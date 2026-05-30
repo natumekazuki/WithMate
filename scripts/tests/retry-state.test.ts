@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildRetryDraftRestoreState,
   buildRetryStopSummary,
   defaultRetryBannerDetailsOpen,
   isRetryActionDisabled,
@@ -46,6 +47,26 @@ function createAuditLog(overrides: Partial<AuditLogSummary> = {}): AuditLogSumma
     ...overrides,
   };
 }
+
+test("buildRetryDraftRestoreState は retry 編集復元時の composer state を作る", () => {
+  const restoreState = buildRetryDraftRestoreState("前回の依頼");
+
+  assert.deepEqual(restoreState, {
+    draft: "前回の依頼",
+    caret: 5,
+    workspacePathMatches: [],
+    activeWorkspacePathMatchIndex: -1,
+    isRetryDraftReplacePending: false,
+    isActionDockPinnedExpanded: true,
+  });
+});
+
+test("buildRetryDraftRestoreState は workspace path matches を呼び出しごとに新しくする", () => {
+  const first = buildRetryDraftRestoreState("a");
+  const second = buildRetryDraftRestoreState("a");
+
+  assert.notEqual(first.workspacePathMatches, second.workspacePathMatches);
+});
 
 test("resolveRetryBannerKind は session state と terminal audit log から retry 種別を解決する", () => {
   assert.equal(resolveRetryBannerKind({ runState: "interrupted" }), "interrupted");

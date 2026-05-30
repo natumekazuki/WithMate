@@ -62,6 +62,7 @@ import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
 import { COMPANION_PENDING_MESSAGE_TEXT } from "./chat/pending-run-indicator.js";
 import {
+  buildRetryDraftRestoreState,
   buildRetryStopSummary,
   defaultRetryBannerDetailsOpen,
   isRetryActionDisabled as resolveRetryActionDisabled,
@@ -2640,17 +2641,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   function restoreLastUserMessageToDraft(messageText: string): void {
     const textarea = composerTextareaRef.current;
-    const nextDraft = messageText;
-    const nextCaret = nextDraft.length;
+    const nextRestoreState = buildRetryDraftRestoreState(messageText);
 
-    setIsActionDockPinnedExpanded(true);
-    setComposerText(nextDraft);
-    setComposerCaret(nextCaret);
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
-    setIsRetryDraftReplacePending(false);
+    setIsActionDockPinnedExpanded(nextRestoreState.isActionDockPinnedExpanded);
+    setComposerText(nextRestoreState.draft);
+    setComposerCaret(nextRestoreState.caret);
+    setWorkspacePathMatches(nextRestoreState.workspacePathMatches);
+    setActiveWorkspacePathMatchIndex(nextRestoreState.activeWorkspacePathMatchIndex);
+    setIsRetryDraftReplacePending(nextRestoreState.isRetryDraftReplacePending);
 
-    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
+    restoreComposerTextareaFocusAndCaret(textarea, nextRestoreState.caret);
   }
 
   function handleEditLastMessage(): void {

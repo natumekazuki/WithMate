@@ -11,6 +11,26 @@ export type RetryBannerState = {
   lastRequestText: string;
 };
 
+export type RetryDraftRestoreState = {
+  draft: string;
+  caret: number;
+  workspacePathMatches: [];
+  activeWorkspacePathMatchIndex: -1;
+  isRetryDraftReplacePending: false;
+  isActionDockPinnedExpanded: true;
+};
+
+export function buildRetryDraftRestoreState(messageText: string): RetryDraftRestoreState {
+  return {
+    draft: messageText,
+    caret: messageText.length,
+    workspacePathMatches: [],
+    activeWorkspacePathMatchIndex: -1,
+    isRetryDraftReplacePending: false,
+    isActionDockPinnedExpanded: true,
+  };
+}
+
 export function defaultRetryBannerDetailsOpen(kind: RetryBannerKind): boolean {
   return kind !== "canceled";
 }
