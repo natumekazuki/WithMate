@@ -109,6 +109,7 @@ import {
   getActivePathReference,
   normalizePathForReference,
   removeActivePathReference,
+  resolvePickedPathBaseDirectory,
   toDirectoryPath,
   toWorkspaceRelativeReference,
 } from "./session-composer-paths.js";
@@ -1540,7 +1541,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         ? await withmateApi.pickImageFile(basePath)
         : await withmateApi.pickFile(basePath);
     if (selectedPath) {
-      setPickerBaseDirectory(kind === "folder" ? selectedPath : toDirectoryPath(selectedPath));
+      setPickerBaseDirectory(resolvePickedPathBaseDirectory(kind, selectedPath));
       insertReferencePath(selectedPath);
     }
   }

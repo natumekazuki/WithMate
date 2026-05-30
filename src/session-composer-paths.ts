@@ -28,6 +28,8 @@ export type AdditionalDirectoryDisplay = {
   title: string;
 };
 
+export type ComposerPathPickerKind = "file" | "folder" | "image";
+
 export function getActivePathReference(value: string, caret: number): ActivePathReference | null {
   const prefix = value.slice(0, caret);
   const match = /(^|[\s(])@(?:"([^"\r\n]*)|([^\s@"\r\n]*))$/.exec(prefix);
@@ -170,4 +172,8 @@ export function toDirectoryPath(selectedPath: string): string {
   }
 
   return normalized.slice(0, lastSlashIndex);
+}
+
+export function resolvePickedPathBaseDirectory(kind: ComposerPathPickerKind, selectedPath: string): string {
+  return kind === "folder" ? selectedPath : toDirectoryPath(selectedPath);
 }

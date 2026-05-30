@@ -94,6 +94,7 @@ import {
   getActivePathReference,
   normalizePathForReference,
   removeActivePathReference,
+  resolvePickedPathBaseDirectory,
   toDirectoryPath,
   toWorkspaceRelativeReference,
 } from "./session-composer-paths.js";
@@ -2709,7 +2710,7 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    setPickerBaseDirectory(toDirectoryPath(selectedPath));
+    setPickerBaseDirectory(resolvePickedPathBaseDirectory("file", selectedPath));
     insertReferencePath(selectedPath);
   };
 
@@ -2724,7 +2725,7 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    setPickerBaseDirectory(selectedPath);
+    setPickerBaseDirectory(resolvePickedPathBaseDirectory("folder", selectedPath));
     insertReferencePath(selectedPath);
   };
 
@@ -2739,7 +2740,7 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    setPickerBaseDirectory(toDirectoryPath(selectedPath));
+    setPickerBaseDirectory(resolvePickedPathBaseDirectory("image", selectedPath));
     insertReferencePath(selectedPath);
   };
 
