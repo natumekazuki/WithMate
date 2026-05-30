@@ -640,6 +640,20 @@ export function resolveReferencePathsForInsertion(
   ));
 }
 
+export function buildSelectedPathReferenceInsertionState(input: {
+  caret: number;
+  draft: string;
+  selectedPaths: readonly string[];
+  workspacePath: string | null;
+}): WorkspacePathMatchSelectionState | null {
+  const referencePaths = resolveReferencePathsForInsertion(input.selectedPaths, input.workspacePath);
+  return buildPathReferenceInsertionWithClosedWorkspaceMatchesState(
+    input.draft,
+    input.caret,
+    referencePaths,
+  );
+}
+
 export function toDirectoryPath(selectedPath: string): string {
   const normalized = selectedPath.replace(/[\\/]+$/, "");
   const lastSlashIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));

@@ -105,11 +105,10 @@ import {
   buildAdditionalDirectoryItems,
   buildClosedWorkspacePathMatchState,
   buildComposerAttachmentItems,
-  buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
+  buildSelectedPathReferenceInsertionState,
   buildWorkspacePathMatchSelectionState,
   pickComposerReferencePath,
-  resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
   toDirectoryPath,
@@ -1379,15 +1378,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     const textarea = composerTextareaRef.current;
     const currentCaret = textarea?.selectionStart ?? composerCaret;
-    const referencePaths = resolveReferencePathsForInsertion(
+    const insertionState = buildSelectedPathReferenceInsertionState({
+      draft: activeComposerText,
+      caret: currentCaret,
       selectedPaths,
-      snapshot?.session.worktreePath ?? null,
-    );
-    const insertionState = buildPathReferenceInsertionWithClosedWorkspaceMatchesState(
-      activeComposerText,
-      currentCaret,
-      referencePaths,
-    );
+      workspacePath: snapshot?.session.worktreePath ?? null,
+    });
     if (!insertionState) {
       return;
     }

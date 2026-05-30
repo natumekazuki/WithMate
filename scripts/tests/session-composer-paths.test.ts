@@ -13,6 +13,7 @@ import {
   buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
+  buildSelectedPathReferenceInsertionState,
   buildPathReferenceReplacementState,
   buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchState,
@@ -127,6 +128,35 @@ test("buildPathReferenceInsertionWithClosedWorkspaceMatchesState は挿入後に
   );
   assert.equal(
     buildPathReferenceInsertionWithClosedWorkspaceMatchesState("確認 ", "確認 ".length, []),
+    null,
+  );
+});
+
+test("buildSelectedPathReferenceInsertionState は選択 path を解決して候補を閉じる", () => {
+  assert.deepEqual(
+    buildSelectedPathReferenceInsertionState({
+      draft: "確認 ",
+      caret: "確認 ".length,
+      selectedPaths: [
+        "C:\\workspace\\project\\src\\App.tsx",
+        "D:\\assets\\cover image.png",
+      ],
+      workspacePath: "C:\\workspace\\project",
+    }),
+    {
+      draft: "確認 @src/App.tsx @\"D:/assets/cover image.png\"",
+      caret: "確認 @src/App.tsx @\"D:/assets/cover image.png\"".length,
+      workspacePathMatches: [],
+      activeWorkspacePathMatchIndex: -1,
+    },
+  );
+  assert.equal(
+    buildSelectedPathReferenceInsertionState({
+      draft: "確認 ",
+      caret: "確認 ".length,
+      selectedPaths: [],
+      workspacePath: "C:\\workspace\\project",
+    }),
     null,
   );
 });

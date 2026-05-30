@@ -90,11 +90,10 @@ import {
   buildAdditionalDirectoryItems,
   buildClosedWorkspacePathMatchState,
   buildComposerAttachmentItems,
-  buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
+  buildSelectedPathReferenceInsertionState,
   buildWorkspacePathMatchSelectionState,
   pickComposerReferencePath,
-  resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
   toDirectoryPath,
@@ -2495,16 +2494,13 @@ export default function AgentSessionWindowApp() {
     const textarea = composerTextareaRef.current;
     const targetAuxiliarySession = activeAuxiliarySession;
     const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
-    const referencePaths = resolveReferencePathsForInsertion(
-      selectedPaths,
-      selectedSession?.workspacePath ?? null,
-    );
     const currentCaret = textarea?.selectionStart ?? composerCaret;
-    const insertionState = buildPathReferenceInsertionWithClosedWorkspaceMatchesState(
-      currentDraft,
-      currentCaret,
-      referencePaths,
-    );
+    const insertionState = buildSelectedPathReferenceInsertionState({
+      draft: currentDraft,
+      caret: currentCaret,
+      selectedPaths,
+      workspacePath: selectedSession?.workspacePath ?? null,
+    });
     if (!insertionState) {
       return;
     }
