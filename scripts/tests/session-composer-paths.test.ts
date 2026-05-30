@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildAdditionalDirectoryItems,
   buildComposerAttachmentItems,
+  buildPathReferenceAttachmentItems,
   buildPathReferenceInsertionState,
   buildPathReferenceRemovalState,
   buildPathReferenceReplacementState,
@@ -100,6 +101,48 @@ test("buildComposerAttachmentItems は attachment display と remove targets を
   assert.deepEqual(
     buildComposerAttachmentItems([attachments[1]], { trimRemoveTargets: false })[0]?.removeTargets,
     ["  ", "D:/assets/cover image.png"],
+  );
+});
+
+test("buildPathReferenceAttachmentItems は MateTalk path reference item を作る", () => {
+  assert.deepEqual(
+    buildPathReferenceAttachmentItems([
+      { path: "src/App.tsx", kind: "file" },
+      { path: "docs/specs", kind: "folder" },
+      { path: "assets/cover image.png", kind: "image" },
+    ]),
+    [
+      {
+        key: "file:src/App.tsx",
+        kind: "file",
+        kindLabel: "ファイル",
+        locationLabel: "参照",
+        primaryLabel: "App.tsx",
+        secondaryLabel: "src",
+        title: "src/App.tsx",
+        removeTargets: ["src/App.tsx"],
+      },
+      {
+        key: "folder:docs/specs",
+        kind: "folder",
+        kindLabel: "フォルダ",
+        locationLabel: "参照",
+        primaryLabel: "specs",
+        secondaryLabel: "docs",
+        title: "docs/specs",
+        removeTargets: ["docs/specs"],
+      },
+      {
+        key: "image:assets/cover image.png",
+        kind: "image",
+        kindLabel: "画像",
+        locationLabel: "参照",
+        primaryLabel: "cover image.png",
+        secondaryLabel: "assets",
+        title: "assets/cover image.png",
+        removeTargets: ["assets/cover image.png"],
+      },
+    ],
   );
 });
 

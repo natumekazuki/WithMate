@@ -21,6 +21,11 @@ export type ComposerAttachmentItem = ComposerAttachmentDisplay & {
   removeTargets: string[];
 };
 
+export type PathReferenceAttachmentInput = {
+  kind: ComposerAttachment["kind"];
+  path: string;
+};
+
 export type WorkspacePathMatchDisplay = {
   kindLabel: string;
   primaryLabel: string;
@@ -255,6 +260,24 @@ export function buildComposerAttachmentItems(
       secondaryLabel: attachmentDisplay.secondaryLabel,
       title: attachmentDisplay.title,
       removeTargets,
+    };
+  });
+}
+
+export function buildPathReferenceAttachmentItems(
+  pathReferences: readonly PathReferenceAttachmentInput[],
+): ComposerAttachmentItem[] {
+  return pathReferences.map((entry) => {
+    const { basename, parentPath } = splitPathForDisplay(entry.path);
+    return {
+      key: `${entry.kind}:${entry.path}`,
+      kind: entry.kind,
+      kindLabel: attachmentKindLabel(entry.kind),
+      locationLabel: "参照",
+      primaryLabel: basename || entry.path,
+      secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 42) : "ルート",
+      title: entry.path,
+      removeTargets: [entry.path],
     };
   });
 }

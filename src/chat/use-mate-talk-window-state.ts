@@ -12,14 +12,13 @@ import {
 } from "../provider-settings-state.js";
 import {
   buildAdditionalDirectoryItems,
+  buildPathReferenceAttachmentItems,
   buildPathReferenceInsertionState,
   buildPathReferenceRemovalState,
-  compactPathForDisplay,
   normalizePathForReference,
   pickComposerReferencePath,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
-  splitPathForDisplay,
   type ComposerPathPickerKind,
   toDirectoryPath,
 } from "../session-composer-paths.js";
@@ -395,20 +394,7 @@ export function useMateTalkWindowState({
 
   const pathReferenceItems = useMemo(
     () =>
-      pathReferences.map((entry) => {
-        const { basename, parentPath } = splitPathForDisplay(entry.path);
-        const kindLabel = entry.kind === "folder" ? "フォルダ" : entry.kind === "image" ? "画像" : "ファイル";
-        return {
-          key: `${entry.kind}:${entry.path}`,
-          kind: entry.kind,
-          kindLabel,
-          locationLabel: "参照",
-          primaryLabel: basename || entry.path,
-          secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 42) : "ルート",
-          title: entry.path,
-          removeTargets: [entry.path],
-        };
-      }),
+      buildPathReferenceAttachmentItems(pathReferences),
     [pathReferences],
   );
   const additionalDirectoryItems = useMemo(
