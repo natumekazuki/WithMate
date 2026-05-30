@@ -57,14 +57,9 @@ import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import {
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   buildAuxiliaryLaunchProviderItems,
-  applyAuxiliaryLaunchDialogState,
-  resolveAuxiliaryLaunchCloseState,
-  resolveAuxiliaryLaunchFeedbackResetState,
-  resolveAuxiliaryLaunchOpenState,
-  resolveAuxiliaryLaunchProviderSelectionState,
-  resolveAuxiliaryLaunchStartErrorState,
 } from "./chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
+import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
 import { createAuxiliaryHeaderActions } from "./chat/chat-header-actions.js";
 import {
   buildComposerSendabilityState,
@@ -391,9 +386,16 @@ export default function AgentSessionWindowApp() {
   const [activeAuxiliarySession, setActiveAuxiliarySession] = useState<AuxiliarySession | null>(null);
   const [closedAuxiliarySessions, setClosedAuxiliarySessions] = useState<AuxiliarySession[]>([]);
   const [isAuxiliaryActionPending, setIsAuxiliaryActionPending] = useState(false);
-  const [auxiliaryLaunchDialogOpen, setAuxiliaryLaunchDialogOpen] = useState(false);
-  const [auxiliaryLaunchProviderId, setAuxiliaryLaunchProviderId] = useState<string | null>(null);
-  const [auxiliaryLaunchFeedback, setAuxiliaryLaunchFeedback] = useState("");
+  const {
+    auxiliaryLaunchDialogOpen,
+    auxiliaryLaunchProviderId,
+    auxiliaryLaunchFeedback,
+    openAuxiliaryLaunchDialog,
+    closeAuxiliaryLaunchDialog,
+    selectAuxiliaryLaunchProvider,
+    resetAuxiliaryLaunchFeedback,
+    setAuxiliaryLaunchStartError,
+  } = useAuxiliaryLaunchDialogState();
   const activityMonitorRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const activityMonitorSignatureRef = useRef("");
@@ -2424,16 +2426,10 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const state = resolveAuxiliaryLaunchOpenState(
-      auxiliaryLaunchProviderItems,
-      selectedSession.provider,
-    );
-    applyAuxiliaryLaunchDialogState(
-      setAuxiliaryLaunchDialogOpen,
-      setAuxiliaryLaunchProviderId,
-      setAuxiliaryLaunchFeedback,
-      state,
-    );
+    openAuxiliaryLaunchDialog({
+      providers: auxiliaryLaunchProviderItems,
+      selectedProviderId: selectedSession.provider,
+    });
   };
 
   const handleCloseAuxiliaryLaunchDialog = () => {
@@ -2441,22 +2437,11 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    applyAuxiliaryLaunchDialogState(
-      setAuxiliaryLaunchDialogOpen,
-      setAuxiliaryLaunchProviderId,
-      setAuxiliaryLaunchFeedback,
-      resolveAuxiliaryLaunchCloseState(),
-    );
+    closeAuxiliaryLaunchDialog();
   };
 
   const handleSelectAuxiliaryLaunchProvider = (providerId: string) => {
-    const state = resolveAuxiliaryLaunchProviderSelectionState(providerId);
-    applyAuxiliaryLaunchDialogState(
-      setAuxiliaryLaunchDialogOpen,
-      setAuxiliaryLaunchProviderId,
-      setAuxiliaryLaunchFeedback,
-      state,
-    );
+    selectAuxiliaryLaunchProvider(providerId);
   };
 
   const handleStartAuxiliarySession = async () => {
@@ -2464,16 +2449,11 @@ export default function AgentSessionWindowApp() {
       return;
     }
     if (!auxiliaryLaunchProviderId) {
-      setAuxiliaryLaunchFeedback(AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK);
+      setAuxiliaryLaunchStartError(new Error(AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK));
       return;
     }
 
-    applyAuxiliaryLaunchDialogState(
-      setAuxiliaryLaunchDialogOpen,
-      setAuxiliaryLaunchProviderId,
-      setAuxiliaryLaunchFeedback,
-      resolveAuxiliaryLaunchFeedbackResetState(),
-    );
+    resetAuxiliaryLaunchFeedback();
 
     const loadRevision = auxiliaryLoadRevisionRef.current + 1;
     auxiliaryLoadRevisionRef.current = loadRevision;
@@ -2494,19 +2474,9 @@ export default function AgentSessionWindowApp() {
       setActiveAuxiliarySession(session);
       setIsActionDockPinnedExpanded(true);
       setForceComposerBlockedFeedback(false);
-      applyAuxiliaryLaunchDialogState(
-        setAuxiliaryLaunchDialogOpen,
-        setAuxiliaryLaunchProviderId,
-        setAuxiliaryLaunchFeedback,
-        resolveAuxiliaryLaunchCloseState(),
-      );
+      closeAuxiliaryLaunchDialog();
     } catch (error) {
-      applyAuxiliaryLaunchDialogState(
-        setAuxiliaryLaunchDialogOpen,
-        setAuxiliaryLaunchProviderId,
-        setAuxiliaryLaunchFeedback,
-        resolveAuxiliaryLaunchStartErrorState(error),
-      );
+      setAuxiliaryLaunchStartError(error);
     } finally {
       void loadClosedAuxiliarySessions(parentSessionId, canApplyLoadResult);
       setIsAuxiliaryActionPending(false);

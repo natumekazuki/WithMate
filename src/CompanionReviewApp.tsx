@@ -79,13 +79,8 @@ import {
 import {
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   buildAuxiliaryLaunchProviderItems,
-  applyAuxiliaryLaunchDialogState,
-  resolveAuxiliaryLaunchCloseState,
-  resolveAuxiliaryLaunchFeedbackResetState,
-  resolveAuxiliaryLaunchOpenState,
-  resolveAuxiliaryLaunchProviderSelectionState,
-  resolveAuxiliaryLaunchStartErrorState,
 } from "./chat/auxiliary-launch-state.js";
+import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
 import {
   buildCustomAgentMatchDisplay,
   buildSelectedCustomAgentDisplay,
@@ -384,9 +379,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [activeAuxiliarySession, setActiveAuxiliarySession] = useState<AuxiliarySession | null>(null);
   const [closedAuxiliarySessions, setClosedAuxiliarySessions] = useState<AuxiliarySession[]>([]);
   const [isAuxiliaryActionPending, setIsAuxiliaryActionPending] = useState(false);
-  const [auxiliaryLaunchDialogOpen, setAuxiliaryLaunchDialogOpen] = useState(false);
-  const [auxiliaryLaunchProviderId, setAuxiliaryLaunchProviderId] = useState<string | null>(null);
-  const [auxiliaryLaunchFeedback, setAuxiliaryLaunchFeedback] = useState("");
+  const {
+    auxiliaryLaunchDialogOpen,
+    auxiliaryLaunchProviderId,
+    auxiliaryLaunchFeedback,
+    openAuxiliaryLaunchDialog,
+    closeAuxiliaryLaunchDialog,
+    selectAuxiliaryLaunchProvider,
+    resetAuxiliaryLaunchFeedback,
+    setAuxiliaryLaunchStartError,
+  } = useAuxiliaryLaunchDialogState();
   const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
   const [elicitationActionRequestId, setElicitationActionRequestId] = useState<string | null>(null);
   const [liveRunState, setLiveRunState] = useState<{ ownerSessionId: string | null; state: LiveSessionRunState | null }>({
@@ -1891,16 +1893,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const state = resolveAuxiliaryLaunchOpenState(
-      auxiliaryLaunchProviderItems,
-      snapshot.session.provider,
-    );
-    applyAuxiliaryLaunchDialogState(
-      setAuxiliaryLaunchDialogOpen,
-      setAuxiliaryLaunchProviderId,
-      setAuxiliaryLaunchFeedback,
-      state,
-    );
+    openAuxiliaryLaunchDialog({
+      providers: auxiliaryLaunchProviderItems,
+      selectedProviderId: snapshot.session.provider,
+    });
   }
 
   function handleCloseAuxiliaryLaunchDialog(): void {
@@ -1908,22 +1904,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    applyAuxiliaryLaunchDialogState(
-      setAuxiliaryLaunchDialogOpen,
-      setAuxiliaryLaunchProviderId,
-      setAuxiliaryLaunchFeedback,
-      resolveAuxiliaryLaunchCloseState(),
-    );
+    closeAuxiliaryLaunchDialog();
   }
 
   function handleSelectAuxiliaryLaunchProvider(providerId: string): void {
-    const state = resolveAuxiliaryLaunchProviderSelectionState(providerId);
-    applyAuxiliaryLaunchDialogState(
-      setAuxiliaryLaunchDialogOpen,
-      setAuxiliaryLaunchProviderId,
-      setAuxiliaryLaunchFeedback,
-      state,
-    );
+    selectAuxiliaryLaunchProvider(providerId);
   }
 
   async function handleStartAuxiliarySession(): Promise<void> {
@@ -1932,20 +1917,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
     if (operationRunning || isSelectedSessionRunning || snapshot.session.status !== "active") {
-      setAuxiliaryLaunchFeedback("Companion が操作中のため Auxiliary Session を開始できないよ。");
+      setAuxiliaryLaunchStartError(new Error("Companion が操作中のため Auxiliary Session を開始できないよ。"));
       return;
     }
     if (!auxiliaryLaunchProviderId) {
-      setAuxiliaryLaunchFeedback(AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK);
+      setAuxiliaryLaunchStartError(new Error(AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK));
       return;
     }
 
-    applyAuxiliaryLaunchDialogState(
-      setAuxiliaryLaunchDialogOpen,
-      setAuxiliaryLaunchProviderId,
-      setAuxiliaryLaunchFeedback,
-      resolveAuxiliaryLaunchFeedbackResetState(),
-    );
+    resetAuxiliaryLaunchFeedback();
 
     const loadRevision = auxiliaryLoadRevisionRef.current + 1;
     auxiliaryLoadRevisionRef.current = loadRevision;
@@ -1964,19 +1944,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       setActiveAuxiliarySession(session);
       setIsActionDockPinnedExpanded(true);
       setForceComposerBlockedFeedback(false);
-      applyAuxiliaryLaunchDialogState(
-        setAuxiliaryLaunchDialogOpen,
-        setAuxiliaryLaunchProviderId,
-        setAuxiliaryLaunchFeedback,
-        resolveAuxiliaryLaunchCloseState(),
-      );
+      closeAuxiliaryLaunchDialog();
     } catch (error) {
-      applyAuxiliaryLaunchDialogState(
-        setAuxiliaryLaunchDialogOpen,
-        setAuxiliaryLaunchProviderId,
-        setAuxiliaryLaunchFeedback,
-        resolveAuxiliaryLaunchStartErrorState(error),
-      );
+      setAuxiliaryLaunchStartError(error);
     } finally {
       void loadClosedAuxiliarySessions(parentSessionId, canApplyLoadResult);
       setIsAuxiliaryActionPending(false);
