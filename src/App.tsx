@@ -82,7 +82,7 @@ import {
   buildCustomAgentMatchDisplay,
   buildSelectedCustomAgentDisplay,
   buildSkillMatchDisplay,
-  buildSkillPromptSnippet,
+  buildSkillPromptInsertionState,
 } from "./session-composer-selection.js";
 import {
   buildAdditionalDirectoryDisplay,
@@ -1930,18 +1930,15 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const snippet = buildSkillPromptSnippet(selectedSession.provider, skill.name);
-    const trimmedDraft = draft.trimStart();
-    const nextDraft = trimmedDraft ? `${snippet}\n\n${trimmedDraft}` : `${snippet}\n`;
-    const nextCaret = nextDraft.length;
+    const nextState = buildSkillPromptInsertionState(selectedSession.provider, skill.name, draft);
 
-    setIsActionDockPinnedExpanded(true);
-    setDraft(nextDraft);
-    setComposerCaret(nextCaret);
-    mainComposerCaretRef.current = nextCaret;
-    setIsSkillPickerOpen(false);
+    setIsActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
+    setDraft(nextState.draft);
+    setComposerCaret(nextState.caret);
+    mainComposerCaretRef.current = nextState.caret;
+    setIsSkillPickerOpen(nextState.isSkillPickerOpen);
 
-    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
+    restoreComposerTextareaFocusAndCaret(textarea, nextState.caret);
   };
 
   const handleSelectCustomAgent = async (agent: DiscoveredCustomAgent | null) => {
@@ -2208,21 +2205,22 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const snippet = buildSkillPromptSnippet(activeAuxiliarySession.provider, skill.name);
-    const trimmedDraft = activeAuxiliarySession.composerDraft.trimStart();
-    const nextDraft = trimmedDraft ? `${snippet}\n\n${trimmedDraft}` : `${snippet}\n`;
-    const nextCaret = nextDraft.length;
+    const nextState = buildSkillPromptInsertionState(
+      activeAuxiliarySession.provider,
+      skill.name,
+      activeAuxiliarySession.composerDraft,
+    );
 
-    setIsActionDockPinnedExpanded(true);
-    setComposerCaret(nextCaret);
-    setIsSkillPickerOpen(false);
+    setIsActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
+    setComposerCaret(nextState.caret);
+    setIsSkillPickerOpen(nextState.isSkillPickerOpen);
     await updateActiveAuxiliarySession((current) => ({
       ...current,
-      composerDraft: nextDraft,
+      composerDraft: nextState.draft,
       updatedAt: currentTimestampLabel(),
     }));
 
-    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
+    restoreComposerTextareaFocusAndCaret(textarea, nextState.caret);
   };
 
   const handleResendLastMessage = async () => {
