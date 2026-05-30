@@ -35,6 +35,12 @@ export type AdditionalDirectoryDisplay = {
   title: string;
 };
 
+export type AdditionalDirectoryItem = AdditionalDirectoryDisplay & {
+  canRemove: boolean;
+  key: string;
+  path: string;
+};
+
 export type PathReferenceInsertionState = {
   caret: number;
   draft: string;
@@ -243,6 +249,23 @@ export function buildAdditionalDirectoryDisplay(directoryPath: string): Addition
     secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 52) : "ルート",
     title: normalizedPath,
   };
+}
+
+export function buildAdditionalDirectoryItems(
+  directoryPaths: readonly string[],
+  canRemove: boolean,
+): AdditionalDirectoryItem[] {
+  return directoryPaths.map((directoryPath) => {
+    const directoryDisplay = buildAdditionalDirectoryDisplay(directoryPath);
+    return {
+      key: directoryPath,
+      path: directoryPath,
+      primaryLabel: directoryDisplay.primaryLabel,
+      secondaryLabel: directoryDisplay.secondaryLabel,
+      title: directoryDisplay.title,
+      canRemove,
+    };
+  });
 }
 
 export function toWorkspaceRelativeReference(workspacePath: string, selectedPath: string): string | null {

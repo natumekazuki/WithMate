@@ -11,7 +11,7 @@ import {
   type AppSettings,
 } from "../provider-settings-state.js";
 import {
-  buildAdditionalDirectoryDisplay,
+  buildAdditionalDirectoryItems,
   buildPathReferenceInsertionState,
   compactPathForDisplay,
   normalizePathForReference,
@@ -409,17 +409,7 @@ export function useMateTalkWindowState({
   );
   const additionalDirectoryItems = useMemo(
     () =>
-      additionalDirectories.map((directoryPath) => {
-        const directoryDisplay = buildAdditionalDirectoryDisplay(directoryPath);
-        return {
-          key: directoryPath,
-          path: directoryPath,
-          primaryLabel: directoryDisplay.primaryLabel,
-          secondaryLabel: directoryDisplay.secondaryLabel,
-          title: directoryDisplay.title,
-          canRemove: true,
-        };
-      }),
+      buildAdditionalDirectoryItems(additionalDirectories, true),
     [additionalDirectories],
   );
   const approvalOptions = useMemo(

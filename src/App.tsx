@@ -87,7 +87,7 @@ import {
   buildSkillPromptInsertionState,
 } from "./session-composer-selection.js";
 import {
-  buildAdditionalDirectoryDisplay,
+  buildAdditionalDirectoryItems,
   buildComposerAttachmentDisplay,
   buildPathReferenceInsertionState,
   buildPathReferenceReplacementState,
@@ -1604,17 +1604,10 @@ export default function AgentSessionWindowApp() {
   const additionalDirectoryItems = useMemo(
     () =>
       displayedSession
-        ? displayedSession.allowedAdditionalDirectories.map((directoryPath) => {
-            const directoryDisplay = buildAdditionalDirectoryDisplay(directoryPath);
-            return {
-              key: directoryPath,
-              path: directoryPath,
-              primaryLabel: directoryDisplay.primaryLabel,
-              secondaryLabel: directoryDisplay.secondaryLabel,
-              title: directoryDisplay.title,
-              canRemove: displayedSession.provider === "codex",
-            };
-          })
+        ? buildAdditionalDirectoryItems(
+            displayedSession.allowedAdditionalDirectories,
+            displayedSession.provider === "codex",
+          )
         : [],
     [displayedSession],
   );

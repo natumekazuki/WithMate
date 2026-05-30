@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildAdditionalDirectoryItems,
   buildPathReferenceInsertionState,
   buildPathReferenceReplacementState,
   buildWorkspacePathMatchItems,
@@ -76,6 +77,41 @@ test("buildWorkspacePathMatchItems は path match display と active state を�
         isActive: true,
       },
     ],
+  );
+});
+
+test("buildAdditionalDirectoryItems は additional directory display と remove state を作る", () => {
+  assert.deepEqual(
+    buildAdditionalDirectoryItems(
+      [
+        "C:\\workspace\\external\\",
+        "C:/",
+      ],
+      true,
+    ),
+    [
+      {
+        key: "C:\\workspace\\external\\",
+        path: "C:\\workspace\\external\\",
+        primaryLabel: "external",
+        secondaryLabel: "C:/workspace",
+        title: "C:/workspace/external",
+        canRemove: true,
+      },
+      {
+        key: "C:/",
+        path: "C:/",
+        primaryLabel: "C:",
+        secondaryLabel: "ルート",
+        title: "C:",
+        canRemove: true,
+      },
+    ],
+  );
+
+  assert.equal(
+    buildAdditionalDirectoryItems(["C:/workspace/readonly"], false)[0]?.canRemove,
+    false,
   );
 });
 
