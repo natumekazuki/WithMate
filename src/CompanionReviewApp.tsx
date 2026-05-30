@@ -127,6 +127,11 @@ import {
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import { fileKindLabel } from "./ui-utils.js";
 import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
+import {
+  buildOnDraftCompositionEndHandler,
+  buildOnDraftCompositionStartHandler,
+  buildOnDraftSelectHandler,
+} from "./chat/composer-draft-handlers.js";
 import { extractTextReferenceCandidates } from "./path-reference.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 
@@ -3173,12 +3178,18 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onDraftFocus: () => setIsActionDockPinnedExpanded(true),
         onDraftKeyDown: handleCompanionDraftKeyDown,
         onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleComposerPaste(event),
-        onDraftSelect: setComposerCaret,
-        onDraftCompositionStart: () => setIsComposerImeComposing(true),
-        onDraftCompositionEnd: () => {
-          setIsComposerImeComposing(false);
-          setComposerCaret(composerTextareaRef.current?.selectionStart ?? activeComposerText.length);
-        },
+        onDraftSelect: buildOnDraftSelectHandler({
+          setComposerCaret,
+        }),
+        onDraftCompositionStart: buildOnDraftCompositionStartHandler({
+          setIsComposerImeComposing,
+        }),
+        onDraftCompositionEnd: buildOnDraftCompositionEndHandler({
+          setComposerCaret,
+          setIsComposerImeComposing,
+          getSelectionStart: () => composerTextareaRef.current?.selectionStart,
+          getFallbackSelectionStart: () => activeComposerText.length,
+        }),
         onSendOrCancel: buildAuxiliaryAwareSendOrCancelHandler({
           shouldSendAuxiliary: !!activeAuxiliarySession,
           isAuxiliarySessionRunning: activeAuxiliarySession?.runState === "running",

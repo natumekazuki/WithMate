@@ -87,6 +87,11 @@ import {
   toWorkspaceRelativeReference,
 } from "./session-composer-paths.js";
 import {
+  buildOnDraftCompositionEndHandler,
+  buildOnDraftCompositionStartHandler,
+  buildOnDraftSelectHandler,
+} from "./chat/composer-draft-handlers.js";
+import {
   useSessionContextRail,
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
@@ -3375,21 +3380,28 @@ export default function AgentSessionWindowApp() {
         onDraftFocus: () => setIsActionDockPinnedExpanded(true),
         onDraftKeyDown: handleComposerKeyDown,
         onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleComposerPaste(event),
-        onDraftSelect: (selectionStart) => {
-          setComposerCaret(selectionStart);
-          if (!activeAuxiliarySession) {
-            mainComposerCaretRef.current = selectionStart;
-          }
-        },
-        onDraftCompositionStart: () => setIsComposerImeComposing(true),
-        onDraftCompositionEnd: () => {
-          setIsComposerImeComposing(false);
-          const selectionStart = composerTextareaRef.current?.selectionStart ?? renderedDraft.length;
-          setComposerCaret(selectionStart);
-          if (!activeAuxiliarySession) {
-            mainComposerCaretRef.current = selectionStart;
-          }
-        },
+        onDraftSelect: buildOnDraftSelectHandler({
+          setComposerCaret,
+          syncMainComposerCaret: !activeAuxiliarySession
+            ? (selectionStart) => {
+                mainComposerCaretRef.current = selectionStart;
+              }
+            : undefined,
+        }),
+        onDraftCompositionStart: buildOnDraftCompositionStartHandler({
+          setIsComposerImeComposing,
+        }),
+        onDraftCompositionEnd: buildOnDraftCompositionEndHandler({
+          setComposerCaret,
+          setIsComposerImeComposing,
+          getSelectionStart: () => composerTextareaRef.current?.selectionStart,
+          getFallbackSelectionStart: () => renderedDraft.length,
+          syncMainComposerCaret: !activeAuxiliarySession
+            ? (selectionStart) => {
+                mainComposerCaretRef.current = selectionStart;
+              }
+            : undefined,
+        }),
         onSendOrCancel: buildAuxiliaryAwareSendOrCancelHandler({
           shouldSendAuxiliary: !!activeAuxiliarySession,
           isAuxiliarySessionRunning: activeAuxiliarySession?.runState === "running",
