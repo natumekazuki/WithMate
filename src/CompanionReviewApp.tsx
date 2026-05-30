@@ -76,6 +76,7 @@ import {
   getComposerSendButtonTitle,
   withForcedComposerBlockedFeedback,
 } from "./session-composer-feedback.js";
+import { buildActionDockCompactPreview } from "./action-dock-preview.js";
 import {
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   buildAuxiliaryLaunchProviderItems,
@@ -1280,18 +1281,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     setIsRetryDetailsOpen(defaultRetryBannerDetailsOpen(retryBanner.kind));
   }, [retryBanner?.kind, retryBannerIdentity, snapshot?.session.id]);
-  const actionDockCompactPreview = useMemo(() => {
-    const normalizedDraft = activeComposerText.replace(/\s+/g, " ").trim();
-    if (normalizedDraft) {
-      return normalizedDraft.length > 84 ? `${normalizedDraft.slice(0, 84)}...` : normalizedDraft;
-    }
-
-    if (isSelectedSessionRunning) {
-      return "実行中";
-    }
-
-    return "下書きなし";
-  }, [activeComposerText, isSelectedSessionRunning]);
+  const actionDockCompactPreview = useMemo(
+    () =>
+      buildActionDockCompactPreview(activeComposerText, isSelectedSessionRunning, {
+        truncationSuffix: "...",
+      }),
+    [activeComposerText, isSelectedSessionRunning],
+  );
   const companionCharacterProfile = displayedSession ? buildCompanionCharacterProfile(displayedSession) : null;
   const selectedCustomAgent = useMemo(() => {
     if (!displayedSession?.customAgentName.trim()) {

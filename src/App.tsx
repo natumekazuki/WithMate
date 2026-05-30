@@ -69,6 +69,7 @@ import {
   withForcedComposerBlockedFeedback,
   type ComposerSendabilityState,
 } from "./session-composer-feedback.js";
+import { buildActionDockCompactPreview } from "./action-dock-preview.js";
 import {
   buildCustomAgentMatchDisplay,
   buildSelectedCustomAgentDisplay,
@@ -1678,18 +1679,13 @@ export default function AgentSessionWindowApp() {
   const isActionDockExpanded = isActionDockPinnedExpanded || shouldForceActionDockExpanded;
   const canCollapseActionDock = !shouldForceActionDockExpanded;
   const isSessionHeaderExpanded = isHeaderExpanded || isEditingTitle;
-  const actionDockCompactPreview = useMemo(() => {
-    const normalizedDraft = draft.replace(/\s+/g, " ").trim();
-    if (normalizedDraft) {
-      return normalizedDraft.length > 84 ? `${normalizedDraft.slice(0, 84)}…` : normalizedDraft;
-    }
-
-    if (selectedSession?.runState === "running") {
-      return "実行中";
-    }
-
-    return "下書きなし";
-  }, [draft, selectedSession?.runState]);
+  const actionDockCompactPreview = useMemo(
+    () =>
+      buildActionDockCompactPreview(draft, selectedSession?.runState === "running", {
+        truncationSuffix: "…",
+      }),
+    [draft, selectedSession?.runState],
+  );
   const retryBannerIdentity = useMemo(() => {
     if (!retryBanner || !selectedSession || !lastUserMessage) {
       return null;
