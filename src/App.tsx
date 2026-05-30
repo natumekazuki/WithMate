@@ -127,7 +127,7 @@ import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
 import { handleWorkspacePathMatchKeyboardNavigation } from "./chat/workspace-path-match-keyboard.js";
 import {
-  copyMessageTextToClipboard,
+  copyMessageTextToClipboardWithFailureHandler,
   createQuotedMessageInsertion,
   insertComposerTextAtCaret,
 } from "./chat/message-text-actions.js";
@@ -2412,12 +2412,13 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleCopyMessageText = (text: string) => {
-    void copyMessageTextToClipboard(
+    void copyMessageTextToClipboardWithFailureHandler({
       text,
-      (normalized) => navigator.clipboard.writeText(normalized),
-    ).catch((error) => {
-      console.error(error);
-      window.alert("コピーに失敗したよ。");
+      writeText: (normalized) => navigator.clipboard.writeText(normalized),
+      onFailure: (error) => {
+        console.error(error);
+        window.alert("コピーに失敗したよ。");
+      },
     });
   };
 

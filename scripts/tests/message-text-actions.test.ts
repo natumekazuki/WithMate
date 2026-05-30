@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   copyMessageTextToClipboard,
+  copyMessageTextToClipboardWithFailureHandler,
   createQuotedMessageInsertion,
   formatMarkdownQuote,
   normalizeMessageTextForCopy,
@@ -22,6 +23,34 @@ test("copyMessageTextToClipboard は空でない response text だけを書き�
   assert.equal(await copyMessageTextToClipboard("  hello  ", writeText), true);
   assert.equal(await copyMessageTextToClipboard("   ", writeText), false);
   assert.deepEqual(writes, ["hello"]);
+});
+
+test("copyMessageTextToClipboardWithFailureHandler は失敗時だけ handler を呼ぶ", async () => {
+  const failures: unknown[] = [];
+  const error = new Error("denied");
+  const writeText = async () => {
+    throw error;
+  };
+
+  assert.equal(
+    await copyMessageTextToClipboardWithFailureHandler({
+      text: "hello",
+      writeText,
+      onFailure: (caughtError) => failures.push(caughtError),
+    }),
+    false,
+  );
+  assert.deepEqual(failures, [error]);
+
+  assert.equal(
+    await copyMessageTextToClipboardWithFailureHandler({
+      text: "   ",
+      writeText,
+      onFailure: (caughtError) => failures.push(caughtError),
+    }),
+    false,
+  );
+  assert.deepEqual(failures, [error]);
 });
 
 test("formatMarkdownQuote は response text を Markdown quote に整形する", () => {

@@ -15,6 +15,19 @@ export async function copyMessageTextToClipboard(
   return true;
 }
 
+export async function copyMessageTextToClipboardWithFailureHandler(input: {
+  onFailure: (error: unknown) => void;
+  text: string;
+  writeText: (text: string) => Promise<void>;
+}): Promise<boolean> {
+  try {
+    return await copyMessageTextToClipboard(input.text, input.writeText);
+  } catch (error) {
+    input.onFailure(error);
+    return false;
+  }
+}
+
 export function formatMarkdownQuote(text: string): string {
   const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
   if (!normalized) {

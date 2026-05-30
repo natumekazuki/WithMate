@@ -72,7 +72,7 @@ import {
   type RetryBannerState,
 } from "./chat/retry-state.js";
 import {
-  copyMessageTextToClipboard,
+  copyMessageTextToClipboardWithFailureHandler,
   createQuotedMessageInsertion,
   insertComposerTextAtCaret,
 } from "./chat/message-text-actions.js";
@@ -1334,12 +1334,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   function handleCopyMessageText(text: string): void {
-    void copyMessageTextToClipboard(
+    void copyMessageTextToClipboardWithFailureHandler({
       text,
-      (normalized) => navigator.clipboard.writeText(normalized),
-    ).catch((error) => {
-      console.error(error);
-      setErrorMessage("コピーに失敗したよ。");
+      writeText: (normalized) => navigator.clipboard.writeText(normalized),
+      onFailure: (error) => {
+        console.error(error);
+        setErrorMessage("コピーに失敗したよ。");
+      },
     });
   }
 
