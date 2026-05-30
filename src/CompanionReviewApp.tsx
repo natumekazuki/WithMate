@@ -82,6 +82,7 @@ import {
   resolveAuxiliaryLaunchCloseState,
   resolveAuxiliaryLaunchProviderSelectionState,
   resolveAuxiliaryLaunchInitialState,
+  resolveAuxiliaryLaunchStartErrorFeedback,
 } from "./chat/auxiliary-launch-state.js";
 import {
   buildCustomAgentMatchDisplay,
@@ -1944,10 +1945,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       setActiveAuxiliarySession(session);
       setIsActionDockPinnedExpanded(true);
       setForceComposerBlockedFeedback(false);
-      setAuxiliaryLaunchDialogOpen(false);
-      setAuxiliaryLaunchFeedback("");
+      const launchCloseState = resolveAuxiliaryLaunchCloseState();
+      setAuxiliaryLaunchDialogOpen(launchCloseState.open);
+      setAuxiliaryLaunchFeedback(launchCloseState.feedback);
     } catch (error) {
-      setAuxiliaryLaunchFeedback(error instanceof Error ? error.message : "Auxiliary Session の開始に失敗したよ。");
+      setAuxiliaryLaunchFeedback(resolveAuxiliaryLaunchStartErrorFeedback(error));
     } finally {
       void loadClosedAuxiliarySessions(parentSessionId, canApplyLoadResult);
       setIsAuxiliaryActionPending(false);

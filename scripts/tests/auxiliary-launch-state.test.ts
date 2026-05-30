@@ -5,11 +5,13 @@ import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
   AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK,
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
+  AUXILIARY_LAUNCH_START_FAILED_FEEDBACK,
   buildAuxiliaryLaunchProviderItems,
   resolveAuxiliaryLaunchCloseState,
   resolveAuxiliaryLaunchProviderSelectionState,
   resolveAuxiliaryLaunchInitialState,
   resolveAuxiliaryLaunchProviderId,
+  resolveAuxiliaryLaunchStartErrorFeedback,
 } from "../../src/chat/auxiliary-launch-state.js";
 
 function makeProvider(
@@ -87,6 +89,11 @@ describe("auxiliary-launch-state", () => {
       providerId: "selected-id",
       feedback: "",
     });
+  });
+
+  it("start error feedback は Error message を優先し fallback 文言を返す", () => {
+    assert.equal(resolveAuxiliaryLaunchStartErrorFeedback(new Error("failed")), "failed");
+    assert.equal(resolveAuxiliaryLaunchStartErrorFeedback("failed"), AUXILIARY_LAUNCH_START_FAILED_FEEDBACK);
   });
 
   it("provider が空のときは resolveAuxiliaryLaunchProviderId が null を返す", () => {
