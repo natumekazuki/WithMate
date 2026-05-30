@@ -104,6 +104,7 @@ import {
 import {
   buildAdditionalDirectoryDisplay,
   buildComposerAttachmentDisplay,
+  buildPathReferenceInsertionState,
   buildWorkspacePathMatchDisplay,
   formatPathReference,
   getActivePathReference,
@@ -1503,17 +1504,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     const textarea = composerTextareaRef.current;
     const currentCaret = textarea?.selectionStart ?? composerCaret;
-    const referenceTokens = selectedPaths.map((selectedPath) => {
+    const referencePaths = selectedPaths.map((selectedPath) => {
       const referencePath = snapshot
         ? toWorkspaceRelativeReference(snapshot.session.worktreePath, selectedPath) ?? normalizePathForReference(selectedPath)
         : normalizePathForReference(selectedPath);
-      return formatPathReference(referencePath);
+      return referencePath;
     });
-    const leadingSpacer = currentCaret > 0 && !/\s/.test(activeComposerText[currentCaret - 1] ?? "") ? " " : "";
-    const trailingSpacer = activeComposerText.length > currentCaret && !/\s/.test(activeComposerText[currentCaret] ?? "") ? " " : "";
-    const insertion = `${leadingSpacer}${referenceTokens.join(" ")}${trailingSpacer}`;
-    const nextDraft = `${activeComposerText.slice(0, currentCaret)}${insertion}${activeComposerText.slice(currentCaret)}`;
-    const nextCaret = currentCaret + insertion.length;
+    const insertionState = buildPathReferenceInsertionState(activeComposerText, currentCaret, referencePaths);
+    if (!insertionState) {
+      return;
+    }
+    const { draft: nextDraft, caret: nextCaret } = insertionState;
 
     setComposerCaret(nextCaret);
     setWorkspacePathMatches([]);

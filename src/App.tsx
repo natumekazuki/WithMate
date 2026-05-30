@@ -89,6 +89,7 @@ import {
 import {
   buildAdditionalDirectoryDisplay,
   buildComposerAttachmentDisplay,
+  buildPathReferenceInsertionState,
   buildWorkspacePathMatchDisplay,
   formatPathReference,
   getActivePathReference,
@@ -2642,18 +2643,18 @@ export default function AgentSessionWindowApp() {
     const textarea = composerTextareaRef.current;
     const targetAuxiliarySession = activeAuxiliarySession;
     const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
-    const referenceTokens = selectedPaths.map((selectedPath) => {
+    const referencePaths = selectedPaths.map((selectedPath) => {
       const referencePath = selectedSession
         ? toWorkspaceRelativeReference(selectedSession.workspacePath, selectedPath) ?? normalizePathForReference(selectedPath)
         : normalizePathForReference(selectedPath);
-      return formatPathReference(referencePath);
+      return referencePath;
     });
     const currentCaret = textarea?.selectionStart ?? composerCaret;
-    const leadingSpacer = currentCaret > 0 && !/\s/.test(currentDraft[currentCaret - 1] ?? "") ? " " : "";
-    const trailingSpacer = currentDraft.length > currentCaret && !/\s/.test(currentDraft[currentCaret] ?? "") ? " " : "";
-    const insertion = `${leadingSpacer}${referenceTokens.join(" ")}${trailingSpacer}`;
-    const nextDraft = `${currentDraft.slice(0, currentCaret)}${insertion}${currentDraft.slice(currentCaret)}`;
-    const nextCaret = currentCaret + insertion.length;
+    const insertionState = buildPathReferenceInsertionState(currentDraft, currentCaret, referencePaths);
+    if (!insertionState) {
+      return;
+    }
+    const { draft: nextDraft, caret: nextCaret } = insertionState;
 
     if (targetAuxiliarySession) {
       void handleAuxiliaryDraftChange(nextDraft, nextCaret);

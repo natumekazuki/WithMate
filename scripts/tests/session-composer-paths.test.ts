@@ -2,10 +2,45 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildPathReferenceInsertionState,
   pickComposerReferencePath,
   resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
 } from "../../src/session-composer-paths.js";
+
+test("buildPathReferenceInsertionState は caret 位置に path reference を挿入する", () => {
+  assert.deepEqual(
+    buildPathReferenceInsertionState("before after", "before ".length, ["src/App.tsx"]),
+    {
+      draft: "before @src/App.tsx after",
+      caret: "before @src/App.tsx ".length,
+    },
+  );
+});
+
+test("buildPathReferenceInsertionState は隣接文字との間に spacer を入れる", () => {
+  assert.deepEqual(
+    buildPathReferenceInsertionState("beforeafter", "before".length, ["src/App.tsx"]),
+    {
+      draft: "before @src/App.tsx after",
+      caret: "before @src/App.tsx ".length,
+    },
+  );
+});
+
+test("buildPathReferenceInsertionState は空白を含む path reference を quote する", () => {
+  assert.deepEqual(
+    buildPathReferenceInsertionState("", 0, ["docs/my note.md", "src/App.tsx"]),
+    {
+      draft: "@\"docs/my note.md\" @src/App.tsx",
+      caret: "@\"docs/my note.md\" @src/App.tsx".length,
+    },
+  );
+});
+
+test("buildPathReferenceInsertionState は reference path が空なら null を返す", () => {
+  assert.equal(buildPathReferenceInsertionState("draft", 0, []), null);
+});
 
 test("resolvePickedPathBaseDirectory は file picker の選択 path から親 directory を返す", () => {
   assert.equal(

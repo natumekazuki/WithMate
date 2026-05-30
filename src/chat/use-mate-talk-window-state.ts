@@ -12,6 +12,7 @@ import {
 } from "../provider-settings-state.js";
 import {
   buildAdditionalDirectoryDisplay,
+  buildPathReferenceInsertionState,
   compactPathForDisplay,
   formatPathReference,
   normalizePathForReference,
@@ -240,13 +241,12 @@ export function useMateTalkWindowState({
 
     const textarea = composerTextareaRef.current;
     const normalizedPaths = selectedPaths.map((selectedPath) => normalizePathForReference(selectedPath));
-    const referenceTokens = normalizedPaths.map((normalizedPath) => formatPathReference(normalizedPath));
     const caret = textarea?.selectionStart ?? inputCaret;
-    const leadingSpacer = caret > 0 && !/\s/.test(input[caret - 1] ?? "") ? " " : "";
-    const trailingSpacer = input.length > caret && !/\s/.test(input[caret] ?? "") ? " " : "";
-    const insertion = `${leadingSpacer}${referenceTokens.join(" ")}${trailingSpacer}`;
-    const nextInput = `${input.slice(0, caret)}${insertion}${input.slice(caret)}`;
-    const nextCaret = caret + insertion.length;
+    const insertionState = buildPathReferenceInsertionState(input, caret, normalizedPaths);
+    if (!insertionState) {
+      return;
+    }
+    const { draft: nextInput, caret: nextCaret } = insertionState;
 
     setInput(nextInput);
     setInputCaret(nextCaret);

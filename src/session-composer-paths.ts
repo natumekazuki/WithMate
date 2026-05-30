@@ -28,6 +28,11 @@ export type AdditionalDirectoryDisplay = {
   title: string;
 };
 
+export type PathReferenceInsertionState = {
+  caret: number;
+  draft: string;
+};
+
 export type ComposerPathPickerKind = "file" | "folder" | "image";
 
 export type ComposerReferencePathPicker = {
@@ -63,6 +68,25 @@ export function removeActivePathReference(value: string, activeReference: Active
 
 export function formatPathReference(path: string): string {
   return /\s/.test(path) ? `@"${path}"` : `@${path}`;
+}
+
+export function buildPathReferenceInsertionState(
+  draft: string,
+  caret: number,
+  referencePaths: readonly string[],
+): PathReferenceInsertionState | null {
+  if (referencePaths.length === 0) {
+    return null;
+  }
+
+  const referenceTokens = referencePaths.map((referencePath) => formatPathReference(referencePath));
+  const leadingSpacer = caret > 0 && !/\s/.test(draft[caret - 1] ?? "") ? " " : "";
+  const trailingSpacer = draft.length > caret && !/\s/.test(draft[caret] ?? "") ? " " : "";
+  const insertion = `${leadingSpacer}${referenceTokens.join(" ")}${trailingSpacer}`;
+  return {
+    draft: `${draft.slice(0, caret)}${insertion}${draft.slice(caret)}`,
+    caret: caret + insertion.length,
+  };
 }
 
 export function normalizePathForReference(filePath: string): string {
