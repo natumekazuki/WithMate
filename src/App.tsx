@@ -93,11 +93,9 @@ import {
   buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildWorkspacePathMatchSelectionState,
-  getWorkspacePathMatchNavigationIndex,
   pickComposerReferencePath,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
-  resolveWorkspacePathMatchNavigation,
   type ComposerPathPickerKind,
   toDirectoryPath,
 } from "./session-composer-paths.js";
@@ -128,6 +126,7 @@ import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolu
 import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
 import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
+import { handleWorkspacePathMatchKeyboardNavigation } from "./chat/workspace-path-match-keyboard.js";
 import {
   copyMessageTextToClipboard,
   createQuotedMessageInsertion,
@@ -1724,54 +1723,16 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    const pathMatchNavigation = resolveWorkspacePathMatchNavigation({
+    if (handleWorkspacePathMatchKeyboardNavigation({
+      event,
       pathMatches: workspacePathMatches,
       activeIndex: activeWorkspacePathMatchIndex,
-      key: event.key,
-      ctrlKey: event.ctrlKey,
-      metaKey: event.metaKey,
       isComposerImeComposing,
-      isNativeComposing: event.nativeEvent.isComposing,
-    });
-
-    if (pathMatchNavigation) {
-      if (pathMatchNavigation.kind === "next") {
-        event.preventDefault();
-        setActiveWorkspacePathMatchIndex((current) => (
-          getWorkspacePathMatchNavigationIndex(
-            pathMatchNavigation,
-            current,
-            workspacePathMatches.length,
-          )
-        ));
-        return;
-      }
-
-      if (pathMatchNavigation.kind === "previous") {
-        event.preventDefault();
-        setActiveWorkspacePathMatchIndex((current) => (
-          getWorkspacePathMatchNavigationIndex(
-            pathMatchNavigation,
-            current,
-            workspacePathMatches.length,
-          )
-        ));
-        return;
-      }
-
-      if (pathMatchNavigation.kind === "dismiss") {
-        if (pathMatchNavigation.shouldPreventDefault) {
-          event.preventDefault();
-        }
-        applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
-        return;
-      }
-
-      if (pathMatchNavigation.kind === "select") {
-        event.preventDefault();
-        handleSelectWorkspacePathMatch(pathMatchNavigation.match.path);
-        return;
-      }
+      onActiveIndexChange: setActiveWorkspacePathMatchIndex,
+      onWorkspacePathMatchStateChange: applyWorkspacePathMatchState,
+      onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
+    })) {
+      return;
     }
 
     if (
