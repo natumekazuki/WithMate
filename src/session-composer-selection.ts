@@ -29,6 +29,30 @@ export type SkillPromptInsertionState = {
   isSkillPickerOpen: false;
 };
 
+export type ComposerPickerToggleTarget = "agent" | "skill";
+
+export type ComposerPickerOpenState = {
+  isAgentPickerOpen: boolean;
+  isSkillPickerOpen: boolean;
+};
+
+export function buildExclusiveComposerPickerToggleState(
+  target: ComposerPickerToggleTarget,
+  isTargetPickerOpen: boolean,
+): ComposerPickerOpenState {
+  if (target === "agent") {
+    return {
+      isAgentPickerOpen: !isTargetPickerOpen,
+      isSkillPickerOpen: false,
+    };
+  }
+
+  return {
+    isAgentPickerOpen: false,
+    isSkillPickerOpen: !isTargetPickerOpen,
+  };
+}
+
 export function buildSkillPromptSnippet(providerId: string, skillName: string): string {
   return providerId === "codex"
     ? `$${skillName}`

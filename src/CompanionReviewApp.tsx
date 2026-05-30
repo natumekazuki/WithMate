@@ -95,6 +95,7 @@ import { buildAuxiliaryAwareSendOrCancelHandler } from "./chat/send-or-cancel.js
 import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-runtime-option-routing.js";
 import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
 import {
+  buildExclusiveComposerPickerToggleState,
   buildCustomAgentMatchDisplay,
   buildSelectedCustomAgentDisplay,
   buildSkillMatchDisplay,
@@ -2233,6 +2234,20 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setIsActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
   }
 
+  function handleToggleAgentPicker(): void {
+    setIsSkillPickerOpen(buildExclusiveComposerPickerToggleState("agent", false).isSkillPickerOpen);
+    setIsAgentPickerOpen((current) => (
+      buildExclusiveComposerPickerToggleState("agent", current).isAgentPickerOpen
+    ));
+  }
+
+  function handleToggleSkillPicker(): void {
+    setIsAgentPickerOpen(buildExclusiveComposerPickerToggleState("skill", false).isAgentPickerOpen);
+    setIsSkillPickerOpen((current) => (
+      buildExclusiveComposerPickerToggleState("skill", current).isSkillPickerOpen
+    ));
+  }
+
   async function reloadSnapshot(preferredPath = selectedPath, options: { preserveSelectionOnly?: boolean } = {}): Promise<void> {
     const withmateApi = getWithMateApi();
     if (!snapshot || !withmateApi) {
@@ -3046,14 +3061,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onPickImage: () => void pickAndInsertPath("image"),
         onAddToSessionFiles: () => void addToSessionFiles(),
         onPickSessionFiles: () => void pickSessionFiles(),
-        onToggleAgentPicker: () => {
-          setIsSkillPickerOpen(false);
-          setIsAgentPickerOpen((current) => !current);
-        },
-        onToggleSkillPicker: () => {
-          setIsAgentPickerOpen(false);
-          setIsSkillPickerOpen((current) => !current);
-        },
+        onToggleAgentPicker: handleToggleAgentPicker,
+        onToggleSkillPicker: handleToggleSkillPicker,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
         onToggleAdditionalDirectoryList: () => setIsAdditionalDirectoryListOpen((current) => !current),
         onCollapseActionDock: handleCollapseActionDock,

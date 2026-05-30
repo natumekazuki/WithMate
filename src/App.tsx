@@ -80,6 +80,7 @@ import {
   buildActionDockRuntimeState,
 } from "./action-dock-state.js";
 import {
+  buildExclusiveComposerPickerToggleState,
   buildCustomAgentMatchDisplay,
   buildSelectedCustomAgentDisplay,
   buildSkillMatchDisplay,
@@ -2309,6 +2310,20 @@ export default function AgentSessionWindowApp() {
     setIsActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
   };
 
+  const handleToggleAgentPicker = () => {
+    setIsSkillPickerOpen(buildExclusiveComposerPickerToggleState("agent", false).isSkillPickerOpen);
+    setIsAgentPickerOpen((current) => (
+      buildExclusiveComposerPickerToggleState("agent", current).isAgentPickerOpen
+    ));
+  };
+
+  const handleToggleSkillPicker = () => {
+    setIsAgentPickerOpen(buildExclusiveComposerPickerToggleState("skill", false).isAgentPickerOpen);
+    setIsSkillPickerOpen((current) => (
+      buildExclusiveComposerPickerToggleState("skill", current).isSkillPickerOpen
+    ));
+  };
+
   const handleOpenInlinePath = async (target: string) => {
     if (!withmateApi) {
       return;
@@ -3221,14 +3236,8 @@ export default function AgentSessionWindowApp() {
         onPickImage: () => void handlePickImage(),
         onAddToSessionFiles: () => void handleAddToSessionFiles(),
         onPickSessionFiles: () => void handlePickSessionFiles(),
-        onToggleAgentPicker: () => {
-          setIsSkillPickerOpen(false);
-          setIsAgentPickerOpen((current) => !current);
-        },
-        onToggleSkillPicker: () => {
-          setIsAgentPickerOpen(false);
-          setIsSkillPickerOpen((current) => !current);
-        },
+        onToggleAgentPicker: handleToggleAgentPicker,
+        onToggleSkillPicker: handleToggleSkillPicker,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
         onToggleAdditionalDirectoryList: () => setIsAdditionalDirectoryListOpen((current) => !current),
         onCollapseActionDock: handleCollapseActionDock,
