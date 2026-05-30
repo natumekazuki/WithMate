@@ -46,6 +46,55 @@ export function resolveAuxiliaryLaunchProviderSelectionState(
   };
 }
 
+export type AuxiliaryLaunchDialogStatePatch = {
+  open?: boolean;
+  providerId?: string | null;
+  feedback?: string;
+};
+
+export function resolveAuxiliaryLaunchOpenState(
+  providers: readonly AuxiliaryLaunchProviderItem[],
+  selectedProviderId: string | null | undefined,
+): AuxiliaryLaunchDialogStatePatch {
+  const initial = resolveAuxiliaryLaunchInitialState(providers, selectedProviderId);
+  return {
+    open: true,
+    providerId: initial.providerId,
+    feedback: initial.feedback,
+  };
+}
+
+export function resolveAuxiliaryLaunchFeedbackResetState(): Pick<AuxiliaryLaunchDialogStatePatch, "feedback"> {
+  return {
+    feedback: "",
+  };
+}
+
+export function resolveAuxiliaryLaunchStartErrorState(
+  error: unknown,
+): Pick<AuxiliaryLaunchDialogStatePatch, "feedback"> {
+  return {
+    feedback: resolveAuxiliaryLaunchStartErrorFeedback(error),
+  };
+}
+
+export function applyAuxiliaryLaunchDialogState(
+  setOpen: (next: boolean) => void,
+  setProviderId: (next: string | null) => void,
+  setFeedback: (next: string) => void,
+  state: AuxiliaryLaunchDialogStatePatch,
+): void {
+  if (state.open !== undefined) {
+    setOpen(state.open);
+  }
+  if (state.providerId !== undefined) {
+    setProviderId(state.providerId);
+  }
+  if (state.feedback !== undefined) {
+    setFeedback(state.feedback);
+  }
+}
+
 export function resolveAuxiliaryLaunchStartErrorFeedback(error: unknown): string {
   return error instanceof Error ? error.message : AUXILIARY_LAUNCH_START_FAILED_FEEDBACK;
 }

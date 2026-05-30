@@ -3,14 +3,18 @@ import { describe, it } from "node:test";
 
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
+  applyAuxiliaryLaunchDialogState,
   AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK,
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   AUXILIARY_LAUNCH_START_FAILED_FEEDBACK,
   buildAuxiliaryLaunchProviderItems,
+  resolveAuxiliaryLaunchFeedbackResetState,
+  resolveAuxiliaryLaunchOpenState,
   resolveAuxiliaryLaunchCloseState,
   resolveAuxiliaryLaunchProviderSelectionState,
   resolveAuxiliaryLaunchInitialState,
   resolveAuxiliaryLaunchProviderId,
+  resolveAuxiliaryLaunchStartErrorState,
   resolveAuxiliaryLaunchStartErrorFeedback,
 } from "../../src/chat/auxiliary-launch-state.js";
 
@@ -94,6 +98,62 @@ describe("auxiliary-launch-state", () => {
   it("start error feedback は Error message を優先し fallback 文言を返す", () => {
     assert.equal(resolveAuxiliaryLaunchStartErrorFeedback(new Error("failed")), "failed");
     assert.equal(resolveAuxiliaryLaunchStartErrorFeedback("failed"), AUXILIARY_LAUNCH_START_FAILED_FEEDBACK);
+  });
+
+  it("open state は provider 解決結果と feedback を反映し open を返す", () => {
+    const items = [
+      { id: "b", label: "B" },
+      { id: "d", label: "D" },
+    ];
+
+    assert.deepEqual(resolveAuxiliaryLaunchOpenState(items, "d"), {
+      open: true,
+      providerId: "d",
+      feedback: "",
+    });
+    assert.deepEqual(resolveAuxiliaryLaunchOpenState(items, "missing"), {
+      open: true,
+      providerId: "b",
+      feedback: "",
+    });
+  });
+
+  it("feedback reset state は feedback 空文字を返す", () => {
+    assert.deepEqual(resolveAuxiliaryLaunchFeedbackResetState(), {
+      feedback: "",
+    });
+  });
+
+  it("start error state は feedback のみを返す", () => {
+    assert.deepEqual(resolveAuxiliaryLaunchStartErrorState(new Error("failed")), {
+      feedback: "failed",
+    });
+    assert.deepEqual(resolveAuxiliaryLaunchStartErrorState("failed"), {
+      feedback: AUXILIARY_LAUNCH_START_FAILED_FEEDBACK,
+    });
+  });
+
+  it("apply した patch は指定フィールドのみ更新する", () => {
+    let open = false;
+    let providerId: string | null = "keep-provider";
+    let feedback = "initial";
+
+    applyAuxiliaryLaunchDialogState(
+      (nextOpen) => {
+        open = nextOpen;
+      },
+      (nextProviderId) => {
+        providerId = nextProviderId;
+      },
+      (nextFeedback) => {
+        feedback = nextFeedback;
+      },
+      { open: true, feedback: "" },
+    );
+
+    assert.equal(open, true);
+    assert.equal(providerId, "keep-provider");
+    assert.equal(feedback, "");
   });
 
   it("provider が空のときは resolveAuxiliaryLaunchProviderId が null を返す", () => {

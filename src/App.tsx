@@ -57,10 +57,12 @@ import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import {
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   buildAuxiliaryLaunchProviderItems,
+  applyAuxiliaryLaunchDialogState,
   resolveAuxiliaryLaunchCloseState,
+  resolveAuxiliaryLaunchFeedbackResetState,
+  resolveAuxiliaryLaunchOpenState,
   resolveAuxiliaryLaunchProviderSelectionState,
-  resolveAuxiliaryLaunchInitialState,
-  resolveAuxiliaryLaunchStartErrorFeedback,
+  resolveAuxiliaryLaunchStartErrorState,
 } from "./chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
 import { createAuxiliaryHeaderActions } from "./chat/chat-header-actions.js";
@@ -2422,13 +2424,16 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const { providerId, feedback } = resolveAuxiliaryLaunchInitialState(
+    const state = resolveAuxiliaryLaunchOpenState(
       auxiliaryLaunchProviderItems,
       selectedSession.provider,
     );
-    setAuxiliaryLaunchProviderId(providerId);
-    setAuxiliaryLaunchFeedback(feedback);
-    setAuxiliaryLaunchDialogOpen(true);
+    applyAuxiliaryLaunchDialogState(
+      setAuxiliaryLaunchDialogOpen,
+      setAuxiliaryLaunchProviderId,
+      setAuxiliaryLaunchFeedback,
+      state,
+    );
   };
 
   const handleCloseAuxiliaryLaunchDialog = () => {
@@ -2436,15 +2441,22 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const state = resolveAuxiliaryLaunchCloseState();
-    setAuxiliaryLaunchDialogOpen(state.open);
-    setAuxiliaryLaunchFeedback(state.feedback);
+    applyAuxiliaryLaunchDialogState(
+      setAuxiliaryLaunchDialogOpen,
+      setAuxiliaryLaunchProviderId,
+      setAuxiliaryLaunchFeedback,
+      resolveAuxiliaryLaunchCloseState(),
+    );
   };
 
   const handleSelectAuxiliaryLaunchProvider = (providerId: string) => {
     const state = resolveAuxiliaryLaunchProviderSelectionState(providerId);
-    setAuxiliaryLaunchProviderId(state.providerId);
-    setAuxiliaryLaunchFeedback(state.feedback);
+    applyAuxiliaryLaunchDialogState(
+      setAuxiliaryLaunchDialogOpen,
+      setAuxiliaryLaunchProviderId,
+      setAuxiliaryLaunchFeedback,
+      state,
+    );
   };
 
   const handleStartAuxiliarySession = async () => {
@@ -2455,6 +2467,13 @@ export default function AgentSessionWindowApp() {
       setAuxiliaryLaunchFeedback(AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK);
       return;
     }
+
+    applyAuxiliaryLaunchDialogState(
+      setAuxiliaryLaunchDialogOpen,
+      setAuxiliaryLaunchProviderId,
+      setAuxiliaryLaunchFeedback,
+      resolveAuxiliaryLaunchFeedbackResetState(),
+    );
 
     const loadRevision = auxiliaryLoadRevisionRef.current + 1;
     auxiliaryLoadRevisionRef.current = loadRevision;
@@ -2475,11 +2494,19 @@ export default function AgentSessionWindowApp() {
       setActiveAuxiliarySession(session);
       setIsActionDockPinnedExpanded(true);
       setForceComposerBlockedFeedback(false);
-      const launchCloseState = resolveAuxiliaryLaunchCloseState();
-      setAuxiliaryLaunchDialogOpen(launchCloseState.open);
-      setAuxiliaryLaunchFeedback(launchCloseState.feedback);
+      applyAuxiliaryLaunchDialogState(
+        setAuxiliaryLaunchDialogOpen,
+        setAuxiliaryLaunchProviderId,
+        setAuxiliaryLaunchFeedback,
+        resolveAuxiliaryLaunchCloseState(),
+      );
     } catch (error) {
-      setAuxiliaryLaunchFeedback(resolveAuxiliaryLaunchStartErrorFeedback(error));
+      applyAuxiliaryLaunchDialogState(
+        setAuxiliaryLaunchDialogOpen,
+        setAuxiliaryLaunchProviderId,
+        setAuxiliaryLaunchFeedback,
+        resolveAuxiliaryLaunchStartErrorState(error),
+      );
     } finally {
       void loadClosedAuxiliarySessions(parentSessionId, canApplyLoadResult);
       setIsAuxiliaryActionPending(false);
