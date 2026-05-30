@@ -111,6 +111,7 @@ import {
   normalizePathForReference,
   pickComposerReferencePath,
   removeActivePathReference,
+  removePathReferenceTokensFromDraft,
   resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
   toDirectoryPath,
@@ -1675,21 +1676,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   function handleRemoveAttachmentReference(attachmentPathCandidates: string[]): void {
-    const escapedCandidates = attachmentPathCandidates
-      .map((candidate) => formatPathReference(candidate))
-      .map((candidate) => candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-
-    let nextDraft = activeComposerText;
-    for (const escapedCandidate of escapedCandidates) {
-      nextDraft = nextDraft.replace(
-        new RegExp(`(^|[\\s(])${escapedCandidate}(?=\\s|$|[),.;:!?])`),
-        (_match, leadingWhitespace: string) => leadingWhitespace || "",
-      );
-    }
-
-    nextDraft = nextDraft
-      .replace(/[ \t]{2,}/g, " ")
-      .replace(/\n{3,}/g, "\n\n");
+    const nextDraft = removePathReferenceTokensFromDraft(activeComposerText, attachmentPathCandidates);
 
     setComposerCaret(nextDraft.length);
     setWorkspacePathMatches([]);

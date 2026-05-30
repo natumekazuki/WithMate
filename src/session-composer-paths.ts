@@ -70,6 +70,10 @@ export function formatPathReference(path: string): string {
   return /\s/.test(path) ? `@"${path}"` : `@${path}`;
 }
 
+function escapeRegExpPattern(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function buildPathReferenceInsertionState(
   draft: string,
   caret: number,
@@ -87,6 +91,26 @@ export function buildPathReferenceInsertionState(
     draft: `${draft.slice(0, caret)}${insertion}${draft.slice(caret)}`,
     caret: caret + insertion.length,
   };
+}
+
+export function removePathReferenceTokensFromDraft(
+  draft: string,
+  referencePaths: readonly string[],
+): string {
+  let nextDraft = draft;
+  const escapedTokens = referencePaths
+    .map((referencePath) => formatPathReference(referencePath))
+    .map(escapeRegExpPattern);
+  for (const escapedToken of escapedTokens) {
+    nextDraft = nextDraft.replace(
+      new RegExp(`(^|[\\s(])${escapedToken}(?=\\s|$|[),.;:!?])`),
+      (_match, leadingWhitespace: string) => leadingWhitespace || "",
+    );
+  }
+
+  return nextDraft
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n");
 }
 
 export function normalizePathForReference(filePath: string): string {

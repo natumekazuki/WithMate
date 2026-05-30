@@ -14,9 +14,9 @@ import {
   buildAdditionalDirectoryDisplay,
   buildPathReferenceInsertionState,
   compactPathForDisplay,
-  formatPathReference,
   normalizePathForReference,
   pickComposerReferencePath,
+  removePathReferenceTokensFromDraft,
   resolvePickedPathBaseDirectory,
   splitPathForDisplay,
   type ComposerPathPickerKind,
@@ -367,20 +367,7 @@ export function useMateTalkWindowState({
 
   const removePathReference = (targets: string[]) => {
     const normalizedTargets = new Set(targets.map((target) => normalizePathForReference(target)));
-    const escapedTokens = Array.from(normalizedTargets)
-      .map((target) => formatPathReference(target))
-      .map((target) => target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-    let nextInput = input;
-    for (const escapedToken of escapedTokens) {
-      nextInput = nextInput.replace(
-        new RegExp(`(^|[\\s(])${escapedToken}(?=\\s|$|[),.;:!?])`),
-        (_match, leadingWhitespace: string) => leadingWhitespace || "",
-      );
-    }
-
-    nextInput = nextInput
-      .replace(/[ \t]{2,}/g, " ")
-      .replace(/\n{3,}/g, "\n\n");
+    const nextInput = removePathReferenceTokensFromDraft(input, Array.from(normalizedTargets));
     setInput(nextInput);
     setInputCaret(nextInput.length);
     setPathReferences((current) => current.filter((entry) => !normalizedTargets.has(entry.path)));

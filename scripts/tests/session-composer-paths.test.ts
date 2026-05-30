@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildPathReferenceInsertionState,
   pickComposerReferencePath,
+  removePathReferenceTokensFromDraft,
   resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
 } from "../../src/session-composer-paths.js";
@@ -40,6 +41,37 @@ test("buildPathReferenceInsertionState は空白を含む path reference を quo
 
 test("buildPathReferenceInsertionState は reference path が空なら null を返す", () => {
   assert.equal(buildPathReferenceInsertionState("draft", 0, []), null);
+});
+
+test("removePathReferenceTokensFromDraft は path reference token を draft から削除する", () => {
+  assert.equal(
+    removePathReferenceTokensFromDraft("確認 @src/App.tsx して", ["src/App.tsx"]),
+    "確認 して",
+  );
+});
+
+test("removePathReferenceTokensFromDraft は quote された path reference token を削除する", () => {
+  assert.equal(
+    removePathReferenceTokensFromDraft("確認 @\"docs/my note.md\" して", ["docs/my note.md"]),
+    "確認 して",
+  );
+});
+
+test("removePathReferenceTokensFromDraft は複数空白と連続改行を整理する", () => {
+  assert.equal(
+    removePathReferenceTokensFromDraft("確認  @src/App.tsx\n\n\nして", ["src/App.tsx"]),
+    "確認 \n\nして",
+  );
+});
+
+test("removePathReferenceTokensFromDraft は複数 token と句読点境界を削除する", () => {
+  assert.equal(
+    removePathReferenceTokensFromDraft(
+      "確認 (@src/App.tsx), @" + "\"docs/my note.md\"" + "!",
+      ["src/App.tsx", "docs/my note.md"],
+    ),
+    "確認 (), !",
+  );
 });
 
 test("resolvePickedPathBaseDirectory は file picker の選択 path から親 directory を返す", () => {

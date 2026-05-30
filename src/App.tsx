@@ -96,6 +96,7 @@ import {
   normalizePathForReference,
   pickComposerReferencePath,
   removeActivePathReference,
+  removePathReferenceTokensFromDraft,
   resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
   toDirectoryPath,
@@ -2674,22 +2675,9 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleRemoveAttachmentReference = (attachmentPathCandidates: string[]) => {
-    const escapedCandidates = attachmentPathCandidates
-      .map((candidate) => formatPathReference(candidate))
-      .map((candidate) => candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-
     const targetAuxiliarySession = activeAuxiliarySession;
-    let nextDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
-    for (const escapedCandidate of escapedCandidates) {
-      nextDraft = nextDraft.replace(
-        new RegExp(`(^|[\\s(])${escapedCandidate}(?=\\s|$|[),.;:!?])`),
-        (_match, leadingWhitespace: string) => leadingWhitespace || "",
-      );
-    }
-
-    nextDraft = nextDraft
-      .replace(/[ \t]{2,}/g, " ")
-      .replace(/\n{3,}/g, "\n\n");
+    const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
+    const nextDraft = removePathReferenceTokensFromDraft(currentDraft, attachmentPathCandidates);
 
     if (targetAuxiliarySession) {
       void handleAuxiliaryDraftChange(nextDraft, nextDraft.length);
