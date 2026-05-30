@@ -88,7 +88,7 @@ import {
 } from "./session-composer-selection.js";
 import {
   buildAdditionalDirectoryItems,
-  buildComposerAttachmentDisplay,
+  buildComposerAttachmentItems,
   buildPathReferenceInsertionState,
   buildPathReferenceReplacementState,
   buildWorkspacePathMatchItems,
@@ -96,7 +96,6 @@ import {
   getInitialWorkspacePathMatchIndex,
   getNextWorkspacePathMatchIndex,
   getPreviousWorkspacePathMatchIndex,
-  normalizePathForReference,
   pickComposerReferencePath,
   removeActivePathReference,
   removePathReferenceTokensFromDraft,
@@ -1586,23 +1585,7 @@ export default function AgentSessionWindowApp() {
   );
   const composerAttachmentItems = useMemo(
     () =>
-      composerPreview.attachments.map((attachment) => {
-        const attachmentDisplay = buildComposerAttachmentDisplay(attachment);
-        return {
-          key: attachment.id,
-          kind: attachment.kind,
-          kindLabel: attachmentDisplay.kindLabel,
-          locationLabel: attachmentDisplay.locationLabel,
-          primaryLabel: attachmentDisplay.primaryLabel,
-          secondaryLabel: attachmentDisplay.secondaryLabel,
-          title: attachmentDisplay.title,
-          removeTargets: [
-            attachment.workspaceRelativePath,
-            attachment.displayPath,
-            normalizePathForReference(attachment.absolutePath),
-          ].filter((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0),
-        };
-      }),
+      buildComposerAttachmentItems(composerPreview.attachments, { trimRemoveTargets: true }),
     [composerPreview.attachments],
   );
   const additionalDirectoryItems = useMemo(

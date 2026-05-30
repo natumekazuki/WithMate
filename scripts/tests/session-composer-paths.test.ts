@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildAdditionalDirectoryItems,
+  buildComposerAttachmentItems,
   buildPathReferenceInsertionState,
   buildPathReferenceReplacementState,
   buildWorkspacePathMatchItems,
@@ -49,6 +50,54 @@ test("buildPathReferenceInsertionState は空白を含む path reference を quo
 
 test("buildPathReferenceInsertionState は reference path が空なら null を返す", () => {
   assert.equal(buildPathReferenceInsertionState("draft", 0, []), null);
+});
+
+test("buildComposerAttachmentItems は attachment display と remove targets を作る", () => {
+  const attachments = [
+    {
+      id: "att-1",
+      kind: "file" as const,
+      absolutePath: "C:\\workspace\\project\\src\\App.tsx",
+      displayPath: "src/App.tsx",
+      workspaceRelativePath: "src/App.tsx",
+      isOutsideWorkspace: false,
+    },
+    {
+      id: "att-2",
+      kind: "image" as const,
+      absolutePath: "D:\\assets\\cover image.png",
+      displayPath: "  ",
+      isOutsideWorkspace: true,
+    },
+  ];
+
+  assert.deepEqual(buildComposerAttachmentItems(attachments, { trimRemoveTargets: true }), [
+    {
+      key: "att-1",
+      kind: "file",
+      kindLabel: "ファイル",
+      locationLabel: "ワークスペース内",
+      primaryLabel: "App.tsx",
+      secondaryLabel: "src",
+      title: "src/App.tsx",
+      removeTargets: ["src/App.tsx", "src/App.tsx", "C:/workspace/project/src/App.tsx"],
+    },
+    {
+      key: "att-2",
+      kind: "image",
+      kindLabel: "画像",
+      locationLabel: "ワークスペース外",
+      primaryLabel: "cover image.png",
+      secondaryLabel: "D:/assets",
+      title: "D:/assets/cover image.png",
+      removeTargets: ["D:/assets/cover image.png"],
+    },
+  ]);
+
+  assert.deepEqual(
+    buildComposerAttachmentItems([attachments[1]], { trimRemoveTargets: false })[0]?.removeTargets,
+    ["  ", "D:/assets/cover image.png"],
+  );
 });
 
 test("buildWorkspacePathMatchItems は path match display と active state を作る", () => {

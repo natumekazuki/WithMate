@@ -15,6 +15,12 @@ export type ComposerAttachmentDisplay = {
   title: string;
 };
 
+export type ComposerAttachmentItem = ComposerAttachmentDisplay & {
+  key: string;
+  kind: ComposerAttachment["kind"];
+  removeTargets: string[];
+};
+
 export type WorkspacePathMatchDisplay = {
   kindLabel: string;
   primaryLabel: string;
@@ -205,6 +211,35 @@ export function buildComposerAttachmentDisplay(attachment: ComposerAttachment): 
     secondaryLabel: secondaryPath,
     title,
   };
+}
+
+export function buildComposerAttachmentItems(
+  attachments: readonly ComposerAttachment[],
+  options: { trimRemoveTargets: boolean },
+): ComposerAttachmentItem[] {
+  return attachments.map((attachment) => {
+    const attachmentDisplay = buildComposerAttachmentDisplay(attachment);
+    const removeTargetCandidates = [
+      attachment.workspaceRelativePath,
+      attachment.displayPath,
+      normalizePathForReference(attachment.absolutePath),
+    ];
+    const removeTargets = options.trimRemoveTargets
+      ? removeTargetCandidates.filter(
+          (candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0,
+        )
+      : removeTargetCandidates.filter((candidate): candidate is string => !!candidate);
+    return {
+      key: attachment.id,
+      kind: attachment.kind,
+      kindLabel: attachmentDisplay.kindLabel,
+      locationLabel: attachmentDisplay.locationLabel,
+      primaryLabel: attachmentDisplay.primaryLabel,
+      secondaryLabel: attachmentDisplay.secondaryLabel,
+      title: attachmentDisplay.title,
+      removeTargets,
+    };
+  });
 }
 
 function workspacePathCandidateKindLabel(kind: WorkspacePathCandidateKind): string {
