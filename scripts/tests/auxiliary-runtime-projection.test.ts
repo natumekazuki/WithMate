@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildAuxiliaryRuntimeSessionProjection } from "../../src/auxiliary-runtime-projection.js";
+import {
+  buildAuxiliaryRuntimeSessionProjection,
+  buildCompanionAuxiliaryRuntimeSession,
+  buildMainAuxiliaryRuntimeSession,
+} from "../../src/auxiliary-runtime-projection.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 import type { CompanionSession } from "../../src/companion-state.js";
 import type { Session } from "../../src/session-state.js";
@@ -116,6 +120,16 @@ test("buildAuxiliaryRuntimeSessionProjection main keeps runtime projection diff 
   assert.deepEqual(projection.stream, []);
 });
 
+test("buildMainAuxiliaryRuntimeSession wraps main runtime projection", () => {
+  const parent = createSession();
+  const auxiliary = createAuxiliarySession();
+
+  assert.deepEqual(
+    buildMainAuxiliaryRuntimeSession(parent, auxiliary),
+    buildAuxiliaryRuntimeSessionProjection("main", parent, auxiliary),
+  );
+});
+
 test("buildAuxiliaryRuntimeSessionProjection main maps non-running auxiliary to idle status", () => {
   const parent = createSession();
   const auxiliary = createAuxiliarySession();
@@ -145,4 +159,14 @@ test("buildAuxiliaryRuntimeSessionProjection companion keeps companion projectio
   assert.equal(projection.status, "active");
   assert.equal(projection.taskTitle, auxiliary.title);
   assert.equal("stream" in projection, false);
+});
+
+test("buildCompanionAuxiliaryRuntimeSession wraps companion runtime projection", () => {
+  const parent = createCompanionSession();
+  const auxiliary = createAuxiliarySession();
+
+  assert.deepEqual(
+    buildCompanionAuxiliaryRuntimeSession(parent, auxiliary),
+    buildAuxiliaryRuntimeSessionProjection("companion", parent, auxiliary),
+  );
 });

@@ -58,7 +58,7 @@ import {
   type ContextPaneTabKey,
   resolveAvailableContextPaneTabs,
 } from "./session-ui-projection.js";
-import { buildAuxiliaryRuntimeSessionProjection } from "./auxiliary-runtime-projection.js";
+import { buildMainAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import {
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
@@ -155,10 +155,6 @@ const COMPOSER_PREVIEW_DEBOUNCE_MS = 120;
 const COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS = 280;
 const WORKSPACE_PATH_QUERY_MIN_LENGTH = 2;
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
-
-function buildAuxiliaryRuntimeSession(parent: Session, auxiliary: AuxiliarySession): Session {
-  return buildAuxiliaryRuntimeSessionProjection("main", parent, auxiliary);
-}
 
 function liveRunStepBucketPriority(status: string): number {
   switch (status) {
@@ -473,7 +469,7 @@ export default function AgentSessionWindowApp() {
   );
   const displayedSession = useMemo(
     () => (selectedSession && activeAuxiliarySession
-      ? buildAuxiliaryRuntimeSession(selectedSession, activeAuxiliarySession)
+      ? buildMainAuxiliaryRuntimeSession(selectedSession, activeAuxiliarySession)
       : selectedSession),
     [activeAuxiliarySession, selectedSession],
   );
@@ -2512,7 +2508,7 @@ export default function AgentSessionWindowApp() {
     activeAuxiliarySessionRef.current = runningSession;
     setActiveAuxiliarySession(runningSession);
     setLiveRunState((current) => createOwnedPendingLiveSessionRunState(
-      buildAuxiliaryRuntimeSession(selectedSession!, runningSession),
+      buildMainAuxiliaryRuntimeSession(selectedSession!, runningSession),
       current,
     ));
 

@@ -129,7 +129,7 @@ import {
   resolveAvailableContextPaneTabs,
   type ContextPaneTabKey,
 } from "./session-ui-projection.js";
-import { buildAuxiliaryRuntimeSessionProjection } from "./auxiliary-runtime-projection.js";
+import { buildCompanionAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import { fileKindLabel } from "./ui-utils.js";
 import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
@@ -155,10 +155,6 @@ const MERGE_FILE_LIST_DEFAULT_PERCENT = 32;
 const MERGE_STAGE_DEFAULT_PERCENT = 50;
 const MERGE_PANE_MIN_PERCENT = 30;
 const MERGE_PANE_MAX_PERCENT = 70;
-
-function buildAuxiliaryCompanionSession(parent: CompanionSession, auxiliary: AuxiliarySession): CompanionSession {
-  return buildAuxiliaryRuntimeSessionProjection("companion", parent, auxiliary);
-}
 
 type ChangedFileTreeAction = "stage" | "unstage";
 
@@ -544,7 +540,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const displayedSession = useMemo(
     () => snapshot
       ? (activeAuxiliarySession
-        ? buildAuxiliaryCompanionSession(snapshot.session, activeAuxiliarySession)
+        ? buildCompanionAuxiliaryRuntimeSession(snapshot.session, activeAuxiliarySession)
         : snapshot.session)
       : null,
     [activeAuxiliarySession, snapshot],
@@ -1992,7 +1988,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     activeAuxiliarySessionRef.current = runningSession;
     setActiveAuxiliarySession(runningSession);
     setLiveRunState((current) => createOwnedPendingLiveSessionRunState(
-      buildAuxiliaryCompanionSession(snapshot.session, runningSession),
+      buildCompanionAuxiliaryRuntimeSession(snapshot.session, runningSession),
       current,
     ));
     setForceComposerBlockedFeedback(false);

@@ -88,3 +88,14 @@ export function buildAuxiliaryRuntimeSessionProjection(
   };
   return projection;
 }
+
+export function buildMainAuxiliaryRuntimeSession(parent: Session, auxiliary: AuxiliarySession): Session {
+  return buildAuxiliaryRuntimeSessionProjection("main", parent, auxiliary);
+}
+
+export function buildCompanionAuxiliaryRuntimeSession(
+  parent: CompanionSession,
+  auxiliary: AuxiliarySession,
+): CompanionSession {
+  return buildAuxiliaryRuntimeSessionProjection("companion", parent, auxiliary);
+}
