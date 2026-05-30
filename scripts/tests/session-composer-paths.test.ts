@@ -5,6 +5,7 @@ import {
   appendAdditionalDirectoryPath,
   appendMissingPathReferenceAttachments,
   buildAdditionalDirectoryItems,
+  buildClosedWorkspacePathMatchState,
   buildComposerAttachmentItems,
   buildComposerPathReferencePreviewState,
   buildPathReferenceAttachmentItems,
@@ -65,6 +66,13 @@ test("buildPathReferenceInsertionState は空白を含む path reference を quo
 
 test("buildPathReferenceInsertionState は reference path が空なら null を返す", () => {
   assert.equal(buildPathReferenceInsertionState("draft", 0, []), null);
+});
+
+test("buildClosedWorkspacePathMatchState は候補と active index を閉じる", () => {
+  assert.deepEqual(buildClosedWorkspacePathMatchState(), {
+    workspacePathMatches: [],
+    activeWorkspacePathMatchIndex: -1,
+  });
 });
 
 test("buildComposerPathReferencePreviewState は active path reference の preview を返す", () => {

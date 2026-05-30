@@ -103,6 +103,7 @@ import {
 } from "./session-composer-selection.js";
 import {
   buildAdditionalDirectoryItems,
+  buildClosedWorkspacePathMatchState,
   buildComposerAttachmentItems,
   buildComposerPathReferencePreviewState,
   buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
@@ -442,8 +443,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setComposerPreview(createEmptyComposerPreview());
     setPickerBaseDirectory(snapshot?.session.worktreePath ?? "");
     setComposerCaret(0);
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
+    const closedWorkspacePathMatchState = buildClosedWorkspacePathMatchState();
+    setWorkspacePathMatches(closedWorkspacePathMatchState.workspacePathMatches);
+    setActiveWorkspacePathMatchIndex(closedWorkspacePathMatchState.activeWorkspacePathMatchIndex);
     setIsComposerImeComposing(false);
     setIsRetryDraftReplacePending(false);
   }, [snapshot?.session.id]);
@@ -1451,8 +1453,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
     const { draft: nextDraft, caret: nextCaret } = insertion;
     setComposerCaret(nextCaret);
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
+    const closedWorkspacePathMatchState = buildClosedWorkspacePathMatchState();
+    setWorkspacePathMatches(closedWorkspacePathMatchState.workspacePathMatches);
+    setActiveWorkspacePathMatchIndex(closedWorkspacePathMatchState.activeWorkspacePathMatchIndex);
     if (activeAuxiliarySession) {
       void handleAuxiliaryDraftChange(nextDraft, nextCaret);
     } else {
@@ -2761,8 +2764,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         if (pathMatchNavigation.shouldPreventDefault) {
           event.preventDefault();
         }
-        setWorkspacePathMatches([]);
-        setActiveWorkspacePathMatchIndex(-1);
+        const closedWorkspacePathMatchState = buildClosedWorkspacePathMatchState();
+        setWorkspacePathMatches(closedWorkspacePathMatchState.workspacePathMatches);
+        setActiveWorkspacePathMatchIndex(closedWorkspacePathMatchState.activeWorkspacePathMatchIndex);
         return;
       }
 

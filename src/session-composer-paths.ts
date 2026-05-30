@@ -69,10 +69,12 @@ export type PathReferenceInsertionState = {
   draft: string;
 };
 
-export type WorkspacePathMatchSelectionState = PathReferenceInsertionState & {
+export type ClosedWorkspacePathMatchState = {
   activeWorkspacePathMatchIndex: -1;
   workspacePathMatches: WorkspacePathCandidate[];
 };
+
+export type WorkspacePathMatchSelectionState = PathReferenceInsertionState & ClosedWorkspacePathMatchState;
 
 export type ComposerPathReferencePreviewState = {
   activePathReference: ActivePathReference | null;
@@ -161,6 +163,13 @@ export function buildPathReferenceInsertionState(
   };
 }
 
+export function buildClosedWorkspacePathMatchState(): ClosedWorkspacePathMatchState {
+  return {
+    workspacePathMatches: [],
+    activeWorkspacePathMatchIndex: -1,
+  };
+}
+
 export function buildPathReferenceInsertionWithClosedWorkspaceMatchesState(
   draft: string,
   caret: number,
@@ -170,8 +179,7 @@ export function buildPathReferenceInsertionWithClosedWorkspaceMatchesState(
   return nextState
     ? {
         ...nextState,
-        workspacePathMatches: [],
-        activeWorkspacePathMatchIndex: -1,
+        ...buildClosedWorkspacePathMatchState(),
       }
     : null;
 }
@@ -201,8 +209,7 @@ export function buildWorkspacePathMatchSelectionState(
   const nextState = buildPathReferenceReplacementState(draft, activeReference, matchPath);
   return {
     ...nextState,
-    workspacePathMatches: [],
-    activeWorkspacePathMatchIndex: -1,
+    ...buildClosedWorkspacePathMatchState(),
   };
 }
 
@@ -244,8 +251,7 @@ export function buildPathReferenceRemovalWithClosedWorkspaceMatchesState(
   const nextState = buildPathReferenceRemovalState(draft, referencePaths);
   return {
     ...nextState,
-    workspacePathMatches: [],
-    activeWorkspacePathMatchIndex: -1,
+    ...buildClosedWorkspacePathMatchState(),
   };
 }
 

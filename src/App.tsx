@@ -88,6 +88,7 @@ import {
 } from "./session-composer-selection.js";
 import {
   buildAdditionalDirectoryItems,
+  buildClosedWorkspacePathMatchState,
   buildComposerAttachmentItems,
   buildComposerPathReferencePreviewState,
   buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
@@ -907,8 +908,9 @@ export default function AgentSessionWindowApp() {
     setPickerBaseDirectory(selectedSession?.workspacePath ?? "");
     setComposerCaret(0);
     mainComposerCaretRef.current = 0;
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
+    const closedWorkspacePathMatchState = buildClosedWorkspacePathMatchState();
+    setWorkspacePathMatches(closedWorkspacePathMatchState.workspacePathMatches);
+    setActiveWorkspacePathMatchIndex(closedWorkspacePathMatchState.activeWorkspacePathMatchIndex);
     setIsComposerImeComposing(false);
     setIsActivityMonitorFollowing(true);
     setHasActivityMonitorUnread(false);
@@ -1844,8 +1846,9 @@ export default function AgentSessionWindowApp() {
         if (pathMatchNavigation.shouldPreventDefault) {
           event.preventDefault();
         }
-        setWorkspacePathMatches([]);
-        setActiveWorkspacePathMatchIndex(-1);
+        const closedWorkspacePathMatchState = buildClosedWorkspacePathMatchState();
+        setWorkspacePathMatches(closedWorkspacePathMatchState.workspacePathMatches);
+        setActiveWorkspacePathMatchIndex(closedWorkspacePathMatchState.activeWorkspacePathMatchIndex);
         return;
       }
 
@@ -2566,8 +2569,9 @@ export default function AgentSessionWindowApp() {
     if (!activeAuxiliarySession) {
       setComposerCaret(nextCaret);
     }
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
+    const closedWorkspacePathMatchState = buildClosedWorkspacePathMatchState();
+    setWorkspacePathMatches(closedWorkspacePathMatchState.workspacePathMatches);
+    setActiveWorkspacePathMatchIndex(closedWorkspacePathMatchState.activeWorkspacePathMatchIndex);
 
     restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
