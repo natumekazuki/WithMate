@@ -2051,11 +2051,9 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    await updateActiveAuxiliarySession((current) => ({
-      ...current,
-      customAgentName: nextCustomAgentName,
-      updatedAt: currentTimestampLabel(),
-    }));
+    await updateActiveAuxiliarySession((current) => (
+      applyAuxiliarySessionPatch(current, { customAgentName: nextCustomAgentName }, currentTimestampLabel())
+    ));
     setIsAgentPickerOpen(false);
   };
 
@@ -2074,11 +2072,9 @@ export default function AgentSessionWindowApp() {
     setIsActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
     setComposerCaret(nextState.caret);
     setIsSkillPickerOpen(nextState.isSkillPickerOpen);
-    await updateActiveAuxiliarySession((current) => ({
-      ...current,
-      composerDraft: nextState.draft,
-      updatedAt: currentTimestampLabel(),
-    }));
+    await updateActiveAuxiliarySession((current) => (
+      applyAuxiliarySessionPatch(current, { composerDraft: nextState.draft }, currentTimestampLabel())
+    ));
 
     restoreComposerTextareaFocusAndCaret(textarea, nextState.caret);
   };
@@ -2677,21 +2673,23 @@ export default function AgentSessionWindowApp() {
     }
 
     setPickerBaseDirectory(selectedPath);
-    await updateActiveAuxiliarySession((current) => ({
-      ...current,
-      allowedAdditionalDirectories: Array.from(new Set([...current.allowedAdditionalDirectories, selectedPath])),
-      updatedAt: currentTimestampLabel(),
-    }));
+    await updateActiveAuxiliarySession((current) => (
+      applyAuxiliarySessionPatch(
+        current,
+        { allowedAdditionalDirectories: Array.from(new Set([...current.allowedAdditionalDirectories, selectedPath])) },
+        currentTimestampLabel(),
+      )
+    ));
   };
 
   const handleRemoveAuxiliaryAdditionalDirectory = async (directoryPath: string) => {
     await updateActiveAuxiliarySession((current) => {
       const nextDirectories = current.allowedAdditionalDirectories.filter((entry) => entry !== directoryPath);
-      return {
-        ...current,
-        allowedAdditionalDirectories: nextDirectories,
-        updatedAt: currentTimestampLabel(),
-      };
+      return applyAuxiliarySessionPatch(
+        current,
+        { allowedAdditionalDirectories: nextDirectories },
+        currentTimestampLabel(),
+      );
     });
   };
 

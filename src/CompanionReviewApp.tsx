@@ -1963,11 +1963,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    await updateActiveAuxiliarySession((current) => ({
-      ...current,
-      customAgentName: nextCustomAgentName,
-      updatedAt: currentTimestampLabel(),
-    }));
+    await updateActiveAuxiliarySession((current) => (
+      applyAuxiliarySessionPatch(current, { customAgentName: nextCustomAgentName }, currentTimestampLabel())
+    ));
     setIsAgentPickerOpen(false);
   }
 
@@ -1985,11 +1983,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setIsActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
     setComposerCaret(nextState.caret);
     setIsSkillPickerOpen(nextState.isSkillPickerOpen);
-    await updateActiveAuxiliarySession((current) => ({
-      ...current,
-      composerDraft: nextState.draft,
-      updatedAt: currentTimestampLabel(),
-    }));
+    await updateActiveAuxiliarySession((current) => (
+      applyAuxiliarySessionPatch(current, { composerDraft: nextState.draft }, currentTimestampLabel())
+    ));
   }
 
   async function handleAddAuxiliaryAdditionalDirectory(): Promise<void> {
@@ -2004,19 +2000,23 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
 
     setPickerBaseDirectory(selectedPath);
-    await updateActiveAuxiliarySession((current) => ({
-      ...current,
-      allowedAdditionalDirectories: Array.from(new Set([...current.allowedAdditionalDirectories, selectedPath])),
-      updatedAt: currentTimestampLabel(),
-    }));
+    await updateActiveAuxiliarySession((current) => (
+      applyAuxiliarySessionPatch(
+        current,
+        { allowedAdditionalDirectories: Array.from(new Set([...current.allowedAdditionalDirectories, selectedPath])) },
+        currentTimestampLabel(),
+      )
+    ));
   }
 
   async function handleRemoveAuxiliaryAdditionalDirectory(directoryPath: string): Promise<void> {
-    await updateActiveAuxiliarySession((current) => ({
-      ...current,
-      allowedAdditionalDirectories: current.allowedAdditionalDirectories.filter((entry) => entry !== directoryPath),
-      updatedAt: currentTimestampLabel(),
-    }));
+    await updateActiveAuxiliarySession((current) => (
+      applyAuxiliarySessionPatch(
+        current,
+        { allowedAdditionalDirectories: current.allowedAdditionalDirectories.filter((entry) => entry !== directoryPath) },
+        currentTimestampLabel(),
+      )
+    ));
   }
 
   function handleStartTitleEdit(): void {
