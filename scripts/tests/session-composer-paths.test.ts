@@ -15,6 +15,7 @@ import {
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildPathReferenceReplacementState,
   buildWorkspacePathMatchSelectionState,
+  buildWorkspacePathMatchState,
   buildWorkspacePathMatchItems,
   canNavigateWorkspacePathMatches,
   getInitialWorkspacePathMatchIndex,
@@ -300,6 +301,21 @@ test("workspace path match index helpers は初期値と上下移動を clamp �
   assert.equal(getNextWorkspacePathMatchIndex(2, 3), 2);
   assert.equal(getPreviousWorkspacePathMatchIndex(0), 0);
   assert.equal(getPreviousWorkspacePathMatchIndex(2), 1);
+});
+
+test("buildWorkspacePathMatchState は候補と初期 active index を返す", () => {
+  const pathMatches = [
+    { kind: "file" as const, path: "src/App.tsx" },
+    { kind: "folder" as const, path: "src" },
+  ];
+  assert.deepEqual(buildWorkspacePathMatchState(pathMatches), {
+    workspacePathMatches: pathMatches,
+    activeWorkspacePathMatchIndex: 0,
+  });
+  assert.deepEqual(buildWorkspacePathMatchState([]), {
+    workspacePathMatches: [],
+    activeWorkspacePathMatchIndex: -1,
+  });
 });
 
 test("resolveActiveWorkspacePathMatch は active index の候補または先頭候補を返す", () => {

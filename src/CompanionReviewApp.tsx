@@ -108,9 +108,9 @@ import {
   buildComposerPathReferencePreviewState,
   buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
+  buildWorkspacePathMatchState,
   buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchItems,
-  getInitialWorkspacePathMatchIndex,
   getWorkspacePathMatchNavigationIndex,
   pickComposerReferencePath,
   resolveReferencePathsForInsertion,
@@ -1007,7 +1007,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       !isEditingPathReference ||
       normalizedActivePathQuery.length < WORKSPACE_PATH_QUERY_MIN_LENGTH
     ) {
-      setWorkspacePathMatches([]);
+      const nextState = buildWorkspacePathMatchState([]);
+      setWorkspacePathMatches(nextState.workspacePathMatches);
+      setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
       return () => {
         active = false;
       };
@@ -1016,11 +1018,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     const timeoutId = window.setTimeout(() => {
       void withmateApi.searchCompanionWorkspaceFiles(sessionId, normalizedActivePathQuery).then((matches) => {
         if (active) {
-          setWorkspacePathMatches(matches);
+          const nextState = buildWorkspacePathMatchState(matches);
+          setWorkspacePathMatches(nextState.workspacePathMatches);
+          setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
         }
       }).catch(() => {
         if (active) {
-          setWorkspacePathMatches([]);
+          const nextState = buildWorkspacePathMatchState([]);
+          setWorkspacePathMatches(nextState.workspacePathMatches);
+          setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
         }
       });
     }, WORKSPACE_PATH_SEARCH_DEBOUNCE_MS);
@@ -1038,9 +1044,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     snapshot?.session.id,
     snapshot?.session.status,
   ]);
-  useEffect(() => {
-    setActiveWorkspacePathMatchIndex(getInitialWorkspacePathMatchIndex(workspacePathMatches.length));
-  }, [workspacePathMatches]);
   const {
     sessionWorkbenchRef,
     sessionWorkbenchStyle,

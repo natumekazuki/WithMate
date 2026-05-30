@@ -69,6 +69,11 @@ export type PathReferenceInsertionState = {
   draft: string;
 };
 
+export type WorkspacePathMatchState = {
+  activeWorkspacePathMatchIndex: number;
+  workspacePathMatches: WorkspacePathCandidate[];
+};
+
 export type ClosedWorkspacePathMatchState = {
   activeWorkspacePathMatchIndex: -1;
   workspacePathMatches: WorkspacePathCandidate[];
@@ -434,6 +439,15 @@ export function buildWorkspacePathMatchItems(
 
 export function getInitialWorkspacePathMatchIndex(matchCount: number): number {
   return matchCount > 0 ? 0 : -1;
+}
+
+export function buildWorkspacePathMatchState(
+  workspacePathMatches: WorkspacePathCandidate[],
+): WorkspacePathMatchState {
+  return {
+    workspacePathMatches,
+    activeWorkspacePathMatchIndex: getInitialWorkspacePathMatchIndex(workspacePathMatches.length),
+  };
 }
 
 export function getNextWorkspacePathMatchIndex(currentIndex: number, matchCount: number): number {

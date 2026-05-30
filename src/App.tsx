@@ -93,9 +93,9 @@ import {
   buildComposerPathReferencePreviewState,
   buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
+  buildWorkspacePathMatchState,
   buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchItems,
-  getInitialWorkspacePathMatchIndex,
   getWorkspacePathMatchNavigationIndex,
   pickComposerReferencePath,
   resolveReferencePathsForInsertion,
@@ -1189,7 +1189,9 @@ export default function AgentSessionWindowApp() {
       || !isEditingPathReference
       || normalizedActivePathQuery.length < WORKSPACE_PATH_QUERY_MIN_LENGTH
     ) {
-      setWorkspacePathMatches([]);
+      const nextState = buildWorkspacePathMatchState([]);
+      setWorkspacePathMatches(nextState.workspacePathMatches);
+      setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
       return () => {
         active = false;
       };
@@ -1198,11 +1200,15 @@ export default function AgentSessionWindowApp() {
     const timeoutId = window.setTimeout(() => {
       void withmateApi.searchWorkspaceFiles(selectedSessionId, normalizedActivePathQuery).then((matches) => {
         if (active) {
-          setWorkspacePathMatches(matches);
+          const nextState = buildWorkspacePathMatchState(matches);
+          setWorkspacePathMatches(nextState.workspacePathMatches);
+          setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
         }
       }).catch(() => {
         if (active) {
-          setWorkspacePathMatches([]);
+          const nextState = buildWorkspacePathMatchState([]);
+          setWorkspacePathMatches(nextState.workspacePathMatches);
+          setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
         }
       });
     }, WORKSPACE_PATH_SEARCH_DEBOUNCE_MS);
@@ -1639,10 +1645,6 @@ export default function AgentSessionWindowApp() {
 
     setIsRetryDetailsOpen(defaultRetryBannerDetailsOpen(retryBanner.kind));
   }, [retryBanner?.kind, retryBannerIdentity, selectedSession?.id]);
-
-  useEffect(() => {
-    setActiveWorkspacePathMatchIndex(getInitialWorkspacePathMatchIndex(workspacePathMatches.length));
-  }, [workspacePathMatches]);
 
   useEffect(() => {
     setForceComposerBlockedFeedback(false);
