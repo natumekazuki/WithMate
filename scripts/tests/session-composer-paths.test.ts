@@ -15,10 +15,12 @@ import {
   getNextWorkspacePathMatchIndex,
   getPreviousWorkspacePathMatchIndex,
   pickComposerReferencePath,
+  removePathReferenceAttachments,
   removePathReferenceTokensFromDraft,
   resolveActiveWorkspacePathMatch,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
+  resolvePathReferenceRemovalTargets,
   resolveWorkspacePathMatchKeyAction,
   type ComposerPathPickerKind,
 } from "../../src/session-composer-paths.js";
@@ -162,6 +164,27 @@ test("appendMissingPathReferenceAttachments は既存にない path reference �
       { path: "docs", kind: "folder" },
       { path: "assets/cover.png", kind: "image" },
     ],
+  );
+});
+
+test("resolvePathReferenceRemovalTargets は削除対象 path を正規化して重複を除く", () => {
+  assert.deepEqual(
+    resolvePathReferenceRemovalTargets(["src\\App.tsx", "src/App.tsx", "docs/spec.md"]),
+    ["src/App.tsx", "docs/spec.md"],
+  );
+});
+
+test("removePathReferenceAttachments は削除対象以外の path reference を残す", () => {
+  assert.deepEqual(
+    removePathReferenceAttachments(
+      [
+        { path: "src\\App.tsx", kind: "file" },
+        { path: "docs", kind: "folder" },
+        { path: "assets/cover.png", kind: "image" },
+      ],
+      ["src\\App.tsx", "assets/cover.png"],
+    ),
+    [{ path: "docs", kind: "folder" }],
   );
 });
 

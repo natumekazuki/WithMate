@@ -170,6 +170,10 @@ export function normalizePathForReference(filePath: string): string {
   return filePath.replace(/\\/g, "/");
 }
 
+export function resolvePathReferenceRemovalTargets(targets: readonly string[]): string[] {
+  return Array.from(new Set(targets.map((target) => normalizePathForReference(target))));
+}
+
 export function splitPathForDisplay(filePath: string): { basename: string; parentPath: string } {
   const normalized = normalizePathForReference(filePath).replace(/\/+$/, "");
   if (!normalized) {
@@ -295,6 +299,14 @@ export function appendMissingPathReferenceAttachments(
     }
   }
   return next;
+}
+
+export function removePathReferenceAttachments(
+  current: readonly PathReferenceAttachmentInput[],
+  referencePaths: readonly string[],
+): PathReferenceAttachmentInput[] {
+  const removablePaths = new Set(resolvePathReferenceRemovalTargets(referencePaths));
+  return current.filter((entry) => !removablePaths.has(normalizePathForReference(entry.path)));
 }
 
 function workspacePathCandidateKindLabel(kind: WorkspacePathCandidateKind): string {

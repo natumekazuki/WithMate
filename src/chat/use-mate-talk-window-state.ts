@@ -18,8 +18,10 @@ import {
   buildPathReferenceRemovalState,
   normalizePathForReference,
   pickComposerReferencePath,
+  removePathReferenceAttachments,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
+  resolvePathReferenceRemovalTargets,
   type ComposerPathPickerKind,
   toDirectoryPath,
 } from "../session-composer-paths.js";
@@ -358,14 +360,14 @@ export function useMateTalkWindowState({
   };
 
   const removePathReference = (targets: string[]) => {
-    const normalizedTargets = new Set(targets.map((target) => normalizePathForReference(target)));
+    const removalTargets = resolvePathReferenceRemovalTargets(targets);
     const { draft: nextInput, caret: nextCaret } = buildPathReferenceRemovalState(
       input,
-      Array.from(normalizedTargets),
+      removalTargets,
     );
     setInput(nextInput);
     setInputCaret(nextCaret);
-    setPathReferences((current) => current.filter((entry) => !normalizedTargets.has(entry.path)));
+    setPathReferences((current) => removePathReferenceAttachments(current, removalTargets));
   };
 
   const addAdditionalDirectory = async () => {
