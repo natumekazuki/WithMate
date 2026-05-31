@@ -647,6 +647,147 @@ describe("CodexAdapter thread settings", () => {
     ]);
   });
 
+  it("collab_tool_call の stream lifecycle を app log に流す", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-collab-log-"));
+    const logs: Array<{ kind: string; level: string; data?: Record<string, unknown> }> = [];
+    const adapter = new CodexAdapter((entry) => {
+      logs.push(entry as { kind: string; level: string; data?: Record<string, unknown> });
+    }) as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+
+    try {
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-1",
+            runStreamed: async () => ({
+              events: createCodexStreamFromEvents([
+                {
+                  type: "item.completed",
+                  item: {
+                    id: "item_33",
+                    type: "collab_tool_call",
+                    tool: "wait",
+                    status: "completed",
+                    agents_states: {
+                      "agent-1": {
+                        status: "completed",
+                        message: "Pass",
+                      },
+                    },
+                  },
+                },
+                {
+                  type: "item.completed",
+                  item: {
+                    id: "message-1",
+                    type: "agent_message",
+                    text: "done",
+                  },
+                },
+                {
+                  type: "turn.completed",
+                  usage: null,
+                },
+              ]),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+
+      const result = await adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath));
+      const openedLog = logs.find((entry) => entry.kind === "codex.run.stream.opened");
+      const finishedLog = logs.find((entry) => entry.kind === "codex.run.stream.finished");
+      const collabLog = logs.find(
+        (entry) => entry.kind === "codex.run.stream.event" && entry.data?.itemType === "collab_tool_call",
+      );
+      const completedLog = logs.find((entry) => entry.kind === "codex.run.completed");
+
+      assert.equal(result.assistantText, "done");
+      assert.equal(openedLog?.data?.threadId, "thread-1");
+      assert.equal(finishedLog?.data?.turnCompleted, true);
+      assert.equal(collabLog?.data?.tool, "wait");
+      assert.equal(collabLog?.data?.status, "completed");
+      assert.deepEqual(collabLog?.data?.agents, {
+        total: 1,
+        statuses: {
+          completed: 1,
+        },
+      });
+      assert.equal(completedLog?.data?.turnCompleted, true);
+      assert.equal(completedLog?.data?.operationCount, 2);
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("app log callback が失敗しても provider 実行は継続する", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-log-throw-"));
+    const adapter = new CodexAdapter(() => {
+      throw new Error("log write failed");
+    }) as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+
+    try {
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-1",
+            runStreamed: async () => ({
+              events: createCodexStreamFromEvents([
+                {
+                  type: "item.completed",
+                  item: {
+                    id: "message-1",
+                    type: "agent_message",
+                    text: "done",
+                  },
+                },
+                {
+                  type: "turn.completed",
+                  usage: null,
+                },
+              ]),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+
+      const result = await adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath));
+
+      assert.equal(result.threadId, "thread-1");
+      assert.equal(result.assistantText, "done");
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("model / reasoning 変更後の thread settings は新 options と settingsKey を反映する", () => {
     const previousSession = createSession({
       threadId: "thread-1",
