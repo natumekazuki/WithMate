@@ -120,7 +120,11 @@ import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
-import { applyAuxiliarySessionPatch, type AuxiliarySession } from "./auxiliary-session-state.js";
+import {
+  applyAuxiliarySessionPatch,
+  resolveEditableActiveAuxiliarySession,
+  type AuxiliarySession,
+} from "./auxiliary-session-state.js";
 import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolution.js";
 import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
 import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
@@ -1981,8 +1985,11 @@ export default function AgentSessionWindowApp() {
     }
 
     await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
-    const currentSession = activeAuxiliarySessionRef.current ?? activeAuxiliarySession;
-    if (currentSession.id !== activeAuxiliarySession.id || currentSession.runState === "running") {
+    const currentSession = resolveEditableActiveAuxiliarySession({
+      activeSession: activeAuxiliarySession,
+      currentSession: activeAuxiliarySessionRef.current,
+    });
+    if (!currentSession) {
       return;
     }
 

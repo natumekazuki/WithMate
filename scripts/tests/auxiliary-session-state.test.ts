@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   applyAuxiliarySessionPatch,
+  resolveEditableActiveAuxiliarySession,
   type AuxiliarySession,
 } from "../../src/auxiliary-session-state.js";
 
@@ -50,5 +51,39 @@ test("applyAuxiliarySessionPatch は指定 field と updatedAt だけを更新�
       codexSandboxMode: "read-only",
       updatedAt: "2026-01-02T00:00:00.000Z",
     },
+  );
+});
+
+test("resolveEditableActiveAuxiliarySession は保存対象の active session を返す", () => {
+  const activeSession = createAuxiliarySession();
+  const currentSession = createAuxiliarySession({ title: "current" });
+
+  assert.equal(
+    resolveEditableActiveAuxiliarySession({
+      activeSession,
+      currentSession: null,
+    }),
+    activeSession,
+  );
+  assert.equal(
+    resolveEditableActiveAuxiliarySession({
+      activeSession,
+      currentSession,
+    }),
+    currentSession,
+  );
+  assert.equal(
+    resolveEditableActiveAuxiliarySession({
+      activeSession,
+      currentSession: createAuxiliarySession({ id: "aux-other" }),
+    }),
+    null,
+  );
+  assert.equal(
+    resolveEditableActiveAuxiliarySession({
+      activeSession,
+      currentSession: createAuxiliarySession({ runState: "running" }),
+    }),
+    null,
   );
 });

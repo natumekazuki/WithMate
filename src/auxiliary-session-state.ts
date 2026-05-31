@@ -50,6 +50,18 @@ export function applyAuxiliarySessionPatch(
   };
 }
 
+export function resolveEditableActiveAuxiliarySession(input: {
+  activeSession: AuxiliarySession;
+  currentSession: AuxiliarySession | null;
+}): AuxiliarySession | null {
+  const currentSession = input.currentSession ?? input.activeSession;
+  if (currentSession.id !== input.activeSession.id || currentSession.runState === "running") {
+    return null;
+  }
+
+  return currentSession;
+}
+
 export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | null {
   if (!value || typeof value !== "object") {
     return null;

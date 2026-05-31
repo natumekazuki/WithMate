@@ -12,7 +12,11 @@ import {
 } from "react";
 
 import type { ApprovalMode } from "./approval-mode.js";
-import { applyAuxiliarySessionPatch, type AuxiliarySession } from "./auxiliary-session-state.js";
+import {
+  applyAuxiliarySessionPatch,
+  resolveEditableActiveAuxiliarySession,
+  type AuxiliarySession,
+} from "./auxiliary-session-state.js";
 import type {
   ComposerPreview,
   DiffPreviewPayload,
@@ -1684,8 +1688,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
 
     await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
-    const currentSession = activeAuxiliarySessionRef.current ?? activeAuxiliarySession;
-    if (currentSession.id !== activeAuxiliarySession.id || currentSession.runState === "running") {
+    const currentSession = resolveEditableActiveAuxiliarySession({
+      activeSession: activeAuxiliarySession,
+      currentSession: activeAuxiliarySessionRef.current,
+    });
+    if (!currentSession) {
       return;
     }
 
