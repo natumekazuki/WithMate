@@ -2013,13 +2013,15 @@ export default function AgentSessionWindowApp() {
 
     await updateActiveAuxiliarySession((current) => {
       const selection = resolveModelChangeSelection(selectedProviderCatalog, model, current.reasoningEffort);
-      return {
-        ...current,
-        catalogRevision: modelCatalog.revision,
-        model: selection.resolvedModel,
-        reasoningEffort: selection.resolvedReasoningEffort,
-        updatedAt: currentTimestampLabel(),
-      };
+      return applyAuxiliarySessionPatch(
+        current,
+        {
+          catalogRevision: modelCatalog.revision,
+          model: selection.resolvedModel,
+          reasoningEffort: selection.resolvedReasoningEffort,
+        },
+        currentTimestampLabel(),
+      );
     });
   };
 
@@ -2030,13 +2032,15 @@ export default function AgentSessionWindowApp() {
 
     await updateActiveAuxiliarySession((current) => {
       const selection = resolveModelSelection(selectedProviderCatalog, current.model, reasoningEffort);
-      return {
-        ...current,
-        catalogRevision: modelCatalog.revision,
-        model: selection.resolvedModel,
-        reasoningEffort: selection.resolvedReasoningEffort,
-        updatedAt: currentTimestampLabel(),
-      };
+      return applyAuxiliarySessionPatch(
+        current,
+        {
+          catalogRevision: modelCatalog.revision,
+          model: selection.resolvedModel,
+          reasoningEffort: selection.resolvedReasoningEffort,
+        },
+        currentTimestampLabel(),
+      );
     });
   };
 
