@@ -86,6 +86,14 @@ export function removeAuxiliarySessionAdditionalDirectory(
   );
 }
 
+export function applyAuxiliarySessionComposerDraftPatch(
+  session: AuxiliarySession,
+  composerDraft: string,
+  updatedAt: string,
+): AuxiliarySession {
+  return applyAuxiliarySessionPatch(session, { composerDraft }, updatedAt);
+}
+
 export function resolveEditableActiveAuxiliarySession(input: {
   activeSession: AuxiliarySession;
   currentSession: AuxiliarySession | null;

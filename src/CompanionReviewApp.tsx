@@ -19,6 +19,7 @@ import type { ApprovalMode } from "./approval-mode.js";
 import {
   addAuxiliarySessionAdditionalDirectory,
   applyAuxiliarySessionPatch,
+  applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
@@ -1808,11 +1809,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const nextSession = {
-      ...activeAuxiliarySession,
-      composerDraft: value,
-      updatedAt: currentTimestampLabel(),
-    };
+    const nextSession = applyAuxiliarySessionComposerDraftPatch(
+      activeAuxiliarySession,
+      value,
+      currentTimestampLabel(),
+    );
     activeAuxiliarySessionRef.current = nextSession;
     setActiveAuxiliarySession(nextSession);
     const saveOperation = auxiliaryDraftSaveQueueRef.current
@@ -1823,11 +1824,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           return null;
         }
 
-        const request = {
-          ...current,
-          composerDraft: value,
-          updatedAt: currentTimestampLabel(),
-        };
+        const request = applyAuxiliarySessionComposerDraftPatch(current, value, currentTimestampLabel());
         const saved = await withmateApi.updateAuxiliarySession(request);
         return { request, saved };
       });
@@ -1994,7 +1991,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setComposerCaret(nextState.caret);
     setIsSkillPickerOpen(nextState.isSkillPickerOpen);
     await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionPatch(current, { composerDraft: nextState.draft }, currentTimestampLabel())
+      applyAuxiliarySessionComposerDraftPatch(current, nextState.draft, currentTimestampLabel())
     ));
   }
 

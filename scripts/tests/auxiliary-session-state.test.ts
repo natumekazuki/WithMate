@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   addAuxiliarySessionAdditionalDirectory,
   applyAuxiliarySessionPatch,
+  applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
@@ -127,6 +128,21 @@ test("removeAuxiliarySessionAdditionalDirectory は指定 directory と updatedA
     {
       ...session,
       allowedAdditionalDirectories: ["C:/workspace/keep"],
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    },
+  );
+});
+
+test("applyAuxiliarySessionComposerDraftPatch は draft と updatedAt だけを更新する", () => {
+  const session = createAuxiliarySession({
+    composerDraft: "before",
+  });
+
+  assert.deepEqual(
+    applyAuxiliarySessionComposerDraftPatch(session, "after", "2026-01-02T00:00:00.000Z"),
+    {
+      ...session,
+      composerDraft: "after",
       updatedAt: "2026-01-02T00:00:00.000Z",
     },
   );

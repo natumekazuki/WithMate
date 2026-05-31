@@ -127,6 +127,7 @@ import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   addAuxiliarySessionAdditionalDirectory,
   applyAuxiliarySessionPatch,
+  applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
@@ -2070,7 +2071,7 @@ export default function AgentSessionWindowApp() {
     setComposerCaret(nextState.caret);
     setIsSkillPickerOpen(nextState.isSkillPickerOpen);
     await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionPatch(current, { composerDraft: nextState.draft }, currentTimestampLabel())
+      applyAuxiliarySessionComposerDraftPatch(current, nextState.draft, currentTimestampLabel())
     ));
 
     restoreComposerTextareaFocusAndCaret(textarea, nextState.caret);
@@ -2286,11 +2287,11 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const nextSession = {
-      ...activeAuxiliarySession,
-      composerDraft: value,
-      updatedAt: currentTimestampLabel(),
-    };
+    const nextSession = applyAuxiliarySessionComposerDraftPatch(
+      activeAuxiliarySession,
+      value,
+      currentTimestampLabel(),
+    );
     activeAuxiliarySessionRef.current = nextSession;
     setActiveAuxiliarySession(nextSession);
     try {
@@ -2305,11 +2306,7 @@ export default function AgentSessionWindowApp() {
             return null;
           }
 
-          const request = {
-            ...current,
-            composerDraft: value,
-            updatedAt: currentTimestampLabel(),
-          };
+          const request = applyAuxiliarySessionComposerDraftPatch(current, value, currentTimestampLabel());
           const saved = await withmateApi.updateAuxiliarySession(request);
           return { request, saved };
         });
