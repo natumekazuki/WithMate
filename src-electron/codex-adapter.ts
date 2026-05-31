@@ -134,6 +134,25 @@ export function isCodexWindowsTaskkillSuccessParseNoiseMessage(message: string):
   return CODEX_WINDOWS_TASKKILL_SUCCESS_PARSE_NOISE_PATTERN.test(message.trim());
 }
 
+function hasCodexTurnResultActivity(state: CodexTurnStreamState): boolean {
+  return (
+    state.turnCompleted
+    || state.items.size > 0
+    || state.streamedAssistantText.trim().length > 0
+    || state.finalAssistantText.trim().length > 0
+  );
+}
+
+function shouldIgnoreCodexWindowsTaskkillParseNoise(
+  state: CodexTurnStreamState,
+  message: string,
+): boolean {
+  return (
+    isCodexWindowsTaskkillSuccessParseNoiseMessage(message)
+    && hasCodexTurnResultActivity(state)
+  );
+}
+
 export type CodexThreadOptions = {
   workingDirectory: string;
   skipGitRepoCheck: true;
@@ -955,10 +974,7 @@ function getLiveAssistantText(state: CodexTurnStreamState): string {
 }
 
 function getLiveStreamErrorMessage(state: CodexTurnStreamState): string {
-  if (
-    state.turnCompleted
-    && isCodexWindowsTaskkillSuccessParseNoiseMessage(state.streamErrorMessage)
-  ) {
+  if (shouldIgnoreCodexWindowsTaskkillParseNoise(state, state.streamErrorMessage)) {
     return "";
   }
 
@@ -1502,7 +1518,8 @@ export class CodexAdapter implements ProviderTurnAdapter {
       }
 
       if (streamState.streamErrorMessage) {
-        const isWindowsTaskkillParseNoise = isCodexWindowsTaskkillSuccessParseNoiseMessage(
+        const shouldIgnoreWindowsTaskkillParseNoise = shouldIgnoreCodexWindowsTaskkillParseNoise(
+          streamState,
           streamState.streamErrorMessage,
         );
         const partialResult = await this.buildTurnResult(
@@ -1516,7 +1533,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
           beforeSnapshot,
           beforeSnapshotStats,
         );
-        if (isWindowsTaskkillParseNoise && streamState.turnCompleted) {
+        if (shouldIgnoreWindowsTaskkillParseNoise) {
           return partialResult;
         }
 
@@ -1544,7 +1561,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
       }
 
       const message = error instanceof Error ? error.message : String(error);
-      const isWindowsTaskkillParseNoise = isCodexWindowsTaskkillSuccessParseNoiseMessage(message);
+      const shouldIgnoreWindowsTaskkillParseNoise = shouldIgnoreCodexWindowsTaskkillParseNoise(
+        streamState,
+        message,
+      );
       const partialResult = await this.buildTurnResult(
         input,
         prompt,
@@ -1556,7 +1576,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         beforeSnapshot,
         beforeSnapshotStats,
       );
-      if (isWindowsTaskkillParseNoise && streamState.turnCompleted) {
+      if (shouldIgnoreWindowsTaskkillParseNoise) {
         return partialResult;
       }
 
