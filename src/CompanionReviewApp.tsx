@@ -122,6 +122,7 @@ import {
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
 import {
+  clearOwnedLiveSessionRunState,
   createOptimisticRunningSessionState,
   createOwnedPendingLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
@@ -1892,11 +1893,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       setActiveAuxiliarySession(saved);
     } catch (error) {
       console.error(error);
-      setLiveRunState((current) => (
-        current.ownerSessionId === currentAuxiliarySession.id
-          ? { ownerSessionId: currentAuxiliarySession.id, state: null }
-          : current
-      ));
+      setLiveRunState((current) => clearOwnedLiveSessionRunState(current, currentAuxiliarySession.id));
       activeAuxiliarySessionRef.current = currentAuxiliarySession;
       setActiveAuxiliarySession(currentAuxiliarySession);
       setErrorMessage(error instanceof Error ? error.message : "Auxiliary Session の実行に失敗したよ。");
@@ -2509,11 +2506,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         if (shouldClearDraft) {
           setComposerText(userMessage);
         }
-        setLiveRunState((current) => (
-          current.ownerSessionId === previousSnapshot.session.id
-            ? { ownerSessionId: previousSnapshot.session.id, state: null }
-            : current
-        ));
+        setLiveRunState((current) => clearOwnedLiveSessionRunState(current, previousSnapshot.session.id));
         setSnapshot((current) => current?.session.id === previousSnapshot.session.id ? previousSnapshot : current);
       }
       setErrorMessage(error instanceof Error ? error.message : "Companion の実行に失敗したよ。");

@@ -61,6 +61,15 @@ export function createOwnedPendingLiveSessionRunState(
   };
 }
 
+export function clearOwnedLiveSessionRunState(
+  current: OwnedLiveSessionRunState,
+  sessionId: string,
+): OwnedLiveSessionRunState {
+  return current.ownerSessionId === sessionId
+    ? { ownerSessionId: sessionId, state: null }
+    : current;
+}
+
 export function replaceLiveRunAfterResolvedRequest(
   current: OwnedLiveSessionRunState,
   options: {

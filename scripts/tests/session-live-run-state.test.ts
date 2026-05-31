@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState } from "../../src/runtime-state.js";
 import {
+  clearOwnedLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
   type OwnedLiveSessionRunState,
 } from "../../src/session-live-run-state.js";
@@ -48,6 +49,27 @@ function makeElicitationRequest(requestId: string): LiveElicitationRequest {
     fields: [],
   };
 }
+
+test("clearOwnedLiveSessionRunState は owner が一致した live run だけ空にする", () => {
+  const current: OwnedLiveSessionRunState = {
+    ownerSessionId: "session-1",
+    state: makeLiveRunState("session-1"),
+  };
+
+  assert.deepEqual(
+    clearOwnedLiveSessionRunState(current, "session-1"),
+    { ownerSessionId: "session-1", state: null },
+  );
+});
+
+test("clearOwnedLiveSessionRunState は別 owner の live run を維持する", () => {
+  const current: OwnedLiveSessionRunState = {
+    ownerSessionId: "session-2",
+    state: makeLiveRunState("session-2"),
+  };
+
+  assert.equal(clearOwnedLiveSessionRunState(current, "session-1"), current);
+});
 
 test("replaceLiveRunAfterResolvedRequest は approval request が一致した live run だけ差し替える", () => {
   const latestLiveRun = makeLiveRunState("session-1");

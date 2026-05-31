@@ -111,6 +111,7 @@ import {
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
 import {
+  clearOwnedLiveSessionRunState,
   createOptimisticRunningSessionState,
   createOwnedPendingLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
@@ -1622,11 +1623,7 @@ export default function AgentSessionWindowApp() {
       setSessions([savedSession]);
     } catch (error) {
       console.error(error);
-      setLiveRunState((current) => (
-        current.ownerSessionId === updatedSession.id
-          ? { ownerSessionId: updatedSession.id, state: null }
-          : current
-      ));
+      setLiveRunState((current) => clearOwnedLiveSessionRunState(current, updatedSession.id));
       setSessions([selectedSession]);
     }
   };
@@ -2403,9 +2400,7 @@ export default function AgentSessionWindowApp() {
       setActiveAuxiliarySession(saved);
     } catch (error) {
       console.error(error);
-      setLiveRunState((current) => (
-        current.ownerSessionId === runningSession.id ? { ownerSessionId: runningSession.id, state: null } : current
-      ));
+      setLiveRunState((current) => clearOwnedLiveSessionRunState(current, runningSession.id));
       activeAuxiliarySessionRef.current = currentAuxiliarySession;
       setActiveAuxiliarySession(currentAuxiliarySession);
       throw error;
