@@ -24,7 +24,6 @@ import type {
   LiveApprovalRequest,
   LiveElicitationRequest,
   LiveElicitationResponse,
-  LiveSessionRunState,
   ProviderQuotaTelemetry,
   SessionContextTelemetry,
 } from "./app-state.js";
@@ -126,6 +125,7 @@ import {
   createOptimisticRunningSessionState,
   createOwnedPendingLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
+  type OwnedLiveSessionRunState,
 } from "./session-live-run-state.js";
 import {
   buildMessageListProjection,
@@ -374,7 +374,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   } = useAuxiliaryLaunchDialogState();
   const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
   const [elicitationActionRequestId, setElicitationActionRequestId] = useState<string | null>(null);
-  const [liveRunState, setLiveRunState] = useState<{ ownerSessionId: string | null; state: LiveSessionRunState | null }>({
+  const [liveRunState, setLiveRunState] = useState<OwnedLiveSessionRunState>({
     ownerSessionId: null,
     state: null,
   });
