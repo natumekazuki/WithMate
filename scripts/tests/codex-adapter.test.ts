@@ -145,6 +145,16 @@ async function* createCodexStreamThatThrowsAfter(
   throw new Error(errorMessage);
 }
 
+async function* createCodexStreamFromEvents(
+  events: unknown[],
+  beforeYield?: () => Promise<void>,
+): AsyncGenerator<never> {
+  await beforeYield?.();
+  for (const event of events) {
+    yield event as never;
+  }
+}
+
 describe("CodexAdapter thread settings", () => {
   const windowsTaskkillParseNoiseMessage =
     "Failed to parse item: SUCCESS: The process with PID 13760 (child process of PID 32340) has been terminated.";
@@ -432,6 +442,41 @@ describe("CodexAdapter thread settings", () => {
     assert.equal(collectCodexReasoningTextFromEventsForTesting(events), "既存経路を確認してから UI に流す");
   });
 
+  it("collab_tool_call は監査 rawItems に残す", () => {
+    const items = buildCodexStableRawItems([
+      {
+        id: "item_33",
+        type: "collab_tool_call",
+        tool: "close_agent",
+        status: "completed",
+        agents_states: {
+          "agent-1": {
+            status: "completed",
+            message: "Pass",
+          },
+        },
+      } as never,
+    ]);
+
+    assert.deepEqual(items, [
+      {
+        type: "collab_tool_call",
+        data: {
+          id: "item_33",
+          status: "completed",
+          tool: "close_agent",
+          agentsStates: {
+            "agent-1": {
+              status: "completed",
+              message: "Pass",
+            },
+          },
+          errorMessage: null,
+        },
+      },
+    ]);
+  });
+
   it("model / reasoning 変更後の thread settings は新 options と settingsKey を反映する", () => {
     const previousSession = createSession({
       threadId: "thread-1",
@@ -637,6 +682,99 @@ describe("workspace snapshot targeted capture", () => {
       assert.equal(refreshed.usedFullRebuild, false);
       assert.equal(refreshed.reason, "file-refresh");
       assert.equal(refreshed.snapshot.get("src/changed.ts"), "after\n");
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("collab_tool_call がある場合は file_change 候補だけを信用せず snapshot fallback で差分を拾う", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-collab-diff-"));
+    const adapter = new CodexAdapter() as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+
+    try {
+      await mkdir(path.join(workspacePath, "src"), { recursive: true });
+      const explicitFilePath = path.join(workspacePath, "src", "explicit.ts");
+      const collabSideEffectFilePath = path.join(workspacePath, "src", "collab-side-effect.ts");
+      await writeFile(explicitFilePath, "before explicit\n", "utf8");
+      await writeFile(collabSideEffectFilePath, "before collab\n", "utf8");
+
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-1",
+            runStreamed: async () => ({
+              events: createCodexStreamFromEvents([
+                {
+                  type: "item.completed",
+                  item: {
+                    id: "file-change-1",
+                    type: "file_change",
+                    status: "completed",
+                    changes: [
+                      {
+                        kind: "update",
+                        path: explicitFilePath,
+                      },
+                    ],
+                  },
+                },
+                {
+                  type: "item.completed",
+                  item: {
+                    id: "item_33",
+                    type: "collab_tool_call",
+                    tool: "close_agent",
+                    status: "completed",
+                    agents_states: {
+                      "agent-1": {
+                        status: "completed",
+                        message: "Pass",
+                      },
+                    },
+                  },
+                },
+                {
+                  type: "item.completed",
+                  item: {
+                    id: "message-1",
+                    type: "agent_message",
+                    text: "done",
+                  },
+                },
+                {
+                  type: "turn.completed",
+                  usage: null,
+                },
+              ], async () => {
+                await writeFile(explicitFilePath, "after explicit\n", "utf8");
+                await writeFile(collabSideEffectFilePath, "after collab\n", "utf8");
+              }),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+
+      const result = await adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath));
+      const changedPaths = result.artifact?.changedFiles.map((file) => file.path).sort();
+
+      assert.deepEqual(changedPaths, [
+        "src/collab-side-effect.ts",
+        "src/explicit.ts",
+      ]);
     } finally {
       await rm(workspacePath, { recursive: true, force: true });
     }

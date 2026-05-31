@@ -102,7 +102,7 @@ type RawDiffOp =
   | { kind: "add"; rightNumber: number; rightText: string };
 
 type CodexTurnStreamState = {
-  items: Map<string, ThreadItem>;
+  items: Map<string, CodexTurnItem>;
   liveSteps: Map<string, LiveRunStep>;
   threadId: string | null;
   streamedAssistantText: string;
@@ -115,6 +115,17 @@ type CodexTurnStreamState = {
 };
 
 type CodexEventRecord = Record<string, unknown>;
+
+type CodexCollabToolCallItem = {
+  id: string;
+  type: "collab_tool_call";
+  tool?: string;
+  status?: string;
+  agents_states?: unknown;
+  error?: { message?: string };
+};
+
+type CodexTurnItem = ThreadItem | CodexCollabToolCallItem;
 
 const CODEX_WINDOWS_TASKKILL_SUCCESS_PARSE_NOISE_PATTERN =
   /^Failed to parse item:\s*SUCCESS:\s+The process with PID \d+ \(child process of PID \d+\) has been terminated\.\s*$/;
@@ -369,14 +380,23 @@ function compareSnapshotChanges(beforeSnapshot: WorkspaceSnapshot, afterSnapshot
   return changes.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-function collectCompletedFileChangeItems(items: ThreadItem[]): Array<Extract<ThreadItem, { type: "file_change" }>> {
+function isCodexCollabToolCallItem(item: unknown): item is CodexCollabToolCallItem {
+  return (
+    typeof item === "object"
+    && item !== null
+    && (item as { type?: unknown }).type === "collab_tool_call"
+    && typeof (item as { id?: unknown }).id === "string"
+  );
+}
+
+function collectCompletedFileChangeItems(items: CodexTurnItem[]): Array<Extract<ThreadItem, { type: "file_change" }>> {
   return items.filter(
     (item): item is Extract<ThreadItem, { type: "file_change" }> =>
       item.type === "file_change" && item.status === "completed",
   );
 }
 
-function collectCompletedFileChangePaths(workspacePath: string, items: ThreadItem[]): string[] {
+function collectCompletedFileChangePaths(workspacePath: string, items: CodexTurnItem[]): string[] {
   const paths = new Set<string>();
 
   for (const item of collectCompletedFileChangeItems(items)) {
@@ -388,19 +408,19 @@ function collectCompletedFileChangePaths(workspacePath: string, items: ThreadIte
   return Array.from(paths).sort((left, right) => left.localeCompare(right));
 }
 
-function hasBroadFilesystemChangeSource(items: ThreadItem[]): boolean {
+function hasBroadFilesystemChangeSource(items: CodexTurnItem[]): boolean {
   return items.some((item) => {
     if ("status" in item && item.status !== "completed") {
       return false;
     }
 
-    return item.type === "command_execution" || item.type === "mcp_tool_call";
+    return item.type === "command_execution" || item.type === "mcp_tool_call" || isCodexCollabToolCallItem(item);
   });
 }
 
 function buildChangedFilesFromSources(
   workspacePath: string,
-  items: ThreadItem[],
+  items: CodexTurnItem[],
   beforeSnapshot: WorkspaceSnapshot,
   afterSnapshot: WorkspaceSnapshot,
   useSnapshotFallback: boolean,
@@ -445,10 +465,17 @@ function buildChangedFilesFromSources(
     });
 }
 
-function toActivitySummary(items: ThreadItem[]): string[] {
+function toActivitySummary(items: CodexTurnItem[]): string[] {
   const summary: string[] = [];
 
   for (const item of items) {
+    if (isCodexCollabToolCallItem(item)) {
+      if (item.status === "completed") {
+        summary.push(`collab: ${item.tool ?? "tool"}`);
+      }
+      continue;
+    }
+
     switch (item.type) {
       case "command_execution":
         if (item.status === "completed") {
@@ -476,7 +503,7 @@ function toActivitySummary(items: ThreadItem[]): string[] {
   return summary.slice(0, 6);
 }
 
-function collectAssistantText(items: Iterable<ThreadItem>): string {
+function collectAssistantText(items: Iterable<CodexTurnItem>): string {
   const parts: string[] = [];
 
   for (const item of items) {
@@ -526,10 +553,21 @@ function parseStructuredPromptJson(rawText: string): unknown | null {
   }
 }
 
-function toAuditOperations(items: ThreadItem[]): AuditLogOperation[] {
+function toAuditOperations(items: CodexTurnItem[]): AuditLogOperation[] {
   const operations: AuditLogOperation[] = [];
 
   for (const item of items) {
+    if (isCodexCollabToolCallItem(item)) {
+      operations.push({
+        type: item.type,
+        summary: item.tool ?? "collab tool",
+        details: item.error?.message
+          ? toAuditTextPreview(item.error.message)
+          : stringifyBoundedAuditValue(item.agents_states),
+      });
+      continue;
+    }
+
     switch (item.type) {
       case "command_execution":
         operations.push({
@@ -598,10 +636,24 @@ function pushCodexRawItem(items: BoundedAuditRawItem[], item: BoundedAuditRawIte
   items.push(boundAuditRawItem(item));
 }
 
-export function buildCodexStableRawItems(items: ThreadItem[]): BoundedAuditRawItem[] {
+export function buildCodexStableRawItems(items: CodexTurnItem[]): BoundedAuditRawItem[] {
   const rawItems: BoundedAuditRawItem[] = [];
 
   for (const item of items) {
+    if (isCodexCollabToolCallItem(item)) {
+      pushCodexRawItem(rawItems, {
+        type: item.type,
+        data: {
+          id: item.id,
+          status: item.status ?? null,
+          tool: item.tool ?? null,
+          agentsStates: item.agents_states ?? null,
+          errorMessage: item.error?.message ?? null,
+        },
+      });
+      continue;
+    }
+
     switch (item.type) {
       case "command_execution":
         pushCodexRawItem(rawItems, {
@@ -708,7 +760,19 @@ function toLiveStepStatus(value: string | undefined): LiveRunStep["status"] {
   return "in_progress";
 }
 
-function buildLiveStep(item: ThreadItem): LiveRunStep | null {
+function buildLiveStep(item: CodexTurnItem): LiveRunStep | null {
+  if (isCodexCollabToolCallItem(item)) {
+    return {
+      id: item.id,
+      type: item.type,
+      summary: item.tool ?? "collab tool",
+      details: item.error?.message
+        ? toAuditTextPreview(item.error.message)
+        : stringifyBoundedAuditValue(item.agents_states),
+      status: toLiveStepStatus(item.status),
+    };
+  }
+
   switch (item.type) {
     case "command_execution":
       return {
@@ -890,7 +954,7 @@ function getLiveAssistantText(state: CodexTurnStreamState): string {
   return state.finalAssistantText || state.streamedAssistantText;
 }
 
-function collectReasoningText(items: Iterable<ThreadItem>): string {
+function collectReasoningText(items: Iterable<CodexTurnItem>): string {
   return Array.from(items)
     .filter((item): item is Extract<ThreadItem, { type: "reasoning" }> => item.type === "reasoning")
     .map((item) => item.text.trim())
@@ -1056,7 +1120,7 @@ function summarizeSnapshotWarning(stats: SnapshotCaptureStats): string {
 async function buildArtifact(
   session: Session,
   workspacePath: string,
-  items: ThreadItem[],
+  items: CodexTurnItem[],
   usage: Usage | null,
   threadId: string | null,
   beforeSnapshot: WorkspaceSnapshot,
@@ -1314,7 +1378,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
 
   private async captureAfterWorkspaceSnapshot(
     input: RunSessionTurnInput,
-    finalItems: ThreadItem[],
+    finalItems: CodexTurnItem[],
   ): Promise<{
     afterSnapshot: WorkspaceSnapshot;
     afterSnapshotStats: SnapshotCaptureStats;
@@ -1342,7 +1406,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
   private async buildTurnResult(
     input: RunSessionTurnInput,
     prompt: ProviderPromptComposition,
-    items: Map<string, ThreadItem>,
+    items: Map<string, CodexTurnItem>,
     usage: Usage | null,
     threadId: string | null,
     streamedAssistantText: string,
