@@ -111,9 +111,17 @@ type CodexTurnStreamState = {
   usage: Usage | null;
   liveUsage: AuditLogUsage | null;
   streamErrorMessage: string;
+  turnCompleted: boolean;
 };
 
 type CodexEventRecord = Record<string, unknown>;
+
+const CODEX_WINDOWS_TASKKILL_SUCCESS_PARSE_NOISE_PATTERN =
+  /^Failed to parse item:\s*SUCCESS:\s+The process with PID \d+ \(child process of PID \d+\) has been terminated\.\s*$/;
+
+export function isCodexWindowsTaskkillSuccessParseNoiseMessage(message: string): boolean {
+  return CODEX_WINDOWS_TASKKILL_SUCCESS_PARSE_NOISE_PATTERN.test(message.trim());
+}
 
 export type CodexThreadOptions = {
   workingDirectory: string;
@@ -797,6 +805,7 @@ function createCodexTurnStreamState(threadId: string | null): CodexTurnStreamSta
     usage: null,
     liveUsage: null,
     streamErrorMessage: "",
+    turnCompleted: false,
   };
 }
 
@@ -902,6 +911,7 @@ function applyCodexTurnEvent(state: CodexTurnStreamState, event: ThreadEvent): v
     case "turn.completed":
       state.usage = event.usage;
       state.liveUsage = normalizeCodexTokenUsage(event.usage);
+      state.turnCompleted = true;
       break;
     case "turn.failed":
       state.streamErrorMessage = event.error.message;
@@ -1452,6 +1462,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       }
 
       const message = error instanceof Error ? error.message : String(error);
+      const isWindowsTaskkillParseNoise = isCodexWindowsTaskkillSuccessParseNoiseMessage(message);
       const partialResult = await this.buildTurnResult(
         input,
         prompt,
@@ -1463,10 +1474,14 @@ export class CodexAdapter implements ProviderTurnAdapter {
         beforeSnapshot,
         beforeSnapshotStats,
       );
+      if (isWindowsTaskkillParseNoise && streamState.turnCompleted) {
+        return partialResult;
+      }
+
       throw new ProviderTurnError(
         message,
         partialResult,
-        Boolean(input.signal?.aborted) || isCanceledProviderMessage(message),
+        Boolean(input.signal?.aborted) || isCanceledProviderMessage(message) || isWindowsTaskkillParseNoise,
       );
     }
   }
