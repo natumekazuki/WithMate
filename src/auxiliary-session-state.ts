@@ -94,6 +94,14 @@ export function applyAuxiliarySessionComposerDraftPatch(
   return applyAuxiliarySessionPatch(session, { composerDraft }, updatedAt);
 }
 
+export function applyAuxiliarySessionCustomAgentPatch(
+  session: AuxiliarySession,
+  customAgentName: string,
+  updatedAt: string,
+): AuxiliarySession {
+  return applyAuxiliarySessionPatch(session, { customAgentName }, updatedAt);
+}
+
 export function resolveEditableActiveAuxiliarySession(input: {
   activeSession: AuxiliarySession;
   currentSession: AuxiliarySession | null;

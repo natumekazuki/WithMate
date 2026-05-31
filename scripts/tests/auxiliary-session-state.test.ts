@@ -5,6 +5,7 @@ import {
   addAuxiliarySessionAdditionalDirectory,
   applyAuxiliarySessionPatch,
   applyAuxiliarySessionComposerDraftPatch,
+  applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
@@ -143,6 +144,21 @@ test("applyAuxiliarySessionComposerDraftPatch は draft と updatedAt だけを�
     {
       ...session,
       composerDraft: "after",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    },
+  );
+});
+
+test("applyAuxiliarySessionCustomAgentPatch は custom agent と updatedAt だけを更新する", () => {
+  const session = createAuxiliarySession({
+    customAgentName: "reviewer",
+  });
+
+  assert.deepEqual(
+    applyAuxiliarySessionCustomAgentPatch(session, "planner", "2026-01-02T00:00:00.000Z"),
+    {
+      ...session,
+      customAgentName: "planner",
       updatedAt: "2026-01-02T00:00:00.000Z",
     },
   );

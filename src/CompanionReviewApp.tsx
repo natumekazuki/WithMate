@@ -20,6 +20,7 @@ import {
   addAuxiliarySessionAdditionalDirectory,
   applyAuxiliarySessionPatch,
   applyAuxiliarySessionComposerDraftPatch,
+  applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
@@ -1971,7 +1972,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
 
     await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionPatch(current, { customAgentName: nextCustomAgentName }, currentTimestampLabel())
+      applyAuxiliarySessionCustomAgentPatch(current, nextCustomAgentName, currentTimestampLabel())
     ));
     setIsAgentPickerOpen(false);
   }
