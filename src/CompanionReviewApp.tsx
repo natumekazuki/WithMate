@@ -24,8 +24,6 @@ import type {
   LiveApprovalRequest,
   LiveElicitationRequest,
   LiveElicitationResponse,
-  ProviderQuotaTelemetry,
-  SessionContextTelemetry,
 } from "./app-state.js";
 import { currentTimestampLabel } from "./app-state.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
@@ -127,6 +125,12 @@ import {
   replaceLiveRunAfterResolvedRequest,
   type OwnedLiveSessionRunState,
 } from "./session-live-run-state.js";
+import {
+  resolveOwnedProviderQuotaTelemetry,
+  resolveOwnedSessionContextTelemetry,
+  type ProviderOwnedQuotaTelemetry,
+  type SessionOwnedContextTelemetry,
+} from "./session-telemetry-state.js";
 import {
   buildMessageListProjection,
   loadProjectedMessageArtifact,
@@ -378,14 +382,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     ownerSessionId: null,
     state: null,
   });
-  const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] = useState<{
-    ownerProviderId: string | null;
-    telemetry: ProviderQuotaTelemetry | null;
-  }>({ ownerProviderId: null, telemetry: null });
-  const [sessionContextTelemetryState, setSessionContextTelemetryState] = useState<{
-    ownerSessionId: string | null;
-    telemetry: SessionContextTelemetry | null;
-  }>({ ownerSessionId: null, telemetry: null });
+  const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] =
+    useState<ProviderOwnedQuotaTelemetry>({ ownerProviderId: null, telemetry: null });
+  const [sessionContextTelemetryState, setSessionContextTelemetryState] =
+    useState<SessionOwnedContextTelemetry>({ ownerSessionId: null, telemetry: null });
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const activeAuxiliarySessionRef = useRef<AuxiliarySession | null>(null);
@@ -1247,13 +1247,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     [composerPreview.attachments],
   );
   const selectedProviderQuotaTelemetry =
-    displayedSession?.provider && providerQuotaTelemetryState.ownerProviderId === displayedSession.provider
-      ? providerQuotaTelemetryState.telemetry
-      : null;
+    resolveOwnedProviderQuotaTelemetry(providerQuotaTelemetryState, displayedSession?.provider);
   const selectedSessionContextTelemetry =
-    displayedSession && sessionContextTelemetryState.ownerSessionId === displayedSession.id
-      ? sessionContextTelemetryState.telemetry
-      : null;
+    resolveOwnedSessionContextTelemetry(sessionContextTelemetryState, displayedSession?.id);
   const isCopilotSession = displayedSession?.provider === "copilot";
   const selectedCopilotQuotaProjection = buildCopilotQuotaProjection(selectedProviderQuotaTelemetry);
   const selectedSessionContextTelemetryProjection =

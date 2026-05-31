@@ -10,9 +10,7 @@ import {
   type LiveElicitationRequest,
   type LiveElicitationResponse,
   type LiveSessionRunState,
-  type ProviderQuotaTelemetry,
   type RunSessionTurnRequest,
-  type SessionContextTelemetry,
 } from "./app-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
@@ -134,6 +132,12 @@ import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
 import { handleWorkspacePathMatchKeyboardNavigation } from "./chat/workspace-path-match-keyboard.js";
 import {
+  resolveOwnedProviderQuotaTelemetry,
+  resolveOwnedSessionContextTelemetry,
+  type ProviderOwnedQuotaTelemetry,
+  type SessionOwnedContextTelemetry,
+} from "./session-telemetry-state.js";
+import {
   copyMessageTextToClipboardWithFailureHandler,
   createQuotedMessageInsertionFromComposer,
 } from "./chat/message-text-actions.js";
@@ -155,16 +159,6 @@ import {
   resolvePendingAuxiliaryMessageGroupId,
 } from "./auxiliary-session-message-projection.js";
 import { hasSameAuxiliaryDraftSaveContext } from "./auxiliary-draft-save-context.js";
-
-type ProviderOwnedQuotaTelemetry = {
-  ownerProviderId: string | null;
-  telemetry: ProviderQuotaTelemetry | null;
-};
-
-type SessionOwnedContextTelemetry = {
-  ownerSessionId: string | null;
-  telemetry: SessionContextTelemetry | null;
-};
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
 
@@ -584,20 +578,11 @@ export default function AgentSessionWindowApp() {
     liveRun: selectedSessionLiveRun,
   });
   const selectedProviderQuotaTelemetry = useMemo(
-    () => (
-      displayedSession?.provider
-      && providerQuotaTelemetryState.ownerProviderId === displayedSession.provider
-        ? providerQuotaTelemetryState.telemetry
-        : null
-    ),
+    () => resolveOwnedProviderQuotaTelemetry(providerQuotaTelemetryState, displayedSession?.provider),
     [displayedSession?.provider, providerQuotaTelemetryState.ownerProviderId, providerQuotaTelemetryState.telemetry],
   );
   const selectedSessionContextTelemetry = useMemo(
-    () => (
-      activeRunSessionId !== null && sessionContextTelemetryState.ownerSessionId === activeRunSessionId
-        ? sessionContextTelemetryState.telemetry
-        : null
-    ),
+    () => resolveOwnedSessionContextTelemetry(sessionContextTelemetryState, activeRunSessionId),
     [activeRunSessionId, sessionContextTelemetryState.ownerSessionId, sessionContextTelemetryState.telemetry],
   );
   const activeComposerDraft = activeAuxiliarySession?.composerDraft ?? draft;
