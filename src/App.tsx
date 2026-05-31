@@ -122,6 +122,7 @@ import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   applyAuxiliarySessionPatch,
+  applyAuxiliarySessionRuntimeOptionsPatch,
   buildRunningAuxiliarySessionTurn,
   resolveEditableActiveAuxiliarySession,
   type AuxiliarySession,
@@ -1982,13 +1983,13 @@ export default function AgentSessionWindowApp() {
 
   const handleChangeAuxiliaryApproval = async (approvalMode: Session["approvalMode"]) => {
     await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionPatch(current, { approvalMode }, currentTimestampLabel())
+      applyAuxiliarySessionRuntimeOptionsPatch(current, { approvalMode }, currentTimestampLabel())
     ));
   };
 
   const handleChangeAuxiliarySandboxMode = async (codexSandboxMode: Session["codexSandboxMode"]) => {
     await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionPatch(current, { codexSandboxMode }, currentTimestampLabel())
+      applyAuxiliarySessionRuntimeOptionsPatch(current, { codexSandboxMode }, currentTimestampLabel())
     ));
   };
 

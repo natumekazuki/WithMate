@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   applyAuxiliarySessionPatch,
+  applyAuxiliarySessionRuntimeOptionsPatch,
   buildRunningAuxiliarySessionTurn,
   resolveEditableActiveAuxiliarySession,
   type AuxiliarySession,
@@ -39,6 +40,30 @@ test("applyAuxiliarySessionPatch は指定 field と updatedAt だけを更新�
 
   assert.deepEqual(
     applyAuxiliarySessionPatch(
+      session,
+      {
+        approvalMode: "on-request",
+        codexSandboxMode: "read-only",
+      },
+      "2026-01-02T00:00:00.000Z",
+    ),
+    {
+      ...session,
+      approvalMode: "on-request",
+      codexSandboxMode: "read-only",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    },
+  );
+});
+
+test("applyAuxiliarySessionRuntimeOptionsPatch は runtime option と updatedAt だけを更新する", () => {
+  const session = createAuxiliarySession({
+    approvalMode: "untrusted",
+    codexSandboxMode: "workspace-write",
+  });
+
+  assert.deepEqual(
+    applyAuxiliarySessionRuntimeOptionsPatch(
       session,
       {
         approvalMode: "on-request",

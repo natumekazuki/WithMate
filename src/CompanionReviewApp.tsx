@@ -14,6 +14,7 @@ import {
 import type { ApprovalMode } from "./approval-mode.js";
 import {
   applyAuxiliarySessionPatch,
+  applyAuxiliarySessionRuntimeOptionsPatch,
   buildRunningAuxiliarySessionTurn,
   resolveEditableActiveAuxiliarySession,
   type AuxiliarySession,
@@ -1907,13 +1908,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   async function handleChangeAuxiliaryApproval(approvalMode: ApprovalMode): Promise<void> {
     await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionPatch(current, { approvalMode }, currentTimestampLabel())
+      applyAuxiliarySessionRuntimeOptionsPatch(current, { approvalMode }, currentTimestampLabel())
     ));
   }
 
   async function handleChangeAuxiliarySandboxMode(codexSandboxMode: CodexSandboxMode): Promise<void> {
     await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionPatch(current, { codexSandboxMode }, currentTimestampLabel())
+      applyAuxiliarySessionRuntimeOptionsPatch(current, { codexSandboxMode }, currentTimestampLabel())
     ));
   }
 

@@ -50,6 +50,14 @@ export function applyAuxiliarySessionPatch(
   };
 }
 
+export function applyAuxiliarySessionRuntimeOptionsPatch(
+  session: AuxiliarySession,
+  patch: Partial<Pick<AuxiliarySession, "approvalMode" | "codexSandboxMode">>,
+  updatedAt: string,
+): AuxiliarySession {
+  return applyAuxiliarySessionPatch(session, patch, updatedAt);
+}
+
 export function resolveEditableActiveAuxiliarySession(input: {
   activeSession: AuxiliarySession;
   currentSession: AuxiliarySession | null;
