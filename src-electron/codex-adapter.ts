@@ -1481,7 +1481,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       throw new ProviderTurnError(
         message,
         partialResult,
-        Boolean(input.signal?.aborted) || isCanceledProviderMessage(message) || isWindowsTaskkillParseNoise,
+        Boolean(input.signal?.aborted) || isCanceledProviderMessage(message),
       );
     }
   }

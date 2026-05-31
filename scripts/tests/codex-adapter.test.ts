@@ -26,7 +26,11 @@ import {
   createWorkspaceSnapshotIndex,
   refreshWorkspaceSnapshotIndex,
 } from "../../src-electron/snapshot-ignore.js";
-import type { RunBackgroundStructuredPromptInput } from "../../src-electron/provider-runtime.js";
+import {
+  ProviderTurnError,
+  type RunBackgroundStructuredPromptInput,
+  type RunSessionTurnInput,
+} from "../../src-electron/provider-runtime.js";
 
 const CODEX_PROVIDER_CATALOG: ModelCatalogProvider = {
   id: "codex",
@@ -113,11 +117,42 @@ function createCodexBackgroundPromptInput(
   };
 }
 
+function createCodexRunSessionTurnInput(workspacePath: string): RunSessionTurnInput {
+  return {
+    session: {
+      ...createSession({ threadId: "" }),
+      workspacePath,
+    },
+    sessionMemory: {
+      entries: [],
+      updatedAt: "",
+    },
+    projectMemoryEntries: [],
+    providerCatalog: CODEX_PROVIDER_CATALOG,
+    userMessage: "run task",
+    appSettings: createDefaultAppSettings(),
+    attachments: [],
+  };
+}
+
+async function* createCodexStreamThatThrowsAfter(
+  events: unknown[],
+  errorMessage: string,
+): AsyncGenerator<never> {
+  for (const event of events) {
+    yield event as never;
+  }
+  throw new Error(errorMessage);
+}
+
 describe("CodexAdapter thread settings", () => {
+  const windowsTaskkillParseNoiseMessage =
+    "Failed to parse item: SUCCESS: The process with PID 13760 (child process of PID 32340) has been terminated.";
+
   it("Windows taskkill の SUCCESS 行だけ Codex JSON parse noise として扱う", () => {
     assert.equal(
       isCodexWindowsTaskkillSuccessParseNoiseMessage(
-        "Failed to parse item: SUCCESS: The process with PID 13760 (child process of PID 32340) has been terminated.",
+        windowsTaskkillParseNoiseMessage,
       ),
       true,
     );
@@ -128,6 +163,102 @@ describe("CodexAdapter thread settings", () => {
       false,
     );
     assert.equal(isCodexWindowsTaskkillSuccessParseNoiseMessage("SUCCESS: ordinary command output"), false);
+  });
+
+  it("turn.completed 後の Windows taskkill parse noise は成功結果として返す", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-taskkill-completed-"));
+    const adapter = new CodexAdapter() as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+
+    try {
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-1",
+            runStreamed: async () => ({
+              events: createCodexStreamThatThrowsAfter([
+                {
+                  type: "item.completed",
+                  item: {
+                    id: "message-1",
+                    type: "agent_message",
+                    text: "done",
+                  },
+                },
+                {
+                  type: "turn.completed",
+                  usage: null,
+                },
+              ], windowsTaskkillParseNoiseMessage),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+
+      const result = await adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath));
+
+      assert.equal(result.threadId, "thread-1");
+      assert.equal(result.assistantText, "done");
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("turn.completed 前の Windows taskkill parse noise は通常の失敗として返す", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-taskkill-before-completed-"));
+    const adapter = new CodexAdapter() as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+
+    try {
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-1",
+            runStreamed: async () => ({
+              events: createCodexStreamThatThrowsAfter([], windowsTaskkillParseNoiseMessage),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+
+      await assert.rejects(
+        () => adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath)),
+        (error) => {
+          assert.equal(error instanceof ProviderTurnError, true);
+          assert.equal((error as ProviderTurnError).canceled, false);
+          assert.equal((error as Error).message, windowsTaskkillParseNoiseMessage);
+          return true;
+        },
+      );
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
   });
 
   it("delta 系 event から assistant text を逐次復元し、final item で確定形に置き換える", () => {
