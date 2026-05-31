@@ -954,6 +954,17 @@ function getLiveAssistantText(state: CodexTurnStreamState): string {
   return state.finalAssistantText || state.streamedAssistantText;
 }
 
+function getLiveStreamErrorMessage(state: CodexTurnStreamState): string {
+  if (
+    state.turnCompleted
+    && isCodexWindowsTaskkillSuccessParseNoiseMessage(state.streamErrorMessage)
+  ) {
+    return "";
+  }
+
+  return state.streamErrorMessage;
+}
+
 function collectReasoningText(items: Iterable<CodexTurnItem>): string {
   return Array.from(items)
     .filter((item): item is Extract<ThreadItem, { type: "reasoning" }> => item.type === "reasoning")
@@ -1468,7 +1479,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       getLiveAssistantText(streamState),
       streamState.reasoningText,
       streamState.liveUsage,
-      streamState.streamErrorMessage,
+      getLiveStreamErrorMessage(streamState),
     );
 
     try {
@@ -1486,11 +1497,14 @@ export class CodexAdapter implements ProviderTurnAdapter {
           getLiveAssistantText(streamState),
           streamState.reasoningText,
           streamState.liveUsage,
-          streamState.streamErrorMessage,
+          getLiveStreamErrorMessage(streamState),
         );
       }
 
       if (streamState.streamErrorMessage) {
+        const isWindowsTaskkillParseNoise = isCodexWindowsTaskkillSuccessParseNoiseMessage(
+          streamState.streamErrorMessage,
+        );
         const partialResult = await this.buildTurnResult(
           input,
           prompt,
@@ -1502,6 +1516,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
           beforeSnapshot,
           beforeSnapshotStats,
         );
+        if (isWindowsTaskkillParseNoise && streamState.turnCompleted) {
+          return partialResult;
+        }
+
         throw new ProviderTurnError(
           streamState.streamErrorMessage,
           partialResult,
