@@ -13,9 +13,11 @@ import {
 
 import type { ApprovalMode } from "./approval-mode.js";
 import {
+  addAuxiliarySessionAdditionalDirectory,
   applyAuxiliarySessionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildRunningAuxiliarySessionTurn,
+  removeAuxiliarySessionAdditionalDirectory,
   resolveEditableActiveAuxiliarySession,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
@@ -2005,21 +2007,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     setPickerBaseDirectory(selectedPath);
     await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionPatch(
-        current,
-        { allowedAdditionalDirectories: Array.from(new Set([...current.allowedAdditionalDirectories, selectedPath])) },
-        currentTimestampLabel(),
-      )
+      addAuxiliarySessionAdditionalDirectory(current, selectedPath, currentTimestampLabel())
     ));
   }
 
   async function handleRemoveAuxiliaryAdditionalDirectory(directoryPath: string): Promise<void> {
     await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionPatch(
-        current,
-        { allowedAdditionalDirectories: current.allowedAdditionalDirectories.filter((entry) => entry !== directoryPath) },
-        currentTimestampLabel(),
-      )
+      removeAuxiliarySessionAdditionalDirectory(current, directoryPath, currentTimestampLabel())
     ));
   }
 

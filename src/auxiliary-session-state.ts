@@ -58,6 +58,30 @@ export function applyAuxiliarySessionRuntimeOptionsPatch(
   return applyAuxiliarySessionPatch(session, patch, updatedAt);
 }
 
+export function addAuxiliarySessionAdditionalDirectory(
+  session: AuxiliarySession,
+  directoryPath: string,
+  updatedAt: string,
+): AuxiliarySession {
+  return applyAuxiliarySessionPatch(
+    session,
+    { allowedAdditionalDirectories: Array.from(new Set([...session.allowedAdditionalDirectories, directoryPath])) },
+    updatedAt,
+  );
+}
+
+export function removeAuxiliarySessionAdditionalDirectory(
+  session: AuxiliarySession,
+  directoryPath: string,
+  updatedAt: string,
+): AuxiliarySession {
+  return applyAuxiliarySessionPatch(
+    session,
+    { allowedAdditionalDirectories: session.allowedAdditionalDirectories.filter((entry) => entry !== directoryPath) },
+    updatedAt,
+  );
+}
+
 export function resolveEditableActiveAuxiliarySession(input: {
   activeSession: AuxiliarySession;
   currentSession: AuxiliarySession | null;

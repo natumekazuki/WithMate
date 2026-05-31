@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  addAuxiliarySessionAdditionalDirectory,
   applyAuxiliarySessionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildRunningAuxiliarySessionTurn,
+  removeAuxiliarySessionAdditionalDirectory,
   resolveEditableActiveAuxiliarySession,
   type AuxiliarySession,
 } from "../../src/auxiliary-session-state.js";
@@ -75,6 +77,56 @@ test("applyAuxiliarySessionRuntimeOptionsPatch は runtime option と updatedAt 
       ...session,
       approvalMode: "on-request",
       codexSandboxMode: "read-only",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    },
+  );
+});
+
+test("addAuxiliarySessionAdditionalDirectory は重複を避けて directory と updatedAt を更新する", () => {
+  const session = createAuxiliarySession({
+    allowedAdditionalDirectories: ["C:/workspace/existing"],
+  });
+
+  assert.deepEqual(
+    addAuxiliarySessionAdditionalDirectory(
+      session,
+      "C:/workspace/next",
+      "2026-01-02T00:00:00.000Z",
+    ),
+    {
+      ...session,
+      allowedAdditionalDirectories: ["C:/workspace/existing", "C:/workspace/next"],
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    },
+  );
+  assert.deepEqual(
+    addAuxiliarySessionAdditionalDirectory(
+      session,
+      "C:/workspace/existing",
+      "2026-01-02T00:00:00.000Z",
+    ),
+    {
+      ...session,
+      allowedAdditionalDirectories: ["C:/workspace/existing"],
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    },
+  );
+});
+
+test("removeAuxiliarySessionAdditionalDirectory は指定 directory と updatedAt を更新する", () => {
+  const session = createAuxiliarySession({
+    allowedAdditionalDirectories: ["C:/workspace/keep", "C:/workspace/remove"],
+  });
+
+  assert.deepEqual(
+    removeAuxiliarySessionAdditionalDirectory(
+      session,
+      "C:/workspace/remove",
+      "2026-01-02T00:00:00.000Z",
+    ),
+    {
+      ...session,
+      allowedAdditionalDirectories: ["C:/workspace/keep"],
       updatedAt: "2026-01-02T00:00:00.000Z",
     },
   );

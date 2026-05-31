@@ -121,9 +121,11 @@ import { buildCompanionGroupMonitorEntries } from "./home/home-session-projectio
 import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
+  addAuxiliarySessionAdditionalDirectory,
   applyAuxiliarySessionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildRunningAuxiliarySessionTurn,
+  removeAuxiliarySessionAdditionalDirectory,
   resolveEditableActiveAuxiliarySession,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
@@ -2661,23 +2663,14 @@ export default function AgentSessionWindowApp() {
 
     setPickerBaseDirectory(selectedPath);
     await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionPatch(
-        current,
-        { allowedAdditionalDirectories: Array.from(new Set([...current.allowedAdditionalDirectories, selectedPath])) },
-        currentTimestampLabel(),
-      )
+      addAuxiliarySessionAdditionalDirectory(current, selectedPath, currentTimestampLabel())
     ));
   };
 
   const handleRemoveAuxiliaryAdditionalDirectory = async (directoryPath: string) => {
-    await updateActiveAuxiliarySession((current) => {
-      const nextDirectories = current.allowedAdditionalDirectories.filter((entry) => entry !== directoryPath);
-      return applyAuxiliarySessionPatch(
-        current,
-        { allowedAdditionalDirectories: nextDirectories },
-        currentTimestampLabel(),
-      );
-    });
+    await updateActiveAuxiliarySession((current) => (
+      removeAuxiliarySessionAdditionalDirectory(current, directoryPath, currentTimestampLabel())
+    ));
   };
 
   const handleTitleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
