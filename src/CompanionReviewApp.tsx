@@ -11,6 +11,10 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 
+import {
+  addAllowedAdditionalDirectory,
+  removeAllowedAdditionalDirectory,
+} from "./additional-directory-state.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import {
   addAuxiliarySessionAdditionalDirectory,
@@ -1503,7 +1507,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
 
     const currentDirectories = snapshot.session.allowedAdditionalDirectories ?? [];
-    const nextDirectories = Array.from(new Set([...currentDirectories, selectedPath]));
+    const nextDirectories = addAllowedAdditionalDirectory(currentDirectories, selectedPath);
     await persistCompanionSession({
       ...snapshot.session,
       allowedAdditionalDirectories: nextDirectories,
@@ -1518,7 +1522,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
 
     const currentDirectories = snapshot.session.allowedAdditionalDirectories ?? [];
-    const nextDirectories = currentDirectories.filter((entry) => entry !== directoryPath);
+    const nextDirectories = removeAllowedAdditionalDirectory(currentDirectories, directoryPath);
     if (nextDirectories.length === currentDirectories.length) {
       return;
     }

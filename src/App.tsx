@@ -12,6 +12,10 @@ import {
   type LiveSessionRunState,
   type RunSessionTurnRequest,
 } from "./app-state.js";
+import {
+  addAllowedAdditionalDirectory,
+  removeAllowedAdditionalDirectory,
+} from "./additional-directory-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
 import {
@@ -2625,7 +2629,7 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const nextDirectories = Array.from(new Set([...selectedSession.allowedAdditionalDirectories, selectedPath]));
+    const nextDirectories = addAllowedAdditionalDirectory(selectedSession.allowedAdditionalDirectories, selectedPath);
     const nextSession: Session = {
       ...selectedSession,
       allowedAdditionalDirectories: nextDirectories,
@@ -2639,7 +2643,7 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const nextDirectories = selectedSession.allowedAdditionalDirectories.filter((entry) => entry !== directoryPath);
+    const nextDirectories = removeAllowedAdditionalDirectory(selectedSession.allowedAdditionalDirectories, directoryPath);
     if (nextDirectories.length === selectedSession.allowedAdditionalDirectories.length) {
       return;
     }

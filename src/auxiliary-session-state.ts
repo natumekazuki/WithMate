@@ -1,4 +1,8 @@
 import type { ApprovalMode } from "./approval-mode.js";
+import {
+  addAllowedAdditionalDirectory,
+  removeAllowedAdditionalDirectory,
+} from "./additional-directory-state.js";
 import { normalizeCodexSandboxMode, type CodexSandboxMode } from "./codex-sandbox-mode.js";
 import type { ModelReasoningEffort } from "./model-catalog.js";
 import { normalizeMessage, type Message } from "./session-state.js";
@@ -65,7 +69,7 @@ export function addAuxiliarySessionAdditionalDirectory(
 ): AuxiliarySession {
   return applyAuxiliarySessionPatch(
     session,
-    { allowedAdditionalDirectories: Array.from(new Set([...session.allowedAdditionalDirectories, directoryPath])) },
+    { allowedAdditionalDirectories: addAllowedAdditionalDirectory(session.allowedAdditionalDirectories, directoryPath) },
     updatedAt,
   );
 }
@@ -77,7 +81,7 @@ export function removeAuxiliarySessionAdditionalDirectory(
 ): AuxiliarySession {
   return applyAuxiliarySessionPatch(
     session,
-    { allowedAdditionalDirectories: session.allowedAdditionalDirectories.filter((entry) => entry !== directoryPath) },
+    { allowedAdditionalDirectories: removeAllowedAdditionalDirectory(session.allowedAdditionalDirectories, directoryPath) },
     updatedAt,
   );
 }
