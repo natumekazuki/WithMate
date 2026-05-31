@@ -16,6 +16,7 @@ import {
   collectCodexAssistantTextSnapshotsFromEventsForTesting,
   collectCodexAssistantTextFromEventsForTesting,
   collectCodexReasoningTextFromEventsForTesting,
+  isCodexWindowsTaskkillSuccessParseNoiseMessage,
   resolveCodexThreadForSettings,
   type CodexThreadOptions,
 } from "../../src-electron/codex-adapter.js";
@@ -113,6 +114,22 @@ function createCodexBackgroundPromptInput(
 }
 
 describe("CodexAdapter thread settings", () => {
+  it("Windows taskkill の SUCCESS 行だけ Codex JSON parse noise として扱う", () => {
+    assert.equal(
+      isCodexWindowsTaskkillSuccessParseNoiseMessage(
+        "Failed to parse item: SUCCESS: The process with PID 13760 (child process of PID 32340) has been terminated.",
+      ),
+      true,
+    );
+    assert.equal(
+      isCodexWindowsTaskkillSuccessParseNoiseMessage(
+        "Failed to parse item: ERROR: The process with PID 13760 could not be terminated.",
+      ),
+      false,
+    );
+    assert.equal(isCodexWindowsTaskkillSuccessParseNoiseMessage("SUCCESS: ordinary command output"), false);
+  });
+
   it("delta 系 event から assistant text を逐次復元し、final item で確定形に置き換える", () => {
     const streamedText = collectCodexAssistantTextFromEventsForTesting([
       {
