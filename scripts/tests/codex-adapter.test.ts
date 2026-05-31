@@ -227,6 +227,69 @@ describe("CodexAdapter thread settings", () => {
     }
   });
 
+  it("turn.completed 後の Windows taskkill parse noise event は進捗 error に出さず成功結果として返す", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-taskkill-event-completed-"));
+    const adapter = new CodexAdapter() as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+    const progressErrors: string[] = [];
+
+    try {
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-1",
+            runStreamed: async () => ({
+              events: createCodexStreamFromEvents([
+                {
+                  type: "item.completed",
+                  item: {
+                    id: "message-1",
+                    type: "agent_message",
+                    text: "done",
+                  },
+                },
+                {
+                  type: "turn.completed",
+                  usage: null,
+                },
+                {
+                  type: "error",
+                  message: windowsTaskkillParseNoiseMessage,
+                },
+              ]),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+
+      const result = await adapter.runSessionTurn(
+        createCodexRunSessionTurnInput(workspacePath),
+        (state) => {
+          progressErrors.push(state.errorMessage);
+        },
+      );
+
+      assert.equal(result.threadId, "thread-1");
+      assert.equal(result.assistantText, "done");
+      assert.deepEqual(progressErrors.filter(Boolean), []);
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("turn.completed 前の Windows taskkill parse noise は通常の失敗として返す", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-taskkill-before-completed-"));
     const adapter = new CodexAdapter() as unknown as {
