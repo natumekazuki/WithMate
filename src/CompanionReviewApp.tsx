@@ -14,6 +14,7 @@ import {
 import type { ApprovalMode } from "./approval-mode.js";
 import {
   applyAuxiliarySessionPatch,
+  buildRunningAuxiliarySessionTurn,
   resolveEditableActiveAuxiliarySession,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
@@ -1865,14 +1866,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       currentAuxiliarySession.messages.length === 0
         ? snapshot.session.messages.length - 1
         : currentAuxiliarySession.displayAfterMessageIndex;
-    const runningSession: AuxiliarySession = {
-      ...currentAuxiliarySession,
-      runState: "running",
-      composerDraft: "",
-      updatedAt: currentTimestampLabel(),
-      messages: [...currentAuxiliarySession.messages, { role: "user", text: userMessage }],
+    const runningSession = buildRunningAuxiliarySessionTurn({
+      session: currentAuxiliarySession,
+      userMessage,
       displayAfterMessageIndex,
-    };
+      updatedAt: currentTimestampLabel(),
+    });
     activeAuxiliarySessionRef.current = runningSession;
     setActiveAuxiliarySession(runningSession);
     setLiveRunState((current) => createOwnedPendingLiveSessionRunState(

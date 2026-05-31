@@ -122,6 +122,7 @@ import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   applyAuxiliarySessionPatch,
+  buildRunningAuxiliarySessionTurn,
   resolveEditableActiveAuxiliarySession,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
@@ -2377,14 +2378,12 @@ export default function AgentSessionWindowApp() {
       currentAuxiliarySession.messages.length === 0 && selectedSession
         ? selectedSession.messages.length - 1
         : currentAuxiliarySession.displayAfterMessageIndex;
-    const runningSession: AuxiliarySession = {
-      ...currentAuxiliarySession,
-      runState: "running",
-      composerDraft: "",
-      updatedAt: currentTimestampLabel(),
-      messages: [...currentAuxiliarySession.messages, { role: "user", text: nextMessage }],
+    const runningSession = buildRunningAuxiliarySessionTurn({
+      session: currentAuxiliarySession,
+      userMessage: nextMessage,
       displayAfterMessageIndex,
-    };
+      updatedAt: currentTimestampLabel(),
+    });
     activeAuxiliarySessionRef.current = runningSession;
     setActiveAuxiliarySession(runningSession);
     setLiveRunState((current) => createOwnedPendingLiveSessionRunState(

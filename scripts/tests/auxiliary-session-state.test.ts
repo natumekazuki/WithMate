@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   applyAuxiliarySessionPatch,
+  buildRunningAuxiliarySessionTurn,
   resolveEditableActiveAuxiliarySession,
   type AuxiliarySession,
 } from "../../src/auxiliary-session-state.js";
@@ -85,5 +86,34 @@ test("resolveEditableActiveAuxiliarySession は保存対象の active session �
       currentSession: createAuxiliarySession({ runState: "running" }),
     }),
     null,
+  );
+});
+
+test("buildRunningAuxiliarySessionTurn は実行中 session state を組み立てる", () => {
+  const session = createAuxiliarySession({
+    composerDraft: "draft text",
+    displayAfterMessageIndex: 3,
+    messages: [{ role: "user", text: "previous" }],
+    updatedAt: "2026-05-30T00:00:00.000Z",
+  });
+
+  assert.deepEqual(
+    buildRunningAuxiliarySessionTurn({
+      session,
+      userMessage: "next message",
+      displayAfterMessageIndex: 8,
+      updatedAt: "2026-05-31T00:00:00.000Z",
+    }),
+    {
+      ...session,
+      runState: "running",
+      composerDraft: "",
+      displayAfterMessageIndex: 8,
+      updatedAt: "2026-05-31T00:00:00.000Z",
+      messages: [
+        { role: "user", text: "previous" },
+        { role: "user", text: "next message" },
+      ],
+    },
   );
 });

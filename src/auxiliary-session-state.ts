@@ -62,6 +62,22 @@ export function resolveEditableActiveAuxiliarySession(input: {
   return currentSession;
 }
 
+export function buildRunningAuxiliarySessionTurn(input: {
+  session: AuxiliarySession;
+  userMessage: string;
+  displayAfterMessageIndex: number | null;
+  updatedAt: string;
+}): AuxiliarySession {
+  return {
+    ...input.session,
+    runState: "running",
+    composerDraft: "",
+    updatedAt: input.updatedAt,
+    messages: [...input.session.messages, { role: "user", text: input.userMessage }],
+    displayAfterMessageIndex: input.displayAfterMessageIndex,
+  };
+}
+
 export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | null {
   if (!value || typeof value !== "object") {
     return null;
