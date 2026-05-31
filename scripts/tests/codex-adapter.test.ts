@@ -290,6 +290,113 @@ describe("CodexAdapter thread settings", () => {
     }
   });
 
+  it("assistant item 後の Windows taskkill parse noise は turn.completed 前でも成功結果として返す", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-taskkill-item-completed-"));
+    const adapter = new CodexAdapter() as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+
+    try {
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-1",
+            runStreamed: async () => ({
+              events: createCodexStreamThatThrowsAfter([
+                {
+                  type: "item.completed",
+                  item: {
+                    id: "message-1",
+                    type: "agent_message",
+                    text: "done",
+                  },
+                },
+              ], windowsTaskkillParseNoiseMessage),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+
+      const result = await adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath));
+
+      assert.equal(result.threadId, "thread-1");
+      assert.equal(result.assistantText, "done");
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("assistant item 後の Windows taskkill parse noise event は進捗 error に出さず成功結果として返す", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-taskkill-event-item-completed-"));
+    const adapter = new CodexAdapter() as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+    const progressErrors: string[] = [];
+
+    try {
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-1",
+            runStreamed: async () => ({
+              events: createCodexStreamFromEvents([
+                {
+                  type: "item.completed",
+                  item: {
+                    id: "message-1",
+                    type: "agent_message",
+                    text: "done",
+                  },
+                },
+                {
+                  type: "error",
+                  message: windowsTaskkillParseNoiseMessage,
+                },
+              ]),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+
+      const result = await adapter.runSessionTurn(
+        createCodexRunSessionTurnInput(workspacePath),
+        (state) => {
+          progressErrors.push(state.errorMessage);
+        },
+      );
+
+      assert.equal(result.threadId, "thread-1");
+      assert.equal(result.assistantText, "done");
+      assert.deepEqual(progressErrors.filter(Boolean), []);
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("turn.completed 前の Windows taskkill parse noise は通常の失敗として返す", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-taskkill-before-completed-"));
     const adapter = new CodexAdapter() as unknown as {
