@@ -127,6 +127,16 @@ type CodexCollabToolCallItem = {
 
 type CodexTurnItem = ThreadItem | CodexCollabToolCallItem;
 
+type CodexAdapterLogInput = {
+  level: "debug" | "info" | "warn" | "error";
+  kind: string;
+  message: string;
+  data?: unknown;
+  error?: { name?: string; message: string; stack?: string };
+};
+
+type CodexAdapterLogger = (input: CodexAdapterLogInput) => void;
+
 const CODEX_WINDOWS_TASKKILL_SUCCESS_PARSE_NOISE_PATTERN =
   /^Failed to parse item:\s*SUCCESS:\s+The process with PID \d+ \(child process of PID \d+\) has been terminated\.\s*$/;
 
@@ -153,6 +163,19 @@ function shouldIgnoreCodexWindowsTaskkillParseNoise(
   );
 }
 
+function errorToCodexAdapterLogError(error: unknown): CodexAdapterLogInput["error"] {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+
+  return {
+    message: typeof error === "string" ? error : String(error),
+  };
+}
 export type CodexThreadOptions = {
   workingDirectory: string;
   skipGitRepoCheck: true;
@@ -969,6 +992,104 @@ function readCodexAssistantDelta(event: ThreadEvent): string | null {
   return readStringFromUnknown(record);
 }
 
+function summarizeCodexAgentsStates(value: unknown): {
+  total: number;
+  statuses: Record<string, number>;
+} | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const statuses: Record<string, number> = {};
+  let total = 0;
+  for (const agentState of Object.values(value as Record<string, unknown>)) {
+    if (!agentState || typeof agentState !== "object") {
+      total += 1;
+      statuses.unknown = (statuses.unknown ?? 0) + 1;
+      continue;
+    }
+
+    const status = (agentState as { status?: unknown }).status;
+    const normalizedStatus = typeof status === "string" && status.trim().length > 0 ? status : "unknown";
+    total += 1;
+    statuses[normalizedStatus] = (statuses[normalizedStatus] ?? 0) + 1;
+  }
+
+  return { total, statuses };
+}
+
+function buildCodexTurnEventLogData(event: ThreadEvent): Record<string, unknown> | null {
+  const record = event as unknown as CodexEventRecord;
+  const eventType = typeof record.type === "string" ? record.type : "";
+
+  switch (event.type) {
+    case "thread.started":
+      return {
+        eventType,
+        threadId: event.thread_id,
+      };
+    case "turn.completed":
+      return {
+        eventType,
+        hasUsage: event.usage !== null,
+      };
+    case "turn.failed":
+      return {
+        eventType,
+        errorMessage: event.error.message,
+      };
+    case "error":
+      return {
+        eventType,
+        errorMessage: event.message,
+      };
+    case "item.started":
+    case "item.updated":
+    case "item.completed": {
+      const item = event.item as unknown;
+      if (isCodexCollabToolCallItem(item)) {
+        return {
+          eventType,
+          itemId: item.id,
+          itemType: item.type,
+          tool: item.tool ?? null,
+          status: item.status ?? null,
+          agents: summarizeCodexAgentsStates(item.agents_states),
+          errorMessage: item.error?.message ?? null,
+        };
+      }
+
+      const threadItem = event.item;
+      if (threadItem.type === "agent_message" || threadItem.type === "error") {
+        return {
+          eventType,
+          itemId: threadItem.id,
+          itemType: threadItem.type,
+          status: "status" in threadItem ? threadItem.status ?? null : null,
+        };
+      }
+
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
+function summarizeCodexTurnStreamState(state: CodexTurnStreamState): Record<string, unknown> {
+  return {
+    threadId: state.threadId,
+    itemCount: state.items.size,
+    liveStepCount: state.liveSteps.size,
+    turnCompleted: state.turnCompleted,
+    streamedAssistantTextLength: state.streamedAssistantText.length,
+    finalAssistantTextLength: state.finalAssistantText.length,
+    reasoningTextLength: state.reasoningText.length,
+    hasUsage: state.usage !== null,
+    streamErrorMessage: state.streamErrorMessage || null,
+  };
+}
+
 function getLiveAssistantText(state: CodexTurnStreamState): string {
   return state.finalAssistantText || state.streamedAssistantText;
 }
@@ -1194,6 +1315,16 @@ export class CodexAdapter implements ProviderTurnAdapter {
   private readonly clients = new Map<string, Codex>();
   private readonly threads = new Map<string, CachedCodexThread>();
   private readonly workspaceSnapshotIndexes = new Map<string, WorkspaceSnapshotIndex>();
+
+  constructor(private readonly logger?: CodexAdapterLogger) {}
+
+  private writeLog(input: CodexAdapterLogInput): void {
+    try {
+      this.logger?.(input);
+    } catch {
+      // Logging must not affect provider execution.
+    }
+  }
 
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
     return composeProviderPrompt(input);
@@ -1487,6 +1618,19 @@ export class CodexAdapter implements ProviderTurnAdapter {
         : prompt.logicalPrompt.composedText;
     const streamState = createCodexTurnStreamState(thread.id);
 
+    this.writeLog({
+      level: "info",
+      kind: "codex.run.started",
+      message: "Codex session turn started",
+      data: {
+        sessionId: input.session.id,
+        threadId: streamState.threadId,
+        model: selection.resolvedModel,
+        reasoningEffort: selection.resolvedReasoningEffort,
+        existingThreadId: input.session.threadId || null,
+      },
+    });
+
     await emitLiveState(
       onProgress,
       input.session.id,
@@ -1502,9 +1646,31 @@ export class CodexAdapter implements ProviderTurnAdapter {
       const { events } = await thread.runStreamed(turnInput, {
         signal: input.signal,
       });
+      this.writeLog({
+        level: "debug",
+        kind: "codex.run.stream.opened",
+        message: "Codex session turn stream opened",
+        data: {
+          sessionId: input.session.id,
+          threadId: streamState.threadId,
+        },
+      });
 
       for await (const event of events) {
         applyCodexTurnEvent(streamState, event);
+        const eventLogData = buildCodexTurnEventLogData(event);
+        if (eventLogData) {
+          this.writeLog({
+            level: event.type === "turn.failed" || event.type === "error" ? "warn" : "debug",
+            kind: "codex.run.stream.event",
+            message: "Codex session turn stream event",
+            data: {
+              sessionId: input.session.id,
+              threadId: streamState.threadId,
+              ...eventLogData,
+            },
+          });
+        }
         await emitLiveState(
           onProgress,
           input.session.id,
@@ -1516,6 +1682,15 @@ export class CodexAdapter implements ProviderTurnAdapter {
           getLiveStreamErrorMessage(streamState),
         );
       }
+      this.writeLog({
+        level: "info",
+        kind: "codex.run.stream.finished",
+        message: "Codex session turn stream finished",
+        data: {
+          sessionId: input.session.id,
+          ...summarizeCodexTurnStreamState(streamState),
+        },
+      });
 
       if (streamState.streamErrorMessage) {
         const shouldIgnoreWindowsTaskkillParseNoise = shouldIgnoreCodexWindowsTaskkillParseNoise(
@@ -1534,9 +1709,27 @@ export class CodexAdapter implements ProviderTurnAdapter {
           beforeSnapshotStats,
         );
         if (shouldIgnoreWindowsTaskkillParseNoise) {
+          this.writeLog({
+            level: "warn",
+            kind: "codex.run.parse-noise.ignored",
+            message: "Codex session turn ignored Windows taskkill parse noise after activity",
+            data: {
+              sessionId: input.session.id,
+              ...summarizeCodexTurnStreamState(streamState),
+            },
+          });
           return partialResult;
         }
 
+        this.writeLog({
+          level: "error",
+          kind: "codex.run.stream-error",
+          message: "Codex session turn stream ended with an error message",
+          data: {
+            sessionId: input.session.id,
+            ...summarizeCodexTurnStreamState(streamState),
+          },
+        });
         throw new ProviderTurnError(
           streamState.streamErrorMessage,
           partialResult,
@@ -1544,7 +1737,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         );
       }
 
-      return this.buildTurnResult(
+      const result = await this.buildTurnResult(
         input,
         prompt,
         streamState.items,
@@ -1555,8 +1748,31 @@ export class CodexAdapter implements ProviderTurnAdapter {
         beforeSnapshot,
         beforeSnapshotStats,
       );
+      this.writeLog({
+        level: "info",
+        kind: "codex.run.completed",
+        message: "Codex session turn completed",
+        data: {
+          sessionId: input.session.id,
+          ...summarizeCodexTurnStreamState(streamState),
+          operationCount: result.operations.length,
+          assistantTextLength: result.assistantText.length,
+        },
+      });
+      return result;
     } catch (error) {
       if (error instanceof ProviderTurnError) {
+        this.writeLog({
+          level: error.canceled ? "warn" : "error",
+          kind: "codex.run.provider-error",
+          message: "Codex session turn provider error",
+          data: {
+            sessionId: input.session.id,
+            canceled: error.canceled,
+            ...summarizeCodexTurnStreamState(streamState),
+          },
+          error: errorToCodexAdapterLogError(error),
+        });
         throw error;
       }
 
@@ -1577,9 +1793,31 @@ export class CodexAdapter implements ProviderTurnAdapter {
         beforeSnapshotStats,
       );
       if (shouldIgnoreWindowsTaskkillParseNoise) {
+        this.writeLog({
+          level: "warn",
+          kind: "codex.run.parse-noise.ignored",
+          message: "Codex session turn ignored Windows taskkill parse noise after thrown error",
+          data: {
+            sessionId: input.session.id,
+            ...summarizeCodexTurnStreamState(streamState),
+          },
+          error: errorToCodexAdapterLogError(error),
+        });
         return partialResult;
       }
 
+      this.writeLog({
+        level: Boolean(input.signal?.aborted) || isCanceledProviderMessage(message) ? "warn" : "error",
+        kind: "codex.run.failed",
+        message: "Codex session turn failed",
+        data: {
+          sessionId: input.session.id,
+          aborted: Boolean(input.signal?.aborted),
+          canceledMessage: isCanceledProviderMessage(message),
+          ...summarizeCodexTurnStreamState(streamState),
+        },
+        error: errorToCodexAdapterLogError(error),
+      });
       throw new ProviderTurnError(
         message,
         partialResult,

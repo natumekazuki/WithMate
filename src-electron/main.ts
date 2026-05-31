@@ -249,7 +249,10 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const bundledModelCatalogPath = devServerUrl
   ? path.resolve(currentDir, "../../public/model-catalog.json")
   : path.resolve(rendererDistPath, "model-catalog.json");
-const codexAdapter = new CodexAdapter();
+const codexAdapter = new CodexAdapter((input) => writeAppLog({
+  ...input,
+  process: "main",
+}));
 const copilotAdapter = new CopilotAdapter();
 const WAL_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 
