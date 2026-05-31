@@ -290,7 +290,7 @@ describe("CodexAdapter thread settings", () => {
     }
   });
 
-  it("assistant item 後の Windows taskkill parse noise は turn.completed 前でも成功結果として返す", async () => {
+  it("assistant item 後でも turn.completed 前の Windows taskkill parse noise は失敗として返す", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-taskkill-item-completed-"));
     const adapter = new CodexAdapter() as unknown as {
       getClient: () => {
@@ -329,16 +329,23 @@ describe("CodexAdapter thread settings", () => {
         clientKey: "client-key",
       });
 
-      const result = await adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath));
-
-      assert.equal(result.threadId, "thread-1");
-      assert.equal(result.assistantText, "done");
+      await assert.rejects(
+        () => adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath)),
+        (error) => {
+          assert.equal(error instanceof ProviderTurnError, true);
+          assert.equal((error as ProviderTurnError).canceled, false);
+          assert.equal((error as Error).message, windowsTaskkillParseNoiseMessage);
+          assert.equal((error as ProviderTurnError).partialResult.threadId, "thread-1");
+          assert.equal((error as ProviderTurnError).partialResult.assistantText, "done");
+          return true;
+        },
+      );
     } finally {
       await rm(workspacePath, { recursive: true, force: true });
     }
   });
 
-  it("assistant item 後の Windows taskkill parse noise event は進捗 error に出さず成功結果として返す", async () => {
+  it("assistant item 後でも turn.completed 前の Windows taskkill parse noise event は進捗 error に出して失敗にする", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-taskkill-event-item-completed-"));
     const adapter = new CodexAdapter() as unknown as {
       getClient: () => {
@@ -382,16 +389,24 @@ describe("CodexAdapter thread settings", () => {
         clientKey: "client-key",
       });
 
-      const result = await adapter.runSessionTurn(
-        createCodexRunSessionTurnInput(workspacePath),
-        (state) => {
-          progressErrors.push(state.errorMessage);
+      await assert.rejects(
+        () => adapter.runSessionTurn(
+          createCodexRunSessionTurnInput(workspacePath),
+          (state) => {
+            progressErrors.push(state.errorMessage);
+          },
+        ),
+        (error) => {
+          assert.equal(error instanceof ProviderTurnError, true);
+          assert.equal((error as ProviderTurnError).canceled, false);
+          assert.equal((error as Error).message, windowsTaskkillParseNoiseMessage);
+          assert.equal((error as ProviderTurnError).partialResult.threadId, "thread-1");
+          assert.equal((error as ProviderTurnError).partialResult.assistantText, "done");
+          return true;
         },
       );
 
-      assert.equal(result.threadId, "thread-1");
-      assert.equal(result.assistantText, "done");
-      assert.deepEqual(progressErrors.filter(Boolean), []);
+      assert.deepEqual(progressErrors.filter(Boolean), [windowsTaskkillParseNoiseMessage]);
     } finally {
       await rm(workspacePath, { recursive: true, force: true });
     }
