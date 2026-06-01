@@ -6,6 +6,7 @@ import {
   applyAuxiliarySessionPatch,
   applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionCustomAgentPatch,
+  applyAuxiliarySessionModelSelectionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
@@ -79,6 +80,33 @@ test("applyAuxiliarySessionRuntimeOptionsPatch は runtime option と updatedAt 
       ...session,
       approvalMode: "on-request",
       codexSandboxMode: "read-only",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    },
+  );
+});
+
+test("applyAuxiliarySessionModelSelectionPatch は model selection と updatedAt だけを更新する", () => {
+  const session = createAuxiliarySession({
+    catalogRevision: 1,
+    model: "gpt-5.4",
+    reasoningEffort: "medium",
+  });
+
+  assert.deepEqual(
+    applyAuxiliarySessionModelSelectionPatch(
+      session,
+      {
+        catalogRevision: 2,
+        model: "gpt-5.4-mini",
+        reasoningEffort: "low",
+      },
+      "2026-01-02T00:00:00.000Z",
+    ),
+    {
+      ...session,
+      catalogRevision: 2,
+      model: "gpt-5.4-mini",
+      reasoningEffort: "low",
       updatedAt: "2026-01-02T00:00:00.000Z",
     },
   );

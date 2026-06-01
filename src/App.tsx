@@ -126,9 +126,9 @@ import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   addAuxiliarySessionAdditionalDirectory,
-  applyAuxiliarySessionPatch,
   applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionCustomAgentPatch,
+  applyAuxiliarySessionModelSelectionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
@@ -2008,7 +2008,7 @@ export default function AgentSessionWindowApp() {
 
     await updateActiveAuxiliarySession((current) => {
       const selection = resolveModelChangeSelection(selectedProviderCatalog, model, current.reasoningEffort);
-      return applyAuxiliarySessionPatch(
+      return applyAuxiliarySessionModelSelectionPatch(
         current,
         {
           catalogRevision: modelCatalog.revision,
@@ -2027,7 +2027,7 @@ export default function AgentSessionWindowApp() {
 
     await updateActiveAuxiliarySession((current) => {
       const selection = resolveModelSelection(selectedProviderCatalog, current.model, reasoningEffort);
-      return applyAuxiliarySessionPatch(
+      return applyAuxiliarySessionModelSelectionPatch(
         current,
         {
           catalogRevision: modelCatalog.revision,

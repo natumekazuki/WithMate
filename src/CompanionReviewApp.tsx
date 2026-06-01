@@ -18,9 +18,9 @@ import {
 import type { ApprovalMode } from "./approval-mode.js";
 import {
   addAuxiliarySessionAdditionalDirectory,
-  applyAuxiliarySessionPatch,
   applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionCustomAgentPatch,
+  applyAuxiliarySessionModelSelectionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
@@ -1929,7 +1929,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     await updateActiveAuxiliarySession((current) => {
       const selection = resolveModelChangeSelection(selectedProviderCatalog, model, current.reasoningEffort);
-      return applyAuxiliarySessionPatch(
+      return applyAuxiliarySessionModelSelectionPatch(
         current,
         {
           catalogRevision: modelCatalog.revision,
@@ -1948,7 +1948,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     await updateActiveAuxiliarySession((current) => {
       const selection = resolveModelSelection(selectedProviderCatalog, current.model, reasoningEffort);
-      return applyAuxiliarySessionPatch(
+      return applyAuxiliarySessionModelSelectionPatch(
         current,
         {
           catalogRevision: modelCatalog.revision,

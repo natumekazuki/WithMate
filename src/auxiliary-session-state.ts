@@ -62,6 +62,14 @@ export function applyAuxiliarySessionRuntimeOptionsPatch(
   return applyAuxiliarySessionPatch(session, patch, updatedAt);
 }
 
+export function applyAuxiliarySessionModelSelectionPatch(
+  session: AuxiliarySession,
+  patch: Pick<AuxiliarySession, "catalogRevision" | "model" | "reasoningEffort">,
+  updatedAt: string,
+): AuxiliarySession {
+  return applyAuxiliarySessionPatch(session, patch, updatedAt);
+}
+
 export function addAuxiliarySessionAdditionalDirectory(
   session: AuxiliarySession,
   directoryPath: string,
