@@ -8,6 +8,7 @@ import {
   applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionModelSelectionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
+  buildEditableActiveAuxiliarySessionPatch,
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
   resolveEditableActiveAuxiliarySession,
@@ -221,6 +222,39 @@ test("resolveEditableActiveAuxiliarySession は保存対象の active session �
     resolveEditableActiveAuxiliarySession({
       activeSession,
       currentSession: createAuxiliarySession({ runState: "running" }),
+    }),
+    null,
+  );
+});
+
+test("buildEditableActiveAuxiliarySessionPatch は保存対象 session に recipe を適用する", () => {
+  const activeSession = createAuxiliarySession({ title: "active" });
+  const currentSession = createAuxiliarySession({ title: "current" });
+
+  assert.deepEqual(
+    buildEditableActiveAuxiliarySessionPatch({
+      activeSession,
+      currentSession,
+      recipe: (current) => ({ ...current, title: "next" }),
+    }),
+    {
+      ...currentSession,
+      title: "next",
+    },
+  );
+  assert.equal(
+    buildEditableActiveAuxiliarySessionPatch({
+      activeSession,
+      currentSession: createAuxiliarySession({ id: "aux-other" }),
+      recipe: (current) => ({ ...current, title: "next" }),
+    }),
+    null,
+  );
+  assert.equal(
+    buildEditableActiveAuxiliarySessionPatch({
+      activeSession,
+      currentSession: createAuxiliarySession({ runState: "running" }),
+      recipe: (current) => ({ ...current, title: "next" }),
     }),
     null,
   );

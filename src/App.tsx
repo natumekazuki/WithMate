@@ -130,9 +130,9 @@ import {
   applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionModelSelectionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
+  buildEditableActiveAuxiliarySessionPatch,
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
-  resolveEditableActiveAuxiliarySession,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
 import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolution.js";
@@ -1973,15 +1973,15 @@ export default function AgentSessionWindowApp() {
     }
 
     await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
-    const currentSession = resolveEditableActiveAuxiliarySession({
+    const nextSession = buildEditableActiveAuxiliarySessionPatch({
       activeSession: activeAuxiliarySession,
       currentSession: activeAuxiliarySessionRef.current,
+      recipe,
     });
-    if (!currentSession) {
+    if (!nextSession) {
       return;
     }
 
-    const nextSession = recipe(currentSession);
     activeAuxiliarySessionRef.current = nextSession;
     setActiveAuxiliarySession(nextSession);
     const saved = await withmateApi.updateAuxiliarySession(nextSession);

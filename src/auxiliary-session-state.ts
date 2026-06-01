@@ -122,6 +122,22 @@ export function resolveEditableActiveAuxiliarySession(input: {
   return currentSession;
 }
 
+export function buildEditableActiveAuxiliarySessionPatch(input: {
+  activeSession: AuxiliarySession;
+  currentSession: AuxiliarySession | null;
+  recipe: (current: AuxiliarySession) => AuxiliarySession;
+}): AuxiliarySession | null {
+  const currentSession = resolveEditableActiveAuxiliarySession({
+    activeSession: input.activeSession,
+    currentSession: input.currentSession,
+  });
+  if (!currentSession) {
+    return null;
+  }
+
+  return input.recipe(currentSession);
+}
+
 export function buildRunningAuxiliarySessionTurn(input: {
   session: AuxiliarySession;
   userMessage: string;
