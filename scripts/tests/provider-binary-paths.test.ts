@@ -13,7 +13,7 @@ describe("provider-binary-paths", () => {
   it("provider ごとの native package spec を返す", () => {
     assert.deepEqual(resolveProviderBinarySpec("codex", "win32", "x64"), {
       packageSpecifier: "@openai/codex-win32-x64",
-      binaryRelativePath: ["vendor", "x86_64-pc-windows-msvc", "codex", "codex.exe"],
+      binaryRelativePath: ["vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe"],
     });
     assert.deepEqual(resolveProviderBinarySpec("copilot", "darwin", "arm64"), {
       packageSpecifier: "@github/copilot-darwin-arm64",
@@ -31,7 +31,7 @@ describe("provider-binary-paths", () => {
       "codex-win32-x64",
       "vendor",
       "x86_64-pc-windows-msvc",
-      "codex",
+      "bin",
       "codex.exe",
     );
 
