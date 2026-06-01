@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import {
   CopilotClient,
+  RuntimeConnection,
   type CopilotSession,
   type PermissionHandler,
   type MessageOptions,
@@ -315,9 +316,10 @@ function applyCopilotTurnEvent(args: {
     case "assistant.usage":
       state.usage = normalizeCopilotTokenUsage(event.data);
       if (args.onProviderQuotaTelemetry) {
+        const quotaSnapshots = readCopilotQuotaSnapshots(event.data);
         const telemetry = buildCopilotProviderQuotaTelemetry(
           providerId,
-          event.data.quotaSnapshots,
+          quotaSnapshots,
           event.timestamp,
         );
         if (telemetry) {
@@ -494,6 +496,37 @@ type CopilotQuotaSnapshotLike = {
   resetDate?: string;
 };
 
+function isCopilotQuotaSnapshotLike(value: unknown): value is CopilotQuotaSnapshotLike {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<CopilotQuotaSnapshotLike>;
+  return typeof candidate.entitlementRequests === "number"
+    && typeof candidate.usedRequests === "number"
+    && typeof candidate.remainingPercentage === "number";
+}
+
+function readCopilotQuotaSnapshots(value: unknown): Record<string, CopilotQuotaSnapshotLike> | null {
+  if (!value || typeof value !== "object" || !("quotaSnapshots" in value)) {
+    return null;
+  }
+
+  const quotaSnapshots = (value as { quotaSnapshots?: unknown }).quotaSnapshots;
+  if (!quotaSnapshots || typeof quotaSnapshots !== "object") {
+    return null;
+  }
+
+  const normalized: Record<string, CopilotQuotaSnapshotLike> = {};
+  for (const [quotaKey, snapshot] of Object.entries(quotaSnapshots)) {
+    if (isCopilotQuotaSnapshotLike(snapshot)) {
+      normalized[quotaKey] = snapshot;
+    }
+  }
+
+  return normalized;
+}
+
 function normalizeQuotaRemainingPercentage(value: number): number {
   if (Number.isNaN(value) || !Number.isFinite(value)) {
     return 0;
@@ -507,13 +540,14 @@ function normalizeQuotaRemainingPercentage(value: number): number {
 }
 
 export function toProviderQuotaSnapshots(
-  snapshots: Record<string, CopilotQuotaSnapshotLike> | null | undefined,
+  snapshots: Record<string, CopilotQuotaSnapshotLike | undefined> | null | undefined,
 ): ProviderQuotaSnapshot[] {
   if (!snapshots) {
     return [];
   }
 
   return Object.entries(snapshots)
+    .filter((entry): entry is [string, CopilotQuotaSnapshotLike] => isCopilotQuotaSnapshotLike(entry[1]))
     .map(([quotaKey, snapshot]) => ({
       quotaKey,
       entitlementRequests: snapshot.entitlementRequests,
@@ -528,7 +562,7 @@ export function toProviderQuotaSnapshots(
 
 export function buildCopilotProviderQuotaTelemetry(
   providerId: string,
-  snapshots: Record<string, CopilotQuotaSnapshotLike> | null | undefined,
+  snapshots: Record<string, CopilotQuotaSnapshotLike | undefined> | null | undefined,
   updatedAt: string,
 ): ProviderQuotaTelemetry | null {
   const normalizedSnapshots = toProviderQuotaSnapshots(snapshots);
@@ -1975,9 +2009,9 @@ export class CopilotAdapter implements ProviderTurnAdapter {
 
     const cliPath = resolveCopilotCliPath();
     const client = new CopilotClient({
-      cliPath,
+      connection: RuntimeConnection.forStdio({ path: cliPath }),
       env: buildCopilotClientEnv(process.env),
-      ...(codingApiKey ? { githubToken: codingApiKey, useLoggedInUser: false } : {}),
+      ...(codingApiKey ? { gitHubToken: codingApiKey, useLoggedInUser: false } : {}),
     });
     this.clients.set(clientKey, client);
     return { client, clientKey };
@@ -1992,9 +2026,9 @@ export class CopilotAdapter implements ProviderTurnAdapter {
 
     const apiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
     const client = new CopilotClient({
-      cliPath: resolveCopilotCliPath(),
+      connection: RuntimeConnection.forStdio({ path: resolveCopilotCliPath() }),
       env: buildCopilotClientEnv(process.env),
-      ...(apiKey ? { githubToken: apiKey, useLoggedInUser: false } : {}),
+      ...(apiKey ? { gitHubToken: apiKey, useLoggedInUser: false } : {}),
     });
     this.clients.set(clientKey, client);
     return client;
@@ -2465,7 +2499,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   ): Promise<ProviderQuotaTelemetry | null> {
     const client = this.getOrCreateClientByAppSettings(providerId, appSettings);
     await client.start();
-    const quota = await client.rpc.account.getQuota();
+    const quota = await client.rpc.account.getQuota({});
     return buildCopilotProviderQuotaTelemetry(providerId, quota.quotaSnapshots, new Date().toISOString());
   }
 }

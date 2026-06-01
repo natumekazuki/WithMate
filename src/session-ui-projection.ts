@@ -178,7 +178,7 @@ export function selectPrimaryQuotaSnapshot(telemetry: ProviderQuotaTelemetry | n
     return null;
   }
 
-  const preferredKeys = ["premium_interactions", "premium_requests", "premium", "chat"];
+  const preferredKeys = ["ai_credits", "ai_credit", "aiu", "premium_interactions", "premium_requests", "premium", "chat"];
   for (const preferredKey of preferredKeys) {
     const matched = telemetry.snapshots.find((snapshot) => snapshot.quotaKey === preferredKey);
     if (matched) {
@@ -187,6 +187,14 @@ export function selectPrimaryQuotaSnapshot(telemetry: ProviderQuotaTelemetry | n
   }
 
   return telemetry.snapshots[0] ?? null;
+}
+
+function formatCopilotQuotaUnitLabel(quotaKey: string): string {
+  const normalized = quotaKey.toLowerCase();
+  if (normalized.includes("credit") || normalized.includes("aiu")) {
+    return "credits";
+  }
+  return "requests";
 }
 
 export function formatQuotaResetLabel(resetDate: string | undefined): string {
@@ -219,10 +227,11 @@ export function buildCopilotQuotaProjection(telemetry: ProviderQuotaTelemetry | 
   }
 
   const remainingRequests = Math.max(0, snapshot.entitlementRequests - snapshot.usedRequests);
+  const unitLabel = formatCopilotQuotaUnitLabel(snapshot.quotaKey);
   return {
     snapshot,
     remainingPercentLabel: `${Math.max(0, Math.round(snapshot.remainingPercentage))}% left`,
-    remainingRequestsLabel: `${remainingRequests} / ${snapshot.entitlementRequests} left`,
+    remainingRequestsLabel: `${remainingRequests} / ${snapshot.entitlementRequests} ${unitLabel} left`,
     resetLabel: formatQuotaResetLabel(snapshot.resetDate),
   };
 }

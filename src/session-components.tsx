@@ -1765,7 +1765,7 @@ export function SessionContextPane({
         <section className="provider-usage-shell" aria-label="Copilot usage">
           <div className="provider-usage-strip">
             <div className="provider-usage-strip-copy">
-              <span className="provider-usage-label">Premium Requests</span>
+              <span className="provider-usage-label">Copilot Usage</span>
               <strong>{selectedCopilotRemainingPercentLabel}</strong>
             </div>
             <span className="provider-usage-pill">
