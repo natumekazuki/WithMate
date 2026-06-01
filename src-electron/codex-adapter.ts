@@ -144,22 +144,13 @@ export function isCodexWindowsTaskkillSuccessParseNoiseMessage(message: string):
   return CODEX_WINDOWS_TASKKILL_SUCCESS_PARSE_NOISE_PATTERN.test(message.trim());
 }
 
-function hasCodexTurnResultActivity(state: CodexTurnStreamState): boolean {
-  return (
-    state.turnCompleted
-    || state.items.size > 0
-    || state.streamedAssistantText.trim().length > 0
-    || state.finalAssistantText.trim().length > 0
-  );
-}
-
 function shouldIgnoreCodexWindowsTaskkillParseNoise(
   state: CodexTurnStreamState,
   message: string,
 ): boolean {
   return (
     isCodexWindowsTaskkillSuccessParseNoiseMessage(message)
-    && hasCodexTurnResultActivity(state)
+    && state.turnCompleted
   );
 }
 
