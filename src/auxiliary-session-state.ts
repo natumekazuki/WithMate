@@ -180,6 +180,29 @@ export function resolveAuxiliarySessionDisplayAfterMessageIndex(input: {
     : input.currentDisplayAfterMessageIndex;
 }
 
+export function resolveClosedAuxiliarySessionIds(summaries: AuxiliarySessionSummary[]): string[] {
+  return summaries
+    .filter((summary) => summary.status === "closed")
+    .reverse()
+    .map((summary) => summary.id);
+}
+
+export function resolveClosedAuxiliarySessionsLoadResult(
+  sessions: Array<AuxiliarySession | null>,
+): AuxiliarySession[] {
+  return sessions.filter((session): session is AuxiliarySession => session !== null);
+}
+
+export function resolveClosedAuxiliarySessionsAfterReturn(
+  currentSessions: AuxiliarySession[],
+  closedSession: AuxiliarySession,
+): AuxiliarySession[] {
+  return [
+    ...currentSessions.filter((session) => session.id !== closedSession.id),
+    closedSession,
+  ];
+}
+
 export function buildRunningAuxiliarySessionTurn(input: {
   session: AuxiliarySession;
   userMessage: string;

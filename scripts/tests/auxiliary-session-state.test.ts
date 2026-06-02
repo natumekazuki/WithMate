@@ -13,6 +13,9 @@ import {
   removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveAuxiliarySessionDisplayAfterMessageIndex,
+  resolveClosedAuxiliarySessionIds,
+  resolveClosedAuxiliarySessionsAfterReturn,
+  resolveClosedAuxiliarySessionsLoadResult,
   resolveEditableActiveAuxiliarySession,
   type AuxiliarySession,
 } from "../../src/auxiliary-session-state.js";
@@ -366,6 +369,40 @@ test("resolveAuxiliarySessionDisplayAfterMessageIndex は初回 Auxiliary anchor
       parentMessageCount: null,
     }),
     3,
+  );
+});
+
+test("resolveClosedAuxiliarySessionIds は closed summary を新しい順の id にする", () => {
+  assert.deepEqual(
+    resolveClosedAuxiliarySessionIds([
+      createAuxiliarySession({ id: "closed-1", status: "closed" }),
+      createAuxiliarySession({ id: "active-1", status: "active" }),
+      createAuxiliarySession({ id: "closed-2", status: "closed" }),
+    ]),
+    ["closed-2", "closed-1"],
+  );
+});
+
+test("resolveClosedAuxiliarySessionsLoadResult は null を除外する", () => {
+  const closedSession = createAuxiliarySession({ id: "closed-1", status: "closed" });
+
+  assert.deepEqual(
+    resolveClosedAuxiliarySessionsLoadResult([null, closedSession, null]),
+    [closedSession],
+  );
+});
+
+test("resolveClosedAuxiliarySessionsAfterReturn は重複を避けて closed session を末尾に置く", () => {
+  const oldClosedSession = createAuxiliarySession({ id: "aux-1", status: "closed", title: "old" });
+  const otherClosedSession = createAuxiliarySession({ id: "aux-2", status: "closed", title: "other" });
+  const returnedClosedSession = createAuxiliarySession({ id: "aux-1", status: "closed", title: "returned" });
+
+  assert.deepEqual(
+    resolveClosedAuxiliarySessionsAfterReturn(
+      [oldClosedSession, otherClosedSession],
+      returnedClosedSession,
+    ),
+    [otherClosedSession, returnedClosedSession],
   );
 });
 

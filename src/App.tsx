@@ -135,6 +135,9 @@ import {
   removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveAuxiliarySessionDisplayAfterMessageIndex,
+  resolveClosedAuxiliarySessionIds,
+  resolveClosedAuxiliarySessionsAfterReturn,
+  resolveClosedAuxiliarySessionsLoadResult,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
 import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolution.js";
@@ -514,14 +517,12 @@ export default function AgentSessionWindowApp() {
 
     try {
       const summaries = await withmateApi.listAuxiliarySessions(parentSessionId);
-      const closedSummaries = summaries
-        .filter((summary) => summary.status === "closed")
-        .reverse();
+      const closedSessionIds = resolveClosedAuxiliarySessionIds(summaries);
       const sessions = await Promise.all(
-        closedSummaries.map((summary) => withmateApi.getAuxiliarySession(summary.id)),
+        closedSessionIds.map((sessionId) => withmateApi.getAuxiliarySession(sessionId)),
       );
       if (canApplyLoadResult()) {
-        setClosedAuxiliarySessions(sessions.filter((session): session is AuxiliarySession => session !== null));
+        setClosedAuxiliarySessions(resolveClosedAuxiliarySessionsLoadResult(sessions));
       }
     } catch {
       if (canApplyLoadResult()) {
@@ -2267,10 +2268,7 @@ export default function AgentSessionWindowApp() {
     try {
       auxiliaryLoadRevisionRef.current += 1;
       const closedSession = await withmateApi.closeAuxiliarySession(activeAuxiliarySession.id);
-      setClosedAuxiliarySessions((current) => [
-        ...current.filter((session) => session.id !== closedSession.id),
-        closedSession,
-      ]);
+      setClosedAuxiliarySessions((current) => resolveClosedAuxiliarySessionsAfterReturn(current, closedSession));
       activeAuxiliarySessionRef.current = null;
       setActiveAuxiliarySession(null);
       setComposerCaret(Math.min(mainComposerCaretRef.current, draft.length));
