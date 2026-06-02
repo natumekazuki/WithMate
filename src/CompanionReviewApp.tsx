@@ -26,6 +26,7 @@ import {
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
+  resolveAuxiliarySessionDisplayAfterMessageIndex,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
 import type {
@@ -1866,10 +1867,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const displayAfterMessageIndex =
-      currentAuxiliarySession.messages.length === 0
-        ? snapshot.session.messages.length - 1
-        : currentAuxiliarySession.displayAfterMessageIndex;
+    const displayAfterMessageIndex = resolveAuxiliarySessionDisplayAfterMessageIndex({
+      auxiliaryMessageCount: currentAuxiliarySession.messages.length,
+      currentDisplayAfterMessageIndex: currentAuxiliarySession.displayAfterMessageIndex,
+      parentMessageCount: snapshot.session.messages.length,
+    });
     const runningSession = buildRunningAuxiliarySessionTurn({
       session: currentAuxiliarySession,
       userMessage,

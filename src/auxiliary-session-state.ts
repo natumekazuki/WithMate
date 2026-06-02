@@ -170,6 +170,16 @@ export function resolveActiveAuxiliarySessionRefreshResult(input: {
   return input.currentSession;
 }
 
+export function resolveAuxiliarySessionDisplayAfterMessageIndex(input: {
+  auxiliaryMessageCount: number;
+  currentDisplayAfterMessageIndex: number | null;
+  parentMessageCount: number | null;
+}): number | null {
+  return input.auxiliaryMessageCount === 0 && input.parentMessageCount !== null
+    ? input.parentMessageCount - 1
+    : input.currentDisplayAfterMessageIndex;
+}
+
 export function buildRunningAuxiliarySessionTurn(input: {
   session: AuxiliarySession;
   userMessage: string;

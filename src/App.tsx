@@ -134,6 +134,7 @@ import {
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
+  resolveAuxiliarySessionDisplayAfterMessageIndex,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
 import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolution.js";
@@ -2358,10 +2359,11 @@ export default function AgentSessionWindowApp() {
     }
 
     setIsActionDockPinnedExpanded(false);
-    const displayAfterMessageIndex =
-      currentAuxiliarySession.messages.length === 0 && selectedSession
-        ? selectedSession.messages.length - 1
-        : currentAuxiliarySession.displayAfterMessageIndex;
+    const displayAfterMessageIndex = resolveAuxiliarySessionDisplayAfterMessageIndex({
+      auxiliaryMessageCount: currentAuxiliarySession.messages.length,
+      currentDisplayAfterMessageIndex: currentAuxiliarySession.displayAfterMessageIndex,
+      parentMessageCount: selectedSession?.messages.length ?? null,
+    });
     const runningSession = buildRunningAuxiliarySessionTurn({
       session: currentAuxiliarySession,
       userMessage: nextMessage,

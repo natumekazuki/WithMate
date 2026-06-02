@@ -12,6 +12,7 @@ import {
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
+  resolveAuxiliarySessionDisplayAfterMessageIndex,
   resolveEditableActiveAuxiliarySession,
   type AuxiliarySession,
 } from "../../src/auxiliary-session-state.js";
@@ -338,6 +339,33 @@ test("resolveActiveAuxiliarySessionRefreshResult は完了後 refresh の反映�
       sessionId: "aux-other",
     }),
     currentSession,
+  );
+});
+
+test("resolveAuxiliarySessionDisplayAfterMessageIndex は初回 Auxiliary anchor を解決する", () => {
+  assert.equal(
+    resolveAuxiliarySessionDisplayAfterMessageIndex({
+      auxiliaryMessageCount: 0,
+      currentDisplayAfterMessageIndex: null,
+      parentMessageCount: 5,
+    }),
+    4,
+  );
+  assert.equal(
+    resolveAuxiliarySessionDisplayAfterMessageIndex({
+      auxiliaryMessageCount: 1,
+      currentDisplayAfterMessageIndex: 2,
+      parentMessageCount: 5,
+    }),
+    2,
+  );
+  assert.equal(
+    resolveAuxiliarySessionDisplayAfterMessageIndex({
+      auxiliaryMessageCount: 0,
+      currentDisplayAfterMessageIndex: 3,
+      parentMessageCount: null,
+    }),
+    3,
   );
 });
 
