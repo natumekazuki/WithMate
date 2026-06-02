@@ -24,10 +24,9 @@ import {
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildAuxiliaryDraftSaveRequest,
   buildEditableActiveAuxiliarySessionPatch,
-  buildRunningAuxiliarySessionTurn,
+  buildAuxiliarySessionRunningTransition,
   removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
-  resolveAuxiliarySessionDisplayAfterMessageIndex,
   resolveClosedAuxiliarySessionIds,
   resolveClosedAuxiliarySessionsAfterReturn,
   resolveClosedAuxiliarySessionsLoadResult,
@@ -1870,15 +1869,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const displayAfterMessageIndex = resolveAuxiliarySessionDisplayAfterMessageIndex({
-      auxiliaryMessageCount: currentAuxiliarySession.messages.length,
-      currentDisplayAfterMessageIndex: currentAuxiliarySession.displayAfterMessageIndex,
-      parentMessageCount: snapshot.session.messages.length,
-    });
-    const runningSession = buildRunningAuxiliarySessionTurn({
+    const { anchorUpdateSession, runningSession } = buildAuxiliarySessionRunningTransition({
       session: currentAuxiliarySession,
       userMessage,
-      displayAfterMessageIndex,
+      parentMessageCount: snapshot.session.messages.length,
       updatedAt: currentTimestampLabel(),
     });
     activeAuxiliarySessionRef.current = runningSession;
@@ -1890,11 +1884,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setForceComposerBlockedFeedback(false);
 
     try {
-      if (displayAfterMessageIndex !== currentAuxiliarySession.displayAfterMessageIndex) {
-        await withmateApi.updateAuxiliarySession({
-          ...currentAuxiliarySession,
-          displayAfterMessageIndex,
-        });
+      if (anchorUpdateSession) {
+        await withmateApi.updateAuxiliarySession(anchorUpdateSession);
       }
       const saved = await withmateApi.runAuxiliarySessionTurn(currentAuxiliarySession.id, { userMessage });
       activeAuxiliarySessionRef.current = saved;

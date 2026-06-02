@@ -132,10 +132,9 @@ import {
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildAuxiliaryDraftSaveRequest,
   buildEditableActiveAuxiliarySessionPatch,
-  buildRunningAuxiliarySessionTurn,
+  buildAuxiliarySessionRunningTransition,
   removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
-  resolveAuxiliarySessionDisplayAfterMessageIndex,
   resolveClosedAuxiliarySessionIds,
   resolveClosedAuxiliarySessionsAfterReturn,
   resolveClosedAuxiliarySessionsLoadResult,
@@ -2359,15 +2358,10 @@ export default function AgentSessionWindowApp() {
     }
 
     setIsActionDockPinnedExpanded(false);
-    const displayAfterMessageIndex = resolveAuxiliarySessionDisplayAfterMessageIndex({
-      auxiliaryMessageCount: currentAuxiliarySession.messages.length,
-      currentDisplayAfterMessageIndex: currentAuxiliarySession.displayAfterMessageIndex,
-      parentMessageCount: selectedSession?.messages.length ?? null,
-    });
-    const runningSession = buildRunningAuxiliarySessionTurn({
+    const { anchorUpdateSession, runningSession } = buildAuxiliarySessionRunningTransition({
       session: currentAuxiliarySession,
       userMessage: nextMessage,
-      displayAfterMessageIndex,
+      parentMessageCount: selectedSession?.messages.length ?? null,
       updatedAt: currentTimestampLabel(),
     });
     activeAuxiliarySessionRef.current = runningSession;
@@ -2378,11 +2372,8 @@ export default function AgentSessionWindowApp() {
     ));
 
     try {
-      if (displayAfterMessageIndex !== currentAuxiliarySession.displayAfterMessageIndex) {
-        await withmateApi.updateAuxiliarySession({
-          ...currentAuxiliarySession,
-          displayAfterMessageIndex,
-        });
+      if (anchorUpdateSession) {
+        await withmateApi.updateAuxiliarySession(anchorUpdateSession);
       }
       const saved = await withmateApi.runAuxiliarySessionTurn(currentAuxiliarySession.id, { userMessage: nextMessage });
       activeAuxiliarySessionRef.current = saved;

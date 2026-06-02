@@ -10,6 +10,7 @@ import {
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildAuxiliaryDraftSaveRequest,
   buildEditableActiveAuxiliarySessionPatch,
+  buildAuxiliarySessionRunningTransition,
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
@@ -488,4 +489,65 @@ test("buildRunningAuxiliarySessionTurn は実行中 session state を組み立�
       ],
     },
   );
+});
+
+test("buildAuxiliarySessionRunningTransition は初回 anchor update と running state を組み立てる", () => {
+  const session = createAuxiliarySession({
+    composerDraft: "draft text",
+    displayAfterMessageIndex: null,
+    messages: [],
+    updatedAt: "2026-05-30T00:00:00.000Z",
+  });
+
+  assert.deepEqual(
+    buildAuxiliarySessionRunningTransition({
+      session,
+      userMessage: "next message",
+      parentMessageCount: 4,
+      updatedAt: "2026-05-31T00:00:00.000Z",
+    }),
+    {
+      anchorUpdateSession: {
+        ...session,
+        displayAfterMessageIndex: 3,
+      },
+      runningSession: {
+        ...session,
+        runState: "running",
+        composerDraft: "",
+        displayAfterMessageIndex: 3,
+        updatedAt: "2026-05-31T00:00:00.000Z",
+        messages: [{ role: "user", text: "next message" }],
+      },
+    },
+  );
+});
+
+test("buildAuxiliarySessionRunningTransition は既存 anchor では保存用 update を作らない", () => {
+  const session = createAuxiliarySession({
+    composerDraft: "draft text",
+    displayAfterMessageIndex: 2,
+    messages: [{ role: "user", text: "previous" }],
+    updatedAt: "2026-05-30T00:00:00.000Z",
+  });
+
+  const result = buildAuxiliarySessionRunningTransition({
+    session,
+    userMessage: "next message",
+    parentMessageCount: 4,
+    updatedAt: "2026-05-31T00:00:00.000Z",
+  });
+
+  assert.equal(result.anchorUpdateSession, null);
+  assert.deepEqual(result.runningSession, {
+    ...session,
+    runState: "running",
+    composerDraft: "",
+    displayAfterMessageIndex: 2,
+    updatedAt: "2026-05-31T00:00:00.000Z",
+    messages: [
+      { role: "user", text: "previous" },
+      { role: "user", text: "next message" },
+    ],
+  });
 });

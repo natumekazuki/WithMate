@@ -236,6 +236,34 @@ export function buildRunningAuxiliarySessionTurn(input: {
   };
 }
 
+export function buildAuxiliarySessionRunningTransition(input: {
+  session: AuxiliarySession;
+  userMessage: string;
+  parentMessageCount: number | null;
+  updatedAt: string;
+}): {
+  anchorUpdateSession: AuxiliarySession | null;
+  runningSession: AuxiliarySession;
+} {
+  const displayAfterMessageIndex = resolveAuxiliarySessionDisplayAfterMessageIndex({
+    auxiliaryMessageCount: input.session.messages.length,
+    currentDisplayAfterMessageIndex: input.session.displayAfterMessageIndex,
+    parentMessageCount: input.parentMessageCount,
+  });
+
+  return {
+    anchorUpdateSession: displayAfterMessageIndex !== input.session.displayAfterMessageIndex
+      ? { ...input.session, displayAfterMessageIndex }
+      : null,
+    runningSession: buildRunningAuxiliarySessionTurn({
+      session: input.session,
+      userMessage: input.userMessage,
+      displayAfterMessageIndex,
+      updatedAt: input.updatedAt,
+    }),
+  };
+}
+
 export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | null {
   if (!value || typeof value !== "object") {
     return null;
