@@ -110,6 +110,23 @@ export function applyAuxiliarySessionCustomAgentPatch(
   return applyAuxiliarySessionPatch(session, { customAgentName }, updatedAt);
 }
 
+export function buildAuxiliaryDraftSaveRequest(input: {
+  currentSession: AuxiliarySession | null;
+  targetSessionId: string;
+  draft: string;
+  updatedAt: string;
+}): AuxiliarySession | null {
+  if (
+    !input.currentSession
+    || input.currentSession.id !== input.targetSessionId
+    || input.currentSession.composerDraft !== input.draft
+  ) {
+    return null;
+  }
+
+  return applyAuxiliarySessionComposerDraftPatch(input.currentSession, input.draft, input.updatedAt);
+}
+
 export function resolveEditableActiveAuxiliarySession(input: {
   activeSession: AuxiliarySession;
   currentSession: AuxiliarySession | null;

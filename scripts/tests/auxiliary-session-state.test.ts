@@ -8,6 +8,7 @@ import {
   applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionModelSelectionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
+  buildAuxiliaryDraftSaveRequest,
   buildEditableActiveAuxiliarySessionPatch,
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
@@ -195,6 +196,60 @@ test("applyAuxiliarySessionCustomAgentPatch は custom agent と updatedAt だ�
       customAgentName: "planner",
       updatedAt: "2026-01-02T00:00:00.000Z",
     },
+  );
+});
+
+test("buildAuxiliaryDraftSaveRequest は保存すべき draft request を作る", () => {
+  const currentSession = createAuxiliarySession({
+    composerDraft: "draft text",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  assert.deepEqual(
+    buildAuxiliaryDraftSaveRequest({
+      currentSession,
+      targetSessionId: currentSession.id,
+      draft: "draft text",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    }),
+    {
+      ...currentSession,
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    },
+  );
+});
+
+test("buildAuxiliaryDraftSaveRequest は古い draft save を無視する", () => {
+  const currentSession = createAuxiliarySession({
+    composerDraft: "newer draft",
+  });
+
+  assert.equal(
+    buildAuxiliaryDraftSaveRequest({
+      currentSession,
+      targetSessionId: currentSession.id,
+      draft: "stale draft",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    }),
+    null,
+  );
+  assert.equal(
+    buildAuxiliaryDraftSaveRequest({
+      currentSession: createAuxiliarySession({ id: "aux-other", composerDraft: "stale draft" }),
+      targetSessionId: currentSession.id,
+      draft: "stale draft",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    }),
+    null,
+  );
+  assert.equal(
+    buildAuxiliaryDraftSaveRequest({
+      currentSession: null,
+      targetSessionId: currentSession.id,
+      draft: "stale draft",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    }),
+    null,
   );
 });
 

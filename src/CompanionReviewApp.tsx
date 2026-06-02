@@ -22,6 +22,7 @@ import {
   applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionModelSelectionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
+  buildAuxiliaryDraftSaveRequest,
   buildEditableActiveAuxiliarySessionPatch,
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
@@ -1821,12 +1822,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     const saveOperation = auxiliaryDraftSaveQueueRef.current
       .catch(() => undefined)
       .then(async () => {
-        const current = activeAuxiliarySessionRef.current;
-        if (!current || current.id !== nextSession.id || current.composerDraft !== value) {
+        const request = buildAuxiliaryDraftSaveRequest({
+          currentSession: activeAuxiliarySessionRef.current,
+          targetSessionId: nextSession.id,
+          draft: value,
+          updatedAt: currentTimestampLabel(),
+        });
+        if (!request) {
           return null;
         }
 
-        const request = applyAuxiliarySessionComposerDraftPatch(current, value, currentTimestampLabel());
         const saved = await withmateApi.updateAuxiliarySession(request);
         return { request, saved };
       });
