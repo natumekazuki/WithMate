@@ -63,9 +63,9 @@ import {
 import { buildMainAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import {
-  AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   buildCreateAuxiliarySessionInput,
   buildAuxiliaryLaunchProviderItems,
+  resolveAuxiliaryLaunchStartError,
 } from "./chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
 import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
@@ -2225,8 +2225,15 @@ export default function AgentSessionWindowApp() {
     if (!withmateApi || !selectedSession || isAuxiliaryActionPending) {
       return;
     }
-    if (!auxiliaryLaunchProviderId) {
-      setAuxiliaryLaunchStartError(new Error(AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK));
+    const startError = resolveAuxiliaryLaunchStartError({
+      providerId: auxiliaryLaunchProviderId,
+    });
+    if (startError) {
+      setAuxiliaryLaunchStartError(startError);
+      return;
+    }
+    const launchProviderId = auxiliaryLaunchProviderId;
+    if (!launchProviderId) {
       return;
     }
 
@@ -2240,10 +2247,10 @@ export default function AgentSessionWindowApp() {
     setIsAuxiliaryActionPending(true);
     try {
       const launchSelectionSessions = await withmateApi.listSessionSummaries().catch(() => sessions);
-      const lastUsedSelection = resolveLastUsedSessionSelection(launchSelectionSessions, auxiliaryLaunchProviderId);
+      const lastUsedSelection = resolveLastUsedSessionSelection(launchSelectionSessions, launchProviderId);
       const session = await withmateApi.createAuxiliarySession(buildCreateAuxiliarySessionInput({
         parentSessionId,
-        provider: auxiliaryLaunchProviderId,
+        provider: launchProviderId,
         defaults: lastUsedSelection,
       }));
       setActiveAuxiliarySession(session);

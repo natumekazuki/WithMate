@@ -103,9 +103,9 @@ import {
   buildActionDockRuntimeState,
 } from "./action-dock-state.js";
 import {
-  AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   buildCreateAuxiliarySessionInput,
   buildAuxiliaryLaunchProviderItems,
+  resolveAuxiliaryLaunchStartError,
 } from "./chat/auxiliary-launch-state.js";
 import { buildAuxiliaryAwareSendOrCancelHandler } from "./chat/send-or-cancel.js";
 import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-runtime-option-routing.js";
@@ -1744,12 +1744,18 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     if (!withmateApi || !snapshot || isAuxiliaryActionPending) {
       return;
     }
-    if (operationRunning || isSelectedSessionRunning || snapshot.session.status !== "active") {
-      setAuxiliaryLaunchStartError(new Error("Companion が操作中のため Auxiliary Session を開始できないよ。"));
+    const startError = resolveAuxiliaryLaunchStartError({
+      providerId: auxiliaryLaunchProviderId,
+      blockedFeedback: operationRunning || isSelectedSessionRunning || snapshot.session.status !== "active"
+        ? "Companion が操作中のため Auxiliary Session を開始できないよ。"
+        : null,
+    });
+    if (startError) {
+      setAuxiliaryLaunchStartError(startError);
       return;
     }
-    if (!auxiliaryLaunchProviderId) {
-      setAuxiliaryLaunchStartError(new Error(AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK));
+    const launchProviderId = auxiliaryLaunchProviderId;
+    if (!launchProviderId) {
       return;
     }
 
@@ -1761,7 +1767,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     const canApplyLoadResult = () => auxiliaryLoadRevisionRef.current === loadRevision;
     setIsAuxiliaryActionPending(true);
     try {
-      const launchDefaults = auxiliaryLaunchProviderId === snapshot.session.provider
+      const launchDefaults = launchProviderId === snapshot.session.provider
         ? {
             model: selectedModel,
             reasoningEffort: selectedReasoningEffort,
@@ -1770,7 +1776,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         : null;
       const session = await withmateApi.createAuxiliarySession(buildCreateAuxiliarySessionInput({
         parentSessionId,
-        provider: auxiliaryLaunchProviderId,
+        provider: launchProviderId,
         defaults: launchDefaults,
       }));
       activeAuxiliarySessionRef.current = session;

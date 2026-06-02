@@ -38,6 +38,20 @@ export function buildCreateAuxiliarySessionInput(input: {
   };
 }
 
+export function resolveAuxiliaryLaunchStartError(input: {
+  providerId: string | null | undefined;
+  blockedFeedback?: string | null;
+}): Error | null {
+  if (input.blockedFeedback) {
+    return new Error(input.blockedFeedback);
+  }
+  if (!input.providerId) {
+    return new Error(AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK);
+  }
+
+  return null;
+}
+
 export function resolveAuxiliaryLaunchProviderId(
   providers: readonly AuxiliaryLaunchProviderItem[],
   selectedProviderId: string | null | undefined,

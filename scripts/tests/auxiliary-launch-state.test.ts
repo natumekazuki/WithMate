@@ -15,6 +15,7 @@ import {
   resolveAuxiliaryLaunchProviderSelectionState,
   resolveAuxiliaryLaunchInitialState,
   resolveAuxiliaryLaunchProviderId,
+  resolveAuxiliaryLaunchStartError,
   resolveAuxiliaryLaunchStartErrorState,
   resolveAuxiliaryLaunchStartErrorFeedback,
 } from "../../src/chat/auxiliary-launch-state.js";
@@ -91,6 +92,33 @@ describe("auxiliary-launch-state", () => {
         reasoningEffort: undefined,
         customAgentName: undefined,
       },
+    );
+  });
+
+  it("start error は blocked feedback を provider 未選択より優先する", () => {
+    const error = resolveAuxiliaryLaunchStartError({
+      providerId: null,
+      blockedFeedback: "blocked",
+    });
+
+    assert.equal(error?.message, "blocked");
+  });
+
+  it("start error は provider 未選択 error を返す", () => {
+    const error = resolveAuxiliaryLaunchStartError({
+      providerId: null,
+    });
+
+    assert.equal(error?.message, AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK);
+  });
+
+  it("start error は開始可能なとき null を返す", () => {
+    assert.equal(
+      resolveAuxiliaryLaunchStartError({
+        providerId: "codex",
+        blockedFeedback: null,
+      }),
+      null,
     );
   });
 
