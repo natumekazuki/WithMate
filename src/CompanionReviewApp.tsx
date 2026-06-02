@@ -73,7 +73,10 @@ import { buildCompanionGroupMonitorEntries } from "./home/home-session-projectio
 import { SessionHeader } from "./session-components.js";
 import { ChatHeaderHandle, ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
-import { createAuxiliaryHeaderActions } from "./chat/chat-header-actions.js";
+import {
+  createAuxiliaryHeaderActions,
+  resolveAuxiliaryHeaderActionState,
+} from "./chat/chat-header-actions.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
 import { COMPANION_PENDING_MESSAGE_TEXT } from "./chat/pending-run-indicator.js";
@@ -2723,10 +2726,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   const auxiliaryHeaderActions = snapshot
     ? createAuxiliaryHeaderActions({
-        isActive: !!activeAuxiliarySession,
-        showIdleLabel: true,
-        startDisabled: isAuxiliaryActionPending || operationRunning || isSelectedSessionRunning || snapshot.session.status !== "active",
-        returnDisabled: isAuxiliaryActionPending || activeAuxiliarySession?.runState === "running",
+        ...resolveAuxiliaryHeaderActionState({
+          isActive: !!activeAuxiliarySession,
+          showIdleLabel: true,
+          isActionPending: isAuxiliaryActionPending,
+          isStartBlocked: operationRunning || isSelectedSessionRunning || snapshot.session.status !== "active",
+          activeRunState: activeAuxiliarySession?.runState,
+        }),
         onStart: handleOpenAuxiliaryLaunchDialog,
         onReturnToMain: () => void handleReturnToMainSession(),
       })

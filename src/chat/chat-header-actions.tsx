@@ -18,6 +18,19 @@ export type AuxiliaryHeaderActionsOptions = {
   onReturnToMain: () => void;
 };
 
+export type AuxiliaryHeaderActionStateInput = {
+  isActive: boolean;
+  isActionPending: boolean;
+  isStartBlocked: boolean;
+  activeRunState?: "idle" | "running" | "error" | null;
+  showIdleLabel?: boolean;
+};
+
+export type AuxiliaryHeaderActionState = Pick<
+  AuxiliaryHeaderActionsOptions,
+  "isActive" | "showIdleLabel" | "startDisabled" | "returnDisabled"
+>;
+
 export type LiveSessionHeaderPropsInput = {
   taskTitle: string;
   isEditingTitle: boolean;
@@ -95,6 +108,15 @@ export function createAuxiliaryHeaderActions({
       )}
     </div>
   );
+}
+
+export function resolveAuxiliaryHeaderActionState(input: AuxiliaryHeaderActionStateInput): AuxiliaryHeaderActionState {
+  return {
+    isActive: input.isActive,
+    showIdleLabel: input.showIdleLabel,
+    startDisabled: input.isActionPending || input.isStartBlocked,
+    returnDisabled: input.isActionPending || input.activeRunState === "running",
+  };
 }
 
 export function buildLiveSessionHeaderProps(input: LiveSessionHeaderPropsInput): SessionHeaderProps {

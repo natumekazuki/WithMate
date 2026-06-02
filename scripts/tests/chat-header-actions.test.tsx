@@ -6,6 +6,7 @@ import {
   buildLiveSessionHeaderProps,
   createAuxiliaryHeaderActions,
   createWorkspaceExplorerAction,
+  resolveAuxiliaryHeaderActionState,
 } from "../../src/chat/chat-header-actions.js";
 
 const noop = () => {};
@@ -65,6 +66,52 @@ test("createAuxiliaryHeaderActions は idle label を任意に表示する", () 
 
   assert.match(html, /<span class="session-window-control-group-label">Auxiliary<\/span>/);
   assert.match(html, />Auxiliary<\/button>/);
+});
+
+test("resolveAuxiliaryHeaderActionState は start/return disabled state を解決する", () => {
+  assert.deepEqual(
+    resolveAuxiliaryHeaderActionState({
+      isActive: true,
+      showIdleLabel: true,
+      isActionPending: false,
+      isStartBlocked: false,
+      activeRunState: "running",
+    }),
+    {
+      isActive: true,
+      showIdleLabel: true,
+      startDisabled: false,
+      returnDisabled: true,
+    },
+  );
+  assert.deepEqual(
+    resolveAuxiliaryHeaderActionState({
+      isActive: false,
+      isActionPending: true,
+      isStartBlocked: false,
+      activeRunState: null,
+    }),
+    {
+      isActive: false,
+      showIdleLabel: undefined,
+      startDisabled: true,
+      returnDisabled: true,
+    },
+  );
+  assert.deepEqual(
+    resolveAuxiliaryHeaderActionState({
+      isActive: false,
+      isActionPending: false,
+      isStartBlocked: true,
+      activeRunState: "idle",
+    }),
+    {
+      isActive: false,
+      showIdleLabel: undefined,
+      startDisabled: true,
+      returnDisabled: false,
+    },
+  );
 });
 
 test("buildLiveSessionHeaderProps は live session header の共通 action を組み立てる", () => {

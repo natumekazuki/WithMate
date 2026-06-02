@@ -69,7 +69,10 @@ import {
 } from "./chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
 import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
-import { createAuxiliaryHeaderActions } from "./chat/chat-header-actions.js";
+import {
+  createAuxiliaryHeaderActions,
+  resolveAuxiliaryHeaderActionState,
+} from "./chat/chat-header-actions.js";
 import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,
@@ -2870,9 +2873,12 @@ export default function AgentSessionWindowApp() {
     ? getComposerSendButtonTitle(auxiliaryComposerSendability)
     : composerSendButtonTitle;
   const auxiliaryHeaderActions = createAuxiliaryHeaderActions({
-    isActive: !!activeAuxiliarySession,
-    startDisabled: isAuxiliaryActionPending || isSelectedSessionRunning || isSelectedSessionReadOnly,
-    returnDisabled: isAuxiliaryActionPending || activeAuxiliarySession?.runState === "running",
+    ...resolveAuxiliaryHeaderActionState({
+      isActive: !!activeAuxiliarySession,
+      isActionPending: isAuxiliaryActionPending,
+      isStartBlocked: isSelectedSessionRunning || isSelectedSessionReadOnly,
+      activeRunState: activeAuxiliarySession?.runState,
+    }),
     onStart: handleOpenAuxiliaryLaunchDialog,
     onReturnToMain: () => void handleReturnToMainSession(),
   });
