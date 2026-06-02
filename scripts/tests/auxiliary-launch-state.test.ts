@@ -7,6 +7,7 @@ import {
   AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK,
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   AUXILIARY_LAUNCH_START_FAILED_FEEDBACK,
+  buildCreateAuxiliarySessionInput,
   buildAuxiliaryLaunchProviderItems,
   resolveAuxiliaryLaunchFeedbackResetState,
   resolveAuxiliaryLaunchOpenState,
@@ -53,6 +54,44 @@ describe("auxiliary-launch-state", () => {
       { id: "b", label: "B" },
       { id: "d", label: "D" },
     ]);
+  });
+
+  it("create input は parent/provider と launch defaults を引き継ぐ", () => {
+    assert.deepEqual(
+      buildCreateAuxiliarySessionInput({
+        parentSessionId: "session-1",
+        provider: "codex",
+        defaults: {
+          model: "gpt-5.4-mini",
+          reasoningEffort: "high",
+          customAgentName: "planner",
+        },
+      }),
+      {
+        parentSessionId: "session-1",
+        provider: "codex",
+        model: "gpt-5.4-mini",
+        reasoningEffort: "high",
+        customAgentName: "planner",
+      },
+    );
+  });
+
+  it("create input は defaults がないとき optional field を undefined にする", () => {
+    assert.deepEqual(
+      buildCreateAuxiliarySessionInput({
+        parentSessionId: "session-1",
+        provider: "codex",
+        defaults: null,
+      }),
+      {
+        parentSessionId: "session-1",
+        provider: "codex",
+        model: undefined,
+        reasoningEffort: undefined,
+        customAgentName: undefined,
+      },
+    );
   });
 
   it("resolve 初期 provider は current provider を優先し、なければ先頭を使う", () => {

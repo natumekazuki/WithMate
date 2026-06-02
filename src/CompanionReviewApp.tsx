@@ -104,6 +104,7 @@ import {
 } from "./action-dock-state.js";
 import {
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
+  buildCreateAuxiliarySessionInput,
   buildAuxiliaryLaunchProviderItems,
 } from "./chat/auxiliary-launch-state.js";
 import { buildAuxiliaryAwareSendOrCancelHandler } from "./chat/send-or-cancel.js";
@@ -1760,13 +1761,18 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     const canApplyLoadResult = () => auxiliaryLoadRevisionRef.current === loadRevision;
     setIsAuxiliaryActionPending(true);
     try {
-      const session = await withmateApi.createAuxiliarySession({
+      const launchDefaults = auxiliaryLaunchProviderId === snapshot.session.provider
+        ? {
+            model: selectedModel,
+            reasoningEffort: selectedReasoningEffort,
+            customAgentName: snapshot.session.customAgentName,
+          }
+        : null;
+      const session = await withmateApi.createAuxiliarySession(buildCreateAuxiliarySessionInput({
         parentSessionId,
         provider: auxiliaryLaunchProviderId,
-        model: auxiliaryLaunchProviderId === snapshot.session.provider ? selectedModel : undefined,
-        reasoningEffort: auxiliaryLaunchProviderId === snapshot.session.provider ? selectedReasoningEffort : undefined,
-        customAgentName: auxiliaryLaunchProviderId === snapshot.session.provider ? snapshot.session.customAgentName : undefined,
-      });
+        defaults: launchDefaults,
+      }));
       activeAuxiliarySessionRef.current = session;
       setActiveAuxiliarySession(session);
       setIsActionDockPinnedExpanded(true);

@@ -1,4 +1,5 @@
 import type { ModelCatalogProvider } from "../model-catalog.js";
+import type { CreateAuxiliarySessionInput } from "../auxiliary-session-state.js";
 import { resolveSelectedLaunchProviderId } from "../launch/launch-provider-selection.js";
 import { LAUNCH_EMPTY_PROVIDER_MESSAGE, LAUNCH_NO_PROVIDER_SELECTED_MESSAGE } from "../launch/launch-feedback.js";
 
@@ -16,6 +17,25 @@ export function buildAuxiliaryLaunchProviderItems(
   canUseProvider: (provider: ModelCatalogProvider) => boolean,
 ): AuxiliaryLaunchProviderItem[] {
   return providers.filter(canUseProvider).map((provider) => ({ id: provider.id, label: provider.label }));
+}
+
+export type AuxiliaryLaunchSessionDefaults = Pick<
+  CreateAuxiliarySessionInput,
+  "model" | "reasoningEffort" | "customAgentName"
+>;
+
+export function buildCreateAuxiliarySessionInput(input: {
+  parentSessionId: string;
+  provider: string;
+  defaults?: Partial<AuxiliaryLaunchSessionDefaults> | null;
+}): CreateAuxiliarySessionInput {
+  return {
+    parentSessionId: input.parentSessionId,
+    provider: input.provider,
+    model: input.defaults?.model,
+    reasoningEffort: input.defaults?.reasoningEffort,
+    customAgentName: input.defaults?.customAgentName,
+  };
 }
 
 export function resolveAuxiliaryLaunchProviderId(

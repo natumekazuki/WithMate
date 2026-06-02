@@ -64,6 +64,7 @@ import { buildMainAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import {
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
+  buildCreateAuxiliarySessionInput,
   buildAuxiliaryLaunchProviderItems,
 } from "./chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
@@ -2240,13 +2241,11 @@ export default function AgentSessionWindowApp() {
     try {
       const launchSelectionSessions = await withmateApi.listSessionSummaries().catch(() => sessions);
       const lastUsedSelection = resolveLastUsedSessionSelection(launchSelectionSessions, auxiliaryLaunchProviderId);
-      const session = await withmateApi.createAuxiliarySession({
+      const session = await withmateApi.createAuxiliarySession(buildCreateAuxiliarySessionInput({
         parentSessionId,
         provider: auxiliaryLaunchProviderId,
-        model: lastUsedSelection?.model,
-        reasoningEffort: lastUsedSelection?.reasoningEffort,
-        customAgentName: lastUsedSelection?.customAgentName,
-      });
+        defaults: lastUsedSelection,
+      }));
       setActiveAuxiliarySession(session);
       setIsActionDockPinnedExpanded(true);
       setForceComposerBlockedFeedback(false);
