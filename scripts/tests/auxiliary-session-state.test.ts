@@ -15,6 +15,7 @@ import {
   removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveAuxiliarySessionDisplayAfterMessageIndex,
+  resolveAuxiliarySessionSendTarget,
   resolveClosedAuxiliarySessionIds,
   resolveClosedAuxiliarySessionsAfterReturn,
   resolveClosedAuxiliarySessionsLoadResult,
@@ -251,6 +252,57 @@ test("buildAuxiliaryDraftSaveRequest は古い draft save を無視する", () =
       updatedAt: "2026-01-02T00:00:00.000Z",
     }),
     null,
+  );
+});
+
+test("resolveAuxiliarySessionSendTarget は保存後の送信対象 session を返す", () => {
+  const activeSession = createAuxiliarySession({ title: "active" });
+  const currentSession = createAuxiliarySession({ title: "current" });
+
+  assert.deepEqual(
+    resolveAuxiliarySessionSendTarget({
+      activeSession,
+      currentSession: null,
+    }),
+    {
+      blockedReason: null,
+      session: activeSession,
+    },
+  );
+  assert.deepEqual(
+    resolveAuxiliarySessionSendTarget({
+      activeSession,
+      currentSession,
+    }),
+    {
+      blockedReason: null,
+      session: currentSession,
+    },
+  );
+});
+
+test("resolveAuxiliarySessionSendTarget は session 変更と running を区別する", () => {
+  const activeSession = createAuxiliarySession();
+
+  assert.deepEqual(
+    resolveAuxiliarySessionSendTarget({
+      activeSession,
+      currentSession: createAuxiliarySession({ id: "aux-other" }),
+    }),
+    {
+      blockedReason: "session-changed",
+      session: null,
+    },
+  );
+  assert.deepEqual(
+    resolveAuxiliarySessionSendTarget({
+      activeSession,
+      currentSession: createAuxiliarySession({ runState: "running" }),
+    }),
+    {
+      blockedReason: "running",
+      session: null,
+    },
   );
 });
 

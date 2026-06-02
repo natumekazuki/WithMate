@@ -27,6 +27,7 @@ import {
   buildAuxiliarySessionRunningTransition,
   removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
+  resolveAuxiliarySessionSendTarget,
   resolveClosedAuxiliarySessionIds,
   resolveClosedAuxiliarySessionsAfterReturn,
   resolveClosedAuxiliarySessionsLoadResult,
@@ -1879,10 +1880,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
 
     await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
-    const currentAuxiliarySession = activeAuxiliarySessionRef.current ?? activeAuxiliarySession;
-    if (currentAuxiliarySession.id !== activeAuxiliarySession.id || currentAuxiliarySession.runState === "running") {
+    const sendTarget = resolveAuxiliarySessionSendTarget({
+      activeSession: activeAuxiliarySession,
+      currentSession: activeAuxiliarySessionRef.current,
+    });
+    if (!sendTarget.session) {
       return;
     }
+    const currentAuxiliarySession = sendTarget.session;
 
     const { anchorUpdateSession, runningSession } = buildAuxiliarySessionRunningTransition({
       session: currentAuxiliarySession,

@@ -127,6 +127,35 @@ export function buildAuxiliaryDraftSaveRequest(input: {
   return applyAuxiliarySessionComposerDraftPatch(input.currentSession, input.draft, input.updatedAt);
 }
 
+export type AuxiliarySessionSendTargetResolution = {
+  blockedReason: "session-changed" | "running" | null;
+  session: AuxiliarySession | null;
+};
+
+export function resolveAuxiliarySessionSendTarget(input: {
+  activeSession: AuxiliarySession;
+  currentSession: AuxiliarySession | null;
+}): AuxiliarySessionSendTargetResolution {
+  const currentSession = input.currentSession ?? input.activeSession;
+  if (currentSession.id !== input.activeSession.id) {
+    return {
+      blockedReason: "session-changed",
+      session: null,
+    };
+  }
+  if (currentSession.runState === "running") {
+    return {
+      blockedReason: "running",
+      session: null,
+    };
+  }
+
+  return {
+    blockedReason: null,
+    session: currentSession,
+  };
+}
+
 export function resolveEditableActiveAuxiliarySession(input: {
   activeSession: AuxiliarySession;
   currentSession: AuxiliarySession | null;

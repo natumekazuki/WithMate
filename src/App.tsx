@@ -139,6 +139,7 @@ import {
   buildAuxiliarySessionRunningTransition,
   removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
+  resolveAuxiliarySessionSendTarget,
   resolveClosedAuxiliarySessionIds,
   resolveClosedAuxiliarySessionsAfterReturn,
   resolveClosedAuxiliarySessionsLoadResult,
@@ -2358,13 +2359,17 @@ export default function AgentSessionWindowApp() {
     }
 
     await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
-    const currentAuxiliarySession = activeAuxiliarySessionRef.current ?? activeAuxiliarySession;
-    if (currentAuxiliarySession.id !== activeAuxiliarySession.id) {
+    const sendTarget = resolveAuxiliarySessionSendTarget({
+      activeSession: activeAuxiliarySession,
+      currentSession: activeAuxiliarySessionRef.current,
+    });
+    if (!sendTarget.session) {
+      if (sendTarget.blockedReason === "running") {
+        throw new Error("Auxiliary Session はまだ実行中だよ。");
+      }
       return;
     }
-    if (currentAuxiliarySession.runState === "running") {
-      throw new Error("Auxiliary Session はまだ実行中だよ。");
-    }
+    const currentAuxiliarySession = sendTarget.session;
 
     setIsActionDockPinnedExpanded(false);
     const { anchorUpdateSession, runningSession } = buildAuxiliarySessionRunningTransition({
