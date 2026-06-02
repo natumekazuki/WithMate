@@ -138,6 +138,38 @@ export function buildEditableActiveAuxiliarySessionPatch(input: {
   return input.recipe(currentSession);
 }
 
+export function resolveActiveAuxiliarySessionRefreshResult(input: {
+  currentSession: AuxiliarySession | null;
+  savedSession: AuxiliarySession | null;
+  sessionId: string;
+}): AuxiliarySession | null {
+  if (input.currentSession?.id !== input.sessionId) {
+    return input.currentSession;
+  }
+
+  if (
+    input.currentSession.runState === "running"
+    && input.savedSession
+    && input.savedSession.runState !== "running"
+    && (
+      input.savedSession.messages.length < input.currentSession.messages.length
+      || input.savedSession.updatedAt < input.currentSession.updatedAt
+    )
+  ) {
+    return input.currentSession;
+  }
+
+  if (
+    !input.savedSession
+    || input.savedSession.runState !== "running"
+    || input.currentSession.runState !== "running"
+  ) {
+    return input.savedSession;
+  }
+
+  return input.currentSession;
+}
+
 export function buildRunningAuxiliarySessionTurn(input: {
   session: AuxiliarySession;
   userMessage: string;

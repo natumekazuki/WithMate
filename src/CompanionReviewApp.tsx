@@ -25,6 +25,7 @@ import {
   buildEditableActiveAuxiliarySessionPatch,
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
+  resolveActiveAuxiliarySessionRefreshResult,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
 import type {
@@ -604,15 +605,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         }
 
         setActiveAuxiliarySession((current) => {
-          if (current?.id !== updatedSessionId) {
-            return current;
-          }
-          if (!saved || saved.runState !== "running" || current.runState !== "running") {
-            activeAuxiliarySessionRef.current = saved;
-            return saved;
+          const nextSession = resolveActiveAuxiliarySessionRefreshResult({
+            currentSession: current,
+            savedSession: saved,
+            sessionId: updatedSessionId,
+          });
+          if (nextSession !== current) {
+            activeAuxiliarySessionRef.current = nextSession;
           }
 
-          return current;
+          return nextSession;
         });
       }).catch(() => undefined);
     };

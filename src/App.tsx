@@ -133,6 +133,7 @@ import {
   buildEditableActiveAuxiliarySessionPatch,
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
+  resolveActiveAuxiliarySessionRefreshResult,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
 import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolution.js";
@@ -994,16 +995,16 @@ export default function AgentSessionWindowApp() {
         }
 
         setActiveAuxiliarySession((current) => {
-          if (current?.id !== sessionId) {
-            return current;
+          const nextSession = resolveActiveAuxiliarySessionRefreshResult({
+            currentSession: current,
+            savedSession: saved,
+            sessionId,
+          });
+          if (nextSession !== current) {
+            activeAuxiliarySessionRef.current = nextSession;
           }
 
-          if (!saved || saved.runState !== "running" || current.runState !== "running") {
-            activeAuxiliarySessionRef.current = saved;
-            return saved;
-          }
-
-          return current;
+          return nextSession;
         });
       }).catch((error) => {
         console.error(error);

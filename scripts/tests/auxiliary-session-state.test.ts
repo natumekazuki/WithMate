@@ -11,6 +11,7 @@ import {
   buildEditableActiveAuxiliarySessionPatch,
   buildRunningAuxiliarySessionTurn,
   removeAuxiliarySessionAdditionalDirectory,
+  resolveActiveAuxiliarySessionRefreshResult,
   resolveEditableActiveAuxiliarySession,
   type AuxiliarySession,
 } from "../../src/auxiliary-session-state.js";
@@ -257,6 +258,86 @@ test("buildEditableActiveAuxiliarySessionPatch は保存対象 session に recip
       recipe: (current) => ({ ...current, title: "next" }),
     }),
     null,
+  );
+});
+
+test("resolveActiveAuxiliarySessionRefreshResult は完了後 refresh の反映先を解決する", () => {
+  const currentSession = createAuxiliarySession({
+    runState: "running",
+    title: "optimistic",
+    messages: [{ role: "user", text: "sent" }],
+    updatedAt: "2026-01-02T00:00:00.000Z",
+  });
+  const savedIdleSession = createAuxiliarySession({
+    runState: "idle",
+    title: "saved",
+    messages: [
+      { role: "user", text: "sent" },
+      { role: "assistant", text: "done" },
+    ],
+    updatedAt: "2026-01-03T00:00:00.000Z",
+  });
+  const staleSavedIdleSession = createAuxiliarySession({
+    runState: "idle",
+    title: "stale saved",
+    messages: [],
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const staleTimestampSavedIdleSession = createAuxiliarySession({
+    runState: "idle",
+    title: "stale timestamp",
+    messages: [{ role: "user", text: "sent" }],
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const savedRunningSession = createAuxiliarySession({ runState: "running", title: "saved running" });
+
+  assert.equal(
+    resolveActiveAuxiliarySessionRefreshResult({
+      currentSession,
+      savedSession: savedRunningSession,
+      sessionId: currentSession.id,
+    }),
+    currentSession,
+  );
+  assert.equal(
+    resolveActiveAuxiliarySessionRefreshResult({
+      currentSession,
+      savedSession: savedIdleSession,
+      sessionId: currentSession.id,
+    }),
+    savedIdleSession,
+  );
+  assert.equal(
+    resolveActiveAuxiliarySessionRefreshResult({
+      currentSession,
+      savedSession: staleSavedIdleSession,
+      sessionId: currentSession.id,
+    }),
+    currentSession,
+  );
+  assert.equal(
+    resolveActiveAuxiliarySessionRefreshResult({
+      currentSession,
+      savedSession: staleTimestampSavedIdleSession,
+      sessionId: currentSession.id,
+    }),
+    currentSession,
+  );
+  assert.equal(
+    resolveActiveAuxiliarySessionRefreshResult({
+      currentSession,
+      savedSession: null,
+      sessionId: currentSession.id,
+    }),
+    null,
+  );
+  assert.equal(
+    resolveActiveAuxiliarySessionRefreshResult({
+      currentSession,
+      savedSession: savedIdleSession,
+      sessionId: "aux-other",
+    }),
+    currentSession,
   );
 });
 
