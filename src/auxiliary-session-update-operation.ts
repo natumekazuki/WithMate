@@ -32,6 +32,15 @@ export function enqueueAuxiliarySessionSaveOperation<T>(
   };
 }
 
+export function enqueueAuxiliarySessionSaveWithQueue<T>(
+  queueRef: { current: Promise<void> },
+  operation: () => Promise<T>,
+): Promise<T> {
+  const saveOperation = enqueueAuxiliarySessionSaveOperation(queueRef.current, operation);
+  queueRef.current = saveOperation.queue;
+  return saveOperation.operation;
+}
+
 export async function runAuxiliarySessionUpdateOperation(input: {
   activeSession: AuxiliarySession;
   currentSession: AuxiliarySession | null;
@@ -112,12 +121,10 @@ export async function runGuardedAuxiliarySessionUpdate(input: {
       input.applyActiveSession(rollbackSession);
     },
     saveAuxiliarySession: (session) => {
-      const saveOperation = enqueueAuxiliarySessionSaveOperation(
-        input.sessionSaveQueue.current,
+      return enqueueAuxiliarySessionSaveWithQueue(
+        input.sessionSaveQueue,
         () => input.saveAuxiliarySession(session),
       );
-      input.sessionSaveQueue.current = saveOperation.queue;
-      return saveOperation.operation;
     },
   });
   if (!result) {

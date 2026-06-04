@@ -178,7 +178,7 @@ import {
   scheduleAuxiliaryDraftSaveOperation,
 } from "./auxiliary-draft-save-context.js";
 import {
-  enqueueAuxiliarySessionSaveOperation,
+  enqueueAuxiliarySessionSaveWithQueue,
   runGuardedAuxiliarySessionUpdate,
 } from "./auxiliary-session-update-operation.js";
 import {
@@ -2316,12 +2316,10 @@ export default function AgentSessionWindowApp() {
       draftSaveQueue: auxiliaryDraftSaveQueueRef.current,
       getCurrentSession: () => activeAuxiliarySessionRef.current,
       saveAuxiliarySession: (request) => {
-        const draftSaveOperation = enqueueAuxiliarySessionSaveOperation(
-          auxiliarySessionSaveQueueRef.current,
+        return enqueueAuxiliarySessionSaveWithQueue(
+          auxiliarySessionSaveQueueRef,
           () => withmateApi.updateAuxiliarySession(request),
         );
-        auxiliarySessionSaveQueueRef.current = draftSaveOperation.queue;
-        return draftSaveOperation.operation;
       },
     });
     const { nextSession, saveOperation } = draftSave;
@@ -2394,12 +2392,10 @@ export default function AgentSessionWindowApp() {
 
     try {
       if (anchorUpdateSession) {
-        const anchorSaveOperation = enqueueAuxiliarySessionSaveOperation(
-          auxiliarySessionSaveQueueRef.current,
+        await enqueueAuxiliarySessionSaveWithQueue(
+          auxiliarySessionSaveQueueRef,
           () => withmateApi.updateAuxiliarySession(anchorUpdateSession),
         );
-        auxiliarySessionSaveQueueRef.current = anchorSaveOperation.queue;
-        await anchorSaveOperation.operation;
       }
       const saved = await withmateApi.runAuxiliarySessionTurn(currentAuxiliarySession.id, { userMessage: nextMessage });
       if (

@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   enqueueAuxiliarySessionSaveOperation,
+  enqueueAuxiliarySessionSaveWithQueue,
   resolveAuxiliarySessionRollbackSession,
   runGuardedAuxiliarySessionUpdate,
   runAuxiliarySessionUpdateOperation,
@@ -714,5 +715,37 @@ describe("enqueueAuxiliarySessionSaveOperation", () => {
     second.resolve(makeAuxiliarySession({ updatedAt: "second" }));
     assert.equal((await secondSave.operation).updatedAt, "second");
     await queue;
+  });
+});
+
+describe("enqueueAuxiliarySessionSaveWithQueue", () => {
+  it("queue ref を更新しながら保存 operation を queue 順に実行する", async () => {
+    const queueRef = { current: Promise.resolve() };
+    const events: string[] = [];
+    const first = createDeferredSave();
+    const second = createDeferredSave();
+
+    const firstOperation = enqueueAuxiliarySessionSaveWithQueue(queueRef, () => {
+      events.push("start:first");
+      return first.promise;
+    });
+    const queueAfterFirst = queueRef.current;
+    const secondOperation = enqueueAuxiliarySessionSaveWithQueue(queueRef, () => {
+      events.push("start:second");
+      return second.promise;
+    });
+
+    assert.notEqual(queueRef.current, queueAfterFirst);
+    await flushQueuedOperationStart();
+    assert.deepEqual(events, ["start:first"]);
+
+    first.resolve(makeAuxiliarySession({ updatedAt: "first" }));
+    assert.equal((await firstOperation).updatedAt, "first");
+    await flushQueuedOperationStart();
+    assert.deepEqual(events, ["start:first", "start:second"]);
+
+    second.resolve(makeAuxiliarySession({ updatedAt: "second" }));
+    assert.equal((await secondOperation).updatedAt, "second");
+    await queueRef.current;
   });
 });
