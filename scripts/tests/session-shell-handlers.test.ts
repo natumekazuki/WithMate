@@ -8,6 +8,7 @@ import {
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
   applyExclusiveComposerPickerToggle,
+  applyHeaderExpandedToggleCommand,
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
   resolveHeaderExpandedToggle,
@@ -27,6 +28,28 @@ describe("resolveHeaderExpandedToggle", () => {
     assert.equal(resolveHeaderExpandedToggle(true, true), true);
     assert.equal(resolveHeaderExpandedToggle(false, false), true);
     assert.equal(resolveHeaderExpandedToggle(true, false), false);
+  });
+});
+
+describe("applyHeaderExpandedToggleCommand", () => {
+  it("title 編集中でなければ header 展開状態を反転し、編集中は維持する", () => {
+    let expanded = false;
+
+    applyHeaderExpandedToggleCommand({
+      isEditingTitle: false,
+      setHeaderExpanded: (updater) => {
+        expanded = updater(expanded);
+      },
+    });
+    assert.equal(expanded, true);
+
+    applyHeaderExpandedToggleCommand({
+      isEditingTitle: true,
+      setHeaderExpanded: (updater) => {
+        expanded = updater(expanded);
+      },
+    });
+    assert.equal(expanded, true);
   });
 });
 

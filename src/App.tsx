@@ -193,9 +193,9 @@ import {
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
   applyExclusiveComposerPickerToggle,
+  applyHeaderExpandedToggleCommand,
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
-  resolveHeaderExpandedToggle,
   toggleExpandedArtifactState,
 } from "./chat/session-shell-handlers.js";
 
@@ -2170,7 +2170,10 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleToggleHeaderExpanded = () => {
-    setIsHeaderExpanded((current) => resolveHeaderExpandedToggle(current, isEditingTitle));
+    applyHeaderExpandedToggleCommand({
+      isEditingTitle,
+      setHeaderExpanded: setIsHeaderExpanded,
+    });
   };
 
   const handleExpandActionDock = (options?: { focusComposer?: boolean }) => {

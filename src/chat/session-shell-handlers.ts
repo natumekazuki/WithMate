@@ -25,6 +25,13 @@ export function resolveHeaderExpandedToggle(
   return isEditingTitle ? current : !current;
 }
 
+export function applyHeaderExpandedToggleCommand(input: {
+  isEditingTitle: boolean;
+  setHeaderExpanded: (updater: (current: boolean) => boolean) => void;
+}): void {
+  input.setHeaderExpanded((current) => resolveHeaderExpandedToggle(current, input.isEditingTitle));
+}
+
 export function applyTitleInputKeyCommand(input: {
   key: string;
   preventDefault: () => void;

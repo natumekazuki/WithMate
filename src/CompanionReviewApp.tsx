@@ -201,9 +201,9 @@ import {
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
   applyExclusiveComposerPickerToggle,
+  applyHeaderExpandedToggleCommand,
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
-  resolveHeaderExpandedToggle,
   toggleExpandedArtifactState,
 } from "./chat/session-shell-handlers.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
@@ -2120,7 +2120,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   };
 
   function handleToggleHeaderExpanded(): void {
-    setIsHeaderExpanded((current) => resolveHeaderExpandedToggle(current, isEditingTitle));
+    applyHeaderExpandedToggleCommand({
+      isEditingTitle,
+      setHeaderExpanded: setIsHeaderExpanded,
+    });
   }
 
   function handleExpandActionDock(options?: { focusComposer?: boolean }): void {
