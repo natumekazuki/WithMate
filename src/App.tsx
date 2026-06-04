@@ -136,6 +136,7 @@ import { useComposerPathReferencePreview } from "./chat/use-composer-path-refere
 import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
 import { handleWorkspacePathMatchKeyboardNavigation } from "./chat/workspace-path-match-keyboard.js";
+import { collectPastedSessionAttachmentPaths } from "./chat/composer-paste-handlers.js";
 import {
   resolveOwnedProviderQuotaTelemetry,
   resolveOwnedSessionContextTelemetry,
@@ -2633,29 +2634,16 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const files = Array.from(event.clipboardData.files);
-    const itemFiles = Array.from(event.clipboardData.items)
-      .filter((item) => item.kind === "file")
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => file !== null);
-    const pastedFiles = files.length > 0 ? files : itemFiles;
-    if (pastedFiles.length === 0) {
+    const savedPaths = await collectPastedSessionAttachmentPaths({
+      clipboardData: event.clipboardData,
+      currentTimestampLabel,
+      preventDefault: () => event.preventDefault(),
+      savePastedSessionFile: (request) => withmateApi.savePastedSessionFile(request),
+      sessionId: selectedSession.id,
+    });
+    if (savedPaths.length === 0) {
       return;
     }
-
-    event.preventDefault();
-    const savedPaths: string[] = [];
-    for (const file of pastedFiles) {
-      const buffer = await file.arrayBuffer();
-      const fileName = file.name.trim() || `pasted-${currentTimestampLabel().replace(/[:/\\\s]+/g, "-")}.png`;
-      const savedPath = await withmateApi.savePastedSessionFile({
-        sessionId: selectedSession.id,
-        fileName,
-        data: buffer,
-      });
-      savedPaths.push(savedPath);
-    }
-
     insertReferencePaths(savedPaths);
   };
 
