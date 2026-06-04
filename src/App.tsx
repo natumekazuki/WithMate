@@ -185,9 +185,11 @@ import {
 import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
 import {
   applyContextPaneTabCycleCommand,
+  applyCancelTitleEditCommand,
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
   applyExclusiveComposerPickerToggle,
+  applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
   resolveHeaderExpandedToggle,
   toggleExpandedArtifactState,
@@ -1900,14 +1902,20 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    setTitleDraft(selectedSession.taskTitle);
-    setIsHeaderExpanded(true);
-    setIsEditingTitle(true);
+    applyStartTitleEditCommand({
+      title: selectedSession.taskTitle,
+      setTitleDraft,
+      setHeaderExpanded: setIsHeaderExpanded,
+      setEditingTitle: setIsEditingTitle,
+    });
   };
 
   const handleCancelTitleEdit = () => {
-    setTitleDraft(selectedSession?.taskTitle ?? "");
-    setIsEditingTitle(false);
+    applyCancelTitleEditCommand({
+      title: selectedSession?.taskTitle ?? "",
+      setTitleDraft,
+      setEditingTitle: setIsEditingTitle,
+    });
   };
 
   const handleSaveTitle = async () => {

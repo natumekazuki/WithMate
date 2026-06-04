@@ -193,9 +193,11 @@ import {
 import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
 import {
   applyContextPaneTabCycleCommand,
+  applyCancelTitleEditCommand,
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
   applyExclusiveComposerPickerToggle,
+  applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
   resolveHeaderExpandedToggle,
   toggleExpandedArtifactState,
@@ -2071,14 +2073,20 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    setTitleDraft(snapshot.session.taskTitle);
-    setIsHeaderExpanded(true);
-    setIsEditingTitle(true);
+    applyStartTitleEditCommand({
+      title: snapshot.session.taskTitle,
+      setTitleDraft,
+      setHeaderExpanded: setIsHeaderExpanded,
+      setEditingTitle: setIsEditingTitle,
+    });
   }
 
   function handleCancelTitleEdit(): void {
-    setTitleDraft(snapshot?.session.taskTitle ?? "");
-    setIsEditingTitle(false);
+    applyCancelTitleEditCommand({
+      title: snapshot?.session.taskTitle ?? "",
+      setTitleDraft,
+      setEditingTitle: setIsEditingTitle,
+    });
   }
 
   async function handleSaveTitle(): Promise<void> {

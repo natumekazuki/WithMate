@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  applyCancelTitleEditCommand,
   applyContextPaneTabCycleCommand,
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
   applyExclusiveComposerPickerToggle,
+  applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
   resolveHeaderExpandedToggle,
   toggleExpandedArtifactState,
@@ -43,6 +45,35 @@ describe("applyTitleInputKeyCommand", () => {
     runCommand("Tab");
 
     assert.deepEqual(events, ["prevent:Enter", "save", "prevent:Escape", "cancel"]);
+  });
+});
+
+describe("applyStartTitleEditCommand", () => {
+  it("title draft を現在値に戻し、header を展開して title 編集中にする", () => {
+    const events: string[] = [];
+
+    applyStartTitleEditCommand({
+      title: "現在のタイトル",
+      setTitleDraft: (title) => events.push(`draft:${title}`),
+      setHeaderExpanded: (expanded) => events.push(`expanded:${expanded}`),
+      setEditingTitle: (editing) => events.push(`editing:${editing}`),
+    });
+
+    assert.deepEqual(events, ["draft:現在のタイトル", "expanded:true", "editing:true"]);
+  });
+});
+
+describe("applyCancelTitleEditCommand", () => {
+  it("title draft を現在値に戻し、title 編集中を解除する", () => {
+    const events: string[] = [];
+
+    applyCancelTitleEditCommand({
+      title: "現在のタイトル",
+      setTitleDraft: (title) => events.push(`draft:${title}`),
+      setEditingTitle: (editing) => events.push(`editing:${editing}`),
+    });
+
+    assert.deepEqual(events, ["draft:現在のタイトル", "editing:false"]);
   });
 });
 

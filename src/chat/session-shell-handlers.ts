@@ -43,6 +43,26 @@ export function applyTitleInputKeyCommand(input: {
   }
 }
 
+export function applyStartTitleEditCommand(input: {
+  title: string;
+  setTitleDraft: (title: string) => void;
+  setHeaderExpanded: (expanded: boolean) => void;
+  setEditingTitle: (editing: boolean) => void;
+}): void {
+  input.setTitleDraft(input.title);
+  input.setHeaderExpanded(true);
+  input.setEditingTitle(true);
+}
+
+export function applyCancelTitleEditCommand(input: {
+  title: string;
+  setTitleDraft: (title: string) => void;
+  setEditingTitle: (editing: boolean) => void;
+}): void {
+  input.setTitleDraft(input.title);
+  input.setEditingTitle(false);
+}
+
 export function applyActionDockExpandCommand(input: {
   options?: { focusComposer?: boolean };
   setPinnedExpanded: (expanded: boolean) => void;
