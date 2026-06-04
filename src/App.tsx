@@ -187,6 +187,7 @@ import {
 } from "./auxiliary-session-start-operation.js";
 import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
 import {
+  applyAdditionalDirectoryListToggle,
   applyContextPaneTabCycleCommand,
   applyCancelTitleEditCommand,
   applyActionDockCollapseCommand,
@@ -2203,6 +2204,12 @@ export default function AgentSessionWindowApp() {
     });
   };
 
+  const handleToggleAdditionalDirectoryList = () => {
+    applyAdditionalDirectoryListToggle({
+      setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
+    });
+  };
+
   const handleOpenInlinePath = async (target: string) => {
     if (!withmateApi) {
       return;
@@ -3069,7 +3076,7 @@ export default function AgentSessionWindowApp() {
         onToggleAgentPicker: handleToggleAgentPicker,
         onToggleSkillPicker: handleToggleSkillPicker,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
-        onToggleAdditionalDirectoryList: () => setIsAdditionalDirectoryListOpen((current) => !current),
+        onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
         onCollapseActionDock: handleCollapseActionDock,
         onJumpToMessageListBottom: handleJumpToMessageListBottom,
         onSelectCustomAgent: (value) => {

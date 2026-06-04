@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  applyAdditionalDirectoryListToggle,
   applyCancelTitleEditCommand,
   applyContextPaneTabCycleCommand,
   applyActionDockCollapseCommand,
@@ -160,6 +161,26 @@ describe("applyExclusiveComposerPickerToggle", () => {
 
     assert.equal(agentOpen, false);
     assert.equal(skillOpen, true);
+  });
+});
+
+describe("applyAdditionalDirectoryListToggle", () => {
+  it("additional directory list の開閉状態を反転する", () => {
+    let open = false;
+
+    applyAdditionalDirectoryListToggle({
+      setAdditionalDirectoryListOpen: (updater) => {
+        open = updater(open);
+      },
+    });
+    assert.equal(open, true);
+
+    applyAdditionalDirectoryListToggle({
+      setAdditionalDirectoryListOpen: (updater) => {
+        open = updater(open);
+      },
+    });
+    assert.equal(open, false);
   });
 });
 

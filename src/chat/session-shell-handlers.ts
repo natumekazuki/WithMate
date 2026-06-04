@@ -107,6 +107,12 @@ export function applyExclusiveComposerPickerToggle(input: {
   ));
 }
 
+export function applyAdditionalDirectoryListToggle(input: {
+  setAdditionalDirectoryListOpen: (updater: (current: boolean) => boolean) => void;
+}): void {
+  input.setAdditionalDirectoryListOpen((current) => !current);
+}
+
 export function applyContextPaneTabCycleCommand(input: {
   direction: -1 | 1;
   availableTabs: ContextPaneTabKey[];

@@ -195,6 +195,7 @@ import {
 } from "./auxiliary-additional-directory-operation.js";
 import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
 import {
+  applyAdditionalDirectoryListToggle,
   applyContextPaneTabCycleCommand,
   applyCancelTitleEditCommand,
   applyActionDockCollapseCommand,
@@ -2153,6 +2154,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
   }
 
+  function handleToggleAdditionalDirectoryList(): void {
+    applyAdditionalDirectoryListToggle({
+      setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
+    });
+  }
+
   async function reloadSnapshot(preferredPath = selectedPath, options: { preserveSelectionOnly?: boolean } = {}): Promise<void> {
     const withmateApi = getWithMateApi();
     if (!snapshot || !withmateApi) {
@@ -2942,7 +2949,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onToggleAgentPicker: handleToggleAgentPicker,
         onToggleSkillPicker: handleToggleSkillPicker,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
-        onToggleAdditionalDirectoryList: () => setIsAdditionalDirectoryListOpen((current) => !current),
+        onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
         onCollapseActionDock: handleCollapseActionDock,
         onJumpToMessageListBottom: handleJumpToMessageListBottom,
         onSelectCustomAgent: (value) => {
