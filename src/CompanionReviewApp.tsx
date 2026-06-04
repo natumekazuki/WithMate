@@ -2971,7 +2971,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           setComposerText(value);
           setComposerCaret(selectionStart);
         },
-        onDraftFocus: () => setIsActionDockPinnedExpanded(true),
+        onDraftFocus: () => handleExpandActionDock({ focusComposer: false }),
         onDraftKeyDown: handleCompanionDraftKeyDown,
         onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleComposerPaste(event),
         onDraftSelect: buildOnDraftSelectHandler({

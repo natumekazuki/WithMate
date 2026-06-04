@@ -3101,7 +3101,7 @@ export default function AgentSessionWindowApp() {
           setComposerCaret(selectionStart);
           mainComposerCaretRef.current = selectionStart;
         },
-        onDraftFocus: () => setIsActionDockPinnedExpanded(true),
+        onDraftFocus: () => handleExpandActionDock({ focusComposer: false }),
         onDraftKeyDown: handleComposerKeyDown,
         onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleComposerPaste(event),
         onDraftSelect: buildOnDraftSelectHandler({
