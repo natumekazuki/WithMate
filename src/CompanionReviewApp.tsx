@@ -22,7 +22,6 @@ import {
   applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionModelSelectionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
-  buildEditableActiveAuxiliarySessionPatch,
   buildAuxiliarySessionRunningTransition,
   loadClosedAuxiliarySessionDetails,
   removeAuxiliarySessionAdditionalDirectory,
@@ -186,6 +185,11 @@ import {
   resolveAuxiliaryDraftSaveResult,
   runAuxiliaryDraftSaveOperation,
 } from "./auxiliary-draft-save-context.js";
+import {
+  enqueueAuxiliarySessionSaveOperation,
+  resolveAuxiliarySessionRollbackSession,
+  runAuxiliarySessionUpdateOperation,
+} from "./auxiliary-session-update-operation.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
 function pickInitialFile(files: ChangedFile[]): ChangedFile | null {
@@ -410,7 +414,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const activeAuxiliarySessionRef = useRef<AuxiliarySession | null>(null);
+  const auxiliarySessionMutationRevisionRef = useRef(0);
   const auxiliaryDraftSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const auxiliarySessionSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const auxiliaryLoadRevisionRef = useRef(0);
   const mergeDiffLayoutRef = useRef<HTMLDivElement | null>(null);
   const mergeFileSelectionRef = useRef<HTMLDivElement | null>(null);
@@ -1706,20 +1712,59 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
 
     await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
-    const nextSession = buildEditableActiveAuxiliarySessionPatch({
+    let operationRevision = auxiliarySessionMutationRevisionRef.current;
+    const result = await runAuxiliarySessionUpdateOperation({
       activeSession: activeAuxiliarySession,
       currentSession: activeAuxiliarySessionRef.current,
       recipe,
+      applyPendingSession: (session) => {
+        operationRevision = auxiliarySessionMutationRevisionRef.current + 1;
+        auxiliarySessionMutationRevisionRef.current = operationRevision;
+        activeAuxiliarySessionRef.current = session;
+        setActiveAuxiliarySession(session);
+      },
+      rollbackPendingSession: async ({ pendingSession, previousSession }) => {
+        if (
+          auxiliarySessionMutationRevisionRef.current !== operationRevision
+          || activeAuxiliarySessionRef.current?.id !== pendingSession.id
+        ) {
+          return;
+        }
+        const rollbackSession = await resolveAuxiliarySessionRollbackSession({
+          pendingSession,
+          previousSession,
+          getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
+        });
+        if (
+          auxiliarySessionMutationRevisionRef.current !== operationRevision
+          || activeAuxiliarySessionRef.current?.id !== pendingSession.id
+        ) {
+          return;
+        }
+        activeAuxiliarySessionRef.current = rollbackSession;
+        setActiveAuxiliarySession(rollbackSession);
+      },
+      saveAuxiliarySession: (session) => {
+        const saveOperation = enqueueAuxiliarySessionSaveOperation(
+          auxiliarySessionSaveQueueRef.current,
+          () => withmateApi.updateAuxiliarySession(session),
+        );
+        auxiliarySessionSaveQueueRef.current = saveOperation.queue;
+        return saveOperation.operation;
+      },
     });
-    if (!nextSession) {
+    if (!result) {
       return;
     }
 
-    activeAuxiliarySessionRef.current = nextSession;
-    setActiveAuxiliarySession(nextSession);
-    const saved = await withmateApi.updateAuxiliarySession(nextSession);
-    activeAuxiliarySessionRef.current = saved;
-    setActiveAuxiliarySession(saved);
+    if (
+      auxiliarySessionMutationRevisionRef.current !== operationRevision
+      || activeAuxiliarySessionRef.current?.id !== result.saved.id
+    ) {
+      return;
+    }
+    activeAuxiliarySessionRef.current = result.saved;
+    setActiveAuxiliarySession(result.saved);
   }
 
   function handleOpenAuxiliaryLaunchDialog(): void {
@@ -1785,6 +1830,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         provider: launchProviderId,
         defaults: launchDefaults,
       }));
+      auxiliarySessionMutationRevisionRef.current += 1;
       activeAuxiliarySessionRef.current = session;
       setActiveAuxiliarySession(session);
       setIsActionDockPinnedExpanded(true);
@@ -1809,6 +1855,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       auxiliaryLoadRevisionRef.current += 1;
       const closedSession = await withmateApi.closeAuxiliarySession(activeAuxiliarySession.id);
       setClosedAuxiliarySessions((current) => resolveClosedAuxiliarySessionsAfterReturn(current, closedSession));
+      auxiliarySessionMutationRevisionRef.current += 1;
       activeAuxiliarySessionRef.current = null;
       setActiveAuxiliarySession(null);
       setComposerCaret(Math.min(composerCaret, composerText.length));
@@ -1834,6 +1881,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       value,
       currentTimestampLabel(),
     );
+    auxiliarySessionMutationRevisionRef.current += 1;
     activeAuxiliarySessionRef.current = nextSession;
     setActiveAuxiliarySession(nextSession);
     const saveOperation = auxiliaryDraftSaveQueueRef.current
@@ -1844,7 +1892,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           targetSessionId: nextSession.id,
           draft: value,
           updatedAt: currentTimestampLabel(),
-          saveAuxiliarySession: (request) => withmateApi.updateAuxiliarySession(request),
+          saveAuxiliarySession: (request) => {
+            const draftSaveOperation = enqueueAuxiliarySessionSaveOperation(
+              auxiliarySessionSaveQueueRef.current,
+              () => withmateApi.updateAuxiliarySession(request),
+            );
+            auxiliarySessionSaveQueueRef.current = draftSaveOperation.queue;
+            return draftSaveOperation.operation;
+          },
         })
       ));
     auxiliaryDraftSaveQueueRef.current = saveOperation.then(() => undefined, () => undefined);
@@ -1878,8 +1933,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
     const userMessage = preflight.userMessage;
+    const sendStartRevision = auxiliarySessionMutationRevisionRef.current;
 
     await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
+    await auxiliarySessionSaveQueueRef.current.catch(() => undefined);
+    if (auxiliarySessionMutationRevisionRef.current !== sendStartRevision) {
+      return;
+    }
     const sendTarget = resolveAuxiliarySessionSendTarget({
       activeSession: activeAuxiliarySession,
       currentSession: activeAuxiliarySessionRef.current,
@@ -1895,6 +1955,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       parentMessageCount: snapshot.session.messages.length,
       updatedAt: currentTimestampLabel(),
     });
+    auxiliarySessionMutationRevisionRef.current += 1;
+    const runOperationRevision = auxiliarySessionMutationRevisionRef.current;
     activeAuxiliarySessionRef.current = runningSession;
     setActiveAuxiliarySession(runningSession);
     setLiveRunState((current) => createOwnedPendingLiveSessionRunState(
@@ -1905,12 +1967,29 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     try {
       if (anchorUpdateSession) {
-        await withmateApi.updateAuxiliarySession(anchorUpdateSession);
+        const anchorSaveOperation = enqueueAuxiliarySessionSaveOperation(
+          auxiliarySessionSaveQueueRef.current,
+          () => withmateApi.updateAuxiliarySession(anchorUpdateSession),
+        );
+        auxiliarySessionSaveQueueRef.current = anchorSaveOperation.queue;
+        await anchorSaveOperation.operation;
       }
       const saved = await withmateApi.runAuxiliarySessionTurn(currentAuxiliarySession.id, { userMessage });
+      if (
+        auxiliarySessionMutationRevisionRef.current !== runOperationRevision
+        || activeAuxiliarySessionRef.current?.id !== saved.id
+      ) {
+        return;
+      }
       activeAuxiliarySessionRef.current = saved;
       setActiveAuxiliarySession(saved);
     } catch (error) {
+      if (
+        auxiliarySessionMutationRevisionRef.current !== runOperationRevision
+        || activeAuxiliarySessionRef.current?.id !== currentAuxiliarySession.id
+      ) {
+        return;
+      }
       console.error(error);
       setLiveRunState((current) => clearOwnedLiveSessionRunState(current, currentAuxiliarySession.id));
       activeAuxiliarySessionRef.current = currentAuxiliarySession;
