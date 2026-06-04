@@ -158,7 +158,6 @@ import {
   buildLatestCommandProjection,
   buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
-  cycleContextPaneTab,
   resolveAvailableContextPaneTabs,
   type ContextPaneTabKey,
 } from "./session-ui-projection.js";
@@ -193,6 +192,7 @@ import {
 } from "./auxiliary-additional-directory-operation.js";
 import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
 import {
+  applyContextPaneTabCycleCommand,
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
   applyExclusiveComposerPickerToggle,
@@ -1350,7 +1350,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }, [activeContextPaneTab, availableContextPaneTabs]);
 
   function handleCycleContextPaneTab(direction: -1 | 1): void {
-    setActiveContextPaneTab((current) => cycleContextPaneTab(current, direction, availableContextPaneTabs));
+    applyContextPaneTabCycleCommand({
+      direction,
+      availableTabs: availableContextPaneTabs,
+      setActiveTab: setActiveContextPaneTab,
+    });
   }
 
   function toggleArtifact(artifactKey: string): void {

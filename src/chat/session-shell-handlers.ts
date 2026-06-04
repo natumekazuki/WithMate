@@ -3,6 +3,10 @@ import {
   buildActionDockExpandState,
 } from "../action-dock-state.js";
 import { buildExclusiveComposerPickerToggleState } from "../session-composer-selection.js";
+import {
+  cycleContextPaneTab,
+  type ContextPaneTabKey,
+} from "../session-ui-projection.js";
 
 export function toggleExpandedArtifactState(
   current: Record<string, boolean>,
@@ -63,4 +67,12 @@ export function applyExclusiveComposerPickerToggle(input: {
   input.setSkillPickerOpen((current) => (
     buildExclusiveComposerPickerToggleState("skill", current).isSkillPickerOpen
   ));
+}
+
+export function applyContextPaneTabCycleCommand(input: {
+  direction: -1 | 1;
+  availableTabs: ContextPaneTabKey[];
+  setActiveTab: (value: ContextPaneTabKey | ((current: ContextPaneTabKey) => ContextPaneTabKey)) => void;
+}): void {
+  input.setActiveTab((current) => cycleContextPaneTab(current, input.direction, input.availableTabs));
 }

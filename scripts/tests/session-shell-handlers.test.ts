@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  applyContextPaneTabCycleCommand,
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
   applyExclusiveComposerPickerToggle,
@@ -108,5 +109,66 @@ describe("applyExclusiveComposerPickerToggle", () => {
 
     assert.equal(agentOpen, false);
     assert.equal(skillOpen, true);
+  });
+});
+
+describe("applyContextPaneTabCycleCommand", () => {
+  it("利用可能な context pane tab の中で active tab を循環する", () => {
+    let activeTab: "latest-command" | "reasoning" | "tasks" | "companion-group" = "latest-command";
+
+    applyContextPaneTabCycleCommand({
+      direction: 1,
+      availableTabs: ["latest-command", "tasks"],
+      setActiveTab: (updater) => {
+        activeTab = updater(activeTab);
+      },
+    });
+    assert.equal(activeTab, "tasks");
+
+    applyContextPaneTabCycleCommand({
+      direction: 1,
+      availableTabs: ["latest-command", "tasks"],
+      setActiveTab: (updater) => {
+        activeTab = updater(activeTab);
+      },
+    });
+    assert.equal(activeTab, "latest-command");
+
+    applyContextPaneTabCycleCommand({
+      direction: -1,
+      availableTabs: ["latest-command", "tasks"],
+      setActiveTab: (updater) => {
+        activeTab = typeof updater === "function" ? updater(activeTab) : updater;
+      },
+    });
+    assert.equal(activeTab, "tasks");
+  });
+
+  it("active tab が利用可能タブにない場合は先頭から循環する", () => {
+    let activeTab: "latest-command" | "reasoning" | "tasks" | "companion-group" = "reasoning";
+
+    applyContextPaneTabCycleCommand({
+      direction: 1,
+      availableTabs: ["latest-command", "tasks"],
+      setActiveTab: (updater) => {
+        activeTab = typeof updater === "function" ? updater(activeTab) : updater;
+      },
+    });
+
+    assert.equal(activeTab, "tasks");
+  });
+
+  it("利用可能タブが空の場合は latest-command を維持する", () => {
+    let activeTab: "latest-command" | "reasoning" | "tasks" | "companion-group" = "reasoning";
+
+    applyContextPaneTabCycleCommand({
+      direction: 1,
+      availableTabs: [],
+      setActiveTab: (updater) => {
+        activeTab = typeof updater === "function" ? updater(activeTab) : updater;
+      },
+    });
+
+    assert.equal(activeTab, "latest-command");
   });
 });

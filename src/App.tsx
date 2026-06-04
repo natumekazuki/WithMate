@@ -56,7 +56,6 @@ import {
   buildLatestCommandProjection,
   buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
-  cycleContextPaneTab,
   type ContextPaneTabKey,
   resolveAvailableContextPaneTabs,
 } from "./session-ui-projection.js";
@@ -185,6 +184,7 @@ import {
 } from "./auxiliary-session-start-operation.js";
 import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
 import {
+  applyContextPaneTabCycleCommand,
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
   applyExclusiveComposerPickerToggle,
@@ -2856,7 +2856,11 @@ export default function AgentSessionWindowApp() {
   }, [activeContextPaneTab, availableContextPaneTabs]);
 
   const handleCycleContextPaneTab = (direction: -1 | 1) => {
-    setActiveContextPaneTab((current) => cycleContextPaneTab(current, direction, availableContextPaneTabs));
+    applyContextPaneTabCycleCommand({
+      direction,
+      availableTabs: availableContextPaneTabs,
+      setActiveTab: setActiveContextPaneTab,
+    });
   };
 
   const auxiliaryComposerSendability = useMemo(
