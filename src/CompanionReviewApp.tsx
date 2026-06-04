@@ -191,6 +191,7 @@ import {
   runAddAuxiliaryAdditionalDirectoryOperation,
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "./auxiliary-additional-directory-operation.js";
+import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
 function pickInitialFile(files: ChangedFile[]): ChangedFile | null {
@@ -1813,15 +1814,24 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     setIsAuxiliaryActionPending(true);
     try {
-      auxiliaryLoadRevisionRef.current += 1;
-      const closedSession = await withmateApi.closeAuxiliarySession(activeAuxiliarySession.id);
-      setClosedAuxiliarySessions((current) => resolveClosedAuxiliarySessionsAfterReturn(current, closedSession));
-      auxiliarySessionMutationRevisionRef.current += 1;
-      activeAuxiliarySessionRef.current = null;
-      setActiveAuxiliarySession(null);
-      setComposerCaret(Math.min(composerCaret, composerText.length));
-      setIsActionDockPinnedExpanded(false);
-      setForceComposerBlockedFeedback(false);
+      await runAuxiliarySessionReturnToMainOperation({
+        activeSession: activeAuxiliarySession,
+        beforeClose: () => {
+          auxiliaryLoadRevisionRef.current += 1;
+        },
+        closeAuxiliarySession: (sessionId) => withmateApi.closeAuxiliarySession(sessionId),
+        applyClosedSession: (closedSession) => {
+          setClosedAuxiliarySessions((current) => resolveClosedAuxiliarySessionsAfterReturn(current, closedSession));
+        },
+        applyReturnedMainSession: () => {
+          auxiliarySessionMutationRevisionRef.current += 1;
+          activeAuxiliarySessionRef.current = null;
+          setActiveAuxiliarySession(null);
+          setComposerCaret(Math.min(composerCaret, composerText.length));
+          setIsActionDockPinnedExpanded(false);
+          setForceComposerBlockedFeedback(false);
+        },
+      });
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "Auxiliary Session の終了に失敗したよ。");
     } finally {
