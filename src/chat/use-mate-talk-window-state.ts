@@ -31,7 +31,7 @@ import { buildCharacterThemeStyle } from "../theme-utils.js";
 import { currentTimestampLabel } from "../time-state.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import {
-  copyMessageTextToClipboardWithFailureHandler,
+  createCopyMessageTextHandler,
   createQuotedMessageInsertionFromComposer,
 } from "./message-text-actions.js";
 import type { MateTalkMessage } from "./mate-talk-chat-projection.js";
@@ -199,16 +199,13 @@ export function useMateTalkWindowState({
     }
   };
 
-  const handleCopyMessageText = (text: string) => {
-    void copyMessageTextToClipboardWithFailureHandler({
-      text,
-      writeText: (normalized) => navigator.clipboard.writeText(normalized),
-      onFailure: (error) => {
-        console.error(error);
-        setFeedback("コピーに失敗したよ。");
-      },
-    });
-  };
+  const handleCopyMessageText = createCopyMessageTextHandler({
+    writeText: (normalized) => navigator.clipboard.writeText(normalized),
+    onFailure: (error) => {
+      console.error(error);
+      setFeedback("コピーに失敗したよ。");
+    },
+  });
 
   const handleQuoteMessageText = (text: string) => {
     if (sending) {

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   copyMessageTextToClipboard,
   copyMessageTextToClipboardWithFailureHandler,
+  createCopyMessageTextHandler,
   createQuotedMessageInsertion,
   createQuotedMessageInsertionFromComposer,
   formatMarkdownQuote,
@@ -51,6 +52,40 @@ test("copyMessageTextToClipboardWithFailureHandler は失敗時だけ handler �
     }),
     false,
   );
+  assert.deepEqual(failures, [error]);
+});
+
+test("createCopyMessageTextHandler は response text copy を fire-and-forget で開始する", async () => {
+  const writes: string[] = [];
+  const failures: unknown[] = [];
+  const handleCopy = createCopyMessageTextHandler({
+    writeText: async (text) => {
+      writes.push(text);
+    },
+    onFailure: (error) => failures.push(error),
+  });
+
+  handleCopy("  hello  ");
+  handleCopy("   ");
+  await Promise.resolve();
+
+  assert.deepEqual(writes, ["hello"]);
+  assert.deepEqual(failures, []);
+});
+
+test("createCopyMessageTextHandler は copy 失敗時に handler を呼ぶ", async () => {
+  const failures: unknown[] = [];
+  const error = new Error("denied");
+  const handleCopy = createCopyMessageTextHandler({
+    writeText: async () => {
+      throw error;
+    },
+    onFailure: (caughtError) => failures.push(caughtError),
+  });
+
+  handleCopy("hello");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
   assert.deepEqual(failures, [error]);
 });
 

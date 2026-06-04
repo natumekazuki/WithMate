@@ -28,6 +28,19 @@ export async function copyMessageTextToClipboardWithFailureHandler(input: {
   }
 }
 
+export function createCopyMessageTextHandler(input: {
+  onFailure: (error: unknown) => void;
+  writeText: (text: string) => Promise<void>;
+}): (text: string) => void {
+  return (text) => {
+    void copyMessageTextToClipboardWithFailureHandler({
+      text,
+      writeText: input.writeText,
+      onFailure: input.onFailure,
+    });
+  };
+}
+
 export function formatMarkdownQuote(text: string): string {
   const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
   if (!normalized) {

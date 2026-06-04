@@ -143,7 +143,7 @@ import {
   type SessionOwnedContextTelemetry,
 } from "./session-telemetry-state.js";
 import {
-  copyMessageTextToClipboardWithFailureHandler,
+  createCopyMessageTextHandler,
   createQuotedMessageInsertionFromComposer,
 } from "./chat/message-text-actions.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
@@ -2417,16 +2417,13 @@ export default function AgentSessionWindowApp() {
     }
   };
 
-  const handleCopyMessageText = (text: string) => {
-    void copyMessageTextToClipboardWithFailureHandler({
-      text,
-      writeText: (normalized) => navigator.clipboard.writeText(normalized),
-      onFailure: (error) => {
-        console.error(error);
-        window.alert("コピーに失敗したよ。");
-      },
-    });
-  };
+  const handleCopyMessageText = createCopyMessageTextHandler({
+    writeText: (normalized) => navigator.clipboard.writeText(normalized),
+    onFailure: (error) => {
+      console.error(error);
+      window.alert("コピーに失敗したよ。");
+    },
+  });
 
   const insertQuoteIntoMainComposer = (messageText: string) => {
     if (!messageText) {
