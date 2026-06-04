@@ -195,13 +195,14 @@ import {
 } from "./auxiliary-additional-directory-operation.js";
 import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
 import {
+  applyAgentPickerToggleCommand,
   applyAdditionalDirectoryListToggle,
   applyContextPaneTabCycleCommand,
   applyCancelTitleEditCommand,
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
-  applyExclusiveComposerPickerToggle,
   applyHeaderExpandedToggleCommand,
+  applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
   toggleExpandedArtifactState,
@@ -2142,16 +2143,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   function handleToggleAgentPicker(): void {
-    applyExclusiveComposerPickerToggle({
-      target: "agent",
+    applyAgentPickerToggleCommand({
       setAgentPickerOpen: setIsAgentPickerOpen,
       setSkillPickerOpen: setIsSkillPickerOpen,
     });
   }
 
   function handleToggleSkillPicker(): void {
-    applyExclusiveComposerPickerToggle({
-      target: "skill",
+    applySkillPickerToggleCommand({
       setAgentPickerOpen: setIsAgentPickerOpen,
       setSkillPickerOpen: setIsSkillPickerOpen,
     });

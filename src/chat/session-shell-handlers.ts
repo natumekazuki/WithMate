@@ -114,6 +114,28 @@ export function applyExclusiveComposerPickerToggle(input: {
   ));
 }
 
+export function applyAgentPickerToggleCommand(input: {
+  setAgentPickerOpen: (updater: (current: boolean) => boolean) => void;
+  setSkillPickerOpen: (updater: (current: boolean) => boolean) => void;
+}): void {
+  applyExclusiveComposerPickerToggle({
+    target: "agent",
+    setAgentPickerOpen: input.setAgentPickerOpen,
+    setSkillPickerOpen: input.setSkillPickerOpen,
+  });
+}
+
+export function applySkillPickerToggleCommand(input: {
+  setAgentPickerOpen: (updater: (current: boolean) => boolean) => void;
+  setSkillPickerOpen: (updater: (current: boolean) => boolean) => void;
+}): void {
+  applyExclusiveComposerPickerToggle({
+    target: "skill",
+    setAgentPickerOpen: input.setAgentPickerOpen,
+    setSkillPickerOpen: input.setSkillPickerOpen,
+  });
+}
+
 export function applyAdditionalDirectoryListToggle(input: {
   setAdditionalDirectoryListOpen: (updater: (current: boolean) => boolean) => void;
 }): void {

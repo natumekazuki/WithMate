@@ -3,12 +3,14 @@ import { describe, it } from "node:test";
 
 import {
   applyAdditionalDirectoryListToggle,
+  applyAgentPickerToggleCommand,
   applyCancelTitleEditCommand,
   applyContextPaneTabCycleCommand,
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
   applyExclusiveComposerPickerToggle,
   applyHeaderExpandedToggleCommand,
+  applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
   resolveHeaderExpandedToggle,
@@ -174,6 +176,44 @@ describe("applyExclusiveComposerPickerToggle", () => {
 
     applyExclusiveComposerPickerToggle({
       target: "skill",
+      setAgentPickerOpen: (updater) => {
+        agentOpen = updater(agentOpen);
+      },
+      setSkillPickerOpen: (updater) => {
+        skillOpen = updater(skillOpen);
+      },
+    });
+
+    assert.equal(agentOpen, false);
+    assert.equal(skillOpen, true);
+  });
+});
+
+describe("applyAgentPickerToggleCommand", () => {
+  it("agent picker を toggle し、skill picker を閉じる", () => {
+    let agentOpen = false;
+    let skillOpen = true;
+
+    applyAgentPickerToggleCommand({
+      setAgentPickerOpen: (updater) => {
+        agentOpen = updater(agentOpen);
+      },
+      setSkillPickerOpen: (updater) => {
+        skillOpen = updater(skillOpen);
+      },
+    });
+
+    assert.equal(agentOpen, true);
+    assert.equal(skillOpen, false);
+  });
+});
+
+describe("applySkillPickerToggleCommand", () => {
+  it("skill picker を toggle し、agent picker を閉じる", () => {
+    let agentOpen = true;
+    let skillOpen = false;
+
+    applySkillPickerToggleCommand({
       setAgentPickerOpen: (updater) => {
         agentOpen = updater(agentOpen);
       },

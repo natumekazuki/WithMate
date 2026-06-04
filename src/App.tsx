@@ -187,13 +187,14 @@ import {
 } from "./auxiliary-session-start-operation.js";
 import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
 import {
+  applyAgentPickerToggleCommand,
   applyAdditionalDirectoryListToggle,
   applyContextPaneTabCycleCommand,
   applyCancelTitleEditCommand,
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
-  applyExclusiveComposerPickerToggle,
   applyHeaderExpandedToggleCommand,
+  applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
   toggleExpandedArtifactState,
@@ -2192,16 +2193,14 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleToggleAgentPicker = () => {
-    applyExclusiveComposerPickerToggle({
-      target: "agent",
+    applyAgentPickerToggleCommand({
       setAgentPickerOpen: setIsAgentPickerOpen,
       setSkillPickerOpen: setIsSkillPickerOpen,
     });
   };
 
   const handleToggleSkillPicker = () => {
-    applyExclusiveComposerPickerToggle({
-      target: "skill",
+    applySkillPickerToggleCommand({
       setAgentPickerOpen: setIsAgentPickerOpen,
       setSkillPickerOpen: setIsSkillPickerOpen,
     });
