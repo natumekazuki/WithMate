@@ -134,7 +134,6 @@ import {
   applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionModelSelectionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
-  buildAuxiliaryDraftSaveRequest,
   buildEditableActiveAuxiliarySessionPatch,
   buildAuxiliarySessionRunningTransition,
   loadClosedAuxiliarySessionDetails,
@@ -177,7 +176,10 @@ import {
   loadProjectedMessageArtifact,
   resolvePendingAuxiliaryMessageGroupId,
 } from "./auxiliary-session-message-projection.js";
-import { resolveAuxiliaryDraftSaveResult } from "./auxiliary-draft-save-context.js";
+import {
+  resolveAuxiliaryDraftSaveResult,
+  runAuxiliaryDraftSaveOperation,
+} from "./auxiliary-draft-save-context.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
 
@@ -2308,20 +2310,15 @@ export default function AgentSessionWindowApp() {
     try {
       const saveOperation = auxiliaryDraftSaveQueueRef.current
         .catch(() => undefined)
-        .then(async () => {
-          const request = buildAuxiliaryDraftSaveRequest({
+        .then(() => (
+          runAuxiliaryDraftSaveOperation({
             currentSession: activeAuxiliarySessionRef.current,
             targetSessionId: nextSession.id,
             draft: value,
             updatedAt: currentTimestampLabel(),
-          });
-          if (!request) {
-            return null;
-          }
-
-          const saved = await withmateApi.updateAuxiliarySession(request);
-          return { request, saved };
-        });
+            saveAuxiliarySession: (request) => withmateApi.updateAuxiliarySession(request),
+          })
+        ));
       auxiliaryDraftSaveQueueRef.current = saveOperation.then(() => undefined, () => undefined);
       const result = await saveOperation;
       if (!result) {

@@ -22,7 +22,6 @@ import {
   applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionModelSelectionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
-  buildAuxiliaryDraftSaveRequest,
   buildEditableActiveAuxiliarySessionPatch,
   buildAuxiliarySessionRunningTransition,
   loadClosedAuxiliarySessionDetails,
@@ -183,7 +182,10 @@ import { useComposerPathReferencePreview } from "./chat/use-composer-path-refere
 import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
 import { handleWorkspacePathMatchKeyboardNavigation } from "./chat/workspace-path-match-keyboard.js";
-import { resolveAuxiliaryDraftSaveResult } from "./auxiliary-draft-save-context.js";
+import {
+  resolveAuxiliaryDraftSaveResult,
+  runAuxiliaryDraftSaveOperation,
+} from "./auxiliary-draft-save-context.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
 function pickInitialFile(files: ChangedFile[]): ChangedFile | null {
@@ -1836,20 +1838,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setActiveAuxiliarySession(nextSession);
     const saveOperation = auxiliaryDraftSaveQueueRef.current
       .catch(() => undefined)
-      .then(async () => {
-        const request = buildAuxiliaryDraftSaveRequest({
+      .then(() => (
+        runAuxiliaryDraftSaveOperation({
           currentSession: activeAuxiliarySessionRef.current,
           targetSessionId: nextSession.id,
           draft: value,
           updatedAt: currentTimestampLabel(),
-        });
-        if (!request) {
-          return null;
-        }
-
-        const saved = await withmateApi.updateAuxiliarySession(request);
-        return { request, saved };
-      });
+          saveAuxiliarySession: (request) => withmateApi.updateAuxiliarySession(request),
+        })
+      ));
     auxiliaryDraftSaveQueueRef.current = saveOperation.then(() => undefined, () => undefined);
     const result = await saveOperation;
     if (!result) {

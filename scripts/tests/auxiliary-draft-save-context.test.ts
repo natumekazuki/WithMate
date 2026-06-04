@@ -5,6 +5,7 @@ import {
   areStringArraysEqual,
   hasSameAuxiliaryDraftSaveContext,
   resolveAuxiliaryDraftSaveResult,
+  runAuxiliaryDraftSaveOperation,
 } from "../../src/auxiliary-draft-save-context.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 
@@ -102,5 +103,73 @@ describe("resolveAuxiliaryDraftSaveResult", () => {
     const saved = makeAuxiliarySession({ status: "active", updatedAt: "saved" });
 
     assert.equal(resolveAuxiliaryDraftSaveResult(current, request, saved, { compareStatus: true }), current);
+  });
+});
+
+describe("runAuxiliaryDraftSaveOperation", () => {
+  it("保存 request を作って save 結果を返す", async () => {
+    const current = makeAuxiliarySession({ composerDraft: "draft", updatedAt: "current" });
+    const saved = makeAuxiliarySession({ composerDraft: "draft", updatedAt: "saved" });
+    const requests: AuxiliarySession[] = [];
+
+    assert.deepEqual(
+      await runAuxiliaryDraftSaveOperation({
+        currentSession: current,
+        targetSessionId: current.id,
+        draft: "draft",
+        updatedAt: "request",
+        saveAuxiliarySession: async (request) => {
+          requests.push(request);
+          return saved;
+        },
+      }),
+      {
+        request: {
+          ...current,
+          updatedAt: "request",
+        },
+        saved,
+      },
+    );
+    assert.deepEqual(requests, [{
+      ...current,
+      updatedAt: "request",
+    }]);
+  });
+
+  it("保存 request を作れない場合は save しない", async () => {
+    let saved = false;
+
+    assert.equal(
+      await runAuxiliaryDraftSaveOperation({
+        currentSession: makeAuxiliarySession({ composerDraft: "newer" }),
+        targetSessionId: "aux-1",
+        draft: "older",
+        updatedAt: "request",
+        saveAuxiliarySession: async (request) => {
+          saved = true;
+          return request;
+        },
+      }),
+      null,
+    );
+    assert.equal(saved, false);
+  });
+
+  it("save が失敗した場合は例外を伝播する", async () => {
+    const error = new Error("save failed");
+
+    await assert.rejects(
+      runAuxiliaryDraftSaveOperation({
+        currentSession: makeAuxiliarySession({ composerDraft: "draft" }),
+        targetSessionId: "aux-1",
+        draft: "draft",
+        updatedAt: "request",
+        saveAuxiliarySession: async () => {
+          throw error;
+        },
+      }),
+      error,
+    );
   });
 });

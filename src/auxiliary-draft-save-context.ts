@@ -1,4 +1,5 @@
 import type { AuxiliarySession } from "./auxiliary-session-state.js";
+import { buildAuxiliaryDraftSaveRequest } from "./auxiliary-session-state.js";
 
 export function areStringArraysEqual(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
@@ -36,4 +37,30 @@ export function resolveAuxiliaryDraftSaveResult(
   }
 
   return saved;
+}
+
+export type AuxiliaryDraftSaveOperationResult = {
+  request: AuxiliarySession;
+  saved: AuxiliarySession;
+} | null;
+
+export async function runAuxiliaryDraftSaveOperation(input: {
+  currentSession: AuxiliarySession | null;
+  targetSessionId: string;
+  draft: string;
+  updatedAt: string;
+  saveAuxiliarySession: (request: AuxiliarySession) => Promise<AuxiliarySession>;
+}): Promise<AuxiliaryDraftSaveOperationResult> {
+  const request = buildAuxiliaryDraftSaveRequest({
+    currentSession: input.currentSession,
+    targetSessionId: input.targetSessionId,
+    draft: input.draft,
+    updatedAt: input.updatedAt,
+  });
+  if (!request) {
+    return null;
+  }
+
+  const saved = await input.saveAuxiliarySession(request);
+  return { request, saved };
 }
