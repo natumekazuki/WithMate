@@ -129,14 +129,12 @@ import { buildCompanionGroupMonitorEntries } from "./home/home-session-projectio
 import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
-  addAuxiliarySessionAdditionalDirectory,
   applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionModelSelectionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildAuxiliarySessionRunningTransition,
   loadClosedAuxiliarySessionDetails,
-  removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveAuxiliarySessionSendPreflight,
   resolveAuxiliarySessionSendTarget,
@@ -184,6 +182,10 @@ import {
   resolveAuxiliarySessionRollbackSession,
   runAuxiliarySessionUpdateOperation,
 } from "./auxiliary-session-update-operation.js";
+import {
+  runAddAuxiliaryAdditionalDirectoryOperation,
+  runRemoveAuxiliaryAdditionalDirectoryOperation,
+} from "./auxiliary-additional-directory-operation.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
 
@@ -2725,25 +2727,27 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleAddAuxiliaryAdditionalDirectory = async () => {
-    if (!withmateApi || !selectedSession || !activeAuxiliarySession || activeAuxiliarySession.runState === "running") {
+    if (!withmateApi || !selectedSession) {
       return;
     }
 
-    const selectedPath = await withmateApi.pickDirectory(pickerBaseDirectory || selectedSession.workspacePath || null);
-    if (!selectedPath) {
-      return;
-    }
-
-    setPickerBaseDirectory(selectedPath);
-    await updateActiveAuxiliarySession((current) => (
-      addAuxiliarySessionAdditionalDirectory(current, selectedPath, currentTimestampLabel())
-    ));
+    await runAddAuxiliaryAdditionalDirectoryOperation({
+      activeAuxiliarySession,
+      pickerBaseDirectory,
+      workspacePath: selectedSession.workspacePath,
+      pickDirectory: (basePath) => withmateApi.pickDirectory(basePath),
+      setPickerBaseDirectory,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
   };
 
   const handleRemoveAuxiliaryAdditionalDirectory = async (directoryPath: string) => {
-    await updateActiveAuxiliarySession((current) => (
-      removeAuxiliarySessionAdditionalDirectory(current, directoryPath, currentTimestampLabel())
-    ));
+    await runRemoveAuxiliaryAdditionalDirectoryOperation({
+      directoryPath,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
   };
 
   const handleTitleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {

@@ -1,0 +1,52 @@
+import type { AuxiliarySession } from "./auxiliary-session-state.js";
+import {
+  addAuxiliarySessionAdditionalDirectory,
+  removeAuxiliarySessionAdditionalDirectory,
+} from "./auxiliary-session-state.js";
+
+type UpdateAuxiliarySession = (
+  recipe: (current: AuxiliarySession) => AuxiliarySession,
+) => Promise<void>;
+
+export function resolveAuxiliaryAdditionalDirectoryPickerBase(input: {
+  pickerBaseDirectory: string;
+  workspacePath?: string | null;
+  fallbackPath?: string | null;
+}): string | null {
+  return input.pickerBaseDirectory || input.workspacePath || input.fallbackPath || null;
+}
+
+export async function runAddAuxiliaryAdditionalDirectoryOperation(input: {
+  activeAuxiliarySession: AuxiliarySession | null;
+  pickerBaseDirectory: string;
+  workspacePath?: string | null;
+  fallbackPath?: string | null;
+  pickDirectory: (basePath: string | null) => Promise<string | null>;
+  setPickerBaseDirectory: (directoryPath: string) => void;
+  updateActiveAuxiliarySession: UpdateAuxiliarySession;
+  createTimestampLabel: () => string;
+}): Promise<void> {
+  if (!input.activeAuxiliarySession || input.activeAuxiliarySession.runState === "running") {
+    return;
+  }
+
+  const selectedPath = await input.pickDirectory(resolveAuxiliaryAdditionalDirectoryPickerBase(input));
+  if (!selectedPath) {
+    return;
+  }
+
+  input.setPickerBaseDirectory(selectedPath);
+  await input.updateActiveAuxiliarySession((current) => (
+    addAuxiliarySessionAdditionalDirectory(current, selectedPath, input.createTimestampLabel())
+  ));
+}
+
+export async function runRemoveAuxiliaryAdditionalDirectoryOperation(input: {
+  directoryPath: string;
+  updateActiveAuxiliarySession: UpdateAuxiliarySession;
+  createTimestampLabel: () => string;
+}): Promise<void> {
+  await input.updateActiveAuxiliarySession((current) => (
+    removeAuxiliarySessionAdditionalDirectory(current, input.directoryPath, input.createTimestampLabel())
+  ));
+}

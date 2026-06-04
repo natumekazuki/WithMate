@@ -17,14 +17,12 @@ import {
 } from "./additional-directory-state.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import {
-  addAuxiliarySessionAdditionalDirectory,
   applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionModelSelectionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildAuxiliarySessionRunningTransition,
   loadClosedAuxiliarySessionDetails,
-  removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveAuxiliarySessionSendPreflight,
   resolveAuxiliarySessionSendTarget,
@@ -190,6 +188,10 @@ import {
   resolveAuxiliarySessionRollbackSession,
   runAuxiliarySessionUpdateOperation,
 } from "./auxiliary-session-update-operation.js";
+import {
+  runAddAuxiliaryAdditionalDirectoryOperation,
+  runRemoveAuxiliaryAdditionalDirectoryOperation,
+} from "./auxiliary-additional-directory-operation.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
 function pickInitialFile(files: ChangedFile[]): ChangedFile | null {
@@ -2083,25 +2085,28 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   async function handleAddAuxiliaryAdditionalDirectory(): Promise<void> {
     const withmateApi = getWithMateApi();
-    if (!withmateApi || !snapshot || !activeAuxiliarySession || activeAuxiliarySession.runState === "running") {
+    if (!withmateApi || !snapshot) {
       return;
     }
 
-    const selectedPath = await withmateApi.pickDirectory(pickerBaseDirectory || snapshot.session.worktreePath || snapshot.session.repoRoot);
-    if (!selectedPath) {
-      return;
-    }
-
-    setPickerBaseDirectory(selectedPath);
-    await updateActiveAuxiliarySession((current) => (
-      addAuxiliarySessionAdditionalDirectory(current, selectedPath, currentTimestampLabel())
-    ));
+    await runAddAuxiliaryAdditionalDirectoryOperation({
+      activeAuxiliarySession,
+      pickerBaseDirectory,
+      workspacePath: snapshot.session.worktreePath,
+      fallbackPath: snapshot.session.repoRoot,
+      pickDirectory: (basePath) => withmateApi.pickDirectory(basePath),
+      setPickerBaseDirectory,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
   }
 
   async function handleRemoveAuxiliaryAdditionalDirectory(directoryPath: string): Promise<void> {
-    await updateActiveAuxiliarySession((current) => (
-      removeAuxiliarySessionAdditionalDirectory(current, directoryPath, currentTimestampLabel())
-    ));
+    await runRemoveAuxiliaryAdditionalDirectoryOperation({
+      directoryPath,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
   }
 
   function handleStartTitleEdit(): void {
