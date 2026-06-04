@@ -139,6 +139,7 @@ import {
   buildAuxiliarySessionRunningTransition,
   removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
+  resolveAuxiliarySessionSendPreflight,
   resolveAuxiliarySessionSendTarget,
   resolveClosedAuxiliarySessionIds,
   resolveClosedAuxiliarySessionsAfterReturn,
@@ -2347,16 +2348,15 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const nextMessage = messageText.trim();
-    if (!nextMessage) {
-      throw new Error("送信するメッセージが空だよ。");
+    const preflight = resolveAuxiliarySessionSendPreflight({
+      activeSession: activeAuxiliarySession,
+      composerBlockedReason,
+      messageText,
+    });
+    if (preflight.blockedReason) {
+      throw new Error(preflight.blockedMessage);
     }
-    if (activeAuxiliarySession.runState === "running") {
-      throw new Error("Auxiliary Session はまだ実行中だよ。");
-    }
-    if (composerBlockedReason) {
-      throw new Error(composerBlockedReason);
-    }
+    const nextMessage = preflight.userMessage;
 
     await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
     const sendTarget = resolveAuxiliarySessionSendTarget({

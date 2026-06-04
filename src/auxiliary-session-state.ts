@@ -132,6 +132,47 @@ export type AuxiliarySessionSendTargetResolution = {
   session: AuxiliarySession | null;
 };
 
+export type AuxiliarySessionSendPreflightResult = {
+  blockedReason: "empty-message" | "running" | "composer-blocked" | null;
+  blockedMessage: string;
+  userMessage: string;
+};
+
+export function resolveAuxiliarySessionSendPreflight(input: {
+  activeSession: AuxiliarySession;
+  composerBlockedReason?: string | null;
+  messageText: string;
+}): AuxiliarySessionSendPreflightResult {
+  const userMessage = input.messageText.trim();
+  if (!userMessage) {
+    return {
+      blockedReason: "empty-message",
+      blockedMessage: "送信するメッセージが空だよ。",
+      userMessage,
+    };
+  }
+  if (input.activeSession.runState === "running") {
+    return {
+      blockedReason: "running",
+      blockedMessage: "Auxiliary Session はまだ実行中だよ。",
+      userMessage,
+    };
+  }
+  if (input.composerBlockedReason) {
+    return {
+      blockedReason: "composer-blocked",
+      blockedMessage: input.composerBlockedReason,
+      userMessage,
+    };
+  }
+
+  return {
+    blockedReason: null,
+    blockedMessage: "",
+    userMessage,
+  };
+}
+
 export function resolveAuxiliarySessionSendTarget(input: {
   activeSession: AuxiliarySession;
   currentSession: AuxiliarySession | null;

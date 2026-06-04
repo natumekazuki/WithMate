@@ -15,6 +15,7 @@ import {
   removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveAuxiliarySessionDisplayAfterMessageIndex,
+  resolveAuxiliarySessionSendPreflight,
   resolveAuxiliarySessionSendTarget,
   resolveClosedAuxiliarySessionIds,
   resolveClosedAuxiliarySessionsAfterReturn,
@@ -252,6 +253,57 @@ test("buildAuxiliaryDraftSaveRequest は古い draft save を無視する", () =
       updatedAt: "2026-01-02T00:00:00.000Z",
     }),
     null,
+  );
+});
+
+test("resolveAuxiliarySessionSendPreflight は送信文を trim する", () => {
+  assert.deepEqual(
+    resolveAuxiliarySessionSendPreflight({
+      activeSession: createAuxiliarySession(),
+      messageText: "  hello  ",
+    }),
+    {
+      blockedReason: null,
+      blockedMessage: "",
+      userMessage: "hello",
+    },
+  );
+});
+
+test("resolveAuxiliarySessionSendPreflight は送信前 block 理由を返す", () => {
+  assert.deepEqual(
+    resolveAuxiliarySessionSendPreflight({
+      activeSession: createAuxiliarySession(),
+      messageText: "   ",
+    }),
+    {
+      blockedReason: "empty-message",
+      blockedMessage: "送信するメッセージが空だよ。",
+      userMessage: "",
+    },
+  );
+  assert.deepEqual(
+    resolveAuxiliarySessionSendPreflight({
+      activeSession: createAuxiliarySession({ runState: "running" }),
+      messageText: "hello",
+    }),
+    {
+      blockedReason: "running",
+      blockedMessage: "Auxiliary Session はまだ実行中だよ。",
+      userMessage: "hello",
+    },
+  );
+  assert.deepEqual(
+    resolveAuxiliarySessionSendPreflight({
+      activeSession: createAuxiliarySession(),
+      composerBlockedReason: "blocked",
+      messageText: "hello",
+    }),
+    {
+      blockedReason: "composer-blocked",
+      blockedMessage: "blocked",
+      userMessage: "hello",
+    },
   );
 });
 

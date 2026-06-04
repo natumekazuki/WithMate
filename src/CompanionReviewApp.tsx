@@ -27,6 +27,7 @@ import {
   buildAuxiliarySessionRunningTransition,
   removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
+  resolveAuxiliarySessionSendPreflight,
   resolveAuxiliarySessionSendTarget,
   resolveClosedAuxiliarySessionIds,
   resolveClosedAuxiliarySessionsAfterReturn,
@@ -1869,15 +1870,19 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   async function sendAuxiliaryMessage(messageText: string): Promise<void> {
     const withmateApi = getWithMateApi();
-    const userMessage = messageText.trim();
-    if (!withmateApi || !snapshot || !activeAuxiliarySession || !userMessage) {
+    if (!withmateApi || !snapshot || !activeAuxiliarySession) {
       setForceComposerBlockedFeedback(true);
       return;
     }
-    if (activeAuxiliarySession.runState === "running") {
+    const preflight = resolveAuxiliarySessionSendPreflight({
+      activeSession: activeAuxiliarySession,
+      messageText,
+    });
+    if (preflight.blockedReason) {
       setForceComposerBlockedFeedback(true);
       return;
     }
+    const userMessage = preflight.userMessage;
 
     await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
     const sendTarget = resolveAuxiliarySessionSendTarget({
