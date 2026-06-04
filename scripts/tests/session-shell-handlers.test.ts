@@ -6,6 +6,7 @@ import {
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
   applyExclusiveComposerPickerToggle,
+  applyTitleInputKeyCommand,
   resolveHeaderExpandedToggle,
   toggleExpandedArtifactState,
 } from "../../src/chat/session-shell-handlers.js";
@@ -23,6 +24,25 @@ describe("resolveHeaderExpandedToggle", () => {
     assert.equal(resolveHeaderExpandedToggle(true, true), true);
     assert.equal(resolveHeaderExpandedToggle(false, false), true);
     assert.equal(resolveHeaderExpandedToggle(true, false), false);
+  });
+});
+
+describe("applyTitleInputKeyCommand", () => {
+  it("Enter では保存、Escape ではキャンセルし、それ以外では何もしない", () => {
+    const events: string[] = [];
+
+    const runCommand = (key: string) => applyTitleInputKeyCommand({
+      key,
+      preventDefault: () => events.push(`prevent:${key}`),
+      saveTitle: () => events.push("save"),
+      cancelTitleEdit: () => events.push("cancel"),
+    });
+
+    runCommand("Enter");
+    runCommand("Escape");
+    runCommand("Tab");
+
+    assert.deepEqual(events, ["prevent:Enter", "save", "prevent:Escape", "cancel"]);
   });
 });
 

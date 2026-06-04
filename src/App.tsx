@@ -188,6 +188,7 @@ import {
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
   applyExclusiveComposerPickerToggle,
+  applyTitleInputKeyCommand,
   resolveHeaderExpandedToggle,
   toggleExpandedArtifactState,
 } from "./chat/session-shell-handlers.js";
@@ -2693,16 +2694,12 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleTitleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      void handleSaveTitle();
-      return;
-    }
-
-    if (event.key === "Escape") {
-      event.preventDefault();
-      handleCancelTitleEdit();
-    }
+    applyTitleInputKeyCommand({
+      key: event.key,
+      preventDefault: () => event.preventDefault(),
+      saveTitle: () => void handleSaveTitle(),
+      cancelTitleEdit: handleCancelTitleEdit,
+    });
   };
 
   const toggleArtifact = (artifactKey: string) => {

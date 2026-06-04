@@ -25,6 +25,24 @@ export function resolveHeaderExpandedToggle(
   return isEditingTitle ? current : !current;
 }
 
+export function applyTitleInputKeyCommand(input: {
+  key: string;
+  preventDefault: () => void;
+  saveTitle: () => void;
+  cancelTitleEdit: () => void;
+}): void {
+  if (input.key === "Enter") {
+    input.preventDefault();
+    input.saveTitle();
+    return;
+  }
+
+  if (input.key === "Escape") {
+    input.preventDefault();
+    input.cancelTitleEdit();
+  }
+}
+
 export function applyActionDockExpandCommand(input: {
   options?: { focusComposer?: boolean };
   setPinnedExpanded: (expanded: boolean) => void;
