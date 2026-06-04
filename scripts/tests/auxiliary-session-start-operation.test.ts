@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { runAuxiliarySessionStartOperation } from "../../src/auxiliary-session-start-operation.js";
+import {
+  applyAuxiliarySessionStartResult,
+  runAuxiliarySessionStartOperation,
+} from "../../src/auxiliary-session-start-operation.js";
 import type {
   AuxiliarySession,
   CreateAuxiliarySessionInput,
@@ -116,5 +119,39 @@ describe("runAuxiliarySessionStartOperation", () => {
       error,
     );
     assert.equal(applied, false);
+  });
+});
+
+describe("applyAuxiliarySessionStartResult", () => {
+  it("mutation revision、active session、dock、feedback、dialog close の順に反映する", () => {
+    const session = makeAuxiliarySession({ id: "aux-started" });
+    const events: string[] = [];
+
+    applyAuxiliarySessionStartResult({
+      session,
+      incrementMutationRevision: () => {
+        events.push("revision");
+      },
+      applyActiveSession: (startedSession) => {
+        events.push(`active:${startedSession.id}`);
+      },
+      setActionDockPinnedExpanded: (expanded) => {
+        events.push(`dock:${expanded}`);
+      },
+      setForceComposerBlockedFeedback: (forced) => {
+        events.push(`feedback:${forced}`);
+      },
+      closeLaunchDialog: () => {
+        events.push("close");
+      },
+    });
+
+    assert.deepEqual(events, [
+      "revision",
+      "active:aux-started",
+      "dock:true",
+      "feedback:false",
+      "close",
+    ]);
   });
 });

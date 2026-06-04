@@ -7,6 +7,21 @@ import type {
   CreateAuxiliarySessionInput,
 } from "./auxiliary-session-state.js";
 
+export function applyAuxiliarySessionStartResult(input: {
+  session: AuxiliarySession;
+  incrementMutationRevision: () => void;
+  applyActiveSession: (session: AuxiliarySession) => void;
+  setActionDockPinnedExpanded: (expanded: boolean) => void;
+  setForceComposerBlockedFeedback: (forced: boolean) => void;
+  closeLaunchDialog: () => void;
+}): void {
+  input.incrementMutationRevision();
+  input.applyActiveSession(input.session);
+  input.setActionDockPinnedExpanded(true);
+  input.setForceComposerBlockedFeedback(false);
+  input.closeLaunchDialog();
+}
+
 export async function runAuxiliarySessionStartOperation(input: {
   parentSessionId: string;
   provider: string;
