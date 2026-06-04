@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyCancelRetryDraftReplace,
+  applyRetryDetailsReset,
+  applyRetryDetailsToggle,
   applyRetryDraftRestoreCommand,
   applyRetryDraftReplaceConfirmation,
   applyRetryEditCommand,
@@ -199,6 +202,53 @@ test("applyRetryDraftReplaceConfirmation は有効な retry edit だけ draft �
   });
 
   assert.deepEqual(events, ["前回の依頼", ""]);
+});
+
+test("applyRetryDetailsReset は banner 種別に応じて詳細表示 state を初期化する", () => {
+  const values: boolean[] = [];
+
+  applyRetryDetailsReset({
+    retryBanner: null,
+    setRetryDetailsOpen: (open) => values.push(open),
+  });
+  applyRetryDetailsReset({
+    retryBanner: { kind: "failed" },
+    setRetryDetailsOpen: (open) => values.push(open),
+  });
+  applyRetryDetailsReset({
+    retryBanner: { kind: "canceled" },
+    setRetryDetailsOpen: (open) => values.push(open),
+  });
+
+  assert.deepEqual(values, [false, true, false]);
+});
+
+test("applyRetryDetailsToggle は現在の詳細表示 state を反転する", () => {
+  let current = false;
+
+  applyRetryDetailsToggle({
+    setRetryDetailsOpen: (updater) => {
+      current = updater(current);
+    },
+  });
+  assert.equal(current, true);
+
+  applyRetryDetailsToggle({
+    setRetryDetailsOpen: (updater) => {
+      current = updater(current);
+    },
+  });
+  assert.equal(current, false);
+});
+
+test("applyCancelRetryDraftReplace は retry draft replace pending を解除する", () => {
+  const values: boolean[] = [];
+
+  applyCancelRetryDraftReplace({
+    setRetryDraftReplacePending: (pending) => values.push(pending),
+  });
+
+  assert.deepEqual(values, [false]);
 });
 
 test("resolveRetryBannerKind は session state と terminal audit log から retry 種別を解決する", () => {

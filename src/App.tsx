@@ -148,11 +148,13 @@ import {
 } from "./chat/message-text-actions.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 import {
+  applyCancelRetryDraftReplace,
+  applyRetryDetailsReset,
+  applyRetryDetailsToggle,
   applyRetryDraftRestoreCommand,
   applyRetryDraftReplaceConfirmation,
   applyRetryEditCommand,
   buildRetryStopSummary,
-  defaultRetryBannerDetailsOpen,
   isRetryActionDisabled as resolveRetryActionDisabled,
   resolveRetryBannerKind,
   runRetryResendCommand,
@@ -1573,12 +1575,10 @@ export default function AgentSessionWindowApp() {
   }, [retryBanner]);
 
   useLayoutEffect(() => {
-    if (!retryBanner) {
-      setIsRetryDetailsOpen(false);
-      return;
-    }
-
-    setIsRetryDetailsOpen(defaultRetryBannerDetailsOpen(retryBanner.kind));
+    applyRetryDetailsReset({
+      retryBanner,
+      setRetryDetailsOpen: setIsRetryDetailsOpen,
+    });
   }, [retryBanner?.kind, retryBannerIdentity, selectedSession?.id]);
 
   useEffect(() => {
@@ -2153,7 +2153,15 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleCancelRetryDraftReplace = () => {
-    setIsRetryDraftReplacePending(false);
+    applyCancelRetryDraftReplace({
+      setRetryDraftReplacePending: setIsRetryDraftReplacePending,
+    });
+  };
+
+  const handleToggleRetryDetails = () => {
+    applyRetryDetailsToggle({
+      setRetryDetailsOpen: setIsRetryDetailsOpen,
+    });
   };
 
   const handleCloseWindow = () => {
@@ -3048,7 +3056,7 @@ export default function AgentSessionWindowApp() {
             : resolveSessionMicrocopy("empty.changed_files", ["changed-files-empty", artifactKey]),
         onCopyMessageText: handleCopyMessageText,
         onQuoteMessageText: handleQuoteMessageText,
-        onToggleRetryDetails: () => setIsRetryDetailsOpen((current) => !current),
+        onToggleRetryDetails: handleToggleRetryDetails,
         onResendLastMessage: () => void handleResendLastMessage(),
         onEditLastMessage: handleEditLastMessage,
         onConfirmRetryDraftReplace: handleConfirmRetryDraftReplace,

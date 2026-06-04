@@ -80,11 +80,13 @@ import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-opera
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
 import { COMPANION_PENDING_MESSAGE_TEXT } from "./chat/pending-run-indicator.js";
 import {
+  applyCancelRetryDraftReplace,
+  applyRetryDetailsReset,
+  applyRetryDetailsToggle,
   applyRetryDraftRestoreCommand,
   applyRetryDraftReplaceConfirmation,
   applyRetryEditCommand,
   buildRetryStopSummary,
-  defaultRetryBannerDetailsOpen,
   isRetryActionDisabled as resolveRetryActionDisabled,
   resolveRetryBannerKind,
   runRetryResendCommand,
@@ -1208,12 +1210,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
   }, [composerText, retryBanner]);
   useLayoutEffect(() => {
-    if (!retryBanner) {
-      setIsRetryDetailsOpen(false);
-      return;
-    }
-
-    setIsRetryDetailsOpen(defaultRetryBannerDetailsOpen(retryBanner.kind));
+    applyRetryDetailsReset({
+      retryBanner,
+      setRetryDetailsOpen: setIsRetryDetailsOpen,
+    });
   }, [retryBanner?.kind, retryBannerIdentity, snapshot?.session.id]);
   const actionDockCompactPreview = useMemo(
     () =>
@@ -2598,7 +2598,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   function handleCancelRetryDraftReplace(): void {
-    setIsRetryDraftReplacePending(false);
+    applyCancelRetryDraftReplace({
+      setRetryDraftReplacePending: setIsRetryDraftReplacePending,
+    });
+  }
+
+  function handleToggleRetryDetails(): void {
+    applyRetryDetailsToggle({
+      setRetryDetailsOpen: setIsRetryDetailsOpen,
+    });
   }
 
   async function handleResolveCompanionLiveApproval(
@@ -2921,7 +2929,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onOpenInlinePath: (target) => openCompanionInlinePath(getWithMateApi(), target, snapshot.session.worktreePath),
         onCopyMessageText: handleCopyMessageText,
         onQuoteMessageText: handleQuoteMessageText,
-        onToggleRetryDetails: () => setIsRetryDetailsOpen((current) => !current),
+        onToggleRetryDetails: handleToggleRetryDetails,
         onResendLastMessage: () => void handleResendLastMessage(),
         onEditLastMessage: handleEditLastMessage,
         onConfirmRetryDraftReplace: handleConfirmRetryDraftReplace,

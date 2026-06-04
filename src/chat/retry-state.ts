@@ -95,6 +95,30 @@ export function applyRetryDraftReplaceConfirmation(input: {
   input.restoreDraft(input.messageText);
 }
 
+export function applyRetryDetailsReset(input: {
+  retryBanner: Pick<RetryBannerState, "kind"> | null;
+  setRetryDetailsOpen: (open: boolean) => void;
+}): void {
+  if (!input.retryBanner) {
+    input.setRetryDetailsOpen(false);
+    return;
+  }
+
+  input.setRetryDetailsOpen(defaultRetryBannerDetailsOpen(input.retryBanner.kind));
+}
+
+export function applyRetryDetailsToggle(input: {
+  setRetryDetailsOpen: (updater: (current: boolean) => boolean) => void;
+}): void {
+  input.setRetryDetailsOpen((current) => !current);
+}
+
+export function applyCancelRetryDraftReplace(input: {
+  setRetryDraftReplacePending: (pending: boolean) => void;
+}): void {
+  input.setRetryDraftReplacePending(false);
+}
+
 export function defaultRetryBannerDetailsOpen(kind: RetryBannerKind): boolean {
   return kind !== "canceled";
 }
