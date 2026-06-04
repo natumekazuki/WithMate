@@ -45,6 +45,7 @@ import {
   MateTalkTurnController,
   resolveMateTalkActionDockExpandedAfterSubmit,
 } from "./mate-talk-state.js";
+import { applyAdditionalDirectoryListToggle } from "./session-shell-handlers.js";
 
 function getMateTalkLaunchParams(): { providerId: string; model: string; reasoningEffort: ModelReasoningEffort } {
   if (typeof window === "undefined") {
@@ -502,7 +503,9 @@ export function useMateTalkWindowState({
     onAddToSessionFiles: () => void addToSessionFiles(),
     onPickSessionFiles: () => void pickSessionFiles(),
     onAddAdditionalDirectory: () => void addAdditionalDirectory(),
-    onToggleAdditionalDirectoryList: () => setIsAdditionalDirectoryListOpen((current) => !current),
+    onToggleAdditionalDirectoryList: () => applyAdditionalDirectoryListToggle({
+      setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
+    }),
     onRemoveAttachment: removePathReference,
     onRemoveAdditionalDirectory: (directoryPath: string) => {
       setAdditionalDirectories((current) => removeAdditionalDirectoryPath(current, directoryPath));
