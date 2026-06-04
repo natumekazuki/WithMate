@@ -9,6 +9,7 @@ import {
   defaultRetryBannerDetailsOpen,
   isRetryActionDisabled,
   resolveRetryBannerKind,
+  runRetryResendCommand,
   shouldProtectRetryEditDraft,
   shouldShowRetryBanner,
 } from "../../src/chat/retry-state.js";
@@ -68,6 +69,41 @@ test("buildRetryDraftRestoreState は workspace path matches を呼び出しご�
   const second = buildRetryDraftRestoreState("a");
 
   assert.notEqual(first.workspacePathMatches, second.workspacePathMatches);
+});
+
+test("runRetryResendCommand は有効な last user message だけ再送する", async () => {
+  const sends: string[] = [];
+
+  await runRetryResendCommand({
+    isDisabled: true,
+    messageText: "前回の依頼",
+    resendMessage: async (messageText) => {
+      sends.push(messageText);
+    },
+  });
+  await runRetryResendCommand({
+    isDisabled: false,
+    messageText: null,
+    resendMessage: async (messageText) => {
+      sends.push(messageText);
+    },
+  });
+  await runRetryResendCommand({
+    isDisabled: false,
+    messageText: "前回の依頼",
+    resendMessage: async (messageText) => {
+      sends.push(messageText);
+    },
+  });
+  await runRetryResendCommand({
+    isDisabled: false,
+    messageText: "",
+    resendMessage: async (messageText) => {
+      sends.push(messageText);
+    },
+  });
+
+  assert.deepEqual(sends, ["前回の依頼", ""]);
 });
 
 test("applyRetryEditCommand は保護確認または draft 復元を選ぶ", () => {

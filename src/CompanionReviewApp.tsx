@@ -87,6 +87,7 @@ import {
   defaultRetryBannerDetailsOpen,
   isRetryActionDisabled as resolveRetryActionDisabled,
   resolveRetryBannerKind,
+  runRetryResendCommand,
   shouldProtectRetryEditDraft,
   shouldShowRetryBanner,
   type RetryBannerState,
@@ -2558,11 +2559,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   async function handleResendLastMessage(): Promise<void> {
-    if (!lastUserMessage || isRetryActionDisabled) {
-      return;
-    }
-
-    await sendCompanionTurn(lastUserMessage.text, { clearDraft: false });
+    await runRetryResendCommand({
+      isDisabled: isRetryActionDisabled,
+      messageText: lastUserMessage?.text,
+      resendMessage: (messageText) => sendCompanionTurn(messageText, { clearDraft: false }),
+    });
   }
 
   function restoreLastUserMessageToDraft(messageText: string): void {

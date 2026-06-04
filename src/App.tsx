@@ -155,6 +155,7 @@ import {
   defaultRetryBannerDetailsOpen,
   isRetryActionDisabled as resolveRetryActionDisabled,
   resolveRetryBannerKind,
+  runRetryResendCommand,
   shouldProtectRetryEditDraft,
   shouldShowRetryBanner,
   type RetryBannerKind,
@@ -2110,11 +2111,11 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleResendLastMessage = async () => {
-    if (!lastUserMessage || composerBlockedReason || isSelectedSessionReadOnly) {
-      return;
-    }
-
-    await sendMessage(lastUserMessage.text, { clearDraft: false });
+    await runRetryResendCommand({
+      isDisabled: !!composerBlockedReason || isSelectedSessionReadOnly,
+      messageText: lastUserMessage?.text,
+      resendMessage: (messageText) => sendMessage(messageText, { clearDraft: false }),
+    });
   };
 
   const restoreLastUserMessageToDraft = (messageText: string) => {

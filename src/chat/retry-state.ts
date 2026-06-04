@@ -31,6 +31,18 @@ export function buildRetryDraftRestoreState(messageText: string): RetryDraftRest
   };
 }
 
+export async function runRetryResendCommand(input: {
+  isDisabled: boolean;
+  messageText: string | null | undefined;
+  resendMessage: (messageText: string) => Promise<void>;
+}): Promise<void> {
+  if (input.isDisabled || input.messageText == null) {
+    return;
+  }
+
+  await input.resendMessage(input.messageText);
+}
+
 export function applyRetryEditCommand(input: {
   isDisabled: boolean;
   messageText: string | null | undefined;
