@@ -2115,6 +2115,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
   }
 
+  function handleToggleContextPaneHeaderExpanded(): void {
+    applyHeaderExpandedToggleCommand({
+      isEditingTitle: false,
+      setHeaderExpanded: setIsHeaderExpanded,
+    });
+  }
+
   function handleExpandActionDock(options?: { focusComposer?: boolean }): void {
     applyActionDockExpandCommand({
       options,
@@ -2895,7 +2902,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         headerActions: auxiliaryHeaderActions,
         isAuxiliaryMode,
         onToggleHeaderExpanded: handleToggleHeaderExpanded,
-        onToggleContextPaneHeaderExpanded: () => setIsHeaderExpanded((current) => !current),
+        onToggleContextPaneHeaderExpanded: handleToggleContextPaneHeaderExpanded,
         onOpenAuditLog: () => setAuditLogsOpen(true),
         onOpenTerminal: () => void openCompanionTerminal(),
         onOpenSessionFilesTerminal: () => void openCompanionSessionFilesTerminal(),
