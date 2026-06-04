@@ -21,11 +21,8 @@ import {
   applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionModelSelectionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
-  buildAuxiliarySessionRunningTransition,
   loadClosedAuxiliarySessionDetails,
   resolveActiveAuxiliarySessionRefreshResult,
-  resolveAuxiliarySessionSendPreflight,
-  resolveAuxiliarySessionSendTarget,
   resolveClosedAuxiliarySessionsAfterReturn,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
@@ -76,6 +73,7 @@ import {
 } from "./chat/chat-header-actions.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
 import { runAuxiliarySessionStartOperation } from "./auxiliary-session-start-operation.js";
+import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
 import { COMPANION_PENDING_MESSAGE_TEXT } from "./chat/pending-run-indicator.js";
 import {
@@ -1884,75 +1882,48 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       setForceComposerBlockedFeedback(true);
       return;
     }
-    const preflight = resolveAuxiliarySessionSendPreflight({
+
+    const result = await runAuxiliarySessionSendOperation({
       activeSession: activeAuxiliarySession,
       messageText,
+      parentMessageCount: snapshot.session.messages.length,
+      updatedAt: currentTimestampLabel(),
+      draftSaveQueue: auxiliaryDraftSaveQueueRef,
+      sessionSaveQueue: auxiliarySessionSaveQueueRef,
+      mutationRevision: auxiliarySessionMutationRevisionRef,
+      getCurrentSession: () => activeAuxiliarySessionRef.current,
+      applyRunningSession: (runningSession) => {
+        activeAuxiliarySessionRef.current = runningSession;
+        setActiveAuxiliarySession(runningSession);
+        setLiveRunState((current) => createOwnedPendingLiveSessionRunState(
+          buildCompanionAuxiliaryRuntimeSession(snapshot.session, runningSession),
+          current,
+        ));
+      },
+      afterRunningSessionApplied: () => {
+        setForceComposerBlockedFeedback(false);
+      },
+      applySavedSession: (saved) => {
+        activeAuxiliarySessionRef.current = saved;
+        setActiveAuxiliarySession(saved);
+      },
+      restoreSessionAfterError: (session) => {
+        activeAuxiliarySessionRef.current = session;
+        setActiveAuxiliarySession(session);
+      },
+      clearPendingLiveRun: (sessionId) => {
+        setLiveRunState((current) => clearOwnedLiveSessionRunState(current, sessionId));
+      },
+      updateAuxiliarySession: (session) => withmateApi.updateAuxiliarySession(session),
+      runAuxiliarySessionTurn: (sessionId, request) => withmateApi.runAuxiliarySessionTurn(sessionId, request),
     });
-    if (preflight.blockedReason) {
+    if (result.status === "blocked") {
       setForceComposerBlockedFeedback(true);
       return;
     }
-    const userMessage = preflight.userMessage;
-    const sendStartRevision = auxiliarySessionMutationRevisionRef.current;
-
-    await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
-    await auxiliarySessionSaveQueueRef.current.catch(() => undefined);
-    if (auxiliarySessionMutationRevisionRef.current !== sendStartRevision) {
-      return;
-    }
-    const sendTarget = resolveAuxiliarySessionSendTarget({
-      activeSession: activeAuxiliarySession,
-      currentSession: activeAuxiliarySessionRef.current,
-    });
-    if (!sendTarget.session) {
-      return;
-    }
-    const currentAuxiliarySession = sendTarget.session;
-
-    const { anchorUpdateSession, runningSession } = buildAuxiliarySessionRunningTransition({
-      session: currentAuxiliarySession,
-      userMessage,
-      parentMessageCount: snapshot.session.messages.length,
-      updatedAt: currentTimestampLabel(),
-    });
-    auxiliarySessionMutationRevisionRef.current += 1;
-    const runOperationRevision = auxiliarySessionMutationRevisionRef.current;
-    activeAuxiliarySessionRef.current = runningSession;
-    setActiveAuxiliarySession(runningSession);
-    setLiveRunState((current) => createOwnedPendingLiveSessionRunState(
-      buildCompanionAuxiliaryRuntimeSession(snapshot.session, runningSession),
-      current,
-    ));
-    setForceComposerBlockedFeedback(false);
-
-    try {
-      if (anchorUpdateSession) {
-        await enqueueAuxiliarySessionSaveWithQueue(
-          auxiliarySessionSaveQueueRef,
-          () => withmateApi.updateAuxiliarySession(anchorUpdateSession),
-        );
-      }
-      const saved = await withmateApi.runAuxiliarySessionTurn(currentAuxiliarySession.id, { userMessage });
-      if (
-        auxiliarySessionMutationRevisionRef.current !== runOperationRevision
-        || activeAuxiliarySessionRef.current?.id !== saved.id
-      ) {
-        return;
-      }
-      activeAuxiliarySessionRef.current = saved;
-      setActiveAuxiliarySession(saved);
-    } catch (error) {
-      if (
-        auxiliarySessionMutationRevisionRef.current !== runOperationRevision
-        || activeAuxiliarySessionRef.current?.id !== currentAuxiliarySession.id
-      ) {
-        return;
-      }
-      console.error(error);
-      setLiveRunState((current) => clearOwnedLiveSessionRunState(current, currentAuxiliarySession.id));
-      activeAuxiliarySessionRef.current = currentAuxiliarySession;
-      setActiveAuxiliarySession(currentAuxiliarySession);
-      setErrorMessage(error instanceof Error ? error.message : "Auxiliary Session の実行に失敗したよ。");
+    if (result.status === "error") {
+      console.error(result.error);
+      setErrorMessage(result.error instanceof Error ? result.error.message : "Auxiliary Session の実行に失敗したよ。");
     }
   }
 

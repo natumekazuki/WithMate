@@ -1,0 +1,282 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import { runAuxiliarySessionSendOperation } from "../../src/auxiliary-session-send-operation.js";
+import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
+
+function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
+  return {
+    id: "aux-1",
+    parentSessionId: "parent-1",
+    status: "active",
+    runState: "idle",
+    title: "Auxiliary",
+    provider: "codex",
+    catalogRevision: 1,
+    model: "gpt-5.4",
+    reasoningEffort: "medium",
+    approvalMode: "untrusted",
+    codexSandboxMode: "workspace-write",
+    customAgentName: "",
+    allowedAdditionalDirectories: [],
+    threadId: "",
+    composerDraft: "draft",
+    messages: [],
+    displayAfterMessageIndex: null,
+    createdAt: "",
+    updatedAt: "before",
+    closedAt: "",
+    ...overrides,
+  };
+}
+
+function createQueueRefs(): {
+  draftSaveQueue: { current: Promise<void> };
+  sessionSaveQueue: { current: Promise<void> };
+} {
+  return {
+    draftSaveQueue: { current: Promise.resolve() },
+    sessionSaveQueue: { current: Promise.resolve() },
+  };
+}
+
+describe("runAuxiliarySessionSendOperation", () => {
+  it("running transition を反映して turn 実行結果を active session へ反映する", async () => {
+    const { draftSaveQueue, sessionSaveQueue } = createQueueRefs();
+    const mutationRevision = { current: 0 };
+    let currentSession = makeAuxiliarySession();
+    const savedSession = makeAuxiliarySession({
+      runState: "idle",
+      composerDraft: "",
+      messages: [
+        { role: "user", text: "hello" },
+        { role: "assistant", text: "done" },
+      ],
+      displayAfterMessageIndex: 2,
+      updatedAt: "saved",
+    });
+    const pendingUpdates: AuxiliarySession[] = [];
+    const runningSessions: AuxiliarySession[] = [];
+    const appliedSavedSessions: AuxiliarySession[] = [];
+    const runRequests: Array<{ sessionId: string; userMessage: string }> = [];
+
+    const result = await runAuxiliarySessionSendOperation({
+      activeSession: currentSession,
+      messageText: "  hello  ",
+      parentMessageCount: 3,
+      updatedAt: "running",
+      draftSaveQueue,
+      sessionSaveQueue,
+      mutationRevision,
+      getCurrentSession: () => currentSession,
+      applyRunningSession: (session) => {
+        currentSession = session;
+        runningSessions.push(session);
+      },
+      applySavedSession: (session) => {
+        currentSession = session;
+        appliedSavedSessions.push(session);
+      },
+      restoreSessionAfterError: (session) => {
+        currentSession = session;
+      },
+      clearPendingLiveRun: () => undefined,
+      updateAuxiliarySession: async (session) => {
+        pendingUpdates.push(session);
+        return session;
+      },
+      runAuxiliarySessionTurn: async (sessionId, request) => {
+        runRequests.push({ sessionId, userMessage: request.userMessage });
+        return savedSession;
+      },
+    });
+
+    assert.deepEqual(result, {
+      status: "completed",
+      saved: savedSession,
+    });
+    assert.equal(mutationRevision.current, 1);
+    assert.deepEqual(pendingUpdates, [{
+      ...makeAuxiliarySession(),
+      displayAfterMessageIndex: 2,
+    }]);
+    assert.deepEqual(runningSessions, [{
+      ...makeAuxiliarySession(),
+      runState: "running",
+      composerDraft: "",
+      messages: [{ role: "user", text: "hello" }],
+      displayAfterMessageIndex: 2,
+      updatedAt: "running",
+    }]);
+    assert.deepEqual(runRequests, [{ sessionId: "aux-1", userMessage: "hello" }]);
+    assert.deepEqual(appliedSavedSessions, [savedSession]);
+    assert.equal(currentSession, savedSession);
+  });
+
+  it("preflight で block された場合は副作用なしで返す", async () => {
+    const { draftSaveQueue, sessionSaveQueue } = createQueueRefs();
+    const mutationRevision = { current: 0 };
+    let sideEffectCount = 0;
+
+    const result = await runAuxiliarySessionSendOperation({
+      activeSession: makeAuxiliarySession(),
+      composerBlockedReason: "blocked",
+      messageText: "hello",
+      parentMessageCount: 1,
+      updatedAt: "running",
+      draftSaveQueue,
+      sessionSaveQueue,
+      mutationRevision,
+      getCurrentSession: () => makeAuxiliarySession(),
+      applyRunningSession: () => {
+        sideEffectCount += 1;
+      },
+      applySavedSession: () => {
+        sideEffectCount += 1;
+      },
+      restoreSessionAfterError: () => {
+        sideEffectCount += 1;
+      },
+      clearPendingLiveRun: () => {
+        sideEffectCount += 1;
+      },
+      updateAuxiliarySession: async (session) => session,
+      runAuxiliarySessionTurn: async () => makeAuxiliarySession(),
+    });
+
+    assert.equal(result.status, "blocked");
+    assert.equal(result.status === "blocked" ? result.preflight.blockedReason : null, "composer-blocked");
+    assert.equal(mutationRevision.current, 0);
+    assert.equal(sideEffectCount, 0);
+  });
+
+  it("queue 待機中に revision が変わった場合は送信しない", async () => {
+    const mutationRevision = { current: 0 };
+    const draftSaveQueue = {
+      current: Promise.resolve().then(() => {
+        mutationRevision.current += 1;
+      }),
+    };
+    const sessionSaveQueue = { current: Promise.resolve() };
+    let didRun = false;
+
+    const result = await runAuxiliarySessionSendOperation({
+      activeSession: makeAuxiliarySession(),
+      messageText: "hello",
+      parentMessageCount: 1,
+      updatedAt: "running",
+      draftSaveQueue,
+      sessionSaveQueue,
+      mutationRevision,
+      getCurrentSession: () => makeAuxiliarySession(),
+      applyRunningSession: () => {
+        didRun = true;
+      },
+      applySavedSession: () => {
+        didRun = true;
+      },
+      restoreSessionAfterError: () => {
+        didRun = true;
+      },
+      clearPendingLiveRun: () => {
+        didRun = true;
+      },
+      updateAuxiliarySession: async (session) => session,
+      runAuxiliarySessionTurn: async () => {
+        didRun = true;
+        return makeAuxiliarySession();
+      },
+    });
+
+    assert.deepEqual(result, { status: "stale" });
+    assert.equal(didRun, false);
+  });
+
+  it("保存後の current session が running の場合は target-blocked を返す", async () => {
+    const { draftSaveQueue, sessionSaveQueue } = createQueueRefs();
+    const mutationRevision = { current: 0 };
+    let didRun = false;
+
+    const result = await runAuxiliarySessionSendOperation({
+      activeSession: makeAuxiliarySession(),
+      messageText: "hello",
+      parentMessageCount: 1,
+      updatedAt: "running",
+      draftSaveQueue,
+      sessionSaveQueue,
+      mutationRevision,
+      getCurrentSession: () => makeAuxiliarySession({ runState: "running" }),
+      applyRunningSession: () => {
+        didRun = true;
+      },
+      applySavedSession: () => {
+        didRun = true;
+      },
+      restoreSessionAfterError: () => {
+        didRun = true;
+      },
+      clearPendingLiveRun: () => {
+        didRun = true;
+      },
+      updateAuxiliarySession: async (session) => session,
+      runAuxiliarySessionTurn: async () => {
+        didRun = true;
+        return makeAuxiliarySession();
+      },
+    });
+
+    assert.equal(result.status, "target-blocked");
+    assert.equal(result.status === "target-blocked" ? result.target.blockedReason : null, "running");
+    assert.equal(mutationRevision.current, 0);
+    assert.equal(didRun, false);
+  });
+
+  it("turn 実行失敗時は live run を clear して送信前 session へ戻す", async () => {
+    const { draftSaveQueue, sessionSaveQueue } = createQueueRefs();
+    const mutationRevision = { current: 0 };
+    const error = new Error("run failed");
+    const beforeSession = makeAuxiliarySession({
+      displayAfterMessageIndex: 1,
+      messages: [{ role: "user", text: "previous" }],
+    });
+    let currentSession = beforeSession;
+    const clearedSessionIds: string[] = [];
+    const restoredSessions: AuxiliarySession[] = [];
+
+    const result = await runAuxiliarySessionSendOperation({
+      activeSession: beforeSession,
+      messageText: "hello",
+      parentMessageCount: 3,
+      updatedAt: "running",
+      draftSaveQueue,
+      sessionSaveQueue,
+      mutationRevision,
+      getCurrentSession: () => currentSession,
+      applyRunningSession: (session) => {
+        currentSession = session;
+      },
+      applySavedSession: (session) => {
+        currentSession = session;
+      },
+      restoreSessionAfterError: (session) => {
+        currentSession = session;
+        restoredSessions.push(session);
+      },
+      clearPendingLiveRun: (sessionId) => {
+        clearedSessionIds.push(sessionId);
+      },
+      updateAuxiliarySession: async (session) => session,
+      runAuxiliarySessionTurn: async () => {
+        throw error;
+      },
+    });
+
+    assert.deepEqual(result, {
+      status: "error",
+      error,
+    });
+    assert.deepEqual(clearedSessionIds, ["aux-1"]);
+    assert.deepEqual(restoredSessions, [beforeSession]);
+    assert.equal(currentSession, beforeSession);
+  });
+});

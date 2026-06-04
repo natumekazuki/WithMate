@@ -132,11 +132,8 @@ import {
   applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionModelSelectionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
-  buildAuxiliarySessionRunningTransition,
   loadClosedAuxiliarySessionDetails,
   resolveActiveAuxiliarySessionRefreshResult,
-  resolveAuxiliarySessionSendPreflight,
-  resolveAuxiliarySessionSendTarget,
   resolveClosedAuxiliarySessionsAfterReturn,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
@@ -186,6 +183,7 @@ import {
 } from "./auxiliary-additional-directory-operation.js";
 import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
 import { runAuxiliarySessionStartOperation } from "./auxiliary-session-start-operation.js";
+import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
 
@@ -2359,78 +2357,50 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const preflight = resolveAuxiliarySessionSendPreflight({
+    const result = await runAuxiliarySessionSendOperation({
       activeSession: activeAuxiliarySession,
       composerBlockedReason,
       messageText,
-    });
-    if (preflight.blockedReason) {
-      throw new Error(preflight.blockedMessage);
-    }
-    const nextMessage = preflight.userMessage;
-    const sendStartRevision = auxiliarySessionMutationRevisionRef.current;
-
-    await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
-    await auxiliarySessionSaveQueueRef.current.catch(() => undefined);
-    if (auxiliarySessionMutationRevisionRef.current !== sendStartRevision) {
-      return;
-    }
-    const sendTarget = resolveAuxiliarySessionSendTarget({
-      activeSession: activeAuxiliarySession,
-      currentSession: activeAuxiliarySessionRef.current,
-    });
-    if (!sendTarget.session) {
-      if (sendTarget.blockedReason === "running") {
-        throw new Error("Auxiliary Session はまだ実行中だよ。");
-      }
-      return;
-    }
-    const currentAuxiliarySession = sendTarget.session;
-
-    setIsActionDockPinnedExpanded(false);
-    const { anchorUpdateSession, runningSession } = buildAuxiliarySessionRunningTransition({
-      session: currentAuxiliarySession,
-      userMessage: nextMessage,
       parentMessageCount: selectedSession?.messages.length ?? null,
       updatedAt: currentTimestampLabel(),
+      draftSaveQueue: auxiliaryDraftSaveQueueRef,
+      sessionSaveQueue: auxiliarySessionSaveQueueRef,
+      mutationRevision: auxiliarySessionMutationRevisionRef,
+      getCurrentSession: () => activeAuxiliarySessionRef.current,
+      beforeRunningSessionApplied: () => {
+        setIsActionDockPinnedExpanded(false);
+      },
+      applyRunningSession: (runningSession) => {
+        activeAuxiliarySessionRef.current = runningSession;
+        setActiveAuxiliarySession(runningSession);
+        setLiveRunState((current) => createOwnedPendingLiveSessionRunState(
+          buildMainAuxiliaryRuntimeSession(selectedSession!, runningSession),
+          current,
+        ));
+      },
+      applySavedSession: (saved) => {
+        activeAuxiliarySessionRef.current = saved;
+        setActiveAuxiliarySession(saved);
+      },
+      restoreSessionAfterError: (session) => {
+        activeAuxiliarySessionRef.current = session;
+        setActiveAuxiliarySession(session);
+      },
+      clearPendingLiveRun: (sessionId) => {
+        setLiveRunState((current) => clearOwnedLiveSessionRunState(current, sessionId));
+      },
+      updateAuxiliarySession: (session) => withmateApi.updateAuxiliarySession(session),
+      runAuxiliarySessionTurn: (sessionId, request) => withmateApi.runAuxiliarySessionTurn(sessionId, request),
     });
-    auxiliarySessionMutationRevisionRef.current += 1;
-    const runOperationRevision = auxiliarySessionMutationRevisionRef.current;
-    activeAuxiliarySessionRef.current = runningSession;
-    setActiveAuxiliarySession(runningSession);
-    setLiveRunState((current) => createOwnedPendingLiveSessionRunState(
-      buildMainAuxiliaryRuntimeSession(selectedSession!, runningSession),
-      current,
-    ));
-
-    try {
-      if (anchorUpdateSession) {
-        await enqueueAuxiliarySessionSaveWithQueue(
-          auxiliarySessionSaveQueueRef,
-          () => withmateApi.updateAuxiliarySession(anchorUpdateSession),
-        );
-      }
-      const saved = await withmateApi.runAuxiliarySessionTurn(currentAuxiliarySession.id, { userMessage: nextMessage });
-      if (
-        auxiliarySessionMutationRevisionRef.current !== runOperationRevision
-        || activeAuxiliarySessionRef.current?.id !== saved.id
-      ) {
-        return;
-      }
-      activeAuxiliarySessionRef.current = saved;
-      setActiveAuxiliarySession(saved);
-    } catch (error) {
-      if (
-        auxiliarySessionMutationRevisionRef.current !== runOperationRevision
-        || activeAuxiliarySessionRef.current?.id !== currentAuxiliarySession.id
-      ) {
-        return;
-      }
-      console.error(error);
-      setLiveRunState((current) => clearOwnedLiveSessionRunState(current, runningSession.id));
-      activeAuxiliarySessionRef.current = currentAuxiliarySession;
-      setActiveAuxiliarySession(currentAuxiliarySession);
-      throw error;
+    if (result.status === "blocked") {
+      throw new Error(result.preflight.blockedMessage);
+    }
+    if (result.status === "target-blocked" && result.target.blockedReason === "running") {
+      throw new Error("Auxiliary Session はまだ実行中だよ。");
+    }
+    if (result.status === "error") {
+      console.error(result.error);
+      throw result.error;
     }
   };
 
