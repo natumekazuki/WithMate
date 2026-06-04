@@ -63,7 +63,6 @@ import {
 import { buildMainAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import {
-  buildCreateAuxiliarySessionInput,
   buildAuxiliaryLaunchProviderItems,
   resolveAuxiliaryLaunchStartError,
 } from "./chat/auxiliary-launch-state.js";
@@ -186,6 +185,7 @@ import {
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "./auxiliary-additional-directory-operation.js";
 import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
+import { runAuxiliarySessionStartOperation } from "./auxiliary-session-start-operation.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
 
@@ -2261,17 +2261,20 @@ export default function AgentSessionWindowApp() {
     try {
       const launchSelectionSessions = await withmateApi.listSessionSummaries().catch(() => sessions);
       const lastUsedSelection = resolveLastUsedSessionSelection(launchSelectionSessions, launchProviderId);
-      const session = await withmateApi.createAuxiliarySession(buildCreateAuxiliarySessionInput({
+      await runAuxiliarySessionStartOperation({
         parentSessionId,
         provider: launchProviderId,
         defaults: lastUsedSelection,
-      }));
-      auxiliarySessionMutationRevisionRef.current += 1;
-      activeAuxiliarySessionRef.current = session;
-      setActiveAuxiliarySession(session);
-      setIsActionDockPinnedExpanded(true);
-      setForceComposerBlockedFeedback(false);
-      closeAuxiliaryLaunchDialog();
+        createAuxiliarySession: (request) => withmateApi.createAuxiliarySession(request),
+        applyStartedSession: (session) => {
+          auxiliarySessionMutationRevisionRef.current += 1;
+          activeAuxiliarySessionRef.current = session;
+          setActiveAuxiliarySession(session);
+          setIsActionDockPinnedExpanded(true);
+          setForceComposerBlockedFeedback(false);
+          closeAuxiliaryLaunchDialog();
+        },
+      });
     } catch (error) {
       setAuxiliaryLaunchStartError(error);
     } finally {

@@ -75,6 +75,7 @@ import {
   resolveAuxiliaryHeaderActionState,
 } from "./chat/chat-header-actions.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
+import { runAuxiliarySessionStartOperation } from "./auxiliary-session-start-operation.js";
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
 import { COMPANION_PENDING_MESSAGE_TEXT } from "./chat/pending-run-indicator.js";
 import {
@@ -103,7 +104,6 @@ import {
   buildActionDockRuntimeState,
 } from "./action-dock-state.js";
 import {
-  buildCreateAuxiliarySessionInput,
   buildAuxiliaryLaunchProviderItems,
   resolveAuxiliaryLaunchStartError,
 } from "./chat/auxiliary-launch-state.js";
@@ -1787,17 +1787,20 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
             customAgentName: snapshot.session.customAgentName,
           }
         : null;
-      const session = await withmateApi.createAuxiliarySession(buildCreateAuxiliarySessionInput({
+      await runAuxiliarySessionStartOperation({
         parentSessionId,
         provider: launchProviderId,
         defaults: launchDefaults,
-      }));
-      auxiliarySessionMutationRevisionRef.current += 1;
-      activeAuxiliarySessionRef.current = session;
-      setActiveAuxiliarySession(session);
-      setIsActionDockPinnedExpanded(true);
-      setForceComposerBlockedFeedback(false);
-      closeAuxiliaryLaunchDialog();
+        createAuxiliarySession: (request) => withmateApi.createAuxiliarySession(request),
+        applyStartedSession: (session) => {
+          auxiliarySessionMutationRevisionRef.current += 1;
+          activeAuxiliarySessionRef.current = session;
+          setActiveAuxiliarySession(session);
+          setIsActionDockPinnedExpanded(true);
+          setForceComposerBlockedFeedback(false);
+          closeAuxiliaryLaunchDialog();
+        },
+      });
     } catch (error) {
       setAuxiliaryLaunchStartError(error);
     } finally {
