@@ -45,7 +45,10 @@ import {
   MateTalkTurnController,
   resolveMateTalkActionDockExpandedAfterSubmit,
 } from "./mate-talk-state.js";
-import { applyAdditionalDirectoryListToggle } from "./session-shell-handlers.js";
+import {
+  applyAdditionalDirectoryListToggle,
+  applyHeaderExpandedToggleCommand,
+} from "./session-shell-handlers.js";
 
 function getMateTalkLaunchParams(): { providerId: string; model: string; reasoningEffort: ModelReasoningEffort } {
   if (typeof window === "undefined") {
@@ -519,7 +522,10 @@ export function useMateTalkWindowState({
     onChangeModel: handleChangeModel,
     onChangeReasoningEffort: handleChangeReasoningEffort,
     onSubmit: () => void handleSubmit(),
-    onToggleHeaderExpanded: () => setIsHeaderExpanded((current) => !current),
+    onToggleHeaderExpanded: () => applyHeaderExpandedToggleCommand({
+      isEditingTitle: false,
+      setHeaderExpanded: setIsHeaderExpanded,
+    }),
     onOpenSessionFilesExplorer: () => void openSessionFilesDirectory(),
     onOpenSessionFilesTerminal: () => void openSessionFilesTerminal(),
     onCollapseActionDock: () => setIsActionDockExpanded(false),
