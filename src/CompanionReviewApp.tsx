@@ -100,8 +100,6 @@ import {
 } from "./session-composer-feedback.js";
 import { buildActionDockCompactPreview } from "./action-dock-preview.js";
 import {
-  buildActionDockCollapseState,
-  buildActionDockExpandState,
   buildActionDockRuntimeState,
 } from "./action-dock-state.js";
 import {
@@ -112,7 +110,6 @@ import { buildAuxiliaryAwareSendOrCancelHandler } from "./chat/send-or-cancel.js
 import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-runtime-option-routing.js";
 import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
 import {
-  buildExclusiveComposerPickerToggleState,
   buildCustomAgentMatchDisplay,
   buildSelectedCustomAgentDisplay,
   buildSkillMatchDisplay,
@@ -193,6 +190,13 @@ import {
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "./auxiliary-additional-directory-operation.js";
 import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
+import {
+  applyActionDockCollapseCommand,
+  applyActionDockExpandCommand,
+  applyExclusiveComposerPickerToggle,
+  resolveHeaderExpandedToggle,
+  toggleExpandedArtifactState,
+} from "./chat/session-shell-handlers.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
 function pickInitialFile(files: ChangedFile[]): ChangedFile | null {
@@ -1348,10 +1352,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   function toggleArtifact(artifactKey: string): void {
-    setExpandedArtifacts((current) => ({
-      ...current,
-      [artifactKey]: !current[artifactKey],
-    }));
+    setExpandedArtifacts((current) => toggleExpandedArtifactState(current, artifactKey));
   }
 
   async function openDiffWindow(payload: DiffPreviewPayload): Promise<void> {
@@ -2109,45 +2110,38 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   };
 
   function handleToggleHeaderExpanded(): void {
-    if (isEditingTitle) {
-      return;
-    }
-
-    setIsHeaderExpanded((current) => !current);
+    setIsHeaderExpanded((current) => resolveHeaderExpandedToggle(current, isEditingTitle));
   }
 
   function handleExpandActionDock(options?: { focusComposer?: boolean }): void {
-    const nextState = buildActionDockExpandState(options);
-    setIsActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
-
-    if (!nextState.shouldFocusComposer) {
-      return;
-    }
-
-    restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current);
+    applyActionDockExpandCommand({
+      options,
+      setPinnedExpanded: setIsActionDockPinnedExpanded,
+      focusComposer: () => restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current),
+    });
   }
 
   function handleCollapseActionDock(): void {
-    const nextState = buildActionDockCollapseState(canCollapseActionDock);
-    if (!nextState) {
-      return;
-    }
-
-    setIsActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
+    applyActionDockCollapseCommand({
+      canCollapse: canCollapseActionDock,
+      setPinnedExpanded: setIsActionDockPinnedExpanded,
+    });
   }
 
   function handleToggleAgentPicker(): void {
-    setIsSkillPickerOpen(buildExclusiveComposerPickerToggleState("agent", false).isSkillPickerOpen);
-    setIsAgentPickerOpen((current) => (
-      buildExclusiveComposerPickerToggleState("agent", current).isAgentPickerOpen
-    ));
+    applyExclusiveComposerPickerToggle({
+      target: "agent",
+      setAgentPickerOpen: setIsAgentPickerOpen,
+      setSkillPickerOpen: setIsSkillPickerOpen,
+    });
   }
 
   function handleToggleSkillPicker(): void {
-    setIsAgentPickerOpen(buildExclusiveComposerPickerToggleState("skill", false).isAgentPickerOpen);
-    setIsSkillPickerOpen((current) => (
-      buildExclusiveComposerPickerToggleState("skill", current).isSkillPickerOpen
-    ));
+    applyExclusiveComposerPickerToggle({
+      target: "skill",
+      setAgentPickerOpen: setIsAgentPickerOpen,
+      setSkillPickerOpen: setIsSkillPickerOpen,
+    });
   }
 
   async function reloadSnapshot(preferredPath = selectedPath, options: { preserveSelectionOnly?: boolean } = {}): Promise<void> {

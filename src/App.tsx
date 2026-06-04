@@ -79,13 +79,8 @@ import {
   type ComposerSendabilityState,
 } from "./session-composer-feedback.js";
 import { buildActionDockCompactPreview } from "./action-dock-preview.js";
+import { buildActionDockRuntimeState } from "./action-dock-state.js";
 import {
-  buildActionDockCollapseState,
-  buildActionDockExpandState,
-  buildActionDockRuntimeState,
-} from "./action-dock-state.js";
-import {
-  buildExclusiveComposerPickerToggleState,
   buildCustomAgentMatchDisplay,
   buildSelectedCustomAgentDisplay,
   buildSkillMatchDisplay,
@@ -187,6 +182,13 @@ import {
   runAuxiliarySessionStartOperation,
 } from "./auxiliary-session-start-operation.js";
 import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
+import {
+  applyActionDockCollapseCommand,
+  applyActionDockExpandCommand,
+  applyExclusiveComposerPickerToggle,
+  resolveHeaderExpandedToggle,
+  toggleExpandedArtifactState,
+} from "./chat/session-shell-handlers.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
 
@@ -2147,45 +2149,38 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleToggleHeaderExpanded = () => {
-    if (isEditingTitle) {
-      return;
-    }
-
-    setIsHeaderExpanded((current) => !current);
+    setIsHeaderExpanded((current) => resolveHeaderExpandedToggle(current, isEditingTitle));
   };
 
   const handleExpandActionDock = (options?: { focusComposer?: boolean }) => {
-    const nextState = buildActionDockExpandState(options);
-    setIsActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
-
-    if (!nextState.shouldFocusComposer) {
-      return;
-    }
-
-    restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current);
+    applyActionDockExpandCommand({
+      options,
+      setPinnedExpanded: setIsActionDockPinnedExpanded,
+      focusComposer: () => restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current),
+    });
   };
 
   const handleCollapseActionDock = () => {
-    const nextState = buildActionDockCollapseState(canCollapseActionDock);
-    if (!nextState) {
-      return;
-    }
-
-    setIsActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
+    applyActionDockCollapseCommand({
+      canCollapse: canCollapseActionDock,
+      setPinnedExpanded: setIsActionDockPinnedExpanded,
+    });
   };
 
   const handleToggleAgentPicker = () => {
-    setIsSkillPickerOpen(buildExclusiveComposerPickerToggleState("agent", false).isSkillPickerOpen);
-    setIsAgentPickerOpen((current) => (
-      buildExclusiveComposerPickerToggleState("agent", current).isAgentPickerOpen
-    ));
+    applyExclusiveComposerPickerToggle({
+      target: "agent",
+      setAgentPickerOpen: setIsAgentPickerOpen,
+      setSkillPickerOpen: setIsSkillPickerOpen,
+    });
   };
 
   const handleToggleSkillPicker = () => {
-    setIsAgentPickerOpen(buildExclusiveComposerPickerToggleState("skill", false).isAgentPickerOpen);
-    setIsSkillPickerOpen((current) => (
-      buildExclusiveComposerPickerToggleState("skill", current).isSkillPickerOpen
-    ));
+    applyExclusiveComposerPickerToggle({
+      target: "skill",
+      setAgentPickerOpen: setIsAgentPickerOpen,
+      setSkillPickerOpen: setIsSkillPickerOpen,
+    });
   };
 
   const handleOpenInlinePath = async (target: string) => {
@@ -2712,10 +2707,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const toggleArtifact = (artifactKey: string) => {
-    setExpandedArtifacts((current) => ({
-      ...current,
-      [artifactKey]: !current[artifactKey],
-    }));
+    setExpandedArtifacts((current) => toggleExpandedArtifactState(current, artifactKey));
   };
 
   const scrollActivityMonitorToBottom = () => {
