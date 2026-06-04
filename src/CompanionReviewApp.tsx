@@ -183,7 +183,7 @@ import { useComposerPathReferencePreview } from "./chat/use-composer-path-refere
 import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
 import { handleWorkspacePathMatchKeyboardNavigation } from "./chat/workspace-path-match-keyboard.js";
-import { hasSameAuxiliaryDraftSaveContext } from "./auxiliary-draft-save-context.js";
+import { resolveAuxiliaryDraftSaveResult } from "./auxiliary-draft-save-context.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
 function pickInitialFile(files: ChangedFile[]): ChangedFile | null {
@@ -1858,12 +1858,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     const { request, saved } = result;
     setActiveAuxiliarySession((current) => {
-      if (!current || !hasSameAuxiliaryDraftSaveContext(current, request, { compareStatus: true })) {
-        return current;
+      const nextSession = resolveAuxiliaryDraftSaveResult(current, request, saved, { compareStatus: true });
+      if (nextSession === saved) {
+        activeAuxiliarySessionRef.current = saved;
       }
-
-      activeAuxiliarySessionRef.current = saved;
-      return saved;
+      return nextSession;
     });
   }
 

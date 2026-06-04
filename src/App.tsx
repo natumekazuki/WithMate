@@ -177,7 +177,7 @@ import {
   loadProjectedMessageArtifact,
   resolvePendingAuxiliaryMessageGroupId,
 } from "./auxiliary-session-message-projection.js";
-import { hasSameAuxiliaryDraftSaveContext } from "./auxiliary-draft-save-context.js";
+import { resolveAuxiliaryDraftSaveResult } from "./auxiliary-draft-save-context.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
 
@@ -2330,12 +2330,11 @@ export default function AgentSessionWindowApp() {
 
       const { request, saved } = result;
       setActiveAuxiliarySession((current) => {
-        if (!current || !hasSameAuxiliaryDraftSaveContext(current, request)) {
-          return current;
+        const nextSession = resolveAuxiliaryDraftSaveResult(current, request, saved);
+        if (nextSession === saved) {
+          activeAuxiliarySessionRef.current = saved;
         }
-
-        activeAuxiliarySessionRef.current = saved;
-        return saved;
+        return nextSession;
       });
     } catch (error) {
       console.error(error);

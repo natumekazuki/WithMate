@@ -24,3 +24,16 @@ export function hasSameAuxiliaryDraftSaveContext(
     && current.catalogRevision === request.catalogRevision
     && areStringArraysEqual(current.allowedAdditionalDirectories, request.allowedAdditionalDirectories);
 }
+
+export function resolveAuxiliaryDraftSaveResult(
+  current: AuxiliarySession | null,
+  request: AuxiliarySession,
+  saved: AuxiliarySession,
+  options: { compareStatus?: boolean } = {},
+): AuxiliarySession | null {
+  if (!current || !hasSameAuxiliaryDraftSaveContext(current, request, options)) {
+    return current;
+  }
+
+  return saved;
+}
