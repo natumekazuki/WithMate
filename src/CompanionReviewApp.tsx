@@ -80,9 +80,9 @@ import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-opera
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
 import { COMPANION_PENDING_MESSAGE_TEXT } from "./chat/pending-run-indicator.js";
 import {
+  applyRetryDraftRestoreCommand,
   applyRetryDraftReplaceConfirmation,
   applyRetryEditCommand,
-  buildRetryDraftRestoreState,
   buildRetryStopSummary,
   defaultRetryBannerDetailsOpen,
   isRetryActionDisabled as resolveRetryActionDisabled,
@@ -2568,15 +2568,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   function restoreLastUserMessageToDraft(messageText: string): void {
     const textarea = composerTextareaRef.current;
-    const nextRestoreState = buildRetryDraftRestoreState(messageText);
-
-    setIsActionDockPinnedExpanded(nextRestoreState.isActionDockPinnedExpanded);
-    setComposerText(nextRestoreState.draft);
-    setComposerCaret(nextRestoreState.caret);
-    applyWorkspacePathMatchState(nextRestoreState);
-    setIsRetryDraftReplacePending(nextRestoreState.isRetryDraftReplacePending);
-
-    restoreComposerTextareaFocusAndCaret(textarea, nextRestoreState.caret);
+    applyRetryDraftRestoreCommand({
+      messageText,
+      setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+      setDraft: setComposerText,
+      setCaret: setComposerCaret,
+      applyWorkspacePathMatchState,
+      setRetryDraftReplacePending: setIsRetryDraftReplacePending,
+      focusComposer: (caret) => restoreComposerTextareaFocusAndCaret(textarea, caret),
+    });
   }
 
   function handleEditLastMessage(): void {

@@ -43,6 +43,27 @@ export async function runRetryResendCommand(input: {
   await input.resendMessage(input.messageText);
 }
 
+export function applyRetryDraftRestoreCommand(input: {
+  messageText: string;
+  setActionDockPinnedExpanded: (expanded: boolean) => void;
+  setDraft: (draft: string) => void;
+  setCaret: (caret: number) => void;
+  syncCaret?: (caret: number) => void;
+  applyWorkspacePathMatchState: (state: RetryDraftRestoreState) => void;
+  setRetryDraftReplacePending: (pending: boolean) => void;
+  focusComposer: (caret: number) => void;
+}): void {
+  const nextState = buildRetryDraftRestoreState(input.messageText);
+
+  input.setActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
+  input.setDraft(nextState.draft);
+  input.setCaret(nextState.caret);
+  input.syncCaret?.(nextState.caret);
+  input.applyWorkspacePathMatchState(nextState);
+  input.setRetryDraftReplacePending(nextState.isRetryDraftReplacePending);
+  input.focusComposer(nextState.caret);
+}
+
 export function applyRetryEditCommand(input: {
   isDisabled: boolean;
   messageText: string | null | undefined;

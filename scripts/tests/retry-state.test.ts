@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyRetryDraftRestoreCommand,
   applyRetryDraftReplaceConfirmation,
   applyRetryEditCommand,
   buildRetryDraftRestoreState,
@@ -104,6 +105,31 @@ test("runRetryResendCommand は有効な last user message だけ再送する", 
   });
 
   assert.deepEqual(sends, ["前回の依頼", ""]);
+});
+
+test("applyRetryDraftRestoreCommand は retry draft restore state を UI setter に適用する", () => {
+  const events: string[] = [];
+
+  applyRetryDraftRestoreCommand({
+    messageText: "前回の依頼",
+    setActionDockPinnedExpanded: (expanded) => events.push(`expanded:${expanded}`),
+    setDraft: (draft) => events.push(`draft:${draft}`),
+    setCaret: (caret) => events.push(`caret:${caret}`),
+    syncCaret: (caret) => events.push(`sync:${caret}`),
+    applyWorkspacePathMatchState: (state) => events.push(`matches:${state.activeWorkspacePathMatchIndex}`),
+    setRetryDraftReplacePending: (pending) => events.push(`pending:${pending}`),
+    focusComposer: (caret) => events.push(`focus:${caret}`),
+  });
+
+  assert.deepEqual(events, [
+    "expanded:true",
+    "draft:前回の依頼",
+    "caret:5",
+    "sync:5",
+    "matches:-1",
+    "pending:false",
+    "focus:5",
+  ]);
 });
 
 test("applyRetryEditCommand は保護確認または draft 復元を選ぶ", () => {

@@ -148,9 +148,9 @@ import {
 } from "./chat/message-text-actions.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 import {
+  applyRetryDraftRestoreCommand,
   applyRetryDraftReplaceConfirmation,
   applyRetryEditCommand,
-  buildRetryDraftRestoreState,
   buildRetryStopSummary,
   defaultRetryBannerDetailsOpen,
   isRetryActionDisabled as resolveRetryActionDisabled,
@@ -2120,15 +2120,18 @@ export default function AgentSessionWindowApp() {
 
   const restoreLastUserMessageToDraft = (messageText: string) => {
     const textarea = composerTextareaRef.current;
-    const nextRestoreState = buildRetryDraftRestoreState(messageText);
-    setIsActionDockPinnedExpanded(nextRestoreState.isActionDockPinnedExpanded);
-    setDraft(nextRestoreState.draft);
-    setComposerCaret(nextRestoreState.caret);
-    mainComposerCaretRef.current = nextRestoreState.caret;
-    applyWorkspacePathMatchState(nextRestoreState);
-    setIsRetryDraftReplacePending(nextRestoreState.isRetryDraftReplacePending);
-
-    restoreComposerTextareaFocusAndCaret(textarea, nextRestoreState.caret);
+    applyRetryDraftRestoreCommand({
+      messageText,
+      setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+      setDraft,
+      setCaret: setComposerCaret,
+      syncCaret: (caret) => {
+        mainComposerCaretRef.current = caret;
+      },
+      applyWorkspacePathMatchState,
+      setRetryDraftReplacePending: setIsRetryDraftReplacePending,
+      focusComposer: (caret) => restoreComposerTextareaFocusAndCaret(textarea, caret),
+    });
   };
 
   const handleEditLastMessage = () => {
