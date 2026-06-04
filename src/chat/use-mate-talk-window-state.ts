@@ -34,6 +34,7 @@ import {
   createCopyMessageTextHandler,
   createQuotedMessageInsertionFromComposer,
 } from "./message-text-actions.js";
+import { collectPastedSessionAttachmentPaths } from "./composer-paste-handlers.js";
 import type { MateTalkMessage } from "./mate-talk-chat-projection.js";
 import {
   buildMateTalkModelSelection,
@@ -305,29 +306,16 @@ export function useMateTalkWindowState({
       return;
     }
 
-    const files = Array.from(event.clipboardData.files);
-    const itemFiles = Array.from(event.clipboardData.items)
-      .filter((item) => item.kind === "file")
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => file !== null);
-    const pastedFiles = files.length > 0 ? files : itemFiles;
-    if (pastedFiles.length === 0) {
+    const savedPaths = await collectPastedSessionAttachmentPaths({
+      clipboardData: event.clipboardData,
+      currentTimestampLabel,
+      preventDefault: () => event.preventDefault(),
+      savePastedSessionFile: (request) => withmateApi.savePastedSessionFile(request),
+      sessionId: sessionFilesSessionIdRef.current,
+    });
+    if (savedPaths.length === 0) {
       return;
     }
-
-    event.preventDefault();
-    const savedPaths: string[] = [];
-    for (const file of pastedFiles) {
-      const buffer = await file.arrayBuffer();
-      const fileName = file.name.trim() || `pasted-${currentTimestampLabel().replace(/[:/\\\s]+/g, "-")}.png`;
-      const savedPath = await withmateApi.savePastedSessionFile({
-        sessionId: sessionFilesSessionIdRef.current,
-        fileName,
-        data: buffer,
-      });
-      savedPaths.push(savedPath);
-    }
-
     insertReferencePaths(savedPaths, "file");
   };
 
