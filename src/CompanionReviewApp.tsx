@@ -182,8 +182,8 @@ import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
 import { handleWorkspacePathMatchKeyboardNavigation } from "./chat/workspace-path-match-keyboard.js";
 import {
-  resolveAuxiliaryDraftSaveResult,
-  runAuxiliaryDraftSaveOperation,
+  resolveAuxiliaryDraftSaveOperationResult,
+  scheduleAuxiliaryDraftSaveOperation,
 } from "./auxiliary-draft-save-context.js";
 import {
   enqueueAuxiliarySessionSaveOperation,
@@ -1876,43 +1876,31 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const nextSession = applyAuxiliarySessionComposerDraftPatch(
-      activeAuxiliarySession,
-      value,
-      currentTimestampLabel(),
-    );
+    const draftSave = scheduleAuxiliaryDraftSaveOperation({
+      currentSession: activeAuxiliarySession,
+      draft: value,
+      createTimestampLabel: currentTimestampLabel,
+      draftSaveQueue: auxiliaryDraftSaveQueueRef.current,
+      getCurrentSession: () => activeAuxiliarySessionRef.current,
+      saveAuxiliarySession: (request) => {
+        const draftSaveOperation = enqueueAuxiliarySessionSaveOperation(
+          auxiliarySessionSaveQueueRef.current,
+          () => withmateApi.updateAuxiliarySession(request),
+        );
+        auxiliarySessionSaveQueueRef.current = draftSaveOperation.queue;
+        return draftSaveOperation.operation;
+      },
+    });
+    const { nextSession, saveOperation } = draftSave;
     auxiliarySessionMutationRevisionRef.current += 1;
     activeAuxiliarySessionRef.current = nextSession;
     setActiveAuxiliarySession(nextSession);
-    const saveOperation = auxiliaryDraftSaveQueueRef.current
-      .catch(() => undefined)
-      .then(() => (
-        runAuxiliaryDraftSaveOperation({
-          currentSession: activeAuxiliarySessionRef.current,
-          targetSessionId: nextSession.id,
-          draft: value,
-          updatedAt: currentTimestampLabel(),
-          saveAuxiliarySession: (request) => {
-            const draftSaveOperation = enqueueAuxiliarySessionSaveOperation(
-              auxiliarySessionSaveQueueRef.current,
-              () => withmateApi.updateAuxiliarySession(request),
-            );
-            auxiliarySessionSaveQueueRef.current = draftSaveOperation.queue;
-            return draftSaveOperation.operation;
-          },
-        })
-      ));
-    auxiliaryDraftSaveQueueRef.current = saveOperation.then(() => undefined, () => undefined);
+    auxiliaryDraftSaveQueueRef.current = draftSave.draftSaveQueue;
     const result = await saveOperation;
-    if (!result) {
-      return;
-    }
-
-    const { request, saved } = result;
     setActiveAuxiliarySession((current) => {
-      const nextSession = resolveAuxiliaryDraftSaveResult(current, request, saved, { compareStatus: true });
-      if (nextSession === saved) {
-        activeAuxiliarySessionRef.current = saved;
+      const nextSession = resolveAuxiliaryDraftSaveOperationResult(current, result, { compareStatus: true });
+      if (result && nextSession === result.saved) {
+        activeAuxiliarySessionRef.current = result.saved;
       }
       return nextSession;
     });

@@ -176,8 +176,8 @@ import {
   resolvePendingAuxiliaryMessageGroupId,
 } from "./auxiliary-session-message-projection.js";
 import {
-  resolveAuxiliaryDraftSaveResult,
-  runAuxiliaryDraftSaveOperation,
+  resolveAuxiliaryDraftSaveOperationResult,
+  scheduleAuxiliaryDraftSaveOperation,
 } from "./auxiliary-draft-save-context.js";
 import {
   enqueueAuxiliarySessionSaveOperation,
@@ -2348,44 +2348,32 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const nextSession = applyAuxiliarySessionComposerDraftPatch(
-      activeAuxiliarySession,
-      value,
-      currentTimestampLabel(),
-    );
+    const draftSave = scheduleAuxiliaryDraftSaveOperation({
+      currentSession: activeAuxiliarySession,
+      draft: value,
+      createTimestampLabel: currentTimestampLabel,
+      draftSaveQueue: auxiliaryDraftSaveQueueRef.current,
+      getCurrentSession: () => activeAuxiliarySessionRef.current,
+      saveAuxiliarySession: (request) => {
+        const draftSaveOperation = enqueueAuxiliarySessionSaveOperation(
+          auxiliarySessionSaveQueueRef.current,
+          () => withmateApi.updateAuxiliarySession(request),
+        );
+        auxiliarySessionSaveQueueRef.current = draftSaveOperation.queue;
+        return draftSaveOperation.operation;
+      },
+    });
+    const { nextSession, saveOperation } = draftSave;
     auxiliarySessionMutationRevisionRef.current += 1;
     activeAuxiliarySessionRef.current = nextSession;
     setActiveAuxiliarySession(nextSession);
+    auxiliaryDraftSaveQueueRef.current = draftSave.draftSaveQueue;
     try {
-      const saveOperation = auxiliaryDraftSaveQueueRef.current
-        .catch(() => undefined)
-        .then(() => (
-          runAuxiliaryDraftSaveOperation({
-            currentSession: activeAuxiliarySessionRef.current,
-            targetSessionId: nextSession.id,
-            draft: value,
-            updatedAt: currentTimestampLabel(),
-            saveAuxiliarySession: (request) => {
-              const draftSaveOperation = enqueueAuxiliarySessionSaveOperation(
-                auxiliarySessionSaveQueueRef.current,
-                () => withmateApi.updateAuxiliarySession(request),
-              );
-              auxiliarySessionSaveQueueRef.current = draftSaveOperation.queue;
-              return draftSaveOperation.operation;
-            },
-          })
-        ));
-      auxiliaryDraftSaveQueueRef.current = saveOperation.then(() => undefined, () => undefined);
       const result = await saveOperation;
-      if (!result) {
-        return;
-      }
-
-      const { request, saved } = result;
       setActiveAuxiliarySession((current) => {
-        const nextSession = resolveAuxiliaryDraftSaveResult(current, request, saved);
-        if (nextSession === saved) {
-          activeAuxiliarySessionRef.current = saved;
+        const nextSession = resolveAuxiliaryDraftSaveOperationResult(current, result);
+        if (result && nextSession === result.saved) {
+          activeAuxiliarySessionRef.current = result.saved;
         }
         return nextSession;
       });

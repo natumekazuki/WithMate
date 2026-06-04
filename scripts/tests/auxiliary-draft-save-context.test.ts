@@ -4,8 +4,10 @@ import { describe, it } from "node:test";
 import {
   areStringArraysEqual,
   hasSameAuxiliaryDraftSaveContext,
+  resolveAuxiliaryDraftSaveOperationResult,
   resolveAuxiliaryDraftSaveResult,
   runAuxiliaryDraftSaveOperation,
+  scheduleAuxiliaryDraftSaveOperation,
 } from "../../src/auxiliary-draft-save-context.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 
@@ -106,6 +108,25 @@ describe("resolveAuxiliaryDraftSaveResult", () => {
   });
 });
 
+describe("resolveAuxiliaryDraftSaveOperationResult", () => {
+  it("保存 result が null の場合は current を維持する", () => {
+    const current = makeAuxiliarySession({ composerDraft: "current" });
+
+    assert.equal(resolveAuxiliaryDraftSaveOperationResult(current, null), current);
+  });
+
+  it("保存 result がある場合は compareStatus を含めて result を解決する", () => {
+    const current = makeAuxiliarySession({ status: "closed", composerDraft: "draft" });
+    const request = makeAuxiliarySession({ status: "active", composerDraft: "draft" });
+    const saved = makeAuxiliarySession({ status: "active", composerDraft: "draft", updatedAt: "saved" });
+
+    assert.equal(
+      resolveAuxiliaryDraftSaveOperationResult(current, { request, saved }, { compareStatus: true }),
+      current,
+    );
+  });
+});
+
 describe("runAuxiliaryDraftSaveOperation", () => {
   it("保存 request を作って save 結果を返す", async () => {
     const current = makeAuxiliarySession({ composerDraft: "draft", updatedAt: "current" });
@@ -171,5 +192,53 @@ describe("runAuxiliaryDraftSaveOperation", () => {
       }),
       error,
     );
+  });
+});
+
+describe("scheduleAuxiliaryDraftSaveOperation", () => {
+  it("draft patch を先に返し、既存 queue の後で最新 current session を保存する", async () => {
+    let releaseQueue = () => {};
+    const initialQueue = new Promise<void>((resolve) => {
+      releaseQueue = resolve;
+    });
+    let latestCurrent = makeAuxiliarySession({ composerDraft: "draft", updatedAt: "latest" });
+    const saved = makeAuxiliarySession({ composerDraft: "next", updatedAt: "saved" });
+    const requests: AuxiliarySession[] = [];
+
+    const scheduled = scheduleAuxiliaryDraftSaveOperation({
+      currentSession: makeAuxiliarySession({ composerDraft: "draft", updatedAt: "current" }),
+      draft: "next",
+      createTimestampLabel: (() => {
+        let count = 0;
+        return () => {
+          count += 1;
+          return `timestamp-${count}`;
+        };
+      })(),
+      draftSaveQueue: initialQueue,
+      getCurrentSession: () => latestCurrent,
+      saveAuxiliarySession: async (request) => {
+        requests.push(request);
+        return saved;
+      },
+    });
+
+    assert.equal(scheduled.nextSession.composerDraft, "next");
+    assert.equal(scheduled.nextSession.updatedAt, "timestamp-1");
+    latestCurrent = { ...latestCurrent, composerDraft: "next", updatedAt: "latest-before-save" };
+    releaseQueue();
+
+    assert.deepEqual(await scheduled.saveOperation, {
+      request: {
+        ...latestCurrent,
+        updatedAt: "timestamp-2",
+      },
+      saved,
+    });
+    assert.deepEqual(requests, [{
+      ...latestCurrent,
+      updatedAt: "timestamp-2",
+    }]);
+    await scheduled.draftSaveQueue;
   });
 });
