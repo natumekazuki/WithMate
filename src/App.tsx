@@ -194,11 +194,11 @@ import {
   applyCancelTitleEditCommand,
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
+  applyExpandedArtifactToggleCommand,
   applyHeaderExpandedToggleCommand,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
-  toggleExpandedArtifactState,
 } from "./chat/session-shell-handlers.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
@@ -2717,7 +2717,10 @@ export default function AgentSessionWindowApp() {
   };
 
   const toggleArtifact = (artifactKey: string) => {
-    setExpandedArtifacts((current) => toggleExpandedArtifactState(current, artifactKey));
+    applyExpandedArtifactToggleCommand({
+      artifactKey,
+      setExpandedArtifacts,
+    });
   };
 
   const scrollActivityMonitorToBottom = () => {

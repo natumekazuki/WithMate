@@ -8,6 +8,7 @@ import {
   applyContextPaneTabCycleCommand,
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
+  applyExpandedArtifactToggleCommand,
   applyExclusiveComposerPickerToggle,
   applyHeaderExpandedToggleCommand,
   applySkillPickerToggleCommand,
@@ -21,6 +22,28 @@ describe("toggleExpandedArtifactState", () => {
   it("指定 artifact の展開状態を反転する", () => {
     assert.deepEqual(toggleExpandedArtifactState({ a: true }, "a"), { a: false });
     assert.deepEqual(toggleExpandedArtifactState({ a: true }, "b"), { a: true, b: true });
+  });
+});
+
+describe("applyExpandedArtifactToggleCommand", () => {
+  it("指定 artifact の展開状態を setter 経由で反転する", () => {
+    let expandedArtifacts: Record<string, boolean> = { a: true };
+
+    applyExpandedArtifactToggleCommand({
+      artifactKey: "a",
+      setExpandedArtifacts: (updater) => {
+        expandedArtifacts = updater(expandedArtifacts);
+      },
+    });
+    assert.deepEqual(expandedArtifacts, { a: false });
+
+    applyExpandedArtifactToggleCommand({
+      artifactKey: "b",
+      setExpandedArtifacts: (updater) => {
+        expandedArtifacts = updater(expandedArtifacts);
+      },
+    });
+    assert.deepEqual(expandedArtifacts, { a: false, b: true });
   });
 });
 

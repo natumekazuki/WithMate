@@ -202,11 +202,11 @@ import {
   applyCancelTitleEditCommand,
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
+  applyExpandedArtifactToggleCommand,
   applyHeaderExpandedToggleCommand,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
-  toggleExpandedArtifactState,
 } from "./chat/session-shell-handlers.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
@@ -1365,7 +1365,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   function toggleArtifact(artifactKey: string): void {
-    setExpandedArtifacts((current) => toggleExpandedArtifactState(current, artifactKey));
+    applyExpandedArtifactToggleCommand({
+      artifactKey,
+      setExpandedArtifacts,
+    });
   }
 
   async function openDiffWindow(payload: DiffPreviewPayload): Promise<void> {
