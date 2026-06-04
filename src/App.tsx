@@ -179,8 +179,7 @@ import {
 } from "./auxiliary-draft-save-context.js";
 import {
   enqueueAuxiliarySessionSaveOperation,
-  resolveAuxiliarySessionRollbackSession,
-  runAuxiliarySessionUpdateOperation,
+  runGuardedAuxiliarySessionUpdate,
 } from "./auxiliary-session-update-operation.js";
 import {
   runAddAuxiliaryAdditionalDirectoryOperation,
@@ -1986,64 +1985,24 @@ export default function AgentSessionWindowApp() {
   };
 
   const updateActiveAuxiliarySession = async (recipe: (current: AuxiliarySession) => AuxiliarySession) => {
-    if (!withmateApi || !activeAuxiliarySession) {
+    if (!withmateApi) {
       return;
     }
 
-    await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
-    let operationRevision = auxiliarySessionMutationRevisionRef.current;
-    const result = await runAuxiliarySessionUpdateOperation({
+    await runGuardedAuxiliarySessionUpdate({
       activeSession: activeAuxiliarySession,
-      currentSession: activeAuxiliarySessionRef.current,
-      recipe,
-      applyPendingSession: (session) => {
-        operationRevision = auxiliarySessionMutationRevisionRef.current + 1;
-        auxiliarySessionMutationRevisionRef.current = operationRevision;
+      getCurrentSession: () => activeAuxiliarySessionRef.current,
+      applyActiveSession: (session) => {
         activeAuxiliarySessionRef.current = session;
         setActiveAuxiliarySession(session);
       },
-      rollbackPendingSession: async ({ pendingSession, previousSession }) => {
-        if (
-          auxiliarySessionMutationRevisionRef.current !== operationRevision
-          || activeAuxiliarySessionRef.current?.id !== pendingSession.id
-        ) {
-          return;
-        }
-        const rollbackSession = await resolveAuxiliarySessionRollbackSession({
-          pendingSession,
-          previousSession,
-          getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
-        });
-        if (
-          auxiliarySessionMutationRevisionRef.current !== operationRevision
-          || activeAuxiliarySessionRef.current?.id !== pendingSession.id
-        ) {
-          return;
-        }
-        activeAuxiliarySessionRef.current = rollbackSession;
-        setActiveAuxiliarySession(rollbackSession);
-      },
-      saveAuxiliarySession: (session) => {
-        const saveOperation = enqueueAuxiliarySessionSaveOperation(
-          auxiliarySessionSaveQueueRef.current,
-          () => withmateApi.updateAuxiliarySession(session),
-        );
-        auxiliarySessionSaveQueueRef.current = saveOperation.queue;
-        return saveOperation.operation;
-      },
+      draftSaveQueue: auxiliaryDraftSaveQueueRef,
+      sessionSaveQueue: auxiliarySessionSaveQueueRef,
+      mutationRevision: auxiliarySessionMutationRevisionRef,
+      recipe,
+      getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
+      saveAuxiliarySession: (session) => withmateApi.updateAuxiliarySession(session),
     });
-    if (!result) {
-      return;
-    }
-
-    if (
-      auxiliarySessionMutationRevisionRef.current !== operationRevision
-      || activeAuxiliarySessionRef.current?.id !== result.saved.id
-    ) {
-      return;
-    }
-    activeAuxiliarySessionRef.current = result.saved;
-    setActiveAuxiliarySession(result.saved);
   };
 
   const handleChangeAuxiliaryApproval = async (approvalMode: Session["approvalMode"]) => {

@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   enqueueAuxiliarySessionSaveOperation,
   resolveAuxiliarySessionRollbackSession,
+  runGuardedAuxiliarySessionUpdate,
   runAuxiliarySessionUpdateOperation,
   type AuxiliarySessionUpdateOperationResult,
 } from "../../src/auxiliary-session-update-operation.js";
@@ -445,6 +446,168 @@ describe("runAuxiliarySessionUpdateOperation", () => {
     assert.equal(currentSession.updatedAt, "second-saved");
     assert.equal(currentSession.approvalMode, "on-request");
     assert.equal(currentSession.codexSandboxMode, "workspace-write");
+  });
+});
+
+describe("runGuardedAuxiliarySessionUpdate", () => {
+  it("active session がない場合は draft queue を待たずに何もしない", async () => {
+    let draftQueueWaited = false;
+    const draftSaveQueue = {
+      current: new Promise<void>((resolve) => {
+        setTimeout(() => {
+          draftQueueWaited = true;
+          resolve();
+        }, 20);
+      }),
+    };
+    let saved = false;
+
+    assert.equal(
+      await runGuardedAuxiliarySessionUpdate({
+        activeSession: null,
+        getCurrentSession: () => null,
+        applyActiveSession: () => undefined,
+        draftSaveQueue,
+        sessionSaveQueue: { current: Promise.resolve() },
+        mutationRevision: { current: 0 },
+        recipe: (current) => current,
+        getAuxiliarySession: async () => null,
+        saveAuxiliarySession: async (session) => {
+          saved = true;
+          return session;
+        },
+      }),
+      null,
+    );
+    assert.equal(saved, false);
+    assert.equal(draftQueueWaited, false);
+  });
+
+  it("draft queue 後に pending を反映し、session save queue 経由で保存結果を反映する", async () => {
+    let releaseDraftQueue = () => {};
+    const draftSaveQueue = {
+      current: new Promise<void>((resolve) => {
+        releaseDraftQueue = resolve;
+      }),
+    };
+    const sessionSaveQueue = { current: Promise.resolve() };
+    const mutationRevision = { current: 0 };
+    let currentSession: AuxiliarySession | null = makeAuxiliarySession({ approvalMode: "untrusted" });
+    const events: string[] = [];
+    const update = runGuardedAuxiliarySessionUpdate({
+      activeSession: currentSession,
+      getCurrentSession: () => currentSession,
+      applyActiveSession: (session) => {
+        currentSession = session;
+        events.push(`${session.approvalMode}:${session.updatedAt}`);
+      },
+      draftSaveQueue,
+      sessionSaveQueue,
+      mutationRevision,
+      recipe: (current) => ({
+        ...current,
+        approvalMode: "on-request",
+        updatedAt: "pending",
+      }),
+      getAuxiliarySession: async () => null,
+      saveAuxiliarySession: async (session) => ({
+        ...session,
+        updatedAt: "saved",
+      }),
+    });
+
+    assert.deepEqual(events, []);
+    releaseDraftQueue();
+    assert.deepEqual(await update, {
+      nextSession: makeAuxiliarySession({ approvalMode: "on-request", updatedAt: "pending" }),
+      saved: makeAuxiliarySession({ approvalMode: "on-request", updatedAt: "saved" }),
+    });
+    assert.deepEqual(events, ["on-request:pending", "on-request:saved"]);
+    assert.equal(currentSession?.updatedAt, "saved");
+    await sessionSaveQueue.current;
+  });
+
+  it("保存失敗時は保存済み session を revision/id guard の範囲で rollback に使う", async () => {
+    const error = new Error("save failed");
+    const activeSession = makeAuxiliarySession({ approvalMode: "untrusted", updatedAt: "previous" });
+    let currentSession: AuxiliarySession | null = activeSession;
+    const savedRollbackSession = makeAuxiliarySession({ approvalMode: "on-request", updatedAt: "storage" });
+
+    await assert.rejects(
+      runGuardedAuxiliarySessionUpdate({
+        activeSession,
+        getCurrentSession: () => currentSession,
+        applyActiveSession: (session) => {
+          currentSession = session;
+        },
+        draftSaveQueue: { current: Promise.resolve() },
+        sessionSaveQueue: { current: Promise.resolve() },
+        mutationRevision: { current: 0 },
+        recipe: (current) => ({
+          ...current,
+          approvalMode: "on-request",
+          updatedAt: "pending",
+        }),
+        getAuxiliarySession: async () => savedRollbackSession,
+        saveAuxiliarySession: async () => {
+          throw error;
+        },
+      }),
+      error,
+    );
+
+    assert.equal(currentSession, savedRollbackSession);
+  });
+
+  it("後続 mutation 後の保存成功と保存失敗 rollback は current を上書きしない", async () => {
+    const error = new Error("save failed");
+    const mutationRevision = { current: 0 };
+    let currentSession: AuxiliarySession | null = makeAuxiliarySession();
+    const success = createDeferredSave();
+    const successUpdate = runGuardedAuxiliarySessionUpdate({
+      activeSession: currentSession,
+      getCurrentSession: () => currentSession,
+      applyActiveSession: (session) => {
+        currentSession = session;
+      },
+      draftSaveQueue: { current: Promise.resolve() },
+      sessionSaveQueue: { current: Promise.resolve() },
+      mutationRevision,
+      recipe: (current) => ({ ...current, approvalMode: "on-request", updatedAt: "pending" }),
+      getAuxiliarySession: async () => null,
+      saveAuxiliarySession: () => success.promise,
+    });
+
+    await flushQueuedOperationStart();
+    mutationRevision.current += 1;
+    currentSession = makeAuxiliarySession({ approvalMode: "on-request", runState: "running", updatedAt: "running" });
+    success.resolve(makeAuxiliarySession({ approvalMode: "on-request", updatedAt: "saved" }));
+    await successUpdate;
+    assert.equal(currentSession.runState, "running");
+    assert.equal(currentSession.updatedAt, "running");
+
+    currentSession = makeAuxiliarySession({ approvalMode: "on-request", updatedAt: "idle-before-failure" });
+    const failure = createDeferredSave();
+    const failureUpdate = runGuardedAuxiliarySessionUpdate({
+      activeSession: currentSession,
+      getCurrentSession: () => currentSession,
+      applyActiveSession: (session) => {
+        currentSession = session;
+      },
+      draftSaveQueue: { current: Promise.resolve() },
+      sessionSaveQueue: { current: Promise.resolve() },
+      mutationRevision,
+      recipe: (current) => ({ ...current, codexSandboxMode: "workspace-write", updatedAt: "pending-2" }),
+      getAuxiliarySession: async () => makeAuxiliarySession({ updatedAt: "storage" }),
+      saveAuxiliarySession: () => failure.promise,
+    });
+    await flushQueuedOperationStart();
+    mutationRevision.current += 1;
+    currentSession = makeAuxiliarySession({ approvalMode: "on-request", runState: "running", updatedAt: "running-2" });
+    failure.reject(error);
+    await assert.rejects(failureUpdate, error);
+    assert.equal(currentSession.runState, "running");
+    assert.equal(currentSession.updatedAt, "running-2");
   });
 });
 

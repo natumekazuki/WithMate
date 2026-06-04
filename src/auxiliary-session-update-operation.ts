@@ -64,3 +64,72 @@ export async function runAuxiliarySessionUpdateOperation(input: {
 
   return { nextSession, saved };
 }
+
+export async function runGuardedAuxiliarySessionUpdate(input: {
+  activeSession: AuxiliarySession | null;
+  getCurrentSession: () => AuxiliarySession | null;
+  applyActiveSession: (session: AuxiliarySession) => void;
+  draftSaveQueue: { current: Promise<void> };
+  sessionSaveQueue: { current: Promise<void> };
+  mutationRevision: { current: number };
+  recipe: (current: AuxiliarySession) => AuxiliarySession;
+  getAuxiliarySession: (sessionId: string) => Promise<AuxiliarySession | null>;
+  saveAuxiliarySession: (session: AuxiliarySession) => Promise<AuxiliarySession>;
+}): Promise<AuxiliarySessionUpdateOperationResult> {
+  if (!input.activeSession) {
+    return null;
+  }
+
+  await input.draftSaveQueue.current.catch(() => undefined);
+  let operationRevision = input.mutationRevision.current;
+  const result = await runAuxiliarySessionUpdateOperation({
+    activeSession: input.activeSession,
+    currentSession: input.getCurrentSession(),
+    recipe: input.recipe,
+    applyPendingSession: (session) => {
+      operationRevision = input.mutationRevision.current + 1;
+      input.mutationRevision.current = operationRevision;
+      input.applyActiveSession(session);
+    },
+    rollbackPendingSession: async ({ pendingSession, previousSession }) => {
+      if (
+        input.mutationRevision.current !== operationRevision
+        || input.getCurrentSession()?.id !== pendingSession.id
+      ) {
+        return;
+      }
+      const rollbackSession = await resolveAuxiliarySessionRollbackSession({
+        pendingSession,
+        previousSession,
+        getAuxiliarySession: input.getAuxiliarySession,
+      });
+      if (
+        input.mutationRevision.current !== operationRevision
+        || input.getCurrentSession()?.id !== pendingSession.id
+      ) {
+        return;
+      }
+      input.applyActiveSession(rollbackSession);
+    },
+    saveAuxiliarySession: (session) => {
+      const saveOperation = enqueueAuxiliarySessionSaveOperation(
+        input.sessionSaveQueue.current,
+        () => input.saveAuxiliarySession(session),
+      );
+      input.sessionSaveQueue.current = saveOperation.queue;
+      return saveOperation.operation;
+    },
+  });
+  if (!result) {
+    return result;
+  }
+
+  if (
+    input.mutationRevision.current !== operationRevision
+    || input.getCurrentSession()?.id !== result.saved.id
+  ) {
+    return result;
+  }
+  input.applyActiveSession(result.saved);
+  return result;
+}
