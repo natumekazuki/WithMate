@@ -12,6 +12,7 @@ import {
   buildEditableActiveAuxiliarySessionPatch,
   buildAuxiliarySessionRunningTransition,
   buildRunningAuxiliarySessionTurn,
+  loadClosedAuxiliarySessionDetails,
   removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveAuxiliarySessionDisplayAfterMessageIndex,
@@ -564,6 +565,38 @@ test("resolveClosedAuxiliarySessionsAfterReturn は重複を避けて closed ses
     ),
     [otherClosedSession, returnedClosedSession],
   );
+});
+
+test("loadClosedAuxiliarySessionDetails は closed session details を読み込む", async () => {
+  const closedSession1 = createAuxiliarySession({ id: "closed-1", status: "closed" });
+  const closedSession2 = createAuxiliarySession({ id: "closed-2", status: "closed" });
+  const requestedSessionIds: string[] = [];
+
+  assert.deepEqual(
+    await loadClosedAuxiliarySessionDetails({
+      parentSessionId: "parent-1",
+      listAuxiliarySessions: async (parentSessionId) => {
+        assert.equal(parentSessionId, "parent-1");
+        return [
+          closedSession1,
+          createAuxiliarySession({ id: "active-1", status: "active" }),
+          closedSession2,
+        ];
+      },
+      getAuxiliarySession: async (sessionId) => {
+        requestedSessionIds.push(sessionId);
+        if (sessionId === "closed-1") {
+          return closedSession1;
+        }
+        if (sessionId === "closed-2") {
+          return null;
+        }
+        return null;
+      },
+    }),
+    [closedSession1],
+  );
+  assert.deepEqual(requestedSessionIds, ["closed-2", "closed-1"]);
 });
 
 test("buildRunningAuxiliarySessionTurn は実行中 session state を組み立てる", () => {

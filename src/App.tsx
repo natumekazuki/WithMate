@@ -137,13 +137,12 @@ import {
   buildAuxiliaryDraftSaveRequest,
   buildEditableActiveAuxiliarySessionPatch,
   buildAuxiliarySessionRunningTransition,
+  loadClosedAuxiliarySessionDetails,
   removeAuxiliarySessionAdditionalDirectory,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveAuxiliarySessionSendPreflight,
   resolveAuxiliarySessionSendTarget,
-  resolveClosedAuxiliarySessionIds,
   resolveClosedAuxiliarySessionsAfterReturn,
-  resolveClosedAuxiliarySessionsLoadResult,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
 import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolution.js";
@@ -522,13 +521,13 @@ export default function AgentSessionWindowApp() {
     }
 
     try {
-      const summaries = await withmateApi.listAuxiliarySessions(parentSessionId);
-      const closedSessionIds = resolveClosedAuxiliarySessionIds(summaries);
-      const sessions = await Promise.all(
-        closedSessionIds.map((sessionId) => withmateApi.getAuxiliarySession(sessionId)),
-      );
+      const sessions = await loadClosedAuxiliarySessionDetails({
+        parentSessionId,
+        listAuxiliarySessions: (sessionId) => withmateApi.listAuxiliarySessions(sessionId),
+        getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
+      });
       if (canApplyLoadResult()) {
-        setClosedAuxiliarySessions(resolveClosedAuxiliarySessionsLoadResult(sessions));
+        setClosedAuxiliarySessions(sessions);
       }
     } catch {
       if (canApplyLoadResult()) {

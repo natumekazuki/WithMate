@@ -290,6 +290,19 @@ export function resolveClosedAuxiliarySessionsAfterReturn(
   ];
 }
 
+export async function loadClosedAuxiliarySessionDetails(input: {
+  parentSessionId: string;
+  listAuxiliarySessions: (parentSessionId: string) => Promise<AuxiliarySessionSummary[]>;
+  getAuxiliarySession: (sessionId: string) => Promise<AuxiliarySession | null>;
+}): Promise<AuxiliarySession[]> {
+  const summaries = await input.listAuxiliarySessions(input.parentSessionId);
+  const closedSessionIds = resolveClosedAuxiliarySessionIds(summaries);
+  const sessions = await Promise.all(
+    closedSessionIds.map((sessionId) => input.getAuxiliarySession(sessionId)),
+  );
+  return resolveClosedAuxiliarySessionsLoadResult(sessions);
+}
+
 export function buildRunningAuxiliarySessionTurn(input: {
   session: AuxiliarySession;
   userMessage: string;
