@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyRetryDraftReplaceConfirmation,
+  applyRetryEditCommand,
   buildRetryDraftRestoreState,
   buildRetryStopSummary,
   defaultRetryBannerDetailsOpen,
@@ -66,6 +68,75 @@ test("buildRetryDraftRestoreState は workspace path matches を呼び出しご�
   const second = buildRetryDraftRestoreState("a");
 
   assert.notEqual(first.workspacePathMatches, second.workspacePathMatches);
+});
+
+test("applyRetryEditCommand は保護確認または draft 復元を選ぶ", () => {
+  const events: string[] = [];
+
+  applyRetryEditCommand({
+    isDisabled: true,
+    messageText: "前回の依頼",
+    shouldProtectDraft: false,
+    requestDraftReplaceConfirmation: () => events.push("confirm"),
+    restoreDraft: (messageText) => events.push(`restore:${messageText}`),
+  });
+  applyRetryEditCommand({
+    isDisabled: false,
+    messageText: null,
+    shouldProtectDraft: false,
+    requestDraftReplaceConfirmation: () => events.push("confirm"),
+    restoreDraft: (messageText) => events.push(`restore:${messageText}`),
+  });
+  applyRetryEditCommand({
+    isDisabled: false,
+    messageText: "前回の依頼",
+    shouldProtectDraft: true,
+    requestDraftReplaceConfirmation: () => events.push("confirm"),
+    restoreDraft: (messageText) => events.push(`restore:${messageText}`),
+  });
+  applyRetryEditCommand({
+    isDisabled: false,
+    messageText: "前回の依頼",
+    shouldProtectDraft: false,
+    requestDraftReplaceConfirmation: () => events.push("confirm"),
+    restoreDraft: (messageText) => events.push(`restore:${messageText}`),
+  });
+  applyRetryEditCommand({
+    isDisabled: false,
+    messageText: "",
+    shouldProtectDraft: false,
+    requestDraftReplaceConfirmation: () => events.push("confirm"),
+    restoreDraft: (messageText) => events.push(`restore:${messageText}`),
+  });
+
+  assert.deepEqual(events, ["confirm", "restore:前回の依頼", "restore:"]);
+});
+
+test("applyRetryDraftReplaceConfirmation は有効な retry edit だけ draft を復元する", () => {
+  const events: string[] = [];
+
+  applyRetryDraftReplaceConfirmation({
+    isDisabled: true,
+    messageText: "前回の依頼",
+    restoreDraft: (messageText) => events.push(messageText),
+  });
+  applyRetryDraftReplaceConfirmation({
+    isDisabled: false,
+    messageText: undefined,
+    restoreDraft: (messageText) => events.push(messageText),
+  });
+  applyRetryDraftReplaceConfirmation({
+    isDisabled: false,
+    messageText: "前回の依頼",
+    restoreDraft: (messageText) => events.push(messageText),
+  });
+  applyRetryDraftReplaceConfirmation({
+    isDisabled: false,
+    messageText: "",
+    restoreDraft: (messageText) => events.push(messageText),
+  });
+
+  assert.deepEqual(events, ["前回の依頼", ""]);
 });
 
 test("resolveRetryBannerKind は session state と terminal audit log から retry 種別を解決する", () => {

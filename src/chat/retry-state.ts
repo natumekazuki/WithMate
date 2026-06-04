@@ -31,6 +31,37 @@ export function buildRetryDraftRestoreState(messageText: string): RetryDraftRest
   };
 }
 
+export function applyRetryEditCommand(input: {
+  isDisabled: boolean;
+  messageText: string | null | undefined;
+  shouldProtectDraft: boolean;
+  requestDraftReplaceConfirmation: () => void;
+  restoreDraft: (messageText: string) => void;
+}): void {
+  if (input.isDisabled || input.messageText == null) {
+    return;
+  }
+
+  if (input.shouldProtectDraft) {
+    input.requestDraftReplaceConfirmation();
+    return;
+  }
+
+  input.restoreDraft(input.messageText);
+}
+
+export function applyRetryDraftReplaceConfirmation(input: {
+  isDisabled: boolean;
+  messageText: string | null | undefined;
+  restoreDraft: (messageText: string) => void;
+}): void {
+  if (input.isDisabled || input.messageText == null) {
+    return;
+  }
+
+  input.restoreDraft(input.messageText);
+}
+
 export function defaultRetryBannerDetailsOpen(kind: RetryBannerKind): boolean {
   return kind !== "canceled";
 }

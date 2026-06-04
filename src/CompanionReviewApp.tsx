@@ -80,6 +80,8 @@ import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-opera
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
 import { COMPANION_PENDING_MESSAGE_TEXT } from "./chat/pending-run-indicator.js";
 import {
+  applyRetryDraftReplaceConfirmation,
+  applyRetryEditCommand,
   buildRetryDraftRestoreState,
   buildRetryStopSummary,
   defaultRetryBannerDetailsOpen,
@@ -2571,24 +2573,21 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   function handleEditLastMessage(): void {
-    if (!retryBanner || !lastUserMessage || isRetryEditDisabled) {
-      return;
-    }
-
-    if (shouldProtectDraftOnRetryEdit) {
-      setIsRetryDraftReplacePending(true);
-      return;
-    }
-
-    restoreLastUserMessageToDraft(lastUserMessage.text);
+    applyRetryEditCommand({
+      isDisabled: !retryBanner || isRetryEditDisabled,
+      messageText: lastUserMessage?.text,
+      shouldProtectDraft: shouldProtectDraftOnRetryEdit,
+      requestDraftReplaceConfirmation: () => setIsRetryDraftReplacePending(true),
+      restoreDraft: restoreLastUserMessageToDraft,
+    });
   }
 
   function handleConfirmRetryDraftReplace(): void {
-    if (!retryBanner || !lastUserMessage || isRetryEditDisabled) {
-      return;
-    }
-
-    restoreLastUserMessageToDraft(lastUserMessage.text);
+    applyRetryDraftReplaceConfirmation({
+      isDisabled: !retryBanner || isRetryEditDisabled,
+      messageText: lastUserMessage?.text,
+      restoreDraft: restoreLastUserMessageToDraft,
+    });
   }
 
   function handleCancelRetryDraftReplace(): void {
