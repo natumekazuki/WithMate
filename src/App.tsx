@@ -200,6 +200,7 @@ import {
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
+  applyUnavailableContextPaneTabFallbackCommand,
 } from "./chat/session-shell-handlers.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
@@ -2871,9 +2872,11 @@ export default function AgentSessionWindowApp() {
   );
 
   useEffect(() => {
-    if (!availableContextPaneTabs.includes(activeContextPaneTab)) {
-      setActiveContextPaneTab(availableContextPaneTabs[0] ?? "latest-command");
-    }
+    applyUnavailableContextPaneTabFallbackCommand({
+      activeTab: activeContextPaneTab,
+      availableTabs: availableContextPaneTabs,
+      setActiveTab: setActiveContextPaneTab,
+    });
   }, [activeContextPaneTab, availableContextPaneTabs]);
 
   const handleCycleContextPaneTab = (direction: -1 | 1) => {

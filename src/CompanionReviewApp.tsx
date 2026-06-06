@@ -208,6 +208,7 @@ import {
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
+  applyUnavailableContextPaneTabFallbackCommand,
 } from "./chat/session-shell-handlers.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
@@ -1352,9 +1353,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   );
 
   useEffect(() => {
-    if (!availableContextPaneTabs.includes(activeContextPaneTab)) {
-      setActiveContextPaneTab(availableContextPaneTabs[0] ?? "latest-command");
-    }
+    applyUnavailableContextPaneTabFallbackCommand({
+      activeTab: activeContextPaneTab,
+      availableTabs: availableContextPaneTabs,
+      setActiveTab: setActiveContextPaneTab,
+    });
   }, [activeContextPaneTab, availableContextPaneTabs]);
 
   function handleCycleContextPaneTab(direction: -1 | 1): void {

@@ -15,6 +15,7 @@ import {
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
+  applyUnavailableContextPaneTabFallbackCommand,
   resolveHeaderExpandedToggle,
   toggleExpandedArtifactState,
 } from "../../src/chat/session-shell-handlers.js";
@@ -348,5 +349,38 @@ describe("applyContextPaneTabCycleCommand", () => {
     });
 
     assert.equal(activeTab, "latest-command");
+  });
+});
+
+describe("applyUnavailableContextPaneTabFallbackCommand", () => {
+  it("active tab が利用可能なら維持し、利用不可なら利用可能な tab へ退避する", () => {
+    const activeTabs: string[] = [];
+
+    applyUnavailableContextPaneTabFallbackCommand({
+      activeTab: "tasks",
+      availableTabs: ["latest-command", "tasks"],
+      setActiveTab: (tab) => {
+        activeTabs.push(tab);
+      },
+    });
+    assert.deepEqual(activeTabs, []);
+
+    applyUnavailableContextPaneTabFallbackCommand({
+      activeTab: "reasoning",
+      availableTabs: ["latest-command", "tasks"],
+      setActiveTab: (tab) => {
+        activeTabs.push(tab);
+      },
+    });
+    assert.deepEqual(activeTabs, ["latest-command"]);
+
+    applyUnavailableContextPaneTabFallbackCommand({
+      activeTab: "reasoning",
+      availableTabs: [],
+      setActiveTab: (tab) => {
+        activeTabs.push(tab);
+      },
+    });
+    assert.deepEqual(activeTabs, ["latest-command", "latest-command"]);
   });
 });

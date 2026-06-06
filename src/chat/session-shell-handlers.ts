@@ -170,3 +170,15 @@ export function applyContextPaneTabCycleCommand(input: {
 }): void {
   input.setActiveTab((current) => cycleContextPaneTab(current, input.direction, input.availableTabs));
 }
+
+export function applyUnavailableContextPaneTabFallbackCommand(input: {
+  activeTab: ContextPaneTabKey;
+  availableTabs: ContextPaneTabKey[];
+  setActiveTab: (value: ContextPaneTabKey) => void;
+}): void {
+  if (input.availableTabs.includes(input.activeTab)) {
+    return;
+  }
+
+  input.setActiveTab(input.availableTabs[0] ?? "latest-command");
+}
