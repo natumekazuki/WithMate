@@ -186,8 +186,6 @@ import {
   applyAdditionalDirectoryListToggle,
   applyContextPaneTabCycleCommand,
   applyCancelTitleEditCommand,
-  applyActionDockCollapseCommand,
-  applyActionDockExpandCommand,
   applyExpandedArtifactToggleCommand,
   applyAgentPickerCloseCommand,
   applyPathReferenceRemovalCommand,
@@ -205,6 +203,8 @@ import {
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
   runSessionFilesOpenCommand,
+  createActionDockCollapseHandler,
+  createActionDockExpandHandler,
   createHeaderExpandedToggleHandler,
 } from "./chat/session-shell-handlers.js";
 
@@ -2184,20 +2184,15 @@ export default function AgentSessionWindowApp() {
     setHeaderExpanded: setIsHeaderExpanded,
   });
 
-  const handleExpandActionDock = (options?: { focusComposer?: boolean }) => {
-    applyActionDockExpandCommand({
-      options,
-      setPinnedExpanded: setIsActionDockPinnedExpanded,
-      focusComposer: () => restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current),
-    });
-  };
+  const handleExpandActionDock = createActionDockExpandHandler({
+    setPinnedExpanded: setIsActionDockPinnedExpanded,
+    focusComposer: () => restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current),
+  });
 
-  const handleCollapseActionDock = () => {
-    applyActionDockCollapseCommand({
-      canCollapse: canCollapseActionDock,
-      setPinnedExpanded: setIsActionDockPinnedExpanded,
-    });
-  };
+  const handleCollapseActionDock = createActionDockCollapseHandler({
+    canCollapse: canCollapseActionDock,
+    setPinnedExpanded: setIsActionDockPinnedExpanded,
+  });
 
   const handleToggleAgentPicker = () => {
     applyAgentPickerToggleCommand({

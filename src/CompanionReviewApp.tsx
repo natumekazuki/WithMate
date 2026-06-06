@@ -194,8 +194,6 @@ import {
   applyAdditionalDirectoryListToggle,
   applyContextPaneTabCycleCommand,
   applyCancelTitleEditCommand,
-  applyActionDockCollapseCommand,
-  applyActionDockExpandCommand,
   applyExpandedArtifactToggleCommand,
   applyAgentPickerCloseCommand,
   applyPathReferenceRemovalCommand,
@@ -213,6 +211,8 @@ import {
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
   runSessionFilesOpenCommand,
+  createActionDockCollapseHandler,
+  createActionDockExpandHandler,
   createHeaderExpandedToggleHandler,
 } from "./chat/session-shell-handlers.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
@@ -2135,20 +2135,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setHeaderExpanded: setIsHeaderExpanded,
   });
 
-  function handleExpandActionDock(options?: { focusComposer?: boolean }): void {
-    applyActionDockExpandCommand({
-      options,
-      setPinnedExpanded: setIsActionDockPinnedExpanded,
-      focusComposer: () => restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current),
-    });
-  }
+  const handleExpandActionDock = createActionDockExpandHandler({
+    setPinnedExpanded: setIsActionDockPinnedExpanded,
+    focusComposer: () => restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current),
+  });
 
-  function handleCollapseActionDock(): void {
-    applyActionDockCollapseCommand({
-      canCollapse: canCollapseActionDock,
-      setPinnedExpanded: setIsActionDockPinnedExpanded,
-    });
-  }
+  const handleCollapseActionDock = createActionDockCollapseHandler({
+    canCollapse: canCollapseActionDock,
+    setPinnedExpanded: setIsActionDockPinnedExpanded,
+  });
 
   function handleToggleAgentPicker(): void {
     applyAgentPickerToggleCommand({

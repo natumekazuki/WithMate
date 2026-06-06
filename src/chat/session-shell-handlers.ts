@@ -110,6 +110,18 @@ export function applyActionDockExpandCommand(input: {
   }
 }
 
+export function createActionDockExpandHandler(input: {
+  defaultOptions?: { focusComposer?: boolean };
+  setPinnedExpanded: (expanded: boolean) => void;
+  focusComposer: () => void;
+}): (options?: { focusComposer?: boolean }) => void {
+  return (options) => applyActionDockExpandCommand({
+    options: options ?? input.defaultOptions,
+    setPinnedExpanded: input.setPinnedExpanded,
+    focusComposer: input.focusComposer,
+  });
+}
+
 export function applyActionDockCollapseCommand(input: {
   canCollapse: boolean;
   setPinnedExpanded: (expanded: boolean) => void;
@@ -120,6 +132,13 @@ export function applyActionDockCollapseCommand(input: {
   }
 
   input.setPinnedExpanded(nextState.isActionDockPinnedExpanded);
+}
+
+export function createActionDockCollapseHandler(input: {
+  canCollapse: boolean;
+  setPinnedExpanded: (expanded: boolean) => void;
+}): () => void {
+  return () => applyActionDockCollapseCommand(input);
 }
 
 export function applyExclusiveComposerPickerToggle(input: {

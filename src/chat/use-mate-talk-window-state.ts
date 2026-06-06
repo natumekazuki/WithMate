@@ -43,14 +43,14 @@ import {
   resolveMateTalkActionDockExpandedAfterSubmit,
 } from "./mate-talk-state.js";
 import {
-  applyActionDockCollapseCommand,
-  applyActionDockExpandCommand,
   applyAdditionalDirectoryListToggle,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyPastedSessionAttachmentPathsCommand,
   applyQuoteMessageTextCommand,
   applySessionFilesReferencePathsCommand,
+  createActionDockCollapseHandler,
+  createActionDockExpandHandler,
   createHeaderExpandedToggleHandler,
 } from "./session-shell-handlers.js";
 
@@ -542,12 +542,12 @@ export function useMateTalkWindowState({
     }),
     onOpenSessionFilesExplorer: () => void openSessionFilesDirectory(),
     onOpenSessionFilesTerminal: () => void openSessionFilesTerminal(),
-    onCollapseActionDock: () => applyActionDockCollapseCommand({
+    onCollapseActionDock: createActionDockCollapseHandler({
       canCollapse: true,
       setPinnedExpanded: setIsActionDockExpanded,
     }),
-    onExpandActionDock: () => applyActionDockExpandCommand({
-      options: { focusComposer: false },
+    onExpandActionDock: createActionDockExpandHandler({
+      defaultOptions: { focusComposer: false },
       setPinnedExpanded: setIsActionDockExpanded,
       focusComposer: () => {},
     }),

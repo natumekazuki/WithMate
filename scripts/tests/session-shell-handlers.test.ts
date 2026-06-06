@@ -26,6 +26,8 @@ import {
   applyTitleInputKeyCommand,
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
+  createActionDockCollapseHandler,
+  createActionDockExpandHandler,
   createHeaderExpandedToggleHandler,
   resolveHeaderExpandedToggle,
   runSessionFilesOpenCommand,
@@ -207,6 +209,41 @@ describe("applyActionDockCollapseCommand", () => {
         events.push(expanded);
       },
     });
+
+    assert.deepEqual(events, [false]);
+  });
+});
+
+describe("createActionDockExpandHandler", () => {
+  it("default options を使いつつ、呼び出し時 options で composer focus を上書きできる", () => {
+    const events: string[] = [];
+    const expand = createActionDockExpandHandler({
+      defaultOptions: { focusComposer: false },
+      setPinnedExpanded: (expanded) => events.push(`expanded:${expanded}`),
+      focusComposer: () => events.push("focus"),
+    });
+
+    expand();
+    expand({ focusComposer: true });
+
+    assert.deepEqual(events, ["expanded:true", "expanded:true", "focus"]);
+  });
+});
+
+describe("createActionDockCollapseHandler", () => {
+  it("collapse 可能性を固定した collapse handler を作る", () => {
+    const events: boolean[] = [];
+    const blockedCollapse = createActionDockCollapseHandler({
+      canCollapse: false,
+      setPinnedExpanded: (expanded) => events.push(expanded),
+    });
+    const collapse = createActionDockCollapseHandler({
+      canCollapse: true,
+      setPinnedExpanded: (expanded) => events.push(expanded),
+    });
+
+    blockedCollapse();
+    collapse();
 
     assert.deepEqual(events, [false]);
   });
