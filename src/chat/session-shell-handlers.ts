@@ -325,6 +325,17 @@ export function applyContextPaneTabCycleCommand(input: {
   input.setActiveTab((current) => cycleContextPaneTab(current, input.direction, input.availableTabs));
 }
 
+export function createContextPaneTabCycleHandler(input: {
+  availableTabs: ContextPaneTabKey[];
+  setActiveTab: (value: ContextPaneTabKey | ((current: ContextPaneTabKey) => ContextPaneTabKey)) => void;
+}): (direction: -1 | 1) => void {
+  return (direction) => applyContextPaneTabCycleCommand({
+    direction,
+    availableTabs: input.availableTabs,
+    setActiveTab: input.setActiveTab,
+  });
+}
+
 export function applyUnavailableContextPaneTabFallbackCommand(input: {
   activeTab: ContextPaneTabKey;
   availableTabs: ContextPaneTabKey[];

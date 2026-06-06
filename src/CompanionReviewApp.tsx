@@ -190,7 +190,6 @@ import {
 import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
 import {
   applyAgentPickerToggleCommand,
-  applyContextPaneTabCycleCommand,
   applyCancelTitleEditCommand,
   applyExpandedArtifactToggleCommand,
   applyAgentPickerCloseCommand,
@@ -211,6 +210,7 @@ import {
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
   createComposerSubmitKeyHandler,
+  createContextPaneTabCycleHandler,
   createHeaderExpandedToggleHandler,
   createSessionFilesOpenHandler,
   createTitleInputKeyHandler,
@@ -1365,13 +1365,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
   }, [activeContextPaneTab, availableContextPaneTabs]);
 
-  function handleCycleContextPaneTab(direction: -1 | 1): void {
-    applyContextPaneTabCycleCommand({
-      direction,
-      availableTabs: availableContextPaneTabs,
-      setActiveTab: setActiveContextPaneTab,
-    });
-  }
+  const handleCycleContextPaneTab = createContextPaneTabCycleHandler({
+    availableTabs: availableContextPaneTabs,
+    setActiveTab: setActiveContextPaneTab,
+  });
 
   function toggleArtifact(artifactKey: string): void {
     applyExpandedArtifactToggleCommand({

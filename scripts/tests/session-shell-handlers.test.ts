@@ -32,6 +32,7 @@ import {
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
   createComposerSubmitKeyHandler,
+  createContextPaneTabCycleHandler,
   createHeaderExpandedToggleHandler,
   createSessionFilesOpenHandler,
   createTitleInputKeyHandler,
@@ -647,6 +648,22 @@ describe("applyContextPaneTabCycleCommand", () => {
         activeTab = typeof updater === "function" ? updater(activeTab) : updater;
       },
     });
+
+    assert.equal(activeTab, "latest-command");
+  });
+});
+
+describe("createContextPaneTabCycleHandler", () => {
+  it("context pane tab cycle handler を作る", () => {
+    let activeTab: "latest-command" | "reasoning" | "tasks" | "companion-group" = "tasks";
+    const cycleTab = createContextPaneTabCycleHandler({
+      availableTabs: ["latest-command", "tasks"],
+      setActiveTab: (updater) => {
+        activeTab = typeof updater === "function" ? updater(activeTab) : updater;
+      },
+    });
+
+    cycleTab(-1);
 
     assert.equal(activeTab, "latest-command");
   });

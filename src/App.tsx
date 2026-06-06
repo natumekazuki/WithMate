@@ -182,7 +182,6 @@ import {
 import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
 import {
   applyAgentPickerToggleCommand,
-  applyContextPaneTabCycleCommand,
   applyCancelTitleEditCommand,
   applyExpandedArtifactToggleCommand,
   applyAgentPickerCloseCommand,
@@ -203,6 +202,7 @@ import {
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
   createComposerSubmitKeyHandler,
+  createContextPaneTabCycleHandler,
   createHeaderExpandedToggleHandler,
   createSessionFilesOpenHandler,
   createTitleInputKeyHandler,
@@ -2853,13 +2853,10 @@ export default function AgentSessionWindowApp() {
     });
   }, [activeContextPaneTab, availableContextPaneTabs]);
 
-  const handleCycleContextPaneTab = (direction: -1 | 1) => {
-    applyContextPaneTabCycleCommand({
-      direction,
-      availableTabs: availableContextPaneTabs,
-      setActiveTab: setActiveContextPaneTab,
-    });
-  };
+  const handleCycleContextPaneTab = createContextPaneTabCycleHandler({
+    availableTabs: availableContextPaneTabs,
+    setActiveTab: setActiveContextPaneTab,
+  });
 
   const auxiliaryComposerSendability = useMemo(
     () => buildComposerSendabilityState({
