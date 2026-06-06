@@ -6,6 +6,7 @@ import {
   buildExclusiveComposerPickerToggleState,
   type SkillPromptInsertionState,
 } from "../session-composer-selection.js";
+import { createQuotedMessageInsertionFromComposer } from "./message-text-actions.js";
 import {
   resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
@@ -199,5 +200,31 @@ export function applyPickedComposerReferencePathCommand(input: {
 
   input.setPickerBaseDirectory(resolvePickedPathBaseDirectory(input.kind, input.selectedPath));
   input.insertReferencePath(input.selectedPath, input.kind);
+  return true;
+}
+
+export function applyQuoteMessageTextCommand(input: {
+  messageText: string;
+  draft: string;
+  fallbackCaret: number;
+  textarea: HTMLTextAreaElement | null;
+  applyInsertion: (insertion: { draft: string; caret: number }) => void;
+  restoreComposerTextareaFocusAndCaret: (
+    textarea: HTMLTextAreaElement | null,
+    caret: number,
+  ) => void;
+}): boolean {
+  const insertion = createQuotedMessageInsertionFromComposer({
+    messageText: input.messageText,
+    draft: input.draft,
+    fallbackCaret: input.fallbackCaret,
+    textarea: input.textarea,
+  });
+  if (!insertion) {
+    return false;
+  }
+
+  input.applyInsertion(insertion);
+  input.restoreComposerTextareaFocusAndCaret(input.textarea, insertion.caret);
   return true;
 }

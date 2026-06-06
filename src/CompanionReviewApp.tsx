@@ -96,7 +96,6 @@ import {
 } from "./chat/retry-state.js";
 import {
   createCopyMessageTextHandler,
-  createQuotedMessageInsertionFromComposer,
 } from "./chat/message-text-actions.js";
 import {
   buildComposerSendabilityState,
@@ -204,6 +203,7 @@ import {
   applyExpandedArtifactToggleCommand,
   applyHeaderExpandedToggleCommand,
   applyPickedComposerReferencePathCommand,
+  applyQuoteMessageTextCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
@@ -1400,25 +1400,22 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
 
     const textarea = composerTextareaRef.current;
-    const insertion = createQuotedMessageInsertionFromComposer({
+    applyQuoteMessageTextCommand({
       messageText: text,
       draft: activeComposerText,
       fallbackCaret: composerCaret,
       textarea,
+      applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
+        setComposerCaret(nextCaret);
+        applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
+        if (activeAuxiliarySession) {
+          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+        } else {
+          setComposerText(nextDraft);
+        }
+      },
+      restoreComposerTextareaFocusAndCaret,
     });
-    if (!insertion) {
-      return;
-    }
-    const { draft: nextDraft, caret: nextCaret } = insertion;
-    setComposerCaret(nextCaret);
-    applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
-    if (activeAuxiliarySession) {
-      void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-    } else {
-      setComposerText(nextDraft);
-    }
-
-    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   }
 
   function insertReferencePaths(selectedPaths: string[]): void {

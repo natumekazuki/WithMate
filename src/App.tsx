@@ -144,7 +144,6 @@ import {
 } from "./session-telemetry-state.js";
 import {
   createCopyMessageTextHandler,
-  createQuotedMessageInsertionFromComposer,
 } from "./chat/message-text-actions.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 import {
@@ -196,6 +195,7 @@ import {
   applyExpandedArtifactToggleCommand,
   applyHeaderExpandedToggleCommand,
   applyPickedComposerReferencePathCommand,
+  applyQuoteMessageTextCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
@@ -2456,51 +2456,40 @@ export default function AgentSessionWindowApp() {
   });
 
   const insertQuoteIntoMainComposer = (messageText: string) => {
-    if (!messageText) {
-      return;
-    }
-
     const textarea = activeAuxiliarySession ? null : composerTextareaRef.current;
-    const insertion = createQuotedMessageInsertionFromComposer({
+    applyQuoteMessageTextCommand({
       messageText,
       draft,
       fallbackCaret: mainComposerCaretRef.current,
       textarea,
+      applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
+        setDraft(nextDraft);
+        mainComposerCaretRef.current = nextCaret;
+        if (!activeAuxiliarySession) {
+          setComposerCaret(nextCaret);
+        }
+        applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
+      },
+      restoreComposerTextareaFocusAndCaret,
     });
-    if (!insertion) {
-      return;
-    }
-    const { draft: nextDraft, caret: nextCaret } = insertion;
-
-    setDraft(nextDraft);
-    mainComposerCaretRef.current = nextCaret;
-    if (!activeAuxiliarySession) {
-      setComposerCaret(nextCaret);
-    }
-    applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
-
-    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
 
   const insertQuoteIntoAuxiliaryComposer = (messageText: string) => {
-    if (!messageText || !activeAuxiliarySession) {
+    if (!activeAuxiliarySession) {
       return;
     }
 
     const textarea = composerTextareaRef.current;
-    const insertion = createQuotedMessageInsertionFromComposer({
+    applyQuoteMessageTextCommand({
       messageText,
       draft: activeAuxiliarySession.composerDraft,
       fallbackCaret: composerCaret,
       textarea,
+      applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
+        void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+      },
+      restoreComposerTextareaFocusAndCaret,
     });
-    if (!insertion) {
-      return;
-    }
-    const { draft: nextDraft, caret: nextCaret } = insertion;
-
-    void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
 
   const handleQuoteMessageText = (text: string) => {

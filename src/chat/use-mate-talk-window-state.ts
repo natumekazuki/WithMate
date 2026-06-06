@@ -31,7 +31,6 @@ import { currentTimestampLabel } from "../time-state.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import {
   createCopyMessageTextHandler,
-  createQuotedMessageInsertionFromComposer,
 } from "./message-text-actions.js";
 import { collectPastedSessionAttachmentPaths } from "./composer-paste-handlers.js";
 import type { MateTalkMessage } from "./mate-talk-chat-projection.js";
@@ -50,6 +49,7 @@ import {
   applyAdditionalDirectoryListToggle,
   applyHeaderExpandedToggleCommand,
   applyPickedComposerReferencePathCommand,
+  applyQuoteMessageTextCommand,
 } from "./session-shell-handlers.js";
 
 function getMateTalkLaunchParams(): { providerId: string; model: string; reasoningEffort: ModelReasoningEffort } {
@@ -220,21 +220,18 @@ export function useMateTalkWindowState({
     }
 
     const textarea = composerTextareaRef.current;
-    const insertion = createQuotedMessageInsertionFromComposer({
+    applyQuoteMessageTextCommand({
       messageText: text,
       draft: input,
       fallbackCaret: inputCaret,
       textarea,
+      applyInsertion: ({ draft: nextInput, caret: nextCaret }) => {
+        setInput(nextInput);
+        setInputCaret(nextCaret);
+        setFeedback("");
+      },
+      restoreComposerTextareaFocusAndCaret,
     });
-    if (!insertion) {
-      return;
-    }
-    const { draft: nextInput, caret: nextCaret } = insertion;
-    setInput(nextInput);
-    setInputCaret(nextCaret);
-    setFeedback("");
-
-    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
 
   const insertReferencePaths = (selectedPaths: string[], kind: ComposerPathPickerKind) => {

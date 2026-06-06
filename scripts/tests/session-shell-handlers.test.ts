@@ -12,6 +12,7 @@ import {
   applyExclusiveComposerPickerToggle,
   applyHeaderExpandedToggleCommand,
   applyPickedComposerReferencePathCommand,
+  applyQuoteMessageTextCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
@@ -423,6 +424,54 @@ describe("applyPickedComposerReferencePathCommand", () => {
       "insert:file:C:\\workspace\\project\\src\\App.tsx",
       "base:C:\\workspace\\project\\docs",
       "insert:folder:C:\\workspace\\project\\docs",
+    ]);
+  });
+});
+
+describe("applyQuoteMessageTextCommand", () => {
+  it("quote 挿入できない場合は何もせず、できる場合は反映後に focus と caret を復元する", () => {
+    const events: string[] = [];
+    const textarea = {
+      selectionStart: "hello".length,
+      focus: () => events.push("focus"),
+      setSelectionRange: (start: number, end: number) => events.push(`selection:${start}:${end}`),
+    } as HTMLTextAreaElement;
+
+    assert.equal(
+      applyQuoteMessageTextCommand({
+        messageText: "   ",
+        draft: "hello world",
+        fallbackCaret: "hello world".length,
+        textarea,
+        applyInsertion: ({ draft, caret }) => events.push(`apply:${caret}:${draft}`),
+        restoreComposerTextareaFocusAndCaret: (textarea, caret) => {
+          textarea?.focus();
+          textarea?.setSelectionRange(caret, caret);
+        },
+      }),
+      false,
+    );
+    assert.deepEqual(events, []);
+
+    assert.equal(
+      applyQuoteMessageTextCommand({
+        messageText: "quoted\ntext",
+        draft: "hello world",
+        fallbackCaret: "hello world".length,
+        textarea,
+        applyInsertion: ({ draft, caret }) => events.push(`apply:${caret}:${draft}`),
+        restoreComposerTextareaFocusAndCaret: (textarea, caret) => {
+          textarea?.focus();
+          textarea?.setSelectionRange(caret, caret);
+        },
+      }),
+      true,
+    );
+
+    assert.deepEqual(events, [
+      "apply:25:hello\n\n> quoted\n> text\n\n\n world",
+      "focus",
+      "selection:25:25",
     ]);
   });
 });
