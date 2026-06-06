@@ -7,6 +7,10 @@ import {
   type SkillPromptInsertionState,
 } from "../session-composer-selection.js";
 import {
+  resolvePickedPathBaseDirectory,
+  type ComposerPathPickerKind,
+} from "../session-composer-paths.js";
+import {
   cycleContextPaneTab,
   type ContextPaneTabKey,
 } from "../session-ui-projection.js";
@@ -181,4 +185,19 @@ export function applyUnavailableContextPaneTabFallbackCommand(input: {
   }
 
   input.setActiveTab(input.availableTabs[0] ?? "latest-command");
+}
+
+export function applyPickedComposerReferencePathCommand(input: {
+  kind: ComposerPathPickerKind;
+  selectedPath: string | null | undefined;
+  setPickerBaseDirectory: (baseDirectory: string) => void;
+  insertReferencePath: (selectedPath: string, kind: ComposerPathPickerKind) => void;
+}): boolean {
+  if (!input.selectedPath) {
+    return false;
+  }
+
+  input.setPickerBaseDirectory(resolvePickedPathBaseDirectory(input.kind, input.selectedPath));
+  input.insertReferencePath(input.selectedPath, input.kind);
+  return true;
 }

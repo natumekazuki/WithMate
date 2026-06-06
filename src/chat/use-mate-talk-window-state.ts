@@ -22,7 +22,6 @@ import {
   removeAdditionalDirectoryPath,
   removePathReferenceAttachments,
   resolveReferencePathsForInsertion,
-  resolvePickedPathBaseDirectory,
   resolvePathReferenceRemovalTargets,
   type ComposerPathPickerKind,
   toDirectoryPath,
@@ -50,6 +49,7 @@ import {
   applyActionDockExpandCommand,
   applyAdditionalDirectoryListToggle,
   applyHeaderExpandedToggleCommand,
+  applyPickedComposerReferencePathCommand,
 } from "./session-shell-handlers.js";
 
 function getMateTalkLaunchParams(): { providerId: string; model: string; reasoningEffort: ModelReasoningEffort } {
@@ -270,12 +270,12 @@ export function useMateTalkWindowState({
 
     const initialPath = pickerBaseDirectory || null;
     const selectedPath = await pickComposerReferencePath(kind, initialPath, withmateApi);
-    if (!selectedPath) {
-      return;
-    }
-
-    setPickerBaseDirectory(resolvePickedPathBaseDirectory(kind, selectedPath));
-    insertReferencePath(selectedPath, kind);
+    applyPickedComposerReferencePathCommand({
+      kind,
+      selectedPath,
+      setPickerBaseDirectory,
+      insertReferencePath,
+    });
   };
 
   const addToSessionFiles = async () => {

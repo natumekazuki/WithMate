@@ -11,6 +11,7 @@ import {
   applyExpandedArtifactToggleCommand,
   applyExclusiveComposerPickerToggle,
   applyHeaderExpandedToggleCommand,
+  applyPickedComposerReferencePathCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
@@ -382,5 +383,46 @@ describe("applyUnavailableContextPaneTabFallbackCommand", () => {
       },
     });
     assert.deepEqual(activeTabs, ["latest-command", "latest-command"]);
+  });
+});
+
+describe("applyPickedComposerReferencePathCommand", () => {
+  it("選択 path がない場合は何もせず、ある場合は base directory 更新後に挿入する", () => {
+    const events: string[] = [];
+    const runCommand = (
+      selectedPath: string | null | undefined,
+      kind: "file" | "folder" | "image" = "file",
+    ) =>
+      applyPickedComposerReferencePathCommand({
+        kind,
+        selectedPath,
+        setPickerBaseDirectory: (baseDirectory) => events.push(`base:${baseDirectory}`),
+        insertReferencePath: (path, kind) => events.push(`insert:${kind}:${path}`),
+      });
+
+    assert.equal(runCommand(null), false);
+    assert.equal(runCommand(undefined), false);
+    assert.equal(runCommand(""), false);
+    assert.deepEqual(events, []);
+
+    assert.equal(
+      runCommand("C:\\workspace\\project\\src\\App.tsx"),
+      true,
+    );
+    assert.deepEqual(events, [
+      "base:C:\\workspace\\project\\src",
+      "insert:file:C:\\workspace\\project\\src\\App.tsx",
+    ]);
+
+    assert.equal(
+      runCommand("C:\\workspace\\project\\docs", "folder"),
+      true,
+    );
+    assert.deepEqual(events, [
+      "base:C:\\workspace\\project\\src",
+      "insert:file:C:\\workspace\\project\\src\\App.tsx",
+      "base:C:\\workspace\\project\\docs",
+      "insert:folder:C:\\workspace\\project\\docs",
+    ]);
   });
 });

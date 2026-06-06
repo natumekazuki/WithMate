@@ -93,7 +93,6 @@ import {
   buildSelectedPathReferenceInsertionState,
   buildWorkspacePathMatchSelectionState,
   pickComposerReferencePath,
-  resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
   toDirectoryPath,
 } from "./session-composer-paths.js";
@@ -196,6 +195,7 @@ import {
   applyActionDockExpandCommand,
   applyExpandedArtifactToggleCommand,
   applyHeaderExpandedToggleCommand,
+  applyPickedComposerReferencePathCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
@@ -2588,12 +2588,12 @@ export default function AgentSessionWindowApp() {
       pickerBaseDirectory || selectedSession?.workspacePath || null,
       withmateApi,
     );
-    if (!selectedPath) {
-      return;
-    }
-
-    setPickerBaseDirectory(resolvePickedPathBaseDirectory(kind, selectedPath));
-    insertReferencePath(selectedPath);
+    applyPickedComposerReferencePathCommand({
+      kind,
+      selectedPath,
+      setPickerBaseDirectory,
+      insertReferencePath: (path) => insertReferencePath(path),
+    });
   };
 
   const handleAddToSessionFiles = async () => {

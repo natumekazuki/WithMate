@@ -128,7 +128,6 @@ import {
   buildSelectedPathReferenceInsertionState,
   buildWorkspacePathMatchSelectionState,
   pickComposerReferencePath,
-  resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
   toDirectoryPath,
 } from "./session-composer-paths.js";
@@ -204,6 +203,7 @@ import {
   applyActionDockExpandCommand,
   applyExpandedArtifactToggleCommand,
   applyHeaderExpandedToggleCommand,
+  applyPickedComposerReferencePathCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
@@ -1461,10 +1461,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
     const basePath = pickerBaseDirectory || snapshot.session.worktreePath || snapshot.session.repoRoot;
     const selectedPath = await pickComposerReferencePath(kind, basePath, withmateApi);
-    if (selectedPath) {
-      setPickerBaseDirectory(resolvePickedPathBaseDirectory(kind, selectedPath));
-      insertReferencePath(selectedPath);
-    }
+    applyPickedComposerReferencePathCommand({
+      kind,
+      selectedPath,
+      setPickerBaseDirectory,
+      insertReferencePath: (path) => insertReferencePath(path),
+    });
   }
 
   async function addToSessionFiles(): Promise<void> {
