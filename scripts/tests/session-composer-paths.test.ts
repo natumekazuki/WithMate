@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  appendAdditionalDirectoryPath,
   appendMissingPathReferenceAttachments,
   buildAdditionalDirectoryItems,
   buildClosedWorkspacePathMatchState,
@@ -25,7 +24,6 @@ import {
   getPreviousWorkspacePathMatchIndex,
   getWorkspacePathMatchNavigationIndex,
   pickComposerReferencePath,
-  removeAdditionalDirectoryPath,
   removePathReferenceAttachments,
   removePathReferenceTokensFromDraft,
   resolveActiveWorkspacePathMatch,
@@ -550,27 +548,6 @@ test("buildAdditionalDirectoryItems は additional directory display と remove 
   assert.equal(
     buildAdditionalDirectoryItems(["C:/workspace/readonly"], false)[0]?.canRemove,
     false,
-  );
-});
-
-test("appendAdditionalDirectoryPath は additional directory を正規化して重複なしで追加する", () => {
-  assert.deepEqual(
-    appendAdditionalDirectoryPath(["C:/workspace/external"], "C:\\workspace\\external"),
-    ["C:/workspace/external"],
-  );
-  assert.deepEqual(
-    appendAdditionalDirectoryPath(["C:/workspace/external"], "D:\\assets"),
-    ["C:/workspace/external", "D:/assets"],
-  );
-});
-
-test("removeAdditionalDirectoryPath は additional directory を正規化して削除する", () => {
-  assert.deepEqual(
-    removeAdditionalDirectoryPath(
-      ["C:\\workspace\\external", "D:/assets"],
-      "C:/workspace/external",
-    ),
-    ["D:/assets"],
   );
 });
 

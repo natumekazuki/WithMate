@@ -602,22 +602,6 @@ export function buildAdditionalDirectoryItems(
   });
 }
 
-export function appendAdditionalDirectoryPath(
-  current: readonly string[],
-  directoryPath: string,
-): string[] {
-  const normalizedPath = normalizePathForReference(directoryPath);
-  return Array.from(new Set([...current, normalizedPath]));
-}
-
-export function removeAdditionalDirectoryPath(
-  current: readonly string[],
-  directoryPath: string,
-): string[] {
-  const removablePath = normalizePathForReference(directoryPath);
-  return current.filter((entry) => normalizePathForReference(entry) !== removablePath);
-}
-
 export function toWorkspaceRelativeReference(workspacePath: string, selectedPath: string): string | null {
   const normalizedWorkspacePath = normalizePathForReference(workspacePath).replace(/\/+$/, "");
   const normalizedSelectedPath = normalizePathForReference(selectedPath);

@@ -18,10 +18,11 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - message action primitive: copy / quote のテキスト正規化と挿入計算。
 - shell handler factory: header/action dock/picker、title edit、composer submit key、workspace match selection、skill prompt insertion、session files open、path insertion/removal command。
 - composer/path helpers: draft select/composition、paste collection、path preview/search、send-or-cancel routing。
+- PR-02: pasted session attachment の保存/挿入/失敗/no-op contract。
 
 進行中:
 
-- PR-02: `createPastedSessionAttachmentHandler` で App / CompanionReview / MateTalk の paste -> session file save -> reference insertion wrapper を共通化中。
+- PR-03: additional directory list の add/remove operation を共通化中。
 
 ## Progress Log
 
@@ -30,6 +31,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-07: PR-02 着手。App / CompanionReview / MateTalk の pasted session attachment handler を `createPastedSessionAttachmentHandler` に集約。surface 固有の paste 可否、sessionId、save API 取得、reference insertion だけを adapter 側に残し、clipboard `items` 経由の file paste も handler contract の test で固定。
 - 2026-06-07: pasted session attachment 保存失敗時の notification contract を `createPastedSessionAttachmentHandler` に追加。App / CompanionReview は alert、MateTalk は feedback に接続し、保存失敗時は reference insertion しないことを test で固定。
 - 2026-06-07: pasted session attachment の no-op 境界を補強。save API 未取得、session id 未取得では preventDefault / save / insertion を行わず、非 Error failure では fallback message を通知する contract を test で固定。未取得値は null / undefined の両方を covered。
+- 2026-06-07: PR-03 着手。additional directory list の add/remove 純粋操作を `additional-directory-state` に集約し、MateTalk の local additional directories も同じ helper 経由へ置換。Windows separator 正規化、重複排除、削除判定を focused test で固定。
 
 ## PR Plan
 
@@ -86,6 +88,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 
 - additional directory add/remove の path 正規化、重複排除、list open state、remove state。
 - App / Companion / MateTalk の mode 固有 persistence 境界を adapter 化。
+- additional directory list の add/remove 純粋操作を `additional-directory-state` に集約。2026-06-07 着手、MateTalk local list への適用完了。
 
 やらないこと:
 

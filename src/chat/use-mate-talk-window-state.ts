@@ -1,6 +1,10 @@
 import { type ClipboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from "../approval-mode.js";
+import {
+  addAllowedAdditionalDirectory,
+  removeAllowedAdditionalDirectory,
+} from "../additional-directory-state.js";
 import { DEFAULT_CODEX_SANDBOX_MODE, normalizeCodexSandboxMode, type CodexSandboxMode } from "../codex-sandbox-mode.js";
 import { restoreComposerTextareaFocusAndCaret } from "../composer-textarea-focus.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
@@ -12,12 +16,10 @@ import {
   type AppSettings,
 } from "../provider-settings-state.js";
 import {
-  appendAdditionalDirectoryPath,
   appendMissingPathReferenceAttachments,
   buildAdditionalDirectoryItems,
   buildPathReferenceAttachmentItems,
   pickComposerReferencePath,
-  removeAdditionalDirectoryPath,
   removePathReferenceAttachments,
   resolveReferencePathsForInsertion,
   resolvePathReferenceRemovalTargets,
@@ -366,7 +368,7 @@ export function useMateTalkWindowState({
       selectedPath,
       setPickerBaseDirectory,
       applyPickedDirectory: (directoryPath) => {
-        setAdditionalDirectories((current) => appendAdditionalDirectoryPath(current, directoryPath));
+        setAdditionalDirectories((current) => addAllowedAdditionalDirectory(current, directoryPath));
       },
       setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
     });
@@ -520,7 +522,7 @@ export function useMateTalkWindowState({
     }),
     onRemoveAttachment: removePathReference,
     onRemoveAdditionalDirectory: (directoryPath: string) => {
-      setAdditionalDirectories((current) => removeAdditionalDirectoryPath(current, directoryPath));
+      setAdditionalDirectories((current) => removeAllowedAdditionalDirectory(current, directoryPath));
     },
     onDraftFocus: () => {},
     onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleDraftPaste(event),
