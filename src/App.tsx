@@ -13,8 +13,8 @@ import {
   type RunSessionTurnRequest,
 } from "./app-state.js";
 import {
-  addAllowedAdditionalDirectory,
-  removeAllowedAdditionalDirectory,
+  buildSessionWithAddedAdditionalDirectory,
+  buildSessionWithRemovedAdditionalDirectory,
 } from "./additional-directory-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
@@ -2571,11 +2571,7 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const nextDirectories = addAllowedAdditionalDirectory(selectedSession.allowedAdditionalDirectories, selectedPath);
-    const nextSession: Session = {
-      ...selectedSession,
-      allowedAdditionalDirectories: nextDirectories,
-    };
+    const nextSession: Session = buildSessionWithAddedAdditionalDirectory(selectedSession, selectedPath);
     applyPickedAdditionalDirectoryUiStateCommand({
       selectedPath,
       setPickerBaseDirectory,
@@ -2588,15 +2584,10 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const nextDirectories = removeAllowedAdditionalDirectory(selectedSession.allowedAdditionalDirectories, directoryPath);
-    if (nextDirectories.length === selectedSession.allowedAdditionalDirectories.length) {
+    const nextSession = buildSessionWithRemovedAdditionalDirectory(selectedSession, directoryPath);
+    if (!nextSession) {
       return;
     }
-
-    const nextSession: Session = {
-      ...selectedSession,
-      allowedAdditionalDirectories: nextDirectories,
-    };
     await persistSession(nextSession);
   };
 

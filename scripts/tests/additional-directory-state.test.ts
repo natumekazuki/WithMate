@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   addAllowedAdditionalDirectory,
+  buildSessionWithAddedAdditionalDirectory,
+  buildSessionWithRemovedAdditionalDirectory,
   removeAllowedAdditionalDirectory,
 } from "../../src/additional-directory-state.js";
 
@@ -84,4 +86,39 @@ test("removeAllowedAdditionalDirectory は directory を正規化して一致す
     removeAllowedAdditionalDirectory(["//Server/Share", "/tmp/test"], "//SERVER/share"),
     ["/tmp/test"],
   );
+});
+
+test("buildSessionWithAddedAdditionalDirectory は session shape を保って directory を追加する", () => {
+  const session = {
+    id: "session-1",
+    allowedAdditionalDirectories: ["C:/workspace/a"],
+    title: "Session",
+  };
+
+  assert.deepEqual(
+    buildSessionWithAddedAdditionalDirectory(session, "C:\\workspace\\b"),
+    {
+      id: "session-1",
+      allowedAdditionalDirectories: ["C:/workspace/a", "C:/workspace/b"],
+      title: "Session",
+    },
+  );
+});
+
+test("buildSessionWithRemovedAdditionalDirectory は削除できる場合だけ session patch を返す", () => {
+  const session = {
+    id: "session-1",
+    allowedAdditionalDirectories: ["C:/workspace/a", "D:/assets"],
+    title: "Session",
+  };
+
+  assert.deepEqual(
+    buildSessionWithRemovedAdditionalDirectory(session, "c:\\workspace\\a"),
+    {
+      id: "session-1",
+      allowedAdditionalDirectories: ["D:/assets"],
+      title: "Session",
+    },
+  );
+  assert.equal(buildSessionWithRemovedAdditionalDirectory(session, "C:/missing"), null);
 });

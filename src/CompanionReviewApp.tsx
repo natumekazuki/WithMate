@@ -12,8 +12,8 @@ import {
 } from "react";
 
 import {
-  addAllowedAdditionalDirectory,
-  removeAllowedAdditionalDirectory,
+  buildSessionWithAddedAdditionalDirectory,
+  buildSessionWithRemovedAdditionalDirectory,
 } from "./additional-directory-state.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import {
@@ -1526,11 +1526,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const currentDirectories = snapshot.session.allowedAdditionalDirectories ?? [];
-    const nextDirectories = addAllowedAdditionalDirectory(currentDirectories, selectedPath);
+    const nextSession = buildSessionWithAddedAdditionalDirectory(snapshot.session, selectedPath);
     await persistCompanionSession({
-      ...snapshot.session,
-      allowedAdditionalDirectories: nextDirectories,
+      ...nextSession,
       updatedAt: currentTimestampLabel(),
     });
     applyPickedAdditionalDirectoryUiStateCommand({
@@ -1544,15 +1542,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const currentDirectories = snapshot.session.allowedAdditionalDirectories ?? [];
-    const nextDirectories = removeAllowedAdditionalDirectory(currentDirectories, directoryPath);
-    if (nextDirectories.length === currentDirectories.length) {
+    const nextSession = buildSessionWithRemovedAdditionalDirectory(snapshot.session, directoryPath);
+    if (!nextSession) {
       return;
     }
 
     await persistCompanionSession({
-      ...snapshot.session,
-      allowedAdditionalDirectories: nextDirectories,
+      ...nextSession,
       updatedAt: currentTimestampLabel(),
     });
   }
