@@ -167,6 +167,28 @@ export function applySkillPromptInsertionUiState(input: {
   input.setSkillPickerOpen(input.state.isSkillPickerOpen);
 }
 
+export function applySkillPromptInsertionCommand(input: {
+  state: SkillPromptInsertionState;
+  textarea: HTMLTextAreaElement | null;
+  setActionDockPinnedExpanded: (expanded: boolean) => void;
+  setCaret: (caret: number) => void;
+  setSkillPickerOpen: (open: boolean) => void;
+  applyDraft: (draft: string, caret: number) => void;
+  restoreComposerTextareaFocusAndCaret: (
+    textarea: HTMLTextAreaElement | null,
+    caret: number,
+  ) => void;
+}): void {
+  applySkillPromptInsertionUiState({
+    state: input.state,
+    setActionDockPinnedExpanded: input.setActionDockPinnedExpanded,
+    setCaret: input.setCaret,
+    setSkillPickerOpen: input.setSkillPickerOpen,
+  });
+  input.applyDraft(input.state.draft, input.state.caret);
+  input.restoreComposerTextareaFocusAndCaret(input.textarea, input.state.caret);
+}
+
 export function applyAdditionalDirectoryListToggle(input: {
   setAdditionalDirectoryListOpen: (updater: (current: boolean) => boolean) => void;
 }): void {

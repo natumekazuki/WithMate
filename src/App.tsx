@@ -196,6 +196,7 @@ import {
   applyPastedSessionAttachmentPathsCommand,
   applyQuoteMessageTextCommand,
   applySelectedPathReferenceInsertionCommand,
+  applySkillPromptInsertionCommand,
   applySessionFilesReferencePathsCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
@@ -1815,16 +1816,18 @@ export default function AgentSessionWindowApp() {
 
     const nextState = buildSkillPromptInsertionState(selectedSession.provider, skill.name, draft);
 
-    applySkillPromptInsertionUiState({
+    applySkillPromptInsertionCommand({
       state: nextState,
+      textarea,
       setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
       setCaret: setComposerCaret,
       setSkillPickerOpen: setIsSkillPickerOpen,
+      applyDraft: (nextDraft, nextCaret) => {
+        setDraft(nextDraft);
+        mainComposerCaretRef.current = nextCaret;
+      },
+      restoreComposerTextareaFocusAndCaret,
     });
-    setDraft(nextState.draft);
-    mainComposerCaretRef.current = nextState.caret;
-
-    restoreComposerTextareaFocusAndCaret(textarea, nextState.caret);
   };
 
   const handleSelectCustomAgent = async (agent: DiscoveredCustomAgent | null) => {

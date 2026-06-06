@@ -204,6 +204,7 @@ import {
   applyPastedSessionAttachmentPathsCommand,
   applyQuoteMessageTextCommand,
   applySelectedPathReferenceInsertionCommand,
+  applySkillPromptInsertionCommand,
   applySessionFilesReferencePathsCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
@@ -1611,15 +1612,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     const nextState = buildSkillPromptInsertionState(snapshot.session.provider, skill.name, composerText);
 
-    applySkillPromptInsertionUiState({
+    applySkillPromptInsertionCommand({
       state: nextState,
+      textarea,
       setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
       setCaret: setComposerCaret,
       setSkillPickerOpen: setIsSkillPickerOpen,
+      applyDraft: (nextDraft) => {
+        setComposerText(nextDraft);
+      },
+      restoreComposerTextareaFocusAndCaret,
     });
-    setComposerText(nextState.draft);
-
-    restoreComposerTextareaFocusAndCaret(textarea, nextState.caret);
   }
 
   async function handleSelectCustomAgent(agent: DiscoveredCustomAgent | null): Promise<void> {

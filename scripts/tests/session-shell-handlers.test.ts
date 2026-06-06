@@ -17,6 +17,7 @@ import {
   applyPastedSessionAttachmentPathsCommand,
   applyQuoteMessageTextCommand,
   applySelectedPathReferenceInsertionCommand,
+  applySkillPromptInsertionCommand,
   applySessionFilesReferencePathsCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
@@ -276,6 +277,43 @@ describe("applySkillPromptInsertionUiState", () => {
     });
 
     assert.deepEqual(events, ["dock:true", "caret:12", "skill:false"]);
+  });
+});
+
+describe("applySkillPromptInsertionCommand", () => {
+  it("skill prompt 挿入後の UI state と draft 反映後に focus と caret を復元する", () => {
+    const events: string[] = [];
+    const textarea = {
+      focus: () => events.push("focus"),
+      setSelectionRange: (start: number, end: number) => events.push(`selection:${start}:${end}`),
+    } as HTMLTextAreaElement;
+
+    applySkillPromptInsertionCommand({
+      state: {
+        draft: "/review ",
+        caret: 8,
+        isActionDockPinnedExpanded: true,
+        isSkillPickerOpen: false,
+      },
+      textarea,
+      setActionDockPinnedExpanded: (expanded) => events.push(`dock:${expanded}`),
+      setCaret: (caret) => events.push(`caret:${caret}`),
+      setSkillPickerOpen: (open) => events.push(`skill:${open}`),
+      applyDraft: (draft, caret) => events.push(`draft:${caret}:${draft}`),
+      restoreComposerTextareaFocusAndCaret: (textarea, caret) => {
+        textarea?.focus();
+        textarea?.setSelectionRange(caret, caret);
+      },
+    });
+
+    assert.deepEqual(events, [
+      "dock:true",
+      "caret:8",
+      "skill:false",
+      "draft:8:/review ",
+      "focus",
+      "selection:8:8",
+    ]);
   });
 });
 
