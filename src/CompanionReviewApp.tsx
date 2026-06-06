@@ -125,7 +125,6 @@ import {
   buildComposerAttachmentItems,
   pickComposerReferencePath,
   type ComposerPathPickerKind,
-  toDirectoryPath,
 } from "./session-composer-paths.js";
 import {
   useSessionContextRail,
@@ -203,6 +202,7 @@ import {
   applyPickedComposerReferencePathCommand,
   applyQuoteMessageTextCommand,
   applySelectedPathReferenceInsertionCommand,
+  applySessionFilesReferencePathsCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
@@ -1476,8 +1476,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
-    insertReferencePaths(savedPaths);
+    applySessionFilesReferencePathsCommand({
+      selectedPaths,
+      referencePaths: savedPaths,
+      setPickerBaseDirectory,
+      insertReferencePaths,
+    });
   }
 
   async function pickSessionFiles(): Promise<void> {
@@ -1491,8 +1495,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
-    insertReferencePaths(selectedPaths);
+    applySessionFilesReferencePathsCommand({
+      selectedPaths,
+      referencePaths: selectedPaths,
+      setPickerBaseDirectory,
+      insertReferencePaths,
+    });
   }
 
   async function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>): Promise<void> {

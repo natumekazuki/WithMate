@@ -24,7 +24,6 @@ import {
   resolveReferencePathsForInsertion,
   resolvePathReferenceRemovalTargets,
   type ComposerPathPickerKind,
-  toDirectoryPath,
 } from "../session-composer-paths.js";
 import { buildCharacterThemeStyle } from "../theme-utils.js";
 import { currentTimestampLabel } from "../time-state.js";
@@ -50,6 +49,7 @@ import {
   applyHeaderExpandedToggleCommand,
   applyPickedComposerReferencePathCommand,
   applyQuoteMessageTextCommand,
+  applySessionFilesReferencePathsCommand,
 } from "./session-shell-handlers.js";
 
 function getMateTalkLaunchParams(): { providerId: string; model: string; reasoningEffort: ModelReasoningEffort } {
@@ -286,8 +286,12 @@ export function useMateTalkWindowState({
     }
 
     const savedPaths = await withmateApi.copyFilesToSessionFiles(sessionFilesSessionIdRef.current, selectedPaths);
-    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
-    insertReferencePaths(savedPaths, "file");
+    applySessionFilesReferencePathsCommand({
+      selectedPaths,
+      referencePaths: savedPaths,
+      setPickerBaseDirectory,
+      insertReferencePaths: (referencePaths) => insertReferencePaths(referencePaths, "file"),
+    });
   };
 
   const pickSessionFiles = async () => {
@@ -300,8 +304,12 @@ export function useMateTalkWindowState({
       return;
     }
 
-    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
-    insertReferencePaths(selectedPaths, "file");
+    applySessionFilesReferencePathsCommand({
+      selectedPaths,
+      referencePaths: selectedPaths,
+      setPickerBaseDirectory,
+      insertReferencePaths: (referencePaths) => insertReferencePaths(referencePaths, "file"),
+    });
   };
 
   const handleDraftPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {

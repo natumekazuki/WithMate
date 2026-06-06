@@ -91,7 +91,6 @@ import {
   buildComposerAttachmentItems,
   pickComposerReferencePath,
   type ComposerPathPickerKind,
-  toDirectoryPath,
 } from "./session-composer-paths.js";
 import {
   buildOnDraftCompositionEndHandler,
@@ -195,6 +194,7 @@ import {
   applyPickedComposerReferencePathCommand,
   applyQuoteMessageTextCommand,
   applySelectedPathReferenceInsertionCommand,
+  applySessionFilesReferencePathsCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
@@ -2588,8 +2588,12 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
-    insertReferencePaths(savedPaths);
+    applySessionFilesReferencePathsCommand({
+      selectedPaths,
+      referencePaths: savedPaths,
+      setPickerBaseDirectory,
+      insertReferencePaths,
+    });
   };
 
   const handlePickSessionFiles = async () => {
@@ -2603,8 +2607,12 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
-    insertReferencePaths(selectedPaths);
+    applySessionFilesReferencePathsCommand({
+      selectedPaths,
+      referencePaths: selectedPaths,
+      setPickerBaseDirectory,
+      insertReferencePaths,
+    });
   };
 
   const handleComposerPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {

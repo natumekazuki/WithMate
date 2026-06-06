@@ -15,6 +15,7 @@ import {
   applyPickedComposerReferencePathCommand,
   applyQuoteMessageTextCommand,
   applySelectedPathReferenceInsertionCommand,
+  applySessionFilesReferencePathsCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
@@ -623,6 +624,32 @@ describe("applySelectedPathReferenceInsertionCommand", () => {
     assert.deepEqual(events, [
       "apply:16:see @src/App.tsx here",
       "restore:none:16",
+    ]);
+  });
+});
+
+describe("applySessionFilesReferencePathsCommand", () => {
+  it("元の選択 path から base directory を更新し、挿入 path は referencePaths を使う", () => {
+    const events: string[] = [];
+    const runCommand = (selectedPaths: string[], referencePaths: string[]) =>
+      applySessionFilesReferencePathsCommand({
+        selectedPaths,
+        referencePaths,
+        setPickerBaseDirectory: (baseDirectory) => events.push(`base:${baseDirectory}`),
+        insertReferencePaths: (paths) => events.push(`insert:${paths.join(",")}`),
+      });
+
+    assert.equal(runCommand([], ["session-files/a.txt"]), false);
+    assert.equal(runCommand(["C:\\workspace\\a.txt"], []), false);
+    assert.deepEqual(events, []);
+
+    assert.equal(
+      runCommand(["C:\\workspace\\picked\\a.txt"], ["session-files/a.txt"]),
+      true,
+    );
+    assert.deepEqual(events, [
+      "base:C:\\workspace\\picked",
+      "insert:session-files/a.txt",
     ]);
   });
 });

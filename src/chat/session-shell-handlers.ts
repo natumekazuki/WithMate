@@ -12,6 +12,7 @@ import {
   buildSelectedPathReferenceInsertionState,
   buildWorkspacePathMatchSelectionState,
   resolvePickedPathBaseDirectory,
+  toDirectoryPath,
   type ComposerPathPickerKind,
   type WorkspacePathMatchSelectionState,
 } from "../session-composer-paths.js";
@@ -295,5 +296,21 @@ export function applySelectedPathReferenceInsertionCommand(input: {
 
   input.applyInsertion(insertionState);
   input.restoreComposerTextareaFocusAndCaret(input.textarea, insertionState.caret);
+  return true;
+}
+
+export function applySessionFilesReferencePathsCommand(input: {
+  selectedPaths: string[];
+  referencePaths: string[];
+  setPickerBaseDirectory: (baseDirectory: string) => void;
+  insertReferencePaths: (referencePaths: string[]) => void;
+}): boolean {
+  const firstSelectedPath = input.selectedPaths[0];
+  if (!firstSelectedPath || input.referencePaths.length === 0) {
+    return false;
+  }
+
+  input.setPickerBaseDirectory(toDirectoryPath(firstSelectedPath));
+  input.insertReferencePaths(input.referencePaths);
   return true;
 }
