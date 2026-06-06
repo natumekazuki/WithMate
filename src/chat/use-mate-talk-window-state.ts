@@ -16,7 +16,6 @@ import {
   appendMissingPathReferenceAttachments,
   buildAdditionalDirectoryItems,
   buildPathReferenceAttachmentItems,
-  buildPathReferenceInsertionState,
   pickComposerReferencePath,
   removeAdditionalDirectoryPath,
   removePathReferenceAttachments,
@@ -47,6 +46,7 @@ import {
   applyPickedComposerReferencePathCommand,
   applyPastedSessionAttachmentPathsCommand,
   applyQuoteMessageTextCommand,
+  applySelectedPathReferenceInsertionCommand,
   applySessionFilesReferencePathsCommand,
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
@@ -238,25 +238,22 @@ export function useMateTalkWindowState({
   };
 
   const insertReferencePaths = (selectedPaths: string[], kind: ComposerPathPickerKind) => {
-    if (selectedPaths.length === 0) {
-      return;
-    }
-
     const textarea = composerTextareaRef.current;
     const normalizedPaths = resolveReferencePathsForInsertion(selectedPaths, null);
-    const caret = textarea?.selectionStart ?? inputCaret;
-    const insertionState = buildPathReferenceInsertionState(input, caret, normalizedPaths);
-    if (!insertionState) {
-      return;
-    }
-    const { draft: nextInput, caret: nextCaret } = insertionState;
-
-    setInput(nextInput);
-    setInputCaret(nextCaret);
-    setFeedback("");
-    setPathReferences((current) => appendMissingPathReferenceAttachments(current, normalizedPaths, kind));
-
-    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
+    applySelectedPathReferenceInsertionCommand({
+      draft: input,
+      fallbackCaret: inputCaret,
+      selectedPaths,
+      textarea,
+      workspacePath: null,
+      applyInsertion: ({ draft: nextInput, caret: nextCaret }) => {
+        setInput(nextInput);
+        setInputCaret(nextCaret);
+        setFeedback("");
+        setPathReferences((current) => appendMissingPathReferenceAttachments(current, normalizedPaths, kind));
+      },
+      restoreComposerTextareaFocusAndCaret,
+    });
   };
 
   const insertReferencePath = (selectedPath: string, kind: ComposerPathPickerKind) => {
