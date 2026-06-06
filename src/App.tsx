@@ -93,8 +93,7 @@ import {
   type ComposerPathPickerKind,
 } from "./session-composer-paths.js";
 import {
-  buildOnDraftCompositionEndHandler,
-  buildOnDraftCompositionStartHandler,
+  buildOnDraftCompositionHandlers,
   buildOnDraftSelectHandler,
 } from "./chat/composer-draft-handlers.js";
 import {
@@ -3100,10 +3099,7 @@ export default function AgentSessionWindowApp() {
               }
             : undefined,
         }),
-        onDraftCompositionStart: buildOnDraftCompositionStartHandler({
-          setIsComposerImeComposing,
-        }),
-        onDraftCompositionEnd: buildOnDraftCompositionEndHandler({
+        ...buildOnDraftCompositionHandlers({
           setComposerCaret,
           setIsComposerImeComposing,
           getSelectionStart: () => composerTextareaRef.current?.selectionStart,

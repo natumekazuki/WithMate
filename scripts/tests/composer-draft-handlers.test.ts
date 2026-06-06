@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildOnDraftCompositionHandlers,
   buildOnDraftCompositionEndHandler,
   buildOnDraftCompositionStartHandler,
   buildOnDraftSelectHandler,
@@ -95,4 +96,24 @@ test("buildOnDraftCompositionEndHandler は選択位置が未取得時に fallba
   assert.equal(state.isComposing, false);
   assert.equal(state.composerCaret, 20);
   assert.equal(state.mainCaret, -1);
+});
+
+test("buildOnDraftCompositionHandlers は start/end handler set を作る", () => {
+  const state = createStateMachine();
+
+  const handlers = buildOnDraftCompositionHandlers({
+    setComposerCaret: state.setComposerCaret.bind(state),
+    setIsComposerImeComposing: state.setIsComposerImeComposing.bind(state),
+    getSelectionStart: () => undefined,
+    getFallbackSelectionStart: () => 9,
+    syncMainComposerCaret: state.setMainComposerCaret.bind(state),
+  });
+
+  handlers.onDraftCompositionStart();
+  assert.equal(state.isComposing, true);
+
+  handlers.onDraftCompositionEnd();
+  assert.equal(state.isComposing, false);
+  assert.equal(state.composerCaret, 9);
+  assert.equal(state.mainCaret, 9);
 });

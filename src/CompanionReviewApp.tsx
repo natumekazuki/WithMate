@@ -163,8 +163,7 @@ import { buildCharacterThemeStyle } from "./theme-utils.js";
 import { fileKindLabel } from "./ui-utils.js";
 import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
 import {
-  buildOnDraftCompositionEndHandler,
-  buildOnDraftCompositionStartHandler,
+  buildOnDraftCompositionHandlers,
   buildOnDraftSelectHandler,
 } from "./chat/composer-draft-handlers.js";
 import {
@@ -2992,10 +2991,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onDraftSelect: buildOnDraftSelectHandler({
           setComposerCaret,
         }),
-        onDraftCompositionStart: buildOnDraftCompositionStartHandler({
-          setIsComposerImeComposing,
-        }),
-        onDraftCompositionEnd: buildOnDraftCompositionEndHandler({
+        ...buildOnDraftCompositionHandlers({
           setComposerCaret,
           setIsComposerImeComposing,
           getSelectionStart: () => composerTextareaRef.current?.selectionStart,

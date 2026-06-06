@@ -42,3 +42,10 @@ export const buildOnDraftCompositionEndHandler = ({
   setComposerCaret(selectionStart);
   syncMainComposerCaret?.(selectionStart);
 };
+
+export const buildOnDraftCompositionHandlers = (args: ComposerDraftCompositionEndHandlerArgs) => ({
+  onDraftCompositionStart: buildOnDraftCompositionStartHandler({
+    setIsComposerImeComposing: args.setIsComposerImeComposing,
+  }),
+  onDraftCompositionEnd: buildOnDraftCompositionEndHandler(args),
+});
