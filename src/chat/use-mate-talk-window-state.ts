@@ -42,7 +42,6 @@ import {
   resolveMateTalkActionDockExpandedAfterSubmit,
 } from "./mate-talk-state.js";
 import {
-  applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyPastedSessionAttachmentPathsCommand,
@@ -53,6 +52,7 @@ import {
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
   createHeaderExpandedToggleHandler,
+  createPathReferenceRemovalHandler,
   createSessionFilesOpenHandler,
 } from "./session-shell-handlers.js";
 
@@ -353,18 +353,15 @@ export function useMateTalkWindowState({
     fallbackErrorMessage: "session files terminal を開けなかったよ。",
   });
 
-  const removePathReference = (targets: string[]) => {
-    const removalTargets = resolvePathReferenceRemovalTargets(targets);
-    applyPathReferenceRemovalCommand({
-      draft: input,
-      attachmentPathCandidates: removalTargets,
-      applyRemoval: ({ draft: nextInput, caret: nextCaret }) => {
-        setInput(nextInput);
-        setInputCaret(nextCaret);
-        setPathReferences((current) => removePathReferenceAttachments(current, removalTargets));
-      },
-    });
-  };
+  const removePathReference = createPathReferenceRemovalHandler({
+    getDraft: () => input,
+    normalizeAttachmentPathCandidates: resolvePathReferenceRemovalTargets,
+    applyRemoval: ({ draft: nextInput, caret: nextCaret }, removalTargets) => {
+      setInput(nextInput);
+      setInputCaret(nextCaret);
+      setPathReferences((current) => removePathReferenceAttachments(current, removalTargets));
+    },
+  });
 
   const addAdditionalDirectory = async () => {
     if (!withmateApi || sending) {

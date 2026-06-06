@@ -21,7 +21,11 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 
 進行中:
 
-- `createPathReferenceRemovalHandler` で App / CompanionReview の attachment path reference 削除 wrapper を共通化。MateTalk への適用は次の低リスク仕上げ候補。
+- PR-01: `createPathReferenceRemovalHandler` で App / CompanionReview / MateTalk の attachment path reference 削除 wrapper を共通化中。
+
+## Progress Log
+
+- 2026-06-07: `createPathReferenceRemovalHandler` を MateTalk にも適用。削除 command 前に candidates を正規化できる contract を追加し、MateTalk の draft 削除と path reference attachment list 更新の両方で正規化済み targets を維持。
 
 ## PR Plan
 
@@ -30,7 +34,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 対象:
 
 - draft key / interaction handlers の残り。
-- path reference removal の MateTalk 適用。
+- path reference removal の MateTalk 適用。2026-06-07 完了。
 - quote / path / picker など、保存 API に触れない薄い wrapper の取り残し。
 
 やらないこと:

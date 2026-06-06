@@ -1145,9 +1145,10 @@ describe("createPathReferenceRemovalHandler", () => {
     const events: string[] = [];
     const removeAttachmentReference = createPathReferenceRemovalHandler({
       getDraft: () => "確認 @src/App.tsx して",
-      applyRemoval: (state) => {
+      applyRemoval: (state, candidates) => {
         events.push(`apply:${state.caret}:${state.draft}`);
         events.push(`matches:${state.workspacePathMatches.length}:${state.activeWorkspacePathMatchIndex}`);
+        events.push(`candidates:${candidates.join(",")}`);
       },
     });
 
@@ -1156,6 +1157,7 @@ describe("createPathReferenceRemovalHandler", () => {
     assert.deepEqual(events, [
       "apply:5:確認 して",
       "matches:0:-1",
+      "candidates:src/App.tsx",
     ]);
   });
 
@@ -1180,6 +1182,25 @@ describe("createPathReferenceRemovalHandler", () => {
     assert.deepEqual(events, [
       "main:5:main ",
       "auxiliary:4:aux ",
+    ]);
+  });
+
+  it("正規化済み candidates を draft 削除と反映 callback の両方に使う", () => {
+    const events: string[] = [];
+    const removeAttachmentReference = createPathReferenceRemovalHandler({
+      getDraft: () => "確認 @src/App.tsx して",
+      normalizeAttachmentPathCandidates: resolvePathReferenceRemovalTargets,
+      applyRemoval: (state, candidates) => {
+        events.push(`apply:${state.caret}:${state.draft}`);
+        events.push(`candidates:${candidates.join(",")}`);
+      },
+    });
+
+    removeAttachmentReference(["src\\App.tsx"]);
+
+    assert.deepEqual(events, [
+      "apply:5:確認 して",
+      "candidates:src/App.tsx",
     ]);
   });
 });

@@ -580,13 +580,18 @@ export function applyPathReferenceRemovalCommand(input: {
 
 export function createPathReferenceRemovalHandler(input: {
   getDraft: () => string;
-  applyRemoval: (state: WorkspacePathMatchSelectionState) => void;
+  normalizeAttachmentPathCandidates?: (attachmentPathCandidates: string[]) => string[];
+  applyRemoval: (state: WorkspacePathMatchSelectionState, attachmentPathCandidates: string[]) => void;
 }): (attachmentPathCandidates: string[]) => void {
-  return (attachmentPathCandidates) => applyPathReferenceRemovalCommand({
-    draft: input.getDraft(),
-    attachmentPathCandidates,
-    applyRemoval: input.applyRemoval,
-  });
+  return (attachmentPathCandidates) => {
+    const removalCandidates = input.normalizeAttachmentPathCandidates?.(attachmentPathCandidates)
+      ?? attachmentPathCandidates;
+    applyPathReferenceRemovalCommand({
+      draft: input.getDraft(),
+      attachmentPathCandidates: removalCandidates,
+      applyRemoval: (state) => input.applyRemoval(state, removalCandidates),
+    });
+  };
 }
 
 export function applySelectedPathReferenceInsertionCommand(input: {
