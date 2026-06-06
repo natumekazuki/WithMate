@@ -192,7 +192,6 @@ import {
 } from "./auxiliary-additional-directory-operation.js";
 import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
 import {
-  applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyPastedSessionAttachmentPathsCommand,
@@ -211,6 +210,7 @@ import {
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
+  createPathReferenceRemovalHandler,
   createQuoteMessageTextHandler,
   createSessionFilesOpenHandler,
   createSkillPickerToggleHandler,
@@ -1581,22 +1581,19 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     restoreComposerTextareaFocusAndCaret,
   });
 
-  function handleRemoveAttachmentReference(attachmentPathCandidates: string[]): void {
-    applyPathReferenceRemovalCommand({
-      draft: activeComposerText,
-      attachmentPathCandidates,
-      applyRemoval: (nextState) => {
-        const { draft: nextDraft, caret: nextCaret } = nextState;
-        setComposerCaret(nextCaret);
-        applyWorkspacePathMatchState(nextState);
-        if (activeAuxiliarySession) {
-          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-        } else {
-          setComposerText(nextDraft);
-        }
-      },
-    });
-  }
+  const handleRemoveAttachmentReference = createPathReferenceRemovalHandler({
+    getDraft: () => activeComposerText,
+    applyRemoval: (nextState) => {
+      const { draft: nextDraft, caret: nextCaret } = nextState;
+      setComposerCaret(nextCaret);
+      applyWorkspacePathMatchState(nextState);
+      if (activeAuxiliarySession) {
+        void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+      } else {
+        setComposerText(nextDraft);
+      }
+    },
+  });
 
   const handleSelectSkill = createSkillPromptInsertionHandler<DiscoveredSkill>({
     getProvider: () => snapshot?.session.provider,

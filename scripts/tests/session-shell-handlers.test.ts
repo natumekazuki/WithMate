@@ -38,6 +38,7 @@ import {
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
+  createPathReferenceRemovalHandler,
   createQuoteMessageTextHandler,
   createSessionFilesOpenHandler,
   createSkillPickerToggleHandler,
@@ -1136,6 +1137,50 @@ describe("applyPathReferenceRemovalCommand", () => {
     });
 
     assert.deepEqual(events, ["apply:5:確認 して"]);
+  });
+});
+
+describe("createPathReferenceRemovalHandler", () => {
+  it("現在の draft getter を使って path reference 削除 handler を作る", () => {
+    const events: string[] = [];
+    const removeAttachmentReference = createPathReferenceRemovalHandler({
+      getDraft: () => "確認 @src/App.tsx して",
+      applyRemoval: (state) => {
+        events.push(`apply:${state.caret}:${state.draft}`);
+        events.push(`matches:${state.workspacePathMatches.length}:${state.activeWorkspacePathMatchIndex}`);
+      },
+    });
+
+    removeAttachmentReference(["src/App.tsx"]);
+
+    assert.deepEqual(events, [
+      "apply:5:確認 して",
+      "matches:0:-1",
+    ]);
+  });
+
+  it("handler 実行時の draft と反映先 state を使う", () => {
+    const events: string[] = [];
+    let target: "main" | "auxiliary" = "main";
+    const drafts = {
+      main: "main @src/App.tsx",
+      auxiliary: "aux @src/App.tsx",
+    };
+    const removeAttachmentReference = createPathReferenceRemovalHandler({
+      getDraft: () => drafts[target],
+      applyRemoval: (state) => {
+        events.push(`${target}:${state.caret}:${state.draft}`);
+      },
+    });
+
+    removeAttachmentReference(["src/App.tsx"]);
+    target = "auxiliary";
+    removeAttachmentReference(["src/App.tsx"]);
+
+    assert.deepEqual(events, [
+      "main:5:main ",
+      "auxiliary:4:aux ",
+    ]);
   });
 });
 

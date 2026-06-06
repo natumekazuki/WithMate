@@ -578,6 +578,17 @@ export function applyPathReferenceRemovalCommand(input: {
   );
 }
 
+export function createPathReferenceRemovalHandler(input: {
+  getDraft: () => string;
+  applyRemoval: (state: WorkspacePathMatchSelectionState) => void;
+}): (attachmentPathCandidates: string[]) => void {
+  return (attachmentPathCandidates) => applyPathReferenceRemovalCommand({
+    draft: input.getDraft(),
+    attachmentPathCandidates,
+    applyRemoval: input.applyRemoval,
+  });
+}
+
 export function applySelectedPathReferenceInsertionCommand(input: {
   draft: string;
   fallbackCaret: number;

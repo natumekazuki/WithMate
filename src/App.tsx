@@ -184,7 +184,6 @@ import {
 } from "./auxiliary-session-start-operation.js";
 import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
 import {
-  applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyPastedSessionAttachmentPathsCommand,
@@ -203,6 +202,7 @@ import {
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
+  createPathReferenceRemovalHandler,
   createQuoteMessageTextHandler,
   createSessionFilesOpenHandler,
   createSkillPickerToggleHandler,
@@ -2465,25 +2465,20 @@ export default function AgentSessionWindowApp() {
     insertReferencePaths([selectedPath]);
   };
 
-  const handleRemoveAttachmentReference = (attachmentPathCandidates: string[]) => {
-    const targetAuxiliarySession = activeAuxiliarySession;
-    const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
-    applyPathReferenceRemovalCommand({
-      draft: currentDraft,
-      attachmentPathCandidates,
-      applyRemoval: (nextState) => {
-        const { draft: nextDraft, caret: nextCaret } = nextState;
-        if (targetAuxiliarySession) {
-          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-        } else {
-          setDraft(nextDraft);
-          mainComposerCaretRef.current = nextCaret;
-        }
-        setComposerCaret(nextCaret);
-        applyWorkspacePathMatchState(nextState);
-      },
-    });
-  };
+  const handleRemoveAttachmentReference = createPathReferenceRemovalHandler({
+    getDraft: () => activeAuxiliarySession ? activeAuxiliarySession.composerDraft : draft,
+    applyRemoval: (nextState) => {
+      const { draft: nextDraft, caret: nextCaret } = nextState;
+      if (activeAuxiliarySession) {
+        void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+      } else {
+        setDraft(nextDraft);
+        mainComposerCaretRef.current = nextCaret;
+      }
+      setComposerCaret(nextCaret);
+      applyWorkspacePathMatchState(nextState);
+    },
+  });
 
   const pickAndInsertPath = async (kind: ComposerPathPickerKind) => {
     if (!withmateApi || isSelectedSessionReadOnly) {
