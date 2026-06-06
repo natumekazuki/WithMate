@@ -64,7 +64,7 @@ export function createPastedSessionAttachmentHandler(input: {
   canPaste: () => boolean;
   currentTimestampLabel: () => string;
   fallbackErrorMessage: string;
-  getSavePastedSessionFile: () => WithMateWindowPickerApi["savePastedSessionFile"] | null;
+  getSavePastedSessionFile: () => WithMateWindowPickerApi["savePastedSessionFile"] | null | undefined;
   getSessionId: () => string | null | undefined;
   insertReferencePaths: (referencePaths: string[]) => void;
 }): (event: PastedSessionAttachmentEvent) => Promise<boolean> {

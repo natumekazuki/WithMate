@@ -229,6 +229,81 @@ test("createPastedSessionAttachmentHandler は paste 不可なら保存も挿入
   assert.equal(inserted, false);
 });
 
+test("createPastedSessionAttachmentHandler は API や session id がなければ保存も挿入も行わない", async () => {
+  const file = createPastedFile("ignored.png", "ignored");
+  let prevented = false;
+  let saved = false;
+  let inserted = false;
+
+  const createHandlePaste = (input: {
+    getSavePastedSessionFile: Parameters<typeof createPastedSessionAttachmentHandler>[0]["getSavePastedSessionFile"];
+    getSessionId: () => string | null | undefined;
+  }) => createPastedSessionAttachmentHandler({
+    alertError: () => {
+      throw new Error("unexpected alert");
+    },
+    canPaste: () => true,
+    currentTimestampLabel: () => "unused",
+    fallbackErrorMessage: "fallback",
+    getSavePastedSessionFile: input.getSavePastedSessionFile,
+    getSessionId: input.getSessionId,
+    insertReferencePaths: () => {
+      inserted = true;
+    },
+  });
+
+  const missingApiHandled = await createHandlePaste({
+    getSavePastedSessionFile: () => null,
+    getSessionId: () => "session-5",
+  })({
+    clipboardData: { files: [file], items: [] },
+    preventDefault: () => {
+      prevented = true;
+    },
+  });
+  const missingSessionHandled = await createHandlePaste({
+    getSavePastedSessionFile: () => async () => {
+      saved = true;
+      return "unused";
+    },
+    getSessionId: () => null,
+  })({
+    clipboardData: { files: [file], items: [] },
+    preventDefault: () => {
+      prevented = true;
+    },
+  });
+  const missingApiUndefinedHandled = await createHandlePaste({
+    getSavePastedSessionFile: () => undefined,
+    getSessionId: () => "session-6",
+  })({
+    clipboardData: { files: [file], items: [] },
+    preventDefault: () => {
+      prevented = true;
+    },
+  });
+  const missingSessionUndefinedHandled = await createHandlePaste({
+    getSavePastedSessionFile: () => async () => {
+      saved = true;
+      return "unused";
+    },
+    getSessionId: () => undefined,
+  })({
+    clipboardData: { files: [file], items: [] },
+    preventDefault: () => {
+      prevented = true;
+    },
+  });
+
+  assert.equal(missingApiHandled, false);
+  assert.equal(missingSessionHandled, false);
+  assert.equal(missingApiUndefinedHandled, false);
+  assert.equal(missingSessionUndefinedHandled, false);
+  assert.equal(prevented, false);
+  assert.equal(saved, false);
+  assert.equal(inserted, false);
+});
+
 test("createPastedSessionAttachmentHandler は保存失敗時に通知して挿入しない", async () => {
   const file = createPastedFile("failed.png", "failed");
   const alerts: string[] = [];
@@ -262,4 +337,33 @@ test("createPastedSessionAttachmentHandler は保存失敗時に通知して挿�
   assert.equal(prevented, true);
   assert.deepEqual(alerts, ["save failed"]);
   assert.equal(inserted, false);
+});
+
+test("createPastedSessionAttachmentHandler は保存失敗が Error でない場合 fallback message を通知する", async () => {
+  const file = createPastedFile("failed.png", "failed");
+  const alerts: string[] = [];
+
+  const handlePaste = createPastedSessionAttachmentHandler({
+    alertError: (message) => {
+      alerts.push(message);
+    },
+    canPaste: () => true,
+    currentTimestampLabel: () => "unused",
+    fallbackErrorMessage: "fallback paste failure",
+    getSavePastedSessionFile: () => async () => {
+      throw "non-error failure";
+    },
+    getSessionId: () => "session-6",
+    insertReferencePaths: () => {
+      throw new Error("unexpected insertion");
+    },
+  });
+
+  const handled = await handlePaste({
+    clipboardData: { files: [file], items: [] },
+    preventDefault: () => {},
+  });
+
+  assert.equal(handled, false);
+  assert.deepEqual(alerts, ["fallback paste failure"]);
 });
