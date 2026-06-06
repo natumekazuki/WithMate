@@ -196,7 +196,6 @@ import {
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyPastedSessionAttachmentPathsCommand,
-  applyQuoteMessageTextCommand,
   applySelectedPathReferenceInsertionCommand,
   applySkillPromptInsertionCommand,
   applySessionFilesReferencePathsCommand,
@@ -213,6 +212,7 @@ import {
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
+  createQuoteMessageTextHandler,
   createSessionFilesOpenHandler,
   createSkillPickerToggleHandler,
   createStartTitleEditHandler,
@@ -1394,31 +1394,28 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     },
   });
 
-  function handleQuoteMessageText(text: string): void {
-    if (runDisabled) {
+  const handleQuoteMessageText = createQuoteMessageTextHandler({
+    isBlocked: () => runDisabled,
+    notifyBlocked: () => {
       setForceComposerBlockedFeedback(true);
       composerTextareaRef.current?.focus();
-      return;
-    }
-
-    const textarea = composerTextareaRef.current;
-    applyQuoteMessageTextCommand({
-      messageText: text,
+    },
+    getComposerState: () => ({
       draft: activeComposerText,
       fallbackCaret: composerCaret,
-      textarea,
-      applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
-        setComposerCaret(nextCaret);
-        applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
-        if (activeAuxiliarySession) {
-          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-        } else {
-          setComposerText(nextDraft);
-        }
-      },
-      restoreComposerTextareaFocusAndCaret,
-    });
-  }
+      textarea: composerTextareaRef.current,
+    }),
+    applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
+      setComposerCaret(nextCaret);
+      applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
+      if (activeAuxiliarySession) {
+        void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+      } else {
+        setComposerText(nextDraft);
+      }
+    },
+    restoreComposerTextareaFocusAndCaret,
+  });
 
   function insertReferencePaths(selectedPaths: string[]): void {
     const textarea = composerTextareaRef.current;

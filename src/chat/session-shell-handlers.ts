@@ -457,6 +457,36 @@ export function applyQuoteMessageTextCommand(input: {
   return true;
 }
 
+export function createQuoteMessageTextHandler(input: {
+  isBlocked: () => boolean;
+  notifyBlocked: () => void;
+  getComposerState: () => {
+    draft: string;
+    fallbackCaret: number;
+    textarea: HTMLTextAreaElement | null;
+  };
+  applyInsertion: (insertion: { draft: string; caret: number }) => void;
+  restoreComposerTextareaFocusAndCaret: (
+    textarea: HTMLTextAreaElement | null,
+    caret: number,
+  ) => void;
+}): (messageText: string) => boolean {
+  return (messageText) => {
+    if (input.isBlocked()) {
+      input.notifyBlocked();
+      return false;
+    }
+
+    const composerState = input.getComposerState();
+    return applyQuoteMessageTextCommand({
+      messageText,
+      ...composerState,
+      applyInsertion: input.applyInsertion,
+      restoreComposerTextareaFocusAndCaret: input.restoreComposerTextareaFocusAndCaret,
+    });
+  };
+}
+
 export function applyWorkspacePathMatchSelectionCommand(input: {
   draft: string;
   caret: number;

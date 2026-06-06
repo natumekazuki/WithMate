@@ -38,6 +38,7 @@ import {
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
+  createQuoteMessageTextHandler,
   createSessionFilesOpenHandler,
   createSkillPickerToggleHandler,
   createStartTitleEditHandler,
@@ -916,6 +917,42 @@ describe("applyQuoteMessageTextCommand", () => {
       "apply:25:hello\n\n> quoted\n> text\n\n\n world",
       "focus",
       "selection:25:25",
+    ]);
+  });
+});
+
+describe("createQuoteMessageTextHandler", () => {
+  it("blocked の場合は通知だけ行い、許可時は composer state を使って quote を挿入する", () => {
+    const events: string[] = [];
+    const textarea = {
+      selectionStart: "hello".length,
+      focus: () => events.push("focus"),
+      setSelectionRange: (start: number, end: number) => events.push(`selection:${start}:${end}`),
+    } as HTMLTextAreaElement;
+    const createHandler = (blocked: boolean) => createQuoteMessageTextHandler({
+      isBlocked: () => blocked,
+      notifyBlocked: () => events.push("blocked"),
+      getComposerState: () => ({
+        draft: "hello world",
+        fallbackCaret: 0,
+        textarea,
+      }),
+      applyInsertion: ({ draft, caret }) => events.push(`apply:${caret}:${draft}`),
+      restoreComposerTextareaFocusAndCaret: (textarea, caret) => {
+        textarea?.focus();
+        textarea?.setSelectionRange(caret, caret);
+      },
+    });
+
+    assert.equal(createHandler(true)("quoted"), false);
+    assert.deepEqual(events, ["blocked"]);
+
+    assert.equal(createHandler(false)("quoted"), true);
+    assert.deepEqual(events, [
+      "blocked",
+      "apply:18:hello\n\n> quoted\n\n\n world",
+      "focus",
+      "selection:18:18",
     ]);
   });
 });

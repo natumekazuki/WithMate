@@ -188,7 +188,6 @@ import {
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyPastedSessionAttachmentPathsCommand,
-  applyQuoteMessageTextCommand,
   applySelectedPathReferenceInsertionCommand,
   applySkillPromptInsertionCommand,
   applySessionFilesReferencePathsCommand,
@@ -205,6 +204,7 @@ import {
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
+  createQuoteMessageTextHandler,
   createSessionFilesOpenHandler,
   createSkillPickerToggleHandler,
   createStartTitleEditHandler,
@@ -2426,61 +2426,31 @@ export default function AgentSessionWindowApp() {
     },
   });
 
-  const insertQuoteIntoMainComposer = (messageText: string) => {
-    const textarea = activeAuxiliarySession ? null : composerTextareaRef.current;
-    applyQuoteMessageTextCommand({
-      messageText,
-      draft,
-      fallbackCaret: mainComposerCaretRef.current,
-      textarea,
-      applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
-        setDraft(nextDraft);
-        mainComposerCaretRef.current = nextCaret;
-        if (!activeAuxiliarySession) {
-          setComposerCaret(nextCaret);
-        }
-        applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
-      },
-      restoreComposerTextareaFocusAndCaret,
-    });
-  };
-
-  const insertQuoteIntoAuxiliaryComposer = (messageText: string) => {
-    if (!activeAuxiliarySession) {
-      return;
-    }
-
-    const textarea = composerTextareaRef.current;
-    applyQuoteMessageTextCommand({
-      messageText,
-      draft: activeAuxiliarySession.composerDraft,
-      fallbackCaret: composerCaret,
-      textarea,
-      applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
+  const handleQuoteMessageText = createQuoteMessageTextHandler({
+    isBlocked: () => (
+      activeAuxiliarySession
+        ? activeAuxiliarySession.runState === "running" || isAuxiliaryActionPending || !!composerBlockedReason
+        : isComposerDisabled
+    ),
+    notifyBlocked: triggerComposerBlockedFeedback,
+    getComposerState: () => ({
+      draft: activeAuxiliarySession ? activeAuxiliarySession.composerDraft : draft,
+      fallbackCaret: activeAuxiliarySession ? composerCaret : mainComposerCaretRef.current,
+      textarea: composerTextareaRef.current,
+    }),
+    applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
+      if (activeAuxiliarySession) {
         void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-      },
-      restoreComposerTextareaFocusAndCaret,
-    });
-  };
-
-  const handleQuoteMessageText = (text: string) => {
-    if (activeAuxiliarySession) {
-      if (activeAuxiliarySession.runState === "running" || isAuxiliaryActionPending || composerBlockedReason) {
-        triggerComposerBlockedFeedback();
         return;
       }
 
-      insertQuoteIntoAuxiliaryComposer(text);
-      return;
-    }
-
-    if (isComposerDisabled) {
-      triggerComposerBlockedFeedback();
-      return;
-    }
-
-    insertQuoteIntoMainComposer(text);
-  };
+      setDraft(nextDraft);
+      mainComposerCaretRef.current = nextCaret;
+      setComposerCaret(nextCaret);
+      applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
+    },
+    restoreComposerTextareaFocusAndCaret,
+  });
 
   const insertReferencePaths = (selectedPaths: string[]) => {
     const textarea = composerTextareaRef.current;
