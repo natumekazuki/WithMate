@@ -15,6 +15,7 @@ import {
   buildSessionWithAddedAdditionalDirectory,
   buildSessionWithRemovedAdditionalDirectory,
   resolveAdditionalDirectoryPickerBase,
+  runAdditionalDirectoryRemovalOperation,
   runPickedAdditionalDirectoryOperation,
 } from "./additional-directory-state.js";
 import type { ApprovalMode } from "./approval-mode.js";
@@ -1546,18 +1547,24 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   async function handleRemoveAdditionalDirectory(directoryPath: string): Promise<void> {
-    if (!snapshot || snapshot.session.provider !== "codex" || isSelectedSessionRunning) {
-      return;
-    }
+    await runAdditionalDirectoryRemovalOperation({
+      directoryPath,
+      canRemoveDirectory: () => !!snapshot && snapshot.session.provider === "codex" && !isSelectedSessionRunning,
+      removeDirectory: async (targetPath) => {
+        if (!snapshot) {
+          return false;
+        }
+        const nextSession = buildSessionWithRemovedAdditionalDirectory(snapshot.session, targetPath);
+        if (!nextSession) {
+          return false;
+        }
 
-    const nextSession = buildSessionWithRemovedAdditionalDirectory(snapshot.session, directoryPath);
-    if (!nextSession) {
-      return;
-    }
-
-    await persistCompanionSession({
-      ...nextSession,
-      updatedAt: currentTimestampLabel(),
+        await persistCompanionSession({
+          ...nextSession,
+          updatedAt: currentTimestampLabel(),
+        });
+        return true;
+      },
     });
   }
 

@@ -36,6 +36,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-07: 通常 Session / Companion の additional directory add/remove session patch を `additional-directory-state` に集約。picker UI state、`updatedAt`、persist API は surface 側に残し、保存境界は変更しない形で App / CompanionReview の重複 patch 構築を置換。
 - 2026-06-07: additional directory picker の base directory 解決を `resolveAdditionalDirectoryPickerBase` に集約。App / Companion / MateTalk / Auxiliary の優先順を共通 helper 経由にし、空文字は従来どおり fallback する contract を test で固定。
 - 2026-06-07: additional directory add picker operation を `runPickedAdditionalDirectoryOperation` に集約。App / Companion / MateTalk の precondition、picker base 解決、cancel no-op、選択後 callback 呼び出しを共通化し、persist / local state / UI state 反映順は surface callback に残した。
+- 2026-06-07: additional directory remove operation を `runAdditionalDirectoryRemovalOperation` に集約。App / Companion / MateTalk の remove guard、no-op 結果、削除 callback 呼び出しを共通化し、persist / local state 更新は surface callback に残した。
 
 ## PR Plan
 
@@ -97,6 +98,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 通常 Session / Companion の persisted session patch 構築を `additional-directory-state` に集約。2026-06-07 完了。
 - additional directory picker base directory 解決を `additional-directory-state` に集約。2026-06-07 完了。
 - additional directory add picker operation を `additional-directory-state` に集約。2026-06-07 完了。
+- additional directory remove operation を `additional-directory-state` に集約。2026-06-07 完了。
 
 やらないこと:
 

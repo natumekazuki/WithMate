@@ -7,6 +7,7 @@ import {
   buildSessionWithRemovedAdditionalDirectory,
   removeAllowedAdditionalDirectory,
   resolveAdditionalDirectoryPickerBase,
+  runAdditionalDirectoryRemovalOperation,
   runPickedAdditionalDirectoryOperation,
 } from "../../src/additional-directory-state.js";
 
@@ -64,6 +65,43 @@ test("runPickedAdditionalDirectoryOperation は実行不可または picker canc
   });
   assert.equal(cancelResult, null);
   assert.deepEqual(cancelEvents, ["pick"]);
+});
+
+test("runAdditionalDirectoryRemovalOperation は guard 通過時だけ remove callback を呼ぶ", async () => {
+  const events: string[] = [];
+  const removed = await runAdditionalDirectoryRemovalOperation({
+    directoryPath: "C:/workspace/a",
+    canRemoveDirectory: () => true,
+    removeDirectory: async (directoryPath) => {
+      events.push(`remove:${directoryPath}`);
+      return true;
+    },
+  });
+
+  assert.equal(removed, true);
+  assert.deepEqual(events, ["remove:C:/workspace/a"]);
+
+  const blockedEvents: string[] = [];
+  const blocked = await runAdditionalDirectoryRemovalOperation({
+    directoryPath: "C:/workspace/a",
+    canRemoveDirectory: () => false,
+    removeDirectory: () => {
+      blockedEvents.push("remove");
+      return true;
+    },
+  });
+
+  assert.equal(blocked, false);
+  assert.deepEqual(blockedEvents, []);
+});
+
+test("runAdditionalDirectoryRemovalOperation は remove callback の no-op 結果を返す", async () => {
+  const removed = await runAdditionalDirectoryRemovalOperation({
+    directoryPath: "C:/missing",
+    removeDirectory: () => false,
+  });
+
+  assert.equal(removed, false);
 });
 
 test("addAllowedAdditionalDirectory は directory を正規化して末尾へ追加し重複を避ける", () => {

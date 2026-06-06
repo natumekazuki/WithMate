@@ -5,6 +5,7 @@ import {
   addAllowedAdditionalDirectory,
   removeAllowedAdditionalDirectory,
   resolveAdditionalDirectoryPickerBase,
+  runAdditionalDirectoryRemovalOperation,
   runPickedAdditionalDirectoryOperation,
 } from "../additional-directory-state.js";
 import { DEFAULT_CODEX_SANDBOX_MODE, normalizeCodexSandboxMode, type CodexSandboxMode } from "../codex-sandbox-mode.js";
@@ -522,7 +523,13 @@ export function useMateTalkWindowState({
     }),
     onRemoveAttachment: removePathReference,
     onRemoveAdditionalDirectory: (directoryPath: string) => {
-      setAdditionalDirectories((current) => removeAllowedAdditionalDirectory(current, directoryPath));
+      void runAdditionalDirectoryRemovalOperation({
+        directoryPath,
+        removeDirectory: (targetPath) => {
+          setAdditionalDirectories((current) => removeAllowedAdditionalDirectory(current, targetPath));
+          return true;
+        },
+      });
     },
     onDraftFocus: () => {},
     onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleDraftPaste(event),

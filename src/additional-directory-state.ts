@@ -49,6 +49,17 @@ export async function runPickedAdditionalDirectoryOperation(input: {
   return selectedPath;
 }
 
+export async function runAdditionalDirectoryRemovalOperation(input: {
+  directoryPath: string;
+  canRemoveDirectory?: () => boolean;
+  removeDirectory: (directoryPath: string) => boolean | Promise<boolean>;
+}): Promise<boolean> {
+  if (input.canRemoveDirectory && !input.canRemoveDirectory()) {
+    return false;
+  }
+  return input.removeDirectory(input.directoryPath);
+}
+
 export function addAllowedAdditionalDirectory(
   directories: readonly string[] | null | undefined,
   directoryPath: string,

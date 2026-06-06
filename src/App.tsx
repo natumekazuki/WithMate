@@ -16,6 +16,7 @@ import {
   buildSessionWithAddedAdditionalDirectory,
   buildSessionWithRemovedAdditionalDirectory,
   resolveAdditionalDirectoryPickerBase,
+  runAdditionalDirectoryRemovalOperation,
   runPickedAdditionalDirectoryOperation,
 } from "./additional-directory-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
@@ -2586,15 +2587,24 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleRemoveAdditionalDirectory = async (directoryPath: string) => {
-    if (!selectedSession || isSelectedSessionReadOnly || selectedSession.provider !== "codex" || selectedSession.runState === "running") {
-      return;
-    }
-
-    const nextSession = buildSessionWithRemovedAdditionalDirectory(selectedSession, directoryPath);
-    if (!nextSession) {
-      return;
-    }
-    await persistSession(nextSession);
+    await runAdditionalDirectoryRemovalOperation({
+      directoryPath,
+      canRemoveDirectory: () => !!selectedSession &&
+        !isSelectedSessionReadOnly &&
+        selectedSession.provider === "codex" &&
+        selectedSession.runState !== "running",
+      removeDirectory: async (targetPath) => {
+        if (!selectedSession) {
+          return false;
+        }
+        const nextSession = buildSessionWithRemovedAdditionalDirectory(selectedSession, targetPath);
+        if (!nextSession) {
+          return false;
+        }
+        await persistSession(nextSession);
+        return true;
+      },
+    });
   };
 
   const handleAddAuxiliaryAdditionalDirectory = async () => {
