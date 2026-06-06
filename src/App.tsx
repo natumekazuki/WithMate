@@ -182,7 +182,6 @@ import {
 import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
 import {
   applyAgentPickerToggleCommand,
-  applyCancelTitleEditCommand,
   applyAgentPickerCloseCommand,
   applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -194,17 +193,18 @@ import {
   applySessionFilesReferencePathsCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
-  applyStartTitleEditCommand,
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
+  createCancelTitleEditHandler,
   createComposerSubmitKeyHandler,
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
   createSessionFilesOpenHandler,
+  createStartTitleEditHandler,
   createTitleInputKeyHandler,
 } from "./chat/session-shell-handlers.js";
 
@@ -1905,26 +1905,19 @@ export default function AgentSessionWindowApp() {
     await persistSession(nextSession);
   };
 
-  const handleStartTitleEdit = () => {
-    if (!selectedSession || isSelectedSessionReadOnly || selectedSession.runState === "running") {
-      return;
-    }
+  const handleStartTitleEdit = createStartTitleEditHandler({
+    getTitle: () => selectedSession?.taskTitle,
+    canStart: () => !!selectedSession && !isSelectedSessionReadOnly && selectedSession.runState !== "running",
+    setTitleDraft,
+    setHeaderExpanded: setIsHeaderExpanded,
+    setEditingTitle: setIsEditingTitle,
+  });
 
-    applyStartTitleEditCommand({
-      title: selectedSession.taskTitle,
-      setTitleDraft,
-      setHeaderExpanded: setIsHeaderExpanded,
-      setEditingTitle: setIsEditingTitle,
-    });
-  };
-
-  const handleCancelTitleEdit = () => {
-    applyCancelTitleEditCommand({
-      title: selectedSession?.taskTitle ?? "",
-      setTitleDraft,
-      setEditingTitle: setIsEditingTitle,
-    });
-  };
+  const handleCancelTitleEdit = createCancelTitleEditHandler({
+    getTitle: () => selectedSession?.taskTitle,
+    setTitleDraft,
+    setEditingTitle: setIsEditingTitle,
+  });
 
   const handleSaveTitle = async () => {
     if (!selectedSession || isSelectedSessionReadOnly) {

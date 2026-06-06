@@ -165,6 +165,33 @@ export function applyStartTitleEditCommand(input: {
   input.setEditingTitle(true);
 }
 
+export function createStartTitleEditHandler(input: {
+  getTitle: () => string | null | undefined;
+  canStart?: () => boolean;
+  setTitleDraft: (title: string) => void;
+  setHeaderExpanded: (expanded: boolean) => void;
+  setEditingTitle: (editing: boolean) => void;
+}): () => boolean {
+  return () => {
+    if (input.canStart?.() === false) {
+      return false;
+    }
+
+    const title = input.getTitle();
+    if (title == null) {
+      return false;
+    }
+
+    applyStartTitleEditCommand({
+      title,
+      setTitleDraft: input.setTitleDraft,
+      setHeaderExpanded: input.setHeaderExpanded,
+      setEditingTitle: input.setEditingTitle,
+    });
+    return true;
+  };
+}
+
 export function applyCancelTitleEditCommand(input: {
   title: string;
   setTitleDraft: (title: string) => void;
@@ -172,6 +199,18 @@ export function applyCancelTitleEditCommand(input: {
 }): void {
   input.setTitleDraft(input.title);
   input.setEditingTitle(false);
+}
+
+export function createCancelTitleEditHandler(input: {
+  getTitle: () => string | null | undefined;
+  setTitleDraft: (title: string) => void;
+  setEditingTitle: (editing: boolean) => void;
+}): () => void {
+  return () => applyCancelTitleEditCommand({
+    title: input.getTitle() ?? "",
+    setTitleDraft: input.setTitleDraft,
+    setEditingTitle: input.setEditingTitle,
+  });
 }
 
 export function applyActionDockExpandCommand(input: {

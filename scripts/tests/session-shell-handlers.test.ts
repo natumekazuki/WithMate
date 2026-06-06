@@ -31,11 +31,13 @@ import {
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
+  createCancelTitleEditHandler,
   createComposerSubmitKeyHandler,
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
   createSessionFilesOpenHandler,
+  createStartTitleEditHandler,
   createTitleInputKeyHandler,
   resolveHeaderExpandedToggle,
   runSessionFilesOpenCommand,
@@ -304,6 +306,43 @@ describe("applyStartTitleEditCommand", () => {
   });
 });
 
+describe("createStartTitleEditHandler", () => {
+  it("開始可能な場合だけ title 編集 state を反映する", () => {
+    const events: string[] = [];
+    const startTitleEdit = createStartTitleEditHandler({
+      getTitle: () => "現在のタイトル",
+      canStart: () => true,
+      setTitleDraft: (title) => events.push(`draft:${title}`),
+      setHeaderExpanded: (expanded) => events.push(`expanded:${expanded}`),
+      setEditingTitle: (editing) => events.push(`editing:${editing}`),
+    });
+
+    assert.equal(startTitleEdit(), true);
+    assert.deepEqual(events, ["draft:現在のタイトル", "expanded:true", "editing:true"]);
+  });
+
+  it("開始不可または title がない場合は何もしない", () => {
+    const events: string[] = [];
+    const blockedStart = createStartTitleEditHandler({
+      getTitle: () => "現在のタイトル",
+      canStart: () => false,
+      setTitleDraft: (title) => events.push(`draft:${title}`),
+      setHeaderExpanded: (expanded) => events.push(`expanded:${expanded}`),
+      setEditingTitle: (editing) => events.push(`editing:${editing}`),
+    });
+    const missingTitleStart = createStartTitleEditHandler({
+      getTitle: () => null,
+      setTitleDraft: (title) => events.push(`draft:${title}`),
+      setHeaderExpanded: (expanded) => events.push(`expanded:${expanded}`),
+      setEditingTitle: (editing) => events.push(`editing:${editing}`),
+    });
+
+    assert.equal(blockedStart(), false);
+    assert.equal(missingTitleStart(), false);
+    assert.deepEqual(events, []);
+  });
+});
+
 describe("applyCancelTitleEditCommand", () => {
   it("title draft を現在値に戻し、title 編集中を解除する", () => {
     const events: string[] = [];
@@ -315,6 +354,21 @@ describe("applyCancelTitleEditCommand", () => {
     });
 
     assert.deepEqual(events, ["draft:現在のタイトル", "editing:false"]);
+  });
+});
+
+describe("createCancelTitleEditHandler", () => {
+  it("title 編集キャンセル handler を作り、title がない場合は空文字へ戻す", () => {
+    const events: string[] = [];
+    const cancelTitleEdit = createCancelTitleEditHandler({
+      getTitle: () => null,
+      setTitleDraft: (title) => events.push(`draft:${title}`),
+      setEditingTitle: (editing) => events.push(`editing:${editing}`),
+    });
+
+    cancelTitleEdit();
+
+    assert.deepEqual(events, ["draft:", "editing:false"]);
   });
 });
 

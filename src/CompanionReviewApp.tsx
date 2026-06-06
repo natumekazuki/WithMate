@@ -190,7 +190,6 @@ import {
 import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
 import {
   applyAgentPickerToggleCommand,
-  applyCancelTitleEditCommand,
   applyAgentPickerCloseCommand,
   applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -202,17 +201,18 @@ import {
   applySessionFilesReferencePathsCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
-  applyStartTitleEditCommand,
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
+  createCancelTitleEditHandler,
   createComposerSubmitKeyHandler,
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
   createSessionFilesOpenHandler,
+  createStartTitleEditHandler,
   createTitleInputKeyHandler,
 } from "./chat/session-shell-handlers.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
@@ -2067,26 +2067,19 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
   }
 
-  function handleStartTitleEdit(): void {
-    if (!snapshot || isSelectedSessionRunning) {
-      return;
-    }
+  const handleStartTitleEdit = createStartTitleEditHandler({
+    getTitle: () => snapshot?.session.taskTitle,
+    canStart: () => !!snapshot && !isSelectedSessionRunning,
+    setTitleDraft,
+    setHeaderExpanded: setIsHeaderExpanded,
+    setEditingTitle: setIsEditingTitle,
+  });
 
-    applyStartTitleEditCommand({
-      title: snapshot.session.taskTitle,
-      setTitleDraft,
-      setHeaderExpanded: setIsHeaderExpanded,
-      setEditingTitle: setIsEditingTitle,
-    });
-  }
-
-  function handleCancelTitleEdit(): void {
-    applyCancelTitleEditCommand({
-      title: snapshot?.session.taskTitle ?? "",
-      setTitleDraft,
-      setEditingTitle: setIsEditingTitle,
-    });
-  }
+  const handleCancelTitleEdit = createCancelTitleEditHandler({
+    getTitle: () => snapshot?.session.taskTitle,
+    setTitleDraft,
+    setEditingTitle: setIsEditingTitle,
+  });
 
   async function handleSaveTitle(): Promise<void> {
     if (!snapshot) {
