@@ -197,6 +197,7 @@ import {
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
   applyExpandedArtifactToggleCommand,
+  applyAgentPickerCloseCommand,
   applyHeaderExpandedToggleCommand,
   applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -1633,7 +1634,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     const nextCustomAgentName = agent?.name ?? "";
     if (nextCustomAgentName === snapshot.session.customAgentName) {
-      setIsAgentPickerOpen(false);
+      applyAgentPickerCloseCommand({ setAgentPickerOpen: setIsAgentPickerOpen });
       return;
     }
 
@@ -1642,7 +1643,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       customAgentName: nextCustomAgentName,
       updatedAt: currentTimestampLabel(),
     });
-    setIsAgentPickerOpen(false);
+    applyAgentPickerCloseCommand({ setAgentPickerOpen: setIsAgentPickerOpen });
   }
 
   async function handleChangeApproval(approvalMode: ApprovalMode): Promise<void> {
@@ -2014,14 +2015,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     const nextCustomAgentName = agent?.name ?? "";
     if (nextCustomAgentName === activeAuxiliarySession.customAgentName) {
-      setIsAgentPickerOpen(false);
+      applyAgentPickerCloseCommand({ setAgentPickerOpen: setIsAgentPickerOpen });
       return;
     }
 
     await updateActiveAuxiliarySession((current) => (
       applyAuxiliarySessionCustomAgentPatch(current, nextCustomAgentName, currentTimestampLabel())
     ));
-    setIsAgentPickerOpen(false);
+    applyAgentPickerCloseCommand({ setAgentPickerOpen: setIsAgentPickerOpen });
   }
 
   async function handleSelectAuxiliarySkill(skill: DiscoveredSkill): Promise<void> {

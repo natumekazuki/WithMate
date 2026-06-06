@@ -189,6 +189,7 @@ import {
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
   applyExpandedArtifactToggleCommand,
+  applyAgentPickerCloseCommand,
   applyHeaderExpandedToggleCommand,
   applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -1838,7 +1839,7 @@ export default function AgentSessionWindowApp() {
 
     const nextCustomAgentName = agent?.name ?? "";
     if (nextCustomAgentName === selectedSession.customAgentName) {
-      setIsAgentPickerOpen(false);
+      applyAgentPickerCloseCommand({ setAgentPickerOpen: setIsAgentPickerOpen });
       return;
     }
 
@@ -1849,7 +1850,7 @@ export default function AgentSessionWindowApp() {
     );
 
     await persistSession(nextSession);
-    setIsAgentPickerOpen(false);
+    applyAgentPickerCloseCommand({ setAgentPickerOpen: setIsAgentPickerOpen });
   };
 
   const persistSession = async (nextSession: Session) => {
@@ -2085,14 +2086,14 @@ export default function AgentSessionWindowApp() {
 
     const nextCustomAgentName = (agent?.name ?? "").trim();
     if (nextCustomAgentName === activeAuxiliarySession.customAgentName) {
-      setIsAgentPickerOpen(false);
+      applyAgentPickerCloseCommand({ setAgentPickerOpen: setIsAgentPickerOpen });
       return;
     }
 
     await updateActiveAuxiliarySession((current) => (
       applyAuxiliarySessionCustomAgentPatch(current, nextCustomAgentName, currentTimestampLabel())
     ));
-    setIsAgentPickerOpen(false);
+    applyAgentPickerCloseCommand({ setAgentPickerOpen: setIsAgentPickerOpen });
   };
 
   const handleSelectAuxiliarySkill = async (skill: DiscoveredSkill) => {

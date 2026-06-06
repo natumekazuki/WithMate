@@ -8,6 +8,7 @@ import {
   applyContextPaneTabCycleCommand,
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
+  applyAgentPickerCloseCommand,
   applyExpandedArtifactToggleCommand,
   applyExclusiveComposerPickerToggle,
   applyHeaderExpandedToggleCommand,
@@ -240,6 +241,20 @@ describe("applyAgentPickerToggleCommand", () => {
 
     assert.equal(agentOpen, true);
     assert.equal(skillOpen, false);
+  });
+});
+
+describe("applyAgentPickerCloseCommand", () => {
+  it("agent picker を閉じる", () => {
+    const values: boolean[] = [];
+
+    applyAgentPickerCloseCommand({
+      setAgentPickerOpen: (open) => {
+        values.push(open);
+      },
+    });
+
+    assert.deepEqual(values, [false]);
   });
 });
 

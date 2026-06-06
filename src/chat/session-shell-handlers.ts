@@ -145,6 +145,12 @@ export function applyAgentPickerToggleCommand(input: {
   });
 }
 
+export function applyAgentPickerCloseCommand(input: {
+  setAgentPickerOpen: (open: boolean) => void;
+}): void {
+  input.setAgentPickerOpen(false);
+}
+
 export function applySkillPickerToggleCommand(input: {
   setAgentPickerOpen: (updater: (current: boolean) => boolean) => void;
   setSkillPickerOpen: (updater: (current: boolean) => boolean) => void;
