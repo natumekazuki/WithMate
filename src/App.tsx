@@ -193,7 +193,6 @@ import {
   applySessionFilesReferencePathsCommand,
   applySkillPromptInsertionUiState,
   applyUnavailableContextPaneTabFallbackCommand,
-  applyWorkspacePathMatchSelectionCommand,
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
@@ -209,6 +208,7 @@ import {
   createSkillPickerToggleHandler,
   createStartTitleEditHandler,
   createTitleInputKeyHandler,
+  createWorkspacePathMatchSelectionHandler,
 } from "./chat/session-shell-handlers.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
@@ -1785,26 +1785,23 @@ export default function AgentSessionWindowApp() {
     submit: handleComposerSubmitKey,
   });
 
-  const handleSelectWorkspacePathMatch = (match: string) => {
-    applyWorkspacePathMatchSelectionCommand({
-      draft: activeComposerDraft,
-      caret: composerCaret,
-      match,
-      textarea: composerTextareaRef.current,
-      applySelection: (nextState) => {
-        const { draft: nextDraft, caret: nextCaret } = nextState;
-        setComposerCaret(nextCaret);
-        if (activeAuxiliarySession) {
-          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-        } else {
-          setDraft(nextDraft);
-          mainComposerCaretRef.current = nextCaret;
-        }
-        applyWorkspacePathMatchState(nextState);
-      },
-      restoreComposerTextareaFocusAndCaret,
-    });
-  };
+  const handleSelectWorkspacePathMatch = createWorkspacePathMatchSelectionHandler({
+    getDraft: () => activeComposerDraft,
+    getCaret: () => composerCaret,
+    getTextarea: () => composerTextareaRef.current,
+    applySelection: (nextState) => {
+      const { draft: nextDraft, caret: nextCaret } = nextState;
+      setComposerCaret(nextCaret);
+      if (activeAuxiliarySession) {
+        void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+      } else {
+        setDraft(nextDraft);
+        mainComposerCaretRef.current = nextCaret;
+      }
+      applyWorkspacePathMatchState(nextState);
+    },
+    restoreComposerTextareaFocusAndCaret,
+  });
 
   const handleSelectSkill = (skill: DiscoveredSkill) => {
     const textarea = composerTextareaRef.current;

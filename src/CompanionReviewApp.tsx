@@ -201,7 +201,6 @@ import {
   applySessionFilesReferencePathsCommand,
   applySkillPromptInsertionUiState,
   applyUnavailableContextPaneTabFallbackCommand,
-  applyWorkspacePathMatchSelectionCommand,
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
@@ -217,6 +216,7 @@ import {
   createSkillPickerToggleHandler,
   createStartTitleEditHandler,
   createTitleInputKeyHandler,
+  createWorkspacePathMatchSelectionHandler,
 } from "./chat/session-shell-handlers.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
@@ -1563,25 +1563,22 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
   }
 
-  function handleSelectWorkspacePathMatch(match: string): void {
-    applyWorkspacePathMatchSelectionCommand({
-      draft: activeComposerText,
-      caret: composerCaret,
-      match,
-      textarea: composerTextareaRef.current,
-      applySelection: (nextState) => {
-        const { draft: nextDraft, caret: nextCaret } = nextState;
-        setComposerCaret(nextCaret);
-        applyWorkspacePathMatchState(nextState);
-        if (activeAuxiliarySession) {
-          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-        } else {
-          setComposerText(nextDraft);
-        }
-      },
-      restoreComposerTextareaFocusAndCaret,
-    });
-  }
+  const handleSelectWorkspacePathMatch = createWorkspacePathMatchSelectionHandler({
+    getDraft: () => activeComposerText,
+    getCaret: () => composerCaret,
+    getTextarea: () => composerTextareaRef.current,
+    applySelection: (nextState) => {
+      const { draft: nextDraft, caret: nextCaret } = nextState;
+      setComposerCaret(nextCaret);
+      applyWorkspacePathMatchState(nextState);
+      if (activeAuxiliarySession) {
+        void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+      } else {
+        setComposerText(nextDraft);
+      }
+    },
+    restoreComposerTextareaFocusAndCaret,
+  });
 
   function handleRemoveAttachmentReference(attachmentPathCandidates: string[]): void {
     applyPathReferenceRemovalCommand({

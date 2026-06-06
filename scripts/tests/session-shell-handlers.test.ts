@@ -43,6 +43,7 @@ import {
   createSkillPickerToggleHandler,
   createStartTitleEditHandler,
   createTitleInputKeyHandler,
+  createWorkspacePathMatchSelectionHandler,
   resolveHeaderExpandedToggle,
   runSessionFilesOpenCommand,
   toggleExpandedArtifactState,
@@ -1017,6 +1018,35 @@ describe("applyWorkspacePathMatchSelectionCommand", () => {
       "matches:0:-1",
       "focus",
       "selection:17:17",
+    ]);
+  });
+});
+
+describe("createWorkspacePathMatchSelectionHandler", () => {
+  it("composer state getter を使って workspace path match 選択 command を実行する", () => {
+    const events: string[] = [];
+    const textarea = {
+      selectionStart: "open @src".length,
+      focus: () => events.push("focus"),
+      setSelectionRange: (start: number, end: number) => events.push(`selection:${start}:${end}`),
+    } as HTMLTextAreaElement;
+    const handler = createWorkspacePathMatchSelectionHandler({
+      getDraft: () => "open @src",
+      getCaret: () => "open @src".length,
+      getTextarea: () => textarea,
+      applySelection: ({ draft, caret }) => events.push(`apply:${caret}:${draft}`),
+      restoreComposerTextareaFocusAndCaret: (textarea, caret) => {
+        textarea?.focus();
+        textarea?.setSelectionRange(caret, caret);
+      },
+    });
+    const expectedDraft = "open @src/App.tsx";
+
+    assert.equal(handler("src/App.tsx"), true);
+    assert.deepEqual(events, [
+      `apply:${expectedDraft.length}:${expectedDraft}`,
+      "focus",
+      `selection:${expectedDraft.length}:${expectedDraft.length}`,
     ]);
   });
 });

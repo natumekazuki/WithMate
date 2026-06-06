@@ -512,6 +512,26 @@ export function applyWorkspacePathMatchSelectionCommand(input: {
   return true;
 }
 
+export function createWorkspacePathMatchSelectionHandler(input: {
+  getDraft: () => string;
+  getCaret: () => number;
+  getTextarea: () => HTMLTextAreaElement | null;
+  applySelection: (state: WorkspacePathMatchSelectionState) => void;
+  restoreComposerTextareaFocusAndCaret: (
+    textarea: HTMLTextAreaElement | null,
+    caret: number,
+  ) => void;
+}): (match: string) => boolean {
+  return (match) => applyWorkspacePathMatchSelectionCommand({
+    draft: input.getDraft(),
+    caret: input.getCaret(),
+    match,
+    textarea: input.getTextarea(),
+    applySelection: input.applySelection,
+    restoreComposerTextareaFocusAndCaret: input.restoreComposerTextareaFocusAndCaret,
+  });
+}
+
 export function applyPathReferenceRemovalCommand(input: {
   draft: string;
   attachmentPathCandidates: string[];
