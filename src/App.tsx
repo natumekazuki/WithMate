@@ -144,11 +144,11 @@ import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 import {
   applyRetryDetailsReset,
   applyRetryDraftRestoreCommand,
-  applyRetryDraftReplaceConfirmation,
-  applyRetryEditCommand,
   buildRetryStopSummary,
   createCancelRetryDraftReplaceHandler,
+  createRetryDraftReplaceConfirmationHandler,
   createRetryDetailsToggleHandler,
+  createRetryEditHandler,
   isRetryActionDisabled as resolveRetryActionDisabled,
   resolveRetryBannerKind,
   runRetryResendCommand,
@@ -2141,23 +2141,19 @@ export default function AgentSessionWindowApp() {
     });
   };
 
-  const handleEditLastMessage = () => {
-    applyRetryEditCommand({
-      isDisabled: !retryBanner || isRetryEditDisabled,
-      messageText: lastUserMessage?.text,
-      shouldProtectDraft: shouldProtectDraftOnRetryEdit,
-      requestDraftReplaceConfirmation: () => setIsRetryDraftReplacePending(true),
-      restoreDraft: restoreLastUserMessageToDraft,
-    });
-  };
+  const handleEditLastMessage = createRetryEditHandler({
+    isDisabled: !retryBanner || isRetryEditDisabled,
+    messageText: lastUserMessage?.text,
+    shouldProtectDraft: shouldProtectDraftOnRetryEdit,
+    requestDraftReplaceConfirmation: () => setIsRetryDraftReplacePending(true),
+    restoreDraft: restoreLastUserMessageToDraft,
+  });
 
-  const handleConfirmRetryDraftReplace = () => {
-    applyRetryDraftReplaceConfirmation({
-      isDisabled: !retryBanner || isRetryEditDisabled,
-      messageText: lastUserMessage?.text,
-      restoreDraft: restoreLastUserMessageToDraft,
-    });
-  };
+  const handleConfirmRetryDraftReplace = createRetryDraftReplaceConfirmationHandler({
+    isDisabled: !retryBanner || isRetryEditDisabled,
+    messageText: lastUserMessage?.text,
+    restoreDraft: restoreLastUserMessageToDraft,
+  });
 
   const handleCancelRetryDraftReplace = createCancelRetryDraftReplaceHandler({
     setRetryDraftReplacePending: setIsRetryDraftReplacePending,

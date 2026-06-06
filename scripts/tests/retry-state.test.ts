@@ -11,7 +11,9 @@ import {
   buildRetryDraftRestoreState,
   buildRetryStopSummary,
   createCancelRetryDraftReplaceHandler,
+  createRetryDraftReplaceConfirmationHandler,
   createRetryDetailsToggleHandler,
+  createRetryEditHandler,
   defaultRetryBannerDetailsOpen,
   isRetryActionDisabled,
   resolveRetryBannerKind,
@@ -179,6 +181,21 @@ test("applyRetryEditCommand は保護確認または draft 復元を選ぶ", () 
   assert.deepEqual(events, ["confirm", "restore:前回の依頼", "restore:"]);
 });
 
+test("createRetryEditHandler は retry edit handler を作る", () => {
+  const events: string[] = [];
+  const editLastMessage = createRetryEditHandler({
+    isDisabled: false,
+    messageText: "前回の依頼",
+    shouldProtectDraft: false,
+    requestDraftReplaceConfirmation: () => events.push("confirm"),
+    restoreDraft: (messageText) => events.push(`restore:${messageText}`),
+  });
+
+  editLastMessage();
+
+  assert.deepEqual(events, ["restore:前回の依頼"]);
+});
+
 test("applyRetryDraftReplaceConfirmation は有効な retry edit だけ draft を復元する", () => {
   const events: string[] = [];
 
@@ -204,6 +221,19 @@ test("applyRetryDraftReplaceConfirmation は有効な retry edit だけ draft �
   });
 
   assert.deepEqual(events, ["前回の依頼", ""]);
+});
+
+test("createRetryDraftReplaceConfirmationHandler は retry draft replace confirmation handler を作る", () => {
+  const events: string[] = [];
+  const confirmRetryDraftReplace = createRetryDraftReplaceConfirmationHandler({
+    isDisabled: false,
+    messageText: "前回の依頼",
+    restoreDraft: (messageText) => events.push(messageText),
+  });
+
+  confirmRetryDraftReplace();
+
+  assert.deepEqual(events, ["前回の依頼"]);
 });
 
 test("applyRetryDetailsReset は banner 種別に応じて詳細表示 state を初期化する", () => {

@@ -83,6 +83,16 @@ export function applyRetryEditCommand(input: {
   input.restoreDraft(input.messageText);
 }
 
+export function createRetryEditHandler(input: {
+  isDisabled: boolean;
+  messageText: string | null | undefined;
+  shouldProtectDraft: boolean;
+  requestDraftReplaceConfirmation: () => void;
+  restoreDraft: (messageText: string) => void;
+}): () => void {
+  return () => applyRetryEditCommand(input);
+}
+
 export function applyRetryDraftReplaceConfirmation(input: {
   isDisabled: boolean;
   messageText: string | null | undefined;
@@ -93,6 +103,14 @@ export function applyRetryDraftReplaceConfirmation(input: {
   }
 
   input.restoreDraft(input.messageText);
+}
+
+export function createRetryDraftReplaceConfirmationHandler(input: {
+  isDisabled: boolean;
+  messageText: string | null | undefined;
+  restoreDraft: (messageText: string) => void;
+}): () => void {
+  return () => applyRetryDraftReplaceConfirmation(input);
 }
 
 export function applyRetryDetailsReset(input: {
