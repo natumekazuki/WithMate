@@ -14,6 +14,7 @@ import {
   applyPathReferenceRemovalCommand,
   applyPickedComposerReferencePathCommand,
   applyQuoteMessageTextCommand,
+  applySelectedPathReferenceInsertionCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
@@ -558,6 +559,70 @@ describe("applyPathReferenceRemovalCommand", () => {
     assert.deepEqual(events, [
       "apply:5:確認 して",
       "matches:0:-1",
+    ]);
+  });
+});
+
+describe("applySelectedPathReferenceInsertionCommand", () => {
+  it("選択 path がない場合は何もせず、ある場合は挿入 state 反映後に focus と caret を復元する", () => {
+    const events: string[] = [];
+    const textarea = {
+      selectionStart: "see ".length,
+      focus: () => events.push("focus"),
+      setSelectionRange: (start: number, end: number) => events.push(`selection:${start}:${end}`),
+    } as HTMLTextAreaElement;
+    const runCommand = (selectedPaths: string[]) =>
+      applySelectedPathReferenceInsertionCommand({
+        draft: "see here",
+        fallbackCaret: "see here".length,
+        selectedPaths,
+        textarea,
+        workspacePath: null,
+        applyInsertion: (state) => {
+          events.push(`apply:${state.caret}:${state.draft}`);
+          events.push(`matches:${state.workspacePathMatches.length}:${state.activeWorkspacePathMatchIndex}`);
+        },
+        restoreComposerTextareaFocusAndCaret: (textarea, caret) => {
+          textarea?.focus();
+          textarea?.setSelectionRange(caret, caret);
+        },
+      });
+
+    assert.equal(runCommand([]), false);
+    assert.deepEqual(events, []);
+
+    assert.equal(runCommand(["src/App.tsx"]), true);
+    assert.deepEqual(events, [
+      "apply:17:see @src/App.tsx here",
+      "matches:0:-1",
+      "focus",
+      "selection:17:17",
+    ]);
+  });
+
+  it("textarea がない場合は fallback caret で挿入し、focus 復元は no-op にできる", () => {
+    const events: string[] = [];
+
+    assert.equal(
+      applySelectedPathReferenceInsertionCommand({
+        draft: "see here",
+        fallbackCaret: "see".length,
+        selectedPaths: ["src/App.tsx"],
+        textarea: null,
+        workspacePath: null,
+        applyInsertion: (state) => {
+          events.push(`apply:${state.caret}:${state.draft}`);
+        },
+        restoreComposerTextareaFocusAndCaret: (textarea, caret) => {
+          events.push(`restore:${textarea === null ? "none" : "textarea"}:${caret}`);
+        },
+      }),
+      true,
+    );
+
+    assert.deepEqual(events, [
+      "apply:16:see @src/App.tsx here",
+      "restore:none:16",
     ]);
   });
 });

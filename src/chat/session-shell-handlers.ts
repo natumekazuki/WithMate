@@ -9,6 +9,7 @@ import {
 import { createQuotedMessageInsertionFromComposer } from "./message-text-actions.js";
 import {
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
+  buildSelectedPathReferenceInsertionState,
   buildWorkspacePathMatchSelectionState,
   resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
@@ -268,4 +269,31 @@ export function applyPathReferenceRemovalCommand(input: {
       input.attachmentPathCandidates,
     ),
   );
+}
+
+export function applySelectedPathReferenceInsertionCommand(input: {
+  draft: string;
+  fallbackCaret: number;
+  selectedPaths: string[];
+  textarea: HTMLTextAreaElement | null;
+  workspacePath: string | null;
+  applyInsertion: (state: WorkspacePathMatchSelectionState) => void;
+  restoreComposerTextareaFocusAndCaret: (
+    textarea: HTMLTextAreaElement | null,
+    caret: number,
+  ) => void;
+}): boolean {
+  const insertionState = buildSelectedPathReferenceInsertionState({
+    draft: input.draft,
+    caret: input.textarea?.selectionStart ?? input.fallbackCaret,
+    selectedPaths: input.selectedPaths,
+    workspacePath: input.workspacePath,
+  });
+  if (!insertionState) {
+    return false;
+  }
+
+  input.applyInsertion(insertionState);
+  input.restoreComposerTextareaFocusAndCaret(input.textarea, insertionState.caret);
+  return true;
 }

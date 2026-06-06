@@ -89,7 +89,6 @@ import {
   buildAdditionalDirectoryItems,
   buildClosedWorkspacePathMatchState,
   buildComposerAttachmentItems,
-  buildSelectedPathReferenceInsertionState,
   pickComposerReferencePath,
   type ComposerPathPickerKind,
   toDirectoryPath,
@@ -195,6 +194,7 @@ import {
   applyPathReferenceRemovalCommand,
   applyPickedComposerReferencePathCommand,
   applyQuoteMessageTextCommand,
+  applySelectedPathReferenceInsertionCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
@@ -2505,35 +2505,28 @@ export default function AgentSessionWindowApp() {
   };
 
   const insertReferencePaths = (selectedPaths: string[]) => {
-    if (selectedPaths.length === 0) {
-      return;
-    }
-
     const textarea = composerTextareaRef.current;
     const targetAuxiliarySession = activeAuxiliarySession;
     const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
-    const currentCaret = textarea?.selectionStart ?? composerCaret;
-    const insertionState = buildSelectedPathReferenceInsertionState({
+    applySelectedPathReferenceInsertionCommand({
       draft: currentDraft,
-      caret: currentCaret,
+      fallbackCaret: composerCaret,
       selectedPaths,
+      textarea,
       workspacePath: selectedSession?.workspacePath ?? null,
+      applyInsertion: (insertionState) => {
+        const { draft: nextDraft, caret: nextCaret } = insertionState;
+        if (targetAuxiliarySession) {
+          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+        } else {
+          setDraft(nextDraft);
+          mainComposerCaretRef.current = nextCaret;
+        }
+        setComposerCaret(nextCaret);
+        applyWorkspacePathMatchState(insertionState);
+      },
+      restoreComposerTextareaFocusAndCaret,
     });
-    if (!insertionState) {
-      return;
-    }
-    const { draft: nextDraft, caret: nextCaret } = insertionState;
-
-    if (targetAuxiliarySession) {
-      void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-    } else {
-      setDraft(nextDraft);
-      mainComposerCaretRef.current = nextCaret;
-    }
-    setComposerCaret(nextCaret);
-    applyWorkspacePathMatchState(insertionState);
-
-    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
 
   const insertReferencePath = (selectedPath: string) => {

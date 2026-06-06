@@ -123,7 +123,6 @@ import {
   buildAdditionalDirectoryItems,
   buildClosedWorkspacePathMatchState,
   buildComposerAttachmentItems,
-  buildSelectedPathReferenceInsertionState,
   pickComposerReferencePath,
   type ComposerPathPickerKind,
   toDirectoryPath,
@@ -203,6 +202,7 @@ import {
   applyPathReferenceRemovalCommand,
   applyPickedComposerReferencePathCommand,
   applyQuoteMessageTextCommand,
+  applySelectedPathReferenceInsertionCommand,
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
@@ -1419,32 +1419,25 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   function insertReferencePaths(selectedPaths: string[]): void {
-    if (selectedPaths.length === 0) {
-      return;
-    }
-
     const textarea = composerTextareaRef.current;
-    const currentCaret = textarea?.selectionStart ?? composerCaret;
-    const insertionState = buildSelectedPathReferenceInsertionState({
+    applySelectedPathReferenceInsertionCommand({
       draft: activeComposerText,
-      caret: currentCaret,
+      fallbackCaret: composerCaret,
       selectedPaths,
+      textarea,
       workspacePath: snapshot?.session.worktreePath ?? null,
+      applyInsertion: (insertionState) => {
+        const { draft: nextDraft, caret: nextCaret } = insertionState;
+        setComposerCaret(nextCaret);
+        applyWorkspacePathMatchState(insertionState);
+        if (activeAuxiliarySession) {
+          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+        } else {
+          setComposerText(nextDraft);
+        }
+      },
+      restoreComposerTextareaFocusAndCaret,
     });
-    if (!insertionState) {
-      return;
-    }
-    const { draft: nextDraft, caret: nextCaret } = insertionState;
-
-    setComposerCaret(nextCaret);
-    applyWorkspacePathMatchState(insertionState);
-    if (activeAuxiliarySession) {
-      void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-    } else {
-      setComposerText(nextDraft);
-    }
-
-    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   }
 
   function insertReferencePath(selectedPath: string): void {
