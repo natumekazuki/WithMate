@@ -26,6 +26,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 ## Progress Log
 
 - 2026-06-07: `createPathReferenceRemovalHandler` を MateTalk にも適用。削除 command 前に candidates を正規化できる contract を追加し、MateTalk の draft 削除と path reference attachment list 更新の両方で正規化済み targets を維持。
+- 2026-06-07: MateTalk の quote message handler を `createQuoteMessageTextHandler` へ置換。sending 中 no-op、draft/caret 更新、feedback clear、focus/caret 復元の既存挙動は維持。
 
 ## PR Plan
 
@@ -35,7 +36,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 
 - draft key / interaction handlers の残り。
 - path reference removal の MateTalk 適用。2026-06-07 完了。
-- quote / path / picker など、保存 API に触れない薄い wrapper の取り残し。
+- quote / path / picker など、保存 API に触れない薄い wrapper の取り残し。MateTalk quote handler は 2026-06-07 完了。
 
 やらないこと:
 

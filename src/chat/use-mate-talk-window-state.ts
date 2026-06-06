@@ -45,7 +45,6 @@ import {
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyPastedSessionAttachmentPathsCommand,
-  applyQuoteMessageTextCommand,
   applySelectedPathReferenceInsertionCommand,
   applySessionFilesReferencePathsCommand,
   createActionDockCollapseHandler,
@@ -53,6 +52,7 @@ import {
   createAdditionalDirectoryListToggleHandler,
   createHeaderExpandedToggleHandler,
   createPathReferenceRemovalHandler,
+  createQuoteMessageTextHandler,
   createSessionFilesOpenHandler,
 } from "./session-shell-handlers.js";
 
@@ -218,25 +218,21 @@ export function useMateTalkWindowState({
     },
   });
 
-  const handleQuoteMessageText = (text: string) => {
-    if (sending) {
-      return;
-    }
-
-    const textarea = composerTextareaRef.current;
-    applyQuoteMessageTextCommand({
-      messageText: text,
+  const handleQuoteMessageText = createQuoteMessageTextHandler({
+    isBlocked: () => sending,
+    notifyBlocked: () => {},
+    getComposerState: () => ({
       draft: input,
       fallbackCaret: inputCaret,
-      textarea,
-      applyInsertion: ({ draft: nextInput, caret: nextCaret }) => {
-        setInput(nextInput);
-        setInputCaret(nextCaret);
-        setFeedback("");
-      },
-      restoreComposerTextareaFocusAndCaret,
-    });
-  };
+      textarea: composerTextareaRef.current,
+    }),
+    applyInsertion: ({ draft: nextInput, caret: nextCaret }) => {
+      setInput(nextInput);
+      setInputCaret(nextCaret);
+      setFeedback("");
+    },
+    restoreComposerTextareaFocusAndCaret,
+  });
 
   const insertReferencePaths = (selectedPaths: string[], kind: ComposerPathPickerKind) => {
     const textarea = composerTextareaRef.current;
