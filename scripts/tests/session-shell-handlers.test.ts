@@ -30,6 +30,7 @@ import {
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
   createHeaderExpandedToggleHandler,
+  createTitleInputKeyHandler,
   resolveHeaderExpandedToggle,
   runSessionFilesOpenCommand,
   toggleExpandedArtifactState,
@@ -133,6 +134,27 @@ describe("applyTitleInputKeyCommand", () => {
     runCommand("Enter");
     runCommand("Escape");
     runCommand("Tab");
+
+    assert.deepEqual(events, ["prevent:Enter", "save", "prevent:Escape", "cancel"]);
+  });
+});
+
+describe("createTitleInputKeyHandler", () => {
+  it("title input keydown handler を作る", () => {
+    const events: string[] = [];
+    const handleKeyDown = createTitleInputKeyHandler({
+      saveTitle: () => events.push("save"),
+      cancelTitleEdit: () => events.push("cancel"),
+    });
+
+    const runHandler = (key: string) => handleKeyDown({
+      key,
+      preventDefault: () => events.push(`prevent:${key}`),
+    });
+
+    runHandler("Enter");
+    runHandler("Escape");
+    runHandler("ArrowLeft");
 
     assert.deepEqual(events, ["prevent:Enter", "save", "prevent:Escape", "cancel"]);
   });

@@ -77,6 +77,18 @@ export function applyTitleInputKeyCommand(input: {
   }
 }
 
+export function createTitleInputKeyHandler(input: {
+  saveTitle: () => void;
+  cancelTitleEdit: () => void;
+}): (event: { key: string; preventDefault: () => void }) => void {
+  return (event) => applyTitleInputKeyCommand({
+    key: event.key,
+    preventDefault: () => event.preventDefault(),
+    saveTitle: input.saveTitle,
+    cancelTitleEdit: input.cancelTitleEdit,
+  });
+}
+
 export function applyStartTitleEditCommand(input: {
   title: string;
   setTitleDraft: (title: string) => void;

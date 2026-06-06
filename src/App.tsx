@@ -198,7 +198,6 @@ import {
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
-  applyTitleInputKeyCommand,
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
   runSessionFilesOpenCommand,
@@ -206,6 +205,7 @@ import {
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
   createHeaderExpandedToggleHandler,
+  createTitleInputKeyHandler,
 } from "./chat/session-shell-handlers.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
@@ -2700,14 +2700,10 @@ export default function AgentSessionWindowApp() {
     });
   };
 
-  const handleTitleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    applyTitleInputKeyCommand({
-      key: event.key,
-      preventDefault: () => event.preventDefault(),
-      saveTitle: () => void handleSaveTitle(),
-      cancelTitleEdit: handleCancelTitleEdit,
-    });
-  };
+  const handleTitleInputKeyDown = createTitleInputKeyHandler({
+    saveTitle: () => void handleSaveTitle(),
+    cancelTitleEdit: handleCancelTitleEdit,
+  });
 
   const toggleArtifact = (artifactKey: string) => {
     applyExpandedArtifactToggleCommand({

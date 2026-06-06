@@ -206,7 +206,6 @@ import {
   applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
-  applyTitleInputKeyCommand,
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
   runSessionFilesOpenCommand,
@@ -214,6 +213,7 @@ import {
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
   createHeaderExpandedToggleHandler,
+  createTitleInputKeyHandler,
 } from "./chat/session-shell-handlers.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
@@ -2116,14 +2116,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setIsEditingTitle(false);
   }
 
-  const handleTitleInputKeyDown: KeyboardEventHandler<HTMLInputElement> = (event) => {
-    applyTitleInputKeyCommand({
-      key: event.key,
-      preventDefault: () => event.preventDefault(),
-      saveTitle: () => void handleSaveTitle(),
-      cancelTitleEdit: handleCancelTitleEdit,
-    });
-  };
+  const handleTitleInputKeyDown: KeyboardEventHandler<HTMLInputElement> = createTitleInputKeyHandler({
+    saveTitle: () => void handleSaveTitle(),
+    cancelTitleEdit: handleCancelTitleEdit,
+  });
 
   const handleToggleHeaderExpanded = createHeaderExpandedToggleHandler({
     isEditingTitle,
