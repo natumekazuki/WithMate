@@ -173,6 +173,22 @@ export function applyAdditionalDirectoryListToggle(input: {
   input.setAdditionalDirectoryListOpen((current) => !current);
 }
 
+export function applyPickedAdditionalDirectoryUiStateCommand(input: {
+  selectedPath: string | null | undefined;
+  setPickerBaseDirectory: (baseDirectory: string) => void;
+  applyPickedDirectory?: (selectedPath: string) => void;
+  setAdditionalDirectoryListOpen?: (open: boolean) => void;
+}): boolean {
+  if (!input.selectedPath) {
+    return false;
+  }
+
+  input.setPickerBaseDirectory(input.selectedPath);
+  input.applyPickedDirectory?.(input.selectedPath);
+  input.setAdditionalDirectoryListOpen?.(true);
+  return true;
+}
+
 export function applyContextPaneTabCycleCommand(input: {
   direction: -1 | 1;
   availableTabs: ContextPaneTabKey[];

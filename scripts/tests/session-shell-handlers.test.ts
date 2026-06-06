@@ -12,6 +12,7 @@ import {
   applyExclusiveComposerPickerToggle,
   applyHeaderExpandedToggleCommand,
   applyPathReferenceRemovalCommand,
+  applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyPastedSessionAttachmentPathsCommand,
   applyQuoteMessageTextCommand,
@@ -295,6 +296,31 @@ describe("applyAdditionalDirectoryListToggle", () => {
       },
     });
     assert.equal(open, false);
+  });
+});
+
+describe("applyPickedAdditionalDirectoryUiStateCommand", () => {
+  it("選択 directory がある場合だけ base directory と optional UI state を反映する", () => {
+    const events: string[] = [];
+    const runCommand = (selectedPath: string | null | undefined) =>
+      applyPickedAdditionalDirectoryUiStateCommand({
+        selectedPath,
+        setPickerBaseDirectory: (baseDirectory) => events.push(`base:${baseDirectory}`),
+        applyPickedDirectory: (directoryPath) => events.push(`apply:${directoryPath}`),
+        setAdditionalDirectoryListOpen: (open) => events.push(`open:${open}`),
+      });
+
+    assert.equal(runCommand(null), false);
+    assert.equal(runCommand(undefined), false);
+    assert.equal(runCommand(""), false);
+    assert.deepEqual(events, []);
+
+    assert.equal(runCommand("C:\\workspace\\fixtures"), true);
+    assert.deepEqual(events, [
+      "base:C:\\workspace\\fixtures",
+      "apply:C:\\workspace\\fixtures",
+      "open:true",
+    ]);
   });
 });
 

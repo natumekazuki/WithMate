@@ -199,6 +199,7 @@ import {
   applyExpandedArtifactToggleCommand,
   applyHeaderExpandedToggleCommand,
   applyPathReferenceRemovalCommand,
+  applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyPastedSessionAttachmentPathsCommand,
   applyQuoteMessageTextCommand,
@@ -1541,7 +1542,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       allowedAdditionalDirectories: nextDirectories,
       updatedAt: currentTimestampLabel(),
     });
-    setPickerBaseDirectory(selectedPath);
+    applyPickedAdditionalDirectoryUiStateCommand({
+      selectedPath,
+      setPickerBaseDirectory,
+    });
   }
 
   async function handleRemoveAdditionalDirectory(directoryPath: string): Promise<void> {

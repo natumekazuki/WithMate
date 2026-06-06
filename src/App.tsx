@@ -191,6 +191,7 @@ import {
   applyExpandedArtifactToggleCommand,
   applyHeaderExpandedToggleCommand,
   applyPathReferenceRemovalCommand,
+  applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyPastedSessionAttachmentPathsCommand,
   applyQuoteMessageTextCommand,
@@ -2655,7 +2656,10 @@ export default function AgentSessionWindowApp() {
       ...selectedSession,
       allowedAdditionalDirectories: nextDirectories,
     };
-    setPickerBaseDirectory(selectedPath);
+    applyPickedAdditionalDirectoryUiStateCommand({
+      selectedPath,
+      setPickerBaseDirectory,
+    });
     await persistSession(nextSession);
   };
 

@@ -47,6 +47,7 @@ import {
   applyActionDockExpandCommand,
   applyAdditionalDirectoryListToggle,
   applyHeaderExpandedToggleCommand,
+  applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyPastedSessionAttachmentPathsCommand,
   applyQuoteMessageTextCommand,
@@ -366,9 +367,14 @@ export function useMateTalkWindowState({
       return;
     }
 
-    setPickerBaseDirectory(selectedPath);
-    setAdditionalDirectories((current) => appendAdditionalDirectoryPath(current, selectedPath));
-    setIsAdditionalDirectoryListOpen(true);
+    applyPickedAdditionalDirectoryUiStateCommand({
+      selectedPath,
+      setPickerBaseDirectory,
+      applyPickedDirectory: (directoryPath) => {
+        setAdditionalDirectories((current) => appendAdditionalDirectoryPath(current, directoryPath));
+      },
+      setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
+    });
   };
 
   const pathReferenceItems = useMemo(
