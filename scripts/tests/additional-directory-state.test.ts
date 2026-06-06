@@ -23,6 +23,22 @@ test("addAllowedAdditionalDirectory は directory を正規化して末尾へ追
     addAllowedAdditionalDirectory(["C:/workspace/a"], "D:\\assets"),
     ["C:/workspace/a", "D:/assets"],
   );
+  assert.deepEqual(
+    addAllowedAdditionalDirectory(["C:/Workspace/A/"], "c:\\workspace\\a"),
+    ["C:/Workspace/A"],
+  );
+  assert.deepEqual(
+    addAllowedAdditionalDirectory(["C:/"], "C:\\"),
+    ["C:/"],
+  );
+  assert.deepEqual(
+    addAllowedAdditionalDirectory(["//Server/Share"], "//server/share"),
+    ["//Server/Share"],
+  );
+  assert.deepEqual(
+    addAllowedAdditionalDirectory(["/tmp/Test"], "/tmp/test"),
+    ["/tmp/Test", "/tmp/test"],
+  );
 });
 
 test("addAllowedAdditionalDirectory は nullish input を空配列として扱う", () => {
@@ -48,5 +64,24 @@ test("removeAllowedAdditionalDirectory は directory を正規化して一致す
       "C:/workspace/a",
     ),
     ["D:/assets"],
+  );
+  assert.deepEqual(
+    removeAllowedAdditionalDirectory(
+      ["C:/Workspace/A/", "D:/assets"],
+      "c:\\workspace\\a",
+    ),
+    ["D:/assets"],
+  );
+  assert.deepEqual(
+    removeAllowedAdditionalDirectory(["/tmp/Test", "/tmp/test"], "/tmp/test"),
+    ["/tmp/Test"],
+  );
+  assert.deepEqual(
+    removeAllowedAdditionalDirectory(["C:/", "D:/assets"], "C:\\"),
+    ["D:/assets"],
+  );
+  assert.deepEqual(
+    removeAllowedAdditionalDirectory(["//Server/Share", "/tmp/test"], "//SERVER/share"),
+    ["/tmp/test"],
   );
 });
