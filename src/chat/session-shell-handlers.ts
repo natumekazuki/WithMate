@@ -227,6 +227,12 @@ export function applyAdditionalDirectoryListToggle(input: {
   input.setAdditionalDirectoryListOpen((current) => !current);
 }
 
+export function createAdditionalDirectoryListToggleHandler(input: {
+  setAdditionalDirectoryListOpen: (updater: (current: boolean) => boolean) => void;
+}): () => void {
+  return () => applyAdditionalDirectoryListToggle(input);
+}
+
 export function applyPickedAdditionalDirectoryUiStateCommand(input: {
   selectedPath: string | null | undefined;
   setPickerBaseDirectory: (baseDirectory: string) => void;

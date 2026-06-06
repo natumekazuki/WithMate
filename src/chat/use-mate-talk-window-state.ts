@@ -43,7 +43,6 @@ import {
   resolveMateTalkActionDockExpandedAfterSubmit,
 } from "./mate-talk-state.js";
 import {
-  applyAdditionalDirectoryListToggle,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyPastedSessionAttachmentPathsCommand,
@@ -51,6 +50,7 @@ import {
   applySessionFilesReferencePathsCommand,
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
+  createAdditionalDirectoryListToggleHandler,
   createHeaderExpandedToggleHandler,
 } from "./session-shell-handlers.js";
 
@@ -520,7 +520,7 @@ export function useMateTalkWindowState({
     onAddToSessionFiles: () => void addToSessionFiles(),
     onPickSessionFiles: () => void pickSessionFiles(),
     onAddAdditionalDirectory: () => void addAdditionalDirectory(),
-    onToggleAdditionalDirectoryList: () => applyAdditionalDirectoryListToggle({
+    onToggleAdditionalDirectoryList: createAdditionalDirectoryListToggleHandler({
       setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
     }),
     onRemoveAttachment: removePathReference,

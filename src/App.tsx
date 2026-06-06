@@ -183,7 +183,6 @@ import {
 import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
 import {
   applyAgentPickerToggleCommand,
-  applyAdditionalDirectoryListToggle,
   applyContextPaneTabCycleCommand,
   applyCancelTitleEditCommand,
   applyExpandedArtifactToggleCommand,
@@ -205,6 +204,7 @@ import {
   runSessionFilesOpenCommand,
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
+  createAdditionalDirectoryListToggleHandler,
   createHeaderExpandedToggleHandler,
 } from "./chat/session-shell-handlers.js";
 
@@ -2208,11 +2208,9 @@ export default function AgentSessionWindowApp() {
     });
   };
 
-  const handleToggleAdditionalDirectoryList = () => {
-    applyAdditionalDirectoryListToggle({
-      setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
-    });
-  };
+  const handleToggleAdditionalDirectoryList = createAdditionalDirectoryListToggleHandler({
+    setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
+  });
 
   const handleOpenInlinePath = async (target: string) => {
     if (!withmateApi) {

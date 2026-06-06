@@ -191,7 +191,6 @@ import {
 import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
 import {
   applyAgentPickerToggleCommand,
-  applyAdditionalDirectoryListToggle,
   applyContextPaneTabCycleCommand,
   applyCancelTitleEditCommand,
   applyExpandedArtifactToggleCommand,
@@ -213,6 +212,7 @@ import {
   runSessionFilesOpenCommand,
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
+  createAdditionalDirectoryListToggleHandler,
   createHeaderExpandedToggleHandler,
 } from "./chat/session-shell-handlers.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
@@ -2159,11 +2159,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
   }
 
-  function handleToggleAdditionalDirectoryList(): void {
-    applyAdditionalDirectoryListToggle({
-      setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
-    });
-  }
+  const handleToggleAdditionalDirectoryList = createAdditionalDirectoryListToggleHandler({
+    setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
+  });
 
   async function reloadSnapshot(preferredPath = selectedPath, options: { preserveSelectionOnly?: boolean } = {}): Promise<void> {
     const withmateApi = getWithMateApi();

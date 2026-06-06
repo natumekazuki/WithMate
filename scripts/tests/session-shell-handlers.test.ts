@@ -28,6 +28,7 @@ import {
   applyWorkspacePathMatchSelectionCommand,
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
+  createAdditionalDirectoryListToggleHandler,
   createHeaderExpandedToggleHandler,
   resolveHeaderExpandedToggle,
   runSessionFilesOpenCommand,
@@ -411,6 +412,23 @@ describe("applyAdditionalDirectoryListToggle", () => {
         open = updater(open);
       },
     });
+    assert.equal(open, false);
+  });
+});
+
+describe("createAdditionalDirectoryListToggleHandler", () => {
+  it("additional directory list toggle handler を作る", () => {
+    let open = false;
+    const toggleList = createAdditionalDirectoryListToggleHandler({
+      setAdditionalDirectoryListOpen: (updater) => {
+        open = updater(open);
+      },
+    });
+
+    toggleList();
+    assert.equal(open, true);
+
+    toggleList();
     assert.equal(open, false);
   });
 });
