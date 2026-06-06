@@ -33,6 +33,7 @@ import {
   createAdditionalDirectoryListToggleHandler,
   createComposerSubmitKeyHandler,
   createContextPaneTabCycleHandler,
+  createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
   createSessionFilesOpenHandler,
   createTitleInputKeyHandler,
@@ -66,6 +67,22 @@ describe("applyExpandedArtifactToggleCommand", () => {
         expandedArtifacts = updater(expandedArtifacts);
       },
     });
+    assert.deepEqual(expandedArtifacts, { a: false, b: true });
+  });
+});
+
+describe("createExpandedArtifactToggleHandler", () => {
+  it("artifact toggle handler を作る", () => {
+    let expandedArtifacts: Record<string, boolean> = { a: true };
+    const toggleArtifact = createExpandedArtifactToggleHandler({
+      setExpandedArtifacts: (updater) => {
+        expandedArtifacts = updater(expandedArtifacts);
+      },
+    });
+
+    toggleArtifact("a");
+    toggleArtifact("b");
+
     assert.deepEqual(expandedArtifacts, { a: false, b: true });
   });
 });

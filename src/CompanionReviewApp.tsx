@@ -191,7 +191,6 @@ import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-re
 import {
   applyAgentPickerToggleCommand,
   applyCancelTitleEditCommand,
-  applyExpandedArtifactToggleCommand,
   applyAgentPickerCloseCommand,
   applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -211,6 +210,7 @@ import {
   createAdditionalDirectoryListToggleHandler,
   createComposerSubmitKeyHandler,
   createContextPaneTabCycleHandler,
+  createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
   createSessionFilesOpenHandler,
   createTitleInputKeyHandler,
@@ -1370,12 +1370,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setActiveTab: setActiveContextPaneTab,
   });
 
-  function toggleArtifact(artifactKey: string): void {
-    applyExpandedArtifactToggleCommand({
-      artifactKey,
-      setExpandedArtifacts,
-    });
-  }
+  const toggleArtifact = createExpandedArtifactToggleHandler({
+    setExpandedArtifacts,
+  });
 
   async function openDiffWindow(payload: DiffPreviewPayload): Promise<void> {
     const withmateApi = getWithMateApi();

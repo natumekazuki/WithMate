@@ -38,6 +38,15 @@ export function applyExpandedArtifactToggleCommand(input: {
   input.setExpandedArtifacts((current) => toggleExpandedArtifactState(current, input.artifactKey));
 }
 
+export function createExpandedArtifactToggleHandler(input: {
+  setExpandedArtifacts: (updater: (current: Record<string, boolean>) => Record<string, boolean>) => void;
+}): (artifactKey: string) => void {
+  return (artifactKey) => applyExpandedArtifactToggleCommand({
+    artifactKey,
+    setExpandedArtifacts: input.setExpandedArtifacts,
+  });
+}
+
 export function resolveHeaderExpandedToggle(
   current: boolean,
   isEditingTitle: boolean,

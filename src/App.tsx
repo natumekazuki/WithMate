@@ -183,7 +183,6 @@ import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-opera
 import {
   applyAgentPickerToggleCommand,
   applyCancelTitleEditCommand,
-  applyExpandedArtifactToggleCommand,
   applyAgentPickerCloseCommand,
   applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -203,6 +202,7 @@ import {
   createAdditionalDirectoryListToggleHandler,
   createComposerSubmitKeyHandler,
   createContextPaneTabCycleHandler,
+  createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
   createSessionFilesOpenHandler,
   createTitleInputKeyHandler,
@@ -2704,12 +2704,9 @@ export default function AgentSessionWindowApp() {
     cancelTitleEdit: handleCancelTitleEdit,
   });
 
-  const toggleArtifact = (artifactKey: string) => {
-    applyExpandedArtifactToggleCommand({
-      artifactKey,
-      setExpandedArtifacts,
-    });
-  };
+  const toggleArtifact = createExpandedArtifactToggleHandler({
+    setExpandedArtifacts,
+  });
 
   const scrollActivityMonitorToBottom = () => {
     const activityMonitorElement = activityMonitorRef.current;
