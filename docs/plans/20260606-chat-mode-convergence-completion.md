@@ -28,6 +28,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-07: `createPathReferenceRemovalHandler` を MateTalk にも適用。削除 command 前に candidates を正規化できる contract を追加し、MateTalk の draft 削除と path reference attachment list 更新の両方で正規化済み targets を維持。
 - 2026-06-07: MateTalk の quote message handler を `createQuoteMessageTextHandler` へ置換。sending 中 no-op、draft/caret 更新、feedback clear、focus/caret 復元の既存挙動は維持。
 - 2026-06-07: PR-02 着手。App / CompanionReview / MateTalk の pasted session attachment handler を `createPastedSessionAttachmentHandler` に集約。surface 固有の paste 可否、sessionId、save API 取得、reference insertion だけを adapter 側に残し、clipboard `items` 経由の file paste も handler contract の test で固定。
+- 2026-06-07: pasted session attachment 保存失敗時の notification contract を `createPastedSessionAttachmentHandler` に追加。App / CompanionReview は alert、MateTalk は feedback に接続し、保存失敗時は reference insertion しないことを test で固定。
 
 ## PR Plan
 
@@ -60,6 +61,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - paste -> pasted file save -> session file reference insertion。
 - App / Companion / MateTalk の precondition、sessionId、preventDefault、error handling の共通 contract。
 - pasted session attachment handler の共通 wrapper 化。2026-06-07 着手、App / CompanionReview / MateTalk への適用完了。
+- pasted session attachment 保存失敗時の通知と no-insertion contract。2026-06-07 完了。
 
 やらないこと:
 

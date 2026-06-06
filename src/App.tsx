@@ -2542,6 +2542,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleComposerPaste = createPastedSessionAttachmentHandler({
+    alertError: (message) => window.alert(message),
     canPaste: () => {
       const targetAuxiliarySession = activeAuxiliarySession;
       return !!withmateApi &&
@@ -2552,6 +2553,7 @@ export default function AgentSessionWindowApp() {
           : selectedSession.runState === "running");
     },
     currentTimestampLabel,
+    fallbackErrorMessage: "貼り付けたファイルの保存に失敗したよ。",
     getSavePastedSessionFile: () => {
       return withmateApi ? (request) => withmateApi.savePastedSessionFile(request) : null;
     },

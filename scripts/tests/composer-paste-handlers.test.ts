@@ -155,8 +155,12 @@ test("createPastedSessionAttachmentHandler は item file paste を保存して�
   let prevented = false;
 
   const handlePaste = createPastedSessionAttachmentHandler({
+    alertError: () => {
+      throw new Error("unexpected alert");
+    },
     canPaste: () => true,
     currentTimestampLabel: () => "unused",
+    fallbackErrorMessage: "fallback",
     getSavePastedSessionFile: () => async ({ sessionId, fileName, data }) => {
       saved.push({
         sessionId,
@@ -196,8 +200,12 @@ test("createPastedSessionAttachmentHandler は paste 不可なら保存も挿入
   let inserted = false;
 
   const handlePaste = createPastedSessionAttachmentHandler({
+    alertError: () => {
+      throw new Error("unexpected alert");
+    },
     canPaste: () => false,
     currentTimestampLabel: () => "unused",
+    fallbackErrorMessage: "fallback",
     getSavePastedSessionFile: () => async () => {
       saved = true;
       return "unused";
@@ -218,5 +226,40 @@ test("createPastedSessionAttachmentHandler は paste 不可なら保存も挿入
   assert.equal(handled, false);
   assert.equal(prevented, false);
   assert.equal(saved, false);
+  assert.equal(inserted, false);
+});
+
+test("createPastedSessionAttachmentHandler は保存失敗時に通知して挿入しない", async () => {
+  const file = createPastedFile("failed.png", "failed");
+  const alerts: string[] = [];
+  let prevented = false;
+  let inserted = false;
+
+  const handlePaste = createPastedSessionAttachmentHandler({
+    alertError: (message) => {
+      alerts.push(message);
+    },
+    canPaste: () => true,
+    currentTimestampLabel: () => "unused",
+    fallbackErrorMessage: "fallback paste failure",
+    getSavePastedSessionFile: () => async () => {
+      throw new Error("save failed");
+    },
+    getSessionId: () => "session-5",
+    insertReferencePaths: () => {
+      inserted = true;
+    },
+  });
+
+  const handled = await handlePaste({
+    clipboardData: { files: [file], items: [] },
+    preventDefault: () => {
+      prevented = true;
+    },
+  });
+
+  assert.equal(handled, false);
+  assert.equal(prevented, true);
+  assert.deepEqual(alerts, ["save failed"]);
   assert.equal(inserted, false);
 });

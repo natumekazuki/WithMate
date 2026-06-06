@@ -60,8 +60,10 @@ export async function collectPastedSessionAttachmentPaths(input: {
 }
 
 export function createPastedSessionAttachmentHandler(input: {
+  alertError: (message: string) => void;
   canPaste: () => boolean;
   currentTimestampLabel: () => string;
+  fallbackErrorMessage: string;
   getSavePastedSessionFile: () => WithMateWindowPickerApi["savePastedSessionFile"] | null;
   getSessionId: () => string | null | undefined;
   insertReferencePaths: (referencePaths: string[]) => void;
@@ -77,18 +79,23 @@ export function createPastedSessionAttachmentHandler(input: {
       return false;
     }
 
-    const savedPaths = await collectPastedSessionAttachmentPaths({
-      clipboardData: event.clipboardData,
-      currentTimestampLabel: input.currentTimestampLabel,
-      preventDefault: () => event.preventDefault(),
-      savePastedSessionFile,
-      sessionId,
-    });
-    if (savedPaths.length === 0) {
+    try {
+      const savedPaths = await collectPastedSessionAttachmentPaths({
+        clipboardData: event.clipboardData,
+        currentTimestampLabel: input.currentTimestampLabel,
+        preventDefault: () => event.preventDefault(),
+        savePastedSessionFile,
+        sessionId,
+      });
+      if (savedPaths.length === 0) {
+        return false;
+      }
+
+      input.insertReferencePaths(savedPaths);
+      return true;
+    } catch (error) {
+      input.alertError(error instanceof Error ? error.message : input.fallbackErrorMessage);
       return false;
     }
-
-    input.insertReferencePaths(savedPaths);
-    return true;
   };
 }

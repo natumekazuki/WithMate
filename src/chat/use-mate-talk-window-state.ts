@@ -309,8 +309,10 @@ export function useMateTalkWindowState({
   };
 
   const handleDraftPaste = createPastedSessionAttachmentHandler({
+    alertError: (message) => setFeedback(message),
     canPaste: () => !!withmateApi && !sending,
     currentTimestampLabel,
+    fallbackErrorMessage: "貼り付けたファイルの保存に失敗したよ。",
     getSavePastedSessionFile: () => {
       return withmateApi ? (request) => withmateApi.savePastedSessionFile(request) : null;
     },

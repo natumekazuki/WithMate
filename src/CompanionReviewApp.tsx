@@ -1503,8 +1503,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   const handleComposerPaste = createPastedSessionAttachmentHandler({
+    alertError: (message) => window.alert(message),
     canPaste: () => !!getWithMateApi() && !!snapshot && !runDisabled,
     currentTimestampLabel,
+    fallbackErrorMessage: "貼り付けたファイルの保存に失敗したよ。",
     getSavePastedSessionFile: () => {
       const withmateApi = getWithMateApi();
       return withmateApi ? (request) => withmateApi.savePastedSessionFile(request) : null;
