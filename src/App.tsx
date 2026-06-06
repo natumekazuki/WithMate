@@ -183,6 +183,7 @@ import {
 import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
 import {
   applyAgentPickerToggleCommand,
+  applyComposerSubmitKeyCommand,
   applyContextPaneTabCycleCommand,
   applyCancelTitleEditCommand,
   applyExpandedArtifactToggleCommand,
@@ -1762,31 +1763,32 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    if (
-      event.key !== "Enter" ||
-      (!event.ctrlKey && !event.metaKey) ||
-      (activeAuxiliarySession ? activeAuxiliarySession.runState === "running" : composerSendability.isRunning)
-    ) {
-      return;
-    }
-
-    event.preventDefault();
-    const activeSendability = activeAuxiliarySession
-      ? buildComposerSendabilityState({
-          runState: activeAuxiliarySession.runState,
-          blockedReason: composerBlockedReason,
-          inputErrors: composerPreview.errors,
-          draftText: activeAuxiliarySession.composerDraft,
-        })
-      : composerSendability;
-    const isActiveSendDisabled = activeAuxiliarySession
-      ? activeSendability.isSendDisabled || isAuxiliaryActionPending
-      : isSendDisabled;
-    if (isActiveSendDisabled) {
-      triggerComposerBlockedFeedback();
-      return;
-    }
-    void handleSend();
+    applyComposerSubmitKeyCommand({
+      key: event.key,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      preventDefault: () => event.preventDefault(),
+      isSubmitDisabled: () => (
+        activeAuxiliarySession
+          ? activeAuxiliarySession.runState === "running"
+          : composerSendability.isRunning
+      ),
+      isSubmitBlocked: () => {
+        const activeSendability = activeAuxiliarySession
+          ? buildComposerSendabilityState({
+              runState: activeAuxiliarySession.runState,
+              blockedReason: composerBlockedReason,
+              inputErrors: composerPreview.errors,
+              draftText: activeAuxiliarySession.composerDraft,
+            })
+          : composerSendability;
+        return activeAuxiliarySession
+          ? activeSendability.isSendDisabled || isAuxiliaryActionPending
+          : isSendDisabled;
+      },
+      notifySubmitBlocked: triggerComposerBlockedFeedback,
+      submit: () => void handleSend(),
+    });
   };
 
   const handleSelectWorkspacePathMatch = (match: string) => {

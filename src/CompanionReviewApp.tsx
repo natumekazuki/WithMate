@@ -191,6 +191,7 @@ import {
 import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
 import {
   applyAgentPickerToggleCommand,
+  applyComposerSubmitKeyCommand,
   applyContextPaneTabCycleCommand,
   applyCancelTitleEditCommand,
   applyExpandedArtifactToggleCommand,
@@ -2682,10 +2683,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      void (activeAuxiliarySession ? sendAuxiliaryMessage(activeAuxiliarySession.composerDraft) : sendCompanionTurn());
-    }
+    applyComposerSubmitKeyCommand({
+      key: event.key,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      preventDefault: () => event.preventDefault(),
+      submit: () => void (
+        activeAuxiliarySession
+          ? sendAuxiliaryMessage(activeAuxiliarySession.composerDraft)
+          : sendCompanionTurn()
+      ),
+    });
   };
 
   async function openCompanionWorktree(): Promise<void> {

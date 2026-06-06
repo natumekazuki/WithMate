@@ -5,6 +5,7 @@ import {
   applyAdditionalDirectoryListToggle,
   applyAgentPickerToggleCommand,
   applyCancelTitleEditCommand,
+  applyComposerSubmitKeyCommand,
   applyContextPaneTabCycleCommand,
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
@@ -158,6 +159,78 @@ describe("createTitleInputKeyHandler", () => {
     runHandler("ArrowLeft");
 
     assert.deepEqual(events, ["prevent:Enter", "save", "prevent:Escape", "cancel"]);
+  });
+});
+
+describe("applyComposerSubmitKeyCommand", () => {
+  it("Ctrl/Cmd+Enter で送信し、それ以外や disabled では何もしない", () => {
+    const events: string[] = [];
+    const runCommand = (input: {
+      key: string;
+      ctrlKey?: boolean;
+      metaKey?: boolean;
+      isSubmitDisabled?: boolean;
+    }) => applyComposerSubmitKeyCommand({
+      key: input.key,
+      ctrlKey: input.ctrlKey ?? false,
+      metaKey: input.metaKey ?? false,
+      isSubmitDisabled: input.isSubmitDisabled,
+      preventDefault: () => events.push(`prevent:${input.key}`),
+      submit: () => events.push("submit"),
+    });
+
+    assert.equal(runCommand({ key: "Tab", ctrlKey: true }), false);
+    assert.equal(runCommand({ key: "Enter" }), false);
+    assert.equal(runCommand({ key: "Enter", ctrlKey: true, isSubmitDisabled: true }), false);
+    assert.deepEqual(events, []);
+
+    assert.equal(runCommand({ key: "Enter", ctrlKey: true }), true);
+    assert.equal(runCommand({ key: "Enter", metaKey: true }), true);
+    assert.deepEqual(events, ["prevent:Enter", "submit", "prevent:Enter", "submit"]);
+  });
+
+  it("送信 shortcut が blocked の場合は feedback だけ呼ぶ", () => {
+    const events: string[] = [];
+
+    assert.equal(
+      applyComposerSubmitKeyCommand({
+        key: "Enter",
+        ctrlKey: true,
+        metaKey: false,
+        isSubmitBlocked: true,
+        preventDefault: () => events.push("prevent"),
+        notifySubmitBlocked: () => events.push("blocked"),
+        submit: () => events.push("submit"),
+      }),
+      false,
+    );
+
+    assert.deepEqual(events, ["prevent", "blocked"]);
+  });
+
+  it("shortcut ではない場合は disabled / blocked 判定を遅延評価しない", () => {
+    const events: string[] = [];
+
+    assert.equal(
+      applyComposerSubmitKeyCommand({
+        key: "a",
+        ctrlKey: false,
+        metaKey: false,
+        isSubmitDisabled: () => {
+          events.push("disabled");
+          return false;
+        },
+        isSubmitBlocked: () => {
+          events.push("blocked");
+          return false;
+        },
+        preventDefault: () => events.push("prevent"),
+        submit: () => events.push("submit"),
+      }),
+      false,
+    );
+
+    assert.deepEqual(events, []);
   });
 });
 

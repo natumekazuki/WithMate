@@ -89,6 +89,40 @@ export function createTitleInputKeyHandler(input: {
   });
 }
 
+type MaybeLazyBoolean = boolean | (() => boolean);
+
+function resolveMaybeLazyBoolean(value: MaybeLazyBoolean | undefined): boolean {
+  return typeof value === "function" ? value() : value === true;
+}
+
+export function applyComposerSubmitKeyCommand(input: {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  preventDefault: () => void;
+  isSubmitDisabled?: MaybeLazyBoolean;
+  isSubmitBlocked?: MaybeLazyBoolean;
+  notifySubmitBlocked?: () => void;
+  submit: () => void;
+}): boolean {
+  if (
+    input.key !== "Enter" ||
+    (!input.ctrlKey && !input.metaKey) ||
+    resolveMaybeLazyBoolean(input.isSubmitDisabled)
+  ) {
+    return false;
+  }
+
+  input.preventDefault();
+  if (resolveMaybeLazyBoolean(input.isSubmitBlocked)) {
+    input.notifySubmitBlocked?.();
+    return false;
+  }
+
+  input.submit();
+  return true;
+}
+
 export function applyStartTitleEditCommand(input: {
   title: string;
   setTitleDraft: (title: string) => void;
