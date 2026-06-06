@@ -433,3 +433,24 @@ export async function runSessionFilesOpenCommand(input: {
     return false;
   }
 }
+
+export function createSessionFilesOpenHandler(input: {
+  getSessionId: () => string | null | undefined;
+  getOpenSessionFiles: () => ((sessionId: string) => Promise<void>) | null | undefined;
+  alertError: (message: string) => void;
+  fallbackErrorMessage: string;
+}): () => Promise<boolean> {
+  return async () => {
+    const openSessionFiles = input.getOpenSessionFiles();
+    if (!openSessionFiles) {
+      return false;
+    }
+
+    return runSessionFilesOpenCommand({
+      sessionId: input.getSessionId(),
+      openSessionFiles,
+      alertError: input.alertError,
+      fallbackErrorMessage: input.fallbackErrorMessage,
+    });
+  };
+}

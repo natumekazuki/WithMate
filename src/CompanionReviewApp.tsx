@@ -208,11 +208,11 @@ import {
   applyStartTitleEditCommand,
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
-  runSessionFilesOpenCommand,
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
   createHeaderExpandedToggleHandler,
+  createSessionFilesOpenHandler,
   createTitleInputKeyHandler,
 } from "./chat/session-shell-handlers.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
@@ -2712,31 +2712,29 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
   }
 
-  async function openCompanionSessionFilesDirectory(): Promise<void> {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-    await runSessionFilesOpenCommand({
-      sessionId: snapshot?.session.id,
-      openSessionFiles: (sessionId) => withmateApi.openSessionFilesDirectory(sessionId),
-      alertError: (message) => window.alert(message),
-      fallbackErrorMessage: "session files directory を開けなかったよ。",
-    });
-  }
+  const openCompanionSessionFilesDirectory = createSessionFilesOpenHandler({
+    getSessionId: () => snapshot?.session.id,
+    getOpenSessionFiles: () => {
+      const withmateApi = getWithMateApi();
+      return withmateApi
+        ? (sessionId) => withmateApi.openSessionFilesDirectory(sessionId)
+        : null;
+    },
+    alertError: (message) => window.alert(message),
+    fallbackErrorMessage: "session files directory を開けなかったよ。",
+  });
 
-  async function openCompanionSessionFilesTerminal(): Promise<void> {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-    await runSessionFilesOpenCommand({
-      sessionId: snapshot?.session.id,
-      openSessionFiles: (sessionId) => withmateApi.openSessionFilesTerminal(sessionId),
-      alertError: (message) => window.alert(message),
-      fallbackErrorMessage: "session files terminal を開けなかったよ。",
-    });
-  }
+  const openCompanionSessionFilesTerminal = createSessionFilesOpenHandler({
+    getSessionId: () => snapshot?.session.id,
+    getOpenSessionFiles: () => {
+      const withmateApi = getWithMateApi();
+      return withmateApi
+        ? (sessionId) => withmateApi.openSessionFilesTerminal(sessionId)
+        : null;
+    },
+    alertError: (message) => window.alert(message),
+    fallbackErrorMessage: "session files terminal を開けなかったよ。",
+  });
 
   async function openCompanionMergeWindow(): Promise<void> {
     const withmateApi = getWithMateApi();

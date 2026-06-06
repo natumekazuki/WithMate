@@ -200,11 +200,11 @@ import {
   applyStartTitleEditCommand,
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
-  runSessionFilesOpenCommand,
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
   createHeaderExpandedToggleHandler,
+  createSessionFilesOpenHandler,
   createTitleInputKeyHandler,
 } from "./chat/session-shell-handlers.js";
 
@@ -2763,31 +2763,23 @@ export default function AgentSessionWindowApp() {
     }
   };
 
-  const handleOpenSessionFilesTerminal = async () => {
-    if (!withmateApi) {
-      return;
-    }
+  const handleOpenSessionFilesTerminal = createSessionFilesOpenHandler({
+    getSessionId: () => selectedSession?.id,
+    getOpenSessionFiles: () => (
+      withmateApi ? (sessionId) => withmateApi.openSessionFilesTerminal(sessionId) : null
+    ),
+    alertError: (message) => window.alert(message),
+    fallbackErrorMessage: "session files terminal の起動に失敗したよ。",
+  });
 
-    await runSessionFilesOpenCommand({
-      sessionId: selectedSession?.id,
-      openSessionFiles: (sessionId) => withmateApi.openSessionFilesTerminal(sessionId),
-      alertError: (message) => window.alert(message),
-      fallbackErrorMessage: "session files terminal の起動に失敗したよ。",
-    });
-  };
-
-  const handleOpenSessionFilesExplorer = async () => {
-    if (!withmateApi) {
-      return;
-    }
-
-    await runSessionFilesOpenCommand({
-      sessionId: selectedSession?.id,
-      openSessionFiles: (sessionId) => withmateApi.openSessionFilesDirectory(sessionId),
-      alertError: (message) => window.alert(message),
-      fallbackErrorMessage: "session files directory を開けなかったよ。",
-    });
-  };
+  const handleOpenSessionFilesExplorer = createSessionFilesOpenHandler({
+    getSessionId: () => selectedSession?.id,
+    getOpenSessionFiles: () => (
+      withmateApi ? (sessionId) => withmateApi.openSessionFilesDirectory(sessionId) : null
+    ),
+    alertError: (message) => window.alert(message),
+    fallbackErrorMessage: "session files directory を開けなかったよ。",
+  });
 
   const handleJumpToActivityMonitorBottom = () => {
     setIsActivityMonitorFollowing(true);

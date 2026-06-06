@@ -30,6 +30,7 @@ import {
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
   createHeaderExpandedToggleHandler,
+  createSessionFilesOpenHandler,
   createTitleInputKeyHandler,
   resolveHeaderExpandedToggle,
   runSessionFilesOpenCommand,
@@ -906,5 +907,34 @@ describe("runSessionFilesOpenCommand", () => {
       "open:session-3",
       "alert:fallback",
     ]);
+  });
+});
+
+describe("createSessionFilesOpenHandler", () => {
+  it("session files open handler を作り、API がない場合は何もしない", async () => {
+    const events: string[] = [];
+    let openSessionFiles: ((sessionId: string) => Promise<void>) | null = null;
+    const openHandler = createSessionFilesOpenHandler({
+      getSessionId: () => "session-1",
+      getOpenSessionFiles: () => openSessionFiles,
+      alertError: (message) => events.push(`alert:${message}`),
+      fallbackErrorMessage: "fallback",
+    });
+
+    assert.equal(await openHandler(), false);
+    assert.deepEqual(events, []);
+
+    openSessionFiles = async (sessionId) => {
+      events.push(`open:${sessionId}`);
+    };
+    assert.equal(await openHandler(), true);
+    assert.deepEqual(events, ["open:session-1"]);
+
+    openSessionFiles = async (sessionId) => {
+      events.push(`open:${sessionId}`);
+      throw "failed";
+    };
+    assert.equal(await openHandler(), false);
+    assert.deepEqual(events, ["open:session-1", "open:session-1", "alert:fallback"]);
   });
 });
