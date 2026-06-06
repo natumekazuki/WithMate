@@ -189,7 +189,6 @@ import {
 } from "./auxiliary-additional-directory-operation.js";
 import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
 import {
-  applyAgentPickerCloseCommand,
   applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
@@ -204,6 +203,7 @@ import {
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
+  createAgentPickerCloseHandler,
   createAgentPickerToggleHandler,
   createCancelTitleEditHandler,
   createComposerSubmitKeyHandler,
@@ -1621,6 +1621,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
   }
 
+  const closeAgentPicker = createAgentPickerCloseHandler({
+    setAgentPickerOpen: setIsAgentPickerOpen,
+  });
+
   async function handleSelectCustomAgent(agent: DiscoveredCustomAgent | null): Promise<void> {
     if (!snapshot || snapshot.session.provider !== "copilot") {
       return;
@@ -1628,7 +1632,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     const nextCustomAgentName = agent?.name ?? "";
     if (nextCustomAgentName === snapshot.session.customAgentName) {
-      applyAgentPickerCloseCommand({ setAgentPickerOpen: setIsAgentPickerOpen });
+      closeAgentPicker();
       return;
     }
 
@@ -1637,7 +1641,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       customAgentName: nextCustomAgentName,
       updatedAt: currentTimestampLabel(),
     });
-    applyAgentPickerCloseCommand({ setAgentPickerOpen: setIsAgentPickerOpen });
+    closeAgentPicker();
   }
 
   async function handleChangeApproval(approvalMode: ApprovalMode): Promise<void> {
@@ -2009,14 +2013,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     const nextCustomAgentName = agent?.name ?? "";
     if (nextCustomAgentName === activeAuxiliarySession.customAgentName) {
-      applyAgentPickerCloseCommand({ setAgentPickerOpen: setIsAgentPickerOpen });
+      closeAgentPicker();
       return;
     }
 
     await updateActiveAuxiliarySession((current) => (
       applyAuxiliarySessionCustomAgentPatch(current, nextCustomAgentName, currentTimestampLabel())
     ));
-    applyAgentPickerCloseCommand({ setAgentPickerOpen: setIsAgentPickerOpen });
+    closeAgentPicker();
   }
 
   async function handleSelectAuxiliarySkill(skill: DiscoveredSkill): Promise<void> {

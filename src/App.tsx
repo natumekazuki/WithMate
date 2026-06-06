@@ -181,7 +181,6 @@ import {
 } from "./auxiliary-session-start-operation.js";
 import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
 import {
-  applyAgentPickerCloseCommand,
   applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
@@ -196,6 +195,7 @@ import {
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
+  createAgentPickerCloseHandler,
   createAgentPickerToggleHandler,
   createCancelTitleEditHandler,
   createComposerSubmitKeyHandler,
@@ -1831,6 +1831,10 @@ export default function AgentSessionWindowApp() {
     });
   };
 
+  const closeAgentPicker = createAgentPickerCloseHandler({
+    setAgentPickerOpen: setIsAgentPickerOpen,
+  });
+
   const handleSelectCustomAgent = async (agent: DiscoveredCustomAgent | null) => {
     if (!selectedSession || isSelectedSessionReadOnly || selectedSession.provider !== "copilot") {
       return;
@@ -1838,7 +1842,7 @@ export default function AgentSessionWindowApp() {
 
     const nextCustomAgentName = agent?.name ?? "";
     if (nextCustomAgentName === selectedSession.customAgentName) {
-      applyAgentPickerCloseCommand({ setAgentPickerOpen: setIsAgentPickerOpen });
+      closeAgentPicker();
       return;
     }
 
@@ -1849,7 +1853,7 @@ export default function AgentSessionWindowApp() {
     );
 
     await persistSession(nextSession);
-    applyAgentPickerCloseCommand({ setAgentPickerOpen: setIsAgentPickerOpen });
+    closeAgentPicker();
   };
 
   const persistSession = async (nextSession: Session) => {
@@ -2078,14 +2082,14 @@ export default function AgentSessionWindowApp() {
 
     const nextCustomAgentName = (agent?.name ?? "").trim();
     if (nextCustomAgentName === activeAuxiliarySession.customAgentName) {
-      applyAgentPickerCloseCommand({ setAgentPickerOpen: setIsAgentPickerOpen });
+      closeAgentPicker();
       return;
     }
 
     await updateActiveAuxiliarySession((current) => (
       applyAuxiliarySessionCustomAgentPatch(current, nextCustomAgentName, currentTimestampLabel())
     ));
-    applyAgentPickerCloseCommand({ setAgentPickerOpen: setIsAgentPickerOpen });
+    closeAgentPicker();
   };
 
   const handleSelectAuxiliarySkill = async (skill: DiscoveredSkill) => {

@@ -31,6 +31,7 @@ import {
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
+  createAgentPickerCloseHandler,
   createAgentPickerToggleHandler,
   createCancelTitleEditHandler,
   createComposerSubmitKeyHandler,
@@ -543,6 +544,21 @@ describe("applyAgentPickerCloseCommand", () => {
         values.push(open);
       },
     });
+
+    assert.deepEqual(values, [false]);
+  });
+});
+
+describe("createAgentPickerCloseHandler", () => {
+  it("agent picker close handler を作る", () => {
+    const values: boolean[] = [];
+    const closeAgentPicker = createAgentPickerCloseHandler({
+      setAgentPickerOpen: (open) => {
+        values.push(open);
+      },
+    });
+
+    closeAgentPicker();
 
     assert.deepEqual(values, [false]);
   });

@@ -300,6 +300,12 @@ export function applyAgentPickerCloseCommand(input: {
   input.setAgentPickerOpen(false);
 }
 
+export function createAgentPickerCloseHandler(input: {
+  setAgentPickerOpen: (open: boolean) => void;
+}): () => void {
+  return () => applyAgentPickerCloseCommand(input);
+}
+
 export function applySkillPickerToggleCommand(input: {
   setAgentPickerOpen: (updater: (current: boolean) => boolean) => void;
   setSkillPickerOpen: (updater: (current: boolean) => boolean) => void;
