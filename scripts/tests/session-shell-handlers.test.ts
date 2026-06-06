@@ -11,6 +11,7 @@ import {
   applyExpandedArtifactToggleCommand,
   applyExclusiveComposerPickerToggle,
   applyHeaderExpandedToggleCommand,
+  applyPathReferenceRemovalCommand,
   applyPickedComposerReferencePathCommand,
   applyQuoteMessageTextCommand,
   applySkillPromptInsertionUiState,
@@ -537,6 +538,26 @@ describe("applyWorkspacePathMatchSelectionCommand", () => {
       "matches:0:-1",
       "focus",
       "selection:17:17",
+    ]);
+  });
+});
+
+describe("applyPathReferenceRemovalCommand", () => {
+  it("path reference 削除後の draft と closed workspace match state を反映する", () => {
+    const events: string[] = [];
+
+    applyPathReferenceRemovalCommand({
+      draft: "確認 @src/App.tsx して",
+      attachmentPathCandidates: ["src/App.tsx"],
+      applyRemoval: (state) => {
+        events.push(`apply:${state.caret}:${state.draft}`);
+        events.push(`matches:${state.workspacePathMatches.length}:${state.activeWorkspacePathMatchIndex}`);
+      },
+    });
+
+    assert.deepEqual(events, [
+      "apply:5:確認 して",
+      "matches:0:-1",
     ]);
   });
 });

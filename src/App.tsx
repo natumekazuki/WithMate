@@ -89,7 +89,6 @@ import {
   buildAdditionalDirectoryItems,
   buildClosedWorkspacePathMatchState,
   buildComposerAttachmentItems,
-  buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildSelectedPathReferenceInsertionState,
   pickComposerReferencePath,
   type ComposerPathPickerKind,
@@ -193,6 +192,7 @@ import {
   applyActionDockExpandCommand,
   applyExpandedArtifactToggleCommand,
   applyHeaderExpandedToggleCommand,
+  applyPathReferenceRemovalCommand,
   applyPickedComposerReferencePathCommand,
   applyQuoteMessageTextCommand,
   applySkillPromptInsertionUiState,
@@ -2543,20 +2543,21 @@ export default function AgentSessionWindowApp() {
   const handleRemoveAttachmentReference = (attachmentPathCandidates: string[]) => {
     const targetAuxiliarySession = activeAuxiliarySession;
     const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
-    const nextState = buildPathReferenceRemovalWithClosedWorkspaceMatchesState(
-      currentDraft,
+    applyPathReferenceRemovalCommand({
+      draft: currentDraft,
       attachmentPathCandidates,
-    );
-    const { draft: nextDraft, caret: nextCaret } = nextState;
-
-    if (targetAuxiliarySession) {
-      void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-    } else {
-      setDraft(nextDraft);
-      mainComposerCaretRef.current = nextCaret;
-    }
-    setComposerCaret(nextCaret);
-    applyWorkspacePathMatchState(nextState);
+      applyRemoval: (nextState) => {
+        const { draft: nextDraft, caret: nextCaret } = nextState;
+        if (targetAuxiliarySession) {
+          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+        } else {
+          setDraft(nextDraft);
+          mainComposerCaretRef.current = nextCaret;
+        }
+        setComposerCaret(nextCaret);
+        applyWorkspacePathMatchState(nextState);
+      },
+    });
   };
 
   const pickAndInsertPath = async (kind: ComposerPathPickerKind) => {

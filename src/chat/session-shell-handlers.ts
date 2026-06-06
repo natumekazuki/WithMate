@@ -8,6 +8,7 @@ import {
 } from "../session-composer-selection.js";
 import { createQuotedMessageInsertionFromComposer } from "./message-text-actions.js";
 import {
+  buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildWorkspacePathMatchSelectionState,
   resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
@@ -254,4 +255,17 @@ export function applyWorkspacePathMatchSelectionCommand(input: {
   input.applySelection(nextState);
   input.restoreComposerTextareaFocusAndCaret(input.textarea, nextState.caret);
   return true;
+}
+
+export function applyPathReferenceRemovalCommand(input: {
+  draft: string;
+  attachmentPathCandidates: string[];
+  applyRemoval: (state: WorkspacePathMatchSelectionState) => void;
+}): void {
+  input.applyRemoval(
+    buildPathReferenceRemovalWithClosedWorkspaceMatchesState(
+      input.draft,
+      input.attachmentPathCandidates,
+    ),
+  );
 }

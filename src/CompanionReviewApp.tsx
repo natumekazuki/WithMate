@@ -123,7 +123,6 @@ import {
   buildAdditionalDirectoryItems,
   buildClosedWorkspacePathMatchState,
   buildComposerAttachmentItems,
-  buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildSelectedPathReferenceInsertionState,
   pickComposerReferencePath,
   type ComposerPathPickerKind,
@@ -201,6 +200,7 @@ import {
   applyActionDockExpandCommand,
   applyExpandedArtifactToggleCommand,
   applyHeaderExpandedToggleCommand,
+  applyPathReferenceRemovalCommand,
   applyPickedComposerReferencePathCommand,
   applyQuoteMessageTextCommand,
   applySkillPromptInsertionUiState,
@@ -1581,19 +1581,20 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   function handleRemoveAttachmentReference(attachmentPathCandidates: string[]): void {
-    const nextState = buildPathReferenceRemovalWithClosedWorkspaceMatchesState(
-      activeComposerText,
+    applyPathReferenceRemovalCommand({
+      draft: activeComposerText,
       attachmentPathCandidates,
-    );
-    const { draft: nextDraft, caret: nextCaret } = nextState;
-
-    setComposerCaret(nextCaret);
-    applyWorkspacePathMatchState(nextState);
-    if (activeAuxiliarySession) {
-      void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-    } else {
-      setComposerText(nextDraft);
-    }
+      applyRemoval: (nextState) => {
+        const { draft: nextDraft, caret: nextCaret } = nextState;
+        setComposerCaret(nextCaret);
+        applyWorkspacePathMatchState(nextState);
+        if (activeAuxiliarySession) {
+          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+        } else {
+          setComposerText(nextDraft);
+        }
+      },
+    });
   }
 
   function handleSelectSkill(skill: DiscoveredSkill): void {
