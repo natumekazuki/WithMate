@@ -15,6 +15,7 @@ import {
   buildSessionWithAddedAdditionalDirectory,
   buildSessionWithRemovedAdditionalDirectory,
   resolveAdditionalDirectoryPickerBase,
+  runPickedAdditionalDirectoryOperation,
 } from "./additional-directory-state.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import {
@@ -1517,26 +1518,30 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   });
 
   async function handleAddAdditionalDirectory(): Promise<void> {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !snapshot || isSelectedSessionRunning) {
-      return;
-    }
-
-    const selectedPath = await withmateApi.pickDirectory(
-      resolveAdditionalDirectoryPickerBase(pickerBaseDirectory, snapshot.session.worktreePath, snapshot.session.repoRoot),
-    );
-    if (!selectedPath) {
-      return;
-    }
-
-    const nextSession = buildSessionWithAddedAdditionalDirectory(snapshot.session, selectedPath);
-    await persistCompanionSession({
-      ...nextSession,
-      updatedAt: currentTimestampLabel(),
-    });
-    applyPickedAdditionalDirectoryUiStateCommand({
-      selectedPath,
-      setPickerBaseDirectory,
+    await runPickedAdditionalDirectoryOperation({
+      canPickDirectory: () => !!getWithMateApi() && !!snapshot && !isSelectedSessionRunning,
+      getPickerBaseDirectory: () => (
+        resolveAdditionalDirectoryPickerBase(
+          pickerBaseDirectory,
+          snapshot?.session.worktreePath,
+          snapshot?.session.repoRoot,
+        )
+      ),
+      pickDirectory: (baseDirectory) => getWithMateApi()?.pickDirectory(baseDirectory) ?? Promise.resolve(null),
+      applyPickedDirectory: async (selectedPath) => {
+        if (!snapshot) {
+          return;
+        }
+        const nextSession = buildSessionWithAddedAdditionalDirectory(snapshot.session, selectedPath);
+        await persistCompanionSession({
+          ...nextSession,
+          updatedAt: currentTimestampLabel(),
+        });
+        applyPickedAdditionalDirectoryUiStateCommand({
+          selectedPath,
+          setPickerBaseDirectory,
+        });
+      },
     });
   }
 

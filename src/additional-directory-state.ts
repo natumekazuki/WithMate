@@ -30,6 +30,25 @@ export function resolveAdditionalDirectoryPickerBase(
   )) ?? null;
 }
 
+export async function runPickedAdditionalDirectoryOperation(input: {
+  canPickDirectory: () => boolean;
+  getPickerBaseDirectory: () => string | null;
+  pickDirectory: (baseDirectory: string | null) => Promise<string | null>;
+  applyPickedDirectory: (selectedPath: string) => void | Promise<void>;
+}): Promise<string | null> {
+  if (!input.canPickDirectory()) {
+    return null;
+  }
+
+  const selectedPath = await input.pickDirectory(input.getPickerBaseDirectory());
+  if (!selectedPath) {
+    return null;
+  }
+
+  await input.applyPickedDirectory(selectedPath);
+  return selectedPath;
+}
+
 export function addAllowedAdditionalDirectory(
   directories: readonly string[] | null | undefined,
   directoryPath: string,

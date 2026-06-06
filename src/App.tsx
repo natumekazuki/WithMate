@@ -16,6 +16,7 @@ import {
   buildSessionWithAddedAdditionalDirectory,
   buildSessionWithRemovedAdditionalDirectory,
   resolveAdditionalDirectoryPickerBase,
+  runPickedAdditionalDirectoryOperation,
 } from "./additional-directory-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
@@ -2563,23 +2564,25 @@ export default function AgentSessionWindowApp() {
   });
 
   const handleAddAdditionalDirectory = async () => {
-    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly || selectedSession.runState === "running") {
-      return;
-    }
-
-    const selectedPath = await withmateApi.pickDirectory(
-      resolveAdditionalDirectoryPickerBase(pickerBaseDirectory, selectedSession.workspacePath),
-    );
-    if (!selectedPath) {
-      return;
-    }
-
-    const nextSession: Session = buildSessionWithAddedAdditionalDirectory(selectedSession, selectedPath);
-    applyPickedAdditionalDirectoryUiStateCommand({
-      selectedPath,
-      setPickerBaseDirectory,
+    await runPickedAdditionalDirectoryOperation({
+      canPickDirectory: () => !!withmateApi &&
+        !!selectedSession &&
+        !isSelectedSessionReadOnly &&
+        selectedSession.runState !== "running",
+      getPickerBaseDirectory: () => resolveAdditionalDirectoryPickerBase(pickerBaseDirectory, selectedSession?.workspacePath),
+      pickDirectory: (baseDirectory) => withmateApi?.pickDirectory(baseDirectory) ?? Promise.resolve(null),
+      applyPickedDirectory: async (selectedPath) => {
+        if (!selectedSession) {
+          return;
+        }
+        const nextSession: Session = buildSessionWithAddedAdditionalDirectory(selectedSession, selectedPath);
+        applyPickedAdditionalDirectoryUiStateCommand({
+          selectedPath,
+          setPickerBaseDirectory,
+        });
+        await persistSession(nextSession);
+      },
     });
-    await persistSession(nextSession);
   };
 
   const handleRemoveAdditionalDirectory = async (directoryPath: string) => {

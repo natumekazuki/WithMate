@@ -5,6 +5,7 @@ import {
   addAllowedAdditionalDirectory,
   removeAllowedAdditionalDirectory,
   resolveAdditionalDirectoryPickerBase,
+  runPickedAdditionalDirectoryOperation,
 } from "../additional-directory-state.js";
 import { DEFAULT_CODEX_SANDBOX_MODE, normalizeCodexSandboxMode, type CodexSandboxMode } from "../codex-sandbox-mode.js";
 import { restoreComposerTextareaFocusAndCaret } from "../composer-textarea-focus.js";
@@ -356,22 +357,20 @@ export function useMateTalkWindowState({
   });
 
   const addAdditionalDirectory = async () => {
-    if (!withmateApi || sending) {
-      return;
-    }
-
-    const selectedPath = await withmateApi.pickDirectory(resolveAdditionalDirectoryPickerBase(pickerBaseDirectory));
-    if (!selectedPath) {
-      return;
-    }
-
-    applyPickedAdditionalDirectoryUiStateCommand({
-      selectedPath,
-      setPickerBaseDirectory,
-      applyPickedDirectory: (directoryPath) => {
-        setAdditionalDirectories((current) => addAllowedAdditionalDirectory(current, directoryPath));
+    await runPickedAdditionalDirectoryOperation({
+      canPickDirectory: () => !!withmateApi && !sending,
+      getPickerBaseDirectory: () => resolveAdditionalDirectoryPickerBase(pickerBaseDirectory),
+      pickDirectory: (baseDirectory) => withmateApi?.pickDirectory(baseDirectory) ?? Promise.resolve(null),
+      applyPickedDirectory: (selectedPath) => {
+        applyPickedAdditionalDirectoryUiStateCommand({
+          selectedPath,
+          setPickerBaseDirectory,
+          applyPickedDirectory: (directoryPath) => {
+            setAdditionalDirectories((current) => addAllowedAdditionalDirectory(current, directoryPath));
+          },
+          setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
+        });
       },
-      setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
     });
   };
 

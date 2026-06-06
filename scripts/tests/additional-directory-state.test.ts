@@ -7,12 +7,63 @@ import {
   buildSessionWithRemovedAdditionalDirectory,
   removeAllowedAdditionalDirectory,
   resolveAdditionalDirectoryPickerBase,
+  runPickedAdditionalDirectoryOperation,
 } from "../../src/additional-directory-state.js";
 
 test("resolveAdditionalDirectoryPickerBase は最初の non-empty path を返す", () => {
   assert.equal(resolveAdditionalDirectoryPickerBase("C:/picked", "C:/workspace"), "C:/picked");
   assert.equal(resolveAdditionalDirectoryPickerBase("", "C:/workspace", "C:/fallback"), "C:/workspace");
   assert.equal(resolveAdditionalDirectoryPickerBase(null, undefined, ""), null);
+});
+
+test("runPickedAdditionalDirectoryOperation は選択 directory を callback に渡す", async () => {
+  const events: string[] = [];
+  const result = await runPickedAdditionalDirectoryOperation({
+    canPickDirectory: () => true,
+    getPickerBaseDirectory: () => "C:/workspace",
+    pickDirectory: async (baseDirectory) => {
+      events.push(`pick:${baseDirectory}`);
+      return "C:/workspace/assets";
+    },
+    applyPickedDirectory: async (selectedPath) => {
+      events.push(`apply:${selectedPath}`);
+    },
+  });
+
+  assert.equal(result, "C:/workspace/assets");
+  assert.deepEqual(events, ["pick:C:/workspace", "apply:C:/workspace/assets"]);
+});
+
+test("runPickedAdditionalDirectoryOperation は実行不可または picker cancel なら apply しない", async () => {
+  const blockedEvents: string[] = [];
+  const blockedResult = await runPickedAdditionalDirectoryOperation({
+    canPickDirectory: () => false,
+    getPickerBaseDirectory: () => "C:/workspace",
+    pickDirectory: async () => {
+      blockedEvents.push("pick");
+      return "C:/workspace/assets";
+    },
+    applyPickedDirectory: () => {
+      blockedEvents.push("apply");
+    },
+  });
+  assert.equal(blockedResult, null);
+  assert.deepEqual(blockedEvents, []);
+
+  const cancelEvents: string[] = [];
+  const cancelResult = await runPickedAdditionalDirectoryOperation({
+    canPickDirectory: () => true,
+    getPickerBaseDirectory: () => "C:/workspace",
+    pickDirectory: async () => {
+      cancelEvents.push("pick");
+      return null;
+    },
+    applyPickedDirectory: () => {
+      cancelEvents.push("apply");
+    },
+  });
+  assert.equal(cancelResult, null);
+  assert.deepEqual(cancelEvents, ["pick"]);
 });
 
 test("addAllowedAdditionalDirectory は directory を正規化して末尾へ追加し重複を避ける", () => {
