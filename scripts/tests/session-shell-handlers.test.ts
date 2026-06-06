@@ -41,6 +41,7 @@ import {
   createQuoteMessageTextHandler,
   createSessionFilesOpenHandler,
   createSkillPickerToggleHandler,
+  createSkillPromptInsertionHandler,
   createStartTitleEditHandler,
   createTitleInputKeyHandler,
   createWorkspacePathMatchSelectionHandler,
@@ -658,6 +659,58 @@ describe("applySkillPromptInsertionCommand", () => {
       "focus",
       "selection:8:8",
     ]);
+  });
+});
+
+describe("createSkillPromptInsertionHandler", () => {
+  it("skill prompt 挿入 handler を作り、provider がある場合だけ draft と UI state を反映する", () => {
+    const events: string[] = [];
+    const textarea = {
+      focus: () => events.push("focus"),
+      setSelectionRange: (start: number, end: number) => events.push(`selection:${start}:${end}`),
+    } as HTMLTextAreaElement;
+    const selectSkill = createSkillPromptInsertionHandler({
+      getProvider: () => "codex",
+      getDraft: () => "",
+      getTextarea: () => textarea,
+      setActionDockPinnedExpanded: (expanded) => events.push(`dock:${expanded}`),
+      setCaret: (caret) => events.push(`caret:${caret}`),
+      setSkillPickerOpen: (open) => events.push(`skill:${open}`),
+      applyDraft: (draft, caret) => events.push(`draft:${caret}:${draft}`),
+      restoreComposerTextareaFocusAndCaret: (targetTextarea, caret) => {
+        targetTextarea?.focus();
+        targetTextarea?.setSelectionRange(caret, caret);
+      },
+    });
+
+    selectSkill({ name: "review" });
+
+    assert.deepEqual(events, [
+      "dock:true",
+      "caret:8",
+      "skill:false",
+      "draft:8:$review\n",
+      "focus",
+      "selection:8:8",
+    ]);
+  });
+
+  it("provider がない場合は何もしない", () => {
+    const events: string[] = [];
+    const selectSkill = createSkillPromptInsertionHandler({
+      getProvider: () => null,
+      getDraft: () => "",
+      getTextarea: () => null,
+      setActionDockPinnedExpanded: (expanded) => events.push(`dock:${expanded}`),
+      setCaret: (caret) => events.push(`caret:${caret}`),
+      setSkillPickerOpen: (open) => events.push(`skill:${open}`),
+      applyDraft: (draft, caret) => events.push(`draft:${caret}:${draft}`),
+      restoreComposerTextareaFocusAndCaret: (_textarea, caret) => events.push(`focus:${caret}`),
+    });
+
+    selectSkill({ name: "review" });
+
+    assert.deepEqual(events, []);
   });
 });
 

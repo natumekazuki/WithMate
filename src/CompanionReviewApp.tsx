@@ -214,6 +214,7 @@ import {
   createQuoteMessageTextHandler,
   createSessionFilesOpenHandler,
   createSkillPickerToggleHandler,
+  createSkillPromptInsertionHandler,
   createStartTitleEditHandler,
   createTitleInputKeyHandler,
   createWorkspacePathMatchSelectionHandler,
@@ -1597,26 +1598,18 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
   }
 
-  function handleSelectSkill(skill: DiscoveredSkill): void {
-    const textarea = composerTextareaRef.current;
-    if (!snapshot) {
-      return;
-    }
-
-    const nextState = buildSkillPromptInsertionState(snapshot.session.provider, skill.name, composerText);
-
-    applySkillPromptInsertionCommand({
-      state: nextState,
-      textarea,
-      setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
-      setCaret: setComposerCaret,
-      setSkillPickerOpen: setIsSkillPickerOpen,
-      applyDraft: (nextDraft) => {
-        setComposerText(nextDraft);
-      },
-      restoreComposerTextareaFocusAndCaret,
-    });
-  }
+  const handleSelectSkill = createSkillPromptInsertionHandler<DiscoveredSkill>({
+    getProvider: () => snapshot?.session.provider,
+    getDraft: () => composerText,
+    getTextarea: () => composerTextareaRef.current,
+    setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+    setCaret: setComposerCaret,
+    setSkillPickerOpen: setIsSkillPickerOpen,
+    applyDraft: (nextDraft) => {
+      setComposerText(nextDraft);
+    },
+    restoreComposerTextareaFocusAndCaret,
+  });
 
   const closeAgentPicker = createAgentPickerCloseHandler({
     setAgentPickerOpen: setIsAgentPickerOpen,

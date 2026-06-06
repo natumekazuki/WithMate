@@ -4,6 +4,7 @@ import {
 } from "../action-dock-state.js";
 import {
   buildExclusiveComposerPickerToggleState,
+  buildSkillPromptInsertionState,
   type SkillPromptInsertionState,
 } from "../session-composer-selection.js";
 import { createQuotedMessageInsertionFromComposer } from "./message-text-actions.js";
@@ -355,6 +356,38 @@ export function applySkillPromptInsertionCommand(input: {
   });
   input.applyDraft(input.state.draft, input.state.caret);
   input.restoreComposerTextareaFocusAndCaret(input.textarea, input.state.caret);
+}
+
+export function createSkillPromptInsertionHandler<TSkill extends { name: string }>(input: {
+  getProvider: () => string | null | undefined;
+  getDraft: () => string;
+  getTextarea: () => HTMLTextAreaElement | null;
+  setActionDockPinnedExpanded: (expanded: boolean) => void;
+  setCaret: (caret: number) => void;
+  setSkillPickerOpen: (open: boolean) => void;
+  applyDraft: (draft: string, caret: number) => void;
+  restoreComposerTextareaFocusAndCaret: (
+    textarea: HTMLTextAreaElement | null,
+    caret: number,
+  ) => void;
+}): (skill: TSkill) => void {
+  return (skill) => {
+    const provider = input.getProvider();
+    if (provider == null) {
+      return;
+    }
+
+    const nextState = buildSkillPromptInsertionState(provider, skill.name, input.getDraft());
+    applySkillPromptInsertionCommand({
+      state: nextState,
+      textarea: input.getTextarea(),
+      setActionDockPinnedExpanded: input.setActionDockPinnedExpanded,
+      setCaret: input.setCaret,
+      setSkillPickerOpen: input.setSkillPickerOpen,
+      applyDraft: input.applyDraft,
+      restoreComposerTextareaFocusAndCaret: input.restoreComposerTextareaFocusAndCaret,
+    });
+  };
 }
 
 export function applyAdditionalDirectoryListToggle(input: {
