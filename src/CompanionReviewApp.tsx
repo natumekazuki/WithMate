@@ -166,6 +166,7 @@ import { buildCharacterThemeStyle } from "./theme-utils.js";
 import { fileKindLabel } from "./ui-utils.js";
 import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
 import {
+  buildComposerDraftKeyDownHandler,
   buildOnDraftCompositionHandlers,
   buildOnDraftSelectHandler,
 } from "./chat/composer-draft-handlers.js";
@@ -176,7 +177,6 @@ import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolu
 import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
 import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
-import { handleWorkspacePathMatchKeyboardNavigation } from "./chat/workspace-path-match-keyboard.js";
 import { collectPastedSessionAttachmentPaths } from "./chat/composer-paste-handlers.js";
 import {
   resolveAuxiliaryDraftSaveOperationResult,
@@ -2649,21 +2649,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     ),
   });
 
-  const handleCompanionDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (event) => {
-    if (handleWorkspacePathMatchKeyboardNavigation({
-      event,
-      pathMatches: workspacePathMatches,
-      activeIndex: activeWorkspacePathMatchIndex,
-      isComposerImeComposing,
-      onActiveIndexChange: setActiveWorkspacePathMatchIndex,
-      onWorkspacePathMatchStateChange: applyWorkspacePathMatchState,
-      onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
-    })) {
-      return;
-    }
-
-    handleCompanionSubmitKey(event);
-  };
+  const handleCompanionDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = buildComposerDraftKeyDownHandler({
+    pathMatches: workspacePathMatches,
+    activeIndex: activeWorkspacePathMatchIndex,
+    isComposerImeComposing,
+    onActiveIndexChange: setActiveWorkspacePathMatchIndex,
+    onWorkspacePathMatchStateChange: applyWorkspacePathMatchState,
+    onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
+    submit: handleCompanionSubmitKey,
+  });
 
   async function openCompanionWorktree(): Promise<void> {
     const withmateApi = getWithMateApi();

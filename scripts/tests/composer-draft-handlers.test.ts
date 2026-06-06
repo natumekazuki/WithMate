@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { KeyboardEvent } from "react";
 
 import {
+  buildComposerDraftKeyDownHandler,
   buildOnDraftCompositionHandlers,
   buildOnDraftCompositionEndHandler,
   buildOnDraftCompositionStartHandler,
@@ -116,4 +118,59 @@ test("buildOnDraftCompositionHandlers は start/end handler set を作る", () =
   assert.equal(state.isComposing, false);
   assert.equal(state.composerCaret, 9);
   assert.equal(state.mainCaret, 9);
+});
+
+test("buildComposerDraftKeyDownHandler は workspace path navigation が処理した場合 submit しない", () => {
+  const events: string[] = [];
+  let activeIndex = 0;
+  const event = {
+    key: "ArrowDown",
+    ctrlKey: false,
+    metaKey: false,
+    nativeEvent: { isComposing: false },
+    preventDefault: () => events.push("prevent"),
+  } as KeyboardEvent<HTMLTextAreaElement>;
+  const handler = buildComposerDraftKeyDownHandler({
+    pathMatches: [
+      { path: "src/App.tsx", kind: "file" },
+      { path: "src/CompanionReviewApp.tsx", kind: "file" },
+    ],
+    activeIndex,
+    isComposerImeComposing: false,
+    onActiveIndexChange: (updater) => {
+      activeIndex = typeof updater === "function" ? updater(activeIndex) : updater;
+      events.push(`active:${activeIndex}`);
+    },
+    onWorkspacePathMatchStateChange: () => events.push("match-state"),
+    onSelectWorkspacePathMatch: (match) => events.push(`select:${match}`),
+    submit: () => events.push("submit"),
+  });
+
+  handler(event);
+
+  assert.deepEqual(events, ["prevent", "active:1"]);
+});
+
+test("buildComposerDraftKeyDownHandler は workspace path navigation が未処理なら submit へ委譲する", () => {
+  const events: string[] = [];
+  const event = {
+    key: "Enter",
+    ctrlKey: true,
+    metaKey: false,
+    nativeEvent: { isComposing: false },
+    preventDefault: () => events.push("prevent"),
+  } as KeyboardEvent<HTMLTextAreaElement>;
+  const handler = buildComposerDraftKeyDownHandler({
+    pathMatches: [],
+    activeIndex: 0,
+    isComposerImeComposing: false,
+    onActiveIndexChange: () => events.push("active"),
+    onWorkspacePathMatchStateChange: () => events.push("match-state"),
+    onSelectWorkspacePathMatch: (match) => events.push(`select:${match}`),
+    submit: (event) => events.push(`submit:${event.key}:${event.ctrlKey}`),
+  });
+
+  handler(event);
+
+  assert.deepEqual(events, ["submit:Enter:true"]);
 });

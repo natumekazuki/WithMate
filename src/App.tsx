@@ -96,6 +96,7 @@ import {
   type ComposerPathPickerKind,
 } from "./session-composer-paths.js";
 import {
+  buildComposerDraftKeyDownHandler,
   buildOnDraftCompositionHandlers,
   buildOnDraftSelectHandler,
 } from "./chat/composer-draft-handlers.js";
@@ -132,7 +133,6 @@ import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolu
 import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
 import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
-import { handleWorkspacePathMatchKeyboardNavigation } from "./chat/workspace-path-match-keyboard.js";
 import { collectPastedSessionAttachmentPaths } from "./chat/composer-paste-handlers.js";
 import {
   resolveOwnedProviderQuotaTelemetry,
@@ -1775,21 +1775,15 @@ export default function AgentSessionWindowApp() {
     submit: () => void handleSend(),
   });
 
-  const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (handleWorkspacePathMatchKeyboardNavigation({
-      event,
-      pathMatches: workspacePathMatches,
-      activeIndex: activeWorkspacePathMatchIndex,
-      isComposerImeComposing,
-      onActiveIndexChange: setActiveWorkspacePathMatchIndex,
-      onWorkspacePathMatchStateChange: applyWorkspacePathMatchState,
-      onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
-    })) {
-      return;
-    }
-
-    handleComposerSubmitKey(event);
-  };
+  const handleComposerKeyDown = buildComposerDraftKeyDownHandler({
+    pathMatches: workspacePathMatches,
+    activeIndex: activeWorkspacePathMatchIndex,
+    isComposerImeComposing,
+    onActiveIndexChange: setActiveWorkspacePathMatchIndex,
+    onWorkspacePathMatchStateChange: applyWorkspacePathMatchState,
+    onSelectWorkspacePathMatch: (match) => handleSelectWorkspacePathMatch(match),
+    submit: handleComposerSubmitKey,
+  });
 
   const handleSelectWorkspacePathMatch = (match: string) => {
     applyWorkspacePathMatchSelectionCommand({
