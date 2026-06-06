@@ -29,7 +29,7 @@ import type { WithMateWindowApi } from "../withmate-window-api.js";
 import {
   createCopyMessageTextHandler,
 } from "./message-text-actions.js";
-import { collectPastedSessionAttachmentPaths } from "./composer-paste-handlers.js";
+import { createPastedSessionAttachmentHandler } from "./composer-paste-handlers.js";
 import { buildOnDraftSelectHandler } from "./composer-draft-handlers.js";
 import type { MateTalkMessage } from "./mate-talk-chat-projection.js";
 import {
@@ -44,7 +44,6 @@ import {
 import {
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
-  applyPastedSessionAttachmentPathsCommand,
   applySelectedPathReferenceInsertionCommand,
   applySessionFilesReferencePathsCommand,
   createActionDockCollapseHandler,
@@ -309,23 +308,15 @@ export function useMateTalkWindowState({
     });
   };
 
-  const handleDraftPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!withmateApi || sending) {
-      return;
-    }
-
-    const savedPaths = await collectPastedSessionAttachmentPaths({
-      clipboardData: event.clipboardData,
-      currentTimestampLabel,
-      preventDefault: () => event.preventDefault(),
-      savePastedSessionFile: (request) => withmateApi.savePastedSessionFile(request),
-      sessionId: sessionFilesSessionIdRef.current,
-    });
-    applyPastedSessionAttachmentPathsCommand({
-      savedPaths,
-      insertReferencePaths: (referencePaths) => insertReferencePaths(referencePaths, "file"),
-    });
-  };
+  const handleDraftPaste = createPastedSessionAttachmentHandler({
+    canPaste: () => !!withmateApi && !sending,
+    currentTimestampLabel,
+    getSavePastedSessionFile: () => {
+      return withmateApi ? (request) => withmateApi.savePastedSessionFile(request) : null;
+    },
+    getSessionId: () => sessionFilesSessionIdRef.current,
+    insertReferencePaths: (referencePaths) => insertReferencePaths(referencePaths, "file"),
+  });
 
   const openSessionFilesDirectory = createSessionFilesOpenHandler({
     getSessionId: () => sessionFilesSessionIdRef.current,

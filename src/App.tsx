@@ -133,7 +133,7 @@ import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolu
 import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
 import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
-import { collectPastedSessionAttachmentPaths } from "./chat/composer-paste-handlers.js";
+import { createPastedSessionAttachmentHandler } from "./chat/composer-paste-handlers.js";
 import {
   resolveOwnedProviderQuotaTelemetry,
   resolveOwnedSessionContextTelemetry,
@@ -186,7 +186,6 @@ import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-opera
 import {
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
-  applyPastedSessionAttachmentPathsCommand,
   applySelectedPathReferenceInsertionCommand,
   applySkillPromptInsertionCommand,
   applySessionFilesReferencePathsCommand,
@@ -2542,29 +2541,23 @@ export default function AgentSessionWindowApp() {
     });
   };
 
-  const handleComposerPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const targetAuxiliarySession = activeAuxiliarySession;
-    if (
-      !withmateApi ||
-      !selectedSession ||
-      isSelectedSessionReadOnly ||
-      (targetAuxiliarySession ? targetAuxiliarySession.runState === "running" : selectedSession.runState === "running")
-    ) {
-      return;
-    }
-
-    const savedPaths = await collectPastedSessionAttachmentPaths({
-      clipboardData: event.clipboardData,
-      currentTimestampLabel,
-      preventDefault: () => event.preventDefault(),
-      savePastedSessionFile: (request) => withmateApi.savePastedSessionFile(request),
-      sessionId: selectedSession.id,
-    });
-    applyPastedSessionAttachmentPathsCommand({
-      savedPaths,
-      insertReferencePaths,
-    });
-  };
+  const handleComposerPaste = createPastedSessionAttachmentHandler({
+    canPaste: () => {
+      const targetAuxiliarySession = activeAuxiliarySession;
+      return !!withmateApi &&
+        !!selectedSession &&
+        !isSelectedSessionReadOnly &&
+        !(targetAuxiliarySession
+          ? targetAuxiliarySession.runState === "running"
+          : selectedSession.runState === "running");
+    },
+    currentTimestampLabel,
+    getSavePastedSessionFile: () => {
+      return withmateApi ? (request) => withmateApi.savePastedSessionFile(request) : null;
+    },
+    getSessionId: () => selectedSession?.id,
+    insertReferencePaths,
+  });
 
   const handleAddAdditionalDirectory = async () => {
     if (!withmateApi || !selectedSession || isSelectedSessionReadOnly || selectedSession.runState === "running") {

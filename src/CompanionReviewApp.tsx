@@ -177,7 +177,7 @@ import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolu
 import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
 import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
-import { collectPastedSessionAttachmentPaths } from "./chat/composer-paste-handlers.js";
+import { createPastedSessionAttachmentHandler } from "./chat/composer-paste-handlers.js";
 import {
   resolveAuxiliaryDraftSaveOperationResult,
   scheduleAuxiliaryDraftSaveOperation,
@@ -194,7 +194,6 @@ import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-re
 import {
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
-  applyPastedSessionAttachmentPathsCommand,
   applySelectedPathReferenceInsertionCommand,
   applySkillPromptInsertionCommand,
   applySessionFilesReferencePathsCommand,
@@ -1503,24 +1502,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
   }
 
-  async function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>): Promise<void> {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !snapshot || runDisabled) {
-      return;
-    }
-
-    const savedPaths = await collectPastedSessionAttachmentPaths({
-      clipboardData: event.clipboardData,
-      currentTimestampLabel,
-      preventDefault: () => event.preventDefault(),
-      savePastedSessionFile: (request) => withmateApi.savePastedSessionFile(request),
-      sessionId: snapshot.session.id,
-    });
-    applyPastedSessionAttachmentPathsCommand({
-      savedPaths,
-      insertReferencePaths,
-    });
-  }
+  const handleComposerPaste = createPastedSessionAttachmentHandler({
+    canPaste: () => !!getWithMateApi() && !!snapshot && !runDisabled,
+    currentTimestampLabel,
+    getSavePastedSessionFile: () => {
+      const withmateApi = getWithMateApi();
+      return withmateApi ? (request) => withmateApi.savePastedSessionFile(request) : null;
+    },
+    getSessionId: () => snapshot?.session.id,
+    insertReferencePaths,
+  });
 
   async function handleAddAdditionalDirectory(): Promise<void> {
     const withmateApi = getWithMateApi();

@@ -12,6 +12,11 @@ export type PastedSessionFileClipboardData = {
   items: ArrayLike<PastedClipboardFileItem> | Iterable<PastedClipboardFileItem>;
 };
 
+export type PastedSessionAttachmentEvent = {
+  clipboardData: PastedSessionFileClipboardData;
+  preventDefault(): void;
+};
+
 export function collectPastedClipboardFiles(
   clipboardData: PastedSessionFileClipboardData,
 ): PastedClipboardFile[] {
@@ -52,4 +57,38 @@ export async function collectPastedSessionAttachmentPaths(input: {
   }
 
   return savedPaths;
+}
+
+export function createPastedSessionAttachmentHandler(input: {
+  canPaste: () => boolean;
+  currentTimestampLabel: () => string;
+  getSavePastedSessionFile: () => WithMateWindowPickerApi["savePastedSessionFile"] | null;
+  getSessionId: () => string | null | undefined;
+  insertReferencePaths: (referencePaths: string[]) => void;
+}): (event: PastedSessionAttachmentEvent) => Promise<boolean> {
+  return async (event) => {
+    if (!input.canPaste()) {
+      return false;
+    }
+
+    const savePastedSessionFile = input.getSavePastedSessionFile();
+    const sessionId = input.getSessionId();
+    if (!savePastedSessionFile || !sessionId) {
+      return false;
+    }
+
+    const savedPaths = await collectPastedSessionAttachmentPaths({
+      clipboardData: event.clipboardData,
+      currentTimestampLabel: input.currentTimestampLabel,
+      preventDefault: () => event.preventDefault(),
+      savePastedSessionFile,
+      sessionId,
+    });
+    if (savedPaths.length === 0) {
+      return false;
+    }
+
+    input.insertReferencePaths(savedPaths);
+    return true;
+  };
 }

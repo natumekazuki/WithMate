@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   collectPastedClipboardFiles,
   collectPastedSessionAttachmentPaths,
+  createPastedSessionAttachmentHandler,
   type PastedClipboardFile,
   type PastedClipboardFileItem,
 } from "../../src/chat/composer-paste-handlers.js";
@@ -141,4 +142,81 @@ test("collectPastedSessionAttachmentPaths は file がなければ preventDefaul
   assert.equal(prevented, false);
   assert.equal(saved, false);
   assert.deepEqual(savedPaths, []);
+});
+
+test("createPastedSessionAttachmentHandler は item file paste を保存して挿入する", async () => {
+  const itemFile = createPastedFile("from-items.png", "items");
+  const fileItem: PastedClipboardFileItem = {
+    kind: "file",
+    getAsFile: () => itemFile,
+  };
+  const saved: Array<{ sessionId: string; fileName: string; dataText: string }> = [];
+  const insertedPaths: string[][] = [];
+  let prevented = false;
+
+  const handlePaste = createPastedSessionAttachmentHandler({
+    canPaste: () => true,
+    currentTimestampLabel: () => "unused",
+    getSavePastedSessionFile: () => async ({ sessionId, fileName, data }) => {
+      saved.push({
+        sessionId,
+        fileName,
+        dataText: new TextDecoder().decode(data),
+      });
+      return `session-files/${fileName}`;
+    },
+    getSessionId: () => "session-3",
+    insertReferencePaths: (referencePaths) => {
+      insertedPaths.push(referencePaths);
+    },
+  });
+
+  const handled = await handlePaste({
+    clipboardData: {
+      files: [],
+      items: [fileItem],
+    },
+    preventDefault: () => {
+      prevented = true;
+    },
+  });
+
+  assert.equal(handled, true);
+  assert.equal(prevented, true);
+  assert.deepEqual(saved, [
+    { sessionId: "session-3", fileName: "from-items.png", dataText: "items" },
+  ]);
+  assert.deepEqual(insertedPaths, [["session-files/from-items.png"]]);
+});
+
+test("createPastedSessionAttachmentHandler は paste 不可なら保存も挿入も行わない", async () => {
+  const file = createPastedFile("ignored.png", "ignored");
+  let prevented = false;
+  let saved = false;
+  let inserted = false;
+
+  const handlePaste = createPastedSessionAttachmentHandler({
+    canPaste: () => false,
+    currentTimestampLabel: () => "unused",
+    getSavePastedSessionFile: () => async () => {
+      saved = true;
+      return "unused";
+    },
+    getSessionId: () => "session-4",
+    insertReferencePaths: () => {
+      inserted = true;
+    },
+  });
+
+  const handled = await handlePaste({
+    clipboardData: { files: [file], items: [] },
+    preventDefault: () => {
+      prevented = true;
+    },
+  });
+
+  assert.equal(handled, false);
+  assert.equal(prevented, false);
+  assert.equal(saved, false);
+  assert.equal(inserted, false);
 });
