@@ -198,7 +198,6 @@ import {
   applyActionDockExpandCommand,
   applyExpandedArtifactToggleCommand,
   applyAgentPickerCloseCommand,
-  applyHeaderExpandedToggleCommand,
   applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
@@ -214,6 +213,7 @@ import {
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
   runSessionFilesOpenCommand,
+  createHeaderExpandedToggleHandler,
 } from "./chat/session-shell-handlers.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
@@ -2125,19 +2125,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
   };
 
-  function handleToggleHeaderExpanded(): void {
-    applyHeaderExpandedToggleCommand({
-      isEditingTitle,
-      setHeaderExpanded: setIsHeaderExpanded,
-    });
-  }
+  const handleToggleHeaderExpanded = createHeaderExpandedToggleHandler({
+    isEditingTitle,
+    setHeaderExpanded: setIsHeaderExpanded,
+  });
 
-  function handleToggleContextPaneHeaderExpanded(): void {
-    applyHeaderExpandedToggleCommand({
-      isEditingTitle: false,
-      setHeaderExpanded: setIsHeaderExpanded,
-    });
-  }
+  const handleToggleContextPaneHeaderExpanded = createHeaderExpandedToggleHandler({
+    isEditingTitle: false,
+    setHeaderExpanded: setIsHeaderExpanded,
+  });
 
   function handleExpandActionDock(options?: { focusComposer?: boolean }): void {
     applyActionDockExpandCommand({

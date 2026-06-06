@@ -46,12 +46,12 @@ import {
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
   applyAdditionalDirectoryListToggle,
-  applyHeaderExpandedToggleCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyPastedSessionAttachmentPathsCommand,
   applyQuoteMessageTextCommand,
   applySessionFilesReferencePathsCommand,
+  createHeaderExpandedToggleHandler,
 } from "./session-shell-handlers.js";
 
 function getMateTalkLaunchParams(): { providerId: string; model: string; reasoningEffort: ModelReasoningEffort } {
@@ -536,7 +536,7 @@ export function useMateTalkWindowState({
     onChangeModel: handleChangeModel,
     onChangeReasoningEffort: handleChangeReasoningEffort,
     onSubmit: () => void handleSubmit(),
-    onToggleHeaderExpanded: () => applyHeaderExpandedToggleCommand({
+    onToggleHeaderExpanded: createHeaderExpandedToggleHandler({
       isEditingTitle: false,
       setHeaderExpanded: setIsHeaderExpanded,
     }),

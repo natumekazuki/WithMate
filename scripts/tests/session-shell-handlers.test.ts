@@ -26,6 +26,7 @@ import {
   applyTitleInputKeyCommand,
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
+  createHeaderExpandedToggleHandler,
   resolveHeaderExpandedToggle,
   runSessionFilesOpenCommand,
   toggleExpandedArtifactState,
@@ -87,6 +88,30 @@ describe("applyHeaderExpandedToggleCommand", () => {
         expanded = updater(expanded);
       },
     });
+    assert.equal(expanded, true);
+  });
+});
+
+describe("createHeaderExpandedToggleHandler", () => {
+  it("header 展開 toggle handler を作る", () => {
+    let expanded = false;
+
+    const toggleHeader = createHeaderExpandedToggleHandler({
+      isEditingTitle: false,
+      setHeaderExpanded: (updater) => {
+        expanded = updater(expanded);
+      },
+    });
+    toggleHeader();
+    assert.equal(expanded, true);
+
+    const editingToggle = createHeaderExpandedToggleHandler({
+      isEditingTitle: true,
+      setHeaderExpanded: (updater) => {
+        expanded = updater(expanded);
+      },
+    });
+    editingToggle();
     assert.equal(expanded, true);
   });
 });

@@ -190,7 +190,6 @@ import {
   applyActionDockExpandCommand,
   applyExpandedArtifactToggleCommand,
   applyAgentPickerCloseCommand,
-  applyHeaderExpandedToggleCommand,
   applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
@@ -206,6 +205,7 @@ import {
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
   runSessionFilesOpenCommand,
+  createHeaderExpandedToggleHandler,
 } from "./chat/session-shell-handlers.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
@@ -2179,12 +2179,10 @@ export default function AgentSessionWindowApp() {
     window.close();
   };
 
-  const handleToggleHeaderExpanded = () => {
-    applyHeaderExpandedToggleCommand({
-      isEditingTitle,
-      setHeaderExpanded: setIsHeaderExpanded,
-    });
-  };
+  const handleToggleHeaderExpanded = createHeaderExpandedToggleHandler({
+    isEditingTitle,
+    setHeaderExpanded: setIsHeaderExpanded,
+  });
 
   const handleExpandActionDock = (options?: { focusComposer?: boolean }) => {
     applyActionDockExpandCommand({
