@@ -91,7 +91,6 @@ import {
   buildComposerAttachmentItems,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildSelectedPathReferenceInsertionState,
-  buildWorkspacePathMatchSelectionState,
   pickComposerReferencePath,
   type ComposerPathPickerKind,
   toDirectoryPath,
@@ -201,6 +200,7 @@ import {
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
   applyUnavailableContextPaneTabFallbackCommand,
+  applyWorkspacePathMatchSelectionCommand,
 } from "./chat/session-shell-handlers.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
@@ -1785,31 +1785,24 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleSelectWorkspacePathMatch = (match: string) => {
-    const textarea = composerTextareaRef.current;
-    if (!textarea) {
-      return;
-    }
-
-    const nextState = buildWorkspacePathMatchSelectionState(
-      activeComposerDraft,
-      composerCaret,
+    applyWorkspacePathMatchSelectionCommand({
+      draft: activeComposerDraft,
+      caret: composerCaret,
       match,
-    );
-    if (!nextState) {
-      return;
-    }
-
-    const { draft: nextDraft, caret: nextCaret } = nextState;
-    setComposerCaret(nextCaret);
-    if (activeAuxiliarySession) {
-      void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-    } else {
-      setDraft(nextDraft);
-      mainComposerCaretRef.current = nextCaret;
-    }
-    applyWorkspacePathMatchState(nextState);
-
-    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
+      textarea: composerTextareaRef.current,
+      applySelection: (nextState) => {
+        const { draft: nextDraft, caret: nextCaret } = nextState;
+        setComposerCaret(nextCaret);
+        if (activeAuxiliarySession) {
+          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+        } else {
+          setDraft(nextDraft);
+          mainComposerCaretRef.current = nextCaret;
+        }
+        applyWorkspacePathMatchState(nextState);
+      },
+      restoreComposerTextareaFocusAndCaret,
+    });
   };
 
   const handleSelectSkill = (skill: DiscoveredSkill) => {

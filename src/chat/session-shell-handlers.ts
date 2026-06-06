@@ -8,8 +8,10 @@ import {
 } from "../session-composer-selection.js";
 import { createQuotedMessageInsertionFromComposer } from "./message-text-actions.js";
 import {
+  buildWorkspacePathMatchSelectionState,
   resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
+  type WorkspacePathMatchSelectionState,
 } from "../session-composer-paths.js";
 import {
   cycleContextPaneTab,
@@ -226,5 +228,30 @@ export function applyQuoteMessageTextCommand(input: {
 
   input.applyInsertion(insertion);
   input.restoreComposerTextareaFocusAndCaret(input.textarea, insertion.caret);
+  return true;
+}
+
+export function applyWorkspacePathMatchSelectionCommand(input: {
+  draft: string;
+  caret: number;
+  match: string;
+  textarea: HTMLTextAreaElement | null;
+  applySelection: (state: WorkspacePathMatchSelectionState) => void;
+  restoreComposerTextareaFocusAndCaret: (
+    textarea: HTMLTextAreaElement | null,
+    caret: number,
+  ) => void;
+}): boolean {
+  if (!input.textarea) {
+    return false;
+  }
+
+  const nextState = buildWorkspacePathMatchSelectionState(input.draft, input.caret, input.match);
+  if (!nextState) {
+    return false;
+  }
+
+  input.applySelection(nextState);
+  input.restoreComposerTextareaFocusAndCaret(input.textarea, nextState.caret);
   return true;
 }

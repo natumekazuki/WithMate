@@ -125,7 +125,6 @@ import {
   buildComposerAttachmentItems,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildSelectedPathReferenceInsertionState,
-  buildWorkspacePathMatchSelectionState,
   pickComposerReferencePath,
   type ComposerPathPickerKind,
   toDirectoryPath,
@@ -209,6 +208,7 @@ import {
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
   applyUnavailableContextPaneTabFallbackCommand,
+  applyWorkspacePathMatchSelectionCommand,
 } from "./chat/session-shell-handlers.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
@@ -1561,30 +1561,23 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   function handleSelectWorkspacePathMatch(match: string): void {
-    const textarea = composerTextareaRef.current;
-    if (!textarea) {
-      return;
-    }
-
-    const nextState = buildWorkspacePathMatchSelectionState(
-      activeComposerText,
-      composerCaret,
+    applyWorkspacePathMatchSelectionCommand({
+      draft: activeComposerText,
+      caret: composerCaret,
       match,
-    );
-    if (!nextState) {
-      return;
-    }
-
-    const { draft: nextDraft, caret: nextCaret } = nextState;
-    setComposerCaret(nextCaret);
-    applyWorkspacePathMatchState(nextState);
-    if (activeAuxiliarySession) {
-      void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-    } else {
-      setComposerText(nextDraft);
-    }
-
-    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
+      textarea: composerTextareaRef.current,
+      applySelection: (nextState) => {
+        const { draft: nextDraft, caret: nextCaret } = nextState;
+        setComposerCaret(nextCaret);
+        applyWorkspacePathMatchState(nextState);
+        if (activeAuxiliarySession) {
+          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+        } else {
+          setComposerText(nextDraft);
+        }
+      },
+      restoreComposerTextareaFocusAndCaret,
+    });
   }
 
   function handleRemoveAttachmentReference(attachmentPathCandidates: string[]): void {

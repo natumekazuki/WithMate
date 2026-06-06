@@ -18,6 +18,7 @@ import {
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
   applyUnavailableContextPaneTabFallbackCommand,
+  applyWorkspacePathMatchSelectionCommand,
   resolveHeaderExpandedToggle,
   toggleExpandedArtifactState,
 } from "../../src/chat/session-shell-handlers.js";
@@ -472,6 +473,70 @@ describe("applyQuoteMessageTextCommand", () => {
       "apply:25:hello\n\n> quoted\n> text\n\n\n world",
       "focus",
       "selection:25:25",
+    ]);
+  });
+});
+
+describe("applyWorkspacePathMatchSelectionCommand", () => {
+  it("textarea や active path reference がない場合は何もせず、選択できる場合は state 反映後に focus と caret を復元する", () => {
+    const events: string[] = [];
+    const textarea = {
+      selectionStart: "open @src".length,
+      focus: () => events.push("focus"),
+      setSelectionRange: (start: number, end: number) => events.push(`selection:${start}:${end}`),
+    } as HTMLTextAreaElement;
+    const runCommand = (input: {
+      draft: string;
+      caret: number;
+      match: string;
+      textarea: HTMLTextAreaElement | null;
+    }) =>
+      applyWorkspacePathMatchSelectionCommand({
+        ...input,
+        applySelection: (state) => {
+          events.push(`apply:${state.caret}:${state.draft}`);
+          events.push(`matches:${state.workspacePathMatches.length}:${state.activeWorkspacePathMatchIndex}`);
+        },
+        restoreComposerTextareaFocusAndCaret: (textarea, caret) => {
+          textarea?.focus();
+          textarea?.setSelectionRange(caret, caret);
+        },
+      });
+
+    assert.equal(
+      runCommand({
+        draft: "open @src",
+        caret: "open @src".length,
+        match: "src/App.tsx",
+        textarea: null,
+      }),
+      false,
+    );
+    assert.equal(
+      runCommand({
+        draft: "open src",
+        caret: "open src".length,
+        match: "src/App.tsx",
+        textarea,
+      }),
+      false,
+    );
+    assert.deepEqual(events, []);
+
+    assert.equal(
+      runCommand({
+        draft: "open @src",
+        caret: "open @src".length,
+        match: "src/App.tsx",
+        textarea,
+      }),
+      true,
+    );
+    assert.deepEqual(events, [
+      "apply:17:open @src/App.tsx",
+      "matches:0:-1",
+      "focus",
+      "selection:17:17",
     ]);
   });
 });
