@@ -212,6 +212,7 @@ import {
   applyTitleInputKeyCommand,
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
+  runSessionFilesOpenCommand,
 } from "./chat/session-shell-handlers.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
@@ -2727,26 +2728,28 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   async function openCompanionSessionFilesDirectory(): Promise<void> {
     const withmateApi = getWithMateApi();
-    if (!snapshot || !withmateApi) {
+    if (!withmateApi) {
       return;
     }
-    try {
-      await withmateApi.openSessionFilesDirectory(snapshot.session.id);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "session files directory を開けなかったよ。");
-    }
+    await runSessionFilesOpenCommand({
+      sessionId: snapshot?.session.id,
+      openSessionFiles: (sessionId) => withmateApi.openSessionFilesDirectory(sessionId),
+      alertError: (message) => window.alert(message),
+      fallbackErrorMessage: "session files directory を開けなかったよ。",
+    });
   }
 
   async function openCompanionSessionFilesTerminal(): Promise<void> {
     const withmateApi = getWithMateApi();
-    if (!snapshot || !withmateApi) {
+    if (!withmateApi) {
       return;
     }
-    try {
-      await withmateApi.openSessionFilesTerminal(snapshot.session.id);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "session files terminal を開けなかったよ。");
-    }
+    await runSessionFilesOpenCommand({
+      sessionId: snapshot?.session.id,
+      openSessionFiles: (sessionId) => withmateApi.openSessionFilesTerminal(sessionId),
+      alertError: (message) => window.alert(message),
+      fallbackErrorMessage: "session files terminal を開けなかったよ。",
+    });
   }
 
   async function openCompanionMergeWindow(): Promise<void> {

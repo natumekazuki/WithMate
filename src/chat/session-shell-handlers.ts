@@ -364,3 +364,22 @@ export function applyPastedSessionAttachmentPathsCommand(input: {
   input.insertReferencePaths(input.savedPaths);
   return true;
 }
+
+export async function runSessionFilesOpenCommand(input: {
+  sessionId: string | null | undefined;
+  openSessionFiles: (sessionId: string) => Promise<void>;
+  alertError: (message: string) => void;
+  fallbackErrorMessage: string;
+}): Promise<boolean> {
+  if (input.sessionId == null) {
+    return false;
+  }
+
+  try {
+    await input.openSessionFiles(input.sessionId);
+    return true;
+  } catch (error) {
+    input.alertError(error instanceof Error ? error.message : input.fallbackErrorMessage);
+    return false;
+  }
+}

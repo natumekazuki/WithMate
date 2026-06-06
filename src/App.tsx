@@ -204,6 +204,7 @@ import {
   applyTitleInputKeyCommand,
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
+  runSessionFilesOpenCommand,
 } from "./chat/session-shell-handlers.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
@@ -2775,27 +2776,29 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleOpenSessionFilesTerminal = async () => {
-    if (!withmateApi || !selectedSession) {
+    if (!withmateApi) {
       return;
     }
 
-    try {
-      await withmateApi.openSessionFilesTerminal(selectedSession.id);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "session files terminal の起動に失敗したよ。");
-    }
+    await runSessionFilesOpenCommand({
+      sessionId: selectedSession?.id,
+      openSessionFiles: (sessionId) => withmateApi.openSessionFilesTerminal(sessionId),
+      alertError: (message) => window.alert(message),
+      fallbackErrorMessage: "session files terminal の起動に失敗したよ。",
+    });
   };
 
   const handleOpenSessionFilesExplorer = async () => {
-    if (!withmateApi || !selectedSession) {
+    if (!withmateApi) {
       return;
     }
 
-    try {
-      await withmateApi.openSessionFilesDirectory(selectedSession.id);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "session files directory を開けなかったよ。");
-    }
+    await runSessionFilesOpenCommand({
+      sessionId: selectedSession?.id,
+      openSessionFiles: (sessionId) => withmateApi.openSessionFilesDirectory(sessionId),
+      alertError: (message) => window.alert(message),
+      fallbackErrorMessage: "session files directory を開けなかったよ。",
+    });
   };
 
   const handleJumpToActivityMonitorBottom = () => {

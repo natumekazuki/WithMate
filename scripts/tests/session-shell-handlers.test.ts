@@ -26,6 +26,7 @@ import {
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
   resolveHeaderExpandedToggle,
+  runSessionFilesOpenCommand,
   toggleExpandedArtifactState,
 } from "../../src/chat/session-shell-handlers.js";
 
@@ -733,5 +734,60 @@ describe("applyPastedSessionAttachmentPathsCommand", () => {
 
     assert.equal(runCommand(["session-files/a.txt", "session-files/b.png"]), true);
     assert.deepEqual(events, ["insert:session-files/a.txt,session-files/b.png"]);
+  });
+});
+
+describe("runSessionFilesOpenCommand", () => {
+  it("session id がある場合だけ session files action を実行し、失敗時は alert する", async () => {
+    const events: string[] = [];
+    const runCommand = (input: {
+      sessionId: string | null | undefined;
+      shouldThrow?: unknown;
+    }) =>
+      runSessionFilesOpenCommand({
+        sessionId: input.sessionId,
+        openSessionFiles: async (sessionId) => {
+          events.push(`open:${sessionId}`);
+          if (input.shouldThrow !== undefined) {
+            throw input.shouldThrow;
+          }
+        },
+        alertError: (message) => events.push(`alert:${message}`),
+        fallbackErrorMessage: "fallback",
+      });
+
+    assert.equal(await runCommand({ sessionId: null }), false);
+    assert.equal(await runCommand({ sessionId: undefined }), false);
+    assert.deepEqual(events, []);
+
+    assert.equal(await runCommand({ sessionId: "" }), true);
+    assert.deepEqual(events, ["open:"]);
+
+    assert.equal(await runCommand({ sessionId: "session-1" }), true);
+    assert.deepEqual(events, ["open:", "open:session-1"]);
+
+    assert.equal(
+      await runCommand({ sessionId: "session-2", shouldThrow: new Error("failed") }),
+      false,
+    );
+    assert.deepEqual(events, [
+      "open:",
+      "open:session-1",
+      "open:session-2",
+      "alert:failed",
+    ]);
+
+    assert.equal(
+      await runCommand({ sessionId: "session-3", shouldThrow: "failed" }),
+      false,
+    );
+    assert.deepEqual(events, [
+      "open:",
+      "open:session-1",
+      "open:session-2",
+      "alert:failed",
+      "open:session-3",
+      "alert:fallback",
+    ]);
   });
 });
