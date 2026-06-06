@@ -15,6 +15,7 @@ import {
 import {
   buildSessionWithAddedAdditionalDirectory,
   buildSessionWithRemovedAdditionalDirectory,
+  resolveAdditionalDirectoryPickerBase,
 } from "./additional-directory-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
@@ -2566,7 +2567,9 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const selectedPath = await withmateApi.pickDirectory(pickerBaseDirectory || selectedSession.workspacePath || null);
+    const selectedPath = await withmateApi.pickDirectory(
+      resolveAdditionalDirectoryPickerBase(pickerBaseDirectory, selectedSession.workspacePath),
+    );
     if (!selectedPath) {
       return;
     }

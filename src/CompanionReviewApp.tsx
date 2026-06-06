@@ -14,6 +14,7 @@ import {
 import {
   buildSessionWithAddedAdditionalDirectory,
   buildSessionWithRemovedAdditionalDirectory,
+  resolveAdditionalDirectoryPickerBase,
 } from "./additional-directory-state.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import {
@@ -1521,7 +1522,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const selectedPath = await withmateApi.pickDirectory(pickerBaseDirectory || snapshot.session.worktreePath || snapshot.session.repoRoot);
+    const selectedPath = await withmateApi.pickDirectory(
+      resolveAdditionalDirectoryPickerBase(pickerBaseDirectory, snapshot.session.worktreePath, snapshot.session.repoRoot),
+    );
     if (!selectedPath) {
       return;
     }

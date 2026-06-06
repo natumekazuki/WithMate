@@ -6,7 +6,14 @@ import {
   buildSessionWithAddedAdditionalDirectory,
   buildSessionWithRemovedAdditionalDirectory,
   removeAllowedAdditionalDirectory,
+  resolveAdditionalDirectoryPickerBase,
 } from "../../src/additional-directory-state.js";
+
+test("resolveAdditionalDirectoryPickerBase は最初の non-empty path を返す", () => {
+  assert.equal(resolveAdditionalDirectoryPickerBase("C:/picked", "C:/workspace"), "C:/picked");
+  assert.equal(resolveAdditionalDirectoryPickerBase("", "C:/workspace", "C:/fallback"), "C:/workspace");
+  assert.equal(resolveAdditionalDirectoryPickerBase(null, undefined, ""), null);
+});
 
 test("addAllowedAdditionalDirectory は directory を正規化して末尾へ追加し重複を避ける", () => {
   assert.deepEqual(

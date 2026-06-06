@@ -1,3 +1,4 @@
+import { resolveAdditionalDirectoryPickerBase } from "./additional-directory-state.js";
 import type { AuxiliarySession } from "./auxiliary-session-state.js";
 import {
   addAuxiliarySessionAdditionalDirectory,
@@ -13,7 +14,7 @@ export function resolveAuxiliaryAdditionalDirectoryPickerBase(input: {
   workspacePath?: string | null;
   fallbackPath?: string | null;
 }): string | null {
-  return input.pickerBaseDirectory || input.workspacePath || input.fallbackPath || null;
+  return resolveAdditionalDirectoryPickerBase(input.pickerBaseDirectory, input.workspacePath, input.fallbackPath);
 }
 
 export async function runAddAuxiliaryAdditionalDirectoryOperation(input: {

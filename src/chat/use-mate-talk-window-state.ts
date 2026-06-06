@@ -4,6 +4,7 @@ import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from 
 import {
   addAllowedAdditionalDirectory,
   removeAllowedAdditionalDirectory,
+  resolveAdditionalDirectoryPickerBase,
 } from "../additional-directory-state.js";
 import { DEFAULT_CODEX_SANDBOX_MODE, normalizeCodexSandboxMode, type CodexSandboxMode } from "../codex-sandbox-mode.js";
 import { restoreComposerTextareaFocusAndCaret } from "../composer-textarea-focus.js";
@@ -359,7 +360,7 @@ export function useMateTalkWindowState({
       return;
     }
 
-    const selectedPath = await withmateApi.pickDirectory(pickerBaseDirectory || null);
+    const selectedPath = await withmateApi.pickDirectory(resolveAdditionalDirectoryPickerBase(pickerBaseDirectory));
     if (!selectedPath) {
       return;
     }

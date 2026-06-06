@@ -34,6 +34,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-07: PR-03 着手。additional directory list の add/remove 純粋操作を `additional-directory-state` に集約し、MateTalk の local additional directories も同じ helper 経由へ置換。Windows separator 正規化、重複排除、削除判定を focused test で固定。
 - 2026-06-07: additional directory list の比較 key を Windows drive / UNC path だけ case-insensitive、POSIX path は case-sensitive として補強。Windows の case 差、末尾 slash 差、drive root の重複/削除、POSIX の大小違い非 dedupe contract を focused test で固定。
 - 2026-06-07: 通常 Session / Companion の additional directory add/remove session patch を `additional-directory-state` に集約。picker UI state、`updatedAt`、persist API は surface 側に残し、保存境界は変更しない形で App / CompanionReview の重複 patch 構築を置換。
+- 2026-06-07: additional directory picker の base directory 解決を `resolveAdditionalDirectoryPickerBase` に集約。App / Companion / MateTalk / Auxiliary の優先順を共通 helper 経由にし、空文字は従来どおり fallback する contract を test で固定。
 
 ## PR Plan
 
@@ -93,6 +94,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - additional directory list の add/remove 純粋操作を `additional-directory-state` に集約。2026-06-07 着手、MateTalk local list への適用完了。
 - additional directory list の comparison key を Windows drive / UNC path は case-insensitive、POSIX path は case-sensitive として補強。2026-06-07 完了。
 - 通常 Session / Companion の persisted session patch 構築を `additional-directory-state` に集約。2026-06-07 完了。
+- additional directory picker base directory 解決を `additional-directory-state` に集約。2026-06-07 完了。
 
 やらないこと:
 

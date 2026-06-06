@@ -22,6 +22,14 @@ type AdditionalDirectorySessionLike = {
   allowedAdditionalDirectories?: readonly string[] | null;
 };
 
+export function resolveAdditionalDirectoryPickerBase(
+  ...directoryPaths: Array<string | null | undefined>
+): string | null {
+  return directoryPaths.find((directoryPath): directoryPath is string => (
+    typeof directoryPath === "string" && directoryPath.length > 0
+  )) ?? null;
+}
+
 export function addAllowedAdditionalDirectory(
   directories: readonly string[] | null | undefined,
   directoryPath: string,
