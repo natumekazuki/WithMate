@@ -108,6 +108,9 @@ import {
 } from "./action-dock-state.js";
 import {
   buildAuxiliaryLaunchProviderItems,
+  createAuxiliaryLaunchDialogCloseHandler,
+  createAuxiliaryLaunchDialogOpenHandler,
+  createAuxiliaryLaunchProviderSelectHandler,
   resolveAuxiliaryLaunchStartError,
 } from "./chat/auxiliary-launch-state.js";
 import { buildAuxiliaryAwareSendOrCancelHandler } from "./chat/send-or-cancel.js";
@@ -1740,28 +1743,21 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
   }
 
-  function handleOpenAuxiliaryLaunchDialog(): void {
-    if (!snapshot || isAuxiliaryActionPending || operationRunning || isSelectedSessionRunning) {
-      return;
-    }
+  const handleOpenAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogOpenHandler({
+    canOpen: () => !!snapshot && !isAuxiliaryActionPending && !operationRunning && !isSelectedSessionRunning,
+    providers: auxiliaryLaunchProviderItems,
+    getSelectedProviderId: () => snapshot?.session.provider,
+    openAuxiliaryLaunchDialog,
+  });
 
-    openAuxiliaryLaunchDialog({
-      providers: auxiliaryLaunchProviderItems,
-      selectedProviderId: snapshot.session.provider,
-    });
-  }
+  const handleCloseAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogCloseHandler({
+    canClose: () => !isAuxiliaryActionPending,
+    closeAuxiliaryLaunchDialog,
+  });
 
-  function handleCloseAuxiliaryLaunchDialog(): void {
-    if (isAuxiliaryActionPending) {
-      return;
-    }
-
-    closeAuxiliaryLaunchDialog();
-  }
-
-  function handleSelectAuxiliaryLaunchProvider(providerId: string): void {
-    selectAuxiliaryLaunchProvider(providerId);
-  }
+  const handleSelectAuxiliaryLaunchProvider = createAuxiliaryLaunchProviderSelectHandler({
+    selectAuxiliaryLaunchProvider,
+  });
 
   async function handleStartAuxiliarySession(): Promise<void> {
     const withmateApi = getWithMateApi();

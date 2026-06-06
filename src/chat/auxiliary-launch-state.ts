@@ -86,6 +86,48 @@ export type AuxiliaryLaunchDialogStatePatch = {
   feedback?: string;
 };
 
+export type AuxiliaryLaunchDialogOpenParams = {
+  providers: readonly AuxiliaryLaunchProviderItem[];
+  selectedProviderId: string | null | undefined;
+};
+
+export function createAuxiliaryLaunchDialogOpenHandler(input: {
+  canOpen: () => boolean;
+  providers: readonly AuxiliaryLaunchProviderItem[];
+  getSelectedProviderId: () => string | null | undefined;
+  openAuxiliaryLaunchDialog: (params: AuxiliaryLaunchDialogOpenParams) => void;
+}): () => void {
+  return () => {
+    if (!input.canOpen()) {
+      return;
+    }
+
+    input.openAuxiliaryLaunchDialog({
+      providers: input.providers,
+      selectedProviderId: input.getSelectedProviderId(),
+    });
+  };
+}
+
+export function createAuxiliaryLaunchDialogCloseHandler(input: {
+  canClose?: () => boolean;
+  closeAuxiliaryLaunchDialog: () => void;
+}): () => void {
+  return () => {
+    if (input.canClose?.() === false) {
+      return;
+    }
+
+    input.closeAuxiliaryLaunchDialog();
+  };
+}
+
+export function createAuxiliaryLaunchProviderSelectHandler(input: {
+  selectAuxiliaryLaunchProvider: (providerId: string) => void;
+}): (providerId: string) => void {
+  return (providerId) => input.selectAuxiliaryLaunchProvider(providerId);
+}
+
 export function resolveAuxiliaryLaunchOpenState(
   providers: readonly AuxiliaryLaunchProviderItem[],
   selectedProviderId: string | null | undefined,

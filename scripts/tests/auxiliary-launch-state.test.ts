@@ -9,6 +9,9 @@ import {
   AUXILIARY_LAUNCH_START_FAILED_FEEDBACK,
   buildCreateAuxiliarySessionInput,
   buildAuxiliaryLaunchProviderItems,
+  createAuxiliaryLaunchDialogCloseHandler,
+  createAuxiliaryLaunchDialogOpenHandler,
+  createAuxiliaryLaunchProviderSelectHandler,
   resolveAuxiliaryLaunchFeedbackResetState,
   resolveAuxiliaryLaunchOpenState,
   resolveAuxiliaryLaunchCloseState,
@@ -198,6 +201,60 @@ describe("auxiliary-launch-state", () => {
     assert.deepEqual(resolveAuxiliaryLaunchStartErrorState("failed"), {
       feedback: AUXILIARY_LAUNCH_START_FAILED_FEEDBACK,
     });
+  });
+
+  it("open handler は開始可能な場合だけ dialog open callback を呼ぶ", () => {
+    const events: string[] = [];
+    const providers = [{ id: "codex", label: "Codex" }];
+    const open = createAuxiliaryLaunchDialogOpenHandler({
+      canOpen: () => true,
+      providers,
+      getSelectedProviderId: () => "codex",
+      openAuxiliaryLaunchDialog: (params) => {
+        events.push(`${params.selectedProviderId}:${params.providers.map((provider) => provider.id).join(",")}`);
+      },
+    });
+    const blockedOpen = createAuxiliaryLaunchDialogOpenHandler({
+      canOpen: () => false,
+      providers,
+      getSelectedProviderId: () => "codex",
+      openAuxiliaryLaunchDialog: () => {
+        events.push("blocked");
+      },
+    });
+
+    open();
+    blockedOpen();
+
+    assert.deepEqual(events, ["codex:codex"]);
+  });
+
+  it("close handler は close 可能な場合だけ dialog close callback を呼ぶ", () => {
+    const events: string[] = [];
+    const close = createAuxiliaryLaunchDialogCloseHandler({
+      canClose: () => true,
+      closeAuxiliaryLaunchDialog: () => events.push("close"),
+    });
+    const blockedClose = createAuxiliaryLaunchDialogCloseHandler({
+      canClose: () => false,
+      closeAuxiliaryLaunchDialog: () => events.push("blocked"),
+    });
+
+    close();
+    blockedClose();
+
+    assert.deepEqual(events, ["close"]);
+  });
+
+  it("provider select handler は provider id を select callback へ渡す", () => {
+    const values: string[] = [];
+    const selectProvider = createAuxiliaryLaunchProviderSelectHandler({
+      selectAuxiliaryLaunchProvider: (providerId) => values.push(providerId),
+    });
+
+    selectProvider("copilot");
+
+    assert.deepEqual(values, ["copilot"]);
   });
 
   it("apply した patch は指定フィールドのみ更新する", () => {

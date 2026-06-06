@@ -63,6 +63,9 @@ import { buildMainAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import {
   buildAuxiliaryLaunchProviderItems,
+  createAuxiliaryLaunchDialogCloseHandler,
+  createAuxiliaryLaunchDialogOpenHandler,
+  createAuxiliaryLaunchProviderSelectHandler,
   resolveAuxiliaryLaunchStartError,
 } from "./chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
@@ -2220,28 +2223,21 @@ export default function AgentSessionWindowApp() {
     }
   };
 
-  const handleOpenAuxiliaryLaunchDialog = () => {
-    if (!selectedSession || isAuxiliaryActionPending) {
-      return;
-    }
+  const handleOpenAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogOpenHandler({
+    canOpen: () => !!selectedSession && !isAuxiliaryActionPending,
+    providers: auxiliaryLaunchProviderItems,
+    getSelectedProviderId: () => selectedSession?.provider,
+    openAuxiliaryLaunchDialog,
+  });
 
-    openAuxiliaryLaunchDialog({
-      providers: auxiliaryLaunchProviderItems,
-      selectedProviderId: selectedSession.provider,
-    });
-  };
+  const handleCloseAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogCloseHandler({
+    canClose: () => !isAuxiliaryActionPending,
+    closeAuxiliaryLaunchDialog,
+  });
 
-  const handleCloseAuxiliaryLaunchDialog = () => {
-    if (isAuxiliaryActionPending) {
-      return;
-    }
-
-    closeAuxiliaryLaunchDialog();
-  };
-
-  const handleSelectAuxiliaryLaunchProvider = (providerId: string) => {
-    selectAuxiliaryLaunchProvider(providerId);
-  };
+  const handleSelectAuxiliaryLaunchProvider = createAuxiliaryLaunchProviderSelectHandler({
+    selectAuxiliaryLaunchProvider,
+  });
 
   const handleStartAuxiliarySession = async () => {
     if (!withmateApi || !selectedSession || isAuxiliaryActionPending) {
