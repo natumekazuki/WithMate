@@ -191,7 +191,6 @@ import {
 import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
 import {
   applyAgentPickerToggleCommand,
-  applyComposerSubmitKeyCommand,
   applyContextPaneTabCycleCommand,
   applyCancelTitleEditCommand,
   applyExpandedArtifactToggleCommand,
@@ -212,6 +211,7 @@ import {
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
+  createComposerSubmitKeyHandler,
   createHeaderExpandedToggleHandler,
   createSessionFilesOpenHandler,
   createTitleInputKeyHandler,
@@ -2670,6 +2670,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
   }
 
+  const handleCompanionSubmitKey = createComposerSubmitKeyHandler({
+    submit: () => void (
+      activeAuxiliarySession
+        ? sendAuxiliaryMessage(activeAuxiliarySession.composerDraft)
+        : sendCompanionTurn()
+    ),
+  });
+
   const handleCompanionDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (event) => {
     if (handleWorkspacePathMatchKeyboardNavigation({
       event,
@@ -2683,17 +2691,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    applyComposerSubmitKeyCommand({
-      key: event.key,
-      ctrlKey: event.ctrlKey,
-      metaKey: event.metaKey,
-      preventDefault: () => event.preventDefault(),
-      submit: () => void (
-        activeAuxiliarySession
-          ? sendAuxiliaryMessage(activeAuxiliarySession.composerDraft)
-          : sendCompanionTurn()
-      ),
-    });
+    handleCompanionSubmitKey(event);
   };
 
   async function openCompanionWorktree(): Promise<void> {

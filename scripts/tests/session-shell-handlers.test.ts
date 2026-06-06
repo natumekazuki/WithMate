@@ -31,6 +31,7 @@ import {
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
+  createComposerSubmitKeyHandler,
   createHeaderExpandedToggleHandler,
   createSessionFilesOpenHandler,
   createTitleInputKeyHandler,
@@ -232,6 +233,41 @@ describe("applyComposerSubmitKeyCommand", () => {
     );
 
     assert.deepEqual(events, []);
+  });
+});
+
+describe("createComposerSubmitKeyHandler", () => {
+  it("keydown event から送信 shortcut command を実行する", () => {
+    const events: string[] = [];
+    const handleKeyDown = createComposerSubmitKeyHandler({
+      isSubmitDisabled: () => {
+        events.push("disabled");
+        return false;
+      },
+      submit: () => events.push("submit"),
+    });
+
+    assert.equal(
+      handleKeyDown({
+        key: "Tab",
+        ctrlKey: true,
+        metaKey: false,
+        preventDefault: () => events.push("prevent:Tab"),
+      }),
+      false,
+    );
+    assert.equal(events.length, 0);
+
+    assert.equal(
+      handleKeyDown({
+        key: "Enter",
+        ctrlKey: true,
+        metaKey: false,
+        preventDefault: () => events.push("prevent:Enter"),
+      }),
+      true,
+    );
+    assert.deepEqual(events, ["disabled", "prevent:Enter", "submit"]);
   });
 });
 

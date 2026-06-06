@@ -90,6 +90,16 @@ export function createTitleInputKeyHandler(input: {
 }
 
 type MaybeLazyBoolean = boolean | (() => boolean);
+type ComposerSubmitKeyEvent = {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  preventDefault: () => void;
+};
+type ComposerSubmitKeyHandlerInput = Omit<
+  Parameters<typeof applyComposerSubmitKeyCommand>[0],
+  keyof ComposerSubmitKeyEvent
+>;
 
 function resolveMaybeLazyBoolean(value: MaybeLazyBoolean | undefined): boolean {
   return typeof value === "function" ? value() : value === true;
@@ -121,6 +131,18 @@ export function applyComposerSubmitKeyCommand(input: {
 
   input.submit();
   return true;
+}
+
+export function createComposerSubmitKeyHandler(
+  input: ComposerSubmitKeyHandlerInput,
+): (event: ComposerSubmitKeyEvent) => boolean {
+  return (event) => applyComposerSubmitKeyCommand({
+    ...input,
+    key: event.key,
+    ctrlKey: event.ctrlKey,
+    metaKey: event.metaKey,
+    preventDefault: () => event.preventDefault(),
+  });
 }
 
 export function applyStartTitleEditCommand(input: {
