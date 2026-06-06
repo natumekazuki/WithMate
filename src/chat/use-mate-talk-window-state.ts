@@ -30,6 +30,7 @@ import {
   createCopyMessageTextHandler,
 } from "./message-text-actions.js";
 import { collectPastedSessionAttachmentPaths } from "./composer-paste-handlers.js";
+import { buildOnDraftSelectHandler } from "./composer-draft-handlers.js";
 import type { MateTalkMessage } from "./mate-talk-chat-projection.js";
 import {
   buildMateTalkModelSelection,
@@ -537,7 +538,9 @@ export function useMateTalkWindowState({
     },
     onDraftFocus: () => {},
     onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleDraftPaste(event),
-    onDraftSelect: (selectionStart: number) => setInputCaret(selectionStart),
+    onDraftSelect: buildOnDraftSelectHandler({
+      setComposerCaret: setInputCaret,
+    }),
     onChangeApprovalMode: (value: ApprovalMode) => setSelectedApprovalMode(normalizeApprovalMode(value)),
     onChangeCodexSandboxMode: (value: CodexSandboxMode) =>
       setSelectedCodexSandboxMode(normalizeCodexSandboxMode(value)),
