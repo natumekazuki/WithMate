@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { resolvePathReferenceRemovalTargets } from "../../src/session-composer-paths.js";
 import {
   applyAdditionalDirectoryListToggle,
   applyAgentPickerToggleCommand,
@@ -818,6 +819,21 @@ describe("applyPathReferenceRemovalCommand", () => {
       "apply:5:確認 して",
       "matches:0:-1",
     ]);
+  });
+
+  it("正規化済みの削除対象で Windows separator の path reference も削除する", () => {
+    const events: string[] = [];
+    const removalTargets = resolvePathReferenceRemovalTargets(["src\\App.tsx"]);
+
+    applyPathReferenceRemovalCommand({
+      draft: "確認 @src/App.tsx して",
+      attachmentPathCandidates: removalTargets,
+      applyRemoval: (state) => {
+        events.push(`apply:${state.caret}:${state.draft}`);
+      },
+    });
+
+    assert.deepEqual(events, ["apply:5:確認 して"]);
   });
 });
 

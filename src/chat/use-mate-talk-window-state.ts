@@ -17,7 +17,6 @@ import {
   buildAdditionalDirectoryItems,
   buildPathReferenceAttachmentItems,
   buildPathReferenceInsertionState,
-  buildPathReferenceRemovalState,
   pickComposerReferencePath,
   removeAdditionalDirectoryPath,
   removePathReferenceAttachments,
@@ -43,6 +42,7 @@ import {
   resolveMateTalkActionDockExpandedAfterSubmit,
 } from "./mate-talk-state.js";
 import {
+  applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyPastedSessionAttachmentPathsCommand,
@@ -357,13 +357,15 @@ export function useMateTalkWindowState({
 
   const removePathReference = (targets: string[]) => {
     const removalTargets = resolvePathReferenceRemovalTargets(targets);
-    const { draft: nextInput, caret: nextCaret } = buildPathReferenceRemovalState(
-      input,
-      removalTargets,
-    );
-    setInput(nextInput);
-    setInputCaret(nextCaret);
-    setPathReferences((current) => removePathReferenceAttachments(current, removalTargets));
+    applyPathReferenceRemovalCommand({
+      draft: input,
+      attachmentPathCandidates: removalTargets,
+      applyRemoval: ({ draft: nextInput, caret: nextCaret }) => {
+        setInput(nextInput);
+        setInputCaret(nextCaret);
+        setPathReferences((current) => removePathReferenceAttachments(current, removalTargets));
+      },
+    });
   };
 
   const addAdditionalDirectory = async () => {
