@@ -2,7 +2,10 @@ import {
   buildActionDockCollapseState,
   buildActionDockExpandState,
 } from "../action-dock-state.js";
-import { buildExclusiveComposerPickerToggleState } from "../session-composer-selection.js";
+import {
+  buildExclusiveComposerPickerToggleState,
+  type SkillPromptInsertionState,
+} from "../session-composer-selection.js";
 import {
   cycleContextPaneTab,
   type ContextPaneTabKey,
@@ -141,6 +144,17 @@ export function applySkillPickerToggleCommand(input: {
     setAgentPickerOpen: input.setAgentPickerOpen,
     setSkillPickerOpen: input.setSkillPickerOpen,
   });
+}
+
+export function applySkillPromptInsertionUiState(input: {
+  state: Pick<SkillPromptInsertionState, "caret" | "isActionDockPinnedExpanded" | "isSkillPickerOpen">;
+  setActionDockPinnedExpanded: (expanded: boolean) => void;
+  setCaret: (caret: number) => void;
+  setSkillPickerOpen: (open: boolean) => void;
+}): void {
+  input.setActionDockPinnedExpanded(input.state.isActionDockPinnedExpanded);
+  input.setCaret(input.state.caret);
+  input.setSkillPickerOpen(input.state.isSkillPickerOpen);
 }
 
 export function applyAdditionalDirectoryListToggle(input: {

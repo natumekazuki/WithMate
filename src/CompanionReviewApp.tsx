@@ -204,6 +204,7 @@ import {
   applyActionDockExpandCommand,
   applyExpandedArtifactToggleCommand,
   applyHeaderExpandedToggleCommand,
+  applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
@@ -1608,10 +1609,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     const nextState = buildSkillPromptInsertionState(snapshot.session.provider, skill.name, composerText);
 
-    setIsActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
+    applySkillPromptInsertionUiState({
+      state: nextState,
+      setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+      setCaret: setComposerCaret,
+      setSkillPickerOpen: setIsSkillPickerOpen,
+    });
     setComposerText(nextState.draft);
-    setComposerCaret(nextState.caret);
-    setIsSkillPickerOpen(nextState.isSkillPickerOpen);
 
     restoreComposerTextareaFocusAndCaret(textarea, nextState.caret);
   }
@@ -2025,9 +2029,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       activeAuxiliarySession.composerDraft,
     );
 
-    setIsActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
-    setComposerCaret(nextState.caret);
-    setIsSkillPickerOpen(nextState.isSkillPickerOpen);
+    applySkillPromptInsertionUiState({
+      state: nextState,
+      setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+      setCaret: setComposerCaret,
+      setSkillPickerOpen: setIsSkillPickerOpen,
+    });
     await updateActiveAuxiliarySession((current) => (
       applyAuxiliarySessionComposerDraftPatch(current, nextState.draft, currentTimestampLabel())
     ));

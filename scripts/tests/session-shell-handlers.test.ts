@@ -11,6 +11,7 @@ import {
   applyExpandedArtifactToggleCommand,
   applyExclusiveComposerPickerToggle,
   applyHeaderExpandedToggleCommand,
+  applySkillPromptInsertionUiState,
   applySkillPickerToggleCommand,
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
@@ -247,6 +248,25 @@ describe("applySkillPickerToggleCommand", () => {
 
     assert.equal(agentOpen, false);
     assert.equal(skillOpen, true);
+  });
+});
+
+describe("applySkillPromptInsertionUiState", () => {
+  it("skill prompt 挿入後の UI state を setter に反映する", () => {
+    const events: string[] = [];
+
+    applySkillPromptInsertionUiState({
+      state: {
+        caret: 12,
+        isActionDockPinnedExpanded: true,
+        isSkillPickerOpen: false,
+      },
+      setActionDockPinnedExpanded: (expanded) => events.push(`dock:${expanded}`),
+      setCaret: (caret) => events.push(`caret:${caret}`),
+      setSkillPickerOpen: (open) => events.push(`skill:${open}`),
+    });
+
+    assert.deepEqual(events, ["dock:true", "caret:12", "skill:false"]);
   });
 });
 
