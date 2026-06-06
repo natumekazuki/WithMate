@@ -80,13 +80,13 @@ import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-opera
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
 import { COMPANION_PENDING_MESSAGE_TEXT } from "./chat/pending-run-indicator.js";
 import {
-  applyCancelRetryDraftReplace,
   applyRetryDetailsReset,
-  applyRetryDetailsToggle,
   applyRetryDraftRestoreCommand,
   applyRetryDraftReplaceConfirmation,
   applyRetryEditCommand,
   buildRetryStopSummary,
+  createCancelRetryDraftReplaceHandler,
+  createRetryDetailsToggleHandler,
   isRetryActionDisabled as resolveRetryActionDisabled,
   resolveRetryBannerKind,
   runRetryResendCommand,
@@ -2590,17 +2590,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
   }
 
-  function handleCancelRetryDraftReplace(): void {
-    applyCancelRetryDraftReplace({
-      setRetryDraftReplacePending: setIsRetryDraftReplacePending,
-    });
-  }
+  const handleCancelRetryDraftReplace = createCancelRetryDraftReplaceHandler({
+    setRetryDraftReplacePending: setIsRetryDraftReplacePending,
+  });
 
-  function handleToggleRetryDetails(): void {
-    applyRetryDetailsToggle({
-      setRetryDetailsOpen: setIsRetryDetailsOpen,
-    });
-  }
+  const handleToggleRetryDetails = createRetryDetailsToggleHandler({
+    setRetryDetailsOpen: setIsRetryDetailsOpen,
+  });
 
   async function handleResolveCompanionLiveApproval(
     request: LiveApprovalRequest,

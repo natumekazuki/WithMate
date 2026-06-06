@@ -113,10 +113,22 @@ export function applyRetryDetailsToggle(input: {
   input.setRetryDetailsOpen((current) => !current);
 }
 
+export function createRetryDetailsToggleHandler(input: {
+  setRetryDetailsOpen: (updater: (current: boolean) => boolean) => void;
+}): () => void {
+  return () => applyRetryDetailsToggle(input);
+}
+
 export function applyCancelRetryDraftReplace(input: {
   setRetryDraftReplacePending: (pending: boolean) => void;
 }): void {
   input.setRetryDraftReplacePending(false);
+}
+
+export function createCancelRetryDraftReplaceHandler(input: {
+  setRetryDraftReplacePending: (pending: boolean) => void;
+}): () => void {
+  return () => applyCancelRetryDraftReplace(input);
 }
 
 export function defaultRetryBannerDetailsOpen(kind: RetryBannerKind): boolean {

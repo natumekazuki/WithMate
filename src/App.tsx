@@ -142,13 +142,13 @@ import {
 } from "./chat/message-text-actions.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 import {
-  applyCancelRetryDraftReplace,
   applyRetryDetailsReset,
-  applyRetryDetailsToggle,
   applyRetryDraftRestoreCommand,
   applyRetryDraftReplaceConfirmation,
   applyRetryEditCommand,
   buildRetryStopSummary,
+  createCancelRetryDraftReplaceHandler,
+  createRetryDetailsToggleHandler,
   isRetryActionDisabled as resolveRetryActionDisabled,
   resolveRetryBannerKind,
   runRetryResendCommand,
@@ -2159,17 +2159,13 @@ export default function AgentSessionWindowApp() {
     });
   };
 
-  const handleCancelRetryDraftReplace = () => {
-    applyCancelRetryDraftReplace({
-      setRetryDraftReplacePending: setIsRetryDraftReplacePending,
-    });
-  };
+  const handleCancelRetryDraftReplace = createCancelRetryDraftReplaceHandler({
+    setRetryDraftReplacePending: setIsRetryDraftReplacePending,
+  });
 
-  const handleToggleRetryDetails = () => {
-    applyRetryDetailsToggle({
-      setRetryDetailsOpen: setIsRetryDetailsOpen,
-    });
-  };
+  const handleToggleRetryDetails = createRetryDetailsToggleHandler({
+    setRetryDetailsOpen: setIsRetryDetailsOpen,
+  });
 
   const handleCloseWindow = () => {
     window.close();

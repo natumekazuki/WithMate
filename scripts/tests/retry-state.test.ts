@@ -10,6 +10,8 @@ import {
   applyRetryEditCommand,
   buildRetryDraftRestoreState,
   buildRetryStopSummary,
+  createCancelRetryDraftReplaceHandler,
+  createRetryDetailsToggleHandler,
   defaultRetryBannerDetailsOpen,
   isRetryActionDisabled,
   resolveRetryBannerKind,
@@ -241,12 +243,35 @@ test("applyRetryDetailsToggle は現在の詳細表示 state を反転する", (
   assert.equal(current, false);
 });
 
+test("createRetryDetailsToggleHandler は詳細表示 toggle handler を作る", () => {
+  let current = false;
+  const toggleRetryDetails = createRetryDetailsToggleHandler({
+    setRetryDetailsOpen: (updater) => {
+      current = updater(current);
+    },
+  });
+
+  toggleRetryDetails();
+  assert.equal(current, true);
+});
+
 test("applyCancelRetryDraftReplace は retry draft replace pending を解除する", () => {
   const values: boolean[] = [];
 
   applyCancelRetryDraftReplace({
     setRetryDraftReplacePending: (pending) => values.push(pending),
   });
+
+  assert.deepEqual(values, [false]);
+});
+
+test("createCancelRetryDraftReplaceHandler は retry draft replace cancel handler を作る", () => {
+  const values: boolean[] = [];
+  const cancelRetryDraftReplace = createCancelRetryDraftReplaceHandler({
+    setRetryDraftReplacePending: (pending) => values.push(pending),
+  });
+
+  cancelRetryDraftReplace();
 
   assert.deepEqual(values, [false]);
 });
