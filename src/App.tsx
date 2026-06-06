@@ -181,7 +181,6 @@ import {
 } from "./auxiliary-session-start-operation.js";
 import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
 import {
-  applyAgentPickerToggleCommand,
   applyAgentPickerCloseCommand,
   applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -192,18 +191,19 @@ import {
   applySkillPromptInsertionCommand,
   applySessionFilesReferencePathsCommand,
   applySkillPromptInsertionUiState,
-  applySkillPickerToggleCommand,
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
+  createAgentPickerToggleHandler,
   createCancelTitleEditHandler,
   createComposerSubmitKeyHandler,
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
   createSessionFilesOpenHandler,
+  createSkillPickerToggleHandler,
   createStartTitleEditHandler,
   createTitleInputKeyHandler,
 } from "./chat/session-shell-handlers.js";
@@ -2186,19 +2186,15 @@ export default function AgentSessionWindowApp() {
     setPinnedExpanded: setIsActionDockPinnedExpanded,
   });
 
-  const handleToggleAgentPicker = () => {
-    applyAgentPickerToggleCommand({
-      setAgentPickerOpen: setIsAgentPickerOpen,
-      setSkillPickerOpen: setIsSkillPickerOpen,
-    });
-  };
+  const handleToggleAgentPicker = createAgentPickerToggleHandler({
+    setAgentPickerOpen: setIsAgentPickerOpen,
+    setSkillPickerOpen: setIsSkillPickerOpen,
+  });
 
-  const handleToggleSkillPicker = () => {
-    applySkillPickerToggleCommand({
-      setAgentPickerOpen: setIsAgentPickerOpen,
-      setSkillPickerOpen: setIsSkillPickerOpen,
-    });
-  };
+  const handleToggleSkillPicker = createSkillPickerToggleHandler({
+    setAgentPickerOpen: setIsAgentPickerOpen,
+    setSkillPickerOpen: setIsSkillPickerOpen,
+  });
 
   const handleToggleAdditionalDirectoryList = createAdditionalDirectoryListToggleHandler({
     setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,

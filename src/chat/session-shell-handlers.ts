@@ -287,6 +287,13 @@ export function applyAgentPickerToggleCommand(input: {
   });
 }
 
+export function createAgentPickerToggleHandler(input: {
+  setAgentPickerOpen: (updater: (current: boolean) => boolean) => void;
+  setSkillPickerOpen: (updater: (current: boolean) => boolean) => void;
+}): () => void {
+  return () => applyAgentPickerToggleCommand(input);
+}
+
 export function applyAgentPickerCloseCommand(input: {
   setAgentPickerOpen: (open: boolean) => void;
 }): void {
@@ -302,6 +309,13 @@ export function applySkillPickerToggleCommand(input: {
     setAgentPickerOpen: input.setAgentPickerOpen,
     setSkillPickerOpen: input.setSkillPickerOpen,
   });
+}
+
+export function createSkillPickerToggleHandler(input: {
+  setAgentPickerOpen: (updater: (current: boolean) => boolean) => void;
+  setSkillPickerOpen: (updater: (current: boolean) => boolean) => void;
+}): () => void {
+  return () => applySkillPickerToggleCommand(input);
 }
 
 export function applySkillPromptInsertionUiState(input: {

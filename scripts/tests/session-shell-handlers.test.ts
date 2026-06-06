@@ -31,12 +31,14 @@ import {
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
+  createAgentPickerToggleHandler,
   createCancelTitleEditHandler,
   createComposerSubmitKeyHandler,
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
   createSessionFilesOpenHandler,
+  createSkillPickerToggleHandler,
   createStartTitleEditHandler,
   createTitleInputKeyHandler,
   resolveHeaderExpandedToggle,
@@ -512,6 +514,26 @@ describe("applyAgentPickerToggleCommand", () => {
   });
 });
 
+describe("createAgentPickerToggleHandler", () => {
+  it("agent picker toggle handler を作り、skill picker を閉じる", () => {
+    let agentOpen = false;
+    let skillOpen = true;
+    const toggleAgentPicker = createAgentPickerToggleHandler({
+      setAgentPickerOpen: (updater) => {
+        agentOpen = updater(agentOpen);
+      },
+      setSkillPickerOpen: (updater) => {
+        skillOpen = updater(skillOpen);
+      },
+    });
+
+    toggleAgentPicker();
+
+    assert.equal(agentOpen, true);
+    assert.equal(skillOpen, false);
+  });
+});
+
 describe("applyAgentPickerCloseCommand", () => {
   it("agent picker を閉じる", () => {
     const values: boolean[] = [];
@@ -539,6 +561,26 @@ describe("applySkillPickerToggleCommand", () => {
         skillOpen = updater(skillOpen);
       },
     });
+
+    assert.equal(agentOpen, false);
+    assert.equal(skillOpen, true);
+  });
+});
+
+describe("createSkillPickerToggleHandler", () => {
+  it("skill picker toggle handler を作り、agent picker を閉じる", () => {
+    let agentOpen = true;
+    let skillOpen = false;
+    const toggleSkillPicker = createSkillPickerToggleHandler({
+      setAgentPickerOpen: (updater) => {
+        agentOpen = updater(agentOpen);
+      },
+      setSkillPickerOpen: (updater) => {
+        skillOpen = updater(skillOpen);
+      },
+    });
+
+    toggleSkillPicker();
 
     assert.equal(agentOpen, false);
     assert.equal(skillOpen, true);

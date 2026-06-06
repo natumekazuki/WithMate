@@ -189,7 +189,6 @@ import {
 } from "./auxiliary-additional-directory-operation.js";
 import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
 import {
-  applyAgentPickerToggleCommand,
   applyAgentPickerCloseCommand,
   applyPathReferenceRemovalCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -200,18 +199,19 @@ import {
   applySkillPromptInsertionCommand,
   applySessionFilesReferencePathsCommand,
   applySkillPromptInsertionUiState,
-  applySkillPickerToggleCommand,
   applyUnavailableContextPaneTabFallbackCommand,
   applyWorkspacePathMatchSelectionCommand,
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
+  createAgentPickerToggleHandler,
   createCancelTitleEditHandler,
   createComposerSubmitKeyHandler,
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
   createSessionFilesOpenHandler,
+  createSkillPickerToggleHandler,
   createStartTitleEditHandler,
   createTitleInputKeyHandler,
 } from "./chat/session-shell-handlers.js";
@@ -2128,19 +2128,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setPinnedExpanded: setIsActionDockPinnedExpanded,
   });
 
-  function handleToggleAgentPicker(): void {
-    applyAgentPickerToggleCommand({
-      setAgentPickerOpen: setIsAgentPickerOpen,
-      setSkillPickerOpen: setIsSkillPickerOpen,
-    });
-  }
+  const handleToggleAgentPicker = createAgentPickerToggleHandler({
+    setAgentPickerOpen: setIsAgentPickerOpen,
+    setSkillPickerOpen: setIsSkillPickerOpen,
+  });
 
-  function handleToggleSkillPicker(): void {
-    applySkillPickerToggleCommand({
-      setAgentPickerOpen: setIsAgentPickerOpen,
-      setSkillPickerOpen: setIsSkillPickerOpen,
-    });
-  }
+  const handleToggleSkillPicker = createSkillPickerToggleHandler({
+    setAgentPickerOpen: setIsAgentPickerOpen,
+    setSkillPickerOpen: setIsSkillPickerOpen,
+  });
 
   const handleToggleAdditionalDirectoryList = createAdditionalDirectoryListToggleHandler({
     setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
