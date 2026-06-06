@@ -48,6 +48,7 @@ import {
   applyAdditionalDirectoryListToggle,
   applyHeaderExpandedToggleCommand,
   applyPickedComposerReferencePathCommand,
+  applyPastedSessionAttachmentPathsCommand,
   applyQuoteMessageTextCommand,
   applySessionFilesReferencePathsCommand,
 } from "./session-shell-handlers.js";
@@ -324,10 +325,10 @@ export function useMateTalkWindowState({
       savePastedSessionFile: (request) => withmateApi.savePastedSessionFile(request),
       sessionId: sessionFilesSessionIdRef.current,
     });
-    if (savedPaths.length === 0) {
-      return;
-    }
-    insertReferencePaths(savedPaths, "file");
+    applyPastedSessionAttachmentPathsCommand({
+      savedPaths,
+      insertReferencePaths: (referencePaths) => insertReferencePaths(referencePaths, "file"),
+    });
   };
 
   const openSessionFilesDirectory = async () => {

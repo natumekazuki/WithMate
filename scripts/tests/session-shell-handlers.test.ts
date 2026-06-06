@@ -13,6 +13,7 @@ import {
   applyHeaderExpandedToggleCommand,
   applyPathReferenceRemovalCommand,
   applyPickedComposerReferencePathCommand,
+  applyPastedSessionAttachmentPathsCommand,
   applyQuoteMessageTextCommand,
   applySelectedPathReferenceInsertionCommand,
   applySessionFilesReferencePathsCommand,
@@ -651,5 +652,22 @@ describe("applySessionFilesReferencePathsCommand", () => {
       "base:C:\\workspace\\picked",
       "insert:session-files/a.txt",
     ]);
+  });
+});
+
+describe("applyPastedSessionAttachmentPathsCommand", () => {
+  it("保存済み paste attachment path がある場合だけ挿入する", () => {
+    const events: string[] = [];
+    const runCommand = (savedPaths: string[]) =>
+      applyPastedSessionAttachmentPathsCommand({
+        savedPaths,
+        insertReferencePaths: (paths) => events.push(`insert:${paths.join(",")}`),
+      });
+
+    assert.equal(runCommand([]), false);
+    assert.deepEqual(events, []);
+
+    assert.equal(runCommand(["session-files/a.txt", "session-files/b.png"]), true);
+    assert.deepEqual(events, ["insert:session-files/a.txt,session-files/b.png"]);
   });
 });

@@ -314,3 +314,15 @@ export function applySessionFilesReferencePathsCommand(input: {
   input.insertReferencePaths(input.referencePaths);
   return true;
 }
+
+export function applyPastedSessionAttachmentPathsCommand(input: {
+  savedPaths: string[];
+  insertReferencePaths: (referencePaths: string[]) => void;
+}): boolean {
+  if (input.savedPaths.length === 0) {
+    return false;
+  }
+
+  input.insertReferencePaths(input.savedPaths);
+  return true;
+}

@@ -192,6 +192,7 @@ import {
   applyHeaderExpandedToggleCommand,
   applyPathReferenceRemovalCommand,
   applyPickedComposerReferencePathCommand,
+  applyPastedSessionAttachmentPathsCommand,
   applyQuoteMessageTextCommand,
   applySelectedPathReferenceInsertionCommand,
   applySessionFilesReferencePathsCommand,
@@ -2633,10 +2634,10 @@ export default function AgentSessionWindowApp() {
       savePastedSessionFile: (request) => withmateApi.savePastedSessionFile(request),
       sessionId: selectedSession.id,
     });
-    if (savedPaths.length === 0) {
-      return;
-    }
-    insertReferencePaths(savedPaths);
+    applyPastedSessionAttachmentPathsCommand({
+      savedPaths,
+      insertReferencePaths,
+    });
   };
 
   const handleAddAdditionalDirectory = async () => {

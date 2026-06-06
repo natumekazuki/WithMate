@@ -200,6 +200,7 @@ import {
   applyHeaderExpandedToggleCommand,
   applyPathReferenceRemovalCommand,
   applyPickedComposerReferencePathCommand,
+  applyPastedSessionAttachmentPathsCommand,
   applyQuoteMessageTextCommand,
   applySelectedPathReferenceInsertionCommand,
   applySessionFilesReferencePathsCommand,
@@ -1516,10 +1517,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       savePastedSessionFile: (request) => withmateApi.savePastedSessionFile(request),
       sessionId: snapshot.session.id,
     });
-    if (savedPaths.length === 0) {
-      return;
-    }
-    insertReferencePaths(savedPaths);
+    applyPastedSessionAttachmentPathsCommand({
+      savedPaths,
+      insertReferencePaths,
+    });
   }
 
   async function handleAddAdditionalDirectory(): Promise<void> {
