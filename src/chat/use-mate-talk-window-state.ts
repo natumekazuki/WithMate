@@ -52,6 +52,7 @@ import {
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
   createHeaderExpandedToggleHandler,
+  createSessionFilesOpenHandler,
 } from "./session-shell-handlers.js";
 
 function getMateTalkLaunchParams(): { providerId: string; model: string; reasoningEffort: ModelReasoningEffort } {
@@ -332,19 +333,27 @@ export function useMateTalkWindowState({
     });
   };
 
-  const openSessionFilesDirectory = async () => {
-    if (!withmateApi) {
-      return;
-    }
-    await withmateApi.openSessionFilesDirectory(sessionFilesSessionIdRef.current);
-  };
+  const openSessionFilesDirectory = createSessionFilesOpenHandler({
+    getSessionId: () => sessionFilesSessionIdRef.current,
+    getOpenSessionFiles: () => {
+      return withmateApi
+        ? (sessionId) => withmateApi.openSessionFilesDirectory(sessionId)
+        : null;
+    },
+    alertError: (message) => setFeedback(message),
+    fallbackErrorMessage: "session files directory を開けなかったよ。",
+  });
 
-  const openSessionFilesTerminal = async () => {
-    if (!withmateApi) {
-      return;
-    }
-    await withmateApi.openSessionFilesTerminal(sessionFilesSessionIdRef.current);
-  };
+  const openSessionFilesTerminal = createSessionFilesOpenHandler({
+    getSessionId: () => sessionFilesSessionIdRef.current,
+    getOpenSessionFiles: () => {
+      return withmateApi
+        ? (sessionId) => withmateApi.openSessionFilesTerminal(sessionId)
+        : null;
+    },
+    alertError: (message) => setFeedback(message),
+    fallbackErrorMessage: "session files terminal を開けなかったよ。",
+  });
 
   const removePathReference = (targets: string[]) => {
     const removalTargets = resolvePathReferenceRemovalTargets(targets);
