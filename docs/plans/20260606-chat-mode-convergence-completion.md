@@ -56,6 +56,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-08: send-or-cancel の action 決定を `resolveAuxiliaryAwareSendOrCancelAction` に分離。Auxiliary cancel、Auxiliary send 優先、selected cancel、selected send の優先順を pure helper と test で固定し、App / Companion の呼び出し境界は未変更。`scripts/tests/chat-window-adapter.test.ts`、`npm run typecheck` は成功。
 - 2026-06-08: App / Companion の preview 後 send preflight 判定を `resolveComposerSendPreflight` に集約。preview API、composer preview state 反映、provider 実行、optimistic run 適用は呼び出し側に残した。`scripts/tests/session-composer-feedback.test.ts`、`npm run typecheck` は成功。
 - 2026-06-08: App / Companion の selected / Auxiliary cancel 対象 id 解決を `resolveRunningSessionCancelTargetId` に集約。cancel API 呼び出し、エラー表示、Companion の `turnRunning` を含む UI 側 running 判定は呼び出し側に残した。`scripts/tests/chat-window-adapter.test.ts`、`npm run typecheck` は成功。
+- 2026-06-08: App / Companion の send / cancel / reload failure message 解決を `resolveSessionRunErrorMessage` に集約。error の出力先、fallback 文言、provider 実行、rollback ordering は呼び出し側に残した。`scripts/tests/session-live-run-state.test.ts`、`npm run typecheck` は成功。
 
 ## PR Plan
 
@@ -183,6 +184,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - send-or-cancel の action 決定を `send-or-cancel` に集約。2026-06-08 着手。
 - App / Companion の preview 後 send preflight 判定を `session-composer-feedback` に集約。2026-06-08 着手。
 - App / Companion の selected / Auxiliary cancel 対象 id 解決を `send-or-cancel` に集約。2026-06-08 着手。
+- App / Companion の send / cancel / reload failure message 解決を `session-live-run-state` に集約。2026-06-08 着手。
 
 やらないこと:
 

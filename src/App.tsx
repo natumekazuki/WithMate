@@ -124,6 +124,7 @@ import {
   createOwnedPendingLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
   rollbackOptimisticSessionRunUpdate,
+  resolveSessionRunErrorMessage,
   type OwnedLiveSessionRunState,
 } from "./session-live-run-state.js";
 import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
@@ -1692,7 +1693,7 @@ export default function AgentSessionWindowApp() {
         setForceComposerBlockedFeedback(false);
         await sendAuxiliaryMessage(auxiliaryDraft);
       } catch (error) {
-        window.alert(error instanceof Error ? error.message : "送信に失敗したよ。");
+        window.alert(resolveSessionRunErrorMessage(error, "送信に失敗したよ。"));
       }
       return;
     }
@@ -1709,7 +1710,7 @@ export default function AgentSessionWindowApp() {
         collapseActionDock: appSettings.autoCollapseActionDockOnSend,
       });
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "送信に失敗したよ。");
+      window.alert(resolveSessionRunErrorMessage(error, "送信に失敗したよ。"));
     }
   };
 
@@ -1722,7 +1723,7 @@ export default function AgentSessionWindowApp() {
     try {
       await withmateApi.cancelSessionRun(sessionId);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "キャンセルに失敗したよ。");
+      window.alert(resolveSessionRunErrorMessage(error, "キャンセルに失敗したよ。"));
     }
   };
 
@@ -2224,7 +2225,7 @@ export default function AgentSessionWindowApp() {
     try {
       await withmateApi.cancelAuxiliarySessionRun(sessionId);
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "キャンセルに失敗したよ。");
+      window.alert(resolveSessionRunErrorMessage(error, "キャンセルに失敗したよ。"));
     }
   };
 

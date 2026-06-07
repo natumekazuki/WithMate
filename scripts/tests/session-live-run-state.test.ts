@@ -9,6 +9,7 @@ import {
   clearOwnedLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
   rollbackOptimisticSessionRunUpdate,
+  resolveSessionRunErrorMessage,
   type OwnedLiveSessionRunState,
 } from "../../src/session-live-run-state.js";
 import type { Message } from "../../src/session-state.js";
@@ -63,6 +64,18 @@ type TestSession = {
   updatedAt: string;
   messages: Message[];
 };
+
+test("resolveSessionRunErrorMessage は Error message を優先する", () => {
+  assert.equal(resolveSessionRunErrorMessage(new Error("provider failed"), "fallback"), "provider failed");
+});
+
+test("resolveSessionRunErrorMessage は非 Error なら fallback を返す", () => {
+  assert.equal(resolveSessionRunErrorMessage("provider failed", "fallback"), "fallback");
+});
+
+test("resolveSessionRunErrorMessage は message 付き object でも非 Error なら fallback を返す", () => {
+  assert.equal(resolveSessionRunErrorMessage({ message: "provider failed" }, "fallback"), "fallback");
+});
 
 test("buildOptimisticSessionRunUpdate は running session と pending live run updater を作る", () => {
   const session: TestSession = {

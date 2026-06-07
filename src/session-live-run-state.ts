@@ -17,6 +17,10 @@ export type OptimisticRunningSessionBase = {
   updatedAt: string;
 };
 
+export function resolveSessionRunErrorMessage(error: unknown, fallbackMessage: string): string {
+  return error instanceof Error ? error.message : fallbackMessage;
+}
+
 export function createOptimisticRunningSessionState<TSession extends OptimisticRunningSessionBase>(
   session: TSession,
   userMessage: string,

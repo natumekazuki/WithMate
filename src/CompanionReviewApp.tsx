@@ -153,6 +153,7 @@ import {
   createOwnedPendingLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
   rollbackOptimisticSessionRunUpdate,
+  resolveSessionRunErrorMessage,
   type OwnedLiveSessionRunState,
 } from "./session-live-run-state.js";
 import {
@@ -1948,7 +1949,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
     if (result.status === "error") {
       console.error(result.error);
-      setErrorMessage(result.error instanceof Error ? result.error.message : "Auxiliary Session の実行に失敗したよ。");
+      setErrorMessage(resolveSessionRunErrorMessage(result.error, "Auxiliary Session の実行に失敗したよ。"));
     }
   }
 
@@ -2532,7 +2533,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       try {
         await reloadSnapshot();
       } catch (error) {
-        setErrorMessage(error instanceof Error ? error.message : "Companion の再読み込みに失敗したよ。");
+        setErrorMessage(resolveSessionRunErrorMessage(error, "Companion の再読み込みに失敗したよ。"));
       }
     } catch (error) {
       if (appliedOptimisticState) {
@@ -2546,7 +2547,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
             setSnapshot((current) => current?.session.id === previousSnapshot.session.id ? previousSnapshot : current),
         });
       }
-      setErrorMessage(error instanceof Error ? error.message : "Companion の実行に失敗したよ。");
+      setErrorMessage(resolveSessionRunErrorMessage(error, "Companion の実行に失敗したよ。"));
     } finally {
       setTurnRunning(false);
     }
