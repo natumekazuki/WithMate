@@ -67,6 +67,22 @@ export function applyAuxiliarySessionRuntimeOptionsPatch(
   return applyAuxiliarySessionPatch(session, patch, updatedAt);
 }
 
+export function applyAuxiliarySessionApprovalModeChange(
+  session: AuxiliarySession,
+  approvalMode: ApprovalMode,
+  updatedAt: string,
+): AuxiliarySession {
+  return applyAuxiliarySessionRuntimeOptionsPatch(session, { approvalMode }, updatedAt);
+}
+
+export function applyAuxiliarySessionCodexSandboxModeChange(
+  session: AuxiliarySession,
+  codexSandboxMode: CodexSandboxMode,
+  updatedAt: string,
+): AuxiliarySession {
+  return applyAuxiliarySessionRuntimeOptionsPatch(session, { codexSandboxMode }, updatedAt);
+}
+
 export function applyAuxiliarySessionModelSelectionPatch(
   session: AuxiliarySession,
   patch: Pick<AuxiliarySession, "catalogRevision" | "model" | "reasoningEffort">,

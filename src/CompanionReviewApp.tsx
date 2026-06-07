@@ -26,11 +26,12 @@ import {
 } from "./runtime-option-state.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import {
+  applyAuxiliarySessionApprovalModeChange,
+  applyAuxiliarySessionCodexSandboxModeChange,
   applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionModelChange,
   applyAuxiliarySessionReasoningEffortChange,
-  applyAuxiliarySessionRuntimeOptionsPatch,
   loadClosedAuxiliarySessionDetails,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveClosedAuxiliarySessionsAfterReturn,
@@ -1956,13 +1957,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   async function handleChangeAuxiliaryApproval(approvalMode: ApprovalMode): Promise<void> {
     await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionRuntimeOptionsPatch(current, { approvalMode }, currentTimestampLabel())
+      applyAuxiliarySessionApprovalModeChange(current, approvalMode, currentTimestampLabel())
     ));
   }
 
   async function handleChangeAuxiliarySandboxMode(codexSandboxMode: CodexSandboxMode): Promise<void> {
     await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionRuntimeOptionsPatch(current, { codexSandboxMode }, currentTimestampLabel())
+      applyAuxiliarySessionCodexSandboxModeChange(current, codexSandboxMode, currentTimestampLabel())
     ));
   }
 

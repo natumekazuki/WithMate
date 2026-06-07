@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyAuxiliarySessionApprovalModeChange,
+  applyAuxiliarySessionCodexSandboxModeChange,
   addAuxiliarySessionAdditionalDirectory,
   applyAuxiliarySessionPatch,
   applyAuxiliarySessionComposerDraftPatch,
@@ -112,6 +114,44 @@ test("applyAuxiliarySessionRuntimeOptionsPatch は runtime option と updatedAt 
     {
       ...session,
       approvalMode: "on-request",
+      codexSandboxMode: "read-only",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    },
+  );
+});
+
+test("applyAuxiliarySessionApprovalModeChange は approval mode と updatedAt だけを更新する", () => {
+  const session = createAuxiliarySession({
+    approvalMode: "untrusted",
+  });
+
+  assert.deepEqual(
+    applyAuxiliarySessionApprovalModeChange(
+      session,
+      "on-request",
+      "2026-01-02T00:00:00.000Z",
+    ),
+    {
+      ...session,
+      approvalMode: "on-request",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    },
+  );
+});
+
+test("applyAuxiliarySessionCodexSandboxModeChange は sandbox mode と updatedAt だけを更新する", () => {
+  const session = createAuxiliarySession({
+    codexSandboxMode: "workspace-write",
+  });
+
+  assert.deepEqual(
+    applyAuxiliarySessionCodexSandboxModeChange(
+      session,
+      "read-only",
+      "2026-01-02T00:00:00.000Z",
+    ),
+    {
+      ...session,
       codexSandboxMode: "read-only",
       updatedAt: "2026-01-02T00:00:00.000Z",
     },

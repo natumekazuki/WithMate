@@ -20,10 +20,11 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - composer/path helpers: draft select/composition、paste collection、path preview/search、send-or-cancel routing。
 - PR-02: pasted session attachment の保存/挿入/失敗/no-op contract。
 - PR-03: additional directory list の add/remove operation。
+- PR-04: runtime option update handler の共通 contract。
 
 進行中:
 
-- PR-04: runtime option update handler の共通 contract を整理中。
+- PR-05: send / run lifecycle の共通化 slice を整理中。
 
 ## Progress Log
 
@@ -42,6 +43,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-07: 通常 Session / Companion の model / reasoning effort session patch 構築を `runtime-option-state` に集約。model catalog selection と fallback/validation 契約は既存 `model-catalog` helper に委譲し、Auxiliary runtime option save queue と MateTalk local runtime state は未変更。
 - 2026-06-07: MateTalk の approval / sandbox option fallback を `resolveRuntimeOptionValue` に集約。approval は空 options なら default、sandbox は候補がある場合だけ補正する既存 effect 境界を維持し、送信 payload と local runtime state 自体は未変更。
 - 2026-06-07: App / CompanionReview の Auxiliary model / reasoning effort patch 構築を `auxiliary-session-state` に集約。`runGuardedAuxiliarySessionUpdate`、保存 queue、active session guard、timestamp 生成は呼び出し側に残し、model catalog fallback/validation は既存 helper に委譲。
+- 2026-06-07: App / CompanionReview の Auxiliary approval / sandbox patch 構築を `auxiliary-session-state` に集約。`runGuardedAuxiliarySessionUpdate`、保存 queue、active session guard、timestamp 生成は呼び出し側に残し、PR-04 runtime option update handler slice を完了扱いに変更。
 
 ## PR Plan
 
@@ -131,6 +133,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 通常 Session / Companion の model / reasoning effort session patch 構築を `runtime-option-state` に集約。2026-06-07 完了。
 - MateTalk の approval / sandbox option fallback を `runtime-option-state` に集約。2026-06-07 完了。
 - App / CompanionReview の Auxiliary model / reasoning effort patch 構築を `auxiliary-session-state` に集約。2026-06-07 完了。
+- App / CompanionReview の Auxiliary approval / sandbox patch 構築を `auxiliary-session-state` に集約。2026-06-07 完了。
 
 やらないこと:
 
