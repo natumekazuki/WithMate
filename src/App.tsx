@@ -22,6 +22,8 @@ import {
 import {
   buildSessionWithApprovalMode,
   buildSessionWithCodexSandboxMode,
+  buildSessionWithModelChange,
+  buildSessionWithReasoningEffort,
 } from "./runtime-option-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
@@ -35,7 +37,6 @@ import {
   type DiffPreviewPayload,
   type Message,
   applyCopilotCustomAgentSelection,
-  applySessionModelMetadataUpdate,
   isLegacyReadOnlySession,
   type Session,
 } from "./session-state.js";
@@ -1974,10 +1975,10 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const selection = resolveModelChangeSelection(selectedProviderCatalog, model, selectedSession.reasoningEffort);
-    const nextSession: Session = applySessionModelMetadataUpdate(
+    const nextSession = buildSessionWithModelChange(
       selectedSession,
-      selection,
+      selectedProviderCatalog,
+      model,
       modelCatalog.revision,
       currentTimestampLabel(),
     );
@@ -1990,10 +1991,10 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const selection = resolveModelSelection(selectedProviderCatalog, selectedSession.model, reasoningEffort);
-    const nextSession: Session = applySessionModelMetadataUpdate(
+    const nextSession = buildSessionWithReasoningEffort(
       selectedSession,
-      selection,
+      selectedProviderCatalog,
+      reasoningEffort,
       modelCatalog.revision,
       currentTimestampLabel(),
     );

@@ -21,6 +21,8 @@ import {
 import {
   buildSessionWithApprovalMode,
   buildSessionWithCodexSandboxMode,
+  buildSessionWithModelChange,
+  buildSessionWithReasoningEffort,
 } from "./runtime-option-state.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import {
@@ -1682,14 +1684,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const selection = resolveModelChangeSelection(selectedProviderCatalog, model, snapshot.session.reasoningEffort);
-    await persistCompanionSession({
-      ...snapshot.session,
-      catalogRevision: modelCatalog.revision,
-      model: selection.resolvedModel,
-      reasoningEffort: selection.resolvedReasoningEffort,
-      updatedAt: currentTimestampLabel(),
-    });
+    const nextSession = buildSessionWithModelChange(
+      snapshot.session,
+      selectedProviderCatalog,
+      model,
+      modelCatalog.revision,
+      currentTimestampLabel(),
+    );
+    await persistCompanionSession(nextSession);
   }
 
   async function handleChangeReasoningEffort(reasoningEffort: ModelReasoningEffort): Promise<void> {
@@ -1697,14 +1699,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const selection = resolveModelSelection(selectedProviderCatalog, snapshot.session.model, reasoningEffort);
-    await persistCompanionSession({
-      ...snapshot.session,
-      catalogRevision: modelCatalog.revision,
-      model: selection.resolvedModel,
-      reasoningEffort: selection.resolvedReasoningEffort,
-      updatedAt: currentTimestampLabel(),
-    });
+    const nextSession = buildSessionWithReasoningEffort(
+      snapshot.session,
+      selectedProviderCatalog,
+      reasoningEffort,
+      modelCatalog.revision,
+      currentTimestampLabel(),
+    );
+    await persistCompanionSession(nextSession);
   }
 
   async function persistCompanionSession(nextSession: CompanionSession): Promise<CompanionSession> {
