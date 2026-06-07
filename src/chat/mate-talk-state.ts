@@ -127,6 +127,23 @@ export function buildMateTalkUserMessage({
   };
 }
 
+export function beginMateTalkTurnSubmission({
+  controller,
+  message,
+}: {
+  controller: Pick<MateTalkTurnController, "beginTurn">;
+  message: string;
+}): MateTalkTurnState & { userMessage: MateTalkTurnMessage } {
+  const turnState = controller.beginTurn();
+  return {
+    ...turnState,
+    userMessage: buildMateTalkUserMessage({
+      messageSequence: turnState.messageSequence,
+      text: message,
+    }),
+  };
+}
+
 export function buildMateTalkAssistantMessage({
   messageSequence,
   text,

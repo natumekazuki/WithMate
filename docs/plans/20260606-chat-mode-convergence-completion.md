@@ -71,6 +71,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-08: MateTalk projection の running 入力名を `isRunning` に統一。hook の local state `sending` は呼び出し側で adapter し、ChatWindow へ渡す running contract と rendering は未変更。
 - 2026-06-08: MateTalk hook の local run flag を `isRunning` に統一。blocked reason の `sending` 文言は既存 contract として残し、turn controller、provider 実行、rendering は未変更。
 - 2026-06-08: MateTalk submit preflight の blocked reason を `running` に統一。呼び出し側は empty reason だけを扱う既存挙動のまま、provider 実行と UI 表示は未変更。
+- 2026-06-08: MateTalk turn 開始時の turn state / user message 作成を `beginMateTalkTurnSubmission` に集約。hook 側の running state 反映順、payload 作成、provider 実行、stale guard は未変更。
 
 ## PR Plan
 
@@ -213,6 +214,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - MateTalk projection の running 入力名を `isRunning` へ統一。2026-06-08 着手。
 - MateTalk hook の local run flag を `isRunning` へ統一。2026-06-08 着手。
 - MateTalk submit preflight の blocked reason を `running` へ統一。2026-06-08 着手。
+- MateTalk turn 開始時の turn state / user message 作成を `mate-talk-state` に集約。2026-06-08 着手。
 
 やらないこと:
 

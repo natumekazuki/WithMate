@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  beginMateTalkTurnSubmission,
   buildMateTalkAssistantMessage,
   buildMateTalkErrorMessage,
   buildMateTalkTurnInput,
@@ -225,6 +226,26 @@ test("buildMateTalkUserMessage は user message id と本文を組み立てる",
       id: "user-3",
       role: "user",
       text: "hello",
+    },
+  );
+});
+
+test("beginMateTalkTurnSubmission は turn state と user message を組み立てる", () => {
+  const controller = new MateTalkTurnController();
+
+  assert.deepEqual(
+    beginMateTalkTurnSubmission({
+      controller,
+      message: "hello",
+    }),
+    {
+      turnId: 1,
+      messageSequence: 1,
+      userMessage: {
+        id: "user-1",
+        role: "user",
+        text: "hello",
+      },
     },
   );
 });

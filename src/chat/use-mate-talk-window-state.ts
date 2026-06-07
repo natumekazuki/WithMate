@@ -44,10 +44,10 @@ import {
   resolveMateTalkModelChange,
 } from "./mate-talk-model-selection.js";
 import {
+  beginMateTalkTurnSubmission,
   buildMateTalkAssistantMessage,
   buildMateTalkErrorMessage,
   buildMateTalkTurnInput,
-  buildMateTalkUserMessage,
   MateTalkTurnController,
   resolveMateTalkActionDockExpandedAfterSubmit,
   resolveMateTalkSubmitPreflight,
@@ -440,10 +440,9 @@ export function useMateTalkWindowState({
     }
     const normalizedText = preflight.message;
 
-    const { turnId, messageSequence } = turnControllerRef.current.beginTurn();
-    const userMessage: MateTalkMessage = buildMateTalkUserMessage({
-      messageSequence,
-      text: normalizedText,
+    const { turnId, messageSequence, userMessage } = beginMateTalkTurnSubmission({
+      controller: turnControllerRef.current,
+      message: normalizedText,
     });
 
     setIsRunning(true);
