@@ -64,6 +64,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-08: App の selected / Auxiliary cancel target 組み立ても `buildRunningSessionCancelTarget` 経由へ統一。Companion と同じ target-id 解決経路にそろえ、cancel API 呼び出し、error handling、provider 実行は未変更。
 - 2026-06-08: App の compact ActionDock preview running 判定を direct session `runState` 参照から `selectedSessionRunState` 経由へ統一。live run fallback を含む selected session running 導出と表示をそろえ、send / cancel / provider 実行は未変更。
 - 2026-06-08: Agent session projection の composer dock running 判定を direct session `runState` 参照から `isSelectedSessionRunning` input へ統一。live run fallback を含む running boolean を composer / compact dock に渡す contract を focused test で固定し、provider 実行と state 更新は未変更。
+- 2026-06-08: App main composer / picker の running gate を direct session `runState` 参照から `selectedSessionRunState` 経由へ統一。picker close、composer disabled、sendability、blocked feedback の判定を live run fallback とそろえ、preview API と provider 実行は未変更。
 
 ## PR Plan
 
@@ -199,6 +200,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App の selected / Auxiliary cancel target 組み立てを `send-or-cancel` に集約。2026-06-08 着手。
 - App の compact ActionDock preview running 判定を `selectedSessionRunState` 経由へ統一。2026-06-08 着手。
 - Agent session projection の composer dock running 判定を `isSelectedSessionRunning` input 経由へ統一。2026-06-08 着手。
+- App main composer / picker の running gate を `selectedSessionRunState` 経由へ統一。2026-06-08 着手。
 
 やらないこと:
 

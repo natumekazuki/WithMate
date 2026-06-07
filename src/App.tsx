@@ -809,11 +809,11 @@ export default function AgentSessionWindowApp() {
   }, [selectedSessionId]);
 
   useEffect(() => {
-    if (selectedSession?.runState === "running") {
+    if (selectedSessionRunState === "running") {
       setIsAgentPickerOpen(false);
       setIsSkillPickerOpen(false);
     }
-  }, [selectedSession?.runState]);
+  }, [selectedSessionRunState]);
 
   useEffect(() => {
     let active = true;
@@ -1432,16 +1432,16 @@ export default function AgentSessionWindowApp() {
     activeAuxiliarySession,
   ]);
   const shouldProtectDraftOnRetryEdit = shouldProtectRetryEditDraft({ retryBanner, draft });
-  const isComposerDisabled = selectedSession?.runState === "running" || !!composerBlockedReason || isSelectedSessionReadOnly;
+  const isComposerDisabled = selectedSessionRunState === "running" || !!composerBlockedReason || isSelectedSessionReadOnly;
   const composerSendabilityBase = useMemo(
     () =>
       buildComposerSendabilityState({
-        runState: selectedSession?.runState,
+        runState: selectedSessionRunState,
         blockedReason: composerBlockedReason,
         inputErrors: composerPreview.errors,
         draftText: draft,
       }),
-    [composerBlockedReason, composerPreview.errors, draft, selectedSession?.runState],
+    [composerBlockedReason, composerPreview.errors, draft, selectedSessionRunState],
   );
   const composerSendability = useMemo(
     () => withForcedComposerBlockedFeedback(composerSendabilityBase, forceComposerBlockedFeedback),
@@ -1619,7 +1619,7 @@ export default function AgentSessionWindowApp() {
   }, [selectedSession?.id]);
 
   const triggerComposerBlockedFeedback = () => {
-    if (!selectedSession || selectedSession.runState === "running") {
+    if (!selectedSession || selectedSessionRunState === "running") {
       return;
     }
 
