@@ -3,10 +3,12 @@ import test from "node:test";
 
 import type { LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState } from "../../src/runtime-state.js";
 import {
+  buildOptimisticSessionRunUpdate,
   clearOwnedLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
   type OwnedLiveSessionRunState,
 } from "../../src/session-live-run-state.js";
+import type { Message } from "../../src/session-state.js";
 
 function makeLiveRunState(
   sessionId: string,
@@ -49,6 +51,66 @@ function makeElicitationRequest(requestId: string): LiveElicitationRequest {
     fields: [],
   };
 }
+
+type TestSession = {
+  id: string;
+  threadId: string;
+  status?: string;
+  runState: string;
+  updatedAt: string;
+  messages: Message[];
+};
+
+test("buildOptimisticSessionRunUpdate は running session と pending live run updater を作る", () => {
+  const session: TestSession = {
+    id: "session-1",
+    threadId: "thread-1",
+    status: "idle",
+    runState: "idle",
+    updatedAt: "before",
+    messages: [{ role: "assistant", text: "hello" }],
+  };
+  const current: OwnedLiveSessionRunState = {
+    ownerSessionId: "session-1",
+    state: {
+      ...makeLiveRunState("session-1"),
+      backgroundTasks: [{ id: "task-1", title: "Install", status: "running" }],
+    },
+  };
+
+  const update = buildOptimisticSessionRunUpdate({
+    session,
+    userMessage: "next",
+    updatedAt: "after",
+    status: "running",
+  });
+
+  assert.deepEqual(update.runningSession, {
+    ...session,
+    status: "running",
+    runState: "running",
+    updatedAt: "after",
+    messages: [
+      { role: "assistant", text: "hello" },
+      { role: "user", text: "next" },
+    ],
+  });
+  assert.deepEqual(update.createPendingLiveRunState(current), {
+    ownerSessionId: "session-1",
+    state: {
+      sessionId: "session-1",
+      threadId: "thread-1",
+      assistantText: "",
+      reasoningText: "",
+      steps: [],
+      backgroundTasks: [{ id: "task-1", title: "Install", status: "running" }],
+      usage: null,
+      errorMessage: "",
+      approvalRequest: null,
+      elicitationRequest: null,
+    },
+  });
+});
 
 test("clearOwnedLiveSessionRunState は owner が一致した live run だけ空にする", () => {
   const current: OwnedLiveSessionRunState = {

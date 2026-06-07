@@ -143,8 +143,8 @@ import {
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
 import {
+  buildOptimisticSessionRunUpdate,
   clearOwnedLiveSessionRunState,
-  createOptimisticRunningSessionState,
   createOwnedPendingLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
   type OwnedLiveSessionRunState,
@@ -2497,15 +2497,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         throw new Error(sendability.primaryFeedback || "送信できない状態だよ。");
       }
 
-      const runningSession = createOptimisticRunningSessionState(
-        snapshot.session,
+      const optimisticRun = buildOptimisticSessionRunUpdate({
+        session: snapshot.session,
         userMessage,
-        currentTimestampLabel(),
-      );
+        updatedAt: currentTimestampLabel(),
+      });
+      const runningSession = optimisticRun.runningSession;
       if (shouldClearDraft) {
         setComposerText("");
       }
-      setLiveRunState((current) => createOwnedPendingLiveSessionRunState(runningSession, current));
+      setLiveRunState(optimisticRun.createPendingLiveRunState);
       setSnapshot((current) => current ? { ...current, session: runningSession } : current);
       appliedOptimisticState = true;
 

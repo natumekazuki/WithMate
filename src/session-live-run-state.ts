@@ -32,6 +32,37 @@ export function createOptimisticRunningSessionState<TSession extends OptimisticR
   } as TSession;
 }
 
+export function buildOptimisticSessionRunUpdate<
+  TSession extends OptimisticRunningSessionBase & PendingLiveRunSessionIdentity,
+>({
+  session,
+  userMessage,
+  updatedAt,
+  status,
+}: {
+  session: TSession;
+  userMessage: string;
+  updatedAt: string;
+  status?: string;
+}): {
+  runningSession: TSession;
+  createPendingLiveRunState: (
+    current?: OwnedLiveSessionRunState | null,
+  ) => OwnedLiveSessionRunState;
+} {
+  const runningSession = createOptimisticRunningSessionState(
+    session,
+    userMessage,
+    updatedAt,
+    status !== undefined ? { status } : {},
+  );
+  return {
+    runningSession,
+    createPendingLiveRunState: (current) =>
+      createOwnedPendingLiveSessionRunState(runningSession, current),
+  };
+}
+
 export function createPendingLiveSessionRunState(
   session: PendingLiveRunSessionIdentity,
   previousState?: LiveSessionRunState | null,
