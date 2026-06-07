@@ -50,6 +50,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-07: MateTalk turn payload 構築を `buildMateTalkTurnInput` に集約。input clear 前の attachment / additional directory / runtime option snapshot と sandbox option なし provider の payload 省略 contract を維持し、provider 実行と stale guard は未変更。`scripts/tests/mate-talk-state.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-08: MateTalk turn の user / assistant / error message 作成を `buildMateTalkUserMessage` / `buildMateTalkAssistantMessage` / `buildMateTalkErrorMessage` に集約。message id と Error fallback の contract を test で固定し、provider 実行と stale guard は未変更。`scripts/tests/mate-talk-state.test.ts`、`npm run typecheck` は成功。
 - 2026-06-08: App / Companion の optimistic run 開始適用を `applyOptimisticSessionRunUpdate` に集約。pending live run updater 反映後に running session を反映する順序を test で固定し、provider 実行、success/failure rollback は呼び出し側に残した。`scripts/tests/session-live-run-state.test.ts`、`npm run typecheck` は成功。
+- 2026-06-08: App / Companion の optimistic run 失敗時 rollback を `rollbackOptimisticSessionRunUpdate` に集約。live run clear 後に session restore を呼ぶ順序を test で固定し、draft restore、error logging、provider execution は呼び出し側に残した。`scripts/tests/session-live-run-state.test.ts`、`npm run typecheck` は成功。
 
 ## PR Plan
 
@@ -171,6 +172,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - MateTalk turn payload 構築を `mate-talk-state` に集約。2026-06-07 着手。
 - MateTalk turn message 作成を `mate-talk-state` に集約。2026-06-08 着手。
 - App / Companion の optimistic run 開始適用を `session-live-run-state` に集約。2026-06-08 着手。
+- App / Companion の optimistic run 失敗時 rollback を `session-live-run-state` に集約。2026-06-08 着手。
 
 やらないこと:
 

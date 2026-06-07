@@ -7,6 +7,7 @@ import {
   buildOptimisticSessionRunUpdate,
   clearOwnedLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
+  rollbackOptimisticSessionRunUpdate,
   type OwnedLiveSessionRunState,
 } from "../../src/session-live-run-state.js";
 import type { Message } from "../../src/session-state.js";
@@ -164,6 +165,56 @@ test("applyOptimisticSessionRunUpdate は pending live run と running session �
       elicitationRequest: null,
     },
   });
+});
+
+test("rollbackOptimisticSessionRunUpdate は live run clear 後に session restore を呼ぶ", () => {
+  const calls: string[] = [];
+  let nextLiveRunState: OwnedLiveSessionRunState | null = null;
+  let restored = false;
+
+  rollbackOptimisticSessionRunUpdate({
+    sessionId: "session-1",
+    updateLiveRunState: (update) => {
+      calls.push("live-run");
+      nextLiveRunState = update({
+        ownerSessionId: "session-1",
+        state: makeLiveRunState("session-1"),
+      });
+    },
+    restoreSession: () => {
+      calls.push("session");
+      restored = true;
+    },
+  });
+
+  assert.deepEqual(calls, ["live-run", "session"]);
+  assert.equal(restored, true);
+  assert.deepEqual(nextLiveRunState, {
+    ownerSessionId: "session-1",
+    state: null,
+  });
+});
+
+test("rollbackOptimisticSessionRunUpdate は別 owner の live run を維持して session restore を呼ぶ", () => {
+  const current: OwnedLiveSessionRunState = {
+    ownerSessionId: "session-2",
+    state: makeLiveRunState("session-2"),
+  };
+  let nextLiveRunState: OwnedLiveSessionRunState | null = null;
+  let restored = false;
+
+  rollbackOptimisticSessionRunUpdate({
+    sessionId: "session-1",
+    updateLiveRunState: (update) => {
+      nextLiveRunState = update(current);
+    },
+    restoreSession: () => {
+      restored = true;
+    },
+  });
+
+  assert.equal(nextLiveRunState, current);
+  assert.equal(restored, true);
 });
 
 test("clearOwnedLiveSessionRunState は owner が一致した live run だけ空にする", () => {

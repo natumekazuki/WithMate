@@ -119,6 +119,7 @@ import {
   clearOwnedLiveSessionRunState,
   createOwnedPendingLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
+  rollbackOptimisticSessionRunUpdate,
   type OwnedLiveSessionRunState,
 } from "./session-live-run-state.js";
 import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
@@ -1665,8 +1666,11 @@ export default function AgentSessionWindowApp() {
       setSessions([savedSession]);
     } catch (error) {
       console.error(error);
-      setLiveRunState((current) => clearOwnedLiveSessionRunState(current, updatedSession.id));
-      setSessions([selectedSession]);
+      rollbackOptimisticSessionRunUpdate({
+        sessionId: updatedSession.id,
+        updateLiveRunState: (update) => setLiveRunState(update),
+        restoreSession: () => setSessions([selectedSession]),
+      });
     }
   };
 

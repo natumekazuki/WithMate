@@ -95,6 +95,21 @@ export function applyOptimisticSessionRunUpdate<
   return update.runningSession;
 }
 
+export function rollbackOptimisticSessionRunUpdate({
+  sessionId,
+  updateLiveRunState,
+  restoreSession,
+}: {
+  sessionId: string;
+  updateLiveRunState: (
+    clearLiveRunState: (current: OwnedLiveSessionRunState) => OwnedLiveSessionRunState,
+  ) => void;
+  restoreSession: () => void;
+}): void {
+  updateLiveRunState((current) => clearOwnedLiveSessionRunState(current, sessionId));
+  restoreSession();
+}
+
 export function createPendingLiveSessionRunState(
   session: PendingLiveRunSessionIdentity,
   previousState?: LiveSessionRunState | null,

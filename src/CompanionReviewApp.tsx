@@ -148,6 +148,7 @@ import {
   clearOwnedLiveSessionRunState,
   createOwnedPendingLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
+  rollbackOptimisticSessionRunUpdate,
   type OwnedLiveSessionRunState,
 } from "./session-live-run-state.js";
 import {
@@ -2530,8 +2531,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         if (shouldClearDraft) {
           setComposerText(userMessage);
         }
-        setLiveRunState((current) => clearOwnedLiveSessionRunState(current, previousSnapshot.session.id));
-        setSnapshot((current) => current?.session.id === previousSnapshot.session.id ? previousSnapshot : current);
+        rollbackOptimisticSessionRunUpdate({
+          sessionId: previousSnapshot.session.id,
+          updateLiveRunState: (update) => setLiveRunState(update),
+          restoreSession: () =>
+            setSnapshot((current) => current?.session.id === previousSnapshot.session.id ? previousSnapshot : current),
+        });
       }
       setErrorMessage(error instanceof Error ? error.message : "Companion の実行に失敗したよ。");
     } finally {
