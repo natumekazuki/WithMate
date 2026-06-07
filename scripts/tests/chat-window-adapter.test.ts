@@ -33,6 +33,7 @@ import {
 import {
   buildAuxiliaryAwareSendOrCancelHandler,
   resolveAuxiliaryAwareSendOrCancelAction,
+  resolveRunningSessionCancelTargetId,
 } from "../../src/chat/send-or-cancel.js";
 import type { ChatWindowProps } from "../../src/chat/chat-window.js";
 import { buildLiveSessionWindowShellProps } from "../../src/chat/live-session-window-props.js";
@@ -152,6 +153,20 @@ test("resolveAuxiliaryAwareSendOrCancelAction は auxiliary も running selected
       isSelectedSessionRunning: false,
     }),
     "send-selected",
+  );
+});
+
+test("resolveRunningSessionCancelTargetId は running session の id だけ返す", () => {
+  assert.equal(resolveRunningSessionCancelTargetId({ id: "session-1", runState: "running" }), "session-1");
+  assert.equal(resolveRunningSessionCancelTargetId({ id: "session-1", runState: "idle" }), null);
+  assert.equal(resolveRunningSessionCancelTargetId({ id: "session-1", runState: undefined }), null);
+  assert.equal(resolveRunningSessionCancelTargetId(null), null);
+});
+
+test("resolveRunningSessionCancelTargetId は UI 側 running 判定を優先できる", () => {
+  assert.equal(
+    resolveRunningSessionCancelTargetId({ id: "session-1", runState: "idle", isRunning: true }),
+    "session-1",
   );
 });
 

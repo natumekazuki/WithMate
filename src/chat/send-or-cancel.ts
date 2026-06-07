@@ -15,6 +15,18 @@ export type AuxiliaryAwareSendOrCancelAction =
   | "cancel-selected"
   | "send-selected";
 
+export type RunningSessionCancelTarget = {
+  id: string;
+  runState: string | null | undefined;
+  isRunning?: boolean;
+} | null | undefined;
+
+export function resolveRunningSessionCancelTargetId(
+  target: RunningSessionCancelTarget,
+): string | null {
+  return target && (target.isRunning || target.runState === "running") ? target.id : null;
+}
+
 export function resolveAuxiliaryAwareSendOrCancelAction({
   shouldSendAuxiliary,
   isAuxiliarySessionRunning,

@@ -123,7 +123,10 @@ import {
   createAuxiliaryLaunchProviderSelectHandler,
   resolveAuxiliaryLaunchStartError,
 } from "./chat/auxiliary-launch-state.js";
-import { buildAuxiliaryAwareSendOrCancelHandler } from "./chat/send-or-cancel.js";
+import {
+  buildAuxiliaryAwareSendOrCancelHandler,
+  resolveRunningSessionCancelTargetId,
+} from "./chat/send-or-cancel.js";
 import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-runtime-option-routing.js";
 import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
 import {
@@ -1951,11 +1954,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   async function cancelAuxiliaryRun(): Promise<void> {
     const withmateApi = getWithMateApi();
-    if (!withmateApi || !activeAuxiliarySession || activeAuxiliarySession.runState !== "running") {
+    const sessionId = resolveRunningSessionCancelTargetId(activeAuxiliarySession);
+    if (!withmateApi || !sessionId) {
       return;
     }
 
-    await withmateApi.cancelAuxiliarySessionRun(activeAuxiliarySession.id);
+    await withmateApi.cancelAuxiliarySessionRun(sessionId);
   }
 
   async function handleChangeAuxiliaryApproval(approvalMode: ApprovalMode): Promise<void> {
@@ -2550,10 +2554,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   async function cancelCompanionTurn(): Promise<void> {
     const withmateApi = getWithMateApi();
-    if (!snapshot || !withmateApi || !isSelectedSessionRunning) {
+    const sessionId = resolveRunningSessionCancelTargetId(
+      snapshot
+        ? { id: snapshot.session.id, runState: selectedSessionRunState, isRunning: isSelectedSessionRunning }
+        : null,
+    );
+    if (!withmateApi || !sessionId) {
       return;
     }
-    await withmateApi.cancelCompanionSessionRun(snapshot.session.id);
+    await withmateApi.cancelCompanionSessionRun(sessionId);
   }
 
   async function handleResendLastMessage(): Promise<void> {

@@ -46,7 +46,10 @@ import {
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
-import { buildAuxiliaryAwareSendOrCancelHandler } from "./chat/send-or-cancel.js";
+import {
+  buildAuxiliaryAwareSendOrCancelHandler,
+  resolveRunningSessionCancelTargetId,
+} from "./chat/send-or-cancel.js";
 import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-runtime-option-routing.js";
 import {
   approvalModeLabel,
@@ -1711,12 +1714,13 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleCancelRun = async () => {
-    if (!withmateApi || !selectedSession || selectedSession.runState !== "running") {
+    const sessionId = resolveRunningSessionCancelTargetId(selectedSession);
+    if (!withmateApi || !sessionId) {
       return;
     }
 
     try {
-      await withmateApi.cancelSessionRun(selectedSession.id);
+      await withmateApi.cancelSessionRun(sessionId);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "キャンセルに失敗したよ。");
     }
@@ -2212,12 +2216,13 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleCancelAuxiliaryRun = async () => {
-    if (!withmateApi || !activeAuxiliarySession || activeAuxiliarySession.runState !== "running") {
+    const sessionId = resolveRunningSessionCancelTargetId(activeAuxiliarySession);
+    if (!withmateApi || !sessionId) {
       return;
     }
 
     try {
-      await withmateApi.cancelAuxiliarySessionRun(activeAuxiliarySession.id);
+      await withmateApi.cancelAuxiliarySessionRun(sessionId);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "キャンセルに失敗したよ。");
     }
