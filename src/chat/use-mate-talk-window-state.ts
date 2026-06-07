@@ -44,6 +44,7 @@ import {
   resolveMateTalkModelChange,
 } from "./mate-talk-model-selection.js";
 import {
+  buildMateTalkTurnInput,
   MateTalkTurnController,
   resolveMateTalkActionDockExpandedAfterSubmit,
   resolveMateTalkSubmitPreflight,
@@ -445,10 +446,16 @@ export function useMateTalkWindowState({
     setSending(true);
     setFeedback("");
     setMessages((current) => [...current, userMessage]);
-    const turnAttachments = pathReferences;
-    const turnAdditionalDirectories = additionalDirectories;
-    const turnApprovalMode = selectedApprovalMode;
-    const turnCodexSandboxMode = sandboxOptions.length > 0 ? selectedCodexSandboxMode : undefined;
+    const turnInput = buildMateTalkTurnInput({
+      message: normalizedText,
+      provider: providerId,
+      model,
+      reasoningEffort,
+      attachments: pathReferences,
+      additionalDirectories,
+      approvalMode: selectedApprovalMode,
+      codexSandboxMode: sandboxOptions.length > 0 ? selectedCodexSandboxMode : undefined,
+    });
     setInput("");
     setInputCaret(0);
     setPathReferences([]);
@@ -463,16 +470,7 @@ export function useMateTalkWindowState({
       if (!withmateApi) {
         throw new Error("Mate API が利用できないよ。");
       }
-      const result = await withmateApi.runMateTalkTurn({
-        message: normalizedText,
-        provider: providerId,
-        model,
-        reasoningEffort,
-        attachments: turnAttachments,
-        additionalDirectories: turnAdditionalDirectories,
-        approvalMode: turnApprovalMode,
-        ...(turnCodexSandboxMode ? { codexSandboxMode: turnCodexSandboxMode } : {}),
-      });
+      const result = await withmateApi.runMateTalkTurn(turnInput);
       if (!turnControllerRef.current.isLatestTurn(turnId)) {
         return;
       }

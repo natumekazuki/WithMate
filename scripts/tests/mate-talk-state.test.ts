@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildMateTalkTurnInput,
   MateTalkTurnController,
   resolveMateTalkActionDockExpandedAfterSubmit,
   resolveMateTalkSubmitPreflight,
@@ -136,6 +137,55 @@ test("resolveMateTalkSubmitPreflight は送信可能な本文を trim して返�
     {
       status: "ready",
       message: "hello",
+    },
+  );
+});
+
+test("buildMateTalkTurnInput は MateTalk turn payload を組み立てる", () => {
+  assert.deepEqual(
+    buildMateTalkTurnInput({
+      message: "hello",
+      provider: "codex",
+      model: "gpt-5.5",
+      reasoningEffort: "medium",
+      attachments: [{ path: "src/App.tsx", kind: "file" }],
+      additionalDirectories: ["docs"],
+      approvalMode: "on-request",
+      codexSandboxMode: "workspace-write",
+    }),
+    {
+      message: "hello",
+      provider: "codex",
+      model: "gpt-5.5",
+      reasoningEffort: "medium",
+      attachments: [{ path: "src/App.tsx", kind: "file" }],
+      additionalDirectories: ["docs"],
+      approvalMode: "on-request",
+      codexSandboxMode: "workspace-write",
+    },
+  );
+});
+
+test("buildMateTalkTurnInput は sandbox mode がない場合 payload から省く", () => {
+  assert.deepEqual(
+    buildMateTalkTurnInput({
+      message: "hello",
+      provider: "local",
+      model: "text",
+      reasoningEffort: "low",
+      attachments: [],
+      additionalDirectories: [],
+      approvalMode: "never",
+      codexSandboxMode: undefined,
+    }),
+    {
+      message: "hello",
+      provider: "local",
+      model: "text",
+      reasoningEffort: "low",
+      attachments: [],
+      additionalDirectories: [],
+      approvalMode: "never",
     },
   );
 });

@@ -1,3 +1,7 @@
+import type { ApprovalMode } from "../approval-mode.js";
+import type { CodexSandboxMode } from "../codex-sandbox-mode.js";
+import type { MateTalkPathReference, MateTalkTurnInput } from "../mate/mate-state.js";
+import type { ModelReasoningEffort } from "../model-catalog.js";
 import type { AppSettings } from "../provider-settings-state.js";
 
 export type MateTalkTurnState = {
@@ -70,6 +74,37 @@ export function resolveMateTalkSubmitPreflight({
     return { status: "blocked", reason: "sending" };
   }
   return { status: "ready", message };
+}
+
+export function buildMateTalkTurnInput({
+  message,
+  provider,
+  model,
+  reasoningEffort,
+  attachments,
+  additionalDirectories,
+  approvalMode,
+  codexSandboxMode,
+}: {
+  message: string;
+  provider: string;
+  model: string;
+  reasoningEffort: ModelReasoningEffort;
+  attachments: MateTalkPathReference[];
+  additionalDirectories: string[];
+  approvalMode: ApprovalMode;
+  codexSandboxMode?: CodexSandboxMode;
+}): MateTalkTurnInput {
+  return {
+    message,
+    provider,
+    model,
+    reasoningEffort,
+    attachments,
+    additionalDirectories,
+    approvalMode,
+    ...(codexSandboxMode ? { codexSandboxMode } : {}),
+  };
 }
 
 export function resolveMateTalkActionDockExpandedAfterSubmit({
