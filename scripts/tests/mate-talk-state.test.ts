@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildMateTalkAssistantMessage,
+  buildMateTalkErrorMessage,
   buildMateTalkTurnInput,
+  buildMateTalkUserMessage,
   MateTalkTurnController,
   resolveMateTalkActionDockExpandedAfterSubmit,
   resolveMateTalkSubmitPreflight,
@@ -186,6 +189,62 @@ test("buildMateTalkTurnInput は sandbox mode がない場合 payload から省�
       attachments: [],
       additionalDirectories: [],
       approvalMode: "never",
+    },
+  );
+});
+
+test("buildMateTalkUserMessage は user message id と本文を組み立てる", () => {
+  assert.deepEqual(
+    buildMateTalkUserMessage({
+      messageSequence: 3,
+      text: "hello",
+    }),
+    {
+      id: "user-3",
+      role: "user",
+      text: "hello",
+    },
+  );
+});
+
+test("buildMateTalkAssistantMessage は mate message id と本文を組み立てる", () => {
+  assert.deepEqual(
+    buildMateTalkAssistantMessage({
+      messageSequence: 3,
+      text: "hi",
+    }),
+    {
+      id: "mate-3",
+      role: "mate",
+      text: "hi",
+    },
+  );
+});
+
+test("buildMateTalkErrorMessage は Error message を優先する", () => {
+  assert.deepEqual(
+    buildMateTalkErrorMessage({
+      messageSequence: 3,
+      error: new Error("failed"),
+    }),
+    {
+      id: "mate-error-3",
+      role: "mate",
+      text: "failed",
+    },
+  );
+});
+
+test("buildMateTalkErrorMessage は Error 以外なら fallback を返す", () => {
+  assert.deepEqual(
+    buildMateTalkErrorMessage({
+      messageSequence: 3,
+      error: "failed",
+    }),
+    {
+      id: "mate-error-3",
+      role: "mate",
+      text: "返信に失敗したよ。",
     },
   );
 });

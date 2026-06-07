@@ -9,6 +9,12 @@ export type MateTalkTurnState = {
   messageSequence: number;
 };
 
+export type MateTalkTurnMessage = {
+  id: string;
+  role: "user" | "mate";
+  text: string;
+};
+
 export class MateTalkTurnController {
   private turnId = 0;
   private messageSequence = 0;
@@ -104,6 +110,50 @@ export function buildMateTalkTurnInput({
     additionalDirectories,
     approvalMode,
     ...(codexSandboxMode ? { codexSandboxMode } : {}),
+  };
+}
+
+export function buildMateTalkUserMessage({
+  messageSequence,
+  text,
+}: {
+  messageSequence: number;
+  text: string;
+}): MateTalkTurnMessage {
+  return {
+    id: `user-${messageSequence}`,
+    role: "user",
+    text,
+  };
+}
+
+export function buildMateTalkAssistantMessage({
+  messageSequence,
+  text,
+}: {
+  messageSequence: number;
+  text: string;
+}): MateTalkTurnMessage {
+  return {
+    id: `mate-${messageSequence}`,
+    role: "mate",
+    text,
+  };
+}
+
+export function buildMateTalkErrorMessage({
+  messageSequence,
+  error,
+  fallback = "返信に失敗したよ。",
+}: {
+  messageSequence: number;
+  error: unknown;
+  fallback?: string;
+}): MateTalkTurnMessage {
+  return {
+    id: `mate-error-${messageSequence}`,
+    role: "mate",
+    text: error instanceof Error ? error.message : fallback,
   };
 }
 

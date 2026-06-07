@@ -44,7 +44,10 @@ import {
   resolveMateTalkModelChange,
 } from "./mate-talk-model-selection.js";
 import {
+  buildMateTalkAssistantMessage,
+  buildMateTalkErrorMessage,
   buildMateTalkTurnInput,
+  buildMateTalkUserMessage,
   MateTalkTurnController,
   resolveMateTalkActionDockExpandedAfterSubmit,
   resolveMateTalkSubmitPreflight,
@@ -437,11 +440,10 @@ export function useMateTalkWindowState({
     const normalizedText = preflight.message;
 
     const { turnId, messageSequence } = turnControllerRef.current.beginTurn();
-    const userMessage: MateTalkMessage = {
-      id: `user-${messageSequence}`,
-      role: "user",
+    const userMessage: MateTalkMessage = buildMateTalkUserMessage({
+      messageSequence,
       text: normalizedText,
-    };
+    });
 
     setSending(true);
     setFeedback("");
@@ -476,11 +478,10 @@ export function useMateTalkWindowState({
       }
       setMessages((current) => [
         ...current,
-        {
-          id: `mate-${messageSequence}`,
-          role: "mate",
+        buildMateTalkAssistantMessage({
+          messageSequence,
           text: result.assistantMessage,
-        },
+        }),
       ]);
     } catch (error) {
       if (!turnControllerRef.current.isLatestTurn(turnId)) {
@@ -488,11 +489,10 @@ export function useMateTalkWindowState({
       }
       setMessages((current) => [
         ...current,
-        {
-          id: `mate-error-${messageSequence}`,
-          role: "mate",
-          text: error instanceof Error ? error.message : "返信に失敗したよ。",
-        },
+        buildMateTalkErrorMessage({
+          messageSequence,
+          error,
+        }),
       ]);
     } finally {
       if (!turnControllerRef.current.isLatestTurn(turnId)) {
