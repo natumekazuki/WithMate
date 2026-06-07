@@ -94,7 +94,10 @@ import {
   type ComposerSendabilityState,
 } from "./session-composer-feedback.js";
 import { buildActionDockCompactPreview } from "./action-dock-preview.js";
-import { buildActionDockRuntimeState } from "./action-dock-state.js";
+import {
+  buildActionDockRuntimeState,
+  shouldFocusComposerForActionDockExpand,
+} from "./action-dock-state.js";
 import {
   buildCustomAgentMatchDisplay,
   buildSelectedCustomAgentDisplay,
@@ -3085,7 +3088,9 @@ export default function AgentSessionWindowApp() {
           onCancelSelectedSessionRun: handleCancelRun,
           onSendSelectedSession: handleSend,
         }),
-        onExpandActionDock: () => handleExpandActionDock({ focusComposer: renderedSession.runState !== "running" }),
+        onExpandActionDock: () => handleExpandActionDock({
+          focusComposer: shouldFocusComposerForActionDockExpand({ isRunning: renderedIsRunning }),
+        }),
         onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
         onActivateWorkspacePathMatch: setActiveWorkspacePathMatchIndex,
         onChangeApprovalMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<Session["approvalMode"]>({

@@ -115,6 +115,7 @@ import {
 import { buildActionDockCompactPreview } from "./action-dock-preview.js";
 import {
   buildActionDockRuntimeState,
+  shouldFocusComposerForActionDockExpand,
 } from "./action-dock-state.js";
 import {
   buildAuxiliaryLaunchProviderItems,
@@ -3011,7 +3012,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           onCancelSelectedSessionRun: cancelCompanionTurn,
           onSendSelectedSession: sendCompanionTurn,
         }),
-        onExpandActionDock: () => handleExpandActionDock({ focusComposer: !isSelectedSessionRunning }),
+        onExpandActionDock: () => handleExpandActionDock({
+          focusComposer: shouldFocusComposerForActionDockExpand({ isRunning: isSelectedSessionRunning }),
+        }),
         onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
         onActivateWorkspacePathMatch: setActiveWorkspacePathMatchIndex,
         onChangeApprovalMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<ApprovalMode>({

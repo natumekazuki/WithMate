@@ -5,6 +5,7 @@ import {
   buildActionDockCollapseState,
   buildActionDockExpandState,
   buildActionDockRuntimeState,
+  shouldFocusComposerForActionDockExpand,
 } from "../../src/action-dock-state.js";
 
 test("buildActionDockRuntimeState は pinned と force reasons から表示 state を解決する", () => {
@@ -51,6 +52,11 @@ test("buildActionDockExpandState は pinned expanded と composer focus 要否�
     isActionDockPinnedExpanded: true,
     shouldFocusComposer: true,
   });
+});
+
+test("shouldFocusComposerForActionDockExpand は running 中だけ focus を抑止する", () => {
+  assert.equal(shouldFocusComposerForActionDockExpand({ isRunning: false }), true);
+  assert.equal(shouldFocusComposerForActionDockExpand({ isRunning: true }), false);
 });
 
 test("buildActionDockCollapseState は collapse 可能なときだけ pinned expanded を解除する", () => {

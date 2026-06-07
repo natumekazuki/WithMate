@@ -33,6 +33,10 @@ export function buildActionDockExpandState(options: { focusComposer?: boolean } 
   };
 }
 
+export function shouldFocusComposerForActionDockExpand(input: { isRunning: boolean }): boolean {
+  return !input.isRunning;
+}
+
 export function buildActionDockCollapseState(canCollapse: boolean): ActionDockCollapseState | null {
   if (!canCollapse) {
     return null;
