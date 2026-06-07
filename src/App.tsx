@@ -19,6 +19,10 @@ import {
   runAdditionalDirectoryRemovalOperation,
   runPickedAdditionalDirectoryOperation,
 } from "./additional-directory-state.js";
+import {
+  buildSessionWithApprovalMode,
+  buildSessionWithCodexSandboxMode,
+} from "./runtime-option-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
 import {
@@ -1863,17 +1867,19 @@ export default function AgentSessionWindowApp() {
     if (
       !selectedSession ||
       isSelectedSessionReadOnly ||
-      selectedSession.runState === "running" ||
-      approvalMode === selectedSession.approvalMode
+      selectedSession.runState === "running"
     ) {
       return;
     }
 
-    const nextSession: Session = {
-      ...selectedSession,
+    const nextSession = buildSessionWithApprovalMode(
+      selectedSession,
       approvalMode,
-      updatedAt: currentTimestampLabel(),
-    };
+      currentTimestampLabel(),
+    );
+    if (!nextSession) {
+      return;
+    }
 
     await persistSession(nextSession);
   };
@@ -1883,17 +1889,19 @@ export default function AgentSessionWindowApp() {
       !selectedSession ||
       selectedSession.provider !== "codex" ||
       isSelectedSessionReadOnly ||
-      selectedSession.runState === "running" ||
-      codexSandboxMode === selectedSession.codexSandboxMode
+      selectedSession.runState === "running"
     ) {
       return;
     }
 
-    const nextSession: Session = {
-      ...selectedSession,
+    const nextSession = buildSessionWithCodexSandboxMode(
+      selectedSession,
       codexSandboxMode,
-      updatedAt: currentTimestampLabel(),
-    };
+      currentTimestampLabel(),
+    );
+    if (!nextSession) {
+      return;
+    }
 
     await persistSession(nextSession);
   };

@@ -18,6 +18,10 @@ import {
   runAdditionalDirectoryRemovalOperation,
   runPickedAdditionalDirectoryOperation,
 } from "./additional-directory-state.js";
+import {
+  buildSessionWithApprovalMode,
+  buildSessionWithCodexSandboxMode,
+} from "./runtime-option-state.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import {
   applyAuxiliarySessionComposerDraftPatch,
@@ -1636,32 +1640,41 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   async function handleChangeApproval(approvalMode: ApprovalMode): Promise<void> {
-    if (!snapshot || isSelectedSessionRunning || approvalMode === snapshot.session.approvalMode) {
+    if (!snapshot || isSelectedSessionRunning) {
       return;
     }
 
-    await persistCompanionSession({
-      ...snapshot.session,
+    const nextSession = buildSessionWithApprovalMode(
+      snapshot.session,
       approvalMode,
-      updatedAt: currentTimestampLabel(),
-    });
+      currentTimestampLabel(),
+    );
+    if (!nextSession) {
+      return;
+    }
+
+    await persistCompanionSession(nextSession);
   }
 
   async function handleChangeCodexSandboxMode(codexSandboxMode: CodexSandboxMode): Promise<void> {
     if (
       !snapshot ||
       snapshot.session.provider !== "codex" ||
-      isSelectedSessionRunning ||
-      codexSandboxMode === snapshot.session.codexSandboxMode
+      isSelectedSessionRunning
     ) {
       return;
     }
 
-    await persistCompanionSession({
-      ...snapshot.session,
+    const nextSession = buildSessionWithCodexSandboxMode(
+      snapshot.session,
       codexSandboxMode,
-      updatedAt: currentTimestampLabel(),
-    });
+      currentTimestampLabel(),
+    );
+    if (!nextSession) {
+      return;
+    }
+
+    await persistCompanionSession(nextSession);
   }
 
   async function handleChangeSelectedModel(model: string): Promise<void> {

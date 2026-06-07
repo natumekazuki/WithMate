@@ -19,10 +19,11 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - shell handler factory: header/action dock/picker、title edit、composer submit key、workspace match selection、skill prompt insertion、session files open、path insertion/removal command。
 - composer/path helpers: draft select/composition、paste collection、path preview/search、send-or-cancel routing。
 - PR-02: pasted session attachment の保存/挿入/失敗/no-op contract。
+- PR-03: additional directory list の add/remove operation。
 
 進行中:
 
-- PR-03: additional directory list の add/remove operation を共通化中。
+- PR-04: runtime option update handler の共通 contract を整理中。
 
 ## Progress Log
 
@@ -37,6 +38,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-07: additional directory picker の base directory 解決を `resolveAdditionalDirectoryPickerBase` に集約。App / Companion / MateTalk / Auxiliary の優先順を共通 helper 経由にし、空文字は従来どおり fallback する contract を test で固定。
 - 2026-06-07: additional directory add picker operation を `runPickedAdditionalDirectoryOperation` に集約。App / Companion / MateTalk の precondition、picker base 解決、cancel no-op、選択後 callback 呼び出しを共通化し、persist / local state / UI state 反映順は surface callback に残した。
 - 2026-06-07: additional directory remove operation を `runAdditionalDirectoryRemovalOperation` に集約。App / Companion / MateTalk の remove guard、no-op 結果、削除 callback 呼び出しを共通化し、persist / local state 更新は surface callback に残した。
+- 2026-06-07: PR-04 着手。通常 Session / Companion の approval / sandbox session patch 構築を `runtime-option-state` に集約。provider / running / read-only guard、`updatedAt` 生成、persist API、MateTalk local runtime state、model / reasoning fallback は surface 側に残した。
 
 ## PR Plan
 
@@ -122,6 +124,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 
 - approval、model、reasoning effort、sandbox の update handler。
 - App / Companion の persisted session update と MateTalk の local runtime state の差分を明示した共通 interface。
+- 通常 Session / Companion の approval / sandbox session patch 構築を `runtime-option-state` に集約。2026-06-07 着手。
 
 やらないこと:
 
