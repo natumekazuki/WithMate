@@ -59,7 +59,7 @@ export const shouldSubmitMateTalkInputByKey = (eventLike: {
 export type MateTalkSubmitPreflightResult =
   | { status: "ready"; message: string }
   | { status: "blocked"; reason: "empty"; feedback: string }
-  | { status: "blocked"; reason: "sending" };
+  | { status: "blocked"; reason: "running" };
 
 export function resolveMateTalkSubmitPreflight({
   draft,
@@ -77,7 +77,7 @@ export function resolveMateTalkSubmitPreflight({
     };
   }
   if (isRunning) {
-    return { status: "blocked", reason: "sending" };
+    return { status: "blocked", reason: "running" };
   }
   return { status: "ready", message };
 }
