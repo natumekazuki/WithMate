@@ -110,6 +110,17 @@ export function rollbackOptimisticSessionRunUpdate({
   restoreSession();
 }
 
+export function applyResolvedSessionRunUpdate<TSession>({
+  savedSession,
+  applySavedSession,
+}: {
+  savedSession: TSession;
+  applySavedSession: (savedSession: TSession) => void;
+}): TSession {
+  applySavedSession(savedSession);
+  return savedSession;
+}
+
 export function createPendingLiveSessionRunState(
   session: PendingLiveRunSessionIdentity,
   previousState?: LiveSessionRunState | null,

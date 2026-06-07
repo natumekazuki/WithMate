@@ -4,6 +4,7 @@ import test from "node:test";
 import type { LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState } from "../../src/runtime-state.js";
 import {
   applyOptimisticSessionRunUpdate,
+  applyResolvedSessionRunUpdate,
   buildOptimisticSessionRunUpdate,
   clearOwnedLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
@@ -215,6 +216,27 @@ test("rollbackOptimisticSessionRunUpdate は別 owner の live run を維持し�
 
   assert.equal(nextLiveRunState, current);
   assert.equal(restored, true);
+});
+
+test("applyResolvedSessionRunUpdate は saved session を反映して返す", () => {
+  const savedSession: TestSession = {
+    id: "session-1",
+    threadId: "thread-1",
+    runState: "idle",
+    updatedAt: "after",
+    messages: [{ role: "assistant", text: "done" }],
+  };
+  let appliedSession: TestSession | null = null;
+
+  const returnedSession = applyResolvedSessionRunUpdate({
+    savedSession,
+    applySavedSession: (nextSession) => {
+      appliedSession = nextSession;
+    },
+  });
+
+  assert.equal(returnedSession, savedSession);
+  assert.equal(appliedSession, savedSession);
 });
 
 test("clearOwnedLiveSessionRunState は owner が一致した live run だけ空にする", () => {

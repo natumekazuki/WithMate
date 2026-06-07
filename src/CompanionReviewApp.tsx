@@ -145,6 +145,7 @@ import {
 } from "./session-chat-layout-hooks.js";
 import {
   applyOptimisticSessionRunUpdate,
+  applyResolvedSessionRunUpdate,
   clearOwnedLiveSessionRunState,
   createOwnedPendingLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
@@ -2520,7 +2521,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         approvalMode: selectedApprovalMode,
         codexSandboxMode: selectedCodexSandboxMode,
       });
-      setSnapshot((current) => current ? { ...current, session: nextSession } : current);
+      applyResolvedSessionRunUpdate({
+        savedSession: nextSession,
+        applySavedSession: (savedSession) =>
+          setSnapshot((current) => current ? { ...current, session: savedSession } : current),
+      });
       try {
         await reloadSnapshot();
       } catch (error) {

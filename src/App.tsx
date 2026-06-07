@@ -116,6 +116,7 @@ import {
 } from "./session-chat-layout-hooks.js";
 import {
   applyOptimisticSessionRunUpdate,
+  applyResolvedSessionRunUpdate,
   clearOwnedLiveSessionRunState,
   createOwnedPendingLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
@@ -1663,7 +1664,10 @@ export default function AgentSessionWindowApp() {
         userMessage: messageText,
       };
       const savedSession = await withmateApi.runSessionTurn(selectedSession.id, request);
-      setSessions([savedSession]);
+      applyResolvedSessionRunUpdate({
+        savedSession,
+        applySavedSession: (nextSession) => setSessions([nextSession]),
+      });
     } catch (error) {
       console.error(error);
       rollbackOptimisticSessionRunUpdate({
