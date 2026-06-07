@@ -1580,10 +1580,10 @@ export default function AgentSessionWindowApp() {
   const isSessionHeaderExpanded = isHeaderExpanded || isEditingTitle;
   const actionDockCompactPreview = useMemo(
     () =>
-      buildActionDockCompactPreview(draft, selectedSession?.runState === "running", {
+      buildActionDockCompactPreview(draft, selectedSessionRunState === "running", {
         truncationSuffix: "…",
       }),
-    [draft, selectedSession?.runState],
+    [draft, selectedSessionRunState],
   );
   const retryBannerIdentity = useMemo(() => {
     if (!retryBanner || !selectedSession || !lastUserMessage) {

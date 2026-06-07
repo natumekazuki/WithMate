@@ -62,6 +62,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-08: Companion の send 開始前 guard を `resolveSessionTurnStartPreflight` に集約。session / API 不在、operation running、turn running、session running、inactive、空白 message の blocked contract と trim 済み user message を focused test で固定し、preview API、optimistic update、provider 実行は未変更。
 - 2026-06-08: App / Companion の selected session run state / running boolean 導出を `resolveSelectedSessionRunState` / `resolveSelectedSessionIsRunning` に集約。既存どおり session `runState` を live run fallback より優先し、Companion の `turnRunning` は running boolean に残す contract を test で固定。send / cancel / provider 実行は未変更。
 - 2026-06-08: App の selected / Auxiliary cancel target 組み立ても `buildRunningSessionCancelTarget` 経由へ統一。Companion と同じ target-id 解決経路にそろえ、cancel API 呼び出し、error handling、provider 実行は未変更。
+- 2026-06-08: App の compact ActionDock preview running 判定を direct session `runState` 参照から `selectedSessionRunState` 経由へ統一。live run fallback を含む selected session running 導出と表示をそろえ、send / cancel / provider 実行は未変更。
 
 ## PR Plan
 
@@ -195,6 +196,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - Companion の send 開始前 guard を `session-live-run-state` に集約。2026-06-08 着手。
 - App / Companion の selected session run state / running boolean 導出を `send-or-cancel` に集約。2026-06-08 着手。
 - App の selected / Auxiliary cancel target 組み立てを `send-or-cancel` に集約。2026-06-08 着手。
+- App の compact ActionDock preview running 判定を `selectedSessionRunState` 経由へ統一。2026-06-08 着手。
 
 やらないこと:
 
