@@ -155,6 +155,7 @@ import {
   replaceLiveRunAfterResolvedRequest,
   rollbackOptimisticSessionRunUpdate,
   resolveSessionRunErrorMessage,
+  resolveSessionTurnStartPreflight,
   type OwnedLiveSessionRunState,
 } from "./session-live-run-state.js";
 import {
@@ -2471,19 +2472,23 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   ): Promise<void> {
     const withmateApi = getWithMateApi();
     const shouldClearDraft = options.clearDraft ?? true;
-    const userMessage = messageText.trim();
-    if (
-      !snapshot
-      || !withmateApi
-      || operationRunning
-      || turnRunning
-      || selectedSessionRunState === "running"
-      || snapshot.session.status !== "active"
-      || !userMessage
-    ) {
+    const preflight = resolveSessionTurnStartPreflight({
+      hasSession: !!snapshot,
+      hasApi: !!withmateApi,
+      operationRunning,
+      turnRunning,
+      runState: selectedSessionRunState,
+      sessionStatus: snapshot?.session.status,
+      messageText,
+    });
+    if (preflight.status === "blocked") {
       setForceComposerBlockedFeedback(true);
       return;
     }
+    if (!snapshot || !withmateApi) {
+      return;
+    }
+    const userMessage = preflight.userMessage;
 
     const previousSnapshot = snapshot;
     let appliedOptimisticState = false;

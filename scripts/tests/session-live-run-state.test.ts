@@ -10,6 +10,7 @@ import {
   replaceLiveRunAfterResolvedRequest,
   rollbackOptimisticSessionRunUpdate,
   resolveSessionRunErrorMessage,
+  resolveSessionTurnStartPreflight,
   type OwnedLiveSessionRunState,
 } from "../../src/session-live-run-state.js";
 import type { Message } from "../../src/session-state.js";
@@ -75,6 +76,106 @@ test("resolveSessionRunErrorMessage は非 Error なら fallback を返す", () 
 
 test("resolveSessionRunErrorMessage は message 付き object でも非 Error なら fallback を返す", () => {
   assert.equal(resolveSessionRunErrorMessage({ message: "provider failed" }, "fallback"), "fallback");
+});
+
+test("resolveSessionTurnStartPreflight は trim 済み user message を返す", () => {
+  assert.deepEqual(
+    resolveSessionTurnStartPreflight({
+      hasSession: true,
+      hasApi: true,
+      operationRunning: false,
+      turnRunning: false,
+      runState: "idle",
+      sessionStatus: "active",
+      messageText: "  hello  ",
+    }),
+    { status: "ready", userMessage: "hello" },
+  );
+});
+
+test("resolveSessionTurnStartPreflight は Companion turnRunning 中を blocked にする", () => {
+  assert.deepEqual(
+    resolveSessionTurnStartPreflight({
+      hasSession: true,
+      hasApi: true,
+      operationRunning: false,
+      turnRunning: true,
+      runState: "idle",
+      sessionStatus: "active",
+      messageText: "hello",
+    }),
+    { status: "blocked", reason: "turn-running" },
+  );
+});
+
+test("resolveSessionTurnStartPreflight は session/API/operation 不成立を blocked にする", () => {
+  const baseInput = {
+    hasSession: true,
+    hasApi: true,
+    operationRunning: false,
+    turnRunning: false,
+    runState: "idle",
+    sessionStatus: "active",
+    messageText: "hello",
+  };
+
+  assert.deepEqual(
+    resolveSessionTurnStartPreflight({ ...baseInput, hasSession: false }),
+    { status: "blocked", reason: "missing-session" },
+  );
+  assert.deepEqual(
+    resolveSessionTurnStartPreflight({ ...baseInput, hasApi: false }),
+    { status: "blocked", reason: "missing-api" },
+  );
+  assert.deepEqual(
+    resolveSessionTurnStartPreflight({ ...baseInput, operationRunning: true }),
+    { status: "blocked", reason: "operation-running" },
+  );
+});
+
+test("resolveSessionTurnStartPreflight は running session を blocked にする", () => {
+  assert.deepEqual(
+    resolveSessionTurnStartPreflight({
+      hasSession: true,
+      hasApi: true,
+      operationRunning: false,
+      turnRunning: false,
+      runState: "running",
+      sessionStatus: "active",
+      messageText: "hello",
+    }),
+    { status: "blocked", reason: "session-running" },
+  );
+});
+
+test("resolveSessionTurnStartPreflight は inactive session を blocked にする", () => {
+  assert.deepEqual(
+    resolveSessionTurnStartPreflight({
+      hasSession: true,
+      hasApi: true,
+      operationRunning: false,
+      turnRunning: false,
+      runState: "idle",
+      sessionStatus: "closed",
+      messageText: "hello",
+    }),
+    { status: "blocked", reason: "inactive-session" },
+  );
+});
+
+test("resolveSessionTurnStartPreflight は空白 message を blocked にする", () => {
+  assert.deepEqual(
+    resolveSessionTurnStartPreflight({
+      hasSession: true,
+      hasApi: true,
+      operationRunning: false,
+      turnRunning: false,
+      runState: "idle",
+      sessionStatus: "active",
+      messageText: "   ",
+    }),
+    { status: "blocked", reason: "empty-message" },
+  );
 });
 
 test("buildOptimisticSessionRunUpdate は running session と pending live run updater を作る", () => {

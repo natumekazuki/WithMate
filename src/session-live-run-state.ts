@@ -17,8 +17,66 @@ export type OptimisticRunningSessionBase = {
   updatedAt: string;
 };
 
+export type SessionTurnStartPreflightResult =
+  | { status: "ready"; userMessage: string }
+  | {
+    status: "blocked";
+    reason:
+      | "missing-session"
+      | "missing-api"
+      | "operation-running"
+      | "turn-running"
+      | "session-running"
+      | "inactive-session"
+      | "empty-message";
+  };
+
 export function resolveSessionRunErrorMessage(error: unknown, fallbackMessage: string): string {
   return error instanceof Error ? error.message : fallbackMessage;
+}
+
+export function resolveSessionTurnStartPreflight({
+  hasSession,
+  hasApi,
+  operationRunning,
+  turnRunning,
+  runState,
+  sessionStatus,
+  messageText,
+}: {
+  hasSession: boolean;
+  hasApi: boolean;
+  operationRunning: boolean;
+  turnRunning: boolean;
+  runState: string | null | undefined;
+  sessionStatus: string | null | undefined;
+  messageText: string;
+}): SessionTurnStartPreflightResult {
+  if (!hasSession) {
+    return { status: "blocked", reason: "missing-session" };
+  }
+  if (!hasApi) {
+    return { status: "blocked", reason: "missing-api" };
+  }
+  if (operationRunning) {
+    return { status: "blocked", reason: "operation-running" };
+  }
+  if (turnRunning) {
+    return { status: "blocked", reason: "turn-running" };
+  }
+  if (runState === "running") {
+    return { status: "blocked", reason: "session-running" };
+  }
+  if (sessionStatus !== "active") {
+    return { status: "blocked", reason: "inactive-session" };
+  }
+
+  const userMessage = messageText.trim();
+  if (!userMessage) {
+    return { status: "blocked", reason: "empty-message" };
+  }
+
+  return { status: "ready", userMessage };
 }
 
 export function createOptimisticRunningSessionState<TSession extends OptimisticRunningSessionBase>(
