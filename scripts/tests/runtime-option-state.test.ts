@@ -6,6 +6,7 @@ import {
   buildSessionWithCodexSandboxMode,
   buildSessionWithModelChange,
   buildSessionWithReasoningEffort,
+  resolveRuntimeOptionValue,
 } from "../../src/runtime-option-state.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 
@@ -226,4 +227,36 @@ test("model / reasoning effort helper は model catalog validation error を維�
     ),
     /selected depth/,
   );
+});
+
+test("resolveRuntimeOptionValue は selected value が option にあれば維持する", () => {
+  assert.equal(
+    resolveRuntimeOptionValue(
+      "on-request",
+      [
+        { value: "never" },
+        { value: "on-request" },
+      ],
+      "untrusted",
+    ),
+    "on-request",
+  );
+});
+
+test("resolveRuntimeOptionValue は selected value が option にない場合に先頭 option へ fallback する", () => {
+  assert.equal(
+    resolveRuntimeOptionValue(
+      "danger-full-access",
+      [
+        { value: "read-only" },
+        { value: "workspace-write" },
+      ],
+      "workspace-write",
+    ),
+    "read-only",
+  );
+});
+
+test("resolveRuntimeOptionValue は option が空なら fallback value を返す", () => {
+  assert.equal(resolveRuntimeOptionValue("custom", [], "fallback"), "fallback");
 });

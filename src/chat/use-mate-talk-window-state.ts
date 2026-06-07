@@ -18,6 +18,7 @@ import {
   createDefaultAppSettings,
   type AppSettings,
 } from "../provider-settings-state.js";
+import { resolveRuntimeOptionValue } from "../runtime-option-state.js";
 import {
   appendMissingPathReferenceAttachments,
   buildAdditionalDirectoryItems,
@@ -395,14 +396,28 @@ export function useMateTalkWindowState({
   );
 
   useEffect(() => {
-    if (!approvalOptions.some((option) => option.value === selectedApprovalMode)) {
-      setSelectedApprovalMode(approvalOptions[0]?.value ?? DEFAULT_APPROVAL_MODE);
+    const nextApprovalMode = resolveRuntimeOptionValue(
+      selectedApprovalMode,
+      approvalOptions,
+      DEFAULT_APPROVAL_MODE,
+    );
+    if (nextApprovalMode !== selectedApprovalMode) {
+      setSelectedApprovalMode(nextApprovalMode);
     }
   }, [approvalOptions, selectedApprovalMode]);
 
   useEffect(() => {
-    if (sandboxOptions.length > 0 && !sandboxOptions.some((option) => option.value === selectedCodexSandboxMode)) {
-      setSelectedCodexSandboxMode(sandboxOptions[0]?.value ?? DEFAULT_CODEX_SANDBOX_MODE);
+    if (sandboxOptions.length === 0) {
+      return;
+    }
+
+    const nextSandboxMode = resolveRuntimeOptionValue(
+      selectedCodexSandboxMode,
+      sandboxOptions,
+      DEFAULT_CODEX_SANDBOX_MODE,
+    );
+    if (nextSandboxMode !== selectedCodexSandboxMode) {
+      setSelectedCodexSandboxMode(nextSandboxMode);
     }
   }, [sandboxOptions, selectedCodexSandboxMode]);
 

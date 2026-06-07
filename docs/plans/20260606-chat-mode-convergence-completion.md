@@ -40,6 +40,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-07: additional directory remove operation を `runAdditionalDirectoryRemovalOperation` に集約。App / Companion / MateTalk の remove guard、no-op 結果、削除 callback 呼び出しを共通化し、persist / local state 更新は surface callback に残した。
 - 2026-06-07: PR-04 着手。通常 Session / Companion の approval / sandbox session patch 構築を `runtime-option-state` に集約。provider / running / read-only guard、`updatedAt` 生成、persist API、MateTalk local runtime state、model / reasoning fallback は surface 側に残した。
 - 2026-06-07: 通常 Session / Companion の model / reasoning effort session patch 構築を `runtime-option-state` に集約。model catalog selection と fallback/validation 契約は既存 `model-catalog` helper に委譲し、Auxiliary runtime option save queue と MateTalk local runtime state は未変更。
+- 2026-06-07: MateTalk の approval / sandbox option fallback を `resolveRuntimeOptionValue` に集約。approval は空 options なら default、sandbox は候補がある場合だけ補正する既存 effect 境界を維持し、送信 payload と local runtime state 自体は未変更。
 
 ## PR Plan
 
@@ -127,6 +128,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の persisted session update と MateTalk の local runtime state の差分を明示した共通 interface。
 - 通常 Session / Companion の approval / sandbox session patch 構築を `runtime-option-state` に集約。2026-06-07 着手。
 - 通常 Session / Companion の model / reasoning effort session patch 構築を `runtime-option-state` に集約。2026-06-07 完了。
+- MateTalk の approval / sandbox option fallback を `runtime-option-state` に集約。2026-06-07 完了。
 
 やらないこと:
 

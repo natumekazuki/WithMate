@@ -29,6 +29,10 @@ type ModelRuntimeSessionPatch = {
   updatedAt: string;
 };
 
+type RuntimeOptionValueOption<TValue> = {
+  value: TValue;
+};
+
 export function buildSessionWithApprovalMode<TSession extends ApprovalModeSessionLike>(
   session: TSession,
   approvalMode: ApprovalMode,
@@ -94,4 +98,16 @@ export function buildSessionWithReasoningEffort<TSession extends ModelRuntimeSes
 ): TSession & ModelRuntimeSessionPatch {
   const selection = resolveModelSelection(providerCatalog, session.model, reasoningEffort);
   return buildSessionWithResolvedModelSelection(session, selection, catalogRevision, updatedAt);
+}
+
+export function resolveRuntimeOptionValue<TValue>(
+  selectedValue: TValue,
+  options: readonly RuntimeOptionValueOption<TValue>[],
+  fallbackValue: TValue,
+): TValue {
+  if (options.some((option) => option.value === selectedValue)) {
+    return selectedValue;
+  }
+
+  return options[0]?.value ?? fallbackValue;
 }
