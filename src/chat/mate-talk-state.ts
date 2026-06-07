@@ -46,6 +46,32 @@ export const shouldSubmitMateTalkInputByKey = (eventLike: {
   return eventLike.ctrlKey === true || eventLike.metaKey === true;
 };
 
+export type MateTalkSubmitPreflightResult =
+  | { status: "ready"; message: string }
+  | { status: "blocked"; reason: "empty"; feedback: string }
+  | { status: "blocked"; reason: "sending" };
+
+export function resolveMateTalkSubmitPreflight({
+  draft,
+  sending,
+}: {
+  draft: string;
+  sending: boolean;
+}): MateTalkSubmitPreflightResult {
+  const message = draft.trim();
+  if (!message) {
+    return {
+      status: "blocked",
+      reason: "empty",
+      feedback: "入力してから送信してね。",
+    };
+  }
+  if (sending) {
+    return { status: "blocked", reason: "sending" };
+  }
+  return { status: "ready", message };
+}
+
 export function resolveMateTalkActionDockExpandedAfterSubmit({
   isActionDockExpanded,
   appSettings,

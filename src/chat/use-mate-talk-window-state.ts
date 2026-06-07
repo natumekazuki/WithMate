@@ -46,6 +46,7 @@ import {
 import {
   MateTalkTurnController,
   resolveMateTalkActionDockExpandedAfterSubmit,
+  resolveMateTalkSubmitPreflight,
 } from "./mate-talk-state.js";
 import {
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -422,14 +423,17 @@ export function useMateTalkWindowState({
   }, [sandboxOptions, selectedCodexSandboxMode]);
 
   const handleSubmit = async () => {
-    const normalizedText = input.trim();
-    if (!normalizedText) {
-      setFeedback("入力してから送信してね。");
+    const preflight = resolveMateTalkSubmitPreflight({
+      draft: input,
+      sending,
+    });
+    if (preflight.status === "blocked") {
+      if (preflight.reason === "empty") {
+        setFeedback(preflight.feedback);
+      }
       return;
     }
-    if (sending) {
-      return;
-    }
+    const normalizedText = preflight.message;
 
     const { turnId, messageSequence } = turnControllerRef.current.beginTurn();
     const userMessage: MateTalkMessage = {

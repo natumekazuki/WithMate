@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   MateTalkTurnController,
   resolveMateTalkActionDockExpandedAfterSubmit,
+  resolveMateTalkSubmitPreflight,
   shouldSubmitMateTalkInputByKey,
 } from "../../src/chat/mate-talk-state.js";
 
@@ -96,6 +97,46 @@ test("shouldSubmitMateTalkInputByKey は composing 中は送信しない", () =>
       isComposing: true,
     }),
     false,
+  );
+});
+
+test("resolveMateTalkSubmitPreflight は空入力を feedback 付き blocked にする", () => {
+  assert.deepEqual(
+    resolveMateTalkSubmitPreflight({
+      draft: "  \n ",
+      sending: false,
+    }),
+    {
+      status: "blocked",
+      reason: "empty",
+      feedback: "入力してから送信してね。",
+    },
+  );
+});
+
+test("resolveMateTalkSubmitPreflight は送信中なら blocked にする", () => {
+  assert.deepEqual(
+    resolveMateTalkSubmitPreflight({
+      draft: " hello ",
+      sending: true,
+    }),
+    {
+      status: "blocked",
+      reason: "sending",
+    },
+  );
+});
+
+test("resolveMateTalkSubmitPreflight は送信可能な本文を trim して返す", () => {
+  assert.deepEqual(
+    resolveMateTalkSubmitPreflight({
+      draft: " hello ",
+      sending: false,
+    }),
+    {
+      status: "ready",
+      message: "hello",
+    },
   );
 });
 

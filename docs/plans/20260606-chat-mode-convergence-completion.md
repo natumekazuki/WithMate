@@ -44,6 +44,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-07: MateTalk の approval / sandbox option fallback を `resolveRuntimeOptionValue` に集約。approval は空 options なら default、sandbox は候補がある場合だけ補正する既存 effect 境界を維持し、送信 payload と local runtime state 自体は未変更。
 - 2026-06-07: App / CompanionReview の Auxiliary model / reasoning effort patch 構築を `auxiliary-session-state` に集約。`runGuardedAuxiliarySessionUpdate`、保存 queue、active session guard、timestamp 生成は呼び出し側に残し、model catalog fallback/validation は既存 helper に委譲。
 - 2026-06-07: App / CompanionReview の Auxiliary approval / sandbox patch 構築を `auxiliary-session-state` に集約。`runGuardedAuxiliarySessionUpdate`、保存 queue、active session guard、timestamp 生成は呼び出し側に残し、PR-04 runtime option update handler slice を完了扱いに変更。
+- 2026-06-07: PR-05 着手。MateTalk 送信前の空入力 / 送信中 / trim 済み本文判定を `resolveMateTalkSubmitPreflight` に集約。provider 実行、turn controller、stale guard、error append、action dock 更新は未変更。`scripts/tests/mate-talk-state.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -159,6 +160,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - Companion `sendCompanionTurn`。
 - MateTalk turn flow。
 - success / failure / cancel / stale result guard の共通 lifecycle。
+- MateTalk 送信 preflight を `mate-talk-state` に集約。2026-06-07 着手。
 
 やらないこと:
 
