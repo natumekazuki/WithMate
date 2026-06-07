@@ -30,7 +30,10 @@ import {
 import {
   buildAuxiliaryAwareRuntimeOptionChangeHandler,
 } from "../../src/chat/auxiliary-runtime-option-routing.js";
-import { buildAuxiliaryAwareSendOrCancelHandler } from "../../src/chat/send-or-cancel.js";
+import {
+  buildAuxiliaryAwareSendOrCancelHandler,
+  resolveAuxiliaryAwareSendOrCancelAction,
+} from "../../src/chat/send-or-cancel.js";
 import type { ChatWindowProps } from "../../src/chat/chat-window.js";
 import { buildLiveSessionWindowShellProps } from "../../src/chat/live-session-window-props.js";
 import { createSessionFilesActions } from "../../src/chat/session-files-actions.js";
@@ -93,6 +96,63 @@ test("buildAuxiliaryAwareSendOrCancelHandler は auxiliary が running のとき
 
   handler();
   assert.deepEqual(calls, ["cancel-aux"]);
+});
+
+test("resolveAuxiliaryAwareSendOrCancelAction は auxiliary running を最優先する", () => {
+  assert.equal(
+    resolveAuxiliaryAwareSendOrCancelAction({
+      shouldSendAuxiliary: true,
+      isAuxiliarySessionRunning: true,
+      isSelectedSessionRunning: true,
+      preferAuxiliarySendOverSelectedCancel: true,
+    }),
+    "cancel-auxiliary",
+  );
+});
+
+test("resolveAuxiliaryAwareSendOrCancelAction は auxiliary 優先なら selected cancel より auxiliary send を返す", () => {
+  assert.equal(
+    resolveAuxiliaryAwareSendOrCancelAction({
+      shouldSendAuxiliary: true,
+      isAuxiliarySessionRunning: false,
+      isSelectedSessionRunning: true,
+      preferAuxiliarySendOverSelectedCancel: true,
+    }),
+    "send-auxiliary",
+  );
+});
+
+test("resolveAuxiliaryAwareSendOrCancelAction は selected running を auxiliary send より優先できる", () => {
+  assert.equal(
+    resolveAuxiliaryAwareSendOrCancelAction({
+      shouldSendAuxiliary: true,
+      isAuxiliarySessionRunning: false,
+      isSelectedSessionRunning: true,
+    }),
+    "cancel-selected",
+  );
+});
+
+test("resolveAuxiliaryAwareSendOrCancelAction は auxiliary がなく selected running なら selected cancel を返す", () => {
+  assert.equal(
+    resolveAuxiliaryAwareSendOrCancelAction({
+      shouldSendAuxiliary: false,
+      isAuxiliarySessionRunning: false,
+      isSelectedSessionRunning: true,
+    }),
+    "cancel-selected",
+  );
+});
+
+test("resolveAuxiliaryAwareSendOrCancelAction は auxiliary も running selected もなければ selected send を返す", () => {
+  assert.equal(
+    resolveAuxiliaryAwareSendOrCancelAction({
+      shouldSendAuxiliary: false,
+      isAuxiliarySessionRunning: false,
+      isSelectedSessionRunning: false,
+    }),
+    "send-selected",
+  );
 });
 
 test("buildAuxiliaryAwareSendOrCancelHandler は auxiliary 優先なら selected running より auxiliary send を使う", () => {

@@ -9,6 +9,43 @@ export type AuxiliaryAwareSendOrCancelInput = {
   onSendSelectedSession: () => void | Promise<void>;
 };
 
+export type AuxiliaryAwareSendOrCancelAction =
+  | "cancel-auxiliary"
+  | "send-auxiliary"
+  | "cancel-selected"
+  | "send-selected";
+
+export function resolveAuxiliaryAwareSendOrCancelAction({
+  shouldSendAuxiliary,
+  isAuxiliarySessionRunning,
+  isSelectedSessionRunning,
+  preferAuxiliarySendOverSelectedCancel = false,
+}: Pick<
+  AuxiliaryAwareSendOrCancelInput,
+  | "shouldSendAuxiliary"
+  | "isAuxiliarySessionRunning"
+  | "isSelectedSessionRunning"
+  | "preferAuxiliarySendOverSelectedCancel"
+>): AuxiliaryAwareSendOrCancelAction {
+  if (isAuxiliarySessionRunning) {
+    return "cancel-auxiliary";
+  }
+
+  if (preferAuxiliarySendOverSelectedCancel && shouldSendAuxiliary) {
+    return "send-auxiliary";
+  }
+
+  if (isSelectedSessionRunning) {
+    return "cancel-selected";
+  }
+
+  if (shouldSendAuxiliary) {
+    return "send-auxiliary";
+  }
+
+  return "send-selected";
+}
+
 export function buildAuxiliaryAwareSendOrCancelHandler({
   shouldSendAuxiliary,
   isAuxiliarySessionRunning,
@@ -20,26 +57,26 @@ export function buildAuxiliaryAwareSendOrCancelHandler({
   onSendSelectedSession,
 }: AuxiliaryAwareSendOrCancelInput): () => void {
   return () => {
-    if (isAuxiliarySessionRunning) {
-      void onCancelAuxiliaryRun();
-      return;
-    }
+    const action = resolveAuxiliaryAwareSendOrCancelAction({
+      shouldSendAuxiliary,
+      isAuxiliarySessionRunning,
+      isSelectedSessionRunning,
+      preferAuxiliarySendOverSelectedCancel,
+    });
 
-    if (preferAuxiliarySendOverSelectedCancel && shouldSendAuxiliary) {
-      void onSendAuxiliary();
-      return;
+    switch (action) {
+      case "cancel-auxiliary":
+        void onCancelAuxiliaryRun();
+        return;
+      case "send-auxiliary":
+        void onSendAuxiliary();
+        return;
+      case "cancel-selected":
+        void onCancelSelectedSessionRun();
+        return;
+      case "send-selected":
+        void onSendSelectedSession();
+        return;
     }
-
-    if (isSelectedSessionRunning) {
-      void onCancelSelectedSessionRun();
-      return;
-    }
-
-    if (shouldSendAuxiliary) {
-      void onSendAuxiliary();
-      return;
-    }
-
-    void onSendSelectedSession();
   };
 }
