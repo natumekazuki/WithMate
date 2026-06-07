@@ -82,8 +82,8 @@ import {
 } from "./chat/chat-header-actions.js";
 import {
   buildComposerSendabilityState,
-  getComposerSendBlockedMessage,
   getComposerSendButtonTitle,
+  resolveComposerSendPreflight,
   withForcedComposerBlockedFeedback,
   type ComposerSendabilityState,
 } from "./session-composer-feedback.js";
@@ -1633,13 +1633,12 @@ export default function AgentSessionWindowApp() {
     const nextMessage = messageText.trim();
     const preview = await withmateApi.previewComposerInput(selectedSession.id, messageText);
     setComposerPreview(preview);
-    const sendability = buildComposerSendabilityState({
+    const { blockedMessage } = resolveComposerSendPreflight({
       runState: selectedSession.runState,
       blockedReason: composerBlockedReason,
       inputErrors: preview.errors,
       draftText: messageText,
     });
-    const blockedMessage = getComposerSendBlockedMessage(sendability);
     if (blockedMessage) {
       throw new Error(blockedMessage);
     }

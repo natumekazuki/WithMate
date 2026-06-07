@@ -54,6 +54,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-08: App / Companion の run success saved session 反映を `applyResolvedSessionRunUpdate` に集約。保存済み session の state 反映を共通 helper に通し、Companion の reloadSnapshot 後処理と provider execution は呼び出し側に残した。`scripts/tests/session-live-run-state.test.ts`、`npm run typecheck` は成功。
 - 2026-06-08: MateTalk turn の stale result guard を `shouldApplyMateTalkTurnUpdate` に集約。success / error / finally の同一 latest-turn 判定を helper 経由にし、message append、sending clear、provider execution は未変更。`scripts/tests/mate-talk-state.test.ts`、`npm run typecheck` は成功。
 - 2026-06-08: send-or-cancel の action 決定を `resolveAuxiliaryAwareSendOrCancelAction` に分離。Auxiliary cancel、Auxiliary send 優先、selected cancel、selected send の優先順を pure helper と test で固定し、App / Companion の呼び出し境界は未変更。`scripts/tests/chat-window-adapter.test.ts`、`npm run typecheck` は成功。
+- 2026-06-08: App / Companion の preview 後 send preflight 判定を `resolveComposerSendPreflight` に集約。preview API、composer preview state 反映、provider 実行、optimistic run 適用は呼び出し側に残した。`scripts/tests/session-composer-feedback.test.ts`、`npm run typecheck` は成功。
 
 ## PR Plan
 
@@ -179,6 +180,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の run success saved session 反映を `session-live-run-state` に集約。2026-06-08 着手。
 - MateTalk turn stale result guard を `mate-talk-state` に集約。2026-06-08 着手。
 - send-or-cancel の action 決定を `send-or-cancel` に集約。2026-06-08 着手。
+- App / Companion の preview 後 send preflight 判定を `session-composer-feedback` に集約。2026-06-08 着手。
 
 やらないこと:
 

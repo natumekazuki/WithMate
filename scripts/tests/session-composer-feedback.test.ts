@@ -6,6 +6,7 @@ import {
   buildComposerSendabilityState,
   getComposerSendBlockedMessage,
   getComposerSendButtonTitle,
+  resolveComposerSendPreflight,
   withForcedComposerBlockedFeedback,
 } from "../../src/session-composer-feedback.js";
 
@@ -85,5 +86,41 @@ describe("session composer feedback", () => {
     });
 
     assert.equal(getComposerSendBlockedMessage(state), null);
+  });
+
+  it("send preflight は sendability と blocked message をまとめて返す", () => {
+    const result = resolveComposerSendPreflight({
+      runState: "idle",
+      blockedReason: "",
+      inputErrors: ["path が見つからないよ。"],
+      draftText: "hello",
+    });
+
+    assert.equal(result.sendability.primaryFeedback, "path が見つからないよ。");
+    assert.equal(result.blockedMessage, "path が見つからないよ。");
+  });
+
+  it("send preflight は送信可能なら blocked message を返さない", () => {
+    const result = resolveComposerSendPreflight({
+      runState: "idle",
+      blockedReason: "",
+      inputErrors: [],
+      draftText: "hello",
+    });
+
+    assert.equal(result.sendability.isSendDisabled, false);
+    assert.equal(result.blockedMessage, null);
+  });
+
+  it("send preflight は primary feedback がなければ指定 fallback を返す", () => {
+    const result = resolveComposerSendPreflight({
+      runState: "idle",
+      blockedReason: "",
+      inputErrors: [],
+      draftText: "",
+      fallbackBlockedMessage: "送信条件を確認してください。",
+    });
+
+    assert.equal(result.blockedMessage, "送信条件を確認してください。");
   });
 });

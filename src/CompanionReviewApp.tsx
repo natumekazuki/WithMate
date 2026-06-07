@@ -108,8 +108,8 @@ import {
 } from "./chat/message-text-actions.js";
 import {
   buildComposerSendabilityState,
-  getComposerSendBlockedMessage,
   getComposerSendButtonTitle,
+  resolveComposerSendPreflight,
   withForcedComposerBlockedFeedback,
 } from "./session-composer-feedback.js";
 import { buildActionDockCompactPreview } from "./action-dock-preview.js";
@@ -2490,13 +2490,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       if (shouldClearDraft || messageText === composerText) {
         setComposerPreview(preview);
       }
-      const sendability = buildComposerSendabilityState({
+      const { blockedMessage } = resolveComposerSendPreflight({
         runState: selectedSessionRunState,
         blockedReason: companionComposerBlockedReason,
         inputErrors: preview.errors,
         draftText: messageText,
       });
-      const blockedMessage = getComposerSendBlockedMessage(sendability);
       if (blockedMessage) {
         throw new Error(blockedMessage);
       }

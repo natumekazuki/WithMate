@@ -105,3 +105,32 @@ export function getComposerSendBlockedMessage(
 
   return state.primaryFeedback || fallback;
 }
+
+export function resolveComposerSendPreflight({
+  runState,
+  blockedReason,
+  inputErrors,
+  draftText,
+  fallbackBlockedMessage,
+}: {
+  runState: string | null | undefined;
+  blockedReason: string;
+  inputErrors: string[];
+  draftText: string;
+  fallbackBlockedMessage?: string;
+}): {
+  sendability: ComposerSendabilityState;
+  blockedMessage: string | null;
+} {
+  const sendability = buildComposerSendabilityState({
+    runState,
+    blockedReason,
+    inputErrors,
+    draftText,
+  });
+
+  return {
+    sendability,
+    blockedMessage: getComposerSendBlockedMessage(sendability, fallbackBlockedMessage),
+  };
+}
