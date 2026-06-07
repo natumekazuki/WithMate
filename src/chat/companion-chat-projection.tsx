@@ -48,7 +48,7 @@ export type CompanionChatProjectionInput = {
   isHeaderExpanded: boolean;
   isEditingTitle: boolean;
   titleDraft: string;
-  isRunning: boolean;
+  isSelectedSessionRunning: boolean;
   isHeaderActionDisabled: boolean;
   messageListRef: RefObject<HTMLDivElement | null>;
   liveApprovalRequest: SessionMessageColumnProps["liveApprovalRequest"];
@@ -201,7 +201,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     taskTitle: input.session.taskTitle,
     isEditingTitle: input.isEditingTitle,
     titleDraft: input.titleDraft,
-    isRunning: input.isRunning,
+    isRunning: input.isSelectedSessionRunning,
     isAuxiliaryMode: input.isAuxiliaryMode,
     canDeleteSession: false,
     canViewAuditLog: true,
@@ -248,7 +248,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       onConfirmRetryDraftReplace: input.onConfirmRetryDraftReplace,
       onCancelRetryDraftReplace: input.onCancelRetryDraftReplace,
       onOpenPath: input.onOpenInlinePath,
-      isRunning: input.isRunning,
+      isRunning: input.isSelectedSessionRunning,
       ...COMPANION_PENDING_RUN_INDICATOR_TEXT,
       modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
       composerBlocked: input.composerBlocked,
@@ -328,7 +328,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       messageGroups: input.displayedMessageGroups,
       expandedArtifacts: input.expandedArtifacts,
       messageListRef: input.messageListRef,
-      isRunning: input.isRunning,
+      isRunning: input.isSelectedSessionRunning,
       liveApprovalRequest: input.liveApprovalRequest,
       approvalActionRequestId: input.approvalActionRequestId,
       liveElicitationRequest: input.liveElicitationRequest,
@@ -368,7 +368,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     backgroundTasks: input.backgroundTasks,
     companionGroupMonitorEntries: input.companionGroupMonitorEntries,
     selectedSessionLiveRunErrorMessage: input.liveRunErrorMessage,
-    isSelectedSessionRunning: input.isRunning,
+    isSelectedSessionRunning: input.isSelectedSessionRunning,
     isCopilotSession: input.isCopilotSession,
     selectedCopilotRemainingPercentLabel: input.selectedCopilotRemainingPercentLabel,
     selectedCopilotRemainingRequestsLabel: input.selectedCopilotRemainingRequestsLabel,

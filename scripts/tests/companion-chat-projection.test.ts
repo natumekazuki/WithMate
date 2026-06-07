@@ -93,7 +93,7 @@ function createProjectionInput(
     isHeaderExpanded: true,
     isEditingTitle: false,
     titleDraft: "Companion session",
-    isRunning: true,
+    isSelectedSessionRunning: true,
     isHeaderActionDisabled: false,
     messageListRef: React.createRef<HTMLDivElement>(),
     liveApprovalRequest: null,
@@ -257,6 +257,15 @@ test("buildCompanionChatWindowProps は running 中の response 待機文を mes
   assert.equal(props.messageColumnProps.isRunning, true);
   assert.equal(props.messageColumnProps.pendingMessageText, "Companion の応答を待っています。");
   assert.deepEqual(props.messageColumnProps.messages, [{ role: "user", text: "調べて" }]);
+});
+
+test("buildCompanionChatWindowProps は selected session running 判定を共通 pane / composer へ渡す", () => {
+  const props = buildCompanionChatWindowProps(createProjectionInput({
+    isSelectedSessionRunning: true,
+  }));
+
+  assert.equal(props.messageColumnProps.isRunning, true);
+  assert.equal(props.compactActionDockProps?.isRunning, true);
 });
 
 test("buildCompanionChatWindowProps は live assistant text の有無を共通 message column helper に委ねる", () => {

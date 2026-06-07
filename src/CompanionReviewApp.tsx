@@ -2829,7 +2829,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         isHeaderExpanded,
         isEditingTitle,
         titleDraft,
-        isRunning: isSelectedSessionRunning,
+        isSelectedSessionRunning,
         isHeaderActionDisabled: operationRunning || turnRunning || isAuxiliaryActionPending,
         messageListRef,
         liveApprovalRequest: selectedSessionLiveRun?.approvalRequest ?? null,
