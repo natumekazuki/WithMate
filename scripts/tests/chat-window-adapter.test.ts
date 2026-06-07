@@ -183,6 +183,16 @@ test("buildRunningSessionCancelTarget は Companion turnRunning 中の cancel �
   assert.equal(resolveRunningSessionCancelTargetId(target), "companion-session-1");
 });
 
+test("buildRunningSessionCancelTarget は runState running の cancel 対象を作る", () => {
+  const target = buildRunningSessionCancelTarget({
+    sessionId: "session-1",
+    runState: "running",
+    isRunning: false,
+  });
+
+  assert.equal(resolveRunningSessionCancelTargetId(target), "session-1");
+});
+
 test("buildRunningSessionCancelTarget は session 未選択なら cancel 対象を作らない", () => {
   assert.equal(
     buildRunningSessionCancelTarget({

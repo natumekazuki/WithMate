@@ -48,6 +48,7 @@ import {
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import {
   buildAuxiliaryAwareSendOrCancelHandler,
+  buildRunningSessionCancelTarget,
   resolveSelectedSessionIsRunning,
   resolveSelectedSessionRunState,
   resolveRunningSessionCancelTargetId,
@@ -1719,7 +1720,13 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleCancelRun = async () => {
-    const sessionId = resolveRunningSessionCancelTargetId(selectedSession);
+    const sessionId = resolveRunningSessionCancelTargetId(
+      buildRunningSessionCancelTarget({
+        sessionId: selectedSession?.id,
+        runState: selectedSessionRunState,
+        isRunning: isSelectedSessionRunning,
+      }),
+    );
     if (!withmateApi || !sessionId) {
       return;
     }
@@ -2221,7 +2228,13 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleCancelAuxiliaryRun = async () => {
-    const sessionId = resolveRunningSessionCancelTargetId(activeAuxiliarySession);
+    const sessionId = resolveRunningSessionCancelTargetId(
+      buildRunningSessionCancelTarget({
+        sessionId: activeAuxiliarySession?.id,
+        runState: activeAuxiliarySession?.runState,
+        isRunning: activeAuxiliarySession?.runState === "running",
+      }),
+    );
     if (!withmateApi || !sessionId) {
       return;
     }
