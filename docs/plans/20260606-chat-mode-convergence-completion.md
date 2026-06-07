@@ -46,6 +46,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-07: App / CompanionReview の Auxiliary approval / sandbox patch 構築を `auxiliary-session-state` に集約。`runGuardedAuxiliarySessionUpdate`、保存 queue、active session guard、timestamp 生成は呼び出し側に残し、PR-04 runtime option update handler slice を完了扱いに変更。
 - 2026-06-07: PR-05 着手。MateTalk 送信前の空入力 / 送信中 / trim 済み本文判定を `resolveMateTalkSubmitPreflight` に集約。provider 実行、turn controller、stale guard、error append、action dock 更新は未変更。`scripts/tests/mate-talk-state.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-07: App / Companion の optimistic running session と pending live run updater 作成を `buildOptimisticSessionRunUpdate` に集約。provider 実行、preview/sendability、draft clear、success/failure rollback は呼び出し側に残した。`scripts/tests/session-live-run-state.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-07: App / Companion の preview 後 sendability blocked message 解決を `getComposerSendBlockedMessage` に集約。preview API、sendability 計算、provider 実行、rollback は未変更。`scripts/tests/session-composer-feedback.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -163,6 +164,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - success / failure / cancel / stale result guard の共通 lifecycle。
 - MateTalk 送信 preflight を `mate-talk-state` に集約。2026-06-07 着手。
 - App / Companion の optimistic running session と pending live run updater 作成を `session-live-run-state` に集約。2026-06-07 着手。
+- App / Companion の sendability blocked message 解決を `session-composer-feedback` に集約。2026-06-07 着手。
 
 やらないこと:
 

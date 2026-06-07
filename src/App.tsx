@@ -82,6 +82,7 @@ import {
 } from "./chat/chat-header-actions.js";
 import {
   buildComposerSendabilityState,
+  getComposerSendBlockedMessage,
   getComposerSendButtonTitle,
   withForcedComposerBlockedFeedback,
   type ComposerSendabilityState,
@@ -1636,8 +1637,9 @@ export default function AgentSessionWindowApp() {
       inputErrors: preview.errors,
       draftText: messageText,
     });
-    if (sendability.isSendDisabled) {
-      throw new Error(sendability.primaryFeedback || "送信できない状態だよ。");
+    const blockedMessage = getComposerSendBlockedMessage(sendability);
+    if (blockedMessage) {
+      throw new Error(blockedMessage);
     }
 
     if (options?.collapseActionDock) {

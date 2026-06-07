@@ -11,6 +11,7 @@ export type ComposerSendabilityState = {
 };
 
 export const BLANK_DRAFT_FEEDBACK = "メッセージを入力してください。";
+export const COMPOSER_SEND_BLOCKED_FALLBACK = "送信できない状態だよ。";
 
 export function buildComposerSendabilityState({
   runState,
@@ -92,4 +93,15 @@ export function getComposerSendButtonTitle(state: ComposerSendabilityState): str
   }
 
   return state.primaryFeedback || (state.isBlankDraft ? BLANK_DRAFT_FEEDBACK : "送信できない状態だよ。");
+}
+
+export function getComposerSendBlockedMessage(
+  state: ComposerSendabilityState,
+  fallback = COMPOSER_SEND_BLOCKED_FALLBACK,
+): string | null {
+  if (!state.isSendDisabled) {
+    return null;
+  }
+
+  return state.primaryFeedback || fallback;
 }

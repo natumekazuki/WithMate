@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   BLANK_DRAFT_FEEDBACK,
   buildComposerSendabilityState,
+  getComposerSendBlockedMessage,
   getComposerSendButtonTitle,
   withForcedComposerBlockedFeedback,
 } from "../../src/session-composer-feedback.js";
@@ -51,5 +52,38 @@ describe("session composer feedback", () => {
 
     assert.equal(state.primaryFeedback, "browse-only session だよ。");
     assert.equal(getComposerSendButtonTitle(state), "browse-only session だよ。");
+  });
+
+  it("send blocked message は primary feedback を優先する", () => {
+    const state = buildComposerSendabilityState({
+      runState: "idle",
+      blockedReason: "読み取り専用だよ。",
+      inputErrors: [],
+      draftText: "hello",
+    });
+
+    assert.equal(getComposerSendBlockedMessage(state), "読み取り専用だよ。");
+  });
+
+  it("send blocked message は disabled で primary feedback がなければ fallback を返す", () => {
+    const state = buildComposerSendabilityState({
+      runState: "idle",
+      blockedReason: "",
+      inputErrors: [],
+      draftText: "",
+    });
+
+    assert.equal(getComposerSendBlockedMessage(state), "送信できない状態だよ。");
+  });
+
+  it("send blocked message は送信可能なら null を返す", () => {
+    const state = buildComposerSendabilityState({
+      runState: "idle",
+      blockedReason: "",
+      inputErrors: [],
+      draftText: "hello",
+    });
+
+    assert.equal(getComposerSendBlockedMessage(state), null);
   });
 });

@@ -108,6 +108,7 @@ import {
 } from "./chat/message-text-actions.js";
 import {
   buildComposerSendabilityState,
+  getComposerSendBlockedMessage,
   getComposerSendButtonTitle,
   withForcedComposerBlockedFeedback,
 } from "./session-composer-feedback.js";
@@ -2493,8 +2494,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         inputErrors: preview.errors,
         draftText: messageText,
       });
-      if (sendability.isSendDisabled) {
-        throw new Error(sendability.primaryFeedback || "送信できない状態だよ。");
+      const blockedMessage = getComposerSendBlockedMessage(sendability);
+      if (blockedMessage) {
+        throw new Error(blockedMessage);
       }
 
       const optimisticRun = buildOptimisticSessionRunUpdate({
