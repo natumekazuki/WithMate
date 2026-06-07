@@ -28,7 +28,8 @@ import type { ApprovalMode } from "./approval-mode.js";
 import {
   applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionCustomAgentPatch,
-  applyAuxiliarySessionModelSelectionPatch,
+  applyAuxiliarySessionModelChange,
+  applyAuxiliarySessionReasoningEffortChange,
   applyAuxiliarySessionRuntimeOptionsPatch,
   loadClosedAuxiliarySessionDetails,
   resolveActiveAuxiliarySessionRefreshResult,
@@ -66,8 +67,6 @@ import {
 } from "./composer-textarea-focus.js";
 import {
   getProviderCatalog,
-  resolveModelChangeSelection,
-  resolveModelSelection,
   type ModelCatalogSnapshot,
   type ModelReasoningEffort,
 } from "./model-catalog.js";
@@ -1972,18 +1971,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    await updateActiveAuxiliarySession((current) => {
-      const selection = resolveModelChangeSelection(selectedProviderCatalog, model, current.reasoningEffort);
-      return applyAuxiliarySessionModelSelectionPatch(
+    await updateActiveAuxiliarySession((current) => (
+      applyAuxiliarySessionModelChange(
         current,
-        {
-          catalogRevision: modelCatalog.revision,
-          model: selection.resolvedModel,
-          reasoningEffort: selection.resolvedReasoningEffort,
-        },
+        selectedProviderCatalog,
+        model,
+        modelCatalog.revision,
         currentTimestampLabel(),
-      );
-    });
+      )
+    ));
   }
 
   async function handleChangeAuxiliaryReasoningEffort(reasoningEffort: ModelReasoningEffort): Promise<void> {
@@ -1991,18 +1987,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    await updateActiveAuxiliarySession((current) => {
-      const selection = resolveModelSelection(selectedProviderCatalog, current.model, reasoningEffort);
-      return applyAuxiliarySessionModelSelectionPatch(
+    await updateActiveAuxiliarySession((current) => (
+      applyAuxiliarySessionReasoningEffortChange(
         current,
-        {
-          catalogRevision: modelCatalog.revision,
-          model: selection.resolvedModel,
-          reasoningEffort: selection.resolvedReasoningEffort,
-        },
+        selectedProviderCatalog,
+        reasoningEffort,
+        modelCatalog.revision,
         currentTimestampLabel(),
-      );
-    });
+      )
+    ));
   }
 
   async function handleSelectAuxiliaryCustomAgent(agent: DiscoveredCustomAgent | null): Promise<void> {

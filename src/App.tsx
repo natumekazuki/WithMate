@@ -43,8 +43,6 @@ import {
 import {
   getProviderCatalog,
   getReasoningEffortOptionsForModel,
-  resolveModelChangeSelection,
-  resolveModelSelection,
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
@@ -130,7 +128,8 @@ import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionCustomAgentPatch,
-  applyAuxiliarySessionModelSelectionPatch,
+  applyAuxiliarySessionModelChange,
+  applyAuxiliarySessionReasoningEffortChange,
   applyAuxiliarySessionRuntimeOptionsPatch,
   loadClosedAuxiliarySessionDetails,
   resolveActiveAuxiliarySessionRefreshResult,
@@ -2041,14 +2040,11 @@ export default function AgentSessionWindowApp() {
     }
 
     await updateActiveAuxiliarySession((current) => {
-      const selection = resolveModelChangeSelection(selectedProviderCatalog, model, current.reasoningEffort);
-      return applyAuxiliarySessionModelSelectionPatch(
+      return applyAuxiliarySessionModelChange(
         current,
-        {
-          catalogRevision: modelCatalog.revision,
-          model: selection.resolvedModel,
-          reasoningEffort: selection.resolvedReasoningEffort,
-        },
+        selectedProviderCatalog,
+        model,
+        modelCatalog.revision,
         currentTimestampLabel(),
       );
     });
@@ -2060,14 +2056,11 @@ export default function AgentSessionWindowApp() {
     }
 
     await updateActiveAuxiliarySession((current) => {
-      const selection = resolveModelSelection(selectedProviderCatalog, current.model, reasoningEffort);
-      return applyAuxiliarySessionModelSelectionPatch(
+      return applyAuxiliarySessionReasoningEffortChange(
         current,
-        {
-          catalogRevision: modelCatalog.revision,
-          model: selection.resolvedModel,
-          reasoningEffort: selection.resolvedReasoningEffort,
-        },
+        selectedProviderCatalog,
+        reasoningEffort,
+        modelCatalog.revision,
         currentTimestampLabel(),
       );
     });

@@ -4,7 +4,12 @@ import {
   removeAllowedAdditionalDirectory,
 } from "./additional-directory-state.js";
 import { normalizeCodexSandboxMode, type CodexSandboxMode } from "./codex-sandbox-mode.js";
-import type { ModelReasoningEffort } from "./model-catalog.js";
+import {
+  resolveModelChangeSelection,
+  resolveModelSelection,
+  type ModelCatalogProvider,
+  type ModelReasoningEffort,
+} from "./model-catalog.js";
 import { normalizeMessage, type Message } from "./session-state.js";
 
 export type AuxiliarySessionStatus = "active" | "closed";
@@ -68,6 +73,44 @@ export function applyAuxiliarySessionModelSelectionPatch(
   updatedAt: string,
 ): AuxiliarySession {
   return applyAuxiliarySessionPatch(session, patch, updatedAt);
+}
+
+export function applyAuxiliarySessionModelChange(
+  session: AuxiliarySession,
+  providerCatalog: ModelCatalogProvider,
+  model: string,
+  catalogRevision: number,
+  updatedAt: string,
+): AuxiliarySession {
+  const selection = resolveModelChangeSelection(providerCatalog, model, session.reasoningEffort);
+  return applyAuxiliarySessionModelSelectionPatch(
+    session,
+    {
+      catalogRevision,
+      model: selection.resolvedModel,
+      reasoningEffort: selection.resolvedReasoningEffort,
+    },
+    updatedAt,
+  );
+}
+
+export function applyAuxiliarySessionReasoningEffortChange(
+  session: AuxiliarySession,
+  providerCatalog: ModelCatalogProvider,
+  reasoningEffort: ModelReasoningEffort,
+  catalogRevision: number,
+  updatedAt: string,
+): AuxiliarySession {
+  const selection = resolveModelSelection(providerCatalog, session.model, reasoningEffort);
+  return applyAuxiliarySessionModelSelectionPatch(
+    session,
+    {
+      catalogRevision,
+      model: selection.resolvedModel,
+      reasoningEffort: selection.resolvedReasoningEffort,
+    },
+    updatedAt,
+  );
 }
 
 export function addAuxiliarySessionAdditionalDirectory(

@@ -6,6 +6,8 @@ import {
   applyAuxiliarySessionPatch,
   applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionCustomAgentPatch,
+  applyAuxiliarySessionModelChange,
+  applyAuxiliarySessionReasoningEffortChange,
   applyAuxiliarySessionModelSelectionPatch,
   applyAuxiliarySessionRuntimeOptionsPatch,
   buildAuxiliaryDraftSaveRequest,
@@ -24,6 +26,26 @@ import {
   resolveEditableActiveAuxiliarySession,
   type AuxiliarySession,
 } from "../../src/auxiliary-session-state.js";
+import type { ModelCatalogProvider } from "../../src/model-catalog.js";
+
+const providerCatalog = {
+  id: "codex",
+  label: "Codex",
+  defaultModelId: "gpt-5.4",
+  defaultReasoningEffort: "medium",
+  models: [
+    {
+      id: "gpt-5.4",
+      label: "GPT-5.4",
+      reasoningEfforts: ["low", "medium", "high"],
+    },
+    {
+      id: "gpt-5.4-mini",
+      label: "GPT-5.4 mini",
+      reasoningEfforts: ["minimal", "low"],
+    },
+  ],
+} satisfies ModelCatalogProvider;
 
 function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
   return {
@@ -200,6 +222,84 @@ test("applyAuxiliarySessionCustomAgentPatch は custom agent と updatedAt だ�
       customAgentName: "planner",
       updatedAt: "2026-01-02T00:00:00.000Z",
     },
+  );
+});
+
+test("applyAuxiliarySessionModelChange は model selection と updatedAt だけを更新する", () => {
+  const session = createAuxiliarySession({
+    catalogRevision: 1,
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+  });
+
+  assert.deepEqual(
+    applyAuxiliarySessionModelChange(
+      session,
+      providerCatalog,
+      "gpt-5.4-mini",
+      2,
+      "2026-01-02T00:00:00.000Z",
+    ),
+    {
+      ...session,
+      catalogRevision: 2,
+      model: "gpt-5.4-mini",
+      reasoningEffort: "minimal",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    },
+  );
+});
+
+test("applyAuxiliarySessionReasoningEffortChange は reasoning effort と updatedAt だけを更新する", () => {
+  const session = createAuxiliarySession({
+    catalogRevision: 1,
+    model: "gpt-5.4-mini",
+    reasoningEffort: "low",
+  });
+
+  assert.deepEqual(
+    applyAuxiliarySessionReasoningEffortChange(
+      session,
+      providerCatalog,
+      "minimal",
+      2,
+      "2026-01-02T00:00:00.000Z",
+    ),
+    {
+      ...session,
+      catalogRevision: 2,
+      model: "gpt-5.4-mini",
+      reasoningEffort: "minimal",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    },
+  );
+});
+
+test("applyAuxiliarySessionReasoningEffortChange は model catalog validation error を維持する", () => {
+  const session = createAuxiliarySession({
+    model: "gpt-5.4-mini",
+    reasoningEffort: "low",
+  });
+
+  assert.throws(
+    () => applyAuxiliarySessionModelChange(
+      session,
+      providerCatalog,
+      "missing-model",
+      2,
+      "2026-01-02T00:00:00.000Z",
+    ),
+    /selected model/,
+  );
+  assert.throws(
+    () => applyAuxiliarySessionReasoningEffortChange(
+      session,
+      providerCatalog,
+      "xhigh",
+      2,
+      "2026-01-02T00:00:00.000Z",
+    ),
+    /selected depth/,
   );
 });
 
