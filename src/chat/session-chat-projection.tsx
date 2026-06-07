@@ -227,7 +227,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onConfirmRetryDraftReplace: input.onConfirmRetryDraftReplace,
       onCancelRetryDraftReplace: input.onCancelRetryDraftReplace,
       onOpenPath: input.onOpenInlinePath,
-      isRunning: input.selectedSession.runState === "running",
+      isRunning: input.isSelectedSessionRunning,
       pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: input.pendingRunIndicatorText,
       modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),

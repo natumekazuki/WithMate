@@ -359,6 +359,7 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
       allowedAdditionalDirectories: ["C:/extra"],
     },
     selectedCustomAgentLabel: "Copilot Agent",
+    isSelectedSessionRunning: true,
     pendingRunIndicatorAnnouncement: "Agent running",
     pendingRunIndicatorText: "Agent responding",
     isMessageListFollowing: false,
@@ -393,4 +394,30 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
   assert.equal(props.compactActionDockProps.onExpand, onExpandActionDock);
   assert.equal(props.compactActionDockProps.onJumpToBottom, onJumpToMessageListBottom);
   assert.equal(props.compactActionDockProps.onSendOrCancel, onSendOrCancel);
+});
+
+test("buildAgentSessionChatWindowProps は selected session running boolean を composer dock に渡す", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    selectedSession: {
+      ...createSession(),
+      runState: "idle",
+    },
+    isSelectedSessionRunning: true,
+  }));
+
+  assert.equal(props.composerProps.isRunning, true);
+  assert.equal(props.compactActionDockProps.isRunning, true);
+});
+
+test("buildAgentSessionChatWindowProps は session runState ではなく running boolean を優先する", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    selectedSession: {
+      ...createSession(),
+      runState: "running",
+    },
+    isSelectedSessionRunning: false,
+  }));
+
+  assert.equal(props.composerProps.isRunning, false);
+  assert.equal(props.compactActionDockProps.isRunning, false);
 });
