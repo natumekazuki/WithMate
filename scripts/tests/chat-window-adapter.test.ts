@@ -34,6 +34,8 @@ import {
   buildAuxiliaryAwareSendOrCancelHandler,
   buildRunningSessionCancelTarget,
   resolveAuxiliaryAwareSendOrCancelAction,
+  resolveSelectedSessionIsRunning,
+  resolveSelectedSessionRunState,
   resolveRunningSessionCancelTargetId,
 } from "../../src/chat/send-or-cancel.js";
 import type { ChatWindowProps } from "../../src/chat/chat-window.js";
@@ -190,6 +192,39 @@ test("buildRunningSessionCancelTarget は session 未選択なら cancel 対象�
     }),
     null,
   );
+});
+
+test("resolveSelectedSessionRunState は session runState を live run より優先する", () => {
+  assert.equal(
+    resolveSelectedSessionRunState({
+      runState: "idle",
+      hasLiveRun: true,
+    }),
+    "idle",
+  );
+});
+
+test("resolveSelectedSessionRunState は runState 未取得時に live run / turnRunning で running にする", () => {
+  assert.equal(
+    resolveSelectedSessionRunState({
+      runState: null,
+      hasLiveRun: true,
+    }),
+    "running",
+  );
+  assert.equal(
+    resolveSelectedSessionRunState({
+      runState: undefined,
+      isTurnRunning: true,
+    }),
+    "running",
+  );
+});
+
+test("resolveSelectedSessionIsRunning は runState と turnRunning を見る", () => {
+  assert.equal(resolveSelectedSessionIsRunning({ runState: "running" }), true);
+  assert.equal(resolveSelectedSessionIsRunning({ runState: "idle", isTurnRunning: true }), true);
+  assert.equal(resolveSelectedSessionIsRunning({ runState: "idle" }), false);
 });
 
 test("buildAuxiliaryAwareSendOrCancelHandler は auxiliary 優先なら selected running より auxiliary send を使う", () => {

@@ -48,6 +48,8 @@ import {
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import {
   buildAuxiliaryAwareSendOrCancelHandler,
+  resolveSelectedSessionIsRunning,
+  resolveSelectedSessionRunState,
   resolveRunningSessionCancelTargetId,
 } from "./chat/send-or-cancel.js";
 import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-runtime-option-routing.js";
@@ -666,8 +668,10 @@ export default function AgentSessionWindowApp() {
     caret: composerCaret,
     isEnabled: Boolean(selectedSessionId),
   });
-  const selectedSessionRunState: Session["runState"] | null = selectedSession?.runState
-    ?? (selectedSessionLiveRun ? "running" : null);
+  const selectedSessionRunState: Session["runState"] | null = resolveSelectedSessionRunState({
+    runState: selectedSession?.runState,
+    hasLiveRun: !!selectedSessionLiveRun,
+  });
 
   const selectedSessionCharacter = useMemo(
     () =>
@@ -2771,7 +2775,9 @@ export default function AgentSessionWindowApp() {
     selectedSession?.id,
     selectedSessionLiveRun?.threadId,
   ]);
-  const isSelectedSessionRunning = selectedSessionRunState === "running";
+  const isSelectedSessionRunning = resolveSelectedSessionIsRunning({
+    runState: selectedSessionRunState,
+  });
   const renderedIsRunning = activeAuxiliarySession
     ? activeAuxiliarySession.runState === "running"
     : isSelectedSessionRunning;

@@ -60,6 +60,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-08: MateTalk の composer capability 合成を `buildMateTalkComposerCapabilityProps` に分離。static text chat runtime defaults と MateTalk 固有の custom agent / skill picker 非表示、collapse 可の contract を focused test で固定し、ChatWindow / provider 実行 / send lifecycle は未変更。
 - 2026-06-08: Companion の selected cancel target 組み立てを `buildRunningSessionCancelTarget` に集約。`turnRunning=true` かつ session `runState` が running でない短い区間でも cancel 対象 id を維持する contract を test で固定し、cancel API 呼び出しと provider 実行は未変更。
 - 2026-06-08: Companion の send 開始前 guard を `resolveSessionTurnStartPreflight` に集約。session / API 不在、operation running、turn running、session running、inactive、空白 message の blocked contract と trim 済み user message を focused test で固定し、preview API、optimistic update、provider 実行は未変更。
+- 2026-06-08: App / Companion の selected session run state / running boolean 導出を `resolveSelectedSessionRunState` / `resolveSelectedSessionIsRunning` に集約。既存どおり session `runState` を live run fallback より優先し、Companion の `turnRunning` は running boolean に残す contract を test で固定。send / cancel / provider 実行は未変更。
 
 ## PR Plan
 
@@ -191,6 +192,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - MateTalk の composer capability 合成を projection helper に集約。2026-06-08 着手。
 - Companion の `turnRunning` を含む selected cancel target 組み立てを `send-or-cancel` に集約。2026-06-08 着手。
 - Companion の send 開始前 guard を `session-live-run-state` に集約。2026-06-08 着手。
+- App / Companion の selected session run state / running boolean 導出を `send-or-cancel` に集約。2026-06-08 着手。
 
 やらないこと:
 

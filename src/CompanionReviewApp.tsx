@@ -126,6 +126,8 @@ import {
 import {
   buildAuxiliaryAwareSendOrCancelHandler,
   buildRunningSessionCancelTarget,
+  resolveSelectedSessionIsRunning,
+  resolveSelectedSessionRunState,
   resolveRunningSessionCancelTargetId,
 } from "./chat/send-or-cancel.js";
 import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-runtime-option-routing.js";
@@ -970,8 +972,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }, [isAuxiliaryMode, setAuditLogsOpen]);
   const selectedSessionRunState = activeAuxiliarySession
     ? activeAuxiliarySession.runState
-    : (snapshot?.session.runState ?? (turnRunning || selectedSessionLiveRun ? "running" : null));
-  const isSelectedSessionRunning = selectedSessionRunState === "running" || turnRunning;
+    : resolveSelectedSessionRunState({
+      runState: snapshot?.session.runState,
+      isTurnRunning: turnRunning,
+      hasLiveRun: !!selectedSessionLiveRun,
+    });
+  const isSelectedSessionRunning = resolveSelectedSessionIsRunning({
+    runState: selectedSessionRunState,
+    isTurnRunning: turnRunning,
+  });
   const lastUserMessage = useMemo(
     () => displayedSession ? [...displayedSession.messages].reverse().find((message) => message.role === "user") ?? null : null,
     [displayedSession],

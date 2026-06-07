@@ -21,6 +21,28 @@ export type RunningSessionCancelTarget = {
   isRunning?: boolean;
 } | null | undefined;
 
+export function resolveSelectedSessionRunState<TRunState extends string>({
+  runState,
+  isTurnRunning = false,
+  hasLiveRun = false,
+}: {
+  runState: TRunState | null | undefined;
+  isTurnRunning?: boolean;
+  hasLiveRun?: boolean;
+}): TRunState | "running" | null {
+  return runState ?? (isTurnRunning || hasLiveRun ? "running" : null);
+}
+
+export function resolveSelectedSessionIsRunning({
+  runState,
+  isTurnRunning = false,
+}: {
+  runState: string | null | undefined;
+  isTurnRunning?: boolean;
+}): boolean {
+  return runState === "running" || isTurnRunning;
+}
+
 export function buildRunningSessionCancelTarget({
   sessionId,
   runState,
