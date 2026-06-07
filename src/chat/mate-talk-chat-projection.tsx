@@ -43,7 +43,7 @@ export type MateTalkChatProjectionInput = {
   onOpenSessionFilesTerminal: () => void;
   onCollapseActionDock: () => void;
   onExpandActionDock: () => void;
-  sending: boolean;
+  isRunning: boolean;
   feedback: string;
   composerCapabilityProps?: StaticTextChatComposerCapabilityProps;
 };
@@ -91,7 +91,7 @@ export function buildMateTalkChatWindowProps({
   onOpenSessionFilesTerminal,
   onCollapseActionDock,
   onExpandActionDock,
-  sending,
+  isRunning,
   feedback,
   composerCapabilityProps,
 }: MateTalkChatProjectionInput): ChatWindowProps {
@@ -128,7 +128,7 @@ export function buildMateTalkChatWindowProps({
       onOpenExplorer: onOpenSessionFilesExplorer,
       onOpenTerminal: onOpenSessionFilesTerminal,
     }),
-    isRunning: sending,
+    isRunning,
     feedback,
     submitOnKey: shouldSubmitMateTalkInputByKey,
     rightPaneHeaderTitle: "メイトーク",

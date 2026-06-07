@@ -47,7 +47,7 @@ export function MateTalkChatModeApp() {
         onOpenSessionFilesTerminal: state.onOpenSessionFilesTerminal,
         onCollapseActionDock: state.onCollapseActionDock,
         onExpandActionDock: state.onExpandActionDock,
-        sending: state.sending,
+        isRunning: state.sending,
         composerCapabilityProps: {
           isAdditionalDirectoryListOpen: state.isAdditionalDirectoryListOpen,
           additionalDirectoryCount: state.additionalDirectoryCount,

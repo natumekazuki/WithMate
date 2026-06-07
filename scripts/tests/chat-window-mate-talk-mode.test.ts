@@ -7,7 +7,7 @@ import { ChatWindow } from "../../src/chat/chat-window.js";
 import { buildMateTalkChatWindowProps } from "../../src/chat/mate-talk-chat-projection.js";
 
 function renderPanel(options?: {
-  sending?: boolean;
+  isRunning?: boolean;
   input?: string;
   messages?: Array<{ id: string; role: "user" | "mate"; text: string }>;
   feedback?: string;
@@ -27,7 +27,7 @@ function renderPanel(options?: {
         messages: options?.messages ?? [],
         input: options?.input ?? "",
         feedback: options?.feedback ?? "",
-        sending: options?.sending ?? false,
+        isRunning: options?.isRunning ?? false,
         isHeaderExpanded: options?.isHeaderExpanded ?? false,
         isActionDockExpanded: true,
         modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
@@ -120,7 +120,7 @@ test("MateTalk は ChatWindow で action dock の格納と復帰を共通 props 
     messages: [],
     input: "おはよう",
     feedback: "",
-    sending: false,
+    isRunning: false,
     isHeaderExpanded: false,
     isActionDockExpanded: false,
     modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
@@ -165,7 +165,7 @@ test("MateTalk は ChatWindow で空白入力の送信を抑制する", () => {
 });
 
 test("MateTalk は ChatWindow で sending 中に共通の pending 表示と disabled を反映する", () => {
-  const html = renderPanel({ sending: true, input: "おはよう" });
+  const html = renderPanel({ isRunning: true, input: "おはよう" });
 
   assert.match(html, /<span class="session-window-title session-title-accent">メイトーク<\/span>/);
   assert.doesNotMatch(html, /まだ会話は開始してないよ。まずは入力してね。/);
@@ -185,7 +185,7 @@ test("MateTalk は pending run indicator props を渡さない", () => {
     messages: [],
     input: "おはよう",
     feedback: "",
-    sending: true,
+    isRunning: true,
     isHeaderExpanded: false,
     isActionDockExpanded: true,
     modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
@@ -274,7 +274,7 @@ test("MateTalk は ChatWindow で feedback を共通 composer feedback で表示
 
 test("MateTalk は ChatWindow で送信中でも空の pending row を追加しない", () => {
   const html = renderPanel({
-    sending: true,
+    isRunning: true,
     input: "おはよう",
     messages: [{ id: "m1", role: "user", text: "最初のメッセージ" }],
   });
