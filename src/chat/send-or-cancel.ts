@@ -21,6 +21,20 @@ export type RunningSessionCancelTarget = {
   isRunning?: boolean;
 } | null | undefined;
 
+export function buildRunningSessionCancelTarget({
+  sessionId,
+  runState,
+  isRunning,
+}: {
+  sessionId: string | null | undefined;
+  runState: string | null | undefined;
+  isRunning: boolean;
+}): RunningSessionCancelTarget {
+  return sessionId
+    ? { id: sessionId, runState, isRunning }
+    : null;
+}
+
 export function resolveRunningSessionCancelTargetId(
   target: RunningSessionCancelTarget,
 ): string | null {

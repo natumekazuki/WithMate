@@ -32,6 +32,7 @@ import {
 } from "../../src/chat/auxiliary-runtime-option-routing.js";
 import {
   buildAuxiliaryAwareSendOrCancelHandler,
+  buildRunningSessionCancelTarget,
   resolveAuxiliaryAwareSendOrCancelAction,
   resolveRunningSessionCancelTargetId,
 } from "../../src/chat/send-or-cancel.js";
@@ -167,6 +168,27 @@ test("resolveRunningSessionCancelTargetId は UI 側 running 判定を優先で�
   assert.equal(
     resolveRunningSessionCancelTargetId({ id: "session-1", runState: "idle", isRunning: true }),
     "session-1",
+  );
+});
+
+test("buildRunningSessionCancelTarget は Companion turnRunning 中の cancel 対象を維持する", () => {
+  const target = buildRunningSessionCancelTarget({
+    sessionId: "companion-session-1",
+    runState: "idle",
+    isRunning: true,
+  });
+
+  assert.equal(resolveRunningSessionCancelTargetId(target), "companion-session-1");
+});
+
+test("buildRunningSessionCancelTarget は session 未選択なら cancel 対象を作らない", () => {
+  assert.equal(
+    buildRunningSessionCancelTarget({
+      sessionId: null,
+      runState: "running",
+      isRunning: true,
+    }),
+    null,
   );
 });
 

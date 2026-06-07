@@ -125,6 +125,7 @@ import {
 } from "./chat/auxiliary-launch-state.js";
 import {
   buildAuxiliaryAwareSendOrCancelHandler,
+  buildRunningSessionCancelTarget,
   resolveRunningSessionCancelTargetId,
 } from "./chat/send-or-cancel.js";
 import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-runtime-option-routing.js";
@@ -2556,9 +2557,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   async function cancelCompanionTurn(): Promise<void> {
     const withmateApi = getWithMateApi();
     const sessionId = resolveRunningSessionCancelTargetId(
-      snapshot
-        ? { id: snapshot.session.id, runState: selectedSessionRunState, isRunning: isSelectedSessionRunning }
-        : null,
+      buildRunningSessionCancelTarget({
+        sessionId: snapshot?.session.id,
+        runState: selectedSessionRunState,
+        isRunning: isSelectedSessionRunning,
+      }),
     );
     if (!withmateApi || !sessionId) {
       return;
