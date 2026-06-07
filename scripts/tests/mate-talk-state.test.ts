@@ -130,7 +130,7 @@ test("resolveMateTalkSubmitPreflight は空入力を feedback 付き blocked に
   assert.deepEqual(
     resolveMateTalkSubmitPreflight({
       draft: "  \n ",
-      sending: false,
+      isRunning: false,
     }),
     {
       status: "blocked",
@@ -144,7 +144,7 @@ test("resolveMateTalkSubmitPreflight は送信中なら blocked にする", () =
   assert.deepEqual(
     resolveMateTalkSubmitPreflight({
       draft: " hello ",
-      sending: true,
+      isRunning: true,
     }),
     {
       status: "blocked",
@@ -157,7 +157,7 @@ test("resolveMateTalkSubmitPreflight は送信可能な本文を trim して返�
   assert.deepEqual(
     resolveMateTalkSubmitPreflight({
       draft: " hello ",
-      sending: false,
+      isRunning: false,
     }),
     {
       status: "ready",

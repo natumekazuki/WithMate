@@ -63,10 +63,10 @@ export type MateTalkSubmitPreflightResult =
 
 export function resolveMateTalkSubmitPreflight({
   draft,
-  sending,
+  isRunning,
 }: {
   draft: string;
-  sending: boolean;
+  isRunning: boolean;
 }): MateTalkSubmitPreflightResult {
   const message = draft.trim();
   if (!message) {
@@ -76,7 +76,7 @@ export function resolveMateTalkSubmitPreflight({
       feedback: "入力してから送信してね。",
     };
   }
-  if (sending) {
+  if (isRunning) {
     return { status: "blocked", reason: "sending" };
   }
   return { status: "ready", message };

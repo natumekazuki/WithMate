@@ -430,7 +430,7 @@ export function useMateTalkWindowState({
   const handleSubmit = async () => {
     const preflight = resolveMateTalkSubmitPreflight({
       draft: input,
-      sending,
+      isRunning: sending,
     });
     if (preflight.status === "blocked") {
       if (preflight.reason === "empty") {

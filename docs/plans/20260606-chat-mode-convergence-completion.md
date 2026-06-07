@@ -67,6 +67,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-08: App main composer / picker の running gate を direct session `runState` 参照から `selectedSessionRunState` 経由へ統一。picker close、composer disabled、sendability、blocked feedback の判定を live run fallback とそろえ、preview API と provider 実行は未変更。
 - 2026-06-08: Companion projection の running input 名を `isSelectedSessionRunning` へ統一。Agent projection と同じ語彙にそろえ、message column / right pane / compact dock に selected session running boolean が渡る contract を focused test で固定し、provider 実行と state 更新は未変更。
 - 2026-06-08: App / Companion の ActionDock expand 時 composer focus 判定を `shouldFocusComposerForActionDockExpand` に集約。running 中は focus しない contract を focused test で固定し、expand state と provider 実行は未変更。
+- 2026-06-08: MateTalk submit preflight の running 入力名を `isRunning` に統一。local state の `sending` rename は別 slice に残し、空入力 / running blocked / trim 済み本文の contract と provider 実行は未変更。
 
 ## PR Plan
 
@@ -205,6 +206,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App main composer / picker の running gate を `selectedSessionRunState` 経由へ統一。2026-06-08 着手。
 - Companion projection の running input 名を `isSelectedSessionRunning` へ統一。2026-06-08 着手。
 - App / Companion の ActionDock expand focus 判定を `action-dock-state` に集約。2026-06-08 着手。
+- MateTalk submit preflight の running 入力名を `isRunning` へ統一。2026-06-08 着手。
 
 やらないこと:
 
