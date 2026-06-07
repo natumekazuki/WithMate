@@ -48,6 +48,23 @@ export type MateTalkChatProjectionInput = {
   composerCapabilityProps?: StaticTextChatComposerCapabilityProps;
 };
 
+export function buildMateTalkComposerCapabilityProps({
+  composerCapabilityProps,
+  onCollapseActionDock,
+}: {
+  composerCapabilityProps?: StaticTextChatComposerCapabilityProps;
+  onCollapseActionDock: () => void;
+}): StaticTextChatComposerCapabilityProps {
+  return buildStaticTextChatComposerCapabilityProps({
+    ...composerCapabilityProps,
+    ...staticTextChatRuntimeComposerCapabilityDefaults,
+    showCustomAgentPicker: false,
+    showSkillPicker: false,
+    canCollapseActionDock: true,
+    onCollapse: onCollapseActionDock,
+  });
+}
+
 export function buildMateTalkChatWindowProps({
   mateName,
   mateAvatarFilePath,
@@ -116,13 +133,9 @@ export function buildMateTalkChatWindowProps({
     submitOnKey: shouldSubmitMateTalkInputByKey,
     rightPaneHeaderTitle: "メイトーク",
     rightPaneAriaLabel: "補助情報",
-    composerCapabilityProps: buildStaticTextChatComposerCapabilityProps({
-      ...composerCapabilityProps,
-      ...staticTextChatRuntimeComposerCapabilityDefaults,
-      showCustomAgentPicker: false,
-      showSkillPicker: false,
-      canCollapseActionDock: true,
-      onCollapse: onCollapseActionDock,
+    composerCapabilityProps: buildMateTalkComposerCapabilityProps({
+      composerCapabilityProps,
+      onCollapseActionDock,
     }),
   });
 }

@@ -57,6 +57,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-08: App / Companion の preview 後 send preflight 判定を `resolveComposerSendPreflight` に集約。preview API、composer preview state 反映、provider 実行、optimistic run 適用は呼び出し側に残した。`scripts/tests/session-composer-feedback.test.ts`、`npm run typecheck` は成功。
 - 2026-06-08: App / Companion の selected / Auxiliary cancel 対象 id 解決を `resolveRunningSessionCancelTargetId` に集約。cancel API 呼び出し、エラー表示、Companion の `turnRunning` を含む UI 側 running 判定は呼び出し側に残した。`scripts/tests/chat-window-adapter.test.ts`、`npm run typecheck` は成功。
 - 2026-06-08: App / Companion の send / cancel / reload failure message 解決を `resolveSessionRunErrorMessage` に集約。error の出力先、fallback 文言、provider 実行、rollback ordering は呼び出し側に残した。`scripts/tests/session-live-run-state.test.ts`、`npm run typecheck` は成功。
+- 2026-06-08: MateTalk の composer capability 合成を `buildMateTalkComposerCapabilityProps` に分離。static text chat runtime defaults と MateTalk 固有の custom agent / skill picker 非表示、collapse 可の contract を focused test で固定し、ChatWindow / provider 実行 / send lifecycle は未変更。
 
 ## PR Plan
 
@@ -185,6 +186,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の preview 後 send preflight 判定を `session-composer-feedback` に集約。2026-06-08 着手。
 - App / Companion の selected / Auxiliary cancel 対象 id 解決を `send-or-cancel` に集約。2026-06-08 着手。
 - App / Companion の send / cancel / reload failure message 解決を `session-live-run-state` に集約。2026-06-08 着手。
+- MateTalk の composer capability 合成を projection helper に集約。2026-06-08 着手。
 
 やらないこと:
 
