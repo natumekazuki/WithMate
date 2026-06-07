@@ -9,6 +9,7 @@ import {
   MateTalkTurnController,
   resolveMateTalkActionDockExpandedAfterSubmit,
   resolveMateTalkSubmitPreflight,
+  shouldApplyMateTalkTurnUpdate,
   shouldSubmitMateTalkInputByKey,
 } from "../../src/chat/mate-talk-state.js";
 
@@ -52,6 +53,27 @@ test("MateTalkTurnController は新規 turn が旧 turn を stale として扱�
 
   assert.equal(controller.isLatestTurn(firstTurn.turnId), false);
   assert.equal(controller.isLatestTurn(secondTurn.turnId), true);
+});
+
+test("shouldApplyMateTalkTurnUpdate は最新 turn だけ true を返す", () => {
+  const controller = new MateTalkTurnController();
+  const firstTurn = controller.beginTurn();
+  const secondTurn = controller.beginTurn();
+
+  assert.equal(
+    shouldApplyMateTalkTurnUpdate({
+      controller,
+      turnId: firstTurn.turnId,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldApplyMateTalkTurnUpdate({
+      controller,
+      turnId: secondTurn.turnId,
+    }),
+    true,
+  );
 });
 
 test("shouldSubmitMateTalkInputByKey は Enter 単体では送信しない", () => {

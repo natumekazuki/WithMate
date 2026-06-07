@@ -157,6 +157,16 @@ export function buildMateTalkErrorMessage({
   };
 }
 
+export function shouldApplyMateTalkTurnUpdate({
+  controller,
+  turnId,
+}: {
+  controller: Pick<MateTalkTurnController, "isLatestTurn">;
+  turnId: number;
+}): boolean {
+  return controller.isLatestTurn(turnId);
+}
+
 export function resolveMateTalkActionDockExpandedAfterSubmit({
   isActionDockExpanded,
   appSettings,

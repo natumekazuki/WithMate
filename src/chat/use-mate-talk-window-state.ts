@@ -51,6 +51,7 @@ import {
   MateTalkTurnController,
   resolveMateTalkActionDockExpandedAfterSubmit,
   resolveMateTalkSubmitPreflight,
+  shouldApplyMateTalkTurnUpdate,
 } from "./mate-talk-state.js";
 import {
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -473,7 +474,7 @@ export function useMateTalkWindowState({
         throw new Error("Mate API が利用できないよ。");
       }
       const result = await withmateApi.runMateTalkTurn(turnInput);
-      if (!turnControllerRef.current.isLatestTurn(turnId)) {
+      if (!shouldApplyMateTalkTurnUpdate({ controller: turnControllerRef.current, turnId })) {
         return;
       }
       setMessages((current) => [
@@ -484,7 +485,7 @@ export function useMateTalkWindowState({
         }),
       ]);
     } catch (error) {
-      if (!turnControllerRef.current.isLatestTurn(turnId)) {
+      if (!shouldApplyMateTalkTurnUpdate({ controller: turnControllerRef.current, turnId })) {
         return;
       }
       setMessages((current) => [
@@ -495,7 +496,7 @@ export function useMateTalkWindowState({
         }),
       ]);
     } finally {
-      if (!turnControllerRef.current.isLatestTurn(turnId)) {
+      if (!shouldApplyMateTalkTurnUpdate({ controller: turnControllerRef.current, turnId })) {
         return;
       }
       setSending(false);
