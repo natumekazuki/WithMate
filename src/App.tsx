@@ -115,7 +115,7 @@ import {
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
 import {
-  buildOptimisticSessionRunUpdate,
+  applyOptimisticSessionRunUpdate,
   clearOwnedLiveSessionRunState,
   createOwnedPendingLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
@@ -1648,16 +1648,14 @@ export default function AgentSessionWindowApp() {
     if (options?.clearDraft ?? true) {
       setDraft("");
     }
-    const optimisticRun = buildOptimisticSessionRunUpdate({
+    const updatedSession = applyOptimisticSessionRunUpdate({
       session: selectedSession,
       userMessage: nextMessage,
       updatedAt: currentTimestampLabel(),
       status: "running",
+      updateLiveRunState: (update) => setLiveRunState(update),
+      applyRunningSession: (runningSession) => setSessions([runningSession]),
     });
-    const updatedSession = optimisticRun.runningSession;
-
-    setLiveRunState(optimisticRun.createPendingLiveRunState);
-    setSessions([updatedSession]);
 
     try {
       const request: RunSessionTurnRequest = {

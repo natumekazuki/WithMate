@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState } from "../../src/runtime-state.js";
 import {
+  applyOptimisticSessionRunUpdate,
   buildOptimisticSessionRunUpdate,
   clearOwnedLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
@@ -104,6 +105,59 @@ test("buildOptimisticSessionRunUpdate は running session と pending live run u
       reasoningText: "",
       steps: [],
       backgroundTasks: [{ id: "task-1", title: "Install", status: "running" }],
+      usage: null,
+      errorMessage: "",
+      approvalRequest: null,
+      elicitationRequest: null,
+    },
+  });
+});
+
+test("applyOptimisticSessionRunUpdate は pending live run と running session を順に反映する", () => {
+  const session: TestSession = {
+    id: "session-1",
+    threadId: "thread-1",
+    runState: "idle",
+    updatedAt: "before",
+    messages: [],
+  };
+  const calls: string[] = [];
+  let nextLiveRunState: OwnedLiveSessionRunState | null = null;
+  let nextSession: TestSession | null = null;
+
+  const returnedSession = applyOptimisticSessionRunUpdate({
+    session,
+    userMessage: "hello",
+    updatedAt: "after",
+    status: "running",
+    updateLiveRunState: (update) => {
+      calls.push("live-run");
+      nextLiveRunState = update({ ownerSessionId: null, state: null });
+    },
+    applyRunningSession: (runningSession) => {
+      calls.push("session");
+      nextSession = runningSession;
+    },
+  });
+
+  assert.deepEqual(calls, ["live-run", "session"]);
+  assert.equal(nextSession, returnedSession);
+  assert.deepEqual(nextSession, {
+    ...session,
+    status: "running",
+    runState: "running",
+    updatedAt: "after",
+    messages: [{ role: "user", text: "hello" }],
+  });
+  assert.deepEqual(nextLiveRunState, {
+    ownerSessionId: "session-1",
+    state: {
+      sessionId: "session-1",
+      threadId: "thread-1",
+      assistantText: "",
+      reasoningText: "",
+      steps: [],
+      backgroundTasks: [],
       usage: null,
       errorMessage: "",
       approvalRequest: null,

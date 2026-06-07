@@ -144,7 +144,7 @@ import {
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
 import {
-  buildOptimisticSessionRunUpdate,
+  applyOptimisticSessionRunUpdate,
   clearOwnedLiveSessionRunState,
   createOwnedPendingLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
@@ -2499,17 +2499,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         throw new Error(blockedMessage);
       }
 
-      const optimisticRun = buildOptimisticSessionRunUpdate({
+      applyOptimisticSessionRunUpdate({
         session: snapshot.session,
         userMessage,
         updatedAt: currentTimestampLabel(),
+        updateLiveRunState: (update) => setLiveRunState(update),
+        applyRunningSession: (nextSession) =>
+          setSnapshot((current) => current ? { ...current, session: nextSession } : current),
       });
-      const runningSession = optimisticRun.runningSession;
       if (shouldClearDraft) {
         setComposerText("");
       }
-      setLiveRunState(optimisticRun.createPendingLiveRunState);
-      setSnapshot((current) => current ? { ...current, session: runningSession } : current);
       appliedOptimisticState = true;
 
       const nextSession = await withmateApi.runCompanionSessionTurn(snapshot.session.id, {

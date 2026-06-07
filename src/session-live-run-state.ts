@@ -63,6 +63,38 @@ export function buildOptimisticSessionRunUpdate<
   };
 }
 
+export function applyOptimisticSessionRunUpdate<
+  TSession extends OptimisticRunningSessionBase & PendingLiveRunSessionIdentity,
+>({
+  session,
+  userMessage,
+  updatedAt,
+  status,
+  updateLiveRunState,
+  applyRunningSession,
+}: {
+  session: TSession;
+  userMessage: string;
+  updatedAt: string;
+  status?: string;
+  updateLiveRunState: (
+    createPendingLiveRunState: (
+      current?: OwnedLiveSessionRunState | null,
+    ) => OwnedLiveSessionRunState,
+  ) => void;
+  applyRunningSession: (runningSession: TSession) => void;
+}): TSession {
+  const update = buildOptimisticSessionRunUpdate({
+    session,
+    userMessage,
+    updatedAt,
+    status,
+  });
+  updateLiveRunState(update.createPendingLiveRunState);
+  applyRunningSession(update.runningSession);
+  return update.runningSession;
+}
+
 export function createPendingLiveSessionRunState(
   session: PendingLiveRunSessionIdentity,
   previousState?: LiveSessionRunState | null,
