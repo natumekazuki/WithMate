@@ -94,7 +94,7 @@ export function useMateTalkWindowState({
   const [mateProfile, setMateProfile] = useState<MateProfile | null>(null);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<MateTalkMessage[]>([]);
-  const [sending, setSending] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
   const [isActionDockExpanded, setIsActionDockExpanded] = useState(true);
@@ -230,7 +230,7 @@ export function useMateTalkWindowState({
   });
 
   const handleQuoteMessageText = createQuoteMessageTextHandler({
-    isBlocked: () => sending,
+    isBlocked: () => isRunning,
     notifyBlocked: () => {},
     getComposerState: () => ({
       draft: input,
@@ -284,7 +284,7 @@ export function useMateTalkWindowState({
   };
 
   const addToSessionFiles = async () => {
-    if (!withmateApi || sending) {
+    if (!withmateApi || isRunning) {
       return;
     }
 
@@ -303,7 +303,7 @@ export function useMateTalkWindowState({
   };
 
   const pickSessionFiles = async () => {
-    if (!withmateApi || sending) {
+    if (!withmateApi || isRunning) {
       return;
     }
 
@@ -322,7 +322,7 @@ export function useMateTalkWindowState({
 
   const handleDraftPaste = createPastedSessionAttachmentHandler({
     alertError: (message) => setFeedback(message),
-    canPaste: () => !!withmateApi && !sending,
+    canPaste: () => !!withmateApi && !isRunning,
     currentTimestampLabel,
     fallbackErrorMessage: "貼り付けたファイルの保存に失敗したよ。",
     getSavePastedSessionFile: () => {
@@ -366,7 +366,7 @@ export function useMateTalkWindowState({
 
   const addAdditionalDirectory = async () => {
     await runPickedAdditionalDirectoryOperation({
-      canPickDirectory: () => !!withmateApi && !sending,
+      canPickDirectory: () => !!withmateApi && !isRunning,
       getPickerBaseDirectory: () => resolveAdditionalDirectoryPickerBase(pickerBaseDirectory),
       pickDirectory: (baseDirectory) => withmateApi?.pickDirectory(baseDirectory) ?? Promise.resolve(null),
       applyPickedDirectory: (selectedPath) => {
@@ -430,7 +430,7 @@ export function useMateTalkWindowState({
   const handleSubmit = async () => {
     const preflight = resolveMateTalkSubmitPreflight({
       draft: input,
-      isRunning: sending,
+      isRunning,
     });
     if (preflight.status === "blocked") {
       if (preflight.reason === "empty") {
@@ -446,7 +446,7 @@ export function useMateTalkWindowState({
       text: normalizedText,
     });
 
-    setSending(true);
+    setIsRunning(true);
     setFeedback("");
     setMessages((current) => [...current, userMessage]);
     const turnInput = buildMateTalkTurnInput({
@@ -499,7 +499,7 @@ export function useMateTalkWindowState({
       if (!shouldApplyMateTalkTurnUpdate({ controller: turnControllerRef.current, turnId })) {
         return;
       }
-      setSending(false);
+      setIsRunning(false);
     }
   };
 
@@ -575,6 +575,6 @@ export function useMateTalkWindowState({
       setPinnedExpanded: setIsActionDockExpanded,
       focusComposer: () => {},
     }),
-    sending,
+    isRunning,
   };
 }

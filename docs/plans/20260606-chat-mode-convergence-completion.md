@@ -69,6 +69,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-08: App / Companion の ActionDock expand 時 composer focus 判定を `shouldFocusComposerForActionDockExpand` に集約。running 中は focus しない contract を focused test で固定し、expand state と provider 実行は未変更。
 - 2026-06-08: MateTalk submit preflight の running 入力名を `isRunning` に統一。local state の `sending` rename は別 slice に残し、空入力 / running blocked / trim 済み本文の contract と provider 実行は未変更。
 - 2026-06-08: MateTalk projection の running 入力名を `isRunning` に統一。hook の local state `sending` は呼び出し側で adapter し、ChatWindow へ渡す running contract と rendering は未変更。
+- 2026-06-08: MateTalk hook の local run flag を `isRunning` に統一。blocked reason の `sending` 文言は既存 contract として残し、turn controller、provider 実行、rendering は未変更。
 
 ## PR Plan
 
@@ -209,6 +210,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の ActionDock expand focus 判定を `action-dock-state` に集約。2026-06-08 着手。
 - MateTalk submit preflight の running 入力名を `isRunning` へ統一。2026-06-08 着手。
 - MateTalk projection の running 入力名を `isRunning` へ統一。2026-06-08 着手。
+- MateTalk hook の local run flag を `isRunning` へ統一。2026-06-08 着手。
 
 やらないこと:
 
