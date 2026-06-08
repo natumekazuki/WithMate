@@ -51,7 +51,7 @@ import {
   resolveMateTalkAssistantTurnUpdate,
   resolveMateTalkErrorTurnUpdate,
   resolveMateTalkSubmitPreflight,
-  shouldApplyMateTalkTurnUpdate,
+  resolveMateTalkTurnFinalization,
 } from "./mate-talk-state.js";
 import {
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -495,7 +495,11 @@ export function useMateTalkWindowState({
       }
       setMessages((current) => [...current, turnUpdate.message]);
     } finally {
-      if (!shouldApplyMateTalkTurnUpdate({ controller: turnControllerRef.current, turnId })) {
+      const finalization = resolveMateTalkTurnFinalization({
+        controller: turnControllerRef.current,
+        turnId,
+      });
+      if (finalization.status === "stale") {
         return;
       }
       setIsRunning(false);

@@ -12,6 +12,7 @@ import {
   resolveMateTalkAssistantTurnUpdate,
   resolveMateTalkErrorTurnUpdate,
   resolveMateTalkSubmitPreflight,
+  resolveMateTalkTurnFinalization,
   shouldApplyMateTalkTurnUpdate,
   shouldSubmitMateTalkInputByKey,
 } from "../../src/chat/mate-talk-state.js";
@@ -365,6 +366,33 @@ test("resolveMateTalkErrorTurnUpdate は stale turn なら stale を返す", () 
       turnId: turn.turnId,
       messageSequence: turn.messageSequence,
       error: new Error("failed"),
+    }),
+    { status: "stale" },
+  );
+});
+
+test("resolveMateTalkTurnFinalization は最新 turn なら running clear を返す", () => {
+  const controller = new MateTalkTurnController();
+  const turn = controller.beginTurn();
+
+  assert.deepEqual(
+    resolveMateTalkTurnFinalization({
+      controller,
+      turnId: turn.turnId,
+    }),
+    { status: "clear-running" },
+  );
+});
+
+test("resolveMateTalkTurnFinalization は stale turn なら stale を返す", () => {
+  const controller = new MateTalkTurnController();
+  const turn = controller.beginTurn();
+  controller.beginTurn();
+
+  assert.deepEqual(
+    resolveMateTalkTurnFinalization({
+      controller,
+      turnId: turn.turnId,
     }),
     { status: "stale" },
   );

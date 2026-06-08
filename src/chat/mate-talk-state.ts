@@ -178,6 +178,10 @@ export type MateTalkTurnUpdateResolution =
   | { status: "stale" }
   | { status: "ready"; message: MateTalkTurnMessage };
 
+export type MateTalkTurnFinalization =
+  | { status: "stale" }
+  | { status: "clear-running" };
+
 export function shouldApplyMateTalkTurnUpdate({
   controller,
   turnId,
@@ -232,6 +236,18 @@ export function resolveMateTalkErrorTurnUpdate({
       error,
     }),
   };
+}
+
+export function resolveMateTalkTurnFinalization({
+  controller,
+  turnId,
+}: {
+  controller: Pick<MateTalkTurnController, "isLatestTurn">;
+  turnId: number;
+}): MateTalkTurnFinalization {
+  return shouldApplyMateTalkTurnUpdate({ controller, turnId })
+    ? { status: "clear-running" }
+    : { status: "stale" };
 }
 
 export function resolveMateTalkActionDockExpandedAfterSubmit({

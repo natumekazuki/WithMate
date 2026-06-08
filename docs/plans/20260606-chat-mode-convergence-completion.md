@@ -73,6 +73,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-08: MateTalk submit preflight の blocked reason を `running` に統一。呼び出し側は empty reason だけを扱う既存挙動のまま、provider 実行と UI 表示は未変更。
 - 2026-06-08: MateTalk turn 開始時の turn state / user message 作成を `beginMateTalkTurnSubmission` に集約。hook 側の running state 反映順、payload 作成、provider 実行、stale guard は未変更。
 - 2026-06-08: MateTalk turn success / error message 反映前の stale 判定と message 作成を `resolveMateTalkAssistantTurnUpdate` / `resolveMateTalkErrorTurnUpdate` に集約。provider 実行、finally の running clear、message append 先は未変更。
+- 2026-06-08: MateTalk turn finally の running clear 判定を `resolveMateTalkTurnFinalization` に集約。success / error update helper と同じ stale 判定語彙にそろえ、provider 実行と running state の更新先は未変更。
 
 ## PR Plan
 
@@ -217,6 +218,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - MateTalk submit preflight の blocked reason を `running` へ統一。2026-06-08 着手。
 - MateTalk turn 開始時の turn state / user message 作成を `mate-talk-state` に集約。2026-06-08 着手。
 - MateTalk turn success / error update の stale 判定と message 作成を `mate-talk-state` に集約。2026-06-08 着手。
+- MateTalk turn finally の running clear 判定を `mate-talk-state` に集約。2026-06-08 着手。
 
 やらないこと:
 
