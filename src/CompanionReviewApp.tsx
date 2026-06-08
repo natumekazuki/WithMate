@@ -1141,7 +1141,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       hasActiveAuxiliarySession: !!activeAuxiliarySession,
       hasLastUserMessage: !!lastUserMessage,
       isReadOnly: snapshot.session.status !== "active",
-      runState: snapshot.session.runState,
+      runState: selectedSessionRunState,
     })) {
       return null;
     }
@@ -1152,7 +1152,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
 
     const kind = resolveRetryBannerKind({
-      runState: snapshot.session.runState,
+      runState: selectedSessionRunState,
       latestTerminalAuditLogPhase: latestTerminalAuditLog?.phase,
     });
     if (!kind) {
@@ -1188,7 +1188,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       default:
         return null;
     }
-  }, [activeAuxiliarySession, lastAssistantMessage, lastUserMessage, latestTerminalAuditLog, selectedSessionLiveRun, snapshot]);
+  }, [
+    activeAuxiliarySession,
+    lastAssistantMessage,
+    lastUserMessage,
+    latestTerminalAuditLog,
+    selectedSessionLiveRun,
+    selectedSessionRunState,
+    snapshot,
+  ]);
   const shouldProtectDraftOnRetryEdit = shouldProtectRetryEditDraft({ retryBanner, draft: composerText });
   const isRetryActionDisabled = resolveRetryActionDisabled({
     retryBanner,
