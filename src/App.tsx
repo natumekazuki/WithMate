@@ -1939,7 +1939,7 @@ export default function AgentSessionWindowApp() {
 
   const handleStartTitleEdit = createStartTitleEditHandler({
     getTitle: () => selectedSession?.taskTitle,
-    canStart: () => !!selectedSession && !isSelectedSessionReadOnly && selectedSession.runState !== "running",
+    canStart: () => !!selectedSession && !isSelectedSessionReadOnly && selectedSessionRunState !== "running",
     setTitleDraft,
     setHeaderExpanded: setIsHeaderExpanded,
     setEditingTitle: setIsEditingTitle,
