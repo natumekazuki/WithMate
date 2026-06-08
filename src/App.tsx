@@ -1979,7 +1979,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleDeleteSession = async () => {
-    if (!withmateApi || !selectedSession || selectedSession.runState === "running") {
+    if (!withmateApi || !selectedSession || selectedSessionRunState === "running") {
       return;
     }
 

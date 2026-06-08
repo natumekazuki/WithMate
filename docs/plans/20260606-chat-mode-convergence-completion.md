@@ -79,6 +79,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-08: Companion retry banner の表示種別 / 表示可否判定に渡す run state も `selectedSessionRunState` へ統一。retry action disabled と同じ derived running 入力にそろえ、retry action 実行、provider 実行、保存は未変更。
 - 2026-06-08: App Activity Monitor の表示中判定を raw session `runState` から `selectedSessionRunState` へ統一。live run fallback を含む running 判定で scroll / unread state を扱うようにし、audit log 読み込み、provider 実行、保存は未変更。
 - 2026-06-08: App title edit 開始 gate を raw session `runState` から `selectedSessionRunState` へ統一。Companion の title edit と同じ derived running 判定にそろえ、title 保存、provider 実行、永続化 API は未変更。
+- 2026-06-08: App delete session guard の running 判定を raw session `runState` から `selectedSessionRunState` へ統一。live run fallback 中も削除開始を抑止するようにし、confirm 表示、delete API、provider 実行は未変更。
 
 ## PR Plan
 
@@ -229,6 +230,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - Companion retry banner の run state 入力を `selectedSessionRunState` 経由へ統一。2026-06-08 着手。
 - App Activity Monitor の running 判定を `selectedSessionRunState` 経由へ統一。2026-06-08 着手。
 - App title edit 開始 gate の running 判定を `selectedSessionRunState` 経由へ統一。2026-06-08 着手。
+- App delete session guard の running 判定を `selectedSessionRunState` 経由へ統一。2026-06-08 着手。
 
 やらないこと:
 
