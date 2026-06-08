@@ -994,7 +994,7 @@ export default function AgentSessionWindowApp() {
   }, [draft]);
 
   useLayoutEffect(() => {
-    const isActivityMonitorVisible = selectedSession?.runState === "running";
+    const isActivityMonitorVisible = selectedSessionRunState === "running";
     const activityMonitorElement = activityMonitorRef.current;
     const currentSignature = activityMonitorScrollSignature;
     const wasSameSession = activityMonitorSessionIdRef.current === selectedSessionId;
@@ -1035,7 +1035,7 @@ export default function AgentSessionWindowApp() {
     }
 
     setHasActivityMonitorUnread(true);
-  }, [activityMonitorScrollSignature, isActivityMonitorFollowing, selectedSession?.runState, selectedSessionId]);
+  }, [activityMonitorScrollSignature, isActivityMonitorFollowing, selectedSessionRunState, selectedSessionId]);
 
   useEffect(() => {
     let active = true;

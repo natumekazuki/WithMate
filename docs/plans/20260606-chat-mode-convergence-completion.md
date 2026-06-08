@@ -77,6 +77,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-08: App の actual send preflight に渡す run state を raw session `runState` から `selectedSessionRunState` に統一。Companion と同じ live run fallback 込みの判定にそろえ、preview API、optimistic update、provider 実行は未変更。
 - 2026-06-08: App retry banner の表示種別 / 表示可否 / action disabled 判定に渡す run state を `selectedSessionRunState` へ統一。live run fallback を含む selected session running 導出と retry UI をそろえ、retry action 実行、provider 実行、保存は未変更。
 - 2026-06-08: Companion retry banner の表示種別 / 表示可否判定に渡す run state も `selectedSessionRunState` へ統一。retry action disabled と同じ derived running 入力にそろえ、retry action 実行、provider 実行、保存は未変更。
+- 2026-06-08: App Activity Monitor の表示中判定を raw session `runState` から `selectedSessionRunState` へ統一。live run fallback を含む running 判定で scroll / unread state を扱うようにし、audit log 読み込み、provider 実行、保存は未変更。
 
 ## PR Plan
 
@@ -225,6 +226,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App actual send preflight の run state 入力を `selectedSessionRunState` 経由へ統一。2026-06-08 着手。
 - App retry banner / retry action disabled の run state 入力を `selectedSessionRunState` 経由へ統一。2026-06-08 着手。
 - Companion retry banner の run state 入力を `selectedSessionRunState` 経由へ統一。2026-06-08 着手。
+- App Activity Monitor の running 判定を `selectedSessionRunState` 経由へ統一。2026-06-08 着手。
 
 やらないこと:
 
