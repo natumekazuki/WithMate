@@ -1646,7 +1646,7 @@ export default function AgentSessionWindowApp() {
     const preview = await withmateApi.previewComposerInput(selectedSession.id, messageText);
     setComposerPreview(preview);
     const { blockedMessage } = resolveComposerSendPreflight({
-      runState: selectedSession.runState,
+      runState: selectedSessionRunState,
       blockedReason: composerBlockedReason,
       inputErrors: preview.errors,
       draftText: messageText,
