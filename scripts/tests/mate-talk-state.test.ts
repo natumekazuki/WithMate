@@ -9,6 +9,8 @@ import {
   buildMateTalkUserMessage,
   MateTalkTurnController,
   resolveMateTalkActionDockExpandedAfterSubmit,
+  resolveMateTalkAssistantTurnUpdate,
+  resolveMateTalkErrorTurnUpdate,
   resolveMateTalkSubmitPreflight,
   shouldApplyMateTalkTurnUpdate,
   shouldSubmitMateTalkInputByKey,
@@ -289,6 +291,82 @@ test("buildMateTalkErrorMessage は Error 以外なら fallback を返す", () =
       role: "mate",
       text: "返信に失敗したよ。",
     },
+  );
+});
+
+test("resolveMateTalkAssistantTurnUpdate は最新 turn の assistant message を返す", () => {
+  const controller = new MateTalkTurnController();
+  const turn = controller.beginTurn();
+
+  assert.deepEqual(
+    resolveMateTalkAssistantTurnUpdate({
+      controller,
+      turnId: turn.turnId,
+      messageSequence: turn.messageSequence,
+      text: "hi",
+    }),
+    {
+      status: "ready",
+      message: {
+        id: "mate-1",
+        role: "mate",
+        text: "hi",
+      },
+    },
+  );
+});
+
+test("resolveMateTalkAssistantTurnUpdate は stale turn なら stale を返す", () => {
+  const controller = new MateTalkTurnController();
+  const turn = controller.beginTurn();
+  controller.beginTurn();
+
+  assert.deepEqual(
+    resolveMateTalkAssistantTurnUpdate({
+      controller,
+      turnId: turn.turnId,
+      messageSequence: turn.messageSequence,
+      text: "hi",
+    }),
+    { status: "stale" },
+  );
+});
+
+test("resolveMateTalkErrorTurnUpdate は最新 turn の error message を返す", () => {
+  const controller = new MateTalkTurnController();
+  const turn = controller.beginTurn();
+
+  assert.deepEqual(
+    resolveMateTalkErrorTurnUpdate({
+      controller,
+      turnId: turn.turnId,
+      messageSequence: turn.messageSequence,
+      error: new Error("failed"),
+    }),
+    {
+      status: "ready",
+      message: {
+        id: "mate-error-1",
+        role: "mate",
+        text: "failed",
+      },
+    },
+  );
+});
+
+test("resolveMateTalkErrorTurnUpdate は stale turn なら stale を返す", () => {
+  const controller = new MateTalkTurnController();
+  const turn = controller.beginTurn();
+  controller.beginTurn();
+
+  assert.deepEqual(
+    resolveMateTalkErrorTurnUpdate({
+      controller,
+      turnId: turn.turnId,
+      messageSequence: turn.messageSequence,
+      error: new Error("failed"),
+    }),
+    { status: "stale" },
   );
 });
 

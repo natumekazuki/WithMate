@@ -174,6 +174,10 @@ export function buildMateTalkErrorMessage({
   };
 }
 
+export type MateTalkTurnUpdateResolution =
+  | { status: "stale" }
+  | { status: "ready"; message: MateTalkTurnMessage };
+
 export function shouldApplyMateTalkTurnUpdate({
   controller,
   turnId,
@@ -182,6 +186,52 @@ export function shouldApplyMateTalkTurnUpdate({
   turnId: number;
 }): boolean {
   return controller.isLatestTurn(turnId);
+}
+
+export function resolveMateTalkAssistantTurnUpdate({
+  controller,
+  turnId,
+  messageSequence,
+  text,
+}: {
+  controller: Pick<MateTalkTurnController, "isLatestTurn">;
+  turnId: number;
+  messageSequence: number;
+  text: string;
+}): MateTalkTurnUpdateResolution {
+  if (!shouldApplyMateTalkTurnUpdate({ controller, turnId })) {
+    return { status: "stale" };
+  }
+  return {
+    status: "ready",
+    message: buildMateTalkAssistantMessage({
+      messageSequence,
+      text,
+    }),
+  };
+}
+
+export function resolveMateTalkErrorTurnUpdate({
+  controller,
+  turnId,
+  messageSequence,
+  error,
+}: {
+  controller: Pick<MateTalkTurnController, "isLatestTurn">;
+  turnId: number;
+  messageSequence: number;
+  error: unknown;
+}): MateTalkTurnUpdateResolution {
+  if (!shouldApplyMateTalkTurnUpdate({ controller, turnId })) {
+    return { status: "stale" };
+  }
+  return {
+    status: "ready",
+    message: buildMateTalkErrorMessage({
+      messageSequence,
+      error,
+    }),
+  };
 }
 
 export function resolveMateTalkActionDockExpandedAfterSubmit({

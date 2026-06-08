@@ -45,11 +45,11 @@ import {
 } from "./mate-talk-model-selection.js";
 import {
   beginMateTalkTurnSubmission,
-  buildMateTalkAssistantMessage,
-  buildMateTalkErrorMessage,
   buildMateTalkTurnInput,
   MateTalkTurnController,
   resolveMateTalkActionDockExpandedAfterSubmit,
+  resolveMateTalkAssistantTurnUpdate,
+  resolveMateTalkErrorTurnUpdate,
   resolveMateTalkSubmitPreflight,
   shouldApplyMateTalkTurnUpdate,
 } from "./mate-talk-state.js";
@@ -473,27 +473,27 @@ export function useMateTalkWindowState({
         throw new Error("Mate API が利用できないよ。");
       }
       const result = await withmateApi.runMateTalkTurn(turnInput);
-      if (!shouldApplyMateTalkTurnUpdate({ controller: turnControllerRef.current, turnId })) {
+      const turnUpdate = resolveMateTalkAssistantTurnUpdate({
+        controller: turnControllerRef.current,
+        turnId,
+        messageSequence,
+        text: result.assistantMessage,
+      });
+      if (turnUpdate.status === "stale") {
         return;
       }
-      setMessages((current) => [
-        ...current,
-        buildMateTalkAssistantMessage({
-          messageSequence,
-          text: result.assistantMessage,
-        }),
-      ]);
+      setMessages((current) => [...current, turnUpdate.message]);
     } catch (error) {
-      if (!shouldApplyMateTalkTurnUpdate({ controller: turnControllerRef.current, turnId })) {
+      const turnUpdate = resolveMateTalkErrorTurnUpdate({
+        controller: turnControllerRef.current,
+        turnId,
+        messageSequence,
+        error,
+      });
+      if (turnUpdate.status === "stale") {
         return;
       }
-      setMessages((current) => [
-        ...current,
-        buildMateTalkErrorMessage({
-          messageSequence,
-          error,
-        }),
-      ]);
+      setMessages((current) => [...current, turnUpdate.message]);
     } finally {
       if (!shouldApplyMateTalkTurnUpdate({ controller: turnControllerRef.current, turnId })) {
         return;
