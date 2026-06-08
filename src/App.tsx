@@ -1359,7 +1359,7 @@ export default function AgentSessionWindowApp() {
       hasActiveAuxiliarySession: !!activeAuxiliarySession,
       hasLastUserMessage: !!lastUserMessage,
       isReadOnly: isSelectedSessionReadOnly,
-      runState: selectedSession.runState,
+      runState: selectedSessionRunState,
     })) {
       return null;
     }
@@ -1370,7 +1370,7 @@ export default function AgentSessionWindowApp() {
     }
 
     const kind = resolveRetryBannerKind({
-      runState: selectedSession.runState,
+      runState: selectedSessionRunState,
       latestTerminalAuditLogPhase: latestTerminalAuditLog?.phase,
     });
 
@@ -1457,7 +1457,7 @@ export default function AgentSessionWindowApp() {
     hasLastUserMessage: !!lastUserMessage,
     composerBlocked: !!composerBlockedReason,
     isReadOnly: isSelectedSessionReadOnly,
-    runState: selectedSession?.runState,
+    runState: selectedSessionRunState,
   });
   const isRetryEditDisabled = isRetryActionDisabled || isComposerDisabled;
   const actionDockRuntimeState = buildActionDockRuntimeState({
