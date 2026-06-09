@@ -36,6 +36,13 @@ type ComposerDraftChangeCommandArgs = {
   clearFeedback?: () => void;
 };
 
+type ComposerDraftClearCommandArgs = {
+  setDraft: (value: string) => void;
+  setComposerCaret?: ComposerDraftCaretUpdater;
+  syncMainComposerCaret?: ComposerDraftCaretUpdater;
+  nextCaret?: number;
+};
+
 export const applyComposerDraftChangeCommand = ({
   value,
   selectionStart = value.length,
@@ -48,6 +55,20 @@ export const applyComposerDraftChangeCommand = ({
   setDraft(value);
   setComposerCaret(selectionStart);
   syncMainComposerCaret?.(selectionStart);
+};
+
+export const applyComposerDraftClearCommand = ({
+  setDraft,
+  setComposerCaret,
+  syncMainComposerCaret,
+  nextCaret,
+}: ComposerDraftClearCommandArgs) => {
+  setDraft("");
+  if (nextCaret === undefined) {
+    return;
+  }
+  setComposerCaret?.(nextCaret);
+  syncMainComposerCaret?.(nextCaret);
 };
 
 export const buildOnDraftSelectHandler = ({

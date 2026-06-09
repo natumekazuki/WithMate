@@ -3,6 +3,7 @@ import test from "node:test";
 import type { KeyboardEvent } from "react";
 
 import {
+  applyComposerDraftClearCommand,
   applyComposerDraftChangeCommand,
   buildComposerDraftKeyDownHandler,
   buildOnDraftCompositionHandlers,
@@ -85,6 +86,38 @@ test("applyComposerDraftChangeCommand は selectionStart なしなら draft 末�
   });
 
   assert.equal(state.composerCaret, 5);
+});
+
+test("applyComposerDraftClearCommand は draft だけを空にできる", () => {
+  const state = createStateMachine();
+  state.setDraft("hello");
+  state.events.length = 0;
+
+  applyComposerDraftClearCommand({
+    setDraft: state.setDraft.bind(state),
+  });
+
+  assert.equal(state.draft, "");
+  assert.equal(state.composerCaret, -1);
+  assert.deepEqual(state.events, ["draft:"]);
+});
+
+test("applyComposerDraftClearCommand は caret reset と main mirror 同期を任意で行う", () => {
+  const state = createStateMachine();
+  state.setDraft("hello");
+  state.events.length = 0;
+
+  applyComposerDraftClearCommand({
+    setDraft: state.setDraft.bind(state),
+    setComposerCaret: state.setComposerCaret.bind(state),
+    syncMainComposerCaret: state.setMainComposerCaret.bind(state),
+    nextCaret: 0,
+  });
+
+  assert.equal(state.draft, "");
+  assert.equal(state.composerCaret, 0);
+  assert.equal(state.mainCaret, 0);
+  assert.deepEqual(state.events, ["draft:", "caret:0", "main:0"]);
 });
 
 test("buildOnDraftSelectHandler は composer caret と main caret mirror を更新する", () => {

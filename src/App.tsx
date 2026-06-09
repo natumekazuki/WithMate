@@ -116,6 +116,7 @@ import {
   type ComposerPathPickerKind,
 } from "./session-composer-paths.js";
 import {
+  applyComposerDraftClearCommand,
   applyComposerDraftChangeCommand,
   buildComposerDraftKeyDownHandler,
   buildOnDraftCompositionHandlers,
@@ -1517,7 +1518,9 @@ export default function AgentSessionWindowApp() {
       setIsActionDockPinnedExpanded(false);
     }
     if (options?.clearDraft ?? true) {
-      setDraft("");
+      applyComposerDraftClearCommand({
+        setDraft,
+      });
     }
     const updatedSession = applyOptimisticSessionRunUpdate({
       session: selectedSession,

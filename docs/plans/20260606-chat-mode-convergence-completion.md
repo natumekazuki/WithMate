@@ -103,6 +103,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-10: Home / MateTalk の mate state + profile 初期取得を `loadMateStatusSnapshot` に集約。`not_created` では profile を読まない、state/profile 取得後に inactive なら stale とし、さらに caller 側でも ready result 適用直前に active を再確認して UI state へ古い結果を反映しない contract にした。Home の `refreshMateStatus` と MateTalk 初期化を同じ loader 経由にし、review 指摘に合わせて caller-level guard の focused test も追加。`scripts/tests/mate-status-load-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-10: PR-07 着手。App / Companion / MateTalk の main composer draft change UI state 反映を `applyComposerDraftChangeCommand` に集約。feedback clear、draft、caret、main caret mirror の順序を helper contract にし、Auxiliary draft save、path insertion、send execution、draft persistence storage は未変更。`scripts/tests/composer-draft-handlers.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-10: MateTalk の submit preflight を `resolveTextComposerSubmitPreflight` 経由へ移行。空入力 / running / trim 済み本文の contract を App / Companion が使う `session-composer-feedback` 側に置き、MateTalk 固有の空入力 feedback 文言だけ wrapper 引数に残した。provider 実行、turn lifecycle、draft clear、runtime option は未変更。`scripts/tests/session-composer-feedback.test.ts`、`scripts/tests/mate-talk-state.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-10: App / Companion / MateTalk の送信開始後の main draft clear を `applyComposerDraftClearCommand` に集約。App / Companion の draft only clear と MateTalk の caret reset 付き clear を同じ command の optional caret 引数で表現し、MateTalk の path reference clear、rollback restore、Auxiliary draft は未変更。`scripts/tests/composer-draft-handlers.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -318,6 +319,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion / MateTalk の draft storage 差分を adapter 化。
 - App / Companion / MateTalk の main composer draft change UI state 反映を `composer-draft-handlers` に集約。2026-06-10 着手。
 - MateTalk の submit preflight を `session-composer-feedback` の text composer primitive に接続。2026-06-10 着手。
+- App / Companion / MateTalk の送信開始後 main draft clear を `composer-draft-handlers` に集約。2026-06-10 着手。
 
 やらないこと:
 

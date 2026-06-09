@@ -40,6 +40,7 @@ import {
 } from "./message-text-actions.js";
 import { createPastedSessionAttachmentHandler } from "./composer-paste-handlers.js";
 import {
+  applyComposerDraftClearCommand,
   applyComposerDraftChangeCommand,
   buildOnDraftSelectHandler,
 } from "./composer-draft-handlers.js";
@@ -467,8 +468,11 @@ export function useMateTalkWindowState({
       approvalMode: selectedApprovalMode,
       codexSandboxMode: sandboxOptions.length > 0 ? selectedCodexSandboxMode : undefined,
     });
-    setInput("");
-    setInputCaret(0);
+    applyComposerDraftClearCommand({
+      setDraft: setInput,
+      setComposerCaret: setInputCaret,
+      nextCaret: 0,
+    });
     setPathReferences([]);
     setIsActionDockExpanded((current) =>
       resolveMateTalkActionDockExpandedAfterSubmit({

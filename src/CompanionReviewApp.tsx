@@ -198,6 +198,7 @@ import { buildCharacterThemeStyle } from "./theme-utils.js";
 import { fileKindLabel } from "./ui-utils.js";
 import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
 import {
+  applyComposerDraftClearCommand,
   applyComposerDraftChangeCommand,
   buildComposerDraftKeyDownHandler,
   buildOnDraftCompositionHandlers,
@@ -2479,7 +2480,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           setSnapshot((current) => current ? { ...current, session: nextSession } : current),
       });
       if (shouldClearDraft) {
-        setComposerText("");
+        applyComposerDraftClearCommand({
+          setDraft: setComposerText,
+        });
       }
       appliedOptimisticState = true;
 
