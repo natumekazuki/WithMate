@@ -151,6 +151,7 @@ import {
 } from "./auxiliary-session-state.js";
 import {
   runActiveAuxiliarySessionRefreshOperation,
+  runActiveAuxiliarySessionLoadOperation,
   runClosedAuxiliarySessionsLoadOperation,
 } from "./auxiliary-session-refresh-operation.js";
 import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolution.js";
@@ -584,13 +585,13 @@ export default function AgentSessionWindowApp() {
       };
     }
 
-    void withmateApi.getActiveAuxiliarySession(selectedSessionId).then((session) => {
-      if (canApplyLoadResult()) {
-        setActiveAuxiliarySession(session);
-      }
-    }).catch(() => {
-      if (canApplyLoadResult()) {
-        setActiveAuxiliarySession(null);
+    void runActiveAuxiliarySessionLoadOperation({
+      parentSessionId: selectedSessionId,
+      getActiveAuxiliarySession: (sessionId) => withmateApi.getActiveAuxiliarySession(sessionId),
+      isActive: canApplyLoadResult,
+    }).then((result) => {
+      if (result.status === "loaded") {
+        setActiveAuxiliarySession(result.session);
       }
     });
 

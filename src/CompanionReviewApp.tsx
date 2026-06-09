@@ -38,6 +38,7 @@ import {
 } from "./auxiliary-session-state.js";
 import {
   runActiveAuxiliarySessionRefreshOperation,
+  runActiveAuxiliarySessionLoadOperation,
   runClosedAuxiliarySessionsLoadOperation,
 } from "./auxiliary-session-refresh-operation.js";
 import type {
@@ -548,13 +549,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       };
     }
 
-    void withmateApi.getActiveAuxiliarySession(sessionId).then((session) => {
-      if (canApplyLoadResult()) {
-        setActiveAuxiliarySession(session);
-      }
-    }).catch(() => {
-      if (canApplyLoadResult()) {
-        setActiveAuxiliarySession(null);
+    void runActiveAuxiliarySessionLoadOperation({
+      parentSessionId: sessionId,
+      getActiveAuxiliarySession: (parentSessionId) => withmateApi.getActiveAuxiliarySession(parentSessionId),
+      isActive: canApplyLoadResult,
+    }).then((result) => {
+      if (result.status === "loaded") {
+        setActiveAuxiliarySession(result.session);
       }
     });
 

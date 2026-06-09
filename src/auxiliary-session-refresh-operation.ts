@@ -37,6 +37,44 @@ export async function runActiveAuxiliarySessionRefreshOperation(input: {
   };
 }
 
+export type ActiveAuxiliarySessionLoadOperationResult =
+  | {
+      status: "skipped";
+    }
+  | {
+      status: "stale";
+    }
+  | {
+      status: "loaded";
+      session: AuxiliarySession | null;
+    };
+
+export async function runActiveAuxiliarySessionLoadOperation(input: {
+  parentSessionId: string | null;
+  getActiveAuxiliarySession: (parentSessionId: string) => Promise<AuxiliarySession | null>;
+  isActive: () => boolean;
+}): Promise<ActiveAuxiliarySessionLoadOperationResult> {
+  if (!input.parentSessionId) {
+    return { status: "skipped" };
+  }
+
+  let session: AuxiliarySession | null;
+  try {
+    session = await input.getActiveAuxiliarySession(input.parentSessionId);
+  } catch {
+    session = null;
+  }
+
+  if (!input.isActive()) {
+    return { status: "stale" };
+  }
+
+  return {
+    status: "loaded",
+    session,
+  };
+}
+
 export type ClosedAuxiliarySessionsLoadOperationResult =
   | {
       status: "skipped";

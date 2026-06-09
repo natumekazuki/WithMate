@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  runActiveAuxiliarySessionLoadOperation,
   runActiveAuxiliarySessionRefreshOperation,
   runClosedAuxiliarySessionsLoadOperation,
 } from "../../src/auxiliary-session-refresh-operation.js";
@@ -95,6 +96,67 @@ test("runActiveAuxiliarySessionRefreshOperation は active のままなら null 
     status: "loaded",
     savedSession: null,
   });
+});
+
+test("runActiveAuxiliarySessionLoadOperation は parent session id がない場合 load しない", async () => {
+  const loadedParentSessionIds: string[] = [];
+
+  const result = await runActiveAuxiliarySessionLoadOperation({
+    parentSessionId: null,
+    getActiveAuxiliarySession: async (parentSessionId) => {
+      loadedParentSessionIds.push(parentSessionId);
+      return createAuxiliarySession({ parentSessionId });
+    },
+    isActive: () => true,
+  });
+
+  assert.deepEqual(result, { status: "skipped" });
+  assert.deepEqual(loadedParentSessionIds, []);
+});
+
+test("runActiveAuxiliarySessionLoadOperation は active session を読み込む", async () => {
+  const activeSession = createAuxiliarySession({ parentSessionId: "parent-1" });
+
+  const result = await runActiveAuxiliarySessionLoadOperation({
+    parentSessionId: "parent-1",
+    getActiveAuxiliarySession: async () => activeSession,
+    isActive: () => true,
+  });
+
+  assert.deepEqual(result, {
+    status: "loaded",
+    session: activeSession,
+  });
+});
+
+test("runActiveAuxiliarySessionLoadOperation は load failure を null loaded result にする", async () => {
+  const result = await runActiveAuxiliarySessionLoadOperation({
+    parentSessionId: "parent-1",
+    getActiveAuxiliarySession: async () => {
+      throw new Error("load failed");
+    },
+    isActive: () => true,
+  });
+
+  assert.deepEqual(result, {
+    status: "loaded",
+    session: null,
+  });
+});
+
+test("runActiveAuxiliarySessionLoadOperation は load 後に inactive なら stale にする", async () => {
+  let active = true;
+
+  const result = await runActiveAuxiliarySessionLoadOperation({
+    parentSessionId: "parent-1",
+    getActiveAuxiliarySession: async () => {
+      active = false;
+      return createAuxiliarySession({ parentSessionId: "parent-1" });
+    },
+    isActive: () => active,
+  });
+
+  assert.deepEqual(result, { status: "stale" });
 });
 
 test("runClosedAuxiliarySessionsLoadOperation は parent session id がない場合 load しない", async () => {
