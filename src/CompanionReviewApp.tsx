@@ -129,7 +129,6 @@ import {
   buildRunningSessionCancelTarget,
   resolveSelectedSessionIsRunning,
   resolveSelectedSessionRunState,
-  resolveRunningSessionCancelTargetId,
   runRunningSessionCancelOperation,
 } from "./chat/send-or-cancel.js";
 import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-runtime-option-routing.js";
@@ -1976,12 +1975,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   async function cancelAuxiliaryRun(): Promise<void> {
     const withmateApi = getWithMateApi();
-    const sessionId = resolveRunningSessionCancelTargetId(activeAuxiliarySession);
-    if (!withmateApi || !sessionId) {
-      return;
-    }
-
-    await withmateApi.cancelAuxiliarySessionRun(sessionId);
+    await runRunningSessionCancelOperation({
+      target: activeAuxiliarySession,
+      cancelRun: withmateApi ? (sessionId) => withmateApi.cancelAuxiliarySessionRun(sessionId) : null,
+    });
   }
 
   async function handleChangeAuxiliaryApproval(approvalMode: ApprovalMode): Promise<void> {

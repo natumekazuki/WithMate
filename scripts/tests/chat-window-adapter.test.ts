@@ -222,6 +222,22 @@ test("runRunningSessionCancelOperation は running target の cancel callback �
   assert.deepEqual(calls, ["session-1"]);
 });
 
+test("runRunningSessionCancelOperation は runState running の target も cancel する", async () => {
+  const calls: string[] = [];
+  const didCancel = await runRunningSessionCancelOperation({
+    target: {
+      id: "auxiliary-session-1",
+      runState: "running",
+    },
+    cancelRun: (sessionId) => {
+      calls.push(sessionId);
+    },
+  });
+
+  assert.equal(didCancel, true);
+  assert.deepEqual(calls, ["auxiliary-session-1"]);
+});
+
 test("runRunningSessionCancelOperation は target や cancel callback がなければ no-op", async () => {
   const calls: string[] = [];
 
