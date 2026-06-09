@@ -172,6 +172,7 @@ import {
   type ProviderOwnedQuotaTelemetry,
   type SessionOwnedContextTelemetry,
 } from "./session-telemetry-state.js";
+import { startLiveSessionRunSubscription } from "./session-live-run-subscription.js";
 import {
   buildMessageListProjection,
   loadProjectedMessageArtifact,
@@ -665,19 +666,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       };
     }
 
-    setLiveRunState({ ownerSessionId: sessionId, state: null });
-    void withmateApi.getLiveSessionRun(sessionId).then((state) => {
-      if (active) {
-        setLiveRunState({ ownerSessionId: sessionId, state });
-        refreshCompletedAuxiliarySession(sessionId);
-      }
-    });
-
-    const unsubscribe = withmateApi.subscribeLiveSessionRun((nextSessionId, state) => {
-      if (active && nextSessionId === sessionId) {
-        setLiveRunState({ ownerSessionId: nextSessionId, state });
-        refreshCompletedAuxiliarySession(nextSessionId);
-      }
+    const unsubscribe = startLiveSessionRunSubscription({
+      sessionId,
+      api: withmateApi,
+      applyLiveRunState: setLiveRunState,
+      onSessionRunUpdated: refreshCompletedAuxiliarySession,
     });
 
     return () => {

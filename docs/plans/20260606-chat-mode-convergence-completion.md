@@ -92,6 +92,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-10: App / Companion の closed Auxiliary sessions 初期 load operation を `runClosedAuxiliarySessionsLoadOperation` に集約。parent id 不在の skip、load 後 stale 抑止、load failure 時の empty fallback を helper contract にし、state 反映だけ surface 側に残した。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`scripts/tests/auxiliary-session-state.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-10: App / Companion の active Auxiliary session 初期 load operation を `runActiveAuxiliarySessionLoadOperation` に集約。parent id 不在の skip、load 後 stale 抑止、load failure 時の null fallback を helper contract にし、state 反映だけ surface 側に残した。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`scripts/tests/auxiliary-session-state.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-10: App / Companion の Companion session summaries 初期取得 + subscription を `startCompanionSessionSummariesSubscription` に集約。API 不在時 no-op cleanup、初回取得、購読更新、cleanup 後 stale 抑止を helper contract にし、state 反映だけ surface 側に残した。`scripts/tests/companion-session-summary-subscription.test.ts`、`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-10: App / Companion の live session run 初期取得 + subscription を `startLiveSessionRunSubscription` に集約。no-api / no-session / merge-view guard は surface 側に残し、対象 session の reset、初回取得、購読更新、cleanup 後 stale 抑止、Auxiliary refresh callback 呼び出しを helper contract にした。review 指摘に合わせ、App / CompanionReview の caller-level guard が helper 呼び出し前に残ることも source-level test で固定した。`scripts/tests/session-live-run-subscription.test.ts`、`scripts/tests/companion-session-summary-subscription.test.ts`、`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -275,6 +276,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の closed Auxiliary sessions 初期 load operation を `auxiliary-session-refresh-operation` に集約。2026-06-10 着手。
 - App / Companion の active Auxiliary session 初期 load operation を `auxiliary-session-refresh-operation` に集約。2026-06-10 着手。
 - App / Companion の Companion session summaries 初期取得 + subscription を `companion-session-summary-subscription` に集約。2026-06-10 着手。
+- App / Companion の live session run 初期取得 + subscription を `session-live-run-subscription` に集約。2026-06-10 着手。
 
 やらないこと:
 

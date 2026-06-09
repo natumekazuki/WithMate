@@ -166,6 +166,7 @@ import {
   type ProviderOwnedQuotaTelemetry,
   type SessionOwnedContextTelemetry,
 } from "./session-telemetry-state.js";
+import { startLiveSessionRunSubscription } from "./session-live-run-subscription.js";
 import {
   createCopyMessageTextHandler,
 } from "./chat/message-text-actions.js";
@@ -1046,21 +1047,11 @@ export default function AgentSessionWindowApp() {
       });
     };
 
-    setLiveRunState({ ownerSessionId: activeRunSessionId, state: null });
-    void withmateApi.getLiveSessionRun(activeRunSessionId).then((state) => {
-      if (active) {
-        setLiveRunState({ ownerSessionId: activeRunSessionId, state });
-        refreshCompletedAuxiliarySession(activeRunSessionId);
-      }
-    });
-
-    const unsubscribe = withmateApi.subscribeLiveSessionRun((sessionId, state) => {
-      if (!active || sessionId !== activeRunSessionId) {
-        return;
-      }
-
-      setLiveRunState({ ownerSessionId: sessionId, state });
-      refreshCompletedAuxiliarySession(sessionId);
+    const unsubscribe = startLiveSessionRunSubscription({
+      sessionId: activeRunSessionId,
+      api: withmateApi,
+      applyLiveRunState: setLiveRunState,
+      onSessionRunUpdated: refreshCompletedAuxiliarySession,
     });
 
     return () => {
