@@ -76,6 +76,7 @@ import {
   type ModelCatalogSnapshot,
   type ModelReasoningEffort,
 } from "./model-catalog.js";
+import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { SessionHeader } from "./session-components.js";
@@ -600,10 +601,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   useEffect(() => {
     const withmateApi = getWithMateApi();
-    if (!withmateApi || isMergeView) {
-      return;
-    }
-    void withmateApi.getModelCatalog(null).then(setModelCatalog).catch(() => setModelCatalog(null));
+    return startModelCatalogSubscription({
+      api: withmateApi,
+      enabled: !isMergeView,
+      subscribe: false,
+      applyModelCatalog: setModelCatalog,
+      onInitialLoadError: () => setModelCatalog(null),
+    });
   }, [isMergeView]);
 
   const activeRunSessionId = activeAuxiliarySession?.id ?? snapshot?.session.id ?? null;

@@ -96,6 +96,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-10: App / Home の open CompanionReview window ids 初期取得 + subscription を `startOpenCompanionReviewWindowIdsSubscription` に集約。API 不在時 no-op cleanup、購読更新、初回 list、cleanup 後 stale 抑止、購読更新後の初回 list 上書き抑止を helper contract にした。`scripts/tests/open-companion-review-window-subscription.test.ts`、`scripts/tests/session-live-run-subscription.test.ts`、`scripts/tests/companion-session-summary-subscription.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-10: App / Companion の provider quota telemetry 初期取得 + subscription を `startProviderQuotaTelemetrySubscription` に集約。API 不在、provider 不在、surface 側 disabled では null telemetry を反映し、初回取得、取得失敗 fallback、対象 provider の購読更新、cleanup 後 stale 抑止を helper contract にした。review 指摘に合わせ、App の Copilot provider 限定と CompanionReview の merge view 除外が caller 側に残ることも source-level test で固定した。`scripts/tests/session-telemetry-subscription.test.ts`、`scripts/tests/session-telemetry-state.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-10: App / Companion の session context telemetry 初期取得 + subscription を `startSessionContextTelemetrySubscription` に集約。API 不在、session 不在、surface 側 disabled では null telemetry を反映し、初回取得、取得失敗 fallback、対象 session の購読更新、cleanup 後 stale 抑止を helper contract にした。App の Copilot provider 限定と CompanionReview の merge view 除外が caller 側に残ることも source-level test で固定した。`scripts/tests/session-telemetry-subscription.test.ts`、`scripts/tests/session-telemetry-state.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-10: App / Companion の model catalog 初期取得を `startModelCatalogSubscription` に集約。App は購読更新あり、CompanionReview は merge view で disabled / 初期取得失敗時 null fallback の surface 差分を helper 引数に残した。review 指摘に合わせ、購読更新後に遅い初回取得が古い revision / null で上書きしない revision guard と focused test を追加。MateTalk は app settings / mate state 初期化と failure feedback が結合しているため別 slice に分離。`scripts/tests/model-catalog-subscription.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -283,6 +284,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Home の open CompanionReview window ids 初期取得 + subscription を `open-companion-review-window-subscription` に集約。2026-06-10 着手。
 - App / Companion の provider quota telemetry 初期取得 + subscription を `session-telemetry-subscription` に集約。2026-06-10 着手。
 - App / Companion の session context telemetry 初期取得 + subscription を `session-telemetry-subscription` に集約。2026-06-10 着手。
+- App / Companion の model catalog 初期取得を `model-catalog-subscription` に集約。2026-06-10 着手。MateTalk の結合初期化は別 slice。
 
 やらないこと:
 

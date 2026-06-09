@@ -47,6 +47,7 @@ import {
   getReasoningEffortOptionsForModel,
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
+import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import {
   buildAuxiliaryAwareSendOrCancelHandler,
@@ -775,32 +776,13 @@ export default function AgentSessionWindowApp() {
   }, [selectedSessionRunState]);
 
   useEffect(() => {
-    let active = true;
-
-    if (!withmateApi) {
-      return () => {
-        active = false;
-      };
-    }
-
-    void withmateApi.getModelCatalog(null).then((snapshot) => {
-      if (active) {
-        setModelCatalog(snapshot);
-      }
+    return startModelCatalogSubscription({
+      api: withmateApi,
+      enabled: true,
+      subscribe: true,
+      applyModelCatalog: setModelCatalog,
     });
-
-    const unsubscribe = withmateApi.subscribeModelCatalog((snapshot) => {
-      if (!active) {
-        return;
-      }
-      setModelCatalog(snapshot);
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [selectedSession?.id]);
+  }, [selectedSession?.id, withmateApi]);
 
   useEffect(() => {
     let active = true;
