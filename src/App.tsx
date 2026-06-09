@@ -2593,7 +2593,7 @@ export default function AgentSessionWindowApp() {
         !isSelectedSessionReadOnly &&
         !(targetAuxiliarySession
           ? targetAuxiliarySession.runState === "running"
-          : selectedSession.runState === "running");
+          : selectedSessionRunState === "running");
     },
     currentTimestampLabel,
     fallbackErrorMessage: "貼り付けたファイルの保存に失敗したよ。",

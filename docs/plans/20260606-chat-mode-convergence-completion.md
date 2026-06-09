@@ -82,6 +82,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-08: App delete session guard の running 判定を raw session `runState` から `selectedSessionRunState` へ統一。live run fallback 中も削除開始を抑止するようにし、confirm 表示、delete API、provider 実行は未変更。
 - 2026-06-08: App approval / sandbox runtime option 変更 guard の running 判定を `selectedSessionRunState` へ統一。patch 構築、persist API、provider 実行、runtime option helper は未変更。
 - 2026-06-10: App additional directory add/remove operation guard の running 判定を `selectedSessionRunState` へ統一。picker / remove operation、session patch、persist API は未変更。
+- 2026-06-10: App pasted session attachment canPaste の selected session 側 running 判定を `selectedSessionRunState` へ統一。Auxiliary session 側の running 判定、save API、reference insertion、error handling は未変更。
 
 ## PR Plan
 
@@ -235,6 +236,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App delete session guard の running 判定を `selectedSessionRunState` 経由へ統一。2026-06-08 着手。
 - App approval / sandbox runtime option 変更 guard の running 判定を `selectedSessionRunState` 経由へ統一。2026-06-08 着手。
 - App additional directory add/remove operation guard の running 判定を `selectedSessionRunState` 経由へ統一。2026-06-10 着手。
+- App pasted session attachment canPaste の selected session 側 running 判定を `selectedSessionRunState` 経由へ統一。2026-06-10 着手。
 
 やらないこと:
 
