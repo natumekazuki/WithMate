@@ -13,6 +13,7 @@ import { restoreComposerTextareaFocusAndCaret } from "../composer-textarea-focus
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { MateTalkPathReference } from "../mate/mate-state.js";
 import type { ModelCatalogSnapshot, ModelReasoningEffort } from "../model-catalog.js";
+import { startAppSettingsSubscription } from "../app-settings-subscription.js";
 import { getApprovalOptionsForProvider, getSandboxOptionsForProvider } from "../provider-runtime-options.js";
 import {
   createDefaultAppSettings,
@@ -122,15 +123,13 @@ export function useMateTalkWindowState({
 
     let active = true;
     void Promise.all([
-      withmateApi.getAppSettings(),
       withmateApi.getModelCatalog(null),
       withmateApi.getMateState(),
       withmateApi.getMateProfile(),
-    ]).then(([settings, snapshot, nextMateState, profile]) => {
+    ]).then(([snapshot, nextMateState, profile]) => {
       if (!active) {
         return;
       }
-      setAppSettings(settings);
       setModelCatalog(snapshot);
       setMateState(nextMateState);
       setMateProfile(profile);
@@ -145,10 +144,13 @@ export function useMateTalkWindowState({
         setModelCatalog(snapshot);
       }
     });
-    const unsubscribeAppSettings = withmateApi.subscribeAppSettings((settings) => {
-      if (active) {
-        setAppSettings(settings);
-      }
+    const unsubscribeAppSettings = startAppSettingsSubscription({
+      api: withmateApi,
+      loadInitial: true,
+      applyAppSettings: setAppSettings,
+      onInitialLoadError: (error) => {
+        setFeedback(error instanceof Error ? error.message : "メイトークの初期化に失敗したよ。");
+      },
     });
 
     return () => {

@@ -4,6 +4,7 @@ import {
   createDefaultAppSettings,
   type AppSettings,
 } from "./provider-settings-state.js";
+import { startAppSettingsSubscription } from "./app-settings-subscription.js";
 import { type SessionSummary } from "./session-state.js";
 import { type ModelCatalogSnapshot } from "./model-catalog.js";
 import {
@@ -262,17 +263,15 @@ export default function HomeApp() {
     void Promise.all([
       refreshMateStatus(withmateApi, { isActive: () => active }),
       Promise.all([
-        withmateApi.getAppSettings(),
         withmateApi.getModelCatalog(null),
         withmateApi.getMateEmbeddingSettings(),
         withmateApi.getMateGrowthSettings(),
       ]),
-    ]).then(([nextMateState, [settings, snapshot, embeddingSettings, growthSettings]]) => {
+    ]).then(([nextMateState, [snapshot, embeddingSettings, growthSettings]]) => {
       if (!active) {
         return;
       }
 
-      applyIncomingAppSettings(settings, { force: isSettingsWindowMode });
       setModelCatalog(snapshot);
       setMateEmbeddingSettings(embeddingSettings);
       setModelCatalogLoaded(true);
@@ -322,10 +321,15 @@ export default function HomeApp() {
         setModelCatalogLoaded(true);
       }
     });
-    const unsubscribeAppSettings = withmateApi.subscribeAppSettings((settings) => {
-      if (active) {
-        applyIncomingAppSettings(settings);
-      }
+    const unsubscribeAppSettings = startAppSettingsSubscription({
+      api: withmateApi,
+      loadInitial: true,
+      applyAppSettings: (settings) => {
+        applyIncomingAppSettings(settings, { force: isSettingsWindowMode });
+      },
+      onInitialLoadError: (error) => {
+        setMateCreationFeedback(error instanceof Error ? error.message : "Mate 状態の取得に失敗したよ。");
+      },
     });
 
     return () => {

@@ -29,6 +29,7 @@ import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./charact
 import type { CompanionSessionSummary } from "./companion-state.js";
 import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
 import { startOpenCompanionReviewWindowIdsSubscription } from "./open-companion-review-window-subscription.js";
+import { startAppSettingsSubscription } from "./app-settings-subscription.js";
 import {
   createDefaultAppSettings,
   getProviderAppSettings,
@@ -785,30 +786,12 @@ export default function AgentSessionWindowApp() {
   }, [selectedSession?.id, withmateApi]);
 
   useEffect(() => {
-    let active = true;
-    if (!withmateApi) {
-      return () => {
-        active = false;
-      };
-    }
-
-    void withmateApi.getAppSettings().then((settings) => {
-      if (active) {
-        setAppSettings(settings);
-      }
+    return startAppSettingsSubscription({
+      api: withmateApi,
+      loadInitial: true,
+      applyAppSettings: setAppSettings,
     });
-
-    const unsubscribe = withmateApi.subscribeAppSettings((settings) => {
-      if (active) {
-        setAppSettings(settings);
-      }
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
+  }, [withmateApi]);
 
   const displayedMessages: Message[] = selectedSession ? selectedSession.messages : [];
   const messageListProjection = useMemo(
