@@ -28,6 +28,7 @@ import {
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
 import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
+import { startOpenCompanionReviewWindowIdsSubscription } from "./open-companion-review-window-subscription.js";
 import {
   createDefaultAppSettings,
   getProviderAppSettings,
@@ -508,30 +509,10 @@ export default function AgentSessionWindowApp() {
   }, [withmateApi]);
 
   useEffect(() => {
-    let active = true;
-
-    if (!withmateApi) {
-      return () => {
-        active = false;
-      };
-    }
-
-    void withmateApi.listOpenCompanionReviewWindowIds().then((nextSessionIds) => {
-      if (active) {
-        setOpenCompanionReviewWindowIds(nextSessionIds);
-      }
+    return startOpenCompanionReviewWindowIdsSubscription({
+      api: withmateApi,
+      applyOpenWindowIds: setOpenCompanionReviewWindowIds,
     });
-
-    const unsubscribe = withmateApi.subscribeOpenCompanionReviewWindowIds((nextSessionIds) => {
-      if (active) {
-        setOpenCompanionReviewWindowIds(nextSessionIds);
-      }
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
   }, [withmateApi]);
 
   const selectedSession = useMemo(

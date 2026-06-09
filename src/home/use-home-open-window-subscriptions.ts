@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 
+import { startOpenCompanionReviewWindowIdsSubscription } from "../open-companion-review-window-subscription.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 
 type UseHomeOpenWindowSubscriptionsInput = {
@@ -48,30 +49,9 @@ export function useHomeOpenWindowSubscriptions({
   }, [getApi, setOpenSessionWindowIds]);
 
   useEffect(() => {
-    let active = true;
-    const api = getApi();
-
-    if (!api) {
-      return () => {
-        active = false;
-      };
-    }
-
-    const unsubscribeOpenCompanionReviewWindowIds = api.subscribeOpenCompanionReviewWindowIds((nextSessionIds) => {
-      if (active) {
-        setOpenCompanionReviewWindowIds(nextSessionIds);
-      }
+    return startOpenCompanionReviewWindowIdsSubscription({
+      api: getApi(),
+      applyOpenWindowIds: setOpenCompanionReviewWindowIds,
     });
-
-    void api.listOpenCompanionReviewWindowIds().then((nextSessionIds) => {
-      if (active) {
-        setOpenCompanionReviewWindowIds(nextSessionIds);
-      }
-    });
-
-    return () => {
-      active = false;
-      unsubscribeOpenCompanionReviewWindowIds();
-    };
   }, [getApi, setOpenCompanionReviewWindowIds]);
 }
