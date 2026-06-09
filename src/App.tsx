@@ -892,7 +892,7 @@ export default function AgentSessionWindowApp() {
   const pendingBubbleScrollSignature = useMemo(
     () =>
       [
-        selectedSession?.runState ?? "",
+        selectedSessionRunState ?? "",
         selectedSessionLiveRun?.assistantText ?? "",
         selectedSessionLiveRun?.errorMessage ?? "",
         selectedSessionLiveRun?.approvalRequest
@@ -911,7 +911,7 @@ export default function AgentSessionWindowApp() {
           : "",
       ].join("\u001b"),
     [
-      selectedSession?.runState,
+      selectedSessionRunState,
       selectedSessionLiveRun?.approvalRequest,
       selectedSessionLiveRun?.elicitationRequest,
       selectedSessionLiveRun?.assistantText,
@@ -926,7 +926,7 @@ export default function AgentSessionWindowApp() {
     () =>
       [
         activeRunSessionId ?? "",
-        activeAuxiliarySession?.runState ?? selectedSession?.runState ?? "",
+        activeAuxiliarySession?.runState ?? selectedSessionRunState ?? "",
         displayedMessagesScrollSignature,
         pendingBubbleScrollSignature,
       ].join("\u001a"),
@@ -935,7 +935,7 @@ export default function AgentSessionWindowApp() {
       activeRunSessionId,
       displayedMessagesScrollSignature,
       pendingBubbleScrollSignature,
-      selectedSession?.runState,
+      selectedSessionRunState,
     ],
   );
   const {
