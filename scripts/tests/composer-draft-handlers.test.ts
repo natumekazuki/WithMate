@@ -3,6 +3,7 @@ import test from "node:test";
 import type { KeyboardEvent } from "react";
 
 import {
+  applyComposerDraftChangeCommand,
   buildComposerDraftKeyDownHandler,
   buildOnDraftCompositionHandlers,
   buildOnDraftCompositionEndHandler,
@@ -13,6 +14,8 @@ import {
 const createStateMachine = () => {
   const state = {
     composerCaret: -1,
+    draft: "",
+    events: [] as string[],
     isComposing: false,
     mainCaret: -1,
   };
@@ -20,6 +23,12 @@ const createStateMachine = () => {
   return {
     get composerCaret() {
       return state.composerCaret;
+    },
+    get draft() {
+      return state.draft;
+    },
+    get events() {
+      return state.events;
     },
     get isComposing() {
       return state.isComposing;
@@ -29,15 +38,54 @@ const createStateMachine = () => {
     },
     setComposerCaret(value: number) {
       state.composerCaret = value;
+      state.events.push(`caret:${value}`);
+    },
+    setDraft(value: string) {
+      state.draft = value;
+      state.events.push(`draft:${value}`);
     },
     setIsComposerImeComposing(value: boolean) {
       state.isComposing = value;
     },
     setMainComposerCaret(value: number) {
       state.mainCaret = value;
+      state.events.push(`main:${value}`);
+    },
+    clearFeedback() {
+      state.events.push("clear-feedback");
     },
   };
 };
+
+test("applyComposerDraftChangeCommand は draft / caret / main caret / feedback を更新する", () => {
+  const state = createStateMachine();
+
+  applyComposerDraftChangeCommand({
+    value: "hello",
+    selectionStart: 3,
+    setDraft: state.setDraft.bind(state),
+    setComposerCaret: state.setComposerCaret.bind(state),
+    syncMainComposerCaret: state.setMainComposerCaret.bind(state),
+    clearFeedback: state.clearFeedback.bind(state),
+  });
+
+  assert.equal(state.draft, "hello");
+  assert.equal(state.composerCaret, 3);
+  assert.equal(state.mainCaret, 3);
+  assert.deepEqual(state.events, ["clear-feedback", "draft:hello", "caret:3", "main:3"]);
+});
+
+test("applyComposerDraftChangeCommand は selectionStart なしなら draft 末尾を caret にする", () => {
+  const state = createStateMachine();
+
+  applyComposerDraftChangeCommand({
+    value: "hello",
+    setDraft: state.setDraft.bind(state),
+    setComposerCaret: state.setComposerCaret.bind(state),
+  });
+
+  assert.equal(state.composerCaret, 5);
+});
 
 test("buildOnDraftSelectHandler は composer caret と main caret mirror を更新する", () => {
   const state = createStateMachine();

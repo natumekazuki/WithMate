@@ -39,7 +39,10 @@ import {
   createCopyMessageTextHandler,
 } from "./message-text-actions.js";
 import { createPastedSessionAttachmentHandler } from "./composer-paste-handlers.js";
-import { buildOnDraftSelectHandler } from "./composer-draft-handlers.js";
+import {
+  applyComposerDraftChangeCommand,
+  buildOnDraftSelectHandler,
+} from "./composer-draft-handlers.js";
 import type { MateTalkMessage } from "./mate-talk-chat-projection.js";
 import {
   buildMateTalkModelSelection,
@@ -201,14 +204,14 @@ export function useMateTalkWindowState({
     }
   }, [model, modelSelection, providerId, reasoningEffort]);
 
-  const handleChangeInput = (value: string) => {
-    setInput(value);
-    setFeedback("");
-  };
-
   const handleChangeInputWithCaret = (value: string, selectionStart = value.length) => {
-    setInputCaret(selectionStart);
-    handleChangeInput(value);
+    applyComposerDraftChangeCommand({
+      value,
+      selectionStart,
+      setDraft: setInput,
+      setComposerCaret: setInputCaret,
+      clearFeedback: () => setFeedback(""),
+    });
   };
 
   const handleChangeModel = (nextModel: string) => {

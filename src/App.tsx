@@ -116,6 +116,7 @@ import {
   type ComposerPathPickerKind,
 } from "./session-composer-paths.js";
 import {
+  applyComposerDraftChangeCommand,
   buildComposerDraftKeyDownHandler,
   buildOnDraftCompositionHandlers,
   buildOnDraftSelectHandler,
@@ -2909,10 +2910,16 @@ export default function AgentSessionWindowApp() {
             void handleAuxiliaryDraftChange(value, selectionStart);
             return;
           }
-          setForceComposerBlockedFeedback(false);
-          setDraft(value);
-          setComposerCaret(selectionStart);
-          mainComposerCaretRef.current = selectionStart;
+          applyComposerDraftChangeCommand({
+            value,
+            selectionStart,
+            setDraft,
+            setComposerCaret,
+            syncMainComposerCaret: (caret) => {
+              mainComposerCaretRef.current = caret;
+            },
+            clearFeedback: () => setForceComposerBlockedFeedback(false),
+          });
         },
         onDraftFocus: () => handleExpandActionDock({ focusComposer: false }),
         onDraftKeyDown: handleComposerKeyDown,

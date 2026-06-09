@@ -198,6 +198,7 @@ import { buildCharacterThemeStyle } from "./theme-utils.js";
 import { fileKindLabel } from "./ui-utils.js";
 import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
 import {
+  applyComposerDraftChangeCommand,
   buildComposerDraftKeyDownHandler,
   buildOnDraftCompositionHandlers,
   buildOnDraftSelectHandler,
@@ -2932,9 +2933,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
             void handleAuxiliaryDraftChange(value, selectionStart);
             return;
           }
-          setForceComposerBlockedFeedback(false);
-          setComposerText(value);
-          setComposerCaret(selectionStart);
+          applyComposerDraftChangeCommand({
+            value,
+            selectionStart,
+            setDraft: setComposerText,
+            setComposerCaret,
+            clearFeedback: () => setForceComposerBlockedFeedback(false),
+          });
         },
         onDraftFocus: () => handleExpandActionDock({ focusComposer: false }),
         onDraftKeyDown: handleCompanionDraftKeyDown,

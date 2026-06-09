@@ -27,6 +27,29 @@ type ComposerDraftKeyDownHandlerArgs = Omit<
   submit: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
 };
 
+type ComposerDraftChangeCommandArgs = {
+  value: string;
+  selectionStart?: number;
+  setDraft: (value: string) => void;
+  setComposerCaret: ComposerDraftCaretUpdater;
+  syncMainComposerCaret?: ComposerDraftCaretUpdater;
+  clearFeedback?: () => void;
+};
+
+export const applyComposerDraftChangeCommand = ({
+  value,
+  selectionStart = value.length,
+  setDraft,
+  setComposerCaret,
+  syncMainComposerCaret,
+  clearFeedback,
+}: ComposerDraftChangeCommandArgs) => {
+  clearFeedback?.();
+  setDraft(value);
+  setComposerCaret(selectionStart);
+  syncMainComposerCaret?.(selectionStart);
+};
+
 export const buildOnDraftSelectHandler = ({
   setComposerCaret,
   syncMainComposerCaret,
