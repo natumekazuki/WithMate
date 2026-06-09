@@ -2609,7 +2609,7 @@ export default function AgentSessionWindowApp() {
       canPickDirectory: () => !!withmateApi &&
         !!selectedSession &&
         !isSelectedSessionReadOnly &&
-        selectedSession.runState !== "running",
+        selectedSessionRunState !== "running",
       getPickerBaseDirectory: () => resolveAdditionalDirectoryPickerBase(pickerBaseDirectory, selectedSession?.workspacePath),
       pickDirectory: (baseDirectory) => withmateApi?.pickDirectory(baseDirectory) ?? Promise.resolve(null),
       applyPickedDirectory: async (selectedPath) => {
@@ -2632,7 +2632,7 @@ export default function AgentSessionWindowApp() {
       canRemoveDirectory: () => !!selectedSession &&
         !isSelectedSessionReadOnly &&
         selectedSession.provider === "codex" &&
-        selectedSession.runState !== "running",
+        selectedSessionRunState !== "running",
       removeDirectory: async (targetPath) => {
         if (!selectedSession) {
           return false;
