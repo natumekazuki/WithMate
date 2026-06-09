@@ -876,11 +876,16 @@ export default function AgentSessionWindowApp() {
   }, [activeAuxiliarySession]);
 
   useEffect(() => {
-    setDraft("");
+    applyComposerDraftClearCommand({
+      setDraft,
+      setComposerCaret,
+      syncMainComposerCaret: (selectionStart) => {
+        mainComposerCaretRef.current = selectionStart;
+      },
+      nextCaret: 0,
+    });
     setComposerPreview(createEmptyComposerPreview());
     setPickerBaseDirectory(selectedSession?.workspacePath ?? "");
-    setComposerCaret(0);
-    mainComposerCaretRef.current = 0;
     applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
     setIsComposerImeComposing(false);
     setIsActivityMonitorFollowing(true);

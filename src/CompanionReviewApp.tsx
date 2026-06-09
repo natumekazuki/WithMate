@@ -531,10 +531,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }, [viewMode]);
 
   useEffect(() => {
-    setComposerText("");
+    applyComposerDraftClearCommand({
+      setDraft: setComposerText,
+      setComposerCaret,
+      nextCaret: 0,
+    });
     setComposerPreview(createEmptyComposerPreview());
     setPickerBaseDirectory(snapshot?.session.worktreePath ?? "");
-    setComposerCaret(0);
     applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
     setIsComposerImeComposing(false);
     setIsRetryDraftReplacePending(false);
