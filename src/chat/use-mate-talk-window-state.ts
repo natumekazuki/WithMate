@@ -12,6 +12,7 @@ import { DEFAULT_CODEX_SANDBOX_MODE, normalizeCodexSandboxMode, type CodexSandbo
 import { restoreComposerTextareaFocusAndCaret } from "../composer-textarea-focus.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { MateTalkPathReference } from "../mate/mate-state.js";
+import { loadMateStatusSnapshot } from "../mate/mate-status-load-operation.js";
 import type { ModelCatalogSnapshot, ModelReasoningEffort } from "../model-catalog.js";
 import { startModelCatalogSubscription } from "../model-catalog-subscription.js";
 import { startAppSettingsSubscription } from "../app-settings-subscription.js";
@@ -123,15 +124,15 @@ export function useMateTalkWindowState({
     }
 
     let active = true;
-    void Promise.all([
-      withmateApi.getMateState(),
-      withmateApi.getMateProfile(),
-    ]).then(([nextMateState, profile]) => {
-      if (!active) {
+    void loadMateStatusSnapshot({
+      api: withmateApi,
+      isActive: () => active,
+    }).then((result) => {
+      if (result.status === "stale" || !active) {
         return;
       }
-      setMateState(nextMateState);
-      setMateProfile(profile);
+      setMateState(result.mateState);
+      setMateProfile(result.mateProfile);
     }).catch((error) => {
       if (active) {
         setFeedback(error instanceof Error ? error.message : "メイトークの初期化に失敗したよ。");

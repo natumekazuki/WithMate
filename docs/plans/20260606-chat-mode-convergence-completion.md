@@ -100,6 +100,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-10: App / Home / MateTalk の app settings 初期取得 + subscription 反映を `startAppSettingsSubscription` に集約。review 指摘に合わせ、Home / MateTalk の結合初期化からも `getAppSettings()` を外して helper 配下へ移し、購読更新後に遅い初回取得 result / failure fallback が古い settings を復活させない guard と focused test を追加。Home / MateTalk の model catalog / mate state 初期化と failure feedback は維持。`scripts/tests/app-settings-subscription.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-10: Home / MateTalk の model catalog 初期取得 + subscription 反映も `startModelCatalogSubscription` に接続。結合初期化から `getModelCatalog(null)` を外し、購読更新後に遅い初回 catalog result / null / failure fallback が古い状態や不要な feedback を復活させない guard を全 surface へ適用した。Home / MateTalk の mate state / embedding / growth 初期化は維持。`scripts/tests/model-catalog-subscription.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-10: Home の session summaries / companion session summaries 初期取得 + subscription 反映を `startSessionSummariesSubscription` / `startCompanionSessionSummariesSubscription` に集約。Mate 未作成時に一覧を読み込まない旧境界は維持しつつ、購読更新後に遅い初回取得 result / failure fallback が古い一覧や不要な feedback を復活させない guard を helper contract にした。`scripts/tests/session-summary-subscription.test.ts`、`scripts/tests/companion-session-summary-subscription.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-10: Home / MateTalk の mate state + profile 初期取得を `loadMateStatusSnapshot` に集約。`not_created` では profile を読まない、state/profile 取得後に inactive なら stale とし、さらに caller 側でも ready result 適用直前に active を再確認して UI state へ古い結果を反映しない contract にした。Home の `refreshMateStatus` と MateTalk 初期化を同じ loader 経由にし、review 指摘に合わせて caller-level guard の focused test も追加。`scripts/tests/mate-status-load-operation.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -291,6 +292,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Home / MateTalk の app settings 初期取得 + subscription 反映を `app-settings-subscription` に集約。2026-06-10 着手。
 - Home / MateTalk の model catalog 初期取得 + subscription 反映も `model-catalog-subscription` に接続。2026-06-10 着手。
 - Home の session summaries / companion session summaries 初期取得 + subscription 反映を `session-summary-subscription` / `companion-session-summary-subscription` に集約。2026-06-10 着手。
+- Home / MateTalk の mate state + profile 初期取得を `mate-status-load-operation` に集約。2026-06-10 着手。
 
 やらないこと:
 
