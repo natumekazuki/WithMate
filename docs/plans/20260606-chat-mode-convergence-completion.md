@@ -89,6 +89,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-10: App / Companion の selected session cancel operation を `runRunningSessionCancelOperation` に集約。cancel API 名、error 表示、Auxiliary cancel は surface 側に残し、target 解決と API 不在 no-op contract を helper test で固定。
 - 2026-06-10: App / Companion の Auxiliary cancel operation も `runRunningSessionCancelOperation` に接続。cancel API 名と App 側 error 表示は surface 側に残し、runState running target の cancel contract を helper test で補強。
 - 2026-06-10: PR-06 着手。App / Companion の active Auxiliary refresh load gate を `runActiveAuxiliarySessionRefreshOperation` に集約。active id 不一致では load せず、effect stale 時は result を捨て、refresh result の state 適用、App の error logging、Companion の silent catch、subscription / live-run API は surface 側に残した。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`scripts/tests/auxiliary-session-state.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-10: App / Companion の closed Auxiliary sessions 初期 load operation を `runClosedAuxiliarySessionsLoadOperation` に集約。parent id 不在の skip、load 後 stale 抑止、load failure 時の empty fallback を helper contract にし、state 反映だけ surface 側に残した。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`scripts/tests/auxiliary-session-state.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -269,6 +270,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - initial fetch、refresh、subscription result の適用。
 - projection sync、stale refresh guard、empty state。
 - App / Companion の active Auxiliary refresh load gate を `auxiliary-session-refresh-operation` に集約。2026-06-10 着手。
+- App / Companion の closed Auxiliary sessions 初期 load operation を `auxiliary-session-refresh-operation` に集約。2026-06-10 着手。
 
 やらないこと:
 

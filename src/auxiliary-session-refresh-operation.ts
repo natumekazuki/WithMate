@@ -1,4 +1,8 @@
-import type { AuxiliarySession } from "./auxiliary-session-state.js";
+import {
+  loadClosedAuxiliarySessionDetails,
+  type AuxiliarySession,
+  type AuxiliarySessionSummary,
+} from "./auxiliary-session-state.js";
 
 export type ActiveAuxiliarySessionRefreshOperationResult =
   | {
@@ -30,5 +34,48 @@ export async function runActiveAuxiliarySessionRefreshOperation(input: {
   return {
     status: "loaded",
     savedSession,
+  };
+}
+
+export type ClosedAuxiliarySessionsLoadOperationResult =
+  | {
+      status: "skipped";
+    }
+  | {
+      status: "stale";
+    }
+  | {
+      status: "loaded";
+      sessions: AuxiliarySession[];
+    };
+
+export async function runClosedAuxiliarySessionsLoadOperation(input: {
+  parentSessionId: string | null;
+  listAuxiliarySessions: (parentSessionId: string) => Promise<AuxiliarySessionSummary[]>;
+  getAuxiliarySession: (sessionId: string) => Promise<AuxiliarySession | null>;
+  isActive: () => boolean;
+}): Promise<ClosedAuxiliarySessionsLoadOperationResult> {
+  if (!input.parentSessionId) {
+    return { status: "skipped" };
+  }
+
+  let sessions: AuxiliarySession[];
+  try {
+    sessions = await loadClosedAuxiliarySessionDetails({
+      parentSessionId: input.parentSessionId,
+      listAuxiliarySessions: input.listAuxiliarySessions,
+      getAuxiliarySession: input.getAuxiliarySession,
+    });
+  } catch {
+    sessions = [];
+  }
+
+  if (!input.isActive()) {
+    return { status: "stale" };
+  }
+
+  return {
+    status: "loaded",
+    sessions,
   };
 }

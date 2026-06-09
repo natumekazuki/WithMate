@@ -32,12 +32,14 @@ import {
   applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionModelChange,
   applyAuxiliarySessionReasoningEffortChange,
-  loadClosedAuxiliarySessionDetails,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveClosedAuxiliarySessionsAfterReturn,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
-import { runActiveAuxiliarySessionRefreshOperation } from "./auxiliary-session-refresh-operation.js";
+import {
+  runActiveAuxiliarySessionRefreshOperation,
+  runClosedAuxiliarySessionsLoadOperation,
+} from "./auxiliary-session-refresh-operation.js";
 import type {
   ComposerPreview,
   DiffPreviewPayload,
@@ -532,30 +534,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     activeAuxiliarySessionRef.current = activeAuxiliarySession;
   }, [activeAuxiliarySession]);
 
-  const loadClosedAuxiliarySessions = async (
-    parentSessionId: string,
-    canApplyLoadResult: () => boolean,
-  ) => {
-    if (!withmateApi) {
-      return;
-    }
-
-    try {
-      const sessions = await loadClosedAuxiliarySessionDetails({
-        parentSessionId,
-        listAuxiliarySessions: (sessionId) => withmateApi.listAuxiliarySessions(sessionId),
-        getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
-      });
-      if (canApplyLoadResult()) {
-        setClosedAuxiliarySessions(sessions);
-      }
-    } catch {
-      if (canApplyLoadResult()) {
-        setClosedAuxiliarySessions([]);
-      }
-    }
-  };
-
   useEffect(() => {
     let active = true;
     const loadRevision = auxiliaryLoadRevisionRef.current + 1;
@@ -580,7 +558,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       }
     });
 
-    void loadClosedAuxiliarySessions(sessionId, canApplyLoadResult);
+    void runClosedAuxiliarySessionsLoadOperation({
+      parentSessionId: sessionId,
+      listAuxiliarySessions: (parentSessionId) => withmateApi.listAuxiliarySessions(parentSessionId),
+      getAuxiliarySession: (targetSessionId) => withmateApi.getAuxiliarySession(targetSessionId),
+      isActive: canApplyLoadResult,
+    }).then((result) => {
+      if (result.status === "loaded") {
+        setClosedAuxiliarySessions(result.sessions);
+      }
+    });
 
     return () => {
       active = false;
@@ -1854,7 +1841,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     } catch (error) {
       setAuxiliaryLaunchStartError(error);
     } finally {
-      void loadClosedAuxiliarySessions(parentSessionId, canApplyLoadResult);
+      void runClosedAuxiliarySessionsLoadOperation({
+        parentSessionId,
+        listAuxiliarySessions: (sessionId) => withmateApi.listAuxiliarySessions(sessionId),
+        getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
+        isActive: canApplyLoadResult,
+      }).then((result) => {
+        if (result.status === "loaded") {
+          setClosedAuxiliarySessions(result.sessions);
+        }
+      });
       setIsAuxiliaryActionPending(false);
     }
   }

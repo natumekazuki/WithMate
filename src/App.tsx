@@ -145,12 +145,14 @@ import {
   applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionModelChange,
   applyAuxiliarySessionReasoningEffortChange,
-  loadClosedAuxiliarySessionDetails,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveClosedAuxiliarySessionsAfterReturn,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
-import { runActiveAuxiliarySessionRefreshOperation } from "./auxiliary-session-refresh-operation.js";
+import {
+  runActiveAuxiliarySessionRefreshOperation,
+  runClosedAuxiliarySessionsLoadOperation,
+} from "./auxiliary-session-refresh-operation.js";
 import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolution.js";
 import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
 import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
@@ -568,30 +570,6 @@ export default function AgentSessionWindowApp() {
     [companionSessions, openCompanionReviewWindowIds],
   );
   const selectedSessionId = selectedSession?.id ?? null;
-  const loadClosedAuxiliarySessions = async (
-    parentSessionId: string,
-    canApplyLoadResult: () => boolean,
-  ) => {
-    if (!withmateApi) {
-      return;
-    }
-
-    try {
-      const sessions = await loadClosedAuxiliarySessionDetails({
-        parentSessionId,
-        listAuxiliarySessions: (sessionId) => withmateApi.listAuxiliarySessions(sessionId),
-        getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
-      });
-      if (canApplyLoadResult()) {
-        setClosedAuxiliarySessions(sessions);
-      }
-    } catch {
-      if (canApplyLoadResult()) {
-        setClosedAuxiliarySessions([]);
-      }
-    }
-  };
-
   useEffect(() => {
     let active = true;
     const loadRevision = auxiliaryLoadRevisionRef.current + 1;
@@ -616,7 +594,16 @@ export default function AgentSessionWindowApp() {
       }
     });
 
-    void loadClosedAuxiliarySessions(selectedSessionId, canApplyLoadResult);
+    void runClosedAuxiliarySessionsLoadOperation({
+      parentSessionId: selectedSessionId,
+      listAuxiliarySessions: (sessionId) => withmateApi.listAuxiliarySessions(sessionId),
+      getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
+      isActive: canApplyLoadResult,
+    }).then((result) => {
+      if (result.status === "loaded") {
+        setClosedAuxiliarySessions(result.sessions);
+      }
+    });
 
     return () => {
       active = false;
@@ -2310,7 +2297,16 @@ export default function AgentSessionWindowApp() {
     } catch (error) {
       setAuxiliaryLaunchStartError(error);
     } finally {
-      void loadClosedAuxiliarySessions(parentSessionId, canApplyLoadResult);
+      void runClosedAuxiliarySessionsLoadOperation({
+        parentSessionId,
+        listAuxiliarySessions: (sessionId) => withmateApi.listAuxiliarySessions(sessionId),
+        getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
+        isActive: canApplyLoadResult,
+      }).then((result) => {
+        if (result.status === "loaded") {
+          setClosedAuxiliarySessions(result.sessions);
+        }
+      });
       setIsAuxiliaryActionPending(false);
     }
   };
