@@ -98,6 +98,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-10: App / Companion の session context telemetry 初期取得 + subscription を `startSessionContextTelemetrySubscription` に集約。API 不在、session 不在、surface 側 disabled では null telemetry を反映し、初回取得、取得失敗 fallback、対象 session の購読更新、cleanup 後 stale 抑止を helper contract にした。App の Copilot provider 限定と CompanionReview の merge view 除外が caller 側に残ることも source-level test で固定した。`scripts/tests/session-telemetry-subscription.test.ts`、`scripts/tests/session-telemetry-state.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-10: App / Companion の model catalog 初期取得を `startModelCatalogSubscription` に集約。App は購読更新あり、CompanionReview は merge view で disabled / 初期取得失敗時 null fallback の surface 差分を helper 引数に残した。review 指摘に合わせ、購読更新後に遅い初回取得が古い revision / null で上書きしない revision guard と focused test を追加。MateTalk は app settings / mate state 初期化と failure feedback が結合しているため別 slice に分離。`scripts/tests/model-catalog-subscription.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-10: App / Home / MateTalk の app settings 初期取得 + subscription 反映を `startAppSettingsSubscription` に集約。review 指摘に合わせ、Home / MateTalk の結合初期化からも `getAppSettings()` を外して helper 配下へ移し、購読更新後に遅い初回取得 result / failure fallback が古い settings を復活させない guard と focused test を追加。Home / MateTalk の model catalog / mate state 初期化と failure feedback は維持。`scripts/tests/app-settings-subscription.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-10: Home / MateTalk の model catalog 初期取得 + subscription 反映も `startModelCatalogSubscription` に接続。結合初期化から `getModelCatalog(null)` を外し、購読更新後に遅い初回 catalog result / null / failure fallback が古い状態や不要な feedback を復活させない guard を全 surface へ適用した。Home / MateTalk の mate state / embedding / growth 初期化は維持。`scripts/tests/model-catalog-subscription.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -287,6 +288,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の session context telemetry 初期取得 + subscription を `session-telemetry-subscription` に集約。2026-06-10 着手。
 - App / Companion の model catalog 初期取得を `model-catalog-subscription` に集約。2026-06-10 着手。MateTalk の結合初期化は別 slice。
 - App / Home / MateTalk の app settings 初期取得 + subscription 反映を `app-settings-subscription` に集約。2026-06-10 着手。
+- Home / MateTalk の model catalog 初期取得 + subscription 反映も `model-catalog-subscription` に接続。2026-06-10 着手。
 
 やらないこと:
 

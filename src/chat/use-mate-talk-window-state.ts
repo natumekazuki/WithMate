@@ -13,6 +13,7 @@ import { restoreComposerTextareaFocusAndCaret } from "../composer-textarea-focus
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { MateTalkPathReference } from "../mate/mate-state.js";
 import type { ModelCatalogSnapshot, ModelReasoningEffort } from "../model-catalog.js";
+import { startModelCatalogSubscription } from "../model-catalog-subscription.js";
 import { startAppSettingsSubscription } from "../app-settings-subscription.js";
 import { getApprovalOptionsForProvider, getSandboxOptionsForProvider } from "../provider-runtime-options.js";
 import {
@@ -123,14 +124,12 @@ export function useMateTalkWindowState({
 
     let active = true;
     void Promise.all([
-      withmateApi.getModelCatalog(null),
       withmateApi.getMateState(),
       withmateApi.getMateProfile(),
-    ]).then(([snapshot, nextMateState, profile]) => {
+    ]).then(([nextMateState, profile]) => {
       if (!active) {
         return;
       }
-      setModelCatalog(snapshot);
       setMateState(nextMateState);
       setMateProfile(profile);
     }).catch((error) => {
@@ -139,10 +138,14 @@ export function useMateTalkWindowState({
       }
     });
 
-    const unsubscribeModelCatalog = withmateApi.subscribeModelCatalog((snapshot) => {
-      if (active) {
-        setModelCatalog(snapshot);
-      }
+    const unsubscribeModelCatalog = startModelCatalogSubscription({
+      api: withmateApi,
+      enabled: true,
+      subscribe: true,
+      applyModelCatalog: setModelCatalog,
+      onInitialLoadError: (error) => {
+        setFeedback(error instanceof Error ? error.message : "メイトークの初期化に失敗したよ。");
+      },
     });
     const unsubscribeAppSettings = startAppSettingsSubscription({
       api: withmateApi,

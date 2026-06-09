@@ -7,6 +7,7 @@ import {
 import { startAppSettingsSubscription } from "./app-settings-subscription.js";
 import { type SessionSummary } from "./session-state.js";
 import { type ModelCatalogSnapshot } from "./model-catalog.js";
+import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
 import {
   DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
   type MemoryManagementViewFilters,
@@ -263,18 +264,15 @@ export default function HomeApp() {
     void Promise.all([
       refreshMateStatus(withmateApi, { isActive: () => active }),
       Promise.all([
-        withmateApi.getModelCatalog(null),
         withmateApi.getMateEmbeddingSettings(),
         withmateApi.getMateGrowthSettings(),
       ]),
-    ]).then(([nextMateState, [snapshot, embeddingSettings, growthSettings]]) => {
+    ]).then(([nextMateState, [embeddingSettings, growthSettings]]) => {
       if (!active) {
         return;
       }
 
-      setModelCatalog(snapshot);
       setMateEmbeddingSettings(embeddingSettings);
-      setModelCatalogLoaded(true);
       if (nextMateState === "not_created") {
         setMateGrowthSettings(null);
         setMateGrowthFeedback("");
@@ -315,11 +313,17 @@ export default function HomeApp() {
       setMateCreationFeedback(error instanceof Error ? error.message : "Mate 状態の取得に失敗したよ。");
     });
 
-    const unsubscribeModelCatalog = withmateApi.subscribeModelCatalog((snapshot) => {
-      if (active) {
+    const unsubscribeModelCatalog = startModelCatalogSubscription({
+      api: withmateApi,
+      enabled: true,
+      subscribe: true,
+      applyModelCatalog: (snapshot) => {
         setModelCatalog(snapshot);
         setModelCatalogLoaded(true);
-      }
+      },
+      onInitialLoadError: (error) => {
+        setMateCreationFeedback(error instanceof Error ? error.message : "Mate 状態の取得に失敗したよ。");
+      },
     });
     const unsubscribeAppSettings = startAppSettingsSubscription({
       api: withmateApi,

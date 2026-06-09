@@ -156,6 +156,37 @@ test("startModelCatalogSubscription は購読更新後に遅い初回 null で c
   ]);
 });
 
+test("startModelCatalogSubscription は購読更新後に遅い初回取得失敗 fallback を呼ばない", async () => {
+  let errorCount = 0;
+  let rejectInitialSnapshot: (error: Error) => void = () => undefined;
+  let subscribedListener: ((snapshot: ModelCatalogSnapshot) => void) | null = null;
+  const api: ModelCatalogSubscriptionApi = {
+    getModelCatalog: () => new Promise((_, reject) => {
+      rejectInitialSnapshot = reject;
+    }),
+    subscribeModelCatalog: (listener) => {
+      subscribedListener = listener;
+      return () => undefined;
+    },
+  };
+
+  const cleanup = startModelCatalogSubscription({
+    api,
+    enabled: true,
+    subscribe: true,
+    applyModelCatalog: () => undefined,
+    onInitialLoadError: () => {
+      errorCount += 1;
+    },
+  });
+  subscribedListener?.(nextModelCatalogSnapshot);
+  rejectInitialSnapshot(new Error("failed"));
+  await flushPromises();
+  cleanup();
+
+  assert.equal(errorCount, 0);
+});
+
 test("startModelCatalogSubscription は subscribe 無効なら初回取得だけ反映する", async () => {
   const updates: Array<ModelCatalogSnapshot | null> = [];
   let subscribeCallCount = 0;
@@ -248,4 +279,24 @@ test("CompanionReview は merge view で model catalog load を無効にし、�
   assert.match(snippet, /enabled: !isMergeView/);
   assert.match(snippet, /subscribe: false/);
   assert.match(snippet, /onInitialLoadError: \(\) => setModelCatalog\(null\)/);
+});
+
+test("Home と MateTalk は model catalog 初期取得と購読更新を helper に通す", async () => {
+  const homeSource = await readFile(new URL("../../src/HomeApp.tsx", import.meta.url), "utf8");
+  const mateTalkSource = await readFile(new URL("../../src/chat/use-mate-talk-window-state.ts", import.meta.url), "utf8");
+  const homeSubscriptionIndex = homeSource.indexOf("startModelCatalogSubscription({");
+  const mateTalkSubscriptionIndex = mateTalkSource.indexOf("startModelCatalogSubscription({");
+
+  assert.notEqual(homeSubscriptionIndex, -1);
+  assert.notEqual(mateTalkSubscriptionIndex, -1);
+  assert.match(
+    homeSource.slice(homeSubscriptionIndex, homeSubscriptionIndex + 260),
+    /subscribe: true/,
+  );
+  assert.match(
+    mateTalkSource.slice(mateTalkSubscriptionIndex, mateTalkSubscriptionIndex + 260),
+    /subscribe: true/,
+  );
+  assert.doesNotMatch(homeSource, /withmateApi\.getModelCatalog\(null\),/);
+  assert.doesNotMatch(mateTalkSource, /withmateApi\.getModelCatalog\(null\),/);
 });

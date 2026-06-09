@@ -10,7 +10,7 @@ export function startModelCatalogSubscription(input: {
   enabled: boolean;
   subscribe: boolean;
   applyModelCatalog: (snapshot: ModelCatalogSnapshot | null) => void;
-  onInitialLoadError?: () => void;
+  onInitialLoadError?: (error: unknown) => void;
 }): () => void {
   let active = true;
   let latestAppliedRevision: number | null = null;
@@ -44,9 +44,9 @@ export function startModelCatalogSubscription(input: {
 
   void input.api.getModelCatalog(null).then((snapshot) => {
     applyFreshSnapshot(snapshot);
-  }).catch(() => {
-    if (active) {
-      input.onInitialLoadError?.();
+  }).catch((error: unknown) => {
+    if (active && latestAppliedRevision === null) {
+      input.onInitialLoadError?.(error);
     }
   });
 
