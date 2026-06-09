@@ -31,7 +31,7 @@ type ComposerDraftChangeCommandArgs = {
   value: string;
   selectionStart?: number;
   setDraft: (value: string) => void;
-  setComposerCaret: ComposerDraftCaretUpdater;
+  setComposerCaret?: ComposerDraftCaretUpdater;
   syncMainComposerCaret?: ComposerDraftCaretUpdater;
   clearFeedback?: () => void;
 };
@@ -53,7 +53,7 @@ export const applyComposerDraftChangeCommand = ({
 }: ComposerDraftChangeCommandArgs) => {
   clearFeedback?.();
   setDraft(value);
-  setComposerCaret(selectionStart);
+  setComposerCaret?.(selectionStart);
   syncMainComposerCaret?.(selectionStart);
 };
 

@@ -1711,8 +1711,14 @@ export default function AgentSessionWindowApp() {
     setCaret: setComposerCaret,
     setSkillPickerOpen: setIsSkillPickerOpen,
     applyDraft: (nextDraft, nextCaret) => {
-      setDraft(nextDraft);
-      mainComposerCaretRef.current = nextCaret;
+      applyComposerDraftChangeCommand({
+        value: nextDraft,
+        selectionStart: nextCaret,
+        setDraft,
+        syncMainComposerCaret: (selectionStart) => {
+          mainComposerCaretRef.current = selectionStart;
+        },
+      });
     },
     restoreComposerTextareaFocusAndCaret,
   });

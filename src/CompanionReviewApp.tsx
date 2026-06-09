@@ -1578,7 +1578,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setCaret: setComposerCaret,
     setSkillPickerOpen: setIsSkillPickerOpen,
     applyDraft: (nextDraft) => {
-      setComposerText(nextDraft);
+      applyComposerDraftChangeCommand({
+        value: nextDraft,
+        setDraft: setComposerText,
+      });
     },
     restoreComposerTextareaFocusAndCaret,
   });

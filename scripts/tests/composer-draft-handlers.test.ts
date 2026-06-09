@@ -88,6 +88,22 @@ test("applyComposerDraftChangeCommand は selectionStart なしなら draft 末�
   assert.equal(state.composerCaret, 5);
 });
 
+test("applyComposerDraftChangeCommand は caret setter なしで draft と main mirror だけ反映できる", () => {
+  const state = createStateMachine();
+
+  applyComposerDraftChangeCommand({
+    value: "$review\n",
+    selectionStart: 8,
+    setDraft: state.setDraft.bind(state),
+    syncMainComposerCaret: state.setMainComposerCaret.bind(state),
+  });
+
+  assert.equal(state.draft, "$review\n");
+  assert.equal(state.composerCaret, -1);
+  assert.equal(state.mainCaret, 8);
+  assert.deepEqual(state.events, ["draft:$review\n", "main:8"]);
+});
+
 test("applyComposerDraftClearCommand は draft だけを空にできる", () => {
   const state = createStateMachine();
   state.setDraft("hello");
