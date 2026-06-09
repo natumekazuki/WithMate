@@ -3,6 +3,10 @@ import type { CodexSandboxMode } from "../codex-sandbox-mode.js";
 import type { MateTalkPathReference, MateTalkTurnInput } from "../mate/mate-state.js";
 import type { ModelReasoningEffort } from "../model-catalog.js";
 import type { AppSettings } from "../provider-settings-state.js";
+import {
+  resolveTextComposerSubmitPreflight,
+  type TextComposerSubmitPreflightResult,
+} from "../session-composer-feedback.js";
 
 export type MateTalkTurnState = {
   turnId: number;
@@ -56,10 +60,7 @@ export const shouldSubmitMateTalkInputByKey = (eventLike: {
   return eventLike.ctrlKey === true || eventLike.metaKey === true;
 };
 
-export type MateTalkSubmitPreflightResult =
-  | { status: "ready"; message: string }
-  | { status: "blocked"; reason: "empty"; feedback: string }
-  | { status: "blocked"; reason: "running" };
+export type MateTalkSubmitPreflightResult = TextComposerSubmitPreflightResult;
 
 export function resolveMateTalkSubmitPreflight({
   draft,
@@ -68,18 +69,11 @@ export function resolveMateTalkSubmitPreflight({
   draft: string;
   isRunning: boolean;
 }): MateTalkSubmitPreflightResult {
-  const message = draft.trim();
-  if (!message) {
-    return {
-      status: "blocked",
-      reason: "empty",
-      feedback: "入力してから送信してね。",
-    };
-  }
-  if (isRunning) {
-    return { status: "blocked", reason: "running" };
-  }
-  return { status: "ready", message };
+  return resolveTextComposerSubmitPreflight({
+    draftText: draft,
+    isRunning,
+    emptyFeedback: "入力してから送信してね。",
+  });
 }
 
 export function buildMateTalkTurnInput({

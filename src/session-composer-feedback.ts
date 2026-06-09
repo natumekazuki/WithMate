@@ -10,6 +10,11 @@ export type ComposerSendabilityState = {
   isSendDisabled: boolean;
 };
 
+export type TextComposerSubmitPreflightResult =
+  | { status: "ready"; message: string }
+  | { status: "blocked"; reason: "empty"; feedback: string }
+  | { status: "blocked"; reason: "running" };
+
 export const BLANK_DRAFT_FEEDBACK = "メッセージを入力してください。";
 export const COMPOSER_SEND_BLOCKED_FALLBACK = "送信できない状態だよ。";
 
@@ -133,4 +138,29 @@ export function resolveComposerSendPreflight({
     sendability,
     blockedMessage: getComposerSendBlockedMessage(sendability, fallbackBlockedMessage),
   };
+}
+
+export function resolveTextComposerSubmitPreflight({
+  draftText,
+  isRunning,
+  emptyFeedback = BLANK_DRAFT_FEEDBACK,
+}: {
+  draftText: string;
+  isRunning: boolean;
+  emptyFeedback?: string;
+}): TextComposerSubmitPreflightResult {
+  const message = draftText.trim();
+  if (!message) {
+    return {
+      status: "blocked",
+      reason: "empty",
+      feedback: emptyFeedback,
+    };
+  }
+
+  if (isRunning) {
+    return { status: "blocked", reason: "running" };
+  }
+
+  return { status: "ready", message };
 }

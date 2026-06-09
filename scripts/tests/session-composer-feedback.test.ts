@@ -7,6 +7,7 @@ import {
   getComposerSendBlockedMessage,
   getComposerSendButtonTitle,
   resolveComposerSendPreflight,
+  resolveTextComposerSubmitPreflight,
   withForcedComposerBlockedFeedback,
 } from "../../src/session-composer-feedback.js";
 
@@ -122,5 +123,46 @@ describe("session composer feedback", () => {
     });
 
     assert.equal(result.blockedMessage, "送信条件を確認してください。");
+  });
+
+  it("text composer submit preflight は空入力を指定 feedback 付き blocked にする", () => {
+    assert.deepEqual(
+      resolveTextComposerSubmitPreflight({
+        draftText: " \n ",
+        isRunning: false,
+        emptyFeedback: "入力してから送信してね。",
+      }),
+      {
+        status: "blocked",
+        reason: "empty",
+        feedback: "入力してから送信してね。",
+      },
+    );
+  });
+
+  it("text composer submit preflight は running 中なら blocked にする", () => {
+    assert.deepEqual(
+      resolveTextComposerSubmitPreflight({
+        draftText: " hello ",
+        isRunning: true,
+      }),
+      {
+        status: "blocked",
+        reason: "running",
+      },
+    );
+  });
+
+  it("text composer submit preflight は送信可能な本文を trim して返す", () => {
+    assert.deepEqual(
+      resolveTextComposerSubmitPreflight({
+        draftText: " hello ",
+        isRunning: false,
+      }),
+      {
+        status: "ready",
+        message: "hello",
+      },
+    );
   });
 });
