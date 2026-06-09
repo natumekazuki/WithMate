@@ -37,6 +37,7 @@ import {
   resolveClosedAuxiliarySessionsAfterReturn,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
+import { runActiveAuxiliarySessionRefreshOperation } from "./auxiliary-session-refresh-operation.js";
 import type {
   ComposerPreview,
   DiffPreviewPayload,
@@ -659,19 +660,24 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     const sessionId = activeRunSessionId;
     const activeAuxiliarySessionId = activeAuxiliarySession?.id ?? null;
     const refreshCompletedAuxiliarySession = (updatedSessionId: string) => {
-      if (!withmateApi || activeAuxiliarySessionId !== updatedSessionId) {
+      if (!withmateApi) {
         return;
       }
 
-      void withmateApi.getAuxiliarySession(updatedSessionId).then((saved) => {
-        if (!active) {
+      void runActiveAuxiliarySessionRefreshOperation({
+        sessionId: updatedSessionId,
+        activeSessionId: activeAuxiliarySessionId,
+        loadAuxiliarySession: (targetSessionId) => withmateApi.getAuxiliarySession(targetSessionId),
+        isActive: () => active,
+      }).then((result) => {
+        if (result.status !== "loaded") {
           return;
         }
 
         setActiveAuxiliarySession((current) => {
           const nextSession = resolveActiveAuxiliarySessionRefreshResult({
             currentSession: current,
-            savedSession: saved,
+            savedSession: result.savedSession,
             sessionId: updatedSessionId,
           });
           if (nextSession !== current) {

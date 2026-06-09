@@ -150,6 +150,7 @@ import {
   resolveClosedAuxiliarySessionsAfterReturn,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
+import { runActiveAuxiliarySessionRefreshOperation } from "./auxiliary-session-refresh-operation.js";
 import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolution.js";
 import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
 import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
@@ -1049,19 +1050,20 @@ export default function AgentSessionWindowApp() {
 
     const activeAuxiliarySessionId = activeAuxiliarySession?.id ?? null;
     const refreshCompletedAuxiliarySession = (sessionId: string) => {
-      if (activeAuxiliarySessionId !== sessionId) {
-        return;
-      }
-
-      void withmateApi.getAuxiliarySession(sessionId).then((saved) => {
-        if (!active) {
+      void runActiveAuxiliarySessionRefreshOperation({
+        sessionId,
+        activeSessionId: activeAuxiliarySessionId,
+        loadAuxiliarySession: (targetSessionId) => withmateApi.getAuxiliarySession(targetSessionId),
+        isActive: () => active,
+      }).then((result) => {
+        if (result.status !== "loaded") {
           return;
         }
 
         setActiveAuxiliarySession((current) => {
           const nextSession = resolveActiveAuxiliarySessionRefreshResult({
             currentSession: current,
-            savedSession: saved,
+            savedSession: result.savedSession,
             sessionId,
           });
           if (nextSession !== current) {
