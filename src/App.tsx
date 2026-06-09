@@ -27,6 +27,7 @@ import {
 } from "./runtime-option-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
+import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
 import {
   createDefaultAppSettings,
   getProviderAppSettings,
@@ -499,30 +500,10 @@ export default function AgentSessionWindowApp() {
   }, [selectedId, withmateApi]);
 
   useEffect(() => {
-    let active = true;
-
-    if (!withmateApi) {
-      return () => {
-        active = false;
-      };
-    }
-
-    void withmateApi.listCompanionSessionSummaries().then((nextSessions) => {
-      if (active) {
-        setCompanionSessions(nextSessions);
-      }
+    return startCompanionSessionSummariesSubscription({
+      api: withmateApi,
+      applySummaries: setCompanionSessions,
     });
-
-    const unsubscribe = withmateApi.subscribeCompanionSessionSummaries((nextSessions) => {
-      if (active) {
-        setCompanionSessions(nextSessions);
-      }
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
   }, [withmateApi]);
 
   useEffect(() => {

@@ -52,6 +52,7 @@ import { currentTimestampLabel } from "./app-state.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import type { CompanionMergeRunSummary, CompanionSession, CompanionSessionSummary } from "./companion-state.js";
 import { createCompanionSessionSummary } from "./companion-state.js";
+import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
 import {
   buildCompanionCharacterProfile,
   buildCompanionChatSnapshot,
@@ -576,31 +577,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }, [isMergeView, snapshot?.session.id, withmateApi]);
 
   useEffect(() => {
-    let active = true;
     const withmateApi = getWithMateApi();
 
-    if (!withmateApi) {
-      return () => {
-        active = false;
-      };
-    }
-
-    void withmateApi.listCompanionSessionSummaries().then((nextSessions) => {
-      if (active) {
-        setCompanionSessions(nextSessions);
-      }
+    return startCompanionSessionSummariesSubscription({
+      api: withmateApi,
+      applySummaries: setCompanionSessions,
     });
-
-    const unsubscribe = withmateApi.subscribeCompanionSessionSummaries((nextSessions) => {
-      if (active) {
-        setCompanionSessions(nextSessions);
-      }
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
   }, []);
 
   useEffect(() => {

@@ -91,6 +91,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-10: PR-06 着手。App / Companion の active Auxiliary refresh load gate を `runActiveAuxiliarySessionRefreshOperation` に集約。active id 不一致では load せず、effect stale 時は result を捨て、refresh result の state 適用、App の error logging、Companion の silent catch、subscription / live-run API は surface 側に残した。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`scripts/tests/auxiliary-session-state.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-10: App / Companion の closed Auxiliary sessions 初期 load operation を `runClosedAuxiliarySessionsLoadOperation` に集約。parent id 不在の skip、load 後 stale 抑止、load failure 時の empty fallback を helper contract にし、state 反映だけ surface 側に残した。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`scripts/tests/auxiliary-session-state.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-10: App / Companion の active Auxiliary session 初期 load operation を `runActiveAuxiliarySessionLoadOperation` に集約。parent id 不在の skip、load 後 stale 抑止、load failure 時の null fallback を helper contract にし、state 反映だけ surface 側に残した。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`scripts/tests/auxiliary-session-state.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-10: App / Companion の Companion session summaries 初期取得 + subscription を `startCompanionSessionSummariesSubscription` に集約。API 不在時 no-op cleanup、初回取得、購読更新、cleanup 後 stale 抑止を helper contract にし、state 反映だけ surface 側に残した。`scripts/tests/companion-session-summary-subscription.test.ts`、`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -273,6 +274,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の active Auxiliary refresh load gate を `auxiliary-session-refresh-operation` に集約。2026-06-10 着手。
 - App / Companion の closed Auxiliary sessions 初期 load operation を `auxiliary-session-refresh-operation` に集約。2026-06-10 着手。
 - App / Companion の active Auxiliary session 初期 load operation を `auxiliary-session-refresh-operation` に集約。2026-06-10 着手。
+- App / Companion の Companion session summaries 初期取得 + subscription を `companion-session-summary-subscription` に集約。2026-06-10 着手。
 
 やらないこと:
 
