@@ -10,8 +10,10 @@ export type CompanionSessionSummariesSubscriptionApi = {
 export function startCompanionSessionSummariesSubscription(input: {
   api: CompanionSessionSummariesSubscriptionApi | null;
   applySummaries: (summaries: CompanionSessionSummary[]) => void;
+  onInitialLoadError?: (error: unknown) => void;
 }): () => void {
   let active = true;
+  let receivedSubscriptionUpdate = false;
   if (!input.api) {
     return () => {
       active = false;
@@ -19,12 +21,17 @@ export function startCompanionSessionSummariesSubscription(input: {
   }
 
   void input.api.listCompanionSessionSummaries().then((summaries) => {
-    if (active) {
+    if (active && !receivedSubscriptionUpdate) {
       input.applySummaries(summaries);
+    }
+  }).catch((error: unknown) => {
+    if (active && !receivedSubscriptionUpdate) {
+      input.onInitialLoadError?.(error);
     }
   });
 
   const unsubscribe = input.api.subscribeCompanionSessionSummaries((summaries) => {
+    receivedSubscriptionUpdate = true;
     if (active) {
       input.applySummaries(summaries);
     }

@@ -6,6 +6,7 @@ import {
 } from "./provider-settings-state.js";
 import { startAppSettingsSubscription } from "./app-settings-subscription.js";
 import { type SessionSummary } from "./session-state.js";
+import { startSessionSummariesSubscription } from "./session-summary-subscription.js";
 import { type ModelCatalogSnapshot } from "./model-catalog.js";
 import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
 import {
@@ -26,6 +27,7 @@ import {
 } from "./home/home-launch-state.js";
 import { resolveSelectedLaunchProviderDraftId } from "./launch/launch-provider-selection.js";
 import { type CompanionSessionSummary } from "./companion-state.js";
+import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
 import { buildHomeMateProfileHandlers } from "./home/home-mate-profile-handlers.js";
 import {
   buildHomeSessionProjection,
@@ -211,21 +213,31 @@ export default function HomeApp() {
       };
     }
 
+    const handleInitialSummaryLoadError = (error: unknown) => {
+      setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
+    };
+
     let unsubscribeSessions: (() => void) | null = null;
     let unsubscribeCompanionSessions: (() => void) | null = null;
 
-    const hydrateOperationalHomeData = async () => {
-      const [nextSessions, nextCompanionSessions] = await Promise.all([
-        withmateApi.listSessionSummaries(),
-        withmateApi.listCompanionSessionSummaries(),
-      ]);
-      if (!active) {
+    const startOperationalHomeSummarySubscriptions = () => {
+      if (unsubscribeSessions || unsubscribeCompanionSessions) {
         return;
       }
 
-      setSessions(nextSessions);
-      setCompanionSessions(nextCompanionSessions);
+      unsubscribeSessions = startSessionSummariesSubscription({
+        api: withmateApi,
+        applySummaries: setSessions,
+        onInitialLoadError: handleInitialSummaryLoadError,
+      });
+      unsubscribeCompanionSessions = startCompanionSessionSummariesSubscription({
+        api: withmateApi,
+        applySummaries: setCompanionSessions,
+        onInitialLoadError: handleInitialSummaryLoadError,
+      });
+    };
 
+    const hydrateOperationalHomeData = async () => {
       if (usesMemoryManagementWindow) {
         try {
           const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
@@ -247,17 +259,6 @@ export default function HomeApp() {
           setMemoryManagementLoaded(true);
         }
       }
-
-      unsubscribeSessions = withmateApi.subscribeSessionSummaries((nextSessions) => {
-        if (active) {
-          setSessions(nextSessions);
-        }
-      });
-      unsubscribeCompanionSessions = withmateApi.subscribeCompanionSessionSummaries((nextSessions) => {
-        if (active) {
-          setCompanionSessions(nextSessions);
-        }
-      });
 
     };
 
@@ -289,6 +290,7 @@ export default function HomeApp() {
       }
 
       if (nextMateState !== "not_created") {
+        startOperationalHomeSummarySubscriptions();
         void hydrateOperationalHomeData().catch((error) => {
           if (!active) {
             return;

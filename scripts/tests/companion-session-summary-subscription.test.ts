@@ -57,6 +57,63 @@ test("startCompanionSessionSummariesSubscription は初回取得と購読更新�
   assert.equal(unsubscribeCount, 1);
 });
 
+test("startCompanionSessionSummariesSubscription は購読更新後に遅い初回取得で古い summaries へ戻さない", async () => {
+  const initialSummaries = [createSummary("companion-1")];
+  const subscribedSummaries = [createSummary("companion-2")];
+  const appliedSummaries: CompanionSessionSummary[][] = [];
+  let resolveList: (summaries: CompanionSessionSummary[]) => void = () => undefined;
+  let subscribedListener: ((summaries: CompanionSessionSummary[]) => void) | null = null;
+  const api: CompanionSessionSummariesSubscriptionApi = {
+    listCompanionSessionSummaries: () => new Promise((resolve) => {
+      resolveList = resolve;
+    }),
+    subscribeCompanionSessionSummaries: (listener) => {
+      subscribedListener = listener;
+      return () => undefined;
+    },
+  };
+
+  const cleanup = startCompanionSessionSummariesSubscription({
+    api,
+    applySummaries: (summaries) => appliedSummaries.push(summaries),
+  });
+  subscribedListener?.(subscribedSummaries);
+  resolveList(initialSummaries);
+  await flushPromises();
+  cleanup();
+
+  assert.deepEqual(appliedSummaries, [subscribedSummaries]);
+});
+
+test("startCompanionSessionSummariesSubscription は購読更新後に遅い初回取得失敗 fallback を呼ばない", async () => {
+  let errorCount = 0;
+  let rejectList: (error: Error) => void = () => undefined;
+  let subscribedListener: ((summaries: CompanionSessionSummary[]) => void) | null = null;
+  const api: CompanionSessionSummariesSubscriptionApi = {
+    listCompanionSessionSummaries: () => new Promise((_, reject) => {
+      rejectList = reject;
+    }),
+    subscribeCompanionSessionSummaries: (listener) => {
+      subscribedListener = listener;
+      return () => undefined;
+    },
+  };
+
+  const cleanup = startCompanionSessionSummariesSubscription({
+    api,
+    applySummaries: () => undefined,
+    onInitialLoadError: () => {
+      errorCount += 1;
+    },
+  });
+  subscribedListener?.([createSummary("companion-2")]);
+  rejectList(new Error("failed"));
+  await flushPromises();
+  cleanup();
+
+  assert.equal(errorCount, 0);
+});
+
 test("startCompanionSessionSummariesSubscription は cleanup 後の初回取得結果を反映しない", async () => {
   const initialSummaries = [createSummary("companion-1")];
   const appliedSummaries: CompanionSessionSummary[][] = [];
