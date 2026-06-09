@@ -167,7 +167,10 @@ import {
   type ProviderOwnedQuotaTelemetry,
   type SessionOwnedContextTelemetry,
 } from "./session-telemetry-state.js";
-import { startProviderQuotaTelemetrySubscription } from "./session-telemetry-subscription.js";
+import {
+  startProviderQuotaTelemetrySubscription,
+  startSessionContextTelemetrySubscription,
+} from "./session-telemetry-subscription.js";
 import { startLiveSessionRunSubscription } from "./session-live-run-subscription.js";
 import {
   createCopyMessageTextHandler,
@@ -1054,40 +1057,15 @@ export default function AgentSessionWindowApp() {
   }, [displayedSession?.provider, withmateApi]);
 
   useEffect(() => {
-    let active = true;
     const sessionId = activeRunSessionId;
     const providerId = displayedSession?.provider ?? null;
 
-    if (!withmateApi || !sessionId || providerId !== "copilot") {
-      setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry: null });
-      return () => {
-        active = false;
-      };
-    }
-
-    setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry: null });
-    void withmateApi.getSessionContextTelemetry(sessionId).then((telemetry) => {
-      if (active) {
-        setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry });
-      }
-    }).catch(() => {
-      if (active) {
-        setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry: null });
-      }
+    return startSessionContextTelemetrySubscription({
+      api: withmateApi,
+      sessionId,
+      enabled: providerId === "copilot",
+      applySessionContextTelemetry: setSessionContextTelemetryState,
     });
-
-    const unsubscribe = withmateApi.subscribeSessionContextTelemetry((nextSessionId, telemetry) => {
-      if (!active || nextSessionId !== sessionId) {
-        return;
-      }
-
-      setSessionContextTelemetryState({ ownerSessionId: nextSessionId, telemetry });
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
   }, [activeRunSessionId, displayedSession?.provider, withmateApi]);
 
   const previewComposerInput = useMemo(() => {

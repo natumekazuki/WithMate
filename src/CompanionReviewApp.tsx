@@ -172,7 +172,10 @@ import {
   type ProviderOwnedQuotaTelemetry,
   type SessionOwnedContextTelemetry,
 } from "./session-telemetry-state.js";
-import { startProviderQuotaTelemetrySubscription } from "./session-telemetry-subscription.js";
+import {
+  startProviderQuotaTelemetrySubscription,
+  startSessionContextTelemetrySubscription,
+} from "./session-telemetry-subscription.js";
 import { startLiveSessionRunSubscription } from "./session-live-run-subscription.js";
 import {
   buildMessageListProjection,
@@ -827,37 +830,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }, [displayedSession?.provider, isMergeView]);
 
   useEffect(() => {
-    let active = true;
     const withmateApi = getWithMateApi();
     const sessionId = activeRunSessionId;
-    if (!withmateApi || !sessionId || isMergeView) {
-      setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry: null });
-      return () => {
-        active = false;
-      };
-    }
 
-    setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry: null });
-    void withmateApi.getSessionContextTelemetry(sessionId).then((telemetry) => {
-      if (active) {
-        setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry });
-      }
-    }).catch(() => {
-      if (active) {
-        setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry: null });
-      }
+    return startSessionContextTelemetrySubscription({
+      api: withmateApi,
+      sessionId,
+      enabled: !isMergeView,
+      applySessionContextTelemetry: setSessionContextTelemetryState,
     });
-
-    const unsubscribe = withmateApi.subscribeSessionContextTelemetry((nextSessionId, telemetry) => {
-      if (active && nextSessionId === sessionId) {
-        setSessionContextTelemetryState({ ownerSessionId: nextSessionId, telemetry });
-      }
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
   }, [activeRunSessionId, isMergeView]);
 
   const themeStyle = useMemo(
