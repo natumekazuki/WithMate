@@ -172,6 +172,7 @@ import {
   type ProviderOwnedQuotaTelemetry,
   type SessionOwnedContextTelemetry,
 } from "./session-telemetry-state.js";
+import { startProviderQuotaTelemetrySubscription } from "./session-telemetry-subscription.js";
 import { startLiveSessionRunSubscription } from "./session-live-run-subscription.js";
 import {
   buildMessageListProjection,
@@ -814,37 +815,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }, [displayedSession, isMergeView]);
 
   useEffect(() => {
-    let active = true;
     const withmateApi = getWithMateApi();
     const providerId = displayedSession?.provider ?? null;
-    if (!withmateApi || !providerId || isMergeView) {
-      setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry: null });
-      return () => {
-        active = false;
-      };
-    }
 
-    setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry: null });
-    void withmateApi.getProviderQuotaTelemetry(providerId).then((telemetry) => {
-      if (active) {
-        setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry });
-      }
-    }).catch(() => {
-      if (active) {
-        setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry: null });
-      }
+    return startProviderQuotaTelemetrySubscription({
+      api: withmateApi,
+      providerId,
+      enabled: !isMergeView,
+      applyProviderQuotaTelemetry: setProviderQuotaTelemetryState,
     });
-
-    const unsubscribe = withmateApi.subscribeProviderQuotaTelemetry((nextProviderId, telemetry) => {
-      if (active && nextProviderId === providerId) {
-        setProviderQuotaTelemetryState({ ownerProviderId: nextProviderId, telemetry });
-      }
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
   }, [displayedSession?.provider, isMergeView]);
 
   useEffect(() => {

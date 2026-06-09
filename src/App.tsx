@@ -167,6 +167,7 @@ import {
   type ProviderOwnedQuotaTelemetry,
   type SessionOwnedContextTelemetry,
 } from "./session-telemetry-state.js";
+import { startProviderQuotaTelemetrySubscription } from "./session-telemetry-subscription.js";
 import { startLiveSessionRunSubscription } from "./session-live-run-subscription.js";
 import {
   createCopyMessageTextHandler,
@@ -1042,44 +1043,14 @@ export default function AgentSessionWindowApp() {
   }, [activeAuxiliarySession?.id, activeRunSessionId, selectedSession, withmateApi]);
 
   useEffect(() => {
-    let active = true;
     const providerId = displayedSession?.provider ?? null;
 
-    if (!withmateApi || providerId !== "copilot") {
-      setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry: null });
-      return () => {
-        active = false;
-      };
-    }
-
-    setProviderQuotaTelemetryState((current) =>
-      current.ownerProviderId === providerId
-        ? current
-        : { ownerProviderId: providerId, telemetry: null },
-    );
-
-    void withmateApi.getProviderQuotaTelemetry(providerId).then((telemetry) => {
-      if (active) {
-        setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry });
-      }
-    }).catch(() => {
-      if (active) {
-        setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry: null });
-      }
+    return startProviderQuotaTelemetrySubscription({
+      api: withmateApi,
+      providerId,
+      enabled: providerId === "copilot",
+      applyProviderQuotaTelemetry: setProviderQuotaTelemetryState,
     });
-
-    const unsubscribe = withmateApi.subscribeProviderQuotaTelemetry((nextProviderId, telemetry) => {
-      if (!active || nextProviderId !== providerId) {
-        return;
-      }
-
-      setProviderQuotaTelemetryState({ ownerProviderId: nextProviderId, telemetry });
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
   }, [displayedSession?.provider, withmateApi]);
 
   useEffect(() => {
