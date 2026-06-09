@@ -1898,7 +1898,7 @@ export default function AgentSessionWindowApp() {
     if (
       !selectedSession ||
       isSelectedSessionReadOnly ||
-      selectedSession.runState === "running"
+      selectedSessionRunState === "running"
     ) {
       return;
     }
@@ -1920,7 +1920,7 @@ export default function AgentSessionWindowApp() {
       !selectedSession ||
       selectedSession.provider !== "codex" ||
       isSelectedSessionReadOnly ||
-      selectedSession.runState === "running"
+      selectedSessionRunState === "running"
     ) {
       return;
     }
