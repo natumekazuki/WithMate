@@ -37,6 +37,7 @@ import {
   resolveSelectedSessionIsRunning,
   resolveSelectedSessionRunState,
   resolveRunningSessionCancelTargetId,
+  runRunningSessionCancelOperation,
 } from "../../src/chat/send-or-cancel.js";
 import type { ChatWindowProps } from "../../src/chat/chat-window.js";
 import { buildLiveSessionWindowShellProps } from "../../src/chat/live-session-window-props.js";
@@ -202,6 +203,53 @@ test("buildRunningSessionCancelTarget は session 未選択なら cancel 対象�
     }),
     null,
   );
+});
+
+test("runRunningSessionCancelOperation は running target の cancel callback を呼ぶ", async () => {
+  const calls: string[] = [];
+  const didCancel = await runRunningSessionCancelOperation({
+    target: buildRunningSessionCancelTarget({
+      sessionId: "session-1",
+      runState: "idle",
+      isRunning: true,
+    }),
+    cancelRun: (sessionId) => {
+      calls.push(sessionId);
+    },
+  });
+
+  assert.equal(didCancel, true);
+  assert.deepEqual(calls, ["session-1"]);
+});
+
+test("runRunningSessionCancelOperation は target や cancel callback がなければ no-op", async () => {
+  const calls: string[] = [];
+
+  assert.equal(
+    await runRunningSessionCancelOperation({
+      target: buildRunningSessionCancelTarget({
+        sessionId: "session-1",
+        runState: "idle",
+        isRunning: false,
+      }),
+      cancelRun: (sessionId) => {
+        calls.push(sessionId);
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    await runRunningSessionCancelOperation({
+      target: buildRunningSessionCancelTarget({
+        sessionId: "session-1",
+        runState: "running",
+        isRunning: true,
+      }),
+      cancelRun: null,
+    }),
+    false,
+  );
+  assert.deepEqual(calls, []);
 });
 
 test("resolveSelectedSessionRunState は session runState を live run より優先する", () => {

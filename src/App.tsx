@@ -52,6 +52,7 @@ import {
   resolveSelectedSessionIsRunning,
   resolveSelectedSessionRunState,
   resolveRunningSessionCancelTargetId,
+  runRunningSessionCancelOperation,
 } from "./chat/send-or-cancel.js";
 import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-runtime-option-routing.js";
 import {
@@ -1723,19 +1724,15 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleCancelRun = async () => {
-    const sessionId = resolveRunningSessionCancelTargetId(
-      buildRunningSessionCancelTarget({
-        sessionId: selectedSession?.id,
-        runState: selectedSessionRunState,
-        isRunning: isSelectedSessionRunning,
-      }),
-    );
-    if (!withmateApi || !sessionId) {
-      return;
-    }
-
     try {
-      await withmateApi.cancelSessionRun(sessionId);
+      await runRunningSessionCancelOperation({
+        target: buildRunningSessionCancelTarget({
+          sessionId: selectedSession?.id,
+          runState: selectedSessionRunState,
+          isRunning: isSelectedSessionRunning,
+        }),
+        cancelRun: withmateApi ? (sessionId) => withmateApi.cancelSessionRun(sessionId) : null,
+      });
     } catch (error) {
       window.alert(resolveSessionRunErrorMessage(error, "キャンセルに失敗したよ。"));
     }

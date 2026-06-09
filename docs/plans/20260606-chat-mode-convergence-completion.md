@@ -84,6 +84,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-10: App additional directory add/remove operation guard の running 判定を `selectedSessionRunState` へ統一。picker / remove operation、session patch、persist API は未変更。
 - 2026-06-10: App pasted session attachment canPaste の selected session 側 running 判定を `selectedSessionRunState` へ統一。Auxiliary session 側の running 判定、save API、reference insertion、error handling は未変更。
 - 2026-06-10: App message list / pending bubble scroll signature の selected session run-state 入力を `selectedSessionRunState` へ統一。Auxiliary session 側の run-state branch、scroll helper、message projection は未変更。
+- 2026-06-10: App / Companion の selected session cancel operation を `runRunningSessionCancelOperation` に集約。cancel API 名、error 表示、Auxiliary cancel は surface 側に残し、target 解決と API 不在 no-op contract を helper test で固定。
 
 ## PR Plan
 
@@ -239,6 +240,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App additional directory add/remove operation guard の running 判定を `selectedSessionRunState` 経由へ統一。2026-06-10 着手。
 - App pasted session attachment canPaste の selected session 側 running 判定を `selectedSessionRunState` 経由へ統一。2026-06-10 着手。
 - App message list / pending bubble scroll signature の selected session run-state 入力を `selectedSessionRunState` 経由へ統一。2026-06-10 着手。
+- App / Companion の selected session cancel operation を `send-or-cancel` helper 経由へ統一。2026-06-10 着手。
 
 やらないこと:
 

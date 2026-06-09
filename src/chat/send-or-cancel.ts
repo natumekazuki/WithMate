@@ -63,6 +63,22 @@ export function resolveRunningSessionCancelTargetId(
   return target && (target.isRunning || target.runState === "running") ? target.id : null;
 }
 
+export async function runRunningSessionCancelOperation({
+  target,
+  cancelRun,
+}: {
+  target: RunningSessionCancelTarget;
+  cancelRun: ((sessionId: string) => void | Promise<void>) | null | undefined;
+}): Promise<boolean> {
+  const sessionId = resolveRunningSessionCancelTargetId(target);
+  if (!sessionId || !cancelRun) {
+    return false;
+  }
+
+  await cancelRun(sessionId);
+  return true;
+}
+
 export function resolveAuxiliaryAwareSendOrCancelAction({
   shouldSendAuxiliary,
   isAuxiliarySessionRunning,
