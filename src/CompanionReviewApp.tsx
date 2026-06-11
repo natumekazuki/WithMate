@@ -87,6 +87,7 @@ import {
 } from "./chat/chat-header-actions.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
 import {
+  applyAuxiliarySessionStartError,
   beginAuxiliarySessionStartOperation,
   createAuxiliarySessionStartResultApplier,
   finishAuxiliarySessionStartClosedLoad,
@@ -1777,7 +1778,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         : null,
     });
     if (startProvider.status === "blocked") {
-      setAuxiliaryLaunchStartError(startProvider.error);
+      applyAuxiliarySessionStartError({
+        error: startProvider.error,
+        setLaunchStartError: setAuxiliaryLaunchStartError,
+      });
       return;
     }
     const launchProviderId = startProvider.providerId;
@@ -1818,7 +1822,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         }),
       });
     } catch (error) {
-      setAuxiliaryLaunchStartError(error);
+      applyAuxiliarySessionStartError({
+        error,
+        setLaunchStartError: setAuxiliaryLaunchStartError,
+      });
     } finally {
       finishAuxiliarySessionStartClosedLoad({
         parentSessionId,

@@ -21,6 +21,13 @@ export function beginAuxiliarySessionStartOperation(input: {
   return nextRevision;
 }
 
+export function applyAuxiliarySessionStartError(input: {
+  error: unknown;
+  setLaunchStartError: (error: unknown) => void;
+}): void {
+  input.setLaunchStartError(input.error);
+}
+
 export function applyAuxiliarySessionStartResult(input: {
   session: AuxiliarySession;
   incrementMutationRevision: () => void;

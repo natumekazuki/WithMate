@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  applyAuxiliarySessionStartError,
   applyAuxiliarySessionStartResult,
   beginAuxiliarySessionStartOperation,
   createAuxiliarySessionStartResultApplier,
@@ -144,6 +145,22 @@ describe("beginAuxiliarySessionStartOperation", () => {
     );
     assert.equal(loadRevision.current, 5);
     assert.deepEqual(events, ["reset", "pending:true"]);
+  });
+});
+
+describe("applyAuxiliarySessionStartError", () => {
+  it("start error を launch error state に反映する", () => {
+    const error = new Error("start failed");
+    const errors: unknown[] = [];
+
+    applyAuxiliarySessionStartError({
+      error,
+      setLaunchStartError: (nextError) => {
+        errors.push(nextError);
+      },
+    });
+
+    assert.deepEqual(errors, [error]);
   });
 });
 

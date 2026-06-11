@@ -235,6 +235,7 @@ import {
   runAuxiliarySessionReturnToMainOperation,
 } from "./auxiliary-session-return-operation.js";
 import {
+  applyAuxiliarySessionStartError,
   beginAuxiliarySessionStartOperation,
   createAuxiliarySessionStartResultApplier,
   finishAuxiliarySessionStartClosedLoad,
@@ -2158,7 +2159,10 @@ export default function AgentSessionWindowApp() {
       providerId: auxiliaryLaunchProviderId,
     });
     if (startProvider.status === "blocked") {
-      setAuxiliaryLaunchStartError(startProvider.error);
+      applyAuxiliarySessionStartError({
+        error: startProvider.error,
+        setLaunchStartError: setAuxiliaryLaunchStartError,
+      });
       return;
     }
     const launchProviderId = startProvider.providerId;
@@ -2198,7 +2202,10 @@ export default function AgentSessionWindowApp() {
         }),
       });
     } catch (error) {
-      setAuxiliaryLaunchStartError(error);
+      applyAuxiliarySessionStartError({
+        error,
+        setLaunchStartError: setAuxiliaryLaunchStartError,
+      });
     } finally {
       finishAuxiliarySessionStartClosedLoad({
         parentSessionId,
