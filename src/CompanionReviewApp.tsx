@@ -91,7 +91,10 @@ import {
   finishAuxiliarySessionStartClosedLoad,
   runAuxiliarySessionStartOperation,
 } from "./auxiliary-session-start-operation.js";
-import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
+import {
+  createAuxiliarySessionRunningApplier,
+  runAuxiliarySessionSendOperation,
+} from "./auxiliary-session-send-operation.js";
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
 import { COMPANION_PENDING_MESSAGE_TEXT } from "./chat/pending-run-indicator.js";
 import {
@@ -1915,17 +1918,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       sessionSaveQueue: auxiliarySessionSaveQueueRef,
       mutationRevision: auxiliarySessionMutationRevisionRef,
       getCurrentSession: () => activeAuxiliarySessionRef.current,
-      applyRunningSession: (runningSession) => {
-        applyActiveAuxiliarySessionUpdate({
-          session: runningSession,
-          activeSessionRef: activeAuxiliarySessionRef,
-          setActiveSession: setActiveAuxiliarySession,
-        });
-        setLiveRunState((current) => createOwnedPendingLiveSessionRunState(
-          buildCompanionAuxiliaryRuntimeSession(snapshot.session, runningSession),
-          current,
-        ));
-      },
+      applyRunningSession: createAuxiliarySessionRunningApplier({
+        activeSessionRef: activeAuxiliarySessionRef,
+        setActiveSession: setActiveAuxiliarySession,
+        updateLiveRunState: (update) => setLiveRunState(update),
+        buildRuntimeSession: (runningSession) => buildCompanionAuxiliaryRuntimeSession(
+          snapshot.session,
+          runningSession,
+        ),
+      }),
       afterRunningSessionApplied: () => {
         setForceComposerBlockedFeedback(false);
       },

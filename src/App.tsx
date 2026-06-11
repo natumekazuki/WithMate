@@ -236,7 +236,10 @@ import {
   finishAuxiliarySessionStartClosedLoad,
   runAuxiliarySessionStartOperation,
 } from "./auxiliary-session-start-operation.js";
-import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
+import {
+  createAuxiliarySessionRunningApplier,
+  runAuxiliarySessionSendOperation,
+} from "./auxiliary-session-send-operation.js";
 import {
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
@@ -2299,17 +2302,15 @@ export default function AgentSessionWindowApp() {
       beforeRunningSessionApplied: () => {
         setIsActionDockPinnedExpanded(false);
       },
-      applyRunningSession: (runningSession) => {
-        applyActiveAuxiliarySessionUpdate({
-          session: runningSession,
-          activeSessionRef: activeAuxiliarySessionRef,
-          setActiveSession: setActiveAuxiliarySession,
-        });
-        setLiveRunState((current) => createOwnedPendingLiveSessionRunState(
-          buildMainAuxiliaryRuntimeSession(selectedSession!, runningSession),
-          current,
-        ));
-      },
+      applyRunningSession: createAuxiliarySessionRunningApplier({
+        activeSessionRef: activeAuxiliarySessionRef,
+        setActiveSession: setActiveAuxiliarySession,
+        updateLiveRunState: (update) => setLiveRunState(update),
+        buildRuntimeSession: (runningSession) => buildMainAuxiliaryRuntimeSession(
+          selectedSession!,
+          runningSession,
+        ),
+      }),
       applySavedSession: createActiveAuxiliarySessionUpdateApplier({
         activeSessionRef: activeAuxiliarySessionRef,
         setActiveSession: setActiveAuxiliarySession,

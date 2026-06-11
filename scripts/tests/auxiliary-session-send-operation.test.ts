@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { runAuxiliarySessionSendOperation } from "../../src/auxiliary-session-send-operation.js";
+import {
+  createAuxiliarySessionRunningApplier,
+  runAuxiliarySessionSendOperation,
+} from "../../src/auxiliary-session-send-operation.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
+import type { OwnedLiveSessionRunState } from "../../src/session-live-run-state.js";
 
 function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
   return {
@@ -41,6 +45,68 @@ function createQueueRefs(): {
 }
 
 describe("runAuxiliarySessionSendOperation", () => {
+  it("running applier は active session と pending live run を同じ running session から反映する", () => {
+    const runningSession = makeAuxiliarySession({
+      runState: "running",
+      threadId: "thread-running",
+      updatedAt: "running",
+    });
+    const activeSessionRef = {
+      current: makeAuxiliarySession({ updatedAt: "before" }) as AuxiliarySession | null,
+    };
+    const appliedSessions: AuxiliarySession[] = [];
+    const liveRunStates: OwnedLiveSessionRunState[] = [];
+    let currentLiveRunState: OwnedLiveSessionRunState = {
+      ownerSessionId: "other",
+      state: {
+        sessionId: "other",
+        threadId: "other-thread",
+        assistantText: "",
+        reasoningText: "",
+        steps: [],
+        backgroundTasks: [],
+        usage: null,
+        errorMessage: "",
+        approvalRequest: null,
+        elicitationRequest: null,
+      },
+    };
+    const applyRunningSession = createAuxiliarySessionRunningApplier({
+      activeSessionRef,
+      setActiveSession: (session) => {
+        appliedSessions.push(session);
+      },
+      updateLiveRunState: (updater) => {
+        currentLiveRunState = updater(currentLiveRunState);
+        liveRunStates.push(currentLiveRunState);
+      },
+      buildRuntimeSession: (session) => ({
+        id: `runtime:${session.id}`,
+        threadId: `runtime:${session.threadId}`,
+      }),
+    });
+
+    applyRunningSession(runningSession);
+
+    assert.equal(activeSessionRef.current, runningSession);
+    assert.deepEqual(appliedSessions, [runningSession]);
+    assert.deepEqual(liveRunStates, [{
+      ownerSessionId: "runtime:aux-1",
+      state: {
+        sessionId: "runtime:aux-1",
+        threadId: "runtime:thread-running",
+        assistantText: "",
+        reasoningText: "",
+        steps: [],
+        backgroundTasks: [],
+        usage: null,
+        errorMessage: "",
+        approvalRequest: null,
+        elicitationRequest: null,
+      },
+    }]);
+  });
+
   it("running transition を反映して turn 実行結果を active session へ反映する", async () => {
     const { draftSaveQueue, sessionSaveQueue } = createQueueRefs();
     const mutationRevision = { current: 0 };

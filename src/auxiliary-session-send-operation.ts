@@ -6,7 +6,15 @@ import {
   type AuxiliarySessionSendPreflightResult,
   type AuxiliarySessionSendTargetResolution,
 } from "./auxiliary-session-state.js";
-import { enqueueAuxiliarySessionSaveWithQueue } from "./auxiliary-session-update-operation.js";
+import {
+  applyActiveAuxiliarySessionUpdate,
+  enqueueAuxiliarySessionSaveWithQueue,
+} from "./auxiliary-session-update-operation.js";
+import {
+  createOwnedPendingLiveSessionRunState,
+  type OwnedLiveSessionRunState,
+  type PendingLiveRunSessionIdentity,
+} from "./session-live-run-state.js";
 
 export type AuxiliarySessionSendOperationResult =
   | {
@@ -28,6 +36,27 @@ export type AuxiliarySessionSendOperationResult =
       status: "error";
       error: unknown;
     };
+
+export function createAuxiliarySessionRunningApplier(input: {
+  activeSessionRef: { current: AuxiliarySession | null };
+  setActiveSession: (session: AuxiliarySession) => void;
+  updateLiveRunState: (
+    updater: (current: OwnedLiveSessionRunState) => OwnedLiveSessionRunState,
+  ) => void;
+  buildRuntimeSession: (runningSession: AuxiliarySession) => PendingLiveRunSessionIdentity;
+}): (runningSession: AuxiliarySession) => void {
+  return (runningSession) => {
+    applyActiveAuxiliarySessionUpdate({
+      session: runningSession,
+      activeSessionRef: input.activeSessionRef,
+      setActiveSession: input.setActiveSession,
+    });
+    input.updateLiveRunState((current) => createOwnedPendingLiveSessionRunState(
+      input.buildRuntimeSession(runningSession),
+      current,
+    ));
+  };
+}
 
 export async function runAuxiliarySessionSendOperation(input: {
   activeSession: AuxiliarySession;
