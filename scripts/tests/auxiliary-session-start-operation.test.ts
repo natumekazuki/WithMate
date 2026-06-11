@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   applyAuxiliarySessionStartResult,
+  createAuxiliarySessionStartResultApplier,
   runAuxiliarySessionStartOperation,
 } from "../../src/auxiliary-session-start-operation.js";
 import type {
@@ -145,6 +146,40 @@ describe("applyAuxiliarySessionStartResult", () => {
         events.push("close");
       },
     });
+
+    assert.deepEqual(events, [
+      "revision",
+      "active:aux-started",
+      "dock:true",
+      "feedback:false",
+      "close",
+    ]);
+  });
+});
+
+describe("createAuxiliarySessionStartResultApplier", () => {
+  it("session を受け取る start result applier を作る", () => {
+    const session = makeAuxiliarySession({ id: "aux-started" });
+    const events: string[] = [];
+    const applyStartedSession = createAuxiliarySessionStartResultApplier({
+      incrementMutationRevision: () => {
+        events.push("revision");
+      },
+      applyActiveSession: (startedSession) => {
+        events.push(`active:${startedSession.id}`);
+      },
+      setActionDockPinnedExpanded: (expanded) => {
+        events.push(`dock:${expanded}`);
+      },
+      setForceComposerBlockedFeedback: (forced) => {
+        events.push(`feedback:${forced}`);
+      },
+      closeLaunchDialog: () => {
+        events.push("close");
+      },
+    });
+
+    applyStartedSession(session);
 
     assert.deepEqual(events, [
       "revision",

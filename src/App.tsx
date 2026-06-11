@@ -227,7 +227,7 @@ import {
   runAuxiliarySessionReturnToMainOperation,
 } from "./auxiliary-session-return-operation.js";
 import {
-  applyAuxiliarySessionStartResult,
+  createAuxiliarySessionStartResultApplier,
   runAuxiliarySessionStartOperation,
 } from "./auxiliary-session-start-operation.js";
 import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
@@ -2187,21 +2187,18 @@ export default function AgentSessionWindowApp() {
         provider: launchProviderId,
         defaults: lastUsedSelection,
         createAuxiliarySession: (request) => withmateApi.createAuxiliarySession(request),
-        applyStartedSession: (session) => {
-          applyAuxiliarySessionStartResult({
-            session,
-            incrementMutationRevision: () => {
-              auxiliarySessionMutationRevisionRef.current += 1;
-            },
-            applyActiveSession: (startedSession) => {
-              activeAuxiliarySessionRef.current = startedSession;
-              setActiveAuxiliarySession(startedSession);
-            },
-            setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
-            setForceComposerBlockedFeedback,
-            closeLaunchDialog: closeAuxiliaryLaunchDialog,
-          });
-        },
+        applyStartedSession: createAuxiliarySessionStartResultApplier({
+          incrementMutationRevision: () => {
+            auxiliarySessionMutationRevisionRef.current += 1;
+          },
+          applyActiveSession: (startedSession) => {
+            activeAuxiliarySessionRef.current = startedSession;
+            setActiveAuxiliarySession(startedSession);
+          },
+          setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+          setForceComposerBlockedFeedback,
+          closeLaunchDialog: closeAuxiliaryLaunchDialog,
+        }),
       });
     } catch (error) {
       setAuxiliaryLaunchStartError(error);

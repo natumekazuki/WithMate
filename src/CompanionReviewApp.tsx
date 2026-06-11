@@ -88,7 +88,7 @@ import {
 } from "./chat/chat-header-actions.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
 import {
-  applyAuxiliarySessionStartResult,
+  createAuxiliarySessionStartResultApplier,
   runAuxiliarySessionStartOperation,
 } from "./auxiliary-session-start-operation.js";
 import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
@@ -1806,21 +1806,18 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         provider: launchProviderId,
         defaults: launchDefaults,
         createAuxiliarySession: (request) => withmateApi.createAuxiliarySession(request),
-        applyStartedSession: (session) => {
-          applyAuxiliarySessionStartResult({
-            session,
-            incrementMutationRevision: () => {
-              auxiliarySessionMutationRevisionRef.current += 1;
-            },
-            applyActiveSession: (startedSession) => {
-              activeAuxiliarySessionRef.current = startedSession;
-              setActiveAuxiliarySession(startedSession);
-            },
-            setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
-            setForceComposerBlockedFeedback,
-            closeLaunchDialog: closeAuxiliaryLaunchDialog,
-          });
-        },
+        applyStartedSession: createAuxiliarySessionStartResultApplier({
+          incrementMutationRevision: () => {
+            auxiliarySessionMutationRevisionRef.current += 1;
+          },
+          applyActiveSession: (startedSession) => {
+            activeAuxiliarySessionRef.current = startedSession;
+            setActiveAuxiliarySession(startedSession);
+          },
+          setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+          setForceComposerBlockedFeedback,
+          closeLaunchDialog: closeAuxiliaryLaunchDialog,
+        }),
       });
     } catch (error) {
       setAuxiliaryLaunchStartError(error);

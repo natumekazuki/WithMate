@@ -22,6 +22,21 @@ export function applyAuxiliarySessionStartResult(input: {
   input.closeLaunchDialog();
 }
 
+export function createAuxiliarySessionStartResultApplier(input: {
+  incrementMutationRevision: () => void;
+  applyActiveSession: (session: AuxiliarySession) => void;
+  setActionDockPinnedExpanded: (expanded: boolean) => void;
+  setForceComposerBlockedFeedback: (forced: boolean) => void;
+  closeLaunchDialog: () => void;
+}): (session: AuxiliarySession) => void {
+  return (session) => {
+    applyAuxiliarySessionStartResult({
+      ...input,
+      session,
+    });
+  };
+}
+
 export async function runAuxiliarySessionStartOperation(input: {
   parentSessionId: string;
   provider: string;
