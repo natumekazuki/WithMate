@@ -2371,11 +2371,18 @@ export default function AgentSessionWindowApp() {
         const { draft: nextDraft, caret: nextCaret } = insertionState;
         if (targetAuxiliarySession) {
           void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+          setComposerCaret(nextCaret);
         } else {
-          setDraft(nextDraft);
-          mainComposerCaretRef.current = nextCaret;
+          applyComposerDraftChangeCommand({
+            value: nextDraft,
+            selectionStart: nextCaret,
+            setDraft,
+            setComposerCaret,
+            syncMainComposerCaret: (selectionStart) => {
+              mainComposerCaretRef.current = selectionStart;
+            },
+          });
         }
-        setComposerCaret(nextCaret);
         applyWorkspacePathMatchState(insertionState);
       },
       restoreComposerTextareaFocusAndCaret,

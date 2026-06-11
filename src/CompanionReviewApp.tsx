@@ -1408,13 +1408,18 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       workspacePath: snapshot?.session.worktreePath ?? null,
       applyInsertion: (insertionState) => {
         const { draft: nextDraft, caret: nextCaret } = insertionState;
-        setComposerCaret(nextCaret);
-        applyWorkspacePathMatchState(insertionState);
         if (activeAuxiliarySession) {
+          setComposerCaret(nextCaret);
           void handleAuxiliaryDraftChange(nextDraft, nextCaret);
         } else {
-          setComposerText(nextDraft);
+          applyComposerDraftChangeCommand({
+            value: nextDraft,
+            selectionStart: nextCaret,
+            setDraft: setComposerText,
+            setComposerCaret,
+          });
         }
+        applyWorkspacePathMatchState(insertionState);
       },
       restoreComposerTextareaFocusAndCaret,
     });

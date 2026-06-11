@@ -269,9 +269,13 @@ export function useMateTalkWindowState({
       textarea,
       workspacePath: null,
       applyInsertion: ({ draft: nextInput, caret: nextCaret }) => {
-        setInput(nextInput);
-        setInputCaret(nextCaret);
-        setFeedback("");
+        applyComposerDraftChangeCommand({
+          value: nextInput,
+          selectionStart: nextCaret,
+          setDraft: setInput,
+          setComposerCaret: setInputCaret,
+          clearFeedback: () => setFeedback(""),
+        });
         setPathReferences((current) => appendMissingPathReferenceAttachments(current, normalizedPaths, kind));
       },
       restoreComposerTextareaFocusAndCaret,
