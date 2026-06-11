@@ -141,6 +141,42 @@ export async function runGuardedAuxiliarySessionUpdate(input: {
   return result;
 }
 
+export function createGuardedActiveAuxiliarySessionUpdater(input: {
+  activeSession: AuxiliarySession | null;
+  getApi: () => {
+    getAuxiliarySession: (sessionId: string) => Promise<AuxiliarySession | null>;
+    updateAuxiliarySession: (session: AuxiliarySession) => Promise<AuxiliarySession>;
+  } | null;
+  getCurrentSession: () => AuxiliarySession | null;
+  activeSessionRef: { current: AuxiliarySession | null };
+  setActiveSession: (session: AuxiliarySession) => void;
+  draftSaveQueue: { current: Promise<void> };
+  sessionSaveQueue: { current: Promise<void> };
+  mutationRevision: { current: number };
+}): (recipe: (current: AuxiliarySession) => AuxiliarySession) => Promise<AuxiliarySessionUpdateOperationResult> {
+  return async (recipe) => {
+    const api = input.getApi();
+    if (!api) {
+      return null;
+    }
+
+    return runGuardedAuxiliarySessionUpdate({
+      activeSession: input.activeSession,
+      getCurrentSession: input.getCurrentSession,
+      applyActiveSession: createActiveAuxiliarySessionUpdateApplier({
+        activeSessionRef: input.activeSessionRef,
+        setActiveSession: input.setActiveSession,
+      }),
+      draftSaveQueue: input.draftSaveQueue,
+      sessionSaveQueue: input.sessionSaveQueue,
+      mutationRevision: input.mutationRevision,
+      recipe,
+      getAuxiliarySession: (sessionId) => api.getAuxiliarySession(sessionId),
+      saveAuxiliarySession: (session) => api.updateAuxiliarySession(session),
+    });
+  };
+}
+
 export function applyActiveAuxiliarySessionUpdate(input: {
   session: AuxiliarySession;
   activeSessionRef: { current: AuxiliarySession | null };

@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   applyActiveAuxiliarySessionUpdate,
   createActiveAuxiliarySessionUpdateApplier,
+  createGuardedActiveAuxiliarySessionUpdater,
   enqueueAuxiliarySessionSaveOperation,
   enqueueAuxiliarySessionSaveWithQueue,
   resolveAuxiliarySessionRollbackSession,
@@ -612,6 +613,77 @@ describe("runGuardedAuxiliarySessionUpdate", () => {
     await assert.rejects(failureUpdate, error);
     assert.equal(currentSession.runState, "running");
     assert.equal(currentSession.updatedAt, "running-2");
+  });
+});
+
+describe("createGuardedActiveAuxiliarySessionUpdater", () => {
+  it("API がない場合は guarded update を実行しない", async () => {
+    const activeSession = makeAuxiliarySession();
+    let saved = false;
+    const updateActiveSession = createGuardedActiveAuxiliarySessionUpdater({
+      activeSession,
+      getApi: () => null,
+      getCurrentSession: () => activeSession,
+      activeSessionRef: { current: activeSession },
+      setActiveSession: () => {
+        saved = true;
+      },
+      draftSaveQueue: { current: Promise.resolve() },
+      sessionSaveQueue: { current: Promise.resolve() },
+      mutationRevision: { current: 0 },
+    });
+
+    assert.equal(
+      await updateActiveSession((current) => ({ ...current, composerDraft: "after" })),
+      null,
+    );
+    assert.equal(saved, false);
+  });
+
+  it("guarded active updater は active session update helper を通して保存結果を反映する", async () => {
+    const activeSession = makeAuxiliarySession({ composerDraft: "before" });
+    const savedSession = makeAuxiliarySession({ composerDraft: "after", updatedAt: "saved" });
+    const activeSessionRef = { current: activeSession as AuxiliarySession | null };
+    const appliedSessions: AuxiliarySession[] = [];
+    const requests: AuxiliarySession[] = [];
+    const mutationRevision = { current: 0 };
+    const updateActiveSession = createGuardedActiveAuxiliarySessionUpdater({
+      activeSession,
+      getApi: () => ({
+        getAuxiliarySession: async () => null,
+        updateAuxiliarySession: async (session) => {
+          requests.push(session);
+          return savedSession;
+        },
+      }),
+      getCurrentSession: () => activeSessionRef.current,
+      activeSessionRef,
+      setActiveSession: (session) => {
+        appliedSessions.push(session);
+      },
+      draftSaveQueue: { current: Promise.resolve() },
+      sessionSaveQueue: { current: Promise.resolve() },
+      mutationRevision,
+    });
+
+    assert.deepEqual(
+      await updateActiveSession((current) => ({
+        ...current,
+        composerDraft: "after",
+        updatedAt: "pending",
+      })),
+      {
+        nextSession: makeAuxiliarySession({ composerDraft: "after", updatedAt: "pending" }),
+        saved: savedSession,
+      },
+    );
+    assert.equal(mutationRevision.current, 1);
+    assert.deepEqual(requests, [makeAuxiliarySession({ composerDraft: "after", updatedAt: "pending" })]);
+    assert.deepEqual(appliedSessions, [
+      makeAuxiliarySession({ composerDraft: "after", updatedAt: "pending" }),
+      savedSession,
+    ]);
+    assert.equal(activeSessionRef.current, savedSession);
   });
 });
 

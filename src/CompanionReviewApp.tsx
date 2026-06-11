@@ -235,8 +235,8 @@ import {
 } from "./auxiliary-draft-save-context.js";
 import {
   createActiveAuxiliarySessionUpdateApplier,
+  createGuardedActiveAuxiliarySessionUpdater,
   enqueueAuxiliarySessionSaveWithQueue,
-  runGuardedAuxiliarySessionUpdate,
   syncActiveAuxiliarySessionRef,
 } from "./auxiliary-session-update-operation.js";
 import {
@@ -1732,25 +1732,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   async function updateActiveAuxiliarySession(recipe: (current: AuxiliarySession) => AuxiliarySession): Promise<void> {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-
-    await runGuardedAuxiliarySessionUpdate({
+    await createGuardedActiveAuxiliarySessionUpdater({
       activeSession: activeAuxiliarySession,
       getCurrentSession: () => activeAuxiliarySessionRef.current,
-      applyActiveSession: createActiveAuxiliarySessionUpdateApplier({
-        activeSessionRef: activeAuxiliarySessionRef,
-        setActiveSession: setActiveAuxiliarySession,
-      }),
+      getApi: () => getWithMateApi(),
+      activeSessionRef: activeAuxiliarySessionRef,
+      setActiveSession: setActiveAuxiliarySession,
       draftSaveQueue: auxiliaryDraftSaveQueueRef,
       sessionSaveQueue: auxiliarySessionSaveQueueRef,
       mutationRevision: auxiliarySessionMutationRevisionRef,
-      recipe,
-      getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
-      saveAuxiliarySession: (session) => withmateApi.updateAuxiliarySession(session),
-    });
+    })(recipe);
   }
 
   const handleOpenAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogOpenHandler({
