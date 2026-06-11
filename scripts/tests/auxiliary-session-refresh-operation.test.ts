@@ -5,6 +5,7 @@ import {
   applyActiveAuxiliarySessionLoadResult,
   applyActiveAuxiliarySessionRefreshResult,
   applyClosedAuxiliarySessionsLoadResult,
+  clearAuxiliarySessionsLoadState,
   runActiveAuxiliarySessionLoadOperation,
   runActiveAuxiliarySessionRefreshOperation,
   runClosedAuxiliarySessionsLoadOperation,
@@ -404,4 +405,21 @@ test("applyClosedAuxiliarySessionsLoadResult は stale / skipped result では c
   );
 
   assert.deepEqual(appliedSessions, []);
+});
+
+test("clearAuxiliarySessionsLoadState は active session と closed sessions を初期化する", () => {
+  const activeSessions: Array<AuxiliarySession | null> = [];
+  const closedSessions: AuxiliarySession[][] = [];
+
+  clearAuxiliarySessionsLoadState({
+    setActiveSession: (session) => {
+      activeSessions.push(session);
+    },
+    setClosedSessions: (sessions) => {
+      closedSessions.push(sessions);
+    },
+  });
+
+  assert.deepEqual(activeSessions, [null]);
+  assert.deepEqual(closedSessions, [[]]);
 });

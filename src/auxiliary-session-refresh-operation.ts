@@ -160,3 +160,11 @@ export function applyClosedAuxiliarySessionsLoadResult(input: {
   input.setClosedSessions(input.result.sessions);
   return true;
 }
+
+export function clearAuxiliarySessionsLoadState(input: {
+  setActiveSession: (session: AuxiliarySession | null) => void;
+  setClosedSessions: (sessions: AuxiliarySession[]) => void;
+}): void {
+  input.setActiveSession(null);
+  input.setClosedSessions([]);
+}

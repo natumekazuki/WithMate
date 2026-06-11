@@ -135,6 +135,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-11: App / Companion の Auxiliary start result active session 反映を `applyActiveAuxiliarySessionUpdate` 経由へ移行。start request、launch defaults、mutation revision increment、dock expand、feedback clear、dialog close、closed list refresh は既存境界を維持。`scripts/tests/auxiliary-session-start-operation.test.ts`、`scripts/tests/auxiliary-session-update-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の return-to-main failure message 解決を `resolveAuxiliarySessionReturnToMainErrorMessage` に集約。close API、closed list 反映、main UI state 反映、pending cleanup は呼び出し側に残し、Error message 優先と非 Error fallback の contract を test で固定。`scripts/tests/auxiliary-session-return-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の Auxiliary start provider resolution を `resolveAuxiliaryLaunchStartProvider` に集約。surface 固有の blocked feedback、launch defaults、start operation、error state 反映は呼び出し側に残し、ready provider id / blocked feedback / provider 未選択の contract を test で固定。`scripts/tests/auxiliary-launch-state.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-11: App / Companion の Auxiliary initial load reset state を `clearAuxiliarySessionsLoadState` に集約。API/session/merge-view precondition、load revision、active/closed load operation は呼び出し側に残し、active session null と closed sessions empty の reset contract を test で固定。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -404,6 +405,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の Auxiliary start result active session 反映を `auxiliary-session-update-operation` に接続。2026-06-11 着手。
 - App / Companion の return-to-main failure message 解決を `auxiliary-session-return-operation` に接続。2026-06-11 着手。
 - App / Companion の Auxiliary start provider resolution を `auxiliary-launch-state` に接続。2026-06-11 着手。
+- App / Companion の Auxiliary initial load reset state を `auxiliary-session-refresh-operation` に接続。2026-06-11 着手。
 
 やらないこと:
 

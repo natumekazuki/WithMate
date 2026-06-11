@@ -161,6 +161,7 @@ import {
   applyActiveAuxiliarySessionLoadResult,
   applyActiveAuxiliarySessionRefreshResult,
   applyClosedAuxiliarySessionsLoadResult,
+  clearAuxiliarySessionsLoadState,
   runActiveAuxiliarySessionRefreshOperation,
   runActiveAuxiliarySessionLoadOperation,
   runClosedAuxiliarySessionsLoadOperation,
@@ -565,8 +566,10 @@ export default function AgentSessionWindowApp() {
     const canApplyLoadResult = () => active && auxiliaryLoadRevisionRef.current === loadRevision;
 
     if (!withmateApi || !selectedSessionId) {
-      setActiveAuxiliarySession(null);
-      setClosedAuxiliarySessions([]);
+      clearAuxiliarySessionsLoadState({
+        setActiveSession: setActiveAuxiliarySession,
+        setClosedSessions: setClosedAuxiliarySessions,
+      });
       return () => {
         active = false;
       };

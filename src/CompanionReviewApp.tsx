@@ -38,6 +38,7 @@ import {
   applyActiveAuxiliarySessionLoadResult,
   applyActiveAuxiliarySessionRefreshResult,
   applyClosedAuxiliarySessionsLoadResult,
+  clearAuxiliarySessionsLoadState,
   runActiveAuxiliarySessionRefreshOperation,
   runActiveAuxiliarySessionLoadOperation,
   runClosedAuxiliarySessionsLoadOperation,
@@ -570,8 +571,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     const canApplyLoadResult = () => active && auxiliaryLoadRevisionRef.current === loadRevision;
     const sessionId = snapshot?.session.id ?? null;
     if (!withmateApi || !sessionId || isMergeView) {
-      setActiveAuxiliarySession(null);
-      setClosedAuxiliarySessions([]);
+      clearAuxiliarySessionsLoadState({
+        setActiveSession: setActiveAuxiliarySession,
+        setClosedSessions: setClosedAuxiliarySessions,
+      });
       return () => {
         active = false;
       };
