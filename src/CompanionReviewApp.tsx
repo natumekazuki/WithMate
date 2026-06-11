@@ -131,6 +131,7 @@ import {
   createAuxiliaryLaunchDialogCloseHandler,
   createAuxiliaryLaunchDialogOpenHandler,
   createAuxiliaryLaunchProviderSelectHandler,
+  resolveAuxiliaryLaunchSessionDefaults,
   resolveAuxiliaryLaunchStartProvider,
 } from "./chat/auxiliary-launch-state.js";
 import {
@@ -1780,13 +1781,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     const canApplyLoadResult = () => auxiliaryLoadRevisionRef.current === loadRevision;
     setIsAuxiliaryActionPending(true);
     try {
-      const launchDefaults = launchProviderId === snapshot.session.provider
-        ? {
-            model: selectedModel,
-            reasoningEffort: selectedReasoningEffort,
-            customAgentName: snapshot.session.customAgentName,
-          }
-        : null;
+      const launchDefaults = resolveAuxiliaryLaunchSessionDefaults({
+        providerId: launchProviderId,
+        defaultsProviderId: snapshot.session.provider,
+        defaults: {
+          model: selectedModel,
+          reasoningEffort: selectedReasoningEffort,
+          customAgentName: snapshot.session.customAgentName,
+        },
+      });
       await runAuxiliarySessionStartOperation({
         parentSessionId,
         provider: launchProviderId,

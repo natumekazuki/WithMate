@@ -15,6 +15,7 @@ import {
   resolveAuxiliaryLaunchFeedbackResetState,
   resolveAuxiliaryLaunchOpenState,
   resolveAuxiliaryLaunchCloseState,
+  resolveAuxiliaryLaunchSessionDefaults,
   resolveAuxiliaryLaunchProviderSelectionState,
   resolveAuxiliaryLaunchInitialState,
   resolveAuxiliaryLaunchProviderId,
@@ -96,6 +97,39 @@ describe("auxiliary-launch-state", () => {
         reasoningEffort: undefined,
         customAgentName: undefined,
       },
+    );
+  });
+
+  it("launch defaults は同じ provider の場合だけ引き継ぐ", () => {
+    const defaults = {
+      model: "gpt-5.4-mini",
+      reasoningEffort: "high" as const,
+      customAgentName: "planner",
+    };
+
+    assert.equal(
+      resolveAuxiliaryLaunchSessionDefaults({
+        providerId: "codex",
+        defaultsProviderId: "codex",
+        defaults,
+      }),
+      defaults,
+    );
+    assert.equal(
+      resolveAuxiliaryLaunchSessionDefaults({
+        providerId: "copilot",
+        defaultsProviderId: "codex",
+        defaults,
+      }),
+      null,
+    );
+    assert.equal(
+      resolveAuxiliaryLaunchSessionDefaults({
+        providerId: "codex",
+        defaultsProviderId: "codex",
+        defaults: null,
+      }),
+      null,
     );
   });
 

@@ -38,6 +38,18 @@ export function buildCreateAuxiliarySessionInput(input: {
   };
 }
 
+export function resolveAuxiliaryLaunchSessionDefaults(input: {
+  providerId: string;
+  defaultsProviderId: string | null | undefined;
+  defaults: Partial<AuxiliaryLaunchSessionDefaults> | null | undefined;
+}): Partial<AuxiliaryLaunchSessionDefaults> | null {
+  if (!input.defaults || input.providerId !== input.defaultsProviderId) {
+    return null;
+  }
+
+  return input.defaults;
+}
+
 export function resolveAuxiliaryLaunchStartError(input: {
   providerId: string | null | undefined;
   blockedFeedback?: string | null;

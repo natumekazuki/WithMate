@@ -82,6 +82,7 @@ import {
   createAuxiliaryLaunchDialogCloseHandler,
   createAuxiliaryLaunchDialogOpenHandler,
   createAuxiliaryLaunchProviderSelectHandler,
+  resolveAuxiliaryLaunchSessionDefaults,
   resolveAuxiliaryLaunchStartProvider,
 } from "./chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
@@ -2168,10 +2169,15 @@ export default function AgentSessionWindowApp() {
     try {
       const launchSelectionSessions = await withmateApi.listSessionSummaries().catch(() => sessions);
       const lastUsedSelection = resolveLastUsedSessionSelection(launchSelectionSessions, launchProviderId);
+      const launchDefaults = resolveAuxiliaryLaunchSessionDefaults({
+        providerId: launchProviderId,
+        defaultsProviderId: launchProviderId,
+        defaults: lastUsedSelection,
+      });
       await runAuxiliarySessionStartOperation({
         parentSessionId,
         provider: launchProviderId,
-        defaults: lastUsedSelection,
+        defaults: launchDefaults,
         createAuxiliarySession: (request) => withmateApi.createAuxiliarySession(request),
         applyStartedSession: createAuxiliarySessionStartResultApplier({
           incrementMutationRevision: () => {
