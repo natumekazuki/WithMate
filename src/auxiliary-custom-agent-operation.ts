@@ -1,4 +1,11 @@
-import type { AuxiliarySession } from "./auxiliary-session-state.js";
+import {
+  applyAuxiliarySessionCustomAgentPatch,
+  type AuxiliarySession,
+} from "./auxiliary-session-state.js";
+
+type UpdateActiveAuxiliarySession = (
+  recipe: (current: AuxiliarySession) => AuxiliarySession,
+) => Promise<void>;
 
 export type AuxiliaryCustomAgentSelectionResult =
   | "noop"
@@ -23,4 +30,14 @@ export async function runAuxiliaryCustomAgentSelectionOperation(input: {
   await input.updateCustomAgent(input.customAgentName);
   input.closeAgentPicker();
   return "updated";
+}
+
+export async function runAuxiliaryCustomAgentPatchOperation(input: {
+  customAgentName: string;
+  updateActiveAuxiliarySession: UpdateActiveAuxiliarySession;
+  createTimestampLabel: () => string;
+}): Promise<void> {
+  await input.updateActiveAuxiliarySession((current) => (
+    applyAuxiliarySessionCustomAgentPatch(current, input.customAgentName, input.createTimestampLabel())
+  ));
 }

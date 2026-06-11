@@ -26,7 +26,6 @@ import {
 } from "./runtime-option-state.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import {
-  applyAuxiliarySessionCustomAgentPatch,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveClosedAuxiliarySessionsAfterReturn,
   type AuxiliarySession,
@@ -145,7 +144,10 @@ import {
   buildSelectedCustomAgentDisplay,
   buildSkillMatchDisplay,
 } from "./session-composer-selection.js";
-import { runAuxiliaryCustomAgentSelectionOperation } from "./auxiliary-custom-agent-operation.js";
+import {
+  runAuxiliaryCustomAgentPatchOperation,
+  runAuxiliaryCustomAgentSelectionOperation,
+} from "./auxiliary-custom-agent-operation.js";
 import { runAuxiliarySkillPromptInsertionOperation } from "./auxiliary-skill-prompt-operation.js";
 import {
   buildAdditionalDirectoryItems,
@@ -2026,9 +2028,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       activeSession: activeAuxiliarySession,
       customAgentName: nextCustomAgentName,
       updateCustomAgent: async (customAgentName) => {
-        await updateActiveAuxiliarySession((current) => (
-          applyAuxiliarySessionCustomAgentPatch(current, customAgentName, currentTimestampLabel())
-        ));
+        await runAuxiliaryCustomAgentPatchOperation({
+          customAgentName,
+          updateActiveAuxiliarySession,
+          createTimestampLabel: currentTimestampLabel,
+        });
       },
       closeAgentPicker,
     });

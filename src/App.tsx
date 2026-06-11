@@ -107,7 +107,10 @@ import {
   buildSelectedCustomAgentDisplay,
   buildSkillMatchDisplay,
 } from "./session-composer-selection.js";
-import { runAuxiliaryCustomAgentSelectionOperation } from "./auxiliary-custom-agent-operation.js";
+import {
+  runAuxiliaryCustomAgentPatchOperation,
+  runAuxiliaryCustomAgentSelectionOperation,
+} from "./auxiliary-custom-agent-operation.js";
 import { runAuxiliarySkillPromptInsertionOperation } from "./auxiliary-skill-prompt-operation.js";
 import {
   buildAdditionalDirectoryItems,
@@ -146,7 +149,6 @@ import { buildCompanionGroupMonitorEntries } from "./home/home-session-projectio
 import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
-  applyAuxiliarySessionCustomAgentPatch,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveClosedAuxiliarySessionsAfterReturn,
   type AuxiliarySession,
@@ -1995,9 +1997,11 @@ export default function AgentSessionWindowApp() {
       activeSession: activeAuxiliarySession,
       customAgentName: nextCustomAgentName,
       updateCustomAgent: async (customAgentName) => {
-        await updateActiveAuxiliarySession((current) => (
-          applyAuxiliarySessionCustomAgentPatch(current, customAgentName, currentTimestampLabel())
-        ));
+        await runAuxiliaryCustomAgentPatchOperation({
+          customAgentName,
+          updateActiveAuxiliarySession,
+          createTimestampLabel: currentTimestampLabel,
+        });
       },
       closeAgentPicker,
     });

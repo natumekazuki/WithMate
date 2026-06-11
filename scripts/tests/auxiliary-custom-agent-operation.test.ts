@@ -1,7 +1,37 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { runAuxiliaryCustomAgentSelectionOperation } from "../../src/auxiliary-custom-agent-operation.js";
+import {
+  runAuxiliaryCustomAgentPatchOperation,
+  runAuxiliaryCustomAgentSelectionOperation,
+} from "../../src/auxiliary-custom-agent-operation.js";
+import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
+
+function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
+  return {
+    id: "aux-1",
+    parentSessionId: "parent-1",
+    status: "active",
+    runState: "idle",
+    title: "Auxiliary",
+    provider: "copilot",
+    catalogRevision: 1,
+    model: "gpt-5.4",
+    reasoningEffort: "medium",
+    approvalMode: "untrusted",
+    codexSandboxMode: "workspace-write",
+    customAgentName: "",
+    allowedAdditionalDirectories: [],
+    threadId: "",
+    composerDraft: "",
+    messages: [],
+    displayAfterMessageIndex: null,
+    createdAt: "",
+    updatedAt: "",
+    closedAt: "",
+    ...overrides,
+  };
+}
 
 describe("runAuxiliaryCustomAgentSelectionOperation", () => {
   it("active session がない場合は no-op", async () => {
@@ -79,5 +109,26 @@ describe("runAuxiliaryCustomAgentSelectionOperation", () => {
       "updated",
     );
     assert.deepEqual(events, ["update:reviewer", "close"]);
+  });
+});
+
+describe("runAuxiliaryCustomAgentPatchOperation", () => {
+  it("custom agent patch を active session updater に渡す", async () => {
+    const current = makeAuxiliarySession({ customAgentName: "planner", updatedAt: "before" });
+    let updated: AuxiliarySession | null = null;
+
+    await runAuxiliaryCustomAgentPatchOperation({
+      customAgentName: "reviewer",
+      updateActiveAuxiliarySession: async (recipe) => {
+        updated = recipe(current);
+      },
+      createTimestampLabel: () => "updated",
+    });
+
+    assert.deepEqual(updated, {
+      ...current,
+      customAgentName: "reviewer",
+      updatedAt: "updated",
+    });
   });
 });
