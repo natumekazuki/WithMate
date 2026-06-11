@@ -1691,12 +1691,19 @@ export default function AgentSessionWindowApp() {
     getTextarea: () => composerTextareaRef.current,
     applySelection: (nextState) => {
       const { draft: nextDraft, caret: nextCaret } = nextState;
-      setComposerCaret(nextCaret);
       if (activeAuxiliarySession) {
+        setComposerCaret(nextCaret);
         void handleAuxiliaryDraftChange(nextDraft, nextCaret);
       } else {
-        setDraft(nextDraft);
-        mainComposerCaretRef.current = nextCaret;
+        applyComposerDraftChangeCommand({
+          value: nextDraft,
+          selectionStart: nextCaret,
+          setDraft,
+          setComposerCaret,
+          syncMainComposerCaret: (selectionStart) => {
+            mainComposerCaretRef.current = selectionStart;
+          },
+        });
       }
       applyWorkspacePathMatchState(nextState);
     },
