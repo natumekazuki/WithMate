@@ -376,8 +376,12 @@ export function useMateTalkWindowState({
     getDraft: () => input,
     normalizeAttachmentPathCandidates: resolvePathReferenceRemovalTargets,
     applyRemoval: ({ draft: nextInput, caret: nextCaret }, removalTargets) => {
-      setInput(nextInput);
-      setInputCaret(nextCaret);
+      applyComposerDraftChangeCommand({
+        value: nextInput,
+        selectionStart: nextCaret,
+        setDraft: setInput,
+        setComposerCaret: setInputCaret,
+      });
       setPathReferences((current) => removePathReferenceAttachments(current, removalTargets));
     },
   });

@@ -2399,11 +2399,18 @@ export default function AgentSessionWindowApp() {
       const { draft: nextDraft, caret: nextCaret } = nextState;
       if (activeAuxiliarySession) {
         void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+        setComposerCaret(nextCaret);
       } else {
-        setDraft(nextDraft);
-        mainComposerCaretRef.current = nextCaret;
+        applyComposerDraftChangeCommand({
+          value: nextDraft,
+          selectionStart: nextCaret,
+          setDraft,
+          setComposerCaret,
+          syncMainComposerCaret: (selectionStart) => {
+            mainComposerCaretRef.current = selectionStart;
+          },
+        });
       }
-      setComposerCaret(nextCaret);
       applyWorkspacePathMatchState(nextState);
     },
   });

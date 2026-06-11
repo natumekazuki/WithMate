@@ -1572,13 +1572,18 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     getDraft: () => activeComposerText,
     applyRemoval: (nextState) => {
       const { draft: nextDraft, caret: nextCaret } = nextState;
-      setComposerCaret(nextCaret);
-      applyWorkspacePathMatchState(nextState);
       if (activeAuxiliarySession) {
+        setComposerCaret(nextCaret);
         void handleAuxiliaryDraftChange(nextDraft, nextCaret);
       } else {
-        setComposerText(nextDraft);
+        applyComposerDraftChangeCommand({
+          value: nextDraft,
+          selectionStart: nextCaret,
+          setDraft: setComposerText,
+          setComposerCaret,
+        });
       }
+      applyWorkspacePathMatchState(nextState);
     },
   });
 
