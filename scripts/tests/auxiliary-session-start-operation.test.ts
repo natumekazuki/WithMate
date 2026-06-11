@@ -8,6 +8,7 @@ import {
   createActiveAuxiliarySessionStartResultApplier,
   createAuxiliarySessionStartResultApplier,
   finishAuxiliarySessionStartClosedLoad,
+  finishAuxiliarySessionStartClosedLoadWithApi,
   runAuxiliarySessionStartOperation,
 } from "../../src/auxiliary-session-start-operation.js";
 import type {
@@ -290,6 +291,48 @@ describe("finishAuxiliarySessionStartClosedLoad", () => {
       getAuxiliarySession: async (sessionId) => {
         events.push(`get:${sessionId}`);
         return closedSession;
+      },
+      isActive: () => true,
+      setClosedSessions: (sessions) => {
+        events.push("closed");
+        appliedClosedSessions.push(sessions);
+      },
+      setActionPending: (pending) => {
+        events.push(`pending:${pending}`);
+      },
+    });
+
+    assert.deepEqual(events.slice(0, 2), ["list:parent-1", "pending:false"]);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.deepEqual(events, [
+      "list:parent-1",
+      "pending:false",
+      "get:closed-1",
+      "closed",
+    ]);
+    assert.deepEqual(appliedClosedSessions, [[closedSession]]);
+  });
+});
+
+describe("finishAuxiliarySessionStartClosedLoadWithApi", () => {
+  it("api adapter 経由で closed sessions reload と pending clear を実行する", async () => {
+    const closedSession = makeAuxiliarySession({ id: "closed-1", status: "closed" });
+    const events: string[] = [];
+    const appliedClosedSessions: AuxiliarySession[][] = [];
+
+    finishAuxiliarySessionStartClosedLoadWithApi({
+      parentSessionId: "parent-1",
+      api: {
+        listAuxiliarySessions: async (parentSessionId) => {
+          events.push(`list:${parentSessionId}`);
+          return [closedSession];
+        },
+        getAuxiliarySession: async (sessionId) => {
+          events.push(`get:${sessionId}`);
+          return closedSession;
+        },
       },
       isActive: () => true,
       setClosedSessions: (sessions) => {

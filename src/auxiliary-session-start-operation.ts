@@ -114,3 +114,23 @@ export function finishAuxiliarySessionStartClosedLoad(input: {
   });
   input.setActionPending(false);
 }
+
+export function finishAuxiliarySessionStartClosedLoadWithApi(input: {
+  parentSessionId: string;
+  api: {
+    listAuxiliarySessions: (parentSessionId: string) => Promise<AuxiliarySessionSummary[]>;
+    getAuxiliarySession: (sessionId: string) => Promise<AuxiliarySession | null>;
+  };
+  isActive: () => boolean;
+  setClosedSessions: (sessions: AuxiliarySession[]) => void;
+  setActionPending: (pending: boolean) => void;
+}): void {
+  finishAuxiliarySessionStartClosedLoad({
+    parentSessionId: input.parentSessionId,
+    listAuxiliarySessions: (parentSessionId) => input.api.listAuxiliarySessions(parentSessionId),
+    getAuxiliarySession: (sessionId) => input.api.getAuxiliarySession(sessionId),
+    isActive: input.isActive,
+    setClosedSessions: input.setClosedSessions,
+    setActionPending: input.setActionPending,
+  });
+}

@@ -91,7 +91,7 @@ import {
   applyAuxiliarySessionStartError,
   beginAuxiliarySessionStartOperation,
   createActiveAuxiliarySessionStartResultApplier,
-  finishAuxiliarySessionStartClosedLoad,
+  finishAuxiliarySessionStartClosedLoadWithApi,
   runAuxiliarySessionStartOperation,
 } from "./auxiliary-session-start-operation.js";
 import {
@@ -1819,10 +1819,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         setLaunchStartError: setAuxiliaryLaunchStartError,
       });
     } finally {
-      finishAuxiliarySessionStartClosedLoad({
+      finishAuxiliarySessionStartClosedLoadWithApi({
         parentSessionId,
-        listAuxiliarySessions: (sessionId) => withmateApi.listAuxiliarySessions(sessionId),
-        getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
+        api: withmateApi,
         isActive: canApplyLoadResult,
         setClosedSessions: setClosedAuxiliarySessions,
         setActionPending: setIsAuxiliaryActionPending,
