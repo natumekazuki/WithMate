@@ -210,6 +210,7 @@ import {
   resolvePendingAuxiliaryMessageGroupId,
 } from "./auxiliary-session-message-projection.js";
 import {
+  applyAuxiliaryDraftChangeUiState,
   applyScheduledAuxiliaryDraftSaveUiState,
   createAppliedAuxiliaryDraftSaveResultResolver,
   runAuxiliaryDraftPatchOperation,
@@ -2248,8 +2249,11 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleAuxiliaryDraftChange = async (value: string, selectionStart: number) => {
-    setForceComposerBlockedFeedback(false);
-    setComposerCaret(selectionStart);
+    applyAuxiliaryDraftChangeUiState({
+      selectionStart,
+      clearBlockedFeedback: () => setForceComposerBlockedFeedback(false),
+      setComposerCaret,
+    });
     if (!withmateApi || !activeAuxiliarySession) {
       return;
     }

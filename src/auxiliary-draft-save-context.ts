@@ -109,6 +109,15 @@ export function createAppliedAuxiliaryDraftSaveResultResolver(input: {
   });
 }
 
+export function applyAuxiliaryDraftChangeUiState(input: {
+  selectionStart: number;
+  clearBlockedFeedback: () => void;
+  setComposerCaret: (caret: number) => void;
+}): void {
+  input.clearBlockedFeedback();
+  input.setComposerCaret(input.selectionStart);
+}
+
 export async function runAuxiliaryDraftPatchOperation(input: {
   draft: string;
   updateActiveAuxiliarySession: UpdateActiveAuxiliarySession;

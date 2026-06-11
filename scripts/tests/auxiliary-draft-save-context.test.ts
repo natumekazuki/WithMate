@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  applyAuxiliaryDraftChangeUiState,
   applyScheduledAuxiliaryDraftSaveUiState,
   areStringArraysEqual,
   createAppliedAuxiliaryDraftSaveResultResolver,
@@ -40,6 +41,24 @@ function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxili
     ...overrides,
   };
 }
+
+describe("applyAuxiliaryDraftChangeUiState", () => {
+  it("blocked feedback を clear して composer caret を更新する", () => {
+    const events: string[] = [];
+
+    applyAuxiliaryDraftChangeUiState({
+      selectionStart: 7,
+      clearBlockedFeedback: () => {
+        events.push("feedback:false");
+      },
+      setComposerCaret: (caret) => {
+        events.push(`caret:${caret}`);
+      },
+    });
+
+    assert.deepEqual(events, ["feedback:false", "caret:7"]);
+  });
+});
 
 describe("areStringArraysEqual", () => {
   it("同順同長なら true", () => {

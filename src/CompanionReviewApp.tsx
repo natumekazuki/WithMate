@@ -226,6 +226,7 @@ import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
 import { createPastedSessionAttachmentHandler } from "./chat/composer-paste-handlers.js";
 import {
+  applyAuxiliaryDraftChangeUiState,
   applyScheduledAuxiliaryDraftSaveUiState,
   createAppliedAuxiliaryDraftSaveResultResolver,
   runAuxiliaryDraftPatchOperation,
@@ -1869,8 +1870,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   async function handleAuxiliaryDraftChange(value: string, selectionStart: number): Promise<void> {
-    setForceComposerBlockedFeedback(false);
-    setComposerCaret(selectionStart);
+    applyAuxiliaryDraftChangeUiState({
+      selectionStart,
+      clearBlockedFeedback: () => setForceComposerBlockedFeedback(false),
+      setComposerCaret,
+    });
     const withmateApi = getWithMateApi();
     if (!withmateApi || !activeAuxiliarySession) {
       return;
