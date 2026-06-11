@@ -8,6 +8,7 @@ import {
   clearAuxiliarySessionsLoadState,
   runActiveAuxiliarySessionLoadAndApply,
   runActiveAuxiliarySessionLoadOperation,
+  runActiveAuxiliarySessionRefreshAndApply,
   runActiveAuxiliarySessionRefreshOperation,
   runClosedAuxiliarySessionsLoadAndApply,
   runClosedAuxiliarySessionsLoadOperation,
@@ -135,6 +136,73 @@ test("applyActiveAuxiliarySessionRefreshResult は反映しない場合 active r
     }),
     currentSession,
   );
+  assert.equal(activeSessionRef.current, currentSession);
+});
+
+test("runActiveAuxiliarySessionRefreshAndApply は loaded result を active session と ref に反映する", async () => {
+  const currentSession = createAuxiliarySession({ id: "aux-1", title: "current" });
+  const savedSession = createAuxiliarySession({ id: "aux-1", title: "saved" });
+  const activeSessionRef = { current: currentSession as AuxiliarySession | null };
+  const appliedSessions: Array<AuxiliarySession | null> = [];
+
+  const result = await runActiveAuxiliarySessionRefreshAndApply({
+    sessionId: savedSession.id,
+    activeSessionId: savedSession.id,
+    loadAuxiliarySession: async () => savedSession,
+    isActive: () => true,
+    setActiveSession: (updater) => {
+      const nextSession = updater(currentSession);
+      appliedSessions.push(nextSession);
+    },
+    activeSessionRef,
+  });
+
+  assert.deepEqual(result, {
+    status: "loaded",
+    savedSession,
+  });
+  assert.deepEqual(appliedSessions, [savedSession]);
+  assert.equal(activeSessionRef.current, savedSession);
+});
+
+test("runActiveAuxiliarySessionRefreshAndApply は stale / skipped result では active session を変更しない", async () => {
+  const currentSession = createAuxiliarySession({ id: "aux-1", title: "current" });
+  const activeSessionRef = { current: currentSession as AuxiliarySession | null };
+  const appliedSessions: Array<AuxiliarySession | null> = [];
+  let active = true;
+
+  assert.deepEqual(
+    await runActiveAuxiliarySessionRefreshAndApply({
+      sessionId: "aux-1",
+      activeSessionId: "aux-other",
+      loadAuxiliarySession: async () => createAuxiliarySession(),
+      isActive: () => true,
+      setActiveSession: (updater) => {
+        appliedSessions.push(updater(currentSession));
+      },
+      activeSessionRef,
+    }),
+    { status: "skipped" },
+  );
+
+  assert.deepEqual(
+    await runActiveAuxiliarySessionRefreshAndApply({
+      sessionId: "aux-1",
+      activeSessionId: "aux-1",
+      loadAuxiliarySession: async () => {
+        active = false;
+        return createAuxiliarySession({ id: "aux-1", title: "saved" });
+      },
+      isActive: () => active,
+      setActiveSession: (updater) => {
+        appliedSessions.push(updater(currentSession));
+      },
+      activeSessionRef,
+    }),
+    { status: "stale" },
+  );
+
+  assert.deepEqual(appliedSessions, []);
   assert.equal(activeSessionRef.current, currentSession);
 });
 

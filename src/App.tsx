@@ -158,10 +158,9 @@ import {
   runAuxiliarySandboxModeChangeOperation,
 } from "./auxiliary-runtime-option-operation.js";
 import {
-  applyActiveAuxiliarySessionRefreshResult,
   clearAuxiliarySessionsLoadState,
   runActiveAuxiliarySessionLoadAndApply,
-  runActiveAuxiliarySessionRefreshOperation,
+  runActiveAuxiliarySessionRefreshAndApply,
   runClosedAuxiliarySessionsLoadAndApply,
 } from "./auxiliary-session-refresh-operation.js";
 import {
@@ -988,24 +987,13 @@ export default function AgentSessionWindowApp() {
 
     const activeAuxiliarySessionId = activeAuxiliarySession?.id ?? null;
     const refreshCompletedAuxiliarySession = (sessionId: string) => {
-      void runActiveAuxiliarySessionRefreshOperation({
+      void runActiveAuxiliarySessionRefreshAndApply({
         sessionId,
         activeSessionId: activeAuxiliarySessionId,
         loadAuxiliarySession: (targetSessionId) => withmateApi.getAuxiliarySession(targetSessionId),
         isActive: () => active,
-      }).then((result) => {
-        if (result.status !== "loaded") {
-          return;
-        }
-
-        setActiveAuxiliarySession((current) => {
-          return applyActiveAuxiliarySessionRefreshResult({
-            currentSession: current,
-            savedSession: result.savedSession,
-            sessionId,
-            activeSessionRef: activeAuxiliarySessionRef,
-          });
-        });
+        setActiveSession: setActiveAuxiliarySession,
+        activeSessionRef: activeAuxiliarySessionRef,
       }).catch((error) => {
         console.error(error);
       });
