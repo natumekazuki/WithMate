@@ -238,6 +238,7 @@ import {
 import {
   applyAuxiliarySessionReturnToMainUiState,
   applyReturnedAuxiliaryClosedSession,
+  resolveAuxiliarySessionReturnToMainErrorMessage,
   runAuxiliarySessionReturnToMainOperation,
 } from "./auxiliary-session-return-operation.js";
 import {
@@ -1875,7 +1876,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         },
       });
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "Auxiliary Session の終了に失敗したよ。");
+      window.alert(resolveAuxiliarySessionReturnToMainErrorMessage(error));
     } finally {
       setIsAuxiliaryActionPending(false);
     }

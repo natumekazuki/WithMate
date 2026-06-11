@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   applyAuxiliarySessionReturnToMainUiState,
   applyReturnedAuxiliaryClosedSession,
+  resolveAuxiliarySessionReturnToMainErrorMessage,
   runAuxiliarySessionReturnToMainOperation,
 } from "../../src/auxiliary-session-return-operation.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
@@ -160,5 +161,13 @@ describe("runAuxiliarySessionReturnToMainOperation", () => {
       error,
     );
     assert.deepEqual(events, ["before", "close"]);
+  });
+
+  it("return-to-main failure message は Error message を優先し、非 Error は fallback を返す", () => {
+    assert.equal(resolveAuxiliarySessionReturnToMainErrorMessage(new Error("close failed")), "close failed");
+    assert.equal(
+      resolveAuxiliarySessionReturnToMainErrorMessage("close failed"),
+      "Auxiliary Session の終了に失敗したよ。",
+    );
   });
 });

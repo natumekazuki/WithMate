@@ -3,6 +3,8 @@ import {
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
 
+const AUXILIARY_SESSION_RETURN_FAILED_MESSAGE = "Auxiliary Session の終了に失敗したよ。";
+
 export function applyAuxiliarySessionReturnToMainUiState(input: {
   mutationRevision: { current: number };
   activeSessionRef: { current: AuxiliarySession | null };
@@ -19,6 +21,10 @@ export function applyAuxiliarySessionReturnToMainUiState(input: {
   input.setComposerCaret(Math.min(input.mainCaret, input.mainDraft.length));
   input.setActionDockPinnedExpanded(false);
   input.setForceComposerBlockedFeedback(false);
+}
+
+export function resolveAuxiliarySessionReturnToMainErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : AUXILIARY_SESSION_RETURN_FAILED_MESSAGE;
 }
 
 export function applyReturnedAuxiliaryClosedSession(
