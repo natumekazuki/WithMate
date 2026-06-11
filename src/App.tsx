@@ -107,6 +107,7 @@ import {
   buildSelectedCustomAgentDisplay,
   buildSkillMatchDisplay,
 } from "./session-composer-selection.js";
+import { runAuxiliaryCustomAgentSelectionOperation } from "./auxiliary-custom-agent-operation.js";
 import { runAuxiliarySkillPromptInsertionOperation } from "./auxiliary-skill-prompt-operation.js";
 import {
   buildAdditionalDirectoryItems,
@@ -1987,20 +1988,17 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleSelectAuxiliaryCustomAgent = async (agent: DiscoveredCustomAgent | null) => {
-    if (!activeAuxiliarySession || activeAuxiliarySession.provider !== "copilot") {
-      return;
-    }
-
     const nextCustomAgentName = (agent?.name ?? "").trim();
-    if (nextCustomAgentName === activeAuxiliarySession.customAgentName) {
-      closeAgentPicker();
-      return;
-    }
-
-    await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionCustomAgentPatch(current, nextCustomAgentName, currentTimestampLabel())
-    ));
-    closeAgentPicker();
+    await runAuxiliaryCustomAgentSelectionOperation({
+      activeSession: activeAuxiliarySession,
+      customAgentName: nextCustomAgentName,
+      updateCustomAgent: async (customAgentName) => {
+        await updateActiveAuxiliarySession((current) => (
+          applyAuxiliarySessionCustomAgentPatch(current, customAgentName, currentTimestampLabel())
+        ));
+      },
+      closeAgentPicker,
+    });
   };
 
   const handleSelectAuxiliarySkill = async (skill: DiscoveredSkill) => {

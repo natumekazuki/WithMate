@@ -144,6 +144,7 @@ import {
   buildSelectedCustomAgentDisplay,
   buildSkillMatchDisplay,
 } from "./session-composer-selection.js";
+import { runAuxiliaryCustomAgentSelectionOperation } from "./auxiliary-custom-agent-operation.js";
 import { runAuxiliarySkillPromptInsertionOperation } from "./auxiliary-skill-prompt-operation.js";
 import {
   buildAdditionalDirectoryItems,
@@ -2018,20 +2019,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   async function handleSelectAuxiliaryCustomAgent(agent: DiscoveredCustomAgent | null): Promise<void> {
-    if (!activeAuxiliarySession || activeAuxiliarySession.provider !== "copilot") {
-      return;
-    }
-
     const nextCustomAgentName = agent?.name ?? "";
-    if (nextCustomAgentName === activeAuxiliarySession.customAgentName) {
-      closeAgentPicker();
-      return;
-    }
-
-    await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionCustomAgentPatch(current, nextCustomAgentName, currentTimestampLabel())
-    ));
-    closeAgentPicker();
+    await runAuxiliaryCustomAgentSelectionOperation({
+      activeSession: activeAuxiliarySession,
+      customAgentName: nextCustomAgentName,
+      updateCustomAgent: async (customAgentName) => {
+        await updateActiveAuxiliarySession((current) => (
+          applyAuxiliarySessionCustomAgentPatch(current, customAgentName, currentTimestampLabel())
+        ));
+      },
+      closeAgentPicker,
+    });
   }
 
   async function handleSelectAuxiliarySkill(skill: DiscoveredSkill): Promise<void> {
