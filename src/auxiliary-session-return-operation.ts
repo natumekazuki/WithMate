@@ -1,5 +1,23 @@
 import type { AuxiliarySession } from "./auxiliary-session-state.js";
 
+export function applyAuxiliarySessionReturnToMainUiState(input: {
+  mutationRevision: { current: number };
+  activeSessionRef: { current: AuxiliarySession | null };
+  setActiveSession: (session: AuxiliarySession | null) => void;
+  mainDraft: string;
+  mainCaret: number;
+  setComposerCaret: (caret: number) => void;
+  setActionDockPinnedExpanded: (expanded: boolean) => void;
+  setForceComposerBlockedFeedback: (forced: boolean) => void;
+}): void {
+  input.mutationRevision.current += 1;
+  input.activeSessionRef.current = null;
+  input.setActiveSession(null);
+  input.setComposerCaret(Math.min(input.mainCaret, input.mainDraft.length));
+  input.setActionDockPinnedExpanded(false);
+  input.setForceComposerBlockedFeedback(false);
+}
+
 export async function runAuxiliarySessionReturnToMainOperation(input: {
   activeSession: AuxiliarySession | null;
   beforeClose?: () => void;

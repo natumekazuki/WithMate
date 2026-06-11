@@ -216,7 +216,10 @@ import {
   runAddAuxiliaryAdditionalDirectoryOperation,
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "./auxiliary-additional-directory-operation.js";
-import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
+import {
+  applyAuxiliarySessionReturnToMainUiState,
+  runAuxiliarySessionReturnToMainOperation,
+} from "./auxiliary-session-return-operation.js";
 import {
   applyAuxiliarySessionStartResult,
   runAuxiliarySessionStartOperation,
@@ -2228,12 +2231,16 @@ export default function AgentSessionWindowApp() {
           setClosedAuxiliarySessions((current) => resolveClosedAuxiliarySessionsAfterReturn(current, closedSession));
         },
         applyReturnedMainSession: () => {
-          auxiliarySessionMutationRevisionRef.current += 1;
-          activeAuxiliarySessionRef.current = null;
-          setActiveAuxiliarySession(null);
-          setComposerCaret(Math.min(mainComposerCaretRef.current, draft.length));
-          setIsActionDockPinnedExpanded(false);
-          setForceComposerBlockedFeedback(false);
+          applyAuxiliarySessionReturnToMainUiState({
+            mutationRevision: auxiliarySessionMutationRevisionRef,
+            activeSessionRef: activeAuxiliarySessionRef,
+            setActiveSession: setActiveAuxiliarySession,
+            mainDraft: draft,
+            mainCaret: mainComposerCaretRef.current,
+            setComposerCaret,
+            setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+            setForceComposerBlockedFeedback,
+          });
         },
       });
     } catch (error) {

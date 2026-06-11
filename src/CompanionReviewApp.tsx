@@ -227,7 +227,10 @@ import {
   runAddAuxiliaryAdditionalDirectoryOperation,
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "./auxiliary-additional-directory-operation.js";
-import { runAuxiliarySessionReturnToMainOperation } from "./auxiliary-session-return-operation.js";
+import {
+  applyAuxiliarySessionReturnToMainUiState,
+  runAuxiliarySessionReturnToMainOperation,
+} from "./auxiliary-session-return-operation.js";
 import {
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
@@ -1848,12 +1851,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           setClosedAuxiliarySessions((current) => resolveClosedAuxiliarySessionsAfterReturn(current, closedSession));
         },
         applyReturnedMainSession: () => {
-          auxiliarySessionMutationRevisionRef.current += 1;
-          activeAuxiliarySessionRef.current = null;
-          setActiveAuxiliarySession(null);
-          setComposerCaret(Math.min(composerCaret, composerText.length));
-          setIsActionDockPinnedExpanded(false);
-          setForceComposerBlockedFeedback(false);
+          applyAuxiliarySessionReturnToMainUiState({
+            mutationRevision: auxiliarySessionMutationRevisionRef,
+            activeSessionRef: activeAuxiliarySessionRef,
+            setActiveSession: setActiveAuxiliarySession,
+            mainDraft: composerText,
+            mainCaret: composerCaret,
+            setComposerCaret,
+            setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+            setForceComposerBlockedFeedback,
+          });
         },
       });
     } catch (error) {

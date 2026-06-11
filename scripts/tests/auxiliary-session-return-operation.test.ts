@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { runAuxiliarySessionReturnToMainOperation } from "../../src/auxiliary-session-return-operation.js";
+import {
+  applyAuxiliarySessionReturnToMainUiState,
+  runAuxiliarySessionReturnToMainOperation,
+} from "../../src/auxiliary-session-return-operation.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 
 function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
@@ -31,6 +34,48 @@ function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxili
 }
 
 describe("runAuxiliarySessionReturnToMainOperation", () => {
+  it("return-to-main UI state は active session を閉じて main caret を draft 長に丸める", () => {
+    const active = makeAuxiliarySession({ id: "aux-active" });
+    const mutationRevision = { current: 2 };
+    const activeSessionRef = { current: active as AuxiliarySession | null };
+    const events: string[] = [];
+    let activeSession: AuxiliarySession | null = active;
+    let composerCaret = 0;
+    let actionDockExpanded = true;
+    let forceBlockedFeedback = true;
+
+    applyAuxiliarySessionReturnToMainUiState({
+      mutationRevision,
+      activeSessionRef,
+      setActiveSession: (session) => {
+        activeSession = session;
+        events.push("active");
+      },
+      mainDraft: "hello",
+      mainCaret: 99,
+      setComposerCaret: (caret) => {
+        composerCaret = caret;
+        events.push(`caret:${caret}`);
+      },
+      setActionDockPinnedExpanded: (expanded) => {
+        actionDockExpanded = expanded;
+        events.push(`dock:${expanded}`);
+      },
+      setForceComposerBlockedFeedback: (forced) => {
+        forceBlockedFeedback = forced;
+        events.push(`feedback:${forced}`);
+      },
+    });
+
+    assert.equal(mutationRevision.current, 3);
+    assert.equal(activeSessionRef.current, null);
+    assert.equal(activeSession, null);
+    assert.equal(composerCaret, 5);
+    assert.equal(actionDockExpanded, false);
+    assert.equal(forceBlockedFeedback, false);
+    assert.deepEqual(events, ["active", "caret:5", "dock:false", "feedback:false"]);
+  });
+
   it("active session がない場合は close せず null を返す", async () => {
     let closed = false;
 
