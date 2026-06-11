@@ -205,7 +205,8 @@ import {
   resolvePendingAuxiliaryMessageGroupId,
 } from "./auxiliary-session-message-projection.js";
 import {
-  resolveAuxiliaryDraftSaveOperationResult,
+  applyScheduledAuxiliaryDraftSaveUiState,
+  resolveAppliedAuxiliaryDraftSaveResult,
   scheduleAuxiliaryDraftSaveOperation,
 } from "./auxiliary-draft-save-context.js";
 import {
@@ -2270,19 +2271,21 @@ export default function AgentSessionWindowApp() {
         );
       },
     });
-    const { nextSession, saveOperation } = draftSave;
-    auxiliarySessionMutationRevisionRef.current += 1;
-    activeAuxiliarySessionRef.current = nextSession;
-    setActiveAuxiliarySession(nextSession);
-    auxiliaryDraftSaveQueueRef.current = draftSave.draftSaveQueue;
+    const saveOperation = applyScheduledAuxiliaryDraftSaveUiState({
+      scheduled: draftSave,
+      mutationRevision: auxiliarySessionMutationRevisionRef,
+      activeSessionRef: activeAuxiliarySessionRef,
+      draftSaveQueueRef: auxiliaryDraftSaveQueueRef,
+      setActiveSession: setActiveAuxiliarySession,
+    });
     try {
       const result = await saveOperation;
       setActiveAuxiliarySession((current) => {
-        const nextSession = resolveAuxiliaryDraftSaveOperationResult(current, result);
-        if (result && nextSession === result.saved) {
-          activeAuxiliarySessionRef.current = result.saved;
-        }
-        return nextSession;
+        return resolveAppliedAuxiliaryDraftSaveResult({
+          current,
+          result,
+          activeSessionRef: activeAuxiliarySessionRef,
+        });
       });
     } catch (error) {
       console.error(error);

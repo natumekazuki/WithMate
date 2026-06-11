@@ -118,6 +118,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-11: App / Companion の送信直前 composer preview request 作成も `createComposerPreviewRequest` 経由へ移行。App は session preview、Companion main は companion preview を使い、preview 結果の state 反映、send preflight、draft clear、provider 実行は未変更。`scripts/tests/composer-preview-resolution.test.ts`、`scripts/tests/session-composer-feedback.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: Companion の Auxiliary cancel target 組み立てを `buildRunningSessionCancelTarget` 経由へ移行し、App の Auxiliary cancel と同じ `runRunningSessionCancelOperation` contract に揃えた。cancel API、error 表示、Auxiliary send/save、provider 実行は未変更。`scripts/tests/chat-window-adapter.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の return-to-main 後 UI state 反映を `applyAuxiliarySessionReturnToMainUiState` に集約。mutation revision、active ref/session clear、main caret clamp、ActionDock collapse、blocked feedback clear の順序を test で固定し、close API、closed list 反映、error 表示は未変更。`scripts/tests/auxiliary-session-return-operation.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-11: App / Companion の Auxiliary draft save optimistic UI 反映と saved result ref 同期を `auxiliary-draft-save-context` に集約。save scheduling、save queue、status 比較差分、error handling は呼び出し側に残し、mutation revision / active ref / draft save queue 反映の順序を test で固定。`scripts/tests/auxiliary-draft-save-context.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -370,6 +371,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の Auxiliary cancel operation を `send-or-cancel` helper 経由へ統一。2026-06-10 着手。
 - Companion の Auxiliary cancel target 組み立ても `buildRunningSessionCancelTarget` に接続。2026-06-11 着手。
 - App / Companion の return-to-main 後 UI state 反映を `auxiliary-session-return-operation` に接続。2026-06-11 着手。
+- App / Companion の Auxiliary draft save optimistic UI 反映と saved result ref 同期を `auxiliary-draft-save-context` に接続。2026-06-11 着手。
 
 やらないこと:
 

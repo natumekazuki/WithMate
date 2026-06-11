@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  applyScheduledAuxiliaryDraftSaveUiState,
   areStringArraysEqual,
   hasSameAuxiliaryDraftSaveContext,
+  resolveAppliedAuxiliaryDraftSaveResult,
   resolveAuxiliaryDraftSaveOperationResult,
   resolveAuxiliaryDraftSaveResult,
   runAuxiliaryDraftSaveOperation,
@@ -127,6 +129,40 @@ describe("resolveAuxiliaryDraftSaveOperationResult", () => {
   });
 });
 
+describe("resolveAppliedAuxiliaryDraftSaveResult", () => {
+  it("saved を適用できた場合は active ref も saved に同期する", () => {
+    const current = makeAuxiliarySession({ composerDraft: "draft" });
+    const request = makeAuxiliarySession({ composerDraft: "draft" });
+    const saved = makeAuxiliarySession({ composerDraft: "draft", updatedAt: "saved" });
+    const activeSessionRef = { current };
+
+    const next = resolveAppliedAuxiliaryDraftSaveResult({
+      current,
+      result: { request, saved },
+      activeSessionRef,
+    });
+
+    assert.equal(next, saved);
+    assert.equal(activeSessionRef.current, saved);
+  });
+
+  it("saved を適用しない場合は active ref を維持する", () => {
+    const current = makeAuxiliarySession({ composerDraft: "newer" });
+    const request = makeAuxiliarySession({ composerDraft: "older" });
+    const saved = makeAuxiliarySession({ composerDraft: "older", updatedAt: "saved" });
+    const activeSessionRef = { current };
+
+    const next = resolveAppliedAuxiliaryDraftSaveResult({
+      current,
+      result: { request, saved },
+      activeSessionRef,
+    });
+
+    assert.equal(next, current);
+    assert.equal(activeSessionRef.current, current);
+  });
+});
+
 describe("runAuxiliaryDraftSaveOperation", () => {
   it("保存 request を作って save 結果を返す", async () => {
     const current = makeAuxiliarySession({ composerDraft: "draft", updatedAt: "current" });
@@ -196,6 +232,37 @@ describe("runAuxiliaryDraftSaveOperation", () => {
 });
 
 describe("scheduleAuxiliaryDraftSaveOperation", () => {
+  it("scheduled draft save の optimistic UI state を反映する", async () => {
+    const nextSession = makeAuxiliarySession({ composerDraft: "next" });
+    const saveOperation = Promise.resolve(null);
+    const draftSaveQueue = Promise.resolve();
+    const mutationRevision = { current: 4 };
+    const activeSessionRef = { current: makeAuxiliarySession() as AuxiliarySession | null };
+    const draftSaveQueueRef = { current: Promise.resolve() };
+    let activeSession: AuxiliarySession | null = null;
+
+    const returnedOperation = applyScheduledAuxiliaryDraftSaveUiState({
+      scheduled: {
+        nextSession,
+        saveOperation,
+        draftSaveQueue,
+      },
+      mutationRevision,
+      activeSessionRef,
+      draftSaveQueueRef,
+      setActiveSession: (session) => {
+        activeSession = session;
+      },
+    });
+
+    assert.equal(returnedOperation, saveOperation);
+    assert.equal(mutationRevision.current, 5);
+    assert.equal(activeSessionRef.current, nextSession);
+    assert.equal(activeSession, nextSession);
+    assert.equal(draftSaveQueueRef.current, draftSaveQueue);
+    await returnedOperation;
+  });
+
   it("draft patch を先に返し、既存 queue の後で最新 current session を保存する", async () => {
     let releaseQueue = () => {};
     const initialQueue = new Promise<void>((resolve) => {

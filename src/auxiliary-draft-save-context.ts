@@ -59,6 +59,39 @@ export function resolveAuxiliaryDraftSaveOperationResult(
   return resolveAuxiliaryDraftSaveResult(current, result.request, result.saved, options);
 }
 
+export function applyScheduledAuxiliaryDraftSaveUiState(input: {
+  scheduled: {
+    nextSession: AuxiliarySession;
+    saveOperation: Promise<AuxiliaryDraftSaveOperationResult>;
+    draftSaveQueue: Promise<void>;
+  };
+  mutationRevision: { current: number };
+  activeSessionRef: { current: AuxiliarySession | null };
+  draftSaveQueueRef: { current: Promise<void> };
+  setActiveSession: (session: AuxiliarySession) => void;
+}): Promise<AuxiliaryDraftSaveOperationResult> {
+  input.mutationRevision.current += 1;
+  input.activeSessionRef.current = input.scheduled.nextSession;
+  input.setActiveSession(input.scheduled.nextSession);
+  input.draftSaveQueueRef.current = input.scheduled.draftSaveQueue;
+  return input.scheduled.saveOperation;
+}
+
+export function resolveAppliedAuxiliaryDraftSaveResult(input: {
+  current: AuxiliarySession | null;
+  result: AuxiliaryDraftSaveOperationResult;
+  activeSessionRef: { current: AuxiliarySession | null };
+  compareStatus?: boolean;
+}): AuxiliarySession | null {
+  const nextSession = resolveAuxiliaryDraftSaveOperationResult(input.current, input.result, {
+    compareStatus: input.compareStatus,
+  });
+  if (input.result && nextSession === input.result.saved) {
+    input.activeSessionRef.current = input.result.saved;
+  }
+  return nextSession;
+}
+
 export async function runAuxiliaryDraftSaveOperation(input: {
   currentSession: AuxiliarySession | null;
   targetSessionId: string;
