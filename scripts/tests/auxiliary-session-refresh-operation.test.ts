@@ -6,6 +6,7 @@ import {
   applyActiveAuxiliarySessionRefreshResult,
   applyClosedAuxiliarySessionsLoadResult,
   clearAuxiliarySessionsLoadState,
+  runActiveAuxiliarySessionLoadAndApply,
   runActiveAuxiliarySessionLoadOperation,
   runActiveAuxiliarySessionRefreshOperation,
   runClosedAuxiliarySessionsLoadAndApply,
@@ -257,6 +258,60 @@ test("applyActiveAuxiliarySessionLoadResult は stale / skipped result では ac
       },
     }),
     false,
+  );
+
+  assert.deepEqual(appliedSessions, []);
+});
+
+test("runActiveAuxiliarySessionLoadAndApply は loaded result を active session に反映する", async () => {
+  const activeSession = createAuxiliarySession({ id: "aux-loaded" });
+  const appliedSessions: Array<AuxiliarySession | null> = [];
+
+  const result = await runActiveAuxiliarySessionLoadAndApply({
+    parentSessionId: "parent-1",
+    getActiveAuxiliarySession: async () => activeSession,
+    isActive: () => true,
+    setActiveSession: (session) => {
+      appliedSessions.push(session);
+    },
+  });
+
+  assert.deepEqual(result, {
+    status: "loaded",
+    session: activeSession,
+  });
+  assert.deepEqual(appliedSessions, [activeSession]);
+});
+
+test("runActiveAuxiliarySessionLoadAndApply は stale / skipped result では active session を変更しない", async () => {
+  const appliedSessions: Array<AuxiliarySession | null> = [];
+  let active = true;
+
+  assert.deepEqual(
+    await runActiveAuxiliarySessionLoadAndApply({
+      parentSessionId: null,
+      getActiveAuxiliarySession: async () => createAuxiliarySession(),
+      isActive: () => true,
+      setActiveSession: (session) => {
+        appliedSessions.push(session);
+      },
+    }),
+    { status: "skipped" },
+  );
+
+  assert.deepEqual(
+    await runActiveAuxiliarySessionLoadAndApply({
+      parentSessionId: "parent-1",
+      getActiveAuxiliarySession: async () => {
+        active = false;
+        return createAuxiliarySession();
+      },
+      isActive: () => active,
+      setActiveSession: (session) => {
+        appliedSessions.push(session);
+      },
+    }),
+    { status: "stale" },
   );
 
   assert.deepEqual(appliedSessions, []);

@@ -35,11 +35,10 @@ import {
   runAuxiliarySandboxModeChangeOperation,
 } from "./auxiliary-runtime-option-operation.js";
 import {
-  applyActiveAuxiliarySessionLoadResult,
   applyActiveAuxiliarySessionRefreshResult,
   clearAuxiliarySessionsLoadState,
+  runActiveAuxiliarySessionLoadAndApply,
   runActiveAuxiliarySessionRefreshOperation,
-  runActiveAuxiliarySessionLoadOperation,
   runClosedAuxiliarySessionsLoadAndApply,
 } from "./auxiliary-session-refresh-operation.js";
 import type {
@@ -579,15 +578,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       };
     }
 
-    void runActiveAuxiliarySessionLoadOperation({
+    void runActiveAuxiliarySessionLoadAndApply({
       parentSessionId: sessionId,
       getActiveAuxiliarySession: (parentSessionId) => withmateApi.getActiveAuxiliarySession(parentSessionId),
       isActive: canApplyLoadResult,
-    }).then((result) => {
-      applyActiveAuxiliarySessionLoadResult({
-        result,
-        setActiveSession: setActiveAuxiliarySession,
-      });
+      setActiveSession: setActiveAuxiliarySession,
     });
 
     void runClosedAuxiliarySessionsLoadAndApply({

@@ -106,6 +106,20 @@ export function applyActiveAuxiliarySessionLoadResult(input: {
   return true;
 }
 
+export async function runActiveAuxiliarySessionLoadAndApply(input: {
+  parentSessionId: string | null;
+  getActiveAuxiliarySession: (parentSessionId: string) => Promise<AuxiliarySession | null>;
+  isActive: () => boolean;
+  setActiveSession: (session: AuxiliarySession | null) => void;
+}): Promise<ActiveAuxiliarySessionLoadOperationResult> {
+  const result = await runActiveAuxiliarySessionLoadOperation(input);
+  applyActiveAuxiliarySessionLoadResult({
+    result,
+    setActiveSession: input.setActiveSession,
+  });
+  return result;
+}
+
 export type ClosedAuxiliarySessionsLoadOperationResult =
   | {
       status: "skipped";
