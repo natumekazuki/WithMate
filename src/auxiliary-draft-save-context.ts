@@ -4,6 +4,10 @@ import {
   buildAuxiliaryDraftSaveRequest,
 } from "./auxiliary-session-state.js";
 
+type UpdateActiveAuxiliarySession = (
+  recipe: (current: AuxiliarySession) => AuxiliarySession,
+) => Promise<void>;
+
 export function areStringArraysEqual(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
@@ -90,6 +94,16 @@ export function resolveAppliedAuxiliaryDraftSaveResult(input: {
     input.activeSessionRef.current = input.result.saved;
   }
   return nextSession;
+}
+
+export async function runAuxiliaryDraftPatchOperation(input: {
+  draft: string;
+  updateActiveAuxiliarySession: UpdateActiveAuxiliarySession;
+  createTimestampLabel: () => string;
+}): Promise<void> {
+  await input.updateActiveAuxiliarySession((current) => (
+    applyAuxiliarySessionComposerDraftPatch(current, input.draft, input.createTimestampLabel())
+  ));
 }
 
 export async function runAuxiliaryDraftSaveOperation(input: {

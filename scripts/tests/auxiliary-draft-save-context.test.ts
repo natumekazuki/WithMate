@@ -8,6 +8,7 @@ import {
   resolveAppliedAuxiliaryDraftSaveResult,
   resolveAuxiliaryDraftSaveOperationResult,
   resolveAuxiliaryDraftSaveResult,
+  runAuxiliaryDraftPatchOperation,
   runAuxiliaryDraftSaveOperation,
   scheduleAuxiliaryDraftSaveOperation,
 } from "../../src/auxiliary-draft-save-context.js";
@@ -160,6 +161,27 @@ describe("resolveAppliedAuxiliaryDraftSaveResult", () => {
 
     assert.equal(next, current);
     assert.equal(activeSessionRef.current, current);
+  });
+});
+
+describe("runAuxiliaryDraftPatchOperation", () => {
+  it("draft patch を active session updater に渡す", async () => {
+    const current = makeAuxiliarySession({ composerDraft: "before", updatedAt: "before" });
+    let updated: AuxiliarySession | null = null;
+
+    await runAuxiliaryDraftPatchOperation({
+      draft: "after",
+      updateActiveAuxiliarySession: async (recipe) => {
+        updated = recipe(current);
+      },
+      createTimestampLabel: () => "updated",
+    });
+
+    assert.deepEqual(updated, {
+      ...current,
+      composerDraft: "after",
+      updatedAt: "updated",
+    });
   });
 });
 

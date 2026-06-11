@@ -146,7 +146,6 @@ import { buildCompanionGroupMonitorEntries } from "./home/home-session-projectio
 import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
-  applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionCustomAgentPatch,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveClosedAuxiliarySessionsAfterReturn,
@@ -210,6 +209,7 @@ import {
 import {
   applyScheduledAuxiliaryDraftSaveUiState,
   resolveAppliedAuxiliaryDraftSaveResult,
+  runAuxiliaryDraftPatchOperation,
   scheduleAuxiliaryDraftSaveOperation,
 } from "./auxiliary-draft-save-context.js";
 import {
@@ -2017,9 +2017,11 @@ export default function AgentSessionWindowApp() {
         });
       },
       updateDraft: async (draft) => {
-        await updateActiveAuxiliarySession((current) => (
-          applyAuxiliarySessionComposerDraftPatch(current, draft, currentTimestampLabel())
-        ));
+        await runAuxiliaryDraftPatchOperation({
+          draft,
+          updateActiveAuxiliarySession,
+          createTimestampLabel: currentTimestampLabel,
+        });
       },
       afterDraftUpdated: (nextState) => {
         restoreComposerTextareaFocusAndCaret(textarea, nextState.caret);

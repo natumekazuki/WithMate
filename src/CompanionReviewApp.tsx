@@ -26,7 +26,6 @@ import {
 } from "./runtime-option-state.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import {
-  applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionCustomAgentPatch,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveClosedAuxiliarySessionsAfterReturn,
@@ -221,6 +220,7 @@ import { createPastedSessionAttachmentHandler } from "./chat/composer-paste-hand
 import {
   applyScheduledAuxiliaryDraftSaveUiState,
   resolveAppliedAuxiliaryDraftSaveResult,
+  runAuxiliaryDraftPatchOperation,
   scheduleAuxiliaryDraftSaveOperation,
 } from "./auxiliary-draft-save-context.js";
 import {
@@ -2047,9 +2047,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         });
       },
       updateDraft: async (draft) => {
-        await updateActiveAuxiliarySession((current) => (
-          applyAuxiliarySessionComposerDraftPatch(current, draft, currentTimestampLabel())
-        ));
+        await runAuxiliaryDraftPatchOperation({
+          draft,
+          updateActiveAuxiliarySession,
+          createTimestampLabel: currentTimestampLabel,
+        });
       },
     });
   }
