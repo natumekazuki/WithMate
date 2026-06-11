@@ -23,6 +23,21 @@ export function applyAuxiliarySessionReturnToMainUiState(input: {
   input.setForceComposerBlockedFeedback(false);
 }
 
+export function createAuxiliarySessionReturnToMainUiStateApplier(input: {
+  mutationRevision: { current: number };
+  activeSessionRef: { current: AuxiliarySession | null };
+  setActiveSession: (session: AuxiliarySession | null) => void;
+  mainDraft: string;
+  mainCaret: number;
+  setComposerCaret: (caret: number) => void;
+  setActionDockPinnedExpanded: (expanded: boolean) => void;
+  setForceComposerBlockedFeedback: (forced: boolean) => void;
+}): () => void {
+  return () => {
+    applyAuxiliarySessionReturnToMainUiState(input);
+  };
+}
+
 export function resolveAuxiliarySessionReturnToMainErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : AUXILIARY_SESSION_RETURN_FAILED_MESSAGE;
 }

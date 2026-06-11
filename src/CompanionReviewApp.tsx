@@ -235,7 +235,7 @@ import {
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "./auxiliary-additional-directory-operation.js";
 import {
-  applyAuxiliarySessionReturnToMainUiState,
+  createAuxiliarySessionReturnToMainUiStateApplier,
   createReturnedAuxiliaryClosedSessionApplier,
   resolveAuxiliarySessionReturnToMainErrorMessage,
   runAuxiliarySessionReturnToMainOperation,
@@ -1837,18 +1837,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         applyClosedSession: createReturnedAuxiliaryClosedSessionApplier({
           setClosedSessions: setClosedAuxiliarySessions,
         }),
-        applyReturnedMainSession: () => {
-          applyAuxiliarySessionReturnToMainUiState({
-            mutationRevision: auxiliarySessionMutationRevisionRef,
-            activeSessionRef: activeAuxiliarySessionRef,
-            setActiveSession: setActiveAuxiliarySession,
-            mainDraft: composerText,
-            mainCaret: composerCaret,
-            setComposerCaret,
-            setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
-            setForceComposerBlockedFeedback,
-          });
-        },
+        applyReturnedMainSession: createAuxiliarySessionReturnToMainUiStateApplier({
+          mutationRevision: auxiliarySessionMutationRevisionRef,
+          activeSessionRef: activeAuxiliarySessionRef,
+          setActiveSession: setActiveAuxiliarySession,
+          mainDraft: composerText,
+          mainCaret: composerCaret,
+          setComposerCaret,
+          setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+          setForceComposerBlockedFeedback,
+        }),
       });
     } catch (error) {
       window.alert(resolveAuxiliarySessionReturnToMainErrorMessage(error));

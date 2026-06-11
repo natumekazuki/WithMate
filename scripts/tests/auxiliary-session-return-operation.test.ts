@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   applyAuxiliarySessionReturnToMainUiState,
+  createAuxiliarySessionReturnToMainUiStateApplier,
   applyReturnedAuxiliaryClosedSession,
   createReturnedAuxiliaryClosedSessionApplier,
   resolveAuxiliarySessionReturnToMainErrorMessage,
@@ -76,6 +77,37 @@ describe("runAuxiliarySessionReturnToMainOperation", () => {
     assert.equal(composerCaret, 5);
     assert.equal(actionDockExpanded, false);
     assert.equal(forceBlockedFeedback, false);
+    assert.deepEqual(events, ["active", "caret:5", "dock:false", "feedback:false"]);
+  });
+
+  it("return-to-main UI state applier は callback として main UI state を反映する", () => {
+    const active = makeAuxiliarySession({ id: "aux-active" });
+    const mutationRevision = { current: 4 };
+    const activeSessionRef = { current: active as AuxiliarySession | null };
+    const events: string[] = [];
+    const applyReturnedMainSession = createAuxiliarySessionReturnToMainUiStateApplier({
+      mutationRevision,
+      activeSessionRef,
+      setActiveSession: () => {
+        events.push("active");
+      },
+      mainDraft: "hello",
+      mainCaret: 10,
+      setComposerCaret: (caret) => {
+        events.push(`caret:${caret}`);
+      },
+      setActionDockPinnedExpanded: (expanded) => {
+        events.push(`dock:${expanded}`);
+      },
+      setForceComposerBlockedFeedback: (forced) => {
+        events.push(`feedback:${forced}`);
+      },
+    });
+
+    applyReturnedMainSession();
+
+    assert.equal(mutationRevision.current, 5);
+    assert.equal(activeSessionRef.current, null);
     assert.deepEqual(events, ["active", "caret:5", "dock:false", "feedback:false"]);
   });
 
