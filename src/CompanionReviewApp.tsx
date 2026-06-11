@@ -224,7 +224,7 @@ import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-stat
 import { createPastedSessionAttachmentHandler } from "./chat/composer-paste-handlers.js";
 import {
   applyScheduledAuxiliaryDraftSaveUiState,
-  resolveAppliedAuxiliaryDraftSaveResult,
+  createAppliedAuxiliaryDraftSaveResultResolver,
   runAuxiliaryDraftPatchOperation,
   scheduleAuxiliaryDraftSaveOperation,
 } from "./auxiliary-draft-save-context.js";
@@ -1885,14 +1885,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       setActiveSession: setActiveAuxiliarySession,
     });
     const result = await saveOperation;
-    setActiveAuxiliarySession((current) => {
-      return resolveAppliedAuxiliaryDraftSaveResult({
-        current,
-        result,
-        activeSessionRef: activeAuxiliarySessionRef,
-        compareStatus: true,
-      });
-    });
+    setActiveAuxiliarySession(createAppliedAuxiliaryDraftSaveResultResolver({
+      result,
+      activeSessionRef: activeAuxiliarySessionRef,
+      compareStatus: true,
+    }));
   }
 
   async function sendAuxiliaryMessage(messageText: string): Promise<void> {

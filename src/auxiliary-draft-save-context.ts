@@ -96,6 +96,19 @@ export function resolveAppliedAuxiliaryDraftSaveResult(input: {
   return nextSession;
 }
 
+export function createAppliedAuxiliaryDraftSaveResultResolver(input: {
+  result: AuxiliaryDraftSaveOperationResult;
+  activeSessionRef: { current: AuxiliarySession | null };
+  compareStatus?: boolean;
+}): (current: AuxiliarySession | null) => AuxiliarySession | null {
+  return (current) => resolveAppliedAuxiliaryDraftSaveResult({
+    current,
+    result: input.result,
+    activeSessionRef: input.activeSessionRef,
+    compareStatus: input.compareStatus,
+  });
+}
+
 export async function runAuxiliaryDraftPatchOperation(input: {
   draft: string;
   updateActiveAuxiliarySession: UpdateActiveAuxiliarySession;

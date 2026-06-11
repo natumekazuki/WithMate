@@ -209,7 +209,7 @@ import {
 } from "./auxiliary-session-message-projection.js";
 import {
   applyScheduledAuxiliaryDraftSaveUiState,
-  resolveAppliedAuxiliaryDraftSaveResult,
+  createAppliedAuxiliaryDraftSaveResultResolver,
   runAuxiliaryDraftPatchOperation,
   scheduleAuxiliaryDraftSaveOperation,
 } from "./auxiliary-draft-save-context.js";
@@ -2265,13 +2265,10 @@ export default function AgentSessionWindowApp() {
     });
     try {
       const result = await saveOperation;
-      setActiveAuxiliarySession((current) => {
-        return resolveAppliedAuxiliaryDraftSaveResult({
-          current,
-          result,
-          activeSessionRef: activeAuxiliarySessionRef,
-        });
-      });
+      setActiveAuxiliarySession(createAppliedAuxiliaryDraftSaveResultResolver({
+        result,
+        activeSessionRef: activeAuxiliarySessionRef,
+      }));
     } catch (error) {
       console.error(error);
     }

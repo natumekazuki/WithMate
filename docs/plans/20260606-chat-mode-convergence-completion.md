@@ -148,6 +148,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-12: App / Companion の Auxiliary send running applier を `createAuxiliarySessionRunningApplier` に集約。surface 固有の runtime session projection、before/after hook、send operation、error handling は呼び出し側に残し、running session から active ref/state と pending live run を反映する callback contract を test で固定。`scripts/tests/auxiliary-session-send-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の guarded Auxiliary update active session applier を `createActiveAuxiliarySessionUpdateApplier` に接続。draft/session save queue、mutation revision、rollback guard、recipe/save API は既存境界を維持し、callback factory 経由で active ref/state へ同じ session を反映する contract に揃えた。`scripts/tests/auxiliary-session-update-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の Auxiliary start result active session applier を `createActiveAuxiliarySessionUpdateApplier` に接続。start request、launch defaults、mutation revision increment、dock expand、feedback clear、dialog close、closed list refresh は既存境界を維持し、App / Companion から active session update の直接 import を削除。`scripts/tests/auxiliary-session-start-operation.test.ts`、`scripts/tests/auxiliary-session-update-operation.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-12: App / Companion の Auxiliary draft save result updater を `createAppliedAuxiliaryDraftSaveResultResolver` に集約。App は status 非比較、Companion は status 比較の差分だけを引数に残し、draft save scheduling、optimistic UI state、error handling は呼び出し側に維持。`scripts/tests/auxiliary-draft-save-context.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -430,6 +431,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の Auxiliary send running applier を `auxiliary-session-send-operation` に接続。2026-06-12 着手。
 - App / Companion の guarded Auxiliary update active session applier を `auxiliary-session-update-operation` に接続。2026-06-12 着手。
 - App / Companion の Auxiliary start result active session applier を `auxiliary-session-update-operation` に接続。2026-06-12 着手。
+- App / Companion の Auxiliary draft save result updater を `auxiliary-draft-save-context` に接続。2026-06-12 着手。
 
 やらないこと:
 

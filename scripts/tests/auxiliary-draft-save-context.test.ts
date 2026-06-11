@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   applyScheduledAuxiliaryDraftSaveUiState,
   areStringArraysEqual,
+  createAppliedAuxiliaryDraftSaveResultResolver,
   hasSameAuxiliaryDraftSaveContext,
   resolveAppliedAuxiliaryDraftSaveResult,
   resolveAuxiliaryDraftSaveOperationResult,
@@ -160,6 +161,37 @@ describe("resolveAppliedAuxiliaryDraftSaveResult", () => {
     });
 
     assert.equal(next, current);
+    assert.equal(activeSessionRef.current, current);
+  });
+});
+
+describe("createAppliedAuxiliaryDraftSaveResultResolver", () => {
+  it("state updater callback として saved result を active ref に同期する", () => {
+    const current = makeAuxiliarySession({ composerDraft: "draft" });
+    const request = makeAuxiliarySession({ composerDraft: "draft" });
+    const saved = makeAuxiliarySession({ composerDraft: "draft", updatedAt: "saved" });
+    const activeSessionRef = { current };
+    const resolveResult = createAppliedAuxiliaryDraftSaveResultResolver({
+      result: { request, saved },
+      activeSessionRef,
+    });
+
+    assert.equal(resolveResult(current), saved);
+    assert.equal(activeSessionRef.current, saved);
+  });
+
+  it("compareStatus が true の場合は status 差異で current を維持する", () => {
+    const current = makeAuxiliarySession({ status: "closed", composerDraft: "draft" });
+    const request = makeAuxiliarySession({ status: "active", composerDraft: "draft" });
+    const saved = makeAuxiliarySession({ status: "active", composerDraft: "draft", updatedAt: "saved" });
+    const activeSessionRef = { current };
+    const resolveResult = createAppliedAuxiliaryDraftSaveResultResolver({
+      result: { request, saved },
+      activeSessionRef,
+      compareStatus: true,
+    });
+
+    assert.equal(resolveResult(current), current);
     assert.equal(activeSessionRef.current, current);
   });
 });
