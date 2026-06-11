@@ -215,7 +215,6 @@ import {
   runAuxiliaryDraftPatchOperation,
 } from "./auxiliary-draft-save-context.js";
 import {
-  createActiveAuxiliarySessionUpdateApplier,
   createGuardedActiveAuxiliarySessionUpdater,
   enqueueAuxiliarySessionSaveWithQueue,
   syncActiveAuxiliarySessionRef,
@@ -236,7 +235,7 @@ import {
 import {
   applyAuxiliarySessionStartError,
   beginAuxiliarySessionStartOperation,
-  createAuxiliarySessionStartResultApplier,
+  createActiveAuxiliarySessionStartResultApplier,
   finishAuxiliarySessionStartClosedLoad,
   runAuxiliarySessionStartOperation,
 } from "./auxiliary-session-start-operation.js";
@@ -2186,14 +2185,10 @@ export default function AgentSessionWindowApp() {
         provider: launchProviderId,
         defaults: launchDefaults,
         createAuxiliarySession: (request) => withmateApi.createAuxiliarySession(request),
-        applyStartedSession: createAuxiliarySessionStartResultApplier({
-          incrementMutationRevision: () => {
-            auxiliarySessionMutationRevisionRef.current += 1;
-          },
-          applyActiveSession: createActiveAuxiliarySessionUpdateApplier({
-            activeSessionRef: activeAuxiliarySessionRef,
-            setActiveSession: setActiveAuxiliarySession,
-          }),
+        applyStartedSession: createActiveAuxiliarySessionStartResultApplier({
+          mutationRevision: auxiliarySessionMutationRevisionRef,
+          activeSessionRef: activeAuxiliarySessionRef,
+          setActiveSession: setActiveAuxiliarySession,
           setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
           setForceComposerBlockedFeedback,
           closeLaunchDialog: closeAuxiliaryLaunchDialog,

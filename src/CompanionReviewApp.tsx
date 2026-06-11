@@ -90,7 +90,7 @@ import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.
 import {
   applyAuxiliarySessionStartError,
   beginAuxiliarySessionStartOperation,
-  createAuxiliarySessionStartResultApplier,
+  createActiveAuxiliarySessionStartResultApplier,
   finishAuxiliarySessionStartClosedLoad,
   runAuxiliarySessionStartOperation,
 } from "./auxiliary-session-start-operation.js";
@@ -234,7 +234,6 @@ import {
   runAuxiliaryDraftPatchOperation,
 } from "./auxiliary-draft-save-context.js";
 import {
-  createActiveAuxiliarySessionUpdateApplier,
   createGuardedActiveAuxiliarySessionUpdater,
   enqueueAuxiliarySessionSaveWithQueue,
   syncActiveAuxiliarySessionRef,
@@ -1805,14 +1804,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         provider: launchProviderId,
         defaults: launchDefaults,
         createAuxiliarySession: (request) => withmateApi.createAuxiliarySession(request),
-        applyStartedSession: createAuxiliarySessionStartResultApplier({
-          incrementMutationRevision: () => {
-            auxiliarySessionMutationRevisionRef.current += 1;
-          },
-          applyActiveSession: createActiveAuxiliarySessionUpdateApplier({
-            activeSessionRef: activeAuxiliarySessionRef,
-            setActiveSession: setActiveAuxiliarySession,
-          }),
+        applyStartedSession: createActiveAuxiliarySessionStartResultApplier({
+          mutationRevision: auxiliarySessionMutationRevisionRef,
+          activeSessionRef: activeAuxiliarySessionRef,
+          setActiveSession: setActiveAuxiliarySession,
           setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
           setForceComposerBlockedFeedback,
           closeLaunchDialog: closeAuxiliaryLaunchDialog,

@@ -161,6 +161,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-12: App / Companion の Auxiliary load revision guard 作成を `createAuxiliaryLoadRevisionGuard` に集約。初期 active/closed load と start 後 closed reload の適用可否だけを共通化し、API 呼び出し、merge view guard、state 反映先は呼び出し側に維持。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の Auxiliary draft save scheduling + optimistic / saved result 反映を `runScheduledAuxiliaryDraftSaveAndApply` に集約。save error logging と Companion の status 比較だけを引数差分に残し、queue、mutation revision、active ref/state 反映順、onError 指定時の failure swallow を test で固定。`scripts/tests/auxiliary-draft-save-context.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の guarded active Auxiliary session updater 作成を `createGuardedActiveAuxiliarySessionUpdater` に集約。API 取得、recipe、呼び出し元 handler は surface 側に残し、queue、mutation revision、active ref/state、rollback/saved 反映は共通 factory 経由に統一。`scripts/tests/auxiliary-session-update-operation.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-12: App / Companion の Auxiliary start result applier 作成を `createActiveAuxiliarySessionStartResultApplier` に集約。launch defaults、create API、closed list refresh、error handling は呼び出し側に残し、mutation revision increment と active ref/state 反映を同じ factory 経由に統一。`scripts/tests/auxiliary-session-start-operation.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -456,6 +457,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の Auxiliary load revision guard 作成を `auxiliary-session-refresh-operation` に接続。2026-06-12 着手。
 - App / Companion の Auxiliary draft save scheduling + optimistic / saved result 反映を `auxiliary-draft-save-context` に接続。2026-06-12 着手。
 - App / Companion の guarded active Auxiliary session updater 作成を `auxiliary-session-update-operation` に接続。2026-06-12 着手。
+- App / Companion の Auxiliary start result applier 作成を `auxiliary-session-start-operation` に接続。2026-06-12 着手。
 
 やらないこと:
 

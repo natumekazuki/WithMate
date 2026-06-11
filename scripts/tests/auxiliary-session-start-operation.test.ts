@@ -5,6 +5,7 @@ import {
   applyAuxiliarySessionStartError,
   applyAuxiliarySessionStartResult,
   beginAuxiliarySessionStartOperation,
+  createActiveAuxiliarySessionStartResultApplier,
   createAuxiliarySessionStartResultApplier,
   finishAuxiliarySessionStartClosedLoad,
   runAuxiliarySessionStartOperation,
@@ -224,6 +225,48 @@ describe("createAuxiliarySessionStartResultApplier", () => {
 
     assert.deepEqual(events, [
       "revision",
+      "active:aux-started",
+      "dock:true",
+      "feedback:false",
+      "close",
+    ]);
+  });
+});
+
+describe("createActiveAuxiliarySessionStartResultApplier", () => {
+  it("mutation revision と active session 反映を含む start result applier を作る", () => {
+    const previousSession = makeAuxiliarySession({ id: "aux-previous" });
+    const session = makeAuxiliarySession({ id: "aux-started" });
+    const mutationRevision = { current: 4 };
+    const activeSessionRef = { current: previousSession as AuxiliarySession | null };
+    const appliedSessions: AuxiliarySession[] = [];
+    const events: string[] = [];
+    const applyStartedSession = createActiveAuxiliarySessionStartResultApplier({
+      mutationRevision,
+      activeSessionRef,
+      setActiveSession: (startedSession) => {
+        events.push(`revision:${mutationRevision.current}`);
+        appliedSessions.push(startedSession);
+        events.push(`active:${startedSession.id}`);
+      },
+      setActionDockPinnedExpanded: (expanded) => {
+        events.push(`dock:${expanded}`);
+      },
+      setForceComposerBlockedFeedback: (forced) => {
+        events.push(`feedback:${forced}`);
+      },
+      closeLaunchDialog: () => {
+        events.push("close");
+      },
+    });
+
+    applyStartedSession(session);
+
+    assert.equal(mutationRevision.current, 5);
+    assert.equal(activeSessionRef.current, session);
+    assert.deepEqual(appliedSessions, [session]);
+    assert.deepEqual(events, [
+      "revision:5",
       "active:aux-started",
       "dock:true",
       "feedback:false",

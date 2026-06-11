@@ -8,6 +8,7 @@ import type {
   CreateAuxiliarySessionInput,
 } from "./auxiliary-session-state.js";
 import { runClosedAuxiliarySessionsLoadAndApply } from "./auxiliary-session-refresh-operation.js";
+import { createActiveAuxiliarySessionUpdateApplier } from "./auxiliary-session-update-operation.js";
 
 export function beginAuxiliarySessionStartOperation(input: {
   loadRevision: { current: number };
@@ -56,6 +57,28 @@ export function createAuxiliarySessionStartResultApplier(input: {
       session,
     });
   };
+}
+
+export function createActiveAuxiliarySessionStartResultApplier(input: {
+  mutationRevision: { current: number };
+  activeSessionRef: { current: AuxiliarySession | null };
+  setActiveSession: (session: AuxiliarySession) => void;
+  setActionDockPinnedExpanded: (expanded: boolean) => void;
+  setForceComposerBlockedFeedback: (forced: boolean) => void;
+  closeLaunchDialog: () => void;
+}): (session: AuxiliarySession) => void {
+  return createAuxiliarySessionStartResultApplier({
+    incrementMutationRevision: () => {
+      input.mutationRevision.current += 1;
+    },
+    applyActiveSession: createActiveAuxiliarySessionUpdateApplier({
+      activeSessionRef: input.activeSessionRef,
+      setActiveSession: input.setActiveSession,
+    }),
+    setActionDockPinnedExpanded: input.setActionDockPinnedExpanded,
+    setForceComposerBlockedFeedback: input.setForceComposerBlockedFeedback,
+    closeLaunchDialog: input.closeLaunchDialog,
+  });
 }
 
 export async function runAuxiliarySessionStartOperation(input: {
