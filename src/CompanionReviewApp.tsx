@@ -37,6 +37,7 @@ import {
 import {
   applyActiveAuxiliarySessionLoadResult,
   applyActiveAuxiliarySessionRefreshResult,
+  applyClosedAuxiliarySessionsLoadResult,
   runActiveAuxiliarySessionRefreshOperation,
   runActiveAuxiliarySessionLoadOperation,
   runClosedAuxiliarySessionsLoadOperation,
@@ -591,9 +592,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       getAuxiliarySession: (targetSessionId) => withmateApi.getAuxiliarySession(targetSessionId),
       isActive: canApplyLoadResult,
     }).then((result) => {
-      if (result.status === "loaded") {
-        setClosedAuxiliarySessions(result.sessions);
-      }
+      applyClosedAuxiliarySessionsLoadResult({
+        result,
+        setClosedSessions: setClosedAuxiliarySessions,
+      });
     });
 
     return () => {
@@ -1826,9 +1828,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
         isActive: canApplyLoadResult,
       }).then((result) => {
-        if (result.status === "loaded") {
-          setClosedAuxiliarySessions(result.sessions);
-        }
+        applyClosedAuxiliarySessionsLoadResult({
+          result,
+          setClosedSessions: setClosedAuxiliarySessions,
+        });
       });
       setIsAuxiliaryActionPending(false);
     }

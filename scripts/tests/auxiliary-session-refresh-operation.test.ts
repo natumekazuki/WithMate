@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   applyActiveAuxiliarySessionLoadResult,
   applyActiveAuxiliarySessionRefreshResult,
+  applyClosedAuxiliarySessionsLoadResult,
   runActiveAuxiliarySessionLoadOperation,
   runActiveAuxiliarySessionRefreshOperation,
   runClosedAuxiliarySessionsLoadOperation,
@@ -339,4 +340,68 @@ test("runClosedAuxiliarySessionsLoadOperation は load 後に inactive なら st
   });
 
   assert.deepEqual(result, { status: "stale" });
+});
+
+test("applyClosedAuxiliarySessionsLoadResult は loaded result だけ closed sessions に反映する", () => {
+  const closedSession = createAuxiliarySession({ id: "closed-1", status: "closed" });
+  const appliedSessions: AuxiliarySession[][] = [];
+
+  assert.equal(
+    applyClosedAuxiliarySessionsLoadResult({
+      result: {
+        status: "loaded",
+        sessions: [closedSession],
+      },
+      setClosedSessions: (sessions) => {
+        appliedSessions.push(sessions);
+      },
+    }),
+    true,
+  );
+
+  assert.deepEqual(appliedSessions, [[closedSession]]);
+});
+
+test("applyClosedAuxiliarySessionsLoadResult は empty loaded result を closed sessions clear として反映する", () => {
+  const appliedSessions: AuxiliarySession[][] = [];
+
+  assert.equal(
+    applyClosedAuxiliarySessionsLoadResult({
+      result: {
+        status: "loaded",
+        sessions: [],
+      },
+      setClosedSessions: (sessions) => {
+        appliedSessions.push(sessions);
+      },
+    }),
+    true,
+  );
+
+  assert.deepEqual(appliedSessions, [[]]);
+});
+
+test("applyClosedAuxiliarySessionsLoadResult は stale / skipped result では closed sessions を変更しない", () => {
+  const appliedSessions: AuxiliarySession[][] = [];
+
+  assert.equal(
+    applyClosedAuxiliarySessionsLoadResult({
+      result: { status: "stale" },
+      setClosedSessions: (sessions) => {
+        appliedSessions.push(sessions);
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    applyClosedAuxiliarySessionsLoadResult({
+      result: { status: "skipped" },
+      setClosedSessions: (sessions) => {
+        appliedSessions.push(sessions);
+      },
+    }),
+    false,
+  );
+
+  assert.deepEqual(appliedSessions, []);
 });

@@ -160,6 +160,7 @@ import {
 import {
   applyActiveAuxiliarySessionLoadResult,
   applyActiveAuxiliarySessionRefreshResult,
+  applyClosedAuxiliarySessionsLoadResult,
   runActiveAuxiliarySessionRefreshOperation,
   runActiveAuxiliarySessionLoadOperation,
   runClosedAuxiliarySessionsLoadOperation,
@@ -586,9 +587,10 @@ export default function AgentSessionWindowApp() {
       getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
       isActive: canApplyLoadResult,
     }).then((result) => {
-      if (result.status === "loaded") {
-        setClosedAuxiliarySessions(result.sessions);
-      }
+      applyClosedAuxiliarySessionsLoadResult({
+        result,
+        setClosedSessions: setClosedAuxiliarySessions,
+      });
     });
 
     return () => {
@@ -2207,9 +2209,10 @@ export default function AgentSessionWindowApp() {
         getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
         isActive: canApplyLoadResult,
       }).then((result) => {
-        if (result.status === "loaded") {
-          setClosedAuxiliarySessions(result.sessions);
-        }
+        applyClosedAuxiliarySessionsLoadResult({
+          result,
+          setClosedSessions: setClosedAuxiliarySessions,
+        });
       });
       setIsAuxiliaryActionPending(false);
     }

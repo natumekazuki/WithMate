@@ -148,3 +148,15 @@ export async function runClosedAuxiliarySessionsLoadOperation(input: {
     sessions,
   };
 }
+
+export function applyClosedAuxiliarySessionsLoadResult(input: {
+  result: ClosedAuxiliarySessionsLoadOperationResult;
+  setClosedSessions: (sessions: AuxiliarySession[]) => void;
+}): boolean {
+  if (input.result.status !== "loaded") {
+    return false;
+  }
+
+  input.setClosedSessions(input.result.sessions);
+  return true;
+}
