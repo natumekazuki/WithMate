@@ -2196,8 +2196,11 @@ export default function AgentSessionWindowApp() {
             auxiliarySessionMutationRevisionRef.current += 1;
           },
           applyActiveSession: (startedSession) => {
-            activeAuxiliarySessionRef.current = startedSession;
-            setActiveAuxiliarySession(startedSession);
+            applyActiveAuxiliarySessionUpdate({
+              session: startedSession,
+              activeSessionRef: activeAuxiliarySessionRef,
+              setActiveSession: setActiveAuxiliarySession,
+            });
           },
           setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
           setForceComposerBlockedFeedback,

@@ -1815,8 +1815,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
             auxiliarySessionMutationRevisionRef.current += 1;
           },
           applyActiveSession: (startedSession) => {
-            activeAuxiliarySessionRef.current = startedSession;
-            setActiveAuxiliarySession(startedSession);
+            applyActiveAuxiliarySessionUpdate({
+              session: startedSession,
+              activeSessionRef: activeAuxiliarySessionRef,
+              setActiveSession: setActiveAuxiliarySession,
+            });
           },
           setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
           setForceComposerBlockedFeedback,
