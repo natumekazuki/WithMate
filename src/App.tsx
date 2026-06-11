@@ -2318,20 +2318,29 @@ export default function AgentSessionWindowApp() {
         setIsActionDockPinnedExpanded(false);
       },
       applyRunningSession: (runningSession) => {
-        activeAuxiliarySessionRef.current = runningSession;
-        setActiveAuxiliarySession(runningSession);
+        applyActiveAuxiliarySessionUpdate({
+          session: runningSession,
+          activeSessionRef: activeAuxiliarySessionRef,
+          setActiveSession: setActiveAuxiliarySession,
+        });
         setLiveRunState((current) => createOwnedPendingLiveSessionRunState(
           buildMainAuxiliaryRuntimeSession(selectedSession!, runningSession),
           current,
         ));
       },
       applySavedSession: (saved) => {
-        activeAuxiliarySessionRef.current = saved;
-        setActiveAuxiliarySession(saved);
+        applyActiveAuxiliarySessionUpdate({
+          session: saved,
+          activeSessionRef: activeAuxiliarySessionRef,
+          setActiveSession: setActiveAuxiliarySession,
+        });
       },
       restoreSessionAfterError: (session) => {
-        activeAuxiliarySessionRef.current = session;
-        setActiveAuxiliarySession(session);
+        applyActiveAuxiliarySessionUpdate({
+          session,
+          activeSessionRef: activeAuxiliarySessionRef,
+          setActiveSession: setActiveAuxiliarySession,
+        });
       },
       clearPendingLiveRun: (sessionId) => {
         setLiveRunState((current) => clearOwnedLiveSessionRunState(current, sessionId));

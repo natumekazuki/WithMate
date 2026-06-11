@@ -1934,8 +1934,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       mutationRevision: auxiliarySessionMutationRevisionRef,
       getCurrentSession: () => activeAuxiliarySessionRef.current,
       applyRunningSession: (runningSession) => {
-        activeAuxiliarySessionRef.current = runningSession;
-        setActiveAuxiliarySession(runningSession);
+        applyActiveAuxiliarySessionUpdate({
+          session: runningSession,
+          activeSessionRef: activeAuxiliarySessionRef,
+          setActiveSession: setActiveAuxiliarySession,
+        });
         setLiveRunState((current) => createOwnedPendingLiveSessionRunState(
           buildCompanionAuxiliaryRuntimeSession(snapshot.session, runningSession),
           current,
@@ -1945,12 +1948,18 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         setForceComposerBlockedFeedback(false);
       },
       applySavedSession: (saved) => {
-        activeAuxiliarySessionRef.current = saved;
-        setActiveAuxiliarySession(saved);
+        applyActiveAuxiliarySessionUpdate({
+          session: saved,
+          activeSessionRef: activeAuxiliarySessionRef,
+          setActiveSession: setActiveAuxiliarySession,
+        });
       },
       restoreSessionAfterError: (session) => {
-        activeAuxiliarySessionRef.current = session;
-        setActiveAuxiliarySession(session);
+        applyActiveAuxiliarySessionUpdate({
+          session,
+          activeSessionRef: activeAuxiliarySessionRef,
+          setActiveSession: setActiveAuxiliarySession,
+        });
       },
       clearPendingLiveRun: (sessionId) => {
         setLiveRunState((current) => clearOwnedLiveSessionRunState(current, sessionId));
