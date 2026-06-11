@@ -19,6 +19,7 @@ import {
   resolveAuxiliaryLaunchInitialState,
   resolveAuxiliaryLaunchProviderId,
   resolveAuxiliaryLaunchStartError,
+  resolveAuxiliaryLaunchStartProvider,
   resolveAuxiliaryLaunchStartErrorState,
   resolveAuxiliaryLaunchStartErrorFeedback,
 } from "../../src/chat/auxiliary-launch-state.js";
@@ -122,6 +123,41 @@ describe("auxiliary-launch-state", () => {
         blockedFeedback: null,
       }),
       null,
+    );
+  });
+
+  it("start provider resolution は開始可能な provider id を返す", () => {
+    assert.deepEqual(
+      resolveAuxiliaryLaunchStartProvider({
+        providerId: "codex",
+        blockedFeedback: null,
+      }),
+      {
+        status: "ready",
+        providerId: "codex",
+      },
+    );
+  });
+
+  it("start provider resolution は blocked feedback を provider 未選択より優先する", () => {
+    const result = resolveAuxiliaryLaunchStartProvider({
+      providerId: null,
+      blockedFeedback: "blocked",
+    });
+
+    assert.equal(result.status, "blocked");
+    assert.equal(result.status === "blocked" ? result.error.message : null, "blocked");
+  });
+
+  it("start provider resolution は provider 未選択を blocked にする", () => {
+    const result = resolveAuxiliaryLaunchStartProvider({
+      providerId: null,
+    });
+
+    assert.equal(result.status, "blocked");
+    assert.equal(
+      result.status === "blocked" ? result.error.message : null,
+      AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
     );
   });
 

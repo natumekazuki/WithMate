@@ -82,7 +82,7 @@ import {
   createAuxiliaryLaunchDialogCloseHandler,
   createAuxiliaryLaunchDialogOpenHandler,
   createAuxiliaryLaunchProviderSelectHandler,
-  resolveAuxiliaryLaunchStartError,
+  resolveAuxiliaryLaunchStartProvider,
 } from "./chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
 import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
@@ -2164,17 +2164,14 @@ export default function AgentSessionWindowApp() {
     if (!withmateApi || !selectedSession || isAuxiliaryActionPending) {
       return;
     }
-    const startError = resolveAuxiliaryLaunchStartError({
+    const startProvider = resolveAuxiliaryLaunchStartProvider({
       providerId: auxiliaryLaunchProviderId,
     });
-    if (startError) {
-      setAuxiliaryLaunchStartError(startError);
+    if (startProvider.status === "blocked") {
+      setAuxiliaryLaunchStartError(startProvider.error);
       return;
     }
-    const launchProviderId = auxiliaryLaunchProviderId;
-    if (!launchProviderId) {
-      return;
-    }
+    const launchProviderId = startProvider.providerId;
 
     resetAuxiliaryLaunchFeedback();
 

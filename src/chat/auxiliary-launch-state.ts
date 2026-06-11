@@ -52,6 +52,41 @@ export function resolveAuxiliaryLaunchStartError(input: {
   return null;
 }
 
+export type AuxiliaryLaunchStartProviderResolution =
+  | {
+      status: "blocked";
+      error: Error;
+    }
+  | {
+      status: "ready";
+      providerId: string;
+    };
+
+export function resolveAuxiliaryLaunchStartProvider(input: {
+  providerId: string | null | undefined;
+  blockedFeedback?: string | null;
+}): AuxiliaryLaunchStartProviderResolution {
+  const providerId = input.providerId;
+  const error = resolveAuxiliaryLaunchStartError(input);
+  if (error) {
+    return {
+      status: "blocked",
+      error,
+    };
+  }
+  if (!providerId) {
+    return {
+      status: "blocked",
+      error: new Error(AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK),
+    };
+  }
+
+  return {
+    status: "ready",
+    providerId,
+  };
+}
+
 export function resolveAuxiliaryLaunchProviderId(
   providers: readonly AuxiliaryLaunchProviderItem[],
   selectedProviderId: string | null | undefined,

@@ -129,7 +129,7 @@ import {
   createAuxiliaryLaunchDialogCloseHandler,
   createAuxiliaryLaunchDialogOpenHandler,
   createAuxiliaryLaunchProviderSelectHandler,
-  resolveAuxiliaryLaunchStartError,
+  resolveAuxiliaryLaunchStartProvider,
 } from "./chat/auxiliary-launch-state.js";
 import {
   buildAuxiliaryAwareSendOrCancelHandler,
@@ -1776,20 +1776,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     if (!withmateApi || !snapshot || isAuxiliaryActionPending) {
       return;
     }
-    const startError = resolveAuxiliaryLaunchStartError({
+    const startProvider = resolveAuxiliaryLaunchStartProvider({
       providerId: auxiliaryLaunchProviderId,
       blockedFeedback: operationRunning || isSelectedSessionRunning || snapshot.session.status !== "active"
         ? "Companion が操作中のため Auxiliary Session を開始できないよ。"
         : null,
     });
-    if (startError) {
-      setAuxiliaryLaunchStartError(startError);
+    if (startProvider.status === "blocked") {
+      setAuxiliaryLaunchStartError(startProvider.error);
       return;
     }
-    const launchProviderId = auxiliaryLaunchProviderId;
-    if (!launchProviderId) {
-      return;
-    }
+    const launchProviderId = startProvider.providerId;
 
     resetAuxiliaryLaunchFeedback();
 
