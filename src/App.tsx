@@ -160,7 +160,10 @@ import {
   runActiveAuxiliarySessionLoadOperation,
   runClosedAuxiliarySessionsLoadOperation,
 } from "./auxiliary-session-refresh-operation.js";
-import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolution.js";
+import {
+  createComposerPreviewRequest,
+  useComposerPreviewResolution,
+} from "./chat/use-composer-preview-resolution.js";
 import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
 import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
@@ -1041,10 +1044,11 @@ export default function AgentSessionWindowApp() {
   }, [activeRunSessionId, displayedSession?.provider, withmateApi]);
 
   const previewComposerInput = useMemo(() => {
-    if (!withmateApi || !activeRunSessionId) {
-      return null;
-    }
-    return (message: string) => withmateApi.previewComposerInput(activeRunSessionId, message);
+    return createComposerPreviewRequest({
+      api: withmateApi,
+      mode: "session",
+      sessionId: activeRunSessionId,
+    });
   }, [activeRunSessionId, withmateApi]);
   useComposerPreviewResolution({
     hasPreviewPathReferenceCandidates,

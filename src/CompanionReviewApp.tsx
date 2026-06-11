@@ -207,7 +207,10 @@ import {
 import {
   createEmptyComposerPreview,
 } from "./composer-preview-config.js";
-import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolution.js";
+import {
+  createComposerPreviewRequest,
+  useComposerPreviewResolution,
+} from "./chat/use-composer-preview-resolution.js";
 import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
 import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
@@ -951,12 +954,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   });
   const previewComposerInput = useMemo(() => {
     const sessionId = activeRunSessionId;
-    if (!withmateApi || !sessionId) {
-      return null;
-    }
-    return activeAuxiliarySession
-      ? (message: string) => withmateApi.previewComposerInput(sessionId, message)
-      : (message: string) => withmateApi.previewCompanionComposerInput(sessionId, message);
+    return createComposerPreviewRequest({
+      api: withmateApi,
+      mode: activeAuxiliarySession ? "session" : "companion",
+      sessionId,
+    });
   }, [activeAuxiliarySession, activeRunSessionId, withmateApi]);
   useComposerPreviewResolution({
     hasPreviewPathReferenceCandidates,
