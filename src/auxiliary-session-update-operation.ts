@@ -162,3 +162,10 @@ export function createActiveAuxiliarySessionUpdateApplier(input: {
     });
   };
 }
+
+export function syncActiveAuxiliarySessionRef(input: {
+  activeSession: AuxiliarySession | null;
+  activeSessionRef: { current: AuxiliarySession | null };
+}): void {
+  input.activeSessionRef.current = input.activeSession;
+}

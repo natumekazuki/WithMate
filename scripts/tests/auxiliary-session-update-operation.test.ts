@@ -9,6 +9,7 @@ import {
   resolveAuxiliarySessionRollbackSession,
   runGuardedAuxiliarySessionUpdate,
   runAuxiliarySessionUpdateOperation,
+  syncActiveAuxiliarySessionRef,
   type AuxiliarySessionUpdateOperationResult,
 } from "../../src/auxiliary-session-update-operation.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
@@ -649,6 +650,26 @@ describe("applyActiveAuxiliarySessionUpdate", () => {
 
     assert.equal(activeSessionRef.current, nextSession);
     assert.deepEqual(appliedSessions, [nextSession]);
+  });
+});
+
+describe("syncActiveAuxiliarySessionRef", () => {
+  it("active session ref を最新の active session に同期する", () => {
+    const previousSession = makeAuxiliarySession({ updatedAt: "previous" });
+    const nextSession = makeAuxiliarySession({ updatedAt: "next" });
+    const activeSessionRef = { current: previousSession as AuxiliarySession | null };
+
+    syncActiveAuxiliarySessionRef({
+      activeSession: nextSession,
+      activeSessionRef,
+    });
+    assert.equal(activeSessionRef.current, nextSession);
+
+    syncActiveAuxiliarySessionRef({
+      activeSession: null,
+      activeSessionRef,
+    });
+    assert.equal(activeSessionRef.current, null);
   });
 });
 

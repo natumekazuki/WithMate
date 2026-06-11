@@ -233,6 +233,7 @@ import {
   createActiveAuxiliarySessionUpdateApplier,
   enqueueAuxiliarySessionSaveWithQueue,
   runGuardedAuxiliarySessionUpdate,
+  syncActiveAuxiliarySessionRef,
 } from "./auxiliary-session-update-operation.js";
 import {
   runAddAuxiliaryAdditionalDirectoryOperation,
@@ -565,7 +566,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }, [applyWorkspacePathMatchState, snapshot?.session.id]);
 
   useEffect(() => {
-    activeAuxiliarySessionRef.current = activeAuxiliarySession;
+    syncActiveAuxiliarySessionRef({
+      activeSession: activeAuxiliarySession,
+      activeSessionRef: activeAuxiliarySessionRef,
+    });
   }, [activeAuxiliarySession]);
 
   useEffect(() => {
