@@ -149,3 +149,16 @@ export function applyActiveAuxiliarySessionUpdate(input: {
   input.activeSessionRef.current = input.session;
   input.setActiveSession(input.session);
 }
+
+export function createActiveAuxiliarySessionUpdateApplier(input: {
+  activeSessionRef: { current: AuxiliarySession | null };
+  setActiveSession: (session: AuxiliarySession) => void;
+}): (session: AuxiliarySession) => void {
+  return (session) => {
+    applyActiveAuxiliarySessionUpdate({
+      session,
+      activeSessionRef: input.activeSessionRef,
+      setActiveSession: input.setActiveSession,
+    });
+  };
+}

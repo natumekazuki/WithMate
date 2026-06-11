@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   applyActiveAuxiliarySessionUpdate,
+  createActiveAuxiliarySessionUpdateApplier,
   enqueueAuxiliarySessionSaveOperation,
   enqueueAuxiliarySessionSaveWithQueue,
   resolveAuxiliarySessionRollbackSession,
@@ -627,6 +628,24 @@ describe("applyActiveAuxiliarySessionUpdate", () => {
         appliedSessions.push(session);
       },
     });
+
+    assert.equal(activeSessionRef.current, nextSession);
+    assert.deepEqual(appliedSessions, [nextSession]);
+  });
+
+  it("active session update applier callback は active session ref と state setter に同じ session を反映する", () => {
+    const previousSession = makeAuxiliarySession({ updatedAt: "previous" });
+    const nextSession = makeAuxiliarySession({ updatedAt: "next" });
+    const activeSessionRef = { current: previousSession as AuxiliarySession | null };
+    const appliedSessions: AuxiliarySession[] = [];
+    const applySession = createActiveAuxiliarySessionUpdateApplier({
+      activeSessionRef,
+      setActiveSession: (session) => {
+        appliedSessions.push(session);
+      },
+    });
+
+    applySession(nextSession);
 
     assert.equal(activeSessionRef.current, nextSession);
     assert.deepEqual(appliedSessions, [nextSession]);

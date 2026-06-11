@@ -227,6 +227,7 @@ import {
 } from "./auxiliary-draft-save-context.js";
 import {
   applyActiveAuxiliarySessionUpdate,
+  createActiveAuxiliarySessionUpdateApplier,
   enqueueAuxiliarySessionSaveWithQueue,
   runGuardedAuxiliarySessionUpdate,
 } from "./auxiliary-session-update-operation.js";
@@ -1928,20 +1929,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       afterRunningSessionApplied: () => {
         setForceComposerBlockedFeedback(false);
       },
-      applySavedSession: (saved) => {
-        applyActiveAuxiliarySessionUpdate({
-          session: saved,
-          activeSessionRef: activeAuxiliarySessionRef,
-          setActiveSession: setActiveAuxiliarySession,
-        });
-      },
-      restoreSessionAfterError: (session) => {
-        applyActiveAuxiliarySessionUpdate({
-          session,
-          activeSessionRef: activeAuxiliarySessionRef,
-          setActiveSession: setActiveAuxiliarySession,
-        });
-      },
+      applySavedSession: createActiveAuxiliarySessionUpdateApplier({
+        activeSessionRef: activeAuxiliarySessionRef,
+        setActiveSession: setActiveAuxiliarySession,
+      }),
+      restoreSessionAfterError: createActiveAuxiliarySessionUpdateApplier({
+        activeSessionRef: activeAuxiliarySessionRef,
+        setActiveSession: setActiveAuxiliarySession,
+      }),
       clearPendingLiveRun: (sessionId) => {
         setLiveRunState((current) => clearOwnedLiveSessionRunState(current, sessionId));
       },
