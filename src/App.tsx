@@ -226,6 +226,7 @@ import {
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "./auxiliary-additional-directory-operation.js";
 import {
+  beginAuxiliarySessionReturnToMainOperation,
   createAuxiliarySessionReturnBeforeCloseHandler,
   createAuxiliarySessionReturnToMainUiStateApplier,
   createReturnedAuxiliaryClosedSessionApplier,
@@ -2213,7 +2214,9 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    setIsAuxiliaryActionPending(true);
+    beginAuxiliarySessionReturnToMainOperation({
+      setActionPending: setIsAuxiliaryActionPending,
+    });
     try {
       await runAuxiliarySessionReturnToMainOperation({
         activeSession: activeAuxiliarySession,

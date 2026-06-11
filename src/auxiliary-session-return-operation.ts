@@ -46,6 +46,12 @@ export function createAuxiliarySessionReturnBeforeCloseHandler(input: {
   };
 }
 
+export function beginAuxiliarySessionReturnToMainOperation(input: {
+  setActionPending: (pending: boolean) => void;
+}): void {
+  input.setActionPending(true);
+}
+
 export function finishAuxiliarySessionReturnToMainOperation(input: {
   setActionPending: (pending: boolean) => void;
 }): void {

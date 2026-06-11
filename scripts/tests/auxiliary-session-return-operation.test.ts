@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   applyAuxiliarySessionReturnToMainUiState,
+  beginAuxiliarySessionReturnToMainOperation,
   createAuxiliarySessionReturnBeforeCloseHandler,
   createAuxiliarySessionReturnToMainUiStateApplier,
   applyReturnedAuxiliaryClosedSession,
@@ -122,6 +123,18 @@ describe("runAuxiliarySessionReturnToMainOperation", () => {
     beforeClose();
 
     assert.equal(loadRevision.current, 4);
+  });
+
+  it("return-to-main begin は pending を true にする", () => {
+    const pendingValues: boolean[] = [];
+
+    beginAuxiliarySessionReturnToMainOperation({
+      setActionPending: (pending) => {
+        pendingValues.push(pending);
+      },
+    });
+
+    assert.deepEqual(pendingValues, [true]);
   });
 
   it("return-to-main cleanup は pending を false に戻す", () => {
