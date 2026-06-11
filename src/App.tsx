@@ -148,14 +148,14 @@ import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionCustomAgentPatch,
-  applyAuxiliarySessionModelChange,
-  applyAuxiliarySessionReasoningEffortChange,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveClosedAuxiliarySessionsAfterReturn,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
 import {
   runAuxiliaryApprovalModeChangeOperation,
+  runAuxiliaryModelChangeOperation,
+  runAuxiliaryReasoningEffortChangeOperation,
   runAuxiliarySandboxModeChangeOperation,
 } from "./auxiliary-runtime-option-operation.js";
 import {
@@ -1966,14 +1966,12 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    await updateActiveAuxiliarySession((current) => {
-      return applyAuxiliarySessionModelChange(
-        current,
-        selectedProviderCatalog,
-        model,
-        modelCatalog.revision,
-        currentTimestampLabel(),
-      );
+    await runAuxiliaryModelChangeOperation({
+      model,
+      providerCatalog: selectedProviderCatalog,
+      catalogRevision: modelCatalog.revision,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
     });
   };
 
@@ -1982,14 +1980,12 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    await updateActiveAuxiliarySession((current) => {
-      return applyAuxiliarySessionReasoningEffortChange(
-        current,
-        selectedProviderCatalog,
-        reasoningEffort,
-        modelCatalog.revision,
-        currentTimestampLabel(),
-      );
+    await runAuxiliaryReasoningEffortChangeOperation({
+      reasoningEffort,
+      providerCatalog: selectedProviderCatalog,
+      catalogRevision: modelCatalog.revision,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
     });
   };
 

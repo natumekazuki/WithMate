@@ -28,14 +28,14 @@ import type { ApprovalMode } from "./approval-mode.js";
 import {
   applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionCustomAgentPatch,
-  applyAuxiliarySessionModelChange,
-  applyAuxiliarySessionReasoningEffortChange,
   resolveActiveAuxiliarySessionRefreshResult,
   resolveClosedAuxiliarySessionsAfterReturn,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
 import {
   runAuxiliaryApprovalModeChangeOperation,
+  runAuxiliaryModelChangeOperation,
+  runAuxiliaryReasoningEffortChangeOperation,
   runAuxiliarySandboxModeChangeOperation,
 } from "./auxiliary-runtime-option-operation.js";
 import {
@@ -1997,15 +1997,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionModelChange(
-        current,
-        selectedProviderCatalog,
-        model,
-        modelCatalog.revision,
-        currentTimestampLabel(),
-      )
-    ));
+    await runAuxiliaryModelChangeOperation({
+      model,
+      providerCatalog: selectedProviderCatalog,
+      catalogRevision: modelCatalog.revision,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
   }
 
   async function handleChangeAuxiliaryReasoningEffort(reasoningEffort: ModelReasoningEffort): Promise<void> {
@@ -2013,15 +2011,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionReasoningEffortChange(
-        current,
-        selectedProviderCatalog,
-        reasoningEffort,
-        modelCatalog.revision,
-        currentTimestampLabel(),
-      )
-    ));
+    await runAuxiliaryReasoningEffortChangeOperation({
+      reasoningEffort,
+      providerCatalog: selectedProviderCatalog,
+      catalogRevision: modelCatalog.revision,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
   }
 
   async function handleSelectAuxiliaryCustomAgent(agent: DiscoveredCustomAgent | null): Promise<void> {
