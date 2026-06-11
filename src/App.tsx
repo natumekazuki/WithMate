@@ -160,6 +160,7 @@ import {
 } from "./auxiliary-runtime-option-operation.js";
 import {
   clearAuxiliarySessionsLoadState,
+  createAuxiliaryLoadRevisionGuard,
   runActiveAuxiliarySessionLoadAndApply,
   runActiveAuxiliarySessionRefreshAndApply,
   runClosedAuxiliarySessionsLoadAndApply,
@@ -574,7 +575,11 @@ export default function AgentSessionWindowApp() {
     let active = true;
     const loadRevision = auxiliaryLoadRevisionRef.current + 1;
     auxiliaryLoadRevisionRef.current = loadRevision;
-    const canApplyLoadResult = () => active && auxiliaryLoadRevisionRef.current === loadRevision;
+    const canApplyLoadResult = createAuxiliaryLoadRevisionGuard({
+      loadRevision: auxiliaryLoadRevisionRef,
+      expectedRevision: loadRevision,
+      isActive: () => active,
+    });
 
     if (!withmateApi || !selectedSessionId) {
       clearAuxiliarySessionsLoadState({
@@ -2173,7 +2178,10 @@ export default function AgentSessionWindowApp() {
       setActionPending: setIsAuxiliaryActionPending,
     });
     const parentSessionId = selectedSession.id;
-    const canApplyLoadResult = () => auxiliaryLoadRevisionRef.current === loadRevision;
+    const canApplyLoadResult = createAuxiliaryLoadRevisionGuard({
+      loadRevision: auxiliaryLoadRevisionRef,
+      expectedRevision: loadRevision,
+    });
 
     try {
       const launchSelectionSessions = await withmateApi.listSessionSummaries().catch(() => sessions);

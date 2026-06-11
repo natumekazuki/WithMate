@@ -158,6 +158,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-12: App / Companion の Auxiliary send result saved / error restore applier pair を `createAuxiliarySessionSendResultAppliers` に集約。running applier、pending live run clear、send result handling、error 表示は既存境界を維持し、saved / restore が同じ active session update 経路を使う contract を test で固定。`scripts/tests/auxiliary-session-send-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の Auxiliary send pending live run clear callback を `createAuxiliarySessionPendingLiveRunClearer` に集約。running applier、send result handling、error 表示は既存境界を維持し、owner が一致する pending live run だけ clear する contract を test で固定。`scripts/tests/auxiliary-session-send-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の Auxiliary start error state 反映を `applyAuxiliarySessionStartError` に集約。provider blocked 判定、launch defaults、start 作成、closed list reload は既存境界を維持し、start error を launch error state に渡す contract を test で固定。`scripts/tests/auxiliary-session-start-operation.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-12: App / Companion の Auxiliary load revision guard 作成を `createAuxiliaryLoadRevisionGuard` に集約。初期 active/closed load と start 後 closed reload の適用可否だけを共通化し、API 呼び出し、merge view guard、state 反映先は呼び出し側に維持。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -450,6 +451,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の Auxiliary send result saved / error restore applier pair を `auxiliary-session-send-operation` に接続。2026-06-12 着手。
 - App / Companion の Auxiliary send pending live run clear callback を `auxiliary-session-send-operation` に接続。2026-06-12 着手。
 - App / Companion の Auxiliary start error state 反映を `auxiliary-session-start-operation` に接続。2026-06-12 着手。
+- App / Companion の Auxiliary load revision guard 作成を `auxiliary-session-refresh-operation` に接続。2026-06-12 着手。
 
 やらないこと:
 

@@ -17,6 +17,20 @@ export type ActiveAuxiliarySessionRefreshOperationResult =
       savedSession: AuxiliarySession | null;
     };
 
+export function createAuxiliaryLoadRevisionGuard(input: {
+  loadRevision: { current: number };
+  expectedRevision: number;
+  isActive?: () => boolean;
+}): () => boolean {
+  return () => {
+    if (input.isActive && !input.isActive()) {
+      return false;
+    }
+
+    return input.loadRevision.current === input.expectedRevision;
+  };
+}
+
 export async function runActiveAuxiliarySessionRefreshOperation(input: {
   sessionId: string;
   activeSessionId: string | null;

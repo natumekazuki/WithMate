@@ -6,6 +6,7 @@ import {
   applyActiveAuxiliarySessionRefreshResult,
   applyClosedAuxiliarySessionsLoadResult,
   clearAuxiliarySessionsLoadState,
+  createAuxiliaryLoadRevisionGuard,
   runActiveAuxiliarySessionLoadAndApply,
   runActiveAuxiliarySessionLoadOperation,
   runActiveAuxiliarySessionRefreshAndApply,
@@ -40,6 +41,38 @@ function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxi
     ...overrides,
   };
 }
+
+test("createAuxiliaryLoadRevisionGuard は revision と active 状態が一致する場合だけ true を返す", () => {
+  const loadRevision = { current: 3 };
+  let active = true;
+  const canApplyLoadResult = createAuxiliaryLoadRevisionGuard({
+    loadRevision,
+    expectedRevision: 3,
+    isActive: () => active,
+  });
+
+  assert.equal(canApplyLoadResult(), true);
+
+  loadRevision.current = 4;
+  assert.equal(canApplyLoadResult(), false);
+
+  loadRevision.current = 3;
+  active = false;
+  assert.equal(canApplyLoadResult(), false);
+});
+
+test("createAuxiliaryLoadRevisionGuard は active callback なしで revision だけを判定する", () => {
+  const loadRevision = { current: 7 };
+  const canApplyLoadResult = createAuxiliaryLoadRevisionGuard({
+    loadRevision,
+    expectedRevision: 7,
+  });
+
+  assert.equal(canApplyLoadResult(), true);
+
+  loadRevision.current = 8;
+  assert.equal(canApplyLoadResult(), false);
+});
 
 test("runActiveAuxiliarySessionRefreshOperation は active id が違う場合 load しない", async () => {
   const loadedSessionIds: string[] = [];

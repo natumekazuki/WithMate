@@ -36,6 +36,7 @@ import {
 } from "./auxiliary-runtime-option-operation.js";
 import {
   clearAuxiliarySessionsLoadState,
+  createAuxiliaryLoadRevisionGuard,
   runActiveAuxiliarySessionLoadAndApply,
   runActiveAuxiliarySessionRefreshAndApply,
   runClosedAuxiliarySessionsLoadAndApply,
@@ -582,7 +583,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     let active = true;
     const loadRevision = auxiliaryLoadRevisionRef.current + 1;
     auxiliaryLoadRevisionRef.current = loadRevision;
-    const canApplyLoadResult = () => active && auxiliaryLoadRevisionRef.current === loadRevision;
+    const canApplyLoadResult = createAuxiliaryLoadRevisionGuard({
+      loadRevision: auxiliaryLoadRevisionRef,
+      expectedRevision: loadRevision,
+      isActive: () => active,
+    });
     const sessionId = snapshot?.session.id ?? null;
     if (!withmateApi || !sessionId || isMergeView) {
       clearAuxiliarySessionsLoadState({
@@ -1792,7 +1797,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       setActionPending: setIsAuxiliaryActionPending,
     });
     const parentSessionId = snapshot.session.id;
-    const canApplyLoadResult = () => auxiliaryLoadRevisionRef.current === loadRevision;
+    const canApplyLoadResult = createAuxiliaryLoadRevisionGuard({
+      loadRevision: auxiliaryLoadRevisionRef,
+      expectedRevision: loadRevision,
+    });
     try {
       const launchDefaults = resolveAuxiliaryLaunchSessionDefaults({
         providerId: launchProviderId,
