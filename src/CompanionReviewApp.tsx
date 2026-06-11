@@ -26,7 +26,6 @@ import {
 } from "./runtime-option-state.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import {
-  resolveClosedAuxiliarySessionsAfterReturn,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
 import {
@@ -235,6 +234,7 @@ import {
 } from "./auxiliary-additional-directory-operation.js";
 import {
   applyAuxiliarySessionReturnToMainUiState,
+  applyReturnedAuxiliaryClosedSession,
   runAuxiliarySessionReturnToMainOperation,
 } from "./auxiliary-session-return-operation.js";
 import {
@@ -1847,7 +1847,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         },
         closeAuxiliarySession: (sessionId) => withmateApi.closeAuxiliarySession(sessionId),
         applyClosedSession: (closedSession) => {
-          setClosedAuxiliarySessions((current) => resolveClosedAuxiliarySessionsAfterReturn(current, closedSession));
+          setClosedAuxiliarySessions((current) => applyReturnedAuxiliaryClosedSession(current, closedSession));
         },
         applyReturnedMainSession: () => {
           applyAuxiliarySessionReturnToMainUiState({

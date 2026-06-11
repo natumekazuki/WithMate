@@ -149,7 +149,6 @@ import { buildCompanionGroupMonitorEntries } from "./home/home-session-projectio
 import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
-  resolveClosedAuxiliarySessionsAfterReturn,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
 import {
@@ -224,6 +223,7 @@ import {
 } from "./auxiliary-additional-directory-operation.js";
 import {
   applyAuxiliarySessionReturnToMainUiState,
+  applyReturnedAuxiliaryClosedSession,
   runAuxiliarySessionReturnToMainOperation,
 } from "./auxiliary-session-return-operation.js";
 import {
@@ -2227,7 +2227,7 @@ export default function AgentSessionWindowApp() {
         },
         closeAuxiliarySession: (sessionId) => withmateApi.closeAuxiliarySession(sessionId),
         applyClosedSession: (closedSession) => {
-          setClosedAuxiliarySessions((current) => resolveClosedAuxiliarySessionsAfterReturn(current, closedSession));
+          setClosedAuxiliarySessions((current) => applyReturnedAuxiliaryClosedSession(current, closedSession));
         },
         applyReturnedMainSession: () => {
           applyAuxiliarySessionReturnToMainUiState({

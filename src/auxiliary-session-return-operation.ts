@@ -1,4 +1,7 @@
-import type { AuxiliarySession } from "./auxiliary-session-state.js";
+import {
+  resolveClosedAuxiliarySessionsAfterReturn,
+  type AuxiliarySession,
+} from "./auxiliary-session-state.js";
 
 export function applyAuxiliarySessionReturnToMainUiState(input: {
   mutationRevision: { current: number };
@@ -16,6 +19,13 @@ export function applyAuxiliarySessionReturnToMainUiState(input: {
   input.setComposerCaret(Math.min(input.mainCaret, input.mainDraft.length));
   input.setActionDockPinnedExpanded(false);
   input.setForceComposerBlockedFeedback(false);
+}
+
+export function applyReturnedAuxiliaryClosedSession(
+  currentSessions: AuxiliarySession[],
+  closedSession: AuxiliarySession,
+): AuxiliarySession[] {
+  return resolveClosedAuxiliarySessionsAfterReturn(currentSessions, closedSession);
 }
 
 export async function runAuxiliarySessionReturnToMainOperation(input: {

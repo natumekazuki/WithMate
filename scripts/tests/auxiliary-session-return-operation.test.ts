@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   applyAuxiliarySessionReturnToMainUiState,
+  applyReturnedAuxiliaryClosedSession,
   runAuxiliarySessionReturnToMainOperation,
 } from "../../src/auxiliary-session-return-operation.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
@@ -74,6 +75,20 @@ describe("runAuxiliarySessionReturnToMainOperation", () => {
     assert.equal(actionDockExpanded, false);
     assert.equal(forceBlockedFeedback, false);
     assert.deepEqual(events, ["active", "caret:5", "dock:false", "feedback:false"]);
+  });
+
+  it("closed session 反映は重複を避けて末尾に置く", () => {
+    const existing = makeAuxiliarySession({ id: "closed-1", status: "closed" });
+    const closed = makeAuxiliarySession({ id: "closed-2", status: "closed" });
+
+    assert.deepEqual(
+      applyReturnedAuxiliaryClosedSession([existing], closed),
+      [existing, closed],
+    );
+    assert.deepEqual(
+      applyReturnedAuxiliaryClosedSession([existing], existing),
+      [existing],
+    );
   });
 
   it("active session がない場合は close せず null を返す", async () => {
