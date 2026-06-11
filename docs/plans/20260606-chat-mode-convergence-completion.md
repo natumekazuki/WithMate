@@ -130,6 +130,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-11: App / Companion の return-to-main closed Auxiliary list 反映を `applyReturnedAuxiliaryClosedSession` に集約。close API、beforeClose revision、main UI state 反映、error handling は呼び出し側に残し、closed session の重複排除と末尾追加 contract を test で固定。`scripts/tests/auxiliary-session-return-operation.test.ts`、`scripts/tests/auxiliary-session-state.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の active Auxiliary initial load result 反映を `applyActiveAuxiliarySessionLoadResult` に集約。load operation、stale guard、closed list load、ref 同期 effect は既存境界を維持し、loaded result だけ active session state に反映する contract を test で固定。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の closed Auxiliary load result 反映を `applyClosedAuxiliarySessionsLoadResult` に集約。初期 load と start 後 refresh の operation / stale guard は既存境界を維持し、loaded result だけ closed sessions state に反映する contract を test で固定。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-11: App / Companion の guarded Auxiliary session update callback を `applyActiveAuxiliarySessionUpdate` に集約。draft/session save queue、mutation revision、rollback guard、recipe/save API は既存境界を維持し、active ref と state setter に同じ session を反映する contract を test で固定。`scripts/tests/auxiliary-session-update-operation.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -394,6 +395,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の return-to-main closed Auxiliary list 反映を `auxiliary-session-return-operation` に接続。2026-06-11 着手。
 - App / Companion の active Auxiliary initial load result 反映を `auxiliary-session-refresh-operation` に接続。2026-06-11 着手。
 - App / Companion の closed Auxiliary load result 反映を `auxiliary-session-refresh-operation` に接続。2026-06-11 着手。
+- App / Companion の guarded Auxiliary session update callback を `auxiliary-session-update-operation` に接続。2026-06-11 着手。
 
 やらないこと:
 

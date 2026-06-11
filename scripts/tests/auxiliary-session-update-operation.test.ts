@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  applyActiveAuxiliarySessionUpdate,
   enqueueAuxiliarySessionSaveOperation,
   enqueueAuxiliarySessionSaveWithQueue,
   resolveAuxiliarySessionRollbackSession,
@@ -609,6 +610,26 @@ describe("runGuardedAuxiliarySessionUpdate", () => {
     await assert.rejects(failureUpdate, error);
     assert.equal(currentSession.runState, "running");
     assert.equal(currentSession.updatedAt, "running-2");
+  });
+});
+
+describe("applyActiveAuxiliarySessionUpdate", () => {
+  it("active session ref と state setter に同じ session を反映する", () => {
+    const previousSession = makeAuxiliarySession({ updatedAt: "previous" });
+    const nextSession = makeAuxiliarySession({ updatedAt: "next" });
+    const activeSessionRef = { current: previousSession as AuxiliarySession | null };
+    const appliedSessions: AuxiliarySession[] = [];
+
+    applyActiveAuxiliarySessionUpdate({
+      session: nextSession,
+      activeSessionRef,
+      setActiveSession: (session) => {
+        appliedSessions.push(session);
+      },
+    });
+
+    assert.equal(activeSessionRef.current, nextSession);
+    assert.deepEqual(appliedSessions, [nextSession]);
   });
 });
 

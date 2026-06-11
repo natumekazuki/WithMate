@@ -216,6 +216,7 @@ import {
   scheduleAuxiliaryDraftSaveOperation,
 } from "./auxiliary-draft-save-context.js";
 import {
+  applyActiveAuxiliarySessionUpdate,
   enqueueAuxiliarySessionSaveWithQueue,
   runGuardedAuxiliarySessionUpdate,
 } from "./auxiliary-session-update-operation.js";
@@ -1935,8 +1936,11 @@ export default function AgentSessionWindowApp() {
       activeSession: activeAuxiliarySession,
       getCurrentSession: () => activeAuxiliarySessionRef.current,
       applyActiveSession: (session) => {
-        activeAuxiliarySessionRef.current = session;
-        setActiveAuxiliarySession(session);
+        applyActiveAuxiliarySessionUpdate({
+          session,
+          activeSessionRef: activeAuxiliarySessionRef,
+          setActiveSession: setActiveAuxiliarySession,
+        });
       },
       draftSaveQueue: auxiliaryDraftSaveQueueRef,
       sessionSaveQueue: auxiliarySessionSaveQueueRef,

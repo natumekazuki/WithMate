@@ -140,3 +140,12 @@ export async function runGuardedAuxiliarySessionUpdate(input: {
   input.applyActiveSession(result.saved);
   return result;
 }
+
+export function applyActiveAuxiliarySessionUpdate(input: {
+  session: AuxiliarySession;
+  activeSessionRef: { current: AuxiliarySession | null };
+  setActiveSession: (session: AuxiliarySession) => void;
+}): void {
+  input.activeSessionRef.current = input.session;
+  input.setActiveSession(input.session);
+}
