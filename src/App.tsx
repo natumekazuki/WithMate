@@ -158,6 +158,7 @@ import {
   runAuxiliarySandboxModeChangeOperation,
 } from "./auxiliary-runtime-option-operation.js";
 import {
+  applyActiveAuxiliarySessionLoadResult,
   applyActiveAuxiliarySessionRefreshResult,
   runActiveAuxiliarySessionRefreshOperation,
   runActiveAuxiliarySessionLoadOperation,
@@ -573,9 +574,10 @@ export default function AgentSessionWindowApp() {
       getActiveAuxiliarySession: (sessionId) => withmateApi.getActiveAuxiliarySession(sessionId),
       isActive: canApplyLoadResult,
     }).then((result) => {
-      if (result.status === "loaded") {
-        setActiveAuxiliarySession(result.session);
-      }
+      applyActiveAuxiliarySessionLoadResult({
+        result,
+        setActiveSession: setActiveAuxiliarySession,
+      });
     });
 
     void runClosedAuxiliarySessionsLoadOperation({

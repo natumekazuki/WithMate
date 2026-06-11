@@ -128,6 +128,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-11: App / Companion の Auxiliary start result callback を `createAuxiliarySessionStartResultApplier` に集約。session 作成 request、launch defaults、error handling、closed list refresh は呼び出し側に残し、mutation revision、active session、dock expand、feedback clear、dialog close の反映順を test で固定。`scripts/tests/auxiliary-session-start-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の active Auxiliary refresh result 反映を `applyActiveAuxiliarySessionRefreshResult` に集約。refresh load / stale guard、error handling、live run subscription は呼び出し側に残し、saved session 適用時だけ active ref を同期する contract を test で固定。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`scripts/tests/auxiliary-session-state.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の return-to-main closed Auxiliary list 反映を `applyReturnedAuxiliaryClosedSession` に集約。close API、beforeClose revision、main UI state 反映、error handling は呼び出し側に残し、closed session の重複排除と末尾追加 contract を test で固定。`scripts/tests/auxiliary-session-return-operation.test.ts`、`scripts/tests/auxiliary-session-state.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-11: App / Companion の active Auxiliary initial load result 反映を `applyActiveAuxiliarySessionLoadResult` に集約。load operation、stale guard、closed list load、ref 同期 effect は既存境界を維持し、loaded result だけ active session state に反映する contract を test で固定。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -390,6 +391,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の Auxiliary start result callback を `auxiliary-session-start-operation` に接続。2026-06-11 着手。
 - App / Companion の active Auxiliary refresh result 反映を `auxiliary-session-refresh-operation` に接続。2026-06-11 着手。
 - App / Companion の return-to-main closed Auxiliary list 反映を `auxiliary-session-return-operation` に接続。2026-06-11 着手。
+- App / Companion の active Auxiliary initial load result 反映を `auxiliary-session-refresh-operation` に接続。2026-06-11 着手。
 
 やらないこと:
 

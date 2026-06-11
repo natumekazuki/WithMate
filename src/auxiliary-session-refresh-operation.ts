@@ -94,6 +94,18 @@ export async function runActiveAuxiliarySessionLoadOperation(input: {
   };
 }
 
+export function applyActiveAuxiliarySessionLoadResult(input: {
+  result: ActiveAuxiliarySessionLoadOperationResult;
+  setActiveSession: (session: AuxiliarySession | null) => void;
+}): boolean {
+  if (input.result.status !== "loaded") {
+    return false;
+  }
+
+  input.setActiveSession(input.result.session);
+  return true;
+}
+
 export type ClosedAuxiliarySessionsLoadOperationResult =
   | {
       status: "skipped";

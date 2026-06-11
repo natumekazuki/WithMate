@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyActiveAuxiliarySessionLoadResult,
   applyActiveAuxiliarySessionRefreshResult,
   runActiveAuxiliarySessionLoadOperation,
   runActiveAuxiliarySessionRefreshOperation,
@@ -192,6 +193,70 @@ test("runActiveAuxiliarySessionLoadOperation は load 後に inactive なら sta
   });
 
   assert.deepEqual(result, { status: "stale" });
+});
+
+test("applyActiveAuxiliarySessionLoadResult は loaded result だけ active session に反映する", () => {
+  const activeSession = createAuxiliarySession({ id: "aux-loaded" });
+  const appliedSessions: Array<AuxiliarySession | null> = [];
+
+  assert.equal(
+    applyActiveAuxiliarySessionLoadResult({
+      result: {
+        status: "loaded",
+        session: activeSession,
+      },
+      setActiveSession: (session) => {
+        appliedSessions.push(session);
+      },
+    }),
+    true,
+  );
+
+  assert.deepEqual(appliedSessions, [activeSession]);
+});
+
+test("applyActiveAuxiliarySessionLoadResult は loaded null result を active session clear として反映する", () => {
+  const appliedSessions: Array<AuxiliarySession | null> = [];
+
+  assert.equal(
+    applyActiveAuxiliarySessionLoadResult({
+      result: {
+        status: "loaded",
+        session: null,
+      },
+      setActiveSession: (session) => {
+        appliedSessions.push(session);
+      },
+    }),
+    true,
+  );
+
+  assert.deepEqual(appliedSessions, [null]);
+});
+
+test("applyActiveAuxiliarySessionLoadResult は stale / skipped result では active session を変更しない", () => {
+  const appliedSessions: Array<AuxiliarySession | null> = [];
+
+  assert.equal(
+    applyActiveAuxiliarySessionLoadResult({
+      result: { status: "stale" },
+      setActiveSession: (session) => {
+        appliedSessions.push(session);
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    applyActiveAuxiliarySessionLoadResult({
+      result: { status: "skipped" },
+      setActiveSession: (session) => {
+        appliedSessions.push(session);
+      },
+    }),
+    false,
+  );
+
+  assert.deepEqual(appliedSessions, []);
 });
 
 test("runClosedAuxiliarySessionsLoadOperation は parent session id がない場合 load しない", async () => {
