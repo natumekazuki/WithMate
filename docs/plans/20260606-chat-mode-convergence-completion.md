@@ -106,6 +106,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-10: App / Companion / MateTalk の送信開始後の main draft clear を `applyComposerDraftClearCommand` に集約。App / Companion の draft only clear と MateTalk の caret reset 付き clear を同じ command の optional caret 引数で表現し、MateTalk の path reference clear、rollback restore、Auxiliary draft は未変更。`scripts/tests/composer-draft-handlers.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-10: App / Companion の session 切替時 main composer draft reset を `applyComposerDraftClearCommand` 経由へ移行。App は main caret mirror も helper 引数で同期し、Companion は composer caret reset だけを適用する形で、preview reset、picker base directory、workspace path match state、IME state、Auxiliary draft は未変更。`scripts/tests/composer-draft-handlers.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-10: App / Companion の main Skill prompt 挿入後 draft apply を `applyComposerDraftChangeCommand` 経由へ移行。Skill prompt handler 側で caret UI state は先に反映済みのため、command の caret setter を optional にして App は main caret mirror だけ同期、Companion は draft 反映だけを行う contract にした。Auxiliary skill selection、focus/caret 復元、provider 分岐、保存境界は未変更。`scripts/tests/composer-draft-handlers.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-10: App / Companion / MateTalk の quote 挿入後 draft apply を `applyComposerDraftChangeCommand` 経由へ移行。App は main caret mirror、Companion は main composer branch、MateTalk は feedback clear 付き draft/caret 反映を同じ command で表現し、Auxiliary quote branch、workspace path match close、focus/caret 復元は未変更。`scripts/tests/composer-draft-handlers.test.ts`、`scripts/tests/session-shell-handlers.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -324,6 +325,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion / MateTalk の送信開始後 main draft clear を `composer-draft-handlers` に集約。2026-06-10 着手。
 - App / Companion の session 切替時 main composer draft reset を `composer-draft-handlers` に接続。2026-06-10 着手。
 - App / Companion の main Skill prompt 挿入後 draft apply を `composer-draft-handlers` に接続。2026-06-10 着手。
+- App / Companion / MateTalk の quote 挿入後 draft apply を `composer-draft-handlers` に接続。2026-06-10 着手。
 
 やらないこと:
 

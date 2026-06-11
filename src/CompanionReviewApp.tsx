@@ -1380,13 +1380,20 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       textarea: composerTextareaRef.current,
     }),
     applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
-      setComposerCaret(nextCaret);
-      applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
       if (activeAuxiliarySession) {
+        setComposerCaret(nextCaret);
+        applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
         void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-      } else {
-        setComposerText(nextDraft);
+        return;
       }
+
+      applyComposerDraftChangeCommand({
+        value: nextDraft,
+        selectionStart: nextCaret,
+        setDraft: setComposerText,
+        setComposerCaret,
+      });
+      applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
     },
     restoreComposerTextareaFocusAndCaret,
   });

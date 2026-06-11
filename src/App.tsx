@@ -2343,9 +2343,15 @@ export default function AgentSessionWindowApp() {
         return;
       }
 
-      setDraft(nextDraft);
-      mainComposerCaretRef.current = nextCaret;
-      setComposerCaret(nextCaret);
+      applyComposerDraftChangeCommand({
+        value: nextDraft,
+        selectionStart: nextCaret,
+        setDraft,
+        setComposerCaret,
+        syncMainComposerCaret: (selectionStart) => {
+          mainComposerCaretRef.current = selectionStart;
+        },
+      });
       applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
     },
     restoreComposerTextareaFocusAndCaret,

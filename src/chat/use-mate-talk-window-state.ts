@@ -248,9 +248,13 @@ export function useMateTalkWindowState({
       textarea: composerTextareaRef.current,
     }),
     applyInsertion: ({ draft: nextInput, caret: nextCaret }) => {
-      setInput(nextInput);
-      setInputCaret(nextCaret);
-      setFeedback("");
+      applyComposerDraftChangeCommand({
+        value: nextInput,
+        selectionStart: nextCaret,
+        setDraft: setInput,
+        setComposerCaret: setInputCaret,
+        clearFeedback: () => setFeedback(""),
+      });
     },
     restoreComposerTextareaFocusAndCaret,
   });
