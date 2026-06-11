@@ -116,6 +116,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-11: App / Companion の main composer sendability と forced blocked feedback の解決を `resolveComposerSendabilityState` に集約。Auxiliary sendability、MateTalk text submit preflight、preview API、provider 実行は未変更。`scripts/tests/session-composer-feedback.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の composer preview request 作成を `createComposerPreviewRequest` に集約。App と Auxiliary は session preview、Companion main は companion preview を使う contract とし、preview resolution の debounce/stale/error 処理、path reference preview、provider 実行は未変更。`scripts/tests/composer-preview-resolution.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の送信直前 composer preview request 作成も `createComposerPreviewRequest` 経由へ移行。App は session preview、Companion main は companion preview を使い、preview 結果の state 反映、send preflight、draft clear、provider 実行は未変更。`scripts/tests/composer-preview-resolution.test.ts`、`scripts/tests/session-composer-feedback.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-11: Companion の Auxiliary cancel target 組み立てを `buildRunningSessionCancelTarget` 経由へ移行し、App の Auxiliary cancel と同じ `runRunningSessionCancelOperation` contract に揃えた。cancel API、error 表示、Auxiliary send/save、provider 実行は未変更。`scripts/tests/chat-window-adapter.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -366,6 +367,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の Auxiliary send、draft save、additional info、return-to-main 周辺。
 - PR-05 / PR-07 の common lifecycle と接続。
 - App / Companion の Auxiliary cancel operation を `send-or-cancel` helper 経由へ統一。2026-06-10 着手。
+- Companion の Auxiliary cancel target 組み立ても `buildRunningSessionCancelTarget` に接続。2026-06-11 着手。
 
 やらないこと:
 
