@@ -214,7 +214,6 @@ import {
   scheduleAuxiliaryDraftSaveOperation,
 } from "./auxiliary-draft-save-context.js";
 import {
-  applyActiveAuxiliarySessionUpdate,
   createActiveAuxiliarySessionUpdateApplier,
   enqueueAuxiliarySessionSaveWithQueue,
   runGuardedAuxiliarySessionUpdate,
@@ -2178,13 +2177,10 @@ export default function AgentSessionWindowApp() {
           incrementMutationRevision: () => {
             auxiliarySessionMutationRevisionRef.current += 1;
           },
-          applyActiveSession: (startedSession) => {
-            applyActiveAuxiliarySessionUpdate({
-              session: startedSession,
-              activeSessionRef: activeAuxiliarySessionRef,
-              setActiveSession: setActiveAuxiliarySession,
-            });
-          },
+          applyActiveSession: createActiveAuxiliarySessionUpdateApplier({
+            activeSessionRef: activeAuxiliarySessionRef,
+            setActiveSession: setActiveAuxiliarySession,
+          }),
           setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
           setForceComposerBlockedFeedback,
           closeLaunchDialog: closeAuxiliaryLaunchDialog,
