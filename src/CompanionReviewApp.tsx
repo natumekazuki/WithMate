@@ -2534,7 +2534,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     } catch (error) {
       if (appliedOptimisticState) {
         if (shouldClearDraft) {
-          setComposerText(userMessage);
+          applyComposerDraftChangeCommand({
+            value: userMessage,
+            setDraft: setComposerText,
+          });
         }
         rollbackOptimisticSessionRunUpdate({
           sessionId: previousSnapshot.session.id,

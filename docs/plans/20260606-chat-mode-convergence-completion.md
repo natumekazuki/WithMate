@@ -112,6 +112,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-11: App / Companion の workspace path match 選択後 main draft apply を `applyComposerDraftChangeCommand` 経由へ移行。MateTalk は workspace path match なしのため対象外とし、App は main caret mirror、Companion は main composer branch を同じ command で表現。Auxiliary draft save、workspace match state、focus/caret 復元は未変更。`scripts/tests/composer-draft-handlers.test.ts`、`scripts/tests/session-shell-handlers.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion が共用する retry draft restore command 内の draft / caret / main caret mirror 反映を `applyComposerDraftChangeCommand` 経由へ移行。retry banner 判定、draft replace confirmation、workspace match close、focus 復元、resend 経路は未変更。`scripts/tests/retry-state.test.ts`、`scripts/tests/composer-draft-handlers.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion / MateTalk の IME composition end 後 caret 同期を `buildOnDraftSelectHandler` 経由へ移行し、MateTalk の app / projection / text chat composer props に composition handlers を接続。MateTalk submit shortcut は native composition と MateTalk composition ref の両方で抑止する contract に補強。selection fallback、draft 変更、IME start の責務は未変更。`scripts/tests/composer-draft-handlers.test.ts`、`scripts/tests/mate-talk-chat-projection.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-11: Companion の optimistic send 失敗時 draft restore を `applyComposerDraftChangeCommand` 経由へ移行。restore 条件、provider 実行、rollback live run clear、snapshot restore、error 表示は未変更。`scripts/tests/composer-draft-handlers.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -336,6 +337,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の workspace path match 選択後 main draft apply を `composer-draft-handlers` に接続。2026-06-11 着手。
 - App / Companion 共用の retry draft restore command を `composer-draft-handlers` に接続。2026-06-11 着手。
 - App / Companion / MateTalk の IME composition end 後 caret 同期を draft select handler に接続。2026-06-11 着手。
+- Companion の optimistic send 失敗時 draft restore を `composer-draft-handlers` に接続。2026-06-11 着手。
 
 やらないこと:
 
