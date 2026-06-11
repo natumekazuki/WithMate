@@ -1727,13 +1727,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     await runGuardedAuxiliarySessionUpdate({
       activeSession: activeAuxiliarySession,
       getCurrentSession: () => activeAuxiliarySessionRef.current,
-      applyActiveSession: (session) => {
-        applyActiveAuxiliarySessionUpdate({
-          session,
-          activeSessionRef: activeAuxiliarySessionRef,
-          setActiveSession: setActiveAuxiliarySession,
-        });
-      },
+      applyActiveSession: createActiveAuxiliarySessionUpdateApplier({
+        activeSessionRef: activeAuxiliarySessionRef,
+        setActiveSession: setActiveAuxiliarySession,
+      }),
       draftSaveQueue: auxiliaryDraftSaveQueueRef,
       sessionSaveQueue: auxiliarySessionSaveQueueRef,
       mutationRevision: auxiliarySessionMutationRevisionRef,
