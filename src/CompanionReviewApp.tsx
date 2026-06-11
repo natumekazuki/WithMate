@@ -115,8 +115,8 @@ import {
 import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,
+  resolveComposerSendabilityState,
   resolveComposerSendPreflight,
-  withForcedComposerBlockedFeedback,
 } from "./session-composer-feedback.js";
 import { buildActionDockCompactPreview } from "./action-dock-preview.js";
 import {
@@ -1144,19 +1144,22 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     runState: selectedSessionRunState,
   });
   const isRetryEditDisabled = isRetryActionDisabled || runDisabled;
-  const companionComposerSendabilityBase = useMemo(
+  const companionComposerSendability = useMemo(
     () =>
-      buildComposerSendabilityState({
+      resolveComposerSendabilityState({
         runState: selectedSessionRunState,
         blockedReason: companionComposerBlockedReason,
         inputErrors: composerPreview.errors,
         draftText: activeComposerText,
+        forceBlockedFeedback: forceComposerBlockedFeedback,
       }),
-    [activeComposerText, companionComposerBlockedReason, composerPreview.errors, selectedSessionRunState],
-  );
-  const companionComposerSendability = useMemo(
-    () => withForcedComposerBlockedFeedback(companionComposerSendabilityBase, forceComposerBlockedFeedback),
-    [companionComposerSendabilityBase, forceComposerBlockedFeedback],
+    [
+      activeComposerText,
+      companionComposerBlockedReason,
+      composerPreview.errors,
+      forceComposerBlockedFeedback,
+      selectedSessionRunState,
+    ],
   );
   const isCompanionSendDisabled = companionComposerSendability.isSendDisabled || operationRunning || isAuxiliaryActionPending;
   const companionSendButtonTitle = getComposerSendButtonTitle(companionComposerSendability);

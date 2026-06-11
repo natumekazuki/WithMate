@@ -6,6 +6,7 @@ import {
   buildComposerSendabilityState,
   getComposerSendBlockedMessage,
   getComposerSendButtonTitle,
+  resolveComposerSendabilityState,
   resolveComposerSendPreflight,
   resolveTextComposerSubmitPreflight,
   withForcedComposerBlockedFeedback,
@@ -54,6 +55,20 @@ describe("session composer feedback", () => {
 
     assert.equal(state.primaryFeedback, "browse-only session だよ。");
     assert.equal(getComposerSendButtonTitle(state), "browse-only session だよ。");
+  });
+
+  it("sendability resolver は forced blocked feedback までまとめて反映する", () => {
+    const state = resolveComposerSendabilityState({
+      runState: "idle",
+      blockedReason: "",
+      inputErrors: [],
+      draftText: "",
+      forceBlockedFeedback: true,
+    });
+
+    assert.equal(state.isSendDisabled, true);
+    assert.equal(state.primaryFeedback, BLANK_DRAFT_FEEDBACK);
+    assert.equal(state.shouldShowFeedback, true);
   });
 
   it("send blocked message は primary feedback を優先する", () => {

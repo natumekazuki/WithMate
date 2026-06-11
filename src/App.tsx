@@ -93,8 +93,8 @@ import {
 import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,
+  resolveComposerSendabilityState,
   resolveComposerSendPreflight,
-  withForcedComposerBlockedFeedback,
   type ComposerSendabilityState,
 } from "./session-composer-feedback.js";
 import { buildActionDockCompactPreview } from "./action-dock-preview.js";
@@ -1300,19 +1300,16 @@ export default function AgentSessionWindowApp() {
   ]);
   const shouldProtectDraftOnRetryEdit = shouldProtectRetryEditDraft({ retryBanner, draft });
   const isComposerDisabled = selectedSessionRunState === "running" || !!composerBlockedReason || isSelectedSessionReadOnly;
-  const composerSendabilityBase = useMemo(
+  const composerSendability = useMemo(
     () =>
-      buildComposerSendabilityState({
+      resolveComposerSendabilityState({
         runState: selectedSessionRunState,
         blockedReason: composerBlockedReason,
         inputErrors: composerPreview.errors,
         draftText: draft,
+        forceBlockedFeedback: forceComposerBlockedFeedback,
       }),
-    [composerBlockedReason, composerPreview.errors, draft, selectedSessionRunState],
-  );
-  const composerSendability = useMemo(
-    () => withForcedComposerBlockedFeedback(composerSendabilityBase, forceComposerBlockedFeedback),
-    [composerSendabilityBase, forceComposerBlockedFeedback],
+    [composerBlockedReason, composerPreview.errors, draft, forceComposerBlockedFeedback, selectedSessionRunState],
   );
   const isSendDisabled = composerSendability.isSendDisabled;
   const composerSendButtonTitle = getComposerSendButtonTitle(composerSendability);

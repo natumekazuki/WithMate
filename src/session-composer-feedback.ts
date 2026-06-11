@@ -88,6 +88,30 @@ export function withForcedComposerBlockedFeedback(
   };
 }
 
+export function resolveComposerSendabilityState({
+  runState,
+  blockedReason,
+  inputErrors,
+  draftText,
+  forceBlockedFeedback,
+}: {
+  runState: string | null | undefined;
+  blockedReason: string;
+  inputErrors: string[];
+  draftText: string;
+  forceBlockedFeedback: boolean;
+}): ComposerSendabilityState {
+  return withForcedComposerBlockedFeedback(
+    buildComposerSendabilityState({
+      runState,
+      blockedReason,
+      inputErrors,
+      draftText,
+    }),
+    forceBlockedFeedback,
+  );
+}
+
 export function getComposerSendButtonTitle(state: ComposerSendabilityState): string | undefined {
   if (state.isRunning) {
     return "実行をキャンセル";
