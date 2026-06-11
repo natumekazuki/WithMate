@@ -106,8 +106,8 @@ import {
   buildCustomAgentMatchDisplay,
   buildSelectedCustomAgentDisplay,
   buildSkillMatchDisplay,
-  buildSkillPromptInsertionState,
 } from "./session-composer-selection.js";
+import { runAuxiliarySkillPromptInsertionOperation } from "./auxiliary-skill-prompt-operation.js";
 import {
   buildAdditionalDirectoryItems,
   buildClosedWorkspacePathMatchState,
@@ -2005,27 +2005,26 @@ export default function AgentSessionWindowApp() {
 
   const handleSelectAuxiliarySkill = async (skill: DiscoveredSkill) => {
     const textarea = composerTextareaRef.current;
-    if (!activeAuxiliarySession) {
-      return;
-    }
-
-    const nextState = buildSkillPromptInsertionState(
-      activeAuxiliarySession.provider,
-      skill.name,
-      activeAuxiliarySession.composerDraft,
-    );
-
-    applySkillPromptInsertionUiState({
-      state: nextState,
-      setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
-      setCaret: setComposerCaret,
-      setSkillPickerOpen: setIsSkillPickerOpen,
+    await runAuxiliarySkillPromptInsertionOperation({
+      activeSession: activeAuxiliarySession,
+      skillName: skill.name,
+      applyUiState: (nextState) => {
+        applySkillPromptInsertionUiState({
+          state: nextState,
+          setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+          setCaret: setComposerCaret,
+          setSkillPickerOpen: setIsSkillPickerOpen,
+        });
+      },
+      updateDraft: async (draft) => {
+        await updateActiveAuxiliarySession((current) => (
+          applyAuxiliarySessionComposerDraftPatch(current, draft, currentTimestampLabel())
+        ));
+      },
+      afterDraftUpdated: (nextState) => {
+        restoreComposerTextareaFocusAndCaret(textarea, nextState.caret);
+      },
     });
-    await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionComposerDraftPatch(current, nextState.draft, currentTimestampLabel())
-    ));
-
-    restoreComposerTextareaFocusAndCaret(textarea, nextState.caret);
   };
 
   const handleResendLastMessage = async () => {

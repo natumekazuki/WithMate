@@ -143,8 +143,8 @@ import {
   buildCustomAgentMatchDisplay,
   buildSelectedCustomAgentDisplay,
   buildSkillMatchDisplay,
-  buildSkillPromptInsertionState,
 } from "./session-composer-selection.js";
+import { runAuxiliarySkillPromptInsertionOperation } from "./auxiliary-skill-prompt-operation.js";
 import {
   buildAdditionalDirectoryItems,
   buildClosedWorkspacePathMatchState,
@@ -2035,25 +2035,23 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   async function handleSelectAuxiliarySkill(skill: DiscoveredSkill): Promise<void> {
-    if (!activeAuxiliarySession) {
-      return;
-    }
-
-    const nextState = buildSkillPromptInsertionState(
-      activeAuxiliarySession.provider,
-      skill.name,
-      activeAuxiliarySession.composerDraft,
-    );
-
-    applySkillPromptInsertionUiState({
-      state: nextState,
-      setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
-      setCaret: setComposerCaret,
-      setSkillPickerOpen: setIsSkillPickerOpen,
+    await runAuxiliarySkillPromptInsertionOperation({
+      activeSession: activeAuxiliarySession,
+      skillName: skill.name,
+      applyUiState: (nextState) => {
+        applySkillPromptInsertionUiState({
+          state: nextState,
+          setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+          setCaret: setComposerCaret,
+          setSkillPickerOpen: setIsSkillPickerOpen,
+        });
+      },
+      updateDraft: async (draft) => {
+        await updateActiveAuxiliarySession((current) => (
+          applyAuxiliarySessionComposerDraftPatch(current, draft, currentTimestampLabel())
+        ));
+      },
     });
-    await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionComposerDraftPatch(current, nextState.draft, currentTimestampLabel())
-    ));
   }
 
   async function handleAddAuxiliaryAdditionalDirectory(): Promise<void> {

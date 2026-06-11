@@ -119,6 +119,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-11: Companion の Auxiliary cancel target 組み立てを `buildRunningSessionCancelTarget` 経由へ移行し、App の Auxiliary cancel と同じ `runRunningSessionCancelOperation` contract に揃えた。cancel API、error 表示、Auxiliary send/save、provider 実行は未変更。`scripts/tests/chat-window-adapter.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の return-to-main 後 UI state 反映を `applyAuxiliarySessionReturnToMainUiState` に集約。mutation revision、active ref/session clear、main caret clamp、ActionDock collapse、blocked feedback clear の順序を test で固定し、close API、closed list 反映、error 表示は未変更。`scripts/tests/auxiliary-session-return-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の Auxiliary draft save optimistic UI 反映と saved result ref 同期を `auxiliary-draft-save-context` に集約。save scheduling、save queue、status 比較差分、error handling は呼び出し側に残し、mutation revision / active ref / draft save queue 反映の順序を test で固定。`scripts/tests/auxiliary-draft-save-context.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-11: App / Companion の Auxiliary Skill prompt 挿入 operation を `runAuxiliarySkillPromptInsertionOperation` に集約。state 構築、UI 反映、draft patch 保存の順序を test で固定し、App の保存後 focus/caret 復元と Companion の復元なし差分は optional hook として呼び出し側に残した。`scripts/tests/auxiliary-skill-prompt-operation.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -372,6 +373,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - Companion の Auxiliary cancel target 組み立ても `buildRunningSessionCancelTarget` に接続。2026-06-11 着手。
 - App / Companion の return-to-main 後 UI state 反映を `auxiliary-session-return-operation` に接続。2026-06-11 着手。
 - App / Companion の Auxiliary draft save optimistic UI 反映と saved result ref 同期を `auxiliary-draft-save-context` に接続。2026-06-11 着手。
+- App / Companion の Auxiliary Skill prompt 挿入 operation を `auxiliary-skill-prompt-operation` に接続。2026-06-11 着手。
 
 やらないこと:
 
