@@ -139,6 +139,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-11: App / Companion の closed Auxiliary load + apply を `runClosedAuxiliarySessionsLoadAndApply` に集約。initial load と start 後 refresh の list/get API と stale guard は呼び出し側に残し、loaded result だけ state 反映、stale/skipped no-op の contract を test で固定。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の active Auxiliary load + apply を `runActiveAuxiliarySessionLoadAndApply` に集約。API/session/merge-view precondition、load revision、closed list load は呼び出し側に残し、loaded result だけ active session 反映、stale/skipped no-op の contract を test で固定。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の active Auxiliary refresh + apply を `runActiveAuxiliarySessionRefreshAndApply` に集約。live run subscription、refresh API、error logging / silent catch は呼び出し側に残し、loaded result だけ active session state と ref に反映、stale/skipped no-op の contract を test で固定。`scripts/tests/auxiliary-session-refresh-operation.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-11: App / Companion の Auxiliary start finally 処理を `finishAuxiliarySessionStartClosedLoad` に集約。start 作成、launch defaults、error handling は呼び出し側に残し、closed list reload 起動と pending clear の順序を test で固定。`scripts/tests/auxiliary-session-start-operation.test.ts`、`scripts/tests/companion-auxiliary-load-revision.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -412,6 +413,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の closed Auxiliary load + apply を `auxiliary-session-refresh-operation` に接続。2026-06-11 着手。
 - App / Companion の active Auxiliary load + apply を `auxiliary-session-refresh-operation` に接続。2026-06-11 着手。
 - App / Companion の active Auxiliary refresh + apply を `auxiliary-session-refresh-operation` に接続。2026-06-11 着手。
+- App / Companion の Auxiliary start finally 処理を `auxiliary-session-start-operation` に接続。2026-06-11 着手。
 
 やらないこと:
 

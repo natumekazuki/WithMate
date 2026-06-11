@@ -230,6 +230,7 @@ import {
 } from "./auxiliary-session-return-operation.js";
 import {
   createAuxiliarySessionStartResultApplier,
+  finishAuxiliarySessionStartClosedLoad,
   runAuxiliarySessionStartOperation,
 } from "./auxiliary-session-start-operation.js";
 import { runAuxiliarySessionSendOperation } from "./auxiliary-session-send-operation.js";
@@ -2189,14 +2190,14 @@ export default function AgentSessionWindowApp() {
     } catch (error) {
       setAuxiliaryLaunchStartError(error);
     } finally {
-      void runClosedAuxiliarySessionsLoadAndApply({
+      finishAuxiliarySessionStartClosedLoad({
         parentSessionId,
         listAuxiliarySessions: (sessionId) => withmateApi.listAuxiliarySessions(sessionId),
         getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
         isActive: canApplyLoadResult,
         setClosedSessions: setClosedAuxiliarySessions,
+        setActionPending: setIsAuxiliaryActionPending,
       });
-      setIsAuxiliaryActionPending(false);
     }
   };
 

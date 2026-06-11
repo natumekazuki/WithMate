@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   applyAuxiliarySessionStartResult,
   createAuxiliarySessionStartResultApplier,
+  finishAuxiliarySessionStartClosedLoad,
   runAuxiliarySessionStartOperation,
 } from "../../src/auxiliary-session-start-operation.js";
 import type {
@@ -188,5 +189,45 @@ describe("createAuxiliarySessionStartResultApplier", () => {
       "feedback:false",
       "close",
     ]);
+  });
+});
+
+describe("finishAuxiliarySessionStartClosedLoad", () => {
+  it("closed sessions reload を起動して pending を false に戻す", async () => {
+    const closedSession = makeAuxiliarySession({ id: "closed-1", status: "closed" });
+    const events: string[] = [];
+    const appliedClosedSessions: AuxiliarySession[][] = [];
+
+    finishAuxiliarySessionStartClosedLoad({
+      parentSessionId: "parent-1",
+      listAuxiliarySessions: async (parentSessionId) => {
+        events.push(`list:${parentSessionId}`);
+        return [closedSession];
+      },
+      getAuxiliarySession: async (sessionId) => {
+        events.push(`get:${sessionId}`);
+        return closedSession;
+      },
+      isActive: () => true,
+      setClosedSessions: (sessions) => {
+        events.push("closed");
+        appliedClosedSessions.push(sessions);
+      },
+      setActionPending: (pending) => {
+        events.push(`pending:${pending}`);
+      },
+    });
+
+    assert.deepEqual(events.slice(0, 2), ["list:parent-1", "pending:false"]);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.deepEqual(events, [
+      "list:parent-1",
+      "pending:false",
+      "get:closed-1",
+      "closed",
+    ]);
+    assert.deepEqual(appliedClosedSessions, [[closedSession]]);
   });
 });

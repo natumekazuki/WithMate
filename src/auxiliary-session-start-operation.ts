@@ -4,8 +4,10 @@ import type {
 import { buildCreateAuxiliarySessionInput } from "./chat/auxiliary-launch-state.js";
 import type {
   AuxiliarySession,
+  AuxiliarySessionSummary,
   CreateAuxiliarySessionInput,
 } from "./auxiliary-session-state.js";
+import { runClosedAuxiliarySessionsLoadAndApply } from "./auxiliary-session-refresh-operation.js";
 
 export function applyAuxiliarySessionStartResult(input: {
   session: AuxiliarySession;
@@ -51,4 +53,22 @@ export async function runAuxiliarySessionStartOperation(input: {
   }));
   input.applyStartedSession(session);
   return session;
+}
+
+export function finishAuxiliarySessionStartClosedLoad(input: {
+  parentSessionId: string;
+  listAuxiliarySessions: (parentSessionId: string) => Promise<AuxiliarySessionSummary[]>;
+  getAuxiliarySession: (sessionId: string) => Promise<AuxiliarySession | null>;
+  isActive: () => boolean;
+  setClosedSessions: (sessions: AuxiliarySession[]) => void;
+  setActionPending: (pending: boolean) => void;
+}): void {
+  void runClosedAuxiliarySessionsLoadAndApply({
+    parentSessionId: input.parentSessionId,
+    listAuxiliarySessions: input.listAuxiliarySessions,
+    getAuxiliarySession: input.getAuxiliarySession,
+    isActive: input.isActive,
+    setClosedSessions: input.setClosedSessions,
+  });
+  input.setActionPending(false);
 }

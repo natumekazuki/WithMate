@@ -12,6 +12,6 @@ test("Companion Auxiliary start は closed 履歴ロードを無効化した rev
   assert.match(handler, /parentSessionId,/);
   assert.match(
     handler,
-    /finally \{\s*void loadClosedAuxiliarySessions\(parentSessionId, canApplyLoadResult\);\s*setIsAuxiliaryActionPending\(false\);\s*\}/,
+    /finally \{\s*finishAuxiliarySessionStartClosedLoad\(\{\s*parentSessionId,[\s\S]*?isActive: canApplyLoadResult,[\s\S]*?setClosedSessions: setClosedAuxiliarySessions,[\s\S]*?setActionPending: setIsAuxiliaryActionPending,[\s\S]*?\}\);\s*\}/,
   );
 });
