@@ -1,5 +1,6 @@
 import type { AuditLogSummary, LiveSessionRunState } from "../runtime-state.js";
 import type { Message } from "../session-state.js";
+import { applyComposerDraftChangeCommand } from "./composer-draft-handlers.js";
 
 export type RetryBannerKind = "interrupted" | "failed" | "canceled";
 
@@ -56,9 +57,13 @@ export function applyRetryDraftRestoreCommand(input: {
   const nextState = buildRetryDraftRestoreState(input.messageText);
 
   input.setActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
-  input.setDraft(nextState.draft);
-  input.setCaret(nextState.caret);
-  input.syncCaret?.(nextState.caret);
+  applyComposerDraftChangeCommand({
+    value: nextState.draft,
+    selectionStart: nextState.caret,
+    setDraft: input.setDraft,
+    setComposerCaret: input.setCaret,
+    syncMainComposerCaret: input.syncCaret,
+  });
   input.applyWorkspacePathMatchState(nextState);
   input.setRetryDraftReplacePending(nextState.isRetryDraftReplacePending);
   input.focusComposer(nextState.caret);

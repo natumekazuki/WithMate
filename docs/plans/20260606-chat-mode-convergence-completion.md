@@ -110,6 +110,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-11: App / Companion / MateTalk の path reference 挿入後 draft apply を `applyComposerDraftChangeCommand` 経由へ移行。App は main caret mirror、Companion は main composer branch、MateTalk は feedback clear 付き draft/caret 反映を同じ command で表現し、Auxiliary draft save、picker / paste / session files 保存境界、path reference attachment 更新、workspace match state は未変更。`scripts/tests/composer-draft-handlers.test.ts`、`scripts/tests/session-shell-handlers.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion / MateTalk の path reference 削除後 draft apply を `applyComposerDraftChangeCommand` 経由へ移行。App は main caret mirror、Companion は main composer branch、MateTalk は draft/caret 反映を同じ command で表現し、Auxiliary draft save、削除対象正規化、path reference attachment removal、workspace match state は未変更。`scripts/tests/composer-draft-handlers.test.ts`、`scripts/tests/session-shell-handlers.test.ts`、`scripts/tests/mate-talk-state.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の workspace path match 選択後 main draft apply を `applyComposerDraftChangeCommand` 経由へ移行。MateTalk は workspace path match なしのため対象外とし、App は main caret mirror、Companion は main composer branch を同じ command で表現。Auxiliary draft save、workspace match state、focus/caret 復元は未変更。`scripts/tests/composer-draft-handlers.test.ts`、`scripts/tests/session-shell-handlers.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-11: App / Companion が共用する retry draft restore command 内の draft / caret / main caret mirror 反映を `applyComposerDraftChangeCommand` 経由へ移行。retry banner 判定、draft replace confirmation、workspace match close、focus 復元、resend 経路は未変更。`scripts/tests/retry-state.test.ts`、`scripts/tests/composer-draft-handlers.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -332,6 +333,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion / MateTalk の path reference 挿入後 draft apply を `composer-draft-handlers` に接続。2026-06-11 着手。
 - App / Companion / MateTalk の path reference 削除後 draft apply を `composer-draft-handlers` に接続。2026-06-11 着手。
 - App / Companion の workspace path match 選択後 main draft apply を `composer-draft-handlers` に接続。2026-06-11 着手。
+- App / Companion 共用の retry draft restore command を `composer-draft-handlers` に接続。2026-06-11 着手。
 
 やらないこと:
 
