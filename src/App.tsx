@@ -224,7 +224,7 @@ import {
 } from "./auxiliary-additional-directory-operation.js";
 import {
   applyAuxiliarySessionReturnToMainUiState,
-  applyReturnedAuxiliaryClosedSession,
+  createReturnedAuxiliaryClosedSessionApplier,
   resolveAuxiliarySessionReturnToMainErrorMessage,
   runAuxiliarySessionReturnToMainOperation,
 } from "./auxiliary-session-return-operation.js";
@@ -2214,9 +2214,9 @@ export default function AgentSessionWindowApp() {
           auxiliaryLoadRevisionRef.current += 1;
         },
         closeAuxiliarySession: (sessionId) => withmateApi.closeAuxiliarySession(sessionId),
-        applyClosedSession: (closedSession) => {
-          setClosedAuxiliarySessions((current) => applyReturnedAuxiliaryClosedSession(current, closedSession));
-        },
+        applyClosedSession: createReturnedAuxiliaryClosedSessionApplier({
+          setClosedSessions: setClosedAuxiliarySessions,
+        }),
         applyReturnedMainSession: () => {
           applyAuxiliarySessionReturnToMainUiState({
             mutationRevision: auxiliarySessionMutationRevisionRef,

@@ -34,6 +34,14 @@ export function applyReturnedAuxiliaryClosedSession(
   return resolveClosedAuxiliarySessionsAfterReturn(currentSessions, closedSession);
 }
 
+export function createReturnedAuxiliaryClosedSessionApplier(input: {
+  setClosedSessions: (updater: (currentSessions: AuxiliarySession[]) => AuxiliarySession[]) => void;
+}): (closedSession: AuxiliarySession) => void {
+  return (closedSession) => {
+    input.setClosedSessions((currentSessions) => applyReturnedAuxiliaryClosedSession(currentSessions, closedSession));
+  };
+}
+
 export async function runAuxiliarySessionReturnToMainOperation(input: {
   activeSession: AuxiliarySession | null;
   beforeClose?: () => void;

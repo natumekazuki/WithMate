@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   applyAuxiliarySessionReturnToMainUiState,
   applyReturnedAuxiliaryClosedSession,
+  createReturnedAuxiliaryClosedSessionApplier,
   resolveAuxiliarySessionReturnToMainErrorMessage,
   runAuxiliarySessionReturnToMainOperation,
 } from "../../src/auxiliary-session-return-operation.js";
@@ -90,6 +91,21 @@ describe("runAuxiliarySessionReturnToMainOperation", () => {
       applyReturnedAuxiliaryClosedSession([existing], existing),
       [existing],
     );
+  });
+
+  it("closed session applier は setter callback 経由で closed list を更新する", () => {
+    const existing = makeAuxiliarySession({ id: "closed-1", status: "closed" });
+    const closed = makeAuxiliarySession({ id: "closed-2", status: "closed" });
+    const appliedSessions: AuxiliarySession[][] = [];
+    const applyClosedSession = createReturnedAuxiliaryClosedSessionApplier({
+      setClosedSessions: (updater) => {
+        appliedSessions.push(updater([existing]));
+      },
+    });
+
+    applyClosedSession(closed);
+
+    assert.deepEqual(appliedSessions, [[existing, closed]]);
   });
 
   it("active session がない場合は close せず null を返す", async () => {
