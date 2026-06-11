@@ -94,8 +94,10 @@ export const buildOnDraftCompositionEndHandler = ({
 }: ComposerDraftCompositionEndHandlerArgs) => () => {
   setIsComposerImeComposing(false);
   const selectionStart = getSelectionStart() ?? getFallbackSelectionStart();
-  setComposerCaret(selectionStart);
-  syncMainComposerCaret?.(selectionStart);
+  buildOnDraftSelectHandler({
+    setComposerCaret,
+    syncMainComposerCaret,
+  })(selectionStart);
 };
 
 export const buildOnDraftCompositionHandlers = (args: ComposerDraftCompositionEndHandlerArgs) => ({

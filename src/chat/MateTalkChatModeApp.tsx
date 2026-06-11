@@ -47,6 +47,7 @@ export function MateTalkChatModeApp() {
         onOpenSessionFilesTerminal: state.onOpenSessionFilesTerminal,
         onCollapseActionDock: state.onCollapseActionDock,
         onExpandActionDock: state.onExpandActionDock,
+        isInputImeComposing: state.isInputImeComposing,
         isRunning: state.isRunning,
         composerCapabilityProps: {
           isAdditionalDirectoryListOpen: state.isAdditionalDirectoryListOpen,
@@ -69,6 +70,8 @@ export function MateTalkChatModeApp() {
           onDraftFocus: state.onDraftFocus,
           onDraftPaste: state.onDraftPaste,
           onDraftSelect: state.onDraftSelect,
+          onDraftCompositionStart: state.onDraftCompositionStart,
+          onDraftCompositionEnd: state.onDraftCompositionEnd,
           onChangeApprovalMode: state.onChangeApprovalMode,
           onChangeCodexSandboxMode: state.onChangeCodexSandboxMode,
         },

@@ -1,4 +1,4 @@
-import { type CSSProperties, type RefObject } from "react";
+import { type CSSProperties, type KeyboardEvent, type RefObject } from "react";
 
 import { type ChatSelectOption, type ChatWindowProps } from "./chat-window.js";
 import {
@@ -43,6 +43,7 @@ export type MateTalkChatProjectionInput = {
   onOpenSessionFilesTerminal: () => void;
   onCollapseActionDock: () => void;
   onExpandActionDock: () => void;
+  isInputImeComposing?: () => boolean;
   isRunning: boolean;
   feedback: string;
   composerCapabilityProps?: StaticTextChatComposerCapabilityProps;
@@ -91,10 +92,20 @@ export function buildMateTalkChatWindowProps({
   onOpenSessionFilesTerminal,
   onCollapseActionDock,
   onExpandActionDock,
+  isInputImeComposing,
   isRunning,
   feedback,
   composerCapabilityProps,
 }: MateTalkChatProjectionInput): ChatWindowProps {
+  const shouldSubmitOnKey = (event: KeyboardEvent<HTMLTextAreaElement>) =>
+    shouldSubmitMateTalkInputByKey({
+      key: event.key,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      shiftKey: event.shiftKey,
+      isComposing: event.nativeEvent.isComposing || isInputImeComposing?.() === true,
+    });
+
   return buildTextChatWindowProps({
     mode: "mate-talk",
     pageTitle: "メイトーク",
@@ -130,7 +141,7 @@ export function buildMateTalkChatWindowProps({
     }),
     isRunning,
     feedback,
-    submitOnKey: shouldSubmitMateTalkInputByKey,
+    submitOnKey: shouldSubmitOnKey,
     rightPaneHeaderTitle: "メイトーク",
     rightPaneAriaLabel: "補助情報",
     composerCapabilityProps: buildMateTalkComposerCapabilityProps({

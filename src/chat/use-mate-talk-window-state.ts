@@ -42,6 +42,7 @@ import { createPastedSessionAttachmentHandler } from "./composer-paste-handlers.
 import {
   applyComposerDraftClearCommand,
   applyComposerDraftChangeCommand,
+  buildOnDraftCompositionHandlers,
   buildOnDraftSelectHandler,
 } from "./composer-draft-handlers.js";
 import type { MateTalkMessage } from "./mate-talk-chat-projection.js";
@@ -112,6 +113,7 @@ export function useMateTalkWindowState({
   const sessionFilesSessionIdRef = useRef(`mate-talk-${Date.now().toString(36)}`);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const inputImeComposingRef = useRef(false);
   const [inputCaret, setInputCaret] = useState(0);
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [pathReferences, setPathReferences] = useState<MateTalkPathReference[]>([]);
@@ -555,6 +557,7 @@ export function useMateTalkWindowState({
     selectedApprovalMode,
     sandboxOptions,
     selectedCodexSandboxMode,
+    isInputImeComposing: () => inputImeComposingRef.current,
     onChangeInput: handleChangeInputWithCaret,
     onCopyMessageText: handleCopyMessageText,
     onQuoteMessageText: handleQuoteMessageText,
@@ -581,6 +584,14 @@ export function useMateTalkWindowState({
     onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleDraftPaste(event),
     onDraftSelect: buildOnDraftSelectHandler({
       setComposerCaret: setInputCaret,
+    }),
+    ...buildOnDraftCompositionHandlers({
+      setComposerCaret: setInputCaret,
+      setIsComposerImeComposing: (isComposing) => {
+        inputImeComposingRef.current = isComposing;
+      },
+      getSelectionStart: () => composerTextareaRef.current?.selectionStart,
+      getFallbackSelectionStart: () => input.length,
     }),
     onChangeApprovalMode: (value: ApprovalMode) => setSelectedApprovalMode(normalizeApprovalMode(value)),
     onChangeCodexSandboxMode: (value: CodexSandboxMode) =>
