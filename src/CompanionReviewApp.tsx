@@ -137,6 +137,7 @@ import {
 } from "./chat/auxiliary-launch-state.js";
 import {
   buildAuxiliaryAwareSendOrCancelHandler,
+  buildAuxiliarySessionCancelTarget,
   buildRunningSessionCancelTarget,
   resolveSelectedSessionIsRunning,
   resolveSelectedSessionRunState,
@@ -1955,11 +1956,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   async function cancelAuxiliaryRun(): Promise<void> {
     const withmateApi = getWithMateApi();
     await runRunningSessionCancelOperation({
-      target: buildRunningSessionCancelTarget({
-        sessionId: activeAuxiliarySession?.id,
-        runState: activeAuxiliarySession?.runState,
-        isRunning: activeAuxiliarySession?.runState === "running",
-      }),
+      target: buildAuxiliarySessionCancelTarget({ session: activeAuxiliarySession }),
       cancelRun: withmateApi ? (sessionId) => withmateApi.cancelAuxiliarySessionRun(sessionId) : null,
     });
   }

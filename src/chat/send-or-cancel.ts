@@ -57,6 +57,18 @@ export function buildRunningSessionCancelTarget({
     : null;
 }
 
+export function buildAuxiliarySessionCancelTarget({
+  session,
+}: {
+  session: { id: string; runState: string | null | undefined } | null | undefined;
+}): RunningSessionCancelTarget {
+  return buildRunningSessionCancelTarget({
+    sessionId: session?.id,
+    runState: session?.runState,
+    isRunning: session?.runState === "running",
+  });
+}
+
 export function resolveRunningSessionCancelTargetId(
   target: RunningSessionCancelTarget,
 ): string | null {

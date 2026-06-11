@@ -32,6 +32,7 @@ import {
 } from "../../src/chat/auxiliary-runtime-option-routing.js";
 import {
   buildAuxiliaryAwareSendOrCancelHandler,
+  buildAuxiliarySessionCancelTarget,
   buildRunningSessionCancelTarget,
   resolveAuxiliaryAwareSendOrCancelAction,
   resolveSelectedSessionIsRunning,
@@ -203,6 +204,26 @@ test("buildRunningSessionCancelTarget は session 未選択なら cancel 対象�
     }),
     null,
   );
+});
+
+test("buildAuxiliarySessionCancelTarget は active Auxiliary session から cancel 対象を作る", () => {
+  const target = buildAuxiliarySessionCancelTarget({
+    session: { id: "auxiliary-session-1", runState: "running" },
+  });
+
+  assert.equal(resolveRunningSessionCancelTargetId(target), "auxiliary-session-1");
+});
+
+test("buildAuxiliarySessionCancelTarget は idle や未選択の Auxiliary session では cancel 対象を作らない", () => {
+  assert.equal(
+    resolveRunningSessionCancelTargetId(
+      buildAuxiliarySessionCancelTarget({
+        session: { id: "auxiliary-session-1", runState: "idle" },
+      }),
+    ),
+    null,
+  );
+  assert.equal(buildAuxiliarySessionCancelTarget({ session: null }), null);
 });
 
 test("runRunningSessionCancelOperation は running target の cancel callback を呼ぶ", async () => {

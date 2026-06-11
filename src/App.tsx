@@ -52,6 +52,7 @@ import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import {
   buildAuxiliaryAwareSendOrCancelHandler,
+  buildAuxiliarySessionCancelTarget,
   buildRunningSessionCancelTarget,
   resolveSelectedSessionIsRunning,
   resolveSelectedSessionRunState,
@@ -2122,11 +2123,7 @@ export default function AgentSessionWindowApp() {
   const handleCancelAuxiliaryRun = async () => {
     try {
       await runRunningSessionCancelOperation({
-        target: buildRunningSessionCancelTarget({
-          sessionId: activeAuxiliarySession?.id,
-          runState: activeAuxiliarySession?.runState,
-          isRunning: activeAuxiliarySession?.runState === "running",
-        }),
+        target: buildAuxiliarySessionCancelTarget({ session: activeAuxiliarySession }),
         cancelRun: withmateApi ? (sessionId) => withmateApi.cancelAuxiliarySessionRun(sessionId) : null,
       });
     } catch (error) {
