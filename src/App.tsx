@@ -211,10 +211,8 @@ import {
 } from "./auxiliary-session-message-projection.js";
 import {
   applyAuxiliaryDraftChangeUiState,
-  applyScheduledAuxiliaryDraftSaveUiState,
-  createAppliedAuxiliaryDraftSaveResultResolver,
+  runScheduledAuxiliaryDraftSaveAndApply,
   runAuxiliaryDraftPatchOperation,
-  scheduleAuxiliaryDraftSaveOperation,
 } from "./auxiliary-draft-save-context.js";
 import {
   createActiveAuxiliarySessionUpdateApplier,
@@ -2274,7 +2272,7 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const draftSave = scheduleAuxiliaryDraftSaveOperation({
+    await runScheduledAuxiliaryDraftSaveAndApply({
       currentSession: activeAuxiliarySession,
       draft: value,
       createTimestampLabel: currentTimestampLabel,
@@ -2286,23 +2284,14 @@ export default function AgentSessionWindowApp() {
           () => withmateApi.updateAuxiliarySession(request),
         );
       },
-    });
-    const saveOperation = applyScheduledAuxiliaryDraftSaveUiState({
-      scheduled: draftSave,
       mutationRevision: auxiliarySessionMutationRevisionRef,
       activeSessionRef: activeAuxiliarySessionRef,
       draftSaveQueueRef: auxiliaryDraftSaveQueueRef,
       setActiveSession: setActiveAuxiliarySession,
+      onError: (error) => {
+        console.error(error);
+      },
     });
-    try {
-      const result = await saveOperation;
-      setActiveAuxiliarySession(createAppliedAuxiliaryDraftSaveResultResolver({
-        result,
-        activeSessionRef: activeAuxiliarySessionRef,
-      }));
-    } catch (error) {
-      console.error(error);
-    }
   };
 
   const sendAuxiliaryMessage = async (messageText: string) => {

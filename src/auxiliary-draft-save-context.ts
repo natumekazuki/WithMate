@@ -184,3 +184,53 @@ export function scheduleAuxiliaryDraftSaveOperation(input: {
     draftSaveQueue: saveOperation.then(() => undefined, () => undefined),
   };
 }
+
+export async function runScheduledAuxiliaryDraftSaveAndApply(input: {
+  currentSession: AuxiliarySession;
+  draft: string;
+  createTimestampLabel: () => string;
+  draftSaveQueue: Promise<void>;
+  getCurrentSession: () => AuxiliarySession | null;
+  saveAuxiliarySession: (request: AuxiliarySession) => Promise<AuxiliarySession>;
+  mutationRevision: { current: number };
+  activeSessionRef: { current: AuxiliarySession | null };
+  draftSaveQueueRef: { current: Promise<void> };
+  setActiveSession: (
+    updater: AuxiliarySession | ((current: AuxiliarySession | null) => AuxiliarySession | null),
+  ) => void;
+  compareStatus?: boolean;
+  onError?: (error: unknown) => void;
+}): Promise<AuxiliaryDraftSaveOperationResult | null> {
+  const draftSave = scheduleAuxiliaryDraftSaveOperation({
+    currentSession: input.currentSession,
+    draft: input.draft,
+    createTimestampLabel: input.createTimestampLabel,
+    draftSaveQueue: input.draftSaveQueue,
+    getCurrentSession: input.getCurrentSession,
+    saveAuxiliarySession: input.saveAuxiliarySession,
+  });
+  const saveOperation = applyScheduledAuxiliaryDraftSaveUiState({
+    scheduled: draftSave,
+    mutationRevision: input.mutationRevision,
+    activeSessionRef: input.activeSessionRef,
+    draftSaveQueueRef: input.draftSaveQueueRef,
+    setActiveSession: (session) => input.setActiveSession(session),
+  });
+
+  try {
+    const result = await saveOperation;
+    input.setActiveSession(createAppliedAuxiliaryDraftSaveResultResolver({
+      result,
+      activeSessionRef: input.activeSessionRef,
+      compareStatus: input.compareStatus,
+    }));
+    return result;
+  } catch (error) {
+    if (input.onError) {
+      input.onError(error);
+      return null;
+    }
+
+    throw error;
+  }
+}

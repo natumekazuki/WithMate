@@ -230,10 +230,8 @@ import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-stat
 import { createPastedSessionAttachmentHandler } from "./chat/composer-paste-handlers.js";
 import {
   applyAuxiliaryDraftChangeUiState,
-  applyScheduledAuxiliaryDraftSaveUiState,
-  createAppliedAuxiliaryDraftSaveResultResolver,
+  runScheduledAuxiliaryDraftSaveAndApply,
   runAuxiliaryDraftPatchOperation,
-  scheduleAuxiliaryDraftSaveOperation,
 } from "./auxiliary-draft-save-context.js";
 import {
   createActiveAuxiliarySessionUpdateApplier,
@@ -1896,7 +1894,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const draftSave = scheduleAuxiliaryDraftSaveOperation({
+    await runScheduledAuxiliaryDraftSaveAndApply({
       currentSession: activeAuxiliarySession,
       draft: value,
       createTimestampLabel: currentTimestampLabel,
@@ -1908,20 +1906,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           () => withmateApi.updateAuxiliarySession(request),
         );
       },
-    });
-    const saveOperation = applyScheduledAuxiliaryDraftSaveUiState({
-      scheduled: draftSave,
       mutationRevision: auxiliarySessionMutationRevisionRef,
       activeSessionRef: activeAuxiliarySessionRef,
       draftSaveQueueRef: auxiliaryDraftSaveQueueRef,
       setActiveSession: setActiveAuxiliarySession,
-    });
-    const result = await saveOperation;
-    setActiveAuxiliarySession(createAppliedAuxiliaryDraftSaveResultResolver({
-      result,
-      activeSessionRef: activeAuxiliarySessionRef,
       compareStatus: true,
-    }));
+      onError: (error) => {
+        console.error(error);
+      },
+    });
   }
 
   async function sendAuxiliaryMessage(messageText: string): Promise<void> {

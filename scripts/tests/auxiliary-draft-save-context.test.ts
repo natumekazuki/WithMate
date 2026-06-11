@@ -12,6 +12,7 @@ import {
   resolveAuxiliaryDraftSaveResult,
   runAuxiliaryDraftPatchOperation,
   runAuxiliaryDraftSaveOperation,
+  runScheduledAuxiliaryDraftSaveAndApply,
   scheduleAuxiliaryDraftSaveOperation,
 } from "../../src/auxiliary-draft-save-context.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
@@ -380,5 +381,110 @@ describe("scheduleAuxiliaryDraftSaveOperation", () => {
       updatedAt: "timestamp-2",
     }]);
     await scheduled.draftSaveQueue;
+  });
+});
+
+describe("runScheduledAuxiliaryDraftSaveAndApply", () => {
+  it("scheduled draft save の optimistic state と saved result を反映する", async () => {
+    const currentSession = makeAuxiliarySession({ composerDraft: "before", updatedAt: "before" });
+    const saved = makeAuxiliarySession({ composerDraft: "after", updatedAt: "saved" });
+    const mutationRevision = { current: 2 };
+    const activeSessionRef = { current: currentSession as AuxiliarySession | null };
+    const draftSaveQueueRef = { current: Promise.resolve() };
+    const appliedSessions: Array<AuxiliarySession | null> = [];
+    let renderedSession: AuxiliarySession | null = currentSession;
+    const requests: AuxiliarySession[] = [];
+
+    const result = await runScheduledAuxiliaryDraftSaveAndApply({
+      currentSession,
+      draft: "after",
+      createTimestampLabel: () => "request",
+      draftSaveQueue: Promise.resolve(),
+      getCurrentSession: () => activeSessionRef.current,
+      saveAuxiliarySession: async (request) => {
+        requests.push(request);
+        return saved;
+      },
+      mutationRevision,
+      activeSessionRef,
+      draftSaveQueueRef,
+      setActiveSession: (sessionOrUpdater) => {
+        const nextSession = typeof sessionOrUpdater === "function"
+          ? sessionOrUpdater(renderedSession)
+          : sessionOrUpdater;
+        renderedSession = nextSession;
+        appliedSessions.push(nextSession);
+      },
+    });
+
+    assert.deepEqual(result, {
+      request: {
+        ...currentSession,
+        composerDraft: "after",
+        updatedAt: "request",
+      },
+      saved,
+    });
+    assert.equal(mutationRevision.current, 3);
+    assert.equal(activeSessionRef.current, saved);
+    assert.deepEqual(requests, [{
+      ...currentSession,
+      composerDraft: "after",
+      updatedAt: "request",
+    }]);
+    assert.deepEqual(appliedSessions, [{
+      ...currentSession,
+      composerDraft: "after",
+      updatedAt: "request",
+    }, saved]);
+  });
+
+  it("onError がある場合は save failure を通知して伝播しない", async () => {
+    const error = new Error("save failed");
+    const errors: unknown[] = [];
+
+    assert.equal(
+      await runScheduledAuxiliaryDraftSaveAndApply({
+        currentSession: makeAuxiliarySession(),
+        draft: "after",
+        createTimestampLabel: () => "request",
+        draftSaveQueue: Promise.resolve(),
+        getCurrentSession: () => makeAuxiliarySession({ composerDraft: "after" }),
+        saveAuxiliarySession: async () => {
+          throw error;
+        },
+        mutationRevision: { current: 0 },
+        activeSessionRef: { current: makeAuxiliarySession() },
+        draftSaveQueueRef: { current: Promise.resolve() },
+        setActiveSession: () => undefined,
+        onError: (nextError) => {
+          errors.push(nextError);
+        },
+      }),
+      null,
+    );
+    assert.deepEqual(errors, [error]);
+  });
+
+  it("onError がない場合は save failure を伝播する", async () => {
+    const error = new Error("save failed");
+
+    await assert.rejects(
+      runScheduledAuxiliaryDraftSaveAndApply({
+        currentSession: makeAuxiliarySession(),
+        draft: "after",
+        createTimestampLabel: () => "request",
+        draftSaveQueue: Promise.resolve(),
+        getCurrentSession: () => makeAuxiliarySession({ composerDraft: "after" }),
+        saveAuxiliarySession: async () => {
+          throw error;
+        },
+        mutationRevision: { current: 0 },
+        activeSessionRef: { current: makeAuxiliarySession() },
+        draftSaveQueueRef: { current: Promise.resolve() },
+        setActiveSession: () => undefined,
+      }),
+      error,
+    );
   });
 });
