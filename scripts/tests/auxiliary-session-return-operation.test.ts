@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   applyAuxiliarySessionReturnToMainUiState,
+  createAuxiliarySessionReturnBeforeCloseHandler,
   createAuxiliarySessionReturnToMainUiStateApplier,
   applyReturnedAuxiliaryClosedSession,
   createReturnedAuxiliaryClosedSessionApplier,
@@ -109,6 +110,17 @@ describe("runAuxiliarySessionReturnToMainOperation", () => {
     assert.equal(mutationRevision.current, 5);
     assert.equal(activeSessionRef.current, null);
     assert.deepEqual(events, ["active", "caret:5", "dock:false", "feedback:false"]);
+  });
+
+  it("return-to-main beforeClose handler は load revision を進める", () => {
+    const loadRevision = { current: 3 };
+    const beforeClose = createAuxiliarySessionReturnBeforeCloseHandler({
+      loadRevision,
+    });
+
+    beforeClose();
+
+    assert.equal(loadRevision.current, 4);
   });
 
   it("closed session 反映は重複を避けて末尾に置く", () => {

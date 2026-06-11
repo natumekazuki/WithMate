@@ -38,6 +38,14 @@ export function createAuxiliarySessionReturnToMainUiStateApplier(input: {
   };
 }
 
+export function createAuxiliarySessionReturnBeforeCloseHandler(input: {
+  loadRevision: { current: number };
+}): () => void {
+  return () => {
+    input.loadRevision.current += 1;
+  };
+}
+
 export function resolveAuxiliarySessionReturnToMainErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : AUXILIARY_SESSION_RETURN_FAILED_MESSAGE;
 }

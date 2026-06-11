@@ -223,6 +223,7 @@ import {
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "./auxiliary-additional-directory-operation.js";
 import {
+  createAuxiliarySessionReturnBeforeCloseHandler,
   createAuxiliarySessionReturnToMainUiStateApplier,
   createReturnedAuxiliaryClosedSessionApplier,
   resolveAuxiliarySessionReturnToMainErrorMessage,
@@ -2210,9 +2211,9 @@ export default function AgentSessionWindowApp() {
     try {
       await runAuxiliarySessionReturnToMainOperation({
         activeSession: activeAuxiliarySession,
-        beforeClose: () => {
-          auxiliaryLoadRevisionRef.current += 1;
-        },
+        beforeClose: createAuxiliarySessionReturnBeforeCloseHandler({
+          loadRevision: auxiliaryLoadRevisionRef,
+        }),
         closeAuxiliarySession: (sessionId) => withmateApi.closeAuxiliarySession(sessionId),
         applyClosedSession: createReturnedAuxiliaryClosedSessionApplier({
           setClosedSessions: setClosedAuxiliarySessions,
