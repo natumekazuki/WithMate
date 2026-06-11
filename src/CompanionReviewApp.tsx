@@ -2490,7 +2490,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setErrorMessage("");
     setOperationMessage("");
     try {
-      const preview = await withmateApi.previewCompanionComposerInput(snapshot.session.id, messageText);
+      const previewRequest = createComposerPreviewRequest({
+        api: withmateApi,
+        mode: "companion",
+        sessionId: snapshot.session.id,
+      });
+      if (!previewRequest) {
+        return;
+      }
+
+      const preview = await previewRequest(messageText);
       if (shouldClearDraft || messageText === composerText) {
         setComposerPreview(preview);
       }

@@ -1507,8 +1507,17 @@ export default function AgentSessionWindowApp() {
       throw new Error("旧バージョンから移行された閲覧専用セッションには送信できないよ。");
     }
 
+    const previewRequest = createComposerPreviewRequest({
+      api: withmateApi,
+      mode: "session",
+      sessionId: selectedSession.id,
+    });
+    if (!previewRequest) {
+      return;
+    }
+
     const nextMessage = messageText.trim();
-    const preview = await withmateApi.previewComposerInput(selectedSession.id, messageText);
+    const preview = await previewRequest(messageText);
     setComposerPreview(preview);
     const { blockedMessage } = resolveComposerSendPreflight({
       runState: selectedSessionRunState,

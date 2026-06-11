@@ -115,6 +115,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-11: Companion の optimistic send 失敗時 draft restore を `applyComposerDraftChangeCommand` 経由へ移行。restore 条件、provider 実行、rollback live run clear、snapshot restore、error 表示は未変更。`scripts/tests/composer-draft-handlers.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の main composer sendability と forced blocked feedback の解決を `resolveComposerSendabilityState` に集約。Auxiliary sendability、MateTalk text submit preflight、preview API、provider 実行は未変更。`scripts/tests/session-composer-feedback.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の composer preview request 作成を `createComposerPreviewRequest` に集約。App と Auxiliary は session preview、Companion main は companion preview を使う contract とし、preview resolution の debounce/stale/error 処理、path reference preview、provider 実行は未変更。`scripts/tests/composer-preview-resolution.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-11: App / Companion の送信直前 composer preview request 作成も `createComposerPreviewRequest` 経由へ移行。App は session preview、Companion main は companion preview を使い、preview 結果の state 反映、send preflight、draft clear、provider 実行は未変更。`scripts/tests/composer-preview-resolution.test.ts`、`scripts/tests/session-composer-feedback.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -342,6 +343,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - Companion の optimistic send 失敗時 draft restore を `composer-draft-handlers` に接続。2026-06-11 着手。
 - App / Companion の main composer sendability と forced feedback 解決を `session-composer-feedback` に接続。2026-06-11 着手。
 - App / Companion の composer preview request 作成を `use-composer-preview-resolution` に接続。2026-06-11 着手。
+- App / Companion の送信直前 composer preview request 作成を `use-composer-preview-resolution` に接続。2026-06-11 着手。
 
 やらないこと:
 
