@@ -143,6 +143,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-11: App / Companion の return-to-main closed session applier を `createReturnedAuxiliaryClosedSessionApplier` に集約。close API、main UI state 反映、pending clear は呼び出し側に残し、setter callback 経由で closed list の重複排除と末尾追加を行う contract を test で固定。`scripts/tests/auxiliary-session-return-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の return-to-main main UI state applier を `createAuxiliarySessionReturnToMainUiStateApplier` に集約。close API、closed list 反映、pending clear は呼び出し側に残し、active clear、caret clamp、dock collapse、feedback clear の反映順を callback contract として test で固定。`scripts/tests/auxiliary-session-return-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の return-to-main beforeClose callback を `createAuxiliarySessionReturnBeforeCloseHandler` に集約。close API、closed list / main UI state 反映、pending clear は呼び出し側に残し、return 開始時に Auxiliary load revision を進める contract を test で固定。`scripts/tests/auxiliary-session-return-operation.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-12: App / Companion の return-to-main cleanup を `finishAuxiliarySessionReturnToMainOperation` に集約。close API、closed list / main UI state 反映、error alert は呼び出し側に残し、pending を false に戻す contract を test で固定。`scripts/tests/auxiliary-session-return-operation.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -420,6 +421,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の return-to-main closed session applier を `auxiliary-session-return-operation` に接続。2026-06-11 着手。
 - App / Companion の return-to-main main UI state applier を `auxiliary-session-return-operation` に接続。2026-06-11 着手。
 - App / Companion の return-to-main beforeClose callback を `auxiliary-session-return-operation` に接続。2026-06-12 着手。
+- App / Companion の return-to-main cleanup を `auxiliary-session-return-operation` に接続。2026-06-12 着手。
 
 やらないこと:
 

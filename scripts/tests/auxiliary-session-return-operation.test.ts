@@ -7,6 +7,7 @@ import {
   createAuxiliarySessionReturnToMainUiStateApplier,
   applyReturnedAuxiliaryClosedSession,
   createReturnedAuxiliaryClosedSessionApplier,
+  finishAuxiliarySessionReturnToMainOperation,
   resolveAuxiliarySessionReturnToMainErrorMessage,
   runAuxiliarySessionReturnToMainOperation,
 } from "../../src/auxiliary-session-return-operation.js";
@@ -121,6 +122,18 @@ describe("runAuxiliarySessionReturnToMainOperation", () => {
     beforeClose();
 
     assert.equal(loadRevision.current, 4);
+  });
+
+  it("return-to-main cleanup は pending を false に戻す", () => {
+    const pendingValues: boolean[] = [];
+
+    finishAuxiliarySessionReturnToMainOperation({
+      setActionPending: (pending) => {
+        pendingValues.push(pending);
+      },
+    });
+
+    assert.deepEqual(pendingValues, [false]);
   });
 
   it("closed session 反映は重複を避けて末尾に置く", () => {

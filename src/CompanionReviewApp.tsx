@@ -238,6 +238,7 @@ import {
   createAuxiliarySessionReturnBeforeCloseHandler,
   createAuxiliarySessionReturnToMainUiStateApplier,
   createReturnedAuxiliaryClosedSessionApplier,
+  finishAuxiliarySessionReturnToMainOperation,
   resolveAuxiliarySessionReturnToMainErrorMessage,
   runAuxiliarySessionReturnToMainOperation,
 } from "./auxiliary-session-return-operation.js";
@@ -1852,7 +1853,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     } catch (error) {
       window.alert(resolveAuxiliarySessionReturnToMainErrorMessage(error));
     } finally {
-      setIsAuxiliaryActionPending(false);
+      finishAuxiliarySessionReturnToMainOperation({
+        setActionPending: setIsAuxiliaryActionPending,
+      });
     }
   }
 

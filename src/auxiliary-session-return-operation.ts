@@ -46,6 +46,12 @@ export function createAuxiliarySessionReturnBeforeCloseHandler(input: {
   };
 }
 
+export function finishAuxiliarySessionReturnToMainOperation(input: {
+  setActionPending: (pending: boolean) => void;
+}): void {
+  input.setActionPending(false);
+}
+
 export function resolveAuxiliarySessionReturnToMainErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : AUXILIARY_SESSION_RETURN_FAILED_MESSAGE;
 }
