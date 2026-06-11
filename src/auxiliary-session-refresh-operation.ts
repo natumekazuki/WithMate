@@ -168,3 +168,18 @@ export function clearAuxiliarySessionsLoadState(input: {
   input.setActiveSession(null);
   input.setClosedSessions([]);
 }
+
+export async function runClosedAuxiliarySessionsLoadAndApply(input: {
+  parentSessionId: string | null;
+  listAuxiliarySessions: (parentSessionId: string) => Promise<AuxiliarySessionSummary[]>;
+  getAuxiliarySession: (sessionId: string) => Promise<AuxiliarySession | null>;
+  isActive: () => boolean;
+  setClosedSessions: (sessions: AuxiliarySession[]) => void;
+}): Promise<ClosedAuxiliarySessionsLoadOperationResult> {
+  const result = await runClosedAuxiliarySessionsLoadOperation(input);
+  applyClosedAuxiliarySessionsLoadResult({
+    result,
+    setClosedSessions: input.setClosedSessions,
+  });
+  return result;
+}

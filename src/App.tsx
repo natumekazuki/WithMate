@@ -160,11 +160,10 @@ import {
 import {
   applyActiveAuxiliarySessionLoadResult,
   applyActiveAuxiliarySessionRefreshResult,
-  applyClosedAuxiliarySessionsLoadResult,
   clearAuxiliarySessionsLoadState,
   runActiveAuxiliarySessionRefreshOperation,
   runActiveAuxiliarySessionLoadOperation,
-  runClosedAuxiliarySessionsLoadOperation,
+  runClosedAuxiliarySessionsLoadAndApply,
 } from "./auxiliary-session-refresh-operation.js";
 import {
   createComposerPreviewRequest,
@@ -586,16 +585,12 @@ export default function AgentSessionWindowApp() {
       });
     });
 
-    void runClosedAuxiliarySessionsLoadOperation({
+    void runClosedAuxiliarySessionsLoadAndApply({
       parentSessionId: selectedSessionId,
       listAuxiliarySessions: (sessionId) => withmateApi.listAuxiliarySessions(sessionId),
       getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
       isActive: canApplyLoadResult,
-    }).then((result) => {
-      applyClosedAuxiliarySessionsLoadResult({
-        result,
-        setClosedSessions: setClosedAuxiliarySessions,
-      });
+      setClosedSessions: setClosedAuxiliarySessions,
     });
 
     return () => {
@@ -2211,16 +2206,12 @@ export default function AgentSessionWindowApp() {
     } catch (error) {
       setAuxiliaryLaunchStartError(error);
     } finally {
-      void runClosedAuxiliarySessionsLoadOperation({
+      void runClosedAuxiliarySessionsLoadAndApply({
         parentSessionId,
         listAuxiliarySessions: (sessionId) => withmateApi.listAuxiliarySessions(sessionId),
         getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
         isActive: canApplyLoadResult,
-      }).then((result) => {
-        applyClosedAuxiliarySessionsLoadResult({
-          result,
-          setClosedSessions: setClosedAuxiliarySessions,
-        });
+        setClosedSessions: setClosedAuxiliarySessions,
       });
       setIsAuxiliaryActionPending(false);
     }

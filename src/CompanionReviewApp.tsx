@@ -37,11 +37,10 @@ import {
 import {
   applyActiveAuxiliarySessionLoadResult,
   applyActiveAuxiliarySessionRefreshResult,
-  applyClosedAuxiliarySessionsLoadResult,
   clearAuxiliarySessionsLoadState,
   runActiveAuxiliarySessionRefreshOperation,
   runActiveAuxiliarySessionLoadOperation,
-  runClosedAuxiliarySessionsLoadOperation,
+  runClosedAuxiliarySessionsLoadAndApply,
 } from "./auxiliary-session-refresh-operation.js";
 import type {
   ComposerPreview,
@@ -591,16 +590,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       });
     });
 
-    void runClosedAuxiliarySessionsLoadOperation({
+    void runClosedAuxiliarySessionsLoadAndApply({
       parentSessionId: sessionId,
       listAuxiliarySessions: (parentSessionId) => withmateApi.listAuxiliarySessions(parentSessionId),
       getAuxiliarySession: (targetSessionId) => withmateApi.getAuxiliarySession(targetSessionId),
       isActive: canApplyLoadResult,
-    }).then((result) => {
-      applyClosedAuxiliarySessionsLoadResult({
-        result,
-        setClosedSessions: setClosedAuxiliarySessions,
-      });
+      setClosedSessions: setClosedAuxiliarySessions,
     });
 
     return () => {
@@ -1830,16 +1825,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     } catch (error) {
       setAuxiliaryLaunchStartError(error);
     } finally {
-      void runClosedAuxiliarySessionsLoadOperation({
+      void runClosedAuxiliarySessionsLoadAndApply({
         parentSessionId,
         listAuxiliarySessions: (sessionId) => withmateApi.listAuxiliarySessions(sessionId),
         getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
         isActive: canApplyLoadResult,
-      }).then((result) => {
-        applyClosedAuxiliarySessionsLoadResult({
-          result,
-          setClosedSessions: setClosedAuxiliarySessions,
-        });
+        setClosedSessions: setClosedAuxiliarySessions,
       });
       setIsAuxiliaryActionPending(false);
     }

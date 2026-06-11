@@ -8,6 +8,7 @@ import {
   clearAuxiliarySessionsLoadState,
   runActiveAuxiliarySessionLoadOperation,
   runActiveAuxiliarySessionRefreshOperation,
+  runClosedAuxiliarySessionsLoadAndApply,
   runClosedAuxiliarySessionsLoadOperation,
 } from "../../src/auxiliary-session-refresh-operation.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
@@ -402,6 +403,63 @@ test("applyClosedAuxiliarySessionsLoadResult は stale / skipped result では c
       },
     }),
     false,
+  );
+
+  assert.deepEqual(appliedSessions, []);
+});
+
+test("runClosedAuxiliarySessionsLoadAndApply は loaded result を closed sessions に反映する", async () => {
+  const closedSession = createAuxiliarySession({ id: "closed-1", status: "closed" });
+  const appliedSessions: AuxiliarySession[][] = [];
+
+  const result = await runClosedAuxiliarySessionsLoadAndApply({
+    parentSessionId: "parent-1",
+    listAuxiliarySessions: async () => [closedSession],
+    getAuxiliarySession: async () => closedSession,
+    isActive: () => true,
+    setClosedSessions: (sessions) => {
+      appliedSessions.push(sessions);
+    },
+  });
+
+  assert.deepEqual(result, {
+    status: "loaded",
+    sessions: [closedSession],
+  });
+  assert.deepEqual(appliedSessions, [[closedSession]]);
+});
+
+test("runClosedAuxiliarySessionsLoadAndApply は stale / skipped result では closed sessions を変更しない", async () => {
+  const appliedSessions: AuxiliarySession[][] = [];
+  let active = true;
+
+  assert.deepEqual(
+    await runClosedAuxiliarySessionsLoadAndApply({
+      parentSessionId: null,
+      listAuxiliarySessions: async () => [],
+      getAuxiliarySession: async () => null,
+      isActive: () => true,
+      setClosedSessions: (sessions) => {
+        appliedSessions.push(sessions);
+      },
+    }),
+    { status: "skipped" },
+  );
+
+  assert.deepEqual(
+    await runClosedAuxiliarySessionsLoadAndApply({
+      parentSessionId: "parent-1",
+      listAuxiliarySessions: async () => {
+        active = false;
+        return [];
+      },
+      getAuxiliarySession: async () => null,
+      isActive: () => active,
+      setClosedSessions: (sessions) => {
+        appliedSessions.push(sessions);
+      },
+    }),
+    { status: "stale" },
   );
 
   assert.deepEqual(appliedSessions, []);
