@@ -93,6 +93,7 @@ import {
   runAuxiliarySessionStartOperation,
 } from "./auxiliary-session-start-operation.js";
 import {
+  createAuxiliarySessionPendingLiveRunClearer,
   createAuxiliarySessionRunningApplier,
   createAuxiliarySessionSendResultAppliers,
   runAuxiliarySessionSendOperation,
@@ -170,7 +171,6 @@ import {
 import {
   applyOptimisticSessionRunUpdate,
   applyResolvedSessionRunUpdate,
-  clearOwnedLiveSessionRunState,
   createOwnedPendingLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
   rollbackOptimisticSessionRunUpdate,
@@ -1941,9 +1941,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         activeSessionRef: activeAuxiliarySessionRef,
         setActiveSession: setActiveAuxiliarySession,
       }),
-      clearPendingLiveRun: (sessionId) => {
-        setLiveRunState((current) => clearOwnedLiveSessionRunState(current, sessionId));
-      },
+      clearPendingLiveRun: createAuxiliarySessionPendingLiveRunClearer({
+        updateLiveRunState: (update) => setLiveRunState(update),
+      }),
       updateAuxiliarySession: (session) => withmateApi.updateAuxiliarySession(session),
       runAuxiliarySessionTurn: (sessionId, request) => withmateApi.runAuxiliarySessionTurn(sessionId, request),
     });

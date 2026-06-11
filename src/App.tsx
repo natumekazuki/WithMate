@@ -138,7 +138,6 @@ import {
 import {
   applyOptimisticSessionRunUpdate,
   applyResolvedSessionRunUpdate,
-  clearOwnedLiveSessionRunState,
   createOwnedPendingLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
   rollbackOptimisticSessionRunUpdate,
@@ -242,6 +241,7 @@ import {
   runAuxiliarySessionStartOperation,
 } from "./auxiliary-session-start-operation.js";
 import {
+  createAuxiliarySessionPendingLiveRunClearer,
   createAuxiliarySessionRunningApplier,
   createAuxiliarySessionSendResultAppliers,
   runAuxiliarySessionSendOperation,
@@ -2321,9 +2321,9 @@ export default function AgentSessionWindowApp() {
         activeSessionRef: activeAuxiliarySessionRef,
         setActiveSession: setActiveAuxiliarySession,
       }),
-      clearPendingLiveRun: (sessionId) => {
-        setLiveRunState((current) => clearOwnedLiveSessionRunState(current, sessionId));
-      },
+      clearPendingLiveRun: createAuxiliarySessionPendingLiveRunClearer({
+        updateLiveRunState: (update) => setLiveRunState(update),
+      }),
       updateAuxiliarySession: (session) => withmateApi.updateAuxiliarySession(session),
       runAuxiliarySessionTurn: (sessionId, request) => withmateApi.runAuxiliarySessionTurn(sessionId, request),
     });

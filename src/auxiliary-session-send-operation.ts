@@ -12,6 +12,7 @@ import {
   enqueueAuxiliarySessionSaveWithQueue,
 } from "./auxiliary-session-update-operation.js";
 import {
+  clearOwnedLiveSessionRunState,
   createOwnedPendingLiveSessionRunState,
   type OwnedLiveSessionRunState,
   type PendingLiveRunSessionIdentity,
@@ -70,6 +71,16 @@ export function createAuxiliarySessionSendResultAppliers(input: {
   return {
     applySavedSession: applyActiveSession,
     restoreSessionAfterError: applyActiveSession,
+  };
+}
+
+export function createAuxiliarySessionPendingLiveRunClearer(input: {
+  updateLiveRunState: (
+    updater: (current: OwnedLiveSessionRunState) => OwnedLiveSessionRunState,
+  ) => void;
+}): (sessionId: string) => void {
+  return (sessionId) => {
+    input.updateLiveRunState((current) => clearOwnedLiveSessionRunState(current, sessionId));
   };
 }
 

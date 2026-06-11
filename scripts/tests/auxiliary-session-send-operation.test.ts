@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  createAuxiliarySessionPendingLiveRunClearer,
   createAuxiliarySessionRunningApplier,
   createAuxiliarySessionSendResultAppliers,
   runAuxiliarySessionSendOperation,
@@ -65,6 +66,35 @@ describe("runAuxiliarySessionSendOperation", () => {
 
     assert.equal(activeSessionRef.current, restored);
     assert.deepEqual(appliedSessions, [saved, restored]);
+  });
+
+  it("pending live run clearer は owner が一致する live run だけ clear する", () => {
+    const appliedStates: OwnedLiveSessionRunState[] = [];
+    let currentState: OwnedLiveSessionRunState = {
+      ownerSessionId: "aux-1",
+      state: {
+        sessionId: "aux-1",
+        threadId: "thread-1",
+        assistantText: "",
+        reasoningText: "",
+        steps: [],
+        backgroundTasks: [],
+        usage: null,
+        errorMessage: "",
+        approvalRequest: null,
+        elicitationRequest: null,
+      },
+    };
+    const clearPendingLiveRun = createAuxiliarySessionPendingLiveRunClearer({
+      updateLiveRunState: (updater) => {
+        currentState = updater(currentState);
+        appliedStates.push(currentState);
+      },
+    });
+
+    clearPendingLiveRun("aux-1");
+
+    assert.deepEqual(appliedStates, [{ ownerSessionId: "aux-1", state: null }]);
   });
 
   it("running applier は active session と pending live run を同じ running session から反映する", () => {
