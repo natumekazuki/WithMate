@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   createAuxiliarySessionRunningApplier,
+  createAuxiliarySessionSendResultAppliers,
   runAuxiliarySessionSendOperation,
 } from "../../src/auxiliary-session-send-operation.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
@@ -45,6 +46,27 @@ function createQueueRefs(): {
 }
 
 describe("runAuxiliarySessionSendOperation", () => {
+  it("send result appliers は saved と error restore で同じ active session 更新を使う", () => {
+    const activeSessionRef = {
+      current: makeAuxiliarySession({ id: "before" }) as AuxiliarySession | null,
+    };
+    const appliedSessions: AuxiliarySession[] = [];
+    const { applySavedSession, restoreSessionAfterError } = createAuxiliarySessionSendResultAppliers({
+      activeSessionRef,
+      setActiveSession: (session) => {
+        appliedSessions.push(session);
+      },
+    });
+    const saved = makeAuxiliarySession({ id: "saved" });
+    const restored = makeAuxiliarySession({ id: "restored" });
+
+    applySavedSession(saved);
+    restoreSessionAfterError(restored);
+
+    assert.equal(activeSessionRef.current, restored);
+    assert.deepEqual(appliedSessions, [saved, restored]);
+  });
+
   it("running applier は active session と pending live run を同じ running session から反映する", () => {
     const runningSession = makeAuxiliarySession({
       runState: "running",

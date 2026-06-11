@@ -155,6 +155,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-12: App / Companion の Auxiliary cancel target 構築を `buildAuxiliarySessionCancelTarget` に集約。cancel API、error 表示、selected session / Companion turn cancel は既存境界を維持し、active Auxiliary session が running の場合だけ cancel 対象になる contract を test で固定。`scripts/tests/chat-window-adapter.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の return-to-main begin pending 反映を `beginAuxiliarySessionReturnToMainOperation` に集約。close API、beforeClose、closed list / main UI state 反映、cleanup は既存境界を維持し、return 開始時に pending を true にする contract を test で固定。`scripts/tests/auxiliary-session-return-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の Auxiliary draft change 先頭 UI state 反映を `applyAuxiliaryDraftChangeUiState` に集約。API 取得、draft save queue、optimistic save UI、status 比較差分は既存境界を維持し、blocked feedback clear と caret 更新の順序を test で固定。`scripts/tests/auxiliary-draft-save-context.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-12: App / Companion の Auxiliary send result saved / error restore applier pair を `createAuxiliarySessionSendResultAppliers` に集約。running applier、pending live run clear、send result handling、error 表示は既存境界を維持し、saved / restore が同じ active session update 経路を使う contract を test で固定。`scripts/tests/auxiliary-session-send-operation.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -444,6 +445,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の Auxiliary cancel target 構築を `send-or-cancel` helper に接続。2026-06-12 着手。
 - App / Companion の return-to-main begin pending 反映を `auxiliary-session-return-operation` に接続。2026-06-12 着手。
 - App / Companion の Auxiliary draft change 先頭 UI state 反映を `auxiliary-draft-save-context` に接続。2026-06-12 着手。
+- App / Companion の Auxiliary send result saved / error restore applier pair を `auxiliary-session-send-operation` に接続。2026-06-12 着手。
 
 やらないこと:
 

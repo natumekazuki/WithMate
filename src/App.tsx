@@ -243,6 +243,7 @@ import {
 } from "./auxiliary-session-start-operation.js";
 import {
   createAuxiliarySessionRunningApplier,
+  createAuxiliarySessionSendResultAppliers,
   runAuxiliarySessionSendOperation,
 } from "./auxiliary-session-send-operation.js";
 import {
@@ -2316,11 +2317,7 @@ export default function AgentSessionWindowApp() {
           runningSession,
         ),
       }),
-      applySavedSession: createActiveAuxiliarySessionUpdateApplier({
-        activeSessionRef: activeAuxiliarySessionRef,
-        setActiveSession: setActiveAuxiliarySession,
-      }),
-      restoreSessionAfterError: createActiveAuxiliarySessionUpdateApplier({
+      ...createAuxiliarySessionSendResultAppliers({
         activeSessionRef: activeAuxiliarySessionRef,
         setActiveSession: setActiveAuxiliarySession,
       }),

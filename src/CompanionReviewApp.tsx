@@ -94,6 +94,7 @@ import {
 } from "./auxiliary-session-start-operation.js";
 import {
   createAuxiliarySessionRunningApplier,
+  createAuxiliarySessionSendResultAppliers,
   runAuxiliarySessionSendOperation,
 } from "./auxiliary-session-send-operation.js";
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
@@ -1936,11 +1937,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       afterRunningSessionApplied: () => {
         setForceComposerBlockedFeedback(false);
       },
-      applySavedSession: createActiveAuxiliarySessionUpdateApplier({
-        activeSessionRef: activeAuxiliarySessionRef,
-        setActiveSession: setActiveAuxiliarySession,
-      }),
-      restoreSessionAfterError: createActiveAuxiliarySessionUpdateApplier({
+      ...createAuxiliarySessionSendResultAppliers({
         activeSessionRef: activeAuxiliarySessionRef,
         setActiveSession: setActiveAuxiliarySession,
       }),

@@ -8,6 +8,7 @@ import {
 } from "./auxiliary-session-state.js";
 import {
   applyActiveAuxiliarySessionUpdate,
+  createActiveAuxiliarySessionUpdateApplier,
   enqueueAuxiliarySessionSaveWithQueue,
 } from "./auxiliary-session-update-operation.js";
 import {
@@ -55,6 +56,20 @@ export function createAuxiliarySessionRunningApplier(input: {
       input.buildRuntimeSession(runningSession),
       current,
     ));
+  };
+}
+
+export function createAuxiliarySessionSendResultAppliers(input: {
+  activeSessionRef: { current: AuxiliarySession | null };
+  setActiveSession: (session: AuxiliarySession) => void;
+}): {
+  applySavedSession: (session: AuxiliarySession) => void;
+  restoreSessionAfterError: (session: AuxiliarySession) => void;
+} {
+  const applyActiveSession = createActiveAuxiliarySessionUpdateApplier(input);
+  return {
+    applySavedSession: applyActiveSession,
+    restoreSessionAfterError: applyActiveSession,
   };
 }
 
