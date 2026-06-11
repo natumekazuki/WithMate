@@ -233,6 +233,7 @@ import {
   runAuxiliarySessionReturnToMainOperation,
 } from "./auxiliary-session-return-operation.js";
 import {
+  beginAuxiliarySessionStartOperation,
   createAuxiliarySessionStartResultApplier,
   finishAuxiliarySessionStartClosedLoad,
   runAuxiliarySessionStartOperation,
@@ -2162,14 +2163,14 @@ export default function AgentSessionWindowApp() {
     }
     const launchProviderId = startProvider.providerId;
 
-    resetAuxiliaryLaunchFeedback();
-
-    const loadRevision = auxiliaryLoadRevisionRef.current + 1;
-    auxiliaryLoadRevisionRef.current = loadRevision;
+    const loadRevision = beginAuxiliarySessionStartOperation({
+      loadRevision: auxiliaryLoadRevisionRef,
+      resetLaunchFeedback: resetAuxiliaryLaunchFeedback,
+      setActionPending: setIsAuxiliaryActionPending,
+    });
     const parentSessionId = selectedSession.id;
     const canApplyLoadResult = () => auxiliaryLoadRevisionRef.current === loadRevision;
 
-    setIsAuxiliaryActionPending(true);
     try {
       const launchSelectionSessions = await withmateApi.listSessionSummaries().catch(() => sessions);
       const lastUsedSelection = resolveLastUsedSessionSelection(launchSelectionSessions, launchProviderId);

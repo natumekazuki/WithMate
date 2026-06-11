@@ -9,6 +9,18 @@ import type {
 } from "./auxiliary-session-state.js";
 import { runClosedAuxiliarySessionsLoadAndApply } from "./auxiliary-session-refresh-operation.js";
 
+export function beginAuxiliarySessionStartOperation(input: {
+  loadRevision: { current: number };
+  resetLaunchFeedback: () => void;
+  setActionPending: (pending: boolean) => void;
+}): number {
+  input.resetLaunchFeedback();
+  const nextRevision = input.loadRevision.current + 1;
+  input.loadRevision.current = nextRevision;
+  input.setActionPending(true);
+  return nextRevision;
+}
+
 export function applyAuxiliarySessionStartResult(input: {
   session: AuxiliarySession;
   incrementMutationRevision: () => void;

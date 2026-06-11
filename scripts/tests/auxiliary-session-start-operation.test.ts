@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   applyAuxiliarySessionStartResult,
+  beginAuxiliarySessionStartOperation,
   createAuxiliarySessionStartResultApplier,
   finishAuxiliarySessionStartClosedLoad,
   runAuxiliarySessionStartOperation,
@@ -121,6 +122,28 @@ describe("runAuxiliarySessionStartOperation", () => {
       error,
     );
     assert.equal(applied, false);
+  });
+});
+
+describe("beginAuxiliarySessionStartOperation", () => {
+  it("feedback reset、load revision increment、pending true の順に反映して revision を返す", () => {
+    const loadRevision = { current: 4 };
+    const events: string[] = [];
+
+    assert.equal(
+      beginAuxiliarySessionStartOperation({
+        loadRevision,
+        resetLaunchFeedback: () => {
+          events.push("reset");
+        },
+        setActionPending: (pending) => {
+          events.push(`pending:${pending}`);
+        },
+      }),
+      5,
+    );
+    assert.equal(loadRevision.current, 5);
+    assert.deepEqual(events, ["reset", "pending:true"]);
   });
 });
 

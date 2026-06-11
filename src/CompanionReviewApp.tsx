@@ -87,6 +87,7 @@ import {
 } from "./chat/chat-header-actions.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
 import {
+  beginAuxiliarySessionStartOperation,
   createAuxiliarySessionStartResultApplier,
   finishAuxiliarySessionStartClosedLoad,
   runAuxiliarySessionStartOperation,
@@ -1777,13 +1778,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
     const launchProviderId = startProvider.providerId;
 
-    resetAuxiliaryLaunchFeedback();
-
-    const loadRevision = auxiliaryLoadRevisionRef.current + 1;
-    auxiliaryLoadRevisionRef.current = loadRevision;
+    const loadRevision = beginAuxiliarySessionStartOperation({
+      loadRevision: auxiliaryLoadRevisionRef,
+      resetLaunchFeedback: resetAuxiliaryLaunchFeedback,
+      setActionPending: setIsAuxiliaryActionPending,
+    });
     const parentSessionId = snapshot.session.id;
     const canApplyLoadResult = () => auxiliaryLoadRevisionRef.current === loadRevision;
-    setIsAuxiliaryActionPending(true);
     try {
       const launchDefaults = resolveAuxiliaryLaunchSessionDefaults({
         providerId: launchProviderId,
