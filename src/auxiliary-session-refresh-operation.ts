@@ -1,5 +1,6 @@
 import {
   loadClosedAuxiliarySessionDetails,
+  resolveActiveAuxiliarySessionRefreshResult,
   type AuxiliarySession,
   type AuxiliarySessionSummary,
 } from "./auxiliary-session-state.js";
@@ -35,6 +36,24 @@ export async function runActiveAuxiliarySessionRefreshOperation(input: {
     status: "loaded",
     savedSession,
   };
+}
+
+export function applyActiveAuxiliarySessionRefreshResult(input: {
+  currentSession: AuxiliarySession | null;
+  savedSession: AuxiliarySession | null;
+  sessionId: string;
+  activeSessionRef: { current: AuxiliarySession | null };
+}): AuxiliarySession | null {
+  const nextSession = resolveActiveAuxiliarySessionRefreshResult({
+    currentSession: input.currentSession,
+    savedSession: input.savedSession,
+    sessionId: input.sessionId,
+  });
+  if (nextSession !== input.currentSession) {
+    input.activeSessionRef.current = nextSession;
+  }
+
+  return nextSession;
 }
 
 export type ActiveAuxiliarySessionLoadOperationResult =

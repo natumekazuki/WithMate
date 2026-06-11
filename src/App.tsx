@@ -149,7 +149,6 @@ import { buildCompanionGroupMonitorEntries } from "./home/home-session-projectio
 import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
-  resolveActiveAuxiliarySessionRefreshResult,
   resolveClosedAuxiliarySessionsAfterReturn,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
@@ -160,6 +159,7 @@ import {
   runAuxiliarySandboxModeChangeOperation,
 } from "./auxiliary-runtime-option-operation.js";
 import {
+  applyActiveAuxiliarySessionRefreshResult,
   runActiveAuxiliarySessionRefreshOperation,
   runActiveAuxiliarySessionLoadOperation,
   runClosedAuxiliarySessionsLoadOperation,
@@ -1000,16 +1000,12 @@ export default function AgentSessionWindowApp() {
         }
 
         setActiveAuxiliarySession((current) => {
-          const nextSession = resolveActiveAuxiliarySessionRefreshResult({
+          return applyActiveAuxiliarySessionRefreshResult({
             currentSession: current,
             savedSession: result.savedSession,
             sessionId,
+            activeSessionRef: activeAuxiliarySessionRef,
           });
-          if (nextSession !== current) {
-            activeAuxiliarySessionRef.current = nextSession;
-          }
-
-          return nextSession;
         });
       }).catch((error) => {
         console.error(error);

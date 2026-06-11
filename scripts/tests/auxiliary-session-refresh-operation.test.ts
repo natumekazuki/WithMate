@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyActiveAuxiliarySessionRefreshResult,
   runActiveAuxiliarySessionLoadOperation,
   runActiveAuxiliarySessionRefreshOperation,
   runClosedAuxiliarySessionsLoadOperation,
@@ -96,6 +97,40 @@ test("runActiveAuxiliarySessionRefreshOperation は active のままなら null 
     status: "loaded",
     savedSession: null,
   });
+});
+
+test("applyActiveAuxiliarySessionRefreshResult は反映時に active ref を同期する", () => {
+  const currentSession = createAuxiliarySession({ id: "aux-1", title: "current" });
+  const savedSession = createAuxiliarySession({ id: "aux-1", title: "saved" });
+  const activeSessionRef = { current: currentSession as AuxiliarySession | null };
+
+  assert.equal(
+    applyActiveAuxiliarySessionRefreshResult({
+      currentSession,
+      savedSession,
+      sessionId: "aux-1",
+      activeSessionRef,
+    }),
+    savedSession,
+  );
+  assert.equal(activeSessionRef.current, savedSession);
+});
+
+test("applyActiveAuxiliarySessionRefreshResult は反映しない場合 active ref を維持する", () => {
+  const currentSession = createAuxiliarySession({ id: "aux-1", title: "current" });
+  const savedSession = createAuxiliarySession({ id: "aux-other", title: "saved" });
+  const activeSessionRef = { current: currentSession as AuxiliarySession | null };
+
+  assert.equal(
+    applyActiveAuxiliarySessionRefreshResult({
+      currentSession,
+      savedSession,
+      sessionId: "aux-other",
+      activeSessionRef,
+    }),
+    currentSession,
+  );
+  assert.equal(activeSessionRef.current, currentSession);
 });
 
 test("runActiveAuxiliarySessionLoadOperation は parent session id がない場合 load しない", async () => {

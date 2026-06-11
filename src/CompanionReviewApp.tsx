@@ -26,7 +26,6 @@ import {
 } from "./runtime-option-state.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import {
-  resolveActiveAuxiliarySessionRefreshResult,
   resolveClosedAuxiliarySessionsAfterReturn,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
@@ -37,6 +36,7 @@ import {
   runAuxiliarySandboxModeChangeOperation,
 } from "./auxiliary-runtime-option-operation.js";
 import {
+  applyActiveAuxiliarySessionRefreshResult,
   runActiveAuxiliarySessionRefreshOperation,
   runActiveAuxiliarySessionLoadOperation,
   runClosedAuxiliarySessionsLoadOperation,
@@ -671,16 +671,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         }
 
         setActiveAuxiliarySession((current) => {
-          const nextSession = resolveActiveAuxiliarySessionRefreshResult({
+          return applyActiveAuxiliarySessionRefreshResult({
             currentSession: current,
             savedSession: result.savedSession,
             sessionId: updatedSessionId,
+            activeSessionRef: activeAuxiliarySessionRef,
           });
-          if (nextSession !== current) {
-            activeAuxiliarySessionRef.current = nextSession;
-          }
-
-          return nextSession;
         });
       }).catch(() => undefined);
     };
