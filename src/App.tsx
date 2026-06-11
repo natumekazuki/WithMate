@@ -146,8 +146,6 @@ import { buildCompanionGroupMonitorEntries } from "./home/home-session-projectio
 import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
-  applyAuxiliarySessionApprovalModeChange,
-  applyAuxiliarySessionCodexSandboxModeChange,
   applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionModelChange,
@@ -156,6 +154,10 @@ import {
   resolveClosedAuxiliarySessionsAfterReturn,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
+import {
+  runAuxiliaryApprovalModeChangeOperation,
+  runAuxiliarySandboxModeChangeOperation,
+} from "./auxiliary-runtime-option-operation.js";
 import {
   runActiveAuxiliarySessionRefreshOperation,
   runActiveAuxiliarySessionLoadOperation,
@@ -1944,15 +1946,19 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleChangeAuxiliaryApproval = async (approvalMode: Session["approvalMode"]) => {
-    await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionApprovalModeChange(current, approvalMode, currentTimestampLabel())
-    ));
+    await runAuxiliaryApprovalModeChangeOperation({
+      approvalMode,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
   };
 
   const handleChangeAuxiliarySandboxMode = async (codexSandboxMode: Session["codexSandboxMode"]) => {
-    await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionCodexSandboxModeChange(current, codexSandboxMode, currentTimestampLabel())
-    ));
+    await runAuxiliarySandboxModeChangeOperation({
+      codexSandboxMode,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
   };
 
   const handleChangeAuxiliaryModel = async (model: string) => {

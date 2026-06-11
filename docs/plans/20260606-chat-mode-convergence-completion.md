@@ -121,6 +121,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-11: App / Companion の Auxiliary draft save optimistic UI 反映と saved result ref 同期を `auxiliary-draft-save-context` に集約。save scheduling、save queue、status 比較差分、error handling は呼び出し側に残し、mutation revision / active ref / draft save queue 反映の順序を test で固定。`scripts/tests/auxiliary-draft-save-context.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の Auxiliary Skill prompt 挿入 operation を `runAuxiliarySkillPromptInsertionOperation` に集約。state 構築、UI 反映、draft patch 保存の順序を test で固定し、App の保存後 focus/caret 復元と Companion の復元なし差分は optional hook として呼び出し側に残した。`scripts/tests/auxiliary-skill-prompt-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-11: App / Companion の Auxiliary custom agent selection を `runAuxiliaryCustomAgentSelectionOperation` に集約。copilot provider guard、同名選択時 close、更新後 close の順序を test で固定し、選択名の正規化差分、patch 構築、保存 queue は呼び出し側に残した。`scripts/tests/auxiliary-custom-agent-operation.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-11: App / Companion の Auxiliary approval / sandbox handler を `runAuxiliaryApprovalModeChangeOperation` / `runAuxiliarySandboxModeChangeOperation` に集約。patch helper、timestamp、active session update queue は既存境界を維持し、handler からの recipe 呼び出しを test で固定。`scripts/tests/auxiliary-runtime-option-operation.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -376,6 +377,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の Auxiliary draft save optimistic UI 反映と saved result ref 同期を `auxiliary-draft-save-context` に接続。2026-06-11 着手。
 - App / Companion の Auxiliary Skill prompt 挿入 operation を `auxiliary-skill-prompt-operation` に接続。2026-06-11 着手。
 - App / Companion の Auxiliary custom agent selection を `auxiliary-custom-agent-operation` に接続。2026-06-11 着手。
+- App / Companion の Auxiliary approval / sandbox handler を `auxiliary-runtime-option-operation` に接続。2026-06-11 着手。
 
 やらないこと:
 

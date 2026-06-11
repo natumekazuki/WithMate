@@ -26,8 +26,6 @@ import {
 } from "./runtime-option-state.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import {
-  applyAuxiliarySessionApprovalModeChange,
-  applyAuxiliarySessionCodexSandboxModeChange,
   applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionCustomAgentPatch,
   applyAuxiliarySessionModelChange,
@@ -36,6 +34,10 @@ import {
   resolveClosedAuxiliarySessionsAfterReturn,
   type AuxiliarySession,
 } from "./auxiliary-session-state.js";
+import {
+  runAuxiliaryApprovalModeChangeOperation,
+  runAuxiliarySandboxModeChangeOperation,
+} from "./auxiliary-runtime-option-operation.js";
 import {
   runActiveAuxiliarySessionRefreshOperation,
   runActiveAuxiliarySessionLoadOperation,
@@ -1975,15 +1977,19 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   async function handleChangeAuxiliaryApproval(approvalMode: ApprovalMode): Promise<void> {
-    await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionApprovalModeChange(current, approvalMode, currentTimestampLabel())
-    ));
+    await runAuxiliaryApprovalModeChangeOperation({
+      approvalMode,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
   }
 
   async function handleChangeAuxiliarySandboxMode(codexSandboxMode: CodexSandboxMode): Promise<void> {
-    await updateActiveAuxiliarySession((current) => (
-      applyAuxiliarySessionCodexSandboxModeChange(current, codexSandboxMode, currentTimestampLabel())
-    ));
+    await runAuxiliarySandboxModeChangeOperation({
+      codexSandboxMode,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
   }
 
   async function handleChangeAuxiliaryModel(model: string): Promise<void> {
