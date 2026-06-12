@@ -58,6 +58,29 @@ export function finishAuxiliarySessionReturnToMainOperation(input: {
   input.setActionPending(false);
 }
 
+export type AuxiliarySessionReturnToMainPreflightResult<TApi> = {
+  status: "ready";
+  api: TApi;
+  activeSession: AuxiliarySession;
+} | {
+  status: "blocked";
+};
+
+export function resolveAuxiliarySessionReturnToMainPreflight<TApi>(input: {
+  api: TApi | null | undefined;
+  activeSession: AuxiliarySession | null;
+  isActionPending: boolean;
+}): AuxiliarySessionReturnToMainPreflightResult<TApi> {
+  if (!input.api || !input.activeSession || input.isActionPending) {
+    return { status: "blocked" };
+  }
+  return {
+    status: "ready",
+    api: input.api,
+    activeSession: input.activeSession,
+  };
+}
+
 export function resolveAuxiliarySessionReturnToMainErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : AUXILIARY_SESSION_RETURN_FAILED_MESSAGE;
 }

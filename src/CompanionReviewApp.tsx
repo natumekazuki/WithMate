@@ -249,6 +249,7 @@ import {
   createAuxiliarySessionReturnToMainUiStateApplier,
   createReturnedAuxiliaryClosedSessionApplier,
   finishAuxiliarySessionReturnToMainOperation,
+  resolveAuxiliarySessionReturnToMainPreflight,
   runAuxiliarySessionReturnToMainOperationWithApi,
 } from "./auxiliary-session-return-operation.js";
 import {
@@ -1828,7 +1829,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   async function handleReturnToMainSession(): Promise<void> {
     const withmateApi = getWithMateApi();
-    if (!withmateApi || !activeAuxiliarySession || isAuxiliaryActionPending) {
+    const preflight = resolveAuxiliarySessionReturnToMainPreflight({
+      api: withmateApi,
+      activeSession: activeAuxiliarySession,
+      isActionPending: isAuxiliaryActionPending,
+    });
+    if (preflight.status === "blocked") {
       return;
     }
     const handleReturnToMainError = createAuxiliarySessionReturnToMainErrorHandler({
@@ -1840,11 +1846,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
     try {
       await runAuxiliarySessionReturnToMainOperationWithApi({
-        activeSession: activeAuxiliarySession,
+        activeSession: preflight.activeSession,
         beforeClose: createAuxiliarySessionReturnBeforeCloseHandler({
           loadRevision: auxiliaryLoadRevisionRef,
         }),
-        api: withmateApi,
+        api: preflight.api,
         applyClosedSession: createReturnedAuxiliaryClosedSessionApplier({
           setClosedSessions: setClosedAuxiliarySessions,
         }),

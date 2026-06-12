@@ -11,6 +11,7 @@ import {
   createReturnedAuxiliaryClosedSessionApplier,
   finishAuxiliarySessionReturnToMainOperation,
   resolveAuxiliarySessionReturnToMainErrorMessage,
+  resolveAuxiliarySessionReturnToMainPreflight,
   runAuxiliarySessionReturnToMainOperation,
   runAuxiliarySessionReturnToMainOperationWithApi,
 } from "../../src/auxiliary-session-return-operation.js";
@@ -149,6 +150,44 @@ describe("runAuxiliarySessionReturnToMainOperation", () => {
     });
 
     assert.deepEqual(pendingValues, [false]);
+  });
+
+  it("return-to-main preflight は API / active session / pending を判定する", () => {
+    const api = { closeAuxiliarySession: async (sessionId: string) => makeAuxiliarySession({ id: sessionId }) };
+    const activeSession = makeAuxiliarySession();
+
+    assert.deepEqual(
+      resolveAuxiliarySessionReturnToMainPreflight({
+        api: null,
+        activeSession,
+        isActionPending: false,
+      }),
+      { status: "blocked" },
+    );
+    assert.deepEqual(
+      resolveAuxiliarySessionReturnToMainPreflight({
+        api,
+        activeSession: null,
+        isActionPending: false,
+      }),
+      { status: "blocked" },
+    );
+    assert.deepEqual(
+      resolveAuxiliarySessionReturnToMainPreflight({
+        api,
+        activeSession,
+        isActionPending: true,
+      }),
+      { status: "blocked" },
+    );
+    assert.deepEqual(
+      resolveAuxiliarySessionReturnToMainPreflight({
+        api,
+        activeSession,
+        isActionPending: false,
+      }),
+      { status: "ready", api, activeSession },
+    );
   });
 
   it("closed session 反映は重複を避けて末尾に置く", () => {
