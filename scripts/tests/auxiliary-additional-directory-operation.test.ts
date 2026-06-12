@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   resolveAuxiliaryAdditionalDirectoryPickerBase,
   runAddAuxiliaryAdditionalDirectoryOperation,
+  runAddAuxiliaryAdditionalDirectoryOperationWithApi,
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "../../src/auxiliary-additional-directory-operation.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
@@ -157,6 +158,71 @@ describe("runAddAuxiliaryAdditionalDirectoryOperation", () => {
 
     assert.equal(pickerBase, "");
     assert.equal(updated, false);
+  });
+});
+
+describe("runAddAuxiliaryAdditionalDirectoryOperationWithApi", () => {
+  it("API または parent session がない場合は picker を開かない", async () => {
+    let picked = false;
+
+    await runAddAuxiliaryAdditionalDirectoryOperationWithApi({
+      api: null,
+      hasParentSession: true,
+      activeAuxiliarySession: makeAuxiliarySession(),
+      pickerBaseDirectory: "",
+      setPickerBaseDirectory: () => {},
+      updateActiveAuxiliarySession: async () => {},
+      createTimestampLabel: () => "updated",
+    });
+    await runAddAuxiliaryAdditionalDirectoryOperationWithApi({
+      api: {
+        pickDirectory: async () => {
+          picked = true;
+          return "C:/selected";
+        },
+      },
+      hasParentSession: false,
+      activeAuxiliarySession: makeAuxiliarySession(),
+      pickerBaseDirectory: "",
+      setPickerBaseDirectory: () => {},
+      updateActiveAuxiliarySession: async () => {},
+      createTimestampLabel: () => "updated",
+    });
+
+    assert.equal(picked, false);
+  });
+
+  it("API adapter 経由で selected directory を active session に反映する", async () => {
+    const current = makeAuxiliarySession();
+    let pickerBase = "";
+    let updatedSession: AuxiliarySession | null = null;
+
+    await runAddAuxiliaryAdditionalDirectoryOperationWithApi({
+      api: {
+        pickDirectory: async (basePath) => {
+          assert.equal(basePath, "C:/workspace");
+          return "C:/selected";
+        },
+      },
+      hasParentSession: true,
+      activeAuxiliarySession: current,
+      pickerBaseDirectory: "",
+      workspacePath: "C:/workspace",
+      setPickerBaseDirectory: (directoryPath) => {
+        pickerBase = directoryPath;
+      },
+      updateActiveAuxiliarySession: async (recipe) => {
+        updatedSession = recipe(current);
+      },
+      createTimestampLabel: () => "updated",
+    });
+
+    assert.equal(pickerBase, "C:/selected");
+    assert.deepEqual(updatedSession, {
+      ...current,
+      allowedAdditionalDirectories: ["C:/selected"],
+      updatedAt: "updated",
+    });
   });
 });
 

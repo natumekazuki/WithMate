@@ -219,7 +219,7 @@ import {
   syncActiveAuxiliarySessionRef,
 } from "./auxiliary-session-update-operation.js";
 import {
-  runAddAuxiliaryAdditionalDirectoryOperation,
+  runAddAuxiliaryAdditionalDirectoryOperationWithApi,
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "./auxiliary-additional-directory-operation.js";
 import {
@@ -2519,15 +2519,12 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleAddAuxiliaryAdditionalDirectory = async () => {
-    if (!withmateApi || !selectedSession) {
-      return;
-    }
-
-    await runAddAuxiliaryAdditionalDirectoryOperation({
+    await runAddAuxiliaryAdditionalDirectoryOperationWithApi({
+      api: withmateApi,
+      hasParentSession: !!selectedSession,
       activeAuxiliarySession,
       pickerBaseDirectory,
-      workspacePath: selectedSession.workspacePath,
-      pickDirectory: (basePath) => withmateApi.pickDirectory(basePath),
+      workspacePath: selectedSession?.workspacePath,
       setPickerBaseDirectory,
       updateActiveAuxiliarySession,
       createTimestampLabel: currentTimestampLabel,

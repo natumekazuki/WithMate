@@ -42,6 +42,36 @@ export async function runAddAuxiliaryAdditionalDirectoryOperation(input: {
   ));
 }
 
+export async function runAddAuxiliaryAdditionalDirectoryOperationWithApi(input: {
+  api: {
+    pickDirectory: (basePath: string | null) => Promise<string | null>;
+  } | null | undefined;
+  hasParentSession: boolean;
+  activeAuxiliarySession: AuxiliarySession | null;
+  pickerBaseDirectory: string;
+  workspacePath?: string | null;
+  fallbackPath?: string | null;
+  setPickerBaseDirectory: (directoryPath: string) => void;
+  updateActiveAuxiliarySession: UpdateAuxiliarySession;
+  createTimestampLabel: () => string;
+}): Promise<void> {
+  const api = input.api;
+  if (!api || !input.hasParentSession) {
+    return;
+  }
+
+  await runAddAuxiliaryAdditionalDirectoryOperation({
+    activeAuxiliarySession: input.activeAuxiliarySession,
+    pickerBaseDirectory: input.pickerBaseDirectory,
+    workspacePath: input.workspacePath,
+    fallbackPath: input.fallbackPath,
+    pickDirectory: (basePath) => api.pickDirectory(basePath),
+    setPickerBaseDirectory: input.setPickerBaseDirectory,
+    updateActiveAuxiliarySession: input.updateActiveAuxiliarySession,
+    createTimestampLabel: input.createTimestampLabel,
+  });
+}
+
 export async function runRemoveAuxiliaryAdditionalDirectoryOperation(input: {
   directoryPath: string;
   updateActiveAuxiliarySession: UpdateAuxiliarySession;

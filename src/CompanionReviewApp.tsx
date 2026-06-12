@@ -238,7 +238,7 @@ import {
   syncActiveAuxiliarySessionRef,
 } from "./auxiliary-session-update-operation.js";
 import {
-  runAddAuxiliaryAdditionalDirectoryOperation,
+  runAddAuxiliaryAdditionalDirectoryOperationWithApi,
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "./auxiliary-additional-directory-operation.js";
 import {
@@ -2008,16 +2008,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   async function handleAddAuxiliaryAdditionalDirectory(): Promise<void> {
     const withmateApi = getWithMateApi();
-    if (!withmateApi || !snapshot) {
-      return;
-    }
-
-    await runAddAuxiliaryAdditionalDirectoryOperation({
+    await runAddAuxiliaryAdditionalDirectoryOperationWithApi({
+      api: withmateApi,
+      hasParentSession: !!snapshot,
       activeAuxiliarySession,
       pickerBaseDirectory,
-      workspacePath: snapshot.session.worktreePath,
-      fallbackPath: snapshot.session.repoRoot,
-      pickDirectory: (basePath) => withmateApi.pickDirectory(basePath),
+      workspacePath: snapshot?.session.worktreePath,
+      fallbackPath: snapshot?.session.repoRoot,
       setPickerBaseDirectory,
       updateActiveAuxiliarySession,
       createTimestampLabel: currentTimestampLabel,
