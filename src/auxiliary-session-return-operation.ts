@@ -108,6 +108,42 @@ export function createReturnedAuxiliaryClosedSessionApplier(input: {
   };
 }
 
+export function createAuxiliarySessionReturnToMainOperationAppliers(input: {
+  loadRevision: { current: number };
+  setClosedSessions: (updater: (currentSessions: AuxiliarySession[]) => AuxiliarySession[]) => void;
+  mutationRevision: { current: number };
+  activeSessionRef: { current: AuxiliarySession | null };
+  setActiveSession: (session: AuxiliarySession | null) => void;
+  mainDraft: string;
+  mainCaret: number;
+  setComposerCaret: (caret: number) => void;
+  setActionDockPinnedExpanded: (expanded: boolean) => void;
+  setForceComposerBlockedFeedback: (forced: boolean) => void;
+}): {
+  beforeClose: () => void;
+  applyClosedSession: (session: AuxiliarySession) => void;
+  applyReturnedMainSession: () => void;
+} {
+  return {
+    beforeClose: createAuxiliarySessionReturnBeforeCloseHandler({
+      loadRevision: input.loadRevision,
+    }),
+    applyClosedSession: createReturnedAuxiliaryClosedSessionApplier({
+      setClosedSessions: input.setClosedSessions,
+    }),
+    applyReturnedMainSession: createAuxiliarySessionReturnToMainUiStateApplier({
+      mutationRevision: input.mutationRevision,
+      activeSessionRef: input.activeSessionRef,
+      setActiveSession: input.setActiveSession,
+      mainDraft: input.mainDraft,
+      mainCaret: input.mainCaret,
+      setComposerCaret: input.setComposerCaret,
+      setActionDockPinnedExpanded: input.setActionDockPinnedExpanded,
+      setForceComposerBlockedFeedback: input.setForceComposerBlockedFeedback,
+    }),
+  };
+}
+
 export async function runAuxiliarySessionReturnToMainOperation(input: {
   activeSession: AuxiliarySession | null;
   beforeClose?: () => void;

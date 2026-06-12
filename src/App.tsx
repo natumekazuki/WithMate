@@ -225,10 +225,8 @@ import {
 } from "./auxiliary-additional-directory-operation.js";
 import {
   beginAuxiliarySessionReturnToMainOperation,
-  createAuxiliarySessionReturnBeforeCloseHandler,
   createAuxiliarySessionReturnToMainErrorHandler,
-  createAuxiliarySessionReturnToMainUiStateApplier,
-  createReturnedAuxiliaryClosedSessionApplier,
+  createAuxiliarySessionReturnToMainOperationAppliers,
   finishAuxiliarySessionReturnToMainOperation,
   resolveAuxiliarySessionReturnToMainPreflight,
   runAuxiliarySessionReturnToMainOperationWithApi,
@@ -2227,14 +2225,10 @@ export default function AgentSessionWindowApp() {
     try {
       await runAuxiliarySessionReturnToMainOperationWithApi({
         activeSession: preflight.activeSession,
-        beforeClose: createAuxiliarySessionReturnBeforeCloseHandler({
-          loadRevision: auxiliaryLoadRevisionRef,
-        }),
         api: preflight.api,
-        applyClosedSession: createReturnedAuxiliaryClosedSessionApplier({
+        ...createAuxiliarySessionReturnToMainOperationAppliers({
+          loadRevision: auxiliaryLoadRevisionRef,
           setClosedSessions: setClosedAuxiliarySessions,
-        }),
-        applyReturnedMainSession: createAuxiliarySessionReturnToMainUiStateApplier({
           mutationRevision: auxiliarySessionMutationRevisionRef,
           activeSessionRef: activeAuxiliarySessionRef,
           setActiveSession: setActiveAuxiliarySession,

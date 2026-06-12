@@ -6,6 +6,7 @@ import {
   beginAuxiliarySessionReturnToMainOperation,
   createAuxiliarySessionReturnBeforeCloseHandler,
   createAuxiliarySessionReturnToMainErrorHandler,
+  createAuxiliarySessionReturnToMainOperationAppliers,
   createAuxiliarySessionReturnToMainUiStateApplier,
   applyReturnedAuxiliaryClosedSession,
   createReturnedAuxiliaryClosedSessionApplier,
@@ -126,6 +127,55 @@ describe("runAuxiliarySessionReturnToMainOperation", () => {
     beforeClose();
 
     assert.equal(loadRevision.current, 4);
+  });
+
+  it("return-to-main operation appliers は beforeClose / closed list / main UI state を組み立てる", () => {
+    const active = makeAuxiliarySession({ id: "aux-active" });
+    const returned = makeAuxiliarySession({ id: "aux-returned", status: "closed" });
+    const loadRevision = { current: 3 };
+    const mutationRevision = { current: 4 };
+    const activeSessionRef = { current: active as AuxiliarySession | null };
+    let closedSessions = [makeAuxiliarySession({ id: "aux-existing" })];
+    let activeSession: AuxiliarySession | null = active;
+    let composerCaret = 0;
+    let actionDockExpanded = true;
+    let forceBlockedFeedback = true;
+
+    const appliers = createAuxiliarySessionReturnToMainOperationAppliers({
+      loadRevision,
+      setClosedSessions: (updater) => {
+        closedSessions = updater(closedSessions);
+      },
+      mutationRevision,
+      activeSessionRef,
+      setActiveSession: (session) => {
+        activeSession = session;
+      },
+      mainDraft: "hello",
+      mainCaret: 99,
+      setComposerCaret: (caret) => {
+        composerCaret = caret;
+      },
+      setActionDockPinnedExpanded: (expanded) => {
+        actionDockExpanded = expanded;
+      },
+      setForceComposerBlockedFeedback: (forced) => {
+        forceBlockedFeedback = forced;
+      },
+    });
+
+    appliers.beforeClose();
+    appliers.applyClosedSession(returned);
+    appliers.applyReturnedMainSession();
+
+    assert.equal(loadRevision.current, 4);
+    assert.deepEqual(closedSessions.map((session) => session.id), ["aux-existing", "aux-returned"]);
+    assert.equal(mutationRevision.current, 5);
+    assert.equal(activeSessionRef.current, null);
+    assert.equal(activeSession, null);
+    assert.equal(composerCaret, 5);
+    assert.equal(actionDockExpanded, false);
+    assert.equal(forceBlockedFeedback, false);
   });
 
   it("return-to-main begin は pending を true にする", () => {
