@@ -230,7 +230,7 @@ import {
   createAuxiliarySessionReturnToMainUiStateApplier,
   createReturnedAuxiliaryClosedSessionApplier,
   finishAuxiliarySessionReturnToMainOperation,
-  runAuxiliarySessionReturnToMainOperation,
+  runAuxiliarySessionReturnToMainOperationWithApi,
 } from "./auxiliary-session-return-operation.js";
 import {
   beginAuxiliarySessionStartOperation,
@@ -2219,12 +2219,12 @@ export default function AgentSessionWindowApp() {
       setActionPending: setIsAuxiliaryActionPending,
     });
     try {
-      await runAuxiliarySessionReturnToMainOperation({
+      await runAuxiliarySessionReturnToMainOperationWithApi({
         activeSession: activeAuxiliarySession,
         beforeClose: createAuxiliarySessionReturnBeforeCloseHandler({
           loadRevision: auxiliaryLoadRevisionRef,
         }),
-        closeAuxiliarySession: (sessionId) => withmateApi.closeAuxiliarySession(sessionId),
+        api: withmateApi,
         applyClosedSession: createReturnedAuxiliaryClosedSessionApplier({
           setClosedSessions: setClosedAuxiliarySessions,
         }),

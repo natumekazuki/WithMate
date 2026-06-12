@@ -12,6 +12,7 @@ import {
   finishAuxiliarySessionReturnToMainOperation,
   resolveAuxiliarySessionReturnToMainErrorMessage,
   runAuxiliarySessionReturnToMainOperation,
+  runAuxiliarySessionReturnToMainOperationWithApi,
 } from "../../src/auxiliary-session-return-operation.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 
@@ -222,6 +223,83 @@ describe("runAuxiliarySessionReturnToMainOperation", () => {
       closed,
     );
     assert.deepEqual(events, ["before", "close:aux-1", "closed:closed", "main"]);
+  });
+
+  it("API adapter 経由でも beforeClose、close、closed反映、main反映の順に実行する", async () => {
+    const active = makeAuxiliarySession({ id: "aux-1" });
+    const closed = makeAuxiliarySession({ id: "aux-1", status: "closed" });
+    const events: string[] = [];
+
+    assert.equal(
+      await runAuxiliarySessionReturnToMainOperationWithApi({
+        activeSession: active,
+        beforeClose: () => {
+          events.push("before");
+        },
+        api: {
+          closeAuxiliarySession: async (sessionId) => {
+            events.push(`close:${sessionId}`);
+            return closed;
+          },
+        },
+        applyClosedSession: (session) => {
+          events.push(`closed:${session.status}`);
+        },
+        applyReturnedMainSession: () => {
+          events.push("main");
+        },
+      }),
+      closed,
+    );
+    assert.deepEqual(events, ["before", "close:aux-1", "closed:closed", "main"]);
+  });
+
+  it("API adapter 経由でも active session がない場合は close せず null を返す", async () => {
+    let closed = false;
+
+    assert.equal(
+      await runAuxiliarySessionReturnToMainOperationWithApi({
+        activeSession: null,
+        api: {
+          closeAuxiliarySession: async (sessionId) => {
+            closed = true;
+            return makeAuxiliarySession({ id: sessionId });
+          },
+        },
+        applyClosedSession: () => undefined,
+        applyReturnedMainSession: () => undefined,
+      }),
+      null,
+    );
+    assert.equal(closed, false);
+  });
+
+  it("API adapter 経由でも close が失敗した場合は closed/main 反映を実行せず例外を伝播する", async () => {
+    const error = new Error("close failed");
+    const events: string[] = [];
+
+    await assert.rejects(
+      runAuxiliarySessionReturnToMainOperationWithApi({
+        activeSession: makeAuxiliarySession(),
+        beforeClose: () => {
+          events.push("before");
+        },
+        api: {
+          closeAuxiliarySession: async () => {
+            events.push("close");
+            throw error;
+          },
+        },
+        applyClosedSession: () => {
+          events.push("closed");
+        },
+        applyReturnedMainSession: () => {
+          events.push("main");
+        },
+      }),
+      error,
+    );
+    assert.deepEqual(events, ["before", "close"]);
   });
 
   it("close が失敗した場合は closed/main 反映を実行せず例外を伝播する", async () => {

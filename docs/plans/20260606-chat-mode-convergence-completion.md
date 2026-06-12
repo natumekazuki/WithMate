@@ -165,6 +165,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-12: App / Companion の Auxiliary start 後 closed sessions reload cleanup を `finishAuxiliarySessionStartClosedLoadWithApi` に集約。start operation、launch defaults、error handling、load revision guard は呼び出し側に残し、list/get API adapter と pending clear を同じ helper 経由に統一。`scripts/tests/auxiliary-session-start-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の Auxiliary start error handler 作成を `createAuxiliarySessionStartErrorHandler` に集約。provider blocked 判定、launch defaults、start 作成、closed list reload は呼び出し側に残し、blocked/catch の error state 反映を同じ handler 経由に統一。`scripts/tests/auxiliary-session-start-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の return-to-main error alert handler 作成を `createAuxiliarySessionReturnToMainErrorHandler` に集約。close API、beforeClose、closed/main state 反映、cleanup は呼び出し側に残し、error message 解決と alert 呼び出しを同じ handler 経由に統一。`scripts/tests/auxiliary-session-return-operation.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-12: App / Companion の return-to-main close API adapter を `runAuxiliarySessionReturnToMainOperationWithApi` に集約。beforeClose、closed session 反映、main UI state 反映、error alert、cleanup は呼び出し側に残し、close API 呼び出しだけを共通 wrapper 経由に統一。adapter 経由の success / null active / close failure contract を focused test で固定。`scripts/tests/auxiliary-session-return-operation.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -464,6 +465,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の Auxiliary start 後 closed sessions reload cleanup を `auxiliary-session-start-operation` に接続。2026-06-12 着手。
 - App / Companion の Auxiliary start error handler 作成を `auxiliary-session-start-operation` に接続。2026-06-12 着手。
 - App / Companion の return-to-main error alert handler 作成を `auxiliary-session-return-operation` に接続。2026-06-12 着手。
+- App / Companion の return-to-main close API adapter を `auxiliary-session-return-operation` に接続。2026-06-12 着手。
 
 やらないこと:
 

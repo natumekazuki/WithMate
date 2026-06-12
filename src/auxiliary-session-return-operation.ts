@@ -102,3 +102,21 @@ export async function runAuxiliarySessionReturnToMainOperation(input: {
   input.applyReturnedMainSession();
   return closedSession;
 }
+
+export async function runAuxiliarySessionReturnToMainOperationWithApi(input: {
+  activeSession: AuxiliarySession | null;
+  beforeClose?: () => void;
+  api: {
+    closeAuxiliarySession: (sessionId: string) => Promise<AuxiliarySession>;
+  };
+  applyClosedSession: (session: AuxiliarySession) => void;
+  applyReturnedMainSession: () => void;
+}): Promise<AuxiliarySession | null> {
+  return runAuxiliarySessionReturnToMainOperation({
+    activeSession: input.activeSession,
+    beforeClose: input.beforeClose,
+    closeAuxiliarySession: (sessionId) => input.api.closeAuxiliarySession(sessionId),
+    applyClosedSession: input.applyClosedSession,
+    applyReturnedMainSession: input.applyReturnedMainSession,
+  });
+}
