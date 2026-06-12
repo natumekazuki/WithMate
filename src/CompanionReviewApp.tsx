@@ -88,9 +88,9 @@ import {
 } from "./chat/chat-header-actions.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
 import {
-  applyAuxiliarySessionStartError,
   beginAuxiliarySessionStartOperation,
   createActiveAuxiliarySessionStartResultApplier,
+  createAuxiliarySessionStartErrorHandler,
   finishAuxiliarySessionStartClosedLoadWithApi,
   runAuxiliarySessionStartOperation,
 } from "./auxiliary-session-start-operation.js";
@@ -1764,6 +1764,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     if (!withmateApi || !snapshot || isAuxiliaryActionPending) {
       return;
     }
+    const setAuxiliaryStartError = createAuxiliarySessionStartErrorHandler({
+      setLaunchStartError: setAuxiliaryLaunchStartError,
+    });
     const startProvider = resolveAuxiliaryLaunchStartProvider({
       providerId: auxiliaryLaunchProviderId,
       blockedFeedback: operationRunning || isSelectedSessionRunning || snapshot.session.status !== "active"
@@ -1771,10 +1774,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         : null,
     });
     if (startProvider.status === "blocked") {
-      applyAuxiliarySessionStartError({
-        error: startProvider.error,
-        setLaunchStartError: setAuxiliaryLaunchStartError,
-      });
+      setAuxiliaryStartError(startProvider.error);
       return;
     }
     const launchProviderId = startProvider.providerId;
@@ -1814,10 +1814,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         }),
       });
     } catch (error) {
-      applyAuxiliarySessionStartError({
-        error,
-        setLaunchStartError: setAuxiliaryLaunchStartError,
-      });
+      setAuxiliaryStartError(error);
     } finally {
       finishAuxiliarySessionStartClosedLoadWithApi({
         parentSessionId,

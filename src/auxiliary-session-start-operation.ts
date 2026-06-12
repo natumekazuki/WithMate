@@ -29,6 +29,17 @@ export function applyAuxiliarySessionStartError(input: {
   input.setLaunchStartError(input.error);
 }
 
+export function createAuxiliarySessionStartErrorHandler(input: {
+  setLaunchStartError: (error: unknown) => void;
+}): (error: unknown) => void {
+  return (error) => {
+    applyAuxiliarySessionStartError({
+      error,
+      setLaunchStartError: input.setLaunchStartError,
+    });
+  };
+}
+
 export function applyAuxiliarySessionStartResult(input: {
   session: AuxiliarySession;
   incrementMutationRevision: () => void;

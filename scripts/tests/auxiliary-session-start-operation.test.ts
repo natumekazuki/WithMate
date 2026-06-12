@@ -6,6 +6,7 @@ import {
   applyAuxiliarySessionStartResult,
   beginAuxiliarySessionStartOperation,
   createActiveAuxiliarySessionStartResultApplier,
+  createAuxiliarySessionStartErrorHandler,
   createAuxiliarySessionStartResultApplier,
   finishAuxiliarySessionStartClosedLoad,
   finishAuxiliarySessionStartClosedLoadWithApi,
@@ -161,6 +162,22 @@ describe("applyAuxiliarySessionStartError", () => {
         errors.push(nextError);
       },
     });
+
+    assert.deepEqual(errors, [error]);
+  });
+});
+
+describe("createAuxiliarySessionStartErrorHandler", () => {
+  it("受け取った start error を launch error state に反映する", () => {
+    const error = new Error("start failed");
+    const errors: unknown[] = [];
+    const handleStartError = createAuxiliarySessionStartErrorHandler({
+      setLaunchStartError: (nextError) => {
+        errors.push(nextError);
+      },
+    });
+
+    handleStartError(error);
 
     assert.deepEqual(errors, [error]);
   });
