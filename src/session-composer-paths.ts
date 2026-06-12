@@ -228,7 +228,7 @@ export function removePathReferenceTokensFromDraft(
     .map(escapeRegExpPattern);
   for (const escapedToken of escapedTokens) {
     nextDraft = nextDraft.replace(
-      new RegExp(`(^|[\\s(])${escapedToken}(?=\\s|$|[),.;:!?])`),
+      new RegExp(`(^|[\\s(])${escapedToken}(?=\\s|$|[),.;:!?])`, "g"),
       (_match, leadingWhitespace: string) => leadingWhitespace || "",
     );
   }
