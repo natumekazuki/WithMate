@@ -107,6 +107,76 @@ test("startProviderQuotaTelemetrySubscription は初回取得と対象 provider 
   assert.equal(unsubscribeCount, 1);
 });
 
+test("startProviderQuotaTelemetrySubscription は購読更新後に遅い初回取得で telemetry を巻き戻さない", async () => {
+  const subscribedTelemetry: ProviderQuotaTelemetry = {
+    ...providerTelemetry,
+    updatedAt: "2026-06-10T01:00:00.000Z",
+  };
+  const updates: ProviderOwnedQuotaTelemetry[] = [];
+  let subscribedListener: ((providerId: string, telemetry: ProviderQuotaTelemetry | null) => void) | null = null;
+  let resolveTelemetry: (telemetry: ProviderQuotaTelemetry | null) => void = () => undefined;
+  const api: ProviderQuotaTelemetrySubscriptionApi = {
+    getProviderQuotaTelemetry: () => new Promise((resolve) => {
+      resolveTelemetry = resolve;
+    }),
+    subscribeProviderQuotaTelemetry: (listener) => {
+      subscribedListener = listener;
+      return () => undefined;
+    },
+  };
+
+  const cleanup = startProviderQuotaTelemetrySubscription({
+    api,
+    providerId: "copilot",
+    enabled: true,
+    applyProviderQuotaTelemetry: (state) => updates.push(state),
+  });
+  subscribedListener?.("copilot", subscribedTelemetry);
+  resolveTelemetry(null);
+  await flushPromises();
+  cleanup();
+
+  assert.deepEqual(updates, [
+    { ownerProviderId: "copilot", telemetry: null },
+    { ownerProviderId: "copilot", telemetry: subscribedTelemetry },
+  ]);
+});
+
+test("startProviderQuotaTelemetrySubscription は購読更新後に遅い初回取得失敗で telemetry を null に戻さない", async () => {
+  const subscribedTelemetry: ProviderQuotaTelemetry = {
+    ...providerTelemetry,
+    updatedAt: "2026-06-10T01:00:00.000Z",
+  };
+  const updates: ProviderOwnedQuotaTelemetry[] = [];
+  let subscribedListener: ((providerId: string, telemetry: ProviderQuotaTelemetry | null) => void) | null = null;
+  let rejectTelemetry: (error: Error) => void = () => undefined;
+  const api: ProviderQuotaTelemetrySubscriptionApi = {
+    getProviderQuotaTelemetry: () => new Promise((_, reject) => {
+      rejectTelemetry = reject;
+    }),
+    subscribeProviderQuotaTelemetry: (listener) => {
+      subscribedListener = listener;
+      return () => undefined;
+    },
+  };
+
+  const cleanup = startProviderQuotaTelemetrySubscription({
+    api,
+    providerId: "copilot",
+    enabled: true,
+    applyProviderQuotaTelemetry: (state) => updates.push(state),
+  });
+  subscribedListener?.("copilot", subscribedTelemetry);
+  rejectTelemetry(new Error("failed"));
+  await flushPromises();
+  cleanup();
+
+  assert.deepEqual(updates, [
+    { ownerProviderId: "copilot", telemetry: null },
+    { ownerProviderId: "copilot", telemetry: subscribedTelemetry },
+  ]);
+});
+
 test("startProviderQuotaTelemetrySubscription は初回取得失敗時に null telemetry を反映する", async () => {
   const updates: ProviderOwnedQuotaTelemetry[] = [];
   const api: ProviderQuotaTelemetrySubscriptionApi = {
@@ -255,6 +325,76 @@ test("startSessionContextTelemetrySubscription は初回取得と対象 session 
     { ownerSessionId: "session-1", telemetry: subscribedTelemetry },
   ]);
   assert.equal(unsubscribeCount, 1);
+});
+
+test("startSessionContextTelemetrySubscription は購読更新後に遅い初回取得で telemetry を巻き戻さない", async () => {
+  const subscribedTelemetry: SessionContextTelemetry = {
+    ...sessionTelemetry,
+    updatedAt: "2026-06-10T01:00:00.000Z",
+  };
+  const updates: SessionOwnedContextTelemetry[] = [];
+  let subscribedListener: ((sessionId: string, telemetry: SessionContextTelemetry | null) => void) | null = null;
+  let resolveTelemetry: (telemetry: SessionContextTelemetry | null) => void = () => undefined;
+  const api: SessionContextTelemetrySubscriptionApi = {
+    getSessionContextTelemetry: () => new Promise((resolve) => {
+      resolveTelemetry = resolve;
+    }),
+    subscribeSessionContextTelemetry: (listener) => {
+      subscribedListener = listener;
+      return () => undefined;
+    },
+  };
+
+  const cleanup = startSessionContextTelemetrySubscription({
+    api,
+    sessionId: "session-1",
+    enabled: true,
+    applySessionContextTelemetry: (state) => updates.push(state),
+  });
+  subscribedListener?.("session-1", subscribedTelemetry);
+  resolveTelemetry(null);
+  await flushPromises();
+  cleanup();
+
+  assert.deepEqual(updates, [
+    { ownerSessionId: "session-1", telemetry: null },
+    { ownerSessionId: "session-1", telemetry: subscribedTelemetry },
+  ]);
+});
+
+test("startSessionContextTelemetrySubscription は購読更新後に遅い初回取得失敗で telemetry を null に戻さない", async () => {
+  const subscribedTelemetry: SessionContextTelemetry = {
+    ...sessionTelemetry,
+    updatedAt: "2026-06-10T01:00:00.000Z",
+  };
+  const updates: SessionOwnedContextTelemetry[] = [];
+  let subscribedListener: ((sessionId: string, telemetry: SessionContextTelemetry | null) => void) | null = null;
+  let rejectTelemetry: (error: Error) => void = () => undefined;
+  const api: SessionContextTelemetrySubscriptionApi = {
+    getSessionContextTelemetry: () => new Promise((_, reject) => {
+      rejectTelemetry = reject;
+    }),
+    subscribeSessionContextTelemetry: (listener) => {
+      subscribedListener = listener;
+      return () => undefined;
+    },
+  };
+
+  const cleanup = startSessionContextTelemetrySubscription({
+    api,
+    sessionId: "session-1",
+    enabled: true,
+    applySessionContextTelemetry: (state) => updates.push(state),
+  });
+  subscribedListener?.("session-1", subscribedTelemetry);
+  rejectTelemetry(new Error("failed"));
+  await flushPromises();
+  cleanup();
+
+  assert.deepEqual(updates, [
+    { ownerSessionId: "session-1", telemetry: null },
+    { ownerSessionId: "session-1", telemetry: subscribedTelemetry },
+  ]);
 });
 
 test("startSessionContextTelemetrySubscription は初回取得失敗時に null telemetry を反映する", async () => {

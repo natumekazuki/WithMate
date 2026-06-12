@@ -32,13 +32,14 @@ export function startProviderQuotaTelemetrySubscription(input: {
   }
 
   input.applyProviderQuotaTelemetry({ ownerProviderId: providerId, telemetry: null });
+  let receivedSubscriptionUpdate = false;
 
   void input.api.getProviderQuotaTelemetry(providerId).then((telemetry) => {
-    if (active) {
+    if (active && !receivedSubscriptionUpdate) {
       input.applyProviderQuotaTelemetry({ ownerProviderId: providerId, telemetry });
     }
   }).catch(() => {
-    if (active) {
+    if (active && !receivedSubscriptionUpdate) {
       input.applyProviderQuotaTelemetry({ ownerProviderId: providerId, telemetry: null });
     }
   });
@@ -48,6 +49,7 @@ export function startProviderQuotaTelemetrySubscription(input: {
       return;
     }
 
+    receivedSubscriptionUpdate = true;
     input.applyProviderQuotaTelemetry({ ownerProviderId: nextProviderId, telemetry });
   });
 
@@ -74,13 +76,14 @@ export function startSessionContextTelemetrySubscription(input: {
   }
 
   input.applySessionContextTelemetry({ ownerSessionId: sessionId, telemetry: null });
+  let receivedSubscriptionUpdate = false;
 
   void input.api.getSessionContextTelemetry(sessionId).then((telemetry) => {
-    if (active) {
+    if (active && !receivedSubscriptionUpdate) {
       input.applySessionContextTelemetry({ ownerSessionId: sessionId, telemetry });
     }
   }).catch(() => {
-    if (active) {
+    if (active && !receivedSubscriptionUpdate) {
       input.applySessionContextTelemetry({ ownerSessionId: sessionId, telemetry: null });
     }
   });
@@ -90,6 +93,7 @@ export function startSessionContextTelemetrySubscription(input: {
       return;
     }
 
+    receivedSubscriptionUpdate = true;
     input.applySessionContextTelemetry({ ownerSessionId: nextSessionId, telemetry });
   });
 

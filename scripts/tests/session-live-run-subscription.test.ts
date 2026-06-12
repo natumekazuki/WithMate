@@ -90,6 +90,40 @@ test("startLiveSessionRunSubscription は対象 session の購読更新だけを
   assert.equal(unsubscribeCount, 1);
 });
 
+test("startLiveSessionRunSubscription は購読更新後に遅い初回取得で live run を巻き戻さない", async () => {
+  const subscribedState = createLiveRunState("subscribed");
+  const updates: LiveSessionRunStateUpdate[] = [];
+  const refreshedSessionIds: string[] = [];
+  let subscribedListener: ((sessionId: string, state: LiveSessionRunState | null) => void) | null = null;
+  let resolveInitialLiveRun: (state: LiveSessionRunState | null) => void = () => undefined;
+  const api: LiveSessionRunSubscriptionApi = {
+    getLiveSessionRun: () => new Promise((resolve) => {
+      resolveInitialLiveRun = resolve;
+    }),
+    subscribeLiveSessionRun: (listener) => {
+      subscribedListener = listener;
+      return () => undefined;
+    },
+  };
+
+  const cleanup = startLiveSessionRunSubscription({
+    sessionId: "session-1",
+    api,
+    applyLiveRunState: (update) => updates.push(update),
+    onSessionRunUpdated: (sessionId) => refreshedSessionIds.push(sessionId),
+  });
+  subscribedListener?.("session-1", subscribedState);
+  resolveInitialLiveRun(null);
+  await flushPromises();
+  cleanup();
+
+  assert.deepEqual(updates, [
+    { ownerSessionId: "session-1", state: null },
+    { ownerSessionId: "session-1", state: subscribedState },
+  ]);
+  assert.deepEqual(refreshedSessionIds, ["session-1"]);
+});
+
 test("startLiveSessionRunSubscription は cleanup 後の初回取得結果を反映しない", async () => {
   const updates: LiveSessionRunStateUpdate[] = [];
   const refreshedSessionIds: string[] = [];

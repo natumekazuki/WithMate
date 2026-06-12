@@ -19,10 +19,11 @@ export function startLiveSessionRunSubscription(input: {
   onSessionRunUpdated?: (sessionId: string) => void;
 }): () => void {
   let active = true;
+  let receivedSubscriptionUpdate = false;
 
   input.applyLiveRunState({ ownerSessionId: input.sessionId, state: null });
   void input.api.getLiveSessionRun(input.sessionId).then((state) => {
-    if (active) {
+    if (active && !receivedSubscriptionUpdate) {
       input.applyLiveRunState({ ownerSessionId: input.sessionId, state });
       input.onSessionRunUpdated?.(input.sessionId);
     }
@@ -33,6 +34,7 @@ export function startLiveSessionRunSubscription(input: {
       return;
     }
 
+    receivedSubscriptionUpdate = true;
     input.applyLiveRunState({ ownerSessionId: sessionId, state });
     input.onSessionRunUpdated?.(sessionId);
   });
