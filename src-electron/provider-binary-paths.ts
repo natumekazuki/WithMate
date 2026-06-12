@@ -17,13 +17,13 @@ function resolveCodexSpec(
       if (arch === "x64") {
         return {
           packageSpecifier: "@openai/codex-win32-x64",
-          binaryRelativePath: ["vendor", "x86_64-pc-windows-msvc", "codex", "codex.exe"],
+          binaryRelativePath: ["vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe"],
         };
       }
       if (arch === "arm64") {
         return {
           packageSpecifier: "@openai/codex-win32-arm64",
-          binaryRelativePath: ["vendor", "aarch64-pc-windows-msvc", "codex", "codex.exe"],
+          binaryRelativePath: ["vendor", "aarch64-pc-windows-msvc", "bin", "codex.exe"],
         };
       }
       return null;
@@ -31,13 +31,13 @@ function resolveCodexSpec(
       if (arch === "x64") {
         return {
           packageSpecifier: "@openai/codex-darwin-x64",
-          binaryRelativePath: ["vendor", "x86_64-apple-darwin", "codex", "codex"],
+          binaryRelativePath: ["vendor", "x86_64-apple-darwin", "bin", "codex"],
         };
       }
       if (arch === "arm64") {
         return {
           packageSpecifier: "@openai/codex-darwin-arm64",
-          binaryRelativePath: ["vendor", "aarch64-apple-darwin", "codex", "codex"],
+          binaryRelativePath: ["vendor", "aarch64-apple-darwin", "bin", "codex"],
         };
       }
       return null;
@@ -45,13 +45,13 @@ function resolveCodexSpec(
       if (arch === "x64") {
         return {
           packageSpecifier: "@openai/codex-linux-x64",
-          binaryRelativePath: ["vendor", "x86_64-unknown-linux-musl", "codex", "codex"],
+          binaryRelativePath: ["vendor", "x86_64-unknown-linux-musl", "bin", "codex"],
         };
       }
       if (arch === "arm64") {
         return {
           packageSpecifier: "@openai/codex-linux-arm64",
-          binaryRelativePath: ["vendor", "aarch64-unknown-linux-musl", "codex", "codex"],
+          binaryRelativePath: ["vendor", "aarch64-unknown-linux-musl", "bin", "codex"],
         };
       }
       return null;

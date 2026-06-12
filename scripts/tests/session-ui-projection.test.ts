@@ -209,8 +209,39 @@ describe("session-ui-projection", () => {
 
     assert.equal(projection.snapshot?.quotaKey, "chat");
     assert.equal(projection.remainingPercentLabel, "40% left");
-    assert.equal(projection.remainingRequestsLabel, "80 / 200 left");
+    assert.equal(projection.remainingRequestsLabel, "80 / 200 requests left");
     assert.match(projection.resetLabel, /\d{2}\/\d{2} \d{2}:\d{2}/);
+  });
+
+  it("Copilot quota projection は AI credits snapshot を優先して credits 表示にする", () => {
+    const telemetry: ProviderQuotaTelemetry = {
+      provider: "copilot",
+      updatedAt: "2026-06-01T00:00:00.000Z",
+      snapshots: [
+        {
+          quotaKey: "premium_interactions",
+          entitlementRequests: 200,
+          usedRequests: 120,
+          remainingPercentage: 40,
+          overage: 0,
+          overageAllowedWithExhaustedQuota: false,
+        },
+        {
+          quotaKey: "ai_credits",
+          entitlementRequests: 1500,
+          usedRequests: 250,
+          remainingPercentage: 83.3,
+          overage: 0,
+          overageAllowedWithExhaustedQuota: false,
+        },
+      ],
+    };
+
+    const projection = buildCopilotQuotaProjection(telemetry);
+
+    assert.equal(projection.snapshot?.quotaKey, "ai_credits");
+    assert.equal(projection.remainingPercentLabel, "83% left");
+    assert.equal(projection.remainingRequestsLabel, "1250 / 1500 credits left");
   });
 
   it("ContextPaneProjection は LatestCommand tab の表示情報を作る", () => {
