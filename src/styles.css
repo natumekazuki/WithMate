@@ -3695,7 +3695,6 @@ button:disabled {
 
 .message-card.has-response-actions > [data-message-body="true"] {
   min-height: 34px;
-  padding-inline-end: 124px;
 }
 
 .message-response-actions {
@@ -3750,6 +3749,10 @@ button:disabled {
 }
 
 @media (hover: none) {
+  .message-card.has-response-actions > [data-message-body="true"] {
+    padding-inline-end: 124px;
+  }
+
   .message-card.has-response-actions .message-response-actions {
     opacity: 1;
     pointer-events: auto;
