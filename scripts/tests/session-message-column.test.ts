@@ -250,22 +250,25 @@ test("SessionMessageColumn は pending と live approval\/elicitation を messag
   );
 });
 
-test("SessionMessageColumn は実行中の assistant text を pending bubble 内に表示する", () => {
+test("SessionMessageColumn は projection 済みの実行中 assistant text を通常 message row として表示する", () => {
   const html = renderSessionMessageColumn({
-    messages: createMessages(100),
+    messages: [
+      ...createMessages(100),
+      { role: "assistant", text: "ストリーミング中の返答" },
+    ],
     isRunning: true,
     liveRunAssistantText: "ストリーミング中の返答",
   });
 
-  assert.match(html, /pending-row/);
+  assert.doesNotMatch(html, /pending-row/);
   assert.match(html, /ストリーミング中の返答/);
   assert.ok(
-    html.indexOf("message 100") < html.indexOf("pending-row"),
-    "pending row は既存メッセージの後に描画する",
+    html.indexOf("message 100") < html.indexOf("ストリーミング中の返答"),
+    "projection 済みの live assistant text は既存メッセージの後に描画する",
   );
   assert.ok(
-    html.indexOf("pending-row") < html.indexOf("ストリーミング中の返答"),
-    "streaming assistant text は pending row 内に描画する",
+    html.indexOf("ストリーミング中の返答") < html.indexOf("message-list-bottom-anchor"),
+    "projection 済みの live assistant text は bottom anchor より前に描画する",
   );
   assert.doesNotMatch(html, /処理を実行中/);
 });

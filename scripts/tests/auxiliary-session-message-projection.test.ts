@@ -3,8 +3,11 @@ import test from "node:test";
 
 import {
   buildMessageListProjection,
+  hasPersistedLiveAssistantMessage,
   loadProjectedMessageArtifact,
+  resolveLiveAssistantMessageIndex,
   resolvePendingAuxiliaryMessageGroupId,
+  shouldProjectLiveAssistantBridge,
 } from "../../src/auxiliary-session-message-projection.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 import type { Message, MessageArtifact } from "../../src/session-state.js";
@@ -174,6 +177,247 @@ test("buildMessageListProjection は Auxiliary を parent message の保存位�
       "main response 2",
       "aux prompt 2",
     ],
+  );
+});
+
+test("buildMessageListProjection は live assistant を transient message として末尾に追加する", () => {
+  const projection = buildMessageListProjection(
+    [{ role: "user", text: "main prompt" }],
+    [],
+    "session-1",
+    {
+      liveAssistant: {
+        sessionId: "session-1",
+        threadId: "thread-1",
+        messageIndex: 1,
+        text: "streaming response",
+      },
+    },
+  );
+
+  assert.deepEqual(
+    projection.messages.map((message) => `${message.role}:${message.text}`),
+    ["user:main prompt", "assistant:streaming response"],
+  );
+  assert.deepEqual(projection.sources[1], {
+    kind: "live-assistant",
+    sessionId: "session-1",
+    threadId: "thread-1",
+  });
+  assert.equal(projection.keys[1], "live-assistant-session-1-1-thread-1");
+});
+
+test("buildMessageListProjection は persisted assistant と live assistant を index で照合して key を引き継ぐ", () => {
+  const projection = buildMessageListProjection(
+    [
+      { role: "user", text: "main prompt" },
+      { role: "assistant", text: "final response" },
+    ],
+    [],
+    "session-1",
+    {
+      liveAssistant: {
+        sessionId: "session-1",
+        threadId: "thread-1",
+        messageIndex: 1,
+        text: "streaming response",
+      },
+    },
+  );
+
+  assert.deepEqual(
+    projection.messages.map((message) => `${message.role}:${message.text}`),
+    ["user:main prompt", "assistant:final response"],
+  );
+  assert.deepEqual(projection.sources, [
+    { kind: "session", messageIndex: 0 },
+    { kind: "session", messageIndex: 1 },
+  ]);
+  assert.equal(projection.keys[1], "live-assistant-session-1-1-thread-1");
+});
+
+test("buildMessageListProjection は live text が既存末尾 assistant と同じでも新規 live row を追加する", () => {
+  const projection = buildMessageListProjection(
+    [
+      { role: "assistant", text: "same response" },
+      { role: "user", text: "next prompt" },
+    ],
+    [],
+    "session-1",
+    {
+      liveAssistant: {
+        sessionId: "session-1",
+        threadId: "thread-2",
+        messageIndex: 2,
+        text: "same response",
+      },
+    },
+  );
+
+  assert.deepEqual(
+    projection.messages.map((message) => `${message.role}:${message.text}`),
+    ["assistant:same response", "user:next prompt", "assistant:same response"],
+  );
+  assert.deepEqual(projection.sources[2], {
+    kind: "live-assistant",
+    sessionId: "session-1",
+    threadId: "thread-2",
+  });
+  assert.equal(projection.keys[2], "live-assistant-session-1-2-thread-2");
+});
+
+test("hasPersistedLiveAssistantMessage は final text が live text と違っても target index の assistant で完了扱いにする", () => {
+  assert.equal(
+    hasPersistedLiveAssistantMessage(
+      [
+        { role: "user", text: "main prompt" },
+        { role: "assistant", text: "完了したよ。" },
+      ],
+      [],
+      {
+        sessionId: "session-1",
+        threadId: "thread-1",
+        messageIndex: 1,
+        text: "処理中... テスト完了",
+      },
+      "session-1",
+    ),
+    true,
+  );
+});
+
+test("hasPersistedLiveAssistantMessage は partial fallback notice 付き final も target index で完了扱いにする", () => {
+  assert.equal(
+    hasPersistedLiveAssistantMessage(
+      [
+        { role: "user", text: "main prompt" },
+        { role: "assistant", text: "partial response\n\n実行に失敗しました。" },
+      ],
+      [],
+      {
+        sessionId: "session-1",
+        threadId: "thread-1",
+        messageIndex: 1,
+        text: "partial response",
+      },
+      "session-1",
+    ),
+    true,
+  );
+});
+
+test("buildMessageListProjection は Auxiliary live assistant を対象 group 内に追加する", () => {
+  const projection = buildMessageListProjection(
+    [
+      { role: "assistant", text: "main response" },
+      { role: "assistant", text: "later main response" },
+    ],
+    [
+      createAuxiliarySession([{ role: "user", text: "aux prompt" }], {
+        id: "aux-1",
+        displayAfterMessageIndex: 0,
+      }),
+    ],
+    "session-1",
+    {
+      liveAssistant: {
+        sessionId: "aux-1",
+        threadId: "aux-thread-1",
+        messageIndex: 1,
+        text: "aux streaming response",
+      },
+    },
+  );
+
+  assert.deepEqual(
+    projection.messages.map((message) => message.text),
+    ["main response", "aux prompt", "aux streaming response", "later main response"],
+  );
+  assert.deepEqual(projection.groups, [
+    null,
+    { id: "aux-1", label: "Auxiliary" },
+    { id: "aux-1", label: "Auxiliary" },
+    null,
+  ]);
+  assert.equal(projection.keys[2], "live-assistant-aux-1-1-aux-thread-1");
+});
+
+test("resolveLiveAssistantMessageIndex は target session の次 assistant index を返す", () => {
+  const auxiliarySession = createAuxiliarySession([{ role: "user", text: "aux prompt" }], {
+    id: "aux-1",
+  });
+
+  assert.equal(
+    resolveLiveAssistantMessageIndex(
+      [{ role: "user", text: "main prompt" }],
+      [auxiliarySession],
+      "session-1",
+      "session-1",
+    ),
+    1,
+  );
+  assert.equal(
+    resolveLiveAssistantMessageIndex(
+      [{ role: "user", text: "main prompt" }],
+      [auxiliarySession],
+      "aux-1",
+      "session-1",
+    ),
+    1,
+  );
+});
+
+test("shouldProjectLiveAssistantBridge は live run が消えて persisted assistant もなければ bridge を投影しない", () => {
+  assert.equal(
+    shouldProjectLiveAssistantBridge({
+      bridge: {
+        sessionId: "session-1",
+        threadId: "thread-1",
+        messageIndex: 1,
+        text: "stale streaming response",
+      },
+      activeSessionId: "session-1",
+      hasLiveRun: false,
+      hasPersistedAssistant: false,
+    }),
+    false,
+  );
+});
+
+test("shouldProjectLiveAssistantBridge は live run 中または persisted assistant 検知後だけ bridge を投影する", () => {
+  const bridge = {
+    sessionId: "session-1",
+    threadId: "thread-1",
+    messageIndex: 1,
+    text: "streaming response",
+  };
+
+  assert.equal(
+    shouldProjectLiveAssistantBridge({
+      bridge,
+      activeSessionId: "session-1",
+      hasLiveRun: true,
+      hasPersistedAssistant: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldProjectLiveAssistantBridge({
+      bridge,
+      activeSessionId: "session-1",
+      hasLiveRun: false,
+      hasPersistedAssistant: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldProjectLiveAssistantBridge({
+      bridge,
+      activeSessionId: "session-2",
+      hasLiveRun: true,
+      hasPersistedAssistant: true,
+    }),
+    false,
   );
 });
 

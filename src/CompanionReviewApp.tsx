@@ -194,8 +194,12 @@ import {
 import { startLiveSessionRunSubscription } from "./session-live-run-subscription.js";
 import {
   buildMessageListProjection,
+  hasPersistedLiveAssistantMessage,
   loadProjectedMessageArtifact,
+  resolveLiveAssistantMessageIndex,
   resolvePendingAuxiliaryMessageGroupId,
+  shouldProjectLiveAssistantBridge,
+  type LiveAssistantProjection,
 } from "./auxiliary-session-message-projection.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
@@ -489,6 +493,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     ownerSessionId: null,
     state: null,
   });
+  const [liveAssistantBridge, setLiveAssistantBridge] = useState<LiveAssistantProjection | null>(null);
   const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] =
     useState<ProviderOwnedQuotaTelemetry>({ ownerProviderId: null, telemetry: null });
   const [sessionContextTelemetryState, setSessionContextTelemetryState] =
@@ -649,17 +654,150 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   );
   const isAuxiliaryMode = activeAuxiliarySession?.status === "active";
   const activeComposerText = activeAuxiliarySession?.composerDraft ?? composerText;
-  const messageListProjection = useMemo(
-    () => buildMessageListProjection(snapshot?.session.messages ?? [], [
+  const selectedSessionLiveRun =
+    activeRunSessionId !== null && liveRunState.ownerSessionId === activeRunSessionId ? liveRunState.state : null;
+  const projectedAuxiliarySessions = useMemo(
+    () => [
       ...closedAuxiliarySessions,
       ...(activeAuxiliarySession ? [activeAuxiliarySession] : []),
-    ], snapshot?.session.id),
-    [activeAuxiliarySession, closedAuxiliarySessions, snapshot?.session.id, snapshot?.session.messages],
+    ],
+    [activeAuxiliarySession, closedAuxiliarySessions],
+  );
+  const liveAssistantMessageIndex = useMemo(
+    () =>
+      activeRunSessionId
+        ? resolveLiveAssistantMessageIndex(
+          snapshot?.session.messages ?? [],
+          projectedAuxiliarySessions,
+          activeRunSessionId,
+          snapshot?.session.id,
+        )
+        : 0,
+    [activeRunSessionId, projectedAuxiliarySessions, snapshot?.session.id, snapshot?.session.messages],
+  );
+  const hasPersistedLiveAssistantBridge = useMemo(
+    () =>
+      liveAssistantBridge
+        ? hasPersistedLiveAssistantMessage(
+          snapshot?.session.messages ?? [],
+          projectedAuxiliarySessions,
+          liveAssistantBridge,
+          snapshot?.session.id,
+        )
+        : false,
+    [liveAssistantBridge, projectedAuxiliarySessions, snapshot?.session.id, snapshot?.session.messages],
+  );
+  const projectedLiveAssistant = useMemo<LiveAssistantProjection | null>(() => {
+    if (!activeRunSessionId) {
+      return null;
+    }
+
+    const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
+    const liveThreadId = selectedSessionLiveRun?.threadId ?? null;
+    const bridgeMessageIndex =
+      liveAssistantBridge?.sessionId === activeRunSessionId &&
+      liveAssistantBridge.threadId === liveThreadId
+        ? liveAssistantBridge.messageIndex
+        : liveAssistantMessageIndex;
+    if (liveRunAssistantText) {
+      return {
+        sessionId: activeRunSessionId,
+        threadId: liveThreadId,
+        messageIndex: bridgeMessageIndex,
+        text: liveRunAssistantText,
+      };
+    }
+
+    return shouldProjectLiveAssistantBridge({
+      bridge: liveAssistantBridge,
+      activeSessionId: activeRunSessionId,
+      hasLiveRun: selectedSessionLiveRun !== null,
+      hasPersistedAssistant: hasPersistedLiveAssistantBridge,
+    })
+      ? liveAssistantBridge
+      : null;
+  }, [
+    activeRunSessionId,
+    hasPersistedLiveAssistantBridge,
+    liveAssistantBridge,
+    liveAssistantMessageIndex,
+    selectedSessionLiveRun,
+    selectedSessionLiveRun?.assistantText,
+    selectedSessionLiveRun?.threadId,
+  ]);
+  const messageListProjection = useMemo(
+    () => buildMessageListProjection(snapshot?.session.messages ?? [], projectedAuxiliarySessions, snapshot?.session.id, {
+      liveAssistant: projectedLiveAssistant,
+    }),
+    [projectedAuxiliarySessions, projectedLiveAssistant, snapshot?.session.id, snapshot?.session.messages],
   );
   const messageListMessages = messageListProjection.messages;
   const messageListSources = messageListProjection.sources;
   const messageListKeys = messageListProjection.keys;
   const messageListGroups = messageListProjection.groups;
+  useEffect(() => {
+    if (!activeRunSessionId || !selectedSessionLiveRun?.assistantText) {
+      return;
+    }
+
+    const liveThreadId = selectedSessionLiveRun.threadId ?? null;
+    setLiveAssistantBridge((current) => {
+      if (current?.sessionId === activeRunSessionId && current.threadId === liveThreadId) {
+        return {
+          ...current,
+          text: selectedSessionLiveRun.assistantText,
+        };
+      }
+
+      return {
+        sessionId: activeRunSessionId,
+        threadId: liveThreadId,
+        messageIndex: liveAssistantMessageIndex,
+        text: selectedSessionLiveRun.assistantText,
+      };
+    });
+  }, [activeRunSessionId, liveAssistantMessageIndex, selectedSessionLiveRun?.assistantText, selectedSessionLiveRun?.threadId]);
+  useEffect(() => {
+    if (!liveAssistantBridge) {
+      return;
+    }
+
+    if (
+      liveAssistantBridge.sessionId !== activeRunSessionId ||
+      (selectedSessionLiveRun === null && !hasPersistedLiveAssistantBridge)
+    ) {
+      setLiveAssistantBridge(null);
+    }
+  }, [activeRunSessionId, hasPersistedLiveAssistantBridge, liveAssistantBridge, selectedSessionLiveRun]);
+  useEffect(() => {
+    if (!liveAssistantBridge) {
+      return;
+    }
+
+    if (!hasPersistedLiveAssistantBridge) {
+      return;
+    }
+
+    let secondFrameId: number | null = null;
+    const firstFrameId = requestAnimationFrame(() => {
+      secondFrameId = requestAnimationFrame(() => {
+        setLiveAssistantBridge((current) =>
+          current?.sessionId === liveAssistantBridge.sessionId &&
+          current.threadId === liveAssistantBridge.threadId &&
+          current.text === liveAssistantBridge.text
+            ? null
+            : current,
+        );
+      });
+    });
+
+    return () => {
+      cancelAnimationFrame(firstFrameId);
+      if (secondFrameId !== null) {
+        cancelAnimationFrame(secondFrameId);
+      }
+    };
+  }, [hasPersistedLiveAssistantBridge, liveAssistantBridge]);
 
   useEffect(() => {
     let active = true;
@@ -881,8 +1019,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   );
   const unstagedFileTree = useMemo(() => buildChangedFileTree(unstagedChangedFiles), [unstagedChangedFiles]);
   const stagedFileTree = useMemo(() => buildChangedFileTree(stagedChangedFiles), [stagedChangedFiles]);
-  const selectedSessionLiveRun =
-    activeRunSessionId !== null && liveRunState.ownerSessionId === activeRunSessionId ? liveRunState.state : null;
   useEffect(() => {
     setApprovalActionRequestId(null);
   }, [selectedSessionLiveRun?.approvalRequest?.requestId]);
@@ -1000,12 +1136,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         displayedSession?.id ?? "",
         displayedSession?.runState ?? "",
         messageListMessages.map((message) => `${message.role}:${message.text.length}:${message.text}`).join("\u001d"),
-        selectedSessionLiveRun?.assistantText ?? "",
         selectedSessionLiveRun?.reasoningText ?? "",
         selectedSessionLiveRun?.errorMessage ?? "",
       ].join("\u001a"),
     [
-      selectedSessionLiveRun?.assistantText,
       selectedSessionLiveRun?.reasoningText,
       selectedSessionLiveRun?.errorMessage,
       displayedSession?.id,
