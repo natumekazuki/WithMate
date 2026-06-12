@@ -171,6 +171,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-12: App / Companion の return-to-main guarded operation を `runGuardedAuxiliarySessionReturnToMainOperationWithApi` に集約。API 取得、main draft/caret、state setter は surface 側に残し、preflight、pending begin/cleanup、close API adapter、operation appliers、error alert の lifecycle を同じ runner 経由に統一。`scripts/tests/auxiliary-session-return-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の Auxiliary draft change + save operation を `runAuxiliaryDraftChangeAndSaveOperation` に集約。保存 API 取得、queue、timestamp、status 比較差分、error logging は呼び出し側に残し、先頭 UI state 反映、active/API guard、scheduled save + saved result 反映を同じ helper 経由に統一。`scripts/tests/auxiliary-draft-save-context.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の Auxiliary additional directory add API guard を `runAddAuxiliaryAdditionalDirectoryOperationWithApi` に集約。workspace/fallback path と update callback は surface 側に残し、API 不在、parent session 不在の no-op と picker API adapter を同じ helper 経由に統一。`scripts/tests/auxiliary-additional-directory-operation.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-12: App / Companion の Auxiliary send API adapter を `runAuxiliarySessionSendOperationWithApi` に集約。送信 preflight、running/saved/error 反映、surface 固有の blocked/error handling は維持し、updateAuxiliarySession / runAuxiliarySessionTurn の API adapter だけを common helper 経由に統一。`scripts/tests/auxiliary-session-send-operation.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -476,6 +477,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の return-to-main guarded operation を `auxiliary-session-return-operation` に接続。2026-06-12 着手。
 - App / Companion の Auxiliary draft change + save operation を `auxiliary-draft-save-context` に接続。2026-06-12 着手。
 - App / Companion の Auxiliary additional directory add API guard を `auxiliary-additional-directory-operation` に接続。2026-06-12 着手。
+- App / Companion の Auxiliary send API adapter を `auxiliary-session-send-operation` に接続。2026-06-12 着手。
 
 やらないこと:
 

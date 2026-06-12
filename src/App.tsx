@@ -236,7 +236,7 @@ import {
   createAuxiliarySessionPendingLiveRunClearer,
   createAuxiliarySessionRunningApplier,
   createAuxiliarySessionSendResultAppliers,
-  runAuxiliarySessionSendOperation,
+  runAuxiliarySessionSendOperationWithApi,
 } from "./auxiliary-session-send-operation.js";
 import {
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -2251,7 +2251,7 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const result = await runAuxiliarySessionSendOperation({
+    const result = await runAuxiliarySessionSendOperationWithApi({
       activeSession: activeAuxiliarySession,
       composerBlockedReason,
       messageText,
@@ -2280,8 +2280,7 @@ export default function AgentSessionWindowApp() {
       clearPendingLiveRun: createAuxiliarySessionPendingLiveRunClearer({
         updateLiveRunState: (update) => setLiveRunState(update),
       }),
-      updateAuxiliarySession: (session) => withmateApi.updateAuxiliarySession(session),
-      runAuxiliarySessionTurn: (sessionId, request) => withmateApi.runAuxiliarySessionTurn(sessionId, request),
+      api: withmateApi,
     });
     if (result.status === "blocked") {
       throw new Error(result.preflight.blockedMessage);

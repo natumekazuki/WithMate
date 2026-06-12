@@ -98,7 +98,7 @@ import {
   createAuxiliarySessionPendingLiveRunClearer,
   createAuxiliarySessionRunningApplier,
   createAuxiliarySessionSendResultAppliers,
-  runAuxiliarySessionSendOperation,
+  runAuxiliarySessionSendOperationWithApi,
 } from "./auxiliary-session-send-operation.js";
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
 import { COMPANION_PENDING_MESSAGE_TEXT } from "./chat/pending-run-indicator.js";
@@ -1875,7 +1875,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const result = await runAuxiliarySessionSendOperation({
+    const result = await runAuxiliarySessionSendOperationWithApi({
       activeSession: activeAuxiliarySession,
       messageText,
       parentMessageCount: snapshot.session.messages.length,
@@ -1903,8 +1903,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       clearPendingLiveRun: createAuxiliarySessionPendingLiveRunClearer({
         updateLiveRunState: (update) => setLiveRunState(update),
       }),
-      updateAuxiliarySession: (session) => withmateApi.updateAuxiliarySession(session),
-      runAuxiliarySessionTurn: (sessionId, request) => withmateApi.runAuxiliarySessionTurn(sessionId, request),
+      api: withmateApi,
     });
     if (result.status === "blocked") {
       setForceComposerBlockedFeedback(true);

@@ -84,7 +84,7 @@ export function createAuxiliarySessionPendingLiveRunClearer(input: {
   };
 }
 
-export async function runAuxiliarySessionSendOperation(input: {
+export type AuxiliarySessionSendOperationInput = {
   activeSession: AuxiliarySession;
   composerBlockedReason?: string | null;
   messageText: string;
@@ -102,7 +102,14 @@ export async function runAuxiliarySessionSendOperation(input: {
   clearPendingLiveRun: (sessionId: string) => void;
   updateAuxiliarySession: (session: AuxiliarySession) => Promise<AuxiliarySession>;
   runAuxiliarySessionTurn: (sessionId: string, request: { userMessage: string }) => Promise<AuxiliarySession>;
-}): Promise<AuxiliarySessionSendOperationResult> {
+};
+
+export type AuxiliarySessionSendOperationApi = {
+  updateAuxiliarySession: (session: AuxiliarySession) => Promise<AuxiliarySession>;
+  runAuxiliarySessionTurn: (sessionId: string, request: { userMessage: string }) => Promise<AuxiliarySession>;
+};
+
+export async function runAuxiliarySessionSendOperation(input: AuxiliarySessionSendOperationInput): Promise<AuxiliarySessionSendOperationResult> {
   const preflight = resolveAuxiliarySessionSendPreflight({
     activeSession: input.activeSession,
     composerBlockedReason: input.composerBlockedReason,
@@ -181,4 +188,16 @@ export async function runAuxiliarySessionSendOperation(input: {
       error,
     };
   }
+}
+
+export async function runAuxiliarySessionSendOperationWithApi(
+  input: Omit<AuxiliarySessionSendOperationInput, "updateAuxiliarySession" | "runAuxiliarySessionTurn"> & {
+    api: AuxiliarySessionSendOperationApi;
+  },
+): Promise<AuxiliarySessionSendOperationResult> {
+  return runAuxiliarySessionSendOperation({
+    ...input,
+    updateAuxiliarySession: (session) => input.api.updateAuxiliarySession(session),
+    runAuxiliarySessionTurn: (sessionId, request) => input.api.runAuxiliarySessionTurn(sessionId, request),
+  });
 }

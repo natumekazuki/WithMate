@@ -6,6 +6,7 @@ import {
   createAuxiliarySessionRunningApplier,
   createAuxiliarySessionSendResultAppliers,
   runAuxiliarySessionSendOperation,
+  runAuxiliarySessionSendOperationWithApi,
 } from "../../src/auxiliary-session-send-operation.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 import type { OwnedLiveSessionRunState } from "../../src/session-live-run-state.js";
@@ -228,6 +229,66 @@ describe("runAuxiliarySessionSendOperation", () => {
     }]);
     assert.deepEqual(runRequests, [{ sessionId: "aux-1", userMessage: "hello" }]);
     assert.deepEqual(appliedSavedSessions, [savedSession]);
+    assert.equal(currentSession, savedSession);
+  });
+
+  it("API adapter 経由でも update と turn 実行を呼び出す", async () => {
+    const { draftSaveQueue, sessionSaveQueue } = createQueueRefs();
+    const mutationRevision = { current: 0 };
+    let currentSession = makeAuxiliarySession();
+    const savedSession = makeAuxiliarySession({
+      runState: "idle",
+      composerDraft: "",
+      messages: [
+        { role: "user", text: "hello" },
+        { role: "assistant", text: "done" },
+      ],
+      displayAfterMessageIndex: 2,
+      updatedAt: "saved",
+    });
+    const apiUpdates: AuxiliarySession[] = [];
+    const apiRuns: Array<{ sessionId: string; userMessage: string }> = [];
+
+    const result = await runAuxiliarySessionSendOperationWithApi({
+      activeSession: currentSession,
+      messageText: "hello",
+      parentMessageCount: 3,
+      updatedAt: "running",
+      draftSaveQueue,
+      sessionSaveQueue,
+      mutationRevision,
+      getCurrentSession: () => currentSession,
+      applyRunningSession: (session) => {
+        currentSession = session;
+      },
+      applySavedSession: (session) => {
+        currentSession = session;
+      },
+      restoreSessionAfterError: (session) => {
+        currentSession = session;
+      },
+      clearPendingLiveRun: () => undefined,
+      api: {
+        updateAuxiliarySession: async (session) => {
+          apiUpdates.push(session);
+          return session;
+        },
+        runAuxiliarySessionTurn: async (sessionId, request) => {
+          apiRuns.push({ sessionId, userMessage: request.userMessage });
+          return savedSession;
+        },
+      },
+    });
+
+    assert.deepEqual(result, {
+      status: "completed",
+      saved: savedSession,
+    });
+    assert.deepEqual(apiUpdates, [{
+      ...makeAuxiliarySession(),
+      displayAfterMessageIndex: 2,
+    }]);
+    assert.deepEqual(apiRuns, [{ sessionId: "aux-1", userMessage: "hello" }]);
     assert.equal(currentSession, savedSession);
   });
 
