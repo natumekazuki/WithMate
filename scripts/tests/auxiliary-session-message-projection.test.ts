@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildMessageListProjection } from "../../src/auxiliary-session-message-projection.js";
+import {
+  buildMessageListProjection,
+  loadProjectedMessageArtifact,
+  resolvePendingAuxiliaryMessageGroupId,
+} from "../../src/auxiliary-session-message-projection.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 import type { Message, MessageArtifact } from "../../src/session-state.js";
 
@@ -13,7 +17,7 @@ function createAuxiliarySession(
     id: overrides.id ?? "aux-1",
     parentSessionId: "session-1",
     status: overrides.status ?? "closed",
-    runState: "idle",
+    runState: overrides.runState ?? "idle",
     title: "Auxiliary",
     provider: "codex",
     catalogRevision: 1,
@@ -122,6 +126,17 @@ test("buildMessageListProjection は Auxiliary session ごとの group を保持
   ]);
 });
 
+test("resolvePendingAuxiliaryMessageGroupId は実行中 Auxiliary だけ group id を返す", () => {
+  assert.equal(resolvePendingAuxiliaryMessageGroupId(null), null);
+  assert.equal(resolvePendingAuxiliaryMessageGroupId(undefined), null);
+  assert.equal(resolvePendingAuxiliaryMessageGroupId(createAuxiliarySession([], { runState: "idle" })), null);
+  assert.equal(resolvePendingAuxiliaryMessageGroupId(createAuxiliarySession([], { runState: "error" })), null);
+  assert.equal(
+    resolvePendingAuxiliaryMessageGroupId(createAuxiliarySession([], { id: "aux-running", runState: "running" })),
+    "aux-running",
+  );
+});
+
 test("buildMessageListProjection は Auxiliary を parent message の保存位置へ差し込む", () => {
   const projection = buildMessageListProjection(
     [
@@ -160,4 +175,73 @@ test("buildMessageListProjection は Auxiliary を parent message の保存位�
       "aux prompt 2",
     ],
   );
+});
+
+test("loadProjectedMessageArtifact は parent source の artifact detail loader を呼ぶ", async () => {
+  const artifact = createArtifact();
+  const loaded = await loadProjectedMessageArtifact({
+    source: { kind: "session", messageIndex: 2 },
+    loadSessionArtifact: (messageIndex) => {
+      assert.equal(messageIndex, 2);
+      return Promise.resolve(artifact);
+    },
+  });
+
+  assert.equal(loaded, artifact);
+});
+
+test("loadProjectedMessageArtifact は projected index ではなく source messageIndex で parent artifact を読む", async () => {
+  const artifact = createArtifact();
+  const projection = buildMessageListProjection(
+    [
+      { role: "assistant", text: "parent response 1" },
+      { role: "assistant", text: "parent response 2" },
+    ],
+    [createAuxiliarySession([{ role: "assistant", text: "aux response" }], { displayAfterMessageIndex: 0 })],
+    "session-1",
+  );
+  const loaded = await loadProjectedMessageArtifact({
+    source: projection.sources[2],
+    loadSessionArtifact: (messageIndex) => {
+      assert.equal(messageIndex, 1);
+      return artifact;
+    },
+  });
+
+  assert.deepEqual(
+    projection.messages.map((message) => message.text),
+    ["parent response 1", "aux response", "parent response 2"],
+  );
+  assert.equal(loaded, artifact);
+});
+
+test("loadProjectedMessageArtifact は Auxiliary source の artifact を直接返す", async () => {
+  const artifact = createArtifact();
+  const loaded = await loadProjectedMessageArtifact({
+    source: { kind: "auxiliary", sessionId: "aux-1", messageIndex: 1, artifact },
+    loadSessionArtifact: () => {
+      throw new Error("parent artifact loader should not run for auxiliary source");
+    },
+  });
+
+  assert.equal(loaded, artifact);
+});
+
+test("loadProjectedMessageArtifact は source 不明または artifact なしなら null を返す", async () => {
+  const missingSource = await loadProjectedMessageArtifact({
+    source: undefined,
+    loadSessionArtifact: () => createArtifact(),
+  });
+  const missingArtifact = await loadProjectedMessageArtifact({
+    source: { kind: "auxiliary", sessionId: "aux-1", messageIndex: 1, artifact: undefined },
+    loadSessionArtifact: () => createArtifact(),
+  });
+  const parentMissingArtifact = await loadProjectedMessageArtifact({
+    source: { kind: "session", messageIndex: 1 },
+    loadSessionArtifact: () => undefined,
+  });
+
+  assert.equal(missingSource, null);
+  assert.equal(missingArtifact, null);
+  assert.equal(parentMissingArtifact, null);
 });

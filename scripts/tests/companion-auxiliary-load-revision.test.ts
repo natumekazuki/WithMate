@@ -1,0 +1,20 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+test("Companion Auxiliary start は closed 履歴ロードを無効化した revision で再ロードする", async () => {
+  const source = await readFile(new URL("../../src/CompanionReviewApp.tsx", import.meta.url), "utf8");
+  const handler = source.match(/async function handleStartAuxiliarySession\(\): Promise<void> \{[\s\S]*?\n  \}/)?.[0];
+
+  assert.ok(handler, "handleStartAuxiliarySession が見つかること");
+  assert.match(handler, /const parentSessionId = snapshot\.session\.id;/);
+  assert.match(
+    handler,
+    /const canApplyLoadResult = createAuxiliaryLoadRevisionGuard\(\{\s*loadRevision: auxiliaryLoadRevisionRef,\s*expectedRevision: loadRevision,\s*\}\);/,
+  );
+  assert.match(handler, /parentSessionId,/);
+  assert.match(
+    handler,
+    /finally \{\s*finishAuxiliarySessionStartClosedLoadWithApi\(\{\s*parentSessionId,[\s\S]*?api: withmateApi,[\s\S]*?isActive: canApplyLoadResult,[\s\S]*?setClosedSessions: setClosedAuxiliarySessions,[\s\S]*?setActionPending: setIsAuxiliaryActionPending,[\s\S]*?\}\);\s*\}/,
+  );
+});

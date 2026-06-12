@@ -15,6 +15,17 @@ export type ComposerAttachmentDisplay = {
   title: string;
 };
 
+export type ComposerAttachmentItem = ComposerAttachmentDisplay & {
+  key: string;
+  kind: ComposerAttachment["kind"];
+  removeTargets: string[];
+};
+
+export type PathReferenceAttachmentInput = {
+  kind: ComposerAttachment["kind"];
+  path: string;
+};
+
 export type WorkspacePathMatchDisplay = {
   kindLabel: string;
   primaryLabel: string;
@@ -22,10 +33,68 @@ export type WorkspacePathMatchDisplay = {
   title: string;
 };
 
+export type WorkspacePathMatchItem = WorkspacePathMatchDisplay & {
+  isActive: boolean;
+  key: string;
+  kind: WorkspacePathCandidateKind;
+  path: string;
+};
+
+export type WorkspacePathMatchKeyAction =
+  | { kind: "dismiss"; shouldPreventDefault: boolean }
+  | { kind: "next"; shouldPreventDefault: true }
+  | { kind: "previous"; shouldPreventDefault: true }
+  | { kind: "select"; shouldPreventDefault: true };
+
+export type WorkspacePathMatchNavigationResult =
+  | { kind: "dismiss"; shouldPreventDefault: boolean }
+  | { kind: "next"; shouldPreventDefault: true }
+  | { kind: "previous"; shouldPreventDefault: true }
+  | { kind: "select"; match: WorkspacePathCandidate; shouldPreventDefault: true };
+
 export type AdditionalDirectoryDisplay = {
   primaryLabel: string;
   secondaryLabel: string;
   title: string;
+};
+
+export type AdditionalDirectoryItem = AdditionalDirectoryDisplay & {
+  canRemove: boolean;
+  key: string;
+  path: string;
+};
+
+export type PathReferenceInsertionState = {
+  caret: number;
+  draft: string;
+};
+
+export type WorkspacePathMatchState = {
+  activeWorkspacePathMatchIndex: number;
+  workspacePathMatches: WorkspacePathCandidate[];
+};
+
+export type ClosedWorkspacePathMatchState = {
+  activeWorkspacePathMatchIndex: -1;
+  workspacePathMatches: WorkspacePathCandidate[];
+};
+
+export type WorkspacePathMatchSelectionState = PathReferenceInsertionState & ClosedWorkspacePathMatchState;
+
+export type ComposerPathReferencePreviewState = {
+  activePathReference: ActivePathReference | null;
+  isEditingPathReference: boolean;
+  normalizedActivePathQuery: string;
+  previewDraft: string;
+  previewUserMessage: string;
+};
+
+export type ComposerPathPickerKind = "file" | "folder" | "image";
+
+export type ComposerReferencePathPicker = {
+  pickDirectory(initialPath?: string | null): Promise<string | null>;
+  pickFile(initialPath?: string | null): Promise<string | null>;
+  pickImageFile(initialPath?: string | null): Promise<string | null>;
 };
 
 export function getActivePathReference(value: string, caret: number): ActivePathReference | null {
@@ -53,12 +122,150 @@ export function removeActivePathReference(value: string, activeReference: Active
   return `${value.slice(0, activeReference.start)}${value.slice(activeReference.end)}`;
 }
 
+export function buildComposerPathReferencePreviewState(input: {
+  caret: number;
+  draft: string;
+  isEnabled: boolean;
+}): ComposerPathReferencePreviewState {
+  const activePathReference = input.isEnabled
+    ? getActivePathReference(input.draft, input.caret)
+    : null;
+  const isEditingPathReference = activePathReference !== null;
+  const previewDraft = removeActivePathReference(input.draft, activePathReference);
+  return {
+    activePathReference,
+    isEditingPathReference,
+    normalizedActivePathQuery: activePathReference?.query.trim() ?? "",
+    previewDraft,
+    previewUserMessage: isEditingPathReference ? previewDraft : input.draft,
+  };
+}
+
 export function formatPathReference(path: string): string {
   return /\s/.test(path) ? `@"${path}"` : `@${path}`;
 }
 
+function escapeRegExpPattern(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function buildPathReferenceInsertionState(
+  draft: string,
+  caret: number,
+  referencePaths: readonly string[],
+): PathReferenceInsertionState | null {
+  if (referencePaths.length === 0) {
+    return null;
+  }
+
+  const referenceTokens = referencePaths.map((referencePath) => formatPathReference(referencePath));
+  const leadingSpacer = caret > 0 && !/\s/.test(draft[caret - 1] ?? "") ? " " : "";
+  const trailingSpacer = draft.length > caret && !/\s/.test(draft[caret] ?? "") ? " " : "";
+  const insertion = `${leadingSpacer}${referenceTokens.join(" ")}${trailingSpacer}`;
+  return {
+    draft: `${draft.slice(0, caret)}${insertion}${draft.slice(caret)}`,
+    caret: caret + insertion.length,
+  };
+}
+
+export function buildClosedWorkspacePathMatchState(): ClosedWorkspacePathMatchState {
+  return {
+    workspacePathMatches: [],
+    activeWorkspacePathMatchIndex: -1,
+  };
+}
+
+export function buildPathReferenceInsertionWithClosedWorkspaceMatchesState(
+  draft: string,
+  caret: number,
+  referencePaths: readonly string[],
+): WorkspacePathMatchSelectionState | null {
+  const nextState = buildPathReferenceInsertionState(draft, caret, referencePaths);
+  return nextState
+    ? {
+        ...nextState,
+        ...buildClosedWorkspacePathMatchState(),
+      }
+    : null;
+}
+
+export function buildPathReferenceReplacementState(
+  draft: string,
+  activeReference: ActivePathReference,
+  referencePath: string,
+): PathReferenceInsertionState {
+  const replacement = formatPathReference(referencePath);
+  return {
+    draft: `${draft.slice(0, activeReference.start)}${replacement}${draft.slice(activeReference.end)}`,
+    caret: activeReference.start + replacement.length,
+  };
+}
+
+export function buildWorkspacePathMatchSelectionState(
+  draft: string,
+  caret: number,
+  matchPath: string,
+): WorkspacePathMatchSelectionState | null {
+  const activeReference = getActivePathReference(draft, caret);
+  if (!activeReference) {
+    return null;
+  }
+
+  const nextState = buildPathReferenceReplacementState(draft, activeReference, matchPath);
+  return {
+    ...nextState,
+    ...buildClosedWorkspacePathMatchState(),
+  };
+}
+
+export function removePathReferenceTokensFromDraft(
+  draft: string,
+  referencePaths: readonly string[],
+): string {
+  let nextDraft = draft;
+  const escapedTokens = referencePaths
+    .map((referencePath) => formatPathReference(referencePath))
+    .map(escapeRegExpPattern);
+  for (const escapedToken of escapedTokens) {
+    nextDraft = nextDraft.replace(
+      new RegExp(`(^|[\\s(])${escapedToken}(?=\\s|$|[),.;:!?])`, "g"),
+      (_match, leadingWhitespace: string) => leadingWhitespace || "",
+    );
+  }
+
+  return nextDraft
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
+export function buildPathReferenceRemovalState(
+  draft: string,
+  referencePaths: readonly string[],
+): PathReferenceInsertionState {
+  const nextDraft = removePathReferenceTokensFromDraft(draft, referencePaths);
+  return {
+    draft: nextDraft,
+    caret: nextDraft.length,
+  };
+}
+
+export function buildPathReferenceRemovalWithClosedWorkspaceMatchesState(
+  draft: string,
+  referencePaths: readonly string[],
+): WorkspacePathMatchSelectionState {
+  const nextState = buildPathReferenceRemovalState(draft, referencePaths);
+  return {
+    ...nextState,
+    ...buildClosedWorkspacePathMatchState(),
+  };
+}
+
 export function normalizePathForReference(filePath: string): string {
   return filePath.replace(/\\/g, "/");
+}
+
+export function resolvePathReferenceRemovalTargets(targets: readonly string[]): string[] {
+  return Array.from(new Set(targets.map((target) => normalizePathForReference(target))));
 }
 
 export function splitPathForDisplay(filePath: string): { basename: string; parentPath: string } {
@@ -126,6 +333,76 @@ export function buildComposerAttachmentDisplay(attachment: ComposerAttachment): 
   };
 }
 
+export function buildComposerAttachmentItems(
+  attachments: readonly ComposerAttachment[],
+  options: { trimRemoveTargets: boolean },
+): ComposerAttachmentItem[] {
+  return attachments.map((attachment) => {
+    const attachmentDisplay = buildComposerAttachmentDisplay(attachment);
+    const removeTargetCandidates = [
+      attachment.workspaceRelativePath,
+      attachment.displayPath,
+      normalizePathForReference(attachment.absolutePath),
+    ];
+    const removeTargets = options.trimRemoveTargets
+      ? removeTargetCandidates.filter(
+          (candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0,
+        )
+      : removeTargetCandidates.filter((candidate): candidate is string => !!candidate);
+    return {
+      key: attachment.id,
+      kind: attachment.kind,
+      kindLabel: attachmentDisplay.kindLabel,
+      locationLabel: attachmentDisplay.locationLabel,
+      primaryLabel: attachmentDisplay.primaryLabel,
+      secondaryLabel: attachmentDisplay.secondaryLabel,
+      title: attachmentDisplay.title,
+      removeTargets,
+    };
+  });
+}
+
+export function buildPathReferenceAttachmentItems(
+  pathReferences: readonly PathReferenceAttachmentInput[],
+): ComposerAttachmentItem[] {
+  return pathReferences.map((entry) => {
+    const { basename, parentPath } = splitPathForDisplay(entry.path);
+    return {
+      key: `${entry.kind}:${entry.path}`,
+      kind: entry.kind,
+      kindLabel: attachmentKindLabel(entry.kind),
+      locationLabel: "参照",
+      primaryLabel: basename || entry.path,
+      secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 42) : "ルート",
+      title: entry.path,
+      removeTargets: [entry.path],
+    };
+  });
+}
+
+export function appendMissingPathReferenceAttachments(
+  current: readonly PathReferenceAttachmentInput[],
+  referencePaths: readonly string[],
+  kind: ComposerAttachment["kind"],
+): PathReferenceAttachmentInput[] {
+  const existing = new Set(current.map((entry) => entry.path));
+  const next = [...current];
+  for (const referencePath of referencePaths) {
+    if (!existing.has(referencePath)) {
+      next.push({ path: referencePath, kind });
+    }
+  }
+  return next;
+}
+
+export function removePathReferenceAttachments(
+  current: readonly PathReferenceAttachmentInput[],
+  referencePaths: readonly string[],
+): PathReferenceAttachmentInput[] {
+  const removablePaths = new Set(resolvePathReferenceRemovalTargets(referencePaths));
+  return current.filter((entry) => !removablePaths.has(normalizePathForReference(entry.path)));
+}
+
 function workspacePathCandidateKindLabel(kind: WorkspacePathCandidateKind): string {
   return kind === "folder" ? "Dir" : "File";
 }
@@ -141,6 +418,163 @@ export function buildWorkspacePathMatchDisplay(pathMatch: WorkspacePathCandidate
   };
 }
 
+export function buildWorkspacePathMatchItems(
+  pathMatches: readonly WorkspacePathCandidate[],
+  activeIndex: number,
+): WorkspacePathMatchItem[] {
+  return pathMatches.map((match, index) => {
+    const matchDisplay = buildWorkspacePathMatchDisplay(match);
+    return {
+      key: `${match.kind}:${match.path}`,
+      path: match.path,
+      kind: match.kind,
+      kindLabel: matchDisplay.kindLabel,
+      primaryLabel: matchDisplay.primaryLabel,
+      secondaryLabel: matchDisplay.secondaryLabel,
+      title: matchDisplay.title,
+      isActive: index === activeIndex,
+    };
+  });
+}
+
+export function getInitialWorkspacePathMatchIndex(matchCount: number): number {
+  return matchCount > 0 ? 0 : -1;
+}
+
+export function buildWorkspacePathMatchState(
+  workspacePathMatches: WorkspacePathCandidate[],
+): WorkspacePathMatchState {
+  return {
+    workspacePathMatches,
+    activeWorkspacePathMatchIndex: getInitialWorkspacePathMatchIndex(workspacePathMatches.length),
+  };
+}
+
+export function canSearchWorkspacePathMatches(input: {
+  isComposerImeComposing: boolean;
+  isEditingPathReference: boolean;
+  isSearchBlocked: boolean;
+  minQueryLength: number;
+  normalizedActivePathQuery: string;
+}): boolean {
+  return (
+    !input.isSearchBlocked
+    && !input.isComposerImeComposing
+    && input.isEditingPathReference
+    && input.normalizedActivePathQuery.length >= input.minQueryLength
+  );
+}
+
+export function getNextWorkspacePathMatchIndex(currentIndex: number, matchCount: number): number {
+  return Math.min(currentIndex + 1, matchCount - 1);
+}
+
+export function getPreviousWorkspacePathMatchIndex(currentIndex: number): number {
+  return Math.max(currentIndex - 1, 0);
+}
+
+export function resolveActiveWorkspacePathMatch(
+  pathMatches: readonly WorkspacePathCandidate[],
+  activeIndex: number,
+): WorkspacePathCandidate | null {
+  return pathMatches[activeIndex] ?? pathMatches[0] ?? null;
+}
+
+export function canNavigateWorkspacePathMatches(input: {
+  isComposerImeComposing: boolean;
+  isNativeComposing: boolean;
+  matchCount: number;
+}): boolean {
+  return input.matchCount > 0 && !input.isComposerImeComposing && !input.isNativeComposing;
+}
+
+export function resolveWorkspacePathMatchKeyAction(input: {
+  ctrlKey: boolean;
+  key: string;
+  metaKey: boolean;
+}): WorkspacePathMatchKeyAction | null {
+  switch (input.key) {
+    case "ArrowDown":
+      return { kind: "next", shouldPreventDefault: true };
+    case "ArrowUp":
+      return { kind: "previous", shouldPreventDefault: true };
+    case "Escape":
+      return { kind: "dismiss", shouldPreventDefault: true };
+    case "Tab":
+      return { kind: "dismiss", shouldPreventDefault: false };
+    case "Enter":
+      return input.ctrlKey || input.metaKey
+        ? null
+        : { kind: "select", shouldPreventDefault: true };
+    default:
+      return null;
+  }
+}
+
+export function resolveWorkspacePathMatchNavigation(input: {
+  activeIndex: number;
+  ctrlKey: boolean;
+  isComposerImeComposing: boolean;
+  isNativeComposing: boolean;
+  key: string;
+  metaKey: boolean;
+  pathMatches: readonly WorkspacePathCandidate[];
+}): WorkspacePathMatchNavigationResult | null {
+  if (!canNavigateWorkspacePathMatches({
+    matchCount: input.pathMatches.length,
+    isComposerImeComposing: input.isComposerImeComposing,
+    isNativeComposing: input.isNativeComposing,
+  })) {
+    return null;
+  }
+
+  const action = resolveWorkspacePathMatchKeyAction({
+    key: input.key,
+    ctrlKey: input.ctrlKey,
+    metaKey: input.metaKey,
+  });
+  switch (action?.kind) {
+    case "next":
+      return {
+        kind: "next",
+        shouldPreventDefault: action.shouldPreventDefault,
+      };
+    case "previous":
+      return {
+        kind: "previous",
+        shouldPreventDefault: action.shouldPreventDefault,
+      };
+    case "dismiss":
+      return action;
+    case "select": {
+      const match = resolveActiveWorkspacePathMatch(input.pathMatches, input.activeIndex);
+      return match
+        ? {
+            kind: "select",
+            match,
+            shouldPreventDefault: action.shouldPreventDefault,
+          }
+        : null;
+    }
+    default:
+      return null;
+  }
+}
+
+export function getWorkspacePathMatchNavigationIndex(
+  navigation: WorkspacePathMatchNavigationResult,
+  currentIndex: number,
+  matchCount: number,
+): number {
+  if (navigation.kind === "next") {
+    return getNextWorkspacePathMatchIndex(currentIndex, matchCount);
+  }
+  if (navigation.kind === "previous") {
+    return getPreviousWorkspacePathMatchIndex(currentIndex);
+  }
+  return currentIndex;
+}
+
 export function buildAdditionalDirectoryDisplay(directoryPath: string): AdditionalDirectoryDisplay {
   const normalizedPath = normalizePathForReference(directoryPath).replace(/\/+$/, "");
   const { basename, parentPath } = splitPathForDisplay(normalizedPath);
@@ -149,6 +583,23 @@ export function buildAdditionalDirectoryDisplay(directoryPath: string): Addition
     secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 52) : "ルート",
     title: normalizedPath,
   };
+}
+
+export function buildAdditionalDirectoryItems(
+  directoryPaths: readonly string[],
+  canRemove: boolean,
+): AdditionalDirectoryItem[] {
+  return directoryPaths.map((directoryPath) => {
+    const directoryDisplay = buildAdditionalDirectoryDisplay(directoryPath);
+    return {
+      key: directoryPath,
+      path: directoryPath,
+      primaryLabel: directoryDisplay.primaryLabel,
+      secondaryLabel: directoryDisplay.secondaryLabel,
+      title: directoryDisplay.title,
+      canRemove,
+    };
+  });
 }
 
 export function toWorkspaceRelativeReference(workspacePath: string, selectedPath: string): string | null {
@@ -162,6 +613,31 @@ export function toWorkspaceRelativeReference(workspacePath: string, selectedPath
   return normalizedSelectedPath.slice(workspacePrefix.length);
 }
 
+export function resolveReferencePathsForInsertion(
+  selectedPaths: readonly string[],
+  workspacePath: string | null,
+): string[] {
+  return selectedPaths.map((selectedPath) => (
+    workspacePath !== null
+      ? toWorkspaceRelativeReference(workspacePath, selectedPath) ?? normalizePathForReference(selectedPath)
+      : normalizePathForReference(selectedPath)
+  ));
+}
+
+export function buildSelectedPathReferenceInsertionState(input: {
+  caret: number;
+  draft: string;
+  selectedPaths: readonly string[];
+  workspacePath: string | null;
+}): WorkspacePathMatchSelectionState | null {
+  const referencePaths = resolveReferencePathsForInsertion(input.selectedPaths, input.workspacePath);
+  return buildPathReferenceInsertionWithClosedWorkspaceMatchesState(
+    input.draft,
+    input.caret,
+    referencePaths,
+  );
+}
+
 export function toDirectoryPath(selectedPath: string): string {
   const normalized = selectedPath.replace(/[\\/]+$/, "");
   const lastSlashIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
@@ -170,4 +646,24 @@ export function toDirectoryPath(selectedPath: string): string {
   }
 
   return normalized.slice(0, lastSlashIndex);
+}
+
+export function resolvePickedPathBaseDirectory(kind: ComposerPathPickerKind, selectedPath: string): string {
+  return kind === "folder" ? selectedPath : toDirectoryPath(selectedPath);
+}
+
+export async function pickComposerReferencePath(
+  kind: ComposerPathPickerKind,
+  initialPath: string | null,
+  picker: ComposerReferencePathPicker,
+): Promise<string | null> {
+  switch (kind) {
+    case "folder":
+      return await picker.pickDirectory(initialPath);
+    case "image":
+      return await picker.pickImageFile(initialPath);
+    case "file":
+    default:
+      return await picker.pickFile(initialPath);
+  }
 }

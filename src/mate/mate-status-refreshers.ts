@@ -1,5 +1,6 @@
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import type { MateGrowthEventListItem } from "./mate-growth-events-state.js";
+import { loadMateStatusSnapshot } from "./mate-status-load-operation.js";
 import type { MateGrowthSettings, MateProfile, MateStorageState } from "./mate-state.js";
 
 type MateStatusRefreshersContext = {
@@ -54,12 +55,12 @@ export function buildMateStatusRefreshers({
 }: MateStatusRefreshersContext): MateStatusRefreshers {
   const refreshMateStatus: MateStatusRefreshers["refreshMateStatus"] = async (api, options) => {
     const isActive = options?.isActive ?? (() => true);
-    const nextMateState = await api.getMateState();
-    if (!isActive()) {
-      return nextMateState;
+    const result = await loadMateStatusSnapshot({ api, isActive });
+    if (result.status === "stale" || !isActive()) {
+      return result.mateState;
     }
 
-    if (nextMateState === "not_created") {
+    if (result.mateState === "not_created") {
       setMateState("not_created");
       setMateProfile(null);
       setMateDisplayName("");
@@ -77,20 +78,13 @@ export function buildMateStatusRefreshers({
       setCorrectingMateGrowthEventStatement("");
       setMateAvatarUpdating(false);
       stopMateEmbeddingSettingsPolling();
-      return nextMateState;
+      return result.mateState;
     }
 
-    setMateState(nextMateState);
-    if (!isActive()) {
-      return nextMateState;
-    }
-    const nextMateProfile = await api.getMateProfile();
-    if (!isActive()) {
-      return nextMateState;
-    }
-    setMateProfile(nextMateProfile);
-    setMateDisplayName(nextMateProfile?.displayName ?? "");
-    return nextMateState;
+    setMateState(result.mateState);
+    setMateProfile(result.mateProfile);
+    setMateDisplayName(result.mateProfile?.displayName ?? "");
+    return result.mateState;
   };
 
   const refreshMateGrowthEvents: MateStatusRefreshers["refreshMateGrowthEvents"] = async (api, options) => {

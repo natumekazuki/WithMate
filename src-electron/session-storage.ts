@@ -45,6 +45,10 @@ type SessionRow = {
   stream_json: string;
 };
 
+type SessionIdRow = {
+  id: string;
+};
+
 type SessionSummaryRow = Omit<SessionRow, "messages_json" | "stream_json">;
 
 type TableColumnRow = {
@@ -197,6 +201,7 @@ const DELETE_SESSION_SQL = `
 `;
 
 const AUXILIARY_SESSIONS_TABLE_NAME = "auxiliary_sessions";
+const COMPANION_SESSIONS_TABLE_NAME = "companion_sessions";
 
 type SessionRowParseMode = "skip" | "throw";
 
@@ -461,7 +466,7 @@ export class SessionStorage {
       normalizedSessions.forEach((session, index) => {
         this.writeSession(session, baseLastActiveAt - index);
       });
-      this.deleteOrphanedAuxiliarySessionsForRetainedParents(normalizedSessions.map((session) => session.id));
+      this.deleteAuxiliarySessionsWithoutValidParents(normalizedSessions.map((session) => session.id));
       this.db.exec("COMMIT");
       return cloneSessions(normalizedSessions);
     } catch (error) {
@@ -523,19 +528,42 @@ export class SessionStorage {
     this.db.prepare("DELETE FROM auxiliary_sessions").run();
   }
 
-  private deleteOrphanedAuxiliarySessionsForRetainedParents(parentSessionIds: Iterable<string>): void {
+  private companionSessionsTableExists(): boolean {
+    return Boolean(this.db.prepare(`
+      SELECT 1
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name = ?
+    `).get(COMPANION_SESSIONS_TABLE_NAME));
+  }
+
+  private listRetainedCompanionSessionIds(): string[] {
+    if (!this.companionSessionsTableExists()) {
+      return [];
+    }
+
+    const rows = this.db
+      .prepare("SELECT id FROM companion_sessions WHERE status NOT IN ('merged', 'discarded')")
+      .all() as SessionIdRow[];
+    return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
+  }
+
+  private deleteAuxiliarySessionsWithoutValidParents(retainedParentSessionIds: Iterable<string>): void {
     if (!this.auxiliarySessionsTableExists()) {
       return;
     }
 
-    const retainedParentSessionIds = Array.from(new Set(parentSessionIds));
-    if (retainedParentSessionIds.length === 0) {
+    const validParentSessionIds = Array.from(new Set([
+      ...retainedParentSessionIds,
+      ...this.listRetainedCompanionSessionIds(),
+    ]));
+    if (validParentSessionIds.length === 0) {
       this.db.prepare("DELETE FROM auxiliary_sessions").run();
       return;
     }
 
-    const placeholders = retainedParentSessionIds.map(() => "?").join(", ");
+    const placeholders = validParentSessionIds.map(() => "?").join(", ");
     this.db.prepare(`DELETE FROM auxiliary_sessions WHERE parent_session_id NOT IN (${placeholders})`)
-      .run(...retainedParentSessionIds);
+      .run(...validParentSessionIds);
   }
 }

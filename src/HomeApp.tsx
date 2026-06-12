@@ -4,8 +4,11 @@ import {
   createDefaultAppSettings,
   type AppSettings,
 } from "./provider-settings-state.js";
+import { startAppSettingsSubscription } from "./app-settings-subscription.js";
 import { type SessionSummary } from "./session-state.js";
+import { startSessionSummariesSubscription } from "./session-summary-subscription.js";
 import { type ModelCatalogSnapshot } from "./model-catalog.js";
+import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
 import {
   DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
   type MemoryManagementViewFilters,
@@ -22,7 +25,9 @@ import {
   createClosedLaunchDraft,
   type HomeLaunchDraft,
 } from "./home/home-launch-state.js";
+import { resolveSelectedLaunchProviderDraftId } from "./launch/launch-provider-selection.js";
 import { type CompanionSessionSummary } from "./companion-state.js";
+import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
 import { buildHomeMateProfileHandlers } from "./home/home-mate-profile-handlers.js";
 import {
   buildHomeSessionProjection,
@@ -208,21 +213,31 @@ export default function HomeApp() {
       };
     }
 
+    const handleInitialSummaryLoadError = (error: unknown) => {
+      setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
+    };
+
     let unsubscribeSessions: (() => void) | null = null;
     let unsubscribeCompanionSessions: (() => void) | null = null;
 
-    const hydrateOperationalHomeData = async () => {
-      const [nextSessions, nextCompanionSessions] = await Promise.all([
-        withmateApi.listSessionSummaries(),
-        withmateApi.listCompanionSessionSummaries(),
-      ]);
-      if (!active) {
+    const startOperationalHomeSummarySubscriptions = () => {
+      if (unsubscribeSessions || unsubscribeCompanionSessions) {
         return;
       }
 
-      setSessions(nextSessions);
-      setCompanionSessions(nextCompanionSessions);
+      unsubscribeSessions = startSessionSummariesSubscription({
+        api: withmateApi,
+        applySummaries: setSessions,
+        onInitialLoadError: handleInitialSummaryLoadError,
+      });
+      unsubscribeCompanionSessions = startCompanionSessionSummariesSubscription({
+        api: withmateApi,
+        applySummaries: setCompanionSessions,
+        onInitialLoadError: handleInitialSummaryLoadError,
+      });
+    };
 
+    const hydrateOperationalHomeData = async () => {
       if (usesMemoryManagementWindow) {
         try {
           const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
@@ -245,36 +260,20 @@ export default function HomeApp() {
         }
       }
 
-      unsubscribeSessions = withmateApi.subscribeSessionSummaries((nextSessions) => {
-        if (active) {
-          setSessions(nextSessions);
-        }
-      });
-      unsubscribeCompanionSessions = withmateApi.subscribeCompanionSessionSummaries((nextSessions) => {
-        if (active) {
-          setCompanionSessions(nextSessions);
-        }
-      });
-
     };
 
     void Promise.all([
       refreshMateStatus(withmateApi, { isActive: () => active }),
       Promise.all([
-        withmateApi.getAppSettings(),
-        withmateApi.getModelCatalog(null),
         withmateApi.getMateEmbeddingSettings(),
         withmateApi.getMateGrowthSettings(),
       ]),
-    ]).then(([nextMateState, [settings, snapshot, embeddingSettings, growthSettings]]) => {
+    ]).then(([nextMateState, [embeddingSettings, growthSettings]]) => {
       if (!active) {
         return;
       }
 
-      applyIncomingAppSettings(settings, { force: isSettingsWindowMode });
-      setModelCatalog(snapshot);
       setMateEmbeddingSettings(embeddingSettings);
-      setModelCatalogLoaded(true);
       if (nextMateState === "not_created") {
         setMateGrowthSettings(null);
         setMateGrowthFeedback("");
@@ -291,6 +290,7 @@ export default function HomeApp() {
       }
 
       if (nextMateState !== "not_created") {
+        startOperationalHomeSummarySubscriptions();
         void hydrateOperationalHomeData().catch((error) => {
           if (!active) {
             return;
@@ -315,16 +315,27 @@ export default function HomeApp() {
       setMateCreationFeedback(error instanceof Error ? error.message : "Mate 状態の取得に失敗したよ。");
     });
 
-    const unsubscribeModelCatalog = withmateApi.subscribeModelCatalog((snapshot) => {
-      if (active) {
+    const unsubscribeModelCatalog = startModelCatalogSubscription({
+      api: withmateApi,
+      enabled: true,
+      subscribe: true,
+      applyModelCatalog: (snapshot) => {
         setModelCatalog(snapshot);
         setModelCatalogLoaded(true);
-      }
+      },
+      onInitialLoadError: (error) => {
+        setMateCreationFeedback(error instanceof Error ? error.message : "Mate 状態の取得に失敗したよ。");
+      },
     });
-    const unsubscribeAppSettings = withmateApi.subscribeAppSettings((settings) => {
-      if (active) {
-        applyIncomingAppSettings(settings);
-      }
+    const unsubscribeAppSettings = startAppSettingsSubscription({
+      api: withmateApi,
+      loadInitial: true,
+      applyAppSettings: (settings) => {
+        applyIncomingAppSettings(settings, { force: isSettingsWindowMode });
+      },
+      onInitialLoadError: (error) => {
+        setMateCreationFeedback(error instanceof Error ? error.message : "Mate 状態の取得に失敗したよ。");
+      },
     });
 
     return () => {
@@ -455,13 +466,18 @@ export default function HomeApp() {
 
   useEffect(() => {
     setLaunchDraft((current) => {
-      if (enabledLaunchProviders.find((provider) => provider.id === current.providerId)) {
+      const nextProviderId = resolveSelectedLaunchProviderDraftId(
+        enabledLaunchProviders,
+        current.providerId,
+      );
+
+      if (current.providerId === nextProviderId) {
         return current;
       }
 
       return {
         ...current,
-        providerId: enabledLaunchProviders[0]?.id ?? "",
+        providerId: nextProviderId,
       };
     });
   }, [enabledLaunchProviders]);

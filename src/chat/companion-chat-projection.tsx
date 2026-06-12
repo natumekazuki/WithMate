@@ -2,6 +2,7 @@ import type {
   CSSProperties,
   KeyboardEventHandler,
   PointerEventHandler,
+  ReactNode,
   RefObject,
   UIEventHandler,
 } from "react";
@@ -9,29 +10,37 @@ import type {
 import type { CharacterProfile, DiffPreviewPayload, MessageArtifact } from "../app-state.js";
 import type { CompanionSession } from "../companion-state.js";
 import {
-  SessionContextPane,
-  SessionPaneErrorBoundary,
   type SessionActionDockCompactRowProps,
   type SessionAuditLogModalProps,
   type SessionComposerExpandedProps,
   type SessionContextPaneProps,
   type SessionHeaderProps,
   type SessionMessageColumnProps,
+  type SessionRetryBannerProps,
 } from "../session-components.js";
 import type { ContextPaneTabKey } from "../session-ui-projection.js";
 import { ChatSessionModals } from "./chat-session-modals.js";
-import { ChatWorkbenchSplitter, type ChatWindowProps } from "./chat-window.js";
 import {
-  buildChatPageClassName,
-  buildLiveSessionCompactActionDockProps,
-  buildLiveSessionComposerProps,
-  buildLiveSessionMessageColumnProps,
-  buildLiveSessionSplitterProps,
+  buildLiveSessionChatBodyProps,
+  buildLiveSessionComposerDockProps,
+  resolveAuxiliaryModeLabel,
 } from "./chat-window-adapter.js";
+import type { ChatWindowProps } from "./chat-window.js";
+import { buildLiveSessionWindowShellProps } from "./live-session-window-props.js";
+import { buildLiveSessionHeaderProps } from "./chat-header-actions.js";
+import { COMPANION_PENDING_RUN_INDICATOR_TEXT } from "./pending-run-indicator.js";
+import {
+  buildLiveSessionCommonComposerDockInput,
+  buildLiveSessionCommonContextPaneProps,
+  buildLiveSessionCommonMessageColumnProps,
+} from "./live-session-projection.js";
 
 export type CompanionChatProjectionInput = {
   session: CompanionSession;
   character: CharacterProfile;
+  displayedMessages?: CompanionSession["messages"];
+  displayedMessageKeys?: SessionMessageColumnProps["messageKeys"];
+  displayedMessageGroups?: SessionMessageColumnProps["messageGroups"];
   expandedArtifacts: Record<string, boolean>;
   themeStyle: CSSProperties | undefined;
   workbenchRef: RefObject<HTMLDivElement | null>;
@@ -39,7 +48,7 @@ export type CompanionChatProjectionInput = {
   isHeaderExpanded: boolean;
   isEditingTitle: boolean;
   titleDraft: string;
-  isRunning: boolean;
+  isSelectedSessionRunning: boolean;
   isHeaderActionDisabled: boolean;
   messageListRef: RefObject<HTMLDivElement | null>;
   liveApprovalRequest: SessionMessageColumnProps["liveApprovalRequest"];
@@ -48,7 +57,14 @@ export type CompanionChatProjectionInput = {
   elicitationActionRequestId: string | null;
   liveRunAssistantText: string;
   liveRunErrorMessage: string;
+  pendingMessageText: string;
+  pendingMessageGroupId?: SessionMessageColumnProps["pendingMessageGroupId"];
   isMessageListFollowing: boolean;
+  retryBanner: SessionRetryBannerProps["retryBanner"];
+  isRetryDetailsOpen: boolean;
+  isRetryActionDisabled: boolean;
+  isRetryEditDisabled: boolean;
+  isRetryDraftReplacePending: boolean;
   isActionDockExpanded: boolean;
   composerBlocked: boolean;
   isAgentPickerOpen: boolean;
@@ -101,6 +117,7 @@ export type CompanionChatProjectionInput = {
   selectedDiffThemeStyle: CSSProperties;
   auditLogsOpen: boolean;
   displayedSessionAuditLogs: SessionAuditLogModalProps["entries"];
+  auditLogSourceLabel?: SessionAuditLogModalProps["sourceLabel"];
   auditLogDetails: SessionAuditLogModalProps["details"];
   auditLogOperationDetails: SessionAuditLogModalProps["operationDetails"];
   auditLogsHasMore: boolean;
@@ -131,6 +148,11 @@ export type CompanionChatProjectionInput = {
   onOpenInlinePath: (target: string) => void;
   onCopyMessageText: SessionMessageColumnProps["onCopyMessageText"];
   onQuoteMessageText: SessionMessageColumnProps["onQuoteMessageText"];
+  onToggleRetryDetails: () => void;
+  onResendLastMessage: () => void;
+  onEditLastMessage: () => void;
+  onConfirmRetryDraftReplace: () => void;
+  onCancelRetryDraftReplace: () => void;
   onPickFile: () => void;
   onPickFolder: () => void;
   onPickImage: () => void;
@@ -170,232 +192,209 @@ export type CompanionChatProjectionInput = {
   onLoadAuditLogDetail: SessionAuditLogModalProps["onLoadDetail"];
   onLoadAuditLogOperationDetail: SessionAuditLogModalProps["onLoadOperationDetail"];
   onCloseAuditLog: () => void;
+  headerActions?: ReactNode;
+  isAuxiliaryMode?: boolean;
 };
 
 export function buildCompanionChatWindowProps(input: CompanionChatProjectionInput): ChatWindowProps {
-  const headerProps: SessionHeaderProps = {
+  const headerProps: SessionHeaderProps = buildLiveSessionHeaderProps({
     taskTitle: input.session.taskTitle,
     isEditingTitle: input.isEditingTitle,
     titleDraft: input.titleDraft,
-    isRunning: input.isRunning,
-    showRenameButton: true,
-    showAuditLogButton: true,
-    showTerminalButton: true,
-    showDeleteButton: false,
+    isRunning: input.isSelectedSessionRunning,
+    isAuxiliaryMode: input.isAuxiliaryMode,
+    canDeleteSession: false,
+    canViewAuditLog: true,
     onToggleExpanded: input.onToggleHeaderExpanded,
     onOpenAuditLog: input.onOpenAuditLog,
     onOpenTerminal: input.onOpenTerminal,
-    sessionFilesActions: (
-      <>
-        <button
-          className="drawer-toggle compact secondary"
-          type="button"
-          onClick={input.onOpenSessionFilesExplorer}
-          title="Open session files directory"
-        >
-          Explorer
-        </button>
-        <button
-          className="drawer-toggle compact secondary"
-          type="button"
-          onClick={input.onOpenSessionFilesTerminal}
-          title="Open terminal in session files directory"
-        >
-          Terminal
-        </button>
-      </>
-    ),
+    onOpenSessionFilesExplorer: input.onOpenSessionFilesExplorer,
+    onOpenSessionFilesTerminal: input.onOpenSessionFilesTerminal,
     onTitleDraftChange: input.onTitleDraftChange,
     onTitleInputKeyDown: input.onTitleInputKeyDown,
     onSaveTitle: input.onSaveTitle,
     onCancelTitleEdit: input.onCancelTitleEdit,
     onStartTitleEdit: input.onStartTitleEdit,
     onDeleteSession: () => {},
-    workspaceActions: (
-      <button
-        className="drawer-toggle compact secondary"
-        type="button"
-        disabled={input.isHeaderActionDisabled}
-        onClick={input.onOpenWorktree}
-      >
-        Explorer
-      </button>
-    ),
+    onOpenWorkspaceExplorer: input.onOpenWorktree,
+    isWorkspaceExplorerDisabled: input.isHeaderActionDisabled,
     actions: (
-      <button
-        className="drawer-toggle compact secondary"
-        type="button"
-        disabled={input.isHeaderActionDisabled || input.session.status !== "active"}
-        onClick={input.onOpenMergeWindow}
-      >
-        Merge
-      </button>
+      <>
+        {input.headerActions}
+        {input.isAuxiliaryMode ? null : (
+          <button
+            className="drawer-toggle compact secondary"
+            type="button"
+            disabled={input.isHeaderActionDisabled || input.session.status !== "active"}
+            onClick={input.onOpenMergeWindow}
+          >
+            Merge
+          </button>
+        )}
+      </>
     ),
-  };
-
-  const messageColumnProps = buildLiveSessionMessageColumnProps({
-    sessionId: input.session.id,
-    character: input.character,
-    messages: input.session.messages,
-    expandedArtifacts: input.expandedArtifacts,
-    messageListRef: input.messageListRef,
-    isRunning: input.isRunning,
-    liveApprovalRequest: input.liveApprovalRequest,
-    approvalActionRequestId: input.approvalActionRequestId,
-    liveElicitationRequest: input.liveElicitationRequest,
-    elicitationActionRequestId: input.elicitationActionRequestId,
-    liveRunAssistantText: input.liveRunAssistantText,
-    hasLiveRunAssistantText: input.liveRunAssistantText.length > 0,
-    liveRunErrorMessage: input.liveRunErrorMessage,
-    isMessageListFollowing: input.isMessageListFollowing,
-    onMessageListScroll: input.onMessageListScroll,
-    onToggleArtifact: input.onToggleArtifact,
-    onLoadArtifactDetail: input.onLoadArtifactDetail,
-    onOpenDiff: input.onOpenDiff,
-    onResolveLiveApproval: input.onResolveLiveApproval,
-    onResolveLiveElicitation: input.onResolveLiveElicitation,
-    onOpenPath: input.onOpenInlinePath,
-    getChangedFilesEmptyText: () => "差分はまだないよ。",
-    onCopyMessageText: input.onCopyMessageText,
-    onQuoteMessageText: input.onQuoteMessageText,
   });
 
-  const composerProps = buildLiveSessionComposerProps({
-    retryBanner: null,
-    isRunning: input.isRunning,
-    pendingRunIndicatorAnnouncement: "Companion が実行中",
-    pendingRunIndicatorText: "Companion が応答を生成中...",
-    composerBlocked: input.composerBlocked,
-    canSelectCustomAgent: input.session.provider === "copilot",
-    showCustomAgentPicker: true,
-    showSkillPicker: true,
-    showAdditionalDirectoryControls: true,
-    isAgentPickerOpen: input.isAgentPickerOpen,
-    isSkillPickerOpen: input.isSkillPickerOpen,
-    isAdditionalDirectoryListOpen: input.isAdditionalDirectoryListOpen,
-    selectedCustomAgentLabel: input.selectedCustomAgentLabel,
-    selectedCustomAgentTitle: input.selectedCustomAgentTitle,
-    additionalDirectoryCount: (input.session.allowedAdditionalDirectories ?? []).length,
-    canCollapseActionDock: input.canCollapseActionDock,
-    showJumpToBottom: !input.isMessageListFollowing,
-    isCustomAgentListLoading: input.isCustomAgentListLoading,
-    isSkillListLoading: input.isSkillListLoading,
-    customAgentItems: input.customAgentItems,
-    skillItems: input.skillItems,
-    attachmentItems: input.attachmentItems,
-    additionalDirectoryItems: input.additionalDirectoryItems,
-    workspacePathMatchItems: input.workspacePathMatchItems,
-    draft: input.draft,
-    composerTextareaRef: input.composerTextareaRef,
-    isComposerDisabled: input.isComposerDisabled,
-    isSendDisabled: input.isSendDisabled,
-    composerSendability: input.composerSendability,
-    sendButtonTitle: input.sendButtonTitle,
-    isComposerBlockedFeedbackActive: input.isComposerBlockedFeedbackActive,
-    approvalOptions: input.approvalOptions,
-    selectedApprovalMode: input.selectedApprovalMode,
-    sandboxOptions: input.sandboxOptions,
-    selectedCodexSandboxMode: input.selectedCodexSandboxMode,
-    modelOptions: input.modelOptions,
-    selectedModel: input.selectedModel,
-    selectedModelFallbackLabel: input.selectedModelFallbackLabel,
-    reasoningOptions: input.reasoningOptions,
-    selectedReasoningEffort: input.selectedReasoningEffort,
-    onPickFile: input.onPickFile,
-    onPickFolder: input.onPickFolder,
-    onPickImage: input.onPickImage,
-    onAddToSessionFiles: input.onAddToSessionFiles,
-    onPickSessionFiles: input.onPickSessionFiles,
-    onToggleAgentPicker: input.onToggleAgentPicker,
-    onToggleSkillPicker: input.onToggleSkillPicker,
-    onAddAdditionalDirectory: input.onAddAdditionalDirectory,
-    onToggleAdditionalDirectoryList: input.onToggleAdditionalDirectoryList,
-    onCollapse: input.onCollapseActionDock,
-    onJumpToBottom: input.onJumpToMessageListBottom,
-    onSelectCustomAgent: input.onSelectCustomAgent,
-    onSelectSkill: input.onSelectSkill,
-    onRemoveAttachment: input.onRemoveAttachment,
-    onRemoveAdditionalDirectory: input.onRemoveAdditionalDirectory,
-    onDraftChange: input.onDraftChange,
-    onDraftFocus: input.onDraftFocus,
-    onDraftKeyDown: input.onDraftKeyDown,
-    onDraftPaste: input.onDraftPaste,
-    onDraftSelect: input.onDraftSelect,
-    onDraftCompositionStart: input.onDraftCompositionStart,
-    onDraftCompositionEnd: input.onDraftCompositionEnd,
-    onSendOrCancel: input.onSendOrCancel,
-    onSelectWorkspacePathMatch: input.onSelectWorkspacePathMatch,
-    onActivateWorkspacePathMatch: input.onActivateWorkspacePathMatch,
-    onChangeApprovalMode: input.onChangeApprovalMode,
-    onChangeCodexSandboxMode: input.onChangeCodexSandboxMode,
-    onChangeModel: input.onChangeModel,
-    onChangeReasoningEffort: input.onChangeReasoningEffort,
-  });
-
-  const compactActionDockProps = buildLiveSessionCompactActionDockProps({
-    draft: input.draft,
-    actionDockCompactPreview: input.actionDockCompactPreview,
-    attachmentCount: input.attachmentCount,
-    isRunning: input.isRunning,
-    pendingRunIndicatorAnnouncement: "Companion が実行中",
-    pendingRunIndicatorText: "Companion が応答を生成中...",
-    isSendDisabled: input.isSendDisabled,
-    showJumpToBottom: !input.isMessageListFollowing,
-    sendButtonTitle: input.sendButtonTitle,
-    onExpand: input.onExpandActionDock,
-    onJumpToBottom: input.onJumpToMessageListBottom,
-    onSendOrCancel: input.onSendOrCancel,
-  });
-
-  return {
-    mode: "companion",
-    className: buildChatPageClassName({
-      baseClassName: "theme-accent",
-      isHeaderExpanded: input.isHeaderExpanded,
+  const composerDockProps = buildLiveSessionComposerDockProps(
+    buildLiveSessionCommonComposerDockInput({
+      retryBanner: input.retryBanner,
+      isRetryDetailsOpen: input.isRetryDetailsOpen,
+      isRetryActionDisabled: input.isRetryActionDisabled,
+      isRetryEditDisabled: input.isRetryEditDisabled,
+      isRetryDraftReplacePending: input.isRetryDraftReplacePending,
+      onToggleDetails: input.onToggleRetryDetails,
+      onResendLastMessage: input.onResendLastMessage,
+      onEditLastMessage: input.onEditLastMessage,
+      onConfirmRetryDraftReplace: input.onConfirmRetryDraftReplace,
+      onCancelRetryDraftReplace: input.onCancelRetryDraftReplace,
+      onOpenPath: input.onOpenInlinePath,
+      isRunning: input.isSelectedSessionRunning,
+      ...COMPANION_PENDING_RUN_INDICATOR_TEXT,
+      modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
+      composerBlocked: input.composerBlocked,
+      canSelectCustomAgent: input.session.provider === "copilot",
+      isAgentPickerOpen: input.isAgentPickerOpen,
+      isSkillPickerOpen: input.isSkillPickerOpen,
+      isAdditionalDirectoryListOpen: input.isAdditionalDirectoryListOpen,
+      selectedCustomAgentLabel: input.selectedCustomAgentLabel,
+      selectedCustomAgentTitle: input.selectedCustomAgentTitle,
+      additionalDirectoryCount: (input.session.allowedAdditionalDirectories ?? []).length,
+      canCollapseActionDock: input.canCollapseActionDock,
+      isMessageListFollowing: input.isMessageListFollowing,
+      isCustomAgentListLoading: input.isCustomAgentListLoading,
+      isSkillListLoading: input.isSkillListLoading,
+      customAgentItems: input.customAgentItems,
+      skillItems: input.skillItems,
+      attachmentItems: input.attachmentItems,
+      additionalDirectoryItems: input.additionalDirectoryItems,
+      workspacePathMatchItems: input.workspacePathMatchItems,
+      draft: input.draft,
+      composerTextareaRef: input.composerTextareaRef,
+      isComposerDisabled: input.isComposerDisabled,
+      isSendDisabled: input.isSendDisabled,
+      composerSendability: input.composerSendability,
+      sendButtonTitle: input.sendButtonTitle,
+      isComposerBlockedFeedbackActive: input.isComposerBlockedFeedbackActive,
+      approvalOptions: input.approvalOptions,
+      selectedApprovalMode: input.selectedApprovalMode,
+      sandboxOptions: input.sandboxOptions,
+      selectedCodexSandboxMode: input.selectedCodexSandboxMode,
+      modelOptions: input.modelOptions,
+      selectedModel: input.selectedModel,
+      selectedModelFallbackLabel: input.selectedModelFallbackLabel,
+      reasoningOptions: input.reasoningOptions,
+      selectedReasoningEffort: input.selectedReasoningEffort,
+      actionDockCompactPreview: input.actionDockCompactPreview,
+      attachmentCount: input.attachmentCount,
+      onPickFile: input.onPickFile,
+      onPickFolder: input.onPickFolder,
+      onPickImage: input.onPickImage,
+      onAddToSessionFiles: input.onAddToSessionFiles,
+      onPickSessionFiles: input.onPickSessionFiles,
+      onToggleAgentPicker: input.onToggleAgentPicker,
+      onToggleSkillPicker: input.onToggleSkillPicker,
+      onAddAdditionalDirectory: input.onAddAdditionalDirectory,
+      onToggleAdditionalDirectoryList: input.onToggleAdditionalDirectoryList,
+      onCollapseActionDock: input.onCollapseActionDock,
+      onExpandActionDock: input.onExpandActionDock,
+      onJumpToBottom: input.onJumpToMessageListBottom,
+      onSelectCustomAgent: input.onSelectCustomAgent,
+      onSelectSkill: input.onSelectSkill,
+      onRemoveAttachment: input.onRemoveAttachment,
+      onRemoveAdditionalDirectory: input.onRemoveAdditionalDirectory,
+      onDraftChange: input.onDraftChange,
+      onDraftFocus: input.onDraftFocus,
+      onDraftKeyDown: input.onDraftKeyDown,
+      onDraftPaste: input.onDraftPaste,
+      onDraftSelect: input.onDraftSelect,
+      onDraftCompositionStart: input.onDraftCompositionStart,
+      onDraftCompositionEnd: input.onDraftCompositionEnd,
+      onSendOrCancel: input.onSendOrCancel,
+      onSelectWorkspacePathMatch: input.onSelectWorkspacePathMatch,
+      onActivateWorkspacePathMatch: input.onActivateWorkspacePathMatch,
+      onChangeApprovalMode: input.onChangeApprovalMode,
+      onChangeCodexSandboxMode: input.onChangeCodexSandboxMode,
+      onChangeModel: input.onChangeModel,
+      onChangeReasoningEffort: input.onChangeReasoningEffort,
     }),
+  );
+
+  const chatBodyProps = buildLiveSessionChatBodyProps({
+    messageColumn: buildLiveSessionCommonMessageColumnProps({
+      sessionId: input.session.id,
+      character: input.character,
+      messages: input.displayedMessages ?? input.session.messages,
+      messageKeys: input.displayedMessageKeys,
+      messageGroups: input.displayedMessageGroups,
+      expandedArtifacts: input.expandedArtifacts,
+      messageListRef: input.messageListRef,
+      isRunning: input.isSelectedSessionRunning,
+      liveApprovalRequest: input.liveApprovalRequest,
+      approvalActionRequestId: input.approvalActionRequestId,
+      liveElicitationRequest: input.liveElicitationRequest,
+      elicitationActionRequestId: input.elicitationActionRequestId,
+      liveRunAssistantText: input.liveRunAssistantText,
+      liveRunErrorMessage: input.liveRunErrorMessage,
+      pendingMessageText: input.pendingMessageText,
+      pendingMessageGroupId: input.pendingMessageGroupId,
+      isMessageListFollowing: input.isMessageListFollowing,
+      onMessageListScroll: input.onMessageListScroll,
+      onToggleArtifact: input.onToggleArtifact,
+      onLoadArtifactDetail: input.onLoadArtifactDetail,
+      onOpenDiff: input.onOpenDiff,
+      onResolveLiveApproval: input.onResolveLiveApproval,
+      onResolveLiveElicitation: input.onResolveLiveElicitation,
+      onOpenPath: input.onOpenInlinePath,
+      getChangedFilesEmptyText: () => "差分はまだないよ。",
+      onCopyMessageText: input.onCopyMessageText,
+      onQuoteMessageText: input.onQuoteMessageText,
+    }),
+    composer: composerDockProps.composer,
+    compactActionDock: composerDockProps.compactActionDock,
+    splitter: {
+      isContextRailResizing: input.isContextRailResizing,
+      onStartContextRailResize: input.onStartContextRailResize,
+    },
+  });
+  const rightPaneProps = buildLiveSessionCommonContextPaneProps({
+    taskTitle: input.session.taskTitle,
+    isHeaderExpanded: input.isHeaderExpanded,
+    activeContextPaneTab: input.activeContextPaneTab,
+    availableContextPaneTabs: input.availableContextPaneTabs,
+    contextPaneProjection: input.contextPaneProjection,
+    latestCommandView: input.latestCommandView,
+    runningDetailsEntries: input.runningDetailsEntries,
+    liveRunReasoningText: input.liveRunReasoningText,
+    backgroundTasks: input.backgroundTasks,
+    companionGroupMonitorEntries: input.companionGroupMonitorEntries,
+    selectedSessionLiveRunErrorMessage: input.liveRunErrorMessage,
+    isSelectedSessionRunning: input.isSelectedSessionRunning,
+    isCopilotSession: input.isCopilotSession,
+    selectedCopilotRemainingPercentLabel: input.selectedCopilotRemainingPercentLabel,
+    selectedCopilotRemainingRequestsLabel: input.selectedCopilotRemainingRequestsLabel,
+    selectedCopilotQuotaResetLabel: input.selectedCopilotQuotaResetLabel,
+    selectedSessionContextTelemetry: input.selectedSessionContextTelemetry,
+    selectedSessionContextTelemetryProjection: input.selectedSessionContextTelemetryProjection,
+    contextEmptyText: "context usage はまだありません。",
+    onToggleHeaderExpanded: input.onToggleContextPaneHeaderExpanded,
+    onCycleContextPaneTab: input.onCycleContextPaneTab,
+    onOpenCompanionReview: input.onOpenCompanionReview,
+  });
+
+  return buildLiveSessionWindowShellProps({
+    mode: "companion",
+    baseClassName: "theme-accent",
     style: input.themeStyle,
+    isHeaderExpanded: input.isHeaderExpanded,
     workbenchRef: input.workbenchRef,
     workbenchStyle: input.workbenchStyle,
-    isHeaderExpanded: input.isHeaderExpanded,
     headerProps,
-    messageColumnProps,
+    messageColumnProps: chatBodyProps.messageColumnProps,
     isActionDockExpanded: input.isActionDockExpanded,
-    composerProps,
-    compactActionDockProps,
-    splitter: (
-      <ChatWorkbenchSplitter {...buildLiveSessionSplitterProps({
-        isContextRailResizing: input.isContextRailResizing,
-        onStartContextRailResize: input.onStartContextRailResize,
-      })} />
-    ),
-    rightPane: (
-      <SessionPaneErrorBoundary>
-        <SessionContextPane
-          taskTitle={input.session.taskTitle}
-          isHeaderExpanded={input.isHeaderExpanded}
-          activeContextPaneTab={input.activeContextPaneTab}
-          availableContextPaneTabs={input.availableContextPaneTabs}
-          contextPaneProjection={input.contextPaneProjection}
-          latestCommandView={input.latestCommandView}
-          runningDetailsEntries={input.runningDetailsEntries}
-          liveRunReasoningText={input.liveRunReasoningText}
-          backgroundTasks={input.backgroundTasks}
-          companionGroupMonitorEntries={input.companionGroupMonitorEntries}
-          selectedSessionLiveRunErrorMessage={input.liveRunErrorMessage}
-          isSelectedSessionRunning={input.isRunning}
-          isCopilotSession={input.isCopilotSession}
-          selectedCopilotRemainingPercentLabel={input.selectedCopilotRemainingPercentLabel}
-          selectedCopilotRemainingRequestsLabel={input.selectedCopilotRemainingRequestsLabel}
-          selectedCopilotQuotaResetLabel={input.selectedCopilotQuotaResetLabel}
-          selectedSessionContextTelemetry={input.selectedSessionContextTelemetry}
-          selectedSessionContextTelemetryProjection={input.selectedSessionContextTelemetryProjection}
-          contextEmptyText="context usage はまだありません。"
-          onToggleHeaderExpanded={input.onToggleContextPaneHeaderExpanded}
-          onCycleContextPaneTab={input.onCycleContextPaneTab}
-          onOpenCompanionReview={input.onOpenCompanionReview}
-        />
-      </SessionPaneErrorBoundary>
-    ),
+    composerProps: chatBodyProps.composerProps,
+    compactActionDockProps: chatBodyProps.compactActionDockProps,
+    splitterProps: chatBodyProps.splitterProps,
+    rightPaneProps,
     modals: (
       <ChatSessionModals {...input}>
         {input.toastMessage ? (
@@ -405,5 +404,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
         ) : null}
       </ChatSessionModals>
     ),
-  };
+    isAuxiliaryMode: input.isAuxiliaryMode,
+  });
 }

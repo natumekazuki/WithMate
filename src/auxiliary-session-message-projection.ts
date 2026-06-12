@@ -25,6 +25,38 @@ export type MessageListGroup = {
   label: string;
 };
 
+type ProjectedMessageArtifact = NonNullable<Message["artifact"]>;
+
+type PendingAuxiliaryMessageGroupSession = Pick<AuxiliarySession, "id" | "runState">;
+
+export type LoadProjectedMessageArtifactOptions = {
+  source: MessageListSource | undefined;
+  loadSessionArtifact: (
+    messageIndex: number,
+  ) => ProjectedMessageArtifact | null | undefined | Promise<ProjectedMessageArtifact | null | undefined>;
+};
+
+export function loadProjectedMessageArtifact({
+  source,
+  loadSessionArtifact,
+}: LoadProjectedMessageArtifactOptions): Promise<ProjectedMessageArtifact | null> {
+  if (!source) {
+    return Promise.resolve(null);
+  }
+
+  if (source.kind === "auxiliary") {
+    return Promise.resolve(source.artifact ?? null);
+  }
+
+  return Promise.resolve(loadSessionArtifact(source.messageIndex)).then((artifact) => artifact ?? null);
+}
+
+export function resolvePendingAuxiliaryMessageGroupId(
+  auxiliarySession: PendingAuxiliaryMessageGroupSession | null | undefined,
+): string | null {
+  return auxiliarySession?.runState === "running" ? auxiliarySession.id : null;
+}
+
 export function buildMessageListProjection(
   sessionMessages: Message[],
   auxiliarySessions: AuxiliarySession[],

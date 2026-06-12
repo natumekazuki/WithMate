@@ -167,7 +167,6 @@ function errorToCodexAdapterLogError(error: unknown): CodexAdapterLogInput["erro
     message: typeof error === "string" ? error : String(error),
   };
 }
-
 export type CodexThreadOptions = {
   workingDirectory: string;
   skipGitRepoCheck: true;

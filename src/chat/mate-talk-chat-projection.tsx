@@ -1,11 +1,17 @@
-import { type CSSProperties, type RefObject } from "react";
+import { type CSSProperties, type KeyboardEvent, type RefObject } from "react";
 
 import { type ChatSelectOption, type ChatWindowProps } from "./chat-window.js";
+import {
+  buildStaticTextChatComposerCapabilityProps,
+  staticTextChatRuntimeComposerCapabilityDefaults,
+  type StaticTextChatComposerCapabilityProps,
+} from "./chat-window-adapter.js";
 import {
   buildTextChatWindowProps,
   type TextChatWindowMessage,
 } from "./text-chat-projection.js";
 import { shouldSubmitMateTalkInputByKey } from "./mate-talk-state.js";
+import { createSessionFilesActions } from "./session-files-actions.js";
 
 export type MateTalkMessage = TextChatWindowMessage & {
   role: "user" | "mate";
@@ -37,10 +43,28 @@ export type MateTalkChatProjectionInput = {
   onOpenSessionFilesTerminal: () => void;
   onCollapseActionDock: () => void;
   onExpandActionDock: () => void;
-  sending: boolean;
+  isInputImeComposing?: () => boolean;
+  isRunning: boolean;
   feedback: string;
-  composerCapabilityProps?: Parameters<typeof buildTextChatWindowProps>[0]["composerCapabilityProps"];
+  composerCapabilityProps?: StaticTextChatComposerCapabilityProps;
 };
+
+export function buildMateTalkComposerCapabilityProps({
+  composerCapabilityProps,
+  onCollapseActionDock,
+}: {
+  composerCapabilityProps?: StaticTextChatComposerCapabilityProps;
+  onCollapseActionDock: () => void;
+}): StaticTextChatComposerCapabilityProps {
+  return buildStaticTextChatComposerCapabilityProps({
+    ...composerCapabilityProps,
+    ...staticTextChatRuntimeComposerCapabilityDefaults,
+    showCustomAgentPicker: false,
+    showSkillPicker: false,
+    canCollapseActionDock: true,
+    onCollapse: onCollapseActionDock,
+  });
+}
 
 export function buildMateTalkChatWindowProps({
   mateName,
@@ -68,10 +92,20 @@ export function buildMateTalkChatWindowProps({
   onOpenSessionFilesTerminal,
   onCollapseActionDock,
   onExpandActionDock,
-  sending,
+  isInputImeComposing,
+  isRunning,
   feedback,
   composerCapabilityProps,
 }: MateTalkChatProjectionInput): ChatWindowProps {
+  const shouldSubmitOnKey = (event: KeyboardEvent<HTMLTextAreaElement>) =>
+    shouldSubmitMateTalkInputByKey({
+      key: event.key,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      shiftKey: event.shiftKey,
+      isComposing: event.nativeEvent.isComposing || isInputImeComposing?.() === true,
+    });
+
   return buildTextChatWindowProps({
     mode: "mate-talk",
     pageTitle: "メイトーク",
@@ -92,8 +126,6 @@ export function buildMateTalkChatWindowProps({
     selectedModelFallbackLabel,
     reasoningOptions,
     selectedReasoningEffort,
-    pendingRunIndicatorAnnouncement: `${mateName} の返信を待っています`,
-    pendingRunIndicatorText: `${mateName} が返信を準備中`,
     messageListRef,
     composerTextareaRef,
     onDraftChange: onChangeInput,
@@ -103,35 +135,18 @@ export function buildMateTalkChatWindowProps({
     onChangeReasoningEffort,
     onSubmit,
     onToggleHeaderExpanded,
-    headerSessionFilesActions: (
-      <>
-        <button
-          className="drawer-toggle compact secondary"
-          type="button"
-          onClick={onOpenSessionFilesExplorer}
-          title="Open session files directory"
-        >
-          Explorer
-        </button>
-        <button
-          className="drawer-toggle compact secondary"
-          type="button"
-          onClick={onOpenSessionFilesTerminal}
-          title="Open terminal in session files directory"
-        >
-          Terminal
-        </button>
-      </>
-    ),
-    isRunning: sending,
+    headerSessionFilesActions: createSessionFilesActions({
+      onOpenExplorer: onOpenSessionFilesExplorer,
+      onOpenTerminal: onOpenSessionFilesTerminal,
+    }),
+    isRunning,
     feedback,
-    submitOnKey: shouldSubmitMateTalkInputByKey,
+    submitOnKey: shouldSubmitOnKey,
     rightPaneHeaderTitle: "メイトーク",
     rightPaneAriaLabel: "補助情報",
-    composerCapabilityProps: {
-      ...composerCapabilityProps,
-      canCollapseActionDock: true,
-      onCollapse: onCollapseActionDock,
-    },
+    composerCapabilityProps: buildMateTalkComposerCapabilityProps({
+      composerCapabilityProps,
+      onCollapseActionDock,
+    }),
   });
 }

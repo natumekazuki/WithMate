@@ -7,6 +7,7 @@ import {
   type AgentSessionChatProjectionInput,
 } from "../../src/chat/session-chat-projection.js";
 import type { CharacterProfile } from "../../src/app-state.js";
+import type { SessionContextPaneProps } from "../../src/session-components.js";
 import type { Session } from "../../src/session-state.js";
 
 const noop = () => {};
@@ -282,4 +283,141 @@ test("buildAgentSessionChatWindowProps は Auxiliary mode でも attachment 経�
   assert.deepEqual(props.composerProps.workspacePathMatchItems, workspacePathMatchItems);
   assert.equal(props.composerProps.onDraftPaste, onDraftPaste);
   assert.equal(props.compactActionDockProps.attachmentCount, 1);
+});
+
+test("buildAgentSessionChatWindowProps は Auxiliary mode で parent header 操作だけ隠す", () => {
+  const normalProps = buildAgentSessionChatWindowProps(createProjectionInput());
+  const auxiliaryProps = buildAgentSessionChatWindowProps(createProjectionInput({ isAuxiliaryMode: true }));
+
+  assert.equal(normalProps.headerProps.showRenameButton, true);
+  assert.equal(normalProps.headerProps.showAuditLogButton, true);
+  assert.equal(normalProps.headerProps.showDeleteButton, true);
+  assert.equal(auxiliaryProps.headerProps.showRenameButton, false);
+  assert.equal(auxiliaryProps.headerProps.showAuditLogButton, true);
+  assert.equal(auxiliaryProps.headerProps.showDeleteButton, false);
+});
+
+test("buildAgentSessionChatWindowProps は right pane props を共通 pane に渡す", () => {
+  const onToggleHeaderExpanded = () => {};
+  const onCycleContextPaneTab = () => {};
+  const onOpenCompanionReview = () => {};
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    selectedContextEmptyText: "Agent context empty",
+    latestCommandEmptyText: "Agent latest command empty",
+    onToggleHeaderExpanded,
+    onCycleContextPaneTab,
+    onOpenCompanionReview,
+  }));
+  const rightPane = props.rightPane as React.ReactElement<{
+    children: React.ReactElement<SessionContextPaneProps>;
+  }>;
+  const paneProps = rightPane.props.children.props;
+
+  assert.equal(paneProps.contextEmptyText, "Agent context empty");
+  assert.equal(paneProps.latestCommandEmptyText, "Agent latest command empty");
+  assert.equal(paneProps.onToggleHeaderExpanded, onToggleHeaderExpanded);
+  assert.equal(paneProps.onCycleContextPaneTab, onCycleContextPaneTab);
+  assert.equal(paneProps.onOpenCompanionReview, onOpenCompanionReview);
+});
+
+test("buildAgentSessionChatWindowProps は header action callbacks を維持する", () => {
+  const onOpenSessionExplorer = () => {};
+  const onOpenSessionFilesExplorer = () => {};
+  const onOpenSessionFilesTerminal = () => {};
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    onOpenSessionExplorer,
+    onOpenSessionFilesExplorer,
+    onOpenSessionFilesTerminal,
+  }));
+  const workspaceAction = props.headerProps.workspaceActions as React.ReactElement<{
+    onClick: () => void;
+  }>;
+  const sessionFilesActions = props.headerProps.sessionFilesActions as React.ReactElement<{
+    children: React.ReactNode;
+  }>;
+  const [sessionFilesExplorer, sessionFilesTerminal] = React.Children.toArray(
+    sessionFilesActions.props.children,
+  ) as Array<React.ReactElement<{ onClick: () => void }>>;
+
+  assert.equal(workspaceAction.props.onClick, onOpenSessionExplorer);
+  assert.equal(sessionFilesExplorer.props.onClick, onOpenSessionFilesExplorer);
+  assert.equal(sessionFilesTerminal.props.onClick, onOpenSessionFilesTerminal);
+});
+
+test("buildAgentSessionChatWindowProps は composer と compact dock の live props を維持する", () => {
+  const onCollapseActionDock = () => {};
+  const onExpandActionDock = () => {};
+  const onJumpToMessageListBottom = () => {};
+  const onSendOrCancel = () => {};
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    selectedSession: {
+      ...createSession(),
+      provider: "copilot",
+      runState: "running",
+      model: "gpt-agent",
+      reasoningEffort: "medium",
+      allowedAdditionalDirectories: ["C:/extra"],
+    },
+    selectedCustomAgentLabel: "Copilot Agent",
+    isSelectedSessionRunning: true,
+    pendingRunIndicatorAnnouncement: "Agent running",
+    pendingRunIndicatorText: "Agent responding",
+    isMessageListFollowing: false,
+    composerSendButtonTitle: "Agent stop",
+    actionDockCompactPreview: "Agent preview",
+    attachmentCount: 2,
+    onCollapseActionDock,
+    onExpandActionDock,
+    onJumpToMessageListBottom,
+    onSendOrCancel,
+  }));
+
+  assert.equal(props.composerProps.isRunning, true);
+  assert.equal(props.composerProps.pendingRunIndicatorAnnouncement, "Agent running");
+  assert.equal(props.composerProps.pendingRunIndicatorText, "Agent responding");
+  assert.equal(props.composerProps.canSelectCustomAgent, true);
+  assert.equal(props.composerProps.selectedCustomAgentLabel, "Copilot Agent");
+  assert.equal(props.composerProps.additionalDirectoryCount, 1);
+  assert.equal(props.composerProps.showJumpToBottom, true);
+  assert.equal(props.composerProps.selectedApprovalMode, "never");
+  assert.equal(props.composerProps.selectedCodexSandboxMode, "workspace-write");
+  assert.equal(props.composerProps.selectedModel, "gpt-agent");
+  assert.equal(props.composerProps.selectedReasoningEffort, "medium");
+  assert.equal(props.composerProps.sendButtonTitle, "Agent stop");
+  assert.equal(props.composerProps.onCollapse, onCollapseActionDock);
+  assert.equal(props.compactActionDockProps.actionDockCompactPreview, "Agent preview");
+  assert.equal(props.compactActionDockProps.attachmentCount, 2);
+  assert.equal(props.compactActionDockProps.isRunning, true);
+  assert.equal(props.compactActionDockProps.pendingRunIndicatorText, "Agent responding");
+  assert.equal(props.compactActionDockProps.showJumpToBottom, true);
+  assert.equal(props.compactActionDockProps.sendButtonTitle, "Agent stop");
+  assert.equal(props.compactActionDockProps.onExpand, onExpandActionDock);
+  assert.equal(props.compactActionDockProps.onJumpToBottom, onJumpToMessageListBottom);
+  assert.equal(props.compactActionDockProps.onSendOrCancel, onSendOrCancel);
+});
+
+test("buildAgentSessionChatWindowProps は selected session running boolean を composer dock に渡す", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    selectedSession: {
+      ...createSession(),
+      runState: "idle",
+    },
+    isSelectedSessionRunning: true,
+  }));
+
+  assert.equal(props.composerProps.isRunning, true);
+  assert.equal(props.compactActionDockProps.isRunning, true);
+});
+
+test("buildAgentSessionChatWindowProps は session runState ではなく running boolean を優先する", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    selectedSession: {
+      ...createSession(),
+      runState: "running",
+    },
+    isSelectedSessionRunning: false,
+  }));
+
+  assert.equal(props.composerProps.isRunning, false);
+  assert.equal(props.compactActionDockProps.isRunning, false);
 });

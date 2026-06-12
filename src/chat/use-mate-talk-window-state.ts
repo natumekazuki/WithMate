@@ -1,27 +1,50 @@
 import { type ClipboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from "../approval-mode.js";
+import {
+  addAllowedAdditionalDirectory,
+  removeAllowedAdditionalDirectory,
+  resolveAdditionalDirectoryPickerBase,
+  runAdditionalDirectoryRemovalOperation,
+  runPickedAdditionalDirectoryOperation,
+} from "../additional-directory-state.js";
 import { DEFAULT_CODEX_SANDBOX_MODE, normalizeCodexSandboxMode, type CodexSandboxMode } from "../codex-sandbox-mode.js";
+import { restoreComposerTextareaFocusAndCaret } from "../composer-textarea-focus.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { MateTalkPathReference } from "../mate/mate-state.js";
+import { loadMateStatusSnapshot } from "../mate/mate-status-load-operation.js";
 import type { ModelCatalogSnapshot, ModelReasoningEffort } from "../model-catalog.js";
+import { startModelCatalogSubscription } from "../model-catalog-subscription.js";
+import { startAppSettingsSubscription } from "../app-settings-subscription.js";
 import { getApprovalOptionsForProvider, getSandboxOptionsForProvider } from "../provider-runtime-options.js";
 import {
   createDefaultAppSettings,
   type AppSettings,
 } from "../provider-settings-state.js";
+import { resolveRuntimeOptionValue } from "../runtime-option-state.js";
 import {
-  buildAdditionalDirectoryDisplay,
-  compactPathForDisplay,
-  formatPathReference,
-  normalizePathForReference,
-  splitPathForDisplay,
-  toDirectoryPath,
+  appendMissingPathReferenceAttachments,
+  buildAdditionalDirectoryItems,
+  buildPathReferenceAttachmentItems,
+  pickComposerReferencePath,
+  removePathReferenceAttachments,
+  resolveReferencePathsForInsertion,
+  resolvePathReferenceRemovalTargets,
+  type ComposerPathPickerKind,
 } from "../session-composer-paths.js";
 import { buildCharacterThemeStyle } from "../theme-utils.js";
 import { currentTimestampLabel } from "../time-state.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
-import { formatMarkdownQuote, insertComposerTextAtCaret } from "./message-text-actions.js";
+import {
+  createCopyMessageTextHandler,
+} from "./message-text-actions.js";
+import { createPastedSessionAttachmentHandler } from "./composer-paste-handlers.js";
+import {
+  applyComposerDraftClearCommand,
+  applyComposerDraftChangeCommand,
+  buildOnDraftCompositionHandlers,
+  buildOnDraftSelectHandler,
+} from "./composer-draft-handlers.js";
 import type { MateTalkMessage } from "./mate-talk-chat-projection.js";
 import {
   buildMateTalkModelSelection,
@@ -29,9 +52,28 @@ import {
   resolveMateTalkModelChange,
 } from "./mate-talk-model-selection.js";
 import {
+  beginMateTalkTurnSubmission,
+  buildMateTalkTurnInput,
   MateTalkTurnController,
   resolveMateTalkActionDockExpandedAfterSubmit,
+  resolveMateTalkAssistantTurnUpdate,
+  resolveMateTalkErrorTurnUpdate,
+  resolveMateTalkSubmitPreflight,
+  resolveMateTalkTurnFinalization,
 } from "./mate-talk-state.js";
+import {
+  applyPickedAdditionalDirectoryUiStateCommand,
+  applyPickedComposerReferencePathCommand,
+  applySelectedPathReferenceInsertionCommand,
+  applySessionFilesReferencePathsCommand,
+  createActionDockCollapseHandler,
+  createActionDockExpandHandler,
+  createAdditionalDirectoryListToggleHandler,
+  createHeaderExpandedToggleHandler,
+  createPathReferenceRemovalHandler,
+  createQuoteMessageTextHandler,
+  createSessionFilesOpenHandler,
+} from "./session-shell-handlers.js";
 
 function getMateTalkLaunchParams(): { providerId: string; model: string; reasoningEffort: ModelReasoningEffort } {
   if (typeof window === "undefined") {
@@ -60,7 +102,7 @@ export function useMateTalkWindowState({
   const [mateProfile, setMateProfile] = useState<MateProfile | null>(null);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<MateTalkMessage[]>([]);
-  const [sending, setSending] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
   const [isActionDockExpanded, setIsActionDockExpanded] = useState(true);
@@ -71,6 +113,7 @@ export function useMateTalkWindowState({
   const sessionFilesSessionIdRef = useRef(`mate-talk-${Date.now().toString(36)}`);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const inputImeComposingRef = useRef(false);
   const [inputCaret, setInputCaret] = useState(0);
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [pathReferences, setPathReferences] = useState<MateTalkPathReference[]>([]);
@@ -87,34 +130,37 @@ export function useMateTalkWindowState({
     }
 
     let active = true;
-    void Promise.all([
-      withmateApi.getAppSettings(),
-      withmateApi.getModelCatalog(null),
-      withmateApi.getMateState(),
-      withmateApi.getMateProfile(),
-    ]).then(([settings, snapshot, nextMateState, profile]) => {
-      if (!active) {
+    void loadMateStatusSnapshot({
+      api: withmateApi,
+      isActive: () => active,
+    }).then((result) => {
+      if (result.status === "stale" || !active) {
         return;
       }
-      setAppSettings(settings);
-      setModelCatalog(snapshot);
-      setMateState(nextMateState);
-      setMateProfile(profile);
+      setMateState(result.mateState);
+      setMateProfile(result.mateProfile);
     }).catch((error) => {
       if (active) {
         setFeedback(error instanceof Error ? error.message : "メイトークの初期化に失敗したよ。");
       }
     });
 
-    const unsubscribeModelCatalog = withmateApi.subscribeModelCatalog((snapshot) => {
-      if (active) {
-        setModelCatalog(snapshot);
-      }
+    const unsubscribeModelCatalog = startModelCatalogSubscription({
+      api: withmateApi,
+      enabled: true,
+      subscribe: true,
+      applyModelCatalog: setModelCatalog,
+      onInitialLoadError: (error) => {
+        setFeedback(error instanceof Error ? error.message : "メイトークの初期化に失敗したよ。");
+      },
     });
-    const unsubscribeAppSettings = withmateApi.subscribeAppSettings((settings) => {
-      if (active) {
-        setAppSettings(settings);
-      }
+    const unsubscribeAppSettings = startAppSettingsSubscription({
+      api: withmateApi,
+      loadInitial: true,
+      applyAppSettings: setAppSettings,
+      onInitialLoadError: (error) => {
+        setFeedback(error instanceof Error ? error.message : "メイトークの初期化に失敗したよ。");
+      },
     });
 
     return () => {
@@ -161,14 +207,14 @@ export function useMateTalkWindowState({
     }
   }, [model, modelSelection, providerId, reasoningEffort]);
 
-  const handleChangeInput = (value: string) => {
-    setInput(value);
-    setFeedback("");
-  };
-
   const handleChangeInputWithCaret = (value: string, selectionStart = value.length) => {
-    setInputCaret(selectionStart);
-    handleChangeInput(value);
+    applyComposerDraftChangeCommand({
+      value,
+      selectionStart,
+      setDraft: setInput,
+      setComposerCaret: setInputCaret,
+      clearFeedback: () => setFeedback(""),
+    });
   };
 
   const handleChangeModel = (nextModel: string) => {
@@ -187,112 +233,78 @@ export function useMateTalkWindowState({
     }
   };
 
-  const handleCopyMessageText = (text: string) => {
-    const normalized = text.trim();
-    if (!normalized) {
-      return;
-    }
-
-    void navigator.clipboard.writeText(normalized).catch((error) => {
+  const handleCopyMessageText = createCopyMessageTextHandler({
+    writeText: (normalized) => navigator.clipboard.writeText(normalized),
+    onFailure: (error) => {
       console.error(error);
       setFeedback("コピーに失敗したよ。");
-    });
-  };
+    },
+  });
 
-  const handleQuoteMessageText = (text: string) => {
-    if (sending) {
-      return;
-    }
+  const handleQuoteMessageText = createQuoteMessageTextHandler({
+    isBlocked: () => isRunning,
+    notifyBlocked: () => {},
+    getComposerState: () => ({
+      draft: input,
+      fallbackCaret: inputCaret,
+      textarea: composerTextareaRef.current,
+    }),
+    applyInsertion: ({ draft: nextInput, caret: nextCaret }) => {
+      applyComposerDraftChangeCommand({
+        value: nextInput,
+        selectionStart: nextCaret,
+        setDraft: setInput,
+        setComposerCaret: setInputCaret,
+        clearFeedback: () => setFeedback(""),
+      });
+    },
+    restoreComposerTextareaFocusAndCaret,
+  });
 
-    const quote = formatMarkdownQuote(text);
-    if (!quote) {
-      return;
-    }
-
+  const insertReferencePaths = (selectedPaths: string[], kind: ComposerPathPickerKind) => {
     const textarea = composerTextareaRef.current;
-    const { draft: nextInput, caret: nextCaret } = insertComposerTextAtCaret(
-      input,
-      quote,
-      textarea?.selectionStart ?? inputCaret,
-    );
-    setInput(nextInput);
-    setInputCaret(nextCaret);
-    setFeedback("");
-
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
+    const normalizedPaths = resolveReferencePathsForInsertion(selectedPaths, null);
+    applySelectedPathReferenceInsertionCommand({
+      draft: input,
+      fallbackCaret: inputCaret,
+      selectedPaths,
+      textarea,
+      workspacePath: null,
+      applyInsertion: ({ draft: nextInput, caret: nextCaret }) => {
+        applyComposerDraftChangeCommand({
+          value: nextInput,
+          selectionStart: nextCaret,
+          setDraft: setInput,
+          setComposerCaret: setInputCaret,
+          clearFeedback: () => setFeedback(""),
+        });
+        setPathReferences((current) => appendMissingPathReferenceAttachments(current, normalizedPaths, kind));
+      },
+      restoreComposerTextareaFocusAndCaret,
     });
   };
 
-  const insertReferencePaths = (selectedPaths: string[], kind: "file" | "folder" | "image") => {
-    if (selectedPaths.length === 0) {
-      return;
-    }
-
-    const textarea = composerTextareaRef.current;
-    const normalizedPaths = selectedPaths.map((selectedPath) => normalizePathForReference(selectedPath));
-    const referenceTokens = normalizedPaths.map((normalizedPath) => formatPathReference(normalizedPath));
-    const caret = textarea?.selectionStart ?? inputCaret;
-    const leadingSpacer = caret > 0 && !/\s/.test(input[caret - 1] ?? "") ? " " : "";
-    const trailingSpacer = input.length > caret && !/\s/.test(input[caret] ?? "") ? " " : "";
-    const insertion = `${leadingSpacer}${referenceTokens.join(" ")}${trailingSpacer}`;
-    const nextInput = `${input.slice(0, caret)}${insertion}${input.slice(caret)}`;
-    const nextCaret = caret + insertion.length;
-
-    setInput(nextInput);
-    setInputCaret(nextCaret);
-    setFeedback("");
-    setPathReferences((current) => {
-      const existing = new Set(current.map((entry) => entry.path));
-      const next = [...current];
-      for (const normalizedPath of normalizedPaths) {
-        if (!existing.has(normalizedPath)) {
-          next.push({ path: normalizedPath, kind });
-        }
-      }
-      return next;
-    });
-
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
-  };
-
-  const insertReferencePath = (selectedPath: string, kind: "file" | "folder" | "image") => {
+  const insertReferencePath = (selectedPath: string, kind: ComposerPathPickerKind) => {
     insertReferencePaths([selectedPath], kind);
   };
 
-  const pickAndInsertPath = async (kind: "file" | "folder" | "image") => {
+  const pickAndInsertPath = async (kind: ComposerPathPickerKind) => {
     if (!withmateApi) {
       return;
     }
 
     const initialPath = pickerBaseDirectory || null;
-    const selectedPath = kind === "folder"
-      ? await withmateApi.pickDirectory(initialPath)
-      : kind === "image"
-        ? await withmateApi.pickImageFile(initialPath)
-        : await withmateApi.pickFile(initialPath);
-    if (!selectedPath) {
-      return;
-    }
-
-    setPickerBaseDirectory(kind === "folder" ? selectedPath : toDirectoryPath(selectedPath));
-    insertReferencePath(selectedPath, kind);
+    const selectedPath = await pickComposerReferencePath(kind, initialPath, withmateApi);
+    applyPickedComposerReferencePathCommand({
+      kind,
+      selectedPath,
+      setPickerBaseDirectory,
+      insertReferencePath,
+    });
   };
 
   const addToSessionFiles = async () => {
-    if (!withmateApi || sending) {
+    if (!withmateApi || isRunning) {
       return;
     }
 
@@ -302,12 +314,16 @@ export function useMateTalkWindowState({
     }
 
     const savedPaths = await withmateApi.copyFilesToSessionFiles(sessionFilesSessionIdRef.current, selectedPaths);
-    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
-    insertReferencePaths(savedPaths, "file");
+    applySessionFilesReferencePathsCommand({
+      selectedPaths,
+      referencePaths: savedPaths,
+      setPickerBaseDirectory,
+      insertReferencePaths: (referencePaths) => insertReferencePaths(referencePaths, "file"),
+    });
   };
 
   const pickSessionFiles = async () => {
-    if (!withmateApi || sending) {
+    if (!withmateApi || isRunning) {
       return;
     }
 
@@ -316,123 +332,88 @@ export function useMateTalkWindowState({
       return;
     }
 
-    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
-    insertReferencePaths(selectedPaths, "file");
+    applySessionFilesReferencePathsCommand({
+      selectedPaths,
+      referencePaths: selectedPaths,
+      setPickerBaseDirectory,
+      insertReferencePaths: (referencePaths) => insertReferencePaths(referencePaths, "file"),
+    });
   };
 
-  const handleDraftPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!withmateApi || sending) {
-      return;
-    }
+  const handleDraftPaste = createPastedSessionAttachmentHandler({
+    alertError: (message) => setFeedback(message),
+    canPaste: () => !!withmateApi && !isRunning,
+    currentTimestampLabel,
+    fallbackErrorMessage: "貼り付けたファイルの保存に失敗したよ。",
+    getSavePastedSessionFile: () => {
+      return withmateApi ? (request) => withmateApi.savePastedSessionFile(request) : null;
+    },
+    getSessionId: () => sessionFilesSessionIdRef.current,
+    insertReferencePaths: (referencePaths) => insertReferencePaths(referencePaths, "file"),
+  });
 
-    const files = Array.from(event.clipboardData.files);
-    const itemFiles = Array.from(event.clipboardData.items)
-      .filter((item) => item.kind === "file")
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => file !== null);
-    const pastedFiles = files.length > 0 ? files : itemFiles;
-    if (pastedFiles.length === 0) {
-      return;
-    }
+  const openSessionFilesDirectory = createSessionFilesOpenHandler({
+    getSessionId: () => sessionFilesSessionIdRef.current,
+    getOpenSessionFiles: () => {
+      return withmateApi
+        ? (sessionId) => withmateApi.openSessionFilesDirectory(sessionId)
+        : null;
+    },
+    alertError: (message) => setFeedback(message),
+    fallbackErrorMessage: "session files directory を開けなかったよ。",
+  });
 
-    event.preventDefault();
-    const savedPaths: string[] = [];
-    for (const file of pastedFiles) {
-      const buffer = await file.arrayBuffer();
-      const fileName = file.name.trim() || `pasted-${currentTimestampLabel().replace(/[:/\\\s]+/g, "-")}.png`;
-      const savedPath = await withmateApi.savePastedSessionFile({
-        sessionId: sessionFilesSessionIdRef.current,
-        fileName,
-        data: buffer,
+  const openSessionFilesTerminal = createSessionFilesOpenHandler({
+    getSessionId: () => sessionFilesSessionIdRef.current,
+    getOpenSessionFiles: () => {
+      return withmateApi
+        ? (sessionId) => withmateApi.openSessionFilesTerminal(sessionId)
+        : null;
+    },
+    alertError: (message) => setFeedback(message),
+    fallbackErrorMessage: "session files terminal を開けなかったよ。",
+  });
+
+  const removePathReference = createPathReferenceRemovalHandler({
+    getDraft: () => input,
+    normalizeAttachmentPathCandidates: resolvePathReferenceRemovalTargets,
+    applyRemoval: ({ draft: nextInput, caret: nextCaret }, removalTargets) => {
+      applyComposerDraftChangeCommand({
+        value: nextInput,
+        selectionStart: nextCaret,
+        setDraft: setInput,
+        setComposerCaret: setInputCaret,
       });
-      savedPaths.push(savedPath);
-    }
-
-    insertReferencePaths(savedPaths, "file");
-  };
-
-  const openSessionFilesDirectory = async () => {
-    if (!withmateApi) {
-      return;
-    }
-    await withmateApi.openSessionFilesDirectory(sessionFilesSessionIdRef.current);
-  };
-
-  const openSessionFilesTerminal = async () => {
-    if (!withmateApi) {
-      return;
-    }
-    await withmateApi.openSessionFilesTerminal(sessionFilesSessionIdRef.current);
-  };
-
-  const removePathReference = (targets: string[]) => {
-    const normalizedTargets = new Set(targets.map((target) => normalizePathForReference(target)));
-    const escapedTokens = Array.from(normalizedTargets)
-      .map((target) => formatPathReference(target))
-      .map((target) => target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-    let nextInput = input;
-    for (const escapedToken of escapedTokens) {
-      nextInput = nextInput.replace(
-        new RegExp(`(^|[\\s(])${escapedToken}(?=\\s|$|[),.;:!?])`),
-        (_match, leadingWhitespace: string) => leadingWhitespace || "",
-      );
-    }
-
-    nextInput = nextInput
-      .replace(/[ \t]{2,}/g, " ")
-      .replace(/\n{3,}/g, "\n\n");
-    setInput(nextInput);
-    setInputCaret(nextInput.length);
-    setPathReferences((current) => current.filter((entry) => !normalizedTargets.has(entry.path)));
-  };
+      setPathReferences((current) => removePathReferenceAttachments(current, removalTargets));
+    },
+  });
 
   const addAdditionalDirectory = async () => {
-    if (!withmateApi || sending) {
-      return;
-    }
-
-    const selectedPath = await withmateApi.pickDirectory(pickerBaseDirectory || null);
-    if (!selectedPath) {
-      return;
-    }
-
-    const normalizedPath = normalizePathForReference(selectedPath);
-    setPickerBaseDirectory(selectedPath);
-    setAdditionalDirectories((current) => Array.from(new Set([...current, normalizedPath])));
-    setIsAdditionalDirectoryListOpen(true);
+    await runPickedAdditionalDirectoryOperation({
+      canPickDirectory: () => !!withmateApi && !isRunning,
+      getPickerBaseDirectory: () => resolveAdditionalDirectoryPickerBase(pickerBaseDirectory),
+      pickDirectory: (baseDirectory) => withmateApi?.pickDirectory(baseDirectory) ?? Promise.resolve(null),
+      applyPickedDirectory: (selectedPath) => {
+        applyPickedAdditionalDirectoryUiStateCommand({
+          selectedPath,
+          setPickerBaseDirectory,
+          applyPickedDirectory: (directoryPath) => {
+            setAdditionalDirectories((current) => addAllowedAdditionalDirectory(current, directoryPath));
+          },
+          setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
+        });
+      },
+    });
   };
 
   const pathReferenceItems = useMemo(
     () =>
-      pathReferences.map((entry) => {
-        const { basename, parentPath } = splitPathForDisplay(entry.path);
-        const kindLabel = entry.kind === "folder" ? "フォルダ" : entry.kind === "image" ? "画像" : "ファイル";
-        return {
-          key: `${entry.kind}:${entry.path}`,
-          kind: entry.kind,
-          kindLabel,
-          locationLabel: "参照",
-          primaryLabel: basename || entry.path,
-          secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 42) : "ルート",
-          title: entry.path,
-          removeTargets: [entry.path],
-        };
-      }),
+      buildPathReferenceAttachmentItems(pathReferences),
     [pathReferences],
   );
   const additionalDirectoryItems = useMemo(
     () =>
-      additionalDirectories.map((directoryPath) => {
-        const directoryDisplay = buildAdditionalDirectoryDisplay(directoryPath);
-        return {
-          key: directoryPath,
-          path: directoryPath,
-          primaryLabel: directoryDisplay.primaryLabel,
-          secondaryLabel: directoryDisplay.secondaryLabel,
-          title: directoryDisplay.title,
-          canRemove: true,
-        };
-      }),
+      buildAdditionalDirectoryItems(additionalDirectories, true),
     [additionalDirectories],
   );
   const approvalOptions = useMemo(
@@ -445,43 +426,67 @@ export function useMateTalkWindowState({
   );
 
   useEffect(() => {
-    if (!approvalOptions.some((option) => option.value === selectedApprovalMode)) {
-      setSelectedApprovalMode(approvalOptions[0]?.value ?? DEFAULT_APPROVAL_MODE);
+    const nextApprovalMode = resolveRuntimeOptionValue(
+      selectedApprovalMode,
+      approvalOptions,
+      DEFAULT_APPROVAL_MODE,
+    );
+    if (nextApprovalMode !== selectedApprovalMode) {
+      setSelectedApprovalMode(nextApprovalMode);
     }
   }, [approvalOptions, selectedApprovalMode]);
 
   useEffect(() => {
-    if (sandboxOptions.length > 0 && !sandboxOptions.some((option) => option.value === selectedCodexSandboxMode)) {
-      setSelectedCodexSandboxMode(sandboxOptions[0]?.value ?? DEFAULT_CODEX_SANDBOX_MODE);
+    if (sandboxOptions.length === 0) {
+      return;
+    }
+
+    const nextSandboxMode = resolveRuntimeOptionValue(
+      selectedCodexSandboxMode,
+      sandboxOptions,
+      DEFAULT_CODEX_SANDBOX_MODE,
+    );
+    if (nextSandboxMode !== selectedCodexSandboxMode) {
+      setSelectedCodexSandboxMode(nextSandboxMode);
     }
   }, [sandboxOptions, selectedCodexSandboxMode]);
 
   const handleSubmit = async () => {
-    const normalizedText = input.trim();
-    if (!normalizedText) {
-      setFeedback("入力してから送信してね。");
+    const preflight = resolveMateTalkSubmitPreflight({
+      draft: input,
+      isRunning,
+    });
+    if (preflight.status === "blocked") {
+      if (preflight.reason === "empty") {
+        setFeedback(preflight.feedback);
+      }
       return;
     }
-    if (sending) {
-      return;
-    }
+    const normalizedText = preflight.message;
 
-    const { turnId, messageSequence } = turnControllerRef.current.beginTurn();
-    const userMessage: MateTalkMessage = {
-      id: `user-${messageSequence}`,
-      role: "user",
-      text: normalizedText,
-    };
+    const { turnId, messageSequence, userMessage } = beginMateTalkTurnSubmission({
+      controller: turnControllerRef.current,
+      message: normalizedText,
+    });
 
-    setSending(true);
+    setIsRunning(true);
     setFeedback("");
     setMessages((current) => [...current, userMessage]);
-    const turnAttachments = pathReferences;
-    const turnAdditionalDirectories = additionalDirectories;
-    const turnApprovalMode = selectedApprovalMode;
-    const turnCodexSandboxMode = sandboxOptions.length > 0 ? selectedCodexSandboxMode : undefined;
-    setInput("");
-    setInputCaret(0);
+    const turnInput = buildMateTalkTurnInput({
+      message: normalizedText,
+      provider: providerId,
+      model,
+      reasoningEffort,
+      attachments: pathReferences,
+      additionalDirectories,
+      approvalMode: selectedApprovalMode,
+      codexSandboxMode: sandboxOptions.length > 0 ? selectedCodexSandboxMode : undefined,
+    });
+    applyComposerDraftClearCommand({
+      setDraft: setInput,
+      setComposerCaret: setInputCaret,
+      nextCaret: 0,
+    });
     setPathReferences([]);
     setIsActionDockExpanded((current) =>
       resolveMateTalkActionDockExpandedAfterSubmit({
@@ -494,44 +499,37 @@ export function useMateTalkWindowState({
       if (!withmateApi) {
         throw new Error("Mate API が利用できないよ。");
       }
-      const result = await withmateApi.runMateTalkTurn({
-        message: normalizedText,
-        provider: providerId,
-        model,
-        reasoningEffort,
-        attachments: turnAttachments,
-        additionalDirectories: turnAdditionalDirectories,
-        approvalMode: turnApprovalMode,
-        ...(turnCodexSandboxMode ? { codexSandboxMode: turnCodexSandboxMode } : {}),
+      const result = await withmateApi.runMateTalkTurn(turnInput);
+      const turnUpdate = resolveMateTalkAssistantTurnUpdate({
+        controller: turnControllerRef.current,
+        turnId,
+        messageSequence,
+        text: result.assistantMessage,
       });
-      if (!turnControllerRef.current.isLatestTurn(turnId)) {
+      if (turnUpdate.status === "stale") {
         return;
       }
-      setMessages((current) => [
-        ...current,
-        {
-          id: `mate-${messageSequence}`,
-          role: "mate",
-          text: result.assistantMessage,
-        },
-      ]);
+      setMessages((current) => [...current, turnUpdate.message]);
     } catch (error) {
-      if (!turnControllerRef.current.isLatestTurn(turnId)) {
+      const turnUpdate = resolveMateTalkErrorTurnUpdate({
+        controller: turnControllerRef.current,
+        turnId,
+        messageSequence,
+        error,
+      });
+      if (turnUpdate.status === "stale") {
         return;
       }
-      setMessages((current) => [
-        ...current,
-        {
-          id: `mate-error-${messageSequence}`,
-          role: "mate",
-          text: error instanceof Error ? error.message : "返信に失敗したよ。",
-        },
-      ]);
+      setMessages((current) => [...current, turnUpdate.message]);
     } finally {
-      if (!turnControllerRef.current.isLatestTurn(turnId)) {
+      const finalization = resolveMateTalkTurnFinalization({
+        controller: turnControllerRef.current,
+        turnId,
+      });
+      if (finalization.status === "stale") {
         return;
       }
-      setSending(false);
+      setIsRunning(false);
     }
   };
 
@@ -559,6 +557,7 @@ export function useMateTalkWindowState({
     selectedApprovalMode,
     sandboxOptions,
     selectedCodexSandboxMode,
+    isInputImeComposing: () => inputImeComposingRef.current,
     onChangeInput: handleChangeInputWithCaret,
     onCopyMessageText: handleCopyMessageText,
     onQuoteMessageText: handleQuoteMessageText,
@@ -568,25 +567,53 @@ export function useMateTalkWindowState({
     onAddToSessionFiles: () => void addToSessionFiles(),
     onPickSessionFiles: () => void pickSessionFiles(),
     onAddAdditionalDirectory: () => void addAdditionalDirectory(),
-    onToggleAdditionalDirectoryList: () => setIsAdditionalDirectoryListOpen((current) => !current),
+    onToggleAdditionalDirectoryList: createAdditionalDirectoryListToggleHandler({
+      setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
+    }),
     onRemoveAttachment: removePathReference,
     onRemoveAdditionalDirectory: (directoryPath: string) => {
-      setAdditionalDirectories((current) => current.filter((entry) => entry !== directoryPath));
+      void runAdditionalDirectoryRemovalOperation({
+        directoryPath,
+        removeDirectory: (targetPath) => {
+          setAdditionalDirectories((current) => removeAllowedAdditionalDirectory(current, targetPath));
+          return true;
+        },
+      });
     },
     onDraftFocus: () => {},
     onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleDraftPaste(event),
-    onDraftSelect: (selectionStart: number) => setInputCaret(selectionStart),
+    onDraftSelect: buildOnDraftSelectHandler({
+      setComposerCaret: setInputCaret,
+    }),
+    ...buildOnDraftCompositionHandlers({
+      setComposerCaret: setInputCaret,
+      setIsComposerImeComposing: (isComposing) => {
+        inputImeComposingRef.current = isComposing;
+      },
+      getSelectionStart: () => composerTextareaRef.current?.selectionStart,
+      getFallbackSelectionStart: () => input.length,
+    }),
     onChangeApprovalMode: (value: ApprovalMode) => setSelectedApprovalMode(normalizeApprovalMode(value)),
     onChangeCodexSandboxMode: (value: CodexSandboxMode) =>
       setSelectedCodexSandboxMode(normalizeCodexSandboxMode(value)),
     onChangeModel: handleChangeModel,
     onChangeReasoningEffort: handleChangeReasoningEffort,
     onSubmit: () => void handleSubmit(),
-    onToggleHeaderExpanded: () => setIsHeaderExpanded((current) => !current),
+    onToggleHeaderExpanded: createHeaderExpandedToggleHandler({
+      isEditingTitle: false,
+      setHeaderExpanded: setIsHeaderExpanded,
+    }),
     onOpenSessionFilesExplorer: () => void openSessionFilesDirectory(),
     onOpenSessionFilesTerminal: () => void openSessionFilesTerminal(),
-    onCollapseActionDock: () => setIsActionDockExpanded(false),
-    onExpandActionDock: () => setIsActionDockExpanded(true),
-    sending,
+    onCollapseActionDock: createActionDockCollapseHandler({
+      canCollapse: true,
+      setPinnedExpanded: setIsActionDockExpanded,
+    }),
+    onExpandActionDock: createActionDockExpandHandler({
+      defaultOptions: { focusComposer: false },
+      setPinnedExpanded: setIsActionDockExpanded,
+      focusComposer: () => {},
+    }),
+    isRunning,
   };
 }

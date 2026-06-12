@@ -1,5 +1,5 @@
 import { getWithMateApi, isDesktopRuntime } from "../renderer-withmate-api.js";
-import { modelDisplayLabel } from "../ui-utils.js";
+import { resolveModelFallbackLabel } from "../model-select-options.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat-window.js";
 import { buildMateTalkChatWindowProps } from "./mate-talk-chat-projection.js";
 import { useMateTalkWindowState } from "./use-mate-talk-window-state.js";
@@ -31,7 +31,7 @@ export function MateTalkChatModeApp() {
         feedback: state.feedback,
         modelOptions: state.modelOptions,
         selectedModel: state.selectedModel?.id ?? "",
-        selectedModelFallbackLabel: modelDisplayLabel(state.providerCatalog, state.selectedModel?.id ?? ""),
+        selectedModelFallbackLabel: resolveModelFallbackLabel(state.providerCatalog, state.selectedModel?.id ?? ""),
         reasoningOptions: state.reasoningOptions,
         selectedReasoningEffort: state.selectedReasoningEffort,
         messageListRef: state.messageListRef,
@@ -47,13 +47,9 @@ export function MateTalkChatModeApp() {
         onOpenSessionFilesTerminal: state.onOpenSessionFilesTerminal,
         onCollapseActionDock: state.onCollapseActionDock,
         onExpandActionDock: state.onExpandActionDock,
-        sending: state.sending,
+        isInputImeComposing: state.isInputImeComposing,
+        isRunning: state.isRunning,
         composerCapabilityProps: {
-          showAttachmentControls: true,
-          showAdditionalDirectoryControls: true,
-          showExecutionModeControls: true,
-          showCustomAgentPicker: false,
-          showSkillPicker: false,
           isAdditionalDirectoryListOpen: state.isAdditionalDirectoryListOpen,
           additionalDirectoryCount: state.additionalDirectoryCount,
           attachmentItems: state.attachmentItems,
@@ -74,6 +70,8 @@ export function MateTalkChatModeApp() {
           onDraftFocus: state.onDraftFocus,
           onDraftPaste: state.onDraftPaste,
           onDraftSelect: state.onDraftSelect,
+          onDraftCompositionStart: state.onDraftCompositionStart,
+          onDraftCompositionEnd: state.onDraftCompositionEnd,
           onChangeApprovalMode: state.onChangeApprovalMode,
           onChangeCodexSandboxMode: state.onChangeCodexSandboxMode,
         },

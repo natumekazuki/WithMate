@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
 
 import {
-  type AuditLogSummary,
   type ComposerPreview,
   currentTimestampLabel,
   type DiscoveredCustomAgent,
@@ -11,12 +10,26 @@ import {
   type LiveElicitationRequest,
   type LiveElicitationResponse,
   type LiveSessionRunState,
-  type ProviderQuotaTelemetry,
   type RunSessionTurnRequest,
-  type SessionContextTelemetry,
 } from "./app-state.js";
+import {
+  buildSessionWithAddedAdditionalDirectory,
+  buildSessionWithRemovedAdditionalDirectory,
+  resolveAdditionalDirectoryPickerBase,
+  runAdditionalDirectoryRemovalOperation,
+  runPickedAdditionalDirectoryOperation,
+} from "./additional-directory-state.js";
+import {
+  buildSessionWithApprovalMode,
+  buildSessionWithCodexSandboxMode,
+  buildSessionWithModelChange,
+  buildSessionWithReasoningEffort,
+} from "./runtime-option-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
+import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
+import { startOpenCompanionReviewWindowIdsSubscription } from "./open-companion-review-window-subscription.js";
+import { startAppSettingsSubscription } from "./app-settings-subscription.js";
 import {
   createDefaultAppSettings,
   getProviderAppSettings,
@@ -27,134 +40,234 @@ import {
   type DiffPreviewPayload,
   type Message,
   applyCopilotCustomAgentSelection,
-  applySessionModelMetadataUpdate,
   isLegacyReadOnlySession,
   type Session,
 } from "./session-state.js";
 import {
   getProviderCatalog,
   getReasoningEffortOptionsForModel,
-  resolveModelChangeSelection,
-  resolveModelSelection,
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
+import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import {
+  buildAuxiliaryAwareSendOrCancelHandler,
+  buildAuxiliarySessionCancelTarget,
+  buildRunningSessionCancelTarget,
+  resolveSelectedSessionIsRunning,
+  resolveSelectedSessionRunState,
+  runRunningSessionCancelOperation,
+} from "./chat/send-or-cancel.js";
+import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-runtime-option-routing.js";
+import {
   approvalModeLabel,
-  modelDisplayLabel,
-  modelOptionLabel,
 } from "./ui-utils.js";
 import {
-  getApprovalOptionsForProvider,
-  getSandboxOptionsForProvider,
-  getSandboxOptionsForProviderSelection,
-} from "./provider-runtime-options.js";
+  restoreComposerTextareaFocusAndCaret,
+  restoreCurrentComposerTextareaFocusToEnd,
+} from "./composer-textarea-focus.js";
+import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
 import {
   buildContextPaneProjection,
   buildCopilotQuotaProjection,
-  buildLatestCommandView,
+  buildLatestCommandProjection,
   buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
-  cycleContextPaneTab,
   type ContextPaneTabKey,
   resolveAvailableContextPaneTabs,
 } from "./session-ui-projection.js";
+import { buildMainAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import {
+  buildAuxiliaryLaunchProviderItems,
+  createAuxiliaryLaunchDialogCloseHandler,
+  createAuxiliaryLaunchDialogOpenHandler,
+  createAuxiliaryLaunchProviderSelectHandler,
+  resolveAuxiliaryLaunchSessionDefaults,
+  resolveAuxiliaryLaunchStartProvider,
+} from "./chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
+import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
+import {
+  createAuxiliaryHeaderActions,
+  resolveAuxiliaryHeaderActionState,
+} from "./chat/chat-header-actions.js";
 import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,
-  withForcedComposerBlockedFeedback,
+  resolveComposerSendabilityState,
+  resolveComposerSendPreflight,
   type ComposerSendabilityState,
 } from "./session-composer-feedback.js";
+import { buildActionDockCompactPreview } from "./action-dock-preview.js";
+import {
+  buildActionDockRuntimeState,
+  shouldFocusComposerForActionDockExpand,
+} from "./action-dock-state.js";
 import {
   buildCustomAgentMatchDisplay,
   buildSelectedCustomAgentDisplay,
   buildSkillMatchDisplay,
-  buildSkillPromptSnippet,
 } from "./session-composer-selection.js";
 import {
-  buildAdditionalDirectoryDisplay,
-  buildComposerAttachmentDisplay,
-  buildWorkspacePathMatchDisplay,
-  formatPathReference,
-  getActivePathReference,
-  normalizePathForReference,
-  removeActivePathReference,
-  toDirectoryPath,
-  toWorkspaceRelativeReference,
+  runAuxiliaryCustomAgentPatchOperation,
+  runAuxiliaryCustomAgentSelectionOperation,
+} from "./auxiliary-custom-agent-operation.js";
+import { runAuxiliarySkillPromptInsertionOperation } from "./auxiliary-skill-prompt-operation.js";
+import {
+  buildAdditionalDirectoryItems,
+  buildClosedWorkspacePathMatchState,
+  buildComposerAttachmentItems,
+  pickComposerReferencePath,
+  type ComposerPathPickerKind,
 } from "./session-composer-paths.js";
+import {
+  applyComposerDraftClearCommand,
+  applyComposerDraftChangeCommand,
+  buildComposerDraftKeyDownHandler,
+  buildOnDraftCompositionHandlers,
+  buildOnDraftSelectHandler,
+} from "./chat/composer-draft-handlers.js";
+import {
+  createEmptyComposerPreview,
+} from "./composer-preview-config.js";
 import {
   useSessionContextRail,
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
+import {
+  applyOptimisticSessionRunUpdate,
+  applyResolvedSessionRunUpdate,
+  createOwnedPendingLiveSessionRunState,
+  replaceLiveRunAfterResolvedRequest,
+  rollbackOptimisticSessionRunUpdate,
+  resolveSessionRunErrorMessage,
+  type OwnedLiveSessionRunState,
+} from "./session-live-run-state.js";
 import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
-import { extractTextReferenceCandidates } from "./path-reference.js";
-import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
-import type { AuxiliarySession } from "./auxiliary-session-state.js";
-import { formatMarkdownQuote, insertComposerTextAtCaret } from "./chat/message-text-actions.js";
-import { buildMessageListProjection } from "./auxiliary-session-message-projection.js";
+import {
+  type AuxiliarySession,
+} from "./auxiliary-session-state.js";
+import {
+  runAuxiliaryApprovalModeChangeOperation,
+  runAuxiliaryModelChangeOperation,
+  runAuxiliaryReasoningEffortChangeOperation,
+  runAuxiliarySandboxModeChangeOperation,
+} from "./auxiliary-runtime-option-operation.js";
+import {
+  clearAuxiliarySessionsLoadState,
+  createAuxiliaryLoadRevisionGuard,
+  runActiveAuxiliarySessionLoadAndApply,
+  runActiveAuxiliarySessionRefreshAndApply,
+  runClosedAuxiliarySessionsLoadAndApply,
+} from "./auxiliary-session-refresh-operation.js";
+import {
+  createComposerPreviewRequest,
+  useComposerPreviewResolution,
+} from "./chat/use-composer-preview-resolution.js";
+import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
+import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
+import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
+import { createPastedSessionAttachmentHandler } from "./chat/composer-paste-handlers.js";
+import {
+  resolveOwnedProviderQuotaTelemetry,
+  resolveOwnedSessionContextTelemetry,
+  type ProviderOwnedQuotaTelemetry,
+  type SessionOwnedContextTelemetry,
+} from "./session-telemetry-state.js";
+import {
+  startProviderQuotaTelemetrySubscription,
+  startSessionContextTelemetrySubscription,
+} from "./session-telemetry-subscription.js";
+import { startLiveSessionRunSubscription } from "./session-live-run-subscription.js";
+import {
+  createCopyMessageTextHandler,
+} from "./chat/message-text-actions.js";
+import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
+import {
+  applyRetryDetailsReset,
+  applyRetryDraftRestoreCommand,
+  buildRetryStopSummary,
+  createCancelRetryDraftReplaceHandler,
+  createRetryDraftReplaceConfirmationHandler,
+  createRetryDetailsToggleHandler,
+  createRetryEditHandler,
+  isRetryActionDisabled as resolveRetryActionDisabled,
+  resolveRetryBannerKind,
+  runRetryResendCommand,
+  shouldProtectRetryEditDraft,
+  shouldShowRetryBanner,
+  type RetryBannerKind,
+  type RetryBannerState,
+} from "./chat/retry-state.js";
+import {
+  buildMessageListProjection,
+  loadProjectedMessageArtifact,
+  resolvePendingAuxiliaryMessageGroupId,
+} from "./auxiliary-session-message-projection.js";
+import {
+  runAuxiliaryDraftChangeAndSaveOperation,
+  runAuxiliaryDraftPatchOperation,
+} from "./auxiliary-draft-save-context.js";
+import {
+  createGuardedActiveAuxiliarySessionUpdater,
+  enqueueAuxiliarySessionSaveWithQueue,
+  syncActiveAuxiliarySessionRef,
+} from "./auxiliary-session-update-operation.js";
+import {
+  runAddAuxiliaryAdditionalDirectoryOperationWithApi,
+  runRemoveAuxiliaryAdditionalDirectoryOperation,
+} from "./auxiliary-additional-directory-operation.js";
+import {
+  runGuardedAuxiliarySessionReturnToMainOperationWithApi,
+} from "./auxiliary-session-return-operation.js";
+import {
+  beginAuxiliarySessionStartOperation,
+  createActiveAuxiliarySessionStartResultApplier,
+  createAuxiliarySessionStartErrorHandler,
+  finishAuxiliarySessionStartClosedLoadWithApi,
+  runAuxiliarySessionStartOperation,
+} from "./auxiliary-session-start-operation.js";
+import {
+  createAuxiliarySessionPendingLiveRunClearer,
+  createAuxiliarySessionRunningApplier,
+  createAuxiliarySessionSendResultAppliers,
+  handleAuxiliarySessionSendOperationResult,
+  runAuxiliarySessionSendOperationWithApi,
+} from "./auxiliary-session-send-operation.js";
+import {
+  applyPickedAdditionalDirectoryUiStateCommand,
+  applyPickedComposerReferencePathCommand,
+  applySelectedPathReferenceInsertionCommand,
+  applySkillPromptInsertionCommand,
+  applySessionFilesReferencePathsCommand,
+  applySkillPromptInsertionUiState,
+  applyUnavailableContextPaneTabFallbackCommand,
+  createActionDockCollapseHandler,
+  createActionDockExpandHandler,
+  createAdditionalDirectoryListToggleHandler,
+  createAgentPickerCloseHandler,
+  createAgentPickerToggleHandler,
+  createCancelTitleEditHandler,
+  createComposerSubmitKeyHandler,
+  createContextPaneTabCycleHandler,
+  createExpandedArtifactToggleHandler,
+  createHeaderExpandedToggleHandler,
+  createPathReferenceRemovalHandler,
+  createQuoteMessageTextHandler,
+  createSessionFilesOpenHandler,
+  createSkillPickerToggleHandler,
+  createSkillPromptInsertionHandler,
+  createStartTitleEditHandler,
+  createTitleInputKeyHandler,
+  createWorkspacePathMatchSelectionHandler,
+} from "./chat/session-shell-handlers.js";
 
-type RetryBannerKind = "interrupted" | "failed" | "canceled";
-
-type RetryBannerState = {
-  kind: RetryBannerKind;
-  badge: string;
-  title: string;
-  stopSummary: string;
-  lastRequestText: string;
-};
-
-type SessionOwnedLiveRun = {
-  ownerSessionId: string | null;
-  state: LiveSessionRunState | null;
-};
-
-type ProviderOwnedQuotaTelemetry = {
-  ownerProviderId: string | null;
-  telemetry: ProviderQuotaTelemetry | null;
-};
-
-type SessionOwnedContextTelemetry = {
-  ownerSessionId: string | null;
-  telemetry: SessionContextTelemetry | null;
-};
-
-const EMPTY_COMPOSER_PREVIEW: ComposerPreview = { attachments: [], errors: [] };
-const COMPOSER_PREVIEW_DEBOUNCE_MS = 120;
-const COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS = 280;
-const WORKSPACE_PATH_QUERY_MIN_LENGTH = 2;
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
-
-function buildAuxiliaryRuntimeSession(parent: Session, auxiliary: AuxiliarySession): Session {
-  return {
-    ...parent,
-    id: auxiliary.id,
-    taskTitle: parent.taskTitle,
-    status: auxiliary.runState === "running" ? "running" : "idle",
-    updatedAt: auxiliary.updatedAt,
-    provider: auxiliary.provider,
-    catalogRevision: auxiliary.catalogRevision,
-    runState: auxiliary.runState,
-    approvalMode: auxiliary.approvalMode,
-    codexSandboxMode: auxiliary.codexSandboxMode,
-    model: auxiliary.model,
-    reasoningEffort: auxiliary.reasoningEffort,
-    customAgentName: auxiliary.customAgentName,
-    allowedAdditionalDirectories: auxiliary.allowedAdditionalDirectories,
-    threadId: auxiliary.threadId,
-    messages: auxiliary.messages,
-    stream: [],
-  };
-}
-
-function defaultRetryBannerDetailsOpen(kind: RetryBannerKind): boolean {
-  return kind !== "canceled";
-}
 
 function liveRunStepBucketPriority(status: string): number {
   switch (status) {
@@ -257,101 +370,8 @@ function buildDisplayedMessagesScrollSignature(messages: Message[]): string {
     .join("\u001c");
 }
 
-function isTerminalAuditLogPhase(phase: AuditLogSummary["phase"]): boolean {
-  return (
-    phase === "completed"
-    || phase === "failed"
-    || phase === "canceled"
-    || phase === "background-completed"
-    || phase === "background-failed"
-    || phase === "background-canceled"
-  );
-}
-
-function getLastNonEmptyValue(values: Array<string | null | undefined>): string {
-  for (let index = values.length - 1; index >= 0; index -= 1) {
-    const candidate = values[index]?.trim();
-    if (candidate) {
-      return candidate;
-    }
-  }
-
-  return "";
-}
-
-function areStringArraysEqual(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-function hasSameAuxiliaryDraftSaveContext(current: AuxiliarySession, request: AuxiliarySession): boolean {
-  return current.id === request.id
-    && current.runState === request.runState
-    && current.threadId === request.threadId
-    && current.messages.length === request.messages.length
-    && current.composerDraft === request.composerDraft
-    && current.provider === request.provider
-    && current.model === request.model
-    && current.reasoningEffort === request.reasoningEffort
-    && current.approvalMode === request.approvalMode
-    && current.codexSandboxMode === request.codexSandboxMode
-    && current.customAgentName === request.customAgentName
-    && current.catalogRevision === request.catalogRevision
-    && areStringArraysEqual(current.allowedAdditionalDirectories, request.allowedAdditionalDirectories);
-}
-
 function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
-}
-
-function buildRetryStopSummary(
-  kind: RetryBannerKind,
-  liveRun: LiveSessionRunState | null,
-  latestTerminalAuditLog: AuditLogSummary | null,
-  lastAssistantMessage: Message | null,
-): string {
-  const liveRunSummary = getLastNonEmptyValue((liveRun?.steps ?? []).map((step) => step.summary));
-  if (liveRunSummary) {
-    return liveRunSummary;
-  }
-
-  if (kind === "interrupted") {
-    return "停止地点は復元できませんでした。";
-  }
-
-  const auditOperationSummary = getLastNonEmptyValue(
-    (latestTerminalAuditLog?.operations ?? []).map((operation) => operation.summary),
-  );
-  if (auditOperationSummary) {
-    return auditOperationSummary;
-  }
-
-  const artifactOperationSummary = getLastNonEmptyValue(
-    (lastAssistantMessage?.artifact?.operationTimeline ?? []).map((operation) => operation.summary),
-  );
-  if (artifactOperationSummary) {
-    return artifactOperationSummary;
-  }
-
-  const artifactActivitySummary = getLastNonEmptyValue(lastAssistantMessage?.artifact?.activitySummary ?? []);
-  if (artifactActivitySummary) {
-    return artifactActivitySummary;
-  }
-
-  if (kind === "failed") {
-    const errorSummary = latestTerminalAuditLog?.errorMessage.trim() ?? "";
-    if (errorSummary && errorSummary !== "ユーザーがキャンセルしたよ。") {
-      return errorSummary;
-    }
-  }
-
-  switch (kind) {
-    case "failed":
-      return "エラー箇所は復元できませんでした。";
-    case "canceled":
-      return "停止位置は記録されていません。";
-    default:
-      return "";
-  }
 }
 
 function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): string {
@@ -392,24 +412,6 @@ function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): strin
   ].join("\u001b");
 }
 
-function createPendingLiveSessionRunState(
-  session: Pick<Session, "id" | "threadId">,
-  previousState?: LiveSessionRunState | null,
-): LiveSessionRunState {
-  return {
-    sessionId: session.id,
-    threadId: session.threadId,
-    assistantText: "",
-    reasoningText: "",
-    steps: [],
-    backgroundTasks: previousState?.backgroundTasks ?? [],
-    usage: null,
-    errorMessage: "",
-    approvalRequest: null,
-    elicitationRequest: null,
-  };
-}
-
 export default function AgentSessionWindowApp() {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();
@@ -423,7 +425,7 @@ export default function AgentSessionWindowApp() {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
-  const [liveRunState, setLiveRunState] = useState<SessionOwnedLiveRun>({ ownerSessionId: null, state: null });
+  const [liveRunState, setLiveRunState] = useState<OwnedLiveSessionRunState>({ ownerSessionId: null, state: null });
   const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] = useState<ProviderOwnedQuotaTelemetry>({
     ownerProviderId: null,
     telemetry: null,
@@ -434,11 +436,16 @@ export default function AgentSessionWindowApp() {
   });
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
-  const [composerPreview, setComposerPreview] = useState<ComposerPreview>({ attachments: [], errors: [] });
+  const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [composerCaret, setComposerCaret] = useState(0);
-  const [workspacePathMatches, setWorkspacePathMatches] = useState<WorkspacePathCandidate[]>([]);
-  const [activeWorkspacePathMatchIndex, setActiveWorkspacePathMatchIndex] = useState(-1);
+  const {
+    workspacePathMatches,
+    activeWorkspacePathMatchIndex,
+    setActiveWorkspacePathMatchIndex,
+    applyWorkspacePathMatchState,
+    workspacePathMatchItems,
+  } = useWorkspacePathMatchState();
   const [availableSkills, setAvailableSkills] = useState<DiscoveredSkill[]>([]);
   const [availableCustomAgents, setAvailableCustomAgents] = useState<DiscoveredCustomAgent[]>([]);
   const [isAgentPickerOpen, setIsAgentPickerOpen] = useState(false);
@@ -458,15 +465,24 @@ export default function AgentSessionWindowApp() {
   const [activeAuxiliarySession, setActiveAuxiliarySession] = useState<AuxiliarySession | null>(null);
   const [closedAuxiliarySessions, setClosedAuxiliarySessions] = useState<AuxiliarySession[]>([]);
   const [isAuxiliaryActionPending, setIsAuxiliaryActionPending] = useState(false);
-  const [auxiliaryLaunchDialogOpen, setAuxiliaryLaunchDialogOpen] = useState(false);
-  const [auxiliaryLaunchProviderId, setAuxiliaryLaunchProviderId] = useState<string | null>(null);
-  const [auxiliaryLaunchFeedback, setAuxiliaryLaunchFeedback] = useState("");
+  const {
+    auxiliaryLaunchDialogOpen,
+    auxiliaryLaunchProviderId,
+    auxiliaryLaunchFeedback,
+    openAuxiliaryLaunchDialog,
+    closeAuxiliaryLaunchDialog,
+    selectAuxiliaryLaunchProvider,
+    resetAuxiliaryLaunchFeedback,
+    setAuxiliaryLaunchStartError,
+  } = useAuxiliaryLaunchDialogState();
   const activityMonitorRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const activityMonitorSignatureRef = useRef("");
   const activityMonitorSessionIdRef = useRef<string | null>(null);
   const activeAuxiliarySessionRef = useRef<AuxiliarySession | null>(null);
+  const auxiliarySessionMutationRevisionRef = useRef(0);
   const auxiliaryDraftSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const auxiliarySessionSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const auxiliaryLoadRevisionRef = useRef(0);
   const mainComposerCaretRef = useRef(0);
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
@@ -514,57 +530,17 @@ export default function AgentSessionWindowApp() {
   }, [selectedId, withmateApi]);
 
   useEffect(() => {
-    let active = true;
-
-    if (!withmateApi) {
-      return () => {
-        active = false;
-      };
-    }
-
-    void withmateApi.listCompanionSessionSummaries().then((nextSessions) => {
-      if (active) {
-        setCompanionSessions(nextSessions);
-      }
+    return startCompanionSessionSummariesSubscription({
+      api: withmateApi,
+      applySummaries: setCompanionSessions,
     });
-
-    const unsubscribe = withmateApi.subscribeCompanionSessionSummaries((nextSessions) => {
-      if (active) {
-        setCompanionSessions(nextSessions);
-      }
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
   }, [withmateApi]);
 
   useEffect(() => {
-    let active = true;
-
-    if (!withmateApi) {
-      return () => {
-        active = false;
-      };
-    }
-
-    void withmateApi.listOpenCompanionReviewWindowIds().then((nextSessionIds) => {
-      if (active) {
-        setOpenCompanionReviewWindowIds(nextSessionIds);
-      }
+    return startOpenCompanionReviewWindowIdsSubscription({
+      api: withmateApi,
+      applyOpenWindowIds: setOpenCompanionReviewWindowIds,
     });
-
-    const unsubscribe = withmateApi.subscribeOpenCompanionReviewWindowIds((nextSessionIds) => {
-      if (active) {
-        setOpenCompanionReviewWindowIds(nextSessionIds);
-      }
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
   }, [withmateApi]);
 
   const selectedSession = useMemo(
@@ -573,7 +549,7 @@ export default function AgentSessionWindowApp() {
   );
   const displayedSession = useMemo(
     () => (selectedSession && activeAuxiliarySession
-      ? buildAuxiliaryRuntimeSession(selectedSession, activeAuxiliarySession)
+      ? buildMainAuxiliaryRuntimeSession(selectedSession, activeAuxiliarySession)
       : selectedSession),
     [activeAuxiliarySession, selectedSession],
   );
@@ -586,57 +562,40 @@ export default function AgentSessionWindowApp() {
     [companionSessions, openCompanionReviewWindowIds],
   );
   const selectedSessionId = selectedSession?.id ?? null;
-  const loadClosedAuxiliarySessions = async (
-    parentSessionId: string,
-    canApplyLoadResult: () => boolean,
-  ) => {
-    if (!withmateApi) {
-      return;
-    }
-
-    try {
-      const summaries = await withmateApi.listAuxiliarySessions(parentSessionId);
-      const closedSummaries = summaries
-        .filter((summary) => summary.status === "closed")
-        .reverse();
-      const sessions = await Promise.all(
-        closedSummaries.map((summary) => withmateApi.getAuxiliarySession(summary.id)),
-      );
-      if (canApplyLoadResult()) {
-        setClosedAuxiliarySessions(sessions.filter((session): session is AuxiliarySession => session !== null));
-      }
-    } catch {
-      if (canApplyLoadResult()) {
-        setClosedAuxiliarySessions([]);
-      }
-    }
-  };
-
   useEffect(() => {
     let active = true;
     const loadRevision = auxiliaryLoadRevisionRef.current + 1;
     auxiliaryLoadRevisionRef.current = loadRevision;
-    const canApplyLoadResult = () => active && auxiliaryLoadRevisionRef.current === loadRevision;
+    const canApplyLoadResult = createAuxiliaryLoadRevisionGuard({
+      loadRevision: auxiliaryLoadRevisionRef,
+      expectedRevision: loadRevision,
+      isActive: () => active,
+    });
 
     if (!withmateApi || !selectedSessionId) {
-      setActiveAuxiliarySession(null);
-      setClosedAuxiliarySessions([]);
+      clearAuxiliarySessionsLoadState({
+        setActiveSession: setActiveAuxiliarySession,
+        setClosedSessions: setClosedAuxiliarySessions,
+      });
       return () => {
         active = false;
       };
     }
 
-    void withmateApi.getActiveAuxiliarySession(selectedSessionId).then((session) => {
-      if (canApplyLoadResult()) {
-        setActiveAuxiliarySession(session);
-      }
-    }).catch(() => {
-      if (canApplyLoadResult()) {
-        setActiveAuxiliarySession(null);
-      }
+    void runActiveAuxiliarySessionLoadAndApply({
+      parentSessionId: selectedSessionId,
+      getActiveAuxiliarySession: (sessionId) => withmateApi.getActiveAuxiliarySession(sessionId),
+      isActive: canApplyLoadResult,
+      setActiveSession: setActiveAuxiliarySession,
     });
 
-    void loadClosedAuxiliarySessions(selectedSessionId, canApplyLoadResult);
+    void runClosedAuxiliarySessionsLoadAndApply({
+      parentSessionId: selectedSessionId,
+      listAuxiliarySessions: (sessionId) => withmateApi.listAuxiliarySessions(sessionId),
+      getAuxiliarySession: (sessionId) => withmateApi.getAuxiliarySession(sessionId),
+      isActive: canApplyLoadResult,
+      setClosedSessions: setClosedAuxiliarySessions,
+    });
 
     return () => {
       active = false;
@@ -671,48 +630,32 @@ export default function AgentSessionWindowApp() {
     liveRun: selectedSessionLiveRun,
   });
   const selectedProviderQuotaTelemetry = useMemo(
-    () => (
-      displayedSession?.provider
-      && providerQuotaTelemetryState.ownerProviderId === displayedSession.provider
-        ? providerQuotaTelemetryState.telemetry
-        : null
-    ),
+    () => resolveOwnedProviderQuotaTelemetry(providerQuotaTelemetryState, displayedSession?.provider),
     [displayedSession?.provider, providerQuotaTelemetryState.ownerProviderId, providerQuotaTelemetryState.telemetry],
   );
   const selectedSessionContextTelemetry = useMemo(
-    () => (
-      activeRunSessionId !== null && sessionContextTelemetryState.ownerSessionId === activeRunSessionId
-        ? sessionContextTelemetryState.telemetry
-        : null
-    ),
+    () => resolveOwnedSessionContextTelemetry(sessionContextTelemetryState, activeRunSessionId),
     [activeRunSessionId, sessionContextTelemetryState.ownerSessionId, sessionContextTelemetryState.telemetry],
   );
   const activeComposerDraft = activeAuxiliarySession?.composerDraft ?? draft;
-  const activePathReference = useMemo(
-    () => (selectedSessionId ? getActivePathReference(activeComposerDraft, composerCaret) : null),
-    [activeComposerDraft, composerCaret, selectedSessionId],
-  );
-  const isEditingPathReference = activePathReference !== null;
-  const normalizedActivePathQuery = activePathReference?.query.trim() ?? "";
-  const previewDraft = useMemo(
-    () => removeActivePathReference(activeComposerDraft, activePathReference),
-    [activeComposerDraft, activePathReference],
-  );
-  const previewUserMessage = useMemo(
-    () => (isEditingPathReference ? previewDraft : activeComposerDraft),
-    [activeComposerDraft, isEditingPathReference, previewDraft],
-  );
-  const previewPathReferenceCandidates = useMemo(
-    () => extractTextReferenceCandidates(previewDraft),
-    [previewDraft],
-  );
-  const hasPreviewPathReferenceCandidates = previewPathReferenceCandidates.length > 0;
-  const previewPathReferenceSignature = useMemo(
-    () => previewPathReferenceCandidates.join("\u001f"),
-    [previewPathReferenceCandidates],
-  );
-  const selectedSessionRunState: Session["runState"] | null = selectedSession?.runState
-    ?? (selectedSessionLiveRun ? "running" : null);
+  const {
+    activePathReference,
+    hasPreviewPathReferenceCandidates,
+    isEditingPathReference,
+    normalizedActivePathQuery,
+    previewPathReferenceCandidates,
+    previewPathReferenceSignature,
+    previewDraft,
+    previewUserMessage,
+  } = useComposerPathReferencePreview({
+    draft: activeComposerDraft,
+    caret: composerCaret,
+    isEnabled: Boolean(selectedSessionId),
+  });
+  const selectedSessionRunState: Session["runState"] | null = resolveSelectedSessionRunState({
+    runState: selectedSession?.runState,
+    hasLiveRun: !!selectedSessionLiveRun,
+  });
 
   const selectedSessionCharacter = useMemo(
     () =>
@@ -753,15 +696,12 @@ export default function AgentSessionWindowApp() {
     () => !!displayedSession && getProviderAppSettings(appSettings, displayedSession.provider).enabled,
     [appSettings, displayedSession],
   );
-  const auxiliaryLaunchProviders = useMemo(
-    () => (modelCatalog?.providers ?? []).filter(
+  const auxiliaryLaunchProviderItems = useMemo(
+    () => buildAuxiliaryLaunchProviderItems(
+      modelCatalog?.providers ?? [],
       (provider) => getProviderAppSettings(appSettings, provider.id).enabled,
     ),
     [appSettings, modelCatalog],
-  );
-  const auxiliaryLaunchProviderItems = useMemo(
-    () => auxiliaryLaunchProviders.map((provider) => ({ id: provider.id, label: provider.label })),
-    [auxiliaryLaunchProviders],
   );
   const sessionExecutionBlockedReason = useMemo(() => {
     if (!selectedSession) {
@@ -852,65 +792,28 @@ export default function AgentSessionWindowApp() {
   }, [selectedSessionId]);
 
   useEffect(() => {
-    if (selectedSession?.runState === "running") {
+    if (selectedSessionRunState === "running") {
       setIsAgentPickerOpen(false);
       setIsSkillPickerOpen(false);
     }
-  }, [selectedSession?.runState]);
+  }, [selectedSessionRunState]);
 
   useEffect(() => {
-    let active = true;
-
-    if (!withmateApi) {
-      return () => {
-        active = false;
-      };
-    }
-
-    void withmateApi.getModelCatalog(null).then((snapshot) => {
-      if (active) {
-        setModelCatalog(snapshot);
-      }
+    return startModelCatalogSubscription({
+      api: withmateApi,
+      enabled: true,
+      subscribe: true,
+      applyModelCatalog: setModelCatalog,
     });
-
-    const unsubscribe = withmateApi.subscribeModelCatalog((snapshot) => {
-      if (!active) {
-        return;
-      }
-      setModelCatalog(snapshot);
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [selectedSession?.id]);
+  }, [selectedSession?.id, withmateApi]);
 
   useEffect(() => {
-    let active = true;
-    if (!withmateApi) {
-      return () => {
-        active = false;
-      };
-    }
-
-    void withmateApi.getAppSettings().then((settings) => {
-      if (active) {
-        setAppSettings(settings);
-      }
+    return startAppSettingsSubscription({
+      api: withmateApi,
+      loadInitial: true,
+      applyAppSettings: setAppSettings,
     });
-
-    const unsubscribe = withmateApi.subscribeAppSettings((settings) => {
-      if (active) {
-        setAppSettings(settings);
-      }
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
+  }, [withmateApi]);
 
   const displayedMessages: Message[] = selectedSession ? selectedSession.messages : [];
   const messageListProjection = useMemo(
@@ -932,7 +835,7 @@ export default function AgentSessionWindowApp() {
   const pendingBubbleScrollSignature = useMemo(
     () =>
       [
-        selectedSession?.runState ?? "",
+        selectedSessionRunState ?? "",
         selectedSessionLiveRun?.assistantText ?? "",
         selectedSessionLiveRun?.errorMessage ?? "",
         selectedSessionLiveRun?.approvalRequest
@@ -951,7 +854,7 @@ export default function AgentSessionWindowApp() {
           : "",
       ].join("\u001b"),
     [
-      selectedSession?.runState,
+      selectedSessionRunState,
       selectedSessionLiveRun?.approvalRequest,
       selectedSessionLiveRun?.elicitationRequest,
       selectedSessionLiveRun?.assistantText,
@@ -966,7 +869,7 @@ export default function AgentSessionWindowApp() {
     () =>
       [
         activeRunSessionId ?? "",
-        activeAuxiliarySession?.runState ?? selectedSession?.runState ?? "",
+        activeAuxiliarySession?.runState ?? selectedSessionRunState ?? "",
         displayedMessagesScrollSignature,
         pendingBubbleScrollSignature,
       ].join("\u001a"),
@@ -975,7 +878,7 @@ export default function AgentSessionWindowApp() {
       activeRunSessionId,
       displayedMessagesScrollSignature,
       pendingBubbleScrollSignature,
-      selectedSession?.runState,
+      selectedSessionRunState,
     ],
   );
   const {
@@ -989,17 +892,24 @@ export default function AgentSessionWindowApp() {
   });
 
   useEffect(() => {
-    activeAuxiliarySessionRef.current = activeAuxiliarySession;
+    syncActiveAuxiliarySessionRef({
+      activeSession: activeAuxiliarySession,
+      activeSessionRef: activeAuxiliarySessionRef,
+    });
   }, [activeAuxiliarySession]);
 
   useEffect(() => {
-    setDraft("");
-    setComposerPreview(EMPTY_COMPOSER_PREVIEW);
+    applyComposerDraftClearCommand({
+      setDraft,
+      setComposerCaret,
+      syncMainComposerCaret: (selectionStart) => {
+        mainComposerCaretRef.current = selectionStart;
+      },
+      nextCaret: 0,
+    });
+    setComposerPreview(createEmptyComposerPreview());
     setPickerBaseDirectory(selectedSession?.workspacePath ?? "");
-    setComposerCaret(0);
-    mainComposerCaretRef.current = 0;
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
+    applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
     setIsComposerImeComposing(false);
     setIsActivityMonitorFollowing(true);
     setHasActivityMonitorUnread(false);
@@ -1018,7 +928,7 @@ export default function AgentSessionWindowApp() {
     setElicitationActionRequestId(null);
     setIsHeaderExpanded(false);
     setIsActionDockPinnedExpanded(false);
-  }, [selectedSession?.provider, selectedSessionId]);
+  }, [applyWorkspacePathMatchState, selectedSession?.provider, selectedSessionId]);
 
   useEffect(() => {
     setApprovalActionRequestId(null);
@@ -1035,7 +945,7 @@ export default function AgentSessionWindowApp() {
   }, [draft]);
 
   useLayoutEffect(() => {
-    const isActivityMonitorVisible = selectedSession?.runState === "running";
+    const isActivityMonitorVisible = selectedSessionRunState === "running";
     const activityMonitorElement = activityMonitorRef.current;
     const currentSignature = activityMonitorScrollSignature;
     const wasSameSession = activityMonitorSessionIdRef.current === selectedSessionId;
@@ -1076,7 +986,7 @@ export default function AgentSessionWindowApp() {
     }
 
     setHasActivityMonitorUnread(true);
-  }, [activityMonitorScrollSignature, isActivityMonitorFollowing, selectedSession?.runState, selectedSessionId]);
+  }, [activityMonitorScrollSignature, isActivityMonitorFollowing, selectedSessionRunState, selectedSessionId]);
 
   useEffect(() => {
     let active = true;
@@ -1090,47 +1000,23 @@ export default function AgentSessionWindowApp() {
 
     const activeAuxiliarySessionId = activeAuxiliarySession?.id ?? null;
     const refreshCompletedAuxiliarySession = (sessionId: string) => {
-      if (activeAuxiliarySessionId !== sessionId) {
-        return;
-      }
-
-      void withmateApi.getAuxiliarySession(sessionId).then((saved) => {
-        if (!active) {
-          return;
-        }
-
-        setActiveAuxiliarySession((current) => {
-          if (current?.id !== sessionId) {
-            return current;
-          }
-
-          if (!saved || saved.runState !== "running" || current.runState !== "running") {
-            activeAuxiliarySessionRef.current = saved;
-            return saved;
-          }
-
-          return current;
-        });
+      void runActiveAuxiliarySessionRefreshAndApply({
+        sessionId,
+        activeSessionId: activeAuxiliarySessionId,
+        loadAuxiliarySession: (targetSessionId) => withmateApi.getAuxiliarySession(targetSessionId),
+        isActive: () => active,
+        setActiveSession: setActiveAuxiliarySession,
+        activeSessionRef: activeAuxiliarySessionRef,
       }).catch((error) => {
         console.error(error);
       });
     };
 
-    setLiveRunState({ ownerSessionId: activeRunSessionId, state: null });
-    void withmateApi.getLiveSessionRun(activeRunSessionId).then((state) => {
-      if (active) {
-        setLiveRunState({ ownerSessionId: activeRunSessionId, state });
-        refreshCompletedAuxiliarySession(activeRunSessionId);
-      }
-    });
-
-    const unsubscribe = withmateApi.subscribeLiveSessionRun((sessionId, state) => {
-      if (!active || sessionId !== activeRunSessionId) {
-        return;
-      }
-
-      setLiveRunState({ ownerSessionId: sessionId, state });
-      refreshCompletedAuxiliarySession(sessionId);
+    const unsubscribe = startLiveSessionRunSubscription({
+      sessionId: activeRunSessionId,
+      api: withmateApi,
+      applyLiveRunState: setLiveRunState,
+      onSessionRunUpdated: refreshCompletedAuxiliarySession,
     });
 
     return () => {
@@ -1140,174 +1026,55 @@ export default function AgentSessionWindowApp() {
   }, [activeAuxiliarySession?.id, activeRunSessionId, selectedSession, withmateApi]);
 
   useEffect(() => {
-    let active = true;
     const providerId = displayedSession?.provider ?? null;
 
-    if (!withmateApi || providerId !== "copilot") {
-      setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry: null });
-      return () => {
-        active = false;
-      };
-    }
-
-    setProviderQuotaTelemetryState((current) =>
-      current.ownerProviderId === providerId
-        ? current
-        : { ownerProviderId: providerId, telemetry: null },
-    );
-
-    void withmateApi.getProviderQuotaTelemetry(providerId).then((telemetry) => {
-      if (active) {
-        setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry });
-      }
-    }).catch(() => {
-      if (active) {
-        setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry: null });
-      }
+    return startProviderQuotaTelemetrySubscription({
+      api: withmateApi,
+      providerId,
+      enabled: providerId === "copilot",
+      applyProviderQuotaTelemetry: setProviderQuotaTelemetryState,
     });
-
-    const unsubscribe = withmateApi.subscribeProviderQuotaTelemetry((nextProviderId, telemetry) => {
-      if (!active || nextProviderId !== providerId) {
-        return;
-      }
-
-      setProviderQuotaTelemetryState({ ownerProviderId: nextProviderId, telemetry });
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
   }, [displayedSession?.provider, withmateApi]);
 
   useEffect(() => {
-    let active = true;
     const sessionId = activeRunSessionId;
     const providerId = displayedSession?.provider ?? null;
 
-    if (!withmateApi || !sessionId || providerId !== "copilot") {
-      setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry: null });
-      return () => {
-        active = false;
-      };
-    }
-
-    setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry: null });
-    void withmateApi.getSessionContextTelemetry(sessionId).then((telemetry) => {
-      if (active) {
-        setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry });
-      }
-    }).catch(() => {
-      if (active) {
-        setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry: null });
-      }
+    return startSessionContextTelemetrySubscription({
+      api: withmateApi,
+      sessionId,
+      enabled: providerId === "copilot",
+      applySessionContextTelemetry: setSessionContextTelemetryState,
     });
-
-    const unsubscribe = withmateApi.subscribeSessionContextTelemetry((nextSessionId, telemetry) => {
-      if (!active || nextSessionId !== sessionId) {
-        return;
-      }
-
-      setSessionContextTelemetryState({ ownerSessionId: nextSessionId, telemetry });
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
   }, [activeRunSessionId, displayedSession?.provider, withmateApi]);
 
-  useEffect(() => {
-    let active = true;
-    if (!withmateApi || !activeRunSessionId) {
-      setComposerPreview(EMPTY_COMPOSER_PREVIEW);
-      return () => {
-        active = false;
-      };
-    }
-
-    if (!hasPreviewPathReferenceCandidates) {
-      setComposerPreview(EMPTY_COMPOSER_PREVIEW);
-      return () => {
-        active = false;
-      };
-    }
-
-    if (isComposerImeComposing) {
-      return () => {
-        active = false;
-      };
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      void withmateApi.previewComposerInput(activeRunSessionId, previewUserMessage).then((preview) => {
-        if (active) {
-          setComposerPreview(preview);
-        }
-      }).catch((error) => {
-        if (active) {
-          setComposerPreview({
-            attachments: [],
-            errors: [error instanceof Error ? error.message : "添付の解決に失敗したよ。"],
-          });
-        }
-      });
-    }, isEditingPathReference ? COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS : COMPOSER_PREVIEW_DEBOUNCE_MS);
-
-    return () => {
-      active = false;
-      window.clearTimeout(timeoutId);
-    };
-  }, [
+  const previewComposerInput = useMemo(() => {
+    return createComposerPreviewRequest({
+      api: withmateApi,
+      mode: "session",
+      sessionId: activeRunSessionId,
+    });
+  }, [activeRunSessionId, withmateApi]);
+  useComposerPreviewResolution({
     hasPreviewPathReferenceCandidates,
     isComposerImeComposing,
     isEditingPathReference,
+    isPreviewBlocked: false,
+    onComposerPreviewChange: setComposerPreview,
+    previewRequest: previewComposerInput,
     previewPathReferenceSignature,
     previewUserMessage,
-    activeRunSessionId,
-  ]);
-  useEffect(() => {
-    let active = true;
-
-    if (
-      !withmateApi
-      || !selectedSessionId
-      || selectedSessionRunState === "running"
-      || !!composerBlockedReason
-      || isComposerImeComposing
-      || !isEditingPathReference
-      || normalizedActivePathQuery.length < WORKSPACE_PATH_QUERY_MIN_LENGTH
-    ) {
-      setWorkspacePathMatches([]);
-      return () => {
-        active = false;
-      };
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      void withmateApi.searchWorkspaceFiles(selectedSessionId, normalizedActivePathQuery).then((matches) => {
-        if (active) {
-          setWorkspacePathMatches(matches);
-        }
-      }).catch(() => {
-        if (active) {
-          setWorkspacePathMatches([]);
-        }
-      });
-    }, 100);
-
-    return () => {
-      active = false;
-      window.clearTimeout(timeoutId);
-    };
-  }, [
-    composerBlockedReason,
+  });
+  useWorkspacePathMatchSearchFlow({
+    searchSource: "session",
+    sessionId: selectedSessionId,
+    withmateApi,
+    isSearchBlocked: selectedSessionRunState === "running" || !!composerBlockedReason,
     isComposerImeComposing,
     isEditingPathReference,
     normalizedActivePathQuery,
-    selectedSessionId,
-    selectedSessionRunState,
-  ]);
+    onWorkspacePathMatchStateChange: applyWorkspacePathMatchState,
+  });
   const selectedProviderCatalog = useMemo(
     () => (modelCatalog && displayedSession ? getProviderCatalog(modelCatalog.providers, displayedSession.provider) : null),
     [displayedSession, modelCatalog],
@@ -1370,34 +1137,16 @@ export default function AgentSessionWindowApp() {
     () => selectedSessionAuditLogs.find((entry) => isTerminalAuditLogPhase(entry.phase)) ?? null,
     [selectedSessionAuditLogs],
   );
-  const latestLiveCommandStep = useMemo(() => {
-    const steps = selectedSessionLiveRun?.steps ?? [];
-    for (let index = steps.length - 1; index >= 0; index -= 1) {
-      if (steps[index]?.type === "command_execution") {
-        return steps[index];
-      }
-    }
-
-    return null;
-  }, [selectedSessionLiveRun?.steps]);
-  const latestAuditCommandOperation = useMemo(() => {
-    const operations = latestTerminalAuditLog?.operations ?? [];
-    for (let index = operations.length - 1; index >= 0; index -= 1) {
-      if (operations[index]?.type === "command_execution") {
-        return operations[index];
-      }
-    }
-
-    return null;
-  }, [latestTerminalAuditLog]);
-  const latestCommandView = useMemo(
-    () => buildLatestCommandView({
-      latestLiveCommandStep,
-      latestAuditCommandOperation,
+  const latestCommandProjection = useMemo(
+    () => buildLatestCommandProjection({
+      liveSteps: selectedSessionLiveRun?.steps ?? [],
+      auditOperations: latestTerminalAuditLog?.operations ?? [],
       latestTerminalAuditPhase: latestTerminalAuditLog?.phase,
     }),
-    [latestAuditCommandOperation, latestLiveCommandStep, latestTerminalAuditLog?.phase],
+    [latestTerminalAuditLog?.operations, latestTerminalAuditLog?.phase, selectedSessionLiveRun?.steps],
   );
+  const latestLiveCommandStep = latestCommandProjection.latestLiveCommandStep;
+  const latestCommandView = latestCommandProjection.latestCommandView;
   const orderedLiveRunSteps = useMemo(
     () =>
       (selectedSessionLiveRun?.steps ?? [])
@@ -1479,18 +1228,24 @@ export default function AgentSessionWindowApp() {
     ],
   );
   const retryBanner = useMemo<RetryBannerState | null>(() => {
-    if (!selectedSession || selectedSession.runState === "running" || isSelectedSessionReadOnly || !lastUserMessage) {
+    if (!selectedSession || !shouldShowRetryBanner({
+      hasActiveAuxiliarySession: !!activeAuxiliarySession,
+      hasLastUserMessage: !!lastUserMessage,
+      isReadOnly: isSelectedSessionReadOnly,
+      runState: selectedSessionRunState,
+    })) {
       return null;
     }
 
-    let kind: RetryBannerKind | null = null;
-    if (selectedSession.runState === "interrupted") {
-      kind = "interrupted";
-    } else if (selectedSession.runState === "error") {
-      kind = "failed";
-    } else if (selectedSession.runState === "idle" && latestTerminalAuditLog?.phase === "canceled") {
-      kind = "canceled";
+    const retryLastUserMessage = lastUserMessage;
+    if (!retryLastUserMessage) {
+      return null;
     }
+
+    const kind = resolveRetryBannerKind({
+      runState: selectedSessionRunState,
+      latestTerminalAuditLogPhase: latestTerminalAuditLog?.phase,
+    });
 
     if (!kind) {
       return null;
@@ -1506,10 +1261,10 @@ export default function AgentSessionWindowApp() {
             "retry",
             "interrupted",
             selectedSession.id,
-            lastUserMessage.text,
+            retryLastUserMessage.text,
           ]),
           stopSummary,
-          lastRequestText: lastUserMessage.text,
+          lastRequestText: retryLastUserMessage.text,
         };
       case "failed":
         return {
@@ -1519,10 +1274,10 @@ export default function AgentSessionWindowApp() {
             "retry",
             "failed",
             selectedSession.id,
-            lastUserMessage.text,
+            retryLastUserMessage.text,
           ]),
           stopSummary,
-          lastRequestText: lastUserMessage.text,
+          lastRequestText: retryLastUserMessage.text,
         };
       case "canceled":
         return {
@@ -1532,11 +1287,11 @@ export default function AgentSessionWindowApp() {
             "retry",
             "canceled",
             selectedSession.id,
-            lastUserMessage.text,
+            retryLastUserMessage.text,
             latestTerminalAuditLog?.id,
           ]),
           stopSummary,
-          lastRequestText: lastUserMessage.text,
+          lastRequestText: retryLastUserMessage.text,
         };
       default:
         return null;
@@ -1550,36 +1305,46 @@ export default function AgentSessionWindowApp() {
     selectedSessionCharacter?.name,
     isSelectedSessionReadOnly,
     selectedSessionLiveRun,
+    activeAuxiliarySession,
   ]);
-  const hasDraftText = draft.trim().length > 0;
-  const shouldProtectDraftOnRetryEdit = !!retryBanner && hasDraftText && draft !== retryBanner.lastRequestText;
-  const isComposerDisabled = selectedSession?.runState === "running" || !!composerBlockedReason || isSelectedSessionReadOnly;
-  const composerSendabilityBase = useMemo(
+  const shouldProtectDraftOnRetryEdit = shouldProtectRetryEditDraft({ retryBanner, draft });
+  const isComposerDisabled = selectedSessionRunState === "running" || !!composerBlockedReason || isSelectedSessionReadOnly;
+  const composerSendability = useMemo(
     () =>
-      buildComposerSendabilityState({
-        runState: selectedSession?.runState,
+      resolveComposerSendabilityState({
+        runState: selectedSessionRunState,
         blockedReason: composerBlockedReason,
         inputErrors: composerPreview.errors,
         draftText: draft,
+        forceBlockedFeedback: forceComposerBlockedFeedback,
       }),
-    [composerBlockedReason, composerPreview.errors, draft, selectedSession?.runState],
-  );
-  const composerSendability = useMemo(
-    () => withForcedComposerBlockedFeedback(composerSendabilityBase, forceComposerBlockedFeedback),
-    [composerSendabilityBase, forceComposerBlockedFeedback],
+    [composerBlockedReason, composerPreview.errors, draft, forceComposerBlockedFeedback, selectedSessionRunState],
   );
   const isSendDisabled = composerSendability.isSendDisabled;
   const composerSendButtonTitle = getComposerSendButtonTitle(composerSendability);
-  const isRetryActionDisabled =
-    !retryBanner || !lastUserMessage || !!composerBlockedReason || isSelectedSessionReadOnly || selectedSession?.runState === "running";
+  const isRetryActionDisabled = resolveRetryActionDisabled({
+    retryBanner,
+    hasLastUserMessage: !!lastUserMessage,
+    composerBlocked: !!composerBlockedReason,
+    isReadOnly: isSelectedSessionReadOnly,
+    runState: selectedSessionRunState,
+  });
   const isRetryEditDisabled = isRetryActionDisabled || isComposerDisabled;
-  const shouldForceActionDockExpanded =
-    isAgentPickerOpen
-    || isSkillPickerOpen
-    || workspacePathMatches.length > 0
-    || isRetryDraftReplacePending
-    || (!!retryBanner && !activeAuxiliarySession)
-    || composerSendability.feedbackTone === "blocked";
+  const actionDockRuntimeState = buildActionDockRuntimeState({
+    isActionDockPinnedExpanded,
+    forceReasons: [
+      isAgentPickerOpen,
+      isSkillPickerOpen,
+      workspacePathMatches.length > 0,
+      isRetryDraftReplacePending,
+      !!retryBanner && !activeAuxiliarySession,
+      composerSendability.feedbackTone === "blocked",
+    ],
+  });
+  const {
+    isActionDockExpanded,
+    canCollapseActionDock,
+  } = actionDockRuntimeState;
   const renderedCustomAgentName = displayedSession?.customAgentName ?? "";
   const selectedCustomAgent = useMemo(() => {
     if (!renderedCustomAgentName.trim()) {
@@ -1593,34 +1358,31 @@ export default function AgentSessionWindowApp() {
     () => buildSelectedCustomAgentDisplay(displayedSession, selectedCustomAgent),
     [displayedSession, selectedCustomAgent],
   );
-  const approvalChoiceOptions = useMemo(
-    () => {
-      const options = getApprovalOptionsForProvider(displayedSession?.provider);
-      if (!displayedSession || options.some((option) => option.value === displayedSession.approvalMode)) {
-        return options;
-      }
-
-      return [{ value: displayedSession.approvalMode, label: displayedSession.approvalMode }, ...options];
-    },
-    [displayedSession?.approvalMode, displayedSession?.provider],
-  );
-  const sandboxChoiceOptions = useMemo(
-    () => displayedSession
-      ? getSandboxOptionsForProviderSelection(displayedSession.provider, displayedSession.codexSandboxMode)
-      : getSandboxOptionsForProvider(undefined),
-    [displayedSession?.codexSandboxMode, displayedSession?.provider],
-  );
-  const modelSelectOptions = useMemo(
-    () => modelOptions.map((model) => ({ value: model.id, label: modelOptionLabel(model) })),
-    [modelOptions],
-  );
-  const selectedModelFallbackLabel = useMemo(
-    () => modelDisplayLabel(selectedProviderCatalog, displayedSession?.model ?? ""),
-    [displayedSession?.model, selectedProviderCatalog],
-  );
-  const reasoningSelectOptions = useMemo(
-    () => availableReasoningEfforts.map((reasoningEffort) => ({ value: reasoningEffort, label: reasoningEffort })),
-    [availableReasoningEfforts],
+  const {
+    approvalChoiceOptions,
+    sandboxChoiceOptions,
+    modelSelectOptions,
+    selectedModelFallbackLabel,
+    reasoningSelectOptions,
+  } = useMemo(
+    () => buildRuntimeSelectionOptions({
+      providerId: displayedSession?.provider,
+      providerCatalog: selectedProviderCatalog,
+      models: modelOptions,
+      selectedModel: displayedSession?.model ?? "",
+      reasoningEfforts: availableReasoningEfforts,
+      selectedApprovalMode: displayedSession?.approvalMode ?? "untrusted",
+      selectedCodexSandboxMode: displayedSession?.codexSandboxMode ?? "workspace-write",
+    }),
+    [
+      displayedSession?.provider,
+      displayedSession?.approvalMode,
+      displayedSession?.codexSandboxMode,
+      displayedSession?.model,
+      modelOptions,
+      selectedProviderCatalog,
+      availableReasoningEfforts,
+    ],
   );
   const customAgentItems = useMemo(
     () => {
@@ -1675,74 +1437,27 @@ export default function AgentSessionWindowApp() {
   );
   const composerAttachmentItems = useMemo(
     () =>
-      composerPreview.attachments.map((attachment) => {
-        const attachmentDisplay = buildComposerAttachmentDisplay(attachment);
-        return {
-          key: attachment.id,
-          kind: attachment.kind,
-          kindLabel: attachmentDisplay.kindLabel,
-          locationLabel: attachmentDisplay.locationLabel,
-          primaryLabel: attachmentDisplay.primaryLabel,
-          secondaryLabel: attachmentDisplay.secondaryLabel,
-          title: attachmentDisplay.title,
-          removeTargets: [
-            attachment.workspaceRelativePath,
-            attachment.displayPath,
-            normalizePathForReference(attachment.absolutePath),
-          ].filter((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0),
-        };
-      }),
+      buildComposerAttachmentItems(composerPreview.attachments, { trimRemoveTargets: true }),
     [composerPreview.attachments],
   );
   const additionalDirectoryItems = useMemo(
     () =>
       displayedSession
-        ? displayedSession.allowedAdditionalDirectories.map((directoryPath) => {
-            const directoryDisplay = buildAdditionalDirectoryDisplay(directoryPath);
-            return {
-              key: directoryPath,
-              path: directoryPath,
-              primaryLabel: directoryDisplay.primaryLabel,
-              secondaryLabel: directoryDisplay.secondaryLabel,
-              title: directoryDisplay.title,
-              canRemove: displayedSession.provider === "codex",
-            };
-          })
+        ? buildAdditionalDirectoryItems(
+            displayedSession.allowedAdditionalDirectories,
+            displayedSession.provider === "codex",
+          )
         : [],
     [displayedSession],
   );
-  const workspacePathMatchItems = useMemo(
-    () =>
-      workspacePathMatches.map((match, index) => {
-        const matchDisplay = buildWorkspacePathMatchDisplay(match);
-        return {
-          key: `${match.kind}:${match.path}`,
-          path: match.path,
-          kind: match.kind,
-          kindLabel: matchDisplay.kindLabel,
-          primaryLabel: matchDisplay.primaryLabel,
-          secondaryLabel: matchDisplay.secondaryLabel,
-          title: matchDisplay.title,
-          isActive: index === activeWorkspacePathMatchIndex,
-        };
-      }),
-    [activeWorkspacePathMatchIndex, workspacePathMatches],
-  );
-  const isActionDockExpanded = isActionDockPinnedExpanded || shouldForceActionDockExpanded;
-  const canCollapseActionDock = !shouldForceActionDockExpanded;
   const isSessionHeaderExpanded = isHeaderExpanded || isEditingTitle;
-  const actionDockCompactPreview = useMemo(() => {
-    const normalizedDraft = draft.replace(/\s+/g, " ").trim();
-    if (normalizedDraft) {
-      return normalizedDraft.length > 84 ? `${normalizedDraft.slice(0, 84)}…` : normalizedDraft;
-    }
-
-    if (selectedSession?.runState === "running") {
-      return "実行中";
-    }
-
-    return "下書きなし";
-  }, [draft, selectedSession?.runState]);
+  const actionDockCompactPreview = useMemo(
+    () =>
+      buildActionDockCompactPreview(draft, selectedSessionRunState === "running", {
+        truncationSuffix: "…",
+      }),
+    [draft, selectedSessionRunState],
+  );
   const retryBannerIdentity = useMemo(() => {
     if (!retryBanner || !selectedSession || !lastUserMessage) {
       return null;
@@ -1766,24 +1481,18 @@ export default function AgentSessionWindowApp() {
   }, [retryBanner]);
 
   useLayoutEffect(() => {
-    if (!retryBanner) {
-      setIsRetryDetailsOpen(false);
-      return;
-    }
-
-    setIsRetryDetailsOpen(defaultRetryBannerDetailsOpen(retryBanner.kind));
+    applyRetryDetailsReset({
+      retryBanner,
+      setRetryDetailsOpen: setIsRetryDetailsOpen,
+    });
   }, [retryBanner?.kind, retryBannerIdentity, selectedSession?.id]);
-
-  useEffect(() => {
-    setActiveWorkspacePathMatchIndex(workspacePathMatches.length > 0 ? 0 : -1);
-  }, [workspacePathMatches]);
 
   useEffect(() => {
     setForceComposerBlockedFeedback(false);
   }, [selectedSession?.id]);
 
   const triggerComposerBlockedFeedback = () => {
-    if (!selectedSession || selectedSession.runState === "running") {
+    if (!selectedSession || selectedSessionRunState === "running") {
       return;
     }
 
@@ -1803,54 +1512,61 @@ export default function AgentSessionWindowApp() {
       throw new Error("旧バージョンから移行された閲覧専用セッションには送信できないよ。");
     }
 
+    const previewRequest = createComposerPreviewRequest({
+      api: withmateApi,
+      mode: "session",
+      sessionId: selectedSession.id,
+    });
+    if (!previewRequest) {
+      return;
+    }
+
     const nextMessage = messageText.trim();
-    const preview = await withmateApi.previewComposerInput(selectedSession.id, messageText);
+    const preview = await previewRequest(messageText);
     setComposerPreview(preview);
-    const sendability = buildComposerSendabilityState({
-      runState: selectedSession.runState,
+    const { blockedMessage } = resolveComposerSendPreflight({
+      runState: selectedSessionRunState,
       blockedReason: composerBlockedReason,
       inputErrors: preview.errors,
       draftText: messageText,
     });
-    if (sendability.isSendDisabled) {
-      throw new Error(sendability.primaryFeedback || "送信できない状態だよ。");
+    if (blockedMessage) {
+      throw new Error(blockedMessage);
     }
 
     if (options?.collapseActionDock) {
       setIsActionDockPinnedExpanded(false);
     }
     if (options?.clearDraft ?? true) {
-      setDraft("");
+      applyComposerDraftClearCommand({
+        setDraft,
+      });
     }
-    const updatedSession: Session = {
-      ...selectedSession,
+    const updatedSession = applyOptimisticSessionRunUpdate({
+      session: selectedSession,
+      userMessage: nextMessage,
       updatedAt: currentTimestampLabel(),
       status: "running",
-      runState: "running",
-      messages: [...selectedSession.messages, { role: "user", text: nextMessage }],
-    };
-
-    setLiveRunState((current) => (
-      current.ownerSessionId === updatedSession.id
-        ? { ownerSessionId: updatedSession.id, state: createPendingLiveSessionRunState(updatedSession, current.state) }
-        : { ownerSessionId: updatedSession.id, state: createPendingLiveSessionRunState(updatedSession) }
-    ));
-    setSessions([updatedSession]);
+      updateLiveRunState: (update) => setLiveRunState(update),
+      applyRunningSession: (runningSession) => setSessions([runningSession]),
+    });
 
     try {
       const request: RunSessionTurnRequest = {
         userMessage: messageText,
       };
       const savedSession = await withmateApi.runSessionTurn(selectedSession.id, request);
-      setSessions([savedSession]);
+      applyResolvedSessionRunUpdate({
+        savedSession,
+        applySavedSession: (nextSession) => setSessions([nextSession]),
+      });
     } catch (error) {
       console.error(error);
-      setLiveRunState((current) => (
-        current.ownerSessionId === updatedSession.id
-          ? { ownerSessionId: updatedSession.id, state: null }
-          : current
-      ));
-      setSessions([selectedSession]);
+      rollbackOptimisticSessionRunUpdate({
+        sessionId: updatedSession.id,
+        updateLiveRunState: (update) => setLiveRunState(update),
+        restoreSession: () => setSessions([selectedSession]),
+      });
     }
   };
 
@@ -1866,7 +1582,7 @@ export default function AgentSessionWindowApp() {
         setForceComposerBlockedFeedback(false);
         await sendAuxiliaryMessage(auxiliaryDraft);
       } catch (error) {
-        window.alert(error instanceof Error ? error.message : "送信に失敗したよ。");
+        window.alert(resolveSessionRunErrorMessage(error, "送信に失敗したよ。"));
       }
       return;
     }
@@ -1883,19 +1599,22 @@ export default function AgentSessionWindowApp() {
         collapseActionDock: appSettings.autoCollapseActionDockOnSend,
       });
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "送信に失敗したよ。");
+      window.alert(resolveSessionRunErrorMessage(error, "送信に失敗したよ。"));
     }
   };
 
   const handleCancelRun = async () => {
-    if (!withmateApi || !selectedSession || selectedSession.runState !== "running") {
-      return;
-    }
-
     try {
-      await withmateApi.cancelSessionRun(selectedSession.id);
+      await runRunningSessionCancelOperation({
+        target: buildRunningSessionCancelTarget({
+          sessionId: selectedSession?.id,
+          runState: selectedSessionRunState,
+          isRunning: isSelectedSessionRunning,
+        }),
+        cancelRun: withmateApi ? (sessionId) => withmateApi.cancelSessionRun(sessionId) : null,
+      });
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "キャンセルに失敗したよ。");
+      window.alert(resolveSessionRunErrorMessage(error, "キャンセルに失敗したよ。"));
     }
   };
 
@@ -1909,16 +1628,12 @@ export default function AgentSessionWindowApp() {
     try {
       await withmateApi.resolveLiveApproval(sessionId, request.requestId, decision);
       const latestLiveRun = await withmateApi.getLiveSessionRun(sessionId);
-      setLiveRunState((current) => {
-        if (
-          current.ownerSessionId !== sessionId
-          || current.state?.approvalRequest?.requestId !== request.requestId
-        ) {
-          return current;
-        }
-
-        return { ownerSessionId: sessionId, state: latestLiveRun };
-      });
+      setLiveRunState((current) => replaceLiveRunAfterResolvedRequest(current, {
+        sessionId,
+        requestId: request.requestId,
+        requestKind: "approval",
+        latestLiveRun,
+      }));
       setApprovalActionRequestId(null);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "承認要求の処理に失敗したよ。");
@@ -1939,16 +1654,12 @@ export default function AgentSessionWindowApp() {
     try {
       await withmateApi.resolveLiveElicitation(sessionId, request.requestId, response);
       const latestLiveRun = await withmateApi.getLiveSessionRun(sessionId);
-      setLiveRunState((current) => {
-        if (
-          current.ownerSessionId !== sessionId
-          || current.state?.elicitationRequest?.requestId !== request.requestId
-        ) {
-          return current;
-        }
-
-        return { ownerSessionId: sessionId, state: latestLiveRun };
-      });
+      setLiveRunState((current) => replaceLiveRunAfterResolvedRequest(current, {
+        sessionId,
+        requestId: request.requestId,
+        requestKind: "elicitation",
+        latestLiveRun,
+      }));
       setElicitationActionRequestId(null);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "入力要求の処理に失敗したよ。");
@@ -1956,132 +1667,87 @@ export default function AgentSessionWindowApp() {
     }
   };
 
-  const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    const canNavigatePathMatches =
-      workspacePathMatches.length > 0
-      && !isComposerImeComposing
-      && !event.nativeEvent.isComposing;
+  const handleComposerSubmitKey = createComposerSubmitKeyHandler({
+    isSubmitDisabled: () => (
+      activeAuxiliarySession
+        ? activeAuxiliarySession.runState === "running"
+        : composerSendability.isRunning
+    ),
+    isSubmitBlocked: () => {
+      const activeSendability = activeAuxiliarySession
+        ? buildComposerSendabilityState({
+            runState: activeAuxiliarySession.runState,
+            blockedReason: composerBlockedReason,
+            inputErrors: composerPreview.errors,
+            draftText: activeAuxiliarySession.composerDraft,
+          })
+        : composerSendability;
+      return activeAuxiliarySession
+        ? activeSendability.isSendDisabled || isAuxiliaryActionPending
+        : isSendDisabled;
+    },
+    notifySubmitBlocked: triggerComposerBlockedFeedback,
+    submit: () => void handleSend(),
+  });
 
-    if (canNavigatePathMatches) {
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setActiveWorkspacePathMatchIndex((current) => Math.min(current + 1, workspacePathMatches.length - 1));
-        return;
+  const handleComposerKeyDown = buildComposerDraftKeyDownHandler({
+    pathMatches: workspacePathMatches,
+    activeIndex: activeWorkspacePathMatchIndex,
+    isComposerImeComposing,
+    onActiveIndexChange: setActiveWorkspacePathMatchIndex,
+    onWorkspacePathMatchStateChange: applyWorkspacePathMatchState,
+    onSelectWorkspacePathMatch: (match) => handleSelectWorkspacePathMatch(match),
+    submit: handleComposerSubmitKey,
+  });
+
+  const handleSelectWorkspacePathMatch = createWorkspacePathMatchSelectionHandler({
+    getDraft: () => activeComposerDraft,
+    getCaret: () => composerCaret,
+    getTextarea: () => composerTextareaRef.current,
+    applySelection: (nextState) => {
+      const { draft: nextDraft, caret: nextCaret } = nextState;
+      if (activeAuxiliarySession) {
+        setComposerCaret(nextCaret);
+        void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+      } else {
+        applyComposerDraftChangeCommand({
+          value: nextDraft,
+          selectionStart: nextCaret,
+          setDraft,
+          setComposerCaret,
+          syncMainComposerCaret: (selectionStart) => {
+            mainComposerCaretRef.current = selectionStart;
+          },
+        });
       }
+      applyWorkspacePathMatchState(nextState);
+    },
+    restoreComposerTextareaFocusAndCaret,
+  });
 
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setActiveWorkspacePathMatchIndex((current) => Math.max(current - 1, 0));
-        return;
-      }
+  const handleSelectSkill = createSkillPromptInsertionHandler<DiscoveredSkill>({
+    getProvider: () => selectedSession?.provider,
+    getDraft: () => draft,
+    getTextarea: () => composerTextareaRef.current,
+    setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+    setCaret: setComposerCaret,
+    setSkillPickerOpen: setIsSkillPickerOpen,
+    applyDraft: (nextDraft, nextCaret) => {
+      applyComposerDraftChangeCommand({
+        value: nextDraft,
+        selectionStart: nextCaret,
+        setDraft,
+        syncMainComposerCaret: (selectionStart) => {
+          mainComposerCaretRef.current = selectionStart;
+        },
+      });
+    },
+    restoreComposerTextareaFocusAndCaret,
+  });
 
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setWorkspacePathMatches([]);
-        setActiveWorkspacePathMatchIndex(-1);
-        return;
-      }
-
-      if (event.key === "Tab") {
-        setWorkspacePathMatches([]);
-        setActiveWorkspacePathMatchIndex(-1);
-        return;
-      }
-
-      if (event.key === "Enter" && !event.ctrlKey && !event.metaKey) {
-        const activeMatch =
-          workspacePathMatches[activeWorkspacePathMatchIndex] ?? workspacePathMatches[0] ?? null;
-        if (activeMatch) {
-          event.preventDefault();
-          handleSelectWorkspacePathMatch(activeMatch.path);
-          return;
-        }
-      }
-    }
-
-    if (
-      event.key !== "Enter" ||
-      (!event.ctrlKey && !event.metaKey) ||
-      (activeAuxiliarySession ? activeAuxiliarySession.runState === "running" : composerSendability.isRunning)
-    ) {
-      return;
-    }
-
-    event.preventDefault();
-    const activeSendability = activeAuxiliarySession
-      ? buildComposerSendabilityState({
-          runState: activeAuxiliarySession.runState,
-          blockedReason: composerBlockedReason,
-          inputErrors: composerPreview.errors,
-          draftText: activeAuxiliarySession.composerDraft,
-        })
-      : composerSendability;
-    const isActiveSendDisabled = activeAuxiliarySession
-      ? activeSendability.isSendDisabled || isAuxiliaryActionPending
-      : isSendDisabled;
-    if (isActiveSendDisabled) {
-      triggerComposerBlockedFeedback();
-      return;
-    }
-    void handleSend();
-  };
-
-  const handleSelectWorkspacePathMatch = (match: string) => {
-    const textarea = composerTextareaRef.current;
-    const activeReference = getActivePathReference(activeComposerDraft, composerCaret);
-    if (!textarea || !activeReference) {
-      return;
-    }
-
-    const replacement = formatPathReference(match);
-    const nextDraft = [
-      activeComposerDraft.slice(0, activeReference.start),
-      replacement,
-      activeComposerDraft.slice(activeReference.end),
-    ].join("");
-    const nextCaret = activeReference.start + replacement.length;
-    setComposerCaret(nextCaret);
-    if (activeAuxiliarySession) {
-      void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-    } else {
-      setDraft(nextDraft);
-      mainComposerCaretRef.current = nextCaret;
-    }
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
-
-    window.requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
-  };
-
-  const handleSelectSkill = (skill: DiscoveredSkill) => {
-    const textarea = composerTextareaRef.current;
-    if (!selectedSession) {
-      return;
-    }
-
-    const snippet = buildSkillPromptSnippet(selectedSession.provider, skill.name);
-    const trimmedDraft = draft.trimStart();
-    const nextDraft = trimmedDraft ? `${snippet}\n\n${trimmedDraft}` : `${snippet}\n`;
-    const nextCaret = nextDraft.length;
-
-    setIsActionDockPinnedExpanded(true);
-    setDraft(nextDraft);
-    setComposerCaret(nextCaret);
-    mainComposerCaretRef.current = nextCaret;
-    setIsSkillPickerOpen(false);
-
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
-  };
+  const closeAgentPicker = createAgentPickerCloseHandler({
+    setAgentPickerOpen: setIsAgentPickerOpen,
+  });
 
   const handleSelectCustomAgent = async (agent: DiscoveredCustomAgent | null) => {
     if (!selectedSession || isSelectedSessionReadOnly || selectedSession.provider !== "copilot") {
@@ -2090,7 +1756,7 @@ export default function AgentSessionWindowApp() {
 
     const nextCustomAgentName = agent?.name ?? "";
     if (nextCustomAgentName === selectedSession.customAgentName) {
-      setIsAgentPickerOpen(false);
+      closeAgentPicker();
       return;
     }
 
@@ -2101,7 +1767,7 @@ export default function AgentSessionWindowApp() {
     );
 
     await persistSession(nextSession);
-    setIsAgentPickerOpen(false);
+    closeAgentPicker();
   };
 
   const persistSession = async (nextSession: Session) => {
@@ -2122,17 +1788,19 @@ export default function AgentSessionWindowApp() {
     if (
       !selectedSession ||
       isSelectedSessionReadOnly ||
-      selectedSession.runState === "running" ||
-      approvalMode === selectedSession.approvalMode
+      selectedSessionRunState === "running"
     ) {
       return;
     }
 
-    const nextSession: Session = {
-      ...selectedSession,
+    const nextSession = buildSessionWithApprovalMode(
+      selectedSession,
       approvalMode,
-      updatedAt: currentTimestampLabel(),
-    };
+      currentTimestampLabel(),
+    );
+    if (!nextSession) {
+      return;
+    }
 
     await persistSession(nextSession);
   };
@@ -2142,35 +1810,36 @@ export default function AgentSessionWindowApp() {
       !selectedSession ||
       selectedSession.provider !== "codex" ||
       isSelectedSessionReadOnly ||
-      selectedSession.runState === "running" ||
-      codexSandboxMode === selectedSession.codexSandboxMode
+      selectedSessionRunState === "running"
     ) {
       return;
     }
 
-    const nextSession: Session = {
-      ...selectedSession,
+    const nextSession = buildSessionWithCodexSandboxMode(
+      selectedSession,
       codexSandboxMode,
-      updatedAt: currentTimestampLabel(),
-    };
+      currentTimestampLabel(),
+    );
+    if (!nextSession) {
+      return;
+    }
 
     await persistSession(nextSession);
   };
 
-  const handleStartTitleEdit = () => {
-    if (!selectedSession || isSelectedSessionReadOnly || selectedSession.runState === "running") {
-      return;
-    }
+  const handleStartTitleEdit = createStartTitleEditHandler({
+    getTitle: () => selectedSession?.taskTitle,
+    canStart: () => !!selectedSession && !isSelectedSessionReadOnly && selectedSessionRunState !== "running",
+    setTitleDraft,
+    setHeaderExpanded: setIsHeaderExpanded,
+    setEditingTitle: setIsEditingTitle,
+  });
 
-    setTitleDraft(selectedSession.taskTitle);
-    setIsHeaderExpanded(true);
-    setIsEditingTitle(true);
-  };
-
-  const handleCancelTitleEdit = () => {
-    setTitleDraft(selectedSession?.taskTitle ?? "");
-    setIsEditingTitle(false);
-  };
+  const handleCancelTitleEdit = createCancelTitleEditHandler({
+    getTitle: () => selectedSession?.taskTitle,
+    setTitleDraft,
+    setEditingTitle: setIsEditingTitle,
+  });
 
   const handleSaveTitle = async () => {
     if (!selectedSession || isSelectedSessionReadOnly) {
@@ -2200,7 +1869,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleDeleteSession = async () => {
-    if (!withmateApi || !selectedSession || selectedSession.runState === "running") {
+    if (!withmateApi || !selectedSession || selectedSessionRunState === "running") {
       return;
     }
 
@@ -2226,10 +1895,10 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const selection = resolveModelChangeSelection(selectedProviderCatalog, model, selectedSession.reasoningEffort);
-    const nextSession: Session = applySessionModelMetadataUpdate(
+    const nextSession = buildSessionWithModelChange(
       selectedSession,
-      selection,
+      selectedProviderCatalog,
+      model,
       modelCatalog.revision,
       currentTimestampLabel(),
     );
@@ -2242,10 +1911,10 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const selection = resolveModelSelection(selectedProviderCatalog, selectedSession.model, reasoningEffort);
-    const nextSession: Session = applySessionModelMetadataUpdate(
+    const nextSession = buildSessionWithReasoningEffort(
       selectedSession,
-      selection,
+      selectedProviderCatalog,
+      reasoningEffort,
       modelCatalog.revision,
       currentTimestampLabel(),
     );
@@ -2254,38 +1923,32 @@ export default function AgentSessionWindowApp() {
   };
 
   const updateActiveAuxiliarySession = async (recipe: (current: AuxiliarySession) => AuxiliarySession) => {
-    if (!withmateApi || !activeAuxiliarySession) {
-      return;
-    }
-
-    await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
-    const currentSession = activeAuxiliarySessionRef.current ?? activeAuxiliarySession;
-    if (currentSession.id !== activeAuxiliarySession.id || currentSession.runState === "running") {
-      return;
-    }
-
-    const nextSession = recipe(currentSession);
-    activeAuxiliarySessionRef.current = nextSession;
-    setActiveAuxiliarySession(nextSession);
-    const saved = await withmateApi.updateAuxiliarySession(nextSession);
-    activeAuxiliarySessionRef.current = saved;
-    setActiveAuxiliarySession(saved);
+    await createGuardedActiveAuxiliarySessionUpdater({
+      activeSession: activeAuxiliarySession,
+      getCurrentSession: () => activeAuxiliarySessionRef.current,
+      getApi: () => withmateApi,
+      activeSessionRef: activeAuxiliarySessionRef,
+      setActiveSession: setActiveAuxiliarySession,
+      draftSaveQueue: auxiliaryDraftSaveQueueRef,
+      sessionSaveQueue: auxiliarySessionSaveQueueRef,
+      mutationRevision: auxiliarySessionMutationRevisionRef,
+    })(recipe);
   };
 
   const handleChangeAuxiliaryApproval = async (approvalMode: Session["approvalMode"]) => {
-    await updateActiveAuxiliarySession((current) => ({
-      ...current,
+    await runAuxiliaryApprovalModeChangeOperation({
       approvalMode,
-      updatedAt: currentTimestampLabel(),
-    }));
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
   };
 
   const handleChangeAuxiliarySandboxMode = async (codexSandboxMode: Session["codexSandboxMode"]) => {
-    await updateActiveAuxiliarySession((current) => ({
-      ...current,
+    await runAuxiliarySandboxModeChangeOperation({
       codexSandboxMode,
-      updatedAt: currentTimestampLabel(),
-    }));
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
   };
 
   const handleChangeAuxiliaryModel = async (model: string) => {
@@ -2293,15 +1956,12 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    await updateActiveAuxiliarySession((current) => {
-      const selection = resolveModelChangeSelection(selectedProviderCatalog, model, current.reasoningEffort);
-      return {
-        ...current,
-        catalogRevision: modelCatalog.revision,
-        model: selection.resolvedModel,
-        reasoningEffort: selection.resolvedReasoningEffort,
-        updatedAt: currentTimestampLabel(),
-      };
+    await runAuxiliaryModelChangeOperation({
+      model,
+      providerCatalog: selectedProviderCatalog,
+      catalogRevision: modelCatalog.revision,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
     });
   };
 
@@ -2310,160 +1970,135 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    await updateActiveAuxiliarySession((current) => {
-      const selection = resolveModelSelection(selectedProviderCatalog, current.model, reasoningEffort);
-      return {
-        ...current,
-        catalogRevision: modelCatalog.revision,
-        model: selection.resolvedModel,
-        reasoningEffort: selection.resolvedReasoningEffort,
-        updatedAt: currentTimestampLabel(),
-      };
+    await runAuxiliaryReasoningEffortChangeOperation({
+      reasoningEffort,
+      providerCatalog: selectedProviderCatalog,
+      catalogRevision: modelCatalog.revision,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
     });
   };
 
   const handleSelectAuxiliaryCustomAgent = async (agent: DiscoveredCustomAgent | null) => {
-    if (!activeAuxiliarySession || activeAuxiliarySession.provider !== "copilot") {
-      return;
-    }
-
     const nextCustomAgentName = (agent?.name ?? "").trim();
-    if (nextCustomAgentName === activeAuxiliarySession.customAgentName) {
-      setIsAgentPickerOpen(false);
-      return;
-    }
-
-    await updateActiveAuxiliarySession((current) => ({
-      ...current,
+    await runAuxiliaryCustomAgentSelectionOperation({
+      activeSession: activeAuxiliarySession,
       customAgentName: nextCustomAgentName,
-      updatedAt: currentTimestampLabel(),
-    }));
-    setIsAgentPickerOpen(false);
+      updateCustomAgent: async (customAgentName) => {
+        await runAuxiliaryCustomAgentPatchOperation({
+          customAgentName,
+          updateActiveAuxiliarySession,
+          createTimestampLabel: currentTimestampLabel,
+        });
+      },
+      closeAgentPicker,
+    });
   };
 
   const handleSelectAuxiliarySkill = async (skill: DiscoveredSkill) => {
     const textarea = composerTextareaRef.current;
-    if (!activeAuxiliarySession) {
-      return;
-    }
-
-    const snippet = buildSkillPromptSnippet(activeAuxiliarySession.provider, skill.name);
-    const trimmedDraft = activeAuxiliarySession.composerDraft.trimStart();
-    const nextDraft = trimmedDraft ? `${snippet}\n\n${trimmedDraft}` : `${snippet}\n`;
-    const nextCaret = nextDraft.length;
-
-    setIsActionDockPinnedExpanded(true);
-    setComposerCaret(nextCaret);
-    setIsSkillPickerOpen(false);
-    await updateActiveAuxiliarySession((current) => ({
-      ...current,
-      composerDraft: nextDraft,
-      updatedAt: currentTimestampLabel(),
-    }));
-
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
+    await runAuxiliarySkillPromptInsertionOperation({
+      activeSession: activeAuxiliarySession,
+      skillName: skill.name,
+      applyUiState: (nextState) => {
+        applySkillPromptInsertionUiState({
+          state: nextState,
+          setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+          setCaret: setComposerCaret,
+          setSkillPickerOpen: setIsSkillPickerOpen,
+        });
+      },
+      updateDraft: async (draft) => {
+        await runAuxiliaryDraftPatchOperation({
+          draft,
+          updateActiveAuxiliarySession,
+          createTimestampLabel: currentTimestampLabel,
+        });
+      },
+      afterDraftUpdated: (nextState) => {
+        restoreComposerTextareaFocusAndCaret(textarea, nextState.caret);
+      },
     });
   };
 
   const handleResendLastMessage = async () => {
-    if (!lastUserMessage || composerBlockedReason || isSelectedSessionReadOnly) {
-      return;
-    }
-
-    await sendMessage(lastUserMessage.text, { clearDraft: false });
+    await runRetryResendCommand({
+      isDisabled: !!composerBlockedReason || isSelectedSessionReadOnly,
+      messageText: lastUserMessage?.text,
+      resendMessage: (messageText) => sendMessage(messageText, { clearDraft: false }),
+    });
   };
 
   const restoreLastUserMessageToDraft = (messageText: string) => {
     const textarea = composerTextareaRef.current;
-    const nextDraft = messageText;
-    const nextCaret = nextDraft.length;
-    setIsActionDockPinnedExpanded(true);
-    setDraft(nextDraft);
-    setComposerCaret(nextCaret);
-    mainComposerCaretRef.current = nextCaret;
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
-    setIsRetryDraftReplacePending(false);
-
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
+    applyRetryDraftRestoreCommand({
+      messageText,
+      setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+      setDraft,
+      setCaret: setComposerCaret,
+      syncCaret: (caret) => {
+        mainComposerCaretRef.current = caret;
+      },
+      applyWorkspacePathMatchState,
+      setRetryDraftReplacePending: setIsRetryDraftReplacePending,
+      focusComposer: (caret) => restoreComposerTextareaFocusAndCaret(textarea, caret),
     });
   };
 
-  const handleEditLastMessage = () => {
-    if (!retryBanner || !lastUserMessage || isRetryEditDisabled) {
-      return;
-    }
+  const handleEditLastMessage = createRetryEditHandler({
+    isDisabled: !retryBanner || isRetryEditDisabled,
+    messageText: lastUserMessage?.text,
+    shouldProtectDraft: shouldProtectDraftOnRetryEdit,
+    requestDraftReplaceConfirmation: () => setIsRetryDraftReplacePending(true),
+    restoreDraft: restoreLastUserMessageToDraft,
+  });
 
-    if (shouldProtectDraftOnRetryEdit) {
-      setIsRetryDraftReplacePending(true);
-      return;
-    }
+  const handleConfirmRetryDraftReplace = createRetryDraftReplaceConfirmationHandler({
+    isDisabled: !retryBanner || isRetryEditDisabled,
+    messageText: lastUserMessage?.text,
+    restoreDraft: restoreLastUserMessageToDraft,
+  });
 
-    restoreLastUserMessageToDraft(lastUserMessage.text);
-  };
+  const handleCancelRetryDraftReplace = createCancelRetryDraftReplaceHandler({
+    setRetryDraftReplacePending: setIsRetryDraftReplacePending,
+  });
 
-  const handleConfirmRetryDraftReplace = () => {
-    if (!retryBanner || !lastUserMessage || isRetryEditDisabled) {
-      return;
-    }
-
-    restoreLastUserMessageToDraft(lastUserMessage.text);
-  };
-
-  const handleCancelRetryDraftReplace = () => {
-    setIsRetryDraftReplacePending(false);
-  };
+  const handleToggleRetryDetails = createRetryDetailsToggleHandler({
+    setRetryDetailsOpen: setIsRetryDetailsOpen,
+  });
 
   const handleCloseWindow = () => {
     window.close();
   };
 
-  const handleToggleHeaderExpanded = () => {
-    if (isEditingTitle) {
-      return;
-    }
+  const handleToggleHeaderExpanded = createHeaderExpandedToggleHandler({
+    isEditingTitle,
+    setHeaderExpanded: setIsHeaderExpanded,
+  });
 
-    setIsHeaderExpanded((current) => !current);
-  };
+  const handleExpandActionDock = createActionDockExpandHandler({
+    setPinnedExpanded: setIsActionDockPinnedExpanded,
+    focusComposer: () => restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current),
+  });
 
-  const handleExpandActionDock = (options?: { focusComposer?: boolean }) => {
-    setIsActionDockPinnedExpanded(true);
+  const handleCollapseActionDock = createActionDockCollapseHandler({
+    canCollapse: canCollapseActionDock,
+    setPinnedExpanded: setIsActionDockPinnedExpanded,
+  });
 
-    if (!options?.focusComposer) {
-      return;
-    }
+  const handleToggleAgentPicker = createAgentPickerToggleHandler({
+    setAgentPickerOpen: setIsAgentPickerOpen,
+    setSkillPickerOpen: setIsSkillPickerOpen,
+  });
 
-    window.requestAnimationFrame(() => {
-      const textarea = composerTextareaRef.current;
-      if (!textarea) {
-        return;
-      }
+  const handleToggleSkillPicker = createSkillPickerToggleHandler({
+    setAgentPickerOpen: setIsAgentPickerOpen,
+    setSkillPickerOpen: setIsSkillPickerOpen,
+  });
 
-      textarea.focus();
-      const caret = textarea.value.length;
-      textarea.setSelectionRange(caret, caret);
-    });
-  };
-
-  const handleCollapseActionDock = () => {
-    if (!canCollapseActionDock) {
-      return;
-    }
-
-    setIsActionDockPinnedExpanded(false);
-  };
+  const handleToggleAdditionalDirectoryList = createAdditionalDirectoryListToggleHandler({
+    setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
+  });
 
   const handleOpenInlinePath = async (target: string) => {
     if (!withmateApi) {
@@ -2478,160 +2113,138 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleCancelAuxiliaryRun = async () => {
-    if (!withmateApi || !activeAuxiliarySession || activeAuxiliarySession.runState !== "running") {
-      return;
-    }
-
     try {
-      await withmateApi.cancelAuxiliarySessionRun(activeAuxiliarySession.id);
+      await runRunningSessionCancelOperation({
+        target: buildAuxiliarySessionCancelTarget({ session: activeAuxiliarySession }),
+        cancelRun: withmateApi ? (sessionId) => withmateApi.cancelAuxiliarySessionRun(sessionId) : null,
+      });
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "キャンセルに失敗したよ。");
+      window.alert(resolveSessionRunErrorMessage(error, "キャンセルに失敗したよ。"));
     }
   };
 
-  const handleOpenAuxiliaryLaunchDialog = () => {
-    if (!selectedSession || isAuxiliaryActionPending) {
-      return;
-    }
+  const handleOpenAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogOpenHandler({
+    canOpen: () => !!selectedSession && !isAuxiliaryActionPending,
+    providers: auxiliaryLaunchProviderItems,
+    getSelectedProviderId: () => selectedSession?.provider,
+    openAuxiliaryLaunchDialog,
+  });
 
-    const providerId =
-      auxiliaryLaunchProviders.find((provider) => provider.id === selectedSession.provider)?.id ??
-      auxiliaryLaunchProviders[0]?.id ??
-      null;
-    setAuxiliaryLaunchProviderId(providerId);
-    setAuxiliaryLaunchFeedback(providerId ? "" : "有効な Coding Provider がないよ。");
-    setAuxiliaryLaunchDialogOpen(true);
-  };
+  const handleCloseAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogCloseHandler({
+    canClose: () => !isAuxiliaryActionPending,
+    closeAuxiliaryLaunchDialog,
+  });
 
-  const handleCloseAuxiliaryLaunchDialog = () => {
-    if (isAuxiliaryActionPending) {
-      return;
-    }
-
-    setAuxiliaryLaunchDialogOpen(false);
-    setAuxiliaryLaunchFeedback("");
-  };
-
-  const handleSelectAuxiliaryLaunchProvider = (providerId: string) => {
-    setAuxiliaryLaunchProviderId(providerId);
-    setAuxiliaryLaunchFeedback("");
-  };
+  const handleSelectAuxiliaryLaunchProvider = createAuxiliaryLaunchProviderSelectHandler({
+    selectAuxiliaryLaunchProvider,
+  });
 
   const handleStartAuxiliarySession = async () => {
     if (!withmateApi || !selectedSession || isAuxiliaryActionPending) {
       return;
     }
-    if (!auxiliaryLaunchProviderId) {
-      setAuxiliaryLaunchFeedback("有効な Coding Provider を選んでね。");
+    const setAuxiliaryStartError = createAuxiliarySessionStartErrorHandler({
+      setLaunchStartError: setAuxiliaryLaunchStartError,
+    });
+    const startProvider = resolveAuxiliaryLaunchStartProvider({
+      providerId: auxiliaryLaunchProviderId,
+    });
+    if (startProvider.status === "blocked") {
+      setAuxiliaryStartError(startProvider.error);
       return;
     }
+    const launchProviderId = startProvider.providerId;
 
-    const loadRevision = auxiliaryLoadRevisionRef.current + 1;
-    auxiliaryLoadRevisionRef.current = loadRevision;
+    const loadRevision = beginAuxiliarySessionStartOperation({
+      loadRevision: auxiliaryLoadRevisionRef,
+      resetLaunchFeedback: resetAuxiliaryLaunchFeedback,
+      setActionPending: setIsAuxiliaryActionPending,
+    });
     const parentSessionId = selectedSession.id;
-    const canApplyLoadResult = () => auxiliaryLoadRevisionRef.current === loadRevision;
+    const canApplyLoadResult = createAuxiliaryLoadRevisionGuard({
+      loadRevision: auxiliaryLoadRevisionRef,
+      expectedRevision: loadRevision,
+    });
 
-    setIsAuxiliaryActionPending(true);
     try {
       const launchSelectionSessions = await withmateApi.listSessionSummaries().catch(() => sessions);
-      const lastUsedSelection = resolveLastUsedSessionSelection(launchSelectionSessions, auxiliaryLaunchProviderId);
-      const session = await withmateApi.createAuxiliarySession({
-        parentSessionId,
-        provider: auxiliaryLaunchProviderId,
-        model: lastUsedSelection?.model,
-        reasoningEffort: lastUsedSelection?.reasoningEffort,
-        customAgentName: lastUsedSelection?.customAgentName,
+      const lastUsedSelection = resolveLastUsedSessionSelection(launchSelectionSessions, launchProviderId);
+      const launchDefaults = resolveAuxiliaryLaunchSessionDefaults({
+        providerId: launchProviderId,
+        defaultsProviderId: launchProviderId,
+        defaults: lastUsedSelection,
       });
-      setActiveAuxiliarySession(session);
-      setIsActionDockPinnedExpanded(true);
-      setForceComposerBlockedFeedback(false);
-      setAuxiliaryLaunchDialogOpen(false);
-      setAuxiliaryLaunchFeedback("");
+      await runAuxiliarySessionStartOperation({
+        parentSessionId,
+        provider: launchProviderId,
+        defaults: launchDefaults,
+        createAuxiliarySession: (request) => withmateApi.createAuxiliarySession(request),
+        applyStartedSession: createActiveAuxiliarySessionStartResultApplier({
+          mutationRevision: auxiliarySessionMutationRevisionRef,
+          activeSessionRef: activeAuxiliarySessionRef,
+          setActiveSession: setActiveAuxiliarySession,
+          setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+          setForceComposerBlockedFeedback,
+          closeLaunchDialog: closeAuxiliaryLaunchDialog,
+        }),
+      });
     } catch (error) {
-      setAuxiliaryLaunchFeedback(error instanceof Error ? error.message : "Auxiliary Session の開始に失敗したよ。");
+      setAuxiliaryStartError(error);
     } finally {
-      void loadClosedAuxiliarySessions(parentSessionId, canApplyLoadResult);
-      setIsAuxiliaryActionPending(false);
+      finishAuxiliarySessionStartClosedLoadWithApi({
+        parentSessionId,
+        api: withmateApi,
+        isActive: canApplyLoadResult,
+        setClosedSessions: setClosedAuxiliarySessions,
+        setActionPending: setIsAuxiliaryActionPending,
+      });
     }
   };
 
   const handleReturnToMainSession = async () => {
-    if (!withmateApi || !activeAuxiliarySession || isAuxiliaryActionPending) {
-      return;
-    }
-
-    setIsAuxiliaryActionPending(true);
-    try {
-      auxiliaryLoadRevisionRef.current += 1;
-      const closedSession = await withmateApi.closeAuxiliarySession(activeAuxiliarySession.id);
-      setClosedAuxiliarySessions((current) => [
-        ...current.filter((session) => session.id !== closedSession.id),
-        closedSession,
-      ]);
-      activeAuxiliarySessionRef.current = null;
-      setActiveAuxiliarySession(null);
-      setComposerCaret(Math.min(mainComposerCaretRef.current, draft.length));
-      setIsActionDockPinnedExpanded(false);
-      setForceComposerBlockedFeedback(false);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "Auxiliary Session の終了に失敗したよ。");
-    } finally {
-      setIsAuxiliaryActionPending(false);
-    }
+    await runGuardedAuxiliarySessionReturnToMainOperationWithApi({
+      api: withmateApi,
+      activeSession: activeAuxiliarySession,
+      isActionPending: isAuxiliaryActionPending,
+      alertError: (message) => window.alert(message),
+      setActionPending: setIsAuxiliaryActionPending,
+      loadRevision: auxiliaryLoadRevisionRef,
+      setClosedSessions: setClosedAuxiliarySessions,
+      mutationRevision: auxiliarySessionMutationRevisionRef,
+      activeSessionRef: activeAuxiliarySessionRef,
+      setActiveSession: setActiveAuxiliarySession,
+      mainDraft: draft,
+      mainCaret: mainComposerCaretRef.current,
+      setComposerCaret,
+      setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+      setForceComposerBlockedFeedback,
+    });
   };
 
   const handleAuxiliaryDraftChange = async (value: string, selectionStart: number) => {
-    setForceComposerBlockedFeedback(false);
-    setComposerCaret(selectionStart);
-    if (!withmateApi || !activeAuxiliarySession) {
-      return;
-    }
-
-    const nextSession = {
-      ...activeAuxiliarySession,
-      composerDraft: value,
-      updatedAt: currentTimestampLabel(),
-    };
-    activeAuxiliarySessionRef.current = nextSession;
-    setActiveAuxiliarySession(nextSession);
-    try {
-      const saveOperation = auxiliaryDraftSaveQueueRef.current
-        .catch(() => undefined)
-        .then(async () => {
-          const current = activeAuxiliarySessionRef.current;
-          if (!current || current.id !== nextSession.id) {
-            return null;
-          }
-          if (current.composerDraft !== value) {
-            return null;
-          }
-
-          const request = {
-            ...current,
-            composerDraft: value,
-            updatedAt: currentTimestampLabel(),
-          };
-          const saved = await withmateApi.updateAuxiliarySession(request);
-          return { request, saved };
-        });
-      auxiliaryDraftSaveQueueRef.current = saveOperation.then(() => undefined, () => undefined);
-      const result = await saveOperation;
-      if (!result) {
-        return;
-      }
-
-      const { request, saved } = result;
-      setActiveAuxiliarySession((current) => {
-        if (!current || !hasSameAuxiliaryDraftSaveContext(current, request)) {
-          return current;
-        }
-
-        activeAuxiliarySessionRef.current = saved;
-        return saved;
-      });
-    } catch (error) {
-      console.error(error);
-    }
+    await runAuxiliaryDraftChangeAndSaveOperation({
+      draft: value,
+      selectionStart,
+      clearBlockedFeedback: () => setForceComposerBlockedFeedback(false),
+      setComposerCaret,
+      currentSession: activeAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+      draftSaveQueue: auxiliaryDraftSaveQueueRef.current,
+      getCurrentSession: () => activeAuxiliarySessionRef.current,
+      saveAuxiliarySession: withmateApi
+        ? (request) => enqueueAuxiliarySessionSaveWithQueue(
+            auxiliarySessionSaveQueueRef,
+            () => withmateApi.updateAuxiliarySession(request),
+          )
+        : null,
+      mutationRevision: auxiliarySessionMutationRevisionRef,
+      activeSessionRef: activeAuxiliarySessionRef,
+      draftSaveQueueRef: auxiliaryDraftSaveQueueRef,
+      setActiveSession: setActiveAuxiliarySession,
+      onError: (error) => {
+        console.error(error);
+      },
+    });
   };
 
   const sendAuxiliaryMessage = async (messageText: string) => {
@@ -2639,187 +2252,121 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const nextMessage = messageText.trim();
-    if (!nextMessage) {
-      throw new Error("送信するメッセージが空だよ。");
-    }
-    if (activeAuxiliarySession.runState === "running") {
-      throw new Error("Auxiliary Session はまだ実行中だよ。");
-    }
-    if (composerBlockedReason) {
-      throw new Error(composerBlockedReason);
-    }
-
-    await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
-    const currentAuxiliarySession = activeAuxiliarySessionRef.current ?? activeAuxiliarySession;
-    if (currentAuxiliarySession.id !== activeAuxiliarySession.id) {
-      return;
-    }
-    if (currentAuxiliarySession.runState === "running") {
-      throw new Error("Auxiliary Session はまだ実行中だよ。");
-    }
-
-    setIsActionDockPinnedExpanded(false);
-    const displayAfterMessageIndex =
-      currentAuxiliarySession.messages.length === 0 && selectedSession
-        ? selectedSession.messages.length - 1
-        : currentAuxiliarySession.displayAfterMessageIndex;
-    const runningSession: AuxiliarySession = {
-      ...currentAuxiliarySession,
-      runState: "running",
-      composerDraft: "",
+    const result = await runAuxiliarySessionSendOperationWithApi({
+      activeSession: activeAuxiliarySession,
+      composerBlockedReason,
+      messageText,
+      parentMessageCount: selectedSession?.messages.length ?? null,
       updatedAt: currentTimestampLabel(),
-      messages: [...currentAuxiliarySession.messages, { role: "user", text: nextMessage }],
-      displayAfterMessageIndex,
-    };
-    activeAuxiliarySessionRef.current = runningSession;
-    setActiveAuxiliarySession(runningSession);
-    setLiveRunState((current) => (
-      current.ownerSessionId === runningSession.id
-        ? { ownerSessionId: runningSession.id, state: createPendingLiveSessionRunState(buildAuxiliaryRuntimeSession(selectedSession!, runningSession), current.state) }
-        : { ownerSessionId: runningSession.id, state: createPendingLiveSessionRunState(buildAuxiliaryRuntimeSession(selectedSession!, runningSession)) }
-    ));
-
-    try {
-      if (displayAfterMessageIndex !== currentAuxiliarySession.displayAfterMessageIndex) {
-        await withmateApi.updateAuxiliarySession({
-          ...currentAuxiliarySession,
-          displayAfterMessageIndex,
-        });
-      }
-      const saved = await withmateApi.runAuxiliarySessionTurn(currentAuxiliarySession.id, { userMessage: nextMessage });
-      activeAuxiliarySessionRef.current = saved;
-      setActiveAuxiliarySession(saved);
-    } catch (error) {
-      console.error(error);
-      setLiveRunState((current) => (
-        current.ownerSessionId === runningSession.id ? { ownerSessionId: runningSession.id, state: null } : current
-      ));
-      activeAuxiliarySessionRef.current = currentAuxiliarySession;
-      setActiveAuxiliarySession(currentAuxiliarySession);
-      throw error;
-    }
+      draftSaveQueue: auxiliaryDraftSaveQueueRef,
+      sessionSaveQueue: auxiliarySessionSaveQueueRef,
+      mutationRevision: auxiliarySessionMutationRevisionRef,
+      getCurrentSession: () => activeAuxiliarySessionRef.current,
+      beforeRunningSessionApplied: () => {
+        setIsActionDockPinnedExpanded(false);
+      },
+      applyRunningSession: createAuxiliarySessionRunningApplier({
+        activeSessionRef: activeAuxiliarySessionRef,
+        setActiveSession: setActiveAuxiliarySession,
+        updateLiveRunState: (update) => setLiveRunState(update),
+        buildRuntimeSession: (runningSession) => buildMainAuxiliaryRuntimeSession(
+          selectedSession!,
+          runningSession,
+        ),
+      }),
+      ...createAuxiliarySessionSendResultAppliers({
+        activeSessionRef: activeAuxiliarySessionRef,
+        setActiveSession: setActiveAuxiliarySession,
+      }),
+      clearPendingLiveRun: createAuxiliarySessionPendingLiveRunClearer({
+        updateLiveRunState: (update) => setLiveRunState(update),
+      }),
+      api: withmateApi,
+    });
+    handleAuxiliarySessionSendOperationResult({
+      result,
+      onBlocked: (preflight) => {
+        throw new Error(preflight.blockedMessage);
+      },
+      onRunningTargetBlocked: () => {
+        throw new Error("Auxiliary Session はまだ実行中だよ。");
+      },
+      onError: (error) => {
+        console.error(error);
+        throw error;
+      },
+    });
   };
 
-  const handleCopyMessageText = (text: string) => {
-    const normalized = text.trim();
-    if (!normalized) {
-      return;
-    }
-
-    void navigator.clipboard.writeText(normalized).catch((error) => {
+  const handleCopyMessageText = createCopyMessageTextHandler({
+    writeText: (normalized) => navigator.clipboard.writeText(normalized),
+    onFailure: (error) => {
       console.error(error);
       window.alert("コピーに失敗したよ。");
-    });
-  };
+    },
+  });
 
-  const insertTextIntoMainComposer = (text: string) => {
-    if (!text) {
-      return;
-    }
-
-    const textarea = activeAuxiliarySession ? null : composerTextareaRef.current;
-    const { draft: nextDraft, caret: nextCaret } = insertComposerTextAtCaret(
-      draft,
-      text,
-      textarea?.selectionStart ?? mainComposerCaretRef.current,
-    );
-
-    setDraft(nextDraft);
-    mainComposerCaretRef.current = nextCaret;
-    if (!activeAuxiliarySession) {
-      setComposerCaret(nextCaret);
-    }
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
-
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
+  const handleQuoteMessageText = createQuoteMessageTextHandler({
+    isBlocked: () => (
+      activeAuxiliarySession
+        ? activeAuxiliarySession.runState === "running" || isAuxiliaryActionPending || !!composerBlockedReason
+        : isComposerDisabled
+    ),
+    notifyBlocked: triggerComposerBlockedFeedback,
+    getComposerState: () => ({
+      draft: activeAuxiliarySession ? activeAuxiliarySession.composerDraft : draft,
+      fallbackCaret: activeAuxiliarySession ? composerCaret : mainComposerCaretRef.current,
+      textarea: composerTextareaRef.current,
+    }),
+    applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
+      if (activeAuxiliarySession) {
+        void handleAuxiliaryDraftChange(nextDraft, nextCaret);
         return;
       }
 
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
-  };
-
-  const insertTextIntoAuxiliaryComposer = (text: string) => {
-    if (!text || !activeAuxiliarySession) {
-      return;
-    }
-
-    const textarea = composerTextareaRef.current;
-    const { draft: nextDraft, caret: nextCaret } = insertComposerTextAtCaret(
-      activeAuxiliarySession.composerDraft,
-      text,
-      textarea?.selectionStart ?? composerCaret,
-    );
-
-    void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-    window.requestAnimationFrame(() => {
-      textarea?.focus();
-      textarea?.setSelectionRange(nextCaret, nextCaret);
-    });
-  };
-
-  const handleQuoteMessageText = (text: string) => {
-    const quote = formatMarkdownQuote(text);
-    if (activeAuxiliarySession) {
-      if (activeAuxiliarySession.runState === "running" || isAuxiliaryActionPending || composerBlockedReason) {
-        triggerComposerBlockedFeedback();
-        return;
-      }
-
-      insertTextIntoAuxiliaryComposer(quote);
-      return;
-    }
-
-    if (isComposerDisabled) {
-      triggerComposerBlockedFeedback();
-      return;
-    }
-
-    insertTextIntoMainComposer(quote);
-  };
+      applyComposerDraftChangeCommand({
+        value: nextDraft,
+        selectionStart: nextCaret,
+        setDraft,
+        setComposerCaret,
+        syncMainComposerCaret: (selectionStart) => {
+          mainComposerCaretRef.current = selectionStart;
+        },
+      });
+      applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
+    },
+    restoreComposerTextareaFocusAndCaret,
+  });
 
   const insertReferencePaths = (selectedPaths: string[]) => {
-    if (selectedPaths.length === 0) {
-      return;
-    }
-
     const textarea = composerTextareaRef.current;
     const targetAuxiliarySession = activeAuxiliarySession;
     const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
-    const referenceTokens = selectedPaths.map((selectedPath) => {
-      const referencePath = selectedSession
-        ? toWorkspaceRelativeReference(selectedSession.workspacePath, selectedPath) ?? normalizePathForReference(selectedPath)
-        : normalizePathForReference(selectedPath);
-      return formatPathReference(referencePath);
-    });
-    const currentCaret = textarea?.selectionStart ?? composerCaret;
-    const leadingSpacer = currentCaret > 0 && !/\s/.test(currentDraft[currentCaret - 1] ?? "") ? " " : "";
-    const trailingSpacer = currentDraft.length > currentCaret && !/\s/.test(currentDraft[currentCaret] ?? "") ? " " : "";
-    const insertion = `${leadingSpacer}${referenceTokens.join(" ")}${trailingSpacer}`;
-    const nextDraft = `${currentDraft.slice(0, currentCaret)}${insertion}${currentDraft.slice(currentCaret)}`;
-    const nextCaret = currentCaret + insertion.length;
-
-    if (targetAuxiliarySession) {
-      void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-    } else {
-      setDraft(nextDraft);
-      mainComposerCaretRef.current = nextCaret;
-    }
-    setComposerCaret(nextCaret);
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
-
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
+    applySelectedPathReferenceInsertionCommand({
+      draft: currentDraft,
+      fallbackCaret: composerCaret,
+      selectedPaths,
+      textarea,
+      workspacePath: selectedSession?.workspacePath ?? null,
+      applyInsertion: (insertionState) => {
+        const { draft: nextDraft, caret: nextCaret } = insertionState;
+        if (targetAuxiliarySession) {
+          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+          setComposerCaret(nextCaret);
+        } else {
+          applyComposerDraftChangeCommand({
+            value: nextDraft,
+            selectionStart: nextCaret,
+            setDraft,
+            setComposerCaret,
+            syncMainComposerCaret: (selectionStart) => {
+              mainComposerCaretRef.current = selectionStart;
+            },
+          });
+        }
+        applyWorkspacePathMatchState(insertionState);
+      },
+      restoreComposerTextareaFocusAndCaret,
     });
   };
 
@@ -2827,78 +2374,45 @@ export default function AgentSessionWindowApp() {
     insertReferencePaths([selectedPath]);
   };
 
-  const handleRemoveAttachmentReference = (attachmentPathCandidates: string[]) => {
-    const escapedCandidates = attachmentPathCandidates
-      .map((candidate) => formatPathReference(candidate))
-      .map((candidate) => candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const handleRemoveAttachmentReference = createPathReferenceRemovalHandler({
+    getDraft: () => activeAuxiliarySession ? activeAuxiliarySession.composerDraft : draft,
+    applyRemoval: (nextState) => {
+      const { draft: nextDraft, caret: nextCaret } = nextState;
+      if (activeAuxiliarySession) {
+        void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+        setComposerCaret(nextCaret);
+      } else {
+        applyComposerDraftChangeCommand({
+          value: nextDraft,
+          selectionStart: nextCaret,
+          setDraft,
+          setComposerCaret,
+          syncMainComposerCaret: (selectionStart) => {
+            mainComposerCaretRef.current = selectionStart;
+          },
+        });
+      }
+      applyWorkspacePathMatchState(nextState);
+    },
+  });
 
-    const targetAuxiliarySession = activeAuxiliarySession;
-    let nextDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
-    for (const escapedCandidate of escapedCandidates) {
-      nextDraft = nextDraft.replace(
-        new RegExp(`(^|[\\s(])${escapedCandidate}(?=\\s|$|[),.;:!?])`),
-        (_match, leadingWhitespace: string) => leadingWhitespace || "",
-      );
-    }
-
-    nextDraft = nextDraft
-      .replace(/[ \t]{2,}/g, " ")
-      .replace(/\n{3,}/g, "\n\n");
-
-    if (targetAuxiliarySession) {
-      void handleAuxiliaryDraftChange(nextDraft, nextDraft.length);
-    } else {
-      setDraft(nextDraft);
-      mainComposerCaretRef.current = nextDraft.length;
-    }
-    setComposerCaret(nextDraft.length);
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
-  };
-
-  const handlePickFile = async () => {
+  const pickAndInsertPath = async (kind: ComposerPathPickerKind) => {
     if (!withmateApi || isSelectedSessionReadOnly) {
       return;
     }
 
     setIsSkillPickerOpen(false);
-    const selectedPath = await withmateApi.pickFile(pickerBaseDirectory || selectedSession?.workspacePath || null);
-    if (!selectedPath) {
-      return;
-    }
-
-    setPickerBaseDirectory(toDirectoryPath(selectedPath));
-    insertReferencePath(selectedPath);
-  };
-
-  const handlePickFolder = async () => {
-    if (!withmateApi || isSelectedSessionReadOnly) {
-      return;
-    }
-
-    setIsSkillPickerOpen(false);
-    const selectedPath = await withmateApi.pickDirectory(pickerBaseDirectory || selectedSession?.workspacePath || null);
-    if (!selectedPath) {
-      return;
-    }
-
-    setPickerBaseDirectory(selectedPath);
-    insertReferencePath(selectedPath);
-  };
-
-  const handlePickImage = async () => {
-    if (!withmateApi || isSelectedSessionReadOnly) {
-      return;
-    }
-
-    setIsSkillPickerOpen(false);
-    const selectedPath = await withmateApi.pickImageFile(pickerBaseDirectory || selectedSession?.workspacePath || null);
-    if (!selectedPath) {
-      return;
-    }
-
-    setPickerBaseDirectory(toDirectoryPath(selectedPath));
-    insertReferencePath(selectedPath);
+    const selectedPath = await pickComposerReferencePath(
+      kind,
+      pickerBaseDirectory || selectedSession?.workspacePath || null,
+      withmateApi,
+    );
+    applyPickedComposerReferencePathCommand({
+      kind,
+      selectedPath,
+      setPickerBaseDirectory,
+      insertReferencePath: (path) => insertReferencePath(path),
+    });
   };
 
   const handleAddToSessionFiles = async () => {
@@ -2917,8 +2431,12 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
-    insertReferencePaths(savedPaths);
+    applySessionFilesReferencePathsCommand({
+      selectedPaths,
+      referencePaths: savedPaths,
+      setPickerBaseDirectory,
+      insertReferencePaths,
+    });
   };
 
   const handlePickSessionFiles = async () => {
@@ -2932,131 +2450,106 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
-    insertReferencePaths(selectedPaths);
-  };
-
-  const handleComposerPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const targetAuxiliarySession = activeAuxiliarySession;
-    if (
-      !withmateApi ||
-      !selectedSession ||
-      isSelectedSessionReadOnly ||
-      (targetAuxiliarySession ? targetAuxiliarySession.runState === "running" : selectedSession.runState === "running")
-    ) {
-      return;
-    }
-
-    const files = Array.from(event.clipboardData.files);
-    const itemFiles = Array.from(event.clipboardData.items)
-      .filter((item) => item.kind === "file")
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => file !== null);
-    const pastedFiles = files.length > 0 ? files : itemFiles;
-    if (pastedFiles.length === 0) {
-      return;
-    }
-
-    event.preventDefault();
-    const savedPaths: string[] = [];
-    for (const file of pastedFiles) {
-      const buffer = await file.arrayBuffer();
-      const fileName = file.name.trim() || `pasted-${currentTimestampLabel().replace(/[:/\\\s]+/g, "-")}.png`;
-      const savedPath = await withmateApi.savePastedSessionFile({
-        sessionId: selectedSession.id,
-        fileName,
-        data: buffer,
-      });
-      savedPaths.push(savedPath);
-    }
-
-    insertReferencePaths(savedPaths);
-  };
-
-  const handleAddAdditionalDirectory = async () => {
-    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly || selectedSession.runState === "running") {
-      return;
-    }
-
-    const selectedPath = await withmateApi.pickDirectory(pickerBaseDirectory || selectedSession.workspacePath || null);
-    if (!selectedPath) {
-      return;
-    }
-
-    const nextDirectories = Array.from(new Set([...selectedSession.allowedAdditionalDirectories, selectedPath]));
-    const nextSession: Session = {
-      ...selectedSession,
-      allowedAdditionalDirectories: nextDirectories,
-    };
-    setPickerBaseDirectory(selectedPath);
-    await persistSession(nextSession);
-  };
-
-  const handleRemoveAdditionalDirectory = async (directoryPath: string) => {
-    if (!selectedSession || isSelectedSessionReadOnly || selectedSession.provider !== "codex" || selectedSession.runState === "running") {
-      return;
-    }
-
-    const nextDirectories = selectedSession.allowedAdditionalDirectories.filter((entry) => entry !== directoryPath);
-    if (nextDirectories.length === selectedSession.allowedAdditionalDirectories.length) {
-      return;
-    }
-
-    const nextSession: Session = {
-      ...selectedSession,
-      allowedAdditionalDirectories: nextDirectories,
-    };
-    await persistSession(nextSession);
-  };
-
-  const handleAddAuxiliaryAdditionalDirectory = async () => {
-    if (!withmateApi || !selectedSession || !activeAuxiliarySession || activeAuxiliarySession.runState === "running") {
-      return;
-    }
-
-    const selectedPath = await withmateApi.pickDirectory(pickerBaseDirectory || selectedSession.workspacePath || null);
-    if (!selectedPath) {
-      return;
-    }
-
-    setPickerBaseDirectory(selectedPath);
-    await updateActiveAuxiliarySession((current) => ({
-      ...current,
-      allowedAdditionalDirectories: Array.from(new Set([...current.allowedAdditionalDirectories, selectedPath])),
-      updatedAt: currentTimestampLabel(),
-    }));
-  };
-
-  const handleRemoveAuxiliaryAdditionalDirectory = async (directoryPath: string) => {
-    await updateActiveAuxiliarySession((current) => {
-      const nextDirectories = current.allowedAdditionalDirectories.filter((entry) => entry !== directoryPath);
-      return {
-        ...current,
-        allowedAdditionalDirectories: nextDirectories,
-        updatedAt: currentTimestampLabel(),
-      };
+    applySessionFilesReferencePathsCommand({
+      selectedPaths,
+      referencePaths: selectedPaths,
+      setPickerBaseDirectory,
+      insertReferencePaths,
     });
   };
 
-  const handleTitleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      void handleSaveTitle();
-      return;
-    }
+  const handleComposerPaste = createPastedSessionAttachmentHandler({
+    alertError: (message) => window.alert(message),
+    canPaste: () => {
+      const targetAuxiliarySession = activeAuxiliarySession;
+      return !!withmateApi &&
+        !!selectedSession &&
+        !isSelectedSessionReadOnly &&
+        !(targetAuxiliarySession
+          ? targetAuxiliarySession.runState === "running"
+          : selectedSessionRunState === "running");
+    },
+    currentTimestampLabel,
+    fallbackErrorMessage: "貼り付けたファイルの保存に失敗したよ。",
+    getSavePastedSessionFile: () => {
+      return withmateApi ? (request) => withmateApi.savePastedSessionFile(request) : null;
+    },
+    getSessionId: () => selectedSession?.id,
+    insertReferencePaths,
+  });
 
-    if (event.key === "Escape") {
-      event.preventDefault();
-      handleCancelTitleEdit();
-    }
+  const handleAddAdditionalDirectory = async () => {
+    await runPickedAdditionalDirectoryOperation({
+      canPickDirectory: () => !!withmateApi &&
+        !!selectedSession &&
+        !isSelectedSessionReadOnly &&
+        selectedSessionRunState !== "running",
+      getPickerBaseDirectory: () => resolveAdditionalDirectoryPickerBase(pickerBaseDirectory, selectedSession?.workspacePath),
+      pickDirectory: (baseDirectory) => withmateApi?.pickDirectory(baseDirectory) ?? Promise.resolve(null),
+      applyPickedDirectory: async (selectedPath) => {
+        if (!selectedSession) {
+          return;
+        }
+        const nextSession: Session = buildSessionWithAddedAdditionalDirectory(selectedSession, selectedPath);
+        applyPickedAdditionalDirectoryUiStateCommand({
+          selectedPath,
+          setPickerBaseDirectory,
+        });
+        await persistSession(nextSession);
+      },
+    });
   };
 
-  const toggleArtifact = (artifactKey: string) => {
-    setExpandedArtifacts((current) => ({
-      ...current,
-      [artifactKey]: !current[artifactKey],
-    }));
+  const handleRemoveAdditionalDirectory = async (directoryPath: string) => {
+    await runAdditionalDirectoryRemovalOperation({
+      directoryPath,
+      canRemoveDirectory: () => !!selectedSession &&
+        !isSelectedSessionReadOnly &&
+        selectedSession.provider === "codex" &&
+        selectedSessionRunState !== "running",
+      removeDirectory: async (targetPath) => {
+        if (!selectedSession) {
+          return false;
+        }
+        const nextSession = buildSessionWithRemovedAdditionalDirectory(selectedSession, targetPath);
+        if (!nextSession) {
+          return false;
+        }
+        await persistSession(nextSession);
+        return true;
+      },
+    });
   };
+
+  const handleAddAuxiliaryAdditionalDirectory = async () => {
+    await runAddAuxiliaryAdditionalDirectoryOperationWithApi({
+      api: withmateApi,
+      hasParentSession: !!selectedSession,
+      activeAuxiliarySession,
+      pickerBaseDirectory,
+      workspacePath: selectedSession?.workspacePath,
+      setPickerBaseDirectory,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
+  };
+
+  const handleRemoveAuxiliaryAdditionalDirectory = async (directoryPath: string) => {
+    await runRemoveAuxiliaryAdditionalDirectoryOperation({
+      directoryPath,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
+  };
+
+  const handleTitleInputKeyDown = createTitleInputKeyHandler({
+    saveTitle: () => void handleSaveTitle(),
+    cancelTitleEdit: handleCancelTitleEdit,
+  });
+
+  const toggleArtifact = createExpandedArtifactToggleHandler({
+    setExpandedArtifacts,
+  });
 
   const scrollActivityMonitorToBottom = () => {
     const activityMonitorElement = activityMonitorRef.current;
@@ -3109,29 +2602,23 @@ export default function AgentSessionWindowApp() {
     }
   };
 
-  const handleOpenSessionFilesTerminal = async () => {
-    if (!withmateApi || !selectedSession) {
-      return;
-    }
+  const handleOpenSessionFilesTerminal = createSessionFilesOpenHandler({
+    getSessionId: () => selectedSession?.id,
+    getOpenSessionFiles: () => (
+      withmateApi ? (sessionId) => withmateApi.openSessionFilesTerminal(sessionId) : null
+    ),
+    alertError: (message) => window.alert(message),
+    fallbackErrorMessage: "session files terminal の起動に失敗したよ。",
+  });
 
-    try {
-      await withmateApi.openSessionFilesTerminal(selectedSession.id);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "session files terminal の起動に失敗したよ。");
-    }
-  };
-
-  const handleOpenSessionFilesExplorer = async () => {
-    if (!withmateApi || !selectedSession) {
-      return;
-    }
-
-    try {
-      await withmateApi.openSessionFilesDirectory(selectedSession.id);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "session files directory を開けなかったよ。");
-    }
-  };
+  const handleOpenSessionFilesExplorer = createSessionFilesOpenHandler({
+    getSessionId: () => selectedSession?.id,
+    getOpenSessionFiles: () => (
+      withmateApi ? (sessionId) => withmateApi.openSessionFilesDirectory(sessionId) : null
+    ),
+    alertError: (message) => window.alert(message),
+    fallbackErrorMessage: "session files directory を開けなかったよ。",
+  });
 
   const handleJumpToActivityMonitorBottom = () => {
     setIsActivityMonitorFollowing(true);
@@ -3175,7 +2662,9 @@ export default function AgentSessionWindowApp() {
     selectedSession?.id,
     selectedSessionLiveRun?.threadId,
   ]);
-  const isSelectedSessionRunning = selectedSessionRunState === "running";
+  const isSelectedSessionRunning = resolveSelectedSessionIsRunning({
+    runState: selectedSessionRunState,
+  });
   const renderedIsRunning = activeAuxiliarySession
     ? activeAuxiliarySession.runState === "running"
     : isSelectedSessionRunning;
@@ -3199,14 +2688,17 @@ export default function AgentSessionWindowApp() {
   );
 
   useEffect(() => {
-    if (!availableContextPaneTabs.includes(activeContextPaneTab)) {
-      setActiveContextPaneTab(availableContextPaneTabs[0] ?? "latest-command");
-    }
+    applyUnavailableContextPaneTabFallbackCommand({
+      activeTab: activeContextPaneTab,
+      availableTabs: availableContextPaneTabs,
+      setActiveTab: setActiveContextPaneTab,
+    });
   }, [activeContextPaneTab, availableContextPaneTabs]);
 
-  const handleCycleContextPaneTab = (direction: -1 | 1) => {
-    setActiveContextPaneTab((current) => cycleContextPaneTab(current, direction, availableContextPaneTabs));
-  };
+  const handleCycleContextPaneTab = createContextPaneTabCycleHandler({
+    availableTabs: availableContextPaneTabs,
+    setActiveTab: setActiveContextPaneTab,
+  });
 
   const auxiliaryComposerSendability = useMemo(
     () => buildComposerSendabilityState({
@@ -3232,30 +2724,16 @@ export default function AgentSessionWindowApp() {
   const renderedComposerButtonTitle = activeAuxiliarySession
     ? getComposerSendButtonTitle(auxiliaryComposerSendability)
     : composerSendButtonTitle;
-  const auxiliaryHeaderActions = activeAuxiliarySession ? (
-    <div className="session-window-control-group auxiliary-session-control-group" role="group" aria-label="Auxiliary session actions">
-      <span className="session-window-control-group-label">Auxiliary</span>
-      <button
-        className="drawer-toggle compact secondary"
-        type="button"
-        onClick={() => void handleReturnToMainSession()}
-        disabled={isAuxiliaryActionPending || activeAuxiliarySession.runState === "running"}
-      >
-        Return to main
-      </button>
-    </div>
-  ) : (
-    <div className="session-window-control-group auxiliary-session-control-group" role="group" aria-label="Auxiliary session actions">
-      <button
-        className="drawer-toggle compact secondary"
-        type="button"
-        onClick={handleOpenAuxiliaryLaunchDialog}
-        disabled={isAuxiliaryActionPending || isSelectedSessionRunning || isSelectedSessionReadOnly}
-      >
-        Auxiliary
-      </button>
-    </div>
-  );
+  const auxiliaryHeaderActions = createAuxiliaryHeaderActions({
+    ...resolveAuxiliaryHeaderActionState({
+      isActive: !!activeAuxiliarySession,
+      isActionPending: isAuxiliaryActionPending,
+      isStartBlocked: isSelectedSessionRunning || isSelectedSessionReadOnly,
+      activeRunState: activeAuxiliarySession?.runState,
+    }),
+    onStart: handleOpenAuxiliaryLaunchDialog,
+    onReturnToMain: () => void handleReturnToMainSession(),
+  });
 
   if (!desktopRuntime) {
     return <ChatWindowStatusScreen message="Session Window は Electron から開いてね。" />;
@@ -3294,7 +2772,7 @@ export default function AgentSessionWindowApp() {
         liveRunAssistantText,
         hasLiveRunAssistantText,
         liveRunErrorMessage: selectedSessionLiveRun?.errorMessage ?? "",
-        pendingMessageGroupId: activeAuxiliarySession?.runState === "running" ? activeAuxiliarySession.id : null,
+        pendingMessageGroupId: resolvePendingAuxiliaryMessageGroupId(activeAuxiliarySession),
         isMessageListFollowing,
         retryBanner: activeAuxiliarySession ? null : retryBanner,
         isRetryDetailsOpen,
@@ -3380,20 +2858,12 @@ export default function AgentSessionWindowApp() {
         onOpenSessionFilesExplorer: () => void handleOpenSessionFilesExplorer(),
         onMessageListScroll: handleMessageListScroll,
         onToggleArtifact: toggleArtifact,
-        onLoadArtifactDetail: (messageIndex) => {
-          const source = messageListSources[messageIndex];
-          if (!source) {
-            return Promise.resolve(null);
-          }
-          if (source.kind === "auxiliary") {
-            return Promise.resolve(source.artifact ?? null);
-          }
-
-          return (
-            withmateApi?.getSessionMessageArtifact(selectedSession.id, source.messageIndex) ??
-            Promise.resolve(null)
-          );
-        },
+        onLoadArtifactDetail: (messageIndex) =>
+          loadProjectedMessageArtifact({
+            source: messageListSources[messageIndex],
+            loadSessionArtifact: (sourceMessageIndex) =>
+              withmateApi?.getSessionMessageArtifact(selectedSession.id, sourceMessageIndex) ?? null,
+          }),
         onOpenDiff: (title, file) =>
           setSelectedDiff({
             title,
@@ -3409,26 +2879,20 @@ export default function AgentSessionWindowApp() {
             : resolveSessionMicrocopy("empty.changed_files", ["changed-files-empty", artifactKey]),
         onCopyMessageText: handleCopyMessageText,
         onQuoteMessageText: handleQuoteMessageText,
-        onToggleRetryDetails: () => setIsRetryDetailsOpen((current) => !current),
+        onToggleRetryDetails: handleToggleRetryDetails,
         onResendLastMessage: () => void handleResendLastMessage(),
         onEditLastMessage: handleEditLastMessage,
         onConfirmRetryDraftReplace: handleConfirmRetryDraftReplace,
         onCancelRetryDraftReplace: handleCancelRetryDraftReplace,
-        onPickFile: () => void handlePickFile(),
-        onPickFolder: () => void handlePickFolder(),
-        onPickImage: () => void handlePickImage(),
+        onPickFile: () => void pickAndInsertPath("file"),
+        onPickFolder: () => void pickAndInsertPath("folder"),
+        onPickImage: () => void pickAndInsertPath("image"),
         onAddToSessionFiles: () => void handleAddToSessionFiles(),
         onPickSessionFiles: () => void handlePickSessionFiles(),
-        onToggleAgentPicker: () => {
-          setIsSkillPickerOpen(false);
-          setIsAgentPickerOpen((current) => !current);
-        },
-        onToggleSkillPicker: () => {
-          setIsAgentPickerOpen(false);
-          setIsSkillPickerOpen((current) => !current);
-        },
+        onToggleAgentPicker: handleToggleAgentPicker,
+        onToggleSkillPicker: handleToggleSkillPicker,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
-        onToggleAdditionalDirectoryList: () => setIsAdditionalDirectoryListOpen((current) => !current),
+        onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
         onCollapseActionDock: handleCollapseActionDock,
         onJumpToMessageListBottom: handleJumpToMessageListBottom,
         onSelectCustomAgent: (value) => {
@@ -3458,43 +2922,74 @@ export default function AgentSessionWindowApp() {
             void handleAuxiliaryDraftChange(value, selectionStart);
             return;
           }
-          setForceComposerBlockedFeedback(false);
-          setDraft(value);
-          setComposerCaret(selectionStart);
-          mainComposerCaretRef.current = selectionStart;
+          applyComposerDraftChangeCommand({
+            value,
+            selectionStart,
+            setDraft,
+            setComposerCaret,
+            syncMainComposerCaret: (caret) => {
+              mainComposerCaretRef.current = caret;
+            },
+            clearFeedback: () => setForceComposerBlockedFeedback(false),
+          });
         },
-        onDraftFocus: () => setIsActionDockPinnedExpanded(true),
+        onDraftFocus: () => handleExpandActionDock({ focusComposer: false }),
         onDraftKeyDown: handleComposerKeyDown,
         onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleComposerPaste(event),
-        onDraftSelect: (selectionStart) => {
-          setComposerCaret(selectionStart);
-          if (!activeAuxiliarySession) {
-            mainComposerCaretRef.current = selectionStart;
-          }
-        },
-        onDraftCompositionStart: () => setIsComposerImeComposing(true),
-        onDraftCompositionEnd: () => {
-          setIsComposerImeComposing(false);
-          const selectionStart = composerTextareaRef.current?.selectionStart ?? renderedDraft.length;
-          setComposerCaret(selectionStart);
-          if (!activeAuxiliarySession) {
-            mainComposerCaretRef.current = selectionStart;
-          }
-        },
-        onSendOrCancel: () => void (
-          activeAuxiliarySession?.runState === "running"
-            ? handleCancelAuxiliaryRun()
-            : renderedSession.runState === "running"
-              ? handleCancelRun()
-              : handleSend()
-        ),
-        onExpandActionDock: () => handleExpandActionDock({ focusComposer: renderedSession.runState !== "running" }),
+        onDraftSelect: buildOnDraftSelectHandler({
+          setComposerCaret,
+          syncMainComposerCaret: !activeAuxiliarySession
+            ? (selectionStart) => {
+                mainComposerCaretRef.current = selectionStart;
+              }
+            : undefined,
+        }),
+        ...buildOnDraftCompositionHandlers({
+          setComposerCaret,
+          setIsComposerImeComposing,
+          getSelectionStart: () => composerTextareaRef.current?.selectionStart,
+          getFallbackSelectionStart: () => renderedDraft.length,
+          syncMainComposerCaret: !activeAuxiliarySession
+            ? (selectionStart) => {
+                mainComposerCaretRef.current = selectionStart;
+              }
+            : undefined,
+        }),
+        onSendOrCancel: buildAuxiliaryAwareSendOrCancelHandler({
+          shouldSendAuxiliary: !!activeAuxiliarySession,
+          isAuxiliarySessionRunning: activeAuxiliarySession?.runState === "running",
+          isSelectedSessionRunning,
+          preferAuxiliarySendOverSelectedCancel: true,
+          onCancelAuxiliaryRun: handleCancelAuxiliaryRun,
+          onSendAuxiliary: handleSend,
+          onCancelSelectedSessionRun: handleCancelRun,
+          onSendSelectedSession: handleSend,
+        }),
+        onExpandActionDock: () => handleExpandActionDock({
+          focusComposer: shouldFocusComposerForActionDockExpand({ isRunning: renderedIsRunning }),
+        }),
         onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
         onActivateWorkspacePathMatch: setActiveWorkspacePathMatchIndex,
-        onChangeApprovalMode: (value) => void (activeAuxiliarySession ? handleChangeAuxiliaryApproval(value) : handleChangeApproval(value)),
-        onChangeCodexSandboxMode: (value) => void (activeAuxiliarySession ? handleChangeAuxiliarySandboxMode(value) : handleChangeCodexSandboxMode(value)),
-        onChangeModel: (value) => void (activeAuxiliarySession ? handleChangeAuxiliaryModel(value) : handleChangeModel(value)),
-        onChangeReasoningEffort: (value) => void (activeAuxiliarySession ? handleChangeAuxiliaryReasoningEffort(value as Session["reasoningEffort"]) : handleChangeReasoningEffort(value as Session["reasoningEffort"])),
+        onChangeApprovalMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<Session["approvalMode"]>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliaryApproval,
+          onSelectedSessionChange: handleChangeApproval,
+        }),
+        onChangeCodexSandboxMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<Session["codexSandboxMode"]>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliarySandboxMode,
+          onSelectedSessionChange: handleChangeCodexSandboxMode,
+        }),
+        onChangeModel: buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliaryModel,
+          onSelectedSessionChange: handleChangeModel,
+        }),
+        onChangeReasoningEffort: buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: (value) => handleChangeAuxiliaryReasoningEffort(value as Session["reasoningEffort"]),
+          onSelectedSessionChange: (value) => handleChangeReasoningEffort(value as Session["reasoningEffort"]),
+        }),
         onStartContextRailResize: handleStartContextRailResize,
         onCycleContextPaneTab: handleCycleContextPaneTab,
         onOpenCompanionReview: (sessionId) => void withmateApi?.openCompanionReviewWindow(sessionId),
