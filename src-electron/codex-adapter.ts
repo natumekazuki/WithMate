@@ -143,6 +143,7 @@ const CODEX_WINDOWS_TASKKILL_SUCCESS_PARSE_NOISE_PATTERN =
 const CODEX_USAGE_LIMIT_MESSAGE_PATTERN = /you['’]ve hit your usage limit\./i;
 const CODEX_USAGE_LIMIT_PURCHASE_PATTERN = /purchase more credits/i;
 const CODEX_USAGE_LIMIT_RETRY_PATTERN = /try again at/i;
+const CODEX_STREAM_DEBUG_ENV = "WITHMATE_CODEX_STREAM_DEBUG";
 
 export function isCodexWindowsTaskkillSuccessParseNoiseMessage(message: string): boolean {
   return CODEX_WINDOWS_TASKKILL_SUCCESS_PARSE_NOISE_PATTERN.test(message.trim());
@@ -164,6 +165,11 @@ function resolveCodexProviderErrorReason(message: string, canceled: boolean): Pr
   }
 
   return "unknown";
+}
+
+function isCodexStreamDebugLogEnabled(): boolean {
+  const value = process.env[CODEX_STREAM_DEBUG_ENV]?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
 function shouldIgnoreCodexWindowsTaskkillParseNoise(
@@ -1659,20 +1665,23 @@ export class CodexAdapter implements ProviderTurnAdapter {
       const { events } = await thread.runStreamed(turnInput, {
         signal: input.signal,
       });
-      this.writeLog({
-        level: "debug",
-        kind: "codex.run.stream.opened",
-        message: "Codex session turn stream opened",
-        data: {
-          sessionId: input.session.id,
-          threadId: streamState.threadId,
-        },
-      });
+      const streamDebugLogEnabled = isCodexStreamDebugLogEnabled();
+      if (streamDebugLogEnabled) {
+        this.writeLog({
+          level: "debug",
+          kind: "codex.run.stream.opened",
+          message: "Codex session turn stream opened",
+          data: {
+            sessionId: input.session.id,
+            threadId: streamState.threadId,
+          },
+        });
+      }
 
       for await (const event of events) {
         applyCodexTurnEvent(streamState, event);
-        const eventLogData = buildCodexTurnEventLogData(event);
-        if (eventLogData) {
+        const eventLogData = streamDebugLogEnabled ? buildCodexTurnEventLogData(event) : null;
+        if (streamDebugLogEnabled && eventLogData) {
           this.writeLog({
             level: event.type === "turn.failed" || event.type === "error" ? "warn" : "debug",
             kind: "codex.run.stream.event",
@@ -1695,15 +1704,17 @@ export class CodexAdapter implements ProviderTurnAdapter {
           getLiveStreamErrorMessage(streamState),
         );
       }
-      this.writeLog({
-        level: "info",
-        kind: "codex.run.stream.finished",
-        message: "Codex session turn stream finished",
-        data: {
-          sessionId: input.session.id,
-          ...summarizeCodexTurnStreamState(streamState),
-        },
-      });
+      if (streamDebugLogEnabled) {
+        this.writeLog({
+          level: "info",
+          kind: "codex.run.stream.finished",
+          message: "Codex session turn stream finished",
+          data: {
+            sessionId: input.session.id,
+            ...summarizeCodexTurnStreamState(streamState),
+          },
+        });
+      }
 
       if (streamState.streamErrorMessage) {
         const shouldIgnoreWindowsTaskkillParseNoise = shouldIgnoreCodexWindowsTaskkillParseNoise(
