@@ -79,6 +79,26 @@ type ProviderTurnResult = {
 };
 ```
 
+Provider 実行が失敗した場合、adapter は `ProviderTurnError` を投げる。`canceled` は既存の session phase / retry / invalidation 判定のため boolean として維持し、失敗分類は `reason` で渡す。
+
+```ts
+type ProviderErrorReason =
+  | "usage_limit"
+  | "auth"
+  | "network"
+  | "provider_unavailable"
+  | "canceled"
+  | "unknown";
+
+type ProviderTurnError = Error & {
+  partialResult: ProviderTurnResult;
+  canceled: boolean;
+  reason: ProviderErrorReason;
+};
+```
+
+Provider 固有の error message 判定は adapter 側に閉じる。`SessionRuntimeService` は `reason` を見て audit log と assistant fallback message を分け、provider 固有の英語 message を再 parse しない。
+
 ```ts
 type ProviderTurnAdapter = ProviderCodingAdapter & ProviderBackgroundAdapter;
 ```

@@ -17,6 +17,7 @@ import {
   collectCodexAssistantTextFromEventsForTesting,
   collectCodexReasoningTextFromEventsForTesting,
   isCodexWindowsTaskkillSuccessParseNoiseMessage,
+  isCodexUsageLimitMessage,
   resolveCodexThreadForSettings,
   type CodexThreadOptions,
 } from "../../src-electron/codex-adapter.js";
@@ -158,6 +159,8 @@ async function* createCodexStreamFromEvents(
 describe("CodexAdapter thread settings", () => {
   const windowsTaskkillParseNoiseMessage =
     "Failed to parse item: SUCCESS: The process with PID 13760 (child process of PID 32340) has been terminated.";
+  const usageLimitMessage =
+    "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Jun 12th, 2026 2:07 AM.";
 
   it("Windows taskkill の SUCCESS 行だけ Codex JSON parse noise として扱う", () => {
     assert.equal(
@@ -173,6 +176,13 @@ describe("CodexAdapter thread settings", () => {
       false,
     );
     assert.equal(isCodexWindowsTaskkillSuccessParseNoiseMessage("SUCCESS: ordinary command output"), false);
+  });
+
+  it("Codex usage limit message は保守的な marker が揃う場合だけ扱う", () => {
+    assert.equal(isCodexUsageLimitMessage(usageLimitMessage), true);
+    assert.equal(isCodexUsageLimitMessage("You've hit your usage limit."), false);
+    assert.equal(isCodexUsageLimitMessage("purchase more credits and try again at 2 AM"), false);
+    assert.equal(isCodexUsageLimitMessage("ordinary provider failure"), false);
   });
 
   it("turn.completed 後の Windows taskkill parse noise は成功結果として返す", async () => {
@@ -451,6 +461,70 @@ describe("CodexAdapter thread settings", () => {
           return true;
         },
       );
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("stream error の usage limit は SDK wrapper error より優先して reason を付ける", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-usage-limit-"));
+    const logs: Array<{ kind: string; data?: Record<string, unknown> }> = [];
+    const adapter = new CodexAdapter((entry) => {
+      logs.push(entry as { kind: string; data?: Record<string, unknown> });
+    }) as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+
+    try {
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-usage-limit",
+            runStreamed: async () => ({
+              events: createCodexStreamThatThrowsAfter([
+                {
+                  type: "error",
+                  message: usageLimitMessage,
+                },
+                {
+                  type: "turn.failed",
+                  error: {
+                    message: usageLimitMessage,
+                  },
+                },
+              ], "Codex Exec exited with code 1: Reading prompt from stdin..."),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+
+      await assert.rejects(
+        () => adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath)),
+        (error) => {
+          assert.equal(error instanceof ProviderTurnError, true);
+          assert.equal((error as ProviderTurnError).canceled, false);
+          assert.equal((error as ProviderTurnError).reason, "usage_limit");
+          assert.equal((error as Error).message, usageLimitMessage);
+          assert.equal((error as ProviderTurnError).partialResult.threadId, "thread-usage-limit");
+          return true;
+        },
+      );
+
+      const failedLog = logs.find((entry) => entry.kind === "codex.run.failed");
+      assert.equal(failedLog?.data?.providerErrorReason, "usage_limit");
+      assert.equal(failedLog?.data?.streamErrorMessage, usageLimitMessage);
     } finally {
       await rm(workspacePath, { recursive: true, force: true });
     }

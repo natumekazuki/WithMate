@@ -205,6 +205,56 @@ function shouldResetFailedSessionThread(
   return candidateThreadId.length > 0;
 }
 
+function extractProviderUsageLimitRetryAt(message: string): string | null {
+  const match = /\btry again at\s+(.+?)(?:\.|$)/i.exec(message);
+  return match?.[1]?.trim() || null;
+}
+
+function formatProviderUsageLimitMessage(providerId: Session["provider"], message: string): string {
+  const providerLabel = providerId === "codex" ? "Codex" : "Provider";
+  const retryAt = extractProviderUsageLimitRetryAt(message);
+  if (retryAt) {
+    return `${providerLabel}の使用上限に達しました。\n再実行可能時刻: ${retryAt}`;
+  }
+
+  const preview = toAuditTextPreview(message) ?? message;
+  return `${providerLabel}の使用上限に達しました。\n詳細: ${preview}`;
+}
+
+function formatProviderFailureMessage(params: {
+  providerId: Session["provider"];
+  reason: ProviderTurnError["reason"] | null;
+  message: string;
+  canceled: boolean;
+}): string {
+  if (params.canceled) {
+    return "ユーザーがキャンセルしたよ。";
+  }
+
+  if (params.reason === "usage_limit") {
+    return formatProviderUsageLimitMessage(params.providerId, params.message);
+  }
+
+  return params.message;
+}
+
+function formatProviderFailureNotice(params: {
+  providerId: Session["provider"];
+  reason: ProviderTurnError["reason"] | null;
+  message: string;
+  canceled: boolean;
+}): string {
+  if (params.canceled) {
+    return "実行をキャンセルしたよ。";
+  }
+
+  if (params.reason === "usage_limit") {
+    return formatProviderUsageLimitMessage(params.providerId, params.message);
+  }
+
+  return `実行に失敗したよ。\n${params.message}`;
+}
+
 function pickPreferredThreadId(...candidates: Array<string | null | undefined>): string {
   for (const candidate of candidates) {
     const normalized = candidate?.trim() ?? "";
@@ -748,6 +798,13 @@ export class SessionRuntimeService {
       const providerTurnError = error instanceof ProviderTurnError ? error : null;
       const canceled = providerTurnError ? providerTurnError.canceled : isCanceledRunError(error);
       const message = error instanceof Error ? error.message : String(error);
+      const providerErrorReason = providerTurnError?.reason ?? null;
+      const failureMessage = formatProviderFailureMessage({
+        providerId: activeRunningSession.provider,
+        reason: providerErrorReason,
+        message,
+        canceled,
+      });
       const partialResult = providerTurnError?.partialResult;
       const failedAuditThreadId = pickPreferredThreadId(
         partialResult?.threadId,
@@ -799,12 +856,17 @@ export class SessionRuntimeService {
         operations: partialResult?.operations ?? [],
         rawItemsJson: partialResult?.rawItemsJson ?? "[]",
         usage: partialResult?.usage ?? null,
-        errorMessage: canceled ? "ユーザーがキャンセルしたよ。" : message,
+        errorMessage: failureMessage,
       });
       await this.deps.updateAuditLog(runningAuditLog.id, failedAuditEntry);
       runningAuditEntry = failedAuditEntry;
 
-      const fallbackNotice = canceled ? "実行をキャンセルしたよ。" : `実行に失敗したよ。\n${message}`;
+      const fallbackNotice = formatProviderFailureNotice({
+        providerId: activeRunningSession.provider,
+        reason: providerErrorReason,
+        message,
+        canceled,
+      });
       const assistantText = partialResult?.assistantText.trim()
         ? `${partialResult.assistantText}\n\n${fallbackNotice}`
         : fallbackNotice;
