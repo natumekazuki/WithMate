@@ -2076,7 +2076,6 @@ export function SessionMessageColumn({
   approvalActionRequestId,
   liveElicitationRequest,
   elicitationActionRequestId,
-  liveRunAssistantText,
   hasLiveRunAssistantText,
   liveRunErrorMessage,
   pendingMessageText = "",
@@ -2111,12 +2110,17 @@ export function SessionMessageColumn({
     [latestMessageWindowStartIndex, messages],
   );
   const hasOlderMessages = latestMessageWindowStartIndex > 0;
+  const hasPendingMessageText =
+    !hasLiveRunAssistantText &&
+    liveApprovalRequest === null &&
+    liveElicitationRequest === null &&
+    !liveRunErrorMessage.trim() &&
+    pendingMessageText.trim().length > 0;
   const hasPendingInlineContent =
     liveApprovalRequest !== null ||
     liveElicitationRequest !== null ||
-    hasLiveRunAssistantText ||
     liveRunErrorMessage.trim().length > 0 ||
-    pendingMessageText.trim().length > 0;
+    hasPendingMessageText;
   const canRenderGroupedPendingInlineContent = useMemo(
     () =>
       hasPendingInlineContent &&
@@ -2320,8 +2324,7 @@ export function SessionMessageColumn({
             onOpenPath={onOpenPath}
           />
         ) : null}
-        {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} onOpenPath={onOpenPath} /> : null}
-        {!liveApprovalRequest && !liveElicitationRequest && !hasLiveRunAssistantText && !liveRunErrorMessage.trim() && pendingMessageText.trim() ? (
+        {hasPendingMessageText ? (
           <MessageRichText text={pendingMessageText} onOpenPath={onOpenPath} />
         ) : null}
         {liveRunErrorMessage ? (

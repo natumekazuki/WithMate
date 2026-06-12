@@ -206,8 +206,12 @@ import {
 } from "./chat/retry-state.js";
 import {
   buildMessageListProjection,
+  hasPersistedLiveAssistantMessage,
   loadProjectedMessageArtifact,
+  resolveLiveAssistantMessageIndex,
   resolvePendingAuxiliaryMessageGroupId,
+  shouldProjectLiveAssistantBridge,
+  type LiveAssistantProjection,
 } from "./auxiliary-session-message-projection.js";
 import {
   runAuxiliaryDraftChangeAndSaveOperation,
@@ -426,6 +430,7 @@ export default function AgentSessionWindowApp() {
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
   const [liveRunState, setLiveRunState] = useState<OwnedLiveSessionRunState>({ ownerSessionId: null, state: null });
+  const [liveAssistantBridge, setLiveAssistantBridge] = useState<LiveAssistantProjection | null>(null);
   const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] = useState<ProviderOwnedQuotaTelemetry>({
     ownerProviderId: null,
     telemetry: null,
@@ -656,6 +661,12 @@ export default function AgentSessionWindowApp() {
     runState: selectedSession?.runState,
     hasLiveRun: !!selectedSessionLiveRun,
   });
+  const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
+  const liveApprovalRequest = selectedSessionLiveRun?.approvalRequest ?? null;
+  const liveElicitationRequest = selectedSessionLiveRun?.elicitationRequest ?? null;
+  const isApprovalRequestPending = !!liveApprovalRequest;
+  const isElicitationRequestPending = !!liveElicitationRequest;
+  const hasLiveRunAssistantText = liveRunAssistantText.length > 0;
 
   const selectedSessionCharacter = useMemo(
     () =>
@@ -816,18 +827,148 @@ export default function AgentSessionWindowApp() {
   }, [withmateApi]);
 
   const displayedMessages: Message[] = selectedSession ? selectedSession.messages : [];
+  const projectedAuxiliarySessions = useMemo(
+    () => [
+      ...closedAuxiliarySessions,
+      ...(activeAuxiliarySession ? [activeAuxiliarySession] : []),
+    ],
+    [activeAuxiliarySession, closedAuxiliarySessions],
+  );
+  const liveAssistantMessageIndex = useMemo(
+    () =>
+      activeRunSessionId
+        ? resolveLiveAssistantMessageIndex(
+          displayedMessages,
+          projectedAuxiliarySessions,
+          activeRunSessionId,
+          selectedSession?.id,
+        )
+        : 0,
+    [activeRunSessionId, displayedMessages, projectedAuxiliarySessions, selectedSession?.id],
+  );
+  const hasPersistedLiveAssistantBridge = useMemo(
+    () =>
+      liveAssistantBridge
+        ? hasPersistedLiveAssistantMessage(
+          displayedMessages,
+          projectedAuxiliarySessions,
+          liveAssistantBridge,
+          selectedSession?.id,
+        )
+        : false,
+    [displayedMessages, liveAssistantBridge, projectedAuxiliarySessions, selectedSession?.id],
+  );
+  const projectedLiveAssistant = useMemo<LiveAssistantProjection | null>(() => {
+    if (!activeRunSessionId) {
+      return null;
+    }
+
+    const liveThreadId = selectedSessionLiveRun?.threadId ?? null;
+    const bridgeMessageIndex =
+      liveAssistantBridge?.sessionId === activeRunSessionId &&
+      liveAssistantBridge.threadId === liveThreadId
+        ? liveAssistantBridge.messageIndex
+        : liveAssistantMessageIndex;
+    if (liveRunAssistantText) {
+      return {
+        sessionId: activeRunSessionId,
+        threadId: liveThreadId,
+        messageIndex: bridgeMessageIndex,
+        text: liveRunAssistantText,
+      };
+    }
+
+    return shouldProjectLiveAssistantBridge({
+      bridge: liveAssistantBridge,
+      activeSessionId: activeRunSessionId,
+      hasLiveRun: selectedSessionLiveRun !== null,
+      hasPersistedAssistant: hasPersistedLiveAssistantBridge,
+    })
+      ? liveAssistantBridge
+      : null;
+  }, [
+    activeRunSessionId,
+    hasPersistedLiveAssistantBridge,
+    liveAssistantBridge,
+    liveAssistantMessageIndex,
+    liveRunAssistantText,
+    selectedSessionLiveRun,
+    selectedSessionLiveRun?.threadId,
+  ]);
   const messageListProjection = useMemo(
     () =>
-      buildMessageListProjection(displayedMessages, [
-        ...closedAuxiliarySessions,
-        ...(activeAuxiliarySession ? [activeAuxiliarySession] : []),
-      ], selectedSession?.id),
-    [activeAuxiliarySession, closedAuxiliarySessions, displayedMessages, selectedSession?.id],
+      buildMessageListProjection(displayedMessages, projectedAuxiliarySessions, selectedSession?.id, {
+        liveAssistant: projectedLiveAssistant,
+      }),
+    [displayedMessages, projectedAuxiliarySessions, projectedLiveAssistant, selectedSession?.id],
   );
   const messageListMessages = messageListProjection.messages;
   const messageListSources = messageListProjection.sources;
   const messageListKeys = messageListProjection.keys;
   const messageListGroups = messageListProjection.groups;
+  useEffect(() => {
+    if (!activeRunSessionId || !liveRunAssistantText) {
+      return;
+    }
+
+    const liveThreadId = selectedSessionLiveRun?.threadId ?? null;
+    setLiveAssistantBridge((current) => {
+      if (current?.sessionId === activeRunSessionId && current.threadId === liveThreadId) {
+        return {
+          ...current,
+          text: liveRunAssistantText,
+        };
+      }
+
+      return {
+        sessionId: activeRunSessionId,
+        threadId: liveThreadId,
+        messageIndex: liveAssistantMessageIndex,
+        text: liveRunAssistantText,
+      };
+    });
+  }, [activeRunSessionId, liveAssistantMessageIndex, liveRunAssistantText, selectedSessionLiveRun?.threadId]);
+  useEffect(() => {
+    if (!liveAssistantBridge) {
+      return;
+    }
+
+    if (
+      liveAssistantBridge.sessionId !== activeRunSessionId ||
+      (selectedSessionLiveRun === null && !hasPersistedLiveAssistantBridge)
+    ) {
+      setLiveAssistantBridge(null);
+    }
+  }, [activeRunSessionId, hasPersistedLiveAssistantBridge, liveAssistantBridge, selectedSessionLiveRun]);
+  useEffect(() => {
+    if (!liveAssistantBridge) {
+      return;
+    }
+
+    if (!hasPersistedLiveAssistantBridge) {
+      return;
+    }
+
+    let secondFrameId: number | null = null;
+    const firstFrameId = requestAnimationFrame(() => {
+      secondFrameId = requestAnimationFrame(() => {
+        setLiveAssistantBridge((current) =>
+          current?.sessionId === liveAssistantBridge.sessionId &&
+          current.threadId === liveAssistantBridge.threadId &&
+          current.text === liveAssistantBridge.text
+            ? null
+            : current,
+        );
+      });
+    });
+
+    return () => {
+      cancelAnimationFrame(firstFrameId);
+      if (secondFrameId !== null) {
+        cancelAnimationFrame(secondFrameId);
+      }
+    };
+  }, [hasPersistedLiveAssistantBridge, liveAssistantBridge]);
   const displayedMessagesScrollSignature = useMemo(
     () => buildDisplayedMessagesScrollSignature(messageListMessages),
     [messageListMessages],
@@ -836,7 +977,6 @@ export default function AgentSessionWindowApp() {
     () =>
       [
         selectedSessionRunState ?? "",
-        selectedSessionLiveRun?.assistantText ?? "",
         selectedSessionLiveRun?.errorMessage ?? "",
         selectedSessionLiveRun?.approvalRequest
           ? [
@@ -857,7 +997,6 @@ export default function AgentSessionWindowApp() {
       selectedSessionRunState,
       selectedSessionLiveRun?.approvalRequest,
       selectedSessionLiveRun?.elicitationRequest,
-      selectedSessionLiveRun?.assistantText,
       selectedSessionLiveRun?.errorMessage,
     ],
   );
@@ -1189,12 +1328,6 @@ export default function AgentSessionWindowApp() {
     [orderedLiveRunSteps],
   );
 
-  const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
-  const liveApprovalRequest = selectedSessionLiveRun?.approvalRequest ?? null;
-  const liveElicitationRequest = selectedSessionLiveRun?.elicitationRequest ?? null;
-  const isApprovalRequestPending = !!liveApprovalRequest;
-  const isElicitationRequestPending = !!liveElicitationRequest;
-  const hasLiveRunAssistantText = liveRunAssistantText.length > 0;
   const selectedContextEmptyText = useMemo(
     () =>
       resolveSessionMicrocopy("empty.context", [
