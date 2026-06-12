@@ -243,12 +243,7 @@ import {
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "./auxiliary-additional-directory-operation.js";
 import {
-  beginAuxiliarySessionReturnToMainOperation,
-  createAuxiliarySessionReturnToMainErrorHandler,
-  createAuxiliarySessionReturnToMainOperationAppliers,
-  finishAuxiliarySessionReturnToMainOperation,
-  resolveAuxiliarySessionReturnToMainPreflight,
-  runAuxiliarySessionReturnToMainOperationWithApi,
+  runGuardedAuxiliarySessionReturnToMainOperationWithApi,
 } from "./auxiliary-session-return-operation.js";
 import {
   applyPickedAdditionalDirectoryUiStateCommand,
@@ -1827,45 +1822,23 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   async function handleReturnToMainSession(): Promise<void> {
     const withmateApi = getWithMateApi();
-    const preflight = resolveAuxiliarySessionReturnToMainPreflight({
+    await runGuardedAuxiliarySessionReturnToMainOperationWithApi({
       api: withmateApi,
       activeSession: activeAuxiliarySession,
       isActionPending: isAuxiliaryActionPending,
-    });
-    if (preflight.status === "blocked") {
-      return;
-    }
-    const handleReturnToMainError = createAuxiliarySessionReturnToMainErrorHandler({
       alertError: (message) => window.alert(message),
-    });
-
-    beginAuxiliarySessionReturnToMainOperation({
       setActionPending: setIsAuxiliaryActionPending,
+      loadRevision: auxiliaryLoadRevisionRef,
+      setClosedSessions: setClosedAuxiliarySessions,
+      mutationRevision: auxiliarySessionMutationRevisionRef,
+      activeSessionRef: activeAuxiliarySessionRef,
+      setActiveSession: setActiveAuxiliarySession,
+      mainDraft: composerText,
+      mainCaret: composerCaret,
+      setComposerCaret,
+      setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+      setForceComposerBlockedFeedback,
     });
-    try {
-      await runAuxiliarySessionReturnToMainOperationWithApi({
-        activeSession: preflight.activeSession,
-        api: preflight.api,
-        ...createAuxiliarySessionReturnToMainOperationAppliers({
-          loadRevision: auxiliaryLoadRevisionRef,
-          setClosedSessions: setClosedAuxiliarySessions,
-          mutationRevision: auxiliarySessionMutationRevisionRef,
-          activeSessionRef: activeAuxiliarySessionRef,
-          setActiveSession: setActiveAuxiliarySession,
-          mainDraft: composerText,
-          mainCaret: composerCaret,
-          setComposerCaret,
-          setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
-          setForceComposerBlockedFeedback,
-        }),
-      });
-    } catch (error) {
-      handleReturnToMainError(error);
-    } finally {
-      finishAuxiliarySessionReturnToMainOperation({
-        setActionPending: setIsAuxiliaryActionPending,
-      });
-    }
   }
 
   async function handleAuxiliaryDraftChange(value: string, selectionStart: number): Promise<void> {

@@ -224,12 +224,7 @@ import {
   runRemoveAuxiliaryAdditionalDirectoryOperation,
 } from "./auxiliary-additional-directory-operation.js";
 import {
-  beginAuxiliarySessionReturnToMainOperation,
-  createAuxiliarySessionReturnToMainErrorHandler,
-  createAuxiliarySessionReturnToMainOperationAppliers,
-  finishAuxiliarySessionReturnToMainOperation,
-  resolveAuxiliarySessionReturnToMainPreflight,
-  runAuxiliarySessionReturnToMainOperationWithApi,
+  runGuardedAuxiliarySessionReturnToMainOperationWithApi,
 } from "./auxiliary-session-return-operation.js";
 import {
   beginAuxiliarySessionStartOperation,
@@ -2207,45 +2202,23 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleReturnToMainSession = async () => {
-    const preflight = resolveAuxiliarySessionReturnToMainPreflight({
+    await runGuardedAuxiliarySessionReturnToMainOperationWithApi({
       api: withmateApi,
       activeSession: activeAuxiliarySession,
       isActionPending: isAuxiliaryActionPending,
-    });
-    if (preflight.status === "blocked") {
-      return;
-    }
-    const handleReturnToMainError = createAuxiliarySessionReturnToMainErrorHandler({
       alertError: (message) => window.alert(message),
-    });
-
-    beginAuxiliarySessionReturnToMainOperation({
       setActionPending: setIsAuxiliaryActionPending,
+      loadRevision: auxiliaryLoadRevisionRef,
+      setClosedSessions: setClosedAuxiliarySessions,
+      mutationRevision: auxiliarySessionMutationRevisionRef,
+      activeSessionRef: activeAuxiliarySessionRef,
+      setActiveSession: setActiveAuxiliarySession,
+      mainDraft: draft,
+      mainCaret: mainComposerCaretRef.current,
+      setComposerCaret,
+      setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+      setForceComposerBlockedFeedback,
     });
-    try {
-      await runAuxiliarySessionReturnToMainOperationWithApi({
-        activeSession: preflight.activeSession,
-        api: preflight.api,
-        ...createAuxiliarySessionReturnToMainOperationAppliers({
-          loadRevision: auxiliaryLoadRevisionRef,
-          setClosedSessions: setClosedAuxiliarySessions,
-          mutationRevision: auxiliarySessionMutationRevisionRef,
-          activeSessionRef: activeAuxiliarySessionRef,
-          setActiveSession: setActiveAuxiliarySession,
-          mainDraft: draft,
-          mainCaret: mainComposerCaretRef.current,
-          setComposerCaret,
-          setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
-          setForceComposerBlockedFeedback,
-        }),
-      });
-    } catch (error) {
-      handleReturnToMainError(error);
-    } finally {
-      finishAuxiliarySessionReturnToMainOperation({
-        setActionPending: setIsAuxiliaryActionPending,
-      });
-    }
   };
 
   const handleAuxiliaryDraftChange = async (value: string, selectionStart: number) => {

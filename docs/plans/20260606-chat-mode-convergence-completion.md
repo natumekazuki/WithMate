@@ -168,6 +168,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-12: App / Companion の return-to-main close API adapter を `runAuxiliarySessionReturnToMainOperationWithApi` に集約。beforeClose、closed session 反映、main UI state 反映、error alert、cleanup は呼び出し側に残し、close API 呼び出しだけを共通 wrapper 経由に統一。adapter 経由の success / null active / close failure contract を focused test で固定。`scripts/tests/auxiliary-session-return-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の return-to-main preflight を `resolveAuxiliarySessionReturnToMainPreflight` に集約。close API、beforeClose、closed/main state 反映、error alert、cleanup は呼び出し側に残し、API 不在、active session 不在、pending 中の blocked contract と ready result を focused test で固定。`scripts/tests/auxiliary-session-return-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の return-to-main operation applier 作成を `createAuxiliarySessionReturnToMainOperationAppliers` に集約。preflight、close API adapter、error alert、pending cleanup は呼び出し側に残し、beforeClose、closed session 反映、main UI state 反映の callback 組み立てを同じ factory 経由に統一。`scripts/tests/auxiliary-session-return-operation.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-12: App / Companion の return-to-main guarded operation を `runGuardedAuxiliarySessionReturnToMainOperationWithApi` に集約。API 取得、main draft/caret、state setter は surface 側に残し、preflight、pending begin/cleanup、close API adapter、operation appliers、error alert の lifecycle を同じ runner 経由に統一。`scripts/tests/auxiliary-session-return-operation.test.ts`、`npm run typecheck`、diff check は成功。
 
 ## PR Plan
 
@@ -470,6 +471,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の return-to-main close API adapter を `auxiliary-session-return-operation` に接続。2026-06-12 着手。
 - App / Companion の return-to-main preflight を `auxiliary-session-return-operation` に接続。2026-06-12 着手。
 - App / Companion の return-to-main operation applier 作成を `auxiliary-session-return-operation` に接続。2026-06-12 着手。
+- App / Companion の return-to-main guarded operation を `auxiliary-session-return-operation` に接続。2026-06-12 着手。
 
 やらないこと:
 

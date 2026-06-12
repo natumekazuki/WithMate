@@ -15,6 +15,7 @@ import {
   resolveAuxiliarySessionReturnToMainPreflight,
   runAuxiliarySessionReturnToMainOperation,
   runAuxiliarySessionReturnToMainOperationWithApi,
+  runGuardedAuxiliarySessionReturnToMainOperationWithApi,
 } from "../../src/auxiliary-session-return-operation.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 
@@ -389,6 +390,163 @@ describe("runAuxiliarySessionReturnToMainOperation", () => {
       error,
     );
     assert.deepEqual(events, ["before", "close"]);
+  });
+
+  it("guarded API operation は preflight blocked なら pending を変更せず close しない", async () => {
+    const events: string[] = [];
+
+    assert.equal(
+      await runGuardedAuxiliarySessionReturnToMainOperationWithApi({
+        api: {
+          closeAuxiliarySession: async () => {
+            events.push("close");
+            return makeAuxiliarySession();
+          },
+        },
+        activeSession: makeAuxiliarySession(),
+        isActionPending: true,
+        setActionPending: (pending) => {
+          events.push(`pending:${pending}`);
+        },
+        alertError: (message) => {
+          events.push(`error:${message}`);
+        },
+        loadRevision: { current: 0 },
+        setClosedSessions: () => {
+          events.push("closed");
+        },
+        mutationRevision: { current: 0 },
+        activeSessionRef: { current: makeAuxiliarySession() },
+        setActiveSession: () => {
+          events.push("active");
+        },
+        mainDraft: "",
+        mainCaret: 0,
+        setComposerCaret: () => {
+          events.push("caret");
+        },
+        setActionDockPinnedExpanded: () => {
+          events.push("dock");
+        },
+        setForceComposerBlockedFeedback: () => {
+          events.push("feedback");
+        },
+      }),
+      null,
+    );
+    assert.deepEqual(events, []);
+  });
+
+  it("guarded API operation は preflight、pending、close、appliers、cleanup を一連で実行する", async () => {
+    const active = makeAuxiliarySession({ id: "aux-active" });
+    const closed = makeAuxiliarySession({ id: "aux-active", status: "closed" });
+    const loadRevision = { current: 3 };
+    const mutationRevision = { current: 4 };
+    const activeSessionRef = { current: active as AuxiliarySession | null };
+    const events: string[] = [];
+    let closedSessions: AuxiliarySession[] = [];
+
+    assert.equal(
+      await runGuardedAuxiliarySessionReturnToMainOperationWithApi({
+        api: {
+          closeAuxiliarySession: async (sessionId) => {
+            events.push(`close:${sessionId}`);
+            return closed;
+          },
+        },
+        activeSession: active,
+        isActionPending: false,
+        setActionPending: (pending) => {
+          events.push(`pending:${pending}`);
+        },
+        alertError: (message) => {
+          events.push(`error:${message}`);
+        },
+        loadRevision,
+        setClosedSessions: (updater) => {
+          closedSessions = updater(closedSessions);
+          events.push(`closed:${closedSessions.length}`);
+        },
+        mutationRevision,
+        activeSessionRef,
+        setActiveSession: (session) => {
+          events.push(`active:${session?.id ?? "none"}`);
+        },
+        mainDraft: "hello",
+        mainCaret: 99,
+        setComposerCaret: (caret) => {
+          events.push(`caret:${caret}`);
+        },
+        setActionDockPinnedExpanded: (expanded) => {
+          events.push(`dock:${expanded}`);
+        },
+        setForceComposerBlockedFeedback: (forced) => {
+          events.push(`feedback:${forced}`);
+        },
+      }),
+      closed,
+    );
+
+    assert.equal(loadRevision.current, 4);
+    assert.equal(mutationRevision.current, 5);
+    assert.equal(activeSessionRef.current, null);
+    assert.deepEqual(closedSessions, [closed]);
+    assert.deepEqual(events, [
+      "pending:true",
+      "close:aux-active",
+      "closed:1",
+      "active:none",
+      "caret:5",
+      "dock:false",
+      "feedback:false",
+      "pending:false",
+    ]);
+  });
+
+  it("guarded API operation は close failure を alert に渡して cleanup する", async () => {
+    const error = new Error("close failed");
+    const events: string[] = [];
+
+    assert.equal(
+      await runGuardedAuxiliarySessionReturnToMainOperationWithApi({
+        api: {
+          closeAuxiliarySession: async () => {
+            events.push("close");
+            throw error;
+          },
+        },
+        activeSession: makeAuxiliarySession(),
+        isActionPending: false,
+        setActionPending: (pending) => {
+          events.push(`pending:${pending}`);
+        },
+        alertError: (message) => {
+          events.push(`error:${message}`);
+        },
+        loadRevision: { current: 0 },
+        setClosedSessions: () => {
+          events.push("closed");
+        },
+        mutationRevision: { current: 0 },
+        activeSessionRef: { current: makeAuxiliarySession() },
+        setActiveSession: () => {
+          events.push("active");
+        },
+        mainDraft: "",
+        mainCaret: 0,
+        setComposerCaret: () => {
+          events.push("caret");
+        },
+        setActionDockPinnedExpanded: () => {
+          events.push("dock");
+        },
+        setForceComposerBlockedFeedback: () => {
+          events.push("feedback");
+        },
+      }),
+      null,
+    );
+    assert.deepEqual(events, ["pending:true", "close", "error:close failed", "pending:false"]);
   });
 
   it("close が失敗した場合は closed/main 反映を実行せず例外を伝播する", async () => {

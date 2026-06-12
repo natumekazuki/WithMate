@@ -179,3 +179,65 @@ export async function runAuxiliarySessionReturnToMainOperationWithApi(input: {
     applyReturnedMainSession: input.applyReturnedMainSession,
   });
 }
+
+export async function runGuardedAuxiliarySessionReturnToMainOperationWithApi(input: {
+  api: {
+    closeAuxiliarySession: (sessionId: string) => Promise<AuxiliarySession>;
+  } | null | undefined;
+  activeSession: AuxiliarySession | null;
+  isActionPending: boolean;
+  setActionPending: (pending: boolean) => void;
+  alertError: (message: string) => void;
+  loadRevision: { current: number };
+  setClosedSessions: (updater: (currentSessions: AuxiliarySession[]) => AuxiliarySession[]) => void;
+  mutationRevision: { current: number };
+  activeSessionRef: { current: AuxiliarySession | null };
+  setActiveSession: (session: AuxiliarySession | null) => void;
+  mainDraft: string;
+  mainCaret: number;
+  setComposerCaret: (caret: number) => void;
+  setActionDockPinnedExpanded: (expanded: boolean) => void;
+  setForceComposerBlockedFeedback: (forced: boolean) => void;
+}): Promise<AuxiliarySession | null> {
+  const preflight = resolveAuxiliarySessionReturnToMainPreflight({
+    api: input.api,
+    activeSession: input.activeSession,
+    isActionPending: input.isActionPending,
+  });
+  if (preflight.status === "blocked") {
+    return null;
+  }
+
+  const handleError = createAuxiliarySessionReturnToMainErrorHandler({
+    alertError: input.alertError,
+  });
+
+  beginAuxiliarySessionReturnToMainOperation({
+    setActionPending: input.setActionPending,
+  });
+  try {
+    return await runAuxiliarySessionReturnToMainOperationWithApi({
+      activeSession: preflight.activeSession,
+      api: preflight.api,
+      ...createAuxiliarySessionReturnToMainOperationAppliers({
+        loadRevision: input.loadRevision,
+        setClosedSessions: input.setClosedSessions,
+        mutationRevision: input.mutationRevision,
+        activeSessionRef: input.activeSessionRef,
+        setActiveSession: input.setActiveSession,
+        mainDraft: input.mainDraft,
+        mainCaret: input.mainCaret,
+        setComposerCaret: input.setComposerCaret,
+        setActionDockPinnedExpanded: input.setActionDockPinnedExpanded,
+        setForceComposerBlockedFeedback: input.setForceComposerBlockedFeedback,
+      }),
+    });
+  } catch (error) {
+    handleError(error);
+    return null;
+  } finally {
+    finishAuxiliarySessionReturnToMainOperation({
+      setActionPending: input.setActionPending,
+    });
+  }
+}
