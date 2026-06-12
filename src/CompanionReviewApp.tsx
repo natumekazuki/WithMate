@@ -245,10 +245,10 @@ import {
 import {
   beginAuxiliarySessionReturnToMainOperation,
   createAuxiliarySessionReturnBeforeCloseHandler,
+  createAuxiliarySessionReturnToMainErrorHandler,
   createAuxiliarySessionReturnToMainUiStateApplier,
   createReturnedAuxiliaryClosedSessionApplier,
   finishAuxiliarySessionReturnToMainOperation,
-  resolveAuxiliarySessionReturnToMainErrorMessage,
   runAuxiliarySessionReturnToMainOperation,
 } from "./auxiliary-session-return-operation.js";
 import {
@@ -1831,6 +1831,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     if (!withmateApi || !activeAuxiliarySession || isAuxiliaryActionPending) {
       return;
     }
+    const handleReturnToMainError = createAuxiliarySessionReturnToMainErrorHandler({
+      alertError: (message) => window.alert(message),
+    });
 
     beginAuxiliarySessionReturnToMainOperation({
       setActionPending: setIsAuxiliaryActionPending,
@@ -1857,7 +1860,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         }),
       });
     } catch (error) {
-      window.alert(resolveAuxiliarySessionReturnToMainErrorMessage(error));
+      handleReturnToMainError(error);
     } finally {
       finishAuxiliarySessionReturnToMainOperation({
         setActionPending: setIsAuxiliaryActionPending,

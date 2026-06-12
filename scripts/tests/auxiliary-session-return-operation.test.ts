@@ -5,6 +5,7 @@ import {
   applyAuxiliarySessionReturnToMainUiState,
   beginAuxiliarySessionReturnToMainOperation,
   createAuxiliarySessionReturnBeforeCloseHandler,
+  createAuxiliarySessionReturnToMainErrorHandler,
   createAuxiliarySessionReturnToMainUiStateApplier,
   applyReturnedAuxiliaryClosedSession,
   createReturnedAuxiliaryClosedSessionApplier,
@@ -255,5 +256,22 @@ describe("runAuxiliarySessionReturnToMainOperation", () => {
       resolveAuxiliarySessionReturnToMainErrorMessage("close failed"),
       "Auxiliary Session の終了に失敗したよ。",
     );
+  });
+
+  it("return-to-main error handler は解決済み message を alert に渡す", () => {
+    const messages: string[] = [];
+    const handleError = createAuxiliarySessionReturnToMainErrorHandler({
+      alertError: (message) => {
+        messages.push(message);
+      },
+    });
+
+    handleError(new Error("close failed"));
+    handleError("close failed");
+
+    assert.deepEqual(messages, [
+      "close failed",
+      "Auxiliary Session の終了に失敗したよ。",
+    ]);
   });
 });

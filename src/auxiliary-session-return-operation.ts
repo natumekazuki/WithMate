@@ -62,6 +62,14 @@ export function resolveAuxiliarySessionReturnToMainErrorMessage(error: unknown):
   return error instanceof Error ? error.message : AUXILIARY_SESSION_RETURN_FAILED_MESSAGE;
 }
 
+export function createAuxiliarySessionReturnToMainErrorHandler(input: {
+  alertError: (message: string) => void;
+}): (error: unknown) => void {
+  return (error) => {
+    input.alertError(resolveAuxiliarySessionReturnToMainErrorMessage(error));
+  };
+}
+
 export function applyReturnedAuxiliaryClosedSession(
   currentSessions: AuxiliarySession[],
   closedSession: AuxiliarySession,
