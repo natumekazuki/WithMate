@@ -5,6 +5,7 @@ import {
   createAuxiliarySessionPendingLiveRunClearer,
   createAuxiliarySessionRunningApplier,
   createAuxiliarySessionSendResultAppliers,
+  handleAuxiliarySessionSendOperationResult,
   runAuxiliarySessionSendOperation,
   runAuxiliarySessionSendOperationWithApi,
 } from "../../src/auxiliary-session-send-operation.js";
@@ -96,6 +97,44 @@ describe("runAuxiliarySessionSendOperation", () => {
     clearPendingLiveRun("aux-1");
 
     assert.deepEqual(appliedStates, [{ ownerSessionId: "aux-1", state: null }]);
+  });
+
+  it("send operation result handler は blocked / running target / error だけ callback に渡す", () => {
+    const error = new Error("failed");
+    const events: string[] = [];
+
+    handleAuxiliarySessionSendOperationResult({
+      result: {
+        status: "blocked",
+        preflight: { blockedReason: "empty", blockedMessage: "empty", userMessage: "" },
+      },
+      onBlocked: (preflight) => {
+        events.push(`blocked:${preflight.blockedMessage}`);
+      },
+    });
+    handleAuxiliarySessionSendOperationResult({
+      result: {
+        status: "target-blocked",
+        target: { session: null, blockedReason: "running" },
+      },
+      onRunningTargetBlocked: (target) => {
+        events.push(`target:${target.blockedReason}`);
+      },
+    });
+    handleAuxiliarySessionSendOperationResult({
+      result: { status: "error", error },
+      onError: (nextError) => {
+        events.push(nextError === error ? "error" : "other");
+      },
+    });
+    handleAuxiliarySessionSendOperationResult({
+      result: { status: "completed", saved: makeAuxiliarySession() },
+      onError: () => {
+        events.push("unexpected");
+      },
+    });
+
+    assert.deepEqual(events, ["blocked:empty", "target:running", "error"]);
   });
 
   it("running applier は active session と pending live run を同じ running session から反映する", () => {

@@ -84,6 +84,25 @@ export function createAuxiliarySessionPendingLiveRunClearer(input: {
   };
 }
 
+export function handleAuxiliarySessionSendOperationResult(input: {
+  result: AuxiliarySessionSendOperationResult;
+  onBlocked?: (preflight: AuxiliarySessionSendPreflightResult) => void;
+  onRunningTargetBlocked?: (target: AuxiliarySessionSendTargetResolution) => void;
+  onError?: (error: unknown) => void;
+}): void {
+  if (input.result.status === "blocked") {
+    input.onBlocked?.(input.result.preflight);
+    return;
+  }
+  if (input.result.status === "target-blocked" && input.result.target.blockedReason === "running") {
+    input.onRunningTargetBlocked?.(input.result.target);
+    return;
+  }
+  if (input.result.status === "error") {
+    input.onError?.(input.result.error);
+  }
+}
+
 export type AuxiliarySessionSendOperationInput = {
   activeSession: AuxiliarySession;
   composerBlockedReason?: string | null;

@@ -98,6 +98,7 @@ import {
   createAuxiliarySessionPendingLiveRunClearer,
   createAuxiliarySessionRunningApplier,
   createAuxiliarySessionSendResultAppliers,
+  handleAuxiliarySessionSendOperationResult,
   runAuxiliarySessionSendOperationWithApi,
 } from "./auxiliary-session-send-operation.js";
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
@@ -1905,14 +1906,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       }),
       api: withmateApi,
     });
-    if (result.status === "blocked") {
-      setForceComposerBlockedFeedback(true);
-      return;
-    }
-    if (result.status === "error") {
-      console.error(result.error);
-      setErrorMessage(resolveSessionRunErrorMessage(result.error, "Auxiliary Session の実行に失敗したよ。"));
-    }
+    handleAuxiliarySessionSendOperationResult({
+      result,
+      onBlocked: () => {
+        setForceComposerBlockedFeedback(true);
+      },
+      onError: (error) => {
+        console.error(error);
+        setErrorMessage(resolveSessionRunErrorMessage(error, "Auxiliary Session の実行に失敗したよ。"));
+      },
+    });
   }
 
   async function cancelAuxiliaryRun(): Promise<void> {

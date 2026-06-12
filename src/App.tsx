@@ -236,6 +236,7 @@ import {
   createAuxiliarySessionPendingLiveRunClearer,
   createAuxiliarySessionRunningApplier,
   createAuxiliarySessionSendResultAppliers,
+  handleAuxiliarySessionSendOperationResult,
   runAuxiliarySessionSendOperationWithApi,
 } from "./auxiliary-session-send-operation.js";
 import {
@@ -2282,16 +2283,19 @@ export default function AgentSessionWindowApp() {
       }),
       api: withmateApi,
     });
-    if (result.status === "blocked") {
-      throw new Error(result.preflight.blockedMessage);
-    }
-    if (result.status === "target-blocked" && result.target.blockedReason === "running") {
-      throw new Error("Auxiliary Session はまだ実行中だよ。");
-    }
-    if (result.status === "error") {
-      console.error(result.error);
-      throw result.error;
-    }
+    handleAuxiliarySessionSendOperationResult({
+      result,
+      onBlocked: (preflight) => {
+        throw new Error(preflight.blockedMessage);
+      },
+      onRunningTargetBlocked: () => {
+        throw new Error("Auxiliary Session はまだ実行中だよ。");
+      },
+      onError: (error) => {
+        console.error(error);
+        throw error;
+      },
+    });
   };
 
   const handleCopyMessageText = createCopyMessageTextHandler({
