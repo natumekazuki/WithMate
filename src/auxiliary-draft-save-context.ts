@@ -118,6 +118,50 @@ export function applyAuxiliaryDraftChangeUiState(input: {
   input.setComposerCaret(input.selectionStart);
 }
 
+export async function runAuxiliaryDraftChangeAndSaveOperation(input: {
+  draft: string;
+  selectionStart: number;
+  clearBlockedFeedback: () => void;
+  setComposerCaret: (caret: number) => void;
+  currentSession: AuxiliarySession | null;
+  createTimestampLabel: () => string;
+  draftSaveQueue: Promise<void>;
+  getCurrentSession: () => AuxiliarySession | null;
+  saveAuxiliarySession: ((request: AuxiliarySession) => Promise<AuxiliarySession>) | null | undefined;
+  mutationRevision: { current: number };
+  activeSessionRef: { current: AuxiliarySession | null };
+  draftSaveQueueRef: { current: Promise<void> };
+  setActiveSession: (
+    updater: AuxiliarySession | ((current: AuxiliarySession | null) => AuxiliarySession | null),
+  ) => void;
+  compareStatus?: boolean;
+  onError?: (error: unknown) => void;
+}): Promise<AuxiliaryDraftSaveOperationResult | null> {
+  applyAuxiliaryDraftChangeUiState({
+    selectionStart: input.selectionStart,
+    clearBlockedFeedback: input.clearBlockedFeedback,
+    setComposerCaret: input.setComposerCaret,
+  });
+  if (!input.currentSession || !input.saveAuxiliarySession) {
+    return null;
+  }
+
+  return runScheduledAuxiliaryDraftSaveAndApply({
+    currentSession: input.currentSession,
+    draft: input.draft,
+    createTimestampLabel: input.createTimestampLabel,
+    draftSaveQueue: input.draftSaveQueue,
+    getCurrentSession: input.getCurrentSession,
+    saveAuxiliarySession: input.saveAuxiliarySession,
+    mutationRevision: input.mutationRevision,
+    activeSessionRef: input.activeSessionRef,
+    draftSaveQueueRef: input.draftSaveQueueRef,
+    setActiveSession: input.setActiveSession,
+    compareStatus: input.compareStatus,
+    onError: input.onError,
+  });
+}
+
 export async function runAuxiliaryDraftPatchOperation(input: {
   draft: string;
   updateActiveAuxiliarySession: UpdateActiveAuxiliarySession;

@@ -210,8 +210,7 @@ import {
   resolvePendingAuxiliaryMessageGroupId,
 } from "./auxiliary-session-message-projection.js";
 import {
-  applyAuxiliaryDraftChangeUiState,
-  runScheduledAuxiliaryDraftSaveAndApply,
+  runAuxiliaryDraftChangeAndSaveOperation,
   runAuxiliaryDraftPatchOperation,
 } from "./auxiliary-draft-save-context.js";
 import {
@@ -2222,27 +2221,21 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleAuxiliaryDraftChange = async (value: string, selectionStart: number) => {
-    applyAuxiliaryDraftChangeUiState({
+    await runAuxiliaryDraftChangeAndSaveOperation({
+      draft: value,
       selectionStart,
       clearBlockedFeedback: () => setForceComposerBlockedFeedback(false),
       setComposerCaret,
-    });
-    if (!withmateApi || !activeAuxiliarySession) {
-      return;
-    }
-
-    await runScheduledAuxiliaryDraftSaveAndApply({
       currentSession: activeAuxiliarySession,
-      draft: value,
       createTimestampLabel: currentTimestampLabel,
       draftSaveQueue: auxiliaryDraftSaveQueueRef.current,
       getCurrentSession: () => activeAuxiliarySessionRef.current,
-      saveAuxiliarySession: (request) => {
-        return enqueueAuxiliarySessionSaveWithQueue(
-          auxiliarySessionSaveQueueRef,
-          () => withmateApi.updateAuxiliarySession(request),
-        );
-      },
+      saveAuxiliarySession: withmateApi
+        ? (request) => enqueueAuxiliarySessionSaveWithQueue(
+            auxiliarySessionSaveQueueRef,
+            () => withmateApi.updateAuxiliarySession(request),
+          )
+        : null,
       mutationRevision: auxiliarySessionMutationRevisionRef,
       activeSessionRef: activeAuxiliarySessionRef,
       draftSaveQueueRef: auxiliaryDraftSaveQueueRef,

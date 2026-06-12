@@ -229,8 +229,7 @@ import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
 import { createPastedSessionAttachmentHandler } from "./chat/composer-paste-handlers.js";
 import {
-  applyAuxiliaryDraftChangeUiState,
-  runScheduledAuxiliaryDraftSaveAndApply,
+  runAuxiliaryDraftChangeAndSaveOperation,
   runAuxiliaryDraftPatchOperation,
 } from "./auxiliary-draft-save-context.js";
 import {
@@ -1842,28 +1841,22 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   async function handleAuxiliaryDraftChange(value: string, selectionStart: number): Promise<void> {
-    applyAuxiliaryDraftChangeUiState({
+    const withmateApi = getWithMateApi();
+    await runAuxiliaryDraftChangeAndSaveOperation({
+      draft: value,
       selectionStart,
       clearBlockedFeedback: () => setForceComposerBlockedFeedback(false),
       setComposerCaret,
-    });
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !activeAuxiliarySession) {
-      return;
-    }
-
-    await runScheduledAuxiliaryDraftSaveAndApply({
       currentSession: activeAuxiliarySession,
-      draft: value,
       createTimestampLabel: currentTimestampLabel,
       draftSaveQueue: auxiliaryDraftSaveQueueRef.current,
       getCurrentSession: () => activeAuxiliarySessionRef.current,
-      saveAuxiliarySession: (request) => {
-        return enqueueAuxiliarySessionSaveWithQueue(
-          auxiliarySessionSaveQueueRef,
-          () => withmateApi.updateAuxiliarySession(request),
-        );
-      },
+      saveAuxiliarySession: withmateApi
+        ? (request) => enqueueAuxiliarySessionSaveWithQueue(
+            auxiliarySessionSaveQueueRef,
+            () => withmateApi.updateAuxiliarySession(request),
+          )
+        : null,
       mutationRevision: auxiliarySessionMutationRevisionRef,
       activeSessionRef: activeAuxiliarySessionRef,
       draftSaveQueueRef: auxiliaryDraftSaveQueueRef,

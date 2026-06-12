@@ -10,6 +10,7 @@ import {
   resolveAppliedAuxiliaryDraftSaveResult,
   resolveAuxiliaryDraftSaveOperationResult,
   resolveAuxiliaryDraftSaveResult,
+  runAuxiliaryDraftChangeAndSaveOperation,
   runAuxiliaryDraftPatchOperation,
   runAuxiliaryDraftSaveOperation,
   runScheduledAuxiliaryDraftSaveAndApply,
@@ -486,5 +487,90 @@ describe("runScheduledAuxiliaryDraftSaveAndApply", () => {
       }),
       error,
     );
+  });
+});
+
+describe("runAuxiliaryDraftChangeAndSaveOperation", () => {
+  it("draft change の先頭 UI state を反映し、保存前提がなければ save しない", async () => {
+    const events: string[] = [];
+
+    assert.equal(
+      await runAuxiliaryDraftChangeAndSaveOperation({
+        draft: "after",
+        selectionStart: 3,
+        clearBlockedFeedback: () => {
+          events.push("feedback");
+        },
+        setComposerCaret: (caret) => {
+          events.push(`caret:${caret}`);
+        },
+        currentSession: null,
+        createTimestampLabel: () => "request",
+        draftSaveQueue: Promise.resolve(),
+        getCurrentSession: () => makeAuxiliarySession(),
+        saveAuxiliarySession: async () => {
+          events.push("save");
+          return makeAuxiliarySession();
+        },
+        mutationRevision: { current: 0 },
+        activeSessionRef: { current: null },
+        draftSaveQueueRef: { current: Promise.resolve() },
+        setActiveSession: () => {
+          events.push("active");
+        },
+      }),
+      null,
+    );
+    assert.deepEqual(events, ["feedback", "caret:3"]);
+  });
+
+  it("draft change operation は UI state 後に scheduled save と saved result を反映する", async () => {
+    const currentSession = makeAuxiliarySession({ composerDraft: "before", updatedAt: "before" });
+    const saved = makeAuxiliarySession({ composerDraft: "after", updatedAt: "saved" });
+    const mutationRevision = { current: 2 };
+    const activeSessionRef = { current: currentSession as AuxiliarySession | null };
+    const draftSaveQueueRef = { current: Promise.resolve() };
+    const events: string[] = [];
+    let renderedSession: AuxiliarySession | null = currentSession;
+
+    const result = await runAuxiliaryDraftChangeAndSaveOperation({
+      draft: "after",
+      selectionStart: 5,
+      clearBlockedFeedback: () => {
+        events.push("feedback");
+      },
+      setComposerCaret: (caret) => {
+        events.push(`caret:${caret}`);
+      },
+      currentSession,
+      createTimestampLabel: () => "request",
+      draftSaveQueue: Promise.resolve(),
+      getCurrentSession: () => activeSessionRef.current,
+      saveAuxiliarySession: async (request) => {
+        events.push(`save:${request.composerDraft}`);
+        return saved;
+      },
+      mutationRevision,
+      activeSessionRef,
+      draftSaveQueueRef,
+      setActiveSession: (sessionOrUpdater) => {
+        renderedSession = typeof sessionOrUpdater === "function"
+          ? sessionOrUpdater(renderedSession)
+          : sessionOrUpdater;
+        events.push(`active:${renderedSession?.composerDraft ?? "none"}`);
+      },
+    });
+
+    assert.deepEqual(result, {
+      request: {
+        ...currentSession,
+        composerDraft: "after",
+        updatedAt: "request",
+      },
+      saved,
+    });
+    assert.equal(mutationRevision.current, 3);
+    assert.equal(activeSessionRef.current, saved);
+    assert.deepEqual(events, ["feedback", "caret:5", "active:after", "save:after", "active:after"]);
   });
 });
