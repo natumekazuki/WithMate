@@ -173,6 +173,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-12: App / Companion の Auxiliary additional directory add API guard を `runAddAuxiliaryAdditionalDirectoryOperationWithApi` に集約。workspace/fallback path と update callback は surface 側に残し、API 不在、parent session 不在の no-op と picker API adapter を同じ helper 経由に統一。`scripts/tests/auxiliary-additional-directory-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の Auxiliary send API adapter を `runAuxiliarySessionSendOperationWithApi` に集約。送信 preflight、running/saved/error 反映、surface 固有の blocked/error handling は維持し、updateAuxiliarySession / runAuxiliarySessionTurn の API adapter だけを common helper 経由に統一。`scripts/tests/auxiliary-session-send-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の Auxiliary send result status 分岐を `handleAuxiliarySessionSendOperationResult` に集約。App の throw と Companion の feedback/error message 反映は surface callback に残し、blocked、running target blocked、error の振り分けだけを同じ helper 経由に統一。`scripts/tests/auxiliary-session-send-operation.test.ts`、`npm run typecheck`、diff check は成功。
+- 2026-06-12: PR-08 Auxiliary path の focused validation sweep を実施。send/save/runtime option/return/refresh/storage/additional directory/start/update の関連 test 9 files、140 tests が成功し、続けて `npm run typecheck` と diff check も成功。full test と実 UI 確認は未実施。
 
 ## PR Plan
 
@@ -480,6 +481,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の Auxiliary additional directory add API guard を `auxiliary-additional-directory-operation` に接続。2026-06-12 着手。
 - App / Companion の Auxiliary send API adapter を `auxiliary-session-send-operation` に接続。2026-06-12 着手。
 - App / Companion の Auxiliary send result status 分岐を `auxiliary-session-send-operation` に接続。2026-06-12 着手。
+- PR-08 Auxiliary path focused validation sweep。2026-06-12 実施。
 
 やらないこと:
 
