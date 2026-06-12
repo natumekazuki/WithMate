@@ -2522,6 +2522,15 @@ export function SessionActionDockCompactRow({
           />
         </button>
         <div className="session-action-dock-compact-actions">
+          {showJumpToBottom ? (
+            <button
+              className="drawer-toggle compact secondary message-jump-bottom-button"
+              type="button"
+              onClick={onJumpToBottom}
+            >
+              末尾へ移動
+            </button>
+          ) : null}
           <button
             className="danger session-send-button"
             type="button"

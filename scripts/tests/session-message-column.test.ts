@@ -527,7 +527,7 @@ test("SessionActionDockCompactRow は jump button を Send の左に描画する
   assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Send"));
 });
 
-test("SessionActionDockCompactRow は実行中の compact 表示を progress と Cancel だけにする", () => {
+test("SessionActionDockCompactRow は実行中の compact 表示に jump button と Cancel を描画する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
       draft: "draft",
@@ -550,10 +550,10 @@ test("SessionActionDockCompactRow は実行中の compact 表示を progress と
   assert.match(html, /session-action-dock-compact-progress/);
   assert.match(html, /処理を実行中/);
   assert.match(html, /session-action-dock-compact-actions/);
+  assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Cancel"));
   assert.match(html, />Cancel<\/button>/);
   assert.doesNotMatch(html, /Draft/);
   assert.doesNotMatch(html, /添付 2/);
-  assert.doesNotMatch(html, /末尾へ移動/);
 });
 
 test("SessionContextPane は latest command がないとき empty text を表示する", () => {
