@@ -137,15 +137,30 @@ export type RunSessionTurnResult = {
   providerQuotaTelemetry?: ProviderQuotaTelemetry | null;
 };
 
+export type ProviderErrorReason =
+  | "usage_limit"
+  | "auth"
+  | "network"
+  | "provider_unavailable"
+  | "canceled"
+  | "unknown";
+
 export class ProviderTurnError extends Error {
   readonly partialResult: RunSessionTurnResult;
   readonly canceled: boolean;
+  readonly reason: ProviderErrorReason;
 
-  constructor(message: string, partialResult: RunSessionTurnResult, canceled: boolean) {
+  constructor(
+    message: string,
+    partialResult: RunSessionTurnResult,
+    canceled: boolean,
+    reason: ProviderErrorReason = canceled ? "canceled" : "unknown",
+  ) {
     super(message);
     this.name = "ProviderTurnError";
     this.partialResult = partialResult;
     this.canceled = canceled;
+    this.reason = reason;
   }
 }
 
