@@ -8,10 +8,13 @@ test("Companion Auxiliary start は closed 履歴ロードを無効化した rev
 
   assert.ok(handler, "handleStartAuxiliarySession が見つかること");
   assert.match(handler, /const parentSessionId = snapshot\.session\.id;/);
-  assert.match(handler, /const canApplyLoadResult = \(\) => auxiliaryLoadRevisionRef\.current === loadRevision;/);
+  assert.match(
+    handler,
+    /const canApplyLoadResult = createAuxiliaryLoadRevisionGuard\(\{\s*loadRevision: auxiliaryLoadRevisionRef,\s*expectedRevision: loadRevision,\s*\}\);/,
+  );
   assert.match(handler, /parentSessionId,/);
   assert.match(
     handler,
-    /finally \{\s*finishAuxiliarySessionStartClosedLoad\(\{\s*parentSessionId,[\s\S]*?isActive: canApplyLoadResult,[\s\S]*?setClosedSessions: setClosedAuxiliarySessions,[\s\S]*?setActionPending: setIsAuxiliaryActionPending,[\s\S]*?\}\);\s*\}/,
+    /finally \{\s*finishAuxiliarySessionStartClosedLoadWithApi\(\{\s*parentSessionId,[\s\S]*?api: withmateApi,[\s\S]*?isActive: canApplyLoadResult,[\s\S]*?setClosedSessions: setClosedAuxiliarySessions,[\s\S]*?setActionPending: setIsAuxiliaryActionPending,[\s\S]*?\}\);\s*\}/,
   );
 });

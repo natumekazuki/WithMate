@@ -174,6 +174,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - 2026-06-12: App / Companion の Auxiliary send API adapter を `runAuxiliarySessionSendOperationWithApi` に集約。送信 preflight、running/saved/error 反映、surface 固有の blocked/error handling は維持し、updateAuxiliarySession / runAuxiliarySessionTurn の API adapter だけを common helper 経由に統一。`scripts/tests/auxiliary-session-send-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: App / Companion の Auxiliary send result status 分岐を `handleAuxiliarySessionSendOperationResult` に集約。App の throw と Companion の feedback/error message 反映は surface callback に残し、blocked、running target blocked、error の振り分けだけを同じ helper 経由に統一。`scripts/tests/auxiliary-session-send-operation.test.ts`、`npm run typecheck`、diff check は成功。
 - 2026-06-12: PR-08 Auxiliary path の focused validation sweep を実施。send/save/runtime option/return/refresh/storage/additional directory/start/update の関連 test 9 files、140 tests が成功し、続けて `npm run typecheck` と diff check も成功。full test と実 UI 確認は未実施。
+- 2026-06-12: PR-08 Auxiliary path の broader validation として `npm test` を実施。初回は `scripts/tests/companion-auxiliary-load-revision.test.ts` の source 文字列契約が現在の `handleStartAuxiliarySession` 実装に追従しておらず 1 件失敗したため、`createAuxiliaryLoadRevisionGuard` / `finishAuxiliarySessionStartClosedLoadWithApi` 接続を確認する contract へ更新。再実行で 1950 tests が成功。実 UI 確認と push は未実施。
 
 ## PR Plan
 
@@ -482,6 +483,7 @@ Agent / Companion / MateTalk で別々に実装されている同じチャット
 - App / Companion の Auxiliary send API adapter を `auxiliary-session-send-operation` に接続。2026-06-12 着手。
 - App / Companion の Auxiliary send result status 分岐を `auxiliary-session-send-operation` に接続。2026-06-12 着手。
 - PR-08 Auxiliary path focused validation sweep。2026-06-12 実施。
+- PR-08 Auxiliary path broader validation として `npm test` を実施。2026-06-12 実施、追従不足の source 契約 test を更新後に成功。
 
 やらないこと:
 
