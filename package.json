@@ -1,6 +1,6 @@
 {
   "name": "withmate",
-  "version": "4.2.17-preview.6",
+  "version": "4.2.17-preview.7",
   "description": "キャラクターロールプレイ対応 coding agent デスクトップアプリ",
   "private": true,
   "main": "dist-electron/src-electron/main.js",
@@ -42,12 +42,14 @@
     "remark-math": "^6.0.0"
   },
   "devDependencies": {
+    "@types/jsdom": "^28.0.3",
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
     "electron": "^41.3.0",
     "electron-builder": "^26.8.1",
+    "jsdom": "^29.1.1",
     "png-to-ico": "^3.0.1",
     "sharp": "^0.34.5",
     "tsx": "^4.21.0",

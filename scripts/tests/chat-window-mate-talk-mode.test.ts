@@ -237,7 +237,7 @@ test("MateTalk は ChatWindow で user/mate メッセージを共通 message row
   assert.doesNotMatch(html, /session-plain-message-speaker/);
 });
 
-test("MateTalk は mate response に共通 Copy / Quote action を表示する", () => {
+test("MateTalk は未選択時に Copy / Quote action を描画しない", () => {
   const html = renderPanel({
     withResponseActions: true,
     messages: [
@@ -247,9 +247,11 @@ test("MateTalk は mate response に共通 Copy / Quote action を表示する",
     input: "test",
   });
 
-  assert.match(html, /<div class="message-response-actions" aria-label="Response actions">/);
-  assert.match(html, />Copy<\/button>/);
-  assert.match(html, />Quote<\/button>/);
+  assert.doesNotMatch(html, /<div class="message-response-actions" aria-label="Response actions">/);
+  assert.doesNotMatch(html, />Copy<\/button>/);
+  assert.doesNotMatch(html, />Quote<\/button>/);
+  assert.match(html, /data-message-text-actions="true"/);
+  assert.equal((html.match(/data-message-text-actions="true"/g) ?? []).length, 1);
 });
 
 test("MateTalk は Mate avatar path を返信メッセージの avatar に渡す", () => {
