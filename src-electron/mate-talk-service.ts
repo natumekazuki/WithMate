@@ -1,11 +1,5 @@
 import type { MateProfile, MateTalkTurnInput, MateTalkTurnResult } from "../src/mate/mate-state.js";
 import type { ModelReasoningEffort } from "../src/model-catalog.js";
-import type { AppSettings } from "../src/provider-settings-state.js";
-
-export type ScheduleMateTalkMemoryGenerationInput = {
-  userMessage: string;
-  assistantText: string;
-};
 
 export type MateTalkServiceDeps = {
   getMateProfile(): MateProfile | null;
@@ -28,9 +22,6 @@ export type MateTalkServiceDeps = {
     approvalMode?: MateTalkTurnInput["approvalMode"];
     codexSandboxMode?: MateTalkTurnInput["codexSandboxMode"];
   }) => Promise<string>;
-  scheduleMemoryGeneration?(input: ScheduleMateTalkMemoryGenerationInput): unknown;
-  onMemoryGenerationScheduleError?(error: unknown): void | Promise<void>;
-  getAppSettings?(): AppSettings;
   now?(): Date;
 };
 
@@ -84,34 +75,11 @@ export class MateTalkService {
     }) ?? Promise.resolve(MateTalkService.fallbackMessage));
     const assistantMessage = assistantMessageRaw.trim() || MateTalkService.fallbackMessage;
 
-    const appSettings = this.deps.getAppSettings?.();
-    const shouldScheduleMemoryGeneration = (appSettings?.memoryGenerationEnabled ?? true) && profile.state === "active";
-    try {
-      if (shouldScheduleMemoryGeneration) {
-        void Promise.resolve(this.deps.scheduleMemoryGeneration?.({
-          userMessage,
-          assistantText: assistantMessage,
-        })).catch((error) => this.notifyMemoryGenerationScheduleError(error));
-      }
-    } catch (error) {
-      this.notifyMemoryGenerationScheduleError(error);
-    }
-
     return {
       mateId: profile.id,
       userMessage,
       assistantMessage,
       createdAt,
     };
-  }
-
-  private notifyMemoryGenerationScheduleError(error: unknown): void {
-    try {
-      void Promise.resolve(this.deps.onMemoryGenerationScheduleError?.(error)).catch(() => {
-        // Memory generation scheduling is background work and must not break the visible turn.
-      });
-    } catch {
-      // Memory generation scheduling is background work and must not break the visible turn.
-    }
   }
 }
