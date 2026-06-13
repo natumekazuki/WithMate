@@ -7,10 +7,8 @@ import type { MateProfile } from "../mate/mate-state.js";
 type HomeRightPaneHandlers = {
   onChangeRightPaneView: (view: HomeRightPaneProps["rightPaneView"]) => void;
   onOpenSessionMonitorWindow: () => void;
-  onOpenMemoryManagementWindow: () => void;
   onOpenSettingsWindow: () => void;
   onOpenMateProfile: () => void;
-  onOpenMateTalk: () => void;
   onOpenSession: (sessionId: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
 };
@@ -42,10 +40,8 @@ export function buildHomeRightPaneProps({
     mateProfile,
     onChangeRightPaneView: handlers.onChangeRightPaneView,
     onOpenSessionMonitorWindow: handlers.onOpenSessionMonitorWindow,
-    onOpenMemoryManagementWindow: handlers.onOpenMemoryManagementWindow,
     onOpenSettingsWindow: handlers.onOpenSettingsWindow,
     onOpenMateProfile: handlers.onOpenMateProfile,
-    onOpenMateTalk: handlers.onOpenMateTalk,
     onOpenSession: handlers.onOpenSession,
     onOpenCompanionReview: handlers.onOpenCompanionReview,
     canUsePrimaryFeatures,

@@ -34,20 +34,7 @@ import type {
   CompanionSyncTargetResult,
   CompanionTargetWorkspaceStashResult,
 } from "./companion-review-state.js";
-import type {
-  MemoryManagementPageRequest,
-  MemoryManagementPageResult,
-  MemoryManagementSnapshot,
-} from "./memory/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
-import type { MateGrowthApplyResult } from "./mate/mate-growth-apply-result.js";
-import type {
-  MateGrowthEventActionRequest,
-  MateGrowthEventActionResult,
-  MateGrowthEventCorrectionRequest,
-  MateGrowthEventListRequest,
-  MateGrowthEventListResult,
-} from "./mate/mate-growth-events-state.js";
 import type { RendererLogInput } from "./app-log-types.js";
 import type { AppBootStatus } from "./app-boot-state.js";
 import type { AppDatabaseDiagnostics } from "./app-database-diagnostics-state.js";
@@ -67,27 +54,15 @@ import type {
   CreateMateInput,
   MateProfile,
   MateStorageState,
-  MateTalkLaunchInput,
-  MateTalkTurnInput,
-  MateTalkTurnResult,
-  MateGrowthSettings,
   SetMateAvatarInput,
   UpdateMateInput,
-  UpdateMateGrowthSettingsInput,
 } from "./mate/mate-state.js";
-import type { MateEmbeddingSettings } from "./mate/mate-embedding-settings.js";
-import type {
-  ProviderInstructionTarget,
-  ProviderInstructionTargetInput,
-} from "./provider-instruction-target-state.js";
 
 export type WithMateWindowNavigationApi = {
   openSession(sessionId: string): Promise<void>;
   openHomeWindow(): Promise<void>;
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
-  openMemoryManagementWindow(): Promise<void>;
-  openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
@@ -208,17 +183,6 @@ export type WithMateWindowSettingsApi = {
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
   getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics>;
   resetAppDatabase(request: ResetAppDatabaseRequest): Promise<ResetAppDatabaseResult>;
-  getMemoryManagementSnapshot(): Promise<MemoryManagementSnapshot>;
-  getMemoryManagementPage(request: MemoryManagementPageRequest): Promise<MemoryManagementPageResult>;
-  getMateGrowthSettings(): Promise<MateGrowthSettings | null>;
-  updateMateGrowthSettings(input: UpdateMateGrowthSettingsInput): Promise<MateGrowthSettings | null>;
-  getMateEmbeddingSettings(): Promise<MateEmbeddingSettings | null>;
-  listProviderInstructionTargets(): Promise<ProviderInstructionTarget[]>;
-  upsertProviderInstructionTarget(input: ProviderInstructionTargetInput): Promise<ProviderInstructionTarget>;
-  startMateEmbeddingDownload(): Promise<void>;
-  deleteSessionMemory(sessionId: string): Promise<void>;
-  deleteProjectMemoryEntry(entryId: string): Promise<void>;
-  forgetMateProfileItem(itemId: string): Promise<void>;
 };
 
 export type WithMateWindowPickerApi = {
@@ -261,12 +225,6 @@ export type WithMateWindowMateApi = {
   createMate(input: CreateMateInput): Promise<MateProfile>;
   updateMate(input: UpdateMateInput): Promise<MateProfile>;
   setMateAvatar(input: SetMateAvatarInput): Promise<MateProfile>;
-  applyPendingGrowth(): Promise<MateGrowthApplyResult>;
-  listMateGrowthEvents(request?: MateGrowthEventListRequest | null): Promise<MateGrowthEventListResult>;
-  correctMateGrowthEvent(request: MateGrowthEventCorrectionRequest): Promise<MateGrowthEventActionResult>;
-  disableMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult>;
-  forgetMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult>;
-  runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
   resetMate(): Promise<void>;
 };
 

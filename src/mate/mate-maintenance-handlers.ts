@@ -1,7 +1,5 @@
-import type { MateEmbeddingSettings } from "./mate-embedding-settings.js";
 import type { MateStorageState } from "./mate-state.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
-import { handleStartMateEmbeddingDownload as handleStartMateEmbeddingDownloadAction } from "../memory/memory-management-actions.js";
 import { buildResetMateConfirmMessage } from "../settings/settings-ui.js";
 
 type MateMaintenanceHandlersContext = {
@@ -10,9 +8,6 @@ type MateMaintenanceHandlersContext = {
   mateResetting: boolean;
   setMateResetting: (resetting: boolean) => void;
   setSettingsFeedback: (message: string) => void;
-  setMateEmbeddingBusy: (busy: boolean) => void;
-  setMateEmbeddingFeedback: (message: string) => void;
-  setMateEmbeddingSettings: (settings: MateEmbeddingSettings | null) => void;
   refreshMateStatus: (
     api: WithMateWindowApi,
     options?: { isActive?: () => boolean },
@@ -22,7 +17,6 @@ type MateMaintenanceHandlersContext = {
 
 export type MateMaintenanceHandlers = {
   onResetMate: () => void;
-  onStartMateEmbeddingDownload: () => void;
 };
 
 export function buildMateMaintenanceHandlers({
@@ -31,9 +25,6 @@ export function buildMateMaintenanceHandlers({
   mateResetting,
   setMateResetting,
   setSettingsFeedback,
-  setMateEmbeddingBusy,
-  setMateEmbeddingFeedback,
-  setMateEmbeddingSettings,
   refreshMateStatus,
   confirmResetMate = (message) => window.confirm(message),
 }: MateMaintenanceHandlersContext): MateMaintenanceHandlers {
@@ -65,17 +56,7 @@ export function buildMateMaintenanceHandlers({
     }
   };
 
-  const startMateEmbeddingDownload = async () => {
-    await handleStartMateEmbeddingDownloadAction({
-      api: getApi(),
-      setMateEmbeddingBusy,
-      setMateEmbeddingFeedback,
-      setMateEmbeddingSettings,
-    });
-  };
-
   return {
     onResetMate: () => void resetMate(),
-    onStartMateEmbeddingDownload: () => void startMateEmbeddingDownload(),
   };
 }

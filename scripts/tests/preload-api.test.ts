@@ -34,14 +34,6 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:open-session",
     args: ["session-1"],
   });
-  assert.deepEqual(await api.openMemoryManagementWindow(), {
-    channel: "withmate:open-memory-management-window",
-    args: [],
-  });
-  assert.deepEqual(await api.openMateTalkWindow(), {
-    channel: "withmate:open-mate-talk-window",
-    args: [],
-  });
   assert.deepEqual(await api.getAppBootStatus(), {
     channel: "withmate:get-app-boot-status",
     args: [],
@@ -70,61 +62,9 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:set-mate-avatar",
     args: [{ avatarFilePath: "C:/avatar.png" }],
   });
-  assert.deepEqual(await api.runMateTalkTurn({ message: "hello" }), {
-    channel: "withmate:run-mate-talk-turn",
-    args: [{ message: "hello" }],
-  });
-  assert.deepEqual(await api.applyPendingGrowth(), {
-    channel: "withmate:apply-mate-growth",
-    args: [],
-  });
-  assert.deepEqual(await api.listMateGrowthEvents({ limit: 5 }), {
-    channel: "withmate:list-mate-growth-events",
-    args: [{ limit: 5 }],
-  });
-  assert.deepEqual(await api.correctMateGrowthEvent({ eventId: "event-0", statement: "修正後" }), {
-    channel: "withmate:correct-mate-growth-event",
-    args: [{ eventId: "event-0", statement: "修正後" }],
-  });
-  assert.deepEqual(await api.disableMateGrowthEvent({ eventId: "event-1" }), {
-    channel: "withmate:disable-mate-growth-event",
-    args: [{ eventId: "event-1" }],
-  });
-  assert.deepEqual(await api.forgetMateGrowthEvent({ eventId: "event-2" }), {
-    channel: "withmate:forget-mate-growth-event",
-    args: [{ eventId: "event-2" }],
-  });
   assert.deepEqual(await api.resetMate(), {
     channel: "withmate:reset-mate",
     args: [],
-  });
-  assert.deepEqual(await api.getMemoryManagementSnapshot(), {
-    channel: "withmate:get-memory-management-snapshot",
-    args: [],
-  });
-  assert.deepEqual(await api.getMateGrowthSettings(), {
-    channel: "withmate:get-mate-growth-settings",
-    args: [],
-  });
-  assert.deepEqual(await api.getMemoryManagementPage({ domain: "session", limit: 50 }), {
-    channel: "withmate:get-memory-management-page",
-    args: [{ domain: "session", limit: 50 }],
-  });
-  assert.deepEqual(await api.updateMateGrowthSettings({ autoApplyEnabled: false }), {
-    channel: "withmate:update-mate-growth-settings",
-    args: [{ autoApplyEnabled: false }],
-  });
-  assert.deepEqual(await api.forgetMateProfileItem("mate-profile-item-1"), {
-    channel: "withmate:forget-mate-profile-item",
-    args: ["mate-profile-item-1"],
-  });
-  assert.deepEqual(await api.listProviderInstructionTargets(), {
-    channel: "withmate:list-provider-instruction-targets",
-    args: [],
-  });
-  assert.deepEqual(await api.upsertProviderInstructionTarget({} as never), {
-    channel: "withmate:upsert-provider-instruction-target",
-    args: [{} as never],
   });
   assert.deepEqual(await api.getSessionBackgroundActivity("session-1", "memory-generation"), {
     channel: "withmate:get-session-background-activity",
@@ -204,14 +144,11 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "createAuxiliarySession",
     "createCompanionSession",
     "createSession",
-    "deleteProjectMemoryEntry",
     "deleteSession",
-    "deleteSessionMemory",
     "discardCompanionSession",
     "dropCompanionTargetStash",
     "exportModelCatalog",
     "exportModelCatalogFile",
-    "forgetMateProfileItem",
     "getActiveAuxiliarySession",
     "getAppDatabaseDiagnostics",
     "getAppBootStatus",
@@ -225,17 +162,8 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getCompanionSession",
     "getDiffPreview",
     "getLiveSessionRun",
-    "getMateEmbeddingSettings",
-    "getMateGrowthSettings",
-    "getMemoryManagementPage",
-    "getMemoryManagementSnapshot",
     "getModelCatalog",
     "getProviderQuotaTelemetry",
-    "listProviderInstructionTargets",
-    "listMateGrowthEvents",
-    "correctMateGrowthEvent",
-    "disableMateGrowthEvent",
-    "forgetMateGrowthEvent",
     "getSession",
     "getSessionAuditLogDetail",
     "getSessionAuditLogDetailSection",
@@ -269,8 +197,6 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "openHomeWindow",
     "openAppLogFolder",
     "openCrashDumpFolder",
-    "openMemoryManagementWindow",
-    "openMateTalkWindow",
     "openPath",
     "openSession",
     "openSessionFilesDirectory",
@@ -288,21 +214,17 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "previewCompanionComposerInput",
     "previewComposerInput",
     "reportRendererLog",
-    "applyPendingGrowth",
     "resetAppDatabase",
     "restoreCompanionTargetStash",
     "resolveLiveApproval",
     "resolveLiveElicitation",
     "runAuxiliarySessionTurn",
     "runCompanionSessionTurn",
-    "runMateTalkTurn",
     "runSessionTurn",
     "savePastedSessionFile",
     "searchCompanionWorkspaceFiles",
     "searchWorkspaceFiles",
     "setMateAvatar",
-    "startMateEmbeddingDownload",
-    "updateMateGrowthSettings",
     "stashCompanionTargetChanges",
     "subscribeAppSettings",
     "subscribeAppBootStatus",
@@ -319,13 +241,36 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "syncCompanionTarget",
     "updateAppSettings",
     "updateAuxiliarySession",
-    "upsertProviderInstructionTarget",
     "updateCompanionSession",
     "updateMate",
     "updateSession",
   ] satisfies Array<keyof WithMateWindowApi>;
 
   assert.deepEqual(keys, [...expectedKeys].sort());
+  const removedKeys = [
+    "applyPendingGrowth",
+    "correctMateGrowthEvent",
+    "deleteProjectMemoryEntry",
+    "deleteSessionMemory",
+    "disableMateGrowthEvent",
+    "forgetMateGrowthEvent",
+    "forgetMateProfileItem",
+    "getMateEmbeddingSettings",
+    "getMateGrowthSettings",
+    "getMemoryManagementPage",
+    "getMemoryManagementSnapshot",
+    "listMateGrowthEvents",
+    "listProviderInstructionTargets",
+    "openMateTalkWindow",
+    "openMemoryManagementWindow",
+    "runMateTalkTurn",
+    "startMateEmbeddingDownload",
+    "updateMateGrowthSettings",
+    "upsertProviderInstructionTarget",
+  ];
+  for (const key of removedKeys) {
+    assert.equal(key in api, false);
+  }
 });
 
 test("createWithMateWindowApi は subscribe 系 API で payload を unwrap する", async () => {

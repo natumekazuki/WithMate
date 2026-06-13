@@ -37,7 +37,9 @@ export function createMainBootstrapDeps(
     initializePersistentStores: args.initializePersistentStores,
     recoverInterruptedSessions: args.recoverInterruptedSessions,
     getMateState: args.getMateState ?? args.ipcRegistration.mate.getMateState,
-    applyPendingGrowth: args.applyPendingGrowth ?? args.ipcRegistration.mate.applyPendingGrowth,
+    applyPendingGrowth: args.applyPendingGrowth ?? (async () => {
+      throw new Error("Growth apply is not wired.");
+    }),
     cleanupStaleGrowthApplyRuns: args.cleanupStaleGrowthApplyRuns,
     growthApplyIntervalMs: args.growthApplyIntervalMs,
     getGrowthApplyIntervalMs: args.getGrowthApplyIntervalMs,

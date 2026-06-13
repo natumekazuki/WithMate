@@ -88,25 +88,25 @@ export type HomeSettingsContentProps = {
   modelCatalogRevisionLabel: string;
   settingsDirty: boolean;
   settingsFeedback: string;
-  memoryManagementSnapshot: MemoryManagementSnapshot | null;
-  memoryManagementPages: {
+  memoryManagementSnapshot?: MemoryManagementSnapshot | null;
+  memoryManagementPages?: {
     session: MemoryManagementDomainPageInfo;
     project: MemoryManagementDomainPageInfo;
     mate_profile: MemoryManagementDomainPageInfo;
   };
-  memoryManagementLoading: boolean;
-  memoryManagementBusyTarget: string | null;
-  memoryManagementFeedback: string;
-  mateGrowthSettings: MateGrowthSettings | null;
-  mateGrowthFeedback: string;
-  mateGrowthBusy: boolean;
-  mateGrowthEvents: MateGrowthEventListItem[];
-  mateGrowthEventsLoading: boolean;
-  mateGrowthEventsFeedback: string;
-  mateGrowthEventBusyTarget: string | null;
-  mateEmbeddingSettings: MateEmbeddingSettings | null;
-  mateEmbeddingFeedback: string;
-  mateEmbeddingBusy: boolean;
+  memoryManagementLoading?: boolean;
+  memoryManagementBusyTarget?: string | null;
+  memoryManagementFeedback?: string;
+  mateGrowthSettings?: MateGrowthSettings | null;
+  mateGrowthFeedback?: string;
+  mateGrowthBusy?: boolean;
+  mateGrowthEvents?: MateGrowthEventListItem[];
+  mateGrowthEventsLoading?: boolean;
+  mateGrowthEventsFeedback?: string;
+  mateGrowthEventBusyTarget?: string | null;
+  mateEmbeddingSettings?: MateEmbeddingSettings | null;
+  mateEmbeddingFeedback?: string;
+  mateEmbeddingBusy?: boolean;
   memoryManagementOnly?: boolean;
   onChangeMemoryGenerationEnabled: (enabled: boolean) => void;
   onChangeMateMemoryGenerationPriorityProvider: (index: number, providerId: string) => void;
@@ -122,11 +122,11 @@ export type HomeSettingsContentProps = {
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
-  onChangeProviderInstructionEnabled: (providerId: string, enabled: boolean) => void;
-  onChangeProviderInstructionWriteMode: (providerId: string, value: string) => void;
-  onChangeProviderInstructionFailPolicy: (providerId: string, value: string) => void;
-  onChangeProviderInstructionInstructionRelativePath: (providerId: string, instructionRelativePath: string) => void;
-  onBrowseProviderInstructionInstructionRelativePath: (providerId: string) => void;
+  onChangeProviderInstructionEnabled?: (providerId: string, enabled: boolean) => void;
+  onChangeProviderInstructionWriteMode?: (providerId: string, value: string) => void;
+  onChangeProviderInstructionFailPolicy?: (providerId: string, value: string) => void;
+  onChangeProviderInstructionInstructionRelativePath?: (providerId: string, instructionRelativePath: string) => void;
+  onBrowseProviderInstructionInstructionRelativePath?: (providerId: string) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
   onBrowseProviderSkillRootPath: (providerId: string) => void;
   onChangeProviderSkillRelativePath: (providerId: string, skillRelativePath: string) => void;
@@ -142,13 +142,13 @@ export type HomeSettingsContentProps = {
   onExportModelCatalog: () => void;
   onOpenAppLogFolder: () => void;
   onOpenCrashDumpFolder: () => void;
-  onReloadMemoryManagement: () => void;
-  onChangeMemoryManagementViewFilters: (filters: MemoryManagementViewFilters) => void;
-  onLoadMoreMemoryManagement: (domain: MemoryManagementDomain) => void;
-  onDeleteSessionMemory: (sessionId: string) => void;
-  onDeleteProjectMemoryEntry: (entryId: string) => void;
-  onDeleteMateProfileItem: (itemId: string) => void;
-  onStartMateEmbeddingDownload: () => void;
+  onReloadMemoryManagement?: () => void;
+  onChangeMemoryManagementViewFilters?: (filters: MemoryManagementViewFilters) => void;
+  onLoadMoreMemoryManagement?: (domain: MemoryManagementDomain) => void;
+  onDeleteSessionMemory?: (sessionId: string) => void;
+  onDeleteProjectMemoryEntry?: (entryId: string) => void;
+  onDeleteMateProfileItem?: (itemId: string) => void;
+  onStartMateEmbeddingDownload?: () => void;
   onApplyPendingGrowth?: () => void;
   applyPendingGrowthBusy?: boolean;
   canApplyPendingGrowth?: boolean;
@@ -161,7 +161,7 @@ export type HomeSettingsContentProps = {
   onCorrectMateGrowthEvent?: (eventId: string, statement: string) => void;
   onDisableMateGrowthEvent?: (eventId: string) => void;
   onForgetMateGrowthEvent?: (eventId: string) => void;
-  onUpdateMateGrowthSettings: (input: UpdateMateGrowthSettingsInput) => void;
+  onUpdateMateGrowthSettings?: (input: UpdateMateGrowthSettingsInput) => void;
   onResetMate?: () => void;
   mateResetBusy?: boolean;
   canResetMate?: boolean;
@@ -202,6 +202,23 @@ const MICROCOPY_SLOT_LABEL: Record<MicrocopySlot, string> = {
   "empty.changed_files": "Empty / 変更なし",
   "empty.context": "Empty / context なし",
 };
+
+const EMPTY_MEMORY_PAGE_INFO: MemoryManagementDomainPageInfo = {
+  nextCursor: null,
+  hasMore: false,
+  total: 0,
+};
+
+const EMPTY_SETTINGS_MEMORY_MANAGEMENT_PAGES = {
+  session: EMPTY_MEMORY_PAGE_INFO,
+  project: EMPTY_MEMORY_PAGE_INFO,
+  mate_profile: EMPTY_MEMORY_PAGE_INFO,
+};
+
+const noop = () => {};
+const SHOW_PROVIDER_INSTRUCTION_SETTINGS = false;
+const SHOW_MATE_EMBEDDING_SETTINGS = false;
+const SHOW_MATE_GROWTH_SETTINGS = false;
 
 const microcopyTextareaValue = (value: AppSettings["userMicrocopyCatalog"][MicrocopySlot]): string => {
   if (typeof value === "string") {
@@ -250,21 +267,21 @@ export function HomeSettingsContent({
   modelCatalogRevisionLabel,
   settingsDirty,
   settingsFeedback,
-  memoryManagementSnapshot,
-  memoryManagementPages,
-  memoryManagementLoading,
-  memoryManagementBusyTarget,
-  memoryManagementFeedback,
-  mateGrowthSettings,
-  mateGrowthFeedback,
+  memoryManagementSnapshot = null,
+  memoryManagementPages = EMPTY_SETTINGS_MEMORY_MANAGEMENT_PAGES,
+  memoryManagementLoading = false,
+  memoryManagementBusyTarget = null,
+  memoryManagementFeedback = "",
+  mateGrowthSettings = null,
+  mateGrowthFeedback = "",
   mateGrowthBusy = false,
-  mateGrowthEvents,
-  mateGrowthEventsLoading,
-  mateGrowthEventsFeedback,
-  mateGrowthEventBusyTarget,
-  mateEmbeddingSettings,
-  mateEmbeddingFeedback,
-  mateEmbeddingBusy,
+  mateGrowthEvents = [],
+  mateGrowthEventsLoading = false,
+  mateGrowthEventsFeedback = "",
+  mateGrowthEventBusyTarget = null,
+  mateEmbeddingSettings = null,
+  mateEmbeddingFeedback = "",
+  mateEmbeddingBusy = false,
   memoryManagementOnly = false,
   onChangeMemoryGenerationEnabled,
   onChangeMateMemoryGenerationPriorityProvider,
@@ -277,11 +294,11 @@ export function HomeSettingsContent({
   onChangeAutoCollapseActionDockOnSend,
   onChangeUserMicrocopySlot,
   onChangeProviderEnabled,
-  onChangeProviderInstructionEnabled,
-  onChangeProviderInstructionWriteMode,
-  onChangeProviderInstructionFailPolicy,
-  onChangeProviderInstructionInstructionRelativePath,
-  onBrowseProviderInstructionInstructionRelativePath,
+  onChangeProviderInstructionEnabled = noop,
+  onChangeProviderInstructionWriteMode = noop,
+  onChangeProviderInstructionFailPolicy = noop,
+  onChangeProviderInstructionInstructionRelativePath = noop,
+  onBrowseProviderInstructionInstructionRelativePath = noop,
   onChangeProviderSkillRootPath,
   onBrowseProviderSkillRootPath,
   onChangeProviderSkillRelativePath,
@@ -294,13 +311,13 @@ export function HomeSettingsContent({
   onExportModelCatalog,
   onOpenAppLogFolder,
   onOpenCrashDumpFolder,
-  onReloadMemoryManagement,
-  onChangeMemoryManagementViewFilters,
-  onLoadMoreMemoryManagement,
-  onDeleteSessionMemory,
-  onDeleteProjectMemoryEntry,
-  onDeleteMateProfileItem,
-  onStartMateEmbeddingDownload,
+  onReloadMemoryManagement = noop,
+  onChangeMemoryManagementViewFilters = noop,
+  onLoadMoreMemoryManagement = noop,
+  onDeleteSessionMemory = noop,
+  onDeleteProjectMemoryEntry = noop,
+  onDeleteMateProfileItem = noop,
+  onStartMateEmbeddingDownload = noop,
   onApplyPendingGrowth,
   applyPendingGrowthBusy = false,
   canApplyPendingGrowth = false,
@@ -313,7 +330,7 @@ export function HomeSettingsContent({
   onCorrectMateGrowthEvent,
   onDisableMateGrowthEvent,
   onForgetMateGrowthEvent,
-  onUpdateMateGrowthSettings,
+  onUpdateMateGrowthSettings = noop,
   onResetMate,
   mateResetBusy = false,
   canResetMate = false,
@@ -500,6 +517,7 @@ export function HomeSettingsContent({
                 </div>
               </section>
 
+              {SHOW_PROVIDER_INSTRUCTION_SETTINGS ? (
               <section className="settings-section-card">
                 <div className="settings-field">
                   <strong>{SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL}</strong>
@@ -658,16 +676,19 @@ export function HomeSettingsContent({
                   </div>
                 </div>
               </section>
+              ) : null}
 
             </>
           ) : null}
 
-          <SettingsMateEmbeddingSection
-            settings={mateEmbeddingSettings}
-            feedback={mateEmbeddingFeedback}
-            busy={mateEmbeddingBusy}
-            onDownload={onStartMateEmbeddingDownload}
-          />
+          {SHOW_MATE_EMBEDDING_SETTINGS ? (
+            <SettingsMateEmbeddingSection
+              settings={mateEmbeddingSettings}
+              feedback={mateEmbeddingFeedback}
+              busy={mateEmbeddingBusy}
+              onDownload={onStartMateEmbeddingDownload}
+            />
+          ) : null}
 
           <section className="settings-section-card">
             <div className="settings-field">
@@ -783,148 +804,150 @@ export function HomeSettingsContent({
             </div>
           </section>
 
-          {onApplyPendingGrowth ? (
-            <section className="settings-section-card">
-              <div className="settings-field">
-                <strong>{SETTINGS_MATE_GROWTH_LABEL}</strong>
-                <p className="settings-help">{SETTINGS_MATE_GROWTH_HELP}</p>
-                <div className="settings-actions">
-                  <button
-                    className="launch-toggle"
-                    type="button"
-                    onClick={onApplyPendingGrowth}
-                    disabled={isMateGrowthControlDisabled || applyPendingGrowthBusy || !canApplyPendingGrowth}
-                  >
-                    {applyPendingGrowthBusy ? "適用中..." : SETTINGS_MATE_GROWTH_LABEL}
-                  </button>
-                </div>
-              </div>
-            </section>
-          ) : null}
+          {SHOW_MATE_GROWTH_SETTINGS ? (
+            <>
+              {onApplyPendingGrowth ? (
+                <section className="settings-section-card">
+                  <div className="settings-field">
+                    <strong>{SETTINGS_MATE_GROWTH_LABEL}</strong>
+                    <p className="settings-help">{SETTINGS_MATE_GROWTH_HELP}</p>
+                    <div className="settings-actions">
+                      <button
+                        className="launch-toggle"
+                        type="button"
+                        onClick={onApplyPendingGrowth}
+                        disabled={isMateGrowthControlDisabled || applyPendingGrowthBusy || !canApplyPendingGrowth}
+                      >
+                        {applyPendingGrowthBusy ? "適用中..." : SETTINGS_MATE_GROWTH_LABEL}
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              ) : null}
 
-          <section className="settings-section-card">
-            <div className="settings-field">
-              <strong>最近の Growth Event</strong>
-              <div className="settings-actions">
-                <button
-                  className="launch-toggle"
-                  type="button"
-                  onClick={() => onReloadMateGrowthEvents?.()}
-                  disabled={!onReloadMateGrowthEvents || mateGrowthEventsLoading || mateGrowthSettings === null}
-                >
-                  {mateGrowthEventsLoading ? "更新中..." : "再読み込み"}
-                </button>
-              </div>
-              {mateGrowthEvents.length > 0 ? (
-                <div className="settings-memory-card-list">
-                  {mateGrowthEvents.map((event) => (
-                    <article key={event.id} className="settings-memory-card settings-growth-event-card compact">
-                      <div className="settings-memory-card-head settings-growth-event-head">
-                        <div className="settings-memory-card-copy">
-                          <strong>{event.statement}</strong>
-                          <span>{formatMateGrowthEventMeta(event)}</span>
-                        </div>
-                      </div>
-                      <div className="settings-memory-actions settings-growth-event-actions">
-                        <button
-                          className="launch-toggle"
-                          type="button"
-                          onClick={() => onBeginCorrectMateGrowthEvent?.(event.id, event.statement)}
-                          disabled={
-                            !onBeginCorrectMateGrowthEvent ||
-                            !onCorrectMateGrowthEvent ||
-                            mateGrowthEventBusyTarget !== null ||
-                            applyPendingGrowthBusy ||
-                            event.state !== "candidate"
-                          }
-                        >
-                          修正
-                        </button>
-                        <button
-                          className="danger-button"
-                          type="button"
-                          onClick={() => onDisableMateGrowthEvent?.(event.id)}
-                          disabled={
-                            !onDisableMateGrowthEvent ||
-                            mateGrowthEventBusyTarget !== null ||
-                            event.state !== "candidate"
-                          }
-                        >
-                          {mateGrowthEventBusyTarget === event.id ? "処理中..." : "無効化"}
-                        </button>
-                        <button
-                          className="danger-button"
-                          type="button"
-                          onClick={() => onForgetMateGrowthEvent?.(event.id)}
-                          disabled={
-                            !onForgetMateGrowthEvent ||
-                            mateGrowthEventBusyTarget !== null ||
-                            event.state !== "candidate"
-                          }
-                        >
-                          {mateGrowthEventBusyTarget === event.id ? "処理中..." : "忘れる"}
-                        </button>
-                      </div>
-                      {correctingMateGrowthEventId === event.id ? (
-                        <div className="settings-field compact">
-                          <label>
-                            <span>修正後の内容</span>
-                            <textarea
-                              value={correctingMateGrowthEventStatement}
-                              rows={3}
-                              disabled={mateGrowthEventBusyTarget !== null}
-                              onChange={(changeEvent) =>
-                                onChangeCorrectMateGrowthEventStatement?.(changeEvent.target.value)}
-                            />
-                          </label>
-                          <div className="settings-actions">
+              <section className="settings-section-card">
+                <div className="settings-field">
+                  <strong>最近の Growth Event</strong>
+                  <div className="settings-actions">
+                    <button
+                      className="launch-toggle"
+                      type="button"
+                      onClick={() => onReloadMateGrowthEvents?.()}
+                      disabled={!onReloadMateGrowthEvents || mateGrowthEventsLoading || mateGrowthSettings === null}
+                    >
+                      {mateGrowthEventsLoading ? "更新中..." : "再読み込み"}
+                    </button>
+                  </div>
+                  {mateGrowthEvents.length > 0 ? (
+                    <div className="settings-memory-card-list">
+                      {mateGrowthEvents.map((event) => (
+                        <article key={event.id} className="settings-memory-card settings-growth-event-card compact">
+                          <div className="settings-memory-card-head settings-growth-event-head">
+                            <div className="settings-memory-card-copy">
+                              <strong>{event.statement}</strong>
+                              <span>{formatMateGrowthEventMeta(event)}</span>
+                            </div>
+                          </div>
+                          <div className="settings-memory-actions settings-growth-event-actions">
                             <button
                               className="launch-toggle"
                               type="button"
-                              onClick={() => {
-                                const nextStatement = correctingMateGrowthEventStatement.trim();
-                                if (nextStatement.length === 0) {
-                                  return;
-                                }
-                                onCorrectMateGrowthEvent?.(event.id, nextStatement);
-                              }}
+                              onClick={() => onBeginCorrectMateGrowthEvent?.(event.id, event.statement)}
                               disabled={
+                                !onBeginCorrectMateGrowthEvent ||
                                 !onCorrectMateGrowthEvent ||
                                 mateGrowthEventBusyTarget !== null ||
                                 applyPendingGrowthBusy ||
-                                event.state !== "candidate" ||
-                                correctingMateGrowthEventStatement.trim().length === 0
+                                event.state !== "candidate"
                               }
                             >
-                              保存
+                              修正
                             </button>
                             <button
-                              className="launch-toggle"
+                              className="danger-button"
                               type="button"
-                              onClick={() => onCancelCorrectMateGrowthEvent?.()}
-                              disabled={mateGrowthEventBusyTarget !== null}
+                              onClick={() => onDisableMateGrowthEvent?.(event.id)}
+                              disabled={
+                                !onDisableMateGrowthEvent ||
+                                mateGrowthEventBusyTarget !== null ||
+                                event.state !== "candidate"
+                              }
                             >
-                              キャンセル
+                              {mateGrowthEventBusyTarget === event.id ? "処理中..." : "無効化"}
+                            </button>
+                            <button
+                              className="danger-button"
+                              type="button"
+                              onClick={() => onForgetMateGrowthEvent?.(event.id)}
+                              disabled={
+                                !onForgetMateGrowthEvent ||
+                                mateGrowthEventBusyTarget !== null ||
+                                event.state !== "candidate"
+                              }
+                            >
+                              {mateGrowthEventBusyTarget === event.id ? "処理中..." : "忘れる"}
                             </button>
                           </div>
-                        </div>
-                      ) : null}
-                      {event.rationalePreview ? <p className="settings-help">{event.rationalePreview}</p> : null}
-                    </article>
-                  ))}
+                          {correctingMateGrowthEventId === event.id ? (
+                            <div className="settings-field compact">
+                              <label>
+                                <span>修正後の内容</span>
+                                <textarea
+                                  value={correctingMateGrowthEventStatement}
+                                  rows={3}
+                                  disabled={mateGrowthEventBusyTarget !== null}
+                                  onChange={(changeEvent) =>
+                                    onChangeCorrectMateGrowthEventStatement?.(changeEvent.target.value)}
+                                />
+                              </label>
+                              <div className="settings-actions">
+                                <button
+                                  className="launch-toggle"
+                                  type="button"
+                                  onClick={() => {
+                                    const nextStatement = correctingMateGrowthEventStatement.trim();
+                                    if (nextStatement.length === 0) {
+                                      return;
+                                    }
+                                    onCorrectMateGrowthEvent?.(event.id, nextStatement);
+                                  }}
+                                  disabled={
+                                    !onCorrectMateGrowthEvent ||
+                                    mateGrowthEventBusyTarget !== null ||
+                                    applyPendingGrowthBusy ||
+                                    event.state !== "candidate" ||
+                                    correctingMateGrowthEventStatement.trim().length === 0
+                                  }
+                                >
+                                  保存
+                                </button>
+                                <button
+                                  className="launch-toggle"
+                                  type="button"
+                                  onClick={() => onCancelCorrectMateGrowthEvent?.()}
+                                  disabled={mateGrowthEventBusyTarget !== null}
+                                >
+                                  キャンセル
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                          {event.rationalePreview ? <p className="settings-help">{event.rationalePreview}</p> : null}
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="settings-help">
+                      {mateGrowthEventsLoading ? "Growth Event を読み込み中..." : "表示できる Growth Event はまだないよ。"}
+                    </p>
+                  )}
+                  {mateGrowthEventsFeedback ? <p className="settings-feedback">{mateGrowthEventsFeedback}</p> : null}
                 </div>
-              ) : (
-                <p className="settings-help">
-                  {mateGrowthEventsLoading ? "Growth Event を読み込み中..." : "表示できる Growth Event はまだないよ。"}
-                </p>
-              )}
-              {mateGrowthEventsFeedback ? <p className="settings-feedback">{mateGrowthEventsFeedback}</p> : null}
-            </div>
-          </section>
+              </section>
 
-          <section className="settings-section-card">
-            <div className="settings-field">
-              <strong>{SETTINGS_MATE_GROWTH_SETTINGS_LABEL}</strong>
+              <section className="settings-section-card">
+                <div className="settings-field">
+                  <strong>{SETTINGS_MATE_GROWTH_SETTINGS_LABEL}</strong>
               <label className="settings-provider-toggle-row settings-section-toggle">
                 <span>{SETTINGS_MATE_GROWTH_ENABLED_LABEL}</span>
                 <input
@@ -1067,8 +1090,10 @@ export function HomeSettingsContent({
                 </div>
               </div>
               {mateGrowthFeedback ? <p className="settings-feedback">{mateGrowthFeedback}</p> : null}
-            </div>
-          </section>
+                </div>
+              </section>
+            </>
+          ) : null}
 
           <section className="settings-section-card danger-zone">
             <div className="settings-field">

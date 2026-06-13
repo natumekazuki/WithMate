@@ -13,10 +13,8 @@ export type HomeRightPaneProps = {
   mateProfile: MateProfile | null;
   onChangeRightPaneView: (view: "monitor" | "mate") => void;
   onOpenSessionMonitorWindow: () => void;
-  onOpenMemoryManagementWindow: () => void;
   onOpenSettingsWindow: () => void;
   onOpenMateProfile: () => void;
-  onOpenMateTalk: () => void;
   onOpenSession: (sessionId: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
   canUsePrimaryFeatures?: boolean;
@@ -30,10 +28,8 @@ export function HomeRightPane({
   mateProfile,
   onChangeRightPaneView,
   onOpenSessionMonitorWindow,
-  onOpenMemoryManagementWindow,
   onOpenSettingsWindow,
   onOpenMateProfile,
-  onOpenMateTalk,
   onOpenSession,
   onOpenCompanionReview,
   canUsePrimaryFeatures = true,
@@ -50,23 +46,11 @@ export function HomeRightPane({
     }
     onOpenSessionMonitorWindow();
   };
-  const openMemoryManagementWindow = () => {
-    if (!canUsePrimaryFeatures) {
-      return;
-    }
-    onOpenMemoryManagementWindow();
-  };
   const openMateProfile = () => {
     if (!canUsePrimaryFeatures) {
       return;
     }
     onOpenMateProfile();
-  };
-  const openMateTalk = () => {
-    if (!canUsePrimaryFeatures) {
-      return;
-    }
-    onOpenMateTalk();
   };
   const openSession = (sessionId: string) => {
     if (!canUsePrimaryFeatures) {
@@ -96,26 +80,8 @@ export function HomeRightPane({
           >
             {monitorWindowIcon}
           </button>
-          <button
-            className="launch-toggle home-settings-button"
-            type="button"
-            onClick={openMemoryManagementWindow}
-            aria-disabled={!canUsePrimaryFeatures}
-            disabled={!canUsePrimaryFeatures}
-          >
-            Memory
-          </button>
           <button className="launch-toggle home-settings-button" type="button" onClick={onOpenSettingsWindow}>
             Settings
-          </button>
-          <button
-            className="launch-toggle home-settings-button"
-            type="button"
-            onClick={openMateTalk}
-            aria-disabled={!canUsePrimaryFeatures}
-            disabled={!canUsePrimaryFeatures}
-          >
-            メイトーク
           </button>
         </div>
         <div className="home-pane-toggle" role="tablist" aria-label="Home right pane">

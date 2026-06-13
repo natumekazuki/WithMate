@@ -10,12 +10,13 @@ import {
   buildHomeProviderInstructionTargetUpsertInput,
   resolveInstructionRelativePathFromSelection,
 } from "./settings-view-model.js";
-import type { WithMateWindowApi } from "../withmate-window-api.js";
 
-export type HomeProviderInstructionTargetApi = Pick<
-  WithMateWindowApi,
-  "pickFile" | "upsertProviderInstructionTarget"
->;
+export type HomeProviderInstructionTargetApi = {
+  pickFile: (initialPath?: string | null) => Promise<string | null>;
+  upsertProviderInstructionTarget: (
+    input: ReturnType<typeof buildHomeProviderInstructionTargetUpsertInput>,
+  ) => Promise<HomeProviderInstructionTargetDraft> | HomeProviderInstructionTargetDraft;
+};
 
 type ProviderInstructionTargetActionContext = {
   providerInstructionTargets: readonly HomeProviderInstructionTargetDraft[];

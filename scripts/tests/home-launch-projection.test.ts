@@ -79,10 +79,9 @@ describe("home-launch-projection", () => {
     assert.equal(enabledOnlyCodex.canStartSession, true);
   });
 
-  it("mate-talk mode は provider があれば title/workspace なしで開始可能にする", () => {
+  it("削除済み launch mode は通常 session と同じ開始条件を使う", () => {
     const projection = buildHomeLaunchProjection({
       launchProviderId: "codex",
-      launchMode: "mate-talk",
       launchTitle: "",
       launchWorkspace: null,
       appSettings: createDefaultAppSettings(),
@@ -90,6 +89,6 @@ describe("home-launch-projection", () => {
     });
 
     assert.equal(projection.selectedLaunchProvider?.id, "codex");
-    assert.equal(projection.canStartSession, true);
+    assert.equal(projection.canStartSession, false);
   });
 });

@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 
 import { MateProfileScreen } from "../mate/MateProfileScreen.js";
-import { MemoryManagementWindowScreen } from "../memory/MemoryManagementWindowScreen.js";
 import { SettingsWindowScreen } from "../settings/SettingsWindowScreen.js";
 import { HomeDashboardScreen } from "./HomeDashboardScreen.js";
 import { HomeMonitorWindowScreen } from "./HomeMonitorWindowScreen.js";
@@ -17,9 +16,6 @@ type HomeAppRouterProps = {
   isMateNotCreated: boolean;
   mateProfileEditorOpen: boolean;
   mateSetupContent: ReactNode;
-  isMemoryWindowMode: boolean;
-  memoryManagementLoaded: boolean;
-  memoryManagementContent: ReactNode;
   isMonitorWindowMode: boolean;
   monitorContent: ReactNode;
   recentSessionsPanel: ReactNode;
@@ -37,9 +33,6 @@ export function HomeAppRouter({
   isMateNotCreated,
   mateProfileEditorOpen,
   mateSetupContent,
-  isMemoryWindowMode,
-  memoryManagementLoaded,
-  memoryManagementContent,
   isMonitorWindowMode,
   monitorContent,
   recentSessionsPanel,
@@ -70,16 +63,6 @@ export function HomeAppRouter({
 
   if (mateProfileEditorOpen) {
     return <MateProfileScreen homePageClassName={homePageClassName} content={mateSetupContent} />;
-  }
-
-  if (isMemoryWindowMode) {
-    return (
-      <MemoryManagementWindowScreen
-        homePageClassName={homePageClassName}
-        loaded={memoryManagementLoaded}
-        content={memoryManagementContent}
-      />
-    );
   }
 
   if (isMonitorWindowMode) {

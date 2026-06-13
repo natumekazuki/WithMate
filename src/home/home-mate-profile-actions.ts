@@ -23,7 +23,7 @@ export type SaveHomeMateProfileInput = {
   setMateCreating: (creating: boolean) => void;
   setLaunchFeedback: (message: string) => void;
   hydrateHomeData: () => Promise<void>;
-  clearMateGrowthViewState: () => void;
+  clearMateGrowthViewState?: () => void;
 };
 
 export async function saveHomeMateProfile(input: SaveHomeMateProfileInput): Promise<void> {
@@ -67,7 +67,7 @@ export async function saveHomeMateProfile(input: SaveHomeMateProfileInput): Prom
         input.setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
       }
     } else {
-      input.clearMateGrowthViewState();
+      input.clearMateGrowthViewState?.();
     }
   } catch (error) {
     input.setMateCreationFeedback(error instanceof Error ? error.message : "Mate の保存に失敗したよ。");

@@ -1,6 +1,5 @@
 import type { CompanionSessionSummary } from "../companion-state.js";
-import type { MateGrowthEventListItem } from "../mate/mate-growth-events-state.js";
-import type { MateGrowthSettings, MateProfile, MateStorageState } from "../mate/mate-state.js";
+import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { SessionSummary } from "../session-state.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import {
@@ -24,17 +23,6 @@ type HomeMateProfileHandlersContext = {
   setLaunchFeedback: (message: string) => void;
   setSessions: (sessions: SessionSummary[]) => void;
   setCompanionSessions: (sessions: CompanionSessionSummary[]) => void;
-  setMateEmbeddingSettings: (settings: Awaited<ReturnType<WithMateWindowApi["getMateEmbeddingSettings"]>>) => void;
-  setMateGrowthSettings: (settings: MateGrowthSettings | null) => void;
-  setMateGrowthFeedback: (message: string) => void;
-  setMateGrowthEvents: (events: MateGrowthEventListItem[]) => void;
-  setMateGrowthEventsFeedback: (message: string) => void;
-  setCorrectingMateGrowthEventId: (eventId: string | null) => void;
-  setCorrectingMateGrowthEventStatement: (statement: string) => void;
-  refreshMateGrowthEvents: (
-    api: WithMateWindowApi,
-    options?: { isActive?: () => boolean; silent?: boolean },
-  ) => Promise<void>;
 };
 
 export type HomeMateProfileHandlers = {
@@ -61,14 +49,6 @@ export function buildHomeMateProfileHandlers({
   setLaunchFeedback,
   setSessions,
   setCompanionSessions,
-  setMateEmbeddingSettings,
-  setMateGrowthSettings,
-  setMateGrowthFeedback,
-  setMateGrowthEvents,
-  setMateGrowthEventsFeedback,
-  setCorrectingMateGrowthEventId,
-  setCorrectingMateGrowthEventStatement,
-  refreshMateGrowthEvents,
 }: HomeMateProfileHandlersContext): HomeMateProfileHandlers {
   const refreshSessionSummaries = async (api: WithMateWindowApi) => {
     const [nextSessions, nextCompanionSessions] = await Promise.all([
@@ -103,25 +83,12 @@ export function buildHomeMateProfileHandlers({
         setMateCreating,
         setLaunchFeedback,
         hydrateHomeData: async () => {
-          const [nextSessions, nextCompanionSessions, nextEmbeddingSettings, nextGrowthSettings] = await Promise.all([
+          const [nextSessions, nextCompanionSessions] = await Promise.all([
             api.listSessionSummaries(),
             api.listCompanionSessionSummaries(),
-            api.getMateEmbeddingSettings(),
-            api.getMateGrowthSettings(),
           ]);
           setSessions(nextSessions);
           setCompanionSessions(nextCompanionSessions);
-          setMateEmbeddingSettings(nextEmbeddingSettings);
-          setMateGrowthSettings(nextGrowthSettings);
-          await refreshMateGrowthEvents(api, { silent: true });
-        },
-        clearMateGrowthViewState: () => {
-          setMateGrowthSettings(null);
-          setMateGrowthFeedback("");
-          setMateGrowthEvents([]);
-          setMateGrowthEventsFeedback("");
-          setCorrectingMateGrowthEventId(null);
-          setCorrectingMateGrowthEventStatement("");
         },
       });
     },

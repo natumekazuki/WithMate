@@ -1,4 +1,3 @@
-import type { WithMateWindowApi } from "../withmate-window-api.js";
 import { getMemoryManagementCursor, normalizeMemoryManagementPages, type MemoryManagementPageState } from "./memory-management-page-state.js";
 import {
   buildMemoryManagementPageRequest,
@@ -7,6 +6,8 @@ import {
   removeProjectMemoryEntryFromSnapshot,
   removeSessionMemoryFromSnapshot,
   type MemoryManagementDomain,
+  type MemoryManagementPageRequest,
+  type MemoryManagementPageResult,
   type MemoryManagementSnapshot,
 } from "./memory-management-state.js";
 import type { MemoryManagementViewFilters } from "./memory-management-view.js";
@@ -14,13 +15,12 @@ import { type MateEmbeddingSettings } from "../mate/mate-embedding-settings.js";
 
 export const MEMORY_MANAGEMENT_PAGE_LIMIT = 50;
 
-export type HomeMemoryManagementApi = Pick<
-  WithMateWindowApi,
-  | "getMemoryManagementPage"
-  | "deleteSessionMemory"
-  | "deleteProjectMemoryEntry"
-  | "forgetMateProfileItem"
->;
+export type HomeMemoryManagementApi = {
+  getMemoryManagementPage: (request: MemoryManagementPageRequest) => Promise<MemoryManagementPageResult>;
+  deleteSessionMemory: (sessionId: string) => Promise<void> | void;
+  deleteProjectMemoryEntry: (entryId: string) => Promise<void> | void;
+  forgetMateProfileItem: (itemId: string) => Promise<void> | void;
+};
 
 export type SetMemoryManagementSnapshot = (
   snapshot: MemoryManagementSnapshot | null | ((current: MemoryManagementSnapshot | null) => MemoryManagementSnapshot),
@@ -171,21 +171,21 @@ const DELETE_ITEM_CONFIG: Record<DeleteMemoryManagementItemKind, DeleteMemoryMan
     busyPrefix: "session",
     successFeedback: "Session Memory を削除したよ。",
     failureFeedback: "Session Memory の削除に失敗したよ。",
-    deleteItem: (api, itemId) => api.deleteSessionMemory(itemId),
+    deleteItem: (api, itemId) => Promise.resolve(api.deleteSessionMemory(itemId)),
     removeFromSnapshot: removeSessionMemoryFromSnapshot,
   },
   project: {
     busyPrefix: "project",
     successFeedback: "Project Memory を削除したよ。",
     failureFeedback: "Project Memory の削除に失敗したよ。",
-    deleteItem: (api, itemId) => api.deleteProjectMemoryEntry(itemId),
+    deleteItem: (api, itemId) => Promise.resolve(api.deleteProjectMemoryEntry(itemId)),
     removeFromSnapshot: removeProjectMemoryEntryFromSnapshot,
   },
   mate_profile: {
     busyPrefix: "mate_profile",
     successFeedback: "Mate Profile Item を忘却したよ。",
     failureFeedback: "Mate Profile Item の忘却に失敗したよ。",
-    deleteItem: (api, itemId) => api.forgetMateProfileItem(itemId),
+    deleteItem: (api, itemId) => Promise.resolve(api.forgetMateProfileItem(itemId)),
     removeFromSnapshot: removeMateProfileItemFromSnapshot,
   },
 };
@@ -401,7 +401,10 @@ export async function handleDeleteMateProfileItem(input: {
 }
 
 export async function handleStartMateEmbeddingDownload(input: {
-  api: Pick<WithMateWindowApi, "startMateEmbeddingDownload" | "getMateEmbeddingSettings"> | null;
+  api: {
+    startMateEmbeddingDownload: () => Promise<void> | void;
+    getMateEmbeddingSettings: () => Promise<MateEmbeddingSettings | null> | MateEmbeddingSettings | null;
+  } | null;
   setMateEmbeddingSettings: (settings: MateEmbeddingSettings | null) => void;
   setMateEmbeddingFeedback: (feedback: string) => void;
   setMateEmbeddingBusy: (busy: boolean) => void;
