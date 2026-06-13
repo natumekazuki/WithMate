@@ -36,7 +36,7 @@ export function buildHomeLaunchProjection({
   modelCatalog,
 }: {
   launchProviderId: string;
-  launchMode?: "session" | "companion" | "mate-talk";
+  launchMode?: "session" | "companion";
   launchTitle: string;
   launchWorkspace: LaunchWorkspace | null;
   appSettings: AppSettings;
@@ -53,8 +53,6 @@ export function buildHomeLaunchProjection({
     enabledLaunchProviders,
     selectedLaunchProvider,
     launchWorkspacePathLabel: launchWorkspace ? launchWorkspace.path : "workspace",
-    canStartSession: launchMode === "mate-talk"
-      ? !!selectedLaunchProvider
-      : !!launchTitle.trim() && !!launchWorkspace && !!selectedLaunchProvider,
+    canStartSession: !!launchTitle.trim() && !!launchWorkspace && !!selectedLaunchProvider,
   };
 }

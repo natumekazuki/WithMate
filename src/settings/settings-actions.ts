@@ -9,18 +9,22 @@ import { buildHomeProviderInstructionTargetUpsertInput } from "./settings-view-m
 import {
   normalizeResetAppDatabaseTargets,
   type ResetAppDatabaseResult,
+  type ResetAppDatabaseRequest,
   type ResetAppDatabaseTarget,
 } from "../withmate-window-types.js";
-import type { WithMateWindowApi } from "../withmate-window-api.js";
 
-export type HomeSettingsApi = Pick<
-  WithMateWindowApi,
-  | "importModelCatalogFile"
-  | "exportModelCatalogFile"
-  | "updateAppSettings"
-  | "resetAppDatabase"
-  | "upsertProviderInstructionTarget"
->;
+export type HomeSettingsApi = {
+  importModelCatalogFile: () => Promise<{ revision: number } | null>;
+  exportModelCatalogFile: () => Promise<string | null>;
+  updateAppSettings: (settings: AppSettings) => Promise<AppSettings>;
+  resetAppDatabase: (request: ResetAppDatabaseRequest) => Promise<ResetAppDatabaseResult>;
+};
+
+type ProviderInstructionTargetSyncApi = {
+  upsertProviderInstructionTarget: (
+    input: ReturnType<typeof buildHomeProviderInstructionTargetUpsertInput>,
+  ) => Promise<HomeProviderInstructionTargetDraft> | HomeProviderInstructionTargetDraft;
+};
 
 export async function importHomeModelCatalog(api: HomeSettingsApi): Promise<string> {
   const snapshot = await api.importModelCatalogFile();
@@ -48,7 +52,7 @@ export async function syncProviderInstructionTargetRoots({
   nextSettings,
   providerInstructionTargets,
 }: {
-  api: HomeSettingsApi;
+  api: ProviderInstructionTargetSyncApi;
   nextSettings: AppSettings;
   providerInstructionTargets: readonly HomeProviderInstructionTargetDraft[];
 }): Promise<HomeProviderInstructionTargetDraft[]> {

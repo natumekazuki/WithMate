@@ -30,20 +30,9 @@ import type {
   CreateMateInput,
   MateProfile,
   MateStorageState,
-  MateTalkLaunchInput,
-  MateTalkTurnInput,
-  MateTalkTurnResult,
   SetMateAvatarInput,
   UpdateMateInput,
 } from "../src/mate/mate-state.js";
-import type { MateGrowthApplyResult } from "../src/mate/mate-growth-apply-result.js";
-import type {
-  MateGrowthEventActionRequest,
-  MateGrowthEventActionResult,
-  MateGrowthEventCorrectionRequest,
-  MateGrowthEventListRequest,
-  MateGrowthEventListResult,
-} from "../src/mate/mate-growth-events-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
 import type {
   CompanionMergeSelectedFilesRequest,
@@ -52,21 +41,10 @@ import type {
   CompanionSyncTargetResult,
   CompanionTargetWorkspaceStashResult,
 } from "../src/companion-review-state.js";
-import type {
-  MemoryManagementPageRequest,
-  MemoryManagementPageResult,
-  MemoryManagementSnapshot,
-} from "../src/memory/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type {
-  ProviderInstructionTarget,
-  ProviderInstructionTargetInput,
-} from "../src/provider-instruction-target-state.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionInput, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
-import type { MateEmbeddingSettings } from "../src/mate/mate-embedding-settings.js";
-import type { MateGrowthSettings, UpdateMateGrowthSettingsInput } from "../src/mate/mate-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
@@ -75,8 +53,6 @@ import {
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_UPDATE_MATE_CHANNEL,
-  WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
-  WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
@@ -89,11 +65,7 @@ import {
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_MATE_STATE_CHANNEL,
   WITHMATE_GET_MATE_PROFILE_CHANNEL,
-  WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
-  WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
-  WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
-  WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
@@ -111,7 +83,6 @@ import {
   WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
-  WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
   WITHMATE_LIST_COMPANION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARIES_CHANNEL,
   WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
@@ -136,8 +107,6 @@ import {
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
-  WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
-  WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_OPEN_SESSION_FILES_DIRECTORY_CHANNEL,
@@ -157,15 +126,8 @@ import {
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESET_MATE_CHANNEL,
-  WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
-  WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL,
-  WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL,
-  WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL,
-  WITHMATE_FORGET_MATE_GROWTH_EVENT_CHANNEL,
-  WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
-  WITHMATE_RUN_MATE_TALK_TURN_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
@@ -179,11 +141,8 @@ import {
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
-  WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL,
-  WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
-  WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
 } from "../src/withmate-ipc-channels.js";
 import type {
   OpenPathOptions,
@@ -210,12 +169,6 @@ const MATE_CREATED_REQUIRED_CHANNEL_WHITELIST = new Set<string>([
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
-  WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL,
-  WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL,
-  WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
-  WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
-  WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
-  WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
@@ -255,8 +208,6 @@ export type MainIpcRegistrationDeps = {
   openHomeWindow(): Promise<void>;
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
-  openMemoryManagementWindow(): Promise<void>;
-  openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
@@ -313,18 +264,7 @@ export type MainIpcRegistrationDeps = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
-  getMateGrowthSettings(): MateGrowthSettings | null;
-  updateMateGrowthSettings(input: UpdateMateGrowthSettingsInput): Awaitable<MateGrowthSettings | null>;
-  getMateEmbeddingSettings(): MateEmbeddingSettings | null;
-  listProviderInstructionTargets(): Awaitable<ProviderInstructionTarget[]>;
-  upsertProviderInstructionTarget(input: ProviderInstructionTargetInput): Awaitable<ProviderInstructionTarget>;
-  startMateEmbeddingDownload(): Awaitable<void>;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
-  getMemoryManagementSnapshot(): MemoryManagementSnapshot;
-  getMemoryManagementPage(request: MemoryManagementPageRequest): MemoryManagementPageResult;
-  deleteSessionMemory(sessionId: string): void;
-  deleteProjectMemoryEntry(entryId: string): void;
-  forgetMateProfileItem(itemId: string): Awaitable<void>;
   getModelCatalog(revision: number | null): ModelCatalogSnapshot | null;
   importModelCatalogDocument(document: ModelCatalogDocument): Awaitable<ModelCatalogSnapshot>;
   importModelCatalogFromFile(targetWindow?: MaybeWindow): Promise<ModelCatalogSnapshot | null>;
@@ -369,12 +309,6 @@ export type MainIpcRegistrationDeps = {
   createMate(input: CreateMateInput): Promise<MateProfile>;
   updateMate(input: UpdateMateInput): Promise<MateProfile>;
   setMateAvatar(input: SetMateAvatarInput): Promise<MateProfile>;
-  applyPendingGrowth(): Promise<MateGrowthApplyResult>;
-  listMateGrowthEvents(request?: MateGrowthEventListRequest | null): Promise<MateGrowthEventListResult>;
-  correctMateGrowthEvent(request: MateGrowthEventCorrectionRequest): Promise<MateGrowthEventActionResult>;
-  disableMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult>;
-  forgetMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult>;
-  runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
   resetMate(): Promise<void>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
@@ -402,8 +336,6 @@ type MainIpcWindowDeps = Pick<
   | "openHomeWindow"
   | "openSessionMonitorWindow"
   | "openSettingsWindow"
-  | "openMemoryManagementWindow"
-  | "openMateTalkWindow"
   | "openDiffWindow"
   | "openCompanionReviewWindow"
   | "openCompanionMergeWindow"
@@ -439,18 +371,7 @@ type MainIpcSettingsDeps = Pick<
   | "getAppSettings"
   | "updateAppSettings"
   | "getAppDatabaseDiagnostics"
-  | "getMateGrowthSettings"
-  | "updateMateGrowthSettings"
-  | "getMateEmbeddingSettings"
-  | "listProviderInstructionTargets"
-  | "upsertProviderInstructionTarget"
-  | "startMateEmbeddingDownload"
   | "resetAppDatabase"
-  | "getMemoryManagementSnapshot"
-  | "getMemoryManagementPage"
-  | "deleteSessionMemory"
-  | "deleteProjectMemoryEntry"
-  | "forgetMateProfileItem"
 >;
 
 type MainIpcAuxiliaryDeps = Pick<
@@ -549,12 +470,6 @@ type MainIpcMateDeps = Pick<
   | "createMate"
   | "updateMate"
   | "setMateAvatar"
-  | "applyPendingGrowth"
-  | "listMateGrowthEvents"
-  | "correctMateGrowthEvent"
-  | "disableMateGrowthEvent"
-  | "forgetMateGrowthEvent"
-  | "runMateTalkTurn"
   | "resetMate"
 >;
 
@@ -580,12 +495,6 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   });
   ipcMain.handle(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL, async () => {
     await deps.openSettingsWindow();
-  });
-  ipcMain.handle(WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL, async () => {
-    await deps.openMemoryManagementWindow();
-  });
-  ipcMain.handle(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL, async (_event, input?: MateTalkLaunchInput | null) => {
-    await deps.openMateTalkWindow(input ?? null);
   });
   ipcMain.handle(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, async (_event, diffPreview: DiffPreviewPayload) => {
     await deps.openDiffWindow(diffPreview);
@@ -732,29 +641,8 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => deps.getAppSettings());
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => deps.updateAppSettings(settings));
   ipcMain.handle(WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL, () => deps.getAppDatabaseDiagnostics());
-  ipcMain.handle(WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL, () => deps.getMateGrowthSettings());
-  ipcMain.handle(WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL, () => deps.getMateEmbeddingSettings());
-  ipcMain.handle(WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL, (_event, input: UpdateMateGrowthSettingsInput) =>
-    deps.updateMateGrowthSettings(input),
-  );
-  ipcMain.handle(WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL, () => deps.listProviderInstructionTargets());
-  ipcMain.handle(WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL, (_event, input: ProviderInstructionTargetInput) =>
-    deps.upsertProviderInstructionTarget(input),
-  );
-  ipcMain.handle(WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL, () => deps.startMateEmbeddingDownload());
   ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, (_event, request: ResetAppDatabaseRequest | null | undefined) =>
     deps.resetAppDatabase(request),
-  );
-  ipcMain.handle(WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL, () => deps.getMemoryManagementSnapshot());
-  ipcMain.handle(WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL, (_event, request: MemoryManagementPageRequest) =>
-    deps.getMemoryManagementPage(request),
-  );
-  ipcMain.handle(WITHMATE_DELETE_SESSION_MEMORY_CHANNEL, (_event, sessionId: string) => deps.deleteSessionMemory(sessionId));
-  ipcMain.handle(WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL, (_event, entryId: string) =>
-    deps.deleteProjectMemoryEntry(entryId),
-  );
-  ipcMain.handle(WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL, (_event, itemId: string) =>
-    deps.forgetMateProfileItem(itemId),
   );
 }
 
@@ -959,22 +847,6 @@ function registerMateHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcMateDeps
   ipcMain.handle(WITHMATE_CREATE_MATE_CHANNEL, (_event, input: CreateMateInput) => deps.createMate(input));
   ipcMain.handle(WITHMATE_UPDATE_MATE_CHANNEL, (_event, input: UpdateMateInput) => deps.updateMate(input));
   ipcMain.handle(WITHMATE_SET_MATE_AVATAR_CHANNEL, (_event, input: SetMateAvatarInput) => deps.setMateAvatar(input));
-  ipcMain.handle(WITHMATE_APPLY_MATE_GROWTH_CHANNEL, () => deps.applyPendingGrowth());
-  ipcMain.handle(WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL, (_event, request?: MateGrowthEventListRequest | null) =>
-    deps.listMateGrowthEvents(request),
-  );
-  ipcMain.handle(WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL, (_event, request: MateGrowthEventCorrectionRequest) =>
-    deps.correctMateGrowthEvent(request),
-  );
-  ipcMain.handle(WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL, (_event, request: MateGrowthEventActionRequest) =>
-    deps.disableMateGrowthEvent(request),
-  );
-  ipcMain.handle(WITHMATE_FORGET_MATE_GROWTH_EVENT_CHANNEL, (_event, request: MateGrowthEventActionRequest) =>
-    deps.forgetMateGrowthEvent(request),
-  );
-  ipcMain.handle(WITHMATE_RUN_MATE_TALK_TURN_CHANNEL, (_event, input: MateTalkTurnInput) =>
-    deps.runMateTalkTurn(input),
-  );
   ipcMain.handle(WITHMATE_RESET_MATE_CHANNEL, () => deps.resetMate());
 }
 

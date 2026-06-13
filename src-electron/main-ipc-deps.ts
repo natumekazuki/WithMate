@@ -33,16 +33,7 @@ import type {
   CompanionSyncTargetResult,
   CompanionTargetWorkspaceStashResult,
 } from "../src/companion-review-state.js";
-import type {
-  MemoryManagementPageRequest,
-  MemoryManagementPageResult,
-  MemoryManagementSnapshot,
-} from "../src/memory/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type {
-  ProviderInstructionTarget,
-  ProviderInstructionTargetInput,
-} from "../src/provider-instruction-target-state.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionInput, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
@@ -56,23 +47,9 @@ import type {
   CreateMateInput,
   MateProfile,
   MateStorageState,
-  MateTalkLaunchInput,
-  MateTalkTurnInput,
-  MateTalkTurnResult,
-  MateGrowthSettings,
   SetMateAvatarInput,
   UpdateMateInput,
-  UpdateMateGrowthSettingsInput,
 } from "../src/mate/mate-state.js";
-import type { MateGrowthApplyResult } from "../src/mate/mate-growth-apply-result.js";
-import type {
-  MateGrowthEventActionRequest,
-  MateGrowthEventActionResult,
-  MateGrowthEventCorrectionRequest,
-  MateGrowthEventListRequest,
-  MateGrowthEventListResult,
-} from "../src/mate/mate-growth-events-state.js";
-import type { MateEmbeddingSettings } from "../src/mate/mate-embedding-settings.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import type { MainIpcRegistrationDeps } from "./main-ipc-registration.js";
 
@@ -85,8 +62,6 @@ export type MainIpcWindowDepsArgs = {
   openHomeWindow(): Promise<BrowserWindow>;
   openSessionMonitorWindow(): Promise<BrowserWindow>;
   openSettingsWindow(): Promise<BrowserWindow>;
-  openMemoryManagementWindow(): Promise<BrowserWindow>;
-  openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
   openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow>;
   openCompanionMergeWindow(sessionId: string): Promise<BrowserWindow>;
@@ -121,17 +96,6 @@ export type MainIpcSettingsDepsArgs = {
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
-  getMemoryManagementSnapshot(): MemoryManagementSnapshot;
-  getMemoryManagementPage(request: MemoryManagementPageRequest): MemoryManagementPageResult;
-  getMateEmbeddingSettings(): MateEmbeddingSettings | null;
-  getMateGrowthSettings(): MateGrowthSettings | null;
-  updateMateGrowthSettings(input: UpdateMateGrowthSettingsInput): Awaitable<MateGrowthSettings | null>;
-  listProviderInstructionTargets(): Awaitable<ProviderInstructionTarget[]>;
-  upsertProviderInstructionTarget(input: ProviderInstructionTargetInput): Awaitable<ProviderInstructionTarget>;
-  startMateEmbeddingDownload(): Awaitable<void>;
-  deleteSessionMemory(sessionId: string): void;
-  deleteProjectMemoryEntry(entryId: string): void;
-  forgetMateProfileItem(itemId: string): Awaitable<void>;
 };
 
 export type MainIpcSessionQueryDepsArgs = {
@@ -236,12 +200,6 @@ export type MainIpcMateDepsArgs = {
   createMate(input: CreateMateInput): Promise<MateProfile>;
   updateMate(input: UpdateMateInput): Promise<MateProfile>;
   setMateAvatar(input: SetMateAvatarInput): Promise<MateProfile>;
-  applyPendingGrowth(): Promise<MateGrowthApplyResult>;
-  listMateGrowthEvents(request?: MateGrowthEventListRequest | null): Promise<MateGrowthEventListResult>;
-  correctMateGrowthEvent(request: MateGrowthEventCorrectionRequest): Promise<MateGrowthEventActionResult>;
-  disableMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult>;
-  forgetMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult>;
-  runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
   resetMate(): Promise<void>;
 };
 
@@ -293,12 +251,6 @@ export function createMainIpcRegistrationDeps(
     openSettingsWindow: async () => {
       await args.window.openSettingsWindow();
     },
-    openMemoryManagementWindow: async () => {
-      await args.window.openMemoryManagementWindow();
-    },
-    openMateTalkWindow: async (input) => {
-      await args.window.openMateTalkWindow(input);
-    },
     openDiffWindow: async (diffPreview) => {
       await args.window.openDiffWindow(diffPreview);
     },
@@ -333,17 +285,6 @@ export function createMainIpcRegistrationDeps(
     updateAppSettings: args.settings.updateAppSettings,
     getAppDatabaseDiagnostics: args.settings.getAppDatabaseDiagnostics,
     resetAppDatabase: args.settings.resetAppDatabase,
-    getMemoryManagementSnapshot: args.settings.getMemoryManagementSnapshot,
-    getMemoryManagementPage: args.settings.getMemoryManagementPage,
-    getMateEmbeddingSettings: args.settings.getMateEmbeddingSettings,
-    getMateGrowthSettings: args.settings.getMateGrowthSettings,
-    listProviderInstructionTargets: args.settings.listProviderInstructionTargets,
-    updateMateGrowthSettings: args.settings.updateMateGrowthSettings,
-    upsertProviderInstructionTarget: args.settings.upsertProviderInstructionTarget,
-    startMateEmbeddingDownload: args.settings.startMateEmbeddingDownload,
-    deleteSessionMemory: args.settings.deleteSessionMemory,
-    deleteProjectMemoryEntry: args.settings.deleteProjectMemoryEntry,
-    forgetMateProfileItem: args.settings.forgetMateProfileItem,
     listSessionSummaries: args.sessionQuery.listSessionSummaries,
     listCompanionSessionSummaries: args.sessionQuery.listCompanionSessionSummaries,
     listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,
@@ -408,12 +349,6 @@ export function createMainIpcRegistrationDeps(
     createMate: args.mate.createMate,
     updateMate: args.mate.updateMate,
     setMateAvatar: args.mate.setMateAvatar,
-    applyPendingGrowth: args.mate.applyPendingGrowth,
-    listMateGrowthEvents: args.mate.listMateGrowthEvents,
-    correctMateGrowthEvent: args.mate.correctMateGrowthEvent,
-    disableMateGrowthEvent: args.mate.disableMateGrowthEvent,
-    forgetMateGrowthEvent: args.mate.forgetMateGrowthEvent,
-    runMateTalkTurn: args.mate.runMateTalkTurn,
     resetMate: args.mate.resetMate,
   };
 }

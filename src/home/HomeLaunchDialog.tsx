@@ -7,7 +7,7 @@ import type { LaunchWorkspace } from "./home-launch-projection.js";
 
 export type HomeLaunchDialogProps = {
   open: boolean;
-  mode: "session" | "companion" | "mate-talk";
+  mode: "session" | "companion";
   title: string;
   workspace: LaunchWorkspace | null;
   launchWorkspacePathLabel: string;
@@ -17,11 +17,11 @@ export type HomeLaunchDialogProps = {
   launchFeedback: string;
   launchStarting: boolean;
   onClose: () => void;
-  onSelectMode: (mode: "session" | "companion" | "mate-talk") => void;
+  onSelectMode: (mode: "session" | "companion") => void;
   onChangeTitle: (value: string) => void;
   onBrowseWorkspace: () => void;
   onSelectProvider: (providerId: string) => void;
-  onStartSession: (mode: "session" | "companion" | "mate-talk") => void;
+  onStartSession: (mode: "session" | "companion") => void;
 };
 
 export function HomeLaunchDialog({
@@ -53,8 +53,6 @@ export function HomeLaunchDialog({
     return null;
   }
 
-  const isMateTalkMode = mode === "mate-talk";
-
   return (
     <LaunchDialogShell
       onClose={onClose}
@@ -66,9 +64,7 @@ export function HomeLaunchDialog({
           startButtonLabel={
             launchStarting
               ? "Starting..."
-              : mode === "mate-talk"
-                ? "Start MateTalk"
-                : mode === "companion"
+              : mode === "companion"
                   ? "Start Companion"
                   : "Start New Session"
           }
@@ -78,64 +74,58 @@ export function HomeLaunchDialog({
         />
       }
     >
-      {!isMateTalkMode ? (
-        <section className="launch-section minimal">
-          <div
-            className="choice-list launch-provider-list"
-            role="tablist"
-            aria-label="Session mode"
-            onKeyDown={(event) => {
-              focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
-            }}
-          >
-            {[
-              { value: "session" as const, label: "Agent Mode" },
-              { value: "companion" as const, label: "Companion Mode" },
-            ].map((option) => (
-              <button
-                key={option.value}
-                className={`choice-chip${mode === option.value ? " active" : ""}`}
-                type="button"
-                role="tab"
-                aria-selected={mode === option.value}
-                tabIndex={mode === option.value ? 0 : -1}
-                onClick={() => onSelectMode(option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {!isMateTalkMode ? (
-        <section className="launch-section minimal">
-          <div className="launch-field">
-            <label className="launch-field-label" htmlFor="launch-session-title">
-              セッションタイトル
-            </label>
-            <input
-              id="launch-session-title"
-              ref={titleInputRef}
-              className="launch-field-input"
-              type="text"
-              value={title}
-              onChange={(event) => onChangeTitle(event.target.value)}
-            />
-          </div>
-        </section>
-      ) : null}
-
-      {!isMateTalkMode ? (
-        <section className="launch-section workspace-picker minimal">
-          <div className="section-head compact-actions">
-            <button className="browse-button" type="button" onClick={onBrowseWorkspace}>
-              Browse
+      <section className="launch-section minimal">
+        <div
+          className="choice-list launch-provider-list"
+          role="tablist"
+          aria-label="Session mode"
+          onKeyDown={(event) => {
+            focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
+          }}
+        >
+          {[
+            { value: "session" as const, label: "Agent Mode" },
+            { value: "companion" as const, label: "Companion Mode" },
+          ].map((option) => (
+            <button
+              key={option.value}
+              className={`choice-chip${mode === option.value ? " active" : ""}`}
+              type="button"
+              role="tab"
+              aria-selected={mode === option.value}
+              tabIndex={mode === option.value ? 0 : -1}
+              onClick={() => onSelectMode(option.value)}
+            >
+              {option.label}
             </button>
-          </div>
-          <p className={`launch-path${workspace ? " selected" : ""}`}>{launchWorkspacePathLabel}</p>
-        </section>
-      ) : null}
+          ))}
+        </div>
+      </section>
+
+      <section className="launch-section minimal">
+        <div className="launch-field">
+          <label className="launch-field-label" htmlFor="launch-session-title">
+            セッションタイトル
+          </label>
+          <input
+            id="launch-session-title"
+            ref={titleInputRef}
+            className="launch-field-input"
+            type="text"
+            value={title}
+            onChange={(event) => onChangeTitle(event.target.value)}
+          />
+        </div>
+      </section>
+
+      <section className="launch-section workspace-picker minimal">
+        <div className="section-head compact-actions">
+          <button className="browse-button" type="button" onClick={onBrowseWorkspace}>
+            Browse
+          </button>
+        </div>
+        <p className={`launch-path${workspace ? " selected" : ""}`}>{launchWorkspacePathLabel}</p>
+      </section>
 
       <ProviderLaunchField
         fieldId="launch-provider-picker"

@@ -499,17 +499,8 @@ export function useMateTalkWindowState({
       if (!withmateApi) {
         throw new Error("Mate API が利用できないよ。");
       }
-      const result = await withmateApi.runMateTalkTurn(turnInput);
-      const turnUpdate = resolveMateTalkAssistantTurnUpdate({
-        controller: turnControllerRef.current,
-        turnId,
-        messageSequence,
-        text: result.assistantMessage,
-      });
-      if (turnUpdate.status === "stale") {
-        return;
-      }
-      setMessages((current) => [...current, turnUpdate.message]);
+      void turnInput;
+      throw new Error("MateTalk は V5 cleanup のため無効化されています。");
     } catch (error) {
       const turnUpdate = resolveMateTalkErrorTurnUpdate({
         controller: turnControllerRef.current,

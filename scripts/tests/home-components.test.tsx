@@ -115,6 +115,7 @@ describe("HomeSettingsContent", () => {
     mateGrowthEventsLoading?: boolean;
     mateGrowthEventsFeedback?: string;
     mateGrowthEventBusyTarget?: string | null;
+    mateEmbeddingSettings?: MateEmbeddingSettings | null;
     onReloadMateGrowthEvents?: () => void;
     correctingMateGrowthEventId?: string | null;
     correctingMateGrowthEventStatement?: string;
@@ -181,7 +182,7 @@ describe("HomeSettingsContent", () => {
     mateGrowthEventsLoading: params?.mateGrowthEventsLoading ?? false,
     mateGrowthEventsFeedback: params?.mateGrowthEventsFeedback ?? "",
     mateGrowthEventBusyTarget: params?.mateGrowthEventBusyTarget ?? null,
-    mateEmbeddingSettings: null,
+    mateEmbeddingSettings: params && "mateEmbeddingSettings" in params ? params.mateEmbeddingSettings ?? null : null,
     mateEmbeddingFeedback: "",
     mateEmbeddingBusy: false,
     onChangeMemoryGenerationEnabled: noOp,
@@ -358,238 +359,31 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes(`<p class="settings-help">${SETTINGS_MATE_RESET_HELP}</p>`));
   });
 
-  it("Mate Growth のラベルとヘルプが表示される", () => {
-    const html = renderSettings({ applyPendingGrowth: true });
-    assert.ok(html.includes(`<strong>${SETTINGS_MATE_GROWTH_LABEL}</strong>`));
-    assert.ok(html.includes(`<p class="settings-help">${SETTINGS_MATE_GROWTH_HELP}</p>`));
-  });
-
-  it("Mate Growth 設定セクションが表示される", () => {
-    const html = renderSettings();
-    assert.ok(html.includes(`<strong>${SETTINGS_MATE_GROWTH_SETTINGS_LABEL}</strong>`));
-    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_ENABLED_LABEL}</span>`));
-    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_AUTO_APPLY_ENABLED_LABEL}</span>`));
-    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_MEMORY_CANDIDATE_MODE_LABEL}</span>`));
-    assert.ok(/<option value="every_turn"[^>]*>every_turn<\/option>/.test(html));
-    assert.ok(!/<option value="threshold"[^>]*>threshold<\/option>/.test(html));
-    assert.ok(!/<option value="manual"[^>]*>manual<\/option>/.test(html));
-    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_APPLY_INTERVAL_MINUTES_LABEL}</span>`));
-    assert.ok(html.includes(`<strong>${SETTINGS_MATE_GROWTH_MODEL_PREFERENCES_LABEL}</strong>`));
-    assert.ok(html.includes('<span class="settings-provider-name">memory_candidate</span>'));
-    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PROVIDER_LABEL}</span>`));
-    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_MODEL_LABEL}</span>`));
-    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_DEPTH_LABEL}</span>`));
-    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_ENABLED_LABEL}</span>`));
-    assert.ok(!html.includes("mate-growth-model-preference-purpose"));
-    assert.ok(!html.includes("mate-growth-model-preference-add"));
-    assert.ok(!html.includes("mate-growth-model-preference-remove"));
-  });
-
-  it("Growth 設定の checkbox/select/input 変更で onUpdate callback が呼ばれる", () => {
-    const updates: Array<Record<string, unknown>> = [];
-    const { enabled, autoApplyEnabled, memoryCandidateMode, applyIntervalMinutes } = collectGrowthInputElements({
-      onUpdateMateGrowthSettings: (input) => {
-        updates.push(input as Record<string, unknown>);
-      },
-    });
-
-    if (!enabled || !autoApplyEnabled || !memoryCandidateMode || !applyIntervalMinutes) {
-      throw new Error("Growth 設定 input が取得できませんでした。");
-    }
-
-    enabled.props.onChange({ target: { checked: false } } as { target: { checked: boolean } });
-    autoApplyEnabled.props.onChange({ target: { checked: true } } as { target: { checked: boolean } });
-    memoryCandidateMode.props.onChange({ target: { value: "every_turn" } } as { target: { value: string } });
-    applyIntervalMinutes.props.onChange({ target: { value: "15" } } as { target: { value: string } });
-
-    assert.equal(updates.length, 4);
-    assert.deepEqual(updates[0], { enabled: false });
-    assert.deepEqual(updates[1], { autoApplyEnabled: true });
-    assert.deepEqual(updates[2], { memoryCandidateMode: "every_turn" });
-    assert.deepEqual(updates[3], { applyIntervalMinutes: 15 });
-  });
-
-  it("未対応の Growth memoryCandidateMode は表示だけ残して選択肢には追加しない", () => {
-    const elements = collectGrowthInputElements({
-      mateGrowthSettings: {
-        ...nextMateGrowthSettings,
-        memoryCandidateMode: "manual",
-      },
-    });
-
-    if (!elements.memoryCandidateMode) {
-      throw new Error("Growth 設定 input が見つからないためテストを実行できません。");
-    }
-
-    assert.equal(elements.memoryCandidateMode.props.value, "unsupported");
-    const optionValues = React.Children.toArray(elements.memoryCandidateMode.props.children)
-      .filter(isValidElement)
-      .map((option) => option.props.value);
-    assert.deepEqual(optionValues, ["every_turn", "unsupported"]);
-  });
-
-  it("Growth model priority の変更で onUpdate callback が呼ばれる", () => {
-    const updates: Array<Record<string, unknown>> = [];
-    const {
-      modelPreferenceProvider,
-      modelPreferenceModel,
-      modelPreferenceDepth,
-      modelPreferenceEnabled,
-    } = collectGrowthInputElements({
-      onUpdateMateGrowthSettings: (input) => {
-        updates.push(input as Record<string, unknown>);
-      },
-    });
-
-    if (
-      !modelPreferenceProvider ||
-      !modelPreferenceModel ||
-      !modelPreferenceDepth ||
-      !modelPreferenceEnabled
-    ) {
-      throw new Error("Growth model priority input が取得できませんでした。");
-    }
-
-    modelPreferenceProvider.props.onChange({ target: { value: "copilot" } } as { target: { value: string } });
-    modelPreferenceModel.props.onChange({ target: { value: "gpt-5.4-mini" } } as { target: { value: string } });
-    modelPreferenceDepth.props.onChange({ target: { value: "high" } } as { target: { value: string } });
-    modelPreferenceEnabled.props.onChange({ target: { checked: false } } as { target: { checked: boolean } });
-
-    assert.equal(updates.length, 4);
-    assert.deepEqual(updates[1]?.modelPreferences, [{
-      ...nextMateGrowthSettings.modelPreferences[0],
-      model: "gpt-5.4-mini",
-      depth: "medium",
-    }]);
-    assert.deepEqual(updates[2]?.modelPreferences, [{
-      ...nextMateGrowthSettings.modelPreferences[0],
-      depth: "high",
-    }]);
-    assert.deepEqual(updates[3]?.modelPreferences, [{
-      ...nextMateGrowthSettings.modelPreferences[0],
-      enabled: false,
-    }]);
-    assert.deepEqual(updates[0]?.modelPreferences, [{
-      ...nextMateGrowthSettings.modelPreferences[0],
-      provider: "copilot",
-      model: "model-b",
-      depth: "medium",
-    }]);
-  });
-
-  it("Growth 設定の interval input が空文字のとき onUpdate callback は呼ばれない", () => {
-    const updates: Array<Record<string, unknown>> = [];
-    const { applyIntervalMinutes } = collectGrowthInputElements({
-      onUpdateMateGrowthSettings: (input) => {
-        updates.push(input as Record<string, unknown>);
-      },
-    });
-
-    if (!applyIntervalMinutes) {
-      throw new Error("Growth 設定 interval input が取得できませんでした。");
-    }
-
-    applyIntervalMinutes.props.onChange({ target: { value: "" } } as { target: { value: string } });
-
-    assert.deepEqual(updates, []);
-  });
-
-  it("mateGrowthSettings が null のとき成長設定コントロールは操作不可", () => {
-    const elements = collectGrowthInputElements({ mateGrowthSettings: null });
-    if (!elements.enabled || !elements.autoApplyEnabled || !elements.memoryCandidateMode || !elements.applyIntervalMinutes) {
-      throw new Error("Growth 設定 input が見つからないためテストを実行できません。");
-    }
-    assert.ok(elements.enabled.props.disabled);
-    assert.ok(elements.autoApplyEnabled.props.disabled);
-    assert.ok(elements.memoryCandidateMode.props.disabled);
-    assert.ok(elements.applyIntervalMinutes.props.disabled);
-    assert.equal(elements.applyIntervalMinutes.props.value, DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES);
-  });
-
-  it("mateGrowthBusy=true のとき成長設定コントロールは操作不可", () => {
-    const html = renderSettings({ mateGrowthBusy: true, mateGrowthFeedback: "更新中..." });
-    const elements = collectGrowthInputElements({ mateGrowthBusy: true });
-    if (!elements.enabled || !elements.autoApplyEnabled || !elements.memoryCandidateMode || !elements.applyIntervalMinutes) {
-      throw new Error("Growth 設定 input が見つからないためテストを実行できません。");
-    }
-    assert.ok(elements.enabled.props.disabled);
-    assert.ok(elements.autoApplyEnabled.props.disabled);
-    assert.ok(elements.memoryCandidateMode.props.disabled);
-    assert.ok(elements.applyIntervalMinutes.props.disabled);
-    assert.ok(html.includes("更新中..."));
-  });
-
-  it("mateGrowthSettings.enabled=false のとき有効化以外の成長設定コントロールは操作不可", () => {
-    const elements = collectGrowthInputElements({ mateGrowthSettings: disabledMateGrowthSettings });
-    if (!elements.enabled || !elements.autoApplyEnabled || !elements.memoryCandidateMode || !elements.applyIntervalMinutes) {
-      throw new Error("Growth 設定 input が見つからないためテストを実行できません。");
-    }
-    assert.equal(elements.enabled.props.disabled, false);
-    assert.ok(elements.autoApplyEnabled.props.disabled);
-    assert.ok(elements.memoryCandidateMode.props.disabled);
-    assert.ok(elements.applyIntervalMinutes.props.disabled);
-  });
-
-  it("canResetMate=false のときリセットボタンは無効化される", () => {
-    const html = renderSettings({ canResetMate: false });
-    const buttonHtml = extractResetButton(html);
-    assert.ok(buttonHtml.includes('disabled=""'));
-    assert.ok(buttonHtml.includes(SETTINGS_MATE_RESET_LABEL));
-  });
-
-  it("canResetMate=true のときリセットボタンは有効", () => {
-    const html = renderSettings({ canResetMate: true });
-    const buttonHtml = extractResetButton(html);
-    assert.ok(!buttonHtml.includes('disabled=""'));
-  });
-
-  it("mateResetBusy=true のときリセットボタンは無効化され「リセット中...」が表示される", () => {
-    const html = renderSettings({ canResetMate: true, mateResetBusy: true });
-    const buttonHtml = extractResetButton(html);
-    assert.ok(buttonHtml.includes('disabled=""'));
-    assert.ok(buttonHtml.includes("リセット中..."));
-  });
-
-  it("Mate Reset ボタンを押すと onResetMate が呼ばれる", () => {
-    let called = 0;
-    const button = extractResetButtonElement({
-      canResetMate: true,
-      mateResetBusy: false,
-      onResetMate: () => {
-        called += 1;
-      },
-    });
-
-    button.props.onClick?.();
-
-    assert.equal(called, 1);
-  });
-
-  it("canApplyPendingGrowth=false のとき適用ボタンは無効化される", () => {
-    const html = renderSettings({ applyPendingGrowth: true, canApplyPendingGrowth: false });
-    const buttonHtml = extractGrowthButton(html);
-    assert.ok(buttonHtml.includes("disabled=\"\""));
-    assert.ok(buttonHtml.includes(SETTINGS_MATE_GROWTH_LABEL));
-  });
-
-  it("canApplyPendingGrowth=true のとき適用ボタンは有効", () => {
-    const html = renderSettings({ applyPendingGrowth: true, canApplyPendingGrowth: true });
-    const buttonHtml = extractGrowthButton(html);
-    assert.ok(!buttonHtml.includes("disabled=\"\""));
-  });
-
-  it("mateGrowthSettings.enabled=false のとき適用ボタンは無効", () => {
+  it("削除対象の Settings surface は表示しない", () => {
     const html = renderSettings({
       applyPendingGrowth: true,
       canApplyPendingGrowth: true,
-      mateGrowthSettings: disabledMateGrowthSettings,
-    });
-    const buttonHtml = extractGrowthButton(html);
-    assert.ok(buttonHtml.includes("disabled=\"\""));
-  });
-
-  it("最近の Growth Event が表示される", () => {
-    const html = renderSettings({
+      mateGrowthSettings: nextMateGrowthSettings,
+      mateEmbeddingSettings: {
+        mateId: "current",
+        enabled: true,
+        backendType: "local_transformers_js",
+        modelId: "text-embedding-3-large",
+        sourceModelId: "text-embedding-3-small",
+        dimension: 1536,
+        cachePolicy: "download_once_local_cache",
+        cacheState: "ready",
+        cacheDirPath: "hidden-cache-path-marker",
+        cacheManifestSha256: "manifest-sha",
+        modelRevision: "model-revision",
+        cacheSizeBytes: 1536,
+        cacheUpdatedAt: "2026-05-01T09:30:00.000Z",
+        lastVerifiedAt: null,
+        lastStatus: "available",
+        lastErrorPreview: "",
+        createdAt: "2026-05-01T09:00:00.000Z",
+        updatedAt: "2026-05-01T09:00:00.000Z",
+      },
       mateGrowthEvents: [
         {
           id: "event-1",
@@ -612,552 +406,15 @@ describe("HomeSettingsContent", () => {
       ],
     });
 
-    assert.ok(html.includes("<strong>最近の Growth Event</strong>"));
-    assert.ok(html.includes("一人称は「私」を優先する"));
-    assert.ok(html.includes("候補"));
-    assert.ok(html.includes("tone"));
-    assert.ok(html.includes("メイトークで明示されたため"));
-    assert.ok(html.includes("修正"));
-    assert.ok(html.includes("無効化"));
-    assert.ok(html.includes("忘れる"));
-    assert.ok(html.includes("settings-growth-event-card"));
-    assert.ok(html.includes("settings-growth-event-actions"));
-  });
-
-  it("Growth Event の修正 / 無効化 / 忘却ボタンは対象 id を渡す", () => {
-    const calls: string[] = [];
-    const content = buildSettingsContent({
-      mateGrowthEvents: [
-        {
-          id: "event-action",
-          sourceType: "mate_talk",
-          sourceSessionId: "session-1",
-          growthSourceType: "memory",
-          kind: "update",
-          targetSection: "tone",
-          statement: "語尾は落ち着かせる",
-          rationalePreview: "",
-          confidence: 0.91,
-          salienceScore: 0.82,
-          recurrenceCount: 2,
-          projectionAllowed: true,
-          state: "candidate",
-          appliedAt: null,
-          createdAt: "2026-05-01T09:00:00.000Z",
-          updatedAt: "2026-05-01T09:30:00.000Z",
-        },
-      ],
-      onBeginCorrectMateGrowthEvent: (eventId, statement) => calls.push(`begin:${eventId}:${statement}`),
-      onDisableMateGrowthEvent: (eventId) => calls.push(`disable:${eventId}`),
-      onForgetMateGrowthEvent: (eventId) => calls.push(`forget:${eventId}`),
-    });
-
-    const actionButtons = collectElementsById(content, (element) =>
-      element.type === "button" &&
-      (element.props.children === "修正" || element.props.children === "無効化" || element.props.children === "忘れる"),
-    );
-    assert.equal(actionButtons.length, 3);
-
-    actionButtons[0]?.props.onClick();
-    actionButtons[1]?.props.onClick();
-    actionButtons[2]?.props.onClick();
-
-    assert.deepEqual(calls, [
-      "begin:event-action:語尾は落ち着かせる",
-      "disable:event-action",
-      "forget:event-action",
-    ]);
-  });
-
-  it("Growth Event の修正フォームは修正内容を保存する", () => {
-    const calls: string[] = [];
-    const content = buildSettingsContent({
-      mateGrowthEvents: [
-        {
-          id: "event-correct-action",
-          sourceType: "mate_talk",
-          sourceSessionId: "session-1",
-          growthSourceType: "memory",
-          kind: "update",
-          targetSection: "tone",
-          statement: "修正前イベント",
-          rationalePreview: "",
-          confidence: 0.91,
-          salienceScore: 0.82,
-          recurrenceCount: 2,
-          projectionAllowed: true,
-          state: "candidate",
-          appliedAt: null,
-          createdAt: "2026-05-01T09:00:00.000Z",
-          updatedAt: "2026-05-01T09:30:00.000Z",
-        },
-      ],
-      correctingMateGrowthEventId: "event-correct-action",
-      correctingMateGrowthEventStatement: "修正後イベント",
-      onChangeCorrectMateGrowthEventStatement: (statement) => calls.push(`change:${statement}`),
-      onCancelCorrectMateGrowthEvent: () => calls.push("cancel"),
-      onCorrectMateGrowthEvent: (eventId, statement) => calls.push(`correct:${eventId}:${statement}`),
-    });
-
-    const textarea = collectElementsById(content, (element) =>
-      element.type === "textarea" && element.props.value === "修正後イベント",
-    )[0];
-    assert.equal(textarea?.props.value, "修正後イベント");
-    textarea?.props.onChange({ target: { value: "さらに修正" } });
-
-    const formButtons = collectElementsById(content, (element) =>
-      element.type === "button" &&
-      (element.props.children === "保存" || element.props.children === "キャンセル"),
-    );
-    assert.equal(formButtons.length, 2);
-    formButtons[0]?.props.onClick();
-    formButtons[1]?.props.onClick();
-
-    assert.deepEqual(calls, [
-      "change:さらに修正",
-      "correct:event-correct-action:修正後イベント",
-      "cancel",
-    ]);
-  });
-
-  it("Growth Event の修正 / 無効化 / 忘却ボタンは候補以外では無効", () => {
-    const content = buildSettingsContent({
-      mateGrowthEvents: [
-        {
-          id: "event-applied-action",
-          sourceType: "mate_talk",
-          sourceSessionId: "session-1",
-          growthSourceType: "memory",
-          kind: "update",
-          targetSection: "tone",
-          statement: "適用済みイベント",
-          rationalePreview: "",
-          confidence: 0.91,
-          salienceScore: 0.82,
-          recurrenceCount: 2,
-          projectionAllowed: true,
-          state: "applied",
-          appliedAt: "2026-05-01T09:10:00.000Z",
-          createdAt: "2026-05-01T09:00:00.000Z",
-          updatedAt: "2026-05-01T09:30:00.000Z",
-        },
-      ],
-      onBeginCorrectMateGrowthEvent: () => {},
-      onCorrectMateGrowthEvent: () => {},
-      onDisableMateGrowthEvent: () => {},
-      onForgetMateGrowthEvent: () => {},
-    });
-
-    const actionButtons = collectElementsById(content, (element) =>
-      element.type === "button" &&
-      (element.props.children === "修正" || element.props.children === "無効化" || element.props.children === "忘れる"),
-    );
-
-    assert.equal(actionButtons.length, 3);
-    assert.ok(actionButtons.every((button) => button.props.disabled));
-  });
-
-  it("Growth Event の修正ボタンと保存ボタンは Growth apply 中に無効", () => {
-    const content = buildSettingsContent({
-      applyPendingGrowthBusy: true,
-      mateGrowthEvents: [
-        {
-          id: "event-correct-busy",
-          sourceType: "mate_talk",
-          sourceSessionId: "session-1",
-          growthSourceType: "memory",
-          kind: "update",
-          targetSection: "tone",
-          statement: "修正対象イベント",
-          rationalePreview: "",
-          confidence: 0.91,
-          salienceScore: 0.82,
-          recurrenceCount: 2,
-          projectionAllowed: true,
-          state: "candidate",
-          appliedAt: null,
-          createdAt: "2026-05-01T09:00:00.000Z",
-          updatedAt: "2026-05-01T09:30:00.000Z",
-        },
-      ],
-      correctingMateGrowthEventId: "event-correct-busy",
-      correctingMateGrowthEventStatement: "修正後イベント",
-      onBeginCorrectMateGrowthEvent: () => {},
-      onCorrectMateGrowthEvent: () => {},
-    });
-
-    const correctButton = collectElementsById(content, (element) =>
-      element.type === "button" && element.props.children === "修正",
-    )[0];
-    const saveButton = collectElementsById(content, (element) =>
-      element.type === "button" && element.props.children === "保存",
-    )[0];
-
-    assert.equal(correctButton?.props.disabled, true);
-    assert.equal(saveButton?.props.disabled, true);
-  });
-
-  it("applyPendingGrowthBusy=true のとき適用ボタンは無効化され「適用中...」が表示される", () => {
-    const html = renderSettings({ applyPendingGrowth: true, canApplyPendingGrowth: true, applyPendingGrowthBusy: true });
-    const buttonHtml = extractGrowthButton(html);
-    assert.ok(buttonHtml.includes("disabled=\"\""));
-    assert.ok(buttonHtml.includes("適用中..."));
-  });
-
-  it("Mate Embedding のキャッシュ状態が拡張表示される", () => {
-    const mateEmbeddingSettings: MateEmbeddingSettings = {
-      mateId: "current",
-      enabled: true,
-      backendType: "local_transformers_js",
-      modelId: "text-embedding-3-large",
-      sourceModelId: "text-embedding-3-small",
-      dimension: 1536,
-      cachePolicy: "download_once_local_cache",
-      cacheState: "ready",
-      cacheDirPath: "hidden-cache-path-marker",
-      cacheManifestSha256: "manifest-sha",
-      modelRevision: "model-revision",
-      cacheSizeBytes: 1536,
-      cacheUpdatedAt: "2026-05-01T09:30:00.000Z",
-      lastVerifiedAt: null,
-      lastStatus: "available",
-      lastErrorPreview: "",
-      createdAt: "2026-05-01T09:00:00.000Z",
-      updatedAt: "2026-05-01T09:00:00.000Z",
-    };
-
-    const html = renderToStaticMarkup(
-      <HomeSettingsContent
-        settingsDraft={settingsDraft}
-        providerSettingRows={providerSettingRows}
-        modelCatalogRevisionLabel={String(modelCatalog.revision)}
-        settingsDirty={false}
-        settingsFeedback=""
-        memoryManagementSnapshot={null}
-        memoryManagementPages={{
-          session: { nextCursor: null, hasMore: false, total: 0 },
-          project: { nextCursor: null, hasMore: false, total: 0 },
-          character: { nextCursor: null, hasMore: false, total: 0 },
-          mate_profile: { nextCursor: null, hasMore: false, total: 0 },
-        }}
-        memoryManagementLoading={false}
-        memoryManagementBusyTarget={null}
-        memoryManagementFeedback=""
-        mateGrowthSettings={nextMateGrowthSettings}
-        mateGrowthFeedback=""
-        mateGrowthBusy={false}
-        mateGrowthEvents={[]}
-        mateGrowthEventsLoading={false}
-        mateGrowthEventsFeedback=""
-        mateEmbeddingSettings={mateEmbeddingSettings}
-        mateEmbeddingFeedback=""
-        mateEmbeddingBusy={false}
-        onChangeMemoryGenerationEnabled={noOp}
-        onChangeMateMemoryGenerationPriorityProvider={noOp}
-        onChangeMateMemoryGenerationPriorityModel={noOp}
-        onChangeMateMemoryGenerationPriorityReasoningEffort={noOp}
-        onChangeMateMemoryGenerationPriorityTimeoutSeconds={noOp}
-        onAddMateMemoryGenerationPriority={noOp}
-        onRemoveMateMemoryGenerationPriority={noOp}
-        onChangeMateMemoryGenerationTriggerIntervalMinutes={noOp}
-        onChangeAutoCollapseActionDockOnSend={noOp}
-        onChangeUserMicrocopySlot={noOp}
-        onChangeProviderEnabled={noOp}
-        onChangeProviderInstructionEnabled={noOp}
-        onChangeProviderInstructionWriteMode={noOp}
-        onChangeProviderInstructionFailPolicy={noOp}
-        onChangeProviderInstructionInstructionRelativePath={noOp}
-        onBrowseProviderInstructionInstructionRelativePath={noOp}
-        onChangeProviderSkillRootPath={noOp}
-        onBrowseProviderSkillRootPath={noOp}
-        onChangeProviderSkillRelativePath={noOp}
-        onBrowseProviderSkillRelativePath={noOp}
-        onChangeMemoryExtractionModel={noOp}
-        onChangeMemoryExtractionReasoningEffort={noOp}
-        onChangeMemoryExtractionThreshold={noOp}
-        onChangeMemoryExtractionTimeoutSeconds={noOp}
-        onChangeCharacterReflectionModel={noOp}
-        onChangeCharacterReflectionReasoningEffort={noOp}
-        onChangeCharacterReflectionTimeoutSeconds={noOp}
-        onChangeCharacterReflectionCooldownSeconds={noOp}
-        onChangeCharacterReflectionCharDeltaThreshold={noOp}
-        onChangeCharacterReflectionMessageDeltaThreshold={noOp}
-        onImportModelCatalog={noOp}
-        onExportModelCatalog={noOp}
-        onOpenAppLogFolder={noOp}
-        onOpenCrashDumpFolder={noOp}
-        onReloadMemoryManagement={noOp}
-        onChangeMemoryManagementViewFilters={noOp}
-        onLoadMoreMemoryManagement={noOp}
-        onDeleteSessionMemory={noOp}
-        onDeleteProjectMemoryEntry={noOp}
-        onDeleteCharacterMemoryEntry={noOp}
-        onDeleteMateProfileItem={noOp}
-        onStartMateEmbeddingDownload={noOp}
-        onReloadMateGrowthEvents={noOp}
-        onUpdateMateGrowthSettings={noOp}
-        onSaveSettings={noOp}
-      />,
-    );
-
-    assert.ok(html.includes(`<strong>${SETTINGS_MATE_EMBEDDING_LABEL}</strong>`));
-    assert.ok(html.includes("キャッシュサイズ"));
-    assert.ok(html.includes("<dd>1.5 KB</dd>"));
-    assert.ok(html.includes("<dt>最終更新</dt>"));
-    assert.ok(html.includes(`<dd>${formatTimestampLabel(mateEmbeddingSettings.cacheUpdatedAt)}</dd>`));
-    assert.ok(html.includes("<dt>最終確認</dt>"));
-    assert.ok(html.includes("<dd>-</dd>"));
-    assert.ok(html.includes("<dt>最終ステータス</dt>"));
-    assert.ok(html.includes("<dd>利用可</dd>"));
+    assert.ok(!html.includes(SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL));
+    assert.ok(!html.includes(SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL));
+    assert.ok(!html.includes(SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL));
+    assert.ok(!html.includes(SETTINGS_MATE_EMBEDDING_LABEL));
+    assert.ok(!html.includes(SETTINGS_MATE_GROWTH_LABEL));
+    assert.ok(!html.includes(SETTINGS_MATE_GROWTH_SETTINGS_LABEL));
+    assert.ok(!html.includes("最近の Growth Event"));
     assert.ok(!html.includes("hidden-cache-path-marker"));
-  });
-
-  it("Provider Instruction Sync に Root Directory / Skill Relative Path / Instruction Relative Path が表示される", () => {
-    const settingsWithSkillRoot = {
-      ...settingsDraft,
-      codingProviderSettings: {
-        ...settingsDraft.codingProviderSettings,
-        codex: {
-          ...settingsDraft.codingProviderSettings.codex,
-          skillRootPath: "/repo-root",
-          skillRelativePath: ".codex/skills",
-        },
-      },
-    };
-    const customRows = buildHomeProviderSettingRows(modelCatalog, settingsWithSkillRoot, [
-      {
-        providerId: "codex",
-        targetId: "main",
-        enabled: true,
-        rootDirectory: "/repo-root",
-        instructionRelativePath: "docs/instructions.md",
-        writeMode: "managed_block",
-        projectionScope: "mate_only",
-        failPolicy: "warn_continue",
-        requiresRestart: false,
-        lastSyncState: "never",
-        lastSyncRunId: null,
-        lastSyncedRevisionId: null,
-        lastErrorPreview: "",
-        lastSyncedAt: null,
-      },
-    ]);
-
-    const html = renderToStaticMarkup(
-      <HomeSettingsContent
-        settingsDraft={settingsWithSkillRoot}
-        providerSettingRows={customRows}
-        modelCatalogRevisionLabel={String(modelCatalog.revision)}
-        settingsDirty={false}
-        settingsFeedback=""
-        memoryManagementSnapshot={null}
-        memoryManagementPages={{
-          session: { nextCursor: null, hasMore: false, total: 0 },
-          project: { nextCursor: null, hasMore: false, total: 0 },
-          character: { nextCursor: null, hasMore: false, total: 0 },
-          mate_profile: { nextCursor: null, hasMore: false, total: 0 },
-        }}
-        memoryManagementLoading={false}
-        memoryManagementBusyTarget={null}
-        memoryManagementFeedback=""
-        mateEmbeddingSettings={null}
-        mateEmbeddingFeedback=""
-        mateEmbeddingBusy={false}
-        mateGrowthEvents={[]}
-        mateGrowthEventsLoading={false}
-        mateGrowthEventsFeedback=""
-        onChangeMemoryGenerationEnabled={noOp}
-        onChangeMateMemoryGenerationPriorityProvider={noOp}
-        onChangeMateMemoryGenerationPriorityModel={noOp}
-        onChangeMateMemoryGenerationPriorityReasoningEffort={noOp}
-        onChangeMateMemoryGenerationPriorityTimeoutSeconds={noOp}
-        onAddMateMemoryGenerationPriority={noOp}
-        onRemoveMateMemoryGenerationPriority={noOp}
-        onChangeMateMemoryGenerationTriggerIntervalMinutes={noOp}
-        onChangeAutoCollapseActionDockOnSend={noOp}
-        onChangeUserMicrocopySlot={noOp}
-        onChangeProviderEnabled={noOp}
-        onChangeProviderInstructionEnabled={noOp}
-        onChangeProviderInstructionWriteMode={noOp}
-        onChangeProviderInstructionFailPolicy={noOp}
-        onChangeProviderInstructionInstructionRelativePath={noOp}
-        onBrowseProviderInstructionInstructionRelativePath={noOp}
-        onChangeProviderSkillRootPath={noOp}
-        onBrowseProviderSkillRootPath={noOp}
-        onChangeProviderSkillRelativePath={noOp}
-        onBrowseProviderSkillRelativePath={noOp}
-        onChangeMemoryExtractionModel={noOp}
-        onChangeMemoryExtractionReasoningEffort={noOp}
-        onChangeMemoryExtractionThreshold={noOp}
-        onChangeMemoryExtractionTimeoutSeconds={noOp}
-        onChangeCharacterReflectionModel={noOp}
-        onChangeCharacterReflectionReasoningEffort={noOp}
-        onChangeCharacterReflectionTimeoutSeconds={noOp}
-        onChangeCharacterReflectionCooldownSeconds={noOp}
-        onChangeCharacterReflectionCharDeltaThreshold={noOp}
-        onChangeCharacterReflectionMessageDeltaThreshold={noOp}
-        onImportModelCatalog={noOp}
-        onExportModelCatalog={noOp}
-        onOpenAppLogFolder={noOp}
-        onOpenCrashDumpFolder={noOp}
-        onReloadMemoryManagement={noOp}
-        onChangeMemoryManagementViewFilters={noOp}
-        onLoadMoreMemoryManagement={noOp}
-        onDeleteSessionMemory={noOp}
-        onDeleteProjectMemoryEntry={noOp}
-        onDeleteCharacterMemoryEntry={noOp}
-        onDeleteMateProfileItem={noOp}
-        onStartMateEmbeddingDownload={noOp}
-        mateGrowthSettings={nextMateGrowthSettings}
-        mateGrowthFeedback=""
-        mateGrowthBusy={false}
-        onReloadMateGrowthEvents={noOp}
-        onUpdateMateGrowthSettings={noOp}
-        onSaveSettings={noOp}
-      />,
-    );
-
-    assert.ok(html.includes(`<strong>${SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL}</strong>`));
-    assert.ok(html.includes(`<span>${SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL}</span>`));
-    assert.ok(html.includes(`<span>${SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL}</span>`));
-    assert.ok(html.includes(`<span>${SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>`));
-    assert.ok(html.includes("Provider Instruction Sync のヘルプ"));
-    assert.ok(html.includes(`${SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL} のヘルプ`));
-    assert.ok(html.includes(`${SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_LABEL} のヘルプ`));
-    assert.ok(html.includes(`${SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL} のヘルプ`));
-    assert.ok(html.includes(`${SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL} のヘルプ`));
-    assert.ok(html.includes(`${SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL} のヘルプ`));
-    assert.ok(html.includes("managed_block は既存ファイル内"));
-    assert.ok(html.includes("管理ブロックがない場合は対象ファイルの末尾に追加"));
-    assert.ok(html.includes("Root Directory を基準に Skill Relative Path"));
-    assert.ok(html.includes("value=\"/repo-root\""));
-    assert.ok(html.includes("value=\".codex/skills\""));
-    assert.ok(html.includes("value=\"docs/instructions.md\""));
-  });
-
-  it("Provider Instruction Sync の同期状態 / 再起動 / エラープレビューが表示される", () => {
-    const syncedAt = "2026-05-06T10:00:00.000Z";
-    const customRows = buildHomeProviderSettingRows(modelCatalog, settingsDraft, [
-      {
-        providerId: "codex",
-        targetId: "main",
-        enabled: true,
-        rootDirectory: "/repo-root",
-        instructionRelativePath: "docs/instructions.md",
-        writeMode: "managed_block",
-        projectionScope: "mate_only",
-        failPolicy: "warn_continue",
-        requiresRestart: true,
-        lastSyncState: "failed",
-        lastSyncRunId: null,
-        lastSyncedRevisionId: null,
-        lastErrorPreview: "permission denied: EACCES (13): Permission denied",
-        lastSyncedAt: syncedAt,
-      },
-    ]);
-
-    const html = renderToStaticMarkup(
-      <HomeSettingsContent
-        settingsDraft={settingsDraft}
-        providerSettingRows={customRows}
-        modelCatalogRevisionLabel={String(modelCatalog.revision)}
-        settingsDirty={false}
-        settingsFeedback=""
-        memoryManagementSnapshot={null}
-        memoryManagementPages={{
-          session: { nextCursor: null, hasMore: false, total: 0 },
-          project: { nextCursor: null, hasMore: false, total: 0 },
-          character: { nextCursor: null, hasMore: false, total: 0 },
-          mate_profile: { nextCursor: null, hasMore: false, total: 0 },
-        }}
-        memoryManagementLoading={false}
-        memoryManagementBusyTarget={null}
-        memoryManagementFeedback=""
-        mateEmbeddingSettings={null}
-        mateEmbeddingFeedback=""
-        mateEmbeddingBusy={false}
-        mateGrowthEvents={[]}
-        mateGrowthEventsLoading={false}
-        mateGrowthEventsFeedback=""
-        onChangeMemoryGenerationEnabled={noOp}
-        onChangeMateMemoryGenerationPriorityProvider={noOp}
-        onChangeMateMemoryGenerationPriorityModel={noOp}
-        onChangeMateMemoryGenerationPriorityReasoningEffort={noOp}
-        onChangeMateMemoryGenerationPriorityTimeoutSeconds={noOp}
-        onAddMateMemoryGenerationPriority={noOp}
-        onRemoveMateMemoryGenerationPriority={noOp}
-        onChangeMateMemoryGenerationTriggerIntervalMinutes={noOp}
-        onChangeAutoCollapseActionDockOnSend={noOp}
-        onChangeUserMicrocopySlot={noOp}
-        onChangeProviderEnabled={noOp}
-        onChangeProviderInstructionEnabled={noOp}
-        onChangeProviderInstructionWriteMode={noOp}
-        onChangeProviderInstructionFailPolicy={noOp}
-        onChangeProviderInstructionInstructionRelativePath={noOp}
-        onBrowseProviderInstructionInstructionRelativePath={noOp}
-        onChangeProviderSkillRootPath={noOp}
-        onBrowseProviderSkillRootPath={noOp}
-        onChangeProviderSkillRelativePath={noOp}
-        onBrowseProviderSkillRelativePath={noOp}
-        onChangeMemoryExtractionModel={noOp}
-        onChangeMemoryExtractionReasoningEffort={noOp}
-        onChangeMemoryExtractionThreshold={noOp}
-        onChangeMemoryExtractionTimeoutSeconds={noOp}
-        onChangeCharacterReflectionModel={noOp}
-        onChangeCharacterReflectionReasoningEffort={noOp}
-        onChangeCharacterReflectionTimeoutSeconds={noOp}
-        onChangeCharacterReflectionCooldownSeconds={noOp}
-        onChangeCharacterReflectionCharDeltaThreshold={noOp}
-        onChangeCharacterReflectionMessageDeltaThreshold={noOp}
-        onImportModelCatalog={noOp}
-        onExportModelCatalog={noOp}
-        onOpenAppLogFolder={noOp}
-        onOpenCrashDumpFolder={noOp}
-        onReloadMemoryManagement={noOp}
-        onChangeMemoryManagementViewFilters={noOp}
-        onLoadMoreMemoryManagement={noOp}
-        onDeleteSessionMemory={noOp}
-        onDeleteProjectMemoryEntry={noOp}
-        onDeleteCharacterMemoryEntry={noOp}
-        onDeleteMateProfileItem={noOp}
-        onStartMateEmbeddingDownload={noOp}
-        mateGrowthSettings={nextMateGrowthSettings}
-        mateGrowthFeedback=""
-        mateGrowthBusy={false}
-        onReloadMateGrowthEvents={noOp}
-        onUpdateMateGrowthSettings={noOp}
-        onSaveSettings={noOp}
-      />,
-    );
-
-    assert.ok(html.includes("<dt>同期状態</dt>"));
-    assert.ok(html.includes("<dd>失敗</dd>"));
-    assert.ok(html.includes("<dt>最終同期</dt>"));
-    assert.ok(html.includes(`<dd>${formatTimestampLabel(syncedAt)}</dd>`));
-    assert.ok(html.includes("<p class=\"settings-feedback settings-memory-feedback\">再起動が必要</p>"));
-    assert.ok(html.includes("<span>エラープレビュー</span>"));
-    assert.ok(html.includes("permission denied: EACCES (13): Permission denied"));
-  });
-
-  it("Provider Instruction Sync の Instruction Relative Path 「選択」ボタンで picker handler が呼ばれる", () => {
-    let pickedProviderId: string | null = null;
-    const content = buildSettingsContent({
-      onBrowseProviderInstructionInstructionRelativePath: (providerId) => {
-        pickedProviderId = providerId;
-      },
-    });
-    const browseButtons = collectElementsById(
-      content,
-      (element) => element.type === "button" && element.props.type === "button" && element.props.children === "選択",
-    );
-    const instructionBrowseButton = browseButtons[2];
-    if (!instructionBrowseButton) {
-      throw new Error("Instruction Relative Path の選択ボタンが見つかりません。");
-    }
-
-    assert.equal(pickedProviderId, null);
-    instructionBrowseButton.props.onClick();
-    assert.equal(pickedProviderId, "codex");
+    assert.ok(!html.includes("一人称は「私」を優先する"));
   });
 });
 
@@ -1366,7 +623,7 @@ describe("HomeMateSetupPanel", () => {
 describe("HomeLaunchDialog", () => {
   const noOp = (..._args: unknown[]) => undefined;
 
-  const renderHomeLaunchDialog = (mode: "session" | "companion" | "mate-talk") => renderToStaticMarkup(
+  const renderHomeLaunchDialog = (mode: "session" | "companion") => renderToStaticMarkup(
     <HomeLaunchDialog
       open={true}
       mode={mode}
@@ -1405,15 +662,6 @@ describe("HomeLaunchDialog", () => {
     assert.ok(!html.includes("Add Character"));
   });
 
-  it("mate-talk mode は provider 選択だけで開始できる表示にする", () => {
-    const html = renderHomeLaunchDialog("mate-talk");
-
-    assert.ok(html.includes("Coding Provider"));
-    assert.ok(html.includes("Start MateTalk"));
-    assert.ok(!html.includes("セッションタイトル"));
-    assert.ok(!html.includes("Browse"));
-    assert.ok(!html.includes("Agent Mode"));
-  });
 });
 
 describe("HomeRecentSessionsPanel", () => {
@@ -1531,10 +779,8 @@ describe("HomeRightPane", () => {
       monitorWindowIcon={<span>Monitor</span>}
       onChangeRightPaneView={noOp}
       onOpenSessionMonitorWindow={noOp}
-      onOpenMemoryManagementWindow={noOp}
       onOpenSettingsWindow={noOp}
       onOpenMateProfile={noOp}
-      onOpenMateTalk={noOp}
       onOpenSession={noOp}
       onOpenCompanionReview={noOp}
       canUsePrimaryFeatures={canUsePrimaryFeatures}
@@ -1579,7 +825,7 @@ describe("HomeRightPane", () => {
     assert.ok(html.includes("説明文"));
     assert.ok(!html.includes("Characters"));
     assert.ok(!html.includes("Add Character"));
-    assert.ok(html.includes("メイトーク"));
+    assert.ok(!html.includes("メイトーク"));
     assert.ok(html.includes("Mate を編集"));
   });
 
@@ -1589,7 +835,7 @@ describe("HomeRightPane", () => {
     assert.ok(!html.includes("Mate の説明は未設定だよ。"));
   });
 
-  it("メイトークは Home right pane のタブではなく起動ボタンとして表示する", () => {
+  it("メイトークは Home right pane のタブにも起動ボタンにも表示しない", () => {
     const monitorHtml = renderHomeRightPane("monitor", null);
     const mateHtml = renderHomeRightPane("mate", null);
     const tablistMatch = monitorHtml.match(/<div class="home-pane-toggle" role="tablist" aria-label="Home right pane">[\s\S]*?<\/div>/);
@@ -1598,8 +844,8 @@ describe("HomeRightPane", () => {
     assert.ok(tablistMatch[0].includes("Monitor"));
     assert.ok(tablistMatch[0].includes("Your Mate"));
     assert.ok(!tablistMatch[0].includes("メイトーク"));
-    assert.match(monitorHtml, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
-    assert.match(mateHtml, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
+    assert.doesNotMatch(monitorHtml, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
+    assert.doesNotMatch(mateHtml, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
     assertNoMateTalkChatSurface(monitorHtml);
     assertNoMateTalkChatSurface(mateHtml);
   });
@@ -1630,6 +876,5 @@ describe("HomeRightPane", () => {
   it("canUsePrimaryFeatures false の時は主要アクションを無効化する", () => {
     const html = renderHomeRightPane("monitor", null, false);
     assert.match(html, /<button class="launch-toggle home-monitor-window-button"[^>]*disabled=""/);
-    assert.match(html, /<button class="launch-toggle home-settings-button"[^>]*aria-disabled="true"[^>]*disabled=""/);
   });
 });

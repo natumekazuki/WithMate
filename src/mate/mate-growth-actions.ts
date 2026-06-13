@@ -8,26 +8,26 @@ import {
   type MateStorageState,
   type UpdateMateGrowthSettingsInput,
 } from "./mate-state.js";
-import type { WithMateWindowApi } from "../withmate-window-api.js";
 import { buildApplyPendingGrowthFeedback } from "./mate-growth-feedback.js";
 
-export type HomeMateGrowthApplyApi = Pick<WithMateWindowApi, "applyPendingGrowth">;
+export type HomeMateGrowthApplyApi = {
+  applyPendingGrowth: () => Promise<MateGrowthApplyResult>;
+};
 
 export async function applyHomePendingGrowth(api: HomeMateGrowthApplyApi): Promise<string> {
   const result: MateGrowthApplyResult = await api.applyPendingGrowth();
   return buildApplyPendingGrowthFeedback(result);
 }
 
-export type HomeMateGrowthApi = Pick<
-  WithMateWindowApi,
-  | "applyPendingGrowth"
-  | "listMateGrowthEvents"
-  | "correctMateGrowthEvent"
-  | "disableMateGrowthEvent"
-  | "forgetMateGrowthEvent"
-  | "updateMateGrowthSettings"
-  | "resetMate"
->;
+export type HomeMateGrowthApi = {
+  applyPendingGrowth: () => Promise<MateGrowthApplyResult>;
+  listMateGrowthEvents: (request?: { limit?: number } | null) => Promise<{ events: MateGrowthEventListItem[]; limit: number }>;
+  correctMateGrowthEvent: (request: { eventId: string; statement: string }) => Promise<MateGrowthEventActionResult>;
+  disableMateGrowthEvent: (request: { eventId: string }) => Promise<MateGrowthEventActionResult>;
+  forgetMateGrowthEvent: (request: { eventId: string }) => Promise<MateGrowthEventActionResult>;
+  updateMateGrowthSettings: (input: UpdateMateGrowthSettingsInput) => Promise<MateGrowthSettings | null>;
+  resetMate: () => Promise<void>;
+};
 
 export type HomeMateGrowthEventListRefresher<TApi> = (
   api: TApi,

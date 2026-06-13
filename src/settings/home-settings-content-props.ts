@@ -13,9 +13,6 @@ export type HomeSettingsContentBaseProps = Omit<
 
 export const buildHomeSettingsContentProps = (
   input: HomeSettingsContentBaseProps & {
-    onApplyPendingGrowth: () => void;
-    applyPendingGrowthBusy: boolean;
-    canApplyPendingGrowth: boolean;
     onResetMate: () => void;
     mateResetBusy: boolean;
     canResetMate: boolean;

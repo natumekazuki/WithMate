@@ -1002,8 +1002,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openHomeWindow: createHomeWindow,
                 openSessionMonitorWindow,
                 openSettingsWindow,
-                openMemoryManagementWindow,
-                openMateTalkWindow,
                 openDiffWindow,
                 openCompanionReviewWindow,
                 openCompanionMergeWindow,
@@ -1040,48 +1038,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
                 getAppDatabaseDiagnostics,
                 resetAppDatabase: async (request) => requireSettingsCatalogService().resetAppDatabase(request),
-                getMemoryManagementSnapshot: () => requireMemoryManagementService().getSnapshot(),
-                getMemoryManagementPage: (request) => requireMemoryManagementService().getPage(request),
-                getMateGrowthSettings: () => getMateGrowthSettings(),
-                updateMateGrowthSettings: (input) => updateMateGrowthSettings(input),
-                getMateEmbeddingSettings: () => requireMateEmbeddingCacheService().getEmbeddingSettings(),
-                listProviderInstructionTargets: () => requireProviderInstructionTargetStorage().listTargets(),
-                upsertProviderInstructionTarget: async (input) => {
-                  return upsertProviderInstructionTargetCommand(input, {
-                    storage: requireProviderInstructionTargetStorage(),
-                    getMateProfile: () => requireMateStorage().getMateProfile(),
-                    syncEnabledProviderInstructionTargetsForMateProfile,
-                    syncDisabledProviderInstructionTarget,
-                    protectedRoots: getProviderInstructionTargetProtectedRoots(),
-                    syncDeps: {
-                      readTextFile: async (filePath) => readFile(filePath, "utf8"),
-                      writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
-                    },
-                    assertProviderInstructionTargetRootNotProtected: (upsertInput, protectedRoots) =>
-                      assertProviderInstructionTargetRootNotProtected(
-                        upsertInput,
-                        protectedRoots,
-                      ),
-                    logDisabledCleanupFailure(error, previousTarget) {
-                      writeAppLog({
-                        level: "warn",
-                        kind: "mate.provider-instruction-sync.disabled-projection.failed",
-                        process: "main",
-                        message: "target を disabled にした際の Provider Instruction cleanup が完了しませんでした。",
-                        data: {
-                          providerId: previousTarget.providerId,
-                          targetId: previousTarget.targetId,
-                          syncBlocked: error instanceof MateProviderInstructionSyncBlockedError,
-                        },
-                        error: appLogService.errorToLogError(error),
-                      });
-                    },
-                  });
-                },
-                startMateEmbeddingDownload: () => startMateEmbeddingDownload(),
-                deleteSessionMemory: (sessionId) => requireMemoryManagementService().deleteSessionMemory(sessionId),
-                deleteProjectMemoryEntry: (entryId) => requireMemoryManagementService().deleteProjectMemoryEntry(entryId),
-                forgetMateProfileItem: (itemId) => requireMemoryManagementService().forgetMateProfileItem(itemId),
               },
               sessionQuery: {
                 listSessionSummaries: () => listSessionSummaries(),
@@ -1238,12 +1194,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 createMate,
                 updateMate,
                 setMateAvatar,
-                applyPendingGrowth,
-                listMateGrowthEvents,
-                correctMateGrowthEvent,
-                disableMateGrowthEvent,
-                forgetMateGrowthEvent,
-                runMateTalkTurn,
                 resetMate,
               },
             },
