@@ -130,6 +130,9 @@ export {
   normalizeSessionMemoryDelta,
 } from "./memory/memory-state.js";
 export type {
+  ManagedProjectMemoryGroup,
+  ManagedSessionMemoryItem,
+  MemoryPageRequest,
   ProjectMemoryCategory,
   ProjectMemoryEntry,
   ProjectScope,

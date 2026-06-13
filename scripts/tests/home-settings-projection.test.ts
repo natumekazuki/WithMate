@@ -8,7 +8,6 @@ describe("home-settings-projection", () => {
     const projection = buildHomeSettingsProjection({
       settingsDraftLoaded: true,
       modelCatalogLoaded: false,
-      memoryManagementLoaded: true,
       resetDatabaseTargets: ["sessions"],
       resettingDatabase: false,
     });
@@ -27,7 +26,6 @@ describe("home-settings-projection", () => {
     const projection = buildHomeSettingsProjection({
       settingsDraftLoaded: false,
       modelCatalogLoaded: true,
-      memoryManagementLoaded: true,
       resetDatabaseTargets: ["appSettings"],
       resettingDatabase: false,
     });

@@ -128,20 +128,7 @@ test("refreshMateStatus は ready result 後に inactive なら UI state を更�
     setMateState: () => calls.push("setMateState"),
     setMateProfile: () => calls.push("setMateProfile"),
     setMateDisplayName: () => calls.push("setMateDisplayName"),
-    setMateEmbeddingSettings: () => calls.push("setMateEmbeddingSettings"),
-    setMateEmbeddingFeedback: () => calls.push("setMateEmbeddingFeedback"),
-    setMateEmbeddingBusy: () => calls.push("setMateEmbeddingBusy"),
-    setMateGrowthSettings: () => calls.push("setMateGrowthSettings"),
-    setMateGrowthFeedback: () => calls.push("setMateGrowthFeedback"),
-    setMateGrowthBusy: () => calls.push("setMateGrowthBusy"),
-    setMateGrowthEvents: () => calls.push("setMateGrowthEvents"),
-    setMateGrowthEventsFeedback: () => calls.push("setMateGrowthEventsFeedback"),
-    setMateGrowthEventsLoading: () => calls.push("setMateGrowthEventsLoading"),
-    setMateGrowthEventBusyTarget: () => calls.push("setMateGrowthEventBusyTarget"),
-    setCorrectingMateGrowthEventId: () => calls.push("setCorrectingMateGrowthEventId"),
-    setCorrectingMateGrowthEventStatement: () => calls.push("setCorrectingMateGrowthEventStatement"),
     setMateAvatarUpdating: () => calls.push("setMateAvatarUpdating"),
-    stopMateEmbeddingSettingsPolling: () => calls.push("stopMateEmbeddingSettingsPolling"),
   });
 
   const state = await refreshers.refreshMateStatus(api, { isActive });

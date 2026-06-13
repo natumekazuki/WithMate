@@ -25,10 +25,6 @@ export class MainWindowFacade {
     return this.deps.getAuxWindowService().openSettingsWindow();
   }
 
-  async openMemoryManagementWindow(): Promise<BrowserWindow> {
-    return this.deps.getAuxWindowService().openMemoryManagementWindow();
-  }
-
   async openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<BrowserWindow> {
     return this.deps.getAuxWindowService().openMateTalkWindow(input);
   }

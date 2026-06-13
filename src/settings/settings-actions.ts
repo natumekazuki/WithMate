@@ -1,11 +1,8 @@
 import type { AppSettings } from "../app-state.js";
-import { getProviderAppSettings } from "../provider-settings-state.js";
 import {
   buildResetDatabaseConfirmMessage,
   buildResetDatabaseSuccessMessage,
 } from "./settings-ui.js";
-import type { HomeProviderInstructionTargetDraft } from "./provider-instruction-target-draft.js";
-import { buildHomeProviderInstructionTargetUpsertInput } from "./settings-view-model.js";
 import {
   normalizeResetAppDatabaseTargets,
   type ResetAppDatabaseResult,
@@ -18,12 +15,6 @@ export type HomeSettingsApi = {
   exportModelCatalogFile: () => Promise<string | null>;
   updateAppSettings: (settings: AppSettings) => Promise<AppSettings>;
   resetAppDatabase: (request: ResetAppDatabaseRequest) => Promise<ResetAppDatabaseResult>;
-};
-
-type ProviderInstructionTargetSyncApi = {
-  upsertProviderInstructionTarget: (
-    input: ReturnType<typeof buildHomeProviderInstructionTargetUpsertInput>,
-  ) => Promise<HomeProviderInstructionTargetDraft> | HomeProviderInstructionTargetDraft;
 };
 
 export async function importHomeModelCatalog(api: HomeSettingsApi): Promise<string> {
@@ -45,37 +36,6 @@ export async function saveHomeSettings(
     nextSettings,
     feedback: "設定を保存したよ。",
   };
-}
-
-export async function syncProviderInstructionTargetRoots({
-  api,
-  nextSettings,
-  providerInstructionTargets,
-}: {
-  api: ProviderInstructionTargetSyncApi;
-  nextSettings: AppSettings;
-  providerInstructionTargets: readonly HomeProviderInstructionTargetDraft[];
-}): Promise<HomeProviderInstructionTargetDraft[]> {
-  const nextTargets = providerInstructionTargets.map((target) => {
-    const rootDirectory = getProviderAppSettings(nextSettings, target.providerId).skillRootPath.trim();
-    if (rootDirectory === target.rootDirectory) {
-      return target;
-    }
-
-    return {
-      ...target,
-      rootDirectory,
-    };
-  });
-
-  const changedTargets = nextTargets.filter((target, index) =>
-    target.rootDirectory !== providerInstructionTargets[index]?.rootDirectory);
-  await Promise.all(
-    changedTargets.map((target) =>
-      api.upsertProviderInstructionTarget(buildHomeProviderInstructionTargetUpsertInput(target))),
-  );
-
-  return nextTargets;
 }
 
 export type ResetHomeDatabaseActionResult =

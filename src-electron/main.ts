@@ -86,7 +86,6 @@ import { SessionElicitationService } from "./session-elicitation-service.js";
 import { WindowBroadcastService } from "./window-broadcast-service.js";
 import { WindowDialogService } from "./window-dialog-service.js";
 import { SessionMemorySupportService } from "./session-memory-support-service.js";
-import { MemoryManagementService } from "./memory-management-service.js";
 import {
   appendSessionFilesDirectory,
   appendSessionFilesDirectoryForSessionId,
@@ -96,28 +95,7 @@ import {
   saveSessionFile,
 } from "./session-files.js";
 import { MateStorage } from "./mate-storage.js";
-import { MateMemoryStorage } from "./mate-memory-storage.js";
-import { MateEmbeddingCacheService } from "./mate-embedding-cache.js";
-import { MateEmbeddingDownloadService } from "./mate-embedding-download-service.js";
-import { MateGrowthApplyService } from "./mate-growth-apply-service.js";
-import { MateGrowthStorage } from "./mate-growth-storage.js";
-import { MateProfileProjectionRefreshService } from "./mate-profile-projection-refresh-service.js";
-import { MateProjectContextService } from "./mate-project-context-service.js";
-import { MateProjectDigestStorage } from "./mate-project-digest-storage.js";
-import {
-  resolveMateProjectContextTextForPrompt,
-} from "./mate-project-context-resolver.js";
 import { MateProfileItemStorage } from "./mate-profile-item-storage.js";
-import { ProviderInstructionTargetStorage } from "./provider-instruction-target-storage.js";
-import { MateEmbeddingVectorizer } from "./mate-embedding-vectorizer.js";
-import { MateSemanticEmbeddingStorage } from "./mate-semantic-embedding-storage.js";
-import { MateSemanticEmbeddingRetrievalService } from "./mate-semantic-embedding-retrieval-service.js";
-import { MateSemanticEmbeddingIndexService } from "./mate-semantic-embedding-index-service.js";
-import {
-  MateProviderInstructionSyncBlockedError,
-  syncDisabledProviderInstructionTargets,
-} from "./mate-provider-instruction-sync.js";
-import { validateMateGrowthSettingsAgainstModelCatalog } from "./mate-growth-settings-validation.js";
 import {
   buildMateTalkRuntimeInstructionFiles,
   MateTalkRuntimeWorkspaceService,
@@ -128,10 +106,6 @@ import { MateTalkService } from "./mate-talk-service.js";
 import { buildMateTalkProfileContextText } from "./mate-talk-profile-context.js";
 import { WindowEntryLoader } from "./window-entry-loader.js";
 import { AuxWindowService } from "./aux-window-service.js";
-import {
-  assertProviderInstructionTargetRootNotProtected,
-  buildProviderInstructionTargetProtectedRoots,
-} from "./provider-instruction-target-root-guard.js";
 import { registerMainIpcHandlers } from "./main-ipc-registration.js";
 import {
   PersistentStoreLifecycleService,
@@ -166,15 +140,7 @@ import {
   type MateTalkLaunchInput,
   type MateTalkTurnInput,
   type MateTalkTurnResult,
-  type UpdateMateGrowthSettingsInput,
 } from "../src/mate/mate-state.js";
-import type {
-  MateGrowthEventActionRequest,
-  MateGrowthEventActionResult,
-  MateGrowthEventCorrectionRequest,
-  MateGrowthEventListRequest,
-  MateGrowthEventListResult,
-} from "../src/mate/mate-growth-events-state.js";
 import {
   type SessionMemoryExtractionTriggerReason,
 } from "./session-memory-extraction.js";
@@ -243,10 +209,6 @@ const codexAdapter = new CodexAdapter((input) => writeAppLog({
 const copilotAdapter = new CopilotAdapter();
 const WAL_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 
-function getProviderInstructionTargetProtectedRoots(): string[] {
-  return buildProviderInstructionTargetProtectedRoots(fixedUserDataPath);
-}
-
 let sessions: Session[] = [];
 let sessionStorage: SessionStorageRead | null = null;
 let sessionMemoryStorage: SessionMemoryStorageAccess | null = null;
@@ -256,18 +218,7 @@ let auditLogStorage: AuditLogStorageRead | null = null;
 let auxiliarySessionStorage: AuxiliarySessionStorageAccess | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
 let mateStorage: MateStorage | null = null;
-let mateMemoryStorage: MateMemoryStorage | null = null;
-let mateEmbeddingCacheService: MateEmbeddingCacheService | null = null;
-let mateEmbeddingVectorizer: MateEmbeddingVectorizer | null = null;
-let mateSemanticEmbeddingStorage: MateSemanticEmbeddingStorage | null = null;
-let mateSemanticEmbeddingRetrievalService: MateSemanticEmbeddingRetrievalService | null = null;
-let mateSemanticEmbeddingIndexService: MateSemanticEmbeddingIndexService | null = null;
-let mateGrowthStorage: MateGrowthStorage | null = null;
 let mateProfileItemStorage: MateProfileItemStorage | null = null;
-let mateProjectDigestStorage: MateProjectDigestStorage | null = null;
-let providerInstructionTargetStorage: ProviderInstructionTargetStorage | null = null;
-let mateProjectContextService: MateProjectContextService | null = null;
-let mateGrowthApplyService: MateGrowthApplyService | null = null;
 let mateTalkRuntimeWorkspaceService: MateTalkRuntimeWorkspaceService | null = null;
 type CompanionStorageHandle = CompanionStorage | CompanionStorageV3;
 
@@ -297,7 +248,6 @@ let sessionApprovalService: SessionApprovalService | null = null;
 let sessionElicitationService: SessionElicitationService | null = null;
 let auditLogService: AuditLogService | null = null;
 let sessionMemorySupportService: SessionMemorySupportService | null = null;
-let memoryManagementService: MemoryManagementService | null = null;
 let companionSessionService: CompanionSessionService | null = null;
 let companionAuditLogStorage: CompanionAuditLogStorageV3 | null = null;
 let companionAuditLogService: AuditLogService | null = null;
@@ -1407,20 +1357,11 @@ function requireAppSettingsStorage(): AppSettingsStorage {
   return appSettingsStorage;
 }
 
-function getMateGrowthSettings(): ReturnType<MateStorage["getMateGrowthSettings"]> {
-  return requireMateStorage().getMateGrowthSettings();
-}
-
-async function updateMateGrowthSettings(input: UpdateMateGrowthSettingsInput): Promise<ReturnType<MateStorage["updateMateGrowthSettings"]>> {
-  validateMateGrowthSettingsAgainstModelCatalog(input, requireModelCatalogStorage().ensureSeeded());
-  return requireMateStorage().updateMateGrowthSettings(input);
-}
-
-async function updateAppSettingsAndSyncMateGrowth(settings: AppSettings): Promise<AppSettings> {
+async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   return requireAppSettingsStorage().updateSettings(settings);
 }
 
-async function resetAppSettingsAndSyncMateGrowth(): Promise<AppSettings> {
+async function resetAppSettings(): Promise<AppSettings> {
   return requireAppSettingsStorage().resetSettings();
 }
 
@@ -1455,120 +1396,8 @@ async function setMateAvatar(input: Parameters<MateStorage["setMateAvatar"]>[0])
   return requireMateStorage().setMateAvatar(input);
 }
 
-async function forgetMateProfileItemAndRefreshProjection(itemId: string): Promise<void> {
-  const service = new MateProfileProjectionRefreshService({
-    mateStorage: requireMateStorage(),
-    profileItemStorage: requireMateProfileItemStorage(),
-    projectDigestProjectionWriter: requireMateProjectDigestStorage(),
-  });
-
-  await service.forgetProfileItemAndRefreshProjection(itemId);
-}
-
-function assertProviderInstructionCleanupComplete(
-  result: { failedCount: number },
-  operationName: string,
-): void {
-  if (result.failedCount > 0) {
-    throw new Error(
-      `${operationName} の Provider Instruction cleanup に ${result.failedCount} 件失敗しました。`,
-    );
-  }
-}
-
 async function resetMate(): Promise<void> {
-  await syncProviderInstructionTargetsForDisabledMateProfile();
   await requireMateStorage().resetMate();
-}
-
-async function syncProviderInstructionTargetsForDisabledMateProfile(): Promise<void> {
-  try {
-    const result = await syncDisabledProviderInstructionTargets(
-      requireProviderInstructionTargetStorage(),
-      {
-        readTextFile: async (filePath) => readFile(filePath, "utf8"),
-        writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
-      },
-      { protectedRoots: getProviderInstructionTargetProtectedRoots() },
-    );
-    assertProviderInstructionCleanupComplete(result, "Mate reset");
-  } catch (error) {
-    if (error instanceof MateProviderInstructionSyncBlockedError) {
-      writeAppLog({
-        level: "warn",
-        kind: "mate.provider-instruction-sync.disabled-projection.failed",
-        process: "main",
-        message: "Mate reset 前の Provider Instruction cleanup が完了しませんでした。reset を中止します。",
-        data: {
-          providerId: error.providerId,
-          targetId: error.targetId,
-        },
-        error: appLogService.errorToLogError(error),
-      });
-      throw error;
-    }
-
-    writeAppLog({
-      level: "warn",
-      kind: "mate.provider-instruction-sync.disabled-projection.failed",
-      process: "main",
-      message: "Mate reset 前の Provider Instruction cleanup が完了しませんでした。reset を中止します。",
-      error: appLogService.errorToLogError(error),
-    });
-    throw error;
-  }
-}
-
-async function applyPendingGrowth(): ReturnType<MateGrowthApplyService["applyPendingGrowth"]> {
-  return applyPendingGrowthCore();
-}
-
-async function listMateGrowthEvents(request?: MateGrowthEventListRequest | null): Promise<MateGrowthEventListResult> {
-  return requireMateGrowthStorage().listEventsForReview(request ?? {});
-}
-
-function readMateGrowthReviewStringField(request: unknown, fieldName: "eventId" | "statement"): string {
-  if (request === null || typeof request !== "object") {
-    throw new Error("Growth Event review リクエストが不正です。");
-  }
-  const value = (request as Record<string, unknown>)[fieldName];
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`Growth Event review リクエストの ${fieldName} が不正です。`);
-  }
-  return value;
-}
-
-async function disableMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult> {
-  return requireMateGrowthStorage().disableEventForReview(
-    readMateGrowthReviewStringField(request, "eventId"),
-  );
-}
-
-async function forgetMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult> {
-  return requireMateGrowthStorage().forgetEventForReview(
-    readMateGrowthReviewStringField(request, "eventId"),
-  );
-}
-
-async function correctMateGrowthEvent(request: MateGrowthEventCorrectionRequest): Promise<MateGrowthEventActionResult> {
-  return requireMateGrowthStorage().correctEventForReview(
-    readMateGrowthReviewStringField(request, "eventId"),
-    readMateGrowthReviewStringField(request, "statement"),
-  );
-}
-
-async function applyPendingGrowthCore(): ReturnType<MateGrowthApplyService["applyPendingGrowth"]> {
-  if (requireMateStorage().getMateState() === "not_created") {
-    return {
-      candidateCount: 0,
-      appliedCount: 0,
-      skippedCount: 0,
-      revisionId: null,
-    };
-  }
-
-  const result = await requireMateGrowthApplyService().applyPendingGrowth();
-  return result;
 }
 
 function extractMateTalkAssistantMessage(value: unknown): string | null {
@@ -1734,18 +1563,6 @@ async function generateMateTalkAssistantMessage(input: {
   }
 }
 
-function requireMateGrowthStorage(): MateGrowthStorage {
-  if (!dbPath) {
-    throw new Error("DB path が初期化されていないよ。");
-  }
-
-  if (!mateGrowthStorage) {
-    mateGrowthStorage = new MateGrowthStorage(dbPath);
-  }
-
-  return mateGrowthStorage;
-}
-
 function requireMateProfileItemStorage(): MateProfileItemStorage {
   if (!dbPath) {
     throw new Error("DB path が初期化されていないよ。");
@@ -1756,123 +1573,6 @@ function requireMateProfileItemStorage(): MateProfileItemStorage {
   }
 
   return mateProfileItemStorage;
-}
-
-function requireMateProjectDigestStorage(): MateProjectDigestStorage {
-  if (!dbPath) {
-    throw new Error("DB path が初期化されていないよ。");
-  }
-
-  if (!mateProjectDigestStorage) {
-    mateProjectDigestStorage = new MateProjectDigestStorage(dbPath);
-  }
-
-  return mateProjectDigestStorage;
-}
-
-function requireProviderInstructionTargetStorage(): ProviderInstructionTargetStorage {
-  if (!dbPath) {
-    throw new Error("DB path が初期化されていないよ。");
-  }
-
-  if (!providerInstructionTargetStorage) {
-    providerInstructionTargetStorage = new ProviderInstructionTargetStorage(dbPath);
-  }
-
-  return providerInstructionTargetStorage;
-}
-
-function requireMateProjectContextService(): MateProjectContextService {
-  if (!mateProjectContextService) {
-    mateProjectContextService = new MateProjectContextService(
-      requireMateProfileItemStorage(),
-      requireMateSemanticEmbeddingRetrievalService(),
-    );
-  }
-
-  return mateProjectContextService;
-}
-
-function requireMateGrowthApplyService(): MateGrowthApplyService {
-  if (!mateGrowthApplyService) {
-    mateGrowthApplyService = new MateGrowthApplyService(
-      requireMateGrowthStorage(),
-      requireMateProfileItemStorage(),
-      requireMateStorage(),
-      requireMateSemanticEmbeddingIndexService(),
-      requireProviderInstructionTargetStorage(),
-      requireMateProjectDigestStorage(),
-    );
-  }
-
-  return mateGrowthApplyService;
-}
-
-function requireMateEmbeddingVectorizer(): MateEmbeddingVectorizer {
-  if (!mateEmbeddingVectorizer) {
-    mateEmbeddingVectorizer = new MateEmbeddingVectorizer(requireMateEmbeddingCacheService());
-  }
-
-  return mateEmbeddingVectorizer;
-}
-
-function requireMateSemanticEmbeddingStorage(): MateSemanticEmbeddingStorage {
-  if (!dbPath) {
-    throw new Error("DB path が初期化されていないよ。");
-  }
-
-  if (!mateSemanticEmbeddingStorage) {
-    mateSemanticEmbeddingStorage = new MateSemanticEmbeddingStorage(dbPath);
-  }
-
-  return mateSemanticEmbeddingStorage;
-}
-
-function requireMateSemanticEmbeddingRetrievalService(): MateSemanticEmbeddingRetrievalService {
-  if (!mateSemanticEmbeddingRetrievalService) {
-    mateSemanticEmbeddingRetrievalService = new MateSemanticEmbeddingRetrievalService(
-      requireMateEmbeddingCacheService(),
-      requireMateEmbeddingVectorizer(),
-      requireMateSemanticEmbeddingStorage(),
-    );
-  }
-
-  return mateSemanticEmbeddingRetrievalService;
-}
-
-function requireMateSemanticEmbeddingIndexService(): MateSemanticEmbeddingIndexService {
-  if (!mateSemanticEmbeddingIndexService) {
-    mateSemanticEmbeddingIndexService = new MateSemanticEmbeddingIndexService(
-      requireMateEmbeddingCacheService(),
-      requireMateEmbeddingVectorizer(),
-      requireMateSemanticEmbeddingStorage(),
-    );
-  }
-
-  return mateSemanticEmbeddingIndexService;
-}
-
-function requireMateEmbeddingCacheService(): MateEmbeddingCacheService {
-  if (!dbPath) {
-    throw new Error("DB path が初期化されていないよ。");
-  }
-
-  if (!mateEmbeddingCacheService) {
-    mateEmbeddingCacheService = new MateEmbeddingCacheService(dbPath, app.getPath("userData"));
-  }
-
-  return mateEmbeddingCacheService;
-}
-
-async function startMateEmbeddingDownload(): Promise<void> {
-  const service = requireMateEmbeddingCacheService();
-  const settings = service.getEmbeddingSettings();
-  if (!settings) {
-    return;
-  }
-
-  const downloadService = new MateEmbeddingDownloadService({ cacheService: service });
-  await downloadService.downloadModel();
 }
 
 async function runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult> {
@@ -1958,39 +1658,6 @@ function requireSessionMemorySupportService(): SessionMemorySupportService {
   return sessionMemorySupportService;
 }
 
-function requireMemoryManagementService(): MemoryManagementService {
-  if (!memoryManagementService) {
-    memoryManagementService = new MemoryManagementService({
-      listSessionSummaries: () => listSessionSummaries(),
-      listSessionMemories: () => requireSessionMemoryStorage().listSessionMemories(),
-      listSessionMemoryPage: (request) => requireSessionMemoryStorage().listSessionMemoryPage(request),
-      deleteSessionMemory: (sessionId) => requireSessionMemoryStorage().deleteSessionMemory(sessionId),
-      listProjectScopes: () => requireProjectMemoryStorage().listProjectScopes(),
-      listProjectMemoryEntries: (projectScopeId) => requireProjectMemoryStorage().listProjectMemoryEntries(projectScopeId),
-      listProjectMemoryPage: (request) => requireProjectMemoryStorage().listProjectMemoryPage(request),
-      deleteProjectMemoryEntry: (entryId) => requireProjectMemoryStorage().deleteProjectMemoryEntry(entryId),
-      listMateProfileItems: () => requireMateProfileItemStorage().listProfileItems({ state: "active" }).map((item) => ({
-        id: item.id,
-        sectionKey: item.sectionKey,
-        projectDigestId: item.projectDigestId,
-        category: item.category,
-        claimKey: item.claimKey,
-        claimValue: item.claimValue,
-        renderedText: item.renderedText,
-        normalizedClaim: item.normalizedClaim,
-        confidence: item.confidence,
-        salienceScore: item.salienceScore,
-        state: item.state,
-        tags: item.tags.map((tag) => `${tag.type}:${tag.value}`),
-        updatedAt: item.updatedAt,
-      })),
-      forgetMateProfileItem: (itemId) => forgetMateProfileItemAndRefreshProjection(itemId),
-    });
-  }
-
-  return memoryManagementService;
-}
-
 function requireWindowEntryLoader(): WindowEntryLoader {
   return requireMainInfrastructureRegistry().getWindowEntryLoader();
 }
@@ -2012,16 +1679,6 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       getSessionMemory: (session) => requireSessionMemoryStorage().ensureSessionMemory(session),
       resolveProjectMemoryEntriesForPrompt: (session, userMessage, sessionMemory) =>
         requireSessionMemorySupportService().resolveProjectMemoryEntriesForPrompt(session, userMessage, sessionMemory),
-      resolveProjectContextTextForPrompt: (session, userMessage) =>
-        resolveMateProjectContextTextForPrompt({
-          session,
-          userMessage,
-          getMateState: () => requireMateStorage().getMateState(),
-          resolveProjectDigestForWorkspace: (workspacePath) =>
-            requireMateProjectDigestStorage().resolveProjectDigestForWorkspace(workspacePath),
-          getProjectDigestContextText: (projectDigestId, options) =>
-            requireMateProjectContextService().getProjectDigestContextText(projectDigestId, options),
-        }),
       createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
       updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
       setLiveSessionRun,
@@ -2158,16 +1815,6 @@ function requireCompanionRuntimeService(): CompanionRuntimeService {
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
-      resolveProjectContextTextForPrompt: (session, userMessage) =>
-        resolveMateProjectContextTextForPrompt({
-          session,
-          userMessage,
-          getMateState: () => requireMateStorage().getMateState(),
-          resolveProjectDigestForWorkspace: (workspacePath) =>
-            requireMateProjectDigestStorage().resolveProjectDigestForWorkspace(workspacePath),
-          getProjectDigestContextText: (projectDigestId, options) =>
-            requireMateProjectContextService().getProjectDigestContextText(projectDigestId, options),
-        }),
       ...(canUseCompanionAuditLogStorage()
         ? {
             createAuditLog: (entry) => requireCompanionAuditLogService().createAuditLog(entry),
@@ -2316,7 +1963,7 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       listSessions: listFullStoredSessions,
       listAuxiliarySessions: () => requireAuxiliarySessionService().listAllAuxiliarySessions(),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
-      updateAppSettings: updateAppSettingsAndSyncMateGrowth,
+      updateAppSettings,
       getModelCatalog,
       ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
       importModelCatalogDocument: (document, source) => requireModelCatalogStorage().importCatalogDocument(document, source),
@@ -2334,7 +1981,7 @@ function requireSettingsCatalogService(): SettingsCatalogService {
           await requireCompanionAuditLogService().clearAuditLogs();
         }
       },
-      resetAppSettings: resetAppSettingsAndSyncMateGrowth,
+      resetAppSettings,
       resetModelCatalogToBundled: () => requireModelCatalogStorage().resetToBundled(),
       clearProjectMemories: () => requireProjectMemoryStorage().clearProjectMemories(),
       resetSessionRuntime: () => requireSessionRuntimeService().reset(),
@@ -2501,20 +2148,17 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
   }
 
   closePersistentStores();
-  const nextMateMemoryStorage = new MateMemoryStorage(dbPath);
   try {
     const bundle = await requirePersistentStoreLifecycleService().initialize(
       dbPath,
       bundledModelCatalogPath,
       app.getPath("userData"),
     );
-    mateMemoryStorage = nextMateMemoryStorage;
     const activeModelCatalog = applyPersistentStoreBundle(bundle);
     appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
     startWalMaintenance();
     return activeModelCatalog;
   } catch (error) {
-    nextMateMemoryStorage.close();
     throw error;
   }
 }
@@ -2523,13 +2167,7 @@ function closePersistentStores(): void {
   stopWalMaintenance();
   companionStorage?.close();
   companionAuditLogStorage?.close();
-  mateMemoryStorage?.close();
-  mateGrowthStorage?.close();
   mateProfileItemStorage?.close();
-  mateProjectDigestStorage?.close();
-  providerInstructionTargetStorage?.close();
-  mateEmbeddingCacheService?.close();
-  mateSemanticEmbeddingStorage?.close();
   requirePersistentStoreLifecycleService().close({
     modelCatalogStorage,
     sessionStorage,
@@ -2551,18 +2189,7 @@ function closePersistentStores(): void {
   auxiliarySessionRuntimeService = null;
   appSettingsStorage = null;
   mateStorage = null;
-  mateMemoryStorage = null;
-  mateGrowthStorage = null;
   mateProfileItemStorage = null;
-  mateProjectDigestStorage = null;
-  providerInstructionTargetStorage = null;
-  mateProjectContextService = null;
-  mateSemanticEmbeddingRetrievalService = null;
-  mateGrowthApplyService = null;
-  mateEmbeddingVectorizer = null;
-  mateSemanticEmbeddingStorage = null;
-  mateSemanticEmbeddingIndexService = null;
-  mateEmbeddingCacheService = null;
   mateTalkRuntimeWorkspaceService = null;
   companionStorage = null;
   companionAuditLogStorage = null;
@@ -2586,46 +2213,15 @@ function closePersistentStores(): void {
   mainInfrastructureRegistry = null;
 }
 
-async function cleanupMateProjectionsBeforeDatabaseRecreate(): Promise<void> {
-  const result = await syncDisabledProviderInstructionTargets(
-    requireProviderInstructionTargetStorage(),
-    {
-      readTextFile: async (filePath) => readFile(filePath, "utf8"),
-      writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
-    },
-    { protectedRoots: getProviderInstructionTargetProtectedRoots() },
-  );
-  assertProviderInstructionCleanupComplete(result, "database reset");
-
-  await requireMateStorage().deleteMateProjectionDirectory();
-}
-
 async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   if (!dbPath) {
     throw new Error("DB path が初期化されていないよ。");
   }
 
   stopWalMaintenance();
-  await cleanupMateProjectionsBeforeDatabaseRecreate();
-  mateMemoryStorage?.close();
-  mateMemoryStorage = null;
-  mateGrowthStorage?.close();
-  mateGrowthStorage = null;
+  await requireMateStorage().deleteMateProjectionDirectory();
   mateProfileItemStorage?.close();
   mateProfileItemStorage = null;
-  mateProjectDigestStorage?.close();
-  mateProjectDigestStorage = null;
-  providerInstructionTargetStorage?.close();
-  providerInstructionTargetStorage = null;
-  mateSemanticEmbeddingStorage?.close();
-  mateSemanticEmbeddingStorage = null;
-  mateProjectContextService = null;
-  mateSemanticEmbeddingRetrievalService = null;
-  mateGrowthApplyService = null;
-  mateEmbeddingVectorizer = null;
-  mateSemanticEmbeddingIndexService = null;
-  mateEmbeddingCacheService?.close();
-  mateEmbeddingCacheService = null;
   companionStorage?.close();
   companionAuditLogStorage?.close();
   const bundle = await requirePersistentStoreLifecycleService().recreate(dbPath, bundledModelCatalogPath, {
@@ -2661,10 +2257,8 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   mainWindowFacade = null;
   mainQueryService = null;
   mateTalkRuntimeWorkspaceService = null;
-  mateEmbeddingCacheService = null;
   mainInfrastructureRegistry?.reset();
   mainInfrastructureRegistry = null;
-  mateMemoryStorage = new MateMemoryStorage(dbPath);
   sessions = [];
 
   const activeModelCatalog = applyPersistentStoreBundle(bundle);
@@ -3354,10 +2948,6 @@ async function openSessionMonitorWindow(): Promise<BrowserWindow> {
 
 async function openSettingsWindow(): Promise<BrowserWindow> {
   return requireMainWindowFacade().openSettingsWindow();
-}
-
-async function openMemoryManagementWindow(): Promise<BrowserWindow> {
-  return requireMainWindowFacade().openMemoryManagementWindow();
 }
 
 async function openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<BrowserWindow> {
