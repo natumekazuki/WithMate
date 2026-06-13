@@ -2,10 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type {
-  ProjectMemoryEntry,
   Session,
   SessionMemory,
-  SessionMemoryDelta,
 } from "../../src/app-state.js";
 import { SessionMemorySupportService } from "../../src-electron/session-memory-support-service.js";
 
@@ -54,31 +52,11 @@ function createSessionMemory(overrides?: Partial<SessionMemory>): SessionMemory 
   };
 }
 
-function createProjectMemoryEntry(overrides?: Partial<ProjectMemoryEntry>): ProjectMemoryEntry {
-  return {
-    id: "project-entry-1",
-    projectScopeId: "project-scope-1",
-    sourceSessionId: "session-1",
-    category: "decision",
-    title: "Memory は段階的に入れる",
-    detail: "Memory は段階的に入れる",
-    keywords: ["memory", "段階的"],
-    evidence: [],
-    createdAt: "2026-03-28T00:00:00.000Z",
-    updatedAt: "2026-03-28T00:00:00.000Z",
-    lastUsedAt: null,
-    ...overrides,
-  };
-}
-
 test("SessionMemorySupportService は session 依存の memory/scope を同期する", () => {
   const calls: string[] = [];
   const service = new SessionMemorySupportService({
     getSessionMemory(sessionId) {
       calls.push(`getSessionMemory:${sessionId}`);
-      return createSessionMemory();
-    },
-    ensureSessionMemory() {
       return createSessionMemory();
     },
     upsertSessionMemory(memory) {
@@ -87,16 +65,6 @@ test("SessionMemorySupportService は session 依存の memory/scope を同期�
     ensureProjectScope(scope) {
       calls.push(`ensureProjectScope:${scope.projectKey}`);
       return { id: "project-scope-1" };
-    },
-    listProjectMemoryEntries() {
-      return [];
-    },
-    upsertProjectMemoryEntry(entry) {
-      return createProjectMemoryEntry(entry);
-    },
-    markProjectMemoryEntriesUsed() {},
-    upsertSession(session) {
-      return session;
     },
   });
 
@@ -116,26 +84,12 @@ test("SessionMemorySupportService は削除済み session memory を起動同期
       calls.push(`getSessionMemory:${sessionId}`);
       return null;
     },
-    ensureSessionMemory() {
-      calls.push("ensureSessionMemory");
-      return createSessionMemory();
-    },
     upsertSessionMemory() {
       calls.push("upsertSessionMemory");
     },
     ensureProjectScope(scope) {
       calls.push(`ensureProjectScope:${scope.projectKey}`);
       return { id: "project-scope-1" };
-    },
-    listProjectMemoryEntries() {
-      return [];
-    },
-    upsertProjectMemoryEntry(entry) {
-      return createProjectMemoryEntry(entry);
-    },
-    markProjectMemoryEntriesUsed() {},
-    upsertSession(session) {
-      return session;
     },
   });
 
@@ -145,52 +99,5 @@ test("SessionMemorySupportService は削除済み session memory を起動同期
     "getSessionMemory:session-1",
     "ensureProjectScope:directory:C:/workspace",
   ]);
-});
-
-test("SessionMemorySupportService は project promotion と prompt retrieval を扱う", async () => {
-  const promoted: Array<string> = [];
-  const marked: string[][] = [];
-  const service = new SessionMemorySupportService({
-    getSessionMemory() {
-      return createSessionMemory();
-    },
-    ensureSessionMemory() {
-      return createSessionMemory();
-    },
-    upsertSessionMemory() {},
-    ensureProjectScope() {
-      return { id: "project-scope-1" };
-    },
-    listProjectMemoryEntries() {
-      return [createProjectMemoryEntry()];
-    },
-    upsertProjectMemoryEntry(entry) {
-      promoted.push(`${entry.category}:${entry.detail}`);
-      return createProjectMemoryEntry(entry);
-    },
-    markProjectMemoryEntriesUsed(entryIds) {
-      marked.push(entryIds);
-    },
-  });
-
-  const delta: SessionMemoryDelta = {
-    decisions: ["Memory は段階的に入れる"],
-    notes: ["制約: Character Memory は coding prompt に入れない"],
-  };
-  const promotedCount = service.promoteSessionMemoryDeltaToProjectMemory(createSession(), delta);
-
-  const resolved = service.resolveProjectMemoryEntriesForPrompt(
-    createSession(),
-    "Memory は段階的に入れる方針を確認したい",
-    createSessionMemory({ goal: "Memory 設計を整理する" }),
-  );
-
-  assert.deepEqual(promoted, [
-    "decision:Memory は段階的に入れる",
-    "constraint:Character Memory は coding prompt に入れない",
-  ]);
-  assert.equal(promotedCount, 2);
-  assert.deepEqual(resolved.map((entry) => entry.id), ["project-entry-1"]);
-  assert.deepEqual(marked, [["project-entry-1"]]);
 });
 

@@ -260,7 +260,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -355,7 +354,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -448,7 +446,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -465,7 +462,6 @@ describe("SessionRuntimeService", () => {
     const storedSessions: Session[] = [];
     const auditUpdates: UpdateAuditLogInput[] = [];
     const liveStates: Array<LiveSessionRunState | null> = [];
-    const memoryTriggers: Array<{ sessionId: string; triggerReason: string }> = [];
     const reflectionTriggers: Array<{ sessionId: string; triggerReason: string }> = [];
     let emitQueuedProgressDuringWrite: (() => void) | null = null;
     let queuedProgressEmitted = false;
@@ -600,9 +596,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction(nextSession, _usage, options) {
-        memoryTriggers.push({ sessionId: nextSession.id, triggerReason: options.triggerReason });
-      },
       runCharacterReflection(nextSession, options) {
         reflectionTriggers.push({ sessionId: nextSession.id, triggerReason: options.triggerReason });
       },
@@ -667,7 +660,6 @@ describe("SessionRuntimeService", () => {
       auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptInputEstimatedTokens")?.value,
       "2",
     );
-    assert.deepEqual(memoryTriggers, []);
     assert.deepEqual(reflectionTriggers, []);
     assert.equal(liveStates.at(-1), null);
     assert.equal(service.isRunInFlight(session.id), false);
@@ -766,7 +758,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -865,7 +856,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -997,7 +987,6 @@ describe("SessionRuntimeService", () => {
         adapter.invalidateSessionThread(sessionId);
       },
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -1118,7 +1107,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -1240,7 +1228,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -1356,7 +1343,6 @@ describe("SessionRuntimeService", () => {
         invalidated.push({ providerId, sessionId: retrySessionId });
       },
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -1475,7 +1461,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -1619,7 +1604,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -1737,7 +1721,6 @@ describe("SessionRuntimeService", () => {
         invalidated.push({ providerId, sessionId: retrySessionId });
       },
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -1843,7 +1826,6 @@ describe("SessionRuntimeService", () => {
         invalidated.push({ providerId, sessionId: retrySessionId });
       },
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -1965,7 +1947,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -2096,7 +2077,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -2198,7 +2178,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -2320,7 +2299,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -2430,7 +2408,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -2532,7 +2509,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -2627,7 +2603,6 @@ describe("SessionRuntimeService", () => {
         invalidated.push({ providerId, sessionId: retrySessionId });
       },
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -2723,7 +2698,6 @@ describe("SessionRuntimeService", () => {
         invalidated.push({ providerId, sessionId: retrySessionId });
       },
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -2869,7 +2843,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -2999,7 +2972,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -3108,7 +3080,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
@@ -3197,7 +3168,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},

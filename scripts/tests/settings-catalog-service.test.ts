@@ -531,7 +531,6 @@ describe("SettingsCatalogService", () => {
       clearProjectMemories() {},
       clearCharacterMemories() {},
       resetSessionRuntime() {},
-      resetMemoryOrchestration() {},
       clearAllProviderQuotaTelemetry() {},
       clearAllSessionContextTelemetry() {},
       clearAllSessionBackgroundActivities() {},
@@ -622,9 +621,6 @@ describe("SettingsCatalogService", () => {
       resetSessionRuntime() {
         calls.push("resetRuntime");
       },
-      resetMemoryOrchestration() {
-        calls.push("resetMemory");
-      },
       clearAllProviderQuotaTelemetry() {
         calls.push("clearAllQuota");
       },
@@ -664,7 +660,6 @@ describe("SettingsCatalogService", () => {
       "closeResetWindows",
       "clearAudit",
       "replace:0",
-      "resetMemory",
       "resetRuntime",
       "clearAllActivity",
       "invalidateAllThreads",
@@ -745,7 +740,6 @@ describe("SettingsCatalogService", () => {
       clearProjectMemories() {},
       clearCharacterMemories() {},
       resetSessionRuntime() {},
-      resetMemoryOrchestration() {},
       clearAllProviderQuotaTelemetry() {},
       clearAllSessionContextTelemetry() {},
       clearAllSessionBackgroundActivities() {},

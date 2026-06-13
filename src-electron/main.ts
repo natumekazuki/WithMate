@@ -78,7 +78,6 @@ import { CompanionStorageV3 } from "./companion-storage-v3.js";
 import { SessionRuntimeService } from "./session-runtime-service.js";
 import { SessionPersistenceService } from "./session-persistence-service.js";
 import { SessionWindowBridge } from "./session-window-bridge.js";
-import { MemoryOrchestrationService } from "./memory-orchestration-service.js";
 import { SettingsCatalogService } from "./settings-catalog-service.js";
 import { SessionObservabilityService } from "./session-observability-service.js";
 import { SessionApprovalService } from "./session-approval-service.js";
@@ -141,9 +140,6 @@ import {
   type MateTalkTurnInput,
   type MateTalkTurnResult,
 } from "../src/mate/mate-state.js";
-import {
-  type SessionMemoryExtractionTriggerReason,
-} from "./session-memory-extraction.js";
 import { discoverSessionSkills } from "./skill-discovery.js";
 import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
@@ -241,7 +237,6 @@ let auxiliarySessionService: AuxiliarySessionService | null = null;
 let auxiliarySessionRuntimeService: SessionRuntimeService | null = null;
 let sessionPersistenceService: SessionPersistenceService | null = null;
 let sessionWindowBridge: SessionWindowBridge<BrowserWindow> | null = null;
-let memoryOrchestrationService: MemoryOrchestrationService | null = null;
 let settingsCatalogService: SettingsCatalogService | null = null;
 let sessionObservabilityService: SessionObservabilityService | null = null;
 let sessionApprovalService: SessionApprovalService | null = null;
@@ -1645,13 +1640,8 @@ function requireSessionMemorySupportService(): SessionMemorySupportService {
   if (!sessionMemorySupportService) {
     sessionMemorySupportService = new SessionMemorySupportService({
       getSessionMemory: (sessionId) => requireSessionMemoryStorage().getSessionMemory(sessionId),
-      ensureSessionMemory: (session) => requireSessionMemoryStorage().ensureSessionMemory(session),
       upsertSessionMemory: (memory) => requireSessionMemoryStorage().upsertSessionMemory(memory),
       ensureProjectScope: (scope) => requireProjectMemoryStorage().ensureProjectScope(scope),
-      listProjectMemoryEntries: (projectScopeId) =>
-        requireProjectMemoryStorage().listProjectMemoryEntries(projectScopeId),
-      upsertProjectMemoryEntry: (entry) => requireProjectMemoryStorage().upsertProjectMemoryEntry(entry),
-      markProjectMemoryEntriesUsed: (entryIds) => requireProjectMemoryStorage().markProjectMemoryEntriesUsed(entryIds),
     });
   }
 
@@ -1676,9 +1666,13 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
-      getSessionMemory: (session) => requireSessionMemoryStorage().ensureSessionMemory(session),
-      resolveProjectMemoryEntriesForPrompt: (session, userMessage, sessionMemory) =>
-        requireSessionMemorySupportService().resolveProjectMemoryEntriesForPrompt(session, userMessage, sessionMemory),
+      getSessionMemory: (session) => createDefaultSessionMemory({
+        id: session.id,
+        workspacePath: session.workspacePath,
+        threadId: session.threadId,
+        taskTitle: session.taskTitle,
+      }),
+      resolveProjectMemoryEntriesForPrompt: () => [],
       createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
       updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
       setLiveSessionRun,
@@ -1933,27 +1927,6 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
   return sessionWindowBridge;
 }
 
-function requireMemoryOrchestrationService(): MemoryOrchestrationService {
-  if (!memoryOrchestrationService) {
-    memoryOrchestrationService = new MemoryOrchestrationService({
-      getSession,
-      isSessionRunInFlight,
-      isRunningSession,
-      getAppSettings: () => requireAppSettingsStorage().getSettings(),
-      getProviderBackgroundAdapter,
-      ensureSessionMemory: (session) => requireSessionMemoryStorage().ensureSessionMemory(session),
-      upsertSessionMemory: (memory) => requireSessionMemoryStorage().upsertSessionMemory(memory),
-      promoteSessionMemoryDeltaToProjectMemory: (session, delta) =>
-        requireSessionMemorySupportService().promoteSessionMemoryDeltaToProjectMemory(session, delta),
-      createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
-      updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
-      setSessionBackgroundActivity,
-    });
-  }
-
-  return memoryOrchestrationService;
-}
-
 function requireSettingsCatalogService(): SettingsCatalogService {
   if (!settingsCatalogService) {
     settingsCatalogService = new SettingsCatalogService({
@@ -1985,7 +1958,6 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       resetModelCatalogToBundled: () => requireModelCatalogStorage().resetToBundled(),
       clearProjectMemories: () => requireProjectMemoryStorage().clearProjectMemories(),
       resetSessionRuntime: () => requireSessionRuntimeService().reset(),
-      resetMemoryOrchestration: () => requireMemoryOrchestrationService().reset(),
       clearAllProviderQuotaTelemetry,
       clearAllSessionContextTelemetry,
       clearAllSessionBackgroundActivities,
