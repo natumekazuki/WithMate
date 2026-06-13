@@ -92,12 +92,20 @@ Progress:
 
 ### Phase 2: Runtime side effects を止める
 
-- [ ] app 起動時の Growth apply timer を削除する
-- [ ] session / companion turn 後の Mate Memory generation scheduling を削除する
-- [ ] MateTalk turn 後の Memory generation scheduling を削除する
-- [ ] provider instruction target への Mate projection sync を session 起動前 path から外す
-- [ ] provider instruction target への Mate projection sync を Mate 作成 / 更新 / avatar 更新 / Growth apply / profile item refresh path から外す
-- [ ] memory-runtime / mate-talk temporary workspace cleanup が不要になることを確認して削除する
+- [x] app 起動時の Growth apply timer を削除する
+- [x] session / companion turn 後の Mate Memory generation scheduling を削除する
+- [x] MateTalk turn 後の Memory generation scheduling を削除する
+- [x] provider instruction target への Mate projection sync を session 起動前 path から外す
+- [x] provider instruction target への Mate projection sync を Mate 作成 / 更新 / avatar 更新 / Growth apply / profile item refresh path から外す
+- [x] memory-runtime / mate-talk temporary workspace cleanup が不要になることを確認して削除する
+
+Progress:
+
+- 2026-06-13: Phase 2 runtime side effects を停止。`MainBootstrapService` から Growth apply timer / stale growth cleanup 実行経路を外し、互換 API は timer を作らない no-op とした。`SessionRuntimeService` と `MateTalkService` から Mate Memory generation scheduling hook を削除し、`main.ts` の session / MateTalk callback 注入と `MateMemoryGenerationService` lazy factory を外した。Companion turn には該当 scheduling path がないことを確認した。
+- 2026-06-13: provider instruction target への Mate projection sync は、Mate 作成 / 更新 / avatar 更新 / Growth apply / profile item refresh path から外した。session 起動前の明示 sync path は現行コード上で未検出。Mate reset / DB reset の disabled cleanup は既存 marker block の明示 cleanup として残し、Phase 3 の service/storage 削除対象へ分離した。
+- 2026-06-13: 起動時の `cleanupMemoryRuntimeWorkspaceOnStartup` と persistent store 初期化後の `cleanupMateTalkSessionFilesDirectories` 呼び出しを削除し、memory-runtime / MateTalk temporary workspace cleanup が起動時に走らないようにした。
+- 2026-06-13: 残存検索として `src-electron/main.ts`、`src-electron/main-bootstrap-service.ts`、`src-electron/main-bootstrap-deps.ts`、`src-electron/session-runtime-service.ts`、`src-electron/mate-talk-service.ts` に対し、`scheduleMateMemoryGeneration`、`scheduleMemoryGeneration`、`createGrowthApplyTimer`、`cleanupStaleGrowthApplyRuns`、`cleanupMemoryRuntimeWorkspaceOnStartup`、`cleanupMateTalkSessionFilesDirectories`、`syncEnabledProviderInstructionTargetsForMateProfile`、`syncEnabledProviderInstructionTargets(` の `Select-String` 検索を実行し、該当なしを確認。
+- 2026-06-13: 検証は `npm install` 後に `npm run typecheck` と `node --import tsx --test scripts/tests/main-bootstrap-service.test.ts scripts/tests/mate-talk-service.test.ts scripts/tests/session-runtime-service.test.ts` が成功。`npm install` では既存依存に 8 件の audit warning が出たが、この Phase 2 変更では未対応。
 
 ### Phase 3: Service / storage を削る
 

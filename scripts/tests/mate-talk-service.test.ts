@@ -3,7 +3,6 @@ import test from "node:test";
 
 import { MateTalkService } from "../../src-electron/mate-talk-service.js";
 import type { MateProfile } from "../../src/mate/mate-state.js";
-import { normalizeAppSettings } from "../../src/provider-settings-state.js";
 
 const PROFILE: MateProfile = {
   id: "mate-1",
@@ -23,8 +22,7 @@ const PROFILE: MateProfile = {
   sections: [],
 };
 
-test("MateTalkService は入力を正規化して provider 応答を返し Memory 生成入力を返す", async () => {
-  const scheduled: unknown[] = [];
+test("MateTalkService は入力を正規化して provider 応答を返す", async () => {
   const assistantInputs: unknown[] = [];
   const service = new MateTalkService({
     getMateProfile: () => PROFILE,
@@ -33,7 +31,6 @@ test("MateTalkService は入力を正規化して provider 応答を返し Memor
       return "core context\n- friendly";
     },
     now: () => new Date("2026-05-04T01:02:03.000Z"),
-    scheduleMemoryGeneration: (input) => scheduled.push(input),
     generateAssistantMessage: async (input) => {
       assistantInputs.push(input);
       return `${input.mateProfile.displayName}、${input.userMessage}に応答するよ。`;
@@ -48,7 +45,6 @@ test("MateTalkService は入力を正規化して provider 応答を返し Memor
     assistantMessage: "Buddy、helloに応答するよ。",
     createdAt: "2026-05-04T01:02:03.000Z",
   });
-  assert.deepEqual(scheduled, [{ userMessage: "hello", assistantText: "Buddy、helloに応答するよ。" }]);
   assert.deepEqual(assistantInputs, [{
     userMessage: "hello",
     mateProfile: {
@@ -63,11 +59,9 @@ test("MateTalkService は入力を正規化して provider 応答を返し Memor
 });
 
 test("MateTalkService は provider 未設定時に fallback 応答を返す", async () => {
-  const scheduled: unknown[] = [];
   const service = new MateTalkService({
     getMateProfile: () => PROFILE,
     now: () => new Date("2026-05-04T01:02:03.000Z"),
-    scheduleMemoryGeneration: (input) => scheduled.push(input),
   });
 
   const result = await service.runTurn({ message: "  hello  " });
@@ -78,7 +72,6 @@ test("MateTalkService は provider 未設定時に fallback 応答を返す", as
     assistantMessage: "受け取ったよ。",
     createdAt: "2026-05-04T01:02:03.000Z",
   });
-  assert.deepEqual(scheduled, [{ userMessage: "hello", assistantText: "受け取ったよ。" }]);
 });
 
 test("MateTalkService は選択された provider/model/depth を provider 呼び出しへ渡す", async () => {
@@ -147,19 +140,16 @@ test("MateTalkService は参照 payload と通常 Session 相当の実行権限�
   }]);
 });
 
-test("MateTalkService は provider の空文字/空白応答を fallback 応答に変換し、Memory scheduling に反映する", async () => {
-  const scheduled: unknown[] = [];
+test("MateTalkService は provider の空文字/空白応答を fallback 応答に変換する", async () => {
   const service = new MateTalkService({
     getMateProfile: () => PROFILE,
     now: () => new Date("2026-05-04T01:02:03.000Z"),
-    scheduleMemoryGeneration: (input) => scheduled.push(input),
     generateAssistantMessage: async () => "   ",
   });
 
   const result = await service.runTurn({ message: "  hello  " });
 
   assert.equal(result.assistantMessage, "受け取ったよ。");
-  assert.deepEqual(scheduled, [{ userMessage: "hello", assistantText: "受け取ったよ。" }]);
 });
 
 test("MateTalkService は getMateProfileContextText の例外でも visible turn を失敗させず provider 呼び出しを継続する", async () => {
@@ -200,40 +190,6 @@ test("MateTalkService は空入力と Mate 未作成を拒否する", async () =
   await assert.rejects(() => service.runTurn({ message: "hello" }), { message: "Mate が見つかりません。" });
 });
 
-test("MateTalkService は memoryGenerationEnabled=false なら scheduleMemoryGeneration を呼ばない", async () => {
-  let scheduleCalled = 0;
-  const service = new MateTalkService({
-    getMateProfile: () => PROFILE,
-    getAppSettings: () => normalizeAppSettings({ memoryGenerationEnabled: false }),
-    now: () => new Date("2026-05-04T01:02:03.000Z"),
-    scheduleMemoryGeneration: () => {
-      scheduleCalled += 1;
-    },
-  });
-
-  const result = await service.runTurn({ message: "  hello  " });
-
-  assert.equal(result.userMessage, "hello");
-  assert.equal(scheduleCalled, 0);
-});
-
-test("MateTalkService は Mate state が draft/deleted なら scheduleMemoryGeneration を呼ばない", async () => {
-  for (const state of ["draft", "deleted"] as const) {
-    let scheduleCalled = 0;
-    const service = new MateTalkService({
-      getMateProfile: () => ({ ...PROFILE, state }),
-      now: () => new Date("2026-05-04T01:02:03.000Z"),
-      scheduleMemoryGeneration: () => {
-        scheduleCalled += 1;
-      },
-    });
-
-    const result = await service.runTurn({ message: "  hello  " });
-    assert.equal(result.userMessage, "hello");
-    assert.equal(scheduleCalled, 0, `${state} では呼ばれない`);
-  }
-});
-
 test("MateTalkService は provider 応答の生成失敗を呼び出し元へ返す", async () => {
   const service = new MateTalkService({
     getMateProfile: () => PROFILE,
@@ -244,69 +200,4 @@ test("MateTalkService は provider 応答の生成失敗を呼び出し元へ返
   });
 
   await assert.rejects(() => service.runTurn({ message: "  hello  " }), /provider error/);
-});
-
-test("MateTalkService は Memory 生成のスケジュール失敗を握りつぶして成功結果を返す", async () => {
-  let scheduledError: unknown;
-  const service = new MateTalkService({
-    getMateProfile: () => PROFILE,
-    now: () => new Date("2026-05-04T01:02:03.000Z"),
-    scheduleMemoryGeneration: () => {
-      throw new Error("memory scheduler failed");
-    },
-    onMemoryGenerationScheduleError: (error) => {
-      scheduledError = error;
-    },
-  });
-
-  const result = await service.runTurn({ message: "  hello  " });
-
-  assert.deepEqual(result, {
-    mateId: "mate-1",
-    userMessage: "hello",
-    assistantMessage: "受け取ったよ。",
-    createdAt: "2026-05-04T01:02:03.000Z",
-  });
-  assert.ok(scheduledError instanceof Error);
-  assert.equal((scheduledError as Error).message, "memory scheduler failed");
-});
-
-test("MateTalkService は非同期の Memory 生成スケジュール失敗も UI 応答から切り離す", async () => {
-  let scheduledError: unknown;
-  const service = new MateTalkService({
-    getMateProfile: () => PROFILE,
-    now: () => new Date("2026-05-04T01:02:03.000Z"),
-    scheduleMemoryGeneration: async () => {
-      throw new Error("async memory scheduler failed");
-    },
-    onMemoryGenerationScheduleError: (error) => {
-      scheduledError = error;
-      throw new Error("logger failed");
-    },
-  });
-
-  const result = await service.runTurn({ message: "  hello  " });
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(result.assistantMessage, "受け取ったよ。");
-  assert.ok(scheduledError instanceof Error);
-  assert.equal((scheduledError as Error).message, "async memory scheduler failed");
-});
-
-test("MateTalkService は非同期の Memory 生成エラー通知失敗も握りつぶす", async () => {
-  const service = new MateTalkService({
-    getMateProfile: () => PROFILE,
-    now: () => new Date("2026-05-04T01:02:03.000Z"),
-    scheduleMemoryGeneration: () => {
-      throw new Error("memory scheduler failed");
-    },
-    onMemoryGenerationScheduleError: async () => {
-      throw new Error("async logger failed");
-    },
-  });
-
-  const result = await service.runTurn({ message: "  hello  " });
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(result.assistantMessage, "受け取ったよ。");
 });

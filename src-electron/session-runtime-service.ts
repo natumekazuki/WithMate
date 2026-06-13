@@ -28,10 +28,6 @@ import { toAuditTextPreview } from "./audit-payload-limits.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
-type SessionMetadataForMemoryGeneration = Pick<
-  Session,
-  "id" | "workspacePath"
->;
 
 export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
@@ -78,16 +74,6 @@ export type SessionRuntimeServiceDeps = {
   broadcastLiveSessionRun(sessionId: string): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
   resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
-  scheduleMateMemoryGeneration?: (params: {
-    session: SessionMetadataForMemoryGeneration;
-    userMessage: string;
-    assistantText: string;
-    auditLogId: number;
-    phase: "completed" | "failed" | "canceled";
-    provider: Session["provider"];
-    threadId: Session["threadId"];
-    logicalPrompt: CreateAuditLogInput["logicalPrompt"];
-  }) => Awaitable<void>;
   getMateState?: () => MateStorageState;
   currentTimestampLabel?: () => string;
 };
@@ -586,34 +572,6 @@ export class SessionRuntimeService {
 
       await enqueueAuditWrite(nextRunningAuditEntry, nextSignature);
     };
-    const scheduleMateMemoryGeneration = async (params: {
-      session: SessionMetadataForMemoryGeneration;
-      userMessage: string;
-      assistantText: string;
-      phase: "completed" | "failed" | "canceled";
-      threadId: Session["threadId"];
-      auditLogId: number;
-    }) => {
-      const { scheduleMateMemoryGeneration: schedule } = this.deps;
-      if (!schedule) {
-        return;
-      }
-      const appSettings = this.deps.getAppSettings();
-      const mateState = this.deps.getMateState?.();
-      if (!appSettings.memoryGenerationEnabled || (mateState && mateState !== "active")) {
-        return;
-      }
-
-      try {
-        await Promise.resolve(schedule({
-          ...params,
-          logicalPrompt: promptForAudit.logicalPrompt,
-          provider: activeRunningSession.provider,
-        }));
-      } catch {
-        console.warn("Failed to schedule Mate Memory generation", params.session.id);
-      }
-    };
     await syncRunningAuditFromLiveState(initialLiveState);
     const runProviderTurn = (turnSession: Session) => {
       const progressGeneration = ++liveProgressGeneration;
@@ -781,17 +739,6 @@ export class SessionRuntimeService {
       };
 
       const storedCompletedSession = await this.deps.upsertSession(completedSession);
-      void scheduleMateMemoryGeneration({
-        session: {
-          id: storedCompletedSession.id,
-          workspacePath: storedCompletedSession.workspacePath,
-        },
-        userMessage: nextMessage,
-        assistantText: completedSession.messages.at(-1)?.text ?? "",
-        phase: "completed",
-        threadId: storedCompletedSession.threadId,
-        auditLogId: runningAuditLog.id,
-      });
       activeRunningSession = storedCompletedSession;
       return storedCompletedSession;
     } catch (error: unknown) {
@@ -888,19 +835,6 @@ export class SessionRuntimeService {
       };
 
       const storedFailedSession = await this.deps.upsertSession(failedSession);
-      if (!canceled || partialResult?.assistantText.trim()) {
-        void scheduleMateMemoryGeneration({
-          session: {
-            id: storedFailedSession.id,
-            workspacePath: storedFailedSession.workspacePath,
-          },
-          userMessage: nextMessage,
-          assistantText: failedSession.messages.at(-1)?.text ?? "",
-          phase: canceled ? "canceled" : "failed",
-          threadId: storedFailedSession.threadId,
-          auditLogId: runningAuditLog.id,
-        });
-      }
       activeRunningSession = storedFailedSession;
       return storedFailedSession;
     } finally {
