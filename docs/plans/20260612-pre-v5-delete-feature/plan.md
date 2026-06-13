@@ -109,11 +109,22 @@ Progress:
 
 ### Phase 3: Service / storage を削る
 
-- [ ] `mate-memory-*`、`mate-growth-*`、`mate-embedding-*`、`mate-semantic-embedding-*`、`mate-project-*` service と対応 tests を削除する
-- [ ] `memory-management-*` UI / state / service と対応 tests を削除する
-- [ ] `provider-instruction-target-*` と `mate-provider-instruction-*` を削除する
+- [x] `mate-memory-*`、`mate-growth-*`、`mate-embedding-*`、`mate-semantic-embedding-*`、`mate-project-*` service と対応 tests を削除する
+- [x] `memory-management-*` UI / state / service と対応 tests を削除する
+- [x] `provider-instruction-target-*` と `mate-provider-instruction-*` を削除する
 - [ ] `session-memory-*`、`project-memory-*`、`memory-orchestration-service.ts` は参照追跡後、互換 read が不要なら削除する
 - [ ] `mate-storage.ts` / `mate-state.ts` / Mate setup UI は、Home と session 起動が Mate 必須 gate に依存しなくなってから削除または縮小する
+
+Progress:
+
+- 2026-06-13: Phase 3 の初回 slice として、Electron main から Mate Memory / Growth / Embedding / semantic embedding / Mate project context / Provider Instruction Target / Memory Management service への singleton、factory、reset cleanup、session / companion prompt injection 依存を削除した。Memory Management dedicated window route は `AuxWindowService` / `MainWindowFacade` から削除した。
+- 2026-06-13: `src-electron/mate-memory-*`、`src-electron/mate-growth-*`、`src-electron/mate-embedding-*`、`src-electron/mate-semantic-embedding-*`、`src-electron/mate-project-*`、`src-electron/mate-provider-instruction-*`、`src-electron/provider-instruction-target-*`、`src-electron/memory-management-service.ts` と対応する service/storage tests を削除した。`copilot-adapter.test.ts` は Mate Memory prompt schema への fixture 依存をローカル schema に置換した。
+- 2026-06-13: レビュー指摘対応として、`HomeEntryMode` から削除済み Memory Management route の `"memory"` を外し、renderer 側 `HomeWindowMode` との entry contract を揃えた。`main.ts` の app settings helper 名から Growth sync 前提を外し、未参照の `forgetMateProfileItemAndRefreshProjection` helper も削除した。
+- 2026-06-13: 追加レビュー指摘対応として、SettingsContent から Memory Management 専用 props / standalone mode、Mate Memory Generation、Mate Growth、Mate Embedding、Provider Instruction Sync の hidden UI / props / label constants を削除した。renderer 側 `src/memory/memory-management-*` と `MemoryManagementWindowScreen`、未使用の renderer Growth action / handler と Embedding settings 型、対応する stale tests も削除した。
+- 2026-06-13: 追加レビュー指摘対応として、未参照になっていた renderer Growth artifact の `src/mate/mate-growth-feedback.ts`、`src/mate/mate-growth-apply-result.ts`、`src/mate/mate-growth-events-state.ts` と対応 test を削除した。Growth schema / storage は `mate-storage.ts` / `mate-state.ts` の legacy 境界として後続 slice に残る。
+- 2026-06-13: Provider Instruction marker cleanup は v4.9.9 では one-shot 実装しない方針に決定。reset / DB recreate では外部 provider instruction file を触らず、既存ユーザー環境に残る WithMate marker block は V5 では参照しない残置物として扱う。cleanup が必要なら V5 移行後の別 Issue で明示操作として扱う。
+- 2026-06-13: `session-memory-*`、`project-memory-*`、`memory-orchestration-service.ts` は `SessionRuntimeService` / persistence / reset 契約にまだ残るため今回 slice では保持した。renderer 側 `src/memory/memory-state.ts` は session / project memory runtime の互換型として残る。
+- 2026-06-13: 検証は `npm install` 後に `npm run typecheck`、`node --import tsx --test scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-bootstrap-deps.test.ts scripts/tests/aux-window-service.test.ts scripts/tests/main-window-facade.test.ts scripts/tests/copilot-adapter.test.ts`、`node --import tsx --test scripts/tests/session-runtime-service.test.ts scripts/tests/companion-runtime-service.test.ts scripts/tests/session-persistence-service.test.ts scripts/tests/companion-session-service.test.ts`、レビュー指摘対応後に `node --import tsx --test scripts/tests/window-entry-loader.test.ts scripts/tests/aux-window-service.test.ts scripts/tests/main-window-facade.test.ts scripts/tests/main-bootstrap-deps.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/mate-profile-projection-refresh-service.test.ts` が成功。追加 slice 後に `npm run typecheck` と `node --import tsx --test scripts/tests/home-components.test.tsx scripts/tests/settings-ui.test.ts scripts/tests/home-settings-projection.test.ts scripts/tests/home-settings-actions.test.ts scripts/tests/home-settings-view-model.test.ts scripts/tests/mate-status-load-operation.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-bootstrap-deps.test.ts scripts/tests/session-memory-storage.test.ts scripts/tests/project-memory-retrieval.test.ts scripts/tests/project-memory-promotion.test.ts` が成功。`npm install` では既存依存に 8 件の audit warning が出たが、この cleanup では未対応。
 
 ### Phase 4: Character-first の足場へ戻す
 
@@ -157,12 +168,11 @@ Deletion-specific checks:
 - `main.ts` に Mate / Memory / Provider Instruction の依存が集中しているため、一括削除は compile error が広がりやすい。
 - `MateStorage` は Mate 未作成 gate、Home 表示、session 起動前処理に絡むため、削除順を誤ると app 起動自体が壊れる。
 - session / companion の persisted snapshot に `character*` metadata が残っている可能性がある。履歴表示互換が必要な型は最後まで削除しない。
-- provider instruction sync 削除時、既存ユーザーの provider instruction file に WithMate marker block が残る可能性がある。v4.9.9 で cleanup するか、V5 移行時に無視するかを実装前に決める。
+- provider instruction sync 削除により、既存ユーザーの provider instruction file に WithMate marker block が残る可能性がある。v4.9.9 では外部 provider instruction file cleanup を実装せず、V5 からは参照しない残置物として無視する。
 - Memory / Growth tables は物理削除しない方針のため、DB diagnostics や reset の対象名に残る可能性がある。UI から見えないことと schema に残ることを混同しない。
 
 ## 未決事項
 
-- v4.9.9 で既存 provider instruction marker block を削除する one-shot cleanup を実装するか。
 - `MateStorage` を完全削除するか、V5 Character storage 実装まで minimal app state として残すか。
 - session / companion persisted data の `characterId` / `characterName` / `characterIconPath` を履歴表示用 metadata として残すか。
 - docs の `single-mate-architecture.md` / `memory-architecture.md` は archive 扱いに移すか、V4 legacy design として残すか。

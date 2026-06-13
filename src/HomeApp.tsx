@@ -300,7 +300,6 @@ export default function HomeApp() {
   });
 
   const settingsDraftHandlers = buildSettingsDraftHandlers({
-    modelCatalog,
     setSettingsDraft,
   });
 
@@ -327,13 +326,10 @@ export default function HomeApp() {
 
   const settingsCommandHandlers = buildSettingsCommandHandlers({
     getApi: getWithMateApi,
-    settingsDraft,
     persistedSettingsDraft,
     setAppSettings,
     setSettingsDraft,
     setSettingsFeedback,
-    onChangeProviderSkillRootPath: settingsDraftHandlers.onChangeProviderSkillRootPath,
-    onChangeProviderSkillRelativePath: settingsDraftHandlers.onChangeProviderSkillRelativePath,
   });
 
   const mateMaintenanceHandlers = buildMateMaintenanceHandlers({

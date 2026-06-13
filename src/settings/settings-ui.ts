@@ -15,66 +15,9 @@ export const SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE =
   "他 provider 対応は future scope として、いまは OpenAI 前提で扱う。";
 export const SETTINGS_RELEASE_COMPATIBILITY_NOTE =
   "初回リリース前のため、設定 schema の後方互換性は考慮しない。";
-export const SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL = "Model";
-export const SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL = "Reasoning Depth";
-export const SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL = "Output Tokens Threshold";
-export const SETTINGS_MEMORY_EXTRACTION_TIMEOUT_LABEL = "Timeout Seconds";
-export const SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL = "Provider Instruction Sync";
-export const SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL = "Write Mode";
-export const SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_LABEL = "Fail Policy";
-export const SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL = "Root Directory";
-export const SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_PLACEHOLDER = "Instruction sync の root directory";
-export const SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL = "Skill Relative Path";
-export const SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_PLACEHOLDER = "Skills folder path (relative)";
-export const SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL = "Instruction Relative Path";
-export const SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER = "Instruction file path (relative)";
-export const SETTINGS_PROVIDER_INSTRUCTION_HELP_SUMMARY = "Provider Instruction Sync のヘルプ";
-export const SETTINGS_PROVIDER_INSTRUCTION_MANAGED_BLOCK_HELP =
-  "managed_block は既存ファイル内の WithMate 管理ブロックだけを更新する。管理ブロックがない場合は対象ファイルの末尾に追加し、管理ブロック外の手書き内容は残す。";
-export const SETTINGS_PROVIDER_INSTRUCTION_MANAGED_FILE_HELP =
-  "managed_file は対象ファイル全体を WithMate 管理として上書きする。";
-export const SETTINGS_PROVIDER_INSTRUCTION_PATH_HELP =
-  "Root Directory を基準に Skill Relative Path と Instruction Relative Path を解決する。Root Directory 配下を選ぶと自動で相対化する。";
-export const SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_HELP =
-  "warn_continue は同期に失敗しても起動を続ける。block_session は同期失敗時に対象セッション起動を止める。";
-export const SETTINGS_MATE_MEMORY_GENERATION_LABEL = "Mate Memory Generation";
-export const SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL = "Trigger Interval (Minutes)";
-export const SETTINGS_MATE_GROWTH_SETTINGS_LABEL = "Mate Growth Settings";
-export const SETTINGS_MATE_GROWTH_ENABLED_LABEL = "成長機能を有効化";
-export const SETTINGS_MATE_GROWTH_AUTO_APPLY_ENABLED_LABEL = "自動適用を有効化";
-export const SETTINGS_MATE_GROWTH_MEMORY_CANDIDATE_MODE_LABEL = "メモリ候補モード";
-export const SETTINGS_MATE_GROWTH_APPLY_INTERVAL_MINUTES_LABEL = "適用間隔 (Minutes)";
-export const SETTINGS_MATE_GROWTH_MODEL_PREFERENCES_LABEL = "Growth Model Priority";
-export const SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PURPOSE_LABEL = "Purpose";
-export const SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PROVIDER_LABEL = "Provider";
-export const SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_MODEL_LABEL = "Model";
-export const SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_DEPTH_LABEL = "Depth";
-export const SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_ENABLED_LABEL = "Enabled";
-export const SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_ADD_LABEL = "追加";
-export const SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_REMOVE_LABEL = "削除";
-export const SETTINGS_MATE_GROWTH_EVERY_TURN_LABEL = "every_turn";
-export const SETTINGS_MATE_GROWTH_THRESHOLD_LABEL = "threshold";
-export const SETTINGS_MATE_GROWTH_MANUAL_LABEL = "manual";
-export const SETTINGS_MATE_MEMORY_GENERATION_MODEL_LABEL = "Model";
-export const SETTINGS_MATE_MEMORY_GENERATION_REASONING_LABEL = "Reasoning Depth";
-export const SETTINGS_MATE_MEMORY_GENERATION_TIMEOUT_LABEL = "Timeout Seconds";
-export const SETTINGS_MATE_MEMORY_GENERATION_PRIORITY_ADD_LABEL = "追加";
-export const SETTINGS_MATE_MEMORY_GENERATION_PRIORITY_REMOVE_LABEL = "削除";
-export const SETTINGS_MATE_EMBEDDING_LABEL = "Mate Embedding";
-export const SETTINGS_MATE_EMBEDDING_DOWNLOAD_LABEL = "Download Model";
-export const SETTINGS_MATE_EMBEDDING_MODEL_LABEL = "Model";
-export const SETTINGS_MATE_EMBEDDING_DIMENSION_LABEL = "Dimension";
-export const SETTINGS_MATE_GROWTH_LABEL = "Mate Growth を手動適用";
-export const SETTINGS_MATE_GROWTH_HELP = "保留中の Mate Growth を手動で適用する。";
 export const SETTINGS_MATE_RESET_LABEL = "Mate を初期化";
 export const SETTINGS_MATE_RESET_HELP =
   "Danger Zone: 保存済みの Mate の状態を破壊的に初期化する。";
-export const SETTINGS_MATE_EMBEDDING_CACHE_STATE_LABEL = "Cache";
-export const SETTINGS_MEMORY_GENERATION_LABEL = "Memory Generation";
-export const SETTINGS_MEMORY_GENERATION_HELP =
-  "OFF にすると、turn 完了後の Generate Memory を実行しない。";
-export const SETTINGS_MEMORY_EXTRACTION_HELP =
-  "turn 完了後に Generate Memory を実行する際に使う memory extraction の設定。timeout に達したらその回の抽出は中断する。";
 export const SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL = "送信後に Action Dock を自動で閉じる";
 export const SETTINGS_RESET_DATABASE_LABEL = "DB を初期化";
 export const SETTINGS_RESET_DATABASE_HELP =

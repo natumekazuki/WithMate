@@ -1,15 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { MateGrowthApplyResult } from "../../src/mate/mate-growth-apply-result.js";
 import { createMainBootstrapDeps } from "../../src-electron/main-bootstrap-deps.js";
-
-const zeroGrowthResult: MateGrowthApplyResult = {
-  candidateCount: 0,
-  appliedCount: 0,
-  skippedCount: 0,
-  revisionId: null,
-};
 
 test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMainIpcHandlers に渡す", async () => {
   const calls: string[] = [];
@@ -46,7 +38,6 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         openHomeWindow: async () => ({}) as never,
         openSessionMonitorWindow: async () => ({}) as never,
         openSettingsWindow: async () => ({}) as never,
-        openMemoryManagementWindow: async () => ({}) as never,
         openMateTalkWindow: async () => ({}) as never,
         openCharacterEditorWindow: async () => ({}) as never,
         openDiffWindow: async () => ({}) as never,
@@ -73,27 +64,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
           ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} }) as never,
         updateAppSettings: (settings) => settings,
         getAppDatabaseDiagnostics: () => ({}) as never,
-        listProviderInstructionTargets: () => [],
-        upsertProviderInstructionTarget: (input) => input as never,
         resetAppDatabase: async () => null,
-        getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], characterMemories: [] }),
-        getMemoryManagementPage: () => ({
-          snapshot: { sessionMemories: [], projectMemories: [], characterMemories: [] },
-          pages: {
-            session: { nextCursor: null, hasMore: false, total: 0 },
-            project: { nextCursor: null, hasMore: false, total: 0 },
-            character: { nextCursor: null, hasMore: false, total: 0 },
-            mate_profile: { nextCursor: null, hasMore: false, total: 0 },
-          },
-        }),
-        getMateGrowthSettings: () => null,
-        updateMateGrowthSettings: () => null,
-        getMateEmbeddingSettings: () => null,
-        startMateEmbeddingDownload: async () => {},
-        deleteSessionMemory: () => {},
-        deleteProjectMemoryEntry: () => {},
-        deleteCharacterMemoryEntry: () => {},
-        forgetMateProfileItem: () => {},
       },
       sessionQuery: {
         listSessionSummaries: () => [],
@@ -165,11 +136,6 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
       mate: {
         getMateState: () => "not_created",
         getMateProfile: () => null,
-        applyPendingGrowth: async () => zeroGrowthResult,
-        listMateGrowthEvents: async () => ({ events: [], limit: 20 }),
-        correctMateGrowthEvent: async () => ({ event: null }),
-        disableMateGrowthEvent: async () => ({ event: null }),
-        forgetMateGrowthEvent: async () => ({ event: null }),
         createMate: async () => ({}) as never,
         updateMate: async () => ({}) as never,
         setMateAvatar: async () => ({}) as never,

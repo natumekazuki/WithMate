@@ -1,4 +1,5 @@
 import { currentIsoTimestamp } from "../time-state.js";
+import type { Session } from "../session-state.js";
 
 export type SessionBackgroundActivityKind = "memory-generation" | "monologue";
 
@@ -64,6 +65,36 @@ export type ProjectMemoryEntry = {
   createdAt: string;
   updatedAt: string;
   lastUsedAt: string | null;
+};
+
+export type ManagedSessionMemoryItem = {
+  sessionId: string;
+  taskTitle: string;
+  character: string;
+  provider: string;
+  workspaceLabel: string;
+  workspacePath: string;
+  status: Session["status"];
+  runState: Session["runState"];
+  updatedAt: string;
+  memory: SessionMemory;
+};
+
+export type ManagedProjectMemoryGroup = {
+  scope: ProjectScope;
+  entries: ProjectMemoryEntry[];
+};
+
+export type MemoryPageDomain = "all" | "session" | "project";
+
+export type MemoryPageRequest = {
+  domain?: MemoryPageDomain;
+  cursor?: number;
+  limit?: number;
+  searchText?: string;
+  sort?: "updated-desc" | "updated-asc";
+  sessionStatus?: "all" | "running" | "idle" | "saved";
+  projectCategory?: "all" | ProjectMemoryCategory;
 };
 
 type CreateDefaultSessionMemoryInput = {

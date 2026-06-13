@@ -4,14 +4,12 @@ import {
   normalizeProjectScope,
   type ProjectMemoryEntry,
   type ProjectScope,
+  type ManagedProjectMemoryGroup,
+  type ManagedSessionMemoryItem,
+  type MemoryPageRequest,
   type Session,
   type SessionMemory,
 } from "../src/app-state.js";
-import type {
-  ManagedProjectMemoryGroup,
-  ManagedSessionMemoryItem,
-  MemoryManagementPageRequest,
-} from "../src/memory/memory-management-state.js";
 import type { ResolvedProjectScopeInput } from "./project-scope.js";
 
 function currentIsoTimestamp(): string {
@@ -27,7 +25,7 @@ export class SessionMemoryStorageV2Read {
     return [];
   }
 
-  listSessionMemoryPage(_request: MemoryManagementPageRequest): { items: ManagedSessionMemoryItem[]; total: number } {
+  listSessionMemoryPage(_request: MemoryPageRequest): { items: ManagedSessionMemoryItem[]; total: number } {
     return { items: [], total: 0 };
   }
 
@@ -87,7 +85,7 @@ export class ProjectMemoryStorageV2Read {
     return [];
   }
 
-  listProjectMemoryPage(_request: MemoryManagementPageRequest): { groups: ManagedProjectMemoryGroup[]; total: number } {
+  listProjectMemoryPage(_request: MemoryPageRequest): { groups: ManagedProjectMemoryGroup[]; total: number } {
     return { groups: [], total: 0 };
   }
 

@@ -13,40 +13,10 @@ import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { buildHomeProviderSettingRows } from "../../src/settings/settings-view-model.js";
-import { DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES, type MateGrowthSettings } from "../../src/mate/mate-state.js";
-import type { MateGrowthEventListItem } from "../../src/mate/mate-growth-events-state.js";
-import type { MateEmbeddingSettings } from "../../src/mate/mate-embedding-settings.js";
 import { formatTimestampLabel } from "../../src/time-state.js";
 import {
-  SETTINGS_MATE_GROWTH_APPLY_INTERVAL_MINUTES_LABEL,
-  SETTINGS_MATE_GROWTH_AUTO_APPLY_ENABLED_LABEL,
-  SETTINGS_MATE_GROWTH_EVERY_TURN_LABEL,
-  SETTINGS_MATE_GROWTH_ENABLED_LABEL,
-  SETTINGS_MATE_GROWTH_MEMORY_CANDIDATE_MODE_LABEL,
-  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_DEPTH_LABEL,
-  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_ENABLED_LABEL,
-  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_MODEL_LABEL,
-  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PROVIDER_LABEL,
-  SETTINGS_MATE_GROWTH_MODEL_PREFERENCES_LABEL,
-  SETTINGS_MATE_GROWTH_SETTINGS_LABEL,
-  SETTINGS_MATE_EMBEDDING_LABEL,
   SETTINGS_MATE_RESET_HELP,
   SETTINGS_MATE_RESET_LABEL,
-  SETTINGS_MATE_GROWTH_HELP,
-  SETTINGS_MATE_GROWTH_LABEL,
-  SETTINGS_MATE_MEMORY_GENERATION_LABEL,
-  SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL,
-  SETTINGS_MATE_MEMORY_GENERATION_MODEL_LABEL,
-  SETTINGS_MATE_MEMORY_GENERATION_PRIORITY_ADD_LABEL,
-  SETTINGS_MATE_MEMORY_GENERATION_PRIORITY_REMOVE_LABEL,
-  SETTINGS_MATE_MEMORY_GENERATION_REASONING_LABEL,
-  SETTINGS_MATE_MEMORY_GENERATION_TIMEOUT_LABEL,
-  SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_LABEL,
-  SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL,
-  SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL,
-  SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL,
-  SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL,
-  SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL,
 } from "../../src/settings/settings-ui.js";
 
 describe("HomeSettingsContent", () => {
@@ -79,56 +49,12 @@ describe("HomeSettingsContent", () => {
   const settingsDraft = createDefaultAppSettings();
   const providerSettingRows = buildHomeProviderSettingRows(modelCatalog, settingsDraft);
   const noOp = (..._args: unknown[]) => undefined;
-  const nextMateGrowthSettings: MateGrowthSettings = {
-    enabled: true,
-    autoApplyEnabled: true,
-    memoryCandidateMode: "every_turn",
-    applyIntervalMinutes: 5,
-    modelPreferences: [
-      {
-        purpose: "memory_candidate",
-        priority: 1,
-        provider: "codex",
-        model: "gpt-5.4",
-        depth: "medium",
-        enabled: true,
-      },
-    ],
-    updatedAt: "2026-05-01T09:00:00.000Z",
-  };
-  const disabledMateGrowthSettings: MateGrowthSettings = {
-    ...nextMateGrowthSettings,
-    enabled: false,
-  };
 
   type RenderSettingsParams = {
     settingsDraft?: typeof settingsDraft;
-    applyPendingGrowth?: boolean;
-    canApplyPendingGrowth?: boolean;
-    applyPendingGrowthBusy?: boolean;
     canResetMate?: boolean;
     mateResetBusy?: boolean;
-    mateGrowthSettings?: MateGrowthSettings | null;
-    mateGrowthBusy?: boolean;
-    mateGrowthFeedback?: string;
-    mateGrowthEvents?: MateGrowthEventListItem[];
-    mateGrowthEventsLoading?: boolean;
-    mateGrowthEventsFeedback?: string;
-    mateGrowthEventBusyTarget?: string | null;
-    mateEmbeddingSettings?: MateEmbeddingSettings | null;
-    onReloadMateGrowthEvents?: () => void;
-    correctingMateGrowthEventId?: string | null;
-    correctingMateGrowthEventStatement?: string;
-    onBeginCorrectMateGrowthEvent?: (eventId: string, statement: string) => void;
-    onChangeCorrectMateGrowthEventStatement?: (statement: string) => void;
-    onCancelCorrectMateGrowthEvent?: () => void;
-    onCorrectMateGrowthEvent?: (eventId: string, statement: string) => void;
-    onDisableMateGrowthEvent?: (eventId: string) => void;
-    onForgetMateGrowthEvent?: (eventId: string) => void;
-    onUpdateMateGrowthSettings?: (input: unknown) => void;
     onResetMate?: () => void;
-    onAddMateMemoryGenerationPriority?: () => void;
-    onBrowseProviderInstructionInstructionRelativePath?: (providerId: string) => void;
   };
 
   const collectElementsById = (node: ReactNode, predicate: (element: React.ReactElement) => boolean): React.ReactElement[] => {
@@ -165,81 +91,13 @@ describe("HomeSettingsContent", () => {
     modelCatalogRevisionLabel: String(modelCatalog.revision),
     settingsDirty: false,
     settingsFeedback: "",
-    memoryManagementSnapshot: null,
-    memoryManagementPages: {
-      session: { nextCursor: null, hasMore: false, total: 0 },
-      project: { nextCursor: null, hasMore: false, total: 0 },
-      character: { nextCursor: null, hasMore: false, total: 0 },
-      mate_profile: { nextCursor: null, hasMore: false, total: 0 },
-    },
-    memoryManagementLoading: false,
-    memoryManagementBusyTarget: null,
-    memoryManagementFeedback: "",
-    mateGrowthSettings: params && "mateGrowthSettings" in params ? params.mateGrowthSettings ?? null : nextMateGrowthSettings,
-    mateGrowthFeedback: params?.mateGrowthFeedback ?? "",
-    mateGrowthBusy: params?.mateGrowthBusy ?? false,
-    mateGrowthEvents: params?.mateGrowthEvents ?? [],
-    mateGrowthEventsLoading: params?.mateGrowthEventsLoading ?? false,
-    mateGrowthEventsFeedback: params?.mateGrowthEventsFeedback ?? "",
-    mateGrowthEventBusyTarget: params?.mateGrowthEventBusyTarget ?? null,
-    mateEmbeddingSettings: params && "mateEmbeddingSettings" in params ? params.mateEmbeddingSettings ?? null : null,
-    mateEmbeddingFeedback: "",
-    mateEmbeddingBusy: false,
-    onChangeMemoryGenerationEnabled: noOp,
-    onChangeMateMemoryGenerationPriorityProvider: noOp,
-    onChangeMateMemoryGenerationPriorityModel: noOp,
-    onChangeMateMemoryGenerationPriorityReasoningEffort: noOp,
-    onChangeMateMemoryGenerationPriorityTimeoutSeconds: noOp,
-    onAddMateMemoryGenerationPriority: params?.onAddMateMemoryGenerationPriority ?? noOp,
-    onRemoveMateMemoryGenerationPriority: noOp,
-    onChangeMateMemoryGenerationTriggerIntervalMinutes: noOp,
     onChangeAutoCollapseActionDockOnSend: noOp,
     onChangeUserMicrocopySlot: noOp,
     onChangeProviderEnabled: noOp,
-    onChangeProviderInstructionEnabled: noOp,
-    onChangeProviderInstructionWriteMode: noOp,
-    onChangeProviderInstructionFailPolicy: noOp,
-    onChangeProviderInstructionInstructionRelativePath: noOp,
-    onBrowseProviderInstructionInstructionRelativePath: params?.onBrowseProviderInstructionInstructionRelativePath ?? noOp,
-    onChangeProviderSkillRootPath: noOp,
-    onBrowseProviderSkillRootPath: noOp,
-    onChangeProviderSkillRelativePath: noOp,
-    onBrowseProviderSkillRelativePath: noOp,
-    onChangeMemoryExtractionModel: noOp,
-    onChangeMemoryExtractionReasoningEffort: noOp,
-    onChangeMemoryExtractionThreshold: noOp,
-    onChangeMemoryExtractionTimeoutSeconds: noOp,
-    onChangeCharacterReflectionModel: noOp,
-    onChangeCharacterReflectionReasoningEffort: noOp,
-    onChangeCharacterReflectionTimeoutSeconds: noOp,
-    onChangeCharacterReflectionCooldownSeconds: noOp,
-    onChangeCharacterReflectionCharDeltaThreshold: noOp,
-    onChangeCharacterReflectionMessageDeltaThreshold: noOp,
     onImportModelCatalog: noOp,
     onExportModelCatalog: noOp,
     onOpenAppLogFolder: noOp,
     onOpenCrashDumpFolder: noOp,
-    onReloadMemoryManagement: noOp,
-    onChangeMemoryManagementViewFilters: noOp,
-    onLoadMoreMemoryManagement: noOp,
-    onDeleteSessionMemory: noOp,
-    onDeleteProjectMemoryEntry: noOp,
-    onDeleteCharacterMemoryEntry: noOp,
-    onDeleteMateProfileItem: noOp,
-    onStartMateEmbeddingDownload: noOp,
-    onApplyPendingGrowth: params?.applyPendingGrowth ? noOp : undefined,
-    canApplyPendingGrowth: params?.canApplyPendingGrowth,
-    applyPendingGrowthBusy: params?.applyPendingGrowthBusy,
-    onReloadMateGrowthEvents: params?.onReloadMateGrowthEvents ?? noOp,
-    correctingMateGrowthEventId: params?.correctingMateGrowthEventId ?? null,
-    correctingMateGrowthEventStatement: params?.correctingMateGrowthEventStatement ?? "",
-    onBeginCorrectMateGrowthEvent: params?.onBeginCorrectMateGrowthEvent ?? noOp,
-    onChangeCorrectMateGrowthEventStatement: params?.onChangeCorrectMateGrowthEventStatement ?? noOp,
-    onCancelCorrectMateGrowthEvent: params?.onCancelCorrectMateGrowthEvent ?? noOp,
-    onCorrectMateGrowthEvent: params?.onCorrectMateGrowthEvent ?? noOp,
-    onDisableMateGrowthEvent: params?.onDisableMateGrowthEvent ?? noOp,
-    onForgetMateGrowthEvent: params?.onForgetMateGrowthEvent ?? noOp,
-    onUpdateMateGrowthSettings: params?.onUpdateMateGrowthSettings ?? noOp,
     onResetMate: params?.onResetMate ?? noOp,
     canResetMate: params?.canResetMate ?? false,
     mateResetBusy: params?.mateResetBusy ?? false,
@@ -248,25 +106,12 @@ describe("HomeSettingsContent", () => {
 
   const renderSettings = (params?: RenderSettingsParams) => renderToStaticMarkup(buildSettingsContent(params));
 
-  const getMateMemoryGenerationAddButton = (content: React.ReactNode) => collectElementsById(
-    content,
-    (element) => element.type === "button" && element.props.id === "mate-memory-generation-priority-add",
-  )[0];
-
   const extractResetButton = (html: string) => {
     const resetLabelIndex = html.indexOf(`<strong>${SETTINGS_MATE_RESET_LABEL}</strong>`);
     const resetButtonIndex = html.indexOf('<button class="launch-toggle danger-button"', resetLabelIndex);
     const resetButtonEndIndex = html.indexOf("</button>", resetButtonIndex);
     assert.ok(resetLabelIndex >= 0 && resetButtonIndex >= 0 && resetButtonEndIndex >= 0);
     return html.slice(resetButtonIndex, resetButtonEndIndex + 9);
-  };
-
-  const extractGrowthButton = (html: string) => {
-    const growthLabelIndex = html.indexOf(`<strong>${SETTINGS_MATE_GROWTH_LABEL}</strong>`);
-    const growthButtonIndex = html.indexOf('<button class="launch-toggle"', growthLabelIndex);
-    const growthButtonEndIndex = html.indexOf("</button>", growthButtonIndex);
-    assert.ok(growthLabelIndex >= 0 && growthButtonIndex >= 0 && growthButtonEndIndex >= 0);
-    return html.slice(growthButtonIndex, growthButtonEndIndex + 9);
   };
 
   const extractResetButtonElement = (params?: RenderSettingsParams): React.ReactElement => {
@@ -284,75 +129,6 @@ describe("HomeSettingsContent", () => {
     return resetButton;
   };
 
-  const collectGrowthInputElements = (params?: RenderSettingsParams) => {
-    const content = buildSettingsContent(params);
-    const byId = (id: string, type: "button" | "input" | "select") =>
-      collectElementsById(content, (element) => element.type === type && element.props.id === id);
-
-    return {
-      enabled: byId("mate-growth-enabled", "input")[0],
-      autoApplyEnabled: byId("mate-growth-auto-apply-enabled", "input")[0],
-      memoryCandidateMode: byId("mate-growth-memory-candidate-mode", "select")[0],
-      applyIntervalMinutes: byId("mate-growth-apply-interval-minutes", "input")[0],
-      modelPreferenceProvider: byId("mate-growth-model-preference-provider", "select")[0],
-      modelPreferenceModel: byId("mate-growth-model-preference-model", "select")[0],
-      modelPreferenceDepth: byId("mate-growth-model-preference-depth", "select")[0],
-      modelPreferenceEnabled: byId("mate-growth-model-preference-enabled", "input")[0],
-    };
-  };
-
-  it("Mate Memory Generation のセクションが表示される", () => {
-    const html = renderSettings();
-
-    assert.ok(html.includes(`<strong>${SETTINGS_MATE_MEMORY_GENERATION_LABEL}</strong>`));
-    assert.ok(html.includes('<span class="settings-provider-name">Priority 1</span>'));
-    assert.ok(html.includes(`>${SETTINGS_MATE_MEMORY_GENERATION_PRIORITY_ADD_LABEL}</button>`));
-    assert.ok(html.includes(`>${SETTINGS_MATE_MEMORY_GENERATION_PRIORITY_REMOVE_LABEL}</button>`));
-    assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_MODEL_LABEL}</span>`));
-    assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_REASONING_LABEL}</span>`));
-    assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_TIMEOUT_LABEL}</span>`));
-    assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL}</span>`));
-  });
-
-  it("Mate Memory Generation の Add で onAdd callback が呼ばれる", () => {
-    let added = 0;
-    const content = buildSettingsContent({
-      onAddMateMemoryGenerationPriority: () => {
-        added += 1;
-      },
-    });
-    const addButton = getMateMemoryGenerationAddButton(content);
-    if (!addButton) {
-      throw new Error("Mate Memory Generation の Add ボタンが見つからない。");
-    }
-
-    addButton.props.onClick();
-    assert.equal(added, 1);
-  });
-
-  it("Priority 2 以上の設定を持つと Priority 2 が表示される", () => {
-    const twoPrioritySettings = {
-      ...settingsDraft,
-      mateMemoryGenerationSettings: {
-        ...settingsDraft.mateMemoryGenerationSettings,
-        priorityList: [
-          ...settingsDraft.mateMemoryGenerationSettings.priorityList,
-          {
-            provider: "codex",
-            model: "gpt-5.4-mini",
-            reasoningEffort: "low",
-            timeoutSeconds: 60,
-          },
-        ],
-      },
-    };
-
-    const html = renderSettings({ settingsDraft: twoPrioritySettings });
-
-    assert.ok(html.includes(`<span class="settings-provider-name">Priority 1</span>`));
-    assert.ok(html.includes(`<span class="settings-provider-name">Priority 2</span>`));
-  });
-
   it("Mate Reset のラベルとヘルプが表示される", () => {
     const html = renderSettings();
     assert.ok(html.includes(`<strong>${SETTINGS_MATE_RESET_LABEL}</strong>`));
@@ -360,61 +136,18 @@ describe("HomeSettingsContent", () => {
   });
 
   it("削除対象の Settings surface は表示しない", () => {
-    const html = renderSettings({
-      applyPendingGrowth: true,
-      canApplyPendingGrowth: true,
-      mateGrowthSettings: nextMateGrowthSettings,
-      mateEmbeddingSettings: {
-        mateId: "current",
-        enabled: true,
-        backendType: "local_transformers_js",
-        modelId: "text-embedding-3-large",
-        sourceModelId: "text-embedding-3-small",
-        dimension: 1536,
-        cachePolicy: "download_once_local_cache",
-        cacheState: "ready",
-        cacheDirPath: "hidden-cache-path-marker",
-        cacheManifestSha256: "manifest-sha",
-        modelRevision: "model-revision",
-        cacheSizeBytes: 1536,
-        cacheUpdatedAt: "2026-05-01T09:30:00.000Z",
-        lastVerifiedAt: null,
-        lastStatus: "available",
-        lastErrorPreview: "",
-        createdAt: "2026-05-01T09:00:00.000Z",
-        updatedAt: "2026-05-01T09:00:00.000Z",
-      },
-      mateGrowthEvents: [
-        {
-          id: "event-1",
-          sourceType: "mate_talk",
-          sourceSessionId: "session-1",
-          growthSourceType: "memory",
-          kind: "update",
-          targetSection: "tone",
-          statement: "一人称は「私」を優先する",
-          rationalePreview: "メイトークで明示されたため",
-          confidence: 0.91,
-          salienceScore: 0.82,
-          recurrenceCount: 2,
-          projectionAllowed: true,
-          state: "candidate",
-          appliedAt: null,
-          createdAt: "2026-05-01T09:00:00.000Z",
-          updatedAt: "2026-05-01T09:30:00.000Z",
-        },
-      ],
-    });
+    const html = renderSettings();
 
-    assert.ok(!html.includes(SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL));
-    assert.ok(!html.includes(SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL));
-    assert.ok(!html.includes(SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL));
-    assert.ok(!html.includes(SETTINGS_MATE_EMBEDDING_LABEL));
-    assert.ok(!html.includes(SETTINGS_MATE_GROWTH_LABEL));
-    assert.ok(!html.includes(SETTINGS_MATE_GROWTH_SETTINGS_LABEL));
+    assert.ok(!html.includes("Provider Instruction Sync"));
+    assert.ok(!html.includes("Root Directory"));
+    assert.ok(!html.includes("Instruction Relative Path"));
+    assert.ok(!html.includes("Write Mode"));
+    assert.ok(!html.includes("Fail Policy"));
+    assert.ok(!html.includes("Mate Embedding"));
+    assert.ok(!html.includes("Mate Memory Generation"));
+    assert.ok(!html.includes("Mate Growth を手動適用"));
+    assert.ok(!html.includes("Mate Growth Settings"));
     assert.ok(!html.includes("最近の Growth Event"));
-    assert.ok(!html.includes("hidden-cache-path-marker"));
-    assert.ok(!html.includes("一人称は「私」を優先する"));
   });
 });
 

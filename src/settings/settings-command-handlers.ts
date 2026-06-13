@@ -1,31 +1,22 @@
-import {
-  getProviderAppSettings,
-  type AppSettings,
-} from "../provider-settings-state.js";
+import type { AppSettings } from "../provider-settings-state.js";
 import type { HomeSettingsContentBaseProps } from "./home-settings-content-props.js";
 import {
   exportHomeModelCatalog,
   importHomeModelCatalog,
   saveHomeSettings,
 } from "./settings-actions.js";
-import { resolveInstructionRelativePathFromSelection } from "./settings-view-model.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 
 type SettingsCommandHandlersContext = {
   getApi: () => WithMateWindowApi | null;
-  settingsDraft: AppSettings;
   persistedSettingsDraft: AppSettings;
   setAppSettings: (settings: AppSettings) => void;
   setSettingsDraft: (settings: AppSettings) => void;
   setSettingsFeedback: (feedback: string) => void;
-  onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
-  onChangeProviderSkillRelativePath: (providerId: string, skillRelativePath: string) => void;
 };
 
 export type SettingsCommandHandlers = Pick<
   HomeSettingsContentBaseProps,
-  | "onBrowseProviderSkillRootPath"
-  | "onBrowseProviderSkillRelativePath"
   | "onImportModelCatalog"
   | "onExportModelCatalog"
   | "onOpenAppLogFolder"
@@ -35,13 +26,10 @@ export type SettingsCommandHandlers = Pick<
 
 export function buildSettingsCommandHandlers({
   getApi,
-  settingsDraft,
   persistedSettingsDraft,
   setAppSettings,
   setSettingsDraft,
   setSettingsFeedback,
-  onChangeProviderSkillRootPath,
-  onChangeProviderSkillRelativePath,
 }: SettingsCommandHandlersContext): SettingsCommandHandlers {
   const withApi = async (callback: (api: WithMateWindowApi) => Promise<void>) => {
     const api = getApi();
@@ -53,40 +41,6 @@ export function buildSettingsCommandHandlers({
   };
 
   return {
-    onBrowseProviderSkillRootPath: (providerId) => {
-      void withApi(async (api) => {
-        const currentSettings = getProviderAppSettings(settingsDraft, providerId);
-        const selectedPath = await api.pickDirectory(currentSettings.skillRootPath || null);
-        if (!selectedPath) {
-          return;
-        }
-
-        onChangeProviderSkillRootPath(providerId, selectedPath);
-      });
-    },
-    onBrowseProviderSkillRelativePath: (providerId) => {
-      void withApi(async (api) => {
-        const currentSettings = getProviderAppSettings(settingsDraft, providerId);
-        const rootDirectory = currentSettings.skillRootPath.trim();
-        if (!rootDirectory) {
-          setSettingsFeedback("Skill folder を選ぶ前に Root Directory を指定してね。");
-          return;
-        }
-
-        const selectedPath = await api.pickDirectory(rootDirectory);
-        if (!selectedPath) {
-          return;
-        }
-
-        const relativePath = resolveInstructionRelativePathFromSelection(rootDirectory, selectedPath);
-        if (relativePath === null) {
-          setSettingsFeedback("Root Directory 配下の Skill folder を選んでね。");
-          return;
-        }
-
-        onChangeProviderSkillRelativePath(providerId, relativePath);
-      });
-    },
     onImportModelCatalog: () => {
       void withApi(async (api) => {
         try {
