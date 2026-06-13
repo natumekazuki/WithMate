@@ -1966,7 +1966,7 @@ function getSelectionDetailsWithinMessageList(element: Element | null): { anchor
   if (
     !messageBody ||
     !element.contains(messageBody) ||
-    !messageBody.closest(".message-card.has-response-actions")
+    messageBody.getAttribute("data-message-text-actions") !== "true"
   ) {
     return null;
   }
@@ -2017,7 +2017,6 @@ function rectsIntersect(a: DOMRect, b: DOMRect): boolean {
 
 type MessageResponseActionsProps = {
   actionText: string;
-  className?: string;
   onCopyMessageText?: (text: string) => void;
   onQuoteMessageText?: (text: string) => void;
   style?: CSSProperties;
@@ -2026,7 +2025,6 @@ type MessageResponseActionsProps = {
 
 function MessageResponseActions({
   actionText,
-  className = "",
   onCopyMessageText,
   onQuoteMessageText,
   style,
@@ -2035,7 +2033,7 @@ function MessageResponseActions({
   return (
     <div
       ref={toolbarRef}
-      className={`message-response-actions${className ? ` ${className}` : ""}`}
+      className="message-response-actions"
       aria-label="Response actions"
       style={style}
     >
@@ -2378,7 +2376,7 @@ export function SessionMessageColumn({
                 details: undefined,
               })) ??
               [];
-            const hasMessageTextActions = isAssistant && (onCopyMessageText || onQuoteMessageText);
+            const canUseMessageTextActions = isAssistant && (onCopyMessageText || onQuoteMessageText);
 
             return (
               <Fragment key={`${message.role}-${messageKey}`}>
@@ -2421,7 +2419,7 @@ export function SessionMessageColumn({
                     ) : null}
                   </div>
                 ) : null}
-                <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${hasMessageTextActions ? " has-response-actions" : ""}`}>
+                <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}`}>
                   {artifact && !isAssistant ? (
                     <button
                       className="artifact-toggle artifact-toggle-icon"
@@ -2440,16 +2438,12 @@ export function SessionMessageColumn({
                       {artifactExpanded ? "−" : "i"}
                     </button>
                   ) : null}
-                  <div data-message-body="true">
+                  <div
+                    data-message-body="true"
+                    data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
+                  >
                     <MessageRichText text={message.text} onOpenPath={onOpenPath} />
                   </div>
-                  {hasMessageTextActions ? (
-                    <MessageResponseActions
-                      actionText={message.text}
-                      onCopyMessageText={onCopyMessageText}
-                      onQuoteMessageText={onQuoteMessageText}
-                    />
-                  ) : null}
 
                   {artifact ? (
                     <section className="artifact-shell">
@@ -2593,7 +2587,6 @@ export function SessionMessageColumn({
         {selectionToolbar ? (
           <MessageResponseActions
             actionText={selectionToolbar.text}
-            className="is-selection-anchor"
             onCopyMessageText={onCopyMessageText}
             onQuoteMessageText={onQuoteMessageText}
             style={selectionToolbar.style}
