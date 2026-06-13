@@ -98,6 +98,15 @@ V5 初期 non-goals:
 - Character Editor の詳細 UX
 - Character validator / Knowledge retrieval
 
+## Phase 4 Preconditions From Pre-V5 Cleanup
+
+`docs/plans/20260612-pre-v5-delete-feature/plan.md` の Phase 3 完了後、V5 Character-first 作業へ入る前提は次の通り。
+
+- Session / Project Memory の background extraction、Project Memory prompt injection、promotion runtime は削除済み。既存 DB の storage / read / delete / diagnostics 境界だけを legacy compatibility として保持する。
+- Mate storage / Mate state / Mate setup UI は Phase 3 では削除しない。Phase 4 で Home と session 起動を Mate 未作成 gate から外し、V5 Character 未実装時の neutral state と minimal app state へ縮小する。
+- MateTalk runtime / window / chat mode は Home 公開導線と送信実行を閉じたまま残る。Phase 4 の Character-first session shell 整理で削除または再定義する。
+- 既存 DB table drop や V4 Mate Profile から V5 Character への丁寧な自動 migration は Phase 4 の前提にしない。
+
 ## Character Definition Direction
 
 V5 の Character Definition は、単なる口調設定ではなく、実行可能な人格仕様として扱う。

@@ -58,7 +58,6 @@ export type SettingsCatalogServiceDeps = {
   resetModelCatalogToBundled(): ModelCatalogSnapshot;
   clearProjectMemories(): void;
   resetSessionRuntime(): void;
-  resetMemoryOrchestration(): void;
   clearAllProviderQuotaTelemetry(): void;
   clearAllSessionContextTelemetry(): void;
   clearAllSessionBackgroundActivities(): void;
@@ -379,7 +378,6 @@ export class SettingsCatalogService {
       }
       if (appliedTargets.has("sessions")) {
         await this.deps.replaceAllSessions([], { broadcast: false });
-        this.deps.resetMemoryOrchestration();
         this.deps.resetSessionRuntime();
         this.deps.clearAllSessionBackgroundActivities();
         this.deps.invalidateAllProviderSessionThreads();

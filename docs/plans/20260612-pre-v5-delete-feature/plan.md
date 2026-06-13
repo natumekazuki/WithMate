@@ -112,8 +112,8 @@ Progress:
 - [x] `mate-memory-*`、`mate-growth-*`、`mate-embedding-*`、`mate-semantic-embedding-*`、`mate-project-*` service と対応 tests を削除する
 - [x] `memory-management-*` UI / state / service と対応 tests を削除する
 - [x] `provider-instruction-target-*` と `mate-provider-instruction-*` を削除する
-- [ ] `session-memory-*`、`project-memory-*`、`memory-orchestration-service.ts` は参照追跡後、互換 read が不要なら削除する
-- [ ] `mate-storage.ts` / `mate-state.ts` / Mate setup UI は、Home と session 起動が Mate 必須 gate に依存しなくなってから削除または縮小する
+- [x] `session-memory-*`、`project-memory-*`、`memory-orchestration-service.ts` は参照追跡後、runtime 削除と legacy storage 互換保持に分類する
+- [x] `mate-storage.ts` / `mate-state.ts` / Mate setup UI は、Phase 4 の Mate 未作成 gate 解除 / minimal app state 化へ移管する
 
 Progress:
 
@@ -125,6 +125,19 @@ Progress:
 - 2026-06-13: Provider Instruction marker cleanup は v4.9.9 では one-shot 実装しない方針に決定。reset / DB recreate では外部 provider instruction file を触らず、既存ユーザー環境に残る WithMate marker block は V5 では参照しない残置物として扱う。cleanup が必要なら V5 移行後の別 Issue で明示操作として扱う。
 - 2026-06-13: `session-memory-*`、`project-memory-*`、`memory-orchestration-service.ts` は `SessionRuntimeService` / persistence / reset 契約にまだ残るため今回 slice では保持した。renderer 側 `src/memory/memory-state.ts` は session / project memory runtime の互換型として残る。
 - 2026-06-13: 検証は `npm install` 後に `npm run typecheck`、`node --import tsx --test scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-bootstrap-deps.test.ts scripts/tests/aux-window-service.test.ts scripts/tests/main-window-facade.test.ts scripts/tests/copilot-adapter.test.ts`、`node --import tsx --test scripts/tests/session-runtime-service.test.ts scripts/tests/companion-runtime-service.test.ts scripts/tests/session-persistence-service.test.ts scripts/tests/companion-session-service.test.ts`、レビュー指摘対応後に `node --import tsx --test scripts/tests/window-entry-loader.test.ts scripts/tests/aux-window-service.test.ts scripts/tests/main-window-facade.test.ts scripts/tests/main-bootstrap-deps.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/mate-profile-projection-refresh-service.test.ts` が成功。追加 slice 後に `npm run typecheck` と `node --import tsx --test scripts/tests/home-components.test.tsx scripts/tests/settings-ui.test.ts scripts/tests/home-settings-projection.test.ts scripts/tests/home-settings-actions.test.ts scripts/tests/home-settings-view-model.test.ts scripts/tests/mate-status-load-operation.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-bootstrap-deps.test.ts scripts/tests/session-memory-storage.test.ts scripts/tests/project-memory-retrieval.test.ts scripts/tests/project-memory-promotion.test.ts` が成功。`npm install` では既存依存に 8 件の audit warning が出たが、この cleanup では未対応。
+- 2026-06-13: Phase 3 completion slice として、通常 Session turn の `SessionRuntimeService` 接続を default session memory / empty project memory に切り替え、Project Memory prompt injection を停止した。`src-electron/memory-orchestration-service.ts`、`src-electron/project-memory-retrieval.ts`、`src-electron/project-memory-promotion.ts` と対応 tests を削除し、`SettingsCatalogService` の reset 契約から memory orchestration reset を外した。`SessionMemorySupportService` は起動時の既存 session memory metadata / project scope 同期だけを残す互換境界に縮小した。
+- 2026-06-13: `session-memory-storage.ts` / `project-memory-storage.ts` / `session-memory-extraction.ts` / `src/memory/memory-state.ts` は既存 DB の read / delete / diagnostics / provider structured output parser 互換として保持する。background extraction / promotion / prompt retrieval の実行経路は削除済みで、既存 DB の物理 migration や table drop はこの cleanup では行わない。
+- 2026-06-13: `mate-storage.ts` / `mate-state.ts` / `MateSetupPanel` / `MateProfileScreen` は Phase 3 では削除しない。Home / session 起動の Mate 未作成 gate 解除、minimal app state 化、Character neutral state 化と同時に扱う Phase 4 前提作業へ移管する。
+- 2026-06-13: MateTalk runtime / window / chat mode は公開導線と送信実行を閉じた状態で Phase 4 へ移管する。残存する `MateTalkChatModeApp`、`use-mate-talk-window-state.ts`、`mate-talk-*`、`MateTalkService`、window entry / facade 経路は Character-first session shell 再整理時に削除または再定義する。
+- 2026-06-13: completion slice の検証は `npm run typecheck`、`node --import tsx --test scripts/tests/session-memory-support-service.test.ts scripts/tests/settings-catalog-service.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-bootstrap-deps.test.ts`、`node --import tsx --test scripts/tests/session-runtime-service.test.ts scripts/tests/session-memory-support-service.test.ts scripts/tests/settings-catalog-service.test.ts`、`node --import tsx --test scripts/tests/session-runtime-service.test.ts scripts/tests/session-persistence-service.test.ts scripts/tests/companion-runtime-service.test.ts scripts/tests/companion-session-service.test.ts`、`node --import tsx --test scripts/tests/home-components.test.tsx scripts/tests/settings-ui.test.ts scripts/tests/home-settings-projection.test.ts scripts/tests/home-settings-actions.test.ts scripts/tests/home-settings-view-model.test.ts`、`node --import tsx --test scripts/tests/session-memory-storage.test.ts scripts/tests/project-memory-storage.test.ts scripts/tests/persistent-store-lifecycle-service.test.ts` が成功。`npm install` では既存依存に 8 件の audit warning が出たが、この cleanup では未対応。
+
+Phase 3 legacy boundaries:
+
+- `src-electron/session-memory-storage.ts` / `src-electron/project-memory-storage.ts`: 既存 DB の read / delete / reset target / diagnostics 互換のため保持する。V5 初期 scope では prompt injection や background generation には接続しない。
+- `src-electron/session-memory-support-service.ts`: 起動時に既存 session memory metadata と project scope を同期する互換 helper として保持する。Project Memory retrieval / promotion は削除済み。
+- `src-electron/session-memory-extraction.ts`: provider structured output parser と既存 tests の互換として保持する。background extraction を呼ぶ service は削除済み。
+- `src/mate/mate-state.ts` / `src-electron/mate-storage.ts` / `src/mate/MateSetupPanel.tsx` / `src/mate/MateProfileScreen.tsx`: Mate 未作成 gate と Home 表示が残るため Phase 4 へ移管する。
+- MateTalk runtime / window / chat mode: Home からの公開導線と送信実行は閉じた状態で、Phase 4 の Character-first session shell 整理へ移管する。
 
 ### Phase 4: Character-first の足場へ戻す
 
@@ -148,7 +161,9 @@ Targeted checks:
 
 Deletion-specific checks:
 
-- `MateTalk|mate-talk|MemoryManagement|mate-memory|mate-growth|providerInstruction|ProviderInstructionTarget|ProjectDigest` の runtime 参照が残っていないこと
+- `MemoryManagement|mate-memory|mate-growth|providerInstruction|ProviderInstructionTarget|ProjectDigest` の runtime 参照が残っていないこと
+- `runSessionMemoryExtraction|MemoryOrchestrationService|project-memory-retrieval|project-memory-promotion` の runtime / test 参照が残っていないこと
+- `MateTalk|mate-talk` の残存参照は Phase 4 移管として分類され、Home 公開導線と送信実行が閉じていること
 - `withmate-ipc-channels.ts`、`withmate-window-api.ts`、`main-ipc-registration.ts` の削除対象 API が揃って消えていること
 - app 起動時に Growth apply timer / Memory runtime workspace cleanup / provider instruction cleanup が走らないこと
 - Mate 未作成状態でも Home / Settings / session 起動の意図した導線が壊れていないこと
