@@ -13,7 +13,6 @@ type HomeAppRouterProps = {
   settingsWindowReady: boolean;
   settingsContent: ReactNode;
   isMateStateLoading: boolean;
-  isMateNotCreated: boolean;
   mateProfileEditorOpen: boolean;
   mateSetupContent: ReactNode;
   isMonitorWindowMode: boolean;
@@ -30,7 +29,6 @@ export function HomeAppRouter({
   settingsWindowReady,
   settingsContent,
   isMateStateLoading,
-  isMateNotCreated,
   mateProfileEditorOpen,
   mateSetupContent,
   isMonitorWindowMode,
@@ -55,10 +53,6 @@ export function HomeAppRouter({
 
   if (isMateStateLoading) {
     return <HomeStatusScreen homePageClassName={homePageClassName} message="Mate 状態を読み込んでるよ..." />;
-  }
-
-  if (isMateNotCreated) {
-    return <MateProfileScreen homePageClassName={homePageClassName} content={mateSetupContent} />;
   }
 
   if (mateProfileEditorOpen) {

@@ -159,44 +159,6 @@ type LogIpcErrorInput = {
   error: unknown;
 };
 
-export const MATE_NOT_CREATED_ERROR_MESSAGE = "Mate が作成されるまでは本機能を実行できません。";
-
-const MATE_CREATED_REQUIRED_CHANNEL_WHITELIST = new Set<string>([
-  WITHMATE_GET_MATE_STATE_CHANNEL,
-  WITHMATE_GET_MATE_PROFILE_CHANNEL,
-  WITHMATE_CREATE_MATE_CHANNEL,
-  WITHMATE_RESET_MATE_CHANNEL,
-  WITHMATE_GET_APP_SETTINGS_CHANNEL,
-  WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
-  WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
-  WITHMATE_RESET_APP_DATABASE_CHANNEL,
-  WITHMATE_GET_MODEL_CATALOG_CHANNEL,
-  WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
-  WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
-  WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
-  WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
-  WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
-  WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
-  WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
-  WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
-  WITHMATE_PICK_DIRECTORY_CHANNEL,
-  WITHMATE_PICK_FILE_CHANNEL,
-  WITHMATE_PICK_IMAGE_FILE_CHANNEL,
-  WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
-  WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL,
-]);
-
-async function ensureMateCreated(deps: Pick<MainIpcRegistrationDeps, "getMateState">, channel: string): Promise<void> {
-  if (MATE_CREATED_REQUIRED_CHANNEL_WHITELIST.has(channel)) {
-    return;
-  }
-
-  const mateState = await deps.getMateState();
-  if (mateState !== "active") {
-    throw new Error(MATE_NOT_CREATED_ERROR_MESSAGE);
-  }
-}
-
 type IpcHandleRegistrar = {
   handle: IpcMain["handle"];
 };
@@ -870,7 +832,6 @@ function createErrorLoggingIpcMain(ipcMain: IpcMain, deps: MainIpcRegistrationDe
   return {
     handle(channel, handler) {
       ipcMain.handle(channel, async (event, ...args) => {
-        await ensureMateCreated(deps, channel);
         const startedAt = Date.now();
         try {
           return await handler(event, ...args);

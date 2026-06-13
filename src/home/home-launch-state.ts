@@ -1,6 +1,6 @@
 import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "../approval-mode.js";
 import type { CreateSessionInput, SessionSummary } from "../app-state.js";
-import type { CharacterThemeColors } from "../character-state.js";
+import { DEFAULT_CHARACTER_THEME_COLORS, type CharacterThemeColors } from "../character-state.js";
 import { DEFAULT_CODEX_SANDBOX_MODE, type CodexSandboxMode } from "../codex-sandbox-mode.js";
 import type { CreateCompanionSessionInput } from "../companion-state.js";
 import { inferWorkspaceFromPath, type LaunchWorkspace } from "./home-launch-projection.js";
@@ -12,6 +12,17 @@ import {
 } from "../model-catalog.js";
 import { LAUNCH_NO_PROVIDER_SELECTED_MESSAGE } from "../launch/launch-feedback.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
+
+const NEUTRAL_CHARACTER_ID = "withmate-neutral-character";
+const NEUTRAL_CHARACTER_NAME = "WithMate";
+
+type LaunchCharacterSnapshot = {
+  characterId: string;
+  character: string;
+  characterRoleMarkdown: string;
+  characterIconPath: string;
+  characterThemeColors: CharacterThemeColors;
+};
 
 type LastUsedSessionSelectionSource = Pick<
   SessionSummary,
@@ -75,9 +86,10 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
   lastUsedSelection?: Pick<CreateSessionInput, "model" | "reasoningEffort" | "customAgentName"> | null;
 }): CreateCompanionSessionInput | null {
   const normalizedTitle = draft.title.trim();
-  if (!normalizedTitle || !draft.workspace || !mateProfile || !selectedProviderId) {
+  if (!normalizedTitle || !draft.workspace || !selectedProviderId) {
     return null;
   }
+  const characterSnapshot = buildLaunchCharacterSnapshot(mateProfile);
 
   const companionModel = draft.mode === "companion"
     ? lastUsedSelection?.model ?? draft.model
@@ -90,11 +102,11 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
     taskTitle: normalizedTitle,
     workspacePath: draft.workspace.path,
     provider: selectedProviderId,
-    characterId: mateProfile.id,
-    character: mateProfile.displayName,
-    characterRoleMarkdown: mateProfile.description ?? "",
-    characterIconPath: mateProfile.avatarFilePath,
-    characterThemeColors: buildCharacterThemeColorsFromMateProfile(mateProfile),
+    characterId: characterSnapshot.characterId,
+    character: characterSnapshot.character,
+    characterRoleMarkdown: characterSnapshot.characterRoleMarkdown,
+    characterIconPath: characterSnapshot.characterIconPath,
+    characterThemeColors: characterSnapshot.characterThemeColors,
     approvalMode: draft.approvalMode,
     codexSandboxMode: draft.codexSandboxMode,
     model: companionModel,
@@ -141,8 +153,8 @@ export function updateLaunchDraftForProviderSelection(
 
 export function resolveLaunchValidationMessage({
   draft,
-  mateState,
-  mateProfile,
+  mateState: _mateState,
+  mateProfile: _mateProfile,
   selectedProviderId,
 }: {
   draft: HomeLaunchDraft;
@@ -150,17 +162,11 @@ export function resolveLaunchValidationMessage({
   mateProfile: MateProfile | null;
   selectedProviderId: string | null;
 }): string {
-  if (mateState === "not_created") {
-    return "Mate を作成してから開始してね。";
-  }
   if (!draft.title.trim()) {
     return "タイトルを入力してね。";
   }
   if (!draft.workspace) {
     return "workspace を選んでね。";
-  }
-  if (!mateProfile) {
-    return "Mate を確認してから開始してね。";
   }
   if (!selectedProviderId) {
     return LAUNCH_NO_PROVIDER_SELECTED_MESSAGE;
@@ -203,9 +209,10 @@ export function buildCreateSessionInputFromLaunchDraft({
   lastUsedSelection?: Pick<CreateSessionInput, "model" | "reasoningEffort" | "customAgentName"> | null;
 }): CreateSessionInput | null {
   const normalizedTitle = draft.title.trim();
-  if (!normalizedTitle || !draft.workspace || !mateProfile || !selectedProviderId) {
+  if (!normalizedTitle || !draft.workspace || !selectedProviderId) {
     return null;
   }
+  const characterSnapshot = buildLaunchCharacterSnapshot(mateProfile);
 
   return {
     provider: selectedProviderId,
@@ -213,14 +220,34 @@ export function buildCreateSessionInputFromLaunchDraft({
     workspaceLabel: draft.workspace.label,
     workspacePath: draft.workspace.path,
     branch: draft.workspace.branch,
-    characterId: mateProfile.id,
-    character: mateProfile.displayName,
-    characterIconPath: mateProfile.avatarFilePath,
-    characterThemeColors: buildCharacterThemeColorsFromMateProfile(mateProfile),
+    characterId: characterSnapshot.characterId,
+    character: characterSnapshot.character,
+    characterIconPath: characterSnapshot.characterIconPath,
+    characterThemeColors: characterSnapshot.characterThemeColors,
     approvalMode,
     model: lastUsedSelection?.model,
     reasoningEffort: lastUsedSelection?.reasoningEffort,
     customAgentName: lastUsedSelection?.customAgentName,
+  };
+}
+
+function buildLaunchCharacterSnapshot(mateProfile: MateProfile | null): LaunchCharacterSnapshot {
+  if (!mateProfile) {
+    return {
+      characterId: NEUTRAL_CHARACTER_ID,
+      character: NEUTRAL_CHARACTER_NAME,
+      characterRoleMarkdown: "",
+      characterIconPath: "",
+      characterThemeColors: { ...DEFAULT_CHARACTER_THEME_COLORS },
+    };
+  }
+
+  return {
+    characterId: mateProfile.id,
+    character: mateProfile.displayName,
+    characterRoleMarkdown: mateProfile.description ?? "",
+    characterIconPath: mateProfile.avatarFilePath,
+    characterThemeColors: buildCharacterThemeColorsFromMateProfile(mateProfile),
   };
 }
 

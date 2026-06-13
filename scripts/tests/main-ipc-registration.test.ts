@@ -4,7 +4,6 @@ import test from "node:test";
 import type { IpcMain } from "electron";
 
 import {
-  MATE_NOT_CREATED_ERROR_MESSAGE,
   registerMainIpcHandlers,
 } from "../../src-electron/main-ipc-registration.js";
 import {
@@ -97,16 +96,15 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   }
 });
 
-test("registerMainIpcHandlers は Mate 未作成時に非 whitelist IPC を block する", async () => {
+test("registerMainIpcHandlers は Mate 未作成時でも session runtime IPC を block しない", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
-  const { deps } = createDeps({
+  const { deps, calls } = createDeps({
     getMateState: async () => "not_created",
   });
 
   registerMainIpcHandlers(ipcMain, deps);
 
-  await assert.rejects(
-    async () => handlers.get(WITHMATE_RUN_SESSION_TURN_CHANNEL)?.({}, "session-1", { userMessage: "hello" }),
-    new Error(MATE_NOT_CREATED_ERROR_MESSAGE),
-  );
+  await handlers.get(WITHMATE_RUN_SESSION_TURN_CHANNEL)?.({}, "session-1", { userMessage: "hello" });
+
+  assert.deepEqual(calls, ["runSessionTurn:session-1,[object Object]"]);
 });
