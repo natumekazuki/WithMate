@@ -1,0 +1,150 @@
+# Plan
+
+- task: Pre-V5 delete feature cleanup
+- date: 2026-06-12
+- target version: v4.9.9
+- owner: Codex
+- design anchor: `docs/design/v5-character-transition.md`
+
+## 目的
+
+V5 Character 化に入る前に、V4 SingleMate / Memory / Growth 周辺で V5 初期 scope に持ち込まない機能をコードベースから一旦削除し、v4.9.9 を Character-first 再設計前のきれいな足場にする。
+
+この plan は実装そのものではなく、削除対象、残す境界、削除順序、検証観点を固定するための棚卸しである。
+
+## 前提
+
+- V5 の方針正本は `docs/design/v5-character-transition.md` とする。
+- V5 初期 scope は Character catalog / Character Definition / `character.md` runtime snapshot / prompt injection boundary に絞る。
+- V4 SingleMate の延命になる Mate Profile / Growth / Memory / MateTalk 追加投資は止める。
+- provider adapter、session runtime、Companion review、model catalog など V5 でも使う低レイヤーは削除対象にしない。
+- 既存ユーザーデータを破壊する DB migration はこの cleanup には含めない。必要なら read path を外すだけにし、物理削除は別 Issue に分ける。
+
+## 削除方針
+
+削除の主目的は「未完成の SingleMate / Memory runtime を残したまま V5 設計へ入らないこと」である。
+
+優先して外すもの:
+
+- background Memory Candidate / Growth apply / embedding retrieval の実行経路
+- MateTalk と、それに付随する Memory 生成経路
+- Memory Management window と Memory 管理 IPC
+- provider instruction sync による Mate projection 永続同期
+- Mate Profile / Growth UI のうち、V5 Character 初期 scope に直接つながらない操作
+- 旧 Character catalog 互換型のうち、現行 runtime から参照されていないもの
+
+慎重に残すもの:
+
+- session / companion の既存履歴を読むための最小型
+- session 起動、provider runtime、audit log、model catalog
+- V5 で再利用する可能性がある `character.md` / Character Definition 関連 design docs
+- app database reset / diagnostics の低レイヤー
+
+## 対象カテゴリ
+
+| Category | 削除候補 | 主なファイル | 方針 |
+| --- | --- | --- | --- |
+| MateTalk | メイトーク window、chat mode、runtime workspace、turn service | `src/chat/MateTalkChatModeApp.tsx`, `src/chat/mate-talk-*.ts*`, `src-electron/mate-talk-*.ts`, `src/withmate-ipc-channels.ts`, `src/withmate-window-api.ts` | V5 初期 scope では Character Editor / Character Definition を先に設計するため削除候補 |
+| Mate Growth | Growth settings、Growth event UI、auto apply timer、Profile update pipeline | `src/mate/mate-growth-*.ts`, `src-electron/mate-growth-*.ts`, `src-electron/main-bootstrap-service.ts`, `src-electron/main.ts` | SingleMate 延命なので v4.9.9 では外す |
+| Mate Memory generation | Memory Candidate 生成、runtime workspace、schema、runner、scheduler | `src-electron/mate-memory-generation-*.ts`, `src-electron/mate-memory-runtime-instructions.ts`, `src-electron/memory-runtime-workspace.ts`, `src-electron/mate-memory-storage.ts` | V5 初期 non-goal。background provider call を止める |
+| Embedding / semantic retrieval | local embedding cache、download UI、semantic index / retrieval | `src-electron/mate-embedding-*.ts`, `src-electron/mate-semantic-embedding-*.ts`, `src/mate/mate-embedding-settings.ts` | Memory 再設計に属するため削除候補 |
+| Project Digest / project context | Profile Item 由来の project digest injection | `src-electron/mate-project-*.ts`, `src-electron/mate-project-context-*.ts` | V5 Character 初期では raw memory / growth history を prompt に入れないため削除候補 |
+| Memory management | Memory 管理 window、page state、delete IPC | `src/memory/*`, `src-electron/memory-management-service.ts`, `src/withmate-window-api.ts`, `src/withmate-ipc-channels.ts` | 旧 Memory / Mate Profile Item 管理 UI として削除候補 |
+| Session / Project memory runtime | session memory extraction / support / promotion / project retrieval | `src-electron/session-memory-*.ts`, `src-electron/project-memory-*.ts`, `src-electron/memory-orchestration-service.ts` | prompt 注入や自動生成は外す。互換 read が必要かは実装前に参照追跡 |
+| Provider Instruction Sync | Mate projection を provider instruction file へ同期する設定・storage・sync | `src/provider-instruction-target-state.ts`, `src/settings/provider-instruction-target-*.ts`, `src-electron/provider-instruction-target-*.ts`, `src-electron/mate-provider-instruction-*.ts` | V5 では Character 注入の主経路にしないため削除候補 |
+| Mate Profile core | SingleMate の profile storage / profile item / projection refresh / setup UI | `src/mate/MateProfileScreen.tsx`, `src/mate/MateSetupPanel.tsx`, `src/mate/mate-state.ts`, `src-electron/mate-storage.ts`, `src-electron/mate-profile-*.ts` | V5 の Character storage 設計に置換予定。全削除前に Home / session の依存を薄くする |
+| Legacy Character types | 旧 `CharacterProfile` / catalog / session copy 型 | `src/character-state.ts`, `scripts/tests/character-state.test.ts` | 未参照なら削除。session/companion snapshot 互換で使うなら最小型へ縮小 |
+
+## 残す対象
+
+| Area | 理由 |
+| --- | --- |
+| `src-electron/provider-runtime.ts` と provider adapters | V5 でも session 実行基盤として使う |
+| `src-electron/session-runtime-service.ts` / `src-electron/session-persistence-service.ts` | Character snapshot injection の受け皿になる |
+| Companion review / merge / git service | V5 Character 化とは別軸の現行価値があり、削除対象に混ぜない |
+| Model catalog / provider settings | V5 の provider selection に必要 |
+| Audit log / live run / approval / elicitation | provider runtime の観測と安全境界として必要 |
+| `docs/design/character-definition-format.md`, `docs/design/character-storage.md`, `docs/design/character-update-workspace.md` | V5 future candidate として読む対象。削除ではなく legacy/future candidate の扱いを明記する |
+
+## 実装順序
+
+### Phase 0: Inventory lock
+
+- [ ] `git grep` または `Select-String` で次の参照数を記録する: `MateTalk`, `mate-talk`, `mate-memory`, `mate-growth`, `MemoryManagement`, `providerInstruction`, `ProviderInstructionTarget`, `ProjectDigest`, `CharacterProfile`, `characterId`
+- [ ] `src/withmate-ipc-channels.ts`、`src/withmate-window-api.ts`、`src-electron/main-ipc-registration.ts`、`src-electron/main-ipc-deps.ts` の公開 API を削除候補別に表へ落とす
+- [ ] `src-electron/main.ts` の singleton / factory / startup cleanup / timer / reset path を削除候補別に表へ落とす
+
+### Phase 1: Public surface を閉じる
+
+- [ ] Home / Settings から Memory Management、MateTalk、Growth、Embedding、Provider Instruction Sync の導線を外す
+- [ ] renderer API から該当 method を削除する
+- [ ] IPC channel constant と main handler を同じ commit で削除する
+- [ ] preload / `window.withmate` surface から該当 API を消す
+
+### Phase 2: Runtime side effects を止める
+
+- [ ] app 起動時の Growth apply timer を削除する
+- [ ] session / companion turn 後の Mate Memory generation scheduling を削除する
+- [ ] MateTalk turn 後の Memory generation scheduling を削除する
+- [ ] provider instruction target への Mate projection sync を session 起動前 path から外す
+- [ ] memory-runtime / mate-talk temporary workspace cleanup が不要になることを確認して削除する
+
+### Phase 3: Service / storage を削る
+
+- [ ] `mate-memory-*`、`mate-growth-*`、`mate-embedding-*`、`mate-semantic-embedding-*`、`mate-project-*` service と対応 tests を削除する
+- [ ] `memory-management-*` UI / state / service と対応 tests を削除する
+- [ ] `provider-instruction-target-*` と `mate-provider-instruction-*` を削除する
+- [ ] `session-memory-*`、`project-memory-*`、`memory-orchestration-service.ts` は参照追跡後、互換 read が不要なら削除する
+- [ ] `mate-storage.ts` / `mate-state.ts` / Mate setup UI は、Home と session 起動が Mate 必須 gate に依存しなくなってから削除または縮小する
+
+### Phase 4: Character-first の足場へ戻す
+
+- [ ] Home は SingleMate 必須 gate ではなく、V5 Character 未実装の neutral state にする
+- [ ] session 起動は Mate 未作成 block に依存しないようにする
+- [ ] `character.md` snapshot / Character catalog の詳細設計へ入るため、旧 Character design docs の扱いを `docs/design/v5-character-transition.md` から明示参照する
+- [ ] package version を `4.9.9` にする
+
+## 検証方針
+
+Targeted checks:
+
+- `npm run typecheck`
+- `node --import tsx --test scripts/tests/main-ipc-registration.test.ts`
+- `node --import tsx --test scripts/tests/renderer-withmate-api.test.ts`
+- `node --import tsx --test scripts/tests/provider-runtime.test.ts`
+- `node --import tsx --test scripts/tests/session-runtime-service.test.ts`
+- `node --import tsx --test scripts/tests/session-persistence-service.test.ts`
+- `node --import tsx --test scripts/tests/companion-runtime-service.test.ts`
+- `node --import tsx --test scripts/tests/companion-session-service.test.ts`
+
+Deletion-specific checks:
+
+- `MateTalk|mate-talk|MemoryManagement|mate-memory|mate-growth|providerInstruction|ProviderInstructionTarget|ProjectDigest` の runtime 参照が残っていないこと
+- `withmate-ipc-channels.ts`、`withmate-window-api.ts`、`main-ipc-registration.ts` の削除対象 API が揃って消えていること
+- app 起動時に Growth apply timer / Memory runtime workspace cleanup / provider instruction cleanup が走らないこと
+- Mate 未作成状態でも Home / Settings / session 起動の意図した導線が壊れていないこと
+- packaged build 前に `npm run build` を実行し、必要なら `npm run dist:win` で installer resources に削除済みコードが残らないことを確認する
+
+## 完了条件
+
+- `docs/design/v5-character-transition.md` の V5 初期 scope と矛盾する SingleMate / Memory / Growth runtime が起動・IPC・UI から外れている
+- v4.9.9 の package version が設定されている
+- session / companion / provider runtime の低レイヤーは維持されている
+- 既存 DB を破壊する migration を混ぜていない
+- targeted tests と typecheck が通る
+- 残す legacy docs と削除済み runtime の関係が説明できる
+
+## リスク
+
+- `main.ts` に Mate / Memory / Provider Instruction の依存が集中しているため、一括削除は compile error が広がりやすい。
+- `MateStorage` は Mate 未作成 gate、Home 表示、session 起動前処理に絡むため、削除順を誤ると app 起動自体が壊れる。
+- session / companion の persisted snapshot に `character*` metadata が残っている可能性がある。履歴表示互換が必要な型は最後まで削除しない。
+- provider instruction sync 削除時、既存ユーザーの provider instruction file に WithMate marker block が残る可能性がある。v4.9.9 で cleanup するか、V5 移行時に無視するかを実装前に決める。
+- Memory / Growth tables は物理削除しない方針のため、DB diagnostics や reset の対象名に残る可能性がある。UI から見えないことと schema に残ることを混同しない。
+
+## 未決事項
+
+- v4.9.9 で既存 provider instruction marker block を削除する one-shot cleanup を実装するか。
+- `MateStorage` を完全削除するか、V5 Character storage 実装まで minimal app state として残すか。
+- session / companion persisted data の `characterId` / `characterName` / `characterIconPath` を履歴表示用 metadata として残すか。
+- docs の `single-mate-architecture.md` / `memory-architecture.md` は archive 扱いに移すか、V4 legacy design として残すか。
