@@ -142,7 +142,7 @@ describe("home-launch-state", () => {
         mateProfile: null,
         selectedProviderId: null,
       }),
-      "Mate を作成してから開始してね。",
+      "タイトルを入力してね。",
     );
     assert.equal(
       resolveLaunchValidationMessage({
@@ -161,15 +161,6 @@ describe("home-launch-state", () => {
         selectedProviderId: "codex",
       }),
       "workspace を選んでね。",
-    );
-    assert.equal(
-      resolveLaunchValidationMessage({
-        draft: baseDraft,
-        mateState: "active",
-        mateProfile: null,
-        selectedProviderId: "codex",
-      }),
-      "Mate を確認してから開始してね。",
     );
     assert.equal(
       resolveLaunchValidationMessage({
@@ -233,6 +224,53 @@ describe("home-launch-state", () => {
       model: "gpt-5.4-mini",
       reasoningEffort: "medium",
       customAgentName: "reviewer",
+    });
+  });
+
+  it("Mate 未作成でも neutral character で session input を組み立てる", () => {
+    const input = buildCreateSessionInputFromLaunchDraft({
+      draft: {
+        ...createClosedLaunchDraft(),
+        open: true,
+        title: "  task  ",
+        workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
+        providerId: "codex",
+      },
+      mateProfile: null,
+      selectedProviderId: "codex",
+      approvalMode: DEFAULT_APPROVAL_MODE,
+    });
+
+    assert.equal(input?.characterId, "withmate-neutral-character");
+    assert.equal(input?.character, "WithMate");
+    assert.equal(input?.characterIconPath, "");
+    assert.deepEqual(input?.characterThemeColors, {
+      main: "#6f8cff",
+      sub: "#6fb8c7",
+    });
+  });
+
+  it("Mate 未作成でも neutral character で Companion input を組み立てる", () => {
+    const input = buildCreateCompanionSessionInputFromLaunchDraft({
+      draft: {
+        ...createClosedLaunchDraft(),
+        open: true,
+        mode: "companion",
+        title: "  task  ",
+        workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
+        providerId: "codex",
+      },
+      mateProfile: null,
+      selectedProviderId: "codex",
+    });
+
+    assert.equal(input?.characterId, "withmate-neutral-character");
+    assert.equal(input?.character, "WithMate");
+    assert.equal(input?.characterRoleMarkdown, "");
+    assert.equal(input?.characterIconPath, "");
+    assert.deepEqual(input?.characterThemeColors, {
+      main: "#6f8cff",
+      sub: "#6fb8c7",
     });
   });
 

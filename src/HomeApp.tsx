@@ -147,13 +147,11 @@ export default function HomeApp() {
       });
     };
 
-    void refreshMateStatus(withmateApi, { isActive: () => active }).then((nextMateState) => {
+    startOperationalHomeSummarySubscriptions();
+
+    void refreshMateStatus(withmateApi, { isActive: () => active }).then(() => {
       if (!active) {
         return;
-      }
-
-      if (nextMateState !== "not_created") {
-        startOperationalHomeSummarySubscriptions();
       }
     }).catch((error) => {
       if (!active) {
@@ -342,8 +340,7 @@ export default function HomeApp() {
   });
 
   const isMateStateLoading = mateState === null;
-  const isMateNotCreated = mateState === "not_created";
-  const canUsePrimaryFeatures = mateState !== "not_created" && mateProfile !== null;
+  const canUsePrimaryFeatures = mateState !== null;
 
   const baseSettingsContentProps: HomeSettingsContentBaseProps = {
     settingsDraft,
@@ -438,7 +435,6 @@ export default function HomeApp() {
       settingsWindowReady={settingsWindowReady}
       settingsContent={settingsContent}
       isMateStateLoading={isMateStateLoading}
-      isMateNotCreated={isMateNotCreated}
       mateProfileEditorOpen={mateProfileEditorOpen}
       mateSetupContent={mateSetupContent}
       isMonitorWindowMode={isMonitorWindowMode}

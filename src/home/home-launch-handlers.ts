@@ -72,11 +72,6 @@ export function buildHomeLaunchHandlers({
   };
 
   const onOpenLaunchDialog = () => {
-    if (mateState === "not_created") {
-      setLaunchFeedback("Mate を作成してから開始してね。");
-      return;
-    }
-
     setLaunchFeedback("");
     setLaunchDraft((current) => openLaunchDraft(current, enabledLaunchProviders[0]?.id ?? ""));
   };

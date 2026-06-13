@@ -194,6 +194,24 @@ describe("home-launch-actions", () => {
     assert.deepEqual(harness.openedSessions, ["session-1"]);
   });
 
+  it("Mate 未作成でも neutral character で session を作成する", async () => {
+    let capturedCharacterId = "";
+    const harness = createStartHomeLaunchHarness({
+      mateState: "not_created",
+      mateProfile: null,
+      createSession: async (input) => {
+        capturedCharacterId = input.characterId;
+        return createSessionSummary();
+      },
+    });
+
+    await startHomeLaunch(harness.input);
+
+    assert.equal(capturedCharacterId, "withmate-neutral-character");
+    assert.deepEqual(harness.feedback, ["Session を開始してるよ..."]);
+    assert.deepEqual(harness.openedSessions, ["session-1"]);
+  });
+
   it("companion を作成して review window を開く", async () => {
     const harness = createStartHomeLaunchHarness({
       draft: createReadyDraft("companion"),

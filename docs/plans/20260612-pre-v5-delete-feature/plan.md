@@ -141,10 +141,20 @@ Phase 3 legacy boundaries:
 
 ### Phase 4: Character-first の足場へ戻す
 
-- [ ] Home は SingleMate 必須 gate ではなく、V5 Character 未実装の neutral state にする
-- [ ] session 起動は Mate 未作成 block に依存しないようにする
-- [ ] `character.md` snapshot / Character catalog の詳細設計へ入るため、旧 Character design docs の扱いを `docs/design/v5-character-transition.md` から明示参照する
-- [ ] package version を `4.9.9` にする
+- [x] Home は SingleMate 必須 gate ではなく、V5 Character 未実装の neutral state にする
+- [x] session 起動は Mate 未作成 block に依存しないようにする
+- [x] `character.md` snapshot / Character catalog の詳細設計へ入るため、旧 Character design docs の扱いを `docs/design/v5-character-transition.md` から明示参照する
+- [x] package version を `4.9.9` にする
+
+Progress:
+
+- 2026-06-13: Phase 4 として、Home の Mate 未作成 gate を解除した。`HomeApp` は Mate 未作成でも session / companion summaries subscription を開始し、主要 Home 操作は Mate profile の有無ではなく Mate state load 完了後に使えるようにした。`HomeAppRouter` は `not_created` で `MateProfileScreen` へ強制遷移しない。
+- 2026-06-13: session / companion 起動 payload は Mate profile が無い場合に `withmate-neutral-character` / `WithMate` / default character theme の neutral snapshot を使うようにした。launch validation と launch dialog open handler から Mate 作成必須 check を削除した。
+- 2026-06-13: Electron main IPC wrapper の Mate 作成必須 gate を削除し、Mate 未作成でも session runtime IPC を wrapper が block しないようにした。Mate 作成 / 更新 API 自体は既存 Mate service の責務として残す。
+- 2026-06-13: `docs/design/v5-character-transition.md` に旧 Character docs の扱いを追記し、`character-definition-format.md`、`character-storage.md`、`character-update-workspace.md` は Phase 4 時点の正本ではなく V5 詳細設計の future candidate と明記した。
+- 2026-06-13: `package.json` / `package-lock.json` の version を `4.9.9` に更新した。
+- 2026-06-13: 残存検索として `Mate を作成してから開始してね`、`Mate を確認してから開始してね`、`本機能を実行できません`、`MATE_NOT_CREATED_ERROR_MESSAGE`、`MATE_CREATED_REQUIRED_CHANNEL_WHITELIST`、`ensureMateCreated`、`canUsePrimaryFeatures = mateState !== "not_created"` の `Select-String` 検索を実行し、該当なしを確認。
+- 2026-06-13: 検証は `npm install` 後に `node --import tsx --test scripts/tests/home-launch-state.test.ts scripts/tests/home-launch-actions.test.ts scripts/tests/home-launch-projection.test.ts scripts/tests/home-components.test.tsx`、`node --import tsx --test scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts scripts/tests/renderer-withmate-api.test.ts`、`npm run typecheck`、`npm run build` が成功。`npm install` では既存依存に 8 件の audit warning、`npm run build` では Vite の chunk size warning が出たが、この cleanup では未対応。
 
 ## 検証方針
 
