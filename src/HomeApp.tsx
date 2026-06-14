@@ -36,9 +36,9 @@ import {
   createNewCharacterEditorDraft,
   formatCharacterEditorError,
   isSettingsCharacterDraftDirty,
-  normalizeThemeColorDraft,
   resolveSettingsCharacterSelection,
   type SettingsCharacterEditorDraft,
+  updateSettingsCharacterEditorDraft,
 } from "./settings/settings-character-editor-state.js";
 import { HomeAppRouter } from "./home/HomeAppRouter.js";
 import { buildHomeDashboardSlots } from "./home/HomeDashboardSlots.js";
@@ -400,15 +400,24 @@ export default function HomeApp() {
     [characterDraft, selectedCharacterDetail],
   );
 
-  const runCharacterEditorCommand = async (command: (api: NonNullable<ReturnType<typeof getWithMateApi>>) => Promise<void>) => {
+  const runCharacterEditorCommand = async (
+    command: (api: NonNullable<ReturnType<typeof getWithMateApi>>) => Promise<void>,
+    fallbackMessage = "Character 操作に失敗したよ。",
+  ) => {
     const api = getWithMateApi();
-    if (!api || characterEditorBusy) {
+    if (characterEditorBusy) {
+      return;
+    }
+    if (!api) {
+      setCharacterEditorFeedback("Character 操作には desktop runtime が必要だよ。");
       return;
     }
 
     setCharacterEditorBusy(true);
     try {
       await command(api);
+    } catch (error) {
+      setCharacterEditorFeedback(formatCharacterEditorError(error, fallbackMessage));
     } finally {
       setCharacterEditorBusy(false);
     }
@@ -416,6 +425,13 @@ export default function HomeApp() {
 
   const characterEditorHandlers = {
     onSelectCharacter: (characterId: string) => {
+      if (characterId === selectedCharacterId) {
+        return;
+      }
+      if (characterEditorDirty) {
+        setCharacterEditorFeedback("未保存の編集があります。保存またはCancelしてから切り替えてね。");
+        return;
+      }
       void runCharacterEditorCommand(async (api) => {
         const detail = await api.getCharacter(characterId);
         setSelectedCharacterId(characterId);
@@ -426,25 +442,20 @@ export default function HomeApp() {
         } else {
           setCharacterEditorFeedback("Character が見つからなかったよ。");
         }
-      });
+      }, "Character の読み込みに失敗したよ。");
     },
     onNewCharacter: () => {
+      if (characterEditorDirty) {
+        setCharacterEditorFeedback("未保存の編集があります。保存またはCancelしてから切り替えてね。");
+        return;
+      }
       setSelectedCharacterId(null);
       setSelectedCharacterDetail(null);
       setCharacterDraft(createNewCharacterEditorDraft());
       setCharacterEditorFeedback("");
     },
     onChangeCharacterDraft: (patch: Partial<SettingsCharacterEditorDraft>) => {
-      setCharacterDraft((current) => ({
-        ...current,
-        ...patch,
-        theme: patch.theme
-          ? {
-              main: normalizeThemeColorDraft(patch.theme.main, current.theme.main),
-              sub: normalizeThemeColorDraft(patch.theme.sub, current.theme.sub),
-            }
-          : current.theme,
-      }));
+      setCharacterDraft((current) => updateSettingsCharacterEditorDraft(current, patch));
     },
     onImportCharacterDefinitionFile: (file: File) => {
       const reader = new FileReader();
@@ -471,50 +482,46 @@ export default function HomeApp() {
             iconFilePath: pickedPath,
           }));
         }
-      });
+      }, "Character icon の選択に失敗したよ。");
     },
     onSaveCharacter: () => {
       void runCharacterEditorCommand(async (api) => {
-        try {
-          const saved = characterDraft.mode === "create"
-            ? await api.createCharacter({
+        const saved = characterDraft.mode === "create"
+          ? await api.createCharacter({
+              name: characterDraft.name,
+              description: characterDraft.description,
+              iconFilePath: characterDraft.iconFilePath,
+              theme: characterDraft.theme,
+              definitionMarkdown: characterDraft.definitionMarkdown,
+              notesMarkdown: characterDraft.notesMarkdown,
+            })
+          : await (async () => {
+              if (!characterDraft.characterId) {
+                throw new Error("保存対象の Character が選択されていないよ。");
+              }
+              if (characterDraft.name.trim().length === 0) {
+                throw new Error("Character name を入力してね。");
+              }
+              await api.updateCharacterDefinition({
+                characterId: characterDraft.characterId,
+                definitionMarkdown: characterDraft.definitionMarkdown,
+                notesMarkdown: characterDraft.notesMarkdown,
+              });
+              return api.updateCharacterMetadata({
+                characterId: characterDraft.characterId,
                 name: characterDraft.name,
                 description: characterDraft.description,
                 iconFilePath: characterDraft.iconFilePath,
                 theme: characterDraft.theme,
-                definitionMarkdown: characterDraft.definitionMarkdown,
-                notesMarkdown: characterDraft.notesMarkdown,
-              })
-            : await (async () => {
-                if (!characterDraft.characterId) {
-                  throw new Error("保存対象の Character が選択されていないよ。");
-                }
-                if (characterDraft.name.trim().length === 0) {
-                  throw new Error("Character name を入力してね。");
-                }
-                await api.updateCharacterDefinition({
-                  characterId: characterDraft.characterId,
-                  definitionMarkdown: characterDraft.definitionMarkdown,
-                  notesMarkdown: characterDraft.notesMarkdown,
-                });
-                return api.updateCharacterMetadata({
-                  characterId: characterDraft.characterId,
-                  name: characterDraft.name,
-                  description: characterDraft.description,
-                  iconFilePath: characterDraft.iconFilePath,
-                  theme: characterDraft.theme,
-                });
-              })();
+              });
+            })();
 
-          setSelectedCharacterId(saved.id);
-          setSelectedCharacterDetail(saved);
-          setCharacterDraft(createCharacterEditorDraftFromDetail(saved));
-          await refreshCharacterEntries(api, saved.id);
-          setCharacterEditorFeedback("Character を保存したよ。");
-        } catch (error) {
-          setCharacterEditorFeedback(formatCharacterEditorError(error, "Character の保存に失敗したよ。"));
-        }
-      });
+        setSelectedCharacterId(saved.id);
+        setSelectedCharacterDetail(saved);
+        setCharacterDraft(createCharacterEditorDraftFromDetail(saved));
+        await refreshCharacterEntries(api, saved.id);
+        setCharacterEditorFeedback("Character を保存したよ。");
+      }, "Character の保存に失敗したよ。");
     },
     onCancelCharacterEdit: () => {
       if (selectedCharacterDetail) {
@@ -533,7 +540,7 @@ export default function HomeApp() {
         await api.setDefaultCharacter(characterDraft.characterId);
         await refreshCharacterEntries(api, characterDraft.characterId);
         setCharacterEditorFeedback("Default Character を更新したよ。");
-      });
+      }, "Default Character の更新に失敗したよ。");
     },
     onArchiveCharacter: () => {
       void runCharacterEditorCommand(async (api) => {
@@ -543,7 +550,7 @@ export default function HomeApp() {
         await api.archiveCharacter(characterDraft.characterId);
         await refreshCharacterEntries(api);
         setCharacterEditorFeedback("Character を archive したよ。");
-      });
+      }, "Character のarchiveに失敗したよ。");
     },
   };
 

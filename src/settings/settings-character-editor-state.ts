@@ -78,6 +78,32 @@ export function isSettingsCharacterDraftDirty(
     || draft.notesMarkdown !== persistedDetail.notesMarkdown;
 }
 
+export function updateSettingsCharacterEditorDraft(
+  current: SettingsCharacterEditorDraft,
+  patch: Partial<SettingsCharacterEditorDraft>,
+): SettingsCharacterEditorDraft {
+  const shouldRegenerateDefinition =
+    patch.name !== undefined
+    && patch.definitionMarkdown === undefined
+    && current.mode === "create"
+    && current.definitionMarkdown === buildDefaultCharacterDefinition(current.name);
+  const nextTheme = patch.theme
+    ? {
+        main: normalizeThemeColorDraft(patch.theme.main, current.theme.main),
+        sub: normalizeThemeColorDraft(patch.theme.sub, current.theme.sub),
+      }
+    : current.theme;
+
+  return {
+    ...current,
+    ...patch,
+    theme: nextTheme,
+    definitionMarkdown: shouldRegenerateDefinition
+      ? buildDefaultCharacterDefinition(patch.name ?? current.name)
+      : patch.definitionMarkdown ?? current.definitionMarkdown,
+  };
+}
+
 export function normalizeThemeColorDraft(value: string, fallback: string): string {
   const trimmed = value.trim();
   return /^#[0-9a-fA-F]{6}$/.test(trimmed) ? trimmed.toLowerCase() : fallback;

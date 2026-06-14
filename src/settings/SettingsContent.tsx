@@ -179,7 +179,12 @@ export function HomeSettingsContent({
             <div className="settings-field">
               <div className="settings-section-head-row">
                 <strong>Characters</strong>
-                <button className="launch-toggle compact" type="button" onClick={onNewCharacter}>
+                <button
+                  className="launch-toggle compact"
+                  type="button"
+                  onClick={onNewCharacter}
+                  disabled={characterEditorBusy}
+                >
                   New
                 </button>
               </div>
@@ -193,6 +198,7 @@ export function HomeSettingsContent({
                       className={`settings-character-row${character.id === selectedCharacterId ? " selected" : ""}`}
                       type="button"
                       onClick={() => onSelectCharacter(character.id)}
+                      disabled={characterEditorBusy}
                     >
                       <span
                         className="settings-character-swatch"
@@ -218,6 +224,7 @@ export function HomeSettingsContent({
                         type="text"
                         value={characterDraft.name}
                         onChange={(event) => onChangeCharacterDraft({ name: event.target.value })}
+                        disabled={characterEditorBusy}
                       />
                     </label>
                     <label className="settings-provider-input">
@@ -226,6 +233,7 @@ export function HomeSettingsContent({
                         type="text"
                         value={characterDraft.description}
                         onChange={(event) => onChangeCharacterDraft({ description: event.target.value })}
+                        disabled={characterEditorBusy}
                       />
                     </label>
                     <label className="settings-provider-input">
@@ -235,8 +243,14 @@ export function HomeSettingsContent({
                           type="text"
                           value={characterDraft.iconFilePath}
                           onChange={(event) => onChangeCharacterDraft({ iconFilePath: event.target.value })}
+                          disabled={characterEditorBusy}
                         />
-                        <button className="launch-toggle compact" type="button" onClick={onPickCharacterIcon}>
+                        <button
+                          className="launch-toggle compact"
+                          type="button"
+                          onClick={onPickCharacterIcon}
+                          disabled={characterEditorBusy}
+                        >
                           Browse
                         </button>
                       </div>
@@ -250,6 +264,7 @@ export function HomeSettingsContent({
                           onChange={(event) => onChangeCharacterDraft({
                             theme: { ...characterDraft.theme, main: event.target.value },
                           })}
+                          disabled={characterEditorBusy}
                         />
                       </label>
                       <label className="settings-provider-input">
@@ -260,6 +275,7 @@ export function HomeSettingsContent({
                           onChange={(event) => onChangeCharacterDraft({
                             theme: { ...characterDraft.theme, sub: event.target.value },
                           })}
+                          disabled={characterEditorBusy}
                         />
                       </label>
                     </div>
@@ -273,6 +289,7 @@ export function HomeSettingsContent({
                       onChange={(event) => onChangeCharacterDraft({ definitionMarkdown: event.target.value })}
                       rows={14}
                       spellCheck={false}
+                      disabled={characterEditorBusy}
                     />
                   </label>
                   <label className="settings-provider-input">
@@ -283,6 +300,7 @@ export function HomeSettingsContent({
                       onChange={(event) => onChangeCharacterDraft({ notesMarkdown: event.target.value })}
                       rows={5}
                       spellCheck={false}
+                      disabled={characterEditorBusy}
                     />
                   </label>
                   <input
@@ -290,6 +308,7 @@ export function HomeSettingsContent({
                     type="file"
                     accept=".md,text/markdown,text/plain"
                     className="settings-character-import-input"
+                    disabled={characterEditorBusy}
                     onChange={(event) => {
                       const file = event.target.files?.[0];
                       if (file) {
