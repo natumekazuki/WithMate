@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { buildNewSession } from "../../src/app-state.js";
+import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
 import { createDefaultSessionMemory, type ProjectMemoryEntry } from "../../src/memory/memory-state.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
@@ -49,6 +50,28 @@ function assertSectionOrder(text: string, sections: string[]): void {
     assert.ok(index > previousIndex, `${section} の順序が不正`);
     previousIndex = index;
   }
+}
+
+function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnapshot>): CharacterRuntimeSnapshot {
+  return {
+    characterId: "character-1",
+    name: "Saved Character",
+    description: "保存済み Character",
+    iconFilePath: "icon.png",
+    theme: characterThemeColors,
+    definitionMarkdown: [
+      "---",
+      "schema: withmate.character.v1",
+      "name: Saved Character",
+      "---",
+      "# Character",
+      "保存済みの character.md だけを runtime persona として扱う。",
+    ].join("\n"),
+    definitionSha256: "sha256-character-definition",
+    definitionByteSize: 128,
+    snapshotAt: "2026-06-14T00:00:00.000Z",
+    ...overrides,
+  };
 }
 
 describe("composeProviderPrompt", () => {
@@ -245,5 +268,87 @@ describe("composeProviderPrompt", () => {
     assert.doesNotMatch(prompt.logicalPrompt.composedText, /# User Input/);
     assert.match(prompt.logicalPrompt.composedText, /system prompt が空でも user input は残ることを確認する/);
     assertSectionOrder(prompt.logicalPrompt.composedText, ["system prompt が空でも user input は残ることを確認する"]);
+  });
+
+  it("保存済み CharacterRuntimeSnapshot の character.md だけを system prompt に注入する", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      characterId: "character-1",
+      character: "Current Catalog Name",
+      characterIconPath: "",
+      characterThemeColors,
+      characterRuntimeSnapshot: createCharacterRuntimeSnapshot({
+        definitionMarkdown: [
+          "---",
+          "schema: withmate.character.v1",
+          "name: Saved Character",
+          "---",
+          "# Character",
+          "保存済み snapshot の口調で話す。",
+        ].join("\n"),
+      }),
+      approvalMode: "untrusted",
+    });
+
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "続けて",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+    });
+
+    assert.match(prompt.systemBodyText, /# Character Definition Snapshot/);
+    assert.match(prompt.systemBodyText, /保存済み snapshot の口調で話す。/);
+    assert.match(prompt.systemBodyText, /character-notes\.md` や Memory \/ Growth history は V5 Core runtime prompt には常設注入しません。/);
+    assert.doesNotMatch(prompt.systemBodyText, /notes-only secret/);
+    assert.doesNotMatch(prompt.systemBodyText, /Current Catalog Name/);
+    assert.doesNotMatch(prompt.inputBodyText, /保存済み snapshot の口調で話す。/);
+    assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
+    assert.equal(prompt.logicalPrompt.inputText, prompt.inputBodyText);
+    assertSectionOrder(prompt.logicalPrompt.composedText, ["# Character Definition Snapshot", "続けて"]);
+  });
+
+  it("character.md 内の code fence より長い外側 fence で snapshot を囲む", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      characterId: "character-1",
+      character: "Saved Character",
+      characterIconPath: "",
+      characterThemeColors,
+      characterRuntimeSnapshot: createCharacterRuntimeSnapshot({
+        definitionMarkdown: [
+          "# Examples",
+          "```ts",
+          "console.log(\"triple fence\");",
+          "```",
+          "````markdown",
+          "quad fence",
+          "````",
+        ].join("\n"),
+      }),
+      approvalMode: "untrusted",
+    });
+
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "続けて",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+    });
+
+    assert.match(prompt.systemBodyText, /`````markdown\n# Examples/);
+    assert.match(prompt.systemBodyText, /````\n`````$/);
   });
 });

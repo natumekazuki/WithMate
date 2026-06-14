@@ -56,6 +56,7 @@ test("MainSessionPersistenceFacade は running session を詳細 hydrate して 
       status: "idle",
       runState: "interrupted",
       updatedAt: "2026-03-28 10:00:00",
+      characterRuntimeSnapshot: null,
       messages: [],
       stream: [],
     },

@@ -1692,7 +1692,7 @@ function requireAuxWindowService(): AuxWindowService<BrowserWindow> {
 function requireSessionRuntimeService(): SessionRuntimeService {
   if (!sessionRuntimeService) {
     sessionRuntimeService = new SessionRuntimeService({
-      getSession: getDisplaySession,
+      getSession: getRuntimeSession,
       upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSession(session),
       resolveComposerPreview,
       resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
@@ -1825,6 +1825,7 @@ function requireCompanionSessionService(): CompanionSessionService {
     companionSessionService = new CompanionSessionService({
       appDataPath: app.getPath("userData"),
       storage: requireCompanionStorage(),
+      createCharacterRuntimeSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
     });
   }
 
@@ -1914,6 +1915,7 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       deleteStoredSession: (sessionId) => requireSessionStorageForWrite().deleteSession(sessionId),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
+      createCharacterRuntimeSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
       syncSessionDependencies: (session) => requireSessionMemorySupportService().syncSessionDependencies(session),
       clearSessionContextTelemetry,
       clearSessionBackgroundActivities,
@@ -2594,6 +2596,10 @@ async function getDisplaySession(sessionId: string): Promise<Session | null> {
   }
 
   return await requireMainQueryService().getSession(sessionId) ?? liveSession ?? null;
+}
+
+async function getRuntimeSession(sessionId: string): Promise<Session | null> {
+  return await requireSessionStorage().getSession(sessionId) ?? getSession(sessionId);
 }
 
 async function getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null> {
