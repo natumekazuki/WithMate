@@ -55,7 +55,6 @@ describe("HomeSettingsContent", () => {
     canResetMate?: boolean;
     mateResetBusy?: boolean;
     onResetMate?: () => void;
-    characterEditorBusy?: boolean;
   };
 
   const collectElementsById = (node: ReactNode, predicate: (element: React.ReactElement) => boolean): React.ReactElement[] => {
@@ -92,7 +91,6 @@ describe("HomeSettingsContent", () => {
     modelCatalogRevisionLabel: String(modelCatalog.revision),
     settingsDirty: false,
     settingsFeedback: "",
-    characterEditorBusy: params?.characterEditorBusy ?? false,
     onChangeAutoCollapseActionDockOnSend: noOp,
     onChangeUserMicrocopySlot: noOp,
     onChangeProviderEnabled: noOp,
@@ -150,15 +148,9 @@ describe("HomeSettingsContent", () => {
     assert.ok(!html.includes("Mate Growth を手動適用"));
     assert.ok(!html.includes("Mate Growth Settings"));
     assert.ok(!html.includes("最近の Growth Event"));
-  });
-
-  it("Character editor は busy 中に編集 field を disabled にする", () => {
-    const html = renderSettings({ characterEditorBusy: true });
-
-    assert.match(html, /<input type="text" disabled="" value="New Character"\/>/);
-    assert.match(html, /<input type="color" disabled="" value="#6f8cff"\/>/);
-    assert.match(html, /<textarea class="settings-character-markdown-textarea" rows="14" spellCheck="false" disabled="">/);
-    assert.match(html, /<textarea class="settings-character-notes-textarea" rows="5" spellCheck="false" disabled="">/);
+    assert.ok(!html.includes("settings-character-section"));
+    assert.ok(!html.includes("Save Character"));
+    assert.ok(!html.includes("character-notes.md"));
   });
 });
 
