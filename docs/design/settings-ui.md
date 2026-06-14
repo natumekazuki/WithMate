@@ -14,7 +14,7 @@
 - 設定は `Home Window` から開く独立 `Settings Window` とする
 - app 共通 system prompt を編集する旧設定項目は廃止する
 - Mate 定義は `Provider Instruction Sync` の managed block へ投影し、turn prompt へ共通 system 指示として合成しない
-- current 実装では `Session Window`、`Coding Agent Providers`、`Provider Instruction Sync`、`Skill Roots`、`Memory Extraction`、`Character Reflection`、`Diagnostics`、`Model Catalog` を置く
+- current 実装では `Session Window`、`Characters`、`Coding Agent Providers`、`Provider Instruction Sync`、`Skill Roots`、`Memory Extraction`、`Character Reflection`、`Diagnostics`、`Model Catalog` を置く
 - `Settings Window` は縦方向の余白を少し増やしつつ、内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - file picker / save dialog は Main Process 側で開く
 - current 実装では Main Process 側の settings / catalog 更新は `src-electron/settings-catalog-service.ts` に寄せ、renderer 側の provider row 組み立ては `src/home-settings-view-model.ts` に寄せる
@@ -35,6 +35,13 @@
 - Settings Window
   - `Session Window`
     - `送信後に Action Dock を自動で閉じる`
+  - `Characters`
+    - Character 一覧
+    - name / description / icon path / theme
+    - raw `character.md` editor
+    - optional `character-notes.md` editor
+    - import / replace
+    - save / cancel / set default / archive
   - `Coding Agent Providers`
     - provider 名を左、enable checkbox を右に置いた 1 行 row
   - `Provider Instruction Sync`
@@ -56,6 +63,14 @@
 ## Current Scope
 
 - `Session Window` の `送信後に Action Dock を自動で閉じる` の保存
+- V5 Core Character の最低限 editor
+  - Character 一覧
+  - 新規作成
+  - metadata 編集
+  - raw `character.md` import / replace / 保存
+  - optional `character-notes.md` 保存
+  - default 切替
+  - archive
 - coding provider ごとの enable / disable
 - provider instruction sync の root / path / write mode 保存
 - coding provider ごとの `Skill Root` 入力保存
@@ -75,6 +90,8 @@
 - Settings Window の `loading` 派生状態は `HomeApp.tsx` が組み立てる
 - Settings Window の `import / export / save` の文言組み立てと戻り値解釈は `home-settings-actions` が担当する
 - Settings 保存成功時は renderer 側で戻り値の `appSettings` を draft に同期し、dirty 状態を解消する
+- Character editor は app settings draft とは分離し、`CharacterStorage` IPC を直接呼び出して保存する。
+- `character.md` の validation error は raw editor の操作結果として Settings Window 内に表示する。
 
 ## Future Scope
 
