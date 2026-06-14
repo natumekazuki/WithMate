@@ -43,7 +43,7 @@ npm run electron:start
 | MT-001A | Home narrow width guardrail | Home Window を最小幅近くまで縮める | single-column layout へ倒れても `Recent Sessions` と right pane toggle / `Settings` 導線が残り、操作不能にならない |
 | MT-002 | Home 一覧 | session が 0 件の状態で起動する | 空状態メッセージが表示される |
 | MT-003 | Your Mate / Mate profile | Mate profile が未設定の状態で起動する | `Your Mate` に Mate profile 設定導線と `MateTalk` 起動導線が表示され、複数 mate の list / picker は出ない |
-| MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `Session Window` / `Coding Agent Providers` / `Provider Instruction Sync` / `Skill Roots` / `Memory Extraction` / `Character Reflection` / `Model Catalog` が既存値で表示される |
+| MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `Session Window` / `Characters` / `Coding Agent Providers` / `Provider Instruction Sync` / `Skill Roots` / `Memory Extraction` / `Character Reflection` / `Model Catalog` が既存値で表示される |
 | MT-004H | Settings window shell layout | `Settings Window` を wide 幅で開き、縦に長い内容まで scroll する | panel は window 幅に追従し、`Home / Close` の header は出ない。本文は inner scroll で最後まで到達でき、scrollbar が shell の角丸に隠れない |
 | MT-004A | Settings provider row layout | `Settings Window` を開いて `Coding Agent Providers` を確認する | provider 名が左、checkbox が右の row で揃って見え、どの provider を on/off しているか即判別できる |
 | MT-004B | Memory extraction settings | `Settings Window` の `Memory Extraction` を確認する | provider ごとに `Model` / `Reasoning Depth` / `Output Tokens Threshold` が表示され、現在の model catalog に沿った選択肢だけが出る |
@@ -58,7 +58,7 @@ npm run electron:start
 | MT-009 | Model catalog import | Settings の `Model Catalog` から `Import Models` を実行する | import 成功メッセージが表示され、active revision が更新される |
 | MT-013 | New Session 起動 | Home の `New Session` を押す | launch dialog が開く |
 | MT-013A | New Session dialog keyboard | `New Session` dialog を開き、初期 focus、`Tab` / `Shift+Tab`、`Escape`、provider chip の矢印キーを試す | open 時に title input へ focus が入り、focus は dialog 内で循環する。`Escape` で閉じ、provider chip は矢印キーで切り替えられる |
-| MT-014 | New Session 作成 | title と workspace と provider を選び `Start New Session` を押す | SingleMate の現在値を使って Session Window が開き、Home の session 一覧に追加され、選んだ provider で session が作られ、approval 初期値は `安全寄り` になる |
+| MT-014 | New Session 作成 | title、workspace、provider、Character を選び `Start New Session` を押す | 選択した Character snapshot を使って Session Window が開き、Home の session 一覧に追加され、選んだ provider で session が作られ、approval 初期値は `安全寄り` になる。Character が 0 件の場合は neutral fallback を使う |
 | MT-014A | New Session provider availability | `Coding Agent Providers` で一部 provider を無効化した後に `New Session` を開く | launch dialog の provider 候補には enabled provider だけが出る。0 件なら empty state が出て `Start New Session` は disabled のままになる |
 | MT-014B | MateTalk launch | Home 右ペインの `Your Mate` から `MateTalk` を起動する | MateTalk は Home inline chat では開かれず、Session Window の chat layout mode として別 window で開始される |
 | MT-015 | Session 実行 | Session Window の textarea に入力して送信する | user message が追加され、pending と live activity が表示される |
