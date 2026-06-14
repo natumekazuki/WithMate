@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -42,6 +42,7 @@ describe("CharacterStorage", () => {
       const mia = storage.createCharacter({
         name: "Mia",
         description: "First character",
+        iconFilePath: "assets/my  icon.png",
         definitionMarkdown: validDefinition("Mia"),
         notesMarkdown: "# Character Notes\n",
       });
@@ -53,6 +54,7 @@ describe("CharacterStorage", () => {
 
       assert.equal(mia.id, "mia");
       assert.equal(mia.isDefault, true);
+      assert.equal(mia.iconFilePath, "assets/my  icon.png");
       assert.equal(noa.isDefault, false);
       assert.deepEqual(storage.listCharacters().map((character) => character.id), ["mia", "noa"]);
 
@@ -81,10 +83,12 @@ describe("CharacterStorage", () => {
         characterId: noa.id,
         name: "Noa Prime",
         description: "Updated",
+        iconFilePath: "assets/new  icon.png",
         theme: { main: "#abcdef" },
       });
       assert.equal(updatedNoa.name, "Noa Prime");
       assert.equal(updatedNoa.description, "Updated");
+      assert.equal(updatedNoa.iconFilePath, "assets/new  icon.png");
       assert.equal(updatedNoa.theme.main, "#abcdef");
 
       const nextDefinition = validDefinition("Noa Prime").replace("- Noa Prime", "- Updated persona");
@@ -126,6 +130,26 @@ describe("CharacterStorage", () => {
       assert.equal(snapshot?.name, "Mia");
       assert.match(snapshot?.definitionSha256 ?? "", /^[0-9a-f]{64}$/);
       assert.equal(snapshot?.definitionByteSize, Buffer.byteLength(validDefinition("Mia"), "utf8"));
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("deleteCharacterRootDirectory は file body を削除して root を再作成する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: CharacterStorage | null = null;
+
+    try {
+      storage = new CharacterStorage(dbPath, userDataPath);
+      const mia = storage.createCharacter({ name: "Mia", definitionMarkdown: validDefinition("Mia") });
+      const definitionPath = path.join(userDataPath, "characters", mia.id, "character.md");
+      await access(definitionPath);
+
+      await storage.deleteCharacterRootDirectory();
+
+      await assert.rejects(access(definitionPath));
+      await access(path.join(userDataPath, "characters"));
     } finally {
       storage?.close();
       await cleanup();

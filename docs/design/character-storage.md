@@ -137,6 +137,7 @@ Runtime prompt injection は catalog 現在値ではなく saved snapshot を使
 - `character.md` の invalid update は metadata update と分離して拒否する。
 - archive は directory を削除しない。過去 session snapshot と audit 参照を優先する。
 - 同名 Character を再作成しても、過去 session を name fallback で自動再接続しない。
+- app database reset / recreate では SQLite metadata と `characters/` file body を同時に削除する。DB だけを消して orphan `character.md` / `character-notes.md` を残さない。
 
 ## Related Docs
 

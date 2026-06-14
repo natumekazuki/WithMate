@@ -2229,12 +2229,14 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
 
   stopWalMaintenance();
   await requireMateStorage().deleteMateProjectionDirectory();
+  await requireCharacterStorage().deleteCharacterRootDirectory();
   mateProfileItemStorage?.close();
   mateProfileItemStorage = null;
   companionStorage?.close();
   companionAuditLogStorage?.close();
   const bundle = await requirePersistentStoreLifecycleService().recreate(dbPath, bundledModelCatalogPath, {
     modelCatalogStorage,
+    characterStorage,
     sessionStorage,
     sessionMemoryStorage,
     projectMemoryStorage,
@@ -2244,6 +2246,8 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
     mateStorage,
   }, app.getPath("userData"));
 
+  characterStorage = null;
+  characterService = null;
   auditLogService = null;
   companionStorage = null;
   companionAuditLogService = null;

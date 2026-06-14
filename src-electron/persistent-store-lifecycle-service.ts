@@ -93,6 +93,7 @@ export type CharacterStorageAccess = {
   setDefaultCharacter(characterId: string): CharacterCatalogEntry;
   resolveLaunchCharacter(input?: ResolveLaunchCharacterInput): CharacterDetail | null;
   createRuntimeSnapshot(characterId: string): CharacterRuntimeSnapshot | null;
+  deleteCharacterRootDirectory(): Promise<void>;
   close(): void;
 };
 
@@ -364,6 +365,8 @@ class LegacyCharacterStorage implements CharacterStorageAccess {
   createRuntimeSnapshot(): CharacterRuntimeSnapshot | null {
     return null;
   }
+
+  async deleteCharacterRootDirectory(): Promise<void> {}
 
   close(): void {}
 }

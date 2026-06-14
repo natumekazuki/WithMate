@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -92,7 +93,7 @@ function normalizeName(value: unknown): string {
   return normalized;
 }
 
-function normalizeOptionalString(value: unknown, fallback = ""): string {
+function normalizeDescription(value: unknown, fallback = ""): string {
   if (value === undefined || value === null) {
     return fallback;
   }
@@ -100,6 +101,16 @@ function normalizeOptionalString(value: unknown, fallback = ""): string {
     return fallback;
   }
   return value.trim().replace(/\s+/g, " ");
+}
+
+function normalizeOptionalPath(value: unknown, fallback = ""): string {
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  return value.trim();
 }
 
 function normalizeHexColor(value: unknown, fallback: string): string {
@@ -300,8 +311,8 @@ export class CharacterStorage {
 
   createCharacter(input: CreateCharacterInput): CharacterDetail {
     const name = normalizeName(input.name);
-    const description = normalizeOptionalString(input.description);
-    const iconFilePath = normalizeOptionalString(input.iconFilePath);
+    const description = normalizeDescription(input.description);
+    const iconFilePath = normalizeOptionalPath(input.iconFilePath);
     const theme = normalizeTheme(input.theme);
     const characterId = this.createUniqueCharacterId(name);
     const createdAt = nowIso();
@@ -353,10 +364,10 @@ export class CharacterStorage {
     const name = input.name === undefined ? current.name : normalizeName(input.name);
     const description = input.description === undefined
       ? current.description
-      : normalizeOptionalString(input.description);
+      : normalizeDescription(input.description);
     const iconFilePath = input.iconFilePath === undefined
       ? current.iconFilePath
-      : normalizeOptionalString(input.iconFilePath);
+      : normalizeOptionalPath(input.iconFilePath);
     const theme = normalizeTheme(input.theme, current.theme);
     const updatedAt = nowIso();
 
@@ -495,6 +506,11 @@ export class CharacterStorage {
       definitionByteSize: byteSize(detail.definitionMarkdown),
       snapshotAt: nowIso(),
     };
+  }
+
+  async deleteCharacterRootDirectory(): Promise<void> {
+    await rm(this.characterRootPath, { recursive: true, force: true });
+    mkdirSync(this.characterRootPath, { recursive: true });
   }
 
   close(): void {
