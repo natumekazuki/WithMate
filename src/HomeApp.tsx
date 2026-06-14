@@ -49,6 +49,7 @@ import { buildHomeWindowContentSlots } from "./home/HomeWindowContentSlots.js";
 import { getHomeWindowMode } from "./home/home-window-mode.js";
 import { useHomeOpenWindowSubscriptions } from "./home/use-home-open-window-subscriptions.js";
 import {
+  openCharacterEditorWindow,
   openCompanionReviewWindow,
   openSessionMonitorWindow,
   openSessionWindow,
@@ -71,7 +72,7 @@ import { buildMateStatusRefreshers } from "./mate/mate-status-refreshers.js";
 import { buildHomeMonitorContentProps } from "./home/home-monitor-content-props.js";
 import { renderHomeMonitorWindowIcon, renderHomeSearchIcon } from "./home/home-icons.js";
 
-type HomeRightPaneView = "monitor" | "mate";
+type HomeRightPaneView = "monitor" | "characters";
 
 export default function HomeApp() {
   const desktopRuntime = isDesktopRuntime();
@@ -258,6 +259,29 @@ export default function HomeApp() {
       unsubscribeAppSettings();
     };
   }, []);
+
+  useEffect(() => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || isSettingsWindowMode || isMonitorWindowMode) {
+      return;
+    }
+
+    let refreshInFlight = false;
+    const refreshCharactersOnFocus = () => {
+      if (refreshInFlight) {
+        return;
+      }
+      refreshInFlight = true;
+      void refreshCharacterEntries(withmateApi, selectedCharacterId).catch((error) => {
+        setCharacterEditorFeedback(formatCharacterEditorError(error, "Character 一覧の再読み込みに失敗したよ。"));
+      }).finally(() => {
+        refreshInFlight = false;
+      });
+    };
+
+    window.addEventListener("focus", refreshCharactersOnFocus);
+    return () => window.removeEventListener("focus", refreshCharactersOnFocus);
+  }, [isMonitorWindowMode, isSettingsWindowMode, selectedCharacterId]);
 
   useHomeOpenWindowSubscriptions({
     getApi: getWithMateApi,
@@ -641,13 +665,14 @@ export default function HomeApp() {
       rightPaneView,
       runningMonitorEntries,
       nonRunningMonitorEntries,
-      mateProfile,
+      characterEntries,
       monitorWindowIcon: renderHomeMonitorWindowIcon(),
       handlers: {
         onChangeRightPaneView: setRightPaneView,
         onOpenSessionMonitorWindow: () => void openSessionMonitorWindow(),
         onOpenSettingsWindow: () => void openSettingsWindow(),
-        onOpenMateProfile: mateProfileHandlers.onOpenProfileEditor,
+        onCreateCharacter: () => void openCharacterEditorWindow(),
+        onEditCharacter: (characterId) => void openCharacterEditorWindow(characterId),
         onOpenSession: (sessionId) => void openSessionWindow(sessionId),
         onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
       },

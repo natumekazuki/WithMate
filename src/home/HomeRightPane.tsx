@@ -1,20 +1,21 @@
 import type { ReactNode } from "react";
 
+import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import type { HomeMonitorEntry } from "./home-session-projection.js";
-import type { MateProfile } from "../mate/mate-state.js";
-import { buildCardThemeStyle, CharacterAvatar } from "../ui-utils.js";
+import { HomeCharactersPanel } from "./HomeCharactersPanel.js";
 import { HomeMonitorContent } from "./HomeMonitorContent.js";
 
 export type HomeRightPaneProps = {
-  rightPaneView: "monitor" | "mate";
+  rightPaneView: "monitor" | "characters";
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
   monitorWindowIcon: ReactNode;
-  mateProfile: MateProfile | null;
-  onChangeRightPaneView: (view: "monitor" | "mate") => void;
+  characterEntries: CharacterCatalogEntry[];
+  onChangeRightPaneView: (view: "monitor" | "characters") => void;
   onOpenSessionMonitorWindow: () => void;
   onOpenSettingsWindow: () => void;
-  onOpenMateProfile: () => void;
+  onCreateCharacter: () => void;
+  onEditCharacter: (characterId: string) => void;
   onOpenSession: (sessionId: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
   canUsePrimaryFeatures?: boolean;
@@ -25,32 +26,21 @@ export function HomeRightPane({
   runningMonitorEntries,
   nonRunningMonitorEntries,
   monitorWindowIcon,
-  mateProfile,
+  characterEntries,
   onChangeRightPaneView,
   onOpenSessionMonitorWindow,
   onOpenSettingsWindow,
-  onOpenMateProfile,
+  onCreateCharacter,
+  onEditCharacter,
   onOpenSession,
   onOpenCompanionReview,
   canUsePrimaryFeatures = true,
 }: HomeRightPaneProps) {
-  const mateDisplayName = mateProfile?.displayName ?? "Your Mate";
-  const mateDescription = mateProfile?.description?.trim() ?? "";
-  const mateThemeStyle = buildCardThemeStyle({
-    main: mateProfile?.themeMain ?? "#3e4b65",
-    sub: mateProfile?.themeSub ?? "#7b8fb0",
-  });
   const openSessionMonitorWindow = () => {
     if (!canUsePrimaryFeatures) {
       return;
     }
     onOpenSessionMonitorWindow();
-  };
-  const openMateProfile = () => {
-    if (!canUsePrimaryFeatures) {
-      return;
-    }
-    onOpenMateProfile();
   };
   const openSession = (sessionId: string) => {
     if (!canUsePrimaryFeatures) {
@@ -95,13 +85,13 @@ export function HomeRightPane({
             Monitor
           </button>
           <button
-            className={`home-pane-toggle-button ${rightPaneView === "mate" ? "active" : ""}`.trim()}
+            className={`home-pane-toggle-button ${rightPaneView === "characters" ? "active" : ""}`.trim()}
             type="button"
             role="tab"
-            aria-selected={rightPaneView === "mate"}
-            onClick={() => onChangeRightPaneView("mate")}
+            aria-selected={rightPaneView === "characters"}
+            onClick={() => onChangeRightPaneView("characters")}
           >
-            Your Mate
+            Characters
           </button>
         </div>
       </div>
@@ -116,25 +106,12 @@ export function HomeRightPane({
           />
         </section>
       ) : (
-        <section className="home-monitor-panel" role="tabpanel" aria-label="Your Mate" style={mateThemeStyle}>
-          <div className="home-monitor-section home-mate-card">
-            <div className="home-monitor-section-head">
-              <h3>Your Mate</h3>
-            </div>
-            <div className="home-mate-card-body">
-              <CharacterAvatar
-                character={{ name: mateDisplayName, iconPath: mateProfile?.avatarFilePath ?? "" }}
-                size="large"
-              />
-              <strong>{mateDisplayName}</strong>
-              {mateDescription ? <p>{mateDescription}</p> : null}
-              <div className="home-monitor-actions">
-                <button className="launch-toggle" type="button" onClick={openMateProfile} disabled={!canUsePrimaryFeatures}>
-                  Mate を編集
-                </button>
-              </div>
-            </div>
-          </div>
+        <section className="home-monitor-panel" role="tabpanel" aria-label="Characters">
+          <HomeCharactersPanel
+            characters={characterEntries}
+            onCreateCharacter={onCreateCharacter}
+            onEditCharacter={onEditCharacter}
+          />
         </section>
       )}
     </section>
