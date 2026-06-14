@@ -121,6 +121,9 @@ name: Mia
     assert.equal(isSafeCharacterRelativePath("#identity"), true);
     assert.equal(isSafeCharacterRelativePath("./character.png"), true);
     assert.equal(isSafeCharacterRelativePath("/tmp/character.png"), false);
+    assert.equal(isSafeCharacterRelativePath("C:\\Users\\example\\secret.png"), false);
+    assert.equal(isSafeCharacterRelativePath("C:/Users/example/secret.png"), false);
+    assert.equal(isSafeCharacterRelativePath("file:///Users/example/secret.png"), false);
     assert.equal(isSafeCharacterRelativePath("..\\secret.png"), false);
   });
 

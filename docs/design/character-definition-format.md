@@ -179,7 +179,7 @@ description: "会話上の役割と雰囲気が分かる短い説明"
 ### `Relationship With User`
 
 - WithMate での初期距離感を定義する
-- ここに Character Memory の更新結果が反映される前提で差分更新しやすくする
+- 将来の Character Memory 再設計時に反映しやすい粒度で保つ
 
 ### `Voice Rules`
 

@@ -119,9 +119,13 @@ function parseFrontmatter(markdown: string): FrontmatterParseResult {
 }
 
 function isExternalReference(pathReference: string): boolean {
-  return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(pathReference)
+  return /^https?:\/\//i.test(pathReference)
     || pathReference.startsWith("#")
     || pathReference.startsWith("mailto:");
+}
+
+function hasUnsupportedScheme(pathReference: string): boolean {
+  return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(pathReference);
 }
 
 export function isSafeCharacterRelativePath(pathReference: string): boolean {
@@ -131,6 +135,9 @@ export function isSafeCharacterRelativePath(pathReference: string): boolean {
   }
   if (isExternalReference(trimmed)) {
     return true;
+  }
+  if (hasUnsupportedScheme(trimmed)) {
+    return false;
   }
   if (
     trimmed.startsWith("/")
