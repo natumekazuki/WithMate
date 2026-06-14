@@ -47,6 +47,8 @@ type SessionHeaderRow = {
   thread_id: string;
 };
 
+type SessionSummaryHeaderRow = Omit<SessionHeaderRow, "character_runtime_snapshot_json">;
+
 type SessionAuditLogCountRow = {
   id: string;
   audit_log_count: number;
@@ -205,7 +207,33 @@ const INSERT_MESSAGE_ARTIFACT_SQL = `
 const GET_SESSION_AUDIT_LOG_COUNT_SQL = "SELECT audit_log_count FROM sessions WHERE id = ?";
 const LIST_SESSION_AUDIT_LOG_COUNTS_SQL = "SELECT id, audit_log_count FROM sessions";
 
-const SESSION_HEADER_COLUMNS = `
+const SESSION_SUMMARY_HEADER_COLUMNS = `
+  id,
+  task_title,
+  status,
+  updated_at,
+  provider,
+  catalog_revision,
+  workspace_label,
+  workspace_path,
+  branch,
+  session_kind,
+  character_id,
+  character_name,
+  character_icon_path,
+  character_theme_main,
+  character_theme_sub,
+  run_state,
+  approval_mode,
+  codex_sandbox_mode,
+  model,
+  reasoning_effort,
+  custom_agent_name,
+  allowed_additional_directories_json,
+  thread_id
+`;
+
+const SESSION_DETAIL_HEADER_COLUMNS = `
   id,
   task_title,
   status,
@@ -234,14 +262,14 @@ const SESSION_HEADER_COLUMNS = `
 
 const LIST_SESSION_SUMMARIES_SQL = `
   SELECT
-    ${SESSION_HEADER_COLUMNS}
+    ${SESSION_SUMMARY_HEADER_COLUMNS}
   FROM sessions
   ORDER BY last_active_at DESC, id DESC
 `;
 
 const GET_SESSION_HEADER_SQL = `
   SELECT
-    ${SESSION_HEADER_COLUMNS}
+    ${SESSION_DETAIL_HEADER_COLUMNS}
   FROM sessions
   WHERE id = ?
 `;
@@ -405,7 +433,10 @@ function preview(value: string): string {
   return value.length > V3_TEXT_PREVIEW_MAX_LENGTH ? value.slice(0, V3_TEXT_PREVIEW_MAX_LENGTH) : value;
 }
 
-function parseAllowedAdditionalDirectories(row: SessionHeaderRow, mode: SessionRowParseMode): string[] | null {
+function parseAllowedAdditionalDirectories(
+  row: Pick<SessionHeaderRow, "allowed_additional_directories_json" | "id">,
+  mode: SessionRowParseMode,
+): string[] | null {
   try {
     const parsed = JSON.parse(row.allowed_additional_directories_json);
     return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === "string") : null;
@@ -422,7 +453,7 @@ function parseAllowedAdditionalDirectories(row: SessionHeaderRow, mode: SessionR
   }
 }
 
-function rowToSessionSummary(row: SessionHeaderRow, mode: SessionRowParseMode = "skip"): SessionSummary | null {
+function rowToSessionSummary(row: SessionSummaryHeaderRow, mode: SessionRowParseMode = "skip"): SessionSummary | null {
   const allowedAdditionalDirectories = parseAllowedAdditionalDirectories(row, mode);
   if (!allowedAdditionalDirectories) {
     return null;
@@ -446,7 +477,6 @@ function rowToSessionSummary(row: SessionHeaderRow, mode: SessionRowParseMode = 
       main: row.character_theme_main,
       sub: row.character_theme_sub,
     },
-    characterRuntimeSnapshot: parseCharacterRuntimeSnapshotJson(row.character_runtime_snapshot_json),
     runState: row.run_state,
     approvalMode: row.approval_mode,
     codexSandboxMode: row.codex_sandbox_mode,
@@ -853,7 +883,7 @@ export class SessionStorageV3 {
 
   async listSessionSummaries(): Promise<SessionSummary[]> {
     return this.withDb((db) => {
-      const rows = db.prepare(LIST_SESSION_SUMMARIES_SQL).all() as SessionHeaderRow[];
+      const rows = db.prepare(LIST_SESSION_SUMMARIES_SQL).all() as SessionSummaryHeaderRow[];
       return cloneSessionSummaries(
         rows.map((row) => rowToSessionSummary(row)).filter((session): session is SessionSummary => session !== null),
       );

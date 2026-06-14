@@ -59,12 +59,19 @@ export function stringifyCharacterRuntimeSnapshot(
   return snapshot ? JSON.stringify(snapshot) : "";
 }
 
+function buildMarkdownFence(content: string): string {
+  const longestBacktickRun = Math.max(2, ...[...content.matchAll(/`+/g)].map((match) => match[0].length));
+  return "`".repeat(longestBacktickRun + 1);
+}
+
 export function buildCharacterRuntimePromptSection(
   snapshot: CharacterRuntimeSnapshot | null | undefined,
 ): string {
-  if (!snapshot?.definitionMarkdown.trim()) {
+  const definitionMarkdown = snapshot?.definitionMarkdown.trim() ?? "";
+  if (!definitionMarkdown) {
     return "";
   }
+  const fence = buildMarkdownFence(definitionMarkdown);
 
   return [
     "# Character Definition Snapshot",
@@ -72,8 +79,8 @@ export function buildCharacterRuntimePromptSection(
     "以下はこの session / companion 開始時点で保存された Character 定義です。現在の Character catalog ではなく、この snapshot を runtime の人格・話し方・振る舞いの正本として扱ってください。",
     "`character-notes.md` や Memory / Growth history は V5 Core runtime prompt には常設注入しません。",
     "",
-    "```markdown",
-    snapshot.definitionMarkdown.trim(),
-    "```",
+    `${fence}markdown`,
+    definitionMarkdown,
+    fence,
   ].join("\n");
 }

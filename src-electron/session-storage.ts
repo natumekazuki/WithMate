@@ -54,7 +54,7 @@ type SessionIdRow = {
   id: string;
 };
 
-type SessionSummaryRow = Omit<SessionRow, "messages_json" | "stream_json">;
+type SessionSummaryRow = Omit<SessionRow, "character_runtime_snapshot_json" | "messages_json" | "stream_json">;
 
 type TableColumnRow = {
   name: string;
@@ -116,7 +116,6 @@ const SESSION_SUMMARY_SELECT_COLUMNS = `
   character_icon_path,
   character_theme_main,
   character_theme_sub,
-  character_runtime_snapshot_json,
   run_state,
   approval_mode,
   codex_sandbox_mode,

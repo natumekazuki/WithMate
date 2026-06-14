@@ -313,4 +313,42 @@ describe("composeProviderPrompt", () => {
     assert.equal(prompt.logicalPrompt.inputText, prompt.inputBodyText);
     assertSectionOrder(prompt.logicalPrompt.composedText, ["# Character Definition Snapshot", "続けて"]);
   });
+
+  it("character.md 内の code fence より長い外側 fence で snapshot を囲む", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      characterId: "character-1",
+      character: "Saved Character",
+      characterIconPath: "",
+      characterThemeColors,
+      characterRuntimeSnapshot: createCharacterRuntimeSnapshot({
+        definitionMarkdown: [
+          "# Examples",
+          "```ts",
+          "console.log(\"triple fence\");",
+          "```",
+          "````markdown",
+          "quad fence",
+          "````",
+        ].join("\n"),
+      }),
+      approvalMode: "untrusted",
+    });
+
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "続けて",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+    });
+
+    assert.match(prompt.systemBodyText, /`````markdown\n# Examples/);
+    assert.match(prompt.systemBodyText, /````\n`````$/);
+  });
 });

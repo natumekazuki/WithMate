@@ -75,6 +75,8 @@ type CompanionSessionRow = {
   updated_at: string;
 };
 
+type CompanionSessionSummaryRow = Omit<CompanionSessionRow, "character_runtime_snapshot_json">;
+
 type CompanionMessageRow = {
   role: string;
   text_preview: string;
@@ -144,7 +146,43 @@ const INSERT_BLOB_OBJECT_SQL = `
 const DELETE_BLOB_OBJECT_SQL = "DELETE FROM blob_objects WHERE blob_id = ?";
 const IS_BLOB_OBJECT_PERSISTED_SQL = "SELECT 1 FROM blob_objects WHERE blob_id = ? LIMIT 1";
 
-const COMPANION_SESSION_COLUMNS = `
+const COMPANION_SESSION_SUMMARY_COLUMNS = `
+  id,
+  group_id,
+  task_title,
+  status,
+  repo_root,
+  focus_path,
+  target_branch,
+  base_snapshot_ref,
+  base_snapshot_commit,
+  companion_branch,
+  worktree_path,
+  selected_paths_json,
+  changed_files_summary_json,
+  sibling_warnings_summary_json,
+  allowed_additional_directories_json,
+  run_state,
+  thread_id,
+  provider,
+  catalog_revision,
+  model,
+  reasoning_effort,
+  custom_agent_name,
+  approval_mode,
+  codex_sandbox_mode,
+  character_id,
+  character_name,
+  character_role_preview,
+  character_role_blob_id,
+  character_icon_path,
+  character_theme_main,
+  character_theme_sub,
+  created_at,
+  updated_at
+`;
+
+const COMPANION_SESSION_DETAIL_COLUMNS = `
   id,
   group_id,
   task_title,
@@ -557,7 +595,7 @@ function sessionToSummary(
 }
 
 function rowToSessionSummary(
-  row: CompanionSessionRow,
+  row: CompanionSessionSummaryRow,
   latestMergeRun: CompanionMergeRunSummary | null = null,
 ): CompanionSessionSummary {
   return {
@@ -866,27 +904,27 @@ export class CompanionStorageV3 {
 
   async listSessionSummaries(): Promise<CompanionSessionSummary[]> {
     const rows = this.db.prepare(`
-      SELECT ${COMPANION_SESSION_COLUMNS}
+      SELECT ${COMPANION_SESSION_SUMMARY_COLUMNS}
       FROM companion_sessions
       WHERE status NOT IN ('merged', 'discarded')
       ORDER BY updated_at DESC, id DESC
-    `).all() as CompanionSessionRow[];
+    `).all() as CompanionSessionSummaryRow[];
     return cloneCompanionSessionSummaries(await this.rowsToSummaries(rows, true));
   }
 
   async listActiveSessionSummaries(): Promise<CompanionSessionSummary[]> {
     const rows = this.db.prepare(`
-      SELECT ${COMPANION_SESSION_COLUMNS}
+      SELECT ${COMPANION_SESSION_SUMMARY_COLUMNS}
       FROM companion_sessions
       WHERE status = 'active'
       ORDER BY updated_at DESC, id DESC
-    `).all() as CompanionSessionRow[];
+    `).all() as CompanionSessionSummaryRow[];
     return cloneCompanionSessionSummaries(await this.rowsToSummaries(rows, false));
   }
 
   async getSession(sessionId: string): Promise<CompanionSession | null> {
     const row = this.db.prepare(`
-      SELECT ${COMPANION_SESSION_COLUMNS}
+      SELECT ${COMPANION_SESSION_DETAIL_COLUMNS}
       FROM companion_sessions
       WHERE id = ?
     `).get(sessionId) as CompanionSessionRow | undefined;
@@ -1040,7 +1078,7 @@ export class CompanionStorageV3 {
   private insertSessionRow(session: CompanionSession, payload: StoredCompanionSessionPayload): void {
     this.db.prepare(`
       INSERT INTO companion_sessions (
-        ${COMPANION_SESSION_COLUMNS},
+        ${COMPANION_SESSION_DETAIL_COLUMNS},
         message_count
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
@@ -1220,7 +1258,7 @@ export class CompanionStorageV3 {
     return Promise.all(rows.map((row) => rowToMessage(row, this.blobStore)));
   }
 
-  private async rowsToSummaries(rows: CompanionSessionRow[], includeLatestMergeRun: boolean): Promise<CompanionSessionSummary[]> {
+  private async rowsToSummaries(rows: CompanionSessionSummaryRow[], includeLatestMergeRun: boolean): Promise<CompanionSessionSummary[]> {
     const summaries: CompanionSessionSummary[] = [];
     for (const row of rows) {
       summaries.push(rowToSessionSummary(
