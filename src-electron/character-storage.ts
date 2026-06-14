@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -17,12 +17,10 @@ import {
   type CharacterRuntimeSnapshot,
   type CharacterTheme,
   type CreateCharacterInput,
-  type ImportCharacterFilesResult,
   type ResolveLaunchCharacterInput,
   type UpdateCharacterDefinitionInput,
   type UpdateCharacterMetadataInput,
 } from "../src/character/character-catalog.js";
-import { parseCharacterImportFiles } from "./character-files-import.js";
 import {
   APP_DATABASE_V4_FILENAME,
   assertV4SchemaInitializationAllowed,
@@ -355,42 +353,6 @@ export class CharacterStorage {
       throw new Error("作成した Character を読み込めませんでした。");
     }
     return created;
-  }
-
-  importCharacterFiles(filePaths: string[]): ImportCharacterFilesResult {
-    const imported = parseCharacterImportFiles(filePaths);
-    const created = this.createCharacter({
-      name: imported.name,
-      description: imported.description,
-      definitionMarkdown: imported.definitionMarkdown,
-      notesMarkdown: imported.notesMarkdown,
-    });
-
-    try {
-      let character = created;
-      if (imported.assets.length > 0) {
-        const assetsDirectory = path.join(this.characterDirectory(created.id), "assets");
-        mkdirSync(assetsDirectory, { recursive: true });
-        for (const asset of imported.assets) {
-          writeFileSync(path.join(assetsDirectory, asset.fileName), asset.data);
-        }
-        if (imported.iconFileName) {
-          character = this.updateCharacterMetadata({
-            characterId: created.id,
-            iconFilePath: path.join(assetsDirectory, imported.iconFileName),
-          });
-        }
-      }
-
-      return {
-        character,
-        importedFiles: imported.importedFiles,
-      };
-    } catch (error) {
-      this.db.prepare("DELETE FROM characters WHERE id = ?").run(created.id);
-      rmSync(this.characterDirectory(created.id), { recursive: true, force: true });
-      throw error;
-    }
   }
 
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): CharacterDetail {

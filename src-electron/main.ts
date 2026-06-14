@@ -44,7 +44,6 @@ import {
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
-import type { ImportCharacterFilesResult } from "../src/character/character-catalog.js";
 import type {
   OpenPathOptions,
   SavePastedSessionFileRequest,
@@ -1114,7 +1113,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 listCharacters: (options) => requireCharacterService().listCharacters(options ?? undefined),
                 getCharacter: (characterId) => requireCharacterService().getCharacter(characterId),
                 createCharacter: (input) => requireCharacterService().createCharacter(input),
-                importCharacterFiles: async (targetWindow) => importCharacterFiles(targetWindow),
                 updateCharacterMetadata: (input) => requireCharacterService().updateCharacterMetadata(input),
                 updateCharacterDefinition: (input) => requireCharacterService().updateCharacterDefinition(input),
                 archiveCharacter: (characterId) => requireCharacterService().archiveCharacter(characterId),
@@ -2744,14 +2742,6 @@ async function openSettingsWindow(): Promise<BrowserWindow> {
 
 async function openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {
   return requireMainWindowFacade().openCharacterEditorWindow(characterId);
-}
-
-async function importCharacterFiles(targetWindow?: BrowserWindow | null): Promise<ImportCharacterFilesResult | null> {
-  const selectedPaths = await requireWindowDialogService().pickFiles(targetWindow, null);
-  if (selectedPaths.length === 0) {
-    return null;
-  }
-  return requireCharacterService().importCharacterFiles(selectedPaths);
 }
 
 async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {

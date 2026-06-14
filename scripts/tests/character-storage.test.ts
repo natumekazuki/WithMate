@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -156,55 +156,4 @@ describe("CharacterStorage", () => {
     }
   });
 
-  it("importCharacterFiles は character.md / notes / icon asset を取り込む", async () => {
-    const { dbPath, userDataPath, cleanup } = await createTempPaths();
-    let storage: CharacterStorage | null = null;
-
-    try {
-      storage = new CharacterStorage(dbPath, userDataPath);
-      const importDirectory = path.join(userDataPath, "sophia-import");
-      await mkdir(path.join(importDirectory, "assets"), { recursive: true });
-      const definitionPath = path.join(importDirectory, "character.md");
-      const notesPath = path.join(importDirectory, "character-notes.md");
-      const readmePath = path.join(importDirectory, "README.md");
-      const iconPath = path.join(importDirectory, "assets", "icon.png");
-      await writeFile(definitionPath, validDefinition("Sophia").replace('description: ""', 'description: "Spy style"'), "utf8");
-      await writeFile(notesPath, "# Character Notes\n\n- source memo\n", "utf8");
-      await writeFile(readmePath, "# Character README\n\nImport note.\n", "utf8");
-      await writeFile(iconPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-
-      const result = storage.importCharacterFiles([definitionPath, notesPath, readmePath, iconPath]);
-
-      assert.equal(result.character.name, "Sophia");
-      assert.equal(result.character.description, "Spy style");
-      assert.match(result.character.notesMarkdown, /source memo/);
-      assert.match(result.character.notesMarkdown, /Imported README/);
-      assert.equal(result.importedFiles.includes("character.md"), true);
-      assert.match(result.character.iconFilePath, /characters[\\/]+sophia[\\/]+assets[\\/]+icon\.png$/);
-      assert.deepEqual(await readFile(result.character.iconFilePath), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-    } finally {
-      storage?.close();
-      await cleanup();
-    }
-  });
-
-  it("importCharacterFiles は character.md がない import を拒否する", async () => {
-    const { dbPath, userDataPath, cleanup } = await createTempPaths();
-    let storage: CharacterStorage | null = null;
-
-    try {
-      storage = new CharacterStorage(dbPath, userDataPath);
-      const notesPath = path.join(userDataPath, "character-notes.md");
-      await writeFile(notesPath, "# Character Notes\n", "utf8");
-
-      assert.throws(
-        () => storage?.importCharacterFiles([notesPath]),
-        /character\.md が含まれていません/,
-      );
-      assert.deepEqual(storage.listCharacters(), []);
-    } finally {
-      storage?.close();
-      await cleanup();
-    }
-  });
 });

@@ -9,7 +9,6 @@ import type {
   CharacterDetail,
   CharacterRuntimeSnapshot,
   CreateCharacterInput,
-  ImportCharacterFilesResult,
   ResolveLaunchCharacterInput,
   UpdateCharacterDefinitionInput,
   UpdateCharacterMetadataInput,
@@ -88,7 +87,6 @@ export type CharacterStorageAccess = {
   listCharacters(options?: { includeArchived?: boolean }): CharacterCatalogEntry[];
   getCharacter(characterId: string): CharacterDetail | null;
   createCharacter(input: CreateCharacterInput): CharacterDetail;
-  importCharacterFiles(filePaths: string[]): ImportCharacterFilesResult;
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): CharacterDetail;
   updateCharacterDefinition(input: UpdateCharacterDefinitionInput): CharacterDetail;
   archiveCharacter(characterId: string): CharacterCatalogEntry;
@@ -341,10 +339,6 @@ class LegacyCharacterStorage implements CharacterStorageAccess {
   }
 
   createCharacter(): CharacterDetail {
-    throw new Error("Character catalog は legacy DB では利用できません。");
-  }
-
-  importCharacterFiles(): ImportCharacterFilesResult {
     throw new Error("Character catalog は legacy DB では利用できません。");
   }
 

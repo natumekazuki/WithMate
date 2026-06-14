@@ -29,7 +29,6 @@ import type {
   CharacterCatalogEntry,
   CharacterDetail,
   CreateCharacterInput,
-  ImportCharacterFilesResult,
   ResolveLaunchCharacterInput,
   UpdateCharacterDefinitionInput,
   UpdateCharacterMetadataInput,
@@ -217,7 +216,6 @@ export type MainIpcCharacterDepsArgs = {
   listCharacters(options?: { includeArchived?: boolean } | null): Awaitable<CharacterCatalogEntry[]>;
   getCharacter(characterId: string): Awaitable<CharacterDetail | null>;
   createCharacter(input: CreateCharacterInput): Awaitable<CharacterDetail>;
-  importCharacterFiles(targetWindow?: MaybeWindow): Awaitable<ImportCharacterFilesResult | null>;
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): Awaitable<CharacterDetail>;
   updateCharacterDefinition(input: UpdateCharacterDefinitionInput): Awaitable<CharacterDetail>;
   archiveCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
@@ -379,7 +377,6 @@ export function createMainIpcRegistrationDeps(
     listCharacters: args.character.listCharacters,
     getCharacter: args.character.getCharacter,
     createCharacter: args.character.createCharacter,
-    importCharacterFiles: args.character.importCharacterFiles,
     updateCharacterMetadata: args.character.updateCharacterMetadata,
     updateCharacterDefinition: args.character.updateCharacterDefinition,
     archiveCharacter: args.character.archiveCharacter,

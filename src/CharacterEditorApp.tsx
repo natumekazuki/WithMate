@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { CharacterDetail, CharacterRuntimeSnapshot } from "./character/character-catalog.js";
+import { parseCharacterDefinitionMarkdown } from "./character/character-definition.js";
 import { buildCharacterRuntimePromptSection } from "./character/character-runtime-snapshot.js";
 import {
   buildCharacterEditorValidationSummary,
@@ -49,9 +50,9 @@ export default function CharacterEditorApp() {
   const [selectedTab, setSelectedTab] = useState<CharacterEditorTab>("profile");
   const [loading, setLoading] = useState(Boolean(initialCharacterId));
   const [saving, setSaving] = useState(false);
-  const [importingFiles, setImportingFiles] = useState(false);
   const [feedback, setFeedback] = useState("");
   const definitionImportInputRef = useRef<HTMLInputElement | null>(null);
+  const notesImportInputRef = useRef<HTMLInputElement | null>(null);
 
   const validation = useMemo(() => buildCharacterEditorValidationSummary(draft), [draft]);
   const dirty = isCharacterEditorDraftDirty(draft, persistedDetail);
@@ -201,43 +202,6 @@ export default function CharacterEditorApp() {
     }
   };
 
-  const importCharacterFiles = async () => {
-    if (archived || importingFiles) {
-      return;
-    }
-    if (dirty && !window.confirm("未保存の編集があります。\n\n選択した Character files を import すると、作成された Character に表示を切り替えます。続行しますか？")) {
-      return;
-    }
-
-    const api = getWithMateApi();
-    if (!api) {
-      setFeedback("Character Editor は Electron から開いてください。");
-      return;
-    }
-
-    setImportingFiles(true);
-    setFeedback("Character files を読み込んでいます...");
-    try {
-      const result = await api.importCharacterFiles();
-      if (!result) {
-        setFeedback("");
-        return;
-      }
-
-      setPersistedDetail(result.character);
-      setDraft(createCharacterEditorDraftFromDetail(result.character));
-      setSelectedTab("profile");
-      setFeedback(`${result.character.name} を import しました。${result.importedFiles.length} files processed.`);
-      const nextUrl = new URL(window.location.href);
-      nextUrl.searchParams.set("characterId", result.character.id);
-      window.history.replaceState(null, "", nextUrl);
-    } catch (error) {
-      setFeedback(formatCharacterEditorError(error, "Character files の import に失敗しました。"));
-    } finally {
-      setImportingFiles(false);
-    }
-  };
-
   const archiveCharacter = async () => {
     const api = getWithMateApi();
     if (!api || !draft.characterId || archived) {
@@ -278,7 +242,7 @@ export default function CharacterEditorApp() {
     window.close();
   };
 
-  const pickIcon = async () => {
+  const importIconImage = async () => {
     if (archived) {
       return;
     }
@@ -286,6 +250,8 @@ export default function CharacterEditorApp() {
     const selected = await api?.pickImageFile(draft.iconFilePath || null);
     if (selected) {
       updateDraft({ iconFilePath: selected });
+      setSelectedTab("profile");
+      setFeedback("画像を icon に読み込みました。保存するまで反映されません。");
     }
   };
 
@@ -297,12 +263,43 @@ export default function CharacterEditorApp() {
         return;
       }
 
-      setDraft((current) => replaceCharacterDefinitionDraft(current, reader.result as string));
+      const markdown = reader.result as string;
+      const parsed = parseCharacterDefinitionMarkdown(markdown);
+      setDraft((current) => replaceCharacterDefinitionDraft(
+        current,
+        markdown,
+        parsed.ok
+          ? {
+              name: parsed.value.frontmatter.name,
+              description: parsed.value.frontmatter.description,
+            }
+          : undefined,
+      ));
       setSelectedTab("definition");
-      setFeedback(`${file.name} を character.md draft に読み込みました。保存するまで反映されません。`);
+      setFeedback(parsed.ok
+        ? `${file.name} を character.md draft に読み込み、name / description も反映しました。保存するまで反映されません。`
+        : `${file.name} を character.md draft に読み込みました。validation issue を確認してください。`);
     };
     reader.onerror = () => {
       setFeedback("character.md の読み込みに失敗しました。");
+    };
+    reader.readAsText(file);
+  };
+
+  const importCharacterNotesFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        setFeedback("character-notes.md の読み込みに失敗しました。");
+        return;
+      }
+
+      updateDraft({ notesMarkdown: reader.result as string });
+      setSelectedTab("notes");
+      setFeedback(`${file.name} を character-notes.md draft に読み込みました。保存するまで反映されません。`);
+    };
+    reader.onerror = () => {
+      setFeedback("character-notes.md の読み込みに失敗しました。");
     };
     reader.readAsText(file);
   };
@@ -333,9 +330,6 @@ export default function CharacterEditorApp() {
           </div>
           <div className="character-editor-header-actions">
             <span className="settings-character-badge">{archived ? "Archived" : saving ? "Saving" : dirty ? "Unsaved" : "Saved"}</span>
-            <button className="launch-toggle" type="button" onClick={importCharacterFiles} disabled={archived || saving || importingFiles}>
-              {importingFiles ? "Importing..." : "Import Files"}
-            </button>
             <button className="launch-toggle" type="button" onClick={closeWindow}>
               Close
             </button>
@@ -362,14 +356,14 @@ export default function CharacterEditorApp() {
               <div className="settings-character-form-grid">
                 <label className="settings-provider-input">
                   <span>Name</span>
-                  <input value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} disabled={archived || importingFiles} />
+                  <input value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} disabled={archived} />
                 </label>
                 <label className="settings-provider-input">
                   <span>Description</span>
                   <input
                     value={draft.description}
                     onChange={(event) => updateDraft({ description: event.target.value })}
-                    disabled={archived || importingFiles}
+                    disabled={archived}
                   />
                 </label>
                 <label className="settings-provider-input">
@@ -378,10 +372,10 @@ export default function CharacterEditorApp() {
                     <input
                       value={draft.iconFilePath}
                       onChange={(event) => updateDraft({ iconFilePath: event.target.value })}
-                      disabled={archived || importingFiles}
+                      disabled={archived}
                     />
-                    <button className="launch-toggle compact" type="button" onClick={pickIcon} disabled={archived || importingFiles}>
-                      Browse
+                    <button className="launch-toggle compact" type="button" onClick={importIconImage} disabled={archived}>
+                      Import Image
                     </button>
                   </div>
                 </label>
@@ -392,7 +386,7 @@ export default function CharacterEditorApp() {
                       type="color"
                       value={draft.theme.main}
                       onChange={(event) => updateDraft({ theme: { ...draft.theme, main: event.target.value } })}
-                      disabled={archived || importingFiles}
+                      disabled={archived}
                     />
                   </label>
                   <label className="settings-provider-input">
@@ -401,7 +395,7 @@ export default function CharacterEditorApp() {
                       type="color"
                       value={draft.theme.sub}
                       onChange={(event) => updateDraft({ theme: { ...draft.theme, sub: event.target.value } })}
-                      disabled={archived || importingFiles}
+                      disabled={archived}
                     />
                   </label>
                 </div>
@@ -411,7 +405,7 @@ export default function CharacterEditorApp() {
                   className="launch-toggle"
                   type="button"
                   onClick={setDefaultCharacter}
-                  disabled={saving || importingFiles || archived || draft.mode !== "edit" || draft.isDefault}
+                  disabled={saving || archived || draft.mode !== "edit" || draft.isDefault}
                 >
                   Set Default
                 </button>
@@ -428,7 +422,7 @@ export default function CharacterEditorApp() {
                   className="launch-toggle compact"
                   type="button"
                   onClick={() => definitionImportInputRef.current?.click()}
-                  disabled={archived || importingFiles}
+                  disabled={archived}
                 >
                   Import / Replace
                 </button>
@@ -440,7 +434,7 @@ export default function CharacterEditorApp() {
                 type="file"
                 accept=".md,text/markdown,text/plain"
                 className="settings-character-import-input"
-                disabled={archived || importingFiles}
+                disabled={archived}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   if (file) {
@@ -453,7 +447,7 @@ export default function CharacterEditorApp() {
                 className="settings-character-markdown-textarea character-editor-textarea"
                 value={draft.definitionMarkdown}
                 onChange={(event) => updateDraft({ definitionMarkdown: event.target.value })}
-                disabled={archived || importingFiles}
+                disabled={archived}
                 spellCheck={false}
               />
             </section>
@@ -461,14 +455,38 @@ export default function CharacterEditorApp() {
 
           {!loading && selectedTab === "notes" ? (
             <section className="settings-section-card character-editor-card character-editor-markdown-card">
-              <strong>character-notes.md</strong>
+              <div className="settings-section-head-row">
+                <strong>character-notes.md</strong>
+                <button
+                  className="launch-toggle compact"
+                  type="button"
+                  onClick={() => notesImportInputRef.current?.click()}
+                  disabled={archived}
+                >
+                  Import / Replace
+                </button>
+              </div>
               <p className="settings-help">調査メモ、採用理由、改稿履歴用です。V5 Core では runtime prompt に常設注入しません。</p>
               <ValidationList issues={validation.notesIssues} emptyLabel="character-notes.md validation OK" />
+              <input
+                ref={notesImportInputRef}
+                type="file"
+                accept=".md,text/markdown,text/plain"
+                className="settings-character-import-input"
+                disabled={archived}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) {
+                    importCharacterNotesFile(file);
+                  }
+                  event.currentTarget.value = "";
+                }}
+              />
               <textarea
                 className="settings-character-notes-textarea character-editor-textarea"
                 value={draft.notesMarkdown}
                 onChange={(event) => updateDraft({ notesMarkdown: event.target.value })}
-                disabled={archived || importingFiles}
+                disabled={archived}
                 spellCheck={false}
               />
             </section>
@@ -495,12 +513,12 @@ export default function CharacterEditorApp() {
             className="launch-toggle danger-button"
             type="button"
             onClick={archiveCharacter}
-            disabled={saving || importingFiles || archived || draft.mode !== "edit"}
+            disabled={saving || archived || draft.mode !== "edit"}
           >
             Archive
           </button>
           <span>{feedback}</span>
-          <button className="launch-toggle start-session-button" type="button" onClick={saveCharacter} disabled={saving || importingFiles || archived || !dirty}>
+          <button className="launch-toggle start-session-button" type="button" onClick={saveCharacter} disabled={saving || archived || !dirty}>
             Save
           </button>
         </footer>

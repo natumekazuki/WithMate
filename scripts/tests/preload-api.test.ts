@@ -86,10 +86,6 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:create-character",
     args: [{ name: "Mia" }],
   });
-  assert.deepEqual(await api.importCharacterFiles(), {
-    channel: "withmate:import-character-files",
-    args: [],
-  });
   assert.deepEqual(await api.updateCharacterMetadata({ characterId: "char-1", name: "Mia 2" }), {
     channel: "withmate:update-character-metadata",
     args: [{ characterId: "char-1", name: "Mia 2" }],
@@ -226,7 +222,6 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getSessionBackgroundActivity",
     "getSessionContextTelemetry",
     "getSessionMessageArtifact",
-    "importCharacterFiles",
     "importModelCatalog",
     "importModelCatalogFile",
     "listAuxiliarySessions",

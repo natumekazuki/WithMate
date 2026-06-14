@@ -35,11 +35,6 @@ export type CreateCharacterInput = {
   setDefault?: boolean;
 };
 
-export type ImportCharacterFilesResult = {
-  character: CharacterDetail;
-  importedFiles: string[];
-};
-
 export type UpdateCharacterMetadataInput = {
   characterId: string;
   name?: string;

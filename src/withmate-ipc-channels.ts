@@ -51,7 +51,6 @@ export const WITHMATE_RESET_MATE_CHANNEL = "withmate:reset-mate";
 export const WITHMATE_LIST_CHARACTERS_CHANNEL = "withmate:list-characters";
 export const WITHMATE_GET_CHARACTER_CHANNEL = "withmate:get-character";
 export const WITHMATE_CREATE_CHARACTER_CHANNEL = "withmate:create-character";
-export const WITHMATE_IMPORT_CHARACTER_FILES_CHANNEL = "withmate:import-character-files";
 export const WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL = "withmate:update-character-metadata";
 export const WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL = "withmate:update-character-definition";
 export const WITHMATE_ARCHIVE_CHARACTER_CHANNEL = "withmate:archive-character";
