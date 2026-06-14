@@ -20,6 +20,21 @@
 npm run electron:start
 ```
 
+## V5 Character Core Release Gate
+
+| ID | 領域 | 手順 | 期待結果 |
+| --- | --- | --- | --- |
+| V5C-001 | Character 0 件 fallback | Character catalog が 0 件の状態で Home を起動し、`New Session` と Companion 起動 dialog を開く | 起動導線は SingleMate / Mate 未作成 gate に戻らず、neutral fallback の Character 表示で session / companion を開始できる |
+| V5C-002 | Character A / B 登録 | Settings の `Characters` で Character A と Character B を作成し、それぞれ name / description / icon / theme / `character.md` を保存する | 一覧に A / B が表示され、Settings を開き直しても metadata と `character.md` が保持される |
+| V5C-003 | Default Character | Character B を default に設定し、Home の `New Session` を開く | Character selector の初期選択が B になり、Character name / icon / theme preview が selector と作成後の session summary に反映される |
+| V5C-004 | New Session explicit selection | `New Session` で Character A を明示選択して session を作成する | 作成された Session Window と Home summary は Character A の name / icon / theme を表示し、B へ default を戻しても既存 session の表示は A のまま残る |
+| V5C-005 | Companion explicit selection | Companion 起動で Character A / B をそれぞれ選んで companion session を作成する | Companion session summary と Companion Review UI に選択した Character の name / icon / theme が反映される |
+| V5C-006 | Snapshot boundary | Character A で session を作成した後、Settings で Character A の `character.md` を別内容へ変更し、既存 session で 1 turn 実行する | provider prompt は session 作成時点の saved snapshot を使い、現在の catalog 内容へ置き換わらない |
+| V5C-007 | Prompt boundary | `character.md` と `character-notes.md` の両方を持つ Character で 1 turn 実行し、Audit Log の `Logical Prompt` / `Transport Payload` を確認する | `character.md` snapshot は system 側に入る。`character-notes.md`、Memory / Growth history、provider instruction sync 由来の Character 書き込みは常設注入されない |
+| V5C-008 | Markdown fence boundary | `character.md` に triple backtick と quadruple backtick の code fence を含め、session を作成して 1 turn 実行する | Character Definition Snapshot section の外側 fence が壊れず、definition 全体が 1 つの markdown block として扱われる |
+| V5C-009 | Legacy compatibility | V5 Core 前に作られた session、または `CharacterRuntimeSnapshot` を持たない session を開いて 1 turn 実行する | session は壊れず実行できる。snapshot が無い session は Character system prompt を空として扱い、messages / audit / approval / thread は従来通り動く |
+| V5C-010 | Summary performance boundary | Character A / B の `character.md` を大きめにして複数 session / companion session を作り、Home session list と Companion summaries を表示する | summary 表示は `character.md` 本文を読み込む必要がなく、一覧表示で大きな定義本文が UI cache や summary payload に出ない |
+
 ## 項目
 
 | ID | 領域 | 手順 | 期待結果 |
@@ -153,4 +168,3 @@ npm run electron:start
 | MT-066 | Copilot selected agent visibility | provider を `GitHub Copilot` にした session で custom agent を選択し、composer の `Agent` ボタンを見る | `Agent` ボタン自体が現在値を表示し、`Default Agent` と custom agent 名を見分けられる |
 | MT-067 | Window error recovery | Home / Session / Mate Editor / Diff のいずれかで renderer render error を再現する | window-level fallback が出て、`再試行` で再描画を試せる。復帰しない場合も `再読み込み` が使える |
 | MT-067A | Right pane error recovery | `Session Window` の right pane だけで render error を再現する | pane 専用 fallback が出て、`右ペインを再描画` と `Window を再読み込み` の両方が表示される |
-
