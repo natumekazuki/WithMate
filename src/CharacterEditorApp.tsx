@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { CharacterDetail, CharacterRuntimeSnapshot } from "./character/character-catalog.js";
 import { buildCharacterRuntimePromptSection } from "./character/character-runtime-snapshot.js";
 import {
   buildCharacterEditorValidationSummary,
+  buildCreateCharacterInputFromDraft,
   createCharacterEditorDraftFromDetail,
   createNewCharacterEditorDraft,
   formatCharacterEditorError,
   isCharacterEditorDraftDirty,
+  replaceCharacterDefinitionDraft,
   type CharacterEditorDraft,
   type CharacterEditorTab,
   updateCharacterEditorDraft,
@@ -48,9 +50,11 @@ export default function CharacterEditorApp() {
   const [loading, setLoading] = useState(Boolean(initialCharacterId));
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const definitionImportInputRef = useRef<HTMLInputElement | null>(null);
 
   const validation = useMemo(() => buildCharacterEditorValidationSummary(draft), [draft]);
   const dirty = isCharacterEditorDraftDirty(draft, persistedDetail);
+  const archived = draft.state === "archived";
   const themeStyle = useMemo(() => buildCharacterThemeStyle({
     main: draft.theme.main,
     sub: draft.theme.sub,
@@ -120,6 +124,10 @@ export default function CharacterEditorApp() {
       setFeedback("Character Editor は Electron から開いてください。");
       return;
     }
+    if (archived) {
+      setFeedback("Archived Character は保存できません。");
+      return;
+    }
     if (validation.blockingIssues.length > 0) {
       setFeedback("validation issue を解消してから保存してください。");
       setSelectedTab(validation.definitionIssues.length > 0 ? "definition" : "notes");
@@ -130,15 +138,7 @@ export default function CharacterEditorApp() {
     setFeedback("保存しています...");
     try {
       if (draft.mode === "create") {
-        const created = await api.createCharacter({
-          name: draft.name,
-          description: draft.description,
-          iconFilePath: draft.iconFilePath,
-          theme: draft.theme,
-          definitionMarkdown: draft.definitionMarkdown,
-          notesMarkdown: draft.notesMarkdown,
-          setDefault: draft.isDefault,
-        });
+        const created = await api.createCharacter(buildCreateCharacterInputFromDraft(draft));
         setPersistedDetail(created);
         setDraft(createCharacterEditorDraftFromDetail(created));
         setFeedback("Character を作成しました。");
@@ -181,7 +181,7 @@ export default function CharacterEditorApp() {
 
   const setDefaultCharacter = async () => {
     const api = getWithMateApi();
-    if (!api || !draft.characterId || draft.isDefault) {
+    if (!api || !draft.characterId || draft.isDefault || archived) {
       return;
     }
     setSaving(true);
@@ -202,7 +202,7 @@ export default function CharacterEditorApp() {
 
   const archiveCharacter = async () => {
     const api = getWithMateApi();
-    if (!api || !draft.characterId) {
+    if (!api || !draft.characterId || archived) {
       return;
     }
     if (!window.confirm("この Character を archive しますか？\n\nHome list と New Session selector には出なくなります。")) {
@@ -211,8 +211,21 @@ export default function CharacterEditorApp() {
 
     setSaving(true);
     try {
-      await api.archiveCharacter(draft.characterId);
-      setFeedback("Character を archive しました。この window は閉じても大丈夫です。");
+      const archivedCharacter = await api.archiveCharacter(draft.characterId);
+      setDraft((current) => updateCharacterEditorDraft(current, {
+        state: archivedCharacter.state,
+        isDefault: archivedCharacter.isDefault,
+      }));
+      setPersistedDetail((current) => current
+        ? {
+            ...current,
+            state: archivedCharacter.state,
+            isDefault: archivedCharacter.isDefault,
+            archivedAt: archivedCharacter.archivedAt,
+            updatedAt: archivedCharacter.updatedAt,
+          }
+        : current);
+      setFeedback("Character を archive しました。Home list と New Session selector には表示されません。");
     } catch (error) {
       setFeedback(formatCharacterEditorError(error, "Character の archive に失敗しました。"));
     } finally {
@@ -228,12 +241,35 @@ export default function CharacterEditorApp() {
   };
 
   const pickIcon = async () => {
+    if (archived) {
+      return;
+    }
     const api = getWithMateApi();
     const selected = await api?.pickImageFile(draft.iconFilePath || null);
     if (selected) {
       updateDraft({ iconFilePath: selected });
     }
   };
+
+  const importCharacterDefinitionFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        setFeedback("character.md の読み込みに失敗しました。");
+        return;
+      }
+
+      setDraft((current) => replaceCharacterDefinitionDraft(current, reader.result as string));
+      setSelectedTab("definition");
+      setFeedback(`${file.name} を character.md draft に読み込みました。保存するまで反映されません。`);
+    };
+    reader.onerror = () => {
+      setFeedback("character.md の読み込みに失敗しました。");
+    };
+    reader.readAsText(file);
+  };
+
+  const modeLabel = archived ? "Archived Character" : draft.mode === "create" ? "Create Character" : "Edit Character";
 
   if (!desktopRuntime) {
     return (
@@ -252,13 +288,13 @@ export default function CharacterEditorApp() {
           <div className="character-editor-heading">
             <CharacterAvatar character={{ name: draft.name, iconPath: draft.iconFilePath }} size="large" />
             <div>
-              <p className="settings-note">{draft.mode === "create" ? "Create Character" : "Edit Character"}</p>
+              <p className="settings-note">{modeLabel}</p>
               <h1>{draft.name || "New Character"}</h1>
               <p>{draft.description || "No description"}</p>
             </div>
           </div>
           <div className="character-editor-header-actions">
-            <span className="settings-character-badge">{saving ? "Saving" : dirty ? "Unsaved" : "Saved"}</span>
+            <span className="settings-character-badge">{archived ? "Archived" : saving ? "Saving" : dirty ? "Unsaved" : "Saved"}</span>
             <button className="launch-toggle" type="button" onClick={closeWindow}>
               Close
             </button>
@@ -285,13 +321,14 @@ export default function CharacterEditorApp() {
               <div className="settings-character-form-grid">
                 <label className="settings-provider-input">
                   <span>Name</span>
-                  <input value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} />
+                  <input value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} disabled={archived} />
                 </label>
                 <label className="settings-provider-input">
                   <span>Description</span>
                   <input
                     value={draft.description}
                     onChange={(event) => updateDraft({ description: event.target.value })}
+                    disabled={archived}
                   />
                 </label>
                 <label className="settings-provider-input">
@@ -300,8 +337,9 @@ export default function CharacterEditorApp() {
                     <input
                       value={draft.iconFilePath}
                       onChange={(event) => updateDraft({ iconFilePath: event.target.value })}
+                      disabled={archived}
                     />
-                    <button className="launch-toggle compact" type="button" onClick={pickIcon}>
+                    <button className="launch-toggle compact" type="button" onClick={pickIcon} disabled={archived}>
                       Browse
                     </button>
                   </div>
@@ -313,6 +351,7 @@ export default function CharacterEditorApp() {
                       type="color"
                       value={draft.theme.main}
                       onChange={(event) => updateDraft({ theme: { ...draft.theme, main: event.target.value } })}
+                      disabled={archived}
                     />
                   </label>
                   <label className="settings-provider-input">
@@ -321,6 +360,7 @@ export default function CharacterEditorApp() {
                       type="color"
                       value={draft.theme.sub}
                       onChange={(event) => updateDraft({ theme: { ...draft.theme, sub: event.target.value } })}
+                      disabled={archived}
                     />
                   </label>
                 </div>
@@ -330,7 +370,7 @@ export default function CharacterEditorApp() {
                   className="launch-toggle"
                   type="button"
                   onClick={setDefaultCharacter}
-                  disabled={saving || draft.mode !== "edit" || draft.isDefault}
+                  disabled={saving || archived || draft.mode !== "edit" || draft.isDefault}
                 >
                   Set Default
                 </button>
@@ -341,13 +381,38 @@ export default function CharacterEditorApp() {
 
           {!loading && selectedTab === "definition" ? (
             <section className="settings-section-card character-editor-card character-editor-markdown-card">
-              <strong>character.md</strong>
+              <div className="settings-section-head-row">
+                <strong>character.md</strong>
+                <button
+                  className="launch-toggle compact"
+                  type="button"
+                  onClick={() => definitionImportInputRef.current?.click()}
+                  disabled={archived}
+                >
+                  Import / Replace
+                </button>
+              </div>
               <p className="settings-help">Runtime definition の正本です。session / companion 開始時に snapshot 化されます。</p>
               <ValidationList issues={validation.definitionIssues} emptyLabel="character.md validation OK" />
+              <input
+                ref={definitionImportInputRef}
+                type="file"
+                accept=".md,text/markdown,text/plain"
+                className="settings-character-import-input"
+                disabled={archived}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) {
+                    importCharacterDefinitionFile(file);
+                  }
+                  event.currentTarget.value = "";
+                }}
+              />
               <textarea
                 className="settings-character-markdown-textarea character-editor-textarea"
                 value={draft.definitionMarkdown}
                 onChange={(event) => updateDraft({ definitionMarkdown: event.target.value })}
+                disabled={archived}
                 spellCheck={false}
               />
             </section>
@@ -362,6 +427,7 @@ export default function CharacterEditorApp() {
                 className="settings-character-notes-textarea character-editor-textarea"
                 value={draft.notesMarkdown}
                 onChange={(event) => updateDraft({ notesMarkdown: event.target.value })}
+                disabled={archived}
                 spellCheck={false}
               />
             </section>
@@ -388,12 +454,12 @@ export default function CharacterEditorApp() {
             className="launch-toggle danger-button"
             type="button"
             onClick={archiveCharacter}
-            disabled={saving || draft.mode !== "edit"}
+            disabled={saving || archived || draft.mode !== "edit"}
           >
             Archive
           </button>
           <span>{feedback}</span>
-          <button className="launch-toggle start-session-button" type="button" onClick={saveCharacter} disabled={saving || !dirty}>
+          <button className="launch-toggle start-session-button" type="button" onClick={saveCharacter} disabled={saving || archived || !dirty}>
             Save
           </button>
         </footer>

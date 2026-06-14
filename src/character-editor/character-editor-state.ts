@@ -1,4 +1,6 @@
 import {
+  type CharacterCatalogState,
+  type CreateCharacterInput,
   DEFAULT_CHARACTER_THEME,
   type CharacterDetail,
   type CharacterTheme,
@@ -14,6 +16,7 @@ export type CharacterEditorTab = "profile" | "definition" | "notes" | "preview";
 export type CharacterEditorDraft = {
   characterId: string | null;
   mode: "create" | "edit";
+  state: CharacterCatalogState;
   name: string;
   description: string;
   iconFilePath: string;
@@ -38,6 +41,7 @@ export function createNewCharacterEditorDraft(name = "New Character"): Character
   return {
     characterId: null,
     mode: "create",
+    state: "active",
     name,
     description: "",
     iconFilePath: "",
@@ -52,6 +56,7 @@ export function createCharacterEditorDraftFromDetail(detail: CharacterDetail): C
   return {
     characterId: detail.id,
     mode: "edit",
+    state: detail.state,
     name: detail.name,
     description: detail.description,
     iconFilePath: detail.iconFilePath,
@@ -76,6 +81,7 @@ export function isCharacterEditorDraftDirty(
   return draft.name !== persistedDetail.name
     || draft.description !== persistedDetail.description
     || draft.iconFilePath !== persistedDetail.iconFilePath
+    || draft.state !== persistedDetail.state
     || draft.theme.main !== persistedDetail.theme.main
     || draft.theme.sub !== persistedDetail.theme.sub
     || draft.definitionMarkdown !== persistedDetail.definitionMarkdown
@@ -112,6 +118,30 @@ export function updateCharacterEditorDraft(
       ? buildDefaultCharacterDefinition(patch.name ?? current.name)
       : patch.definitionMarkdown ?? current.definitionMarkdown,
   };
+}
+
+export function buildCreateCharacterInputFromDraft(draft: CharacterEditorDraft): CreateCharacterInput {
+  const input: CreateCharacterInput = {
+    name: draft.name,
+    description: draft.description,
+    iconFilePath: draft.iconFilePath,
+    theme: draft.theme,
+    definitionMarkdown: draft.definitionMarkdown,
+    notesMarkdown: draft.notesMarkdown,
+  };
+
+  if (draft.isDefault) {
+    input.setDefault = true;
+  }
+
+  return input;
+}
+
+export function replaceCharacterDefinitionDraft(
+  current: CharacterEditorDraft,
+  definitionMarkdown: string,
+): CharacterEditorDraft {
+  return updateCharacterEditorDraft(current, { definitionMarkdown });
 }
 
 export function buildCharacterEditorValidationSummary(

@@ -5,9 +5,11 @@ import { DEFAULT_CHARACTER_THEME, type CharacterDetail } from "../../src/charact
 import {
   buildDefaultCharacterDefinition,
   buildCharacterEditorValidationSummary,
+  buildCreateCharacterInputFromDraft,
   createCharacterEditorDraftFromDetail,
   createNewCharacterEditorDraft,
   isCharacterEditorDraftDirty,
+  replaceCharacterDefinitionDraft,
   updateCharacterEditorDraft,
 } from "../../src/character-editor/character-editor-state.js";
 
@@ -58,7 +60,31 @@ describe("Character editor state", () => {
 
     assert.equal(isCharacterEditorDraftDirty(draft, detail), false);
     assert.equal(isCharacterEditorDraftDirty({ ...draft, description: "changed" }, detail), true);
+    assert.equal(isCharacterEditorDraftDirty({ ...draft, state: "archived" }, detail), true);
     assert.equal(isCharacterEditorDraftDirty(createNewCharacterEditorDraft(), null), true);
+  });
+
+  it("create payload は default fallback を潰す setDefault false を渡さない", () => {
+    const draft = createNewCharacterEditorDraft("Mia");
+
+    assert.deepEqual(buildCreateCharacterInputFromDraft(draft), {
+      name: "Mia",
+      description: "",
+      iconFilePath: "",
+      theme: { ...DEFAULT_CHARACTER_THEME },
+      definitionMarkdown: draft.definitionMarkdown,
+      notesMarkdown: "# Character Notes\n",
+    });
+    assert.equal(buildCreateCharacterInputFromDraft({ ...draft, isDefault: true }).setDefault, true);
+  });
+
+  it("import / replace は character.md draft だけを置き換える", () => {
+    const draft = createNewCharacterEditorDraft("Mia");
+    const replaced = replaceCharacterDefinitionDraft(draft, "---\nschema: withmate-character-v5\nname: Noa\n---\n\n# Noa\n");
+
+    assert.match(replaced.definitionMarkdown, /name: Noa/);
+    assert.equal(replaced.notesMarkdown, draft.notesMarkdown);
+    assert.equal(replaced.name, "Mia");
   });
 
   it("definition / notes validation issue を集約する", () => {
