@@ -1,6 +1,7 @@
 import type { DiffPreviewPayload } from "../src/session-state.js";
 import type { ChatEntryMode, HomeEntryMode, WindowLike } from "./window-entry-loader.js";
 import {
+  CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
   COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
   COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
   DIFF_WINDOW_DEFAULT_BOUNDS,
@@ -33,6 +34,7 @@ export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
   loadDiffEntry(window: TWindow, token: string): Promise<void>;
   loadChatEntry(window: TWindow, mode: ChatEntryMode): Promise<void>;
   loadCompanionMergeReviewEntry(window: TWindow, sessionId: string): Promise<void>;
+  loadCharacterEditorEntry(window: TWindow, characterId?: string | null): Promise<void>;
   generateDiffToken(): string;
   onCompanionReviewWindowsChanged(): void;
 };
@@ -44,6 +46,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   private readonly diffWindows = new Map<string, TWindow>();
   private readonly companionReviewWindows = new Map<string, TWindow>();
   private readonly companionMergeWindows = new Map<string, TWindow>();
+  private readonly characterEditorWindows = new Map<string, TWindow>();
   private readonly diffPreviewStore = new Map<string, DiffPreviewPayload>();
 
   constructor(private readonly deps: AuxWindowServiceDeps<TWindow>) {}
@@ -143,6 +146,27 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return window;
   }
 
+  async openCharacterEditorWindow(characterId?: string | null): Promise<TWindow> {
+    const normalizedCharacterId = characterId?.trim() ?? "";
+    const windowKey = normalizedCharacterId ? `character:${normalizedCharacterId}` : "character:new";
+    const existing = this.reuseWindow(this.characterEditorWindows.get(windowKey) ?? null);
+    if (existing) {
+      return existing;
+    }
+
+    const window = this.deps.createWindow({
+      ...CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
+      title: normalizedCharacterId ? "WithMate Character Editor" : "WithMate New Character",
+    });
+    this.characterEditorWindows.set(windowKey, window);
+    window.once("ready-to-show", () => window.show());
+    window.on("closed", () => {
+      this.characterEditorWindows.delete(windowKey);
+    });
+    await this.deps.loadCharacterEditorEntry(window, normalizedCharacterId || null);
+    return window;
+  }
+
   async openDiffWindow(diffPreview: DiffPreviewPayload): Promise<TWindow> {
     const token = this.deps.generateDiffToken();
     const window = this.deps.createWindow({
@@ -221,6 +245,12 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       }
     }
     this.companionMergeWindows.clear();
+    for (const window of this.characterEditorWindows.values()) {
+      if (!window.isDestroyed()) {
+        window.close();
+      }
+    }
+    this.characterEditorWindows.clear();
   }
 
   private reuseWindow(window: TWindow | null): TWindow | null {

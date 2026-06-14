@@ -41,6 +41,12 @@ export class WindowEntryLoader {
     await this.load(window, "review.html", search);
   }
 
+  async loadCharacterEditorEntry(window: WindowLike, characterId?: string | null): Promise<void> {
+    const normalizedCharacterId = characterId?.trim() ?? "";
+    const search = normalizedCharacterId ? `?characterId=${encodeURIComponent(normalizedCharacterId)}` : "";
+    await this.load(window, "character-editor.html", search);
+  }
+
   private async load(window: WindowLike, entryFileName: string, search: string): Promise<void> {
     const { devServerUrl } = this.deps;
     if (devServerUrl) {

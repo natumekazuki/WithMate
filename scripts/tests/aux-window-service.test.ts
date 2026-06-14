@@ -4,7 +4,12 @@ import test from "node:test";
 import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src/character-state.js";
 import type { DiffPreviewPayload } from "../../src/session-state.js";
 import { AuxWindowService } from "../../src-electron/aux-window-service.js";
-import { COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS, COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS, DIFF_WINDOW_DEFAULT_BOUNDS } from "../../src-electron/window-defaults.js";
+import {
+  CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
+  COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
+  COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
+  DIFF_WINDOW_DEFAULT_BOUNDS,
+} from "../../src-electron/window-defaults.js";
 
 function createWindowStub() {
   let destroyed = false;
@@ -76,6 +81,7 @@ test("AuxWindowService は singleton window を再利用する", async () => {
     async loadDiffEntry() {},
     async loadChatEntry() {},
     async loadCompanionMergeReviewEntry() {},
+    async loadCharacterEditorEntry() {},
     onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "diff-token";
@@ -107,6 +113,7 @@ test("AuxWindowService は diff preview を保持し reset 時に close する",
     },
     async loadChatEntry() {},
     async loadCompanionMergeReviewEntry() {},
+    async loadCharacterEditorEntry() {},
     onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "diff-token";
@@ -146,6 +153,7 @@ test("AuxWindowService は companion chat と merge の entry を分けて開く
     async loadCompanionMergeReviewEntry(_window, sessionId) {
       companionMergeLoads.push(sessionId);
     },
+    async loadCharacterEditorEntry() {},
     onCompanionReviewWindowsChanged() {
       companionReviewWindowChangeCount += 1;
     },
@@ -174,6 +182,49 @@ test("AuxWindowService は companion chat と merge の entry を分けて開く
     {
       ...COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
       title: "Companion Merge - companion-1",
+    },
+  ]);
+});
+
+test("AuxWindowService は Character Editor window を create/edit key ごとに再利用する", async () => {
+  const characterEditorLoads: Array<string | null | undefined> = [];
+  const createdOptions: Array<Record<string, unknown>> = [];
+  const service = new AuxWindowService({
+    createWindow(options) {
+      const stub = createWindowStub();
+      createdOptions.push(options);
+      return stub.window;
+    },
+    async loadHomeEntry() {},
+    async loadDiffEntry() {},
+    async loadChatEntry() {},
+    async loadCompanionMergeReviewEntry() {},
+    async loadCharacterEditorEntry(_window, characterId) {
+      characterEditorLoads.push(characterId);
+    },
+    onCompanionReviewWindowsChanged() {},
+    generateDiffToken() {
+      return "diff-token";
+    },
+  });
+
+  const createWindow = await service.openCharacterEditorWindow();
+  const createWindowReopened = await service.openCharacterEditorWindow(null);
+  const editWindow = await service.openCharacterEditorWindow("char-1");
+  const editWindowReopened = await service.openCharacterEditorWindow("char-1");
+
+  assert.equal(createWindow, createWindowReopened);
+  assert.equal(editWindow, editWindowReopened);
+  assert.notEqual(createWindow, editWindow);
+  assert.deepEqual(characterEditorLoads, [null, "char-1"]);
+  assert.deepEqual(createdOptions, [
+    {
+      ...CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
+      title: "WithMate New Character",
+    },
+    {
+      ...CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
+      title: "WithMate Character Editor",
     },
   ]);
 });

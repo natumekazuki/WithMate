@@ -6565,6 +6565,31 @@ button:disabled {
   height: 100%;
 }
 
+.character-editor-shell {
+  width: min(100%, 1120px);
+  min-height: min(880px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
+}
+
+.character-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.character-editor-header h1 {
+  margin: 4px 0 0;
+  font-size: 22px;
+}
+
+.character-editor-placeholder {
+  padding: 20px;
+}
+
 .character-editor-page {
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   overflow: hidden;

@@ -38,6 +38,14 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-app-boot-status",
     args: [],
   });
+  assert.deepEqual(await api.openCharacterEditorWindow("char-1"), {
+    channel: "withmate:open-character-editor-window",
+    args: ["char-1"],
+  });
+  assert.deepEqual(await api.openCharacterEditorWindow(), {
+    channel: "withmate:open-character-editor-window",
+    args: [null],
+  });
   assert.deepEqual(await api.resetAppDatabase({ targets: ["appSettings"] }), {
     channel: "withmate:reset-app-database",
     args: [{ targets: ["appSettings"] }],
@@ -235,6 +243,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "mergeCompanionSelectedFiles",
     "openCompanionMergeWindow",
     "openCompanionReviewWindow",
+    "openCharacterEditorWindow",
     "openDiffWindow",
     "openHomeWindow",
     "openAppLogFolder",
