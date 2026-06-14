@@ -367,7 +367,23 @@ describe("HomeMateSetupPanel", () => {
 describe("HomeLaunchDialog", () => {
   const noOp = (..._args: unknown[]) => undefined;
 
-  const renderHomeLaunchDialog = (mode: "session" | "companion") => renderToStaticMarkup(
+  const characterOptions = [{
+    id: "mia",
+    name: "Mia",
+    description: "Default character",
+    iconFilePath: "",
+    theme: { main: "#111111", sub: "#eeeeee" },
+    state: "active" as const,
+    isDefault: true,
+    createdAt: "",
+    updatedAt: "",
+    archivedAt: null,
+  }];
+
+  const renderHomeLaunchDialog = (
+    mode: "session" | "companion",
+    options = characterOptions,
+  ) => renderToStaticMarkup(
     <HomeLaunchDialog
       open={true}
       mode={mode}
@@ -376,6 +392,8 @@ describe("HomeLaunchDialog", () => {
       launchWorkspacePathLabel="workspace"
       enabledLaunchProviders={[{ id: "codex", label: "Codex" }]}
       selectedLaunchProviderId="codex"
+      characterOptions={options}
+      selectedCharacterId={options[0]?.id ?? null}
       canStartSession={true}
       launchFeedback=""
       launchStarting={false}
@@ -384,26 +402,32 @@ describe("HomeLaunchDialog", () => {
       onChangeTitle={noOp}
       onBrowseWorkspace={noOp}
       onSelectProvider={noOp}
+      onSelectCharacter={noOp}
       onStartSession={noOp}
     />,
   );
 
-  it("session mode でダイアログにキャラ選択 UI が含まれない", () => {
+  it("session mode でダイアログに Character selector が含まれる", () => {
     const html = renderHomeLaunchDialog("session");
 
-    assert.ok(!html.includes("launch-search-row"));
-    assert.ok(!html.includes("キャラクターを選ぶ"));
-    assert.ok(!html.includes("キャラを選んでね"));
-    assert.ok(!html.includes("Add Character"));
+    assert.ok(html.includes("Character"));
+    assert.ok(html.includes("Mia"));
+    assert.ok(html.includes("Default"));
+    assert.ok(html.includes("Default character"));
   });
 
-  it("companion mode でもダイアログにキャラ選択 UI が含まれない", () => {
+  it("companion mode でも Character selector が含まれる", () => {
     const html = renderHomeLaunchDialog("companion");
 
-    assert.ok(!html.includes("launch-search-row"));
-    assert.ok(!html.includes("キャラクターを選ぶ"));
-    assert.ok(!html.includes("キャラを選んでね"));
-    assert.ok(!html.includes("Add Character"));
+    assert.ok(html.includes("Character"));
+    assert.ok(html.includes("Mia"));
+  });
+
+  it("Character 0 件なら neutral fallback を表示する", () => {
+    const html = renderHomeLaunchDialog("session", []);
+
+    assert.ok(html.includes("WithMate"));
+    assert.ok(html.includes("Neutral"));
   });
 
 });

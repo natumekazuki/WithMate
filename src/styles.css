@@ -2415,6 +2415,70 @@ button:disabled {
   justify-content: flex-end;
 }
 
+.launch-character-list {
+  display: grid;
+  gap: 8px;
+}
+
+.launch-character-option,
+.launch-character-neutral {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  text-align: left;
+}
+
+.launch-character-option {
+  font: inherit;
+  cursor: pointer;
+}
+
+.launch-character-option:hover,
+.launch-character-option.selected {
+  border-color: color-mix(in srgb, var(--character-main) 42%, rgba(203, 213, 225, 0.18));
+  background: color-mix(in srgb, var(--character-main-soft) 34%, rgba(255, 255, 255, 0.04));
+}
+
+.launch-character-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.launch-character-copy strong,
+.launch-character-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launch-character-copy strong {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.launch-character-copy span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.launch-character-badge {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--character-sub-soft) 64%, rgba(255, 255, 255, 0.04));
+  color: color-mix(in srgb, var(--ink) 88%, var(--character-sub) 12%);
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .settings-provider-input span {
   color: var(--muted);
   font-size: 0.78rem;

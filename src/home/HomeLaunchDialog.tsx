@@ -3,7 +3,10 @@ import { useRef } from "react";
 import { focusRovingItemByKey, useDialogA11y } from "../a11y.js";
 import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-shell.js";
 import { ProviderLaunchField } from "../launch/provider-launch-picker.js";
+import { buildCharacterThemeStyle } from "../theme-utils.js";
+import { CharacterAvatar } from "../ui-utils.js";
 import type { LaunchWorkspace } from "./home-launch-projection.js";
+import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 
 export type HomeLaunchDialogProps = {
   open: boolean;
@@ -13,6 +16,8 @@ export type HomeLaunchDialogProps = {
   launchWorkspacePathLabel: string;
   enabledLaunchProviders: Array<{ id: string; label: string }>;
   selectedLaunchProviderId: string | null;
+  characterOptions: CharacterCatalogEntry[];
+  selectedCharacterId: string | null;
   canStartSession: boolean;
   launchFeedback: string;
   launchStarting: boolean;
@@ -21,6 +26,7 @@ export type HomeLaunchDialogProps = {
   onChangeTitle: (value: string) => void;
   onBrowseWorkspace: () => void;
   onSelectProvider: (providerId: string) => void;
+  onSelectCharacter: (characterId: string) => void;
   onStartSession: (mode: "session" | "companion") => void;
 };
 
@@ -32,6 +38,8 @@ export function HomeLaunchDialog({
   launchWorkspacePathLabel,
   enabledLaunchProviders,
   selectedLaunchProviderId,
+  characterOptions,
+  selectedCharacterId,
   canStartSession,
   launchFeedback,
   launchStarting,
@@ -40,6 +48,7 @@ export function HomeLaunchDialog({
   onChangeTitle,
   onBrowseWorkspace,
   onSelectProvider,
+  onSelectCharacter,
   onStartSession,
 }: HomeLaunchDialogProps) {
   const titleInputRef = useRef<HTMLInputElement | null>(null);
@@ -133,6 +142,53 @@ export function HomeLaunchDialog({
         selectedProviderId={selectedLaunchProviderId}
         onSelectProvider={onSelectProvider}
       />
+
+      <section className="launch-section minimal">
+        <div className="launch-field">
+          <span className="launch-field-label">Character</span>
+          {characterOptions.length === 0 ? (
+            <div className="launch-character-neutral">
+              <span className="character-avatar tiny" aria-hidden="true">W</span>
+              <div className="launch-character-copy">
+                <strong>WithMate</strong>
+                <span>Neutral</span>
+              </div>
+            </div>
+          ) : (
+            <div
+              className="launch-character-list"
+              role="radiogroup"
+              aria-label="Character"
+              onKeyDown={(event) => {
+                focusRovingItemByKey(event, { orientation: "vertical", activateOnFocus: true });
+              }}
+            >
+              {characterOptions.map((character) => (
+                <button
+                  key={character.id}
+                  className={`launch-character-option${character.id === selectedCharacterId ? " selected" : ""}`}
+                  type="button"
+                  role="radio"
+                  aria-checked={character.id === selectedCharacterId}
+                  tabIndex={character.id === selectedCharacterId ? 0 : -1}
+                  style={buildCharacterThemeStyle(character.theme)}
+                  onClick={() => onSelectCharacter(character.id)}
+                >
+                  <CharacterAvatar
+                    character={{ name: character.name, iconPath: character.iconFilePath }}
+                    size="tiny"
+                  />
+                  <span className="launch-character-copy">
+                    <strong>{character.name}</strong>
+                    <span>{character.description || character.id}</span>
+                  </span>
+                  {character.isDefault ? <span className="launch-character-badge">Default</span> : null}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
     </LaunchDialogShell>
   );
 }

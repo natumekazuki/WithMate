@@ -1,4 +1,5 @@
 import type { CompanionSessionSummary } from "../companion-state.js";
+import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import type { CreateSessionInput, SessionSummary } from "../session-state.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { CreateCompanionSessionInput, CompanionSession } from "../companion-state.js";
@@ -7,7 +8,9 @@ import type { HomeLaunchDraft } from "./home-launch-state.js";
 import {
   closeLaunchDraft,
   openLaunchDraft,
+  resolveLaunchCharacterId,
   setLaunchWorkspaceFromPath,
+  updateLaunchDraftForCharacterSelection,
   updateLaunchDraftForProviderSelection,
 } from "./home-launch-state.js";
 import { startHomeLaunch } from "./home-launch-actions.js";
@@ -18,6 +21,7 @@ type HomeLaunchHandlersContext = {
   mateState: MateStorageState | null;
   mateProfile: MateProfile | null;
   enabledLaunchProviders: readonly ModelCatalogProvider[];
+  characterEntries: readonly CharacterCatalogEntry[];
   selectedLaunchProviderId: string | null;
   sessions: readonly SessionSummary[];
   setLaunchFeedback: (message: string) => void;
@@ -37,6 +41,7 @@ export type HomeLaunchHandlers = {
   onOpenLaunchDialog: () => void;
   onCloseLaunchDialog: () => void;
   onSelectLaunchProvider: (providerId: string) => void;
+  onSelectLaunchCharacter: (characterId: string) => void;
   onChangeMode: (mode: HomeLaunchDraft["mode"]) => void;
   onChangeTitle: (value: string) => void;
   onStartSession: (mode?: HomeLaunchDraft["mode"]) => void;
@@ -48,6 +53,7 @@ export function buildHomeLaunchHandlers({
   mateState,
   mateProfile,
   enabledLaunchProviders,
+  characterEntries,
   selectedLaunchProviderId,
   sessions,
   setLaunchFeedback,
@@ -73,7 +79,14 @@ export function buildHomeLaunchHandlers({
 
   const onOpenLaunchDialog = () => {
     setLaunchFeedback("");
-    setLaunchDraft((current) => openLaunchDraft(current, enabledLaunchProviders[0]?.id ?? ""));
+    setLaunchDraft((current) =>
+      openLaunchDraft(
+        current,
+        enabledLaunchProviders[0]?.id ?? "",
+        "session",
+        resolveLaunchCharacterId(characterEntries, current.characterId),
+      ),
+    );
   };
 
   const onCloseLaunchDialog = () => {
@@ -95,6 +108,7 @@ export function buildHomeLaunchHandlers({
       mateState,
       mateProfile,
       selectedProviderId: selectedLaunchProviderId,
+      characterEntries,
       sessions,
       createSession,
       createCompanionSession,
@@ -113,6 +127,10 @@ export function buildHomeLaunchHandlers({
     onOpenLaunchDialog,
     onCloseLaunchDialog,
     onSelectLaunchProvider,
+    onSelectLaunchCharacter: (characterId) => {
+      setLaunchFeedback("");
+      setLaunchDraft((current) => updateLaunchDraftForCharacterSelection(current, characterId));
+    },
     onChangeMode: (mode) => {
       setLaunchFeedback("");
       setLaunchDraft((current) => ({ ...current, mode }));

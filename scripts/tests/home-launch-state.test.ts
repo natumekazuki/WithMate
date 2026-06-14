@@ -5,6 +5,7 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
 import { DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT, type ModelCatalogProvider } from "../../src/model-catalog.js";
 import type { SessionSummary } from "../../src/app-state.js";
+import type { CharacterCatalogEntry } from "../../src/character/character-catalog.js";
 import {
   buildCreateCompanionSessionInputFromLaunchDraft,
   buildCreateSessionInputFromLaunchDraft,
@@ -12,8 +13,10 @@ import {
   createClosedLaunchDraft,
   openLaunchDraft,
   resolveLastUsedSessionSelection,
+  resolveLaunchCharacterId,
   resolveLaunchValidationMessage,
   setLaunchWorkspaceFromPath,
+  updateLaunchDraftForCharacterSelection,
   updateLaunchDraftForProviderSelection,
 } from "../../src/home/home-launch-state.js";
 import type { MateProfile } from "../../src/mate/mate-state.js";
@@ -40,6 +43,21 @@ function createMateProfile(partial: Partial<MateProfile> & Pick<MateProfile, "id
   };
 }
 
+function createCharacterEntry(partial: Partial<CharacterCatalogEntry> & Pick<CharacterCatalogEntry, "id" | "name">): CharacterCatalogEntry {
+  return {
+    id: partial.id,
+    name: partial.name,
+    description: partial.description ?? "",
+    iconFilePath: partial.iconFilePath ?? "",
+    theme: partial.theme ?? { main: "#6f8cff", sub: "#6fb8c7" },
+    state: partial.state ?? "active",
+    isDefault: partial.isDefault ?? false,
+    createdAt: partial.createdAt ?? "",
+    updatedAt: partial.updatedAt ?? "",
+    archivedAt: partial.archivedAt ?? null,
+  };
+}
+
 describe("home-launch-state", () => {
   it("open と close で launch draft を reset する", () => {
     const opened = openLaunchDraft(
@@ -51,6 +69,8 @@ describe("home-launch-state", () => {
         providerId: "old",
       },
       "codex",
+      "session",
+      "mia",
     );
 
     assert.deepEqual(opened, {
@@ -59,6 +79,7 @@ describe("home-launch-state", () => {
       title: "",
       workspace: null,
       providerId: "codex",
+      characterId: "mia",
       model: DEFAULT_MODEL_ID,
       reasoningEffort: DEFAULT_REASONING_EFFORT,
       approvalMode: DEFAULT_APPROVAL_MODE,
@@ -71,6 +92,7 @@ describe("home-launch-state", () => {
       title: "",
       workspace: null,
       providerId: "",
+      characterId: "",
       model: DEFAULT_MODEL_ID,
       reasoningEffort: DEFAULT_REASONING_EFFORT,
       approvalMode: DEFAULT_APPROVAL_MODE,
@@ -123,6 +145,23 @@ describe("home-launch-state", () => {
     assert.equal(draft.providerId, "missing");
     assert.equal(draft.model, "gpt-5.4-mini");
     assert.equal(draft.reasoningEffort, "medium");
+  });
+
+  it("character 選択時に launch draft の characterId を更新する", () => {
+    const draft = updateLaunchDraftForCharacterSelection(createClosedLaunchDraft(), "mia");
+
+    assert.equal(draft.characterId, "mia");
+  });
+
+  it("character selection は既存選択、default順の先頭、空文字の順で解決する", () => {
+    const entries = [
+      createCharacterEntry({ id: "mia", name: "Mia", isDefault: true }),
+      createCharacterEntry({ id: "noa", name: "Noa" }),
+    ];
+
+    assert.equal(resolveLaunchCharacterId(entries, "noa"), "noa");
+    assert.equal(resolveLaunchCharacterId(entries, "missing"), "mia");
+    assert.equal(resolveLaunchCharacterId([], "missing"), "");
   });
 
   it("launch validation message は既存の優先順位で返す", () => {
@@ -190,6 +229,7 @@ describe("home-launch-state", () => {
         title: "  task  ",
         workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
         providerId: "codex",
+        characterId: "mia",
       },
       mateProfile: createMateProfile({
         id: "mate-a",
@@ -200,6 +240,16 @@ describe("home-launch-state", () => {
       }),
       selectedProviderId: "codex",
       approvalMode: DEFAULT_APPROVAL_MODE,
+      characterEntries: [
+        createCharacterEntry({
+          id: "mia",
+          name: "Mia",
+          description: "assistant profile",
+          iconFilePath: "icon.png",
+          theme: { main: "#000000", sub: "#ffffff" },
+          isDefault: true,
+        }),
+      ],
       lastUsedSelection: {
         model: "gpt-5.4-mini",
         reasoningEffort: "medium",
@@ -213,7 +263,7 @@ describe("home-launch-state", () => {
       workspaceLabel: "demo",
       workspacePath: "F:/work/demo",
       branch: "main",
-      characterId: "mate-a",
+      characterId: "mia",
       character: "Mia",
       characterIconPath: "icon.png",
       characterThemeColors: {
@@ -283,6 +333,7 @@ describe("home-launch-state", () => {
         title: "  task  ",
         workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
         providerId: "codex",
+        characterId: "mia",
       },
       mateProfile: createMateProfile({
         id: "mate-a",
@@ -290,6 +341,15 @@ describe("home-launch-state", () => {
         description: "assistant profile",
       }),
       selectedProviderId: "codex",
+      characterEntries: [
+        createCharacterEntry({
+          id: "mia",
+          name: "Mia",
+          description: "assistant profile",
+          iconFilePath: "icon.png",
+          theme: { main: "#000000", sub: "#ffffff" },
+        }),
+      ],
       lastUsedSelection: {
         model: "gpt-5.4-mini",
         reasoningEffort: "medium",

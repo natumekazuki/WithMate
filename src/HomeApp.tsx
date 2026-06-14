@@ -15,6 +15,7 @@ import {
 import { buildHomeLaunchDialogProps } from "./home/home-launch-dialog-props.js";
 import {
   createClosedLaunchDraft,
+  resolveLaunchCharacterId,
   type HomeLaunchDraft,
 } from "./home/home-launch-state.js";
 import { resolveSelectedLaunchProviderDraftId } from "./launch/launch-provider-selection.js";
@@ -135,6 +136,10 @@ export default function HomeApp() {
     preferredCharacterId?: string | null,
   ) => {
     setCharacterEntries(entries);
+    setLaunchDraft((current) => ({
+      ...current,
+      characterId: resolveLaunchCharacterId(entries, current.characterId),
+    }));
     const nextSelectedCharacterId = resolveSettingsCharacterSelection(entries, preferredCharacterId ?? selectedCharacterId);
     setSelectedCharacterId(nextSelectedCharacterId);
 
@@ -279,10 +284,12 @@ export default function HomeApp() {
       launchMode: launchDraft.mode,
       launchTitle: launchDraft.title,
       launchWorkspace: launchDraft.workspace,
+      launchCharacterId: launchDraft.characterId,
+      characterEntries,
       appSettings,
       modelCatalog,
     }),
-    [appSettings, launchDraft, modelCatalog],
+    [appSettings, characterEntries, launchDraft, modelCatalog],
   );
   const { enabledLaunchProviders, selectedLaunchProvider } = launchProjection;
 
@@ -312,6 +319,7 @@ export default function HomeApp() {
     mateState,
     mateProfile,
     enabledLaunchProviders,
+    characterEntries,
     selectedLaunchProviderId: selectedLaunchProvider?.id ?? null,
     sessions,
     setLaunchFeedback,
@@ -645,6 +653,7 @@ export default function HomeApp() {
       onChangeTitle: homeLaunchHandlers.onChangeTitle,
       onBrowseWorkspace: () => void homeLaunchHandlers.onBrowseWorkspace(),
       onSelectProvider: homeLaunchHandlers.onSelectLaunchProvider,
+      onSelectCharacter: homeLaunchHandlers.onSelectLaunchCharacter,
       onStartSession: (mode) => void homeLaunchHandlers.onStartSession(mode),
     }),
   });
