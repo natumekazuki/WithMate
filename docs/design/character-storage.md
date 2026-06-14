@@ -5,6 +5,12 @@
 > この文書は 3.x の character catalog と character update workspace の supporting / legacy detail として扱う。
 > 4.0.0 では既存 character catalog から Mate への自動 migration は行わず、初回利用時に新しい Mate 作成から開始する。
 
+> V5 Core note:
+> V5 Core では、この文書を複数 Character catalog / storage の正本へ更新する候補として扱う。
+> ただし 3.x の file-only catalog や Character Update Workspace 前提をそのまま戻さない。
+> V5 Core の境界は SQLite metadata、`characters/<character-id>/character.md` file body、optional `character-notes.md`、session 開始時の saved snapshot に分ける。
+> provider instruction sync、Memory / Growth、Character Update Workspace は Character 注入の主経路にしない。
+
 ## Goal
 WithMate 専用ディレクトリ配下でキャラクターデータを永続化し、Home / Character Editor / Session / Character Stream が共通で参照できる character catalog を提供する。
 

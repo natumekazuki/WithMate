@@ -3,6 +3,11 @@
 - 作成日: 2026-03-29
 - 対象: `character.md` と `character-notes.md` の標準構成
 
+> V5 Core note:
+> この文書は V5 Core で `character.md` / `character-notes.md` format の正本へ戻す候補である。
+> V5 Core では `character.md` を runtime definition として扱い、`character-notes.md` は runtime 常設 prompt に入れない補助メモとして扱う。
+> Character 定義自動生成、詳細 Editor、validator、Knowledge retrieval、Character Update Workspace は Core に含めない。
+
 ## Goal
 
 `character.md` を実行時 prompt の正本として扱いながら、  
