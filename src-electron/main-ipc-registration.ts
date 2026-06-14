@@ -116,6 +116,7 @@ import {
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL,
   WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
+  WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
@@ -186,6 +187,7 @@ export type MainIpcRegistrationDeps = {
   openHomeWindow(): Promise<void>;
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
+  openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
@@ -322,6 +324,7 @@ type MainIpcWindowDeps = Pick<
   | "openHomeWindow"
   | "openSessionMonitorWindow"
   | "openSettingsWindow"
+  | "openCharacterEditorWindow"
   | "openDiffWindow"
   | "openCompanionReviewWindow"
   | "openCompanionMergeWindow"
@@ -493,6 +496,9 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   });
   ipcMain.handle(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL, async () => {
     await deps.openSettingsWindow();
+  });
+  ipcMain.handle(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL, async (_event, characterId?: string | null) => {
+    await deps.openCharacterEditorWindow(characterId ?? null);
   });
   ipcMain.handle(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, async (_event, diffPreview: DiffPreviewPayload) => {
     await deps.openDiffWindow(diffPreview);
