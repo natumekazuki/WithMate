@@ -66,6 +66,44 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:reset-mate",
     args: [],
   });
+  assert.deepEqual(await api.listCharacters({ includeArchived: true }), {
+    channel: "withmate:list-characters",
+    args: [{ includeArchived: true }],
+  });
+  assert.deepEqual(await api.getCharacter("char-1"), {
+    channel: "withmate:get-character",
+    args: ["char-1"],
+  });
+  assert.deepEqual(await api.createCharacter({ name: "Mia" }), {
+    channel: "withmate:create-character",
+    args: [{ name: "Mia" }],
+  });
+  assert.deepEqual(await api.updateCharacterMetadata({ characterId: "char-1", name: "Mia 2" }), {
+    channel: "withmate:update-character-metadata",
+    args: [{ characterId: "char-1", name: "Mia 2" }],
+  });
+  assert.deepEqual(await api.updateCharacterDefinition({
+    characterId: "char-1",
+    definitionMarkdown: "definition",
+  }), {
+    channel: "withmate:update-character-definition",
+    args: [{
+      characterId: "char-1",
+      definitionMarkdown: "definition",
+    }],
+  });
+  assert.deepEqual(await api.archiveCharacter("char-1"), {
+    channel: "withmate:archive-character",
+    args: ["char-1"],
+  });
+  assert.deepEqual(await api.setDefaultCharacter("char-1"), {
+    channel: "withmate:set-default-character",
+    args: ["char-1"],
+  });
+  assert.deepEqual(await api.resolveLaunchCharacter({ characterId: "char-1" }), {
+    channel: "withmate:resolve-launch-character",
+    args: [{ characterId: "char-1" }],
+  });
   assert.deepEqual(await api.getSessionBackgroundActivity("session-1", "memory-generation"), {
     channel: "withmate:get-session-background-activity",
     args: ["session-1", "memory-generation"],
@@ -140,8 +178,10 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "cancelSessionRun",
     "closeAuxiliarySession",
     "copyFilesToSessionFiles",
+    "archiveCharacter",
     "createMate",
     "createAuxiliarySession",
+    "createCharacter",
     "createCompanionSession",
     "createSession",
     "deleteSession",
@@ -154,6 +194,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getAppBootStatus",
     "getAppSettings",
     "getAuxiliarySession",
+    "getCharacter",
     "getCompanionAuditLogDetail",
     "getCompanionAuditLogDetailSection",
     "getCompanionAuditLogOperationDetail",
@@ -176,6 +217,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "importModelCatalog",
     "importModelCatalogFile",
     "listAuxiliarySessions",
+    "listCharacters",
     "listCompanionAuditLogSummaries",
     "listCompanionAuditLogSummaryPage",
     "listCompanionAuditLogs",
@@ -218,6 +260,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "restoreCompanionTargetStash",
     "resolveLiveApproval",
     "resolveLiveElicitation",
+    "resolveLaunchCharacter",
     "runAuxiliarySessionTurn",
     "runCompanionSessionTurn",
     "runSessionTurn",
@@ -225,6 +268,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "searchCompanionWorkspaceFiles",
     "searchWorkspaceFiles",
     "setMateAvatar",
+    "setDefaultCharacter",
     "stashCompanionTargetChanges",
     "subscribeAppSettings",
     "subscribeAppBootStatus",
@@ -241,6 +285,8 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "syncCompanionTarget",
     "updateAppSettings",
     "updateAuxiliarySession",
+    "updateCharacterDefinition",
+    "updateCharacterMetadata",
     "updateCompanionSession",
     "updateMate",
     "updateSession",

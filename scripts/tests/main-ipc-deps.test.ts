@@ -173,22 +173,24 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async getCharacter() {
         return null;
       },
-      async getCharacterUpdateWorkspace() {
-        return null;
-      },
-      async extractCharacterUpdateMemory() {
-        return { characterId: "char-1", generatedAt: "", entryCount: 0, text: "" };
-      },
-      async createCharacterUpdateSession() {
-        return {} as never;
-      },
       async createCharacter() {
         return {} as never;
       },
-      async updateCharacter() {
+      async updateCharacterMetadata() {
         return {} as never;
       },
-      async deleteCharacter() {},
+      async updateCharacterDefinition() {
+        return {} as never;
+      },
+      async archiveCharacter() {
+        return {} as never;
+      },
+      async setDefaultCharacter() {
+        return {} as never;
+      },
+      async resolveLaunchCharacter() {
+        return null;
+      },
     },
     mate: {
       getMateState() {

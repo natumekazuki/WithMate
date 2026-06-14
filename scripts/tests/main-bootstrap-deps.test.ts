@@ -126,12 +126,12 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
       character: {
         listCharacters: async () => [],
         getCharacter: async () => null,
-        getCharacterUpdateWorkspace: async () => null,
-        extractCharacterUpdateMemory: async () => ({ characterId: "char-1", generatedAt: "", entryCount: 0, text: "" }),
-        createCharacterUpdateSession: async () => ({}) as never,
         createCharacter: async () => ({}) as never,
-        updateCharacter: async () => ({}) as never,
-        deleteCharacter: async () => {},
+        updateCharacterMetadata: async () => ({}) as never,
+        updateCharacterDefinition: async () => ({}) as never,
+        archiveCharacter: async () => ({}) as never,
+        setDefaultCharacter: async () => ({}) as never,
+        resolveLaunchCharacter: async () => null,
       },
       mate: {
         getMateState: () => "not_created",

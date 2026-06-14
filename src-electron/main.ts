@@ -55,6 +55,8 @@ import { AppSettingsStorage } from "./app-settings-storage.js";
 import { companionSessionToAuxiliaryParentSession } from "./auxiliary-parent-session.js";
 import { AuxiliarySessionService } from "./auxiliary-session-service.js";
 import { AuxiliarySessionStorage } from "./auxiliary-session-storage.js";
+import { CharacterService } from "./character-service.js";
+import { CharacterStorage } from "./character-storage.js";
 import { CodexAdapter } from "./codex-adapter.js";
 import { CopilotAdapter } from "./copilot-adapter.js";
 import { getMateTalkBackgroundStructuredPromptCapability } from "./provider-runtime.js";
@@ -110,6 +112,7 @@ import {
   PersistentStoreLifecycleService,
   type AuditLogStorageRead,
   type AuxiliarySessionStorageAccess,
+  type CharacterStorageAccess,
   type PersistentStoreBundle,
   type ProjectMemoryStorageAccess,
   type SessionMemoryStorageAccess,
@@ -210,6 +213,8 @@ let sessionStorage: SessionStorageRead | null = null;
 let sessionMemoryStorage: SessionMemoryStorageAccess | null = null;
 let projectMemoryStorage: ProjectMemoryStorageAccess | null = null;
 let modelCatalogStorage: ModelCatalogStorage | null = null;
+let characterStorage: CharacterStorageAccess | null = null;
+let characterService: CharacterService | null = null;
 let auditLogStorage: AuditLogStorageRead | null = null;
 let auxiliarySessionStorage: AuxiliarySessionStorageAccess | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
@@ -843,6 +848,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
         new PersistentStoreLifecycleService({
           createModelCatalogStorage: (nextDbPath, nextBundledModelCatalogPath) =>
             new ModelCatalogStorage(nextDbPath, nextBundledModelCatalogPath),
+          createCharacterStorage: (nextDbPath, nextUserDataPath) =>
+            new CharacterStorage(nextDbPath, nextUserDataPath),
           createSessionStorage: (nextDbPath) => new SessionStorage(nextDbPath),
           createSessionMemoryStorage: (nextDbPath) => new SessionMemoryStorage(nextDbPath),
           createProjectMemoryStorage: (nextDbPath) => new ProjectMemoryStorage(nextDbPath),
@@ -1126,6 +1133,16 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 setMateAvatar,
                 resetMate,
               },
+              character: {
+                listCharacters: (options) => requireCharacterService().listCharacters(options ?? undefined),
+                getCharacter: (characterId) => requireCharacterService().getCharacter(characterId),
+                createCharacter: (input) => requireCharacterService().createCharacter(input),
+                updateCharacterMetadata: (input) => requireCharacterService().updateCharacterMetadata(input),
+                updateCharacterDefinition: (input) => requireCharacterService().updateCharacterDefinition(input),
+                archiveCharacter: (characterId) => requireCharacterService().archiveCharacter(characterId),
+                setDefaultCharacter: (characterId) => requireCharacterService().setDefaultCharacter(characterId),
+                resolveLaunchCharacter: (input) => requireCharacterService().resolveLaunchCharacter(input),
+              },
             },
             getMateState: () => requireMateStorage().getMateState(),
           }),
@@ -1376,6 +1393,22 @@ function requireMateStorage(): MateStorage {
   }
 
   return mateStorage;
+}
+
+function requireCharacterStorage(): CharacterStorageAccess {
+  if (!characterStorage) {
+    throw new Error("character storage が初期化されていないよ。");
+  }
+
+  return characterStorage;
+}
+
+function requireCharacterService(): CharacterService {
+  if (!characterService) {
+    characterService = new CharacterService(requireCharacterStorage());
+  }
+
+  return characterService;
 }
 
 async function createMate(input: Parameters<MateStorage["createMate"]>[0]): ReturnType<MateStorage["createMate"]> {
@@ -2073,6 +2106,7 @@ function requireMainBootstrapService(): MainBootstrapService {
 
 function applyPersistentStoreBundle(bundle: PersistentStoreBundle): ModelCatalogSnapshot {
   modelCatalogStorage = bundle.modelCatalogStorage;
+  characterStorage = bundle.characterStorage;
   sessionStorage = bundle.sessionStorage;
   sessionMemoryStorage = bundle.sessionMemoryStorage;
   projectMemoryStorage = bundle.projectMemoryStorage;
@@ -2142,6 +2176,7 @@ function closePersistentStores(): void {
   mateProfileItemStorage?.close();
   requirePersistentStoreLifecycleService().close({
     modelCatalogStorage,
+    characterStorage,
     sessionStorage,
     sessionMemoryStorage,
     projectMemoryStorage,
@@ -2151,6 +2186,8 @@ function closePersistentStores(): void {
     mateStorage,
   }, dbPath);
   modelCatalogStorage = null;
+  characterStorage = null;
+  characterService = null;
   sessionStorage = null;
   sessionMemoryStorage = null;
   projectMemoryStorage = null;

@@ -25,6 +25,14 @@ import type {
   AuxiliarySessionSummary,
   CreateAuxiliarySessionInput,
 } from "../src/auxiliary-session-state.js";
+import type {
+  CharacterCatalogEntry,
+  CharacterDetail,
+  CreateCharacterInput,
+  ResolveLaunchCharacterInput,
+  UpdateCharacterDefinitionInput,
+  UpdateCharacterMetadataInput,
+} from "../src/character/character-catalog.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
 import type {
   CompanionMergeSelectedFilesRequest,
@@ -203,6 +211,17 @@ export type MainIpcMateDepsArgs = {
   resetMate(): Promise<void>;
 };
 
+export type MainIpcCharacterDepsArgs = {
+  listCharacters(options?: { includeArchived?: boolean } | null): Awaitable<CharacterCatalogEntry[]>;
+  getCharacter(characterId: string): Awaitable<CharacterDetail | null>;
+  createCharacter(input: CreateCharacterInput): Awaitable<CharacterDetail>;
+  updateCharacterMetadata(input: UpdateCharacterMetadataInput): Awaitable<CharacterDetail>;
+  updateCharacterDefinition(input: UpdateCharacterDefinitionInput): Awaitable<CharacterDetail>;
+  archiveCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
+  setDefaultCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
+  resolveLaunchCharacter(input?: ResolveLaunchCharacterInput | null): Awaitable<CharacterDetail | null>;
+};
+
 export type CreateMainIpcRegistrationDepsArgs = {
   window: MainIpcWindowDepsArgs;
   catalog: MainIpcCatalogDepsArgs;
@@ -212,6 +231,7 @@ export type CreateMainIpcRegistrationDepsArgs = {
   companion: MainIpcCompanionDepsArgs;
   sessionRuntime: MainIpcSessionRuntimeDepsArgs;
   mate: MainIpcMateDepsArgs;
+  character: MainIpcCharacterDepsArgs;
 };
 
 function createUnavailableAuxiliaryDeps(): MainIpcAuxiliaryDepsArgs {
@@ -350,5 +370,13 @@ export function createMainIpcRegistrationDeps(
     updateMate: args.mate.updateMate,
     setMateAvatar: args.mate.setMateAvatar,
     resetMate: args.mate.resetMate,
+    listCharacters: args.character.listCharacters,
+    getCharacter: args.character.getCharacter,
+    createCharacter: args.character.createCharacter,
+    updateCharacterMetadata: args.character.updateCharacterMetadata,
+    updateCharacterDefinition: args.character.updateCharacterDefinition,
+    archiveCharacter: args.character.archiveCharacter,
+    setDefaultCharacter: args.character.setDefaultCharacter,
+    resolveLaunchCharacter: args.character.resolveLaunchCharacter,
   };
 }

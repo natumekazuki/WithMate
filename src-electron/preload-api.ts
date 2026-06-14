@@ -4,6 +4,7 @@ import type { RendererLogInput } from "../src/app-log-types.js";
 import type {
   WithMateWindowApi,
   WithMateWindowCatalogApi,
+  WithMateWindowCharacterApi,
   WithMateWindowCompanionApi,
   WithMateWindowNavigationApi,
   WithMateWindowObservabilityApi,
@@ -19,7 +20,9 @@ import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
+  WITHMATE_ARCHIVE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
+  WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
@@ -32,10 +35,12 @@ import {
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
+  WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
@@ -101,7 +106,9 @@ import {
   WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESET_MATE_CHANNEL,
+  WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
   WITHMATE_SET_MATE_AVATAR_CHANNEL,
+  WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
   WITHMATE_SAVE_PASTED_SESSION_FILE_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
@@ -121,6 +128,8 @@ import {
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL,
+  WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL,
   WITHMATE_UPDATE_MATE_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
@@ -475,6 +484,35 @@ function createMateApi(ipcRenderer: IpcRendererLike): WithMateWindowMateApi {
   };
 }
 
+function createCharacterApi(ipcRenderer: IpcRendererLike): WithMateWindowCharacterApi {
+  return {
+    listCharacters(options) {
+      return ipcRenderer.invoke(WITHMATE_LIST_CHARACTERS_CHANNEL, options ?? null);
+    },
+    getCharacter(characterId) {
+      return ipcRenderer.invoke(WITHMATE_GET_CHARACTER_CHANNEL, characterId);
+    },
+    createCharacter(input) {
+      return ipcRenderer.invoke(WITHMATE_CREATE_CHARACTER_CHANNEL, input);
+    },
+    updateCharacterMetadata(input) {
+      return ipcRenderer.invoke(WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL, input);
+    },
+    updateCharacterDefinition(input) {
+      return ipcRenderer.invoke(WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL, input);
+    },
+    archiveCharacter(characterId) {
+      return ipcRenderer.invoke(WITHMATE_ARCHIVE_CHARACTER_CHANNEL, characterId);
+    },
+    setDefaultCharacter(characterId) {
+      return ipcRenderer.invoke(WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL, characterId);
+    },
+    resolveLaunchCharacter(input) {
+      return ipcRenderer.invoke(WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL, input ?? null);
+    },
+  };
+}
+
 function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettingsApi {
   return {
     getAppSettings() {
@@ -651,5 +689,6 @@ export function createWithMateWindowApi(ipcRenderer: IpcRendererLike): WithMateW
     ...createPickerApi(ipcRenderer),
     ...createSubscriptionApi(ipcRenderer),
     ...createMateApi(ipcRenderer),
+    ...createCharacterApi(ipcRenderer),
   };
 }
