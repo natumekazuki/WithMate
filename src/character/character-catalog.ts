@@ -35,7 +35,7 @@ export type CreateCharacterInput = {
   setDefault?: boolean;
 };
 
-export type ImportCharacterPackFileResult = {
+export type ImportCharacterFilesResult = {
   character: CharacterDetail;
   importedFiles: string[];
 };

@@ -36,7 +36,7 @@ import {
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
-  WITHMATE_IMPORT_CHARACTER_PACK_FILE_CHANNEL,
+  WITHMATE_IMPORT_CHARACTER_FILES_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
@@ -500,8 +500,8 @@ function createCharacterApi(ipcRenderer: IpcRendererLike): WithMateWindowCharact
     createCharacter(input) {
       return ipcRenderer.invoke(WITHMATE_CREATE_CHARACTER_CHANNEL, input);
     },
-    importCharacterPackFile() {
-      return ipcRenderer.invoke(WITHMATE_IMPORT_CHARACTER_PACK_FILE_CHANNEL);
+    importCharacterFiles() {
+      return ipcRenderer.invoke(WITHMATE_IMPORT_CHARACTER_FILES_CHANNEL);
     },
     updateCharacterMetadata(input) {
       return ipcRenderer.invoke(WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL, input);

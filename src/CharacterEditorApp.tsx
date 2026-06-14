@@ -49,7 +49,7 @@ export default function CharacterEditorApp() {
   const [selectedTab, setSelectedTab] = useState<CharacterEditorTab>("profile");
   const [loading, setLoading] = useState(Boolean(initialCharacterId));
   const [saving, setSaving] = useState(false);
-  const [importingPack, setImportingPack] = useState(false);
+  const [importingFiles, setImportingFiles] = useState(false);
   const [feedback, setFeedback] = useState("");
   const definitionImportInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -201,11 +201,11 @@ export default function CharacterEditorApp() {
     }
   };
 
-  const importCharacterPack = async () => {
-    if (archived || importingPack) {
+  const importCharacterFiles = async () => {
+    if (archived || importingFiles) {
       return;
     }
-    if (dirty && !window.confirm("未保存の編集があります。\n\nCharacter pack を import すると、作成された Character に表示を切り替えます。続行しますか？")) {
+    if (dirty && !window.confirm("未保存の編集があります。\n\n選択した Character files を import すると、作成された Character に表示を切り替えます。続行しますか？")) {
       return;
     }
 
@@ -215,10 +215,10 @@ export default function CharacterEditorApp() {
       return;
     }
 
-    setImportingPack(true);
-    setFeedback("Character pack を読み込んでいます...");
+    setImportingFiles(true);
+    setFeedback("Character files を読み込んでいます...");
     try {
-      const result = await api.importCharacterPackFile();
+      const result = await api.importCharacterFiles();
       if (!result) {
         setFeedback("");
         return;
@@ -232,9 +232,9 @@ export default function CharacterEditorApp() {
       nextUrl.searchParams.set("characterId", result.character.id);
       window.history.replaceState(null, "", nextUrl);
     } catch (error) {
-      setFeedback(formatCharacterEditorError(error, "Character pack の import に失敗しました。"));
+      setFeedback(formatCharacterEditorError(error, "Character files の import に失敗しました。"));
     } finally {
-      setImportingPack(false);
+      setImportingFiles(false);
     }
   };
 
@@ -333,8 +333,8 @@ export default function CharacterEditorApp() {
           </div>
           <div className="character-editor-header-actions">
             <span className="settings-character-badge">{archived ? "Archived" : saving ? "Saving" : dirty ? "Unsaved" : "Saved"}</span>
-            <button className="launch-toggle" type="button" onClick={importCharacterPack} disabled={archived || saving || importingPack}>
-              {importingPack ? "Importing..." : "Import Pack"}
+            <button className="launch-toggle" type="button" onClick={importCharacterFiles} disabled={archived || saving || importingFiles}>
+              {importingFiles ? "Importing..." : "Import Files"}
             </button>
             <button className="launch-toggle" type="button" onClick={closeWindow}>
               Close
@@ -362,14 +362,14 @@ export default function CharacterEditorApp() {
               <div className="settings-character-form-grid">
                 <label className="settings-provider-input">
                   <span>Name</span>
-                  <input value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} disabled={archived || importingPack} />
+                  <input value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} disabled={archived || importingFiles} />
                 </label>
                 <label className="settings-provider-input">
                   <span>Description</span>
                   <input
                     value={draft.description}
                     onChange={(event) => updateDraft({ description: event.target.value })}
-                    disabled={archived || importingPack}
+                    disabled={archived || importingFiles}
                   />
                 </label>
                 <label className="settings-provider-input">
@@ -378,9 +378,9 @@ export default function CharacterEditorApp() {
                     <input
                       value={draft.iconFilePath}
                       onChange={(event) => updateDraft({ iconFilePath: event.target.value })}
-                      disabled={archived || importingPack}
+                      disabled={archived || importingFiles}
                     />
-                    <button className="launch-toggle compact" type="button" onClick={pickIcon} disabled={archived || importingPack}>
+                    <button className="launch-toggle compact" type="button" onClick={pickIcon} disabled={archived || importingFiles}>
                       Browse
                     </button>
                   </div>
@@ -392,7 +392,7 @@ export default function CharacterEditorApp() {
                       type="color"
                       value={draft.theme.main}
                       onChange={(event) => updateDraft({ theme: { ...draft.theme, main: event.target.value } })}
-                      disabled={archived || importingPack}
+                      disabled={archived || importingFiles}
                     />
                   </label>
                   <label className="settings-provider-input">
@@ -401,7 +401,7 @@ export default function CharacterEditorApp() {
                       type="color"
                       value={draft.theme.sub}
                       onChange={(event) => updateDraft({ theme: { ...draft.theme, sub: event.target.value } })}
-                      disabled={archived || importingPack}
+                      disabled={archived || importingFiles}
                     />
                   </label>
                 </div>
@@ -411,7 +411,7 @@ export default function CharacterEditorApp() {
                   className="launch-toggle"
                   type="button"
                   onClick={setDefaultCharacter}
-                  disabled={saving || importingPack || archived || draft.mode !== "edit" || draft.isDefault}
+                  disabled={saving || importingFiles || archived || draft.mode !== "edit" || draft.isDefault}
                 >
                   Set Default
                 </button>
@@ -428,7 +428,7 @@ export default function CharacterEditorApp() {
                   className="launch-toggle compact"
                   type="button"
                   onClick={() => definitionImportInputRef.current?.click()}
-                  disabled={archived || importingPack}
+                  disabled={archived || importingFiles}
                 >
                   Import / Replace
                 </button>
@@ -440,7 +440,7 @@ export default function CharacterEditorApp() {
                 type="file"
                 accept=".md,text/markdown,text/plain"
                 className="settings-character-import-input"
-                disabled={archived || importingPack}
+                disabled={archived || importingFiles}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   if (file) {
@@ -453,7 +453,7 @@ export default function CharacterEditorApp() {
                 className="settings-character-markdown-textarea character-editor-textarea"
                 value={draft.definitionMarkdown}
                 onChange={(event) => updateDraft({ definitionMarkdown: event.target.value })}
-                disabled={archived || importingPack}
+                disabled={archived || importingFiles}
                 spellCheck={false}
               />
             </section>
@@ -468,7 +468,7 @@ export default function CharacterEditorApp() {
                 className="settings-character-notes-textarea character-editor-textarea"
                 value={draft.notesMarkdown}
                 onChange={(event) => updateDraft({ notesMarkdown: event.target.value })}
-                disabled={archived || importingPack}
+                disabled={archived || importingFiles}
                 spellCheck={false}
               />
             </section>
@@ -495,12 +495,12 @@ export default function CharacterEditorApp() {
             className="launch-toggle danger-button"
             type="button"
             onClick={archiveCharacter}
-            disabled={saving || importingPack || archived || draft.mode !== "edit"}
+            disabled={saving || importingFiles || archived || draft.mode !== "edit"}
           >
             Archive
           </button>
           <span>{feedback}</span>
-          <button className="launch-toggle start-session-button" type="button" onClick={saveCharacter} disabled={saving || importingPack || archived || !dirty}>
+          <button className="launch-toggle start-session-button" type="button" onClick={saveCharacter} disabled={saving || importingFiles || archived || !dirty}>
             Save
           </button>
         </footer>

@@ -44,7 +44,7 @@ import {
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
-import type { ImportCharacterPackFileResult } from "../src/character/character-catalog.js";
+import type { ImportCharacterFilesResult } from "../src/character/character-catalog.js";
 import type {
   OpenPathOptions,
   SavePastedSessionFileRequest,
@@ -1114,7 +1114,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 listCharacters: (options) => requireCharacterService().listCharacters(options ?? undefined),
                 getCharacter: (characterId) => requireCharacterService().getCharacter(characterId),
                 createCharacter: (input) => requireCharacterService().createCharacter(input),
-                importCharacterPackFile: async (targetWindow) => importCharacterPackFile(targetWindow),
+                importCharacterFiles: async (targetWindow) => importCharacterFiles(targetWindow),
                 updateCharacterMetadata: (input) => requireCharacterService().updateCharacterMetadata(input),
                 updateCharacterDefinition: (input) => requireCharacterService().updateCharacterDefinition(input),
                 archiveCharacter: (characterId) => requireCharacterService().archiveCharacter(characterId),
@@ -2746,15 +2746,12 @@ async function openCharacterEditorWindow(characterId?: string | null): Promise<B
   return requireMainWindowFacade().openCharacterEditorWindow(characterId);
 }
 
-async function importCharacterPackFile(targetWindow?: BrowserWindow | null): Promise<ImportCharacterPackFileResult | null> {
-  const selectedPath = await requireWindowDialogService().pickFile(targetWindow, null);
-  if (!selectedPath) {
+async function importCharacterFiles(targetWindow?: BrowserWindow | null): Promise<ImportCharacterFilesResult | null> {
+  const selectedPaths = await requireWindowDialogService().pickFiles(targetWindow, null);
+  if (selectedPaths.length === 0) {
     return null;
   }
-  if (path.extname(selectedPath).toLowerCase() !== ".zip") {
-    throw new Error("Character pack は .zip を選択してください。");
-  }
-  return requireCharacterService().importCharacterPackFile(selectedPath);
+  return requireCharacterService().importCharacterFiles(selectedPaths);
 }
 
 async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {

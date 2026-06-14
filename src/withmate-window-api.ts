@@ -61,7 +61,7 @@ import type {
   CharacterCatalogEntry,
   CharacterDetail,
   CreateCharacterInput,
-  ImportCharacterPackFileResult,
+  ImportCharacterFilesResult,
   ResolveLaunchCharacterInput,
   UpdateCharacterDefinitionInput,
   UpdateCharacterMetadataInput,
@@ -242,7 +242,7 @@ export type WithMateWindowCharacterApi = {
   listCharacters(options?: { includeArchived?: boolean }): Promise<CharacterCatalogEntry[]>;
   getCharacter(characterId: string): Promise<CharacterDetail | null>;
   createCharacter(input: CreateCharacterInput): Promise<CharacterDetail>;
-  importCharacterPackFile(): Promise<ImportCharacterPackFileResult | null>;
+  importCharacterFiles(): Promise<ImportCharacterFilesResult | null>;
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): Promise<CharacterDetail>;
   updateCharacterDefinition(input: UpdateCharacterDefinitionInput): Promise<CharacterDetail>;
   archiveCharacter(characterId: string): Promise<CharacterCatalogEntry>;

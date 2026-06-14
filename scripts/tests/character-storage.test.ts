@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -19,69 +19,6 @@ description: ""
 ## Identity
 - ${name}
 `;
-}
-
-function buildStoredZip(entries: Array<{ name: string; data: Buffer | string }>): Buffer {
-  const localParts: Buffer[] = [];
-  const centralParts: Buffer[] = [];
-  let offset = 0;
-
-  for (const entry of entries) {
-    const name = Buffer.from(entry.name, "utf8");
-    const data = Buffer.isBuffer(entry.data) ? entry.data : Buffer.from(entry.data, "utf8");
-    const localHeader = Buffer.alloc(30);
-    localHeader.writeUInt32LE(0x04034b50, 0);
-    localHeader.writeUInt16LE(20, 4);
-    localHeader.writeUInt16LE(0, 6);
-    localHeader.writeUInt16LE(0, 8);
-    localHeader.writeUInt32LE(0, 10);
-    localHeader.writeUInt32LE(0, 14);
-    localHeader.writeUInt32LE(data.byteLength, 18);
-    localHeader.writeUInt32LE(data.byteLength, 22);
-    localHeader.writeUInt16LE(name.byteLength, 26);
-    localHeader.writeUInt16LE(0, 28);
-    localParts.push(localHeader, name, data);
-
-    const centralHeader = Buffer.alloc(46);
-    centralHeader.writeUInt32LE(0x02014b50, 0);
-    centralHeader.writeUInt16LE(20, 4);
-    centralHeader.writeUInt16LE(20, 6);
-    centralHeader.writeUInt16LE(0, 8);
-    centralHeader.writeUInt16LE(0, 10);
-    centralHeader.writeUInt32LE(0, 12);
-    centralHeader.writeUInt32LE(0, 16);
-    centralHeader.writeUInt32LE(data.byteLength, 20);
-    centralHeader.writeUInt32LE(data.byteLength, 24);
-    centralHeader.writeUInt16LE(name.byteLength, 28);
-    centralHeader.writeUInt16LE(0, 30);
-    centralHeader.writeUInt16LE(0, 32);
-    centralHeader.writeUInt32LE(0, 34);
-    centralHeader.writeUInt32LE(0, 38);
-    centralHeader.writeUInt32LE(offset, 42);
-    centralParts.push(centralHeader, name);
-
-    offset += localHeader.byteLength + name.byteLength + data.byteLength;
-  }
-
-  const centralDirectory = Buffer.concat(centralParts);
-  const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(0, 4);
-  end.writeUInt16LE(0, 6);
-  end.writeUInt16LE(entries.length, 8);
-  end.writeUInt16LE(entries.length, 10);
-  end.writeUInt32LE(centralDirectory.byteLength, 12);
-  end.writeUInt32LE(offset, 16);
-  end.writeUInt16LE(0, 20);
-
-  return Buffer.concat([...localParts, centralDirectory, end]);
-}
-
-function corruptFirstCentralDirectoryUncompressedSize(zipBuffer: Buffer, size: number): Buffer {
-  const copy = Buffer.from(zipBuffer);
-  const localHeaderLength = 30 + Buffer.from("sophia/character.md", "utf8").byteLength + Buffer.byteLength(validDefinition("Sophia"), "utf8");
-  copy.writeUInt32LE(size, localHeaderLength + 24);
-  return copy;
 }
 
 async function createTempPaths(): Promise<{ dbPath: string; userDataPath: string; cleanup: () => Promise<void> }> {
@@ -219,30 +156,30 @@ describe("CharacterStorage", () => {
     }
   });
 
-  it("importCharacterPackFile は character.md / notes / icon asset を取り込む", async () => {
+  it("importCharacterFiles は character.md / notes / icon asset を取り込む", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: CharacterStorage | null = null;
 
     try {
       storage = new CharacterStorage(dbPath, userDataPath);
-      const zipPath = path.join(userDataPath, "sophia-pack.zip");
-      await writeFile(zipPath, buildStoredZip([
-        {
-          name: "sophia/character.md",
-          data: validDefinition("Sophia").replace('description: ""', 'description: "Spy style"'),
-        },
-        { name: "sophia/character-notes.md", data: "# Character Notes\n\n- source memo\n" },
-        { name: "sophia/README.md", data: "# Pack README\n\nImport note.\n" },
-        { name: "sophia/assets/icon.png", data: Buffer.from([0x89, 0x50, 0x4e, 0x47]) },
-      ]));
+      const importDirectory = path.join(userDataPath, "sophia-import");
+      await mkdir(path.join(importDirectory, "assets"), { recursive: true });
+      const definitionPath = path.join(importDirectory, "character.md");
+      const notesPath = path.join(importDirectory, "character-notes.md");
+      const readmePath = path.join(importDirectory, "README.md");
+      const iconPath = path.join(importDirectory, "assets", "icon.png");
+      await writeFile(definitionPath, validDefinition("Sophia").replace('description: ""', 'description: "Spy style"'), "utf8");
+      await writeFile(notesPath, "# Character Notes\n\n- source memo\n", "utf8");
+      await writeFile(readmePath, "# Character README\n\nImport note.\n", "utf8");
+      await writeFile(iconPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
 
-      const result = storage.importCharacterPackFile(zipPath);
+      const result = storage.importCharacterFiles([definitionPath, notesPath, readmePath, iconPath]);
 
       assert.equal(result.character.name, "Sophia");
       assert.equal(result.character.description, "Spy style");
       assert.match(result.character.notesMarkdown, /source memo/);
-      assert.match(result.character.notesMarkdown, /Imported Pack README/);
-      assert.equal(result.importedFiles.includes("sophia/character.md"), true);
+      assert.match(result.character.notesMarkdown, /Imported README/);
+      assert.equal(result.importedFiles.includes("character.md"), true);
       assert.match(result.character.iconFilePath, /characters[\\/]+sophia[\\/]+assets[\\/]+icon\.png$/);
       assert.deepEqual(await readFile(result.character.iconFilePath), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     } finally {
@@ -251,21 +188,18 @@ describe("CharacterStorage", () => {
     }
   });
 
-  it("importCharacterPackFile は zip entry size 不一致を拒否する", async () => {
+  it("importCharacterFiles は character.md がない import を拒否する", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: CharacterStorage | null = null;
 
     try {
       storage = new CharacterStorage(dbPath, userDataPath);
-      const zipPath = path.join(userDataPath, "broken-pack.zip");
-      const zipBuffer = buildStoredZip([
-        { name: "sophia/character.md", data: validDefinition("Sophia") },
-      ]);
-      await writeFile(zipPath, corruptFirstCentralDirectoryUncompressedSize(zipBuffer, 1));
+      const notesPath = path.join(userDataPath, "character-notes.md");
+      await writeFile(notesPath, "# Character Notes\n", "utf8");
 
       assert.throws(
-        () => storage?.importCharacterPackFile(zipPath),
-        /entry size が一致しません/,
+        () => storage?.importCharacterFiles([notesPath]),
+        /character\.md が含まれていません/,
       );
       assert.deepEqual(storage.listCharacters(), []);
     } finally {

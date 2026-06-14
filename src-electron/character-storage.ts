@@ -17,12 +17,12 @@ import {
   type CharacterRuntimeSnapshot,
   type CharacterTheme,
   type CreateCharacterInput,
-  type ImportCharacterPackFileResult,
+  type ImportCharacterFilesResult,
   type ResolveLaunchCharacterInput,
   type UpdateCharacterDefinitionInput,
   type UpdateCharacterMetadataInput,
 } from "../src/character/character-catalog.js";
-import { parseCharacterPackZipFile } from "./character-pack-import.js";
+import { parseCharacterImportFiles } from "./character-files-import.js";
 import {
   APP_DATABASE_V4_FILENAME,
   assertV4SchemaInitializationAllowed,
@@ -357,31 +357,34 @@ export class CharacterStorage {
     return created;
   }
 
-  importCharacterPackFile(filePath: string): ImportCharacterPackFileResult {
-    const pack = parseCharacterPackZipFile(filePath);
+  importCharacterFiles(filePaths: string[]): ImportCharacterFilesResult {
+    const imported = parseCharacterImportFiles(filePaths);
     const created = this.createCharacter({
-      name: pack.name,
-      description: pack.description,
-      definitionMarkdown: pack.definitionMarkdown,
-      notesMarkdown: pack.notesMarkdown,
+      name: imported.name,
+      description: imported.description,
+      definitionMarkdown: imported.definitionMarkdown,
+      notesMarkdown: imported.notesMarkdown,
     });
 
     try {
       let character = created;
-      if (pack.iconAsset) {
+      if (imported.assets.length > 0) {
         const assetsDirectory = path.join(this.characterDirectory(created.id), "assets");
         mkdirSync(assetsDirectory, { recursive: true });
-        const iconFilePath = path.join(assetsDirectory, pack.iconAsset.fileName);
-        writeFileSync(iconFilePath, pack.iconAsset.data);
-        character = this.updateCharacterMetadata({
-          characterId: created.id,
-          iconFilePath,
-        });
+        for (const asset of imported.assets) {
+          writeFileSync(path.join(assetsDirectory, asset.fileName), asset.data);
+        }
+        if (imported.iconFileName) {
+          character = this.updateCharacterMetadata({
+            characterId: created.id,
+            iconFilePath: path.join(assetsDirectory, imported.iconFileName),
+          });
+        }
       }
 
       return {
         character,
-        importedFiles: pack.importedFiles,
+        importedFiles: imported.importedFiles,
       };
     } catch (error) {
       this.db.prepare("DELETE FROM characters WHERE id = ?").run(created.id);

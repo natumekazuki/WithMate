@@ -1,7 +1,7 @@
 import type {
   CharacterCatalogEntry,
   CharacterDetail,
-  ImportCharacterPackFileResult,
+  ImportCharacterFilesResult,
   CharacterRuntimeSnapshot,
   CreateCharacterInput,
   ResolveLaunchCharacterInput,
@@ -15,7 +15,7 @@ export type CharacterCatalogServiceStorage = Pick<
   | "listCharacters"
   | "getCharacter"
   | "createCharacter"
-  | "importCharacterPackFile"
+  | "importCharacterFiles"
   | "updateCharacterMetadata"
   | "updateCharacterDefinition"
   | "archiveCharacter"
@@ -42,8 +42,8 @@ export class CharacterService {
     return this.storage.createCharacter(input);
   }
 
-  importCharacterPackFile(filePath: string): ImportCharacterPackFileResult {
-    return this.storage.importCharacterPackFile(filePath);
+  importCharacterFiles(filePaths: string[]): ImportCharacterFilesResult {
+    return this.storage.importCharacterFiles(filePaths);
   }
 
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): CharacterDetail {
