@@ -1,5 +1,9 @@
+import { useRef, type CSSProperties } from "react";
+
 import type { AppSettings } from "../app-state.js";
+import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import { MICROCOPY_SLOTS, type MicrocopySlot } from "../microcopy-state.js";
+import type { SettingsCharacterEditorDraft } from "./settings-character-editor-state.js";
 import type { HomeProviderSettingRow } from "./settings-view-model.js";
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
@@ -13,12 +17,27 @@ import {
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
   providerSettingRows: HomeProviderSettingRow[];
+  characterEntries: CharacterCatalogEntry[];
+  selectedCharacterId: string | null;
+  characterDraft: SettingsCharacterEditorDraft;
+  characterEditorDirty: boolean;
+  characterEditorBusy: boolean;
+  characterEditorFeedback: string;
   modelCatalogRevisionLabel: string;
   settingsDirty: boolean;
   settingsFeedback: string;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
+  onSelectCharacter: (characterId: string) => void;
+  onNewCharacter: () => void;
+  onChangeCharacterDraft: (patch: Partial<SettingsCharacterEditorDraft>) => void;
+  onImportCharacterDefinitionFile: (file: File) => void;
+  onPickCharacterIcon: () => void;
+  onSaveCharacter: () => void;
+  onCancelCharacterEdit: () => void;
+  onSetDefaultCharacter: () => void;
+  onArchiveCharacter: () => void;
   onImportModelCatalog: () => void;
   onExportModelCatalog: () => void;
   onOpenAppLogFolder: () => void;
@@ -55,12 +74,27 @@ const microcopyTextareaValue = (value: AppSettings["userMicrocopyCatalog"][Micro
 export function HomeSettingsContent({
   settingsDraft,
   providerSettingRows,
+  characterEntries,
+  selectedCharacterId,
+  characterDraft,
+  characterEditorDirty,
+  characterEditorBusy,
+  characterEditorFeedback,
   modelCatalogRevisionLabel,
   settingsDirty,
   settingsFeedback,
   onChangeAutoCollapseActionDockOnSend,
   onChangeUserMicrocopySlot,
   onChangeProviderEnabled,
+  onSelectCharacter,
+  onNewCharacter,
+  onChangeCharacterDraft,
+  onImportCharacterDefinitionFile,
+  onPickCharacterIcon,
+  onSaveCharacter,
+  onCancelCharacterEdit,
+  onSetDefaultCharacter,
+  onArchiveCharacter,
   onImportModelCatalog,
   onExportModelCatalog,
   onOpenAppLogFolder,
@@ -70,6 +104,9 @@ export function HomeSettingsContent({
   canResetMate = false,
   onSaveSettings,
 }: HomeSettingsContentProps) {
+  const characterImportInputRef = useRef<HTMLInputElement | null>(null);
+  const selectedCharacter = characterEntries.find((entry) => entry.id === selectedCharacterId) ?? null;
+
   return (
     <>
       <div className="settings-panel settings-panel-window">
@@ -133,6 +170,179 @@ export function HomeSettingsContent({
               </section>
             </>
           ) : null}
+
+          <section className="settings-section-card settings-character-section">
+            <div className="settings-field">
+              <div className="settings-section-head-row">
+                <strong>Characters</strong>
+                <button className="launch-toggle compact" type="button" onClick={onNewCharacter}>
+                  New
+                </button>
+              </div>
+              <div className="settings-character-editor">
+                <div className="settings-character-list" aria-label="Characters">
+                  {characterEntries.length === 0 ? (
+                    <p className="settings-note">登録済み Character はまだないよ。</p>
+                  ) : characterEntries.map((character) => (
+                    <button
+                      key={character.id}
+                      className={`settings-character-row${character.id === selectedCharacterId ? " selected" : ""}`}
+                      type="button"
+                      onClick={() => onSelectCharacter(character.id)}
+                    >
+                      <span
+                        className="settings-character-swatch"
+                        style={{ "--settings-character-swatch": character.theme.main } as CSSProperties}
+                        aria-hidden="true"
+                      />
+                      <span className="settings-character-row-copy">
+                        <span className="settings-character-row-name">
+                          {character.name}
+                          {character.isDefault ? <span className="settings-character-badge">Default</span> : null}
+                        </span>
+                        <span>{character.description || character.id}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="settings-character-form">
+                  <div className="settings-character-form-grid">
+                    <label className="settings-provider-input">
+                      <span>Name</span>
+                      <input
+                        type="text"
+                        value={characterDraft.name}
+                        onChange={(event) => onChangeCharacterDraft({ name: event.target.value })}
+                      />
+                    </label>
+                    <label className="settings-provider-input">
+                      <span>Description</span>
+                      <input
+                        type="text"
+                        value={characterDraft.description}
+                        onChange={(event) => onChangeCharacterDraft({ description: event.target.value })}
+                      />
+                    </label>
+                    <label className="settings-provider-input">
+                      <span>Icon</span>
+                      <div className="settings-inline-input-row">
+                        <input
+                          type="text"
+                          value={characterDraft.iconFilePath}
+                          onChange={(event) => onChangeCharacterDraft({ iconFilePath: event.target.value })}
+                        />
+                        <button className="launch-toggle compact" type="button" onClick={onPickCharacterIcon}>
+                          Browse
+                        </button>
+                      </div>
+                    </label>
+                    <div className="settings-character-theme-fields">
+                      <label className="settings-provider-input">
+                        <span>Main</span>
+                        <input
+                          type="color"
+                          value={characterDraft.theme.main}
+                          onChange={(event) => onChangeCharacterDraft({
+                            theme: { ...characterDraft.theme, main: event.target.value },
+                          })}
+                        />
+                      </label>
+                      <label className="settings-provider-input">
+                        <span>Sub</span>
+                        <input
+                          type="color"
+                          value={characterDraft.theme.sub}
+                          onChange={(event) => onChangeCharacterDraft({
+                            theme: { ...characterDraft.theme, sub: event.target.value },
+                          })}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <label className="settings-provider-input">
+                    <span>character.md</span>
+                    <textarea
+                      className="settings-character-markdown-textarea"
+                      value={characterDraft.definitionMarkdown}
+                      onChange={(event) => onChangeCharacterDraft({ definitionMarkdown: event.target.value })}
+                      rows={14}
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="settings-provider-input">
+                    <span>character-notes.md</span>
+                    <textarea
+                      className="settings-character-notes-textarea"
+                      value={characterDraft.notesMarkdown}
+                      onChange={(event) => onChangeCharacterDraft({ notesMarkdown: event.target.value })}
+                      rows={5}
+                      spellCheck={false}
+                    />
+                  </label>
+                  <input
+                    ref={characterImportInputRef}
+                    type="file"
+                    accept=".md,text/markdown,text/plain"
+                    className="settings-character-import-input"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) {
+                        onImportCharacterDefinitionFile(file);
+                      }
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                  <div className="settings-actions settings-character-actions">
+                    <button
+                      className="launch-toggle"
+                      type="button"
+                      onClick={() => characterImportInputRef.current?.click()}
+                      disabled={characterEditorBusy}
+                    >
+                      Import / Replace
+                    </button>
+                    <button
+                      className="launch-toggle"
+                      type="button"
+                      onClick={onSetDefaultCharacter}
+                      disabled={characterEditorBusy || characterDraft.mode !== "edit" || selectedCharacter?.isDefault}
+                    >
+                      Set Default
+                    </button>
+                    <button
+                      className="launch-toggle danger-button"
+                      type="button"
+                      onClick={onArchiveCharacter}
+                      disabled={characterEditorBusy || characterDraft.mode !== "edit"}
+                    >
+                      Archive
+                    </button>
+                    <button
+                      className="launch-toggle"
+                      type="button"
+                      onClick={onCancelCharacterEdit}
+                      disabled={characterEditorBusy || !characterEditorDirty}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="launch-toggle start-session-button"
+                      type="button"
+                      onClick={onSaveCharacter}
+                      disabled={characterEditorBusy || !characterEditorDirty}
+                    >
+                      Save Character
+                    </button>
+                  </div>
+                  {characterEditorFeedback ? (
+                    <p className="settings-feedback">{characterEditorFeedback}</p>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </section>
 
           <section className="settings-section-card">
             <div className="settings-field">

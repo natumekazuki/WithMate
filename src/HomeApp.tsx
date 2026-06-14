@@ -30,6 +30,16 @@ import {
   buildPersistedAppSettingsFromRows,
   type HomeProviderSettingRow,
 } from "./settings/settings-view-model.js";
+import type { CharacterCatalogEntry, CharacterDetail } from "./character/character-catalog.js";
+import {
+  createCharacterEditorDraftFromDetail,
+  createNewCharacterEditorDraft,
+  formatCharacterEditorError,
+  isSettingsCharacterDraftDirty,
+  normalizeThemeColorDraft,
+  resolveSettingsCharacterSelection,
+  type SettingsCharacterEditorDraft,
+} from "./settings/settings-character-editor-state.js";
 import { HomeAppRouter } from "./home/HomeAppRouter.js";
 import { buildHomeDashboardSlots } from "./home/HomeDashboardSlots.js";
 import { buildHomeRecentSessionsPanelProps } from "./home/home-recent-sessions-panel-props.js";
@@ -77,6 +87,12 @@ export default function HomeApp() {
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(createDefaultAppSettings());
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
+  const [characterEntries, setCharacterEntries] = useState<CharacterCatalogEntry[]>([]);
+  const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
+  const [selectedCharacterDetail, setSelectedCharacterDetail] = useState<CharacterDetail | null>(null);
+  const [characterDraft, setCharacterDraft] = useState<SettingsCharacterEditorDraft>(() => createNewCharacterEditorDraft());
+  const [characterEditorBusy, setCharacterEditorBusy] = useState(false);
+  const [characterEditorFeedback, setCharacterEditorFeedback] = useState("");
   const [settingsDraftLoaded, setSettingsDraftLoaded] = useState(!isSettingsWindowMode);
   const [modelCatalogLoaded, setModelCatalogLoaded] = useState(!isSettingsWindowMode);
   const [launchDraft, setLaunchDraft] = useState<HomeLaunchDraft>(() => createClosedLaunchDraft());
@@ -112,6 +128,36 @@ export default function HomeApp() {
     setMateDisplayName,
     setMateAvatarUpdating,
   });
+
+  const applyLoadedCharacterEntries = async (
+    api: NonNullable<ReturnType<typeof getWithMateApi>>,
+    entries: CharacterCatalogEntry[],
+    preferredCharacterId?: string | null,
+  ) => {
+    setCharacterEntries(entries);
+    const nextSelectedCharacterId = resolveSettingsCharacterSelection(entries, preferredCharacterId ?? selectedCharacterId);
+    setSelectedCharacterId(nextSelectedCharacterId);
+
+    if (!nextSelectedCharacterId) {
+      setSelectedCharacterDetail(null);
+      setCharacterDraft(createNewCharacterEditorDraft());
+      return;
+    }
+
+    const detail = await api.getCharacter(nextSelectedCharacterId);
+    setSelectedCharacterDetail(detail);
+    if (detail) {
+      setCharacterDraft(createCharacterEditorDraftFromDetail(detail));
+    }
+  };
+
+  const refreshCharacterEntries = async (
+    api: NonNullable<ReturnType<typeof getWithMateApi>>,
+    preferredCharacterId?: string | null,
+  ) => {
+    const entries = await api.listCharacters();
+    await applyLoadedCharacterEntries(api, entries, preferredCharacterId);
+  };
 
   useEffect(() => {
     let active = true;
@@ -161,6 +207,16 @@ export default function HomeApp() {
       setMateState("not_created");
       setMateProfile(null);
       setMateCreationFeedback(error instanceof Error ? error.message : "Mate 状態の取得に失敗したよ。");
+    });
+
+    void refreshCharacterEntries(withmateApi).catch((error) => {
+      if (!active) {
+        return;
+      }
+
+      setCharacterEditorFeedback(
+        formatCharacterEditorError(error, "Character 一覧の読み込みに失敗したよ。"),
+      );
     });
 
     const unsubscribeModelCatalog = startModelCatalogSubscription({
@@ -339,17 +395,176 @@ export default function HomeApp() {
     refreshMateStatus,
   });
 
+  const characterEditorDirty = useMemo(
+    () => isSettingsCharacterDraftDirty(characterDraft, selectedCharacterDetail),
+    [characterDraft, selectedCharacterDetail],
+  );
+
+  const runCharacterEditorCommand = async (command: (api: NonNullable<ReturnType<typeof getWithMateApi>>) => Promise<void>) => {
+    const api = getWithMateApi();
+    if (!api || characterEditorBusy) {
+      return;
+    }
+
+    setCharacterEditorBusy(true);
+    try {
+      await command(api);
+    } finally {
+      setCharacterEditorBusy(false);
+    }
+  };
+
+  const characterEditorHandlers = {
+    onSelectCharacter: (characterId: string) => {
+      void runCharacterEditorCommand(async (api) => {
+        const detail = await api.getCharacter(characterId);
+        setSelectedCharacterId(characterId);
+        setSelectedCharacterDetail(detail);
+        if (detail) {
+          setCharacterDraft(createCharacterEditorDraftFromDetail(detail));
+          setCharacterEditorFeedback("");
+        } else {
+          setCharacterEditorFeedback("Character が見つからなかったよ。");
+        }
+      });
+    },
+    onNewCharacter: () => {
+      setSelectedCharacterId(null);
+      setSelectedCharacterDetail(null);
+      setCharacterDraft(createNewCharacterEditorDraft());
+      setCharacterEditorFeedback("");
+    },
+    onChangeCharacterDraft: (patch: Partial<SettingsCharacterEditorDraft>) => {
+      setCharacterDraft((current) => ({
+        ...current,
+        ...patch,
+        theme: patch.theme
+          ? {
+              main: normalizeThemeColorDraft(patch.theme.main, current.theme.main),
+              sub: normalizeThemeColorDraft(patch.theme.sub, current.theme.sub),
+            }
+          : current.theme,
+      }));
+    },
+    onImportCharacterDefinitionFile: (file: File) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === "string") {
+          setCharacterDraft((current) => ({
+            ...current,
+            definitionMarkdown: reader.result as string,
+          }));
+          setCharacterEditorFeedback(`${file.name} を読み込んだよ。`);
+        }
+      };
+      reader.onerror = () => {
+        setCharacterEditorFeedback("character.md の読み込みに失敗したよ。");
+      };
+      reader.readAsText(file);
+    },
+    onPickCharacterIcon: () => {
+      void runCharacterEditorCommand(async (api) => {
+        const pickedPath = await api.pickImageFile(characterDraft.iconFilePath || undefined);
+        if (pickedPath) {
+          setCharacterDraft((current) => ({
+            ...current,
+            iconFilePath: pickedPath,
+          }));
+        }
+      });
+    },
+    onSaveCharacter: () => {
+      void runCharacterEditorCommand(async (api) => {
+        try {
+          const saved = characterDraft.mode === "create"
+            ? await api.createCharacter({
+                name: characterDraft.name,
+                description: characterDraft.description,
+                iconFilePath: characterDraft.iconFilePath,
+                theme: characterDraft.theme,
+                definitionMarkdown: characterDraft.definitionMarkdown,
+                notesMarkdown: characterDraft.notesMarkdown,
+              })
+            : await (async () => {
+                if (!characterDraft.characterId) {
+                  throw new Error("保存対象の Character が選択されていないよ。");
+                }
+                if (characterDraft.name.trim().length === 0) {
+                  throw new Error("Character name を入力してね。");
+                }
+                await api.updateCharacterDefinition({
+                  characterId: characterDraft.characterId,
+                  definitionMarkdown: characterDraft.definitionMarkdown,
+                  notesMarkdown: characterDraft.notesMarkdown,
+                });
+                return api.updateCharacterMetadata({
+                  characterId: characterDraft.characterId,
+                  name: characterDraft.name,
+                  description: characterDraft.description,
+                  iconFilePath: characterDraft.iconFilePath,
+                  theme: characterDraft.theme,
+                });
+              })();
+
+          setSelectedCharacterId(saved.id);
+          setSelectedCharacterDetail(saved);
+          setCharacterDraft(createCharacterEditorDraftFromDetail(saved));
+          await refreshCharacterEntries(api, saved.id);
+          setCharacterEditorFeedback("Character を保存したよ。");
+        } catch (error) {
+          setCharacterEditorFeedback(formatCharacterEditorError(error, "Character の保存に失敗したよ。"));
+        }
+      });
+    },
+    onCancelCharacterEdit: () => {
+      if (selectedCharacterDetail) {
+        setCharacterDraft(createCharacterEditorDraftFromDetail(selectedCharacterDetail));
+        setCharacterEditorFeedback("編集を保存前の状態へ戻したよ。");
+      } else {
+        setCharacterDraft(createNewCharacterEditorDraft());
+        setCharacterEditorFeedback("");
+      }
+    },
+    onSetDefaultCharacter: () => {
+      void runCharacterEditorCommand(async (api) => {
+        if (!characterDraft.characterId) {
+          return;
+        }
+        await api.setDefaultCharacter(characterDraft.characterId);
+        await refreshCharacterEntries(api, characterDraft.characterId);
+        setCharacterEditorFeedback("Default Character を更新したよ。");
+      });
+    },
+    onArchiveCharacter: () => {
+      void runCharacterEditorCommand(async (api) => {
+        if (!characterDraft.characterId) {
+          return;
+        }
+        await api.archiveCharacter(characterDraft.characterId);
+        await refreshCharacterEntries(api);
+        setCharacterEditorFeedback("Character を archive したよ。");
+      });
+    },
+  };
+
   const isMateStateLoading = mateState === null;
   const canUsePrimaryFeatures = mateState !== null;
 
   const baseSettingsContentProps: HomeSettingsContentBaseProps = {
     settingsDraft,
     providerSettingRows,
+    characterEntries,
+    selectedCharacterId,
+    characterDraft,
+    characterEditorDirty,
+    characterEditorBusy,
+    characterEditorFeedback,
     modelCatalogRevisionLabel: String(modelCatalog?.revision ?? "-"),
     settingsDirty,
     settingsFeedback,
     ...settingsDraftHandlers,
     ...settingsCommandHandlers,
+    ...characterEditorHandlers,
   };
 
   const { settingsContent, mateSetupContent, monitorContent } = buildHomeWindowContentSlots({
