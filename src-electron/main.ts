@@ -814,6 +814,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           loadChatEntry: (window, mode) => requireWindowEntryLoader().loadChatEntry(window, mode),
           loadCompanionMergeReviewEntry: (window, sessionId) =>
             requireWindowEntryLoader().loadCompanionMergeReviewEntry(window, sessionId),
+          loadCharacterEditorEntry: (window, characterId) =>
+            requireWindowEntryLoader().loadCharacterEditorEntry(window, characterId),
           generateDiffToken: () => crypto.randomUUID(),
           onCompanionReviewWindowsChanged: () => broadcastOpenCompanionReviewWindowIds(),
         }),
@@ -912,6 +914,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openHomeWindow: createHomeWindow,
                 openSessionMonitorWindow,
                 openSettingsWindow,
+                openCharacterEditorWindow,
                 openDiffWindow,
                 openCompanionReviewWindow,
                 openCompanionMergeWindow,
@@ -2735,6 +2738,10 @@ async function openSessionMonitorWindow(): Promise<BrowserWindow> {
 
 async function openSettingsWindow(): Promise<BrowserWindow> {
   return requireMainWindowFacade().openSettingsWindow();
+}
+
+async function openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {
+  return requireMainWindowFacade().openCharacterEditorWindow(characterId);
 }
 
 async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {

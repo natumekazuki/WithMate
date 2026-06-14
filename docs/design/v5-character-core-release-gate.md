@@ -8,7 +8,7 @@
 
 V5 Core の完了条件を、automated checks、manual checklist、release note、known risks の 4 点で固定する。
 
-V5 Core は「複数 Character へ戻せていること」を release 判定の中心に置く。ここでいう完了は、Character catalog / Settings raw editor / launch selection / runtime snapshot / prompt injection boundary が、current runtime で一貫して使える状態を指す。
+V5 Core は「複数 Character へ戻せていること」を release 判定の中心に置く。ここでいう完了は、Home Character catalog / Character Editor Window / launch selection / runtime snapshot / prompt injection boundary が、current runtime で一貫して使える状態を指す。
 
 ## Source Of Truth
 
@@ -47,8 +47,9 @@ npm run dist:win
 必須確認:
 
 - Character 0 件でも Home / New Session / Companion が neutral fallback で起動できる
-- Character A / B を登録し、default / explicit selection が New Session と Companion に渡る
-- Settings の Character raw editor / import / archive / default が保存後も維持される
+- Home の Characters panel から Character A / B を登録し、default / explicit selection が New Session と Companion に渡る
+- Character Editor Window の `character.md` / `character-notes.md` / import / archive / default が保存後も維持される
+- Settings Window に Character raw editor は表示されない
 - session / companion は開始時点の Character snapshot を保存し、catalog 現在値ではなく saved snapshot を runtime prompt に使う
 - `character-notes.md`、Memory / Growth history、provider instruction sync は V5 Core runtime prompt に常設注入されない
 - legacy session / legacy DB / existing session summary が壊れず、snapshot が無い session は空 system prompt のまま動く
@@ -58,7 +59,7 @@ npm run dist:win
 ```md
 ### V5 Character Core
 
-- 複数 Character catalog を再導入し、Settings から Character を作成・編集・既定設定・archive できるようにしました。
+- 複数 Character catalog を再導入し、Home から Character 一覧を確認して、独立した Character Editor Window で作成・編集・既定設定・archive できるようにしました。
 - New Session と Companion 起動時に Character を選択できるようにしました。Character が 0 件の場合も neutral fallback で起動できます。
 - session / companion 開始時点の `character.md` を runtime snapshot として保存し、その保存済み snapshot を coding agent prompt に注入します。後から Character catalog を編集しても、既存 session の人格定義は開始時点の snapshot を使います。
 - `character-notes.md`、Memory / Growth history、provider instruction sync への Character 書き込みは V5 Core では未実装です。
@@ -69,7 +70,7 @@ npm run dist:win
 
 | Risk | Release stance |
 | --- | --- |
-| Character 定義品質の自動評価がない | V5 Core では raw `character.md` editor / import validation までを scope とし、自動生成・人格品質 validator は後続 scope に送る |
+| Character 定義品質の自動評価がない | V5 Core では Character Editor Window の raw `character.md` editor / import validation までを scope とし、自動生成・人格品質 validator は後続 scope に送る |
 | `character-notes.md` が runtime prompt に入らない | 意図した境界。補助ファイルとして保存するが、常設 prompt 注入はしない |
 | 既存 session は CharacterRuntimeSnapshot を持たない | legacy compatibility として許容。snapshot が無い session は従来通り空 system prompt で動く |
 | Character catalog 更新が既存 session に反映されない | 意図した snapshot 境界。既存 session は開始時点の `character.md` を正本にする |

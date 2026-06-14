@@ -24,6 +24,10 @@ export class MainWindowFacade {
     return this.deps.getAuxWindowService().openSettingsWindow();
   }
 
+  async openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {
+    return this.deps.getAuxWindowService().openCharacterEditorWindow(characterId);
+  }
+
   async openSessionWindow(sessionId: string): Promise<BrowserWindow> {
     return this.deps.getSessionWindowBridge().openSessionWindow(sessionId);
   }

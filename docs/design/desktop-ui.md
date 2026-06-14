@@ -5,7 +5,7 @@
 
 ## Goal
 
-Electron デスクトップアプリとして、`Home Window` / `Session Window` / `Diff Window` / `Settings Window` / `Session Monitor Window` の責務を整理し、現行 UI の入口を 1 枚で把握できるようにする。V5 preview では legacy MateTalk runtime / `mate-talk` mode を current UI として扱わない。
+Electron デスクトップアプリとして、`Home Window` / `Character Editor Window` / `Session Window` / `Diff Window` / `Settings Window` / `Session Monitor Window` の責務を整理し、現行 UI の入口を 1 枚で把握できるようにする。V5 preview では legacy MateTalk runtime / `mate-talk` mode を current UI として扱わない。
 
 ## Manual Test Maintenance
 
@@ -15,7 +15,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 
 ## Scope
 
-- Home の session / mate 管理 UI
+- Home の session / Character catalog 管理 UI
+- Character Editor Window
 - Session Monitor Window
 - Session の coding agent 作業 UI
 - Diff Window の閲覧 UI
@@ -32,7 +33,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - 画面の実装ファイルは、表示される入口ではなく役割ごとの domain に置く
 - `Home` 配下に置くのは Home dashboard と Home から直接見える管理ハブだけとする
 - `Settings Window` の画面実装は `settings` domain に置き、Home の実装ファイルへ混ぜない
-- legacy Mate summary は `mate` domain に置き、Home には要約だけを残す
+- Character catalog は `character` / `character-editor` domain を正本にし、Home には一覧と editor window 起動だけを置く
 - chat layout の実装は 1 系統だけとし、`chat` domain を正本にする
 - Agent / Companion は同じ chat layout に乗せ、各機能側には state / service / adapter だけを置く
 - `Session` という名前の UI 実装に Agent / Companion 固有処理を詰め込まない。必要な差分は mode / capability / adapter として注入する
@@ -48,14 +49,14 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 ## Home Window
 
 - 黒基調の管理ハブとして表示する
-- `Settings` は別 window で開く前提のため、Home は session / mate 管理ハブを優先する
+- `Settings` は別 window で開く前提のため、Home は session / Character catalog 管理ハブを優先する
 - 2 カラム構成
   - 左: `Recent Sessions`
-  - 右: `Memory / Settings` rail + `Session Monitor` または `Your Mate`
-- `Recent Sessions` / `Your Mate` 見出しは dark background 上で十分読める色を明示する
+  - 右: `Memory / Settings` rail + `Session Monitor` または `Characters`
+- `Recent Sessions` / `Characters` 見出しは dark background 上で十分読める色を明示する
 - `Monitor & Resume` / `Manage Cast` の補助ラベルは置かない
 - `Session Monitor`
-  - right pane 上部の segmented toggle で `Your Mate` と排他的に切り替える
+  - right pane 上部の segmented toggle で `Characters` と排他的に切り替える
   - 初期表示は `Session Monitor`
   - compact な session row を表示する
   - source は `src-electron/main.ts` の `sessionWindows: Map<string, BrowserWindow>` を truth source にした open session ids と、`Recent Sessions` と同じ filtered session list の交差集合を使う
@@ -88,14 +89,18 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
     - background = mate `main`
     - left accent bar = mate `sub`
     - text color = WCAG AA の contrast ratio を満たす dark / light 候補から自動決定
-- `Your Mate`
+- `Characters`
   - right pane 上部の segmented toggle で `Session Monitor` と排他的に切り替える
-  - legacy Mate の avatar / name / short profile summary を表示する
-  - MateTalk launcher は表示しない
-  - V5 の新規会話導線は `New Session` / Companion の Character selector を使う
+  - Character catalog の active Character を card list で表示する
+  - header に `Create Character` を置く
+  - card には avatar / name / description / default badge / updatedAt / `Edit` を表示する
+  - card click または `Edit` で `Character Editor Window` を開く
+  - Character 0 件時は empty state と `Create Character` を表示する
+  - Home には archive / delete / Set Default を置かない
+  - `Your Mate` / MateTalk launcher / Mate Profile 編集導線は表示しない
   - card theme
-    - background = mate `main`
-    - left accent bar = mate `sub`
+    - background = Character `main`
+    - left accent bar = Character `sub`
     - text color = WCAG AA の contrast ratio を満たす dark / light 候補から自動決定
 - `New Session` dialog
   - session title 入力
@@ -116,14 +121,49 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - `Session Window`
     - `送信後に Action Dock を自動で閉じる`
   - `Default Microcopy`
-  - `Characters`
-    - Character 一覧 / raw `character.md` editor / `character-notes.md`
-    - import / replace / save / default / archive
   - `Coding Agent Providers` で provider 名と checkbox を 1 行 row で見せ、provider ごとの enable / disable を切り替える
   - `Diagnostics`
-  - `Mate Reset`
   - `Model Catalog` import / export
   - 縦が小さいときも overlay 内スクロールで末尾まで操作できる
+
+## Character Editor Window
+
+- Home の `Characters` panel から create / edit mode で開く
+- 1 Character に集中して編集する独立 window とする
+- header
+  - avatar / name / description
+  - create / edit / archived の mode
+  - saved / unsaved / saving の状態
+- tabs
+  - `Profile`
+  - `character.md`
+  - `character-notes.md`
+  - `Preview`
+- `Profile`
+  - name
+  - description
+  - icon path + Browse
+  - theme main / sub
+  - default state と `Set Default`
+- `character.md`
+  - runtime definition の正本である説明
+  - save 前 validation summary
+  - raw markdown editor
+  - import / replace
+- `character-notes.md`
+  - authoring notes / evidence / revision notes 用である説明
+  - V5 Core では runtime prompt に常設注入しない境界説明
+  - raw markdown editor
+- `Preview`
+  - Home card preview
+  - launch selector row preview
+  - runtime snapshot boundary の説明
+- footer
+  - destructive な `Archive` は左へ離して置き、confirm を挟む
+  - `Reload` / `Cancel` / `Save`
+- close
+  - dirty draft では discard confirm を出す
+- Character 定義自動生成、LLM 添削、section editor、revision / rollback、Character Update Workspace は current UI に含めない
 
 ## Session Monitor Window
 
@@ -281,25 +321,6 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `Open In Window` による `Diff Window` popout
 - `Audit Log` overlay と inline `Diff Viewer` overlay は open 時に dialog 内へ focus を移し、`Escape` で閉じ、`Tab` / `Shift+Tab` を dialog 内で循環させる
 
-## Mate Editor Window
-
-- `Profile / mate.md` の 2 モード切り替え
-- Home と同じ dark base を使う
-- header action に `Reload / Open Folder / Open Update Workspace / Close`
-- 画面下部固定の action bar に `Save / Delete`
-- `Name`
-- `Icon`
-- `Description`
-- `Theme Colors`
-  - `main`
-  - `sub`
-  - color picker + RGB 入力
-- `mate.md`
-- create / update / delete
-- 小さい window では縦積みと外側スクロールを優先し、内部スクロールの多重化を避ける
-- 既存 mate では header action の `Open Update Workspace` から Mate Editor 内で provider picker modal を開ける
-- provider picker modal は `Escape` / focus trap / provider chip の矢印キー選択に対応する
-
 ## Diff Window
 
 - side-by-side split diff
@@ -321,11 +342,11 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `Session Monitor Window` も同じ IPC bridge と truth source を使い、`Home` と別 window でも monitor 内容を同期する
 - Session 実行の監査ログは SQLite に保存し、Session Window から閲覧する
 - chat message は限定的な rich text renderer で整形表示する
-- `Settings Window` は app 共通 system prompt を編集しない。V5 Character 定義は Settings の `Characters` と session / companion snapshot を正本にする
+- `Settings Window` は app 共通 system prompt や Character 本文を編集しない。V5 Character 定義は `Character Editor Window` と session / companion snapshot を正本にする
 - legacy mate は `userData/mate/` に残る場合がある
 - `userData` は `<appData>/WithMate/` に固定する
 - Session は mate の `main / sub` theme color snapshot を保持し、現在は header title、assistant / pending bubble、composer settings、`Send / Cancel`、artifact block、Session から開く Diff の `titlebar / subbar / pane header` の限定的な accent に使う
-- theme 由来の前景色決定は輝度閾値ではなく共通 contrast helper を正本にし、Home / Session / Mate Editor / Diff で同じ WCAG AA 基準を使う
+- theme 由来の前景色決定は輝度閾値ではなく共通 contrast helper を正本にし、Home / Character Editor / Session / Diff で同じ WCAG AA 基準を使う
 - session は SQLite を正本とする
 - model catalog は DB の active revision を読む
 - message list follow mode は assistantText streaming / pending bubble 更新に反応し、command 監視は right pane の `Latest Command` へ分離する

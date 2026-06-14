@@ -80,6 +80,8 @@ V5 への移行条件は、複数 Character へ戻せていることとする。
 
 - 複数 Character を保存できる
 - UI 上で複数 Character の存在を確認できる
+- Home から Character 一覧と作成導線へ到達できる
+- Character の作成・編集は独立した Character Editor Window で行える
 - session / companion 起動時に Character を選択できる
 - session 開始時点の Character snapshot が保存される
 - 既存 session は catalog 変更の影響を受けない
@@ -87,7 +89,8 @@ V5 への移行条件は、複数 Character へ戻せていることとする。
 V5 初期 scope:
 
 - 複数 Character を作成・選択できる
-- Settings で最低限の Character 編集画面を使える
+- Home に Character catalog 一覧と `Create Character` を置く
+- 独立した Character Editor Window で最低限の Character 編集画面を使える
 - `character.md` を手動貼り付け / import / 保存できる
 - `character.md` を runtime 定義の正本にする
 - `character.md` を毎 turn prompt へ注入する
@@ -107,11 +110,11 @@ V5 初期 non-goals:
 - YacchoGPT プロンプト本文の複製や、特定キャラクターへの依存
 - Character 定義の自動生成
 - GPT-5.5 Pro 等を使う Character authoring workflow の WithMate 内組み込み
-- Character Editor の詳細 UX
+- Character Editor の詳細 authoring UX
 - V3 Character Editor / Character Update Workspace の復活
 - Character validator / Knowledge retrieval
 
-V5 Core の最低限編集画面は、作成済みの `character.md` を WithMate に登録、修正、保存するための raw editor と metadata editor に限る。section 単位の詳細 Editor、validator、revision / diff / rollback、Character Update Workspace、Character 定義自動生成は Core 完了後の個別 Issue で扱う。
+V5 Core の最低限編集画面は、Home 起点の Character Editor Window で、作成済みの `character.md` を WithMate に登録、修正、保存するための raw editor と metadata editor に限る。Settings Window には Character raw editor を置かない。section 単位の詳細 Editor、validator、revision / diff / rollback、Character Update Workspace、Character 定義自動生成は Core 完了後の個別 Issue で扱う。
 
 ## Phase 4 Preconditions From Pre-V5 Cleanup
 

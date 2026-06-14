@@ -18,8 +18,8 @@ V5 Character Core に関しては `A2. V5 Character Core Source Of Truth` を優
 
 | Doc | Role |
 | --- | --- |
-| `product-direction.md` | プロダクトの優先順位と current milestone の判断基準 |
-| `single-mate-architecture.md` | 4.0.0 SingleMate / Mate Profile / Growth 方針の正本。V5 Character Core では `A2` の文書を優先する |
+| `product-direction.md` | プロダクトの優先順位と milestone の判断基準。V5 Character Core では `A2` の文書を優先し、4.0.0 SingleMate 方針は pre-V5 context として扱う |
+| `single-mate-architecture.md` | 4.0.0 SingleMate / Mate Profile / Growth 方針の正本。V5 Character Core では `A2` の文書を優先し、この文書は legacy / deferred context として扱う |
 | `mate-storage-schema.md` | 4.0.0 Mate Profile / Growth / provider instruction sync の SQLite schema 正本 |
 | `mate-growth-engine.md` | 4.0.0 Growth Candidate / Mate Memory Engine の責務と policy gate の正本。V5 Character Core の runtime prompt 注入経路では使わない |
 | `mate-memory-summary.md` | Memory / Growth 周りを外部検討に渡すための単一 summary |

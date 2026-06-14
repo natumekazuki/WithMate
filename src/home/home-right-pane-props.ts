@@ -1,14 +1,15 @@
 import type { ReactNode } from "react";
 
+import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import type { HomeRightPaneProps } from "./HomeRightPane.js";
 import type { HomeMonitorEntry } from "./home-session-projection.js";
-import type { MateProfile } from "../mate/mate-state.js";
 
 type HomeRightPaneHandlers = {
   onChangeRightPaneView: (view: HomeRightPaneProps["rightPaneView"]) => void;
   onOpenSessionMonitorWindow: () => void;
   onOpenSettingsWindow: () => void;
-  onOpenMateProfile: () => void;
+  onCreateCharacter: () => void;
+  onEditCharacter: (characterId: string) => void;
   onOpenSession: (sessionId: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
 };
@@ -18,7 +19,8 @@ export type HomeRightPanePropsInput = {
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
   monitorWindowIcon: ReactNode;
-  mateProfile: MateProfile | null;
+  characterEntries: CharacterCatalogEntry[];
+  characterListFeedback?: string;
   handlers: HomeRightPaneHandlers;
   canUsePrimaryFeatures?: boolean;
 };
@@ -28,7 +30,8 @@ export function buildHomeRightPaneProps({
   runningMonitorEntries,
   nonRunningMonitorEntries,
   monitorWindowIcon,
-  mateProfile,
+  characterEntries,
+  characterListFeedback,
   handlers,
   canUsePrimaryFeatures,
 }: HomeRightPanePropsInput): HomeRightPaneProps {
@@ -37,11 +40,13 @@ export function buildHomeRightPaneProps({
     runningMonitorEntries,
     nonRunningMonitorEntries,
     monitorWindowIcon,
-    mateProfile,
+    characterEntries,
+    characterListFeedback,
     onChangeRightPaneView: handlers.onChangeRightPaneView,
     onOpenSessionMonitorWindow: handlers.onOpenSessionMonitorWindow,
     onOpenSettingsWindow: handlers.onOpenSettingsWindow,
-    onOpenMateProfile: handlers.onOpenMateProfile,
+    onCreateCharacter: handlers.onCreateCharacter,
+    onEditCharacter: handlers.onEditCharacter,
     onOpenSession: handlers.onOpenSession,
     onOpenCompanionReview: handlers.onOpenCompanionReview,
     canUsePrimaryFeatures,
