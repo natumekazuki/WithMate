@@ -60,6 +60,8 @@ V5 Core 必須条件:
 - size limit は 128 KiB 以下とする。
 - 本文中の相対 path 参照は、絶対 path、backslash、`..` traversal、null byte を含まない。
 
+V5 Core の frontmatter parser は `key: value` の flat scalar subset だけを扱う。nested object、array、multiline scalar は Core では扱わない。
+
 ### `character-notes.md`
 
 責務:
