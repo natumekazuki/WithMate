@@ -20,6 +20,7 @@ export type HomeRightPanePropsInput = {
   nonRunningMonitorEntries: HomeMonitorEntry[];
   monitorWindowIcon: ReactNode;
   characterEntries: CharacterCatalogEntry[];
+  characterListFeedback?: string;
   handlers: HomeRightPaneHandlers;
   canUsePrimaryFeatures?: boolean;
 };
@@ -30,6 +31,7 @@ export function buildHomeRightPaneProps({
   nonRunningMonitorEntries,
   monitorWindowIcon,
   characterEntries,
+  characterListFeedback,
   handlers,
   canUsePrimaryFeatures,
 }: HomeRightPanePropsInput): HomeRightPaneProps {
@@ -39,6 +41,7 @@ export function buildHomeRightPaneProps({
     nonRunningMonitorEntries,
     monitorWindowIcon,
     characterEntries,
+    characterListFeedback,
     onChangeRightPaneView: handlers.onChangeRightPaneView,
     onOpenSessionMonitorWindow: handlers.onOpenSessionMonitorWindow,
     onOpenSettingsWindow: handlers.onOpenSettingsWindow,

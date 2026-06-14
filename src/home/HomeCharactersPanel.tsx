@@ -3,12 +3,14 @@ import { buildCardThemeStyle, CharacterAvatar } from "../ui-utils.js";
 
 export type HomeCharactersPanelProps = {
   characters: readonly CharacterCatalogEntry[];
+  feedback?: string;
   onCreateCharacter: () => void;
   onEditCharacter: (characterId: string) => void;
 };
 
 export function HomeCharactersPanel({
   characters,
+  feedback = "",
   onCreateCharacter,
   onEditCharacter,
 }: HomeCharactersPanelProps) {
@@ -21,6 +23,7 @@ export function HomeCharactersPanel({
             Create
           </button>
         </div>
+        {feedback ? <p className="settings-feedback">{feedback}</p> : null}
         {characters.length === 0 ? (
           <div className="home-monitor-empty">
             <p>Character はまだありません。</p>

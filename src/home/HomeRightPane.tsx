@@ -11,6 +11,7 @@ export type HomeRightPaneProps = {
   nonRunningMonitorEntries: HomeMonitorEntry[];
   monitorWindowIcon: ReactNode;
   characterEntries: CharacterCatalogEntry[];
+  characterListFeedback?: string;
   onChangeRightPaneView: (view: "monitor" | "characters") => void;
   onOpenSessionMonitorWindow: () => void;
   onOpenSettingsWindow: () => void;
@@ -27,6 +28,7 @@ export function HomeRightPane({
   nonRunningMonitorEntries,
   monitorWindowIcon,
   characterEntries,
+  characterListFeedback = "",
   onChangeRightPaneView,
   onOpenSessionMonitorWindow,
   onOpenSettingsWindow,
@@ -109,6 +111,7 @@ export function HomeRightPane({
         <section className="home-monitor-panel" role="tabpanel" aria-label="Characters">
           <HomeCharactersPanel
             characters={characterEntries}
+            feedback={characterListFeedback}
             onCreateCharacter={onCreateCharacter}
             onEditCharacter={onEditCharacter}
           />
