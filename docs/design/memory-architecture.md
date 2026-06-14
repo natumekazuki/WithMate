@@ -1,7 +1,7 @@
 # Memory Architecture
 
 - 作成日: 2026-03-12
-- 更新日: 2026-05-03
+- 更新日: 2026-06-14
 - 対象: Project Memory / Session Memory / Character Memory の責務設計
 - 関連 Issue:
   - `#3 LangGraphを使ってMemoryの永続化と共有`
@@ -15,7 +15,7 @@ WithMate における Memory を、保存データとしての責務と coding p
 
 2026-04-27 時点では、MemoryGeneration と独り言 / character reflection runtime は削除する。理由は保存容量や描画軽量化ではなく、AI agent に渡す prompt の token 効率と有用性を改善するためである。
 
-2026-05-03 の 4.0.0 方針では、WithMate は完全 SingleMate へ移行する。旧 Memory runtime を復活させず、Mate の継続性は `Growth Candidate`、`Bond Profile`、`Work Style`、tag 付き Profile Item として再設計する。Growth Candidate は 4.0.0 から実装し、毎回のユーザー承認ではなく、Mate の自律的な profile 更新として扱う。
+2026-06-14 の V5 Character Core では、Memory / Growth history を Character runtime prompt へ常設注入しない。Character の runtime 正本は session / companion 開始時点の `CharacterRuntimeSnapshot.definitionMarkdown` であり、Memory / Growth 再設計は V5 preview 後の deferred scope とする。
 
 4.0.0 の Memory / Growth は project 単位で分割された保存領域ではない。
 機械学習 dataset の tag に近い形で、Memory ID に紐づく別 table に `tag_type` と `tag_value` を持たせ、制限なしで複数 tag を付与して扱う。
@@ -54,6 +54,7 @@ current runtime では次を行わない。
 - 独り言生成
 - `Session Window` 右ペインでの MemoryGeneration / 独り言 tab 表示
 - Settings での `Memory Generation` / `Memory Extraction` / `Character Reflection` 設定表示
+- V5 Character runtime prompt への Memory / Growth history 常設注入
 
 既存 DB data は削除しない。保存済み `session_memories`、`project_memory_entries`、`character_memory_entries`、`sessions.stream_json`、background `audit_logs` は互換用の既存データとして残す。
 

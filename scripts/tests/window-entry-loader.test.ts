@@ -30,7 +30,6 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
   await loader.loadDiffEntry(stub.window, "diff#1");
   await loader.loadBootEntry(stub.window);
   await loader.loadChatEntry(stub.window, { kind: "companion", sessionId: "companion 1" });
-  await loader.loadChatEntry(stub.window, { kind: "mate-talk" });
   await loader.loadCompanionMergeReviewEntry(stub.window, "companion 1");
 
   assert.deepEqual(stub.calls, [
@@ -39,7 +38,6 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
     { kind: "url", value: "http://localhost:5173/diff.html?token=diff%231" },
     { kind: "url", value: "http://localhost:5173/boot.html" },
     { kind: "url", value: "http://localhost:5173/session.html?companionSessionId=companion%201&mode=companion" },
-    { kind: "url", value: "http://localhost:5173/session.html?mode=mate-talk" },
     { kind: "url", value: "http://localhost:5173/review.html?companionSessionId=companion%201&view=merge" },
   ]);
 });
@@ -49,11 +47,6 @@ test("buildChatEntrySearch は chat mode ごとの session.html query を組み�
   assert.equal(
     buildChatEntrySearch({ kind: "companion", sessionId: "companion 1" }),
     "?companionSessionId=companion%201&mode=companion",
-  );
-  assert.equal(buildChatEntrySearch({ kind: "mate-talk" }), "?mode=mate-talk");
-  assert.equal(
-    buildChatEntrySearch({ kind: "mate-talk", launch: { provider: "copilot", model: "claude-sonnet-4.5", reasoningEffort: "medium" } }),
-    "?mode=mate-talk&provider=copilot&model=claude-sonnet-4.5&reasoningEffort=medium",
   );
 });
 
@@ -68,7 +61,6 @@ test("WindowEntryLoader は production build で loadFile する", async () => {
   await loader.loadHomeEntry(stub.window, "settings");
   await loader.loadBootEntry(stub.window);
   await loader.loadChatEntry(stub.window, { kind: "companion", sessionId: "companion 1" });
-  await loader.loadChatEntry(stub.window, { kind: "mate-talk" });
   await loader.loadCompanionMergeReviewEntry(stub.window, "companion 1");
 
   assert.deepEqual(stub.calls, [
@@ -79,11 +71,6 @@ test("WindowEntryLoader は production build で loadFile する", async () => {
       kind: "file",
       value: "F:\\dist\\session.html",
       search: "?companionSessionId=companion%201&mode=companion",
-    },
-    {
-      kind: "file",
-      value: "F:\\dist\\session.html",
-      search: "?mode=mate-talk",
     },
     {
       kind: "file",

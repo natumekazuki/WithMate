@@ -11,6 +11,9 @@ WithMate が管理する Mate Profile を、各 coding provider の instruction 
 
 ## Position
 
+- V5 Character Core では、この文書の provider instruction sync は Character 注入の主経路ではない。
+- V5 current runtime の Character 注入は、session / companion 開始時点の `CharacterRuntimeSnapshot.definitionMarkdown` を system 側へ入れる経路を正本にする。
+- この文書は V4 SingleMate 由来の provider instruction sync 設計と legacy data / deferred 再検討用の詳細として扱う。
 - SingleMate の product / storage 方針は `docs/design/single-mate-architecture.md` を参照する
 - provider instruction sync table の詳細は `docs/design/mate-storage-schema.md` を参照する
 - coding plane の prompt detail は `docs/design/prompt-composition.md` を参照する

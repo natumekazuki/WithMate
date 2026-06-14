@@ -14,13 +14,14 @@
 
 current 実装の正本として維持する文書。  
 仕様変更やコード変更に追従して更新する前提で扱う。
+V5 Character Core に関しては `A2. V5 Character Core Source Of Truth` を優先し、V4 SingleMate / MateTalk / Growth / provider instruction sync と矛盾する記述は V5 preview では legacy / deferred として扱う。
 
 | Doc | Role |
 | --- | --- |
 | `product-direction.md` | プロダクトの優先順位と current milestone の判断基準 |
-| `single-mate-architecture.md` | 4.0.0 SingleMate / Mate Profile / Growth 方針の正本 |
+| `single-mate-architecture.md` | 4.0.0 SingleMate / Mate Profile / Growth 方針の正本。V5 Character Core では `A2` の文書を優先する |
 | `mate-storage-schema.md` | 4.0.0 Mate Profile / Growth / provider instruction sync の SQLite schema 正本 |
-| `mate-growth-engine.md` | 4.0.0 Growth Candidate / Mate Memory Engine の責務と policy gate の正本 |
+| `mate-growth-engine.md` | 4.0.0 Growth Candidate / Mate Memory Engine の責務と policy gate の正本。V5 Character Core の runtime prompt 注入経路では使わない |
 | `mate-memory-summary.md` | Memory / Growth 周りを外部検討に渡すための単一 summary |
 | `provider-instruction-sync.md` | Mate Profile と provider instruction file 同期方針の正本 |
 | `window-architecture.md` | Window 構成と mode 切り替えの正本 |
@@ -45,6 +46,7 @@ Character catalog、definition format、snapshot、prompt boundary、release gat
 | `character-definition-format.md` | V5 Core の `character.md` / `character-notes.md` format 正本 |
 | `character-storage.md` | V5 Core の Character catalog / storage / snapshot 境界の正本 |
 | `v5-character-core-release-gate.md` | V5 Core の automated checks、manual checklist、release note、known risks を固定する release gate 正本 |
+| `v5-character-preview-release.md` | V5 Character Core preview release note、verification checklist、known risks の正本 |
 
 ### B. Supporting / Domain Detail
 

@@ -1,5 +1,4 @@
 import type { DiffPreviewPayload } from "../src/session-state.js";
-import type { MateTalkLaunchInput } from "../src/mate/mate-state.js";
 import type { ChatEntryMode, HomeEntryMode, WindowLike } from "./window-entry-loader.js";
 import {
   COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
@@ -42,7 +41,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   private homeWindow: TWindow | null = null;
   private sessionMonitorWindow: TWindow | null = null;
   private settingsWindow: TWindow | null = null;
-  private mateTalkWindow: TWindow | null = null;
   private readonly diffWindows = new Map<string, TWindow>();
   private readonly companionReviewWindows = new Map<string, TWindow>();
   private readonly companionMergeWindows = new Map<string, TWindow>();
@@ -59,7 +57,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       this.homeWindow,
       this.sessionMonitorWindow,
       this.settingsWindow,
-      this.mateTalkWindow,
     ].filter((window): window is TWindow => !!window && !window.isDestroyed());
   }
 
@@ -146,25 +143,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return window;
   }
 
-  async openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<TWindow> {
-    const existing = this.reuseWindow(this.mateTalkWindow);
-    if (existing) {
-      return existing;
-    }
-
-    const window = this.deps.createWindow({
-      ...COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
-      title: "WithMate MateTalk",
-    });
-    this.mateTalkWindow = window;
-    window.once("ready-to-show", () => window.show());
-    window.on("closed", () => {
-      this.mateTalkWindow = null;
-    });
-    await this.deps.loadChatEntry(window, input ? { kind: "mate-talk", launch: input } : { kind: "mate-talk" });
-    return window;
-  }
-
   async openDiffWindow(diffPreview: DiffPreviewPayload): Promise<TWindow> {
     const token = this.deps.generateDiffToken();
     const window = this.deps.createWindow({
@@ -243,10 +221,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       }
     }
     this.companionMergeWindows.clear();
-    if (this.mateTalkWindow && !this.mateTalkWindow.isDestroyed()) {
-      this.mateTalkWindow.close();
-    }
-    this.mateTalkWindow = null;
   }
 
   private reuseWindow(window: TWindow | null): TWindow | null {

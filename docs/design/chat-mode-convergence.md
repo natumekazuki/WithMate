@@ -13,6 +13,7 @@ mode ごとの違いは個別 component の分岐ではなく、capability、act
 
 `docs/design/desktop-ui.md` は、chat layout を 1 系統だけにし、Agent / Companion / メイトークを同じ chat layout に乗せる方針を正本にしている。
 `docs/design/auxiliary-session.md` も、Auxiliary を Agent 専用ではなく既存 Session Window / chat layout 上の汎用補助会話として扱う。
+V5 preview では legacy MateTalk runtime / window / `mate-talk` mode を current runtime から外す。この文書の MateTalk 行は、将来 Character Chat を再設計する場合の historical design note として扱う。
 
 今回の整理では、この方針を実装単位へ落とす。
 新しい差分を追加するときは、まず共通 component に capability を渡して表現できるかを確認する。

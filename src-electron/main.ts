@@ -59,7 +59,6 @@ import { CharacterService } from "./character-service.js";
 import { CharacterStorage } from "./character-storage.js";
 import { CodexAdapter } from "./codex-adapter.js";
 import { CopilotAdapter } from "./copilot-adapter.js";
-import { getMateTalkBackgroundStructuredPromptCapability } from "./provider-runtime.js";
 import { resolveComposerPreview } from "./composer-attachments.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import {
@@ -97,14 +96,6 @@ import {
 } from "./session-files.js";
 import { MateStorage } from "./mate-storage.js";
 import { MateProfileItemStorage } from "./mate-profile-item-storage.js";
-import {
-  buildMateTalkRuntimeInstructionFiles,
-  MateTalkRuntimeWorkspaceService,
-  sanitizeMateTalkProfileContextText,
-} from "./mate-talk-runtime-workspace.js";
-import { buildMateTalkProviderAdditionalDirectories } from "./mate-talk-reference-access.js";
-import { MateTalkService } from "./mate-talk-service.js";
-import { buildMateTalkProfileContextText } from "./mate-talk-profile-context.js";
 import { WindowEntryLoader } from "./window-entry-loader.js";
 import { AuxWindowService } from "./aux-window-service.js";
 import { registerMainIpcHandlers } from "./main-ipc-registration.js";
@@ -132,17 +123,8 @@ import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
 import {
-  DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS,
-  getMateMemoryGenerationSettings,
-  getProviderAppSettings,
   type AppSettings,
-  type MateMemoryGenerationProviderSettings,
 } from "../src/provider-settings-state.js";
-import {
-  type MateTalkLaunchInput,
-  type MateTalkTurnInput,
-  type MateTalkTurnResult,
-} from "../src/mate/mate-state.js";
 import { discoverSessionSkills } from "./skill-discovery.js";
 import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
@@ -176,14 +158,6 @@ const fixedUserDataPath = userDataPathOverride ? path.resolve(userDataPathOverri
 app.setAppUserModelId("com.natumekazuki.withmate");
 app.setPath("userData", fixedUserDataPath);
 const appLogsPath = path.join(fixedUserDataPath, "logs");
-const MATE_TALK_OUTPUT_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    assistantMessage: { type: "string" },
-  },
-  required: ["assistantMessage"],
-} as const;
 const appLogService = new AppLogService({
   logsPath: appLogsPath,
   runtimeInfo: {
@@ -220,7 +194,6 @@ let auxiliarySessionStorage: AuxiliarySessionStorageAccess | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
 let mateStorage: MateStorage | null = null;
 let mateProfileItemStorage: MateProfileItemStorage | null = null;
-let mateTalkRuntimeWorkspaceService: MateTalkRuntimeWorkspaceService | null = null;
 type CompanionStorageHandle = CompanionStorage | CompanionStorageV3;
 
 let companionStorage: CompanionStorageHandle | null = null;
@@ -1377,16 +1350,6 @@ async function resetAppSettings(): Promise<AppSettings> {
   return requireAppSettingsStorage().resetSettings();
 }
 
-function requireMateTalkRuntimeWorkspaceService(): MateTalkRuntimeWorkspaceService {
-  if (!mateTalkRuntimeWorkspaceService) {
-    mateTalkRuntimeWorkspaceService = new MateTalkRuntimeWorkspaceService({
-      userDataPath: app.getPath("userData"),
-    });
-  }
-
-  return mateTalkRuntimeWorkspaceService;
-}
-
 function requireMateStorage(): MateStorage {
   if (!mateStorage) {
     throw new Error("mate storage が初期化されていないよ。");
@@ -1428,169 +1391,6 @@ async function resetMate(): Promise<void> {
   await requireMateStorage().resetMate();
 }
 
-function extractMateTalkAssistantMessage(value: unknown): string | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const assistantMessage = (value as { assistantMessage?: unknown }).assistantMessage;
-  return typeof assistantMessage === "string" && assistantMessage.trim()
-    ? assistantMessage.trim()
-    : null;
-}
-
-function buildMateTalkSelectedContextText(input: {
-  attachments?: MateTalkTurnInput["attachments"];
-  additionalDirectories?: MateTalkTurnInput["additionalDirectories"];
-}): string {
-  const lines: string[] = [];
-  for (const attachment of input.attachments ?? []) {
-    const normalizedPath = attachment.path.trim();
-    if (normalizedPath) {
-      lines.push(`- ${attachment.kind}: ${normalizedPath}`);
-    }
-  }
-  for (const directory of input.additionalDirectories ?? []) {
-    const normalizedDirectory = directory.trim();
-    if (normalizedDirectory) {
-      lines.push(`- additional-directory: ${normalizedDirectory}`);
-    }
-  }
-
-  return lines.join("\n");
-}
-
-async function generateMateTalkAssistantMessage(input: {
-  userMessage: string;
-  provider?: string;
-  model?: string;
-  reasoningEffort?: MateMemoryGenerationProviderSettings["reasoningEffort"];
-  attachments?: MateTalkTurnInput["attachments"];
-  additionalDirectories?: MateTalkTurnInput["additionalDirectories"];
-  approvalMode?: MateTalkTurnInput["approvalMode"];
-  codexSandboxMode?: MateTalkTurnInput["codexSandboxMode"];
-  mateProfile: {
-    id: string;
-    displayName: string;
-    description: string;
-    themeMain: string;
-    themeSub: string;
-    contextText?: string;
-  };
-}): Promise<string> {
-  const appSettings = requireAppSettingsStorage().getSettings();
-  const settings = getMateMemoryGenerationSettings(appSettings);
-  const firstCandidate = settings.priorityList[0] ?? DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS;
-  const requestedCandidate =
-    input.provider || input.model || input.reasoningEffort
-      ? [{
-        ...firstCandidate,
-        provider: input.provider?.trim() || firstCandidate.provider,
-        model: input.model?.trim() || firstCandidate.model,
-        reasoningEffort: input.reasoningEffort ?? firstCandidate.reasoningEffort,
-      }]
-      : [];
-  const candidates = requestedCandidate.length > 0 ? requestedCandidate : settings.priorityList;
-  let lastFailure: Error | null = null;
-  const workspaceService = requireMateTalkRuntimeWorkspaceService();
-  let preparedRun: { workspacePath: string; lockPath: string } | null = null;
-
-  try {
-    preparedRun = await workspaceService.prepareRun();
-    await workspaceService.regenerateInstructionFiles(buildMateTalkRuntimeInstructionFiles(input.mateProfile));
-    const profileContextText = sanitizeMateTalkProfileContextText(input.mateProfile.contextText);
-    const selectedContextText = buildMateTalkSelectedContextText({
-      attachments: input.attachments,
-      additionalDirectories: input.additionalDirectories,
-    });
-    const providerAdditionalDirectories = buildMateTalkProviderAdditionalDirectories({
-      attachments: input.attachments,
-      additionalDirectories: input.additionalDirectories,
-    });
-
-    for (const candidate of candidates) {
-      const providerSettings = getProviderAppSettings(appSettings, candidate.provider);
-      if (!providerSettings.enabled) {
-        continue;
-      }
-
-      const backgroundAdapter = getProviderBackgroundAdapter(candidate.provider);
-      const capability = getMateTalkBackgroundStructuredPromptCapability(backgroundAdapter, {
-        operationPermissionMode: "user-selected",
-        approvalMode: input.approvalMode,
-        codexSandboxMode: input.codexSandboxMode,
-      });
-      if (!capability.compatible) {
-        console.warn(
-          "メイトーク背景 structured prompt の条件を満たさない provider をスキップしました:",
-          candidate.provider,
-          capability.reasons.join(", "),
-        );
-        continue;
-      }
-
-      try {
-        const result = await backgroundAdapter.runBackgroundStructuredPrompt({
-          providerId: candidate.provider,
-          workspacePath: preparedRun.workspacePath,
-          appSettings,
-          model: candidate.model,
-          reasoningEffort: candidate.reasoningEffort,
-          timeoutMs: candidate.timeoutSeconds * 1000,
-          prompt: {
-            systemText: [
-              "あなたは WithMate の Mate として、ユーザーと自然に会話します。",
-              "Mate の現在の定義を尊重し、まだ未確定な性格や口調は決めつけすぎないでください。",
-              "指定された参照パスは必要な範囲で読み取り用の文脈として扱い、ファイルの作成・更新・削除は行わず、会話文だけを返してください。",
-              "返答は JSON object のみを返してください。",
-            ].join("\n"),
-            userText: [
-              "# Mate",
-              `id: ${input.mateProfile.id}`,
-              `name: ${input.mateProfile.displayName}`,
-              `description: ${input.mateProfile.description || "(未設定)"}`,
-              ...(profileContextText ? [``, "# Profile context", profileContextText] : []),
-              ...(selectedContextText ? [``, "# Selected context", selectedContextText] : []),
-              "",
-              "# User message",
-              input.userMessage,
-              "",
-              "# Output JSON shape",
-              '{"assistantMessage":"..."}',
-            ].join("\n"),
-            outputSchema: MATE_TALK_OUTPUT_SCHEMA,
-          },
-          additionalDirectories: providerAdditionalDirectories,
-          approvalMode: input.approvalMode,
-          codexSandboxMode: input.codexSandboxMode,
-        });
-
-        const output = result.structuredOutput ?? result.parsedJson ?? result.output;
-        const assistantMessage = extractMateTalkAssistantMessage(output);
-        if (assistantMessage) {
-          return assistantMessage;
-        }
-        lastFailure = new Error(`MateTalk provider returned an invalid assistantMessage: ${candidate.provider}`);
-      } catch (error) {
-        lastFailure = error instanceof Error ? error : new Error(String(error));
-        console.warn("Failed to generate MateTalk response", candidate.provider, lastFailure);
-      }
-    }
-
-    if (lastFailure) {
-      console.warn("Failed to generate MateTalk response.", lastFailure);
-      throw lastFailure;
-    } else {
-      console.warn("有効な MateTalk provider が見つかりませんでした。");
-      throw new Error("有効な MateTalk provider が見つかりませんでした。");
-    }
-  } finally {
-    if (preparedRun) {
-      await workspaceService.completeRun();
-    }
-  }
-}
-
 function requireMateProfileItemStorage(): MateProfileItemStorage {
   if (!dbPath) {
     throw new Error("DB path が初期化されていないよ。");
@@ -1601,36 +1401,6 @@ function requireMateProfileItemStorage(): MateProfileItemStorage {
   }
 
   return mateProfileItemStorage;
-}
-
-async function runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult> {
-  const service = new MateTalkService({
-    getMateProfile: () => requireMateStorage().getMateProfile(),
-    getMateProfileContextText: (profile) => {
-      try {
-        const profileItems = requireMateProfileItemStorage().listProfileItems({
-          state: "active",
-          projectionAllowed: true,
-          projectDigestId: null,
-          limit: 40,
-        }).map(({ sectionKey, claimKey, renderedText }) => ({
-          sectionKey,
-          claimKey,
-          renderedText,
-        }));
-        return buildMateTalkProfileContextText({
-          ...profile,
-          profileItems,
-        });
-      } catch (error) {
-        console.warn("Failed to load Mate profile items for MateTalk", error);
-        return buildMateTalkProfileContextText(profile);
-      }
-    },
-    generateAssistantMessage: generateMateTalkAssistantMessage,
-  });
-
-  return service.runTurn(input);
 }
 
 function requireCompanionStorage(): CompanionStorageHandle {
@@ -2201,7 +1971,6 @@ function closePersistentStores(): void {
   appSettingsStorage = null;
   mateStorage = null;
   mateProfileItemStorage = null;
-  mateTalkRuntimeWorkspaceService = null;
   companionStorage = null;
   companionAuditLogStorage = null;
   companionAuditLogService = null;
@@ -2271,7 +2040,6 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   mainSessionPersistenceFacade = null;
   mainWindowFacade = null;
   mainQueryService = null;
-  mateTalkRuntimeWorkspaceService = null;
   mainInfrastructureRegistry?.reset();
   mainInfrastructureRegistry = null;
   sessions = [];
@@ -2967,10 +2735,6 @@ async function openSessionMonitorWindow(): Promise<BrowserWindow> {
 
 async function openSettingsWindow(): Promise<BrowserWindow> {
   return requireMainWindowFacade().openSettingsWindow();
-}
-
-async function openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<BrowserWindow> {
-  return requireMainWindowFacade().openMateTalkWindow(input);
 }
 
 async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {

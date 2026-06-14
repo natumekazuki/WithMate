@@ -44,7 +44,7 @@ import { normalizeCodexTokenUsage } from "./provider-token-usage.js";
 import {
   ProviderTurnError,
   resolveRunWorkspacePath,
-  MATE_TALK_BACKGROUND_STRUCTURED_PROMPT_POLICY,
+  BACKGROUND_STRUCTURED_PROMPT_POLICY,
   type ExtractSessionMemoryResult,
   type ExtractSessionMemoryInput,
   type ProviderErrorReason,
@@ -1354,7 +1354,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
   }
 
   getBackgroundStructuredPromptPolicy() {
-    return MATE_TALK_BACKGROUND_STRUCTURED_PROMPT_POLICY;
+    return BACKGROUND_STRUCTURED_PROMPT_POLICY;
   }
 
   async runBackgroundStructuredPrompt<TOutput = unknown>(
@@ -1931,4 +1931,3 @@ export function resolveCodexThreadForSettings(args: {
     reusedCached: false,
   };
 }
-

@@ -12,7 +12,7 @@ V5 の中核変更を、SingleMate の延命ではなく Character catalog / Cha
 ## Position
 
 - V4 current 実装の正本は引き続き `docs/design/single-mate-architecture.md` と `docs/design/provider-instruction-sync.md` とする。
-- この文書は V5 移行方針の正本であり、V4 current 実装の仕様を即時変更するものではない。
+- この文書は V5 移行方針の正本である。V5 Character Core merge 後は、Character catalog / snapshot / prompt boundary について `docs/design/character-definition-format.md`、`docs/design/character-storage.md`、`docs/design/v5-character-core-release-gate.md` を current source of truth として優先する。
 - V5 詳細設計、DB schema、UI、migration 手順は、この文書で決めすぎない。
 - V5 親 Issue / Notion / 設計タスクを作るときは、この文書を入口にする。
 
@@ -119,7 +119,7 @@ V5 Core の最低限編集画面は、作成済みの `character.md` を WithMat
 
 - Session / Project Memory の background extraction、Project Memory prompt injection、promotion runtime は削除済み。既存 DB の storage / read / delete / diagnostics 境界だけを legacy compatibility として保持する。
 - Mate storage / Mate state / Mate setup UI は Phase 3 では削除しない。Phase 4 で Home と session 起動を Mate 未作成 gate から外し、V5 Character 未実装時の neutral state と minimal app state へ縮小する。
-- MateTalk runtime / window / chat mode は Home 公開導線と送信実行を閉じたまま残る。Phase 4 の Character-first session shell 整理で削除または再定義する。
+- MateTalk runtime / window / chat mode は V5 preview 前に current runtime から削除する。Character Chat が必要な場合は、V5 Character catalog から選択した Character を使う別 Issue として再設計する。
 - 既存 DB table drop や V4 Mate Profile から V5 Character への丁寧な自動 migration は Phase 4 の前提にしない。
 
 ## Character Definition Direction

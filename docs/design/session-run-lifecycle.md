@@ -21,10 +21,10 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - `Session Window` は session 実行の viewer / input surface として扱う
 - 実行中 session の `Session Window` を閉じても、実行自体は継続する
 - `Session Window` から実行中 session を明示キャンセルできる
-- turn 完了後の Session Memory extraction と Character Reflection は background task として分離する
-- `SessionStart` では monologue only の character reflection path を起動する
+- V5 preview では turn 完了後の Session Memory extraction / Character Reflection を current background task として起動しない
+- `SessionStart` で monologue only の character reflection path を起動しない
 - `Session Window` close では Session Memory extraction を自動実行しない
-- 必要なら `Session Window` から Session Memory extraction を手動実行できる
+- Memory / Growth history は V5 Character runtime prompt に常設注入しない
 - アプリ終了は実行中 session がある場合に確認ダイアログを出す
 - 全 window が閉じても実行中 session がある場合は `Home Window` を再生成して、アプリ全体の終了を避ける
 - 実行中 session の metadata 更新は制限し、少なくとも approval / model / depth / title / delete は UI と Main Process の両方でブロックする
@@ -83,11 +83,9 @@ window は上の状態機械とは分離する。
 - session context telemetry
 - background activity
 
-### MemoryOrchestrationService
+### Legacy Memory Orchestration
 
-- Session Memory extraction trigger
-- Character Reflection trigger
-- background audit 更新
+V5 preview では Session Memory extraction / Character Reflection trigger を current runtime path として起動しない。既存 data や background audit record は legacy compatibility として保持してよいが、新規 Character prompt の正本にはしない。
 
 ### Session Window
 
@@ -109,12 +107,6 @@ window は上の状態機械とは分離する。
   - `閉じない`: close をキャンセル
   - `閉じて続行`: window は閉じるが session 実行は継続する
 - close 時に Session Memory extraction は自動実行しない
-
-### Manual Session Memory Extraction
-
-- `Session Window` の `Generate Memory` から明示実行できる
-- 実行中 session では受け付けない
-- 実行結果は `Memory生成` pane と background audit に残す
 
 ### Session Run Cancel
 
