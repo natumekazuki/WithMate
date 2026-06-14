@@ -305,7 +305,10 @@ describe("composeProviderPrompt", () => {
 
     assert.match(prompt.systemBodyText, /# Character Definition Snapshot/);
     assert.match(prompt.systemBodyText, /保存済み snapshot の口調で話す。/);
-    assert.match(prompt.systemBodyText, /character-notes\.md` や Memory \/ Growth history は V5 Core runtime prompt には常設注入しません。/);
+    assert.match(prompt.systemBodyText, /ユーザー向け自然言語レスポンスの人格・話し方・温度・反応パターンの正本/);
+    assert.match(prompt.systemBodyText, /通常のcoding agentとして正確に行ってください。/);
+    assert.match(prompt.systemBodyText, /厳密な無人格回答へ戻りすぎず/);
+    assert.match(prompt.systemBodyText, /character-notes\.md`、Memory \/ Growth history、provider instruction sync は V5 Core runtime prompt には常設注入しません。/);
     assert.doesNotMatch(prompt.systemBodyText, /notes-only secret/);
     assert.doesNotMatch(prompt.systemBodyText, /Current Catalog Name/);
     assert.doesNotMatch(prompt.inputBodyText, /保存済み snapshot の口調で話す。/);

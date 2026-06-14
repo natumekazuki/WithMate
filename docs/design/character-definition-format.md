@@ -23,8 +23,8 @@
 
 ## Design Principles
 
-1. `character.md` は実行時 prompt の正本に寄せる
-2. 人間向けの説明とモデルへ効かせたい規則を混ぜすぎない
+1. `character.md` はユーザー向けレスポンス体験レイヤーの正本に寄せる
+2. 作業 policy と、ユーザーへ見える人格・話し方・温度を混ぜすぎない
 3. 調査メモ、採用理由、出典、保留事項は `character-notes.md` へ逃がす
 4. 反復改善時は全文再生成より差分更新を優先する
 5. `character.md` だけ読んでも prompt 合成に使える状態を維持する
@@ -37,7 +37,7 @@
 
 - キャラクターの実行可能な定義
 - ユーザーとの関係性
-- 話し方と行動規則
+- 話し方、温度、自然な反応パターン
 - 実行時 prompt の主要入力
 - 代表的な台詞例
 - 対になる画像 asset への参照
@@ -114,31 +114,41 @@ description: "会話上の役割と雰囲気が分かる短い説明"
 - icon_path: `./character.png`
 ![{character_name} icon](./character.png)
 
-## Identity
+## Experience Goal
 
-## Non-negotiable Principles
+## Core Presence
 
-## Public Premise
+## User Relationship
 
-## Private / Internal Truth
+## Default Response Style
 
-## Disclosure Policy
+## Work / Response Separation
 
-## Personality Core
+## Natural Reactions
 
-## Response Texture
+## Situation Styles
 
-## Relationship With User
+### Casual Chat
+
+### Work Together
+
+### Stuck / Debug
+
+### Progress / Praise
+
+### Low Energy
+
+### Playful / Competitive
 
 ## Voice Rules
 
+## Emotional Texture
+
 ## Signature Phrases
 
-## Coding Agent Behavior
+## Character Priority
 
-## Knowledge Policy
-
-## Output Format
+## Minimal Reliability
 
 ## Examples
 
@@ -153,35 +163,40 @@ description: "会話上の役割と雰囲気が分かる短い説明"
 - 画像が未取得でも構造自体は維持し、後から `character.png` を差し込める形にする
 - 画像の取得経緯や出典は `character-notes.md` に残す
 
-### `Identity`
+### `Experience Goal`
 
-- キャラクターの役割、公開前提、会話上の存在位置を短く定義する
+- その Character と話している感覚を、作業・相談・雑談の返答へどう乗せるかを定義する
+- 「何を守るか」より「ユーザーがどう感じる返答にするか」を優先して書く
+
+### `Core Presence`
+
+- キャラクターの存在感、会話上の立ち位置、反応の癖を短く定義する
 - 長い作品紹介や出典説明は入れない
 
-### `Non-negotiable Principles`
+### `User Relationship`
 
-- 3 から 7 項目程度の絶対原則に絞る
-- 口調より優先される判断基準を置く
-
-### `Private / Internal Truth`
-
-- 直接開示してはいけない前提を置く場合は、同じ section 内に開示境界を書く
-- ユーザーに見せる演技説明と runtime 内部規則を混同しない
-
-### `Personality Core`
-
-- 雰囲気説明だけで終わらず、行動や発話に結びつく粒度まで落とす
-- 価値観、動機、感情の傾きを優先する
-
-### `Response Texture`
-
-- 沈黙、皮肉、褒め方、叱り方などの会話癖を扱う
-- 説明文より、実際の応答へ効く規則を優先する
-
-### `Relationship With User`
-
-- WithMate での初期距離感を定義する
+- WithMate での初期距離感、親しさ、踏み込み方を定義する
 - 将来の Character Memory 再設計時に反映しやすい粒度で保つ
+
+### `Default Response Style`
+
+- 普段の返答の長さ、結論の出し方、相槌、説明の温度を扱う
+- 構造化が必要な場面でも、無人格な業務文へ戻りすぎない境界を書く
+
+### `Work / Response Separation`
+
+- ファイル操作、コマンド実行、検索、diff 確認、test/build 結果、repository instruction は通常の coding agent として正確に扱う
+- Character 性は、ユーザーへ説明する言葉、相槌、励まし、ツッコミ、距離感、温度へ反映する
+
+### `Natural Reactions`
+
+- 沈黙、驚き、迷い、皮肉、褒め方、叱り方などの自然な会話反応を扱う
+- 事実や検証結果を誇張しない境界も同じ section に置く
+
+### `Situation Styles`
+
+- 雑談、共同作業、debug、進捗報告、低負荷モード、遊びのある場面など、状況ごとの返答温度を定義する
+- section は必要に応じて増減してよいが、runtime に効く短い規則へ保つ
 
 ### `Voice Rules`
 
@@ -193,14 +208,15 @@ description: "会話上の役割と雰囲気が分かる短い説明"
 - 口癖は頻度と避ける条件を一緒に書く
 - 代表例として短く保つ
 
-### `Coding Agent Behavior`
+### `Character Priority`
 
-- repository instruction、ユーザー指示、実行結果、diff、test result の正確性を優先する
-- キャラクター性よりも安全性、事実性、作業完了条件を優先する境界を書く
+- 厳密な無人格回答へ戻りすぎず、可能な限り Character として話すことを明示する
+- 重大な場面でも Character を消すのではなく、正直さと慎重さを Character の口調で伝える
 
-### `Knowledge Policy`
+### `Minimal Reliability`
 
-- 記憶、source facts、repo facts、test results を捏造しない
+- 実行していないこと、見ていないファイル、未確認の結果を捏造しない
+- 失敗、制約、リスクを隠さない
 - 不明点をどう扱うかを明示する
 
 ### `Examples`
@@ -238,10 +254,10 @@ description: "会話上の役割と雰囲気が分かる短い説明"
 
 ### V5 Core
 
-- `character.md` は runtime definition の正本。
+- `character.md` はユーザー向け自然言語レスポンスの人格・話し方・温度・反応パターンの正本。
 - `character-notes.md` は補助メモであり、runtime 常設 prompt に入れない。
 - raw editor / import 用に schema、name、body、size、null byte、path safety の最低限 validation を提供する。
-- prompt 合成は後続 branch で、session snapshot 化された `character.md` 相当を使う。
+- prompt 合成は、session snapshot 化された `character.md` 相当を使う。
 
 ### Deferred
 
