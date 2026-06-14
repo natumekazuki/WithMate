@@ -27,6 +27,14 @@ import type {
   CreateAuxiliarySessionInput,
 } from "../src/auxiliary-session-state.js";
 import type {
+  CharacterCatalogEntry,
+  CharacterDetail,
+  CreateCharacterInput,
+  ResolveLaunchCharacterInput,
+  UpdateCharacterDefinitionInput,
+  UpdateCharacterMetadataInput,
+} from "../src/character/character-catalog.js";
+import type {
   CreateMateInput,
   MateProfile,
   MateStorageState,
@@ -49,6 +57,8 @@ import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
+  WITHMATE_ARCHIVE_CHARACTER_CHANNEL,
+  WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
@@ -59,6 +69,7 @@ import {
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
+  WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_COMPANION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
   WITHMATE_GET_COMPANION_SESSION_CHANNEL,
@@ -81,6 +92,7 @@ import {
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_COMPANION_AUDIT_LOGS_CHANNEL,
@@ -126,6 +138,7 @@ import {
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESET_MATE_CHANNEL,
+  WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
@@ -134,6 +147,7 @@ import {
   WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SET_MATE_AVATAR_CHANNEL,
+  WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
   WITHMATE_SAVE_PASTED_SESSION_FILE_CHANNEL,
   WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
   WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL,
@@ -141,6 +155,8 @@ import {
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL,
+  WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
 } from "../src/withmate-ipc-channels.js";
@@ -272,6 +288,14 @@ export type MainIpcRegistrationDeps = {
   updateMate(input: UpdateMateInput): Promise<MateProfile>;
   setMateAvatar(input: SetMateAvatarInput): Promise<MateProfile>;
   resetMate(): Promise<void>;
+  listCharacters(options?: { includeArchived?: boolean } | null): Awaitable<CharacterCatalogEntry[]>;
+  getCharacter(characterId: string): Awaitable<CharacterDetail | null>;
+  createCharacter(input: CreateCharacterInput): Awaitable<CharacterDetail>;
+  updateCharacterMetadata(input: UpdateCharacterMetadataInput): Awaitable<CharacterDetail>;
+  updateCharacterDefinition(input: UpdateCharacterDefinitionInput): Awaitable<CharacterDetail>;
+  archiveCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
+  setDefaultCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
+  resolveLaunchCharacter(input?: ResolveLaunchCharacterInput | null): Awaitable<CharacterDetail | null>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFiles(targetWindow: MaybeWindow, initialPath: string | null): Promise<string[]>;
@@ -433,6 +457,18 @@ type MainIpcMateDeps = Pick<
   | "updateMate"
   | "setMateAvatar"
   | "resetMate"
+>;
+
+type MainIpcCharacterDeps = Pick<
+  MainIpcRegistrationDeps,
+  | "listCharacters"
+  | "getCharacter"
+  | "createCharacter"
+  | "updateCharacterMetadata"
+  | "updateCharacterDefinition"
+  | "archiveCharacter"
+  | "setDefaultCharacter"
+  | "resolveLaunchCharacter"
 >;
 
 function resolveTargetWindow(
@@ -812,6 +848,36 @@ function registerMateHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcMateDeps
   ipcMain.handle(WITHMATE_RESET_MATE_CHANNEL, () => deps.resetMate());
 }
 
+function registerCharacterHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCharacterDeps): void {
+  ipcMain.handle(WITHMATE_LIST_CHARACTERS_CHANNEL, (_event, options: { includeArchived?: boolean } | null) =>
+    deps.listCharacters(options ?? undefined),
+  );
+  ipcMain.handle(WITHMATE_GET_CHARACTER_CHANNEL, (_event, characterId: string) => {
+    if (!characterId) {
+      return null;
+    }
+    return deps.getCharacter(characterId);
+  });
+  ipcMain.handle(WITHMATE_CREATE_CHARACTER_CHANNEL, (_event, input: CreateCharacterInput) =>
+    deps.createCharacter(input),
+  );
+  ipcMain.handle(WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL, (_event, input: UpdateCharacterMetadataInput) =>
+    deps.updateCharacterMetadata(input),
+  );
+  ipcMain.handle(WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL, (_event, input: UpdateCharacterDefinitionInput) =>
+    deps.updateCharacterDefinition(input),
+  );
+  ipcMain.handle(WITHMATE_ARCHIVE_CHARACTER_CHANNEL, (_event, characterId: string) =>
+    deps.archiveCharacter(characterId),
+  );
+  ipcMain.handle(WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL, (_event, characterId: string) =>
+    deps.setDefaultCharacter(characterId),
+  );
+  ipcMain.handle(WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL, (_event, input: ResolveLaunchCharacterInput | null) =>
+    deps.resolveLaunchCharacter(input),
+  );
+}
+
 export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrationDeps): void {
   const wrappedIpcMain = createErrorLoggingIpcMain(ipcMain, deps);
   registerWindowHandlers(wrappedIpcMain, deps);
@@ -822,6 +888,7 @@ export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrat
   registerCompanionHandlers(wrappedIpcMain, deps);
   registerSessionRuntimeHandlers(wrappedIpcMain, deps);
   registerMateHandlers(wrappedIpcMain, deps);
+  registerCharacterHandlers(wrappedIpcMain, deps);
   ipcMain.on(WITHMATE_RENDERER_LOG_CHANNEL, (event, input: RendererLogInput) => {
     const windowId = deps.resolveEventWindow(event)?.id;
     deps.reportRendererLog?.(input, windowId);

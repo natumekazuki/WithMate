@@ -4,6 +4,15 @@ import { rm } from "node:fs/promises";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { Session } from "../src/session-state.js";
 import type { AuxiliarySession, AuxiliarySessionSummary } from "../src/auxiliary-session-state.js";
+import type {
+  CharacterCatalogEntry,
+  CharacterDetail,
+  CharacterRuntimeSnapshot,
+  CreateCharacterInput,
+  ResolveLaunchCharacterInput,
+  UpdateCharacterDefinitionInput,
+  UpdateCharacterMetadataInput,
+} from "../src/character/character-catalog.js";
 import { APP_DATABASE_V2_FILENAME, CREATE_V2_SCHEMA_SQL, isValidV2Database } from "./database-schema-v2.js";
 import { APP_DATABASE_V3_FILENAME, CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
 import { APP_DATABASE_V4_FILENAME } from "./database-schema-v4.js";
@@ -12,6 +21,7 @@ import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogStorageV2 } from "./audit-log-storage-v2.js";
 import { AuditLogStorageV3 } from "./audit-log-storage-v3.js";
 import { AuxiliarySessionStorage } from "./auxiliary-session-storage.js";
+import { CharacterStorage } from "./character-storage.js";
 import { MateStorage, type MateProfileFileMismatch } from "./mate-storage.js";
 import {
   ProjectMemoryStorageV2Read,
@@ -73,9 +83,23 @@ export type AuxiliarySessionStorageAccess = {
   deleteAuxiliarySessionsExceptParents(parentSessionIds: Iterable<string>): void;
   close(): void;
 };
+export type CharacterStorageAccess = {
+  listCharacters(options?: { includeArchived?: boolean }): CharacterCatalogEntry[];
+  getCharacter(characterId: string): CharacterDetail | null;
+  createCharacter(input: CreateCharacterInput): CharacterDetail;
+  updateCharacterMetadata(input: UpdateCharacterMetadataInput): CharacterDetail;
+  updateCharacterDefinition(input: UpdateCharacterDefinitionInput): CharacterDetail;
+  archiveCharacter(characterId: string): CharacterCatalogEntry;
+  setDefaultCharacter(characterId: string): CharacterCatalogEntry;
+  resolveLaunchCharacter(input?: ResolveLaunchCharacterInput): CharacterDetail | null;
+  createRuntimeSnapshot(characterId: string): CharacterRuntimeSnapshot | null;
+  deleteCharacterRootDirectory(): Promise<void>;
+  close(): void;
+};
 
 export type PersistentStoreBundle = {
   modelCatalogStorage: ModelCatalogStorage;
+  characterStorage: CharacterStorageAccess;
   sessionStorage: SessionStorageRead;
   sessionMemoryStorage: SessionMemoryStorageAccess;
   projectMemoryStorage: ProjectMemoryStorageAccess;
@@ -96,6 +120,7 @@ export type PersistentStoreBundleLike = {
 
 type PersistentStoreLifecycleDeps = {
   createModelCatalogStorage(dbPath: string, bundledModelCatalogPath: string): ModelCatalogStorage;
+  createCharacterStorage?(dbPath: string, userDataPath: string): CharacterStorageAccess;
   createSessionStorage(dbPath: string): SessionStorage;
   createSessionMemoryStorage(dbPath: string): SessionMemoryStorage;
   createProjectMemoryStorage(dbPath: string): ProjectMemoryStorage;
@@ -145,6 +170,10 @@ export class PersistentStoreLifecycleService {
     const auxiliarySessionStorage = isV3Database || isV2Database || basename(dbPath) !== APP_DATABASE_V4_FILENAME
       ? new LegacyAuxiliarySessionStorage()
       : this.deps.createAuxiliarySessionStorage?.(dbPath) ?? new AuxiliarySessionStorage(dbPath);
+    const characterStorage = isV3Database || isV2Database || basename(dbPath) !== APP_DATABASE_V4_FILENAME
+      ? new LegacyCharacterStorage()
+      : this.deps.createCharacterStorage?.(dbPath, resolvedUserDataPath)
+        ?? new CharacterStorage(dbPath, resolvedUserDataPath);
     const appSettingsStorage = this.deps.createAppSettingsStorage(dbPath);
     const mateStorage = this.deps.createMateStorage(dbPath, resolvedUserDataPath);
     await this.recoverActiveMateProfileProjection(mateStorage);
@@ -153,6 +182,7 @@ export class PersistentStoreLifecycleService {
 
     return {
       modelCatalogStorage,
+      characterStorage,
       sessionStorage,
       sessionMemoryStorage,
       projectMemoryStorage,
@@ -170,6 +200,7 @@ export class PersistentStoreLifecycleService {
 
     const stores: Array<ClosableStore | null | undefined> = [
       bundle.modelCatalogStorage,
+      bundle.characterStorage,
       bundle.sessionStorage,
       bundle.sessionMemoryStorage,
       bundle.projectMemoryStorage,
@@ -298,10 +329,53 @@ class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
   close(): void {}
 }
 
+class LegacyCharacterStorage implements CharacterStorageAccess {
+  listCharacters(): CharacterCatalogEntry[] {
+    return [];
+  }
+
+  getCharacter(): CharacterDetail | null {
+    return null;
+  }
+
+  createCharacter(): CharacterDetail {
+    throw new Error("Character catalog は legacy DB では利用できません。");
+  }
+
+  updateCharacterMetadata(): CharacterDetail {
+    throw new Error("Character catalog は legacy DB では利用できません。");
+  }
+
+  updateCharacterDefinition(): CharacterDetail {
+    throw new Error("Character catalog は legacy DB では利用できません。");
+  }
+
+  archiveCharacter(): CharacterCatalogEntry {
+    throw new Error("Character catalog は legacy DB では利用できません。");
+  }
+
+  setDefaultCharacter(): CharacterCatalogEntry {
+    throw new Error("Character catalog は legacy DB では利用できません。");
+  }
+
+  resolveLaunchCharacter(): CharacterDetail | null {
+    return null;
+  }
+
+  createRuntimeSnapshot(): CharacterRuntimeSnapshot | null {
+    return null;
+  }
+
+  async deleteCharacterRootDirectory(): Promise<void> {}
+
+  close(): void {}
+}
+
 export function createPersistentStoreLifecycleService(): PersistentStoreLifecycleService {
   return new PersistentStoreLifecycleService({
     createModelCatalogStorage: (dbPath, bundledModelCatalogPath) =>
       new ModelCatalogStorage(dbPath, bundledModelCatalogPath),
+    createCharacterStorage: (dbPath, userDataPath) => new CharacterStorage(dbPath, userDataPath),
     createSessionStorage: (dbPath) => new SessionStorage(dbPath),
     createSessionMemoryStorage: (dbPath) => new SessionMemoryStorage(dbPath),
     createProjectMemoryStorage: (dbPath) => new ProjectMemoryStorage(dbPath),

@@ -527,6 +527,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     createSessionStorage: () => null as never,
     createSessionMemoryStorage: () => null as never,
     createProjectMemoryStorage: () => null as never,
+    createCharacterStorage: () => null as never,
     createCharacterMemoryStorage: () => null as never,
     createAuditLogStorage: () => null as never,
     createAppSettingsStorage: () => null as never,
@@ -543,6 +544,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
   const bundle: PersistentStoreBundleLike = {
     modelCatalogStorage: createClosableStore("model", closeCalls) as never,
     sessionStorage: createClosableStore("session", closeCalls) as never,
+    characterStorage: createClosableStore("character", closeCalls) as never,
     sessionMemoryStorage: createClosableStore("session-memory", closeCalls) as never,
     projectMemoryStorage: createClosableStore("project-memory", closeCalls) as never,
     auditLogStorage: createClosableStore("audit", closeCalls) as never,
@@ -555,6 +557,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
   assert.deepEqual(closeCalls, [
     "before-close",
     "model",
+    "character",
     "session",
     "session-memory",
     "project-memory",

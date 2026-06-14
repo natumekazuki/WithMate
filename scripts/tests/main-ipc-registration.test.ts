@@ -7,14 +7,19 @@ import {
   registerMainIpcHandlers,
 } from "../../src-electron/main-ipc-registration.js";
 import {
+  WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
+  WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_MATE_STATE_CHANNEL,
+  WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
+  WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
+  WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
 } from "../../src/withmate-ipc-channels.js";
 
 type Handler = (...args: unknown[]) => unknown;
@@ -66,6 +71,11 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_GET_APP_SETTINGS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_MATE_STATE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_CREATE_MATE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_CHARACTERS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_CHARACTER_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_CREATE_CHARACTER_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL));
   assert.ok(handlers.has(WITHMATE_CREATE_SESSION_CHANNEL));
   assert.ok(handlers.has(WITHMATE_RUN_SESSION_TURN_CHANNEL));
 

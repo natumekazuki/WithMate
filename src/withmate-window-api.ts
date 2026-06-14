@@ -57,6 +57,14 @@ import type {
   SetMateAvatarInput,
   UpdateMateInput,
 } from "./mate/mate-state.js";
+import type {
+  CharacterCatalogEntry,
+  CharacterDetail,
+  CreateCharacterInput,
+  ResolveLaunchCharacterInput,
+  UpdateCharacterDefinitionInput,
+  UpdateCharacterMetadataInput,
+} from "./character/character-catalog.js";
 
 export type WithMateWindowNavigationApi = {
   openSession(sessionId: string): Promise<void>;
@@ -228,6 +236,17 @@ export type WithMateWindowMateApi = {
   resetMate(): Promise<void>;
 };
 
+export type WithMateWindowCharacterApi = {
+  listCharacters(options?: { includeArchived?: boolean }): Promise<CharacterCatalogEntry[]>;
+  getCharacter(characterId: string): Promise<CharacterDetail | null>;
+  createCharacter(input: CreateCharacterInput): Promise<CharacterDetail>;
+  updateCharacterMetadata(input: UpdateCharacterMetadataInput): Promise<CharacterDetail>;
+  updateCharacterDefinition(input: UpdateCharacterDefinitionInput): Promise<CharacterDetail>;
+  archiveCharacter(characterId: string): Promise<CharacterCatalogEntry>;
+  setDefaultCharacter(characterId: string): Promise<CharacterCatalogEntry>;
+  resolveLaunchCharacter(input?: ResolveLaunchCharacterInput | null): Promise<CharacterDetail | null>;
+};
+
 export type WithMateWindowApi =
   & WithMateWindowNavigationApi
   & WithMateWindowCatalogApi
@@ -238,4 +257,5 @@ export type WithMateWindowApi =
   & WithMateWindowSettingsApi
   & WithMateWindowPickerApi
   & WithMateWindowSubscriptionApi
-  & WithMateWindowMateApi;
+  & WithMateWindowMateApi
+  & WithMateWindowCharacterApi;
