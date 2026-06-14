@@ -18,6 +18,7 @@ export type HomeLaunchDialogProps = {
   selectedLaunchProviderId: string | null;
   characterOptions: CharacterCatalogEntry[];
   selectedCharacterId: string | null;
+  charactersLoaded: boolean;
   canStartSession: boolean;
   launchFeedback: string;
   launchStarting: boolean;
@@ -40,6 +41,7 @@ export function HomeLaunchDialog({
   selectedLaunchProviderId,
   characterOptions,
   selectedCharacterId,
+  charactersLoaded,
   canStartSession,
   launchFeedback,
   launchStarting,
@@ -146,7 +148,15 @@ export function HomeLaunchDialog({
       <section className="launch-section minimal">
         <div className="launch-field">
           <span className="launch-field-label">Character</span>
-          {characterOptions.length === 0 ? (
+          {!charactersLoaded ? (
+            <div className="launch-character-neutral">
+              <span className="character-avatar tiny" aria-hidden="true">W</span>
+              <div className="launch-character-copy">
+                <strong>読み込み中</strong>
+                <span>Character を読み込んでるよ...</span>
+              </div>
+            </div>
+          ) : characterOptions.length === 0 ? (
             <div className="launch-character-neutral">
               <span className="character-avatar tiny" aria-hidden="true">W</span>
               <div className="launch-character-copy">

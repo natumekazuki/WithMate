@@ -115,6 +115,22 @@ describe("home-launch-projection", () => {
     assert.equal(enabledOnlyCodex.canStartSession, true);
   });
 
+  it("Character catalog 読み込み前は開始不可にする", () => {
+    const projection = buildHomeLaunchProjection({
+      launchProviderId: "codex",
+      launchTitle: "task",
+      launchWorkspace: { label: "demo", path: "F:/work/demo", branch: "" },
+      characterEntries: [],
+      charactersLoaded: false,
+      appSettings: createDefaultAppSettings(),
+      modelCatalog: createCatalog(),
+    });
+
+    assert.equal(projection.charactersLoaded, false);
+    assert.equal(projection.selectedCharacter, null);
+    assert.equal(projection.canStartSession, false);
+  });
+
   it("削除済み launch mode は通常 session と同じ開始条件を使う", () => {
     const projection = buildHomeLaunchProjection({
       launchProviderId: "codex",

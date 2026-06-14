@@ -383,6 +383,7 @@ describe("HomeLaunchDialog", () => {
   const renderHomeLaunchDialog = (
     mode: "session" | "companion",
     options = characterOptions,
+    charactersLoaded = true,
   ) => renderToStaticMarkup(
     <HomeLaunchDialog
       open={true}
@@ -394,6 +395,7 @@ describe("HomeLaunchDialog", () => {
       selectedLaunchProviderId="codex"
       characterOptions={options}
       selectedCharacterId={options[0]?.id ?? null}
+      charactersLoaded={charactersLoaded}
       canStartSession={true}
       launchFeedback=""
       launchStarting={false}
@@ -428,6 +430,14 @@ describe("HomeLaunchDialog", () => {
 
     assert.ok(html.includes("WithMate"));
     assert.ok(html.includes("Neutral"));
+  });
+
+  it("Character catalog 読み込み前は neutral fallback を表示しない", () => {
+    const html = renderHomeLaunchDialog("session", [], false);
+
+    assert.ok(html.includes("読み込み中"));
+    assert.ok(html.includes("Character を読み込んでるよ..."));
+    assert.ok(!html.includes("Neutral"));
   });
 
 });

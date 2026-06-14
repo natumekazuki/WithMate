@@ -164,6 +164,15 @@ describe("home-launch-state", () => {
     assert.equal(resolveLaunchCharacterId([], "missing"), "");
   });
 
+  it("character selection は archived Character を候補にしない", () => {
+    const entries = [
+      createCharacterEntry({ id: "mia", name: "Mia", state: "archived" }),
+      createCharacterEntry({ id: "noa", name: "Noa" }),
+    ];
+
+    assert.equal(resolveLaunchCharacterId(entries, "mia"), "noa");
+  });
+
   it("launch validation message は既存の優先順位で返す", () => {
     const baseDraft = {
       ...createClosedLaunchDraft(),
@@ -300,6 +309,29 @@ describe("home-launch-state", () => {
     });
   });
 
+  it("archived Character が draft に残っていても active Character で session input を組み立てる", () => {
+    const input = buildCreateSessionInputFromLaunchDraft({
+      draft: {
+        ...createClosedLaunchDraft(),
+        open: true,
+        title: "task",
+        workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
+        providerId: "codex",
+        characterId: "mia",
+      },
+      mateProfile: null,
+      selectedProviderId: "codex",
+      approvalMode: DEFAULT_APPROVAL_MODE,
+      characterEntries: [
+        createCharacterEntry({ id: "mia", name: "Mia", state: "archived" }),
+        createCharacterEntry({ id: "noa", name: "Noa", description: "active profile" }),
+      ],
+    });
+
+    assert.equal(input?.characterId, "noa");
+    assert.equal(input?.character, "Noa");
+  });
+
   it("Mate 未作成でも neutral character で Companion input を組み立てる", () => {
     const input = buildCreateCompanionSessionInputFromLaunchDraft({
       draft: {
@@ -360,6 +392,28 @@ describe("home-launch-state", () => {
     assert.equal(input?.model, "gpt-5.4-mini");
     assert.equal(input?.reasoningEffort, "medium");
     assert.equal(input?.customAgentName, "reviewer");
+  });
+
+  it("active Character がない時だけ Companion input は neutral fallback を使う", () => {
+    const input = buildCreateCompanionSessionInputFromLaunchDraft({
+      draft: {
+        ...createClosedLaunchDraft(),
+        open: true,
+        mode: "companion",
+        title: "task",
+        workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
+        providerId: "codex",
+        characterId: "mia",
+      },
+      mateProfile: null,
+      selectedProviderId: "codex",
+      characterEntries: [
+        createCharacterEntry({ id: "mia", name: "Mia", state: "archived" }),
+      ],
+    });
+
+    assert.equal(input?.characterId, "withmate-neutral-character");
+    assert.equal(input?.character, "WithMate");
   });
 
   it("selected provider の直近 session から last-used selection を引く", () => {

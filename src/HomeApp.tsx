@@ -89,6 +89,7 @@ export default function HomeApp() {
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(createDefaultAppSettings());
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [characterEntries, setCharacterEntries] = useState<CharacterCatalogEntry[]>([]);
+  const [charactersLoaded, setCharactersLoaded] = useState(false);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
   const [selectedCharacterDetail, setSelectedCharacterDetail] = useState<CharacterDetail | null>(null);
   const [characterDraft, setCharacterDraft] = useState<SettingsCharacterEditorDraft>(() => createNewCharacterEditorDraft());
@@ -159,9 +160,11 @@ export default function HomeApp() {
   const refreshCharacterEntries = async (
     api: NonNullable<ReturnType<typeof getWithMateApi>>,
     preferredCharacterId?: string | null,
-  ) => {
+  ): Promise<CharacterCatalogEntry[]> => {
     const entries = await api.listCharacters();
     await applyLoadedCharacterEntries(api, entries, preferredCharacterId);
+    setCharactersLoaded(true);
+    return entries;
   };
 
   useEffect(() => {
@@ -286,10 +289,11 @@ export default function HomeApp() {
       launchWorkspace: launchDraft.workspace,
       launchCharacterId: launchDraft.characterId,
       characterEntries,
+      charactersLoaded,
       appSettings,
       modelCatalog,
     }),
-    [appSettings, characterEntries, launchDraft, modelCatalog],
+    [appSettings, characterEntries, charactersLoaded, launchDraft, modelCatalog],
   );
   const { enabledLaunchProviders, selectedLaunchProvider } = launchProjection;
 
@@ -322,6 +326,13 @@ export default function HomeApp() {
     characterEntries,
     selectedLaunchProviderId: selectedLaunchProvider?.id ?? null,
     sessions,
+    refreshCharacterEntries: async () => {
+      const api = getWithMateApi();
+      if (!api) {
+        throw new Error("Character 一覧の再読み込みには desktop runtime が必要だよ。");
+      }
+      return refreshCharacterEntries(api);
+    },
     setLaunchFeedback,
     setLaunchStarting,
     setLaunchDraft,

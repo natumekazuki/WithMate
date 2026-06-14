@@ -15,6 +15,7 @@ export type HomeLaunchProjection = {
   selectedLaunchProvider: ModelCatalogProvider | null;
   characterOptions: CharacterCatalogEntry[];
   selectedCharacter: CharacterCatalogEntry | null;
+  charactersLoaded: boolean;
   launchWorkspacePathLabel: string;
   canStartSession: boolean;
 };
@@ -38,6 +39,7 @@ export function buildHomeLaunchProjection({
   launchWorkspace,
   launchCharacterId,
   characterEntries = [],
+  charactersLoaded = true,
   appSettings,
   modelCatalog,
 }: {
@@ -47,6 +49,7 @@ export function buildHomeLaunchProjection({
   launchWorkspace: LaunchWorkspace | null;
   launchCharacterId?: string;
   characterEntries?: readonly CharacterCatalogEntry[];
+  charactersLoaded?: boolean;
   appSettings: AppSettings;
   modelCatalog: ModelCatalogSnapshot | null;
 }): HomeLaunchProjection {
@@ -66,7 +69,8 @@ export function buildHomeLaunchProjection({
     selectedLaunchProvider,
     characterOptions: [...activeCharacterEntries],
     selectedCharacter,
+    charactersLoaded,
     launchWorkspacePathLabel: launchWorkspace ? launchWorkspace.path : "workspace",
-    canStartSession: !!launchTitle.trim() && !!launchWorkspace && !!selectedLaunchProvider,
+    canStartSession: charactersLoaded && !!launchTitle.trim() && !!launchWorkspace && !!selectedLaunchProvider,
   };
 }

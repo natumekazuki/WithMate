@@ -255,11 +255,12 @@ export function resolveLaunchCharacterId(
   entries: readonly CharacterCatalogEntry[],
   currentCharacterId: string | null | undefined,
 ): string {
-  if (currentCharacterId && entries.some((entry) => entry.id === currentCharacterId)) {
+  const activeEntries = entries.filter((entry) => entry.state === "active");
+  if (currentCharacterId && activeEntries.some((entry) => entry.id === currentCharacterId)) {
     return currentCharacterId;
   }
 
-  return entries[0]?.id ?? "";
+  return activeEntries[0]?.id ?? "";
 }
 
 function resolveLaunchCharacterEntry(
@@ -267,7 +268,7 @@ function resolveLaunchCharacterEntry(
   characterId: string | null | undefined,
 ): CharacterCatalogEntry | null {
   const resolvedCharacterId = resolveLaunchCharacterId(entries, characterId);
-  return entries.find((entry) => entry.id === resolvedCharacterId) ?? null;
+  return entries.find((entry) => entry.state === "active" && entry.id === resolvedCharacterId) ?? null;
 }
 
 function buildLaunchCharacterSnapshot(

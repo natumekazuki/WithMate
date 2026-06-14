@@ -24,6 +24,7 @@ type HomeLaunchHandlersContext = {
   characterEntries: readonly CharacterCatalogEntry[];
   selectedLaunchProviderId: string | null;
   sessions: readonly SessionSummary[];
+  refreshCharacterEntries: () => Promise<readonly CharacterCatalogEntry[]>;
   setLaunchFeedback: (message: string) => void;
   setLaunchStarting: (launchStarting: boolean) => void;
   setLaunchDraft: (updater: HomeLaunchDraft | ((draft: HomeLaunchDraft) => HomeLaunchDraft)) => void;
@@ -38,7 +39,7 @@ type HomeLaunchHandlersContext = {
 
 export type HomeLaunchHandlers = {
   onBrowseWorkspace: () => void;
-  onOpenLaunchDialog: () => void;
+  onOpenLaunchDialog: () => Promise<void>;
   onCloseLaunchDialog: () => void;
   onSelectLaunchProvider: (providerId: string) => void;
   onSelectLaunchCharacter: (characterId: string) => void;
@@ -56,6 +57,7 @@ export function buildHomeLaunchHandlers({
   characterEntries,
   selectedLaunchProviderId,
   sessions,
+  refreshCharacterEntries,
   setLaunchFeedback,
   setLaunchStarting,
   setLaunchDraft,
@@ -77,14 +79,18 @@ export function buildHomeLaunchHandlers({
     setLaunchDraft((current) => setLaunchWorkspaceFromPath(current, selectedPath));
   };
 
-  const onOpenLaunchDialog = () => {
+  const onOpenLaunchDialog = async () => {
     setLaunchFeedback("");
+    const latestCharacterEntries = await refreshCharacterEntries().catch((error) => {
+      setLaunchFeedback(error instanceof Error ? error.message : "Character 一覧の再読み込みに失敗したよ。");
+      return characterEntries;
+    });
     setLaunchDraft((current) =>
       openLaunchDraft(
         current,
         enabledLaunchProviders[0]?.id ?? "",
         "session",
-        resolveLaunchCharacterId(characterEntries, current.characterId),
+        resolveLaunchCharacterId(latestCharacterEntries, current.characterId),
       ),
     );
   };
