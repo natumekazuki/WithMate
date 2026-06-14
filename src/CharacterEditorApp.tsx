@@ -49,6 +49,7 @@ export default function CharacterEditorApp() {
   const [selectedTab, setSelectedTab] = useState<CharacterEditorTab>("profile");
   const [loading, setLoading] = useState(Boolean(initialCharacterId));
   const [saving, setSaving] = useState(false);
+  const [importingPack, setImportingPack] = useState(false);
   const [feedback, setFeedback] = useState("");
   const definitionImportInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -200,6 +201,43 @@ export default function CharacterEditorApp() {
     }
   };
 
+  const importCharacterPack = async () => {
+    if (archived || importingPack) {
+      return;
+    }
+    if (dirty && !window.confirm("未保存の編集があります。\n\nCharacter pack を import すると、作成された Character に表示を切り替えます。続行しますか？")) {
+      return;
+    }
+
+    const api = getWithMateApi();
+    if (!api) {
+      setFeedback("Character Editor は Electron から開いてください。");
+      return;
+    }
+
+    setImportingPack(true);
+    setFeedback("Character pack を読み込んでいます...");
+    try {
+      const result = await api.importCharacterPackFile();
+      if (!result) {
+        setFeedback("");
+        return;
+      }
+
+      setPersistedDetail(result.character);
+      setDraft(createCharacterEditorDraftFromDetail(result.character));
+      setSelectedTab("profile");
+      setFeedback(`${result.character.name} を import しました。${result.importedFiles.length} files processed.`);
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set("characterId", result.character.id);
+      window.history.replaceState(null, "", nextUrl);
+    } catch (error) {
+      setFeedback(formatCharacterEditorError(error, "Character pack の import に失敗しました。"));
+    } finally {
+      setImportingPack(false);
+    }
+  };
+
   const archiveCharacter = async () => {
     const api = getWithMateApi();
     if (!api || !draft.characterId || archived) {
@@ -295,6 +333,9 @@ export default function CharacterEditorApp() {
           </div>
           <div className="character-editor-header-actions">
             <span className="settings-character-badge">{archived ? "Archived" : saving ? "Saving" : dirty ? "Unsaved" : "Saved"}</span>
+            <button className="launch-toggle" type="button" onClick={importCharacterPack} disabled={archived || saving || importingPack}>
+              {importingPack ? "Importing..." : "Import Pack"}
+            </button>
             <button className="launch-toggle" type="button" onClick={closeWindow}>
               Close
             </button>
@@ -321,14 +362,14 @@ export default function CharacterEditorApp() {
               <div className="settings-character-form-grid">
                 <label className="settings-provider-input">
                   <span>Name</span>
-                  <input value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} disabled={archived} />
+                  <input value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} disabled={archived || importingPack} />
                 </label>
                 <label className="settings-provider-input">
                   <span>Description</span>
                   <input
                     value={draft.description}
                     onChange={(event) => updateDraft({ description: event.target.value })}
-                    disabled={archived}
+                    disabled={archived || importingPack}
                   />
                 </label>
                 <label className="settings-provider-input">
@@ -337,9 +378,9 @@ export default function CharacterEditorApp() {
                     <input
                       value={draft.iconFilePath}
                       onChange={(event) => updateDraft({ iconFilePath: event.target.value })}
-                      disabled={archived}
+                      disabled={archived || importingPack}
                     />
-                    <button className="launch-toggle compact" type="button" onClick={pickIcon} disabled={archived}>
+                    <button className="launch-toggle compact" type="button" onClick={pickIcon} disabled={archived || importingPack}>
                       Browse
                     </button>
                   </div>
@@ -351,7 +392,7 @@ export default function CharacterEditorApp() {
                       type="color"
                       value={draft.theme.main}
                       onChange={(event) => updateDraft({ theme: { ...draft.theme, main: event.target.value } })}
-                      disabled={archived}
+                      disabled={archived || importingPack}
                     />
                   </label>
                   <label className="settings-provider-input">
@@ -360,7 +401,7 @@ export default function CharacterEditorApp() {
                       type="color"
                       value={draft.theme.sub}
                       onChange={(event) => updateDraft({ theme: { ...draft.theme, sub: event.target.value } })}
-                      disabled={archived}
+                      disabled={archived || importingPack}
                     />
                   </label>
                 </div>
@@ -370,7 +411,7 @@ export default function CharacterEditorApp() {
                   className="launch-toggle"
                   type="button"
                   onClick={setDefaultCharacter}
-                  disabled={saving || archived || draft.mode !== "edit" || draft.isDefault}
+                  disabled={saving || importingPack || archived || draft.mode !== "edit" || draft.isDefault}
                 >
                   Set Default
                 </button>
@@ -387,7 +428,7 @@ export default function CharacterEditorApp() {
                   className="launch-toggle compact"
                   type="button"
                   onClick={() => definitionImportInputRef.current?.click()}
-                  disabled={archived}
+                  disabled={archived || importingPack}
                 >
                   Import / Replace
                 </button>
@@ -399,7 +440,7 @@ export default function CharacterEditorApp() {
                 type="file"
                 accept=".md,text/markdown,text/plain"
                 className="settings-character-import-input"
-                disabled={archived}
+                disabled={archived || importingPack}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   if (file) {
@@ -412,7 +453,7 @@ export default function CharacterEditorApp() {
                 className="settings-character-markdown-textarea character-editor-textarea"
                 value={draft.definitionMarkdown}
                 onChange={(event) => updateDraft({ definitionMarkdown: event.target.value })}
-                disabled={archived}
+                disabled={archived || importingPack}
                 spellCheck={false}
               />
             </section>
@@ -427,7 +468,7 @@ export default function CharacterEditorApp() {
                 className="settings-character-notes-textarea character-editor-textarea"
                 value={draft.notesMarkdown}
                 onChange={(event) => updateDraft({ notesMarkdown: event.target.value })}
-                disabled={archived}
+                disabled={archived || importingPack}
                 spellCheck={false}
               />
             </section>
@@ -454,12 +495,12 @@ export default function CharacterEditorApp() {
             className="launch-toggle danger-button"
             type="button"
             onClick={archiveCharacter}
-            disabled={saving || archived || draft.mode !== "edit"}
+            disabled={saving || importingPack || archived || draft.mode !== "edit"}
           >
             Archive
           </button>
           <span>{feedback}</span>
-          <button className="launch-toggle start-session-button" type="button" onClick={saveCharacter} disabled={saving || archived || !dirty}>
+          <button className="launch-toggle start-session-button" type="button" onClick={saveCharacter} disabled={saving || importingPack || archived || !dirty}>
             Save
           </button>
         </footer>

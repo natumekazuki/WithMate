@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -17,10 +17,12 @@ import {
   type CharacterRuntimeSnapshot,
   type CharacterTheme,
   type CreateCharacterInput,
+  type ImportCharacterPackFileResult,
   type ResolveLaunchCharacterInput,
   type UpdateCharacterDefinitionInput,
   type UpdateCharacterMetadataInput,
 } from "../src/character/character-catalog.js";
+import { parseCharacterPackZipFile } from "./character-pack-import.js";
 import {
   APP_DATABASE_V4_FILENAME,
   assertV4SchemaInitializationAllowed,
@@ -353,6 +355,39 @@ export class CharacterStorage {
       throw new Error("作成した Character を読み込めませんでした。");
     }
     return created;
+  }
+
+  importCharacterPackFile(filePath: string): ImportCharacterPackFileResult {
+    const pack = parseCharacterPackZipFile(filePath);
+    const created = this.createCharacter({
+      name: pack.name,
+      description: pack.description,
+      definitionMarkdown: pack.definitionMarkdown,
+      notesMarkdown: pack.notesMarkdown,
+    });
+
+    try {
+      let character = created;
+      if (pack.iconAsset) {
+        const assetsDirectory = path.join(this.characterDirectory(created.id), "assets");
+        mkdirSync(assetsDirectory, { recursive: true });
+        const iconFilePath = path.join(assetsDirectory, pack.iconAsset.fileName);
+        writeFileSync(iconFilePath, pack.iconAsset.data);
+        character = this.updateCharacterMetadata({
+          characterId: created.id,
+          iconFilePath,
+        });
+      }
+
+      return {
+        character,
+        importedFiles: pack.importedFiles,
+      };
+    } catch (error) {
+      this.db.prepare("DELETE FROM characters WHERE id = ?").run(created.id);
+      rmSync(this.characterDirectory(created.id), { recursive: true, force: true });
+      throw error;
+    }
   }
 
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): CharacterDetail {

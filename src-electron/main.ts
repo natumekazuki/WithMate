@@ -44,6 +44,7 @@ import {
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
+import type { ImportCharacterPackFileResult } from "../src/character/character-catalog.js";
 import type {
   OpenPathOptions,
   SavePastedSessionFileRequest,
@@ -1113,6 +1114,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 listCharacters: (options) => requireCharacterService().listCharacters(options ?? undefined),
                 getCharacter: (characterId) => requireCharacterService().getCharacter(characterId),
                 createCharacter: (input) => requireCharacterService().createCharacter(input),
+                importCharacterPackFile: async (targetWindow) => importCharacterPackFile(targetWindow),
                 updateCharacterMetadata: (input) => requireCharacterService().updateCharacterMetadata(input),
                 updateCharacterDefinition: (input) => requireCharacterService().updateCharacterDefinition(input),
                 archiveCharacter: (characterId) => requireCharacterService().archiveCharacter(characterId),
@@ -2742,6 +2744,17 @@ async function openSettingsWindow(): Promise<BrowserWindow> {
 
 async function openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {
   return requireMainWindowFacade().openCharacterEditorWindow(characterId);
+}
+
+async function importCharacterPackFile(targetWindow?: BrowserWindow | null): Promise<ImportCharacterPackFileResult | null> {
+  const selectedPath = await requireWindowDialogService().pickFile(targetWindow, null);
+  if (!selectedPath) {
+    return null;
+  }
+  if (path.extname(selectedPath).toLowerCase() !== ".zip") {
+    throw new Error("Character pack は .zip を選択してください。");
+  }
+  return requireCharacterService().importCharacterPackFile(selectedPath);
 }
 
 async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {

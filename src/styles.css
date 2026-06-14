@@ -6588,6 +6588,8 @@ button:disabled {
   width: min(100%, 1120px);
   min-height: min(880px, calc(100vh - 32px));
   overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: rgba(21, 26, 35, 0.98);
 }
 
 .character-editor-window-header,
@@ -6600,9 +6602,15 @@ button:disabled {
   border-bottom: 1px solid var(--line);
 }
 
+.character-editor-window-header {
+  align-items: flex-start;
+  background: rgba(18, 22, 30, 0.98);
+}
+
 .character-editor-window-footer {
   border-top: 1px solid var(--line);
   border-bottom: 0;
+  background: rgba(18, 22, 30, 0.98);
 }
 
 .character-editor-window-footer > span {
@@ -6610,11 +6618,13 @@ button:disabled {
   flex: 1 1 auto;
   color: var(--muted);
   font-size: 0.84rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .character-editor-heading {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 14px;
   min-width: 0;
 }
@@ -6631,12 +6641,15 @@ button:disabled {
 .character-editor-heading h1 {
   color: var(--ink);
   font-size: 1.35rem;
+  line-height: 1.2;
 }
 
 .character-editor-heading p:last-child {
   margin-top: 4px;
   color: var(--muted);
   font-size: 0.86rem;
+  white-space: normal;
+  line-height: 1.45;
 }
 
 .character-editor-header-actions,
@@ -6647,10 +6660,17 @@ button:disabled {
   flex: 0 0 auto;
 }
 
+.character-editor-header-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  max-width: 420px;
+}
+
 .character-editor-tabs {
   padding: 12px 22px;
   border-bottom: 1px solid var(--line);
   overflow-x: auto;
+  background: rgba(15, 19, 26, 0.72);
 }
 
 .character-editor-tab {
@@ -6674,11 +6694,14 @@ button:disabled {
   min-height: 0;
   overflow: auto;
   padding: 22px;
+  background: rgba(10, 14, 20, 0.44);
 }
 
 .character-editor-card {
   display: grid;
   gap: 16px;
+  border-radius: var(--radius-md);
+  background: rgba(15, 19, 26, 0.92);
 }
 
 .character-editor-markdown-card {
@@ -6702,7 +6725,7 @@ button:disabled {
   align-content: start;
   padding: 16px;
   border: 1px solid rgba(203, 213, 225, 0.12);
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.04);
 }
 

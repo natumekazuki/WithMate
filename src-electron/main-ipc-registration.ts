@@ -30,6 +30,7 @@ import type {
   CharacterCatalogEntry,
   CharacterDetail,
   CreateCharacterInput,
+  ImportCharacterPackFileResult,
   ResolveLaunchCharacterInput,
   UpdateCharacterDefinitionInput,
   UpdateCharacterMetadataInput,
@@ -70,6 +71,7 @@ import {
   WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
+  WITHMATE_IMPORT_CHARACTER_PACK_FILE_CHANNEL,
   WITHMATE_GET_COMPANION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
   WITHMATE_GET_COMPANION_SESSION_CHANNEL,
@@ -293,6 +295,7 @@ export type MainIpcRegistrationDeps = {
   listCharacters(options?: { includeArchived?: boolean } | null): Awaitable<CharacterCatalogEntry[]>;
   getCharacter(characterId: string): Awaitable<CharacterDetail | null>;
   createCharacter(input: CreateCharacterInput): Awaitable<CharacterDetail>;
+  importCharacterPackFile(targetWindow?: MaybeWindow): Awaitable<ImportCharacterPackFileResult | null>;
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): Awaitable<CharacterDetail>;
   updateCharacterDefinition(input: UpdateCharacterDefinitionInput): Awaitable<CharacterDetail>;
   archiveCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
@@ -464,9 +467,12 @@ type MainIpcMateDeps = Pick<
 
 type MainIpcCharacterDeps = Pick<
   MainIpcRegistrationDeps,
+  | "resolveEventWindow"
+  | "resolveHomeWindow"
   | "listCharacters"
   | "getCharacter"
   | "createCharacter"
+  | "importCharacterPackFile"
   | "updateCharacterMetadata"
   | "updateCharacterDefinition"
   | "archiveCharacter"
@@ -866,6 +872,9 @@ function registerCharacterHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCha
   });
   ipcMain.handle(WITHMATE_CREATE_CHARACTER_CHANNEL, (_event, input: CreateCharacterInput) =>
     deps.createCharacter(input),
+  );
+  ipcMain.handle(WITHMATE_IMPORT_CHARACTER_PACK_FILE_CHANNEL, (event) =>
+    deps.importCharacterPackFile(resolveTargetWindow(event, deps)),
   );
   ipcMain.handle(WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL, (_event, input: UpdateCharacterMetadataInput) =>
     deps.updateCharacterMetadata(input),
