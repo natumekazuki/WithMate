@@ -20,6 +20,21 @@
 npm run electron:start
 ```
 
+## V5 Character Core Release Gate
+
+| ID | 領域 | 手順 | 期待結果 |
+| --- | --- | --- | --- |
+| V5C-001 | Character 0 件 fallback | Character catalog が 0 件の状態で Home を起動し、`New Session` と Companion 起動 dialog を開く | 起動導線は SingleMate / Mate 未作成 gate に戻らず、neutral fallback の Character 表示で session / companion を開始できる |
+| V5C-002 | Character A / B 登録 | Settings の `Characters` で Character A と Character B を作成し、それぞれ name / description / icon / theme / `character.md` を保存する | 一覧に A / B が表示され、Settings を開き直しても metadata と `character.md` が保持される |
+| V5C-003 | Default Character | Character B を default に設定し、Home の `New Session` を開く | Character selector の初期選択が B になり、Character name / icon / theme preview が selector と作成後の session summary に反映される |
+| V5C-004 | New Session explicit selection | `New Session` で Character A を明示選択して session を作成する | 作成された Session Window と Home summary は Character A の name / icon / theme を表示し、B へ default を戻しても既存 session の表示は A のまま残る |
+| V5C-005 | Companion explicit selection | Companion 起動で Character A / B をそれぞれ選んで companion session を作成する | Companion session summary と Companion Review UI に選択した Character の name / icon / theme が反映される |
+| V5C-006 | Snapshot boundary | Character A で session を作成した後、Settings で Character A の `character.md` を別内容へ変更し、既存 session で 1 turn 実行する | provider prompt は session 作成時点の saved snapshot を使い、現在の catalog 内容へ置き換わらない |
+| V5C-007 | Prompt boundary | `character.md` と `character-notes.md` の両方を持つ Character で 1 turn 実行し、Audit Log の `Logical Prompt` / `Transport Payload` を確認する | `character.md` snapshot は system 側に入る。`character-notes.md`、Memory / Growth history、provider instruction sync 由来の Character 書き込みは常設注入されない |
+| V5C-008 | Markdown fence boundary | `character.md` に triple backtick と quadruple backtick の code fence を含め、session を作成して 1 turn 実行する | Character Definition Snapshot section の外側 fence が壊れず、definition 全体が 1 つの markdown block として扱われる |
+| V5C-009 | Legacy compatibility | V5 Core 前に作られた session、または `CharacterRuntimeSnapshot` を持たない session を開いて 1 turn 実行する | session は壊れず実行できる。snapshot が無い session は Character system prompt を空として扱い、messages / audit / approval / thread は従来通り動く |
+| V5C-010 | Summary performance boundary | Character A / B の `character.md` を大きめにして複数 session / companion session を作り、Home session list と Companion summaries を表示する | summary 表示は `character.md` 本文を読み込む必要がなく、一覧表示で大きな定義本文が UI cache や summary payload に出ない |
+
 ## 項目
 
 | ID | 領域 | 手順 | 期待結果 |
@@ -28,7 +43,7 @@ npm run electron:start
 | MT-001A | Home narrow width guardrail | Home Window を最小幅近くまで縮める | single-column layout へ倒れても `Recent Sessions` と right pane toggle / `Settings` 導線が残り、操作不能にならない |
 | MT-002 | Home 一覧 | session が 0 件の状態で起動する | 空状態メッセージが表示される |
 | MT-003 | Your Mate / Mate profile | Mate profile が未設定の状態で起動する | `Your Mate` に Mate profile 設定導線と `MateTalk` 起動導線が表示され、複数 mate の list / picker は出ない |
-| MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `Session Window` / `Coding Agent Providers` / `Provider Instruction Sync` / `Skill Roots` / `Memory Extraction` / `Character Reflection` / `Model Catalog` が既存値で表示される |
+| MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `Session Window` / `Characters` / `Coding Agent Providers` / `Provider Instruction Sync` / `Skill Roots` / `Memory Extraction` / `Character Reflection` / `Model Catalog` が既存値で表示される |
 | MT-004H | Settings window shell layout | `Settings Window` を wide 幅で開き、縦に長い内容まで scroll する | panel は window 幅に追従し、`Home / Close` の header は出ない。本文は inner scroll で最後まで到達でき、scrollbar が shell の角丸に隠れない |
 | MT-004A | Settings provider row layout | `Settings Window` を開いて `Coding Agent Providers` を確認する | provider 名が左、checkbox が右の row で揃って見え、どの provider を on/off しているか即判別できる |
 | MT-004B | Memory extraction settings | `Settings Window` の `Memory Extraction` を確認する | provider ごとに `Model` / `Reasoning Depth` / `Output Tokens Threshold` が表示され、現在の model catalog に沿った選択肢だけが出る |
@@ -43,7 +58,7 @@ npm run electron:start
 | MT-009 | Model catalog import | Settings の `Model Catalog` から `Import Models` を実行する | import 成功メッセージが表示され、active revision が更新される |
 | MT-013 | New Session 起動 | Home の `New Session` を押す | launch dialog が開く |
 | MT-013A | New Session dialog keyboard | `New Session` dialog を開き、初期 focus、`Tab` / `Shift+Tab`、`Escape`、provider chip の矢印キーを試す | open 時に title input へ focus が入り、focus は dialog 内で循環する。`Escape` で閉じ、provider chip は矢印キーで切り替えられる |
-| MT-014 | New Session 作成 | title と workspace と provider を選び `Start New Session` を押す | SingleMate の現在値を使って Session Window が開き、Home の session 一覧に追加され、選んだ provider で session が作られ、approval 初期値は `安全寄り` になる |
+| MT-014 | New Session 作成 | title、workspace、provider、Character を選び `Start New Session` を押す | 選択した Character snapshot を使って Session Window が開き、Home の session 一覧に追加され、選んだ provider で session が作られ、approval 初期値は `安全寄り` になる。Character が 0 件の場合は neutral fallback を使う |
 | MT-014A | New Session provider availability | `Coding Agent Providers` で一部 provider を無効化した後に `New Session` を開く | launch dialog の provider 候補には enabled provider だけが出る。0 件なら empty state が出て `Start New Session` は disabled のままになる |
 | MT-014B | MateTalk launch | Home 右ペインの `Your Mate` から `MateTalk` を起動する | MateTalk は Home inline chat では開かれず、Session Window の chat layout mode として別 window で開始される |
 | MT-015 | Session 実行 | Session Window の textarea に入力して送信する | user message が追加され、pending と live activity が表示される |
@@ -153,4 +168,3 @@ npm run electron:start
 | MT-066 | Copilot selected agent visibility | provider を `GitHub Copilot` にした session で custom agent を選択し、composer の `Agent` ボタンを見る | `Agent` ボタン自体が現在値を表示し、`Default Agent` と custom agent 名を見分けられる |
 | MT-067 | Window error recovery | Home / Session / Mate Editor / Diff のいずれかで renderer render error を再現する | window-level fallback が出て、`再試行` で再描画を試せる。復帰しない場合も `再読み込み` が使える |
 | MT-067A | Right pane error recovery | `Session Window` の right pane だけで render error を再現する | pane 専用 fallback が出て、`右ペインを再描画` と `Window を再読み込み` の両方が表示される |
-

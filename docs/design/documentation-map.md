@@ -34,6 +34,18 @@ current 実装の正本として維持する文書。
 | `model-catalog.md` | model catalog 保存 / 解決ロジック |
 | `session-run-lifecycle.md` | session 実行 lifecycle と background task のつながり |
 
+### A2. V5 Character Core Source Of Truth
+
+V5 Character Core で採用済みの Character-first 実装に対する正本。
+Character catalog、definition format、snapshot、prompt boundary、release gate を確認するときはこの分類を優先する。
+
+| Doc | Role |
+| --- | --- |
+| `v5-character-transition.md` | V4 SingleMate から V5 Character-first への移行方針、scope、non-goals、completion criteria の入口 |
+| `character-definition-format.md` | V5 Core の `character.md` / `character-notes.md` format 正本 |
+| `character-storage.md` | V5 Core の Character catalog / storage / snapshot 境界の正本 |
+| `v5-character-core-release-gate.md` | V5 Core の automated checks、manual checklist、release note、known risks を固定する release gate 正本 |
+
 ### B. Supporting / Domain Detail
 
 正本を補助する詳細文書。  
@@ -68,12 +80,10 @@ SingleMate 化に伴い、次の文書は current runtime の正本・supporting
 ### B2. Future Design / Migration Candidate
 
 current 実装の正本ではないが、次の保存構造や migration の採否判断に使う文書。
+V5 Character Core で採用済みの文書は `A2. V5 Character Core Source Of Truth` に置く。
 
 | Doc | Role |
 | --- | --- |
-| `v5-character-transition.md` | V4 SingleMate から V5 Character-first へ移行するための方針正本。V5 Core 開始後は scope / non-goals / completion criteria の入口 |
-| `character-definition-format.md` | V5 Core の `character.md` / `character-notes.md` format 正本。current runtime 正本ではないが、V5 Character 実装ではこの文書を優先する |
-| `character-storage.md` | V5 Core の Character catalog / storage / snapshot 境界の正本。current runtime 正本ではないが、V5 Character 実装ではこの文書を優先する |
 | `character-update-workspace.md` | V5 Core には含めず、詳細 Editor / update workspace の deferred candidate として保持 |
 | `database-v2-migration.md` | V1 -> V2 migration と V2 schema 方針 |
 | `database-v3-blob-storage.md` | V3 DB と compressed blob store の方針 |
