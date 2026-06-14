@@ -573,6 +573,7 @@ function rowToCompanionSession(row: CompanionSessionRow, messages: CompanionMess
       main: row.character_theme_main,
       sub: row.character_theme_sub,
     },
+    characterRuntimeSnapshot: null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     messages: messages.map(rowToCompanionMessage),

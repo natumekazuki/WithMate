@@ -10,6 +10,7 @@ import {
 } from "../src/companion-state.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
 import type { CompanionStorage } from "./companion-storage.js";
+import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
 import {
   buildCompanionGroupDisplayName,
   cleanupCompanionWorkspaceArtifacts,
@@ -27,6 +28,7 @@ export type CompanionSessionServiceDeps = {
     ensureGroup(group: CompanionGroup): Awaitable<CompanionGroup>;
     createSession(session: CompanionSession): Awaitable<CompanionSession>;
   };
+  createCharacterRuntimeSnapshot?(characterId: string): CharacterRuntimeSnapshot | null;
 };
 
 function safeId(id: string): string {
@@ -115,6 +117,8 @@ export class CompanionSessionService {
       characterRoleMarkdown: input.characterRoleMarkdown,
       characterIconPath: input.characterIconPath,
       characterThemeColors: input.characterThemeColors,
+      characterRuntimeSnapshot:
+        input.characterRuntimeSnapshot ?? this.deps.createCharacterRuntimeSnapshot?.(input.characterId) ?? null,
       createdAt: now,
       updatedAt: now,
       messages: [],

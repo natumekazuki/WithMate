@@ -16,6 +16,10 @@ import {
 } from "../src/companion-state.js";
 import type { ChangedFile, DiffRow } from "../src/runtime-state.js";
 import { summarizeMessageArtifact, type Message, type MessageArtifact } from "../src/session-state.js";
+import {
+  parseCharacterRuntimeSnapshotJson,
+  stringifyCharacterRuntimeSnapshot,
+} from "../src/character/character-runtime-snapshot.js";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
@@ -66,6 +70,7 @@ type CompanionSessionRow = {
   character_icon_path: string;
   character_theme_main: string;
   character_theme_sub: string;
+  character_runtime_snapshot_json: string;
   created_at: string;
   updated_at: string;
 };
@@ -94,6 +99,10 @@ type CompanionMergeRunRow = {
 
 type BlobIdRow = {
   blob_id: string | null;
+};
+
+type TableColumnRow = {
+  name: string;
 };
 
 type ExistingMessageArtifactRef = {
@@ -167,6 +176,7 @@ const COMPANION_SESSION_COLUMNS = `
   character_icon_path,
   character_theme_main,
   character_theme_sub,
+  character_runtime_snapshot_json,
   created_at,
   updated_at
 `;
@@ -460,6 +470,7 @@ async function rowToSession(row: CompanionSessionRow, blobStore: TextBlobStore):
       main: row.character_theme_main,
       sub: row.character_theme_sub,
     },
+    characterRuntimeSnapshot: parseCharacterRuntimeSnapshotJson(row.character_runtime_snapshot_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     messages: [],
@@ -794,6 +805,17 @@ export class CompanionStorageV3 {
   constructor(dbPath: string, blobRootPath: string) {
     this.db = openAppDatabase(dbPath);
     this.blobStore = new TextBlobStore(blobRootPath);
+    this.ensureSchema();
+  }
+
+  private ensureSchema(): void {
+    const columns = new Set(
+      (this.db.prepare("PRAGMA table_info(companion_sessions)").all() as TableColumnRow[])
+        .map((column) => column.name),
+    );
+    if (!columns.has("character_runtime_snapshot_json")) {
+      this.db.exec("ALTER TABLE companion_sessions ADD COLUMN character_runtime_snapshot_json TEXT NOT NULL DEFAULT '';");
+    }
   }
 
   async ensureGroup(group: CompanionGroup): Promise<CompanionGroup> {
@@ -1020,7 +1042,7 @@ export class CompanionStorageV3 {
       INSERT INTO companion_sessions (
         ${COMPANION_SESSION_COLUMNS},
         message_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.id,
       session.groupId,
@@ -1053,6 +1075,7 @@ export class CompanionStorageV3 {
       session.characterIconPath,
       session.characterThemeColors.main,
       session.characterThemeColors.sub,
+      stringifyCharacterRuntimeSnapshot(session.characterRuntimeSnapshot),
       session.createdAt,
       session.updatedAt,
       session.messages.length,
@@ -1084,6 +1107,7 @@ export class CompanionStorageV3 {
         character_icon_path = ?,
         character_theme_main = ?,
         character_theme_sub = ?,
+        character_runtime_snapshot_json = ?,
         message_count = ?,
         updated_at = ?
       WHERE id = ?
@@ -1110,6 +1134,7 @@ export class CompanionStorageV3 {
       session.characterIconPath,
       session.characterThemeColors.main,
       session.characterThemeColors.sub,
+      stringifyCharacterRuntimeSnapshot(session.characterRuntimeSnapshot),
       session.messages.length,
       session.updatedAt,
       session.id,

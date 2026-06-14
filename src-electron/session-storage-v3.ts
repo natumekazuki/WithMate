@@ -12,6 +12,10 @@ import {
   type SessionSummary,
 } from "../src/session-state.js";
 import type { AuditLogOperation, ChangedFile, RunCheck } from "../src/runtime-state.js";
+import {
+  parseCharacterRuntimeSnapshotJson,
+  stringifyCharacterRuntimeSnapshot,
+} from "../src/character/character-runtime-snapshot.js";
 import { V3_SUMMARY_JSON_MAX_LENGTH, V3_TEXT_PREVIEW_MAX_LENGTH } from "./database-schema-v3.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import { type BlobRef, TextBlobStore } from "./text-blob-store.js";
@@ -32,6 +36,7 @@ type SessionHeaderRow = {
   character_icon_path: string;
   character_theme_main: string;
   character_theme_sub: string;
+  character_runtime_snapshot_json: string;
   run_state: string;
   approval_mode: string;
   codex_sandbox_mode: string;
@@ -69,6 +74,10 @@ type BlobIdRow = {
   blob_id: string | null;
 };
 
+type TableColumnRow = {
+  name: string;
+};
+
 type SessionRowParseMode = "skip" | "throw";
 
 type ExistingMessageArtifactRef = {
@@ -104,6 +113,7 @@ const UPSERT_SESSION_SQL = `
     character_icon_path,
     character_theme_main,
     character_theme_sub,
+    character_runtime_snapshot_json,
     run_state,
     approval_mode,
     codex_sandbox_mode,
@@ -115,7 +125,7 @@ const UPSERT_SESSION_SQL = `
     message_count,
     audit_log_count,
     last_active_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     task_title = excluded.task_title,
     status = excluded.status,
@@ -131,6 +141,7 @@ const UPSERT_SESSION_SQL = `
     character_icon_path = excluded.character_icon_path,
     character_theme_main = excluded.character_theme_main,
     character_theme_sub = excluded.character_theme_sub,
+    character_runtime_snapshot_json = excluded.character_runtime_snapshot_json,
     run_state = excluded.run_state,
     approval_mode = excluded.approval_mode,
     codex_sandbox_mode = excluded.codex_sandbox_mode,
@@ -210,6 +221,7 @@ const SESSION_HEADER_COLUMNS = `
   character_icon_path,
   character_theme_main,
   character_theme_sub,
+  character_runtime_snapshot_json,
   run_state,
   approval_mode,
   codex_sandbox_mode,
@@ -434,6 +446,7 @@ function rowToSessionSummary(row: SessionHeaderRow, mode: SessionRowParseMode = 
       main: row.character_theme_main,
       sub: row.character_theme_sub,
     },
+    characterRuntimeSnapshot: parseCharacterRuntimeSnapshotJson(row.character_runtime_snapshot_json),
     runState: row.run_state,
     approvalMode: row.approval_mode,
     codexSandboxMode: row.codex_sandbox_mode,
@@ -459,6 +472,7 @@ function rowToSession(row: SessionHeaderRow, messages: Message[], mode: SessionR
 
   const session = normalizeSession({
     ...summary,
+    characterRuntimeSnapshot: parseCharacterRuntimeSnapshotJson(row.character_runtime_snapshot_json),
     messages,
     stream: [],
   });
@@ -506,6 +520,7 @@ function writeSessionHeader(
     session.characterIconPath,
     session.characterThemeColors.main,
     session.characterThemeColors.sub,
+    stringifyCharacterRuntimeSnapshot(session.characterRuntimeSnapshot),
     session.runState,
     session.approvalMode,
     session.codexSandboxMode,
@@ -795,6 +810,7 @@ export class SessionStorageV3 {
   constructor(dbPath: string, blobRootPath: string) {
     this.db = openAppDatabase(dbPath);
     this.blobStore = new TextBlobStore(blobRootPath);
+    this.ensureSchema();
   }
 
   private withDb<T>(runner: (db: DatabaseSync) => T): T {
@@ -803,6 +819,17 @@ export class SessionStorageV3 {
     }
 
     return runner(this.db);
+  }
+
+  private ensureSchema(): void {
+    this.withDb((db) => {
+      const columns = new Set(
+        (db.prepare("PRAGMA table_info(sessions)").all() as TableColumnRow[]).map((column) => column.name),
+      );
+      if (!columns.has("character_runtime_snapshot_json")) {
+        db.exec("ALTER TABLE sessions ADD COLUMN character_runtime_snapshot_json TEXT NOT NULL DEFAULT '';");
+      }
+    });
   }
 
   private async rowToMessage(row: SessionMessageRow): Promise<Message | null> {

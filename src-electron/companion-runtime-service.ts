@@ -102,6 +102,7 @@ function buildProviderSession(session: CompanionSession): Session {
     character: session.character,
     characterIconPath: session.characterIconPath,
     characterThemeColors: session.characterThemeColors,
+    characterRuntimeSnapshot: session.characterRuntimeSnapshot,
     runState: session.runState,
     approvalMode: session.approvalMode,
     codexSandboxMode: session.codexSandboxMode,

@@ -23,6 +23,7 @@ export function companionSessionToAuxiliaryParentSession(session: CompanionSessi
     character: session.character,
     characterIconPath: session.characterIconPath,
     characterThemeColors: { ...session.characterThemeColors },
+    characterRuntimeSnapshot: session.characterRuntimeSnapshot,
     runState: session.runState,
     approvalMode: session.approvalMode,
     codexSandboxMode: session.codexSandboxMode,

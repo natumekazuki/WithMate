@@ -1825,6 +1825,7 @@ function requireCompanionSessionService(): CompanionSessionService {
     companionSessionService = new CompanionSessionService({
       appDataPath: app.getPath("userData"),
       storage: requireCompanionStorage(),
+      createCharacterRuntimeSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
     });
   }
 
@@ -1914,6 +1915,7 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       deleteStoredSession: (sessionId) => requireSessionStorageForWrite().deleteSession(sessionId),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
+      createCharacterRuntimeSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
       syncSessionDependencies: (session) => requireSessionMemorySupportService().syncSessionDependencies(session),
       clearSessionContextTelemetry,
       clearSessionBackgroundActivities,
