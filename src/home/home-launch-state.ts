@@ -1,6 +1,7 @@
 import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "../approval-mode.js";
 import type { CreateSessionInput, SessionSummary } from "../app-state.js";
 import { DEFAULT_CHARACTER_THEME_COLORS, type CharacterThemeColors } from "../character-state.js";
+import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import { DEFAULT_CODEX_SANDBOX_MODE, type CodexSandboxMode } from "../codex-sandbox-mode.js";
 import type { CreateCompanionSessionInput } from "../companion-state.js";
 import { inferWorkspaceFromPath, type LaunchWorkspace } from "./home-launch-projection.js";
@@ -35,6 +36,7 @@ export type HomeLaunchDraft = {
   title: string;
   workspace: LaunchWorkspace | null;
   providerId: string;
+  characterId: string;
   model: string;
   reasoningEffort: ModelReasoningEffort;
   approvalMode: ApprovalMode;
@@ -48,6 +50,7 @@ export function createClosedLaunchDraft(): HomeLaunchDraft {
     title: "",
     workspace: null,
     providerId: "",
+    characterId: "",
     model: DEFAULT_MODEL_ID,
     reasoningEffort: DEFAULT_REASONING_EFFORT,
     approvalMode: DEFAULT_APPROVAL_MODE,
@@ -59,6 +62,7 @@ export function openLaunchDraft(
   draft: HomeLaunchDraft,
   defaultProviderId: string,
   mode: HomeLaunchDraft["mode"] = "session",
+  defaultCharacterId = "",
 ): HomeLaunchDraft {
   return {
     ...draft,
@@ -67,6 +71,7 @@ export function openLaunchDraft(
     title: "",
     workspace: null,
     providerId: defaultProviderId,
+    characterId: defaultCharacterId,
     model: DEFAULT_MODEL_ID,
     reasoningEffort: DEFAULT_REASONING_EFFORT,
     approvalMode: draft.approvalMode,
@@ -79,17 +84,19 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
   mateProfile,
   selectedProviderId,
   lastUsedSelection,
+  characterEntries = [],
 }: {
   draft: HomeLaunchDraft;
   mateProfile: MateProfile | null;
   selectedProviderId: string | null;
   lastUsedSelection?: Pick<CreateSessionInput, "model" | "reasoningEffort" | "customAgentName"> | null;
+  characterEntries?: readonly CharacterCatalogEntry[];
 }): CreateCompanionSessionInput | null {
   const normalizedTitle = draft.title.trim();
   if (!normalizedTitle || !draft.workspace || !selectedProviderId) {
     return null;
   }
-  const characterSnapshot = buildLaunchCharacterSnapshot(mateProfile);
+  const characterSnapshot = buildLaunchCharacterSnapshot(characterEntries, draft.characterId);
 
   const companionModel = draft.mode === "companion"
     ? lastUsedSelection?.model ?? draft.model
@@ -122,6 +129,7 @@ export function closeLaunchDraft(draft: HomeLaunchDraft): HomeLaunchDraft {
     title: "",
     workspace: null,
     providerId: "",
+    characterId: "",
   };
 }
 
@@ -148,6 +156,16 @@ export function updateLaunchDraftForProviderSelection(
     providerId,
     model: model?.id ?? draft.model,
     reasoningEffort: model?.reasoningEfforts[0] ?? provider?.defaultReasoningEffort ?? draft.reasoningEffort,
+  };
+}
+
+export function updateLaunchDraftForCharacterSelection(
+  draft: HomeLaunchDraft,
+  characterId: string,
+): HomeLaunchDraft {
+  return {
+    ...draft,
+    characterId,
   };
 }
 
@@ -201,18 +219,20 @@ export function buildCreateSessionInputFromLaunchDraft({
   selectedProviderId,
   approvalMode,
   lastUsedSelection,
+  characterEntries = [],
 }: {
   draft: HomeLaunchDraft;
   mateProfile: MateProfile | null;
   selectedProviderId: string | null;
   approvalMode: ApprovalMode;
   lastUsedSelection?: Pick<CreateSessionInput, "model" | "reasoningEffort" | "customAgentName"> | null;
+  characterEntries?: readonly CharacterCatalogEntry[];
 }): CreateSessionInput | null {
   const normalizedTitle = draft.title.trim();
   if (!normalizedTitle || !draft.workspace || !selectedProviderId) {
     return null;
   }
-  const characterSnapshot = buildLaunchCharacterSnapshot(mateProfile);
+  const characterSnapshot = buildLaunchCharacterSnapshot(characterEntries, draft.characterId);
 
   return {
     provider: selectedProviderId,
@@ -231,8 +251,32 @@ export function buildCreateSessionInputFromLaunchDraft({
   };
 }
 
-function buildLaunchCharacterSnapshot(mateProfile: MateProfile | null): LaunchCharacterSnapshot {
-  if (!mateProfile) {
+export function resolveLaunchCharacterId(
+  entries: readonly CharacterCatalogEntry[],
+  currentCharacterId: string | null | undefined,
+): string {
+  const activeEntries = entries.filter((entry) => entry.state === "active");
+  if (currentCharacterId && activeEntries.some((entry) => entry.id === currentCharacterId)) {
+    return currentCharacterId;
+  }
+
+  return activeEntries[0]?.id ?? "";
+}
+
+function resolveLaunchCharacterEntry(
+  entries: readonly CharacterCatalogEntry[],
+  characterId: string | null | undefined,
+): CharacterCatalogEntry | null {
+  const resolvedCharacterId = resolveLaunchCharacterId(entries, characterId);
+  return entries.find((entry) => entry.state === "active" && entry.id === resolvedCharacterId) ?? null;
+}
+
+function buildLaunchCharacterSnapshot(
+  entries: readonly CharacterCatalogEntry[],
+  characterId: string | null | undefined,
+): LaunchCharacterSnapshot {
+  const character = resolveLaunchCharacterEntry(entries, characterId);
+  if (!character) {
     return {
       characterId: NEUTRAL_CHARACTER_ID,
       character: NEUTRAL_CHARACTER_NAME,
@@ -243,19 +287,13 @@ function buildLaunchCharacterSnapshot(mateProfile: MateProfile | null): LaunchCh
   }
 
   return {
-    characterId: mateProfile.id,
-    character: mateProfile.displayName,
-    characterRoleMarkdown: mateProfile.description ?? "",
-    characterIconPath: mateProfile.avatarFilePath,
-    characterThemeColors: buildCharacterThemeColorsFromMateProfile(mateProfile),
-  };
-}
-
-function buildCharacterThemeColorsFromMateProfile(
-  mateProfile: Pick<MateProfile, "themeMain" | "themeSub">,
-): CharacterThemeColors {
-  return {
-    main: mateProfile.themeMain || "#000000",
-    sub: mateProfile.themeSub || "#ffffff",
+    characterId: character.id,
+    character: character.name,
+    characterRoleMarkdown: character.description,
+    characterIconPath: character.iconFilePath,
+    characterThemeColors: {
+      main: character.theme.main,
+      sub: character.theme.sub,
+    },
   };
 }

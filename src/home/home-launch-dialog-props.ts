@@ -13,6 +13,7 @@ type HomeLaunchDialogPropsInput = {
   onChangeTitle: (value: string) => void;
   onBrowseWorkspace: () => void;
   onSelectProvider: (providerId: string) => void;
+  onSelectCharacter: (characterId: string) => void;
   onStartSession: (mode: HomeLaunchDraft["mode"]) => void;
 };
 
@@ -27,6 +28,7 @@ export function buildHomeLaunchDialogProps({
   onChangeTitle,
   onBrowseWorkspace,
   onSelectProvider,
+  onSelectCharacter,
   onStartSession,
 }: HomeLaunchDialogPropsInput): HomeLaunchDialogProps {
   return {
@@ -37,6 +39,9 @@ export function buildHomeLaunchDialogProps({
     launchWorkspacePathLabel: projection.launchWorkspacePathLabel,
     enabledLaunchProviders: projection.enabledLaunchProviders,
     selectedLaunchProviderId: projection.selectedLaunchProvider?.id ?? null,
+    characterOptions: projection.characterOptions,
+    selectedCharacterId: projection.selectedCharacter?.id ?? null,
+    charactersLoaded: projection.charactersLoaded,
     canStartSession: projection.canStartSession && canUsePrimaryFeatures,
     launchFeedback,
     launchStarting,
@@ -45,6 +50,7 @@ export function buildHomeLaunchDialogProps({
     onChangeTitle,
     onBrowseWorkspace,
     onSelectProvider,
+    onSelectCharacter,
     onStartSession,
   };
 }

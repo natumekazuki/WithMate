@@ -1,4 +1,5 @@
 import type { CompanionSessionSummary } from "../companion-state.js";
+import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import type { CreateSessionInput, SessionSummary } from "../session-state.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { CreateCompanionSessionInput, CompanionSession } from "../companion-state.js";
@@ -7,7 +8,9 @@ import type { HomeLaunchDraft } from "./home-launch-state.js";
 import {
   closeLaunchDraft,
   openLaunchDraft,
+  resolveLaunchCharacterId,
   setLaunchWorkspaceFromPath,
+  updateLaunchDraftForCharacterSelection,
   updateLaunchDraftForProviderSelection,
 } from "./home-launch-state.js";
 import { startHomeLaunch } from "./home-launch-actions.js";
@@ -18,8 +21,10 @@ type HomeLaunchHandlersContext = {
   mateState: MateStorageState | null;
   mateProfile: MateProfile | null;
   enabledLaunchProviders: readonly ModelCatalogProvider[];
+  characterEntries: readonly CharacterCatalogEntry[];
   selectedLaunchProviderId: string | null;
   sessions: readonly SessionSummary[];
+  refreshCharacterEntries: () => Promise<readonly CharacterCatalogEntry[]>;
   setLaunchFeedback: (message: string) => void;
   setLaunchStarting: (launchStarting: boolean) => void;
   setLaunchDraft: (updater: HomeLaunchDraft | ((draft: HomeLaunchDraft) => HomeLaunchDraft)) => void;
@@ -34,9 +39,10 @@ type HomeLaunchHandlersContext = {
 
 export type HomeLaunchHandlers = {
   onBrowseWorkspace: () => void;
-  onOpenLaunchDialog: () => void;
+  onOpenLaunchDialog: () => Promise<void>;
   onCloseLaunchDialog: () => void;
   onSelectLaunchProvider: (providerId: string) => void;
+  onSelectLaunchCharacter: (characterId: string) => void;
   onChangeMode: (mode: HomeLaunchDraft["mode"]) => void;
   onChangeTitle: (value: string) => void;
   onStartSession: (mode?: HomeLaunchDraft["mode"]) => void;
@@ -48,8 +54,10 @@ export function buildHomeLaunchHandlers({
   mateState,
   mateProfile,
   enabledLaunchProviders,
+  characterEntries,
   selectedLaunchProviderId,
   sessions,
+  refreshCharacterEntries,
   setLaunchFeedback,
   setLaunchStarting,
   setLaunchDraft,
@@ -71,9 +79,20 @@ export function buildHomeLaunchHandlers({
     setLaunchDraft((current) => setLaunchWorkspaceFromPath(current, selectedPath));
   };
 
-  const onOpenLaunchDialog = () => {
+  const onOpenLaunchDialog = async () => {
     setLaunchFeedback("");
-    setLaunchDraft((current) => openLaunchDraft(current, enabledLaunchProviders[0]?.id ?? ""));
+    const latestCharacterEntries = await refreshCharacterEntries().catch((error) => {
+      setLaunchFeedback(error instanceof Error ? error.message : "Character 一覧の再読み込みに失敗したよ。");
+      return characterEntries;
+    });
+    setLaunchDraft((current) =>
+      openLaunchDraft(
+        current,
+        enabledLaunchProviders[0]?.id ?? "",
+        "session",
+        resolveLaunchCharacterId(latestCharacterEntries, current.characterId),
+      ),
+    );
   };
 
   const onCloseLaunchDialog = () => {
@@ -95,6 +114,7 @@ export function buildHomeLaunchHandlers({
       mateState,
       mateProfile,
       selectedProviderId: selectedLaunchProviderId,
+      characterEntries,
       sessions,
       createSession,
       createCompanionSession,
@@ -113,6 +133,10 @@ export function buildHomeLaunchHandlers({
     onOpenLaunchDialog,
     onCloseLaunchDialog,
     onSelectLaunchProvider,
+    onSelectLaunchCharacter: (characterId) => {
+      setLaunchFeedback("");
+      setLaunchDraft((current) => updateLaunchDraftForCharacterSelection(current, characterId));
+    },
     onChangeMode: (mode) => {
       setLaunchFeedback("");
       setLaunchDraft((current) => ({ ...current, mode }));

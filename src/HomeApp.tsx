@@ -15,6 +15,7 @@ import {
 import { buildHomeLaunchDialogProps } from "./home/home-launch-dialog-props.js";
 import {
   createClosedLaunchDraft,
+  resolveLaunchCharacterId,
   type HomeLaunchDraft,
 } from "./home/home-launch-state.js";
 import { resolveSelectedLaunchProviderDraftId } from "./launch/launch-provider-selection.js";
@@ -88,6 +89,7 @@ export default function HomeApp() {
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(createDefaultAppSettings());
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [characterEntries, setCharacterEntries] = useState<CharacterCatalogEntry[]>([]);
+  const [charactersLoaded, setCharactersLoaded] = useState(false);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
   const [selectedCharacterDetail, setSelectedCharacterDetail] = useState<CharacterDetail | null>(null);
   const [characterDraft, setCharacterDraft] = useState<SettingsCharacterEditorDraft>(() => createNewCharacterEditorDraft());
@@ -135,6 +137,10 @@ export default function HomeApp() {
     preferredCharacterId?: string | null,
   ) => {
     setCharacterEntries(entries);
+    setLaunchDraft((current) => ({
+      ...current,
+      characterId: resolveLaunchCharacterId(entries, current.characterId),
+    }));
     const nextSelectedCharacterId = resolveSettingsCharacterSelection(entries, preferredCharacterId ?? selectedCharacterId);
     setSelectedCharacterId(nextSelectedCharacterId);
 
@@ -154,9 +160,11 @@ export default function HomeApp() {
   const refreshCharacterEntries = async (
     api: NonNullable<ReturnType<typeof getWithMateApi>>,
     preferredCharacterId?: string | null,
-  ) => {
+  ): Promise<CharacterCatalogEntry[]> => {
     const entries = await api.listCharacters();
     await applyLoadedCharacterEntries(api, entries, preferredCharacterId);
+    setCharactersLoaded(true);
+    return entries;
   };
 
   useEffect(() => {
@@ -279,10 +287,13 @@ export default function HomeApp() {
       launchMode: launchDraft.mode,
       launchTitle: launchDraft.title,
       launchWorkspace: launchDraft.workspace,
+      launchCharacterId: launchDraft.characterId,
+      characterEntries,
+      charactersLoaded,
       appSettings,
       modelCatalog,
     }),
-    [appSettings, launchDraft, modelCatalog],
+    [appSettings, characterEntries, charactersLoaded, launchDraft, modelCatalog],
   );
   const { enabledLaunchProviders, selectedLaunchProvider } = launchProjection;
 
@@ -312,8 +323,16 @@ export default function HomeApp() {
     mateState,
     mateProfile,
     enabledLaunchProviders,
+    characterEntries,
     selectedLaunchProviderId: selectedLaunchProvider?.id ?? null,
     sessions,
+    refreshCharacterEntries: async () => {
+      const api = getWithMateApi();
+      if (!api) {
+        throw new Error("Character 一覧の再読み込みには desktop runtime が必要だよ。");
+      }
+      return refreshCharacterEntries(api);
+    },
     setLaunchFeedback,
     setLaunchStarting,
     setLaunchDraft,
@@ -645,6 +664,7 @@ export default function HomeApp() {
       onChangeTitle: homeLaunchHandlers.onChangeTitle,
       onBrowseWorkspace: () => void homeLaunchHandlers.onBrowseWorkspace(),
       onSelectProvider: homeLaunchHandlers.onSelectLaunchProvider,
+      onSelectCharacter: homeLaunchHandlers.onSelectLaunchCharacter,
       onStartSession: (mode) => void homeLaunchHandlers.onStartSession(mode),
     }),
   });

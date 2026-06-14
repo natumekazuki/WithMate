@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import type { CharacterCatalogEntry } from "../../src/character/character-catalog.js";
 import type { CompanionSession, CompanionSessionSummary } from "../../src/companion-state.js";
 import { startHomeLaunch } from "../../src/home/home-launch-actions.js";
 import {
@@ -38,7 +39,23 @@ function createReadyDraft(mode: HomeLaunchDraft["mode"] = "session"): HomeLaunch
     mode,
     title: "Task",
     providerId: "codex",
+    characterId: "mia",
   };
+}
+
+function createCharacterEntries(): CharacterCatalogEntry[] {
+  return [{
+    id: "mia",
+    name: "Mia",
+    description: "Character profile",
+    iconFilePath: "character.png",
+    theme: { main: "#222222", sub: "#eeeeee" },
+    state: "active",
+    isDefault: true,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    archivedAt: null,
+  }];
 }
 
 function createCompanionSession(): CompanionSession {
@@ -130,6 +147,7 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
       launchStarting: false,
       mateState: "active" as const,
       mateProfile: createMateProfile(),
+      characterEntries: createCharacterEntries(),
       selectedProviderId: "codex",
       sessions: [],
       createSession: async () => createSessionSummary(),
@@ -184,9 +202,15 @@ describe("home-launch-actions", () => {
 
   it("session を作成して window を開く", async () => {
     const harness = createStartHomeLaunchHarness();
+    let capturedCharacterId = "";
 
+    harness.input.createSession = async (input) => {
+      capturedCharacterId = input.characterId;
+      return createSessionSummary();
+    };
     await startHomeLaunch(harness.input);
 
+    assert.equal(capturedCharacterId, "mia");
     assert.deepEqual(harness.feedback, ["Session を開始してるよ..."]);
     assert.deepEqual(harness.startingStates, [true, false]);
     assert.equal(harness.closeCount, 1);
@@ -199,6 +223,7 @@ describe("home-launch-actions", () => {
     const harness = createStartHomeLaunchHarness({
       mateState: "not_created",
       mateProfile: null,
+      characterEntries: [],
       createSession: async (input) => {
         capturedCharacterId = input.characterId;
         return createSessionSummary();
@@ -217,9 +242,16 @@ describe("home-launch-actions", () => {
       draft: createReadyDraft("companion"),
       requestedMode: "companion",
     });
+    let capturedCharacter = "";
+
+    harness.input.createCompanionSession = async (input) => {
+      capturedCharacter = input.character;
+      return createCompanionSession();
+    };
 
     await startHomeLaunch(harness.input);
 
+    assert.equal(capturedCharacter, "Mia");
     assert.deepEqual(harness.feedback, ["Companion を開始してるよ..."]);
     assert.deepEqual(harness.startingStates, [true, false]);
     assert.equal(harness.closeCount, 1);
