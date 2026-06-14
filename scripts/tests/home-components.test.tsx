@@ -529,12 +529,14 @@ describe("HomeRightPane", () => {
     archivedAt: null,
   }],
     canUsePrimaryFeatures = true,
+    characterListFeedback = "",
   ) => renderToStaticMarkup(
     <HomeRightPane
       rightPaneView={rightPaneView}
       runningMonitorEntries={[]}
       nonRunningMonitorEntries={[]}
       characterEntries={characters}
+      characterListFeedback={characterListFeedback}
       monitorWindowIcon={<span>Monitor</span>}
       onChangeRightPaneView={noOp}
       onOpenSessionMonitorWindow={noOp}
@@ -578,6 +580,13 @@ describe("HomeRightPane", () => {
   it("Character が空でも Create Character を表示できる", () => {
     const html = renderHomeRightPane("characters", []);
     assert.ok(html.includes("Character はまだありません。"));
+    assert.ok(html.includes("Create Character"));
+  });
+
+  it("Characters panel は一覧読み込み error を panel 内に表示する", () => {
+    const html = renderHomeRightPane("characters", [], true, "Character 一覧の再読み込みに失敗したよ。");
+
+    assert.ok(html.includes("Character 一覧の再読み込みに失敗したよ。"));
     assert.ok(html.includes("Create Character"));
   });
 

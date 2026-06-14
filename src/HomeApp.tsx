@@ -81,6 +81,7 @@ export default function HomeApp() {
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(createDefaultAppSettings());
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [characterEntries, setCharacterEntries] = useState<CharacterCatalogEntry[]>([]);
+  const [characterListFeedback, setCharacterListFeedback] = useState("");
   const [charactersLoaded, setCharactersLoaded] = useState(false);
   const [settingsDraftLoaded, setSettingsDraftLoaded] = useState(!isSettingsWindowMode);
   const [modelCatalogLoaded, setModelCatalogLoaded] = useState(!isSettingsWindowMode);
@@ -131,6 +132,7 @@ export default function HomeApp() {
   ): Promise<CharacterCatalogEntry[]> => {
     const entries = await api.listCharacters();
     applyLoadedCharacterEntries(entries);
+    setCharacterListFeedback("");
     setCharactersLoaded(true);
     return entries;
   };
@@ -190,7 +192,7 @@ export default function HomeApp() {
         return;
       }
 
-      setLaunchFeedback(error instanceof Error ? error.message : "Character 一覧の読み込みに失敗したよ。");
+      setCharacterListFeedback(error instanceof Error ? error.message : "Character 一覧の読み込みに失敗したよ。");
     });
 
     const unsubscribeModelCatalog = startModelCatalogSubscription({
@@ -238,7 +240,7 @@ export default function HomeApp() {
       }
       refreshInFlight = true;
       void refreshCharacterEntries(withmateApi).catch((error) => {
-        setLaunchFeedback(error instanceof Error ? error.message : "Character 一覧の再読み込みに失敗したよ。");
+        setCharacterListFeedback(error instanceof Error ? error.message : "Character 一覧の再読み込みに失敗したよ。");
       }).finally(() => {
         refreshInFlight = false;
       });
@@ -465,6 +467,7 @@ export default function HomeApp() {
       runningMonitorEntries,
       nonRunningMonitorEntries,
       characterEntries,
+      characterListFeedback,
       monitorWindowIcon: renderHomeMonitorWindowIcon(),
       handlers: {
         onChangeRightPaneView: setRightPaneView,
