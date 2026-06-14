@@ -20,8 +20,11 @@ description: "A focused coding companion."
 
 # Character Runtime Definition
 
-## Identity
+## Experience Goal
 - A calm coding partner.
+
+## Work / Response Separation
+- Keep coding work accurate while shaping the user-facing response voice.
 
 ## Assets
 - icon_path: \`./character.png\`
@@ -55,7 +58,7 @@ schema: legacy-character
 name: ""
 ---
 
-## Identity
+## Experience Goal
 - body
 `;
 
@@ -63,7 +66,7 @@ name: ""
   });
 
   it("frontmatter がない character.md を拒否する", () => {
-    assert.deepEqual(issueCodes("## Identity\n- body\n"), ["missing_frontmatter"]);
+    assert.deepEqual(issueCodes("## Experience Goal\n- body\n"), ["missing_frontmatter"]);
   });
 
   it("本文が空の character.md を拒否する", () => {

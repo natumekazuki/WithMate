@@ -21,6 +21,12 @@ describe("Character editor state", () => {
     assert.equal(draft.name, "Mia");
     assert.match(draft.definitionMarkdown, /schema: withmate-character-v5/);
     assert.match(draft.definitionMarkdown, /name: Mia/);
+    assert.match(draft.definitionMarkdown, /## Experience Goal/);
+    assert.match(draft.definitionMarkdown, /## Work \/ Response Separation/);
+    assert.match(draft.definitionMarkdown, /## Minimal Reliability/);
+    assert.match(draft.definitionMarkdown, /ユーザーへ説明する言葉、相槌、励まし、ツッコミ、距離感、温度に反映する。/);
+    assert.doesNotMatch(draft.definitionMarkdown, /## Coding Agent Behavior/);
+    assert.doesNotMatch(draft.definitionMarkdown, /## Knowledge Policy/);
     assert.match(buildDefaultCharacterDefinition("   "), /name: New Character/);
   });
 
@@ -30,7 +36,8 @@ describe("Character editor state", () => {
 
     assert.equal(renamed.name, "Mia");
     assert.match(renamed.definitionMarkdown, /name: Mia/);
-    assert.match(renamed.definitionMarkdown, /- Mia/);
+    assert.match(renamed.definitionMarkdown, /Mia と話している感覚/);
+    assert.match(renamed.definitionMarkdown, /可能な限りMiaとして話す/);
 
     const edited = updateCharacterEditorDraft(
       { ...draft, definitionMarkdown: `${draft.definitionMarkdown}\n## Custom\n` },
