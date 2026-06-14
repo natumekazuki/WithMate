@@ -1,9 +1,12 @@
-import { useRef, type CSSProperties } from "react";
+import type { CSSProperties } from "react";
 
 import type { AppSettings } from "../app-state.js";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import { MICROCOPY_SLOTS, type MicrocopySlot } from "../microcopy-state.js";
-import type { SettingsCharacterEditorDraft } from "./settings-character-editor-state.js";
+import {
+  createNewCharacterEditorDraft,
+  type SettingsCharacterEditorDraft,
+} from "./settings-character-editor-state.js";
 import type { HomeProviderSettingRow } from "./settings-view-model.js";
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
@@ -17,27 +20,27 @@ import {
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
   providerSettingRows: HomeProviderSettingRow[];
-  characterEntries: CharacterCatalogEntry[];
-  selectedCharacterId: string | null;
-  characterDraft: SettingsCharacterEditorDraft;
-  characterEditorDirty: boolean;
-  characterEditorBusy: boolean;
-  characterEditorFeedback: string;
+  characterEntries?: CharacterCatalogEntry[];
+  selectedCharacterId?: string | null;
+  characterDraft?: SettingsCharacterEditorDraft;
+  characterEditorDirty?: boolean;
+  characterEditorBusy?: boolean;
+  characterEditorFeedback?: string;
   modelCatalogRevisionLabel: string;
   settingsDirty: boolean;
   settingsFeedback: string;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
-  onSelectCharacter: (characterId: string) => void;
-  onNewCharacter: () => void;
-  onChangeCharacterDraft: (patch: Partial<SettingsCharacterEditorDraft>) => void;
-  onImportCharacterDefinitionFile: (file: File) => void;
-  onPickCharacterIcon: () => void;
-  onSaveCharacter: () => void;
-  onCancelCharacterEdit: () => void;
-  onSetDefaultCharacter: () => void;
-  onArchiveCharacter: () => void;
+  onSelectCharacter?: (characterId: string) => void;
+  onNewCharacter?: () => void;
+  onChangeCharacterDraft?: (patch: Partial<SettingsCharacterEditorDraft>) => void;
+  onImportCharacterDefinitionFile?: (file: File) => void;
+  onPickCharacterIcon?: () => void;
+  onSaveCharacter?: () => void;
+  onCancelCharacterEdit?: () => void;
+  onSetDefaultCharacter?: () => void;
+  onArchiveCharacter?: () => void;
   onImportModelCatalog: () => void;
   onExportModelCatalog: () => void;
   onOpenAppLogFolder: () => void;
@@ -71,30 +74,32 @@ const microcopyTextareaValue = (value: AppSettings["userMicrocopyCatalog"][Micro
   return (value ?? []).join("\n");
 };
 
+const CHARACTER_DEFINITION_IMPORT_INPUT_ID = "settings-character-definition-import";
+
 export function HomeSettingsContent({
   settingsDraft,
   providerSettingRows,
-  characterEntries,
-  selectedCharacterId,
-  characterDraft,
-  characterEditorDirty,
-  characterEditorBusy,
-  characterEditorFeedback,
+  characterEntries = [],
+  selectedCharacterId = null,
+  characterDraft = createNewCharacterEditorDraft(),
+  characterEditorDirty = false,
+  characterEditorBusy = false,
+  characterEditorFeedback = "",
   modelCatalogRevisionLabel,
   settingsDirty,
   settingsFeedback,
   onChangeAutoCollapseActionDockOnSend,
   onChangeUserMicrocopySlot,
   onChangeProviderEnabled,
-  onSelectCharacter,
-  onNewCharacter,
-  onChangeCharacterDraft,
-  onImportCharacterDefinitionFile,
-  onPickCharacterIcon,
-  onSaveCharacter,
-  onCancelCharacterEdit,
-  onSetDefaultCharacter,
-  onArchiveCharacter,
+  onSelectCharacter = () => undefined,
+  onNewCharacter = () => undefined,
+  onChangeCharacterDraft = () => undefined,
+  onImportCharacterDefinitionFile = () => undefined,
+  onPickCharacterIcon = () => undefined,
+  onSaveCharacter = () => undefined,
+  onCancelCharacterEdit = () => undefined,
+  onSetDefaultCharacter = () => undefined,
+  onArchiveCharacter = () => undefined,
   onImportModelCatalog,
   onExportModelCatalog,
   onOpenAppLogFolder,
@@ -104,7 +109,6 @@ export function HomeSettingsContent({
   canResetMate = false,
   onSaveSettings,
 }: HomeSettingsContentProps) {
-  const characterImportInputRef = useRef<HTMLInputElement | null>(null);
   const selectedCharacter = characterEntries.find((entry) => entry.id === selectedCharacterId) ?? null;
 
   return (
@@ -282,7 +286,7 @@ export function HomeSettingsContent({
                     />
                   </label>
                   <input
-                    ref={characterImportInputRef}
+                    id={CHARACTER_DEFINITION_IMPORT_INPUT_ID}
                     type="file"
                     accept=".md,text/markdown,text/plain"
                     className="settings-character-import-input"
@@ -298,7 +302,12 @@ export function HomeSettingsContent({
                     <button
                       className="launch-toggle"
                       type="button"
-                      onClick={() => characterImportInputRef.current?.click()}
+                      onClick={() => {
+                        if (typeof document === "undefined") {
+                          return;
+                        }
+                        document.getElementById(CHARACTER_DEFINITION_IMPORT_INPUT_ID)?.click();
+                      }}
                       disabled={characterEditorBusy}
                     >
                       Import / Replace
