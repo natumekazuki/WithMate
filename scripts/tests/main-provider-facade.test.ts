@@ -95,6 +95,4 @@ test("MainProviderFacade は未対応 provider の runtime capability を codex 
   assert.equal(capabilities.providerSupported, false);
   assert.equal(capabilities.instructionSyncSupported, false);
   assert.equal(capabilities.tokenUsageSupported, false);
-  assert.equal(capabilities.mateTalkBackgroundPromptSupported, false);
-  assert.equal(capabilities.backgroundStructuredPrompt.compatible, true);
 });

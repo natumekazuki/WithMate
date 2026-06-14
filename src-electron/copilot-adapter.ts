@@ -39,7 +39,7 @@ import { composeProviderPrompt, isCanceledProviderMessage } from "./provider-pro
 import {
   ProviderTurnError,
   resolveRunWorkspacePath,
-  MATE_TALK_SCHEMA_SUBMIT_TOOL_BACKGROUND_STRUCTURED_PROMPT_POLICY,
+  SCHEMA_SUBMIT_TOOL_BACKGROUND_STRUCTURED_PROMPT_POLICY,
   type ExtractSessionMemoryResult,
   type ExtractSessionMemoryInput,
   type ProviderPromptComposition,
@@ -1922,7 +1922,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   }
 
   getBackgroundStructuredPromptPolicy() {
-    return MATE_TALK_SCHEMA_SUBMIT_TOOL_BACKGROUND_STRUCTURED_PROMPT_POLICY;
+    return SCHEMA_SUBMIT_TOOL_BACKGROUND_STRUCTURED_PROMPT_POLICY;
   }
 
   invalidateSessionThread(sessionId: string): void {

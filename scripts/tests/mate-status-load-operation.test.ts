@@ -136,14 +136,3 @@ test("refreshMateStatus は ready result 後に inactive なら UI state を更�
   assert.equal(state, "active");
   assert.deepEqual(calls, []);
 });
-
-test("MateTalk 初期化 caller は mate status result 適用直前に active を再確認する", async () => {
-  const source = await readFile(new URL("../../src/chat/use-mate-talk-window-state.ts", import.meta.url), "utf8");
-  const loadIndex = source.indexOf("loadMateStatusSnapshot({");
-  assert.notEqual(loadIndex, -1);
-
-  assert.match(
-    source.slice(loadIndex, loadIndex + 260),
-    /result\.status === "stale" \|\| !active/,
-  );
-});

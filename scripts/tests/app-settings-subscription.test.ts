@@ -203,18 +203,12 @@ test("App は app settings の初回取得と購読更新を helper に通す", 
   assert.match(snippet, /loadInitial: true/);
 });
 
-test("Home と MateTalk は app settings 初期取得と購読更新を helper に通す", async () => {
+test("Home は app settings 初期取得と購読更新を helper に通す", async () => {
   const homeSource = await readFile(new URL("../../src/HomeApp.tsx", import.meta.url), "utf8");
-  const mateTalkSource = await readFile(new URL("../../src/chat/use-mate-talk-window-state.ts", import.meta.url), "utf8");
 
   assert.match(
     homeSource.slice(homeSource.indexOf("startAppSettingsSubscription({"), homeSource.indexOf("startAppSettingsSubscription({") + 220),
     /loadInitial: true/,
   );
-  assert.match(
-    mateTalkSource.slice(mateTalkSource.indexOf("startAppSettingsSubscription({"), mateTalkSource.indexOf("startAppSettingsSubscription({") + 220),
-    /loadInitial: true/,
-  );
   assert.doesNotMatch(homeSource, /withmateApi\.getAppSettings\(\),/);
-  assert.doesNotMatch(mateTalkSource, /withmateApi\.getAppSettings\(\),/);
 });

@@ -4,11 +4,7 @@ import test from "node:test";
 import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src/character-state.js";
 import type { DiffPreviewPayload } from "../../src/session-state.js";
 import { AuxWindowService } from "../../src-electron/aux-window-service.js";
-import {
-  COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
-  COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
-  DIFF_WINDOW_DEFAULT_BOUNDS,
-} from "../../src-electron/window-defaults.js";
+import { COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS, COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS, DIFF_WINDOW_DEFAULT_BOUNDS } from "../../src-electron/window-defaults.js";
 
 function createWindowStub() {
   let destroyed = false;
@@ -178,40 +174,6 @@ test("AuxWindowService は companion chat と merge の entry を分けて開く
     {
       ...COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
       title: "Companion Merge - companion-1",
-    },
-  ]);
-});
-
-test("AuxWindowService は MateTalk を chat entry として開く", async () => {
-  const chatLoads: unknown[] = [];
-  const createdOptions: Array<Record<string, unknown>> = [];
-  const service = new AuxWindowService({
-    createWindow(options) {
-      const stub = createWindowStub();
-      createdOptions.push(options);
-      return stub.window;
-    },
-    async loadHomeEntry() {},
-    async loadDiffEntry() {},
-    async loadChatEntry(_window, mode) {
-      chatLoads.push(mode);
-    },
-    async loadCompanionMergeReviewEntry() {},
-    onCompanionReviewWindowsChanged() {},
-    generateDiffToken() {
-      return "diff-token";
-    },
-  });
-
-  const mateTalk = await service.openMateTalkWindow();
-  const mateTalkReopened = await service.openMateTalkWindow();
-
-  assert.equal(mateTalk, mateTalkReopened);
-  assert.deepEqual(chatLoads, [{ kind: "mate-talk" }]);
-  assert.deepEqual(createdOptions, [
-    {
-      ...COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
-      title: "WithMate MateTalk",
     },
   ]);
 });

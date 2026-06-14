@@ -20,10 +20,6 @@ test("MainWindowFacade は aux/session window service を束ねる", async () =>
           calls.push("settings");
           return { id: "settings" };
         },
-        async openMateTalkWindow() {
-          calls.push("mate-talk");
-          return { id: "mate-talk" };
-        },
         async openDiffWindow() {
           calls.push("diff");
           return { id: "diff" };
@@ -51,7 +47,6 @@ test("MainWindowFacade は aux/session window service を束ねる", async () =>
   await facade.openHomeWindow();
   await facade.openSessionMonitorWindow();
   await facade.openSettingsWindow();
-  await facade.openMateTalkWindow();
   await facade.openSessionWindow("s-1");
   await facade.openDiffWindow({ token: "d-1" } as never);
   assert.deepEqual(facade.listOpenSessionWindowIds(), ["s-1", "s-2"]);
@@ -61,7 +56,6 @@ test("MainWindowFacade は aux/session window service を束ねる", async () =>
     "home",
     "monitor",
     "settings",
-    "mate-talk",
     "session:s-1",
     "diff",
     "list-session",
