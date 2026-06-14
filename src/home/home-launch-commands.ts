@@ -16,6 +16,10 @@ export async function openSettingsWindow() {
   await withWithMateApi((api) => api.openSettingsWindow());
 }
 
+export async function openCharacterEditorWindow(characterId?: string | null) {
+  await withWithMateApi((api) => api.openCharacterEditorWindow(characterId ?? null));
+}
+
 export async function openCompanionReviewWindow(sessionId: string) {
   await withWithMateApi((api) => api.openCompanionReviewWindow(sessionId));
 }

@@ -31,16 +31,7 @@ import {
   buildPersistedAppSettingsFromRows,
   type HomeProviderSettingRow,
 } from "./settings/settings-view-model.js";
-import type { CharacterCatalogEntry, CharacterDetail } from "./character/character-catalog.js";
-import {
-  createCharacterEditorDraftFromDetail,
-  createNewCharacterEditorDraft,
-  formatCharacterEditorError,
-  isSettingsCharacterDraftDirty,
-  resolveSettingsCharacterSelection,
-  type SettingsCharacterEditorDraft,
-  updateSettingsCharacterEditorDraft,
-} from "./settings/settings-character-editor-state.js";
+import type { CharacterCatalogEntry } from "./character/character-catalog.js";
 import { HomeAppRouter } from "./home/HomeAppRouter.js";
 import { buildHomeDashboardSlots } from "./home/HomeDashboardSlots.js";
 import { buildHomeRecentSessionsPanelProps } from "./home/home-recent-sessions-panel-props.js";
@@ -49,6 +40,7 @@ import { buildHomeWindowContentSlots } from "./home/HomeWindowContentSlots.js";
 import { getHomeWindowMode } from "./home/home-window-mode.js";
 import { useHomeOpenWindowSubscriptions } from "./home/use-home-open-window-subscriptions.js";
 import {
+  openCharacterEditorWindow,
   openCompanionReviewWindow,
   openSessionMonitorWindow,
   openSessionWindow,
@@ -71,7 +63,7 @@ import { buildMateStatusRefreshers } from "./mate/mate-status-refreshers.js";
 import { buildHomeMonitorContentProps } from "./home/home-monitor-content-props.js";
 import { renderHomeMonitorWindowIcon, renderHomeSearchIcon } from "./home/home-icons.js";
 
-type HomeRightPaneView = "monitor" | "mate";
+type HomeRightPaneView = "monitor" | "characters";
 
 export default function HomeApp() {
   const desktopRuntime = isDesktopRuntime();
@@ -89,12 +81,8 @@ export default function HomeApp() {
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(createDefaultAppSettings());
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [characterEntries, setCharacterEntries] = useState<CharacterCatalogEntry[]>([]);
+  const [characterListFeedback, setCharacterListFeedback] = useState("");
   const [charactersLoaded, setCharactersLoaded] = useState(false);
-  const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
-  const [selectedCharacterDetail, setSelectedCharacterDetail] = useState<CharacterDetail | null>(null);
-  const [characterDraft, setCharacterDraft] = useState<SettingsCharacterEditorDraft>(() => createNewCharacterEditorDraft());
-  const [characterEditorBusy, setCharacterEditorBusy] = useState(false);
-  const [characterEditorFeedback, setCharacterEditorFeedback] = useState("");
   const [settingsDraftLoaded, setSettingsDraftLoaded] = useState(!isSettingsWindowMode);
   const [modelCatalogLoaded, setModelCatalogLoaded] = useState(!isSettingsWindowMode);
   const [launchDraft, setLaunchDraft] = useState<HomeLaunchDraft>(() => createClosedLaunchDraft());
@@ -131,38 +119,20 @@ export default function HomeApp() {
     setMateAvatarUpdating,
   });
 
-  const applyLoadedCharacterEntries = async (
-    api: NonNullable<ReturnType<typeof getWithMateApi>>,
-    entries: CharacterCatalogEntry[],
-    preferredCharacterId?: string | null,
-  ) => {
+  const applyLoadedCharacterEntries = (entries: CharacterCatalogEntry[]) => {
     setCharacterEntries(entries);
     setLaunchDraft((current) => ({
       ...current,
       characterId: resolveLaunchCharacterId(entries, current.characterId),
     }));
-    const nextSelectedCharacterId = resolveSettingsCharacterSelection(entries, preferredCharacterId ?? selectedCharacterId);
-    setSelectedCharacterId(nextSelectedCharacterId);
-
-    if (!nextSelectedCharacterId) {
-      setSelectedCharacterDetail(null);
-      setCharacterDraft(createNewCharacterEditorDraft());
-      return;
-    }
-
-    const detail = await api.getCharacter(nextSelectedCharacterId);
-    setSelectedCharacterDetail(detail);
-    if (detail) {
-      setCharacterDraft(createCharacterEditorDraftFromDetail(detail));
-    }
   };
 
   const refreshCharacterEntries = async (
     api: NonNullable<ReturnType<typeof getWithMateApi>>,
-    preferredCharacterId?: string | null,
   ): Promise<CharacterCatalogEntry[]> => {
     const entries = await api.listCharacters();
-    await applyLoadedCharacterEntries(api, entries, preferredCharacterId);
+    applyLoadedCharacterEntries(entries);
+    setCharacterListFeedback("");
     setCharactersLoaded(true);
     return entries;
   };
@@ -222,9 +192,7 @@ export default function HomeApp() {
         return;
       }
 
-      setCharacterEditorFeedback(
-        formatCharacterEditorError(error, "Character 一覧の読み込みに失敗したよ。"),
-      );
+      setCharacterListFeedback(error instanceof Error ? error.message : "Character 一覧の読み込みに失敗したよ。");
     });
 
     const unsubscribeModelCatalog = startModelCatalogSubscription({
@@ -258,6 +226,29 @@ export default function HomeApp() {
       unsubscribeAppSettings();
     };
   }, []);
+
+  useEffect(() => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || isSettingsWindowMode || isMonitorWindowMode) {
+      return;
+    }
+
+    let refreshInFlight = false;
+    const refreshCharactersOnFocus = () => {
+      if (refreshInFlight) {
+        return;
+      }
+      refreshInFlight = true;
+      void refreshCharacterEntries(withmateApi).catch((error) => {
+        setCharacterListFeedback(error instanceof Error ? error.message : "Character 一覧の再読み込みに失敗したよ。");
+      }).finally(() => {
+        refreshInFlight = false;
+      });
+    };
+
+    window.addEventListener("focus", refreshCharactersOnFocus);
+    return () => window.removeEventListener("focus", refreshCharactersOnFocus);
+  }, [isMonitorWindowMode, isSettingsWindowMode]);
 
   useHomeOpenWindowSubscriptions({
     getApi: getWithMateApi,
@@ -414,183 +405,17 @@ export default function HomeApp() {
     refreshMateStatus,
   });
 
-  const characterEditorDirty = useMemo(
-    () => isSettingsCharacterDraftDirty(characterDraft, selectedCharacterDetail),
-    [characterDraft, selectedCharacterDetail],
-  );
-
-  const runCharacterEditorCommand = async (
-    command: (api: NonNullable<ReturnType<typeof getWithMateApi>>) => Promise<void>,
-    fallbackMessage = "Character 操作に失敗したよ。",
-  ) => {
-    const api = getWithMateApi();
-    if (characterEditorBusy) {
-      return;
-    }
-    if (!api) {
-      setCharacterEditorFeedback("Character 操作には desktop runtime が必要だよ。");
-      return;
-    }
-
-    setCharacterEditorBusy(true);
-    try {
-      await command(api);
-    } catch (error) {
-      setCharacterEditorFeedback(formatCharacterEditorError(error, fallbackMessage));
-    } finally {
-      setCharacterEditorBusy(false);
-    }
-  };
-
-  const characterEditorHandlers = {
-    onSelectCharacter: (characterId: string) => {
-      if (characterId === selectedCharacterId) {
-        return;
-      }
-      if (characterEditorDirty) {
-        setCharacterEditorFeedback("未保存の編集があります。保存またはCancelしてから切り替えてね。");
-        return;
-      }
-      void runCharacterEditorCommand(async (api) => {
-        const detail = await api.getCharacter(characterId);
-        setSelectedCharacterId(characterId);
-        setSelectedCharacterDetail(detail);
-        if (detail) {
-          setCharacterDraft(createCharacterEditorDraftFromDetail(detail));
-          setCharacterEditorFeedback("");
-        } else {
-          setCharacterEditorFeedback("Character が見つからなかったよ。");
-        }
-      }, "Character の読み込みに失敗したよ。");
-    },
-    onNewCharacter: () => {
-      if (characterEditorDirty) {
-        setCharacterEditorFeedback("未保存の編集があります。保存またはCancelしてから切り替えてね。");
-        return;
-      }
-      setSelectedCharacterId(null);
-      setSelectedCharacterDetail(null);
-      setCharacterDraft(createNewCharacterEditorDraft());
-      setCharacterEditorFeedback("");
-    },
-    onChangeCharacterDraft: (patch: Partial<SettingsCharacterEditorDraft>) => {
-      setCharacterDraft((current) => updateSettingsCharacterEditorDraft(current, patch));
-    },
-    onImportCharacterDefinitionFile: (file: File) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === "string") {
-          setCharacterDraft((current) => ({
-            ...current,
-            definitionMarkdown: reader.result as string,
-          }));
-          setCharacterEditorFeedback(`${file.name} を読み込んだよ。`);
-        }
-      };
-      reader.onerror = () => {
-        setCharacterEditorFeedback("character.md の読み込みに失敗したよ。");
-      };
-      reader.readAsText(file);
-    },
-    onPickCharacterIcon: () => {
-      void runCharacterEditorCommand(async (api) => {
-        const pickedPath = await api.pickImageFile(characterDraft.iconFilePath || undefined);
-        if (pickedPath) {
-          setCharacterDraft((current) => ({
-            ...current,
-            iconFilePath: pickedPath,
-          }));
-        }
-      }, "Character icon の選択に失敗したよ。");
-    },
-    onSaveCharacter: () => {
-      void runCharacterEditorCommand(async (api) => {
-        const saved = characterDraft.mode === "create"
-          ? await api.createCharacter({
-              name: characterDraft.name,
-              description: characterDraft.description,
-              iconFilePath: characterDraft.iconFilePath,
-              theme: characterDraft.theme,
-              definitionMarkdown: characterDraft.definitionMarkdown,
-              notesMarkdown: characterDraft.notesMarkdown,
-            })
-          : await (async () => {
-              if (!characterDraft.characterId) {
-                throw new Error("保存対象の Character が選択されていないよ。");
-              }
-              if (characterDraft.name.trim().length === 0) {
-                throw new Error("Character name を入力してね。");
-              }
-              await api.updateCharacterDefinition({
-                characterId: characterDraft.characterId,
-                definitionMarkdown: characterDraft.definitionMarkdown,
-                notesMarkdown: characterDraft.notesMarkdown,
-              });
-              return api.updateCharacterMetadata({
-                characterId: characterDraft.characterId,
-                name: characterDraft.name,
-                description: characterDraft.description,
-                iconFilePath: characterDraft.iconFilePath,
-                theme: characterDraft.theme,
-              });
-            })();
-
-        setSelectedCharacterId(saved.id);
-        setSelectedCharacterDetail(saved);
-        setCharacterDraft(createCharacterEditorDraftFromDetail(saved));
-        await refreshCharacterEntries(api, saved.id);
-        setCharacterEditorFeedback("Character を保存したよ。");
-      }, "Character の保存に失敗したよ。");
-    },
-    onCancelCharacterEdit: () => {
-      if (selectedCharacterDetail) {
-        setCharacterDraft(createCharacterEditorDraftFromDetail(selectedCharacterDetail));
-        setCharacterEditorFeedback("編集を保存前の状態へ戻したよ。");
-      } else {
-        setCharacterDraft(createNewCharacterEditorDraft());
-        setCharacterEditorFeedback("");
-      }
-    },
-    onSetDefaultCharacter: () => {
-      void runCharacterEditorCommand(async (api) => {
-        if (!characterDraft.characterId) {
-          return;
-        }
-        await api.setDefaultCharacter(characterDraft.characterId);
-        await refreshCharacterEntries(api, characterDraft.characterId);
-        setCharacterEditorFeedback("Default Character を更新したよ。");
-      }, "Default Character の更新に失敗したよ。");
-    },
-    onArchiveCharacter: () => {
-      void runCharacterEditorCommand(async (api) => {
-        if (!characterDraft.characterId) {
-          return;
-        }
-        await api.archiveCharacter(characterDraft.characterId);
-        await refreshCharacterEntries(api);
-        setCharacterEditorFeedback("Character を archive したよ。");
-      }, "Character のarchiveに失敗したよ。");
-    },
-  };
-
   const isMateStateLoading = mateState === null;
   const canUsePrimaryFeatures = mateState !== null;
 
   const baseSettingsContentProps: HomeSettingsContentBaseProps = {
     settingsDraft,
     providerSettingRows,
-    characterEntries,
-    selectedCharacterId,
-    characterDraft,
-    characterEditorDirty,
-    characterEditorBusy,
-    characterEditorFeedback,
     modelCatalogRevisionLabel: String(modelCatalog?.revision ?? "-"),
     settingsDirty,
     settingsFeedback,
     ...settingsDraftHandlers,
     ...settingsCommandHandlers,
-    ...characterEditorHandlers,
   };
 
   const { settingsContent, mateSetupContent, monitorContent } = buildHomeWindowContentSlots({
@@ -641,13 +466,15 @@ export default function HomeApp() {
       rightPaneView,
       runningMonitorEntries,
       nonRunningMonitorEntries,
-      mateProfile,
+      characterEntries,
+      characterListFeedback,
       monitorWindowIcon: renderHomeMonitorWindowIcon(),
       handlers: {
         onChangeRightPaneView: setRightPaneView,
         onOpenSessionMonitorWindow: () => void openSessionMonitorWindow(),
         onOpenSettingsWindow: () => void openSettingsWindow(),
-        onOpenMateProfile: mateProfileHandlers.onOpenProfileEditor,
+        onCreateCharacter: () => void openCharacterEditorWindow(),
+        onEditCharacter: (characterId) => void openCharacterEditorWindow(characterId),
         onOpenSession: (sessionId) => void openSessionWindow(sessionId),
         onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
       },

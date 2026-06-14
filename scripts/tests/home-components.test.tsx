@@ -55,7 +55,6 @@ describe("HomeSettingsContent", () => {
     canResetMate?: boolean;
     mateResetBusy?: boolean;
     onResetMate?: () => void;
-    characterEditorBusy?: boolean;
   };
 
   const collectElementsById = (node: ReactNode, predicate: (element: React.ReactElement) => boolean): React.ReactElement[] => {
@@ -92,7 +91,6 @@ describe("HomeSettingsContent", () => {
     modelCatalogRevisionLabel: String(modelCatalog.revision),
     settingsDirty: false,
     settingsFeedback: "",
-    characterEditorBusy: params?.characterEditorBusy ?? false,
     onChangeAutoCollapseActionDockOnSend: noOp,
     onChangeUserMicrocopySlot: noOp,
     onChangeProviderEnabled: noOp,
@@ -150,15 +148,9 @@ describe("HomeSettingsContent", () => {
     assert.ok(!html.includes("Mate Growth を手動適用"));
     assert.ok(!html.includes("Mate Growth Settings"));
     assert.ok(!html.includes("最近の Growth Event"));
-  });
-
-  it("Character editor は busy 中に編集 field を disabled にする", () => {
-    const html = renderSettings({ characterEditorBusy: true });
-
-    assert.match(html, /<input type="text" disabled="" value="New Character"\/>/);
-    assert.match(html, /<input type="color" disabled="" value="#6f8cff"\/>/);
-    assert.match(html, /<textarea class="settings-character-markdown-textarea" rows="14" spellCheck="false" disabled="">/);
-    assert.match(html, /<textarea class="settings-character-notes-textarea" rows="5" spellCheck="false" disabled="">/);
+    assert.ok(!html.includes("settings-character-section"));
+    assert.ok(!html.includes("Save Character"));
+    assert.ok(!html.includes("character-notes.md"));
   });
 });
 
@@ -524,41 +516,33 @@ describe("HomeMonitorContent", () => {
 describe("HomeRightPane", () => {
   const noOp = (..._args: unknown[]) => undefined;
 
-  const renderHomeRightPane = (rightPaneView: "monitor" | "mate", mateProfile: null | {
-    id: string;
-    state: "draft" | "active" | "deleted";
-    displayName: string;
-    description: string;
-    themeMain: string;
-    themeSub: string;
-    avatarFilePath: string;
-    avatarSha256: string;
-    avatarByteSize: number;
-    activeRevisionId: string | null;
-    profileGeneration: number;
-    createdAt: string;
-    updatedAt: string;
-    deletedAt: string | null;
-    sections: {
-      sectionKey: "core" | "bond" | "work_style" | "notes";
-      filePath: string;
-      sha256: string;
-      byteSize: number;
-      updatedByRevisionId: string;
-    }[];
-    },
+  const renderHomeRightPane = (rightPaneView: "monitor" | "characters", characters = [{
+    id: "char-1",
+    name: "Mia",
+    description: "説明文",
+    iconFilePath: "",
+    theme: { main: "#3b82f6", sub: "#1d4ed8" },
+    state: "active" as const,
+    isDefault: true,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    archivedAt: null,
+  }],
     canUsePrimaryFeatures = true,
+    characterListFeedback = "",
   ) => renderToStaticMarkup(
     <HomeRightPane
       rightPaneView={rightPaneView}
       runningMonitorEntries={[]}
       nonRunningMonitorEntries={[]}
-      mateProfile={mateProfile}
+      characterEntries={characters}
+      characterListFeedback={characterListFeedback}
       monitorWindowIcon={<span>Monitor</span>}
       onChangeRightPaneView={noOp}
       onOpenSessionMonitorWindow={noOp}
       onOpenSettingsWindow={noOp}
-      onOpenMateProfile={noOp}
+      onCreateCharacter={noOp}
+      onEditCharacter={noOp}
       onOpenSession={noOp}
       onOpenCompanionReview={noOp}
       canUsePrimaryFeatures={canUsePrimaryFeatures}
@@ -580,79 +564,68 @@ describe("HomeRightPane", () => {
     assert.ok(!html.includes('aria-label="補助情報"'));
   };
 
-  it("Your Mate タブは character list ではなく Your Mate を表示し Characters / Add Character を含まない", () => {
-    const html = renderHomeRightPane("mate", {
-      id: "mate-1",
-      state: "active",
-      displayName: "Your Mate",
-      description: "説明文",
-      themeMain: "#3b82f6",
-      themeSub: "#1d4ed8",
-      avatarFilePath: "",
-      avatarSha256: "",
-      avatarByteSize: 0,
-      activeRevisionId: null,
-      profileGeneration: 1,
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-      deletedAt: null,
-      sections: [],
-    });
+  it("Characters タブは character list と Create を表示する", () => {
+    const html = renderHomeRightPane("characters");
 
-    assert.ok(html.includes("Your Mate"));
+    assert.ok(html.includes("Characters"));
+    assert.ok(html.includes("Mia"));
     assert.ok(html.includes("説明文"));
-    assert.ok(!html.includes("Characters"));
-    assert.ok(!html.includes("Add Character"));
+    assert.ok(html.includes("Create"));
+    assert.ok(html.includes("Edit"));
+    assert.ok(html.includes("Default"));
+    assert.ok(!html.includes("Your Mate"));
     assert.ok(!html.includes("メイトーク"));
-    assert.ok(html.includes("Mate を編集"));
   });
 
-  it("mateProfile が null でも fallback で Mate 表示できる", () => {
-    const html = renderHomeRightPane("mate", null);
-    assert.ok(html.includes("Your Mate"));
-    assert.ok(!html.includes("Mate の説明は未設定だよ。"));
+  it("Character が空でも Create Character を表示できる", () => {
+    const html = renderHomeRightPane("characters", []);
+    assert.ok(html.includes("Character はまだありません。"));
+    assert.ok(html.includes("Create Character"));
+  });
+
+  it("Characters panel は一覧読み込み error を panel 内に表示する", () => {
+    const html = renderHomeRightPane("characters", [], true, "Character 一覧の再読み込みに失敗したよ。");
+
+    assert.ok(html.includes("Character 一覧の再読み込みに失敗したよ。"));
+    assert.ok(html.includes("Create Character"));
   });
 
   it("メイトークは Home right pane のタブにも起動ボタンにも表示しない", () => {
-    const monitorHtml = renderHomeRightPane("monitor", null);
-    const mateHtml = renderHomeRightPane("mate", null);
+    const monitorHtml = renderHomeRightPane("monitor");
+    const characterHtml = renderHomeRightPane("characters");
     const tablistMatch = monitorHtml.match(/<div class="home-pane-toggle" role="tablist" aria-label="Home right pane">[\s\S]*?<\/div>/);
 
     assert.ok(tablistMatch);
     assert.ok(tablistMatch[0].includes("Monitor"));
-    assert.ok(tablistMatch[0].includes("Your Mate"));
+    assert.ok(tablistMatch[0].includes("Characters"));
+    assert.ok(!tablistMatch[0].includes("Your Mate"));
     assert.ok(!tablistMatch[0].includes("メイトーク"));
     assert.doesNotMatch(monitorHtml, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
-    assert.doesNotMatch(mateHtml, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
+    assert.doesNotMatch(characterHtml, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
     assertNoMateTalkChatSurface(monitorHtml);
-    assertNoMateTalkChatSurface(mateHtml);
+    assertNoMateTalkChatSurface(characterHtml);
   });
 
-  it("active mateProfile で avatar 未設定のとき fallback がレンダリングされ、画像タグは出力されない", () => {
-    const html = renderHomeRightPane("mate", {
-      id: "mate-2",
-      state: "active",
-      displayName: "テストマテ",
+  it("Character icon 未設定のとき fallback がレンダリングされ、画像タグは出力されない", () => {
+    const html = renderHomeRightPane("characters", [{
+      id: "char-2",
+      name: "テストマテ",
       description: "説明文",
-      themeMain: "#10b981",
-      themeSub: "#047857",
-      avatarFilePath: "",
-      avatarSha256: "",
-      avatarByteSize: 0,
-      activeRevisionId: null,
-      profileGeneration: 2,
+      iconFilePath: "",
+      theme: { main: "#10b981", sub: "#047857" },
+      state: "active",
+      isDefault: false,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
-      deletedAt: null,
-      sections: [],
-    });
+      archivedAt: null,
+    }]);
 
     assert.ok(html.includes('<span class="avatar-fallback">テ</span>'));
     assert.ok(!html.includes("<img"));
   });
 
   it("canUsePrimaryFeatures false の時は主要アクションを無効化する", () => {
-    const html = renderHomeRightPane("monitor", null, false);
+    const html = renderHomeRightPane("monitor", undefined, false);
     assert.match(html, /<button class="launch-toggle home-monitor-window-button"[^>]*disabled=""/);
   });
 });
