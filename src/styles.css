@@ -4829,6 +4829,7 @@ button:disabled {
 }
 
 .live-run-command-text {
+  display: block;
   min-width: 0;
   margin: 0;
   color: inherit;
@@ -4941,14 +4942,18 @@ button:disabled {
 }
 
 .live-run-step-details summary {
+  min-width: 0;
   cursor: pointer;
   color: var(--muted);
   font-size: 0.8rem;
+  overflow-wrap: anywhere;
   user-select: none;
+  word-break: break-word;
 }
 
 .live-run-step-details pre {
   margin: 0;
+  min-width: 0;
   max-height: 160px;
   overflow: auto;
   padding: 10px 12px;
@@ -4958,6 +4963,8 @@ button:disabled {
   color: rgba(245, 245, 247, 0.92);
   font: 0.82rem/1.55 "IBM Plex Mono", monospace;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .live-reasoning-details pre {
@@ -5070,8 +5077,10 @@ button:disabled {
 
 .command-monitor-confirmed-summary {
   margin: 0;
+  min-width: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .live-run-usage {
@@ -5174,6 +5183,30 @@ button:disabled {
 }
 
 .session-page .artifact-file-meta,
+.session-page .artifact-file-meta code,
+.session-page .artifact-file-item,
+.session-page .artifact-operation-body,
+.session-page .artifact-operation-item p,
+.session-page .artifact-operation-item pre,
+.session-page .artifact-operation-message,
+.command-monitor-confirmed-summary,
+.live-run-step-details pre,
+.live-run-step-details summary,
+.live-run-command-text {
+  min-width: 0;
+}
+
+.session-page .artifact-file-meta {
+  flex-wrap: wrap;
+}
+
+.session-page .artifact-file-meta code {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .session-page .artifact-fold-summary-copy span,
 .session-page .check-item span,
 .session-page .artifact-operation-type,
@@ -5187,6 +5220,17 @@ button:disabled {
 .session-page .audit-log-operation-head span,
 .session-page .audit-log-empty {
   color: var(--muted);
+}
+
+.session-page .artifact-operation-item p,
+.session-page .artifact-operation-item pre,
+.session-page .artifact-operation-message {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.session-page .artifact-operation-item pre {
+  white-space: pre-wrap;
 }
 
 .artifact-toggle {
