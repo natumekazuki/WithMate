@@ -11,12 +11,13 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
     : "";
   const referencedImages = input.attachments.filter((attachment) => attachment.kind === "image");
   const inputSections: string[] = [];
+  const userMessageText = input.userMessage.trim();
 
   if (projectContextSection) {
     inputSections.push(projectContextSection);
-    inputSections.push(`# User Input\n\n${input.userMessage.trim()}`);
-  } else {
-    inputSections.push(input.userMessage.trim());
+  }
+  if (userMessageText) {
+    inputSections.push(`# User Input\n\n${userMessageText}`);
   }
   const inputPromptBody = inputSections.join("\n\n");
   const inputPromptText = inputPromptBody;
