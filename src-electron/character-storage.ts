@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -31,6 +31,8 @@ const CHARACTER_ROOT_DIRECTORY = "characters";
 const CHARACTER_DEFINITION_FILE = "character.md";
 const CHARACTER_NOTES_FILE = "character-notes.md";
 const CHARACTER_ICON_FILE_BASE = "icon";
+const CHARACTER_ICON_MAX_BYTE_SIZE = 10 * 1024 * 1024;
+const CHARACTER_ICON_ALLOWED_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"]);
 const CHARACTER_ID_MAX_LENGTH = 80;
 
 const CREATE_CHARACTER_TABLE_SQL = `
@@ -137,8 +139,16 @@ function materializeCharacterIconFilePath(userDataPath: string, filePath: string
 
 function safeIconExtension(sourcePath: string): string {
   const extension = path.extname(sourcePath).toLowerCase();
-  if (!extension || extension.length > 16 || !/^\.[a-z0-9]+$/.test(extension)) {
-    return ".png";
+  if (!CHARACTER_ICON_ALLOWED_EXTENSIONS.has(extension)) {
+    throw new Error("Character icon は png / jpg / jpeg / gif / webp / bmp / svg の画像ファイルを指定してね。");
+  }
+
+  const stats = statSync(sourcePath);
+  if (!stats.isFile()) {
+    throw new Error("Character icon は通常のファイルを指定してね。");
+  }
+  if (stats.size > CHARACTER_ICON_MAX_BYTE_SIZE) {
+    throw new Error("Character icon は 10 MiB 以下の画像ファイルを指定してね。");
   }
 
   return extension;
@@ -259,17 +269,65 @@ export class CharacterStorage {
     return materializeCharacterIconFilePath(this.userDataPath, iconFilePath);
   }
 
+  private getManagedIconAbsolutePath(characterId: string, iconFilePath: string): string | null {
+    const trimmed = normalizeDbRelativePath(iconFilePath.trim());
+    if (!trimmed || path.isAbsolute(trimmed) || hasPathScheme(trimmed)) {
+      return null;
+    }
+
+    const prefix = `${CHARACTER_ROOT_DIRECTORY}/${characterId}/`;
+    if (!trimmed.startsWith(prefix)) {
+      return null;
+    }
+
+    const basename = path.basename(trimmed);
+    if (!/^icon\.[a-z0-9]+$/.test(basename)) {
+      return null;
+    }
+
+    const characterDirectoryPath = path.resolve(this.characterDirectory(characterId));
+    const resolvedIconPath = path.resolve(this.userDataPath, trimmed);
+    const relativePath = path.relative(characterDirectoryPath, resolvedIconPath);
+    if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+      return null;
+    }
+
+    return resolvedIconPath;
+  }
+
+  private cleanupReplacedManagedIcon(characterId: string, previousIconFilePath: string, nextIconFilePath: string): void {
+    if (normalizeDbRelativePath(previousIconFilePath) === normalizeDbRelativePath(nextIconFilePath)) {
+      return;
+    }
+
+    const previousIconAbsolutePath = this.getManagedIconAbsolutePath(characterId, previousIconFilePath);
+    if (!previousIconAbsolutePath) {
+      return;
+    }
+
+    try {
+      rmSync(previousIconAbsolutePath, { force: true });
+    } catch (error) {
+      console.warn("Character icon cleanup failed", {
+        characterId,
+        iconFilePath: previousIconFilePath,
+        error,
+      });
+    }
+  }
+
   private copyIconFromSourcePath(characterId: string, sourceIconFilePath: string): string {
+    if (!path.isAbsolute(sourceIconFilePath) || hasPathScheme(sourceIconFilePath)) {
+      return sourceIconFilePath;
+    }
+
+    const extension = safeIconExtension(sourceIconFilePath);
     const managedRelativePath = this.maybeGetManagedIconRelativePath(characterId, sourceIconFilePath);
     if (managedRelativePath) {
       return managedRelativePath;
     }
 
-    if (!path.isAbsolute(sourceIconFilePath) || hasPathScheme(sourceIconFilePath)) {
-      return sourceIconFilePath;
-    }
-
-    const relativeIconPath = this.characterIconRelativePath(characterId, safeIconExtension(sourceIconFilePath));
+    const relativeIconPath = this.characterIconRelativePath(characterId, extension);
     const destinationPath = path.join(this.userDataPath, relativeIconPath);
     mkdirSync(path.dirname(destinationPath), { recursive: true });
     copyFileSync(sourceIconFilePath, destinationPath);
@@ -456,6 +514,7 @@ export class CharacterStorage {
       SET name = ?, description = ?, icon_file_path = ?, theme_main = ?, theme_sub = ?, updated_at = ?
       WHERE id = ?
     `).run(name, description, iconFilePath, theme.main, theme.sub, updatedAt, input.characterId);
+    this.cleanupReplacedManagedIcon(input.characterId, currentRow.icon_file_path, iconFilePath);
 
     const updated = this.getCharacter(input.characterId);
     if (!updated) {

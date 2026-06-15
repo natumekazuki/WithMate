@@ -150,6 +150,75 @@ describe("CharacterStorage", () => {
     }
   });
 
+  it("updateCharacterMetadata は managed icon 置換時に旧 icon ファイルを削除する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: CharacterStorage | null = null;
+
+    try {
+      storage = new CharacterStorage(dbPath, userDataPath);
+      const mia = storage.createCharacter({ name: "Mia", definitionMarkdown: validDefinition("Mia") });
+      const sourcePngPath = path.join(path.dirname(userDataPath), "source-icon.png");
+      const sourceJpgPath = path.join(path.dirname(userDataPath), "source-icon.jpg");
+      const sourcePngContent = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01]);
+      const sourceJpgContent = Buffer.from([0xff, 0xd8, 0xff, 0x02]);
+      await writeFile(sourcePngPath, sourcePngContent);
+      await writeFile(sourceJpgPath, sourceJpgContent);
+
+      storage.updateCharacterMetadata({
+        characterId: mia.id,
+        iconFilePath: sourcePngPath,
+      });
+      const oldIconPath = path.join(userDataPath, "characters", "mia", "icon.png");
+      await access(oldIconPath);
+
+      const updated = storage.updateCharacterMetadata({
+        characterId: mia.id,
+        iconFilePath: sourceJpgPath,
+      });
+      const nextIconPath = path.join(userDataPath, "characters", "mia", "icon.jpg");
+
+      assert.equal(updated.iconFilePath, nextIconPath);
+      assert.equal((await readFile(nextIconPath)).equals(sourceJpgContent), true);
+      await assert.rejects(access(oldIconPath));
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("createCharacter は画像ではない絶対 icon path と大きすぎる icon を拒否する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: CharacterStorage | null = null;
+
+    try {
+      storage = new CharacterStorage(dbPath, userDataPath);
+      const textPath = path.join(path.dirname(userDataPath), "not-image.txt");
+      const largePngPath = path.join(path.dirname(userDataPath), "large-icon.png");
+      await writeFile(textPath, "not an image", "utf8");
+      await writeFile(largePngPath, Buffer.alloc((10 * 1024 * 1024) + 1));
+
+      assert.throws(
+        () => storage.createCharacter({
+          name: "Text Icon",
+          iconFilePath: textPath,
+          definitionMarkdown: validDefinition("Text Icon"),
+        }),
+        /png \/ jpg \/ jpeg \/ gif \/ webp \/ bmp \/ svg/,
+      );
+      assert.throws(
+        () => storage.createCharacter({
+          name: "Large Icon",
+          iconFilePath: largePngPath,
+          definitionMarkdown: validDefinition("Large Icon"),
+        }),
+        /10 MiB/,
+      );
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
   it("metadata / definition 更新、default 切替、archive fallback、launch 解決を扱う", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: CharacterStorage | null = null;
