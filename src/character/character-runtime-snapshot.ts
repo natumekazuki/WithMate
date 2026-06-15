@@ -73,11 +73,19 @@ export function buildCharacterRuntimePromptSection(
     return "";
   }
   const fence = buildMarkdownFence(definitionMarkdown);
+  const characterName = snapshot?.name.trim() || "Unnamed Character";
+  const characterDescription = snapshot?.description.trim() ?? "";
+  const metadataLines = characterDescription
+    ? [`Character: ${characterName}`, `Description: ${characterDescription}`]
+    : [`Character: ${characterName}`];
 
   return [
     "# Character Definition Snapshot",
     "",
+    ...metadataLines,
+    "",
     "以下はこの session / companion 開始時点の Character 定義です。ユーザー向け自然言語レスポンスの話し方・温度・反応パターンに反映してください。",
+    "ファイル操作、検索、diff確認、test/build結果、repository instruction、未確認事実の扱いは通常のcoding agentとして正確に扱い、Character定義で置き換えないでください。",
     "",
     `${fence}markdown`,
     definitionMarkdown,

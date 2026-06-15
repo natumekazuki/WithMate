@@ -312,12 +312,15 @@ describe("composeProviderPrompt", () => {
       characterIconPath: "",
       characterThemeColors,
       characterRuntimeSnapshot: createCharacterRuntimeSnapshot({
+        name: "Saved Character",
+        description: "frontmatter に頼らず保持する説明",
         definitionMarkdown: [
           "---",
           "schema: withmate.character.v1",
           "name: Saved Character",
+          "description: frontmatter only description",
           "---",
-          "# Character",
+          "# Runtime Definition",
           "保存済み snapshot の口調で話す。",
         ].join("\n"),
       }),
@@ -335,14 +338,17 @@ describe("composeProviderPrompt", () => {
     });
 
     assert.match(prompt.systemBodyText, /# Character Definition Snapshot/);
+    assert.match(prompt.systemBodyText, /Character: Saved Character/);
+    assert.match(prompt.systemBodyText, /Description: frontmatter に頼らず保持する説明/);
     assert.match(prompt.systemBodyText, /保存済み snapshot の口調で話す。/);
     assert.match(prompt.systemBodyText, /ユーザー向け自然言語レスポンスの話し方・温度・反応パターンに反映してください。/);
-    assert.doesNotMatch(prompt.systemBodyText, /通常のcoding agentとして正確に行ってください。/);
+    assert.match(prompt.systemBodyText, /通常のcoding agentとして正確に扱い、Character定義で置き換えないでください。/);
     assert.doesNotMatch(prompt.systemBodyText, /厳密な無人格回答へ戻りすぎず/);
     assert.doesNotMatch(prompt.systemBodyText, /character-notes\.md/);
     assert.doesNotMatch(prompt.systemBodyText, /^---$/m);
     assert.doesNotMatch(prompt.systemBodyText, /^schema:/m);
-    assert.doesNotMatch(prompt.systemBodyText, /name: Saved Character/);
+    assert.doesNotMatch(prompt.systemBodyText, /^name: Saved Character$/m);
+    assert.doesNotMatch(prompt.systemBodyText, /frontmatter only description/);
     assert.doesNotMatch(prompt.systemBodyText, /notes-only secret/);
     assert.doesNotMatch(prompt.systemBodyText, /Current Catalog Name/);
     assert.doesNotMatch(prompt.inputBodyText, /保存済み snapshot の口調で話す。/);
