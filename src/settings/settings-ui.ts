@@ -55,12 +55,13 @@ export function buildResetDatabaseConfirmMessage(targets: readonly ResetAppDatab
   const normalized = normalizeResetAppDatabaseTargets(targets);
   const lines = [
     `次を初期化するよ: ${describeResetDatabaseTargets(normalized)}`,
-    "characters は DB 外ファイルなので保持されるよ。",
     "実行中の session がある間は初期化できないよ。",
   ];
 
   if (areAllResetAppDatabaseTargetsSelected(normalized)) {
-    lines.splice(1, 0, "全対象を選んでいるので、DB ファイルを再生成して schema も初期化するよ。");
+    lines.splice(1, 0, "全対象を選んでいるので、DB ファイルと characters file body を再生成して schema も初期化するよ。");
+  } else {
+    lines.splice(1, 0, "characters file body は保持されるよ。");
   }
 
   lines.push("本当に続ける？");
@@ -71,10 +72,10 @@ export function buildResetDatabaseSuccessMessage(targets: readonly ResetAppDatab
   const normalized = normalizeResetAppDatabaseTargets(targets);
   const targetSummary = describeResetDatabaseTargets(normalized);
   if (areAllResetAppDatabaseTargetsSelected(normalized)) {
-    return `DB を再生成して ${targetSummary} を初期状態へ戻したよ。characters は保持したよ。`;
+    return `DB と characters file body を再生成して ${targetSummary} を初期状態へ戻したよ。`;
   }
 
-  return `${targetSummary} を初期状態へ戻したよ。characters は保持したよ。`;
+  return `${targetSummary} を初期状態へ戻したよ。characters file body は保持したよ。`;
 }
 
 export { ALL_RESET_APP_DATABASE_TARGETS };

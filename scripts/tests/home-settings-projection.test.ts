@@ -7,7 +7,7 @@ describe("home-settings-projection", () => {
   it("loading と reset target 派生状態を返す", () => {
     const projection = buildHomeSettingsProjection({
       settingsDraftLoaded: true,
-      modelCatalogLoaded: false,
+      modelCatalogLoadSettled: false,
       resetDatabaseTargets: ["sessions"],
       resettingDatabase: false,
     });
@@ -25,11 +25,22 @@ describe("home-settings-projection", () => {
   it("settings draft が hydrate されるまでは ready にしない", () => {
     const projection = buildHomeSettingsProjection({
       settingsDraftLoaded: false,
-      modelCatalogLoaded: true,
+      modelCatalogLoadSettled: true,
       resetDatabaseTargets: ["appSettings"],
       resettingDatabase: false,
     });
 
     assert.equal(projection.settingsWindowReady, false);
+  });
+
+  it("model catalog load が失敗して settled した後は SettingsContent を描画できる", () => {
+    const projection = buildHomeSettingsProjection({
+      settingsDraftLoaded: true,
+      modelCatalogLoadSettled: true,
+      resetDatabaseTargets: ["appSettings"],
+      resettingDatabase: false,
+    });
+
+    assert.equal(projection.settingsWindowReady, true);
   });
 });
