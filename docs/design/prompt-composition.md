@@ -1,7 +1,7 @@
 # Prompt Composition
 
 - 作成日: 2026-03-13
-- 更新日: 2026-06-14
+- 更新日: 2026-06-15
 - 対象: WithMate における coding plane の prompt 合成
 
 ## Goal
@@ -88,7 +88,8 @@ Mate Core / Bond Profile / Work Style は provider instruction file へ同期し
 - source:
   - ユーザーがそのターンで送った指示本文
 - 形式:
-  - 入力本文をそのまま置く
+  - `# User Input` 見出しの下に入力本文をそのまま置く
+  - Character Definition Snapshot や Project Context の直後でも、ここからがユーザー入力であることを明示する
 
 ## Memory Injection Policy
 
