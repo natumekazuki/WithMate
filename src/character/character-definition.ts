@@ -161,6 +161,11 @@ export function collectCharacterDefinitionPathReferences(markdownBody: string): 
   return references;
 }
 
+export function stripCharacterDefinitionFrontmatter(markdown: string): string {
+  const frontmatterMatch = FRONTMATTER_PATTERN.exec(markdown);
+  return (frontmatterMatch ? markdown.slice(frontmatterMatch[0].length) : markdown).trim();
+}
+
 export function validateCharacterNotesMarkdown(markdown: string): CharacterDefinitionValidationIssue[] {
   const issues: CharacterDefinitionValidationIssue[] = [];
   if (markdown.includes("\0")) {

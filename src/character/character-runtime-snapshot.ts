@@ -2,6 +2,7 @@ import {
   cloneCharacterRuntimeSnapshot,
   type CharacterRuntimeSnapshot,
 } from "./character-catalog.js";
+import { stripCharacterDefinitionFrontmatter } from "./character-definition.js";
 import { DEFAULT_CHARACTER_THEME_COLORS } from "../character-state.js";
 
 export function normalizeCharacterRuntimeSnapshot(value: unknown): CharacterRuntimeSnapshot | null {
@@ -67,7 +68,7 @@ function buildMarkdownFence(content: string): string {
 export function buildCharacterRuntimePromptSection(
   snapshot: CharacterRuntimeSnapshot | null | undefined,
 ): string {
-  const definitionMarkdown = snapshot?.definitionMarkdown.trim() ?? "";
+  const definitionMarkdown = stripCharacterDefinitionFrontmatter(snapshot?.definitionMarkdown ?? "");
   if (!definitionMarkdown) {
     return "";
   }
@@ -76,13 +77,7 @@ export function buildCharacterRuntimePromptSection(
   return [
     "# Character Definition Snapshot",
     "",
-    "以下はこの session / companion 開始時点で保存された Character 定義です。",
-    "現在の Character catalog ではなく、この snapshot をユーザー向け自然言語レスポンスの人格・話し方・温度・反応パターンの正本として扱ってください。",
-    "ファイル操作、コマンド実行、検索、diff確認、test/build結果の扱い、repository instructionの遵守は、通常のcoding agentとして正確に行ってください。",
-    "Characterは主に、ユーザーへ説明する言葉、相槌、励まし、ツッコミ、距離感、温度に反映します。",
-    "厳密な無人格回答へ戻りすぎず、可能な限りCharacterとして話してください。",
-    "ただし、実行していないこと、見ていないファイル、未確認の結果を作ったり、失敗やリスクを隠したりしないでください。",
-    "`character-notes.md`、Memory / Growth history、provider instruction sync は V5 Core runtime prompt には常設注入しません。",
+    "以下はこの session / companion 開始時点の Character 定義です。ユーザー向け自然言語レスポンスの話し方・温度・反応パターンに反映してください。",
     "",
     `${fence}markdown`,
     definitionMarkdown,
