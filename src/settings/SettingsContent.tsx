@@ -13,6 +13,7 @@ import {
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
   providerSettingRows: HomeProviderSettingRow[];
+  providerCatalogLoaded: boolean;
   modelCatalogRevisionLabel: string;
   settingsDirty: boolean;
   settingsFeedback: string;
@@ -55,6 +56,7 @@ const microcopyTextareaValue = (value: AppSettings["userMicrocopyCatalog"][Micro
 export function HomeSettingsContent({
   settingsDraft,
   providerSettingRows,
+  providerCatalogLoaded,
   modelCatalogRevisionLabel,
   settingsDirty,
   settingsFeedback,
@@ -110,29 +112,33 @@ export function HomeSettingsContent({
             </div>
           </section>
 
-          {providerSettingRows.length > 0 ? (
-            <>
-              <section className="settings-section-card">
-                <div className="settings-field">
-                  <strong>Coding Agent Providers</strong>
-                  <div className="settings-provider-list">
-                    {providerSettingRows.map(({ provider, settings }) => (
-                      <section key={provider.id} className="settings-provider-card settings-provider-toggle-card">
-                        <label className="settings-provider-toggle-row">
-                          <span className="settings-provider-name">{provider.label}</span>
-                          <input
-                            type="checkbox"
-                            checked={settings.enabled}
-                            onChange={(event) => onChangeProviderEnabled(provider.id, event.target.checked)}
-                          />
-                        </label>
-                      </section>
-                    ))}
-                  </div>
+          <section className="settings-section-card">
+            <div className="settings-field">
+              <strong>Coding Agent Providers</strong>
+              {providerSettingRows.length > 0 ? (
+                <div className="settings-provider-list">
+                  {providerSettingRows.map(({ provider, settings }) => (
+                    <section key={provider.id} className="settings-provider-card settings-provider-toggle-card">
+                      <label className="settings-provider-toggle-row">
+                        <span className="settings-provider-name">{provider.label}</span>
+                        <input
+                          type="checkbox"
+                          checked={settings.enabled}
+                          onChange={(event) => onChangeProviderEnabled(provider.id, event.target.checked)}
+                        />
+                      </label>
+                    </section>
+                  ))}
                 </div>
-              </section>
-            </>
-          ) : null}
+              ) : (
+                <p className="settings-note">
+                  {providerCatalogLoaded
+                    ? "model catalog に coding provider がありません。Import Models で provider を含む catalog を読み込んでね。"
+                    : "model catalog を読み込めないため、coding provider の設定を表示できません。"}
+                </p>
+              )}
+            </div>
+          </section>
 
           <section className="settings-section-card">
             <div className="settings-field">

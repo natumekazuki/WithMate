@@ -805,9 +805,10 @@ test("PersistentStoreLifecycleService は V3 DB 再生成時に blob root も削
   }
 });
 
-test("PersistentStoreLifecycleService は V4 DB 再生成時にも blob root を削除する", async () => {
+test("PersistentStoreLifecycleService は V4 DB 再生成時に blob root と Character root を削除する", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "withmate-v4-recreate-"));
   const dbPath = path.join(dir, APP_DATABASE_V4_FILENAME);
+  const userDataPath = path.join(dir, "user-data");
   const removedDirectories: string[] = [];
 
   try {
@@ -840,10 +841,13 @@ test("PersistentStoreLifecycleService は V4 DB 再生成時にも blob root を
       },
     });
 
-    const bundle = await service.recreate(dbPath, "model-catalog.json", {});
+    const bundle = await service.recreate(dbPath, "model-catalog.json", {}, userDataPath);
 
     assert.equal(bundle.activeModelCatalog.revision, 8);
-    assert.deepEqual(removedDirectories, [path.join(dir, "blobs", "v3")]);
+    assert.deepEqual(removedDirectories, [
+      path.join(dir, "blobs", "v3"),
+      path.join(userDataPath, "characters"),
+    ]);
     service.close(bundle, dbPath);
   } finally {
     await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });

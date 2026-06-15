@@ -2003,7 +2003,6 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
 
   stopWalMaintenance();
   await requireMateStorage().deleteMateProjectionDirectory();
-  await requireCharacterStorage().deleteCharacterRootDirectory();
   mateProfileItemStorage?.close();
   mateProfileItemStorage = null;
   companionStorage?.close();

@@ -52,6 +52,8 @@ describe("HomeSettingsContent", () => {
 
   type RenderSettingsParams = {
     settingsDraft?: typeof settingsDraft;
+    providerSettingRows?: typeof providerSettingRows;
+    providerCatalogLoaded?: boolean;
     canResetMate?: boolean;
     mateResetBusy?: boolean;
     onResetMate?: () => void;
@@ -87,7 +89,8 @@ describe("HomeSettingsContent", () => {
 
   const buildSettingsContent = (params?: RenderSettingsParams) => HomeSettingsContent({
     settingsDraft: params?.settingsDraft ?? settingsDraft,
-    providerSettingRows,
+    providerSettingRows: params?.providerSettingRows ?? providerSettingRows,
+    providerCatalogLoaded: params?.providerCatalogLoaded ?? true,
     modelCatalogRevisionLabel: String(modelCatalog.revision),
     settingsDirty: false,
     settingsFeedback: "",
@@ -151,6 +154,20 @@ describe("HomeSettingsContent", () => {
     assert.ok(!html.includes("settings-character-section"));
     assert.ok(!html.includes("Save Character"));
     assert.ok(!html.includes("character-notes.md"));
+  });
+
+  it("provider row が 0 件でも Coding Agent Providers section と empty state を表示する", () => {
+    const html = renderSettings({ providerSettingRows: [] });
+
+    assert.ok(html.includes("Coding Agent Providers"));
+    assert.ok(html.includes("model catalog に coding provider がありません。"));
+  });
+
+  it("provider catalog 読み込み前は catalog unavailable empty state を表示する", () => {
+    const html = renderSettings({ providerSettingRows: [], providerCatalogLoaded: false });
+
+    assert.ok(html.includes("Coding Agent Providers"));
+    assert.ok(html.includes("model catalog を読み込めないため"));
   });
 });
 

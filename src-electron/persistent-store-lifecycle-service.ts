@@ -238,6 +238,9 @@ export class PersistentStoreLifecycleService {
       this.isBlobBackedDatabasePath(dbPath)
         ? this.removeBlobRoot(dbPath)
         : Promise.resolve(),
+      this.isCharacterBackedDatabasePath(dbPath)
+        ? this.removeCharacterRoot(userDataPath ?? dirname(dbPath))
+        : Promise.resolve(),
     ]);
 
     if (this.isV3DatabasePath(dbPath)) {
@@ -262,12 +265,24 @@ export class PersistentStoreLifecycleService {
     return databaseFilename === APP_DATABASE_V3_FILENAME || databaseFilename === APP_DATABASE_V4_FILENAME;
   }
 
+  private isCharacterBackedDatabasePath(dbPath: string): boolean {
+    return basename(dbPath) === APP_DATABASE_V4_FILENAME;
+  }
+
   private removeBlobRoot(dbPath: string): Promise<void> {
     if (!this.deps.removeDirectory) {
       throw new Error("DB 再生成には blob root 削除 dependency が必要です。");
     }
 
     return this.deps.removeDirectory(this.v3BlobRootPath(dbPath));
+  }
+
+  private removeCharacterRoot(userDataPath: string): Promise<void> {
+    if (!this.deps.removeDirectory) {
+      throw new Error("DB 再生成には Character root 削除 dependency が必要です。");
+    }
+
+    return this.deps.removeDirectory(join(userDataPath, "characters"));
   }
 
   private v3BlobRootPath(dbPath: string): string {

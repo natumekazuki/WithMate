@@ -56,7 +56,7 @@ describe("home-settings-actions", () => {
 
     assert.equal(result.kind, "success");
     if (result.kind === "success") {
-      assert.equal(result.feedback, "sessions / audit logs を初期状態へ戻したよ。characters は保持したよ。");
+      assert.equal(result.feedback, "sessions / audit logs を初期状態へ戻したよ。characters file body は保持したよ。");
       assert.deepEqual(result.result.resetTargets, ["sessions", "auditLogs"]);
     }
   });

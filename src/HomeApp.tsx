@@ -84,7 +84,7 @@ export default function HomeApp() {
   const [characterListFeedback, setCharacterListFeedback] = useState("");
   const [charactersLoaded, setCharactersLoaded] = useState(false);
   const [settingsDraftLoaded, setSettingsDraftLoaded] = useState(!isSettingsWindowMode);
-  const [modelCatalogLoaded, setModelCatalogLoaded] = useState(!isSettingsWindowMode);
+  const [modelCatalogLoadSettled, setModelCatalogLoadSettled] = useState(!isSettingsWindowMode);
   const [launchDraft, setLaunchDraft] = useState<HomeLaunchDraft>(() => createClosedLaunchDraft());
   const [launchFeedback, setLaunchFeedback] = useState("");
   const [launchStarting, setLaunchStarting] = useState(false);
@@ -201,10 +201,12 @@ export default function HomeApp() {
       subscribe: true,
       applyModelCatalog: (snapshot) => {
         setModelCatalog(snapshot);
-        setModelCatalogLoaded(true);
+        setModelCatalogLoadSettled(true);
       },
       onInitialLoadError: (error) => {
-        setMateCreationFeedback(error instanceof Error ? error.message : "Mate 状態の取得に失敗したよ。");
+        setModelCatalog(null);
+        setModelCatalogLoadSettled(true);
+        setSettingsFeedback(error instanceof Error ? error.message : "model catalog の読み込みに失敗したよ。");
       },
     });
     const unsubscribeAppSettings = startAppSettingsSubscription({
@@ -379,7 +381,7 @@ export default function HomeApp() {
     [providerSettingRows, settingsDraft],
   );
   const settingsWindowReady =
-    settingsDraftLoaded && modelCatalogLoaded;
+    settingsDraftLoaded && modelCatalogLoadSettled;
   const settingsDirty = useMemo(() => {
     return JSON.stringify(persistedSettingsDraft) !== JSON.stringify(appSettings);
   }, [appSettings, persistedSettingsDraft]);
@@ -411,6 +413,7 @@ export default function HomeApp() {
   const baseSettingsContentProps: HomeSettingsContentBaseProps = {
     settingsDraft,
     providerSettingRows,
+    providerCatalogLoaded: modelCatalog !== null,
     modelCatalogRevisionLabel: String(modelCatalog?.revision ?? "-"),
     settingsDirty,
     settingsFeedback,
