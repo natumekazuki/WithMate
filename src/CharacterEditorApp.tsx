@@ -283,7 +283,7 @@ export default function CharacterEditorApp() {
 
   return (
     <div className="page-shell character-editor-page" style={themeStyle}>
-      <section className="panel character-editor-window rise-2">
+      <section className="character-editor-window">
         <header className="character-editor-window-header">
           <div className="character-editor-heading">
             <CharacterAvatar character={{ name: draft.name, iconPath: draft.iconFilePath }} size="large" />
