@@ -155,4 +155,5 @@ describe("CharacterStorage", () => {
       await cleanup();
     }
   });
+
 });

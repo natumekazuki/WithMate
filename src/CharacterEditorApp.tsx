@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { CharacterDetail, CharacterRuntimeSnapshot } from "./character/character-catalog.js";
+import { parseCharacterDefinitionMarkdown } from "./character/character-definition.js";
 import { buildCharacterRuntimePromptSection } from "./character/character-runtime-snapshot.js";
 import {
   buildCharacterEditorValidationSummary,
@@ -51,6 +52,7 @@ export default function CharacterEditorApp() {
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState("");
   const definitionImportInputRef = useRef<HTMLInputElement | null>(null);
+  const notesImportInputRef = useRef<HTMLInputElement | null>(null);
 
   const validation = useMemo(() => buildCharacterEditorValidationSummary(draft), [draft]);
   const dirty = isCharacterEditorDraftDirty(draft, persistedDetail);
@@ -240,7 +242,7 @@ export default function CharacterEditorApp() {
     window.close();
   };
 
-  const pickIcon = async () => {
+  const importIconImage = async () => {
     if (archived) {
       return;
     }
@@ -248,6 +250,8 @@ export default function CharacterEditorApp() {
     const selected = await api?.pickImageFile(draft.iconFilePath || null);
     if (selected) {
       updateDraft({ iconFilePath: selected });
+      setSelectedTab("profile");
+      setFeedback("画像を icon に読み込みました。保存するまで反映されません。");
     }
   };
 
@@ -259,12 +263,43 @@ export default function CharacterEditorApp() {
         return;
       }
 
-      setDraft((current) => replaceCharacterDefinitionDraft(current, reader.result as string));
+      const markdown = reader.result as string;
+      const parsed = parseCharacterDefinitionMarkdown(markdown);
+      setDraft((current) => replaceCharacterDefinitionDraft(
+        current,
+        markdown,
+        parsed.ok
+          ? {
+              name: parsed.value.frontmatter.name,
+              description: parsed.value.frontmatter.description,
+            }
+          : undefined,
+      ));
       setSelectedTab("definition");
-      setFeedback(`${file.name} を character.md draft に読み込みました。保存するまで反映されません。`);
+      setFeedback(parsed.ok
+        ? `${file.name} を character.md draft に読み込み、name / description も反映しました。保存するまで反映されません。`
+        : `${file.name} を character.md draft に読み込みました。validation issue を確認してください。`);
     };
     reader.onerror = () => {
       setFeedback("character.md の読み込みに失敗しました。");
+    };
+    reader.readAsText(file);
+  };
+
+  const importCharacterNotesFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        setFeedback("character-notes.md の読み込みに失敗しました。");
+        return;
+      }
+
+      updateDraft({ notesMarkdown: reader.result as string });
+      setSelectedTab("notes");
+      setFeedback(`${file.name} を character-notes.md draft に読み込みました。保存するまで反映されません。`);
+    };
+    reader.onerror = () => {
+      setFeedback("character-notes.md の読み込みに失敗しました。");
     };
     reader.readAsText(file);
   };
@@ -339,8 +374,8 @@ export default function CharacterEditorApp() {
                       onChange={(event) => updateDraft({ iconFilePath: event.target.value })}
                       disabled={archived}
                     />
-                    <button className="launch-toggle compact" type="button" onClick={pickIcon} disabled={archived}>
-                      Browse
+                    <button className="launch-toggle compact" type="button" onClick={importIconImage} disabled={archived}>
+                      Import Image
                     </button>
                   </div>
                 </label>
@@ -420,9 +455,33 @@ export default function CharacterEditorApp() {
 
           {!loading && selectedTab === "notes" ? (
             <section className="settings-section-card character-editor-card character-editor-markdown-card">
-              <strong>character-notes.md</strong>
+              <div className="settings-section-head-row">
+                <strong>character-notes.md</strong>
+                <button
+                  className="launch-toggle compact"
+                  type="button"
+                  onClick={() => notesImportInputRef.current?.click()}
+                  disabled={archived}
+                >
+                  Import / Replace
+                </button>
+              </div>
               <p className="settings-help">調査メモ、採用理由、改稿履歴用です。V5 Core では runtime prompt に常設注入しません。</p>
               <ValidationList issues={validation.notesIssues} emptyLabel="character-notes.md validation OK" />
+              <input
+                ref={notesImportInputRef}
+                type="file"
+                accept=".md,text/markdown,text/plain"
+                className="settings-character-import-input"
+                disabled={archived}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) {
+                    importCharacterNotesFile(file);
+                  }
+                  event.currentTarget.value = "";
+                }}
+              />
               <textarea
                 className="settings-character-notes-textarea character-editor-textarea"
                 value={draft.notesMarkdown}

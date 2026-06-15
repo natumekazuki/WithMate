@@ -85,13 +85,20 @@ describe("Character editor state", () => {
     assert.equal(buildCreateCharacterInputFromDraft({ ...draft, isDefault: true }).setDefault, true);
   });
 
-  it("import / replace は character.md draft だけを置き換える", () => {
+  it("import / replace は character.md draft と任意 metadata を置き換える", () => {
     const draft = createNewCharacterEditorDraft("Mia");
     const replaced = replaceCharacterDefinitionDraft(draft, "---\nschema: withmate-character-v5\nname: Noa\n---\n\n# Noa\n");
 
     assert.match(replaced.definitionMarkdown, /name: Noa/);
     assert.equal(replaced.notesMarkdown, draft.notesMarkdown);
     assert.equal(replaced.name, "Mia");
+
+    const metadataReplaced = replaceCharacterDefinitionDraft(draft, replaced.definitionMarkdown, {
+      name: "Noa",
+      description: "Imported",
+    });
+    assert.equal(metadataReplaced.name, "Noa");
+    assert.equal(metadataReplaced.description, "Imported");
   });
 
   it("definition / notes validation issue を集約する", () => {

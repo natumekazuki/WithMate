@@ -220,8 +220,13 @@ export function buildCreateCharacterInputFromDraft(draft: CharacterEditorDraft):
 export function replaceCharacterDefinitionDraft(
   current: CharacterEditorDraft,
   definitionMarkdown: string,
+  metadata?: { name?: string; description?: string },
 ): CharacterEditorDraft {
-  return updateCharacterEditorDraft(current, { definitionMarkdown });
+  return updateCharacterEditorDraft(current, {
+    definitionMarkdown,
+    name: metadata?.name ?? current.name,
+    description: metadata?.description ?? current.description,
+  });
 }
 
 export function buildCharacterEditorValidationSummary(

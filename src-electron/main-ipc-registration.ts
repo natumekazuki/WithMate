@@ -464,6 +464,8 @@ type MainIpcMateDeps = Pick<
 
 type MainIpcCharacterDeps = Pick<
   MainIpcRegistrationDeps,
+  | "resolveEventWindow"
+  | "resolveHomeWindow"
   | "listCharacters"
   | "getCharacter"
   | "createCharacter"
