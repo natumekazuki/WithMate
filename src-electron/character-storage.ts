@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -30,6 +30,7 @@ import { openAppDatabase } from "./sqlite-connection.js";
 const CHARACTER_ROOT_DIRECTORY = "characters";
 const CHARACTER_DEFINITION_FILE = "character.md";
 const CHARACTER_NOTES_FILE = "character-notes.md";
+const CHARACTER_ICON_FILE_BASE = "icon";
 const CHARACTER_ID_MAX_LENGTH = 80;
 
 const CREATE_CHARACTER_TABLE_SQL = `
@@ -113,6 +114,36 @@ function normalizeOptionalPath(value: unknown, fallback = ""): string {
   return value.trim();
 }
 
+function hasPathScheme(value: string): boolean {
+  if (/^[a-zA-Z]:[\\/]/.test(value)) {
+    return false;
+  }
+
+  return /^[a-z][a-z0-9+.-]*:/i.test(value);
+}
+
+function normalizeDbRelativePath(value: string): string {
+  return value.replace(/\\/g, "/");
+}
+
+function materializeCharacterIconFilePath(userDataPath: string, filePath: string): string {
+  const trimmed = filePath.trim();
+  if (!trimmed || path.isAbsolute(trimmed) || hasPathScheme(trimmed)) {
+    return trimmed;
+  }
+
+  return path.join(userDataPath, normalizeDbRelativePath(trimmed));
+}
+
+function safeIconExtension(sourcePath: string): string {
+  const extension = path.extname(sourcePath).toLowerCase();
+  if (!extension || extension.length > 16 || !/^\.[a-z0-9]+$/.test(extension)) {
+    return ".png";
+  }
+
+  return extension;
+}
+
 function normalizeHexColor(value: unknown, fallback: string): string {
   if (typeof value !== "string") {
     return fallback;
@@ -177,11 +208,13 @@ function buildDefaultNotesMarkdown(name: string): string {
 
 export class CharacterStorage {
   private readonly db: DatabaseSync;
+  private readonly userDataPath: string;
   private readonly characterRootPath: string;
 
   constructor(dbPath: string, userDataPath: string) {
     assertV4SchemaInitializationAllowed(dbPath, "CharacterStorage");
     this.db = openAppDatabase(dbPath);
+    this.userDataPath = userDataPath;
     this.characterRootPath = path.join(userDataPath, CHARACTER_ROOT_DIRECTORY);
     this.ensureSchema();
   }
@@ -202,12 +235,53 @@ export class CharacterStorage {
     return path.join(this.characterDirectory(characterId), fileName);
   }
 
+  private characterIconRelativePath(characterId: string, extension: string): string {
+    return normalizeDbRelativePath(path.join(CHARACTER_ROOT_DIRECTORY, characterId, `${CHARACTER_ICON_FILE_BASE}${extension}`));
+  }
+
+  private maybeGetManagedIconRelativePath(characterId: string, iconFilePath: string): string | null {
+    const trimmed = iconFilePath.trim();
+    if (!trimmed || !path.isAbsolute(trimmed)) {
+      return null;
+    }
+
+    const characterDirectoryPath = path.resolve(this.characterDirectory(characterId));
+    const resolvedIconPath = path.resolve(trimmed);
+    const relativePath = path.relative(characterDirectoryPath, resolvedIconPath);
+    if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+      return null;
+    }
+
+    return normalizeDbRelativePath(path.join(CHARACTER_ROOT_DIRECTORY, characterId, relativePath));
+  }
+
+  private materializeIconFilePath(iconFilePath: string): string {
+    return materializeCharacterIconFilePath(this.userDataPath, iconFilePath);
+  }
+
+  private copyIconFromSourcePath(characterId: string, sourceIconFilePath: string): string {
+    const managedRelativePath = this.maybeGetManagedIconRelativePath(characterId, sourceIconFilePath);
+    if (managedRelativePath) {
+      return managedRelativePath;
+    }
+
+    if (!path.isAbsolute(sourceIconFilePath) || hasPathScheme(sourceIconFilePath)) {
+      return sourceIconFilePath;
+    }
+
+    const relativeIconPath = this.characterIconRelativePath(characterId, safeIconExtension(sourceIconFilePath));
+    const destinationPath = path.join(this.userDataPath, relativeIconPath);
+    mkdirSync(path.dirname(destinationPath), { recursive: true });
+    copyFileSync(sourceIconFilePath, destinationPath);
+    return relativeIconPath;
+  }
+
   private toEntry(row: CharacterRow): CharacterCatalogEntry {
     return {
       id: row.id,
       name: row.name,
       description: row.description,
-      iconFilePath: row.icon_file_path,
+      iconFilePath: this.materializeIconFilePath(row.icon_file_path),
       theme: {
         main: row.theme_main,
         sub: row.theme_sub,
@@ -312,9 +386,9 @@ export class CharacterStorage {
   createCharacter(input: CreateCharacterInput): CharacterDetail {
     const name = normalizeName(input.name);
     const description = normalizeDescription(input.description);
-    const iconFilePath = normalizeOptionalPath(input.iconFilePath);
     const theme = normalizeTheme(input.theme);
     const characterId = this.createUniqueCharacterId(name);
+    const sourceIconFilePath = normalizeOptionalPath(input.iconFilePath);
     const createdAt = nowIso();
     const definitionMarkdown = input.definitionMarkdown ?? buildDefaultDefinitionMarkdown(name, description);
     const notesMarkdown = input.notesMarkdown ?? buildDefaultNotesMarkdown(name);
@@ -322,6 +396,7 @@ export class CharacterStorage {
 
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
+      const iconFilePath = this.copyIconFromSourcePath(characterId, sourceIconFilePath);
       if (shouldSetDefault) {
         this.db.prepare("UPDATE characters SET is_default = 0 WHERE is_default = 1").run();
       }
@@ -345,6 +420,7 @@ export class CharacterStorage {
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
+      rmSync(this.characterDirectory(characterId), { recursive: true, force: true });
       throw error;
     }
 
@@ -360,14 +436,18 @@ export class CharacterStorage {
     if (!current) {
       throw new Error("Character が見つかりません。");
     }
+    const currentRow = this.readCharacterRow(input.characterId);
+    if (!currentRow) {
+      throw new Error("Character が見つかりません。");
+    }
 
     const name = input.name === undefined ? current.name : normalizeName(input.name);
     const description = input.description === undefined
       ? current.description
       : normalizeDescription(input.description);
     const iconFilePath = input.iconFilePath === undefined
-      ? current.iconFilePath
-      : normalizeOptionalPath(input.iconFilePath);
+      ? currentRow.icon_file_path
+      : this.copyIconFromSourcePath(input.characterId, normalizeOptionalPath(input.iconFilePath));
     const theme = normalizeTheme(input.theme, current.theme);
     const updatedAt = nowIso();
 
