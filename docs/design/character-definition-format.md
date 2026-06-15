@@ -1,7 +1,7 @@
 # Character Definition Format
 
 - 作成日: 2026-03-29
-- 更新日: 2026-06-14
+- 更新日: 2026-06-15
 - 対象: `character.md` と `character-notes.md` の標準構成
 
 > V5 Core note:
@@ -90,13 +90,14 @@ V5 Core 必須条件:
 <character-dir>/
   character.md
   character-notes.md
-  character.png
+  icon.<ext>
 ```
 
 補足:
 
 - V5 Core の storage metadata は `docs/design/character-storage.md` で扱う。
-- `character-notes.md` と `character.png` は optional asset として扱う。
+- `character-notes.md` と `icon.<ext>` は optional asset として扱う。
+- 取り込み後の managed icon file は `characters/<character-id>/icon.<ext>` に保存される。`character.md` 内の asset 参照例は authoring 時の推奨構造であり、metadata の `iconFilePath` 正本は storage service が管理する。
 - update workspace 用の `AGENTS.md`、instruction file、skill は V5 Core に含めない。
 
 ## `character.md` Recommended Structure
@@ -111,8 +112,8 @@ description: "会話上の役割と雰囲気が分かる短い説明"
 # Character Runtime Definition
 
 ## Assets
-- icon_path: `./character.png`
-![{character_name} icon](./character.png)
+- icon_path: `./icon.png`
+![{character_name} icon](./icon.png)
 
 ## Experience Goal
 
@@ -160,7 +161,7 @@ description: "会話上の役割と雰囲気が分かる短い説明"
 ### `Assets`
 
 - 対になる代表画像を相対パスで参照する
-- 画像が未取得でも構造自体は維持し、後から `character.png` を差し込める形にする
+- 画像が未取得でも構造自体は維持し、後から `icon.<ext>` を差し込める形にする
 - 画像の取得経緯や出典は `character-notes.md` に残す
 
 ### `Experience Goal`
