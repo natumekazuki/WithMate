@@ -1,4 +1,5 @@
 import type { HomeMonitorEntry } from "./home-session-projection.js";
+import { CharacterAvatar } from "../ui-utils.js";
 
 export type HomeMonitorContentProps = {
   runningEntries: HomeMonitorEntry[];
@@ -33,6 +34,11 @@ export function HomeMonitorContent({
             type="button"
             onClick={() => onOpenCompanionReview(session.id)}
           >
+            <CharacterAvatar
+              character={{ name: session.character, iconPath: session.characterIconPath }}
+              size="tiny"
+              className="home-monitor-avatar"
+            />
             <div className="home-monitor-row-copy">
               <strong>{session.taskTitle}</strong>
               <span>{entry.groupLabel}</span>
@@ -54,6 +60,11 @@ export function HomeMonitorContent({
           type="button"
           onClick={() => onOpenSession(session.id)}
         >
+          <CharacterAvatar
+            character={{ name: session.character, iconPath: session.characterIconPath }}
+            size="tiny"
+            className="home-monitor-avatar"
+          />
           <div className="home-monitor-row-copy">
             <strong>{session.taskTitle}</strong>
             <span>{session.workspaceLabel || session.workspacePath || "workspace 未設定"}</span>
