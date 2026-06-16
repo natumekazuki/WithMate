@@ -1,7 +1,7 @@
 # Database Schema
 
 - 作成日: 2026-03-27
-- 更新日: 2026-05-25
+- 更新日: 2026-06-16
 - 対象: WithMate の current 保存構造
 
 ## Goal
@@ -423,12 +423,16 @@ current 実装の key:
   "codex": {
     "enabled": true,
     "apiKey": "",
-    "skillRootPath": ""
+    "skillRootPath": "",
+    "skillRelativePath": "",
+    "instructionRelativePath": ""
   },
   "copilot": {
     "enabled": true,
     "apiKey": "",
-    "skillRootPath": ""
+    "skillRootPath": "",
+    "skillRelativePath": "",
+    "instructionRelativePath": ""
   }
 }
 ```

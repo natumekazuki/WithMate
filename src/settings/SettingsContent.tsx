@@ -8,6 +8,16 @@ import {
   SETTINGS_DIAGNOSTICS_LABEL,
   SETTINGS_OPEN_LOG_FOLDER_LABEL,
   SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
+  SETTINGS_PROVIDER_FILE_SETTINGS_HELP,
+  SETTINGS_PROVIDER_FILE_SETTINGS_LABEL,
+  SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_HELP,
+  SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL,
+  SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER,
+  SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_HELP,
+  SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL,
+  SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_PLACEHOLDER,
+  SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL,
+  SETTINGS_PROVIDER_ROOT_DIRECTORY_PLACEHOLDER,
 } from "./settings-ui.js";
 
 export type HomeSettingsContentProps = {
@@ -20,6 +30,12 @@ export type HomeSettingsContentProps = {
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
+  onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
+  onChangeProviderSkillRelativePath: (providerId: string, skillRelativePath: string) => void;
+  onChangeProviderInstructionRelativePath: (providerId: string, instructionRelativePath: string) => void;
+  onBrowseProviderSkillRootPath: (providerId: string) => void;
+  onBrowseProviderSkillRelativePath: (providerId: string) => void;
+  onBrowseProviderInstructionRelativePath: (providerId: string) => void;
   onImportModelCatalog: () => void;
   onExportModelCatalog: () => void;
   onOpenAppLogFolder: () => void;
@@ -63,6 +79,12 @@ export function HomeSettingsContent({
   onChangeAutoCollapseActionDockOnSend,
   onChangeUserMicrocopySlot,
   onChangeProviderEnabled,
+  onChangeProviderSkillRootPath,
+  onChangeProviderSkillRelativePath,
+  onChangeProviderInstructionRelativePath,
+  onBrowseProviderSkillRootPath,
+  onBrowseProviderSkillRelativePath,
+  onBrowseProviderInstructionRelativePath,
   onImportModelCatalog,
   onExportModelCatalog,
   onOpenAppLogFolder,
@@ -118,7 +140,7 @@ export function HomeSettingsContent({
               {providerSettingRows.length > 0 ? (
                 <div className="settings-provider-list">
                   {providerSettingRows.map(({ provider, settings }) => (
-                    <section key={provider.id} className="settings-provider-card settings-provider-toggle-card">
+                    <section key={provider.id} className="settings-provider-card">
                       <label className="settings-provider-toggle-row">
                         <span className="settings-provider-name">{provider.label}</span>
                         <input
@@ -127,6 +149,74 @@ export function HomeSettingsContent({
                           onChange={(event) => onChangeProviderEnabled(provider.id, event.target.checked)}
                         />
                       </label>
+                      <div className="settings-provider-file-settings">
+                        <div>
+                          <strong>{SETTINGS_PROVIDER_FILE_SETTINGS_LABEL}</strong>
+                          <p className="settings-help">{SETTINGS_PROVIDER_FILE_SETTINGS_HELP}</p>
+                        </div>
+                        <label className="settings-provider-input">
+                          <span>{SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL}</span>
+                          <div className="settings-inline-input-row">
+                            <input
+                              type="text"
+                              value={settings.skillRootPath}
+                              onChange={(event) => onChangeProviderSkillRootPath(provider.id, event.target.value)}
+                              placeholder={SETTINGS_PROVIDER_ROOT_DIRECTORY_PLACEHOLDER}
+                              autoComplete="off"
+                              spellCheck={false}
+                            />
+                            <button
+                              className="launch-toggle"
+                              type="button"
+                              onClick={() => onBrowseProviderSkillRootPath(provider.id)}
+                            >
+                              選択
+                            </button>
+                          </div>
+                        </label>
+                        <label className="settings-provider-input">
+                          <span>{SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL}</span>
+                          <div className="settings-inline-input-row">
+                            <input
+                              type="text"
+                              value={settings.skillRelativePath ?? ""}
+                              onChange={(event) => onChangeProviderSkillRelativePath(provider.id, event.target.value)}
+                              placeholder={SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_PLACEHOLDER}
+                              autoComplete="off"
+                              spellCheck={false}
+                            />
+                            <button
+                              className="launch-toggle"
+                              type="button"
+                              onClick={() => onBrowseProviderSkillRelativePath(provider.id)}
+                            >
+                              選択
+                            </button>
+                          </div>
+                          <p className="settings-help">{SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_HELP}</p>
+                        </label>
+                        <label className="settings-provider-input">
+                          <span>{SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>
+                          <div className="settings-inline-input-row">
+                            <input
+                              type="text"
+                              value={settings.instructionRelativePath ?? ""}
+                              onChange={(event) => onChangeProviderInstructionRelativePath(provider.id, event.target.value)}
+                              placeholder={SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER}
+                              autoComplete="off"
+                              spellCheck={false}
+                            />
+                            <button
+                              className="launch-toggle"
+                              type="button"
+                              onClick={() => onBrowseProviderInstructionRelativePath(provider.id)}
+                            >
+                              選択
+                            </button>
+                          </div>
+                          <p className="settings-help">{SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_HELP}</p>
+                        </label>
+                      </div>
                     </section>
                   ))}
                 </div>

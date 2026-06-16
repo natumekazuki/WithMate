@@ -7,6 +7,19 @@ import {
 
 export const SETTINGS_SKILL_ROOT_LABEL = "Skill Root";
 export const SETTINGS_SKILL_ROOT_PLACEHOLDER = "skill folder の親ディレクトリを入力";
+export const SETTINGS_PROVIDER_FILE_SETTINGS_LABEL = "Provider File Settings";
+export const SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL = "Root Directory";
+export const SETTINGS_PROVIDER_ROOT_DIRECTORY_PLACEHOLDER = "Provider 設定の root directory";
+export const SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL = "Skill Relative Path";
+export const SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_PLACEHOLDER = "skills";
+export const SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL = "Instruction Relative Path";
+export const SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER = "AGENTS.md";
+export const SETTINGS_PROVIDER_FILE_SETTINGS_HELP =
+  "Provider ごとに skill folder と instruction file の基準 path を指定する。Root Directory が空欄の場合、skill は workspace 内の既定 directory だけを使う。";
+export const SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_HELP =
+  "Root Directory 配下の skill folder を相対パスで指定する。例: skills";
+export const SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_HELP =
+  "Root Directory 配下の instruction file を相対パスで指定する。V5では同期実行せず、provider ごとの設定値として保持する。";
 export const SETTINGS_API_KEY_LABEL = "OpenAI API Key (Coding Agent)";
 export const SETTINGS_API_KEY_PLACEHOLDER = "Coding Agent 用 OpenAI API Key を入力";
 export const SETTINGS_CODING_CREDENTIALS_HELP =

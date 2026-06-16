@@ -97,6 +97,12 @@ describe("HomeSettingsContent", () => {
     onChangeAutoCollapseActionDockOnSend: noOp,
     onChangeUserMicrocopySlot: noOp,
     onChangeProviderEnabled: noOp,
+    onChangeProviderSkillRootPath: noOp,
+    onChangeProviderSkillRelativePath: noOp,
+    onChangeProviderInstructionRelativePath: noOp,
+    onBrowseProviderSkillRootPath: noOp,
+    onBrowseProviderSkillRelativePath: noOp,
+    onBrowseProviderInstructionRelativePath: noOp,
     onImportModelCatalog: noOp,
     onExportModelCatalog: noOp,
     onOpenAppLogFolder: noOp,
@@ -142,8 +148,6 @@ describe("HomeSettingsContent", () => {
     const html = renderSettings();
 
     assert.ok(!html.includes("Provider Instruction Sync"));
-    assert.ok(!html.includes("Root Directory"));
-    assert.ok(!html.includes("Instruction Relative Path"));
     assert.ok(!html.includes("Write Mode"));
     assert.ok(!html.includes("Fail Policy"));
     assert.ok(!html.includes("Mate Embedding"));
@@ -154,6 +158,15 @@ describe("HomeSettingsContent", () => {
     assert.ok(!html.includes("settings-character-section"));
     assert.ok(!html.includes("Save Character"));
     assert.ok(!html.includes("character-notes.md"));
+  });
+
+  it("provider ごとの file settings を表示する", () => {
+    const html = renderSettings();
+
+    assert.ok(html.includes("Provider File Settings"));
+    assert.ok(html.includes("Root Directory"));
+    assert.ok(html.includes("Skill Relative Path"));
+    assert.ok(html.includes("Instruction Relative Path"));
   });
 
   it("provider row が 0 件でも Coding Agent Providers section と empty state を表示する", () => {

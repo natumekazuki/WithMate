@@ -3,7 +3,10 @@ import type { AppSettings } from "../provider-settings-state.js";
 import type { HomeSettingsContentBaseProps } from "./home-settings-content-props.js";
 import {
   handleChangeAutoCollapseActionDockOnSend,
+  handleChangeProviderInstructionRelativePath,
   handleChangeProviderEnabled,
+  handleChangeProviderSkillRelativePath,
+  handleChangeProviderSkillRootPath,
   handleChangeUserMicrocopySlot,
 } from "./settings-draft-actions.js";
 
@@ -16,6 +19,9 @@ export type SettingsDraftHandlers = Pick<
   | "onChangeAutoCollapseActionDockOnSend"
   | "onChangeUserMicrocopySlot"
   | "onChangeProviderEnabled"
+  | "onChangeProviderInstructionRelativePath"
+  | "onChangeProviderSkillRootPath"
+  | "onChangeProviderSkillRelativePath"
 >;
 
 export function buildSettingsDraftHandlers({
@@ -30,6 +36,15 @@ export function buildSettingsDraftHandlers({
     },
     onChangeProviderEnabled: (providerId, enabled) => {
       handleChangeProviderEnabled({ providerId, enabled, setSettingsDraft });
+    },
+    onChangeProviderSkillRootPath: (providerId, skillRootPath) => {
+      handleChangeProviderSkillRootPath({ providerId, skillRootPath, setSettingsDraft });
+    },
+    onChangeProviderSkillRelativePath: (providerId, skillRelativePath) => {
+      handleChangeProviderSkillRelativePath({ providerId, skillRelativePath, setSettingsDraft });
+    },
+    onChangeProviderInstructionRelativePath: (providerId, instructionRelativePath) => {
+      handleChangeProviderInstructionRelativePath({ providerId, instructionRelativePath, setSettingsDraft });
     },
   };
 }

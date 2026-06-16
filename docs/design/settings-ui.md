@@ -1,7 +1,7 @@
 # Settings UI
 
 - 作成日: 2026-03-14
-- 更新日: 2026-06-14
+- 更新日: 2026-06-16
 - 対象: 独立した `Settings Window`
 
 ## Goal
@@ -15,7 +15,7 @@
 - app 共通 system prompt を編集する旧設定項目は廃止する
 - V5 current では Character 定義は `Characters` editor で管理し、session / companion 開始時の `CharacterRuntimeSnapshot` を runtime prompt の主経路にする
 - provider instruction sync は V5 Character 注入の主経路ではなく、Settings current UI には置かない
-- current 実装では `Session Window`、`Default Microcopy`、`Characters`、`Coding Agent Providers`、`Diagnostics`、`Mate Reset`、`Model Catalog` を置く
+- current 実装では `Session Window`、`Default Microcopy`、`Coding Agent Providers`、`Diagnostics`、`Mate Reset`、`Model Catalog` を置く
 - `Settings Window` は縦方向の余白を少し増やしつつ、内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - file picker / save dialog は Main Process 側で開く
 - current 実装では Main Process 側の settings / catalog 更新は `src-electron/settings-catalog-service.ts` に寄せ、renderer 側の provider row 組み立ては `src/home-settings-view-model.ts` に寄せる
@@ -24,7 +24,7 @@
 
 1. ユーザーが Home toolbar の `Settings` を押す
 2. 独立した `Settings Window` が開く
-3. Session 表示設定、microcopy、Character、coding provider の enable / disable を編集して保存する。window が小さいときは内部スクロールで下端まで移動し、`Import Models` / `Export Models` も実行できる
+3. Session 表示設定、microcopy、coding provider の enable / disable と provider file settings を編集して保存する。window が小さいときは内部スクロールで下端まで移動し、`Import Models` / `Export Models` も実行できる
 4. 結果は window 内の短いフィードバックで返す
 
 ## Layout
@@ -36,15 +36,12 @@
 - Settings Window
   - `Session Window`
     - `送信後に Action Dock を自動で閉じる`
-  - `Characters`
-    - Character 一覧
-    - name / description / icon path / theme
-    - raw `character.md` editor
-    - optional `character-notes.md` editor
-    - import / replace
-    - save / cancel / set default / archive
   - `Coding Agent Providers`
-    - provider 名を左、enable checkbox を右に置いた 1 行 row
+    - provider 名を左、enable checkbox を右に置く
+    - provider ごとの `Provider File Settings`
+      - `Root Directory`
+      - `Skill Relative Path`
+      - `Instruction Relative Path`
   - `Diagnostics`
     - app log / crash dump folder
   - `Mate Reset`
@@ -57,15 +54,12 @@
 ## Current Scope
 
 - `Session Window` の `送信後に Action Dock を自動で閉じる` の保存
-- V5 Core Character の最低限 editor
-  - Character 一覧
-  - 新規作成
-  - metadata 編集
-  - raw `character.md` import / replace / 保存
-  - optional `character-notes.md` 保存
-  - default 切替
-  - archive
 - coding provider ごとの enable / disable
+- coding provider ごとの provider file settings
+  - `Root Directory` は provider ごとの file 設定の基準 directory として保持される
+  - `Skill Relative Path` がある場合は root 配下の相対 path として解決される
+  - `Instruction Relative Path` は root 配下の instruction file 設定として保持される
+  - V5 current では skill folder だけが runtime の skill 探索元になり、instruction file は Provider Instruction Sync を再起動せず設定値として保持する
 - Diagnostics の folder open
 - legacy Mate reset
 - `model catalog` の import
@@ -80,6 +74,7 @@
 - `model catalog export` の document 取得も `SettingsCatalogService` が担当する
 - renderer 側では `HomeApp.tsx` が storage 正規化を直接持たず、`home-settings-view-model` の derived data を使って provider row を描画する
 - renderer 側の provider settings draft 更新は `home-settings-draft` の pure function を経由する
+- provider file settings の directory / file picker は、`Root Directory` 配下で選ばれた path だけを相対 path として draft へ反映する
 - `HomeApp.tsx` は provider settings を別 state で持たず、単一の `AppSettings draft` を編集する
 - save 時の payload は `home-settings-view-model` が resolved model / reasoning を反映した `persisted settings` として組み立てる
 - Settings Window の `loading` 派生状態は `HomeApp.tsx` が組み立てる
