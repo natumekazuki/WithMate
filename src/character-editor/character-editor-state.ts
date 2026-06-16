@@ -169,6 +169,14 @@ export function isCharacterEditorDraftDirty(
     || draft.isDefault !== persistedDetail.isDefault;
 }
 
+export function shouldBlockCharacterEditorBeforeUnload(args: {
+  dirty: boolean;
+  saving: boolean;
+  confirmedClose: boolean;
+}): boolean {
+  return args.dirty && !args.saving && !args.confirmedClose;
+}
+
 export function normalizeThemeColorDraft(value: string, fallback: string): string {
   const trimmed = value.trim();
   return /^#[0-9a-fA-F]{6}$/.test(trimmed) ? trimmed.toLowerCase() : fallback;

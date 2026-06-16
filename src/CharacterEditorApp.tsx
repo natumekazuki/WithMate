@@ -11,6 +11,7 @@ import {
   formatCharacterEditorError,
   isCharacterEditorDraftDirty,
   replaceCharacterDefinitionDraft,
+  shouldBlockCharacterEditorBeforeUnload,
   type CharacterEditorDraft,
   type CharacterEditorTab,
   updateCharacterEditorDraft,
@@ -53,10 +54,12 @@ export default function CharacterEditorApp() {
   const [feedback, setFeedback] = useState("");
   const definitionImportInputRef = useRef<HTMLInputElement | null>(null);
   const notesImportInputRef = useRef<HTMLInputElement | null>(null);
+  const confirmedCloseRef = useRef(false);
 
   const validation = useMemo(() => buildCharacterEditorValidationSummary(draft), [draft]);
   const dirty = isCharacterEditorDraftDirty(draft, persistedDetail);
   const archived = draft.state === "archived";
+  const denseEditorBody = selectedTab === "definition" || selectedTab === "notes" || selectedTab === "preview";
   const themeStyle = useMemo(() => buildCharacterThemeStyle({
     main: draft.theme.main,
     sub: draft.theme.sub,
@@ -104,7 +107,7 @@ export default function CharacterEditorApp() {
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (!dirty || saving) {
+      if (!shouldBlockCharacterEditorBeforeUnload({ dirty, saving, confirmedClose: confirmedCloseRef.current })) {
         return;
       }
       event.preventDefault();
@@ -239,6 +242,7 @@ export default function CharacterEditorApp() {
     if (dirty && !window.confirm("未保存の編集があります。\n\n保存せずに閉じますか？")) {
       return;
     }
+    confirmedCloseRef.current = true;
     window.close();
   };
 
@@ -304,8 +308,6 @@ export default function CharacterEditorApp() {
     reader.readAsText(file);
   };
 
-  const modeLabel = archived ? "Archived Character" : draft.mode === "create" ? "Create Character" : "Edit Character";
-
   if (!desktopRuntime) {
     return (
       <div className="page-shell character-editor-page">
@@ -323,7 +325,6 @@ export default function CharacterEditorApp() {
           <div className="character-editor-heading">
             <CharacterAvatar character={{ name: draft.name, iconPath: draft.iconFilePath }} size="large" />
             <div>
-              <p className="settings-note">{modeLabel}</p>
               <h1>{draft.name || "New Character"}</h1>
               <p>{draft.description || "No description"}</p>
             </div>
@@ -349,10 +350,10 @@ export default function CharacterEditorApp() {
           ))}
         </nav>
 
-        <main className="character-editor-window-body">
+        <main className={`character-editor-window-body ${denseEditorBody ? "character-editor-window-body-dense" : ""}`.trim()}>
           {loading ? <p className="settings-note">Character を読み込んでいます...</p> : null}
           {!loading && selectedTab === "profile" ? (
-            <section className="settings-section-card character-editor-card">
+            <section className="character-editor-profile-card">
               <div className="settings-character-form-grid">
                 <label className="settings-provider-input">
                   <span>Name</span>
@@ -415,7 +416,7 @@ export default function CharacterEditorApp() {
           ) : null}
 
           {!loading && selectedTab === "definition" ? (
-            <section className="settings-section-card character-editor-card character-editor-markdown-card">
+            <section className="character-editor-markdown-card">
               <div className="settings-section-head-row">
                 <strong>character.md</strong>
                 <button
@@ -454,7 +455,7 @@ export default function CharacterEditorApp() {
           ) : null}
 
           {!loading && selectedTab === "notes" ? (
-            <section className="settings-section-card character-editor-card character-editor-markdown-card">
+            <section className="character-editor-markdown-card">
               <div className="settings-section-head-row">
                 <strong>character-notes.md</strong>
                 <button
@@ -493,14 +494,14 @@ export default function CharacterEditorApp() {
           ) : null}
 
           {!loading && selectedTab === "preview" ? (
-            <section className="settings-section-card character-editor-card character-editor-preview-grid">
-              <div className="home-character-card-preview">
+            <section className="character-editor-preview-grid">
+              <div className="character-editor-preview-profile">
                 <CharacterAvatar character={{ name: draft.name, iconPath: draft.iconFilePath }} size="large" />
                 <strong>{draft.name || "New Character"}</strong>
                 <p>{draft.description || "No description"}</p>
                 {draft.isDefault ? <span className="settings-character-badge">Default</span> : null}
               </div>
-              <label className="settings-provider-input">
+              <label className="settings-provider-input character-editor-runtime-preview">
                 <span>Runtime prompt preview</span>
                 <textarea value={runtimePromptPreview} readOnly rows={14} spellCheck={false} />
               </label>

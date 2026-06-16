@@ -10,6 +10,7 @@ import {
   createNewCharacterEditorDraft,
   isCharacterEditorDraftDirty,
   replaceCharacterDefinitionDraft,
+  shouldBlockCharacterEditorBeforeUnload,
   updateCharacterEditorDraft,
 } from "../../src/character-editor/character-editor-state.js";
 
@@ -69,6 +70,13 @@ describe("Character editor state", () => {
     assert.equal(isCharacterEditorDraftDirty({ ...draft, description: "changed" }, detail), true);
     assert.equal(isCharacterEditorDraftDirty({ ...draft, state: "archived" }, detail), true);
     assert.equal(isCharacterEditorDraftDirty(createNewCharacterEditorDraft(), null), true);
+  });
+
+  it("close 確認済みの beforeunload は dirty draft でもブロックしない", () => {
+    assert.equal(shouldBlockCharacterEditorBeforeUnload({ dirty: true, saving: false, confirmedClose: false }), true);
+    assert.equal(shouldBlockCharacterEditorBeforeUnload({ dirty: true, saving: true, confirmedClose: false }), false);
+    assert.equal(shouldBlockCharacterEditorBeforeUnload({ dirty: false, saving: false, confirmedClose: false }), false);
+    assert.equal(shouldBlockCharacterEditorBeforeUnload({ dirty: true, saving: false, confirmedClose: true }), false);
   });
 
   it("create payload は default fallback を潰す setDefault false を渡さない", () => {
