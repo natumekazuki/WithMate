@@ -987,9 +987,9 @@ button:disabled {
 
 .home-page .home-monitor-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
   padding: 12px;
   border: 1px solid rgba(203, 213, 225, 0.1);
@@ -997,6 +997,13 @@ button:disabled {
   background: rgba(255, 255, 255, 0.04);
   color: var(--ink);
   text-align: left;
+  box-shadow: none;
+}
+
+.home-page .home-monitor-avatar {
+  width: 32px;
+  height: 32px;
+  border-width: 1px;
   box-shadow: none;
 }
 
@@ -5843,7 +5850,13 @@ button:disabled {
 }
 
 .home-page.home-page-monitor-window .home-monitor-row {
+  grid-template-columns: auto minmax(0, 1fr);
   padding: 10px;
+}
+
+.home-page.home-page-monitor-window .home-monitor-row-badges {
+  grid-column: 2;
+  justify-content: flex-start;
 }
 
 .home-page.home-page-monitor-window .home-monitor-row-copy strong {

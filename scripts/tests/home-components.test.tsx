@@ -485,7 +485,7 @@ describe("HomeRecentSessionsPanel", () => {
 describe("HomeMonitorContent", () => {
   const noOp = (..._args: unknown[]) => undefined;
 
-  it("Monitor カードは Mate アイコン画像なしでセッション情報を表示する", () => {
+  it("Monitor カードはキャラアイコン付きでセッション情報を表示する", () => {
     const entries: HomeMonitorEntry[] = [
       {
         kind: "agent",
@@ -525,8 +525,8 @@ describe("HomeMonitorContent", () => {
     assert.ok(html.includes("workspace"));
     assert.ok(html.includes("Companion task"));
     assert.ok(html.includes("demo"));
-    assert.ok(!html.includes("character-avatar"));
-    assert.ok(!html.includes("<img"));
+    assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 2);
+    assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 2);
   });
 });
 
