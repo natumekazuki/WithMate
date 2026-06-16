@@ -32,6 +32,7 @@ type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(session: Session): Awaitable<Session>;
+  resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
   resolveProviderSession?: (session: Session) => Session;
   resolveSessionCharacter?: (session: Session) => Promise<CharacterProfile | null>;
@@ -430,10 +431,11 @@ export class SessionRuntimeService {
   }
 
   async runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {
-    const session = await this.deps.getSession(sessionId);
-    if (!session) {
+    const storedSession = await this.deps.getSession(sessionId);
+    if (!storedSession) {
       throw new Error("対象セッションが見つからないよ。");
     }
+    const session = await Promise.resolve(this.deps.resolveRuntimeSessionForTurn?.(storedSession) ?? storedSession);
 
     if (session.runState === "running") {
       throw new Error("このセッションはまだ実行中だよ。");

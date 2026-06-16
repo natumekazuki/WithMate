@@ -65,6 +65,10 @@ import type {
   UpdateCharacterDefinitionInput,
   UpdateCharacterMetadataInput,
 } from "./character/character-catalog.js";
+import type {
+  CharacterAuthoringSessionStartResult,
+  StartCharacterAuthoringSessionInput,
+} from "./character/character-authoring.js";
 
 export type WithMateWindowNavigationApi = {
   openSession(sessionId: string): Promise<void>;
@@ -246,6 +250,7 @@ export type WithMateWindowCharacterApi = {
   archiveCharacter(characterId: string): Promise<CharacterCatalogEntry>;
   setDefaultCharacter(characterId: string): Promise<CharacterCatalogEntry>;
   resolveLaunchCharacter(input?: ResolveLaunchCharacterInput | null): Promise<CharacterDetail | null>;
+  startCharacterAuthoringSession(input: StartCharacterAuthoringSessionInput): Promise<CharacterAuthoringSessionStartResult>;
 };
 
 export type WithMateWindowApi =

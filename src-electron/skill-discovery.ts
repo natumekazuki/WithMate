@@ -20,8 +20,9 @@ type CachedSkillDiscovery = {
 };
 
 const WORKSPACE_SKILL_ROOT_CANDIDATES = [
-  "skills",
+  ".agents/skills",
   ".github/skills",
+  "skills",
   ".copilot/skills",
   ".codex/skills",
   ".claude/skills",

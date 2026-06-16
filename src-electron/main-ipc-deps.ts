@@ -26,6 +26,10 @@ import type {
   CreateAuxiliarySessionInput,
 } from "../src/auxiliary-session-state.js";
 import type {
+  CharacterAuthoringSessionStartResult,
+  StartCharacterAuthoringSessionInput,
+} from "../src/character/character-authoring.js";
+import type {
   CharacterCatalogEntry,
   CharacterDetail,
   CreateCharacterInput,
@@ -221,6 +225,7 @@ export type MainIpcCharacterDepsArgs = {
   archiveCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
   setDefaultCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
   resolveLaunchCharacter(input?: ResolveLaunchCharacterInput | null): Awaitable<CharacterDetail | null>;
+  startCharacterAuthoringSession(input: StartCharacterAuthoringSessionInput): Awaitable<CharacterAuthoringSessionStartResult>;
 };
 
 export type CreateMainIpcRegistrationDepsArgs = {
@@ -382,5 +387,6 @@ export function createMainIpcRegistrationDeps(
     archiveCharacter: args.character.archiveCharacter,
     setDefaultCharacter: args.character.setDefaultCharacter,
     resolveLaunchCharacter: args.character.resolveLaunchCharacter,
+    startCharacterAuthoringSession: args.character.startCharacterAuthoringSession,
   };
 }

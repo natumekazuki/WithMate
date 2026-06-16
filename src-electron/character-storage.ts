@@ -241,6 +241,10 @@ export class CharacterStorage {
     return path.join(this.characterRootPath, characterId);
   }
 
+  getCharacterDirectory(characterId: string): string {
+    return this.characterDirectory(characterId);
+  }
+
   private characterFilePath(characterId: string, fileName: string): string {
     return path.join(this.characterDirectory(characterId), fileName);
   }

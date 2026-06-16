@@ -6,6 +6,7 @@ import {
   type CharacterTheme,
 } from "../character/character-catalog.js";
 import {
+  parseCharacterDefinitionMarkdown,
   validateCharacterDefinitionMarkdown,
   validateCharacterNotesMarkdown,
   type CharacterDefinitionValidationIssue,
@@ -133,17 +134,32 @@ export function createNewCharacterEditorDraft(name = "New Character"): Character
 }
 
 export function createCharacterEditorDraftFromDetail(detail: CharacterDetail): CharacterEditorDraft {
+  const metadata = resolveCharacterDefinitionMetadata(detail.definitionMarkdown);
   return {
     characterId: detail.id,
     mode: "edit",
     state: detail.state,
-    name: detail.name,
-    description: detail.description,
+    name: metadata.name || detail.name,
+    description: metadata.description ?? detail.description,
     iconFilePath: detail.iconFilePath,
     theme: { ...detail.theme },
     definitionMarkdown: detail.definitionMarkdown,
     notesMarkdown: detail.notesMarkdown,
     isDefault: detail.isDefault,
+  };
+}
+
+export function resolveCharacterDefinitionMetadata(
+  definitionMarkdown: string,
+): { name: string; description: string } {
+  const parsed = parseCharacterDefinitionMarkdown(definitionMarkdown);
+  if (!parsed.ok) {
+    return { name: "", description: "" };
+  }
+
+  return {
+    name: parsed.value.frontmatter.name,
+    description: parsed.value.frontmatter.description,
   };
 }
 
@@ -209,9 +225,10 @@ export function updateCharacterEditorDraft(
 }
 
 export function buildCreateCharacterInputFromDraft(draft: CharacterEditorDraft): CreateCharacterInput {
+  const metadata = resolveCharacterDefinitionMetadata(draft.definitionMarkdown);
   const input: CreateCharacterInput = {
-    name: draft.name,
-    description: draft.description,
+    name: metadata.name || draft.name,
+    description: metadata.description ?? draft.description,
     iconFilePath: draft.iconFilePath,
     theme: draft.theme,
     definitionMarkdown: draft.definitionMarkdown,

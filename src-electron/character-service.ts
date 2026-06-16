@@ -20,6 +20,7 @@ export type CharacterCatalogServiceStorage = Pick<
   | "setDefaultCharacter"
   | "resolveLaunchCharacter"
   | "createRuntimeSnapshot"
+  | "getCharacterDirectory"
 >;
 
 export class CharacterService {
@@ -65,5 +66,12 @@ export class CharacterService {
       return null;
     }
     return this.storage.createRuntimeSnapshot(characterId);
+  }
+
+  getCharacterDirectory(characterId: string): string | null {
+    if (!characterId) {
+      return null;
+    }
+    return this.storage.getCharacterDirectory(characterId);
   }
 }

@@ -124,6 +124,7 @@ import {
   WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
+  WITHMATE_START_CHARACTER_AUTHORING_SESSION_CHANNEL,
   WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
@@ -513,6 +514,9 @@ function createCharacterApi(ipcRenderer: IpcRendererLike): WithMateWindowCharact
     },
     resolveLaunchCharacter(input) {
       return ipcRenderer.invoke(WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL, input ?? null);
+    },
+    startCharacterAuthoringSession(input) {
+      return ipcRenderer.invoke(WITHMATE_START_CHARACTER_AUTHORING_SESSION_CHANNEL, input);
     },
   };
 }
