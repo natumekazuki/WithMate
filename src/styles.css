@@ -2322,6 +2322,18 @@ button:disabled {
   gap: 0;
 }
 
+.settings-provider-file-settings {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(203, 213, 225, 0.1);
+}
+
+.settings-provider-file-settings strong {
+  color: var(--ink);
+  font-size: 0.86rem;
+}
+
 .settings-provider-name {
   margin: 0;
   color: var(--ink);

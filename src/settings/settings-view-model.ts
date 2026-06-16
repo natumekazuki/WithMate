@@ -11,6 +11,39 @@ import {
   type ModelCatalogSnapshot,
 } from "../model-catalog.js";
 
+function normalizeSelectablePath(filePath: string): string {
+  return filePath.trim().replace(/\\/g, "/").replace(/\/+$/g, "");
+}
+
+function normalizePathComparisonKey(filePath: string): string {
+  const normalized = normalizeSelectablePath(filePath);
+  return /^[a-z]:\//i.test(normalized) ? normalized.toLowerCase() : normalized;
+}
+
+export function resolveProviderRelativePathFromSelection(
+  rootDirectory: string,
+  selectedPath: string,
+): string | null {
+  const normalizedRoot = normalizeSelectablePath(rootDirectory);
+  const normalizedSelectedPath = normalizeSelectablePath(selectedPath);
+  if (!normalizedRoot || !normalizedSelectedPath) {
+    return null;
+  }
+
+  const rootKey = normalizePathComparisonKey(normalizedRoot);
+  const selectedKey = normalizePathComparisonKey(normalizedSelectedPath);
+  if (selectedKey === rootKey) {
+    return "";
+  }
+
+  const prefix = `${rootKey}/`;
+  if (!selectedKey.startsWith(prefix)) {
+    return null;
+  }
+
+  return normalizedSelectedPath.slice(normalizedRoot.length + 1);
+}
+
 export type HomeProviderSettingRow = {
   provider: ModelCatalogProvider;
   settings: ProviderAppSettings;

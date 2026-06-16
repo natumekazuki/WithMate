@@ -372,8 +372,9 @@ CodexAdapter は `workspacePath + allowedAdditionalDirectories` ごとに proces
 ## Agent / Skill Mapping
 
 - skill 探索元は次を使う
-  - `codingProviderSettings[providerId].skillRootPath`
+  - `codingProviderSettings[providerId].skillRootPath` と任意の `skillRelativePath` から解決した provider skill root
   - workspace 標準 skill roots (`skills`, `.github/skills`, `.copilot/skills`, `.codex/skills`, `.claude/skills`)
+- `codingProviderSettings[providerId].instructionRelativePath` は provider ごとの instruction file 設定として保持するが、V5 current の skill 探索や prompt composition では参照しない
 - 同名 skill は workspace 優先で dedupe する
 - adapter は選択済み skill を provider ごとの prompt / option へ変換する
   - Codex: `$skill-name` mention

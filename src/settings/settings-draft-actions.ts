@@ -6,6 +6,7 @@ import {
   removeMateMemoryGenerationPriorityDraft,
   updateAutoCollapseActionDockOnSend,
   updateCodingProviderEnabledDraft,
+  updateCodingProviderInstructionRelativePathDraft,
   updateCodingProviderSkillRelativePathDraft,
   updateCodingProviderSkillRootPathDraft,
   updateMateMemoryGenerationPriorityModelDraft,
@@ -55,6 +56,14 @@ export function handleChangeProviderSkillRelativePath(input: SettingsDraftAction
 }): void {
   input.setSettingsDraft((current) =>
     updateCodingProviderSkillRelativePathDraft(current, input.providerId, input.skillRelativePath));
+}
+
+export function handleChangeProviderInstructionRelativePath(input: SettingsDraftActionInput & {
+  providerId: string;
+  instructionRelativePath: string;
+}): void {
+  input.setSettingsDraft((current) =>
+    updateCodingProviderInstructionRelativePathDraft(current, input.providerId, input.instructionRelativePath));
 }
 
 export function handleChangeMemoryGenerationEnabled(input: SettingsDraftActionInput & {

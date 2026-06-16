@@ -25,6 +25,7 @@ export type ProviderAppSettings = {
   apiKey: string;
   skillRootPath: string;
   skillRelativePath?: string;
+  instructionRelativePath?: string;
 };
 
 export type MemoryExtractionProviderSettings = {
@@ -56,6 +57,7 @@ export const DEFAULT_PROVIDER_APP_SETTINGS: ProviderAppSettings = {
   apiKey: "",
   skillRootPath: "",
   skillRelativePath: "",
+  instructionRelativePath: "",
 };
 
 export const DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD = 300_000;
@@ -95,6 +97,7 @@ export function createDefaultAppSettings(): AppSettings {
         apiKey: "",
         skillRootPath: "",
         skillRelativePath: "",
+        instructionRelativePath: "",
       },
     },
     memoryExtractionProviderSettings: {
@@ -124,6 +127,7 @@ function normalizeProviderAppSettings(value: unknown, defaultEnabled: boolean): 
       apiKey: "",
       skillRootPath: "",
       skillRelativePath: "",
+      instructionRelativePath: "",
     };
   }
 
@@ -133,6 +137,7 @@ function normalizeProviderAppSettings(value: unknown, defaultEnabled: boolean): 
     apiKey: typeof candidate.apiKey === "string" ? candidate.apiKey : "",
     skillRootPath: typeof candidate.skillRootPath === "string" ? candidate.skillRootPath : "",
     skillRelativePath: typeof candidate.skillRelativePath === "string" ? candidate.skillRelativePath : "",
+    instructionRelativePath: typeof candidate.instructionRelativePath === "string" ? candidate.instructionRelativePath : "",
   };
 }
 

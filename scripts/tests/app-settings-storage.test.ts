@@ -27,11 +27,15 @@ describe("AppSettingsStorage", () => {
             enabled: false,
             apiKey: "codex-key",
             skillRootPath: "C:/skills/codex",
+            skillRelativePath: ".codex/skills",
+            instructionRelativePath: "AGENTS.md",
           },
           copilot: {
             enabled: true,
             apiKey: "copilot-key",
             skillRootPath: "C:/skills/copilot",
+            skillRelativePath: "skills",
+            instructionRelativePath: "copilot-instructions.md",
           },
         },
         memoryExtractionProviderSettings: {
@@ -109,11 +113,15 @@ describe("AppSettingsStorage", () => {
             enabled: false,
             apiKey: "custom-key",
             skillRootPath: "C:/skills/codex",
+            skillRelativePath: ".codex/skills",
+            instructionRelativePath: "AGENTS.md",
           },
           copilot: {
             enabled: true,
             apiKey: "copilot-key",
             skillRootPath: "C:/skills/copilot",
+            skillRelativePath: "skills",
+            instructionRelativePath: "copilot-instructions.md",
           },
         },
         memoryExtractionProviderSettings: {
