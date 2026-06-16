@@ -27,6 +27,10 @@ import type {
   CreateAuxiliarySessionInput,
 } from "../src/auxiliary-session-state.js";
 import type {
+  StartCharacterAuthoringSessionInput,
+  CharacterAuthoringSessionStartResult,
+} from "../src/character/character-authoring.js";
+import type {
   CharacterCatalogEntry,
   CharacterDetail,
   CreateCharacterInput,
@@ -150,6 +154,7 @@ import {
   WITHMATE_SET_MATE_AVATAR_CHANNEL,
   WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
   WITHMATE_SAVE_PASTED_SESSION_FILE_CHANNEL,
+  WITHMATE_START_CHARACTER_AUTHORING_SESSION_CHANNEL,
   WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
   WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL,
   WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
@@ -298,6 +303,7 @@ export type MainIpcRegistrationDeps = {
   archiveCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
   setDefaultCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
   resolveLaunchCharacter(input?: ResolveLaunchCharacterInput | null): Awaitable<CharacterDetail | null>;
+  startCharacterAuthoringSession(input: StartCharacterAuthoringSessionInput): Awaitable<CharacterAuthoringSessionStartResult>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFiles(targetWindow: MaybeWindow, initialPath: string | null): Promise<string[]>;
@@ -474,6 +480,7 @@ type MainIpcCharacterDeps = Pick<
   | "archiveCharacter"
   | "setDefaultCharacter"
   | "resolveLaunchCharacter"
+  | "startCharacterAuthoringSession"
 >;
 
 function resolveTargetWindow(
@@ -883,6 +890,9 @@ function registerCharacterHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCha
   );
   ipcMain.handle(WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL, (_event, input: ResolveLaunchCharacterInput | null) =>
     deps.resolveLaunchCharacter(input),
+  );
+  ipcMain.handle(WITHMATE_START_CHARACTER_AUTHORING_SESSION_CHANNEL, (_event, input: StartCharacterAuthoringSessionInput) =>
+    deps.startCharacterAuthoringSession(input),
   );
 }
 

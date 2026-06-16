@@ -68,6 +68,7 @@ Character catalog、definition format、snapshot、prompt boundary、release gat
 | `provider-usage-telemetry.md` | Copilot quota / context telemetry の詳細 |
 | `distribution-packaging.md` | installer / app bundle の packaging 方針 |
 | `refactor-roadmap.md` | current リファクタの進行管理 |
+| `character-authoring-growth.md` | V5 Character Core 後の `character.md` / `character-notes.md` 作成・改善支援の次スコープ設計 |
 
 ### B-legacy. Removed Character Documents
 

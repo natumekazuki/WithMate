@@ -113,7 +113,7 @@ describe("home-session-projection", () => {
     assert.equal(projection.monitorCompletedEmptyMessage, "一致するセッションはないよ。");
   });
 
-  it("character-update session を Home 一覧と monitor から除外する", () => {
+  it("character-update / character-authoring session を Home 一覧と monitor から除外する", () => {
     const projection = buildHomeSessionProjection(
       [
         createSession({ id: "main", taskTitle: "Main Task", branch: "main" }),
@@ -125,14 +125,26 @@ describe("home-session-projection", () => {
           status: "running",
           runState: "running",
         }),
+        createSession({
+          id: "authoring",
+          taskTitle: "Muse の作成",
+          branch: "main",
+          sessionKind: "character-authoring",
+          status: "running",
+          runState: "running",
+        }),
       ],
-      ["main", "update"],
+      ["main", "update", "authoring"],
       "",
     );
 
     assert.equal(shouldDisplayHomeSession(createSession({ id: "visible", taskTitle: "visible", branch: "main" })), true);
     assert.equal(
       shouldDisplayHomeSession(createSession({ id: "hidden", taskTitle: "hidden", branch: "main", sessionKind: "character-update" })),
+      false,
+    );
+    assert.equal(
+      shouldDisplayHomeSession(createSession({ id: "hidden-authoring", taskTitle: "hidden", branch: "main", sessionKind: "character-authoring" })),
       false,
     );
     assert.deepEqual(projection.filteredSessionEntries.map(({ session }) => session.id), ["main"]);

@@ -140,22 +140,22 @@ describe("SessionStorage", () => {
     }
   });
 
-  it("sessionKind を含む session を保存して読み戻せる", async () => {
+  it("character-authoring sessionKind を含む session を保存して読み戻せる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
       const storage = new SessionStorage(dbPath);
       const session = storage.upsertSession({
-        ...createSession("character update", "workspace-character", "char-a", "A"),
-        sessionKind: "character-update",
+        ...createSession("character authoring", "workspace-character", "char-a", "A"),
+        sessionKind: "character-authoring",
       });
 
       const loaded = storage.getSession(session.id);
       storage.close();
 
       assert.ok(loaded);
-      assert.equal(loaded.sessionKind, "character-update");
+      assert.equal(loaded.sessionKind, "character-authoring");
     } finally {
       await removeDirectoryWithRetry(tempDirectory);
     }

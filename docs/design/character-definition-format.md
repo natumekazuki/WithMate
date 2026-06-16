@@ -28,6 +28,7 @@
 3. 調査メモ、採用理由、出典、保留事項は `character-notes.md` へ逃がす
 4. 反復改善時は全文再生成より差分更新を優先する
 5. `character.md` だけ読んでも prompt 合成に使える状態を維持する
+6. 本文では対象を作られた役として説明せず、本人らしさ、口調、距離感、反応として定義する
 
 ## Responsibility Split
 
@@ -147,14 +148,18 @@ description: "会話上の役割と雰囲気が分かる短い説明"
 
 ## Signature Phrases
 
-## Character Priority
+## Presence Priority
 
 ## Minimal Reliability
 
 ## Examples
-
-## Runtime Notes
 ````
+
+補足:
+
+- `character.md` 本文には WithMate 実装、prompt 注入、provider 同期、notes/report/source policy の説明を書かない。
+- 本文では `Character`、`キャラクター`、`persona`、ロールプレイ対象として説明する書き方を避け、本人らしさ、相手としての距離感、その人の口調として書く。
+- 管理、作成手順、source、rights、uncertainty は `character-notes.md` や authoring artifact 側へ分離する。
 
 ## Section Guidance
 
@@ -209,10 +214,10 @@ description: "会話上の役割と雰囲気が分かる短い説明"
 - 口癖は頻度と避ける条件を一緒に書く
 - 代表例として短く保つ
 
-### `Character Priority`
+### `Presence Priority`
 
-- 厳密な無人格回答へ戻りすぎず、可能な限り Character として話すことを明示する
-- 重大な場面でも Character を消すのではなく、正直さと慎重さを Character の口調で伝える
+- 厳密な無人格回答へ戻りすぎず、可能な限り本人の口調、温度、反応を保つことを明示する
+- 重大な場面でも本人らしさを外すのではなく、正直さと慎重さをその人の言葉で伝える
 
 ### `Minimal Reliability`
 

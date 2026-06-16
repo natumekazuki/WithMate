@@ -279,6 +279,125 @@ describe("SessionRuntimeService", () => {
     assert.equal(composeProjectContextText, runProjectContextText);
   });
 
+  it("character-authoring session は turn 開始時の最新 Character snapshot を使う", async () => {
+    const staleSession = createSession({
+      sessionKind: "character-authoring",
+      characterRuntimeSnapshot: {
+        characterId: "char-a",
+        name: "Old",
+        description: "",
+        iconFilePath: "",
+        theme: { main: "#111111", sub: "#222222" },
+        definitionMarkdown: "# Old",
+        definitionSha256: "old",
+        definitionByteSize: 5,
+        snapshotAt: "old",
+      },
+    });
+    const freshSession = {
+      ...staleSession,
+      character: "Fresh",
+      characterRuntimeSnapshot: {
+        characterId: "char-a",
+        name: "Fresh",
+        description: "",
+        iconFilePath: "",
+        theme: { main: "#333333", sub: "#444444" },
+        definitionMarkdown: "# Fresh",
+        definitionSha256: "fresh",
+        definitionByteSize: 7,
+        snapshotAt: "fresh",
+      },
+    };
+    let composeSessionName = "";
+    let runSessionName = "";
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt(input) {
+        composeSessionName = input.session.characterRuntimeSnapshot?.name ?? "";
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      runSessionTurn(input) {
+        runSessionName = input.session.characterRuntimeSnapshot?.name ?? "";
+        return Promise.resolve(createPartialResult({
+          threadId: "thread-1",
+          assistantText: "完了したよ。",
+        }));
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === staleSession.id ? staleSession : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      resolveRuntimeSessionForTurn(session) {
+        assert.equal(session.characterRuntimeSnapshot?.name, "Old");
+        return freshSession;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory() {
+        return createSessionMemory(staleSession.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(staleSession.id, { userMessage: "お願いします" });
+
+    assert.equal(composeSessionName, "Fresh");
+    assert.equal(runSessionName, "Fresh");
+    assert.equal(result.characterRuntimeSnapshot?.name, "Fresh");
+  });
+
   it("resolveSessionCharacter 未提供でも provider turn まで進む", async () => {
     const session = createSession();
     let composeCalled = false;

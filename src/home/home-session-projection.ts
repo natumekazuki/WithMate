@@ -34,7 +34,7 @@ export type HomeSessionProjection = {
 };
 
 export function shouldDisplayHomeSession(session: SessionSummary): boolean {
-  return session.sessionKind !== "character-update";
+  return session.sessionKind !== "character-update" && session.sessionKind !== "character-authoring";
 }
 
 export function getHomeSessionState(session: SessionSummary): HomeSessionState {

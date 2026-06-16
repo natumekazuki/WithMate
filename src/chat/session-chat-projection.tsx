@@ -189,6 +189,7 @@ export type AgentSessionChatProjectionInput = {
 };
 
 export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjectionInput): ChatWindowProps {
+  const isCharacterAuthoringSession = input.selectedSession.sessionKind === "character-authoring";
   const headerProps: SessionHeaderProps = buildLiveSessionHeaderProps({
     taskTitle: input.selectedSession.taskTitle,
     isEditingTitle: input.isEditingTitle,
@@ -232,11 +233,16 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       pendingRunIndicatorText: input.pendingRunIndicatorText,
       modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
       composerBlocked: input.composerBlocked,
-      canSelectCustomAgent: input.selectedSession.provider === "copilot",
+      canSelectCustomAgent: !isCharacterAuthoringSession && input.selectedSession.provider === "copilot",
+      showCustomAgentPicker: !isCharacterAuthoringSession,
+      showSkillPicker: !isCharacterAuthoringSession,
       isAgentPickerOpen: input.isAgentPickerOpen,
       isSkillPickerOpen: input.isSkillPickerOpen,
       isAdditionalDirectoryListOpen: input.isAdditionalDirectoryListOpen,
-      selectedCustomAgentLabel: input.selectedSession.provider === "copilot" ? input.selectedCustomAgentLabel : "Agent",
+      selectedCustomAgentLabel:
+        !isCharacterAuthoringSession && input.selectedSession.provider === "copilot"
+          ? input.selectedCustomAgentLabel
+          : "Agent",
       selectedCustomAgentTitle: input.selectedCustomAgentTitle,
       additionalDirectoryCount: input.selectedSession.allowedAdditionalDirectories.length,
       canCollapseActionDock: input.canCollapseActionDock,

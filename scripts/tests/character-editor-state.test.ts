@@ -61,7 +61,15 @@ describe("Character editor state", () => {
       createdAt: "2026-06-14T00:00:00.000Z",
       updatedAt: "2026-06-14T00:00:00.000Z",
       archivedAt: null,
-      definitionMarkdown: buildDefaultCharacterDefinition("Mia"),
+      definitionMarkdown: [
+        "---",
+        "schema: withmate-character-v5",
+        "name: \"Mia\"",
+        "description: \"first\"",
+        "---",
+        "",
+        "# Profile",
+      ].join("\n"),
       notesMarkdown: "# Character Notes\n",
     };
     const draft = createCharacterEditorDraftFromDetail(detail);
@@ -70,6 +78,37 @@ describe("Character editor state", () => {
     assert.equal(isCharacterEditorDraftDirty({ ...draft, description: "changed" }, detail), true);
     assert.equal(isCharacterEditorDraftDirty({ ...draft, state: "archived" }, detail), true);
     assert.equal(isCharacterEditorDraftDirty(createNewCharacterEditorDraft(), null), true);
+  });
+
+  it("persisted detail 読み込み時は character.md frontmatter の metadata を editor draft に反映する", () => {
+    const detail: CharacterDetail = {
+      id: "mia",
+      name: "Old Mia",
+      description: "old description",
+      iconFilePath: "",
+      theme: { ...DEFAULT_CHARACTER_THEME },
+      state: "active",
+      isDefault: false,
+      createdAt: "2026-06-14T00:00:00.000Z",
+      updatedAt: "2026-06-14T00:00:00.000Z",
+      archivedAt: null,
+      definitionMarkdown: [
+        "---",
+        "schema: withmate-character-v5",
+        "name: \"Frontmatter Mia\"",
+        "description: \"frontmatter description\"",
+        "---",
+        "",
+        "# Profile",
+      ].join("\n"),
+      notesMarkdown: "# Character Notes\n",
+    };
+
+    const draft = createCharacterEditorDraftFromDetail(detail);
+
+    assert.equal(draft.name, "Frontmatter Mia");
+    assert.equal(draft.description, "frontmatter description");
+    assert.equal(isCharacterEditorDraftDirty(draft, detail), true);
   });
 
   it("close 確認済みの beforeunload は dirty draft でもブロックしない", () => {
@@ -91,6 +130,26 @@ describe("Character editor state", () => {
       notesMarkdown: "# Character Notes\n",
     });
     assert.equal(buildCreateCharacterInputFromDraft({ ...draft, isDefault: true }).setDefault, true);
+  });
+
+  it("create payload は character.md frontmatter の metadata を優先する", () => {
+    const draft = {
+      ...createNewCharacterEditorDraft("Mia"),
+      definitionMarkdown: [
+        "---",
+        "schema: withmate-character-v5",
+        "name: \"Frontmatter Mia\"",
+        "description: \"frontmatter description\"",
+        "---",
+        "",
+        "# Profile",
+      ].join("\n"),
+    };
+
+    const input = buildCreateCharacterInputFromDraft(draft);
+
+    assert.equal(input.name, "Frontmatter Mia");
+    assert.equal(input.description, "frontmatter description");
   });
 
   it("import / replace は character.md draft と任意 metadata を置き換える", () => {

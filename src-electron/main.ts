@@ -39,6 +39,10 @@ import {
   type Session,
   type SessionSummary,
 } from "../src/session-state.js";
+import type {
+  CharacterAuthoringSessionStartResult,
+  StartCharacterAuthoringSessionInput,
+} from "../src/character/character-authoring.js";
 import {
   type ModelCatalogDocument,
   type ModelCatalogProvider,
@@ -57,6 +61,10 @@ import { AuxiliarySessionService } from "./auxiliary-session-service.js";
 import { AuxiliarySessionStorage } from "./auxiliary-session-storage.js";
 import { CharacterService } from "./character-service.js";
 import { CharacterStorage } from "./character-storage.js";
+import {
+  CharacterAuthoringService,
+  CHARACTER_AUTHORING_SKILL_NAME,
+} from "./character-authoring-service.js";
 import { CodexAdapter } from "./codex-adapter.js";
 import { CopilotAdapter } from "./copilot-adapter.js";
 import { resolveComposerPreview } from "./composer-attachments.js";
@@ -175,6 +183,9 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const bundledModelCatalogPath = devServerUrl
   ? path.resolve(currentDir, "../../public/model-catalog.json")
   : path.resolve(rendererDistPath, "model-catalog.json");
+const bundledCharacterAuthoringSkillPath = app.isPackaged
+  ? path.join(process.resourcesPath, "resources", "skills", CHARACTER_AUTHORING_SKILL_NAME)
+  : path.resolve(currentDir, "../../resources/skills", CHARACTER_AUTHORING_SKILL_NAME);
 const codexAdapter = new CodexAdapter((input) => writeAppLog({
   ...input,
   process: "main",
@@ -189,6 +200,7 @@ let projectMemoryStorage: ProjectMemoryStorageAccess | null = null;
 let modelCatalogStorage: ModelCatalogStorage | null = null;
 let characterStorage: CharacterStorageAccess | null = null;
 let characterService: CharacterService | null = null;
+let characterAuthoringService: CharacterAuthoringService | null = null;
 let auditLogStorage: AuditLogStorageRead | null = null;
 let auxiliarySessionStorage: AuxiliarySessionStorageAccess | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
@@ -1118,6 +1130,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 archiveCharacter: (characterId) => requireCharacterService().archiveCharacter(characterId),
                 setDefaultCharacter: (characterId) => requireCharacterService().setDefaultCharacter(characterId),
                 resolveLaunchCharacter: (input) => requireCharacterService().resolveLaunchCharacter(input),
+                startCharacterAuthoringSession,
               },
             },
             getMateState: () => requireMateStorage().getMateState(),
@@ -1377,6 +1390,19 @@ function requireCharacterService(): CharacterService {
   return characterService;
 }
 
+function requireCharacterAuthoringService(): CharacterAuthoringService {
+  if (!characterAuthoringService) {
+    characterAuthoringService = new CharacterAuthoringService({
+      bundledSkillPath: bundledCharacterAuthoringSkillPath,
+      createSession: (input) => requireMainSessionCommandFacade().createSession(input),
+      getCharacter: (characterId) => requireCharacterService().getCharacter(characterId),
+      getCharacterDirectory: (characterId) => requireCharacterService().getCharacterDirectory(characterId),
+    });
+  }
+
+  return characterAuthoringService;
+}
+
 async function createMate(input: Parameters<MateStorage["createMate"]>[0]): ReturnType<MateStorage["createMate"]> {
   const profile = await requireMateStorage().createMate(input);
   return profile;
@@ -1392,6 +1418,15 @@ async function setMateAvatar(input: Parameters<MateStorage["setMateAvatar"]>[0])
 
 async function resetMate(): Promise<void> {
   await requireMateStorage().resetMate();
+}
+
+async function startCharacterAuthoringSession(
+  input: StartCharacterAuthoringSessionInput,
+): Promise<CharacterAuthoringSessionStartResult> {
+  const result = await requireCharacterAuthoringService().startSession(input);
+  await openSessionWindow(result.session.id);
+  void broadcastSessions();
+  return result;
 }
 
 function requireMateProfileItemStorage(): MateProfileItemStorage {
@@ -1467,6 +1502,24 @@ function requireSessionRuntimeService(): SessionRuntimeService {
     sessionRuntimeService = new SessionRuntimeService({
       getSession: getRuntimeSession,
       upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSession(session),
+      resolveRuntimeSessionForTurn: (session) => {
+        if (session.sessionKind !== "character-authoring") {
+          return session;
+        }
+
+        const snapshot = requireCharacterService().createRuntimeSnapshot(session.characterId);
+        if (!snapshot) {
+          return session;
+        }
+
+        return {
+          ...session,
+          character: snapshot.name,
+          characterIconPath: snapshot.iconFilePath,
+          characterThemeColors: snapshot.theme,
+          characterRuntimeSnapshot: snapshot,
+        };
+      },
       resolveComposerPreview,
       resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
@@ -1963,6 +2016,7 @@ function closePersistentStores(): void {
   modelCatalogStorage = null;
   characterStorage = null;
   characterService = null;
+  characterAuthoringService = null;
   sessionStorage = null;
   sessionMemoryStorage = null;
   projectMemoryStorage = null;
@@ -2021,6 +2075,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
 
   characterStorage = null;
   characterService = null;
+  characterAuthoringService = null;
   auditLogService = null;
   companionStorage = null;
   companionAuditLogService = null;

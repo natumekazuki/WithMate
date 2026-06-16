@@ -112,6 +112,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:resolve-launch-character",
     args: [{ characterId: "char-1" }],
   });
+  assert.deepEqual(await api.startCharacterAuthoringSession({ mode: "improve", characterId: "char-1", name: "Mia" }), {
+    channel: "withmate:start-character-authoring-session",
+    args: [{ mode: "improve", characterId: "char-1", name: "Mia" }],
+  });
   assert.deepEqual(await api.getSessionBackgroundActivity("session-1", "memory-generation"), {
     channel: "withmate:get-session-background-activity",
     args: ["session-1", "memory-generation"],
@@ -278,6 +282,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "searchWorkspaceFiles",
     "setMateAvatar",
     "setDefaultCharacter",
+    "startCharacterAuthoringSession",
     "stashCompanionTargetChanges",
     "subscribeAppSettings",
     "subscribeAppBootStatus",
