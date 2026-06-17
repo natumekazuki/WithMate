@@ -25,6 +25,7 @@ import type {
   ResetAppDatabaseTarget,
 } from "../src/withmate-window-types.js";
 import type { AuxiliarySession } from "../src/auxiliary-session-state.js";
+import type { CompanionSession } from "../src/companion-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 export type SettingsCatalogServiceDeps = {
@@ -33,6 +34,7 @@ export type SettingsCatalogServiceDeps = {
   isRunningSession(session: Session): boolean;
   listSessions(): Awaitable<Session[]>;
   listAuxiliarySessions(): Awaitable<AuxiliarySession[]>;
+  listCompanionSessions?: () => Awaitable<CompanionSession[]>;
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   getModelCatalog(revision?: number | null): ModelCatalogSnapshot | null;
@@ -50,6 +52,7 @@ export type SettingsCatalogServiceDeps = {
     },
   ): Awaitable<Session[]>;
   replaceAuxiliarySessions(nextSessions: AuxiliarySession[]): Awaitable<AuxiliarySession[]>;
+  replaceCompanionSessions?: (nextSessions: CompanionSession[]) => Awaitable<CompanionSession[]>;
   clearProviderQuotaTelemetry(providerId: string): void;
   clearSessionContextTelemetry(sessionId: string): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
@@ -119,6 +122,10 @@ function migrateSessionToCatalog(session: Session, snapshot: ModelCatalogSnapsho
 }
 
 function migrateAuxiliarySessionToCatalog(session: AuxiliarySession, snapshot: ModelCatalogSnapshot): AuxiliarySession {
+  return migrateProviderRuntimeMetadata(session, snapshot);
+}
+
+function migrateCompanionSessionToCatalog(session: CompanionSession, snapshot: ModelCatalogSnapshot): CompanionSession {
   return migrateProviderRuntimeMetadata(session, snapshot);
 }
 
@@ -293,12 +300,16 @@ export class SettingsCatalogService {
 
     const previousSessions = await this.deps.listSessions();
     const previousAuxiliarySessions = await this.deps.listAuxiliarySessions();
+    const previousCompanionSessions = await this.deps.listCompanionSessions?.() ?? [];
     const normalizedDocument = parseModelCatalogDocument(document);
     for (const session of previousSessions) {
       migrateSessionToCatalog(session, { revision: previousSnapshot.revision, providers: normalizedDocument.providers });
     }
     for (const session of previousAuxiliarySessions) {
       migrateAuxiliarySessionToCatalog(session, { revision: previousSnapshot.revision, providers: normalizedDocument.providers });
+    }
+    for (const session of previousCompanionSessions) {
+      migrateCompanionSessionToCatalog(session, { revision: previousSnapshot.revision, providers: normalizedDocument.providers });
     }
 
     let importedSnapshot: ModelCatalogSnapshot | null = null;
@@ -309,18 +320,30 @@ export class SettingsCatalogService {
       const migratedAuxiliarySessions = previousAuxiliarySessions.map((session) =>
         migrateAuxiliarySessionToCatalog(session, nextSnapshot),
       );
+      const migratedCompanionSessions = previousCompanionSessions.map((session) =>
+        migrateCompanionSessionToCatalog(session, nextSnapshot),
+      );
       const { invalidatedIds: invalidatedSessionIds } = collectRuntimeThreadResets(previousSessions, migratedSessions);
       const { invalidatedIds: invalidatedAuxiliarySessionIds } = collectRuntimeThreadResets(
         previousAuxiliarySessions,
         migratedAuxiliarySessions,
+      );
+      const { invalidatedIds: invalidatedCompanionSessionIds } = collectRuntimeThreadResets(
+        previousCompanionSessions,
+        migratedCompanionSessions,
       );
       await this.deps.replaceAllSessions(migratedSessions, {
         broadcast: false,
         invalidateSessionIds: invalidatedSessionIds,
       });
       await this.deps.replaceAuxiliarySessions(migratedAuxiliarySessions);
+      await this.deps.replaceCompanionSessions?.(migratedCompanionSessions);
       for (const sessionId of invalidatedAuxiliarySessionIds) {
         const sessionProvider = previousAuxiliarySessions.find((session) => session.id === sessionId)?.provider ?? null;
+        this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+      }
+      for (const sessionId of invalidatedCompanionSessionIds) {
+        const sessionProvider = previousCompanionSessions.find((session) => session.id === sessionId)?.provider ?? null;
         this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
       }
       this.deps.broadcastSessions(migratedSessions.map((session) => session.id));
@@ -335,6 +358,7 @@ export class SettingsCatalogService {
         this.deps.importModelCatalogDocument(previousCatalogDocument, "rollback");
         await this.deps.replaceAllSessions(previousSessions, { broadcast: false });
         await this.deps.replaceAuxiliarySessions(previousAuxiliarySessions);
+        await this.deps.replaceCompanionSessions?.(previousCompanionSessions);
       } catch (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],
@@ -391,9 +415,13 @@ export class SettingsCatalogService {
         if (!appliedTargets.has("sessions")) {
           const previousCatalogSessions = await this.deps.listSessions();
           const previousCatalogAuxiliarySessions = await this.deps.listAuxiliarySessions();
+          const previousCatalogCompanionSessions = await this.deps.listCompanionSessions?.() ?? [];
           const migratedSessions = previousCatalogSessions.map((session) => migrateSessionToCatalog(session, resetSnapshot));
           const migratedAuxiliarySessions = previousCatalogAuxiliarySessions.map((session) =>
             migrateAuxiliarySessionToCatalog(session, resetSnapshot),
+          );
+          const migratedCompanionSessions = previousCatalogCompanionSessions.map((session) =>
+            migrateCompanionSessionToCatalog(session, resetSnapshot),
           );
           const { invalidatedIds: invalidatedSessionIds } = collectRuntimeThreadResets(
             previousCatalogSessions,
@@ -403,14 +431,24 @@ export class SettingsCatalogService {
             previousCatalogAuxiliarySessions,
             migratedAuxiliarySessions,
           );
+          const { invalidatedIds: invalidatedCompanionSessionIds } = collectRuntimeThreadResets(
+            previousCatalogCompanionSessions,
+            migratedCompanionSessions,
+          );
           await this.deps.replaceAllSessions(migratedSessions, {
             broadcast: false,
             invalidateSessionIds: invalidatedSessionIds,
           });
           await this.deps.replaceAuxiliarySessions(migratedAuxiliarySessions);
+          await this.deps.replaceCompanionSessions?.(migratedCompanionSessions);
           for (const sessionId of invalidatedAuxiliarySessionIds) {
             const sessionProvider =
               previousCatalogAuxiliarySessions.find((session) => session.id === sessionId)?.provider ?? null;
+            this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+          }
+          for (const sessionId of invalidatedCompanionSessionIds) {
+            const sessionProvider =
+              previousCatalogCompanionSessions.find((session) => session.id === sessionId)?.provider ?? null;
             this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
           }
         }

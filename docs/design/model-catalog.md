@@ -1,7 +1,7 @@
 # Model Catalog
 
 - 作成日: 2026-03-14
-- 更新日: 2026-03-17
+- 更新日: 2026-06-17
 - 対象: WithMate の provider-aware model / reasoning depth catalog
 
 ## Goal
@@ -16,9 +16,9 @@ WithMate の model catalog を SQLite で管理し、Session Window と provider
 - catalog の import / export 形式は versionless JSON にする
 - 初回起動で active catalog が無ければ、アプリ同梱の `public/model-catalog.json` を import して seed する
 - import のたびに内部 revision を新規採番し、active revision を切り替える
-- Session は `provider / model / reasoningEffort / catalogRevision` を保持する
+- Agent / Auxiliary / Companion の runtime session は `provider / model / reasoningEffort / catalogRevision` を保持する
 - Session Window の model 設定は catalog 選択のみとし、自由入力は許可しない
-- catalog import 時は既存 session も新 active revision へ自動 migrate する
+- catalog import 時は既存 Agent / Auxiliary / Companion session も新 active revision へ自動 migrate する
 
 ## JSON Format
 
@@ -90,16 +90,16 @@ SQLite では次の 4 テーブルで保持する。
 - active catalog は常に 1 revision
 - import 時は既存 revision を破壊更新しない
 - 新 revision を作って `is_active = 1` に切り替える
-- Session には `catalogRevision` を保存する
+- Agent / Auxiliary / Companion session には `catalogRevision` を保存する
 
 ### current 実装
 
 - Session Window の選択肢は常に current active revision を正本にして表示する
 - Session 内で model / depth を変更した場合は current active revision に乗り換える
-- import 成功時は、active revision の切り替えと同じタイミングで既存 session も自動 migrate 対象にする
+- import 成功時は、active revision の切り替えと同じタイミングで既存 Agent / Auxiliary / Companion session も自動 migrate 対象にする
 - `catalogRevision` は `旧 revision を保持し続ける pin` の説明よりも、`その session に現在反映されている revision` を示す値として扱う
 - import 後に旧 revision を長く抱えたまま UI と実行が分岐する状態は current milestone の目標にしない
-- migration では provider / model / reasoningEffort を新 active revision に合わせて正規化し、選択が変わった session は thread をリセットしてよい
+- migration では provider / model / reasoningEffort を新 active revision に合わせて正規化し、選択が変わった runtime session は thread をリセットしてよい
 
 ## Seed Policy
 
@@ -120,7 +120,7 @@ SQLite では次の 4 テーブルで保持する。
 
 - `Settings Window` から `Import Models` / `Export Models` を実行できる
 - file picker / save dialog は Main Process が開く
-- import 成功時は active revision を切り替え、既存 session も同じタイミングで migrate する
+- import 成功時は active revision を切り替え、既存 Agent / Auxiliary / Companion session も同じタイミングで migrate する
 - current milestone では model / depth を出さない
 - new session は active catalog の provider default で作る
 
