@@ -2506,6 +2506,8 @@ function requireCompanionSessionService(): CompanionSessionService {
   if (!companionSessionService) {
     companionSessionService = new CompanionSessionService({
       appDataPath: app.getPath("userData"),
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
       storage: requireCompanionStorage(),
     });
   }
