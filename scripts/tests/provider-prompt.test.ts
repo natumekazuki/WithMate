@@ -343,6 +343,10 @@ describe("composeProviderPrompt", () => {
     assert.match(prompt.systemBodyText, /保存済み snapshot の口調で話す。/);
     assert.match(prompt.systemBodyText, /ユーザー向け自然言語レスポンスの話し方・温度・反応パターンに反映してください。/);
     assert.match(prompt.systemBodyText, /通常のcoding agentとして正確に扱い、Character定義で置き換えないでください。/);
+    assert.doesNotMatch(prompt.systemBodyText, /開始時点の Character 定義/);
+    assert.match(prompt.systemBodyText, /# Output Boundary/);
+    assert.match(prompt.systemBodyText, /生成ファイル、diff、artifact summary には、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜないでください。/);
+    assert.match(prompt.systemBodyText, /成果物は repository instruction、既存文体、対象ファイルの目的を優先してください。/);
     assert.doesNotMatch(prompt.systemBodyText, /厳密な無人格回答へ戻りすぎず/);
     assert.doesNotMatch(prompt.systemBodyText, /character-notes\.md/);
     assert.doesNotMatch(prompt.systemBodyText, /^---$/m);
@@ -354,7 +358,56 @@ describe("composeProviderPrompt", () => {
     assert.doesNotMatch(prompt.inputBodyText, /保存済み snapshot の口調で話す。/);
     assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
     assert.equal(prompt.logicalPrompt.inputText, prompt.inputBodyText);
-    assertSectionOrder(prompt.logicalPrompt.composedText, ["# Character Definition Snapshot", "# User Input", "続けて"]);
+    assertSectionOrder(prompt.logicalPrompt.composedText, [
+      "# Character Definition Snapshot",
+      "# Output Boundary",
+      "# User Input",
+      "続けて",
+    ]);
+  });
+
+  it("character-authoring session では Character の成果物境界を注入しない", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      sessionKind: "character-authoring",
+      characterId: "character-1",
+      character: "Saved Character",
+      characterIconPath: "",
+      characterThemeColors,
+      characterRuntimeSnapshot: createCharacterRuntimeSnapshot({
+        definitionMarkdown: [
+          "# Runtime Definition",
+          "authoring 対象の character.md。",
+        ].join("\n"),
+      }),
+      approvalMode: "untrusted",
+    });
+
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "character.md を改善して",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+    });
+
+    assert.match(prompt.systemBodyText, /# Character Definition Snapshot/);
+    assert.match(prompt.systemBodyText, /authoring 対象の character\.md。/);
+    assert.doesNotMatch(prompt.systemBodyText, /開始時点の Character 定義/);
+    assert.doesNotMatch(prompt.systemBodyText, /# Output Boundary/);
+    assert.doesNotMatch(prompt.systemBodyText, /ユーザー向け自然言語レスポンスの話し方・温度・反応パターンに反映してください。/);
+    assert.doesNotMatch(prompt.systemBodyText, /通常のcoding agentとして正確に扱い、Character定義で置き換えないでください。/);
+    assert.doesNotMatch(prompt.systemBodyText, /生成ファイル、diff、artifact summary/);
+    assertSectionOrder(prompt.logicalPrompt.composedText, [
+      "# Character Definition Snapshot",
+      "# User Input",
+      "character.md を改善して",
+    ]);
   });
 
   it("character.md 内の code fence より長い外側 fence で snapshot を囲む", () => {
@@ -392,6 +445,7 @@ describe("composeProviderPrompt", () => {
     });
 
     assert.match(prompt.systemBodyText, /`````markdown\n# Examples/);
-    assert.match(prompt.systemBodyText, /````\n`````$/);
+    assert.match(prompt.systemBodyText, /````\n`````\n\n# Output Boundary/);
+    assertSectionOrder(prompt.systemBodyText, ["`````markdown", "quad fence", "`````\n\n# Output Boundary"]);
   });
 });
