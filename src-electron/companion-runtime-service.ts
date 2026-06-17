@@ -34,11 +34,6 @@ export type CompanionRuntimeServiceDeps = {
   updateCompanionSession(session: CompanionSession): Awaitable<CompanionSession>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
   resolveProviderSession?: (session: Session) => Session;
-  resolveProjectContextTextForPrompt?: (
-    session: Session,
-    userMessage: string,
-    sessionMemory: SessionMemory,
-  ) => Awaitable<string | null>;
   getAppSettings: () => AppSettings;
   resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): {
     snapshot: ModelCatalogSnapshot;
@@ -331,13 +326,6 @@ export class CompanionRuntimeService {
     const providerAdapter = this.deps.getProviderCodingAdapter(provider.id);
     const character = buildCompanionCharacter(requestedSession);
     const sessionMemory = buildSessionMemory(requestedSession);
-    const projectContextSession: Session = {
-      ...providerSession,
-      workspacePath: sessionMemory.workspacePath,
-    };
-    const projectContextText = await Promise.resolve(
-      this.deps.resolveProjectContextTextForPrompt?.(projectContextSession, nextMessage, sessionMemory) ?? null,
-    );
     const runningSessionCandidate: CompanionSession = {
       ...requestedSession,
       runState: "running",
@@ -353,7 +341,6 @@ export class CompanionRuntimeService {
         executionWorkspacePath: turnSession.worktreePath,
         sessionMemory,
         projectMemoryEntries: [],
-        projectContextText,
         character,
         providerCatalog: provider,
         userMessage: nextMessage,

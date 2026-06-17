@@ -74,7 +74,7 @@ Mate Core / Bond Profile / Work Style は provider instruction file へ同期し
 論理 prompt では `Character Definition Snapshot` section を system 側に置く。
 通常 session / companion では `Output Boundary` section も system 側に置く。`character-authoring` session では置かない。
 
-`# Session Memory`、`# Project Memory`、`# Character Memory` も coding plane prompt では作らない。
+`# Session Memory`、`# Project Memory`、`# Project Context`、`# Character Memory` も coding plane prompt では作らない。
 
 ### 4.0.0 SingleMate target
 
@@ -95,7 +95,7 @@ Mate Core / Bond Profile / Work Style は provider instruction file へ同期し
   - ユーザーがそのターンで送った指示本文
 - 形式:
   - `# User Input` 見出しの下に入力本文をそのまま置く
-  - Character Definition Snapshot や Project Context の直後でも、ここからがユーザー入力であることを明示する
+  - Character Definition Snapshot や Output Boundary の直後でも、ここからがユーザー入力であることを明示する
 
 ### `# Output Boundary`
 
@@ -125,6 +125,14 @@ Mate Core / Bond Profile / Work Style は provider instruction file へ同期し
 - 保存済み `project_memory_entries` は互換性と管理用途のために残してよい
 - coding plane prompt への最大 3 件注入は停止する
 - 再導入する場合は、ユーザー入力との関連性、重複抑制、token 予算、効果測定を設計し直す
+
+### Project Context
+
+`Project Context` は現在 prompt に注入しない。
+
+- `projectContextText` 用の provider input と runtime resolver hook は持たない
+- audit log / logical prompt に未使用の `# Project Context` section は出さない
+- 再導入する場合は production 配線、provider prompt、audit 表示、テスト名を同じ意図で更新する
 
 ### Character Memory
 
