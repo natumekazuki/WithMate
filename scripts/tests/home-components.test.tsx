@@ -8,6 +8,8 @@ import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
 import { HomeRecentSessionsPanel } from "../../src/home/HomeRecentSessionsPanel.js";
 import { HomeRightPane } from "../../src/home/HomeRightPane.js";
 import type { HomeMonitorEntry } from "../../src/home/home-session-projection.js";
+import type { SessionSummary } from "../../src/session-state.js";
+import type { CompanionSessionSummary } from "../../src/companion-state.js";
 import { HomeMateSetupPanel } from "../../src/mate/MateSetupPanel.js";
 import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
@@ -466,13 +468,79 @@ describe("HomeLaunchDialog", () => {
 
 describe("HomeRecentSessionsPanel", () => {
   const noOp = (..._args: unknown[]) => undefined;
+  const createSessionSummary = (partial: Partial<SessionSummary> & Pick<SessionSummary, "id" | "taskTitle">): SessionSummary => ({
+    status: "idle",
+    updatedAt: "2026-06-17T00:00:00.000Z",
+    provider: "codex",
+    catalogRevision: 1,
+    workspaceLabel: "workspace",
+    workspacePath: "C:/workspace",
+    branch: "main",
+    sessionKind: "default",
+    accessMode: "active",
+    sourceSchemaVersion: 4,
+    characterId: "char-1",
+    character: "Mia",
+    characterIconPath: "",
+    characterThemeColors: { main: "#223344", sub: "#88bbcc" },
+    runState: "idle",
+    approvalMode: "untrusted",
+    codexSandboxMode: "danger-full-access",
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+    customAgentName: "",
+    allowedAdditionalDirectories: [],
+    threadId: "",
+    ...partial,
+  });
+  const createCompanionSummary = (
+    partial: Partial<CompanionSessionSummary> & Pick<CompanionSessionSummary, "id" | "taskTitle">,
+  ): CompanionSessionSummary => ({
+    status: "active",
+    updatedAt: "2026-06-17T00:00:00.000Z",
+    groupId: "group-1",
+    repoRoot: "C:/workspace/repo",
+    focusPath: "",
+    targetBranch: "main",
+    baseSnapshotRef: "refs/withmate/base/1",
+    baseSnapshotCommit: "base-1",
+    selectedPaths: [],
+    changedFiles: [],
+    siblingWarnings: [],
+    allowedAdditionalDirectories: [],
+    runState: "idle",
+    threadId: "",
+    provider: "codex",
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+    approvalMode: "untrusted",
+    codexSandboxMode: "danger-full-access",
+    character: "Mia",
+    characterRoleMarkdown: "",
+    characterIconPath: "",
+    characterThemeColors: { main: "#223344", sub: "#88bbcc" },
+    latestMergeRun: null,
+    ...partial,
+  });
 
-  const renderHomeRecentSessions = (canUsePrimaryFeatures = true) => renderToStaticMarkup(
+  const renderHomeRecentSessions = ({
+    canUsePrimaryFeatures = true,
+    filteredSessionEntries = [],
+    companionSessions = [],
+    normalizedSessionSearch = "",
+    searchText = "",
+  }: {
+    canUsePrimaryFeatures?: boolean;
+    filteredSessionEntries?: React.ComponentProps<typeof HomeRecentSessionsPanel>["filteredSessionEntries"];
+    companionSessions?: CompanionSessionSummary[];
+    normalizedSessionSearch?: string;
+    searchText?: string;
+  } = {}) => renderToStaticMarkup(
     <HomeRecentSessionsPanel
-      filteredSessionEntries={[]}
-      companionSessions={[]}
-      normalizedSessionSearch=""
-      searchText=""
+      filteredSessionEntries={filteredSessionEntries}
+      companionSessions={companionSessions}
+      normalizedSessionSearch={normalizedSessionSearch}
+      searchText={searchText}
       searchIcon={<span />}
       onChangeSearchText={noOp}
       onOpenLaunchDialog={noOp}
@@ -483,7 +551,7 @@ describe("HomeRecentSessionsPanel", () => {
   );
 
   it("canUsePrimaryFeatures false の時は New Session が無効化される", () => {
-    const html = renderHomeRecentSessions(false);
+    const html = renderHomeRecentSessions({ canUsePrimaryFeatures: false });
     const disabledButtons = html.match(/<button class="start-session-button"[^>]*disabled=""/g);
     assert.equal(disabledButtons?.length, 1);
   });
@@ -492,6 +560,39 @@ describe("HomeRecentSessionsPanel", () => {
     const html = renderHomeRecentSessions();
     const newSessionButtons = html.match(/<button class="start-session-button"/g);
     assert.equal(newSessionButtons?.length, 1);
+  });
+
+  it("character authoring session は Character badge で表示する", () => {
+    const html = renderHomeRecentSessions({
+      filteredSessionEntries: [
+        {
+          kind: "agent",
+          session: createSessionSummary({
+            id: "authoring",
+            taskTitle: "Mia の character.md 改善",
+            sessionKind: "character-authoring",
+          }),
+          state: { kind: "neutral", label: "idle" },
+        },
+      ],
+    });
+
+    assert.ok(html.includes("Mia の character.md 改善"));
+    assert.ok(html.includes("session-mode-badge character"));
+    assert.ok(html.includes(">Character<"));
+  });
+
+  it("companion kind label で Companion session を検索できる", () => {
+    const html = renderHomeRecentSessions({
+      companionSessions: [
+        createCompanionSummary({ id: "companion-1", taskTitle: "Review task" }),
+      ],
+      normalizedSessionSearch: "companion",
+      searchText: "companion",
+    });
+
+    assert.ok(html.includes("Review task"));
+    assert.ok(html.includes(">Companion<"));
   });
 });
 

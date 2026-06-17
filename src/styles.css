@@ -1121,6 +1121,11 @@ button:disabled {
   background: rgba(111, 184, 199, 0.14);
 }
 
+.home-page .session-mode-badge.character {
+  border-color: rgba(125, 211, 168, 0.34);
+  background: rgba(125, 211, 168, 0.18);
+}
+
 .home-page .home-session-chip-status.running,
 .home-page .home-session-status.running,
 .home-page .home-monitor-status.running {

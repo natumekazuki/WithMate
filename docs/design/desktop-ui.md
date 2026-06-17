@@ -72,10 +72,11 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - section action として `New Session`
   - resume picker
   - session search input
-    - `taskTitle / workspace`
+    - `taskTitle / workspace / kind label`
     - 部分一致
   - card list は全 session を正本として表示し、storage 既定の `last_active_at DESC` を崩さない
   - `sessionKind === "character-update"` の update 専用 session はこの一覧から除外する
+  - `sessionKind === "character-authoring"` の Character authoring session は通常 session と同じ削除・再開導線へ到達できるよう表示する
   - card 常時表示情報
     - `avatar / taskTitle / runState badge / workspacePath / updatedAt`
     - `taskSummary` は 1 行補助情報として、空なら省略可
