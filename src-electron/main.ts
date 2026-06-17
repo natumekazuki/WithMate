@@ -1603,7 +1603,6 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         taskTitle: session.taskTitle,
       }),
       resolveProjectMemoryEntriesForPrompt: () => [],
-      resolveProjectContextTextForPrompt: () => null,
       createAuditLog: (entry) => ({
         id: 0,
         ...entry,

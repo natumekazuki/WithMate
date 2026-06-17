@@ -37,7 +37,6 @@ export type RunSessionTurnInput = {
   executionWorkspacePath?: string;
   sessionMemory: SessionMemory;
   projectMemoryEntries: ProjectMemoryEntry[];
-  projectContextText?: string | null;
   character?: CharacterProfile;
   providerCatalog: ModelCatalogProvider;
   userMessage: string;
