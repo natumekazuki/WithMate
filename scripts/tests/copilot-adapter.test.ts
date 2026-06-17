@@ -42,7 +42,25 @@ import {
   type RunSessionTurnInput,
   type RunSessionTurnResult,
 } from "../../src-electron/provider-runtime.js";
-import { MATE_MEMORY_GENERATION_OUTPUT_SCHEMA } from "../../src-electron/mate-memory-generation-prompt.js";
+
+const TEST_STRUCTURED_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    memories: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          statement: { type: "string" },
+        },
+        required: ["statement"],
+      },
+    },
+  },
+  required: ["memories"],
+} as const;
 
 function createPartialResult(overrides?: Partial<RunSessionTurnResult>): RunSessionTurnResult {
   return {
@@ -1908,7 +1926,7 @@ describe("CopilotAdapter background structured prompt", () => {
           prompt: {
             systemText: "",
             userText: "extract memory candidates",
-            outputSchema: MATE_MEMORY_GENERATION_OUTPUT_SCHEMA,
+            outputSchema: TEST_STRUCTURED_OUTPUT_SCHEMA,
           },
         }),
         (rawText) => JSON.parse(rawText),

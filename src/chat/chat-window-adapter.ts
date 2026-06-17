@@ -8,6 +8,7 @@ import {
   type MessageArtifact,
 } from "../app-state.js";
 import { type PointerEventHandler, type RefObject, type UIEventHandler } from "react";
+import type { SessionContextPaneProps } from "../session-components.js";
 import type { ChatWindowProps } from "./chat-window.js";
 
 export const chatWindowNoop = () => {};
@@ -16,6 +17,10 @@ type ChatHeaderProps = ChatWindowProps["headerProps"];
 type ChatMessageColumnProps = ChatWindowProps["messageColumnProps"];
 type ChatComposerProps = ChatWindowProps["composerProps"];
 type ChatCompactActionDockProps = ChatWindowProps["compactActionDockProps"];
+
+export function resolveAuxiliaryModeLabel(isAuxiliaryMode?: boolean): string | undefined {
+  return isAuxiliaryMode ? "Auxiliary" : undefined;
+}
 
 type StaticChatCharacterInput = {
   id: string;
@@ -154,7 +159,7 @@ type StaticTextChatCompactActionDockProps = Pick<ChatCompactActionDockProps, "dr
   onExpand?: ChatCompactActionDockProps["onExpand"];
 };
 
-type LiveSessionMessageColumnProps = {
+export type LiveSessionMessageColumnProps = {
   sessionId: string;
   character: ChatMessageColumnProps["character"];
   messages: Message[];
@@ -168,7 +173,7 @@ type LiveSessionMessageColumnProps = {
   liveElicitationRequest: ChatMessageColumnProps["liveElicitationRequest"];
   elicitationActionRequestId: ChatMessageColumnProps["elicitationActionRequestId"];
   liveRunAssistantText: string;
-  hasLiveRunAssistantText: boolean;
+  hasLiveRunAssistantText?: boolean;
   liveRunErrorMessage: string;
   pendingMessageText?: string;
   pendingMessageGroupId?: ChatMessageColumnProps["pendingMessageGroupId"];
@@ -185,25 +190,174 @@ type LiveSessionMessageColumnProps = {
   onQuoteMessageText?: ChatMessageColumnProps["onQuoteMessageText"];
 };
 
-type LiveSessionComposerProps = Omit<
+export type LiveSessionComposerProps = Omit<
   ChatComposerProps,
   | "showAttachmentControls"
   | "showAdditionalDirectoryControls"
   | "showExecutionModeControls"
+  | "showCustomAgentPicker"
+  | "showSkillPicker"
 > & {
   showAttachmentControls?: boolean;
   showAdditionalDirectoryControls?: boolean;
   showExecutionModeControls?: boolean;
+  showCustomAgentPicker?: boolean;
+  showSkillPicker?: boolean;
 };
 
-type LiveSessionCompactActionDockProps = Omit<ChatCompactActionDockProps, "showJumpToBottom"> & {
+export type StaticTextChatComposerCapabilityProps = Partial<
+  Omit<
+    ChatComposerProps,
+    | "draft"
+    | "placeholder"
+    | "composerTextareaRef"
+    | "isRunning"
+    | "composerBlocked"
+    | "isComposerDisabled"
+    | "isSendDisabled"
+    | "composerSendability"
+    | "sendButtonTitle"
+    | "modelOptions"
+    | "selectedModel"
+    | "selectedModelFallbackLabel"
+    | "reasoningOptions"
+    | "selectedReasoningEffort"
+    | "onDraftChange"
+    | "onDraftKeyDown"
+    | "onSendOrCancel"
+    | "onChangeModel"
+    | "onChangeReasoningEffort"
+  >
+>;
+
+const liveSessionComposerCapabilityDefaults = {
+  showAttachmentControls: true,
+  showAdditionalDirectoryControls: true,
+  showExecutionModeControls: true,
+  showCustomAgentPicker: true,
+  showSkillPicker: true,
+} as const;
+
+export const staticTextChatRuntimeComposerCapabilityDefaults = {
+  showAttachmentControls: true,
+  showAdditionalDirectoryControls: true,
+  showExecutionModeControls: true,
+  showCustomAgentPicker: false,
+  showSkillPicker: false,
+} as const;
+
+export type LiveSessionCompactActionDockProps = Omit<ChatCompactActionDockProps, "showJumpToBottom"> & {
   showJumpToBottom: boolean;
 };
 
-type LiveSessionSplitterProps = {
+export type LiveSessionComposerDockPropsInput = Omit<
+  LiveSessionComposerProps,
+  "onCollapse" | "showJumpToBottom"
+> & {
+  actionDockCompactPreview: string;
+  attachmentCount: number;
+  isMessageListFollowing: boolean;
+  onCollapseActionDock: () => void;
+  onExpandActionDock: () => void;
+};
+
+export type LiveSessionSplitterProps = {
   isContextRailResizing: boolean;
   onStartContextRailResize?: PointerEventHandler<HTMLButtonElement>;
 };
+
+export type LiveSessionChatBodyPropsInput = {
+  messageColumn: LiveSessionMessageColumnProps;
+  composer: LiveSessionComposerProps;
+  compactActionDock: LiveSessionCompactActionDockProps;
+  splitter: LiveSessionSplitterProps;
+};
+
+export type LiveSessionContextPanePropsInput = SessionContextPaneProps;
+
+export function buildLiveSessionChatBodyProps(input: LiveSessionChatBodyPropsInput): Pick<
+  ChatWindowProps,
+  "messageColumnProps" | "composerProps" | "compactActionDockProps"
+> & {
+  splitterProps: ReturnType<typeof buildLiveSessionSplitterProps>;
+} {
+  return {
+    messageColumnProps: buildLiveSessionMessageColumnProps(input.messageColumn),
+    composerProps: buildLiveSessionComposerProps(input.composer),
+    compactActionDockProps: buildLiveSessionCompactActionDockProps(input.compactActionDock),
+    splitterProps: buildLiveSessionSplitterProps(input.splitter),
+  };
+}
+
+export function buildLiveSessionComposerDockProps(
+  input: LiveSessionComposerDockPropsInput,
+): {
+  composer: LiveSessionComposerProps;
+  compactActionDock: LiveSessionCompactActionDockProps;
+} {
+  const {
+    actionDockCompactPreview,
+    attachmentCount,
+    isMessageListFollowing,
+    onCollapseActionDock,
+    onExpandActionDock,
+    ...composerInput
+  } = input;
+  const showJumpToBottom = !isMessageListFollowing;
+
+  return {
+    composer: {
+      ...composerInput,
+      showJumpToBottom,
+      onCollapse: onCollapseActionDock,
+    },
+    compactActionDock: {
+      draft: input.draft,
+      actionDockCompactPreview,
+      attachmentCount,
+      isRunning: input.isRunning,
+      pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
+      pendingRunIndicatorText: input.pendingRunIndicatorText,
+      modeLabel: input.modeLabel,
+      isSendDisabled: input.isSendDisabled,
+      showJumpToBottom,
+      sendButtonTitle: input.sendButtonTitle,
+      onExpand: onExpandActionDock,
+      onJumpToBottom: input.onJumpToBottom,
+      onSendOrCancel: input.onSendOrCancel,
+    },
+  };
+}
+
+export function buildLiveSessionContextPaneProps(
+  input: LiveSessionContextPanePropsInput,
+): SessionContextPaneProps {
+  return {
+    taskTitle: input.taskTitle,
+    isHeaderExpanded: input.isHeaderExpanded,
+    activeContextPaneTab: input.activeContextPaneTab,
+    availableContextPaneTabs: input.availableContextPaneTabs,
+    contextPaneProjection: input.contextPaneProjection,
+    latestCommandView: input.latestCommandView,
+    runningDetailsEntries: input.runningDetailsEntries,
+    liveRunReasoningText: input.liveRunReasoningText,
+    backgroundTasks: input.backgroundTasks,
+    companionGroupMonitorEntries: input.companionGroupMonitorEntries,
+    selectedSessionLiveRunErrorMessage: input.selectedSessionLiveRunErrorMessage,
+    isSelectedSessionRunning: input.isSelectedSessionRunning,
+    isCopilotSession: input.isCopilotSession,
+    selectedCopilotRemainingPercentLabel: input.selectedCopilotRemainingPercentLabel,
+    selectedCopilotRemainingRequestsLabel: input.selectedCopilotRemainingRequestsLabel,
+    selectedCopilotQuotaResetLabel: input.selectedCopilotQuotaResetLabel,
+    selectedSessionContextTelemetry: input.selectedSessionContextTelemetry,
+    selectedSessionContextTelemetryProjection: input.selectedSessionContextTelemetryProjection,
+    contextEmptyText: input.contextEmptyText,
+    latestCommandEmptyText: input.latestCommandEmptyText,
+    onToggleHeaderExpanded: input.onToggleHeaderExpanded,
+    onCycleContextPaneTab: input.onCycleContextPaneTab,
+    onOpenCompanionReview: input.onOpenCompanionReview,
+  };
+}
 
 export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColumnProps): ChatMessageColumnProps {
   return {
@@ -220,7 +374,7 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     liveElicitationRequest: input.liveElicitationRequest,
     elicitationActionRequestId: input.elicitationActionRequestId,
     liveRunAssistantText: input.liveRunAssistantText,
-    hasLiveRunAssistantText: input.hasLiveRunAssistantText,
+    hasLiveRunAssistantText: input.hasLiveRunAssistantText ?? input.liveRunAssistantText.length > 0,
     liveRunErrorMessage: input.liveRunErrorMessage,
     pendingMessageText: input.pendingMessageText,
     pendingMessageGroupId: input.pendingMessageGroupId,
@@ -240,10 +394,21 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
 
 export function buildLiveSessionComposerProps(input: LiveSessionComposerProps): ChatComposerProps {
   return {
-    showAttachmentControls: true,
-    showAdditionalDirectoryControls: true,
-    showExecutionModeControls: true,
+    ...liveSessionComposerCapabilityDefaults,
     ...input,
+  };
+}
+
+export function buildStaticTextChatComposerCapabilityProps(
+  props: StaticTextChatComposerCapabilityProps = {},
+): StaticTextChatComposerCapabilityProps {
+  return {
+    showAttachmentControls: false,
+    showAdditionalDirectoryControls: false,
+    showExecutionModeControls: false,
+    showCustomAgentPicker: false,
+    showSkillPicker: false,
+    ...props,
   };
 }
 

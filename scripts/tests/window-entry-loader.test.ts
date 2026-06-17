@@ -30,8 +30,9 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
   await loader.loadDiffEntry(stub.window, "diff#1");
   await loader.loadBootEntry(stub.window);
   await loader.loadChatEntry(stub.window, { kind: "companion", sessionId: "companion 1" });
-  await loader.loadChatEntry(stub.window, { kind: "mate-talk" });
   await loader.loadCompanionMergeReviewEntry(stub.window, "companion 1");
+  await loader.loadCharacterEditorEntry(stub.window, "char 1");
+  await loader.loadCharacterEditorEntry(stub.window);
 
   assert.deepEqual(stub.calls, [
     { kind: "url", value: "http://localhost:5173?mode=settings" },
@@ -39,8 +40,9 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
     { kind: "url", value: "http://localhost:5173/diff.html?token=diff%231" },
     { kind: "url", value: "http://localhost:5173/boot.html" },
     { kind: "url", value: "http://localhost:5173/session.html?companionSessionId=companion%201&mode=companion" },
-    { kind: "url", value: "http://localhost:5173/session.html?mode=mate-talk" },
     { kind: "url", value: "http://localhost:5173/review.html?companionSessionId=companion%201&view=merge" },
+    { kind: "url", value: "http://localhost:5173/character-editor.html?characterId=char%201" },
+    { kind: "url", value: "http://localhost:5173/character-editor.html" },
   ]);
 });
 
@@ -49,11 +51,6 @@ test("buildChatEntrySearch は chat mode ごとの session.html query を組み�
   assert.equal(
     buildChatEntrySearch({ kind: "companion", sessionId: "companion 1" }),
     "?companionSessionId=companion%201&mode=companion",
-  );
-  assert.equal(buildChatEntrySearch({ kind: "mate-talk" }), "?mode=mate-talk");
-  assert.equal(
-    buildChatEntrySearch({ kind: "mate-talk", launch: { provider: "copilot", model: "claude-sonnet-4.5", reasoningEffort: "medium" } }),
-    "?mode=mate-talk&provider=copilot&model=claude-sonnet-4.5&reasoningEffort=medium",
   );
 });
 
@@ -68,8 +65,8 @@ test("WindowEntryLoader は production build で loadFile する", async () => {
   await loader.loadHomeEntry(stub.window, "settings");
   await loader.loadBootEntry(stub.window);
   await loader.loadChatEntry(stub.window, { kind: "companion", sessionId: "companion 1" });
-  await loader.loadChatEntry(stub.window, { kind: "mate-talk" });
   await loader.loadCompanionMergeReviewEntry(stub.window, "companion 1");
+  await loader.loadCharacterEditorEntry(stub.window, "char 1");
 
   assert.deepEqual(stub.calls, [
     { kind: "file", value: "F:\\dist\\index.html", search: undefined },
@@ -82,13 +79,13 @@ test("WindowEntryLoader は production build で loadFile する", async () => {
     },
     {
       kind: "file",
-      value: "F:\\dist\\session.html",
-      search: "?mode=mate-talk",
+      value: "F:\\dist\\review.html",
+      search: "?companionSessionId=companion%201&view=merge",
     },
     {
       kind: "file",
-      value: "F:\\dist\\review.html",
-      search: "?companionSessionId=companion%201&view=merge",
+      value: "F:\\dist\\character-editor.html",
+      search: "?characterId=char%201",
     },
   ]);
 });

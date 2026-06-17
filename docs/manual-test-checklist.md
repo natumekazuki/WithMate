@@ -20,6 +20,21 @@
 npm run electron:start
 ```
 
+## V5 Character Core Release Gate
+
+| ID | 領域 | 手順 | 期待結果 |
+| --- | --- | --- | --- |
+| V5C-001 | Character 0 件 fallback | Character catalog が 0 件の状態で Home を起動し、`New Session` と Companion 起動 dialog を開く | 起動導線は SingleMate / Mate 未作成 gate に戻らず、neutral fallback の Character 表示で session / companion を開始できる |
+| V5C-002 | Character A / B 登録 | Home の `Characters` から `Create Character` を押し、Character Editor Window で Character A と Character B を作成して name / description / icon / theme / `character.md` を保存する | Home の Characters list に A / B が表示され、Editor Window を開き直しても metadata と `character.md` が保持される |
+| V5C-003 | Default Character | Character Editor Window で Character B を default に設定し、Home の `New Session` を開く | Character selector の初期選択が B になり、Character name / icon / theme preview が selector と作成後の session summary に反映される |
+| V5C-004 | New Session explicit selection | `New Session` で Character A を明示選択して session を作成する | 作成された Session Window と Home summary は Character A の name / icon / theme を表示し、B へ default を戻しても既存 session の表示は A のまま残る |
+| V5C-005 | Companion explicit selection | Companion 起動で Character A / B をそれぞれ選んで companion session を作成する | Companion session summary と Companion Review UI に選択した Character の name / icon / theme が反映される |
+| V5C-006 | Snapshot boundary | Character A で session を作成した後、Character Editor Window で Character A の `character.md` を別内容へ変更し、既存 session で 1 turn 実行する | provider prompt は session 作成時点の saved snapshot を使い、現在の catalog 内容へ置き換わらない |
+| V5C-007 | Prompt boundary | `character.md` と `character-notes.md` の両方を持つ Character で 1 turn 実行し、Audit Log の `Logical Prompt` / `Transport Payload` を確認する | `character.md` snapshot は system 側に入る。`character-notes.md`、Memory / Growth history、provider instruction sync 由来の Character 書き込みは常設注入されない |
+| V5C-008 | Markdown fence boundary | `character.md` に triple backtick と quadruple backtick の code fence を含め、session を作成して 1 turn 実行する | Character Definition Snapshot section の外側 fence が壊れず、definition 全体が 1 つの markdown block として扱われる |
+| V5C-009 | Legacy compatibility | V5 Core 前に作られた session、または `CharacterRuntimeSnapshot` を持たない session を開いて 1 turn 実行する | session は壊れず実行できる。snapshot が無い session は Character system prompt を空として扱い、messages / audit / approval / thread は従来通り動く |
+| V5C-010 | Summary performance boundary | Character A / B の `character.md` を大きめにして複数 session / companion session を作り、Home session list と Companion summaries を表示する | summary 表示は `character.md` 本文を読み込む必要がなく、一覧表示で大きな定義本文が UI cache や summary payload に出ない |
+
 ## 項目
 
 | ID | 領域 | 手順 | 期待結果 |
@@ -27,38 +42,31 @@ npm run electron:start
 | MT-001 | Home 起動 | `npm run electron:start` でアプリを起動する | Home Window が表示される |
 | MT-001A | Home narrow width guardrail | Home Window を最小幅近くまで縮める | single-column layout へ倒れても `Recent Sessions` と right pane toggle / `Settings` 導線が残り、操作不能にならない |
 | MT-002 | Home 一覧 | session が 0 件の状態で起動する | 空状態メッセージが表示される |
-| MT-003 | Your Mate / Mate profile | Mate profile が未設定の状態で起動する | `Your Mate` に Mate profile 設定導線と `MateTalk` 起動導線が表示され、複数 mate の list / picker は出ない |
-| MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `Session Window` / `Coding Agent Providers` / `Provider Instruction Sync` / `Skill Roots` / `Memory Extraction` / `Character Reflection` / `Model Catalog` が既存値で表示される |
+| MT-003 | Home Characters panel | Home 右ペインの `Characters` を開く | Character list と `Create Character` が表示され、`Your Mate` tab / panel / `Mate を編集` は出ない |
+| MT-003A | Character Editor Window create | Home の `Characters` で `Create Character` を押す | 独立した Character Editor Window が create mode で開き、Profile / `character.md` / `character-notes.md` / Preview を編集できる |
+| MT-003B | Character Editor Window edit | Home の Character card または `Edit` を押す | 該当 Character の Editor Window が edit mode で開き、同じ Character を再度開いた場合は既存 window が前面に出る |
+| MT-003C | Character editor validation / notes boundary | Character Editor Window で invalid `character.md` と `character-notes.md` を編集する | 保存前 validation issue が読め、`character-notes.md` は runtime prompt に常設注入しない補助メモであることが表示される |
+| MT-003D | Character editor archive / dirty close | 既存 Character を編集し、未保存のまま close と archive をそれぞれ試す | close は未保存変更の破棄確認を出し、archive は destructive confirmation を挟む。archive 後は Home list と launch selector から消える |
+| MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `Session Window` / `Default Microcopy` / `Coding Agent Providers` / `Diagnostics` / `Model Catalog` が既存値で表示され、Character editor と `Mate Reset` は出ない |
 | MT-004H | Settings window shell layout | `Settings Window` を wide 幅で開き、縦に長い内容まで scroll する | panel は window 幅に追従し、`Home / Close` の header は出ない。本文は inner scroll で最後まで到達でき、scrollbar が shell の角丸に隠れない |
 | MT-004A | Settings provider row layout | `Settings Window` を開いて `Coding Agent Providers` を確認する | provider 名が左、checkbox が右の row で揃って見え、どの provider を on/off しているか即判別できる |
-| MT-004B | Memory extraction settings | `Settings Window` の `Memory Extraction` を確認する | provider ごとに `Model` / `Reasoning Depth` / `Output Tokens Threshold` が表示され、現在の model catalog に沿った選択肢だけが出る |
-| MT-004C | Character reflection settings | `Settings Window` の `Character Reflection` を確認する | app-wide の `Cooldown Seconds` / `Min Char Delta` / `Min Message Delta` と、provider ごとの `Model` / `Reasoning Depth` が表示される。provider 選択肢は現在の model catalog に沿ったものだけが出る |
-| MT-004C1 | Character reflection trigger settings save | `Character Reflection` の `Cooldown Seconds` / `Min Char Delta` / `Min Message Delta` を変更して `Save Settings` し、Settings を開き直す | 変更した trigger 値が保持される。`0` や極端な値を入れて保存した場合も clamp 後の値で再表示される |
-| MT-004D | Memory 管理専用画面起動 | Home 右ペインの `Memory` を押す | 独立した `Memory Management Window` が開き、保存済み Memory snapshot の読込完了までは loading が出る |
-| MT-004G | Cursor-based window placement | cursor を画面端寄りへ移動してから `Settings Window`、`Memory Management Window`、`Mate Editor Window`、`Session Window`、`Diff Window` を新規に開く | `Home Window` 以外の新規 window は cursor がある display 付近に開き、workArea 外へはみ出さない。既に開いている window を再度開いた時は位置を変えず focus だけが前面へ来る |
-| MT-004E | Memory 管理一覧 / delete | `Memory Management Window` を開き、Session / Project / Mate Memory が少なくとも 1 件ずつある状態で `Delete` を実行する | `Session / Project / Mate Memory` の件数、一覧、`Reload Memory` が表示される。対象 domain の item が消え、最後の `Project / Mate Memory` entry を削除した時は空 scope も残らない。reload 後も再出現しない |
-| MT-004F | Memory 管理 search / filter | `Memory Management Window` で search text、domain tab、status / category、sort を切り替える | search は title / detail / keyword / workspace を横断して絞り込める。domain は `All / Session / Project / Mate` tab で切り替えられ、選択中 section だけが出る。domain に応じて不要な filter は disabled になり、sort は更新日時順の切替が効く |
+| MT-004G | Cursor-based window placement | cursor を画面端寄りへ移動してから `Settings Window`、`Session Window`、`Diff Window`、`Session Monitor Window` を新規に開く | `Home Window` 以外の新規 window は cursor がある display 付近に開き、workArea 外へはみ出さない。既に開いている window を再度開いた時は位置を変えず focus だけが前面へ来る |
 | MT-007 | Settings save | Session 表示設定または coding provider 設定を変更して `Save Settings` を押す | 保存成功メッセージが表示され、再度開いても保持される |
 | MT-008 | Model catalog export | Settings の `Model Catalog` から `Export Models` を押す | catalog JSON が保存される |
 | MT-009 | Model catalog import | Settings の `Model Catalog` から `Import Models` を実行する | import 成功メッセージが表示され、active revision が更新される |
 | MT-013 | New Session 起動 | Home の `New Session` を押す | launch dialog が開く |
 | MT-013A | New Session dialog keyboard | `New Session` dialog を開き、初期 focus、`Tab` / `Shift+Tab`、`Escape`、provider chip の矢印キーを試す | open 時に title input へ focus が入り、focus は dialog 内で循環する。`Escape` で閉じ、provider chip は矢印キーで切り替えられる |
-| MT-014 | New Session 作成 | title と workspace と provider を選び `Start New Session` を押す | SingleMate の現在値を使って Session Window が開き、Home の session 一覧に追加され、選んだ provider で session が作られ、approval 初期値は `安全寄り` になる |
+| MT-014 | New Session 作成 | title、workspace、provider、Character を選び `Start New Session` を押す | 選択した Character snapshot を使って Session Window が開き、Home の session 一覧に追加され、選んだ provider で session が作られ、approval 初期値は `安全寄り` になる。Character が 0 件の場合は neutral fallback を使う |
 | MT-014A | New Session provider availability | `Coding Agent Providers` で一部 provider を無効化した後に `New Session` を開く | launch dialog の provider 候補には enabled provider だけが出る。0 件なら empty state が出て `Start New Session` は disabled のままになる |
-| MT-014B | MateTalk launch | Home 右ペインの `Your Mate` から `MateTalk` を起動する | MateTalk は Home inline chat では開かれず、Session Window の chat layout mode として別 window で開始される |
 | MT-015 | Session 実行 | Session Window の textarea に入力して送信する | user message が追加され、pending と live activity が表示される |
 | MT-015A | Copilot basic turn | provider を `GitHub Copilot` にした session を作成し、text-only の prompt を 1 回送る | assistant response が返り、Session が `idle` へ戻る。添付なしなら Codex と同じ Session UI で 1 turn 完了できる |
-| MT-015A1 | Copilot mate prompt separation | provider を `GitHub Copilot` にした session で mate 指示を有効にした 1 turn を実行し、その後 `Audit Log` を開く | `Logical Prompt` には mate 指示を含む論理合成が残り、`Transport Payload` では `session.systemMessage` と `session.send.prompt` が分離して見える |
+| MT-015A1 | Copilot Character prompt separation | provider を `GitHub Copilot` にした Character snapshot 付き session で 1 turn 実行し、その後 `Audit Log` を開く | `Logical Prompt` には選択 Character の `character.md` snapshot が system 側に入り、`Transport Payload` では `session.systemMessage` と `session.send.prompt` が分離して見える |
 | MT-015B | Copilot file / folder context | provider を `GitHub Copilot` にした session で workspace 内 file と folder を `@path` で参照して 1 turn 実行する | assistant response が返り、Copilot 側へ file / folder attachment が渡る。workspace 外 path でも session が失敗せず、少なくとも turn 自体は継続できる |
 | MT-015C | Copilot image via Image button | provider を `GitHub Copilot` にした session で `Image` ボタンから画像を選んで 1 turn 実行する | `Image` ボタンが利用でき、選んだ画像は Copilot 側へ file attachment として渡される |
 | MT-015D | Additional directory allowlist | Session Window の composer toolbar から `Add Directory` で workspace 外ディレクトリを追加し、その配下の file または folder を `@path` で添付して 1 turn 実行する | 追加前は composer preview で workspace 外 path が拒否される。追加後は添付でき、`changed files / diff` の監視対象にも入る |
 | MT-015E | Copilot premium requests strip | provider を `GitHub Copilot` にした session を開く | 右 pane の `Latest Command` 下に `Premium Requests` strip が出て、残量が表示される。未取得時は `unavailable` 表示でもよい |
 | MT-015F | Copilot context usage details | Copilot session で 1 turn 実行し、右 pane の `Context` を開く | `current / limit / messages / system / conversation / reset` が開いた時だけ表示される。閉じた状態では右 pane の面積をほぼ消費しない |
 | MT-015H | Copilot background tasks snapshot | Copilot session で background agent または detached shell を起動する turn を実行する | turn 完了後も right pane に `Tasks` tab が現れ、`agent / shell` の running / completed / failed が見える。Codex session ではこの tab は出ない |
-| MT-015G | Memory生成 tab auto switch | memory extraction が走る session を作り、右 pane を観察する | background memory extraction が `running` になった時だけ `Memory生成` 面へ自動切り替わる。command 実行中は `Latest Command` が優先される |
-| MT-015H | Memory生成 details content | Session Memory または Mate Memory が更新される session を実行し、right pane の `Memory生成` で `Details` を開く | `trigger / model / reasoning` に加えて、更新された field や entry 内容が確認できる |
-| MT-015I | Manual Session Memory generation | idle の Session Window で right pane を `Memory生成` へ切り替え、`Generate Memory` を押す | `Session Memory extraction` が `trigger: manual` で走る。完了後は summary / details が更新される。button は `Memory生成` 表示中だけ出て、switcher の下段へ回る |
-| MT-015J | Session close no auto extraction | Session Memory を持つ idle session を開いて閉じ、会話更新なしで再度開く | close 直後に `Memory生成` が自動実行されない。会話増分が無ければ `SessionStart` 独り言も重複生成されない |
 | MT-016 | Session 実行キャンセル | 実行中に `Cancel` を押す | 実行が止まり、session は `idle` に戻り、Audit Log に `CANCELED` が残る |
 | MT-017 | Approval / Model / Depth | idle 状態の Session Window で approval / model / depth を変更する | approval は `自動実行 / 安全寄り / プロバイダー判断` で表示され、選択値が保存され、再度開いても保持される |
 | MT-017A | Copilot approval prompt | provider を `GitHub Copilot`、approval を `プロバイダー判断` にした session で shell または write 承認が必要な turn を実行する | pending bubble 内に approval card が出て、`今回だけ許可 / 拒否` を押すと run が再開される。read-only request では card は出ない |
@@ -66,28 +74,24 @@ npm run electron:start
 | MT-017C | Stale thread internal retry | provider 側で thread / session not found または expired 相当を再現できる session を用意して 1 turn 送る | renderer からの再送なしで同一 turn 内の internal retry だけが走り、user / assistant message と audit log record は 1 件ずつに留まる。meaningful partial が無い時だけ回復し、回復後は新 thread で継続できる |
 | MT-017D | Copilot elicitation prompt | provider を `GitHub Copilot` にした session で `elicitation.requested` を返す turn を実行する | pending bubble 内に form または URL card が出て、`送信 / 拒否 / 閉じる` が使える。form では required field 未入力時に alert が出て、`accept / decline / cancel` に応じて run が再開または終了する |
 | MT-018 | Audit Log | expanded header の `Audit Log` を押す | 1 turn 1 record の監査ログが閲覧でき、approval 表示は provider-neutral wording になる。prompt 表示は `Logical Prompt` と `Transport Payload` に分かれる |
-| MT-018D | Background Audit Log refresh | Session Memory extraction または Character Reflection を走らせた状態で `Audit Log` を開いたまま background task 完了まで待つ | `Background` タブの該当 entry が再描画され、reload や session 切替をしなくても response / error / raw items の completed 値が見える |
-| MT-018E | Background timeout settings persistence | Home の `Settings` で provider ごとの `Memory Extraction` / `Character Reflection` の `Timeout Seconds` を変更して保存し、開き直す | timeout 設定が provider ごとに保持され、再読込後も同じ値が表示される |
 | MT-018C | Audit Log modal keyboard | `Audit Log` を開き、`Tab` / `Shift+Tab` と `Escape` を試す | focus は overlay 内で循環し、`Escape` で閉じる |
 | MT-018A | Copilot audit log minimum | Copilot session で 1 turn 実行後に `Audit Log` を開く | `Logical Prompt` と `Transport Payload`、assistant text、provider metadata、bounded raw item summaries が保存される。大きな text payload は preview と truncation metadata になり、operations は command が無い turn では空でもよい |
 | MT-018B | Copilot Details / Diff | Copilot session で file 変更を伴う turn を 1 回実行し、assistant bubble 右上の details icon を押す | `Changed Files` は 1 ブロックで default closed、`Run Checks` は即時表示、`operationTimeline` は item ごとに default closed で表示される。差分がある file では `Changed Files` を開いて `Open Diff` から split diff を開ける |
 | MT-019 | Diff | artifact の `Open Diff` を押し、必要なら `Open In Window` も押す | inline diff と Diff Window の両方で split diff が開く |
 | MT-019A | Diff keyboard scroll | inline diff または `Diff Window` を開き、`Before / After` pane head / body へ focus して矢印キー、`PageUp` / `PageDown`、`Home` / `End` を試す | focus ring が見え、keyboard だけで縦横 scroll できる。左右 pane の同期も崩れない |
 | MT-019B | Diff narrow width guardrail | `Diff Window` を最小幅近くまで縮める | `Before / After` が縦 stack に切り替わり、各 pane の横 scroll は維持される。狭幅でも内容を読める |
-| MT-020 | Mate Profile persistence | Mate profile を作成 / 編集 / 削除する | `mate/` 相当の保存内容が Home と Session に反映される |
-| MT-020A | Mate Profile session copy persistence | Mate Editor の `Session Copy` を編集して保存し、editor を開き直す | 各 slot の文言が保持され、再読込後も同じ値が表示される |
-| MT-020B | Mate Profile session copy list edit | Mate Editor の `Session Copy` で `+` と `×` を使って候補を追加・削除する | session-copy tab 自体が card 内でスクロールし、各 slot は複数候補を行単位で保持したまま保存できる |
-| MT-020C | Mate Profile update workspace open | Mate Editor で既存 mate を開き、footer の `Update Workspace` を押す | `Mate Update Window` が開き、mate 名、workspace path、provider 選択、`Start Update Session`、`Extract Memory`、`Copy` が表示される |
-| MT-020D | Mate update session start | `Mate Update Window` で provider を選んで `Start Update Session` を押す | mate directory を workspace にした Session が作成され、選んだ provider に応じて `AGENTS.md` または `copilot-instructions.md` が workspace に生成されてから `Session Window` が開く |
-| MT-020E | Mate Profile memory extract helper | `Mate Update Window` で `Extract Memory` を押し、結果を `Copy` する | mate memory entries 由来の grouped markdown が read-only textarea に表示され、`Copy` で clipboard へコピーできる |
-| MT-021 | Mate Editor title theme | Home から Mate Editor を開く | header title の文字色が現在の mate `main` 色で表示される |
+| MT-020 | Character Profile persistence | Character Editor Window で name / description / icon / theme を編集して保存する | Home card、New Session selector、Editor Window の再読込後表示に同じ値が反映される |
+| MT-020A | Character definition persistence | Character Editor Window の `character.md` を編集して保存し、editor を開き直す | `character.md` が保持され、次に作成する session / companion の snapshot に保存後内容が使われる |
+| MT-020B | Character notes persistence | Character Editor Window の `character-notes.md` を編集して保存し、editor を開き直す | notes は保持されるが、runtime prompt preview と Audit Log の prompt には常設注入されない |
+| MT-020C | Character import replace | Character Editor Window の `character.md` で import / replace を実行する | import 後は保存前 draft として表示され、validation が走り、保存するまで persisted detail は変わらない |
+| MT-021 | Character Editor title theme | Home から Character Editor Window を開く | header / active tab / preview swatch に Character theme が限定的に反映され、文字が背景に埋もれない |
 | MT-022 | Session theme accent | Session Window を開く | header title、assistant / pending bubble、composer settings、`Send / Cancel`、Details 展開後の artifact block に mate theme の accent が反映され、`user-bubble` は neutral tone を維持する |
 | MT-023 | Diff theme accent | Session から Diff を開く | `titlebar / subbar / pane header` に mate theme の薄い accent が反映され、`Before / After` の文字が背景色に埋もれず読める |
-| MT-023AA | Theme contrast guard | 極端に明るい / 暗い mate `main` 色をそれぞれ設定し、Home card、Mate Editor title、Session title、Diff titlebar を確認する | 前景色は WCAG AA 基準の contrast ratio を満たす dark / light 側へ自動で切り替わり、背景に埋もれない |
+| MT-023AA | Theme contrast guard | 極端に明るい / 暗い Character `main` 色をそれぞれ設定し、Home card、Character Editor title、Session title、Diff titlebar を確認する | 前景色は WCAG AA 基準の contrast ratio を満たす dark / light 側へ自動で切り替わり、背景に埋もれない |
 | MT-023A | Session wide layout baseline | `1920x1080` 前後の幅で Session Window を開く | 通常 state では左が最上端から `message list + Action Dock`、右が `title handle + Latest Command` の 2 分割で表示され、right pane は下端まで伸びる |
 | MT-023B | Session splitter resize | wide desktop 状態で左右境界をドラッグする | message list 面と `Latest Command` pane の幅が追従し、極端に寄せても chat の最小可読幅と右 pane の最小幅を下回らない |
 | MT-023C | Session action dock baseline | Session Window を開き、textarea / attachment / skill / approval / model / depth / `Send` の位置関係を見る | これらは message list と同じ左列幅の `Action Dock` にまとまり、expanded 時だけ full editor と設定群が表示される。`File / Folder / Image` は attachment group、`Skill` は別ボタンとして区別される |
-| MT-023C1 | Session narrow layout reachability | 幅 `1400px` 前後まで狭めた Session Window を開く | `message list + Action Dock` の塊の下に right pane が縦 stack で残り、`Latest Command / Memory生成 / 独り言` へ到達できる。狭幅でも right pane が失われない |
+| MT-023C1 | Session narrow layout reachability | 幅 `1400px` 前後まで狭めた Session Window を開く | `message list + Action Dock` の塊の下に right pane が縦 stack で残り、`Latest Command` と provider に応じた `Tasks` / `Context` へ到達できる。狭幅でも right pane が失われない |
 | MT-023C2 | Session minimum width guardrail | Session Window を最小幅近くまで縮める | `message list + Action Dock` と right pane の縦 stack が維持され、scroll すれば両方へ到達できる。最小幅でも window が不自然に固定されない |
 | MT-023D | Session header collapsed state | Session Window を開いて right pane 上端を見る | 通常 state では right pane 上部に title だけの handle が表示され、左列の `message list + Action Dock` は window 最上端から始まる |
 | MT-023D1 | Session header expanded state | collapsed handle を押して header を展開する | header が左端まで伸びた full-width strip として表示され、`Rename / Audit Log / Terminal / Delete` が常時見える。`Close` と `More` は出ない |
@@ -98,13 +102,11 @@ npm run electron:start
 | MT-023E1 | Session action dock auto close | Settings で `送信後に Action Dock を自動で閉じる` を ON にした状態で Session Window から通常送信する。続けて OFF にして同じ操作を行う | ON の時は送信直後に `Action Dock` が compact へ戻る。OFF の時は expanded のまま残る。retry banner や picker など force-expanded 条件がある時は ON でも閉じない |
 | MT-023F | Session action dock forced expand | retry banner、skill picker、`@path` 候補、blocked feedback のいずれかが出る状態を作る | その間は `Action Dock` が compact に落ちず、必要な操作要素が隠れない |
 | MT-024 | Latest command running state | `command_execution` を含む run を実行する | 右 pane に実行中または直前の command 1 件だけが表示され、raw command、status、source が読める |
-| MT-024A | Right pane tab switch | Session Window の右 pane を確認し、`LatestCommand / Memory生成 / 独り言` を手動で切り替える | 3 つの tab button が見え、手動切り替えで各 panel が入れ替わる |
+| MT-024A | Right pane tab switch | Session Window の右 pane を確認し、`Latest Command` と provider に応じた `Tasks` / `Reasoning` / `Context` 表示を切り替える | Memory 生成や独り言の tab は出ず、current session の command / task / context 観測面だけが表示される |
 | MT-025 | Latest command terminal state | completed / failed / canceled の run をそれぞれ確認する | run 完了後も right pane に直近 run の最後の command が残り、status が terminal state に応じて変わる |
 | MT-026 | Latest command visibility with assistantText | assistantText streaming と `command_execution` が同時にある run を実行する | pending bubble は本文だけを表示し、right pane は command 1 件だけを表示する。command 一覧が会話本文を押し流さない |
 | MT-027 | Latest command pre-command empty state | run 開始直後でまだ `command_execution` が来ていない状態を観察する | pending bubble に実行中 indicator が出て、right pane は `最初の command を待っています。` の empty state を表示する |
 | MT-027A | Mate session copy | `Session Copy` を設定した mate で session を開き、pending indicator、retry banner、`Latest Command` empty、`Changed Files` empty、`Context` empty を確認する | 設定した slot だけが差し替わり、`{name}` は mate 名へ置換される。未設定 slot は bland default copy のまま残る |
-| MT-027C | Monologue recent stream | `独り言` tab を開いて、`SessionStart` または文脈増加後の monologue を確認する | background state が表示され、完了後は recent monologue が session `stream` から新しい順で見える。会話更新なしの reopen では同じ monologue を重複生成しない |
-| MT-027D | Monologue trigger settings effect | `Character Reflection` の trigger 値を軽めに設定した session で短い会話を 2〜3 往復行う | `context-growth` の独り言と Mate Memory 更新が、保存した `cooldown / char delta / message delta` に従って以前より早く発火する |
 | MT-027B | Mate session copy variation | 同じ slot に 2 つ以上の候補を入れた mate で SessionWindow を開き直す、または状態を作り直す | 候補から 1 つが選ばれる。表示中に再描画だけで文言が頻繁に入れ替わらない |
 | MT-028 | Live progress pending indicator persistence | run 開始直後から assistantText streaming 開始後まで pending bubble を観察する。可能なら本文と right pane が同時に見える run も確認する | 本文が出始めても `runState === "running"` の間は先頭の実行中 indicator が残り、mate 名が取れる時は `<mate名>が…` の形、取れない時は主語なしの一般化表現で表示される。`runState !== "running"` になった時点で indicator が消える |
 | MT-029 | Latest command details collapse | command output を伴う run を実行する | right pane では raw command が常時表示され、stdout / stderr 相当は `Details` を開いた時だけ見える |
@@ -136,9 +138,9 @@ npm run electron:start
 | MT-052 | Home session badge precedence / sort | Home に `status === "running"`、`runState === "running"`、`runState === "interrupted"`、`runState === "error"`、non-active session が混在する状態を作る | `running` が最優先、次に `interrupted`、次に `error`、それ以外は neutral badge で card に残る。card 並びは active state 優先へ再ソートされず、storage 既定の `last_active_at DESC` を保つ |
 | MT-053 | Home monitor open session truth source / search sync | 複数 session を用意し、そのうち一部だけ `SessionWindow` を開く。Home 右ペインを `Session Monitor` にして、続けて session search で一部 session だけに絞り込む | monitor panel は open な `SessionWindow` を持つ session だけを出し、`実行中` と `停止・完了` に分かれる。`interrupted` / `error` / neutral は `停止・完了` 側へ badge 付きで残る。検索結果から外れた session は `Recent Sessions` card と monitor row の両方から消える |
 | MT-054 | Home monitor open / close follow | Home を開いたまま session card から `SessionWindow` を開き、続けて対象 window を閉じる。可能なら複数 session で繰り返す | `SessionWindow` を開いた session は monitor に追加され、閉じた session は monitor から消える。Home 再読み込みなしで右ペイン表示が追従する |
-| MT-055 | Home right pane segmented toggle / initial state | Home を起動し、右ペイン上部の切替 UI を確認した後、`Session Monitor` / `Your Mate` を相互に切り替える | 起動時は `Session Monitor` が選択済みで、right pane には片方だけが表示される。segmented toggle だけで現在選択中が見分けられ、`Your Mate` 選択時は SingleMate の要約、Mate profile 設定導線、`MateTalk` launcher が表示され、複数 mate の list / picker は出ない |
+| MT-055 | Home right pane segmented toggle / initial state | Home を起動し、右ペイン上部の切替 UI を確認した後、`Session Monitor` / `Characters` を相互に切り替える | 起動時は `Session Monitor` が選択済みで、right pane には片方だけが表示される。segmented toggle だけで現在選択中が見分けられ、`Characters` 選択時に Character list / Create が出る |
 | MT-056 | Home session empty / no-result と monitor empty state | session 0 件の状態で Home を開き、その後 session を作成して `SessionWindow` を開かないケース、さらに search で 0 件になる条件も試す | session 0 件では `Recent Sessions` に空状態メッセージと `New Session` 導線が見える。open な `SessionWindow` が 0 件なら monitor 側は説明文ではなく短い empty state を出す。search 0 件では `一致するセッションはないよ。` が出て、monitor 側も同じ検索条件に追従した no-result 表示になる |
-| MT-057 | Home right pane heading dedupe | Home を開いて `Session Monitor` / `Your Mate` を切り替え、right pane の先頭付近を確認する | active pane は segmented toggle だけで判別でき、pane 内トップに `Session Monitor` / `Your Mate` の重複 heading は出ない。`Your Mate` 側では Mate profile 設定導線と `MateTalk` launcher が残る |
+| MT-057 | Home right pane heading dedupe | Home を開いて `Session Monitor` / `Characters` を切り替え、right pane の先頭付近を確認する | active pane は segmented toggle だけで判別でき、pane 内トップに `Session Monitor` / `Characters` の重複 heading は出ない。Characters 側に legacy MateTalk / Mate editor 導線は出ない |
 | MT-058 | Home monitor scroll / CSS no-bleed | monitor 対象になる open session を増やして right pane を縦にあふれさせた後、Home でスクロール挙動を確認する。続けて Session Window を開いて pending / retry banner / composer 周辺の既存表示も見る | `SessionMonitor` は right pane 内で自然に縦スクロールし、wrapper 全体が伸び続けない。Home 専用の 2 カラム / right pane toggle / monitor 用 CSS が Session Window へ波及せず、Session 側の既存レイアウトと配色が退行しない |
 | MT-058A | Monitor Window open | Home の `Monitor Window` を押す | 細く縦長の `Session Monitor Window` が開き、Home とは独立した window として表示される |
 | MT-058B | Monitor Window always-on-top | `Session Monitor Window` を開いたまま別の通常 window を前面に出す | monitor window が最前面を維持し、`Home` button を押すと通常の `Home Window` を前面へ戻せる |
@@ -146,11 +148,10 @@ npm run electron:start
 | MT-059 | New Session approval default | Home から `New Session` dialog を開き、新規 session を作成する | session 作成直後の approval 初期値が `safety` で保存され、UI 表示は `安全寄り` になる |
 | MT-060 | provider-neutral approval UI | Session Window の composer approval chip、artifact `Run Checks`、`Audit Log` overlay を見比べる | approval がすべて `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording で揃う |
 | MT-061 | legacy approval normalize | legacy DB または既存 row に `never / untrusted / on-request / on-failure` を含む session / audit log を読み込む | session approval chip、Audit Log、artifact `Run Checks` がそれぞれ `allow-all / safety / provider-controlled` 相当へ normalize され、表示は provider-neutral wording になる |
-| MT-062 | Skill Root settings | Home の `Settings` で provider ごとの `Skill Root` を入力または `Browse` で選び、`Save Settings` して再度開く | skill root path が保存され、provider ごとに保持される |
+| MT-062 | Settings provider empty state | provider 0 件または model catalog 読み込み失敗の状態で `Settings Window` を開く | `Coding Agent Providers` section は消えず、catalog unavailable / no providers の empty state が表示される |
 | MT-063 | Skill picker と挿入 | Session Window の composer 上部にある `Skill` を開き、候補を選ぶ | skill 候補が dropdown で表示され、選択すると Codex では `$skill-name`、Copilot では skill directive が composer 先頭へ挿入される |
 | MT-064 | Skill picker empty state | skill が 0 件の session で `Skill` を開く | 空状態メッセージが出て、textarea の通常入力や送信導線は固まらない |
 | MT-065 | Copilot custom agent picker | provider を `GitHub Copilot` にした session で `Agent` を開き、workspace `.github/agents` または `~/.copilot/agents` にある custom agent を選ぶ | `user-invocable: true` の custom agent だけが dropdown に出る。同名なら workspace が優先され、選択後の turn では Copilot session config に反映される |
 | MT-066 | Copilot selected agent visibility | provider を `GitHub Copilot` にした session で custom agent を選択し、composer の `Agent` ボタンを見る | `Agent` ボタン自体が現在値を表示し、`Default Agent` と custom agent 名を見分けられる |
-| MT-067 | Window error recovery | Home / Session / Mate Editor / Diff のいずれかで renderer render error を再現する | window-level fallback が出て、`再試行` で再描画を試せる。復帰しない場合も `再読み込み` が使える |
+| MT-067 | Window error recovery | Home / Character Editor / Session / Diff のいずれかで renderer render error を再現する | window-level fallback が出て、`再試行` で再描画を試せる。復帰しない場合も `再読み込み` が使える |
 | MT-067A | Right pane error recovery | `Session Window` の right pane だけで render error を再現する | pane 専用 fallback が出て、`右ペインを再描画` と `Window を再読み込み` の両方が表示される |
-

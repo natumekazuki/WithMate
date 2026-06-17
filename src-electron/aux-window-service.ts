@@ -1,7 +1,7 @@
 import type { DiffPreviewPayload } from "../src/session-state.js";
-import type { MateTalkLaunchInput } from "../src/mate/mate-state.js";
 import type { ChatEntryMode, HomeEntryMode, WindowLike } from "./window-entry-loader.js";
 import {
+  CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
   COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
   COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
   DIFF_WINDOW_DEFAULT_BOUNDS,
@@ -34,6 +34,7 @@ export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
   loadDiffEntry(window: TWindow, token: string): Promise<void>;
   loadChatEntry(window: TWindow, mode: ChatEntryMode): Promise<void>;
   loadCompanionMergeReviewEntry(window: TWindow, sessionId: string): Promise<void>;
+  loadCharacterEditorEntry(window: TWindow, characterId?: string | null): Promise<void>;
   generateDiffToken(): string;
   onCompanionReviewWindowsChanged(): void;
 };
@@ -42,11 +43,10 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   private homeWindow: TWindow | null = null;
   private sessionMonitorWindow: TWindow | null = null;
   private settingsWindow: TWindow | null = null;
-  private memoryManagementWindow: TWindow | null = null;
-  private mateTalkWindow: TWindow | null = null;
   private readonly diffWindows = new Map<string, TWindow>();
   private readonly companionReviewWindows = new Map<string, TWindow>();
   private readonly companionMergeWindows = new Map<string, TWindow>();
+  private readonly characterEditorWindows = new Map<string, TWindow>();
   private readonly diffPreviewStore = new Map<string, DiffPreviewPayload>();
 
   constructor(private readonly deps: AuxWindowServiceDeps<TWindow>) {}
@@ -60,8 +60,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       this.homeWindow,
       this.sessionMonitorWindow,
       this.settingsWindow,
-      this.memoryManagementWindow,
-      this.mateTalkWindow,
     ].filter((window): window is TWindow => !!window && !window.isDestroyed());
   }
 
@@ -148,44 +146,24 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return window;
   }
 
-  async openMemoryManagementWindow(): Promise<TWindow> {
-    const existing = this.reuseWindow(this.memoryManagementWindow);
+  async openCharacterEditorWindow(characterId?: string | null): Promise<TWindow> {
+    const normalizedCharacterId = characterId?.trim() ?? "";
+    const windowKey = normalizedCharacterId ? `character:${normalizedCharacterId}` : "character:new";
+    const existing = this.reuseWindow(this.characterEditorWindows.get(windowKey) ?? null);
     if (existing) {
       return existing;
     }
 
     const window = this.deps.createWindow({
-      width: 1180,
-      height: 960,
-      minWidth: 900,
-      minHeight: 720,
-      title: "WithMate Memory",
+      ...CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
+      title: normalizedCharacterId ? "WithMate Character Editor" : "WithMate New Character",
     });
-    this.memoryManagementWindow = window;
+    this.characterEditorWindows.set(windowKey, window);
     window.once("ready-to-show", () => window.show());
     window.on("closed", () => {
-      this.memoryManagementWindow = null;
+      this.characterEditorWindows.delete(windowKey);
     });
-    await this.deps.loadHomeEntry(window, "memory");
-    return window;
-  }
-
-  async openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<TWindow> {
-    const existing = this.reuseWindow(this.mateTalkWindow);
-    if (existing) {
-      return existing;
-    }
-
-    const window = this.deps.createWindow({
-      ...COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
-      title: "WithMate MateTalk",
-    });
-    this.mateTalkWindow = window;
-    window.once("ready-to-show", () => window.show());
-    window.on("closed", () => {
-      this.mateTalkWindow = null;
-    });
-    await this.deps.loadChatEntry(window, input ? { kind: "mate-talk", launch: input } : { kind: "mate-talk" });
+    await this.deps.loadCharacterEditorEntry(window, normalizedCharacterId || null);
     return window;
   }
 
@@ -267,10 +245,12 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       }
     }
     this.companionMergeWindows.clear();
-    if (this.mateTalkWindow && !this.mateTalkWindow.isDestroyed()) {
-      this.mateTalkWindow.close();
+    for (const window of this.characterEditorWindows.values()) {
+      if (!window.isDestroyed()) {
+        window.close();
+      }
     }
-    this.mateTalkWindow = null;
+    this.characterEditorWindows.clear();
   }
 
   private reuseWindow(window: TWindow | null): TWindow | null {

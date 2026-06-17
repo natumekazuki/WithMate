@@ -94,6 +94,28 @@ describe("session-state custom agent selection", () => {
   });
 });
 
+describe("session-state session kind", () => {
+  it("character-authoring session kind を新規 session に保持する", () => {
+    const session = buildNewSession({
+      provider: "codex",
+      taskTitle: "authoring",
+      workspaceLabel: "workspace",
+      workspacePath: "F:/repo",
+      branch: "main",
+      sessionKind: "character-authoring",
+      characterId: "char-a",
+      character: "A",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      approvalMode: DEFAULT_APPROVAL_MODE,
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+    });
+
+    assert.equal(session.sessionKind, "character-authoring");
+  });
+});
+
 describe("session-state model selection", () => {
   it("Copilot session の model 更新時は threadId を維持して正規化後の設定を保存する", () => {
     const session = {

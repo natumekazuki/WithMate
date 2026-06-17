@@ -8,6 +8,7 @@ type SessionSummaryHydrationSource = {
 export function sessionSummaryToSession(summary: SessionSummary): Session {
   return {
     ...summary,
+    characterRuntimeSnapshot: null,
     messages: [],
     stream: [],
   };

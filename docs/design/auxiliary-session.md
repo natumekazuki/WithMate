@@ -82,10 +82,11 @@ Session Header に `Auxiliary` action を置く。
 - Active Auxiliary 中は同じ位置に `Return to main` を表示し、メイン送信はできない。
 - Auxiliary 実行中は `Return to main` を無効にし、必要ならまず `Cancel` で実行を止める。
 - `Return to main` は Session Header の通常操作群ではなく、Auxiliary 枠 header または Auxiliary ActionDock に置く。
-- response の `Copy` / `Quote` は ActionDock ではなく、assistant response の message card 内 action として置く。
+- response の `Copy` / `Quote` は ActionDock ではなく、assistant response 内の選択範囲に対する selection action として扱う。
 
-response action は assistant response ごとの固定機能とする。
-desktop では hover / focus 時に表示してもよいが、機能の存在が分からなくならないよう、message card 内の一貫した位置に出す。
+response action は assistant response ごとの固定機能ではなく、ユーザーが assistant response text を選択したときだけ表示する。
+未選択時に message card 内へ常設しない。
+`Copy` / `Quote` の対象は選択範囲のみとし、response 全体を暗黙の fallback 対象にはしない。
 右クリックメニューは初期実装の主導線にしない。
 
 ### Active Auxiliary

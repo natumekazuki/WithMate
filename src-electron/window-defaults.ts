@@ -32,3 +32,10 @@ export const COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS = {
   minWidth: 980,
   minHeight: 680,
 } as const;
+
+export const CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS = {
+  width: 1280,
+  height: 920,
+  minWidth: 820,
+  minHeight: 680,
+} as const;

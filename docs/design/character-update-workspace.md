@@ -1,5 +1,9 @@
 # Character Update Workspace
 
+> V5 Core note:
+> この文書は V5 Core の実装正本ではない。
+> V5 Core では Settings 内の raw `character.md` editor / import / metadata 編集だけを扱い、詳細 Editor、revision / diff / rollback、validator UI、Character Update Workspace は Core 完了後の deferred scope とする。
+
 ## 目的
 
 - `character.md` の改善作業を、character ごとの保存ディレクトリを workspace にして行えるようにする

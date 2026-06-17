@@ -17,6 +17,7 @@ import {
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import { sessionSummaryToSession } from "./session-summary-adapter.js";
+import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
 
 export type SessionPersistenceServiceDeps = {
   getSessions(): Session[];
@@ -30,6 +31,7 @@ export type SessionPersistenceServiceDeps = {
   deleteStoredSession(sessionId: string): Awaitable<void>;
   getAppSettings: () => AppSettings;
   getModelCatalogSnapshot(): ModelCatalogSnapshot;
+  createCharacterRuntimeSnapshot?(characterId: string): CharacterRuntimeSnapshot | null;
   syncSessionDependencies(session: Session): void;
   clearSessionContextTelemetry(sessionId: string): void;
   clearSessionBackgroundActivities(sessionId: string): void;
@@ -84,6 +86,8 @@ export class SessionPersistenceService {
       catalogRevision: snapshot.revision,
       model: selection.resolvedModel,
       reasoningEffort: selection.resolvedReasoningEffort,
+      characterRuntimeSnapshot:
+        input.characterRuntimeSnapshot ?? this.deps.createCharacterRuntimeSnapshot?.(input.characterId) ?? null,
       allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
         input.workspacePath,
         input.allowedAdditionalDirectories ?? [],

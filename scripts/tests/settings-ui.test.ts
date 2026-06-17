@@ -6,17 +6,8 @@ import {
   SETTINGS_API_KEY_PLACEHOLDER,
   SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE,
   SETTINGS_CODING_CREDENTIALS_HELP,
-  SETTINGS_MATE_GROWTH_LABEL,
-  SETTINGS_MATE_GROWTH_HELP,
   SETTINGS_MATE_RESET_LABEL,
   SETTINGS_MATE_RESET_HELP,
-  SETTINGS_MEMORY_EXTRACTION_HELP,
-  SETTINGS_MEMORY_GENERATION_HELP,
-  SETTINGS_MEMORY_GENERATION_LABEL,
-  SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL,
-  SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL,
-  SETTINGS_MEMORY_EXTRACTION_TIMEOUT_LABEL,
-  SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL,
   SETTINGS_RELEASE_COMPATIBILITY_NOTE,
   SETTINGS_RESET_DATABASE_HELP,
   SETTINGS_RESET_DATABASE_LABEL,
@@ -45,23 +36,6 @@ describe("Settings UI constants", () => {
     assert.match(buildResetDatabaseSuccessMessage(ALL_RESET_APP_DATABASE_TARGETS), /初期状態へ戻した/);
   });
 
-  it("memory extraction の設定項目は model / reasoning / threshold / timeout を持つ", () => {
-    assert.equal(SETTINGS_MEMORY_GENERATION_LABEL, "Memory Generation");
-    assert.match(SETTINGS_MEMORY_GENERATION_HELP, /OFF にすると/);
-    assert.equal(SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL, "Model");
-    assert.equal(SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL, "Reasoning Depth");
-    assert.equal(SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL, "Output Tokens Threshold");
-    assert.equal(SETTINGS_MEMORY_EXTRACTION_TIMEOUT_LABEL, "Timeout Seconds");
-    assert.match(SETTINGS_MEMORY_EXTRACTION_HELP, /turn 完了後/);
-    assert.match(SETTINGS_MEMORY_EXTRACTION_HELP, /Generate Memory/);
-    assert.match(SETTINGS_MEMORY_EXTRACTION_HELP, /timeout/);
-  });
-
-  it("Mate Growth は未適用成長を手動で適用する導線を示す", () => {
-    assert.equal(SETTINGS_MATE_GROWTH_LABEL, "Mate Growth を手動適用");
-    assert.match(SETTINGS_MATE_GROWTH_HELP, /手動で適用する/);
-  });
-
   it("Mate Reset は破壊的操作として意図と再確認文言が含まれる", () => {
     assert.equal(SETTINGS_MATE_RESET_LABEL, "Mate を初期化");
     assert.match(SETTINGS_MATE_RESET_HELP, /Danger Zone/);
@@ -77,4 +51,5 @@ describe("Settings UI constants", () => {
       minHeight: 680,
     });
   });
+
 });

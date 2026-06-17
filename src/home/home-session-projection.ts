@@ -37,6 +37,14 @@ export function shouldDisplayHomeSession(session: SessionSummary): boolean {
   return session.sessionKind !== "character-update";
 }
 
+export function getHomeSessionKindSearchLabels(session: SessionSummary): string[] {
+  if (session.sessionKind === "character-authoring") {
+    return ["character", "character authoring", "authoring", "agent"];
+  }
+
+  return ["agent", session.sessionKind];
+}
+
 export function getHomeSessionState(session: SessionSummary): HomeSessionState {
   if (session.status === "running" || session.runState === "running") {
     return {
@@ -196,7 +204,12 @@ export function buildHomeSessionProjection(
         return true;
       }
 
-      const haystacks = [session.taskTitle, session.workspacePath, session.workspaceLabel]
+      const haystacks = [
+        session.taskTitle,
+        session.workspacePath,
+        session.workspaceLabel,
+        ...getHomeSessionKindSearchLabels(session),
+      ]
         .map((value) => value.toLocaleLowerCase());
       return haystacks.some((value) => value.includes(normalizedSessionSearch));
     })

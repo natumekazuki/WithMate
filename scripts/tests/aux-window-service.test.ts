@@ -5,6 +5,7 @@ import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src/character-state.js";
 import type { DiffPreviewPayload } from "../../src/session-state.js";
 import { AuxWindowService } from "../../src-electron/aux-window-service.js";
 import {
+  CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
   COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
   COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
   DIFF_WINDOW_DEFAULT_BOUNDS,
@@ -80,6 +81,7 @@ test("AuxWindowService は singleton window を再利用する", async () => {
     async loadDiffEntry() {},
     async loadChatEntry() {},
     async loadCompanionMergeReviewEntry() {},
+    async loadCharacterEditorEntry() {},
     onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "diff-token";
@@ -89,15 +91,11 @@ test("AuxWindowService は singleton window を再利用する", async () => {
   const first = await service.openHomeWindow();
   const second = await service.openHomeWindow();
   const settings = await service.openSettingsWindow();
-  const memory = await service.openMemoryManagementWindow();
-  const memoryReopened = await service.openMemoryManagementWindow();
 
   assert.equal(first, second);
   assert.notEqual(first, settings);
-  assert.notEqual(settings, memory);
-  assert.equal(memory, memoryReopened);
-  assert.deepEqual(homeLoads, ["home", "settings", "memory"]);
-  assert.equal(created.length, 3);
+  assert.deepEqual(homeLoads, ["home", "settings"]);
+  assert.equal(created.length, 2);
 });
 
 test("AuxWindowService は diff preview を保持し reset 時に close する", async () => {
@@ -115,6 +113,7 @@ test("AuxWindowService は diff preview を保持し reset 時に close する",
     },
     async loadChatEntry() {},
     async loadCompanionMergeReviewEntry() {},
+    async loadCharacterEditorEntry() {},
     onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "diff-token";
@@ -154,6 +153,7 @@ test("AuxWindowService は companion chat と merge の entry を分けて開く
     async loadCompanionMergeReviewEntry(_window, sessionId) {
       companionMergeLoads.push(sessionId);
     },
+    async loadCharacterEditorEntry() {},
     onCompanionReviewWindowsChanged() {
       companionReviewWindowChangeCount += 1;
     },
@@ -186,8 +186,8 @@ test("AuxWindowService は companion chat と merge の entry を分けて開く
   ]);
 });
 
-test("AuxWindowService は MateTalk を chat entry として開く", async () => {
-  const chatLoads: unknown[] = [];
+test("AuxWindowService は Character Editor window を create/edit key ごとに再利用する", async () => {
+  const characterEditorLoads: Array<string | null | undefined> = [];
   const createdOptions: Array<Record<string, unknown>> = [];
   const service = new AuxWindowService({
     createWindow(options) {
@@ -197,25 +197,34 @@ test("AuxWindowService は MateTalk を chat entry として開く", async () =>
     },
     async loadHomeEntry() {},
     async loadDiffEntry() {},
-    async loadChatEntry(_window, mode) {
-      chatLoads.push(mode);
-    },
+    async loadChatEntry() {},
     async loadCompanionMergeReviewEntry() {},
+    async loadCharacterEditorEntry(_window, characterId) {
+      characterEditorLoads.push(characterId);
+    },
     onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "diff-token";
     },
   });
 
-  const mateTalk = await service.openMateTalkWindow();
-  const mateTalkReopened = await service.openMateTalkWindow();
+  const createWindow = await service.openCharacterEditorWindow();
+  const createWindowReopened = await service.openCharacterEditorWindow(null);
+  const editWindow = await service.openCharacterEditorWindow("char-1");
+  const editWindowReopened = await service.openCharacterEditorWindow("char-1");
 
-  assert.equal(mateTalk, mateTalkReopened);
-  assert.deepEqual(chatLoads, [{ kind: "mate-talk" }]);
+  assert.equal(createWindow, createWindowReopened);
+  assert.equal(editWindow, editWindowReopened);
+  assert.notEqual(createWindow, editWindow);
+  assert.deepEqual(characterEditorLoads, [null, "char-1"]);
   assert.deepEqual(createdOptions, [
     {
-      ...COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
-      title: "WithMate MateTalk",
+      ...CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
+      title: "WithMate New Character",
+    },
+    {
+      ...CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
+      title: "WithMate Character Editor",
     },
   ]);
 });

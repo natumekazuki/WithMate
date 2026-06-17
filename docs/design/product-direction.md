@@ -1,7 +1,7 @@
 # Product Direction
 
 - 作成日: 2026-03-11
-- 更新日: 2026-05-03
+- 更新日: 2026-06-14
 - 対象: WithMate 全体の体験設計方針
 
 ## Goal
@@ -9,11 +9,24 @@
 WithMate を「キャラ付きチャットアプリ」や「複数 character catalog」ではなく、`Codex CLI / GitHub Copilot CLI` 相当の coding agent 体験をベースに、
 1 つの環境に 1 人の Mate が定着して育つ coding companion として定義する。
 
-この文書は、current milestone で何を主役にし、何をまだ主役にしないかを判断するための上位方針とする。
+この文書は、milestone ごとに何を主役にし、何をまだ主役にしないかを判断するための上位方針とする。
+
+## V5 Character Core Note
+
+V5 Character Core / preview では、4.0.0 SingleMate 方針を current runtime の正本として扱わない。V5 の Character catalog、`character.md` runtime definition、launch selection、runtime snapshot boundary は次の文書を優先する。
+
+- `docs/design/v5-character-transition.md`
+- `docs/design/character-definition-format.md`
+- `docs/design/character-storage.md`
+- `docs/design/v5-character-core-release-gate.md`
+- `docs/design/v5-character-preview-release.md`
+
+この文書に残る SingleMate / Mate Profile / Growth / provider instruction sync の記述は、V5 preview では pre-V5 / 4.0.0 の判断履歴または deferred context として読む。
 
 ## Position
 
-- プロダクト全体の優先順位と Mate / Growth / Memory / Monologue の位置づけの正本はこの文書とする
+- プロダクト全体の優先順位と Mate / Growth / Memory / Monologue の位置づけはこの文書に残す
+- V5 Character Core / preview の正本は `docs/design/documentation-map.md` の `A2. V5 Character Core Source Of Truth` を優先する
 - WithMate 4.0.0 の SingleMate 詳細は `docs/design/single-mate-architecture.md` を参照する
 - provider instruction sync の詳細は `docs/design/provider-instruction-sync.md` を参照する
 - current UI の具体仕様は `docs/design/desktop-ui.md` を参照する

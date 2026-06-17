@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { JSDOM } from "jsdom";
 import React, { createRef } from "react";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
@@ -12,6 +15,8 @@ import {
 } from "../../src/session-components.js";
 import { buildContextPaneProjection } from "../../src/session-ui-projection.js";
 import type { CharacterProfile, LiveApprovalRequest, LiveElicitationRequest, Message } from "../../src/app-state.js";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function createCharacterProfile(): CharacterProfile {
   return {
@@ -154,6 +159,113 @@ function renderSessionMessageColumn(options: {
   );
 }
 
+function createRect(input: {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}): DOMRect {
+  return {
+    left: input.left,
+    top: input.top,
+    width: input.width,
+    height: input.height,
+    right: input.left + input.width,
+    bottom: input.top + input.height,
+    x: input.left,
+    y: input.top,
+    toJSON() {
+      return this;
+    },
+  } as DOMRect;
+}
+
+type MountedSessionMessageColumn = {
+  container: HTMLElement;
+  dom: JSDOM;
+  messageListRef: React.RefObject<HTMLDivElement | null>;
+  root: Root;
+  cleanup: () => Promise<void>;
+};
+
+async function mountSessionMessageColumn(options: {
+  messages: Message[];
+  onCopyMessageText?: (text: string) => void;
+  onQuoteMessageText?: (text: string) => void;
+}): Promise<MountedSessionMessageColumn> {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousNode = globalThis.Node;
+  const previousDOMRect = globalThis.DOMRect;
+  const previousEvent = globalThis.Event;
+  const previousMouseEvent = globalThis.MouseEvent;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", { pretendToBeVisual: true });
+  const container = dom.window.document.getElementById("root") as HTMLElement;
+  const messageListRef = createRef<HTMLDivElement>();
+  const root = createRoot(container);
+
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "DOMRect", { configurable: true, value: dom.window.DOMRect });
+  Object.defineProperty(globalThis, "Event", { configurable: true, value: dom.window.Event });
+  Object.defineProperty(globalThis, "MouseEvent", { configurable: true, value: dom.window.MouseEvent });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+
+  await act(async () => {
+    root.render(
+      React.createElement(SessionMessageColumn, {
+        sessionId: "session-1",
+        character: createCharacterProfile(),
+        messages: options.messages,
+        expandedArtifacts: {},
+        messageListRef,
+        isRunning: false,
+        liveApprovalRequest: null,
+        approvalActionRequestId: null,
+        liveElicitationRequest: null,
+        elicitationActionRequestId: null,
+        liveRunAssistantText: "",
+        hasLiveRunAssistantText: false,
+        liveRunErrorMessage: "",
+        isMessageListFollowing: false,
+        onMessageListScroll() {},
+        onToggleArtifact() {},
+        onOpenDiff() {},
+        onResolveLiveApproval() {},
+        onResolveLiveElicitation() {},
+        onOpenPath: undefined,
+        getChangedFilesEmptyText() {
+          return "変更ファイルはありません";
+        },
+        onCopyMessageText: options.onCopyMessageText,
+        onQuoteMessageText: options.onQuoteMessageText,
+      }),
+    );
+  });
+
+  return {
+    container,
+    dom,
+    messageListRef,
+    root,
+    async cleanup() {
+      await act(async () => {
+        root.unmount();
+      });
+      dom.window.close();
+      Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+      Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+      Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+      Object.defineProperty(globalThis, "DOMRect", { configurable: true, value: previousDOMRect });
+      Object.defineProperty(globalThis, "Event", { configurable: true, value: previousEvent });
+      Object.defineProperty(globalThis, "MouseEvent", { configurable: true, value: previousMouseEvent });
+      Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    },
+  };
+}
+
 test("SessionMessageColumn は大量メッセージを最新 chunk に絞って描画する", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(100),
@@ -190,7 +302,7 @@ test("SessionMessageColumn は artifact 展開と diff 起動に必要な表示�
   assert.match(html, /snapshot files/);
 });
 
-test("SessionMessageColumn は assistant response action を assistant message にだけ描画する", () => {
+test("SessionMessageColumn は未選択時に response action を描画しない", () => {
   const html = renderSessionMessageColumn({
     messages: [
       { role: "assistant", text: "assistant result" },
@@ -199,10 +311,137 @@ test("SessionMessageColumn は assistant response action を assistant message �
     withResponseActions: true,
   });
 
-  assert.match(html, /message-response-actions/);
-  assert.match(html, />Copy</);
-  assert.match(html, />Quote</);
-  assert.equal((html.match(/message-response-actions/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /message-response-actions/);
+  assert.doesNotMatch(html, />Copy</);
+  assert.doesNotMatch(html, />Quote</);
+  assert.match(html, /data-message-text-actions="true"/);
+  assert.equal((html.match(/data-message-text-actions="true"/g) ?? []).length, 1);
+});
+
+test("SessionMessageColumn は選択範囲にだけ response action toolbar を表示する", async () => {
+  const copiedTexts: string[] = [];
+  const quotedTexts: string[] = [];
+  const mounted = await mountSessionMessageColumn({
+    messages: [
+      { role: "assistant", text: "assistant result text" },
+      { role: "user", text: "user prompt text" },
+    ],
+    onCopyMessageText: (text) => copiedTexts.push(text),
+    onQuoteMessageText: (text) => quotedTexts.push(text),
+  });
+
+  try {
+    const { container, dom, messageListRef } = mounted;
+    const messageList = messageListRef.current;
+    assert.ok(messageList);
+    Object.defineProperty(messageList, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createRect({ left: 0, top: 0, width: 500, height: 500 }),
+    });
+
+    let selectedText = "";
+    let isCollapsed = true;
+    let anchorRect = createRect({ left: 100, top: 100, width: 60, height: 20 });
+    let selectionNode: Node = container;
+    const selection = {
+      get isCollapsed() {
+        return isCollapsed;
+      },
+      get rangeCount() {
+        return isCollapsed ? 0 : 1;
+      },
+      getRangeAt() {
+        return {
+          commonAncestorContainer: selectionNode,
+          getBoundingClientRect: () => anchorRect,
+          getClientRects: () => [anchorRect],
+        };
+      },
+      toString() {
+        return selectedText;
+      },
+    } as unknown as Selection;
+    Object.defineProperty(dom.window, "getSelection", {
+      configurable: true,
+      value: () => selection,
+    });
+
+    const selectText = async (body: Element, text: string, rect: DOMRect) => {
+      const paragraph = body.querySelector(".message-paragraph");
+      assert.ok(paragraph?.firstChild);
+      selectionNode = paragraph.firstChild;
+      selectedText = text;
+      isCollapsed = false;
+      anchorRect = rect;
+      await act(async () => {
+        dom.window.document.dispatchEvent(new dom.window.Event("selectionchange"));
+      });
+    };
+    const clearSelection = async () => {
+      isCollapsed = true;
+      selectedText = "";
+      await act(async () => {
+        dom.window.document.dispatchEvent(new dom.window.Event("selectionchange"));
+      });
+    };
+
+    const assistantBody = container.querySelector("[data-message-text-actions=\"true\"]");
+    assert.ok(assistantBody);
+    await selectText(assistantBody, "assistant result", anchorRect);
+
+    let toolbar = container.querySelector(".message-response-actions") as HTMLElement | null;
+    assert.ok(toolbar);
+    assert.equal(toolbar.style.left, "74px");
+    assert.equal(toolbar.style.top, "60px");
+
+    const copyButton = Array.from(toolbar.querySelectorAll("button"))
+      .find((button) => button.textContent === "Copy") as HTMLButtonElement | undefined;
+    const quoteButton = Array.from(toolbar.querySelectorAll("button"))
+      .find((button) => button.textContent === "Quote") as HTMLButtonElement | undefined;
+    assert.ok(copyButton);
+    assert.ok(quoteButton);
+
+    await act(async () => {
+      copyButton.click();
+      quoteButton.click();
+    });
+    assert.deepEqual(copiedTexts, ["assistant result"]);
+    assert.deepEqual(quotedTexts, ["assistant result"]);
+
+    const userBody = Array.from(container.querySelectorAll("[data-message-body=\"true\"]"))
+      .find((body) => body.getAttribute("data-message-text-actions") !== "true");
+    assert.ok(userBody);
+    await selectText(userBody, "user prompt", createRect({ left: 120, top: 140, width: 60, height: 20 }));
+    assert.equal(container.querySelector(".message-response-actions"), null);
+
+    await selectText(assistantBody, "result text", createRect({ left: 200, top: 220, width: 80, height: 20 }));
+    toolbar = container.querySelector(".message-response-actions") as HTMLElement | null;
+    assert.ok(toolbar);
+    assert.equal(toolbar.style.left, "184px");
+    assert.equal(toolbar.style.top, "180px");
+
+    anchorRect = createRect({ left: 240, top: 260, width: 80, height: 20 });
+    await act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("resize"));
+    });
+    toolbar = container.querySelector(".message-response-actions") as HTMLElement | null;
+    assert.ok(toolbar);
+    assert.equal(toolbar.style.left, "224px");
+    assert.equal(toolbar.style.top, "220px");
+
+    anchorRect = createRect({ left: 520, top: 520, width: 40, height: 20 });
+    await act(async () => {
+      messageList.dispatchEvent(new dom.window.Event("scroll"));
+    });
+    assert.equal(container.querySelector(".message-response-actions"), null);
+
+    await selectText(assistantBody, "assistant result", createRect({ left: 100, top: 100, width: 60, height: 20 }));
+    assert.ok(container.querySelector(".message-response-actions"));
+    await clearSelection();
+    assert.equal(container.querySelector(".message-response-actions"), null);
+  } finally {
+    mounted.cleanup();
+  }
 });
 
 test("SessionMessageColumn は Auxiliary transcript group を message list 内に描画する", () => {
@@ -250,22 +489,25 @@ test("SessionMessageColumn は pending と live approval\/elicitation を messag
   );
 });
 
-test("SessionMessageColumn は実行中の assistant text を pending bubble 内に表示する", () => {
+test("SessionMessageColumn は projection 済みの実行中 assistant text を通常 message row として表示する", () => {
   const html = renderSessionMessageColumn({
-    messages: createMessages(100),
+    messages: [
+      ...createMessages(100),
+      { role: "assistant", text: "ストリーミング中の返答" },
+    ],
     isRunning: true,
     liveRunAssistantText: "ストリーミング中の返答",
   });
 
-  assert.match(html, /pending-row/);
+  assert.doesNotMatch(html, /pending-row/);
   assert.match(html, /ストリーミング中の返答/);
   assert.ok(
-    html.indexOf("message 100") < html.indexOf("pending-row"),
-    "pending row は既存メッセージの後に描画する",
+    html.indexOf("message 100") < html.indexOf("ストリーミング中の返答"),
+    "projection 済みの live assistant text は既存メッセージの後に描画する",
   );
   assert.ok(
-    html.indexOf("pending-row") < html.indexOf("ストリーミング中の返答"),
-    "streaming assistant text は pending row 内に描画する",
+    html.indexOf("ストリーミング中の返答") < html.indexOf("message-list-bottom-anchor"),
+    "projection 済みの live assistant text は bottom anchor より前に描画する",
   );
   assert.doesNotMatch(html, /処理を実行中/);
 });
@@ -527,7 +769,7 @@ test("SessionActionDockCompactRow は jump button を Send の左に描画する
   assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Send"));
 });
 
-test("SessionActionDockCompactRow は実行中の compact 表示を progress と Cancel だけにする", () => {
+test("SessionActionDockCompactRow は実行中の compact 表示に jump button と Cancel を描画する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
       draft: "draft",
@@ -550,10 +792,10 @@ test("SessionActionDockCompactRow は実行中の compact 表示を progress と
   assert.match(html, /session-action-dock-compact-progress/);
   assert.match(html, /処理を実行中/);
   assert.match(html, /session-action-dock-compact-actions/);
+  assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Cancel"));
   assert.match(html, />Cancel<\/button>/);
   assert.doesNotMatch(html, /Draft/);
   assert.doesNotMatch(html, /添付 2/);
-  assert.doesNotMatch(html, /末尾へ移動/);
 });
 
 test("SessionContextPane は latest command がないとき empty text を表示する", () => {

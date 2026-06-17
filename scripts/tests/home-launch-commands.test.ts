@@ -4,8 +4,6 @@ import test from "node:test";
 import {
   openCompanionReviewWindow,
   openHomeWindow,
-  openMateTalkWindow,
-  openMemoryManagementWindow,
   openSessionMonitorWindow,
   openSessionWindow,
   openSettingsWindow,
@@ -60,22 +58,10 @@ const windowCommandCases = [
     expectedArgs: [],
   },
   {
-    name: "openMemoryManagementWindow",
-    apiName: "openMemoryManagementWindow",
-    command: () => openMemoryManagementWindow(),
-    expectedArgs: [],
-  },
-  {
     name: "openCompanionReviewWindow",
     apiName: "openCompanionReviewWindow",
     command: () => openCompanionReviewWindow("companion-session-1"),
     expectedArgs: ["companion-session-1"],
-  },
-  {
-    name: "openMateTalkWindow",
-    apiName: "openMateTalkWindow",
-    command: () => openMateTalkWindow(),
-    expectedArgs: [],
   },
 ];
 

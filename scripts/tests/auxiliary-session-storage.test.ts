@@ -7,8 +7,11 @@ import test from "node:test";
 import { buildNewSession } from "../../src/app-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
+import type { CompanionSession } from "../../src/companion-state.js";
+import { companionSessionToAuxiliaryParentSession } from "../../src-electron/auxiliary-parent-session.js";
 import { AuxiliarySessionService } from "../../src-electron/auxiliary-session-service.js";
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary-session-storage.js";
+import { CompanionStorage } from "../../src-electron/companion-storage.js";
 import { appendSessionFilesDirectoryForSessionId, resolveSessionFilesDirectory } from "../../src-electron/session-files.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";
 
@@ -39,6 +42,44 @@ function buildTestModelCatalogSnapshot(revision: number): ModelCatalogSnapshot {
   };
 }
 
+function buildCompanionSession(overrides: Partial<CompanionSession> = {}): CompanionSession {
+  return {
+    id: "companion-session-1",
+    groupId: "group-1",
+    taskTitle: "companion review",
+    status: "active",
+    repoRoot: "C:/workspace/WithMate",
+    focusPath: "",
+    targetBranch: "master",
+    baseSnapshotRef: "master",
+    baseSnapshotCommit: "abc123",
+    companionBranch: "companion/test",
+    worktreePath: "C:/workspace/WithMate-companion",
+    selectedPaths: [],
+    changedFiles: [],
+    siblingWarnings: [],
+    allowedAdditionalDirectories: ["C:/review-context"],
+    runState: "idle",
+    threadId: "companion-thread",
+    provider: "codex",
+    catalogRevision: 1,
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+    customAgentName: "reviewer",
+    approvalMode: "on-request",
+    codexSandboxMode: "workspace-write-network",
+    characterId: "companion",
+    character: "Companion",
+    characterRoleMarkdown: "",
+    characterIconPath: "",
+    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    createdAt: "2026-05-25T00:00:00.000Z",
+    updatedAt: "2026-05-25T00:00:00.000Z",
+    messages: [{ role: "user", text: "review this" }],
+    ...overrides,
+  };
+}
+
 async function removeDirectoryWithRetry(targetPath: string, attempts = 5): Promise<void> {
   for (let index = 0; index < attempts; index += 1) {
     try {
@@ -60,10 +101,12 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
   const dbPath = path.join(tempDirectory, "withmate.db");
   let sessionStorage: SessionStorage | null = null;
   let auxiliaryStorage: AuxiliarySessionStorage | null = null;
+  let companionStorage: CompanionStorage | null = null;
 
   try {
     sessionStorage = new SessionStorage(dbPath);
     auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+    companionStorage = new CompanionStorage(dbPath);
     const parent = {
       ...buildNewSession({
         taskTitle: "main task",
@@ -87,12 +130,12 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
     let activeModelCatalog = buildTestModelCatalogSnapshot(parent.catalogRevision);
 
     const service = new AuxiliarySessionService({
-      getSession: (sessionId) => sessionStorage?.getSession(sessionId) ?? null,
+      getParentSession: (parentSessionId) => sessionStorage?.getSession(parentSessionId) ?? null,
       getStorage: () => auxiliaryStorage!,
       getModelCatalogSnapshot: () => activeModelCatalog,
     });
 
-    const auxiliary = service.createAuxiliarySession({ parentSessionId: parent.id, provider: parent.provider });
+    const auxiliary = await service.createAuxiliarySession({ parentSessionId: parent.id, provider: parent.provider });
     assert.equal(auxiliary.parentSessionId, parent.id);
     assert.equal(auxiliary.status, "active");
     assert.equal(auxiliary.runState, "idle");
@@ -103,7 +146,7 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
     assert.deepEqual(auxiliary.allowedAdditionalDirectories, ["C:/shared"]);
     assert.equal(auxiliary.displayAfterMessageIndex, parent.messages.length - 1);
 
-    const sameActive = service.createAuxiliarySession({ parentSessionId: parent.id, provider: "copilot" });
+    const sameActive = await service.createAuxiliarySession({ parentSessionId: parent.id, provider: "copilot" });
     assert.equal(sameActive.id, auxiliary.id);
 
     const updated = service.updateAuxiliarySession({
@@ -125,7 +168,7 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
     });
     assert.equal(staleDraftWithOldDisplayAnchor.displayAfterMessageIndex, 3);
 
-    const runtimeSession = service.getAuxiliaryRuntimeSession(movedDisplayAnchor.id);
+    const runtimeSession = await service.getAuxiliaryRuntimeSession(movedDisplayAnchor.id);
     assert.ok(runtimeSession);
     const persistedRuntime = service.upsertAuxiliaryRuntimeSession({
       ...runtimeSession,
@@ -274,19 +317,96 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
 
     const orphanedParent = { ...parent, id: "session-orphaned", taskTitle: "orphaned main task" };
     sessionStorage.upsertSession(orphanedParent);
-    const orphanedAuxiliary = service.createAuxiliarySession({
+    const orphanedAuxiliary = await service.createAuxiliarySession({
       parentSessionId: orphanedParent.id,
       provider: orphanedParent.provider,
     });
     assert.equal(service.listAuxiliarySessions(orphanedParent.id)[0]?.id, orphanedAuxiliary.id);
+    const activeCompanion = buildCompanionSession({
+      id: "companion-active-parent",
+      groupId: "companion-group",
+    });
+    const mergedCompanion = buildCompanionSession({
+      id: "companion-merged-parent",
+      groupId: activeCompanion.groupId,
+      status: "merged",
+    });
+    const discardedCompanion = buildCompanionSession({
+      id: "companion-discarded-parent",
+      groupId: activeCompanion.groupId,
+      status: "discarded",
+    });
+    const recoveryRequiredCompanion = buildCompanionSession({
+      id: "companion-recovery-parent",
+      groupId: activeCompanion.groupId,
+      status: "recovery-required",
+    });
+    const unknownStatusCompanion = buildCompanionSession({
+      id: "companion-unknown-parent",
+      groupId: activeCompanion.groupId,
+      status: "unknown-status" as CompanionSession["status"],
+    });
+    companionStorage.ensureGroup({
+      id: activeCompanion.groupId,
+      repoRoot: activeCompanion.repoRoot,
+      displayName: "Companion Group",
+      createdAt: activeCompanion.createdAt,
+      updatedAt: activeCompanion.updatedAt,
+    });
+    companionStorage.createSession(activeCompanion);
+    companionStorage.createSession(recoveryRequiredCompanion);
+    companionStorage.createSession(mergedCompanion);
+    companionStorage.createSession(discardedCompanion);
+    companionStorage.createSession(unknownStatusCompanion);
+    auxiliaryStorage.upsertAuxiliarySession({
+      ...orphanedAuxiliary,
+      id: "aux-companion-parent",
+      parentSessionId: activeCompanion.id,
+      createdAt: "2026-05-25T00:00:00.000Z",
+      updatedAt: "2026-05-25T00:00:00.000Z",
+    });
+    auxiliaryStorage.upsertAuxiliarySession({
+      ...orphanedAuxiliary,
+      id: "aux-recovery-companion-parent",
+      parentSessionId: recoveryRequiredCompanion.id,
+      createdAt: "2026-05-25T00:00:00.000Z",
+      updatedAt: "2026-05-25T00:00:00.000Z",
+    });
+    auxiliaryStorage.upsertAuxiliarySession({
+      ...orphanedAuxiliary,
+      id: "aux-merged-companion-parent",
+      parentSessionId: mergedCompanion.id,
+      createdAt: "2026-05-25T00:00:00.000Z",
+      updatedAt: "2026-05-25T00:00:00.000Z",
+    });
+    auxiliaryStorage.upsertAuxiliarySession({
+      ...orphanedAuxiliary,
+      id: "aux-discarded-companion-parent",
+      parentSessionId: discardedCompanion.id,
+      createdAt: "2026-05-25T00:00:00.000Z",
+      updatedAt: "2026-05-25T00:00:00.000Z",
+    });
+    auxiliaryStorage.upsertAuxiliarySession({
+      ...orphanedAuxiliary,
+      id: "aux-unknown-status-companion-parent",
+      parentSessionId: unknownStatusCompanion.id,
+      createdAt: "2026-05-25T00:00:00.000Z",
+      updatedAt: "2026-05-25T00:00:00.000Z",
+    });
 
     sessionStorage.replaceSessions([{ ...parent, taskTitle: "retained main task" }]);
     assert.equal(service.listAuxiliarySessions(parent.id).length, 1);
     assert.deepEqual(service.listAuxiliarySessions(orphanedParent.id), []);
+    assert.equal(service.listAuxiliarySessions(activeCompanion.id)[0]?.id, "aux-companion-parent");
+    assert.equal(service.listAuxiliarySessions(recoveryRequiredCompanion.id)[0]?.id, "aux-recovery-companion-parent");
+    assert.deepEqual(service.listAuxiliarySessions(mergedCompanion.id), []);
+    assert.deepEqual(service.listAuxiliarySessions(discardedCompanion.id), []);
+    assert.equal(service.listAuxiliarySessions(unknownStatusCompanion.id)[0]?.id, "aux-unknown-status-companion-parent");
 
     sessionStorage.deleteSession(parent.id);
     assert.deepEqual(service.listAuxiliarySessions(parent.id), []);
   } finally {
+    companionStorage?.close();
     auxiliaryStorage?.close();
     sessionStorage?.close();
     await removeDirectoryWithRetry(tempDirectory);
@@ -324,12 +444,12 @@ test("AuxiliarySessionService は通常起動と同じ選択済み model context
     const activeModelCatalog = buildTestModelCatalogSnapshot(parent.catalogRevision);
 
     const service = new AuxiliarySessionService({
-      getSession: (sessionId) => sessionStorage?.getSession(sessionId) ?? null,
+      getParentSession: (parentSessionId) => sessionStorage?.getSession(parentSessionId) ?? null,
       getStorage: () => auxiliaryStorage!,
       getModelCatalogSnapshot: () => activeModelCatalog,
     });
 
-    const auxiliary = service.createAuxiliarySession({
+    const auxiliary = await service.createAuxiliarySession({
       parentSessionId: parent.id,
       provider: parent.provider,
       model: "gpt-5.4-mini",
@@ -378,12 +498,12 @@ test("AuxiliarySessionService は指定 Provider の既定 model で active sess
     const activeModelCatalog = buildTestModelCatalogSnapshot(parent.catalogRevision);
 
     const service = new AuxiliarySessionService({
-      getSession: (sessionId) => sessionStorage?.getSession(sessionId) ?? null,
+      getParentSession: (parentSessionId) => sessionStorage?.getSession(parentSessionId) ?? null,
       getStorage: () => auxiliaryStorage!,
       getModelCatalogSnapshot: () => activeModelCatalog,
     });
 
-    const auxiliary = service.createAuxiliarySession({
+    const auxiliary = await service.createAuxiliarySession({
       parentSessionId: parent.id,
       provider: "copilot",
     });
@@ -398,6 +518,54 @@ test("AuxiliarySessionService は指定 Provider の既定 model で active sess
   } finally {
     auxiliaryStorage?.close();
     sessionStorage?.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+test("AuxiliarySessionService は Companion 由来の parent runtime session から実行 context を継承する", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-companion-parent-"));
+  const dbPath = path.join(tempDirectory, "withmate.db");
+  let auxiliaryStorage: AuxiliarySessionStorage | null = null;
+
+  try {
+    auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+    const companion = buildCompanionSession();
+    const activeModelCatalog = buildTestModelCatalogSnapshot(companion.catalogRevision);
+    const service = new AuxiliarySessionService({
+      getParentSession: (parentSessionId) =>
+        parentSessionId === companion.id
+          ? companionSessionToAuxiliaryParentSession(companion)
+          : null,
+      getStorage: () => auxiliaryStorage!,
+      getModelCatalogSnapshot: () => activeModelCatalog,
+    });
+
+    const auxiliary = await service.createAuxiliarySession({
+      parentSessionId: companion.id,
+      provider: companion.provider,
+    });
+
+    assert.equal(auxiliary.parentSessionId, companion.id);
+    assert.equal(auxiliary.approvalMode, companion.approvalMode);
+    assert.equal(auxiliary.codexSandboxMode, companion.codexSandboxMode);
+    assert.deepEqual(auxiliary.allowedAdditionalDirectories, ["C:/review-context"]);
+    assert.equal(auxiliary.displayAfterMessageIndex, companion.messages.length - 1);
+
+    const runtimeSession = await service.getAuxiliaryRuntimeSession(auxiliary.id);
+    assert.ok(runtimeSession);
+    assert.equal(runtimeSession.workspacePath, companion.worktreePath);
+    assert.equal(runtimeSession.branch, companion.companionBranch);
+    assert.equal(runtimeSession.threadId, "");
+    assert.deepEqual(runtimeSession.messages, []);
+    assert.ok(companionSessionToAuxiliaryParentSession({ ...companion, status: "recovery-required" }));
+    assert.equal(companionSessionToAuxiliaryParentSession({ ...companion, status: "merged" }), null);
+    assert.equal(companionSessionToAuxiliaryParentSession({ ...companion, status: "discarded" }), null);
+    assert.equal(
+      companionSessionToAuxiliaryParentSession({ ...companion, status: "unknown-status" as typeof companion.status }),
+      null,
+    );
+  } finally {
+    auxiliaryStorage?.close();
     await removeDirectoryWithRetry(tempDirectory);
   }
 });
@@ -428,11 +596,11 @@ test("AuxiliarySessionService は起動時に running active session を復旧�
     sessionStorage.upsertSession(parent);
 
     const service = new AuxiliarySessionService({
-      getSession: (sessionId) => sessionStorage?.getSession(sessionId) ?? null,
+      getParentSession: (parentSessionId) => sessionStorage?.getSession(parentSessionId) ?? null,
       getStorage: () => auxiliaryStorage!,
       getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
     });
-    const auxiliary = service.createAuxiliarySession({ parentSessionId: parent.id, provider: parent.provider });
+    const auxiliary = await service.createAuxiliarySession({ parentSessionId: parent.id, provider: parent.provider });
     auxiliaryStorage.upsertAuxiliarySession({
       ...auxiliary,
       runState: "running",

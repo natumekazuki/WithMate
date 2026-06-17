@@ -17,6 +17,7 @@ import {
   collectCodexAssistantTextFromEventsForTesting,
   collectCodexReasoningTextFromEventsForTesting,
   isCodexWindowsTaskkillSuccessParseNoiseMessage,
+  isCodexUsageLimitMessage,
   resolveCodexThreadForSettings,
   type CodexThreadOptions,
 } from "../../src-electron/codex-adapter.js";
@@ -158,6 +159,8 @@ async function* createCodexStreamFromEvents(
 describe("CodexAdapter thread settings", () => {
   const windowsTaskkillParseNoiseMessage =
     "Failed to parse item: SUCCESS: The process with PID 13760 (child process of PID 32340) has been terminated.";
+  const usageLimitMessage =
+    "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Jun 12th, 2026 2:07 AM.";
 
   it("Windows taskkill の SUCCESS 行だけ Codex JSON parse noise として扱う", () => {
     assert.equal(
@@ -173,6 +176,13 @@ describe("CodexAdapter thread settings", () => {
       false,
     );
     assert.equal(isCodexWindowsTaskkillSuccessParseNoiseMessage("SUCCESS: ordinary command output"), false);
+  });
+
+  it("Codex usage limit message は保守的な marker が揃う場合だけ扱う", () => {
+    assert.equal(isCodexUsageLimitMessage(usageLimitMessage), true);
+    assert.equal(isCodexUsageLimitMessage("You've hit your usage limit."), false);
+    assert.equal(isCodexUsageLimitMessage("purchase more credits and try again at 2 AM"), false);
+    assert.equal(isCodexUsageLimitMessage("ordinary provider failure"), false);
   });
 
   it("turn.completed 後の Windows taskkill parse noise は成功結果として返す", async () => {
@@ -456,6 +466,70 @@ describe("CodexAdapter thread settings", () => {
     }
   });
 
+  it("stream error の usage limit は SDK wrapper error より優先して reason を付ける", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-usage-limit-"));
+    const logs: Array<{ kind: string; data?: Record<string, unknown> }> = [];
+    const adapter = new CodexAdapter((entry) => {
+      logs.push(entry as { kind: string; data?: Record<string, unknown> });
+    }) as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+
+    try {
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-usage-limit",
+            runStreamed: async () => ({
+              events: createCodexStreamThatThrowsAfter([
+                {
+                  type: "error",
+                  message: usageLimitMessage,
+                },
+                {
+                  type: "turn.failed",
+                  error: {
+                    message: usageLimitMessage,
+                  },
+                },
+              ], "Codex Exec exited with code 1: Reading prompt from stdin..."),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+
+      await assert.rejects(
+        () => adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath)),
+        (error) => {
+          assert.equal(error instanceof ProviderTurnError, true);
+          assert.equal((error as ProviderTurnError).canceled, false);
+          assert.equal((error as ProviderTurnError).reason, "usage_limit");
+          assert.equal((error as Error).message, usageLimitMessage);
+          assert.equal((error as ProviderTurnError).partialResult.threadId, "thread-usage-limit");
+          return true;
+        },
+      );
+
+      const failedLog = logs.find((entry) => entry.kind === "codex.run.failed");
+      assert.equal(failedLog?.data?.providerErrorReason, "usage_limit");
+      assert.equal(failedLog?.data?.streamErrorMessage, usageLimitMessage);
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("delta 系 event から assistant text を逐次復元し、final item で確定形に置き換える", () => {
     const streamedText = collectCodexAssistantTextFromEventsForTesting([
       {
@@ -662,8 +736,9 @@ describe("CodexAdapter thread settings", () => {
     ]);
   });
 
-  it("collab_tool_call の stream lifecycle を app log に流す", async () => {
+  it("stream 診断ログは通常運用の app log に流さず summary だけ残す", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-collab-log-"));
+    const previousDebugValue = process.env.WITHMATE_CODEX_STREAM_DEBUG;
     const logs: Array<{ kind: string; level: string; data?: Record<string, unknown> }> = [];
     const adapter = new CodexAdapter((entry) => {
       logs.push(entry as { kind: string; level: string; data?: Record<string, unknown> });
@@ -682,6 +757,95 @@ describe("CodexAdapter thread settings", () => {
     };
 
     try {
+      delete process.env.WITHMATE_CODEX_STREAM_DEBUG;
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-1",
+            runStreamed: async () => ({
+              events: createCodexStreamFromEvents([
+                {
+                  type: "item.completed",
+                  item: {
+                    id: "item_33",
+                    type: "collab_tool_call",
+                    tool: "wait",
+                    status: "completed",
+                    agents_states: {
+                      "agent-1": {
+                        status: "completed",
+                        message: "Pass",
+                      },
+                    },
+                  },
+                },
+                {
+                  type: "item.completed",
+                  item: {
+                    id: "message-1",
+                    type: "agent_message",
+                    text: "done",
+                  },
+                },
+                {
+                  type: "turn.completed",
+                  usage: null,
+                },
+              ]),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+
+      const result = await adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath));
+      const openedLog = logs.find((entry) => entry.kind === "codex.run.stream.opened");
+      const finishedLog = logs.find((entry) => entry.kind === "codex.run.stream.finished");
+      const collabLog = logs.find(
+        (entry) => entry.kind === "codex.run.stream.event" && entry.data?.itemType === "collab_tool_call",
+      );
+      const completedLog = logs.find((entry) => entry.kind === "codex.run.completed");
+
+      assert.equal(result.assistantText, "done");
+      assert.equal(openedLog, undefined);
+      assert.equal(finishedLog, undefined);
+      assert.equal(collabLog, undefined);
+      assert.equal(completedLog?.data?.turnCompleted, true);
+      assert.equal(completedLog?.data?.operationCount, 2);
+      assert.equal(completedLog?.data?.hasUsage, false);
+    } finally {
+      if (previousDebugValue === undefined) {
+        delete process.env.WITHMATE_CODEX_STREAM_DEBUG;
+      } else {
+        process.env.WITHMATE_CODEX_STREAM_DEBUG = previousDebugValue;
+      }
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("debug flag 有効時は collab_tool_call の stream lifecycle を app log に流す", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-collab-debug-log-"));
+    const previousDebugValue = process.env.WITHMATE_CODEX_STREAM_DEBUG;
+    const logs: Array<{ kind: string; level: string; data?: Record<string, unknown> }> = [];
+    const adapter = new CodexAdapter((entry) => {
+      logs.push(entry as { kind: string; level: string; data?: Record<string, unknown> });
+    }) as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+
+    try {
+      process.env.WITHMATE_CODEX_STREAM_DEBUG = "1";
       adapter.getClient = () => ({
         client: {
           startThread: () => ({
@@ -745,6 +909,11 @@ describe("CodexAdapter thread settings", () => {
       assert.equal(completedLog?.data?.turnCompleted, true);
       assert.equal(completedLog?.data?.operationCount, 2);
     } finally {
+      if (previousDebugValue === undefined) {
+        delete process.env.WITHMATE_CODEX_STREAM_DEBUG;
+      } else {
+        process.env.WITHMATE_CODEX_STREAM_DEBUG = previousDebugValue;
+      }
       await rm(workspacePath, { recursive: true, force: true });
     }
   });

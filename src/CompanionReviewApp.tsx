@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -10,21 +11,48 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 
+import {
+  buildSessionWithAddedAdditionalDirectory,
+  buildSessionWithRemovedAdditionalDirectory,
+  resolveAdditionalDirectoryPickerBase,
+  runAdditionalDirectoryRemovalOperation,
+  runPickedAdditionalDirectoryOperation,
+} from "./additional-directory-state.js";
+import {
+  buildSessionWithApprovalMode,
+  buildSessionWithCodexSandboxMode,
+  buildSessionWithModelChange,
+  buildSessionWithReasoningEffort,
+} from "./runtime-option-state.js";
 import type { ApprovalMode } from "./approval-mode.js";
+import {
+  type AuxiliarySession,
+} from "./auxiliary-session-state.js";
+import {
+  runAuxiliaryApprovalModeChangeOperation,
+  runAuxiliaryModelChangeOperation,
+  runAuxiliaryReasoningEffortChangeOperation,
+  runAuxiliarySandboxModeChangeOperation,
+} from "./auxiliary-runtime-option-operation.js";
+import {
+  clearAuxiliarySessionsLoadState,
+  createAuxiliaryLoadRevisionGuard,
+  runActiveAuxiliarySessionLoadAndApply,
+  runActiveAuxiliarySessionRefreshAndApply,
+  runClosedAuxiliarySessionsLoadAndApply,
+} from "./auxiliary-session-refresh-operation.js";
 import type {
   ComposerPreview,
   DiffPreviewPayload,
   LiveApprovalRequest,
   LiveElicitationRequest,
   LiveElicitationResponse,
-  LiveSessionRunState,
-  ProviderQuotaTelemetry,
-  SessionContextTelemetry,
 } from "./app-state.js";
 import { currentTimestampLabel } from "./app-state.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import type { CompanionMergeRunSummary, CompanionSession, CompanionSessionSummary } from "./companion-state.js";
 import { createCompanionSessionSummary } from "./companion-state.js";
+import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
 import {
   buildCompanionCharacterProfile,
   buildCompanionChatSnapshot,
@@ -40,74 +68,220 @@ import type {
 import { getCompanionSessionIdFromLocation } from "./companion-review-state.js";
 import { DiffViewer } from "./DiffViewer.js";
 import {
+  restoreComposerTextareaFocusAndCaret,
+  restoreCurrentComposerTextareaFocusToEnd,
+} from "./composer-textarea-focus.js";
+import {
   getProviderCatalog,
-  resolveModelChangeSelection,
-  resolveModelSelection,
   type ModelCatalogSnapshot,
   type ModelReasoningEffort,
 } from "./model-catalog.js";
+import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { SessionHeader } from "./session-components.js";
 import { ChatHeaderHandle, ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
+import {
+  createAuxiliaryHeaderActions,
+  resolveAuxiliaryHeaderActionState,
+} from "./chat/chat-header-actions.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
+import {
+  beginAuxiliarySessionStartOperation,
+  createActiveAuxiliarySessionStartResultApplier,
+  createAuxiliarySessionStartErrorHandler,
+  finishAuxiliarySessionStartClosedLoadWithApi,
+  runAuxiliarySessionStartOperation,
+} from "./auxiliary-session-start-operation.js";
+import {
+  createAuxiliarySessionPendingLiveRunClearer,
+  createAuxiliarySessionRunningApplier,
+  createAuxiliarySessionSendResultAppliers,
+  handleAuxiliarySessionSendOperationResult,
+  runAuxiliarySessionSendOperationWithApi,
+} from "./auxiliary-session-send-operation.js";
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
-import { formatMarkdownQuote, insertComposerTextAtCaret } from "./chat/message-text-actions.js";
+import { COMPANION_PENDING_MESSAGE_TEXT } from "./chat/pending-run-indicator.js";
+import {
+  applyRetryDetailsReset,
+  applyRetryDraftRestoreCommand,
+  buildRetryStopSummary,
+  createCancelRetryDraftReplaceHandler,
+  createRetryDraftReplaceConfirmationHandler,
+  createRetryDetailsToggleHandler,
+  createRetryEditHandler,
+  isRetryActionDisabled as resolveRetryActionDisabled,
+  resolveRetryBannerKind,
+  runRetryResendCommand,
+  shouldProtectRetryEditDraft,
+  shouldShowRetryBanner,
+  type RetryBannerState,
+} from "./chat/retry-state.js";
+import {
+  createCopyMessageTextHandler,
+} from "./chat/message-text-actions.js";
 import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,
-  withForcedComposerBlockedFeedback,
+  resolveComposerSendabilityState,
+  resolveComposerSendPreflight,
 } from "./session-composer-feedback.js";
+import { buildActionDockCompactPreview } from "./action-dock-preview.js";
+import {
+  buildActionDockRuntimeState,
+  shouldFocusComposerForActionDockExpand,
+} from "./action-dock-state.js";
+import {
+  buildAuxiliaryLaunchProviderItems,
+  createAuxiliaryLaunchDialogCloseHandler,
+  createAuxiliaryLaunchDialogOpenHandler,
+  createAuxiliaryLaunchProviderSelectHandler,
+  resolveAuxiliaryLaunchSessionDefaults,
+  resolveAuxiliaryLaunchStartProvider,
+} from "./chat/auxiliary-launch-state.js";
+import {
+  buildAuxiliaryAwareSendOrCancelHandler,
+  buildAuxiliarySessionCancelTarget,
+  buildRunningSessionCancelTarget,
+  resolveSelectedSessionIsRunning,
+  resolveSelectedSessionRunState,
+  runRunningSessionCancelOperation,
+} from "./chat/send-or-cancel.js";
+import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-runtime-option-routing.js";
+import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
 import {
   buildCustomAgentMatchDisplay,
   buildSelectedCustomAgentDisplay,
   buildSkillMatchDisplay,
-  buildSkillPromptSnippet,
 } from "./session-composer-selection.js";
 import {
-  buildAdditionalDirectoryDisplay,
-  buildComposerAttachmentDisplay,
-  buildWorkspacePathMatchDisplay,
-  formatPathReference,
-  getActivePathReference,
-  normalizePathForReference,
-  removeActivePathReference,
-  toDirectoryPath,
-  toWorkspaceRelativeReference,
+  runAuxiliaryCustomAgentPatchOperation,
+  runAuxiliaryCustomAgentSelectionOperation,
+} from "./auxiliary-custom-agent-operation.js";
+import { runAuxiliarySkillPromptInsertionOperation } from "./auxiliary-skill-prompt-operation.js";
+import {
+  buildAdditionalDirectoryItems,
+  buildClosedWorkspacePathMatchState,
+  buildComposerAttachmentItems,
+  pickComposerReferencePath,
+  type ComposerPathPickerKind,
 } from "./session-composer-paths.js";
 import {
   useSessionContextRail,
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
+import {
+  applyOptimisticSessionRunUpdate,
+  applyResolvedSessionRunUpdate,
+  createOwnedPendingLiveSessionRunState,
+  replaceLiveRunAfterResolvedRequest,
+  rollbackOptimisticSessionRunUpdate,
+  resolveSessionRunErrorMessage,
+  resolveSessionTurnStartPreflight,
+  type OwnedLiveSessionRunState,
+} from "./session-live-run-state.js";
+import {
+  resolveOwnedProviderQuotaTelemetry,
+  resolveOwnedSessionContextTelemetry,
+  type ProviderOwnedQuotaTelemetry,
+  type SessionOwnedContextTelemetry,
+} from "./session-telemetry-state.js";
+import {
+  startProviderQuotaTelemetrySubscription,
+  startSessionContextTelemetrySubscription,
+} from "./session-telemetry-subscription.js";
+import { startLiveSessionRunSubscription } from "./session-live-run-subscription.js";
+import {
+  buildMessageListProjection,
+  hasPersistedLiveAssistantMessage,
+  loadProjectedMessageArtifact,
+  resolveLiveAssistantMessageIndex,
+  resolvePendingAuxiliaryMessageGroupId,
+  shouldProjectLiveAssistantBridge,
+  type LiveAssistantProjection,
+} from "./auxiliary-session-message-projection.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   buildContextPaneProjection,
   buildCopilotQuotaProjection,
-  buildLatestCommandView,
+  buildLatestCommandProjection,
   buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
-  cycleContextPaneTab,
   resolveAvailableContextPaneTabs,
   type ContextPaneTabKey,
 } from "./session-ui-projection.js";
+import { buildCompanionAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
-import { fileKindLabel, modelOptionLabel, reasoningDepthLabel } from "./ui-utils.js";
+import { fileKindLabel } from "./ui-utils.js";
+import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
 import {
-  getApprovalOptionsForProvider,
-  getSandboxOptionsForProvider,
-  getSandboxOptionsForProviderSelection,
-} from "./provider-runtime-options.js";
-import { extractTextReferenceCandidates } from "./path-reference.js";
-import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
+  applyComposerDraftClearCommand,
+  applyComposerDraftChangeCommand,
+  buildComposerDraftKeyDownHandler,
+  buildOnDraftCompositionHandlers,
+  buildOnDraftSelectHandler,
+} from "./chat/composer-draft-handlers.js";
+import {
+  createEmptyComposerPreview,
+} from "./composer-preview-config.js";
+import {
+  createComposerPreviewRequest,
+  useComposerPreviewResolution,
+} from "./chat/use-composer-preview-resolution.js";
+import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
+import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
+import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
+import { createPastedSessionAttachmentHandler } from "./chat/composer-paste-handlers.js";
+import {
+  runAuxiliaryDraftChangeAndSaveOperation,
+  runAuxiliaryDraftPatchOperation,
+} from "./auxiliary-draft-save-context.js";
+import {
+  createGuardedActiveAuxiliarySessionUpdater,
+  enqueueAuxiliarySessionSaveWithQueue,
+  syncActiveAuxiliarySessionRef,
+} from "./auxiliary-session-update-operation.js";
+import {
+  runAddAuxiliaryAdditionalDirectoryOperationWithApi,
+  runRemoveAuxiliaryAdditionalDirectoryOperation,
+} from "./auxiliary-additional-directory-operation.js";
+import {
+  runGuardedAuxiliarySessionReturnToMainOperationWithApi,
+} from "./auxiliary-session-return-operation.js";
+import {
+  applyPickedAdditionalDirectoryUiStateCommand,
+  applyPickedComposerReferencePathCommand,
+  applySelectedPathReferenceInsertionCommand,
+  applySkillPromptInsertionCommand,
+  applySessionFilesReferencePathsCommand,
+  applySkillPromptInsertionUiState,
+  applyUnavailableContextPaneTabFallbackCommand,
+  createActionDockCollapseHandler,
+  createActionDockExpandHandler,
+  createAdditionalDirectoryListToggleHandler,
+  createAgentPickerCloseHandler,
+  createAgentPickerToggleHandler,
+  createCancelTitleEditHandler,
+  createComposerSubmitKeyHandler,
+  createContextPaneTabCycleHandler,
+  createExpandedArtifactToggleHandler,
+  createHeaderExpandedToggleHandler,
+  createPathReferenceRemovalHandler,
+  createQuoteMessageTextHandler,
+  createSessionFilesOpenHandler,
+  createSkillPickerToggleHandler,
+  createSkillPromptInsertionHandler,
+  createStartTitleEditHandler,
+  createTitleInputKeyHandler,
+  createWorkspacePathMatchSelectionHandler,
+} from "./chat/session-shell-handlers.js";
+import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
 function pickInitialFile(files: ChangedFile[]): ChangedFile | null {
   return files[0] ?? null;
 }
 
-const EMPTY_COMPOSER_PREVIEW: ComposerPreview = { attachments: [], errors: [] };
-const COMPOSER_PREVIEW_DEBOUNCE_MS = 120;
-const COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS = 280;
-const WORKSPACE_PATH_QUERY_MIN_LENGTH = 2;
 const MERGE_FILE_LIST_DEFAULT_PERCENT = 32;
 const MERGE_STAGE_DEFAULT_PERCENT = 50;
 const MERGE_PANE_MIN_PERCENT = 30;
@@ -263,7 +437,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [turnRunning, setTurnRunning] = useState(false);
   const [composerText, setComposerText] = useState("");
   const [forceComposerBlockedFeedback, setForceComposerBlockedFeedback] = useState(false);
-  const [composerPreview, setComposerPreview] = useState<ComposerPreview>(EMPTY_COMPOSER_PREVIEW);
+  const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
@@ -290,25 +464,47 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [isAgentPickerOpen, setIsAgentPickerOpen] = useState(false);
   const [isSkillPickerOpen, setIsSkillPickerOpen] = useState(false);
   const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
-  const [workspacePathMatches, setWorkspacePathMatches] = useState<WorkspacePathCandidate[]>([]);
-  const [activeWorkspacePathMatchIndex, setActiveWorkspacePathMatchIndex] = useState(-1);
+  const {
+    workspacePathMatches,
+    activeWorkspacePathMatchIndex,
+    setActiveWorkspacePathMatchIndex,
+    applyWorkspacePathMatchState,
+    workspacePathMatchItems,
+  } = useWorkspacePathMatchState();
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
+  const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
+  const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
+  const [activeAuxiliarySession, setActiveAuxiliarySession] = useState<AuxiliarySession | null>(null);
+  const [closedAuxiliarySessions, setClosedAuxiliarySessions] = useState<AuxiliarySession[]>([]);
+  const [isAuxiliaryActionPending, setIsAuxiliaryActionPending] = useState(false);
+  const {
+    auxiliaryLaunchDialogOpen,
+    auxiliaryLaunchProviderId,
+    auxiliaryLaunchFeedback,
+    openAuxiliaryLaunchDialog,
+    closeAuxiliaryLaunchDialog,
+    selectAuxiliaryLaunchProvider,
+    resetAuxiliaryLaunchFeedback,
+    setAuxiliaryLaunchStartError,
+  } = useAuxiliaryLaunchDialogState();
   const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
   const [elicitationActionRequestId, setElicitationActionRequestId] = useState<string | null>(null);
-  const [liveRunState, setLiveRunState] = useState<{ ownerSessionId: string | null; state: LiveSessionRunState | null }>({
+  const [liveRunState, setLiveRunState] = useState<OwnedLiveSessionRunState>({
     ownerSessionId: null,
     state: null,
   });
-  const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] = useState<{
-    ownerProviderId: string | null;
-    telemetry: ProviderQuotaTelemetry | null;
-  }>({ ownerProviderId: null, telemetry: null });
-  const [sessionContextTelemetryState, setSessionContextTelemetryState] = useState<{
-    ownerSessionId: string | null;
-    telemetry: SessionContextTelemetry | null;
-  }>({ ownerSessionId: null, telemetry: null });
+  const [liveAssistantBridge, setLiveAssistantBridge] = useState<LiveAssistantProjection | null>(null);
+  const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] =
+    useState<ProviderOwnedQuotaTelemetry>({ ownerProviderId: null, telemetry: null });
+  const [sessionContextTelemetryState, setSessionContextTelemetryState] =
+    useState<SessionOwnedContextTelemetry>({ ownerSessionId: null, telemetry: null });
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const activeAuxiliarySessionRef = useRef<AuxiliarySession | null>(null);
+  const auxiliarySessionMutationRevisionRef = useRef(0);
+  const auxiliaryDraftSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const auxiliarySessionSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const auxiliaryLoadRevisionRef = useRef(0);
   const mergeDiffLayoutRef = useRef<HTMLDivElement | null>(null);
   const mergeFileSelectionRef = useRef<HTMLDivElement | null>(null);
 
@@ -360,41 +556,72 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }, [viewMode]);
 
   useEffect(() => {
-    setComposerText("");
-    setComposerPreview(EMPTY_COMPOSER_PREVIEW);
+    applyComposerDraftClearCommand({
+      setDraft: setComposerText,
+      setComposerCaret,
+      nextCaret: 0,
+    });
+    setComposerPreview(createEmptyComposerPreview());
     setPickerBaseDirectory(snapshot?.session.worktreePath ?? "");
-    setComposerCaret(0);
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
+    applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
     setIsComposerImeComposing(false);
-  }, [snapshot?.session.id]);
+    setIsRetryDraftReplacePending(false);
+  }, [applyWorkspacePathMatchState, snapshot?.session.id]);
+
+  useEffect(() => {
+    syncActiveAuxiliarySessionRef({
+      activeSession: activeAuxiliarySession,
+      activeSessionRef: activeAuxiliarySessionRef,
+    });
+  }, [activeAuxiliarySession]);
 
   useEffect(() => {
     let active = true;
-    const withmateApi = getWithMateApi();
-
-    if (!withmateApi) {
+    const loadRevision = auxiliaryLoadRevisionRef.current + 1;
+    auxiliaryLoadRevisionRef.current = loadRevision;
+    const canApplyLoadResult = createAuxiliaryLoadRevisionGuard({
+      loadRevision: auxiliaryLoadRevisionRef,
+      expectedRevision: loadRevision,
+      isActive: () => active,
+    });
+    const sessionId = snapshot?.session.id ?? null;
+    if (!withmateApi || !sessionId || isMergeView) {
+      clearAuxiliarySessionsLoadState({
+        setActiveSession: setActiveAuxiliarySession,
+        setClosedSessions: setClosedAuxiliarySessions,
+      });
       return () => {
         active = false;
       };
     }
 
-    void withmateApi.listCompanionSessionSummaries().then((nextSessions) => {
-      if (active) {
-        setCompanionSessions(nextSessions);
-      }
+    void runActiveAuxiliarySessionLoadAndApply({
+      parentSessionId: sessionId,
+      getActiveAuxiliarySession: (parentSessionId) => withmateApi.getActiveAuxiliarySession(parentSessionId),
+      isActive: canApplyLoadResult,
+      setActiveSession: setActiveAuxiliarySession,
     });
 
-    const unsubscribe = withmateApi.subscribeCompanionSessionSummaries((nextSessions) => {
-      if (active) {
-        setCompanionSessions(nextSessions);
-      }
+    void runClosedAuxiliarySessionsLoadAndApply({
+      parentSessionId: sessionId,
+      listAuxiliarySessions: (parentSessionId) => withmateApi.listAuxiliarySessions(parentSessionId),
+      getAuxiliarySession: (targetSessionId) => withmateApi.getAuxiliarySession(targetSessionId),
+      isActive: canApplyLoadResult,
+      setClosedSessions: setClosedAuxiliarySessions,
     });
 
     return () => {
       active = false;
-      unsubscribe();
     };
+  }, [isMergeView, snapshot?.session.id, withmateApi]);
+
+  useEffect(() => {
+    const withmateApi = getWithMateApi();
+
+    return startCompanionSessionSummariesSubscription({
+      api: withmateApi,
+      applySummaries: setCompanionSessions,
+    });
   }, []);
 
   useEffect(() => {
@@ -407,16 +634,190 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   useEffect(() => {
     const withmateApi = getWithMateApi();
-    if (!withmateApi || isMergeView) {
+    return startModelCatalogSubscription({
+      api: withmateApi,
+      enabled: !isMergeView,
+      subscribe: false,
+      applyModelCatalog: setModelCatalog,
+      onInitialLoadError: () => setModelCatalog(null),
+    });
+  }, [isMergeView]);
+
+  const activeRunSessionId = activeAuxiliarySession?.id ?? snapshot?.session.id ?? null;
+  const displayedSession = useMemo(
+    () => snapshot
+      ? (activeAuxiliarySession
+        ? buildCompanionAuxiliaryRuntimeSession(snapshot.session, activeAuxiliarySession)
+        : snapshot.session)
+      : null,
+    [activeAuxiliarySession, snapshot],
+  );
+  const isAuxiliaryMode = activeAuxiliarySession?.status === "active";
+  const activeComposerText = activeAuxiliarySession?.composerDraft ?? composerText;
+  const selectedSessionLiveRun =
+    activeRunSessionId !== null && liveRunState.ownerSessionId === activeRunSessionId ? liveRunState.state : null;
+  const projectedAuxiliarySessions = useMemo(
+    () => [
+      ...closedAuxiliarySessions,
+      ...(activeAuxiliarySession ? [activeAuxiliarySession] : []),
+    ],
+    [activeAuxiliarySession, closedAuxiliarySessions],
+  );
+  const liveAssistantMessageIndex = useMemo(
+    () =>
+      activeRunSessionId
+        ? resolveLiveAssistantMessageIndex(
+          snapshot?.session.messages ?? [],
+          projectedAuxiliarySessions,
+          activeRunSessionId,
+          snapshot?.session.id,
+        )
+        : 0,
+    [activeRunSessionId, projectedAuxiliarySessions, snapshot?.session.id, snapshot?.session.messages],
+  );
+  const hasPersistedLiveAssistantBridge = useMemo(
+    () =>
+      liveAssistantBridge
+        ? hasPersistedLiveAssistantMessage(
+          snapshot?.session.messages ?? [],
+          projectedAuxiliarySessions,
+          liveAssistantBridge,
+          snapshot?.session.id,
+        )
+        : false,
+    [liveAssistantBridge, projectedAuxiliarySessions, snapshot?.session.id, snapshot?.session.messages],
+  );
+  const projectedLiveAssistant = useMemo<LiveAssistantProjection | null>(() => {
+    if (!activeRunSessionId) {
+      return null;
+    }
+
+    const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
+    const liveThreadId = selectedSessionLiveRun?.threadId ?? null;
+    const bridgeMessageIndex =
+      liveAssistantBridge?.sessionId === activeRunSessionId &&
+      liveAssistantBridge.threadId === liveThreadId
+        ? liveAssistantBridge.messageIndex
+        : liveAssistantMessageIndex;
+    if (liveRunAssistantText) {
+      return {
+        sessionId: activeRunSessionId,
+        threadId: liveThreadId,
+        messageIndex: bridgeMessageIndex,
+        text: liveRunAssistantText,
+      };
+    }
+
+    return shouldProjectLiveAssistantBridge({
+      bridge: liveAssistantBridge,
+      activeSessionId: activeRunSessionId,
+      hasLiveRun: selectedSessionLiveRun !== null,
+      hasPersistedAssistant: hasPersistedLiveAssistantBridge,
+    })
+      ? liveAssistantBridge
+      : null;
+  }, [
+    activeRunSessionId,
+    hasPersistedLiveAssistantBridge,
+    liveAssistantBridge,
+    liveAssistantMessageIndex,
+    selectedSessionLiveRun,
+    selectedSessionLiveRun?.assistantText,
+    selectedSessionLiveRun?.threadId,
+  ]);
+  const messageListProjection = useMemo(
+    () => buildMessageListProjection(snapshot?.session.messages ?? [], projectedAuxiliarySessions, snapshot?.session.id, {
+      liveAssistant: projectedLiveAssistant,
+    }),
+    [projectedAuxiliarySessions, projectedLiveAssistant, snapshot?.session.id, snapshot?.session.messages],
+  );
+  const messageListMessages = messageListProjection.messages;
+  const messageListSources = messageListProjection.sources;
+  const messageListKeys = messageListProjection.keys;
+  const messageListGroups = messageListProjection.groups;
+  useEffect(() => {
+    if (!activeRunSessionId || !selectedSessionLiveRun?.assistantText) {
       return;
     }
-    void withmateApi.getModelCatalog(null).then(setModelCatalog).catch(() => setModelCatalog(null));
-  }, [isMergeView]);
+
+    const liveThreadId = selectedSessionLiveRun.threadId ?? null;
+    setLiveAssistantBridge((current) => {
+      if (current?.sessionId === activeRunSessionId && current.threadId === liveThreadId) {
+        return {
+          ...current,
+          text: selectedSessionLiveRun.assistantText,
+        };
+      }
+
+      return {
+        sessionId: activeRunSessionId,
+        threadId: liveThreadId,
+        messageIndex: liveAssistantMessageIndex,
+        text: selectedSessionLiveRun.assistantText,
+      };
+    });
+  }, [activeRunSessionId, liveAssistantMessageIndex, selectedSessionLiveRun?.assistantText, selectedSessionLiveRun?.threadId]);
+  useEffect(() => {
+    if (!liveAssistantBridge) {
+      return;
+    }
+
+    if (
+      liveAssistantBridge.sessionId !== activeRunSessionId ||
+      (selectedSessionLiveRun === null && !hasPersistedLiveAssistantBridge)
+    ) {
+      setLiveAssistantBridge(null);
+    }
+  }, [activeRunSessionId, hasPersistedLiveAssistantBridge, liveAssistantBridge, selectedSessionLiveRun]);
+  useEffect(() => {
+    if (!liveAssistantBridge) {
+      return;
+    }
+
+    if (!hasPersistedLiveAssistantBridge) {
+      return;
+    }
+
+    let secondFrameId: number | null = null;
+    const firstFrameId = requestAnimationFrame(() => {
+      secondFrameId = requestAnimationFrame(() => {
+        setLiveAssistantBridge((current) =>
+          current?.sessionId === liveAssistantBridge.sessionId &&
+          current.threadId === liveAssistantBridge.threadId &&
+          current.text === liveAssistantBridge.text
+            ? null
+            : current,
+        );
+      });
+    });
+
+    return () => {
+      cancelAnimationFrame(firstFrameId);
+      if (secondFrameId !== null) {
+        cancelAnimationFrame(secondFrameId);
+      }
+    };
+  }, [hasPersistedLiveAssistantBridge, liveAssistantBridge]);
 
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
-    const sessionId = snapshot?.session.id ?? null;
+    const sessionId = activeRunSessionId;
+    const activeAuxiliarySessionId = activeAuxiliarySession?.id ?? null;
+    const refreshCompletedAuxiliarySession = (updatedSessionId: string) => {
+      if (!withmateApi) {
+        return;
+      }
+
+      void runActiveAuxiliarySessionRefreshAndApply({
+        sessionId: updatedSessionId,
+        activeSessionId: activeAuxiliarySessionId,
+        loadAuxiliarySession: (targetSessionId) => withmateApi.getAuxiliarySession(targetSessionId),
+        isActive: () => active,
+        setActiveSession: setActiveAuxiliarySession,
+        activeSessionRef: activeAuxiliarySessionRef,
+      }).catch(() => undefined);
+    };
     if (!withmateApi || !sessionId || isMergeView) {
       setLiveRunState({ ownerSessionId: sessionId, state: null });
       return () => {
@@ -424,24 +825,18 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       };
     }
 
-    setLiveRunState({ ownerSessionId: sessionId, state: null });
-    void withmateApi.getLiveSessionRun(sessionId).then((state) => {
-      if (active) {
-        setLiveRunState({ ownerSessionId: sessionId, state });
-      }
-    });
-
-    const unsubscribe = withmateApi.subscribeLiveSessionRun((nextSessionId, state) => {
-      if (active && nextSessionId === sessionId) {
-        setLiveRunState({ ownerSessionId: nextSessionId, state });
-      }
+    const unsubscribe = startLiveSessionRunSubscription({
+      sessionId,
+      api: withmateApi,
+      applyLiveRunState: setLiveRunState,
+      onSessionRunUpdated: refreshCompletedAuxiliarySession,
     });
 
     return () => {
       active = false;
       unsubscribe();
     };
-  }, [isMergeView, snapshot?.session.id]);
+  }, [activeAuxiliarySession?.id, activeRunSessionId, isMergeView]);
 
   useEffect(() => {
     if (!isMergePaneResizing) {
@@ -520,7 +915,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
-    const session = snapshot?.session ?? null;
+    const session = displayedSession;
     if (!withmateApi || !session || isMergeView) {
       setAvailableSkills([]);
       setIsSkillListLoading(false);
@@ -545,12 +940,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     return () => {
       active = false;
     };
-  }, [isMergeView, snapshot?.session.provider, snapshot?.session.worktreePath]);
+  }, [displayedSession, isMergeView]);
 
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
-    const session = snapshot?.session ?? null;
+    const session = displayedSession;
     if (!withmateApi || !session || session.provider !== "copilot" || isMergeView) {
       setAvailableCustomAgents([]);
       setIsCustomAgentListLoading(false);
@@ -575,75 +970,31 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     return () => {
       active = false;
     };
-  }, [isMergeView, snapshot?.session.provider, snapshot?.session.worktreePath]);
+  }, [displayedSession, isMergeView]);
 
   useEffect(() => {
-    let active = true;
     const withmateApi = getWithMateApi();
-    const providerId = snapshot?.session.provider ?? null;
-    if (!withmateApi || !providerId || isMergeView) {
-      setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry: null });
-      return () => {
-        active = false;
-      };
-    }
+    const providerId = displayedSession?.provider ?? null;
 
-    setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry: null });
-    void withmateApi.getProviderQuotaTelemetry(providerId).then((telemetry) => {
-      if (active) {
-        setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry });
-      }
-    }).catch(() => {
-      if (active) {
-        setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry: null });
-      }
+    return startProviderQuotaTelemetrySubscription({
+      api: withmateApi,
+      providerId,
+      enabled: !isMergeView,
+      applyProviderQuotaTelemetry: setProviderQuotaTelemetryState,
     });
-
-    const unsubscribe = withmateApi.subscribeProviderQuotaTelemetry((nextProviderId, telemetry) => {
-      if (active && nextProviderId === providerId) {
-        setProviderQuotaTelemetryState({ ownerProviderId: nextProviderId, telemetry });
-      }
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [isMergeView, snapshot?.session.provider]);
+  }, [displayedSession?.provider, isMergeView]);
 
   useEffect(() => {
-    let active = true;
     const withmateApi = getWithMateApi();
-    const sessionId = snapshot?.session.id ?? null;
-    if (!withmateApi || !sessionId || isMergeView) {
-      setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry: null });
-      return () => {
-        active = false;
-      };
-    }
+    const sessionId = activeRunSessionId;
 
-    setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry: null });
-    void withmateApi.getSessionContextTelemetry(sessionId).then((telemetry) => {
-      if (active) {
-        setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry });
-      }
-    }).catch(() => {
-      if (active) {
-        setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry: null });
-      }
+    return startSessionContextTelemetrySubscription({
+      api: withmateApi,
+      sessionId,
+      enabled: !isMergeView,
+      applySessionContextTelemetry: setSessionContextTelemetryState,
     });
-
-    const unsubscribe = withmateApi.subscribeSessionContextTelemetry((nextSessionId, telemetry) => {
-      if (active && nextSessionId === sessionId) {
-        setSessionContextTelemetryState({ ownerSessionId: nextSessionId, telemetry });
-      }
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [isMergeView, snapshot?.session.id]);
+  }, [activeRunSessionId, isMergeView]);
 
   const themeStyle = useMemo(
     () => (snapshot ? buildCharacterThemeStyle(snapshot.session.characterThemeColors) : undefined),
@@ -668,8 +1019,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   );
   const unstagedFileTree = useMemo(() => buildChangedFileTree(unstagedChangedFiles), [unstagedChangedFiles]);
   const stagedFileTree = useMemo(() => buildChangedFileTree(stagedChangedFiles), [stagedChangedFiles]);
-  const selectedSessionLiveRun =
-    snapshot && liveRunState.ownerSessionId === snapshot.session.id ? liveRunState.state : null;
   useEffect(() => {
     setApprovalActionRequestId(null);
   }, [selectedSessionLiveRun?.approvalRequest?.requestId]);
@@ -687,6 +1036,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     auditLogsState,
     auditLogDetails,
     auditLogOperationDetails,
+    persistedEntries: companionSessionAuditLogs,
     displayedEntries: displayedSessionAuditLogs,
     handleLoadMoreAuditLogs,
     handleLoadAuditLogDetail,
@@ -698,132 +1048,79 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     liveRun: selectedSessionLiveRun,
     enabled: !isMergeView,
   });
-  const selectedSessionRunState = snapshot?.session.runState ?? (selectedSessionLiveRun ? "running" : null);
-  const isSelectedSessionRunning = selectedSessionRunState === "running" || turnRunning;
-  const activePathReference = useMemo(
-    () => (snapshot ? getActivePathReference(composerText, composerCaret) : null),
-    [composerCaret, composerText, snapshot],
-  );
-  const isEditingPathReference = activePathReference !== null;
-  const normalizedActivePathQuery = activePathReference?.query.trim() ?? "";
-  const previewDraft = useMemo(
-    () => removeActivePathReference(composerText, activePathReference),
-    [activePathReference, composerText],
-  );
-  const previewUserMessage = useMemo(
-    () => (isEditingPathReference ? previewDraft : composerText),
-    [composerText, isEditingPathReference, previewDraft],
-  );
-  const previewPathReferenceCandidates = useMemo(
-    () => extractTextReferenceCandidates(previewDraft),
-    [previewDraft],
-  );
-  const hasPreviewPathReferenceCandidates = previewPathReferenceCandidates.length > 0;
-  const previewPathReferenceSignature = useMemo(
-    () => previewPathReferenceCandidates.join("\u001f"),
-    [previewPathReferenceCandidates],
-  );
   useEffect(() => {
-    let active = true;
-    const withmateApi = getWithMateApi();
-    const sessionId = snapshot?.session.id ?? null;
-    if (!withmateApi || !sessionId || isMergeView) {
-      setComposerPreview(EMPTY_COMPOSER_PREVIEW);
-      return () => {
-        active = false;
-      };
+    if (isAuxiliaryMode) {
+      setAuditLogsOpen(false);
     }
-
-    if (!hasPreviewPathReferenceCandidates) {
-      setComposerPreview(EMPTY_COMPOSER_PREVIEW);
-      return () => {
-        active = false;
-      };
-    }
-
-    if (isComposerImeComposing) {
-      return () => {
-        active = false;
-      };
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      void withmateApi.previewCompanionComposerInput(sessionId, previewUserMessage).then((preview) => {
-        if (active) {
-          setComposerPreview(preview);
-        }
-      }).catch((error) => {
-        if (active) {
-          setComposerPreview({
-            attachments: [],
-            errors: [error instanceof Error ? error.message : "添付の解決に失敗したよ。"],
-          });
-        }
-      });
-    }, isEditingPathReference ? COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS : COMPOSER_PREVIEW_DEBOUNCE_MS);
-
-    return () => {
-      active = false;
-      window.clearTimeout(timeoutId);
-    };
-  }, [
+  }, [isAuxiliaryMode, setAuditLogsOpen]);
+  const selectedSessionRunState = activeAuxiliarySession
+    ? activeAuxiliarySession.runState
+    : resolveSelectedSessionRunState({
+      runState: snapshot?.session.runState,
+      isTurnRunning: turnRunning,
+      hasLiveRun: !!selectedSessionLiveRun,
+    });
+  const isSelectedSessionRunning = resolveSelectedSessionIsRunning({
+    runState: selectedSessionRunState,
+    isTurnRunning: turnRunning,
+  });
+  const lastUserMessage = useMemo(
+    () => displayedSession ? [...displayedSession.messages].reverse().find((message) => message.role === "user") ?? null : null,
+    [displayedSession],
+  );
+  const lastAssistantMessage = useMemo(
+    () =>
+      displayedSession
+        ? [...displayedSession.messages].reverse().find((message) => message.role === "assistant") ?? null
+        : null,
+    [displayedSession],
+  );
+  const latestTerminalAuditLog = useMemo(
+    () => companionSessionAuditLogs.find((entry) => isTerminalAuditLogPhase(entry.phase)) ?? null,
+    [companionSessionAuditLogs],
+  );
+  const {
+    activePathReference,
+    hasPreviewPathReferenceCandidates,
+    isEditingPathReference,
+    normalizedActivePathQuery,
+    previewPathReferenceCandidates,
+    previewPathReferenceSignature,
+    previewDraft,
+    previewUserMessage,
+  } = useComposerPathReferencePreview({
+    draft: activeComposerText,
+    caret: composerCaret,
+    isEnabled: Boolean(snapshot),
+  });
+  const previewComposerInput = useMemo(() => {
+    const sessionId = activeRunSessionId;
+    return createComposerPreviewRequest({
+      api: withmateApi,
+      mode: activeAuxiliarySession ? "session" : "companion",
+      sessionId,
+    });
+  }, [activeAuxiliarySession, activeRunSessionId, withmateApi]);
+  useComposerPreviewResolution({
     hasPreviewPathReferenceCandidates,
     isComposerImeComposing,
     isEditingPathReference,
-    isMergeView,
+    isPreviewBlocked: isMergeView,
+    onComposerPreviewChange: setComposerPreview,
+    previewRequest: previewComposerInput,
     previewPathReferenceSignature,
     previewUserMessage,
-    snapshot?.session.id,
-  ]);
-  useEffect(() => {
-    let active = true;
-    const withmateApi = getWithMateApi();
-    const sessionId = snapshot?.session.id ?? null;
-
-    if (
-      !withmateApi ||
-      !sessionId ||
-      isMergeView ||
-      selectedSessionRunState === "running" ||
-      snapshot?.session.status !== "active" ||
-      isComposerImeComposing ||
-      !isEditingPathReference ||
-      normalizedActivePathQuery.length < WORKSPACE_PATH_QUERY_MIN_LENGTH
-    ) {
-      setWorkspacePathMatches([]);
-      return () => {
-        active = false;
-      };
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      void withmateApi.searchCompanionWorkspaceFiles(sessionId, normalizedActivePathQuery).then((matches) => {
-        if (active) {
-          setWorkspacePathMatches(matches);
-        }
-      }).catch(() => {
-        if (active) {
-          setWorkspacePathMatches([]);
-        }
-      });
-    }, 100);
-
-    return () => {
-      active = false;
-      window.clearTimeout(timeoutId);
-    };
-  }, [
+  });
+  useWorkspacePathMatchSearchFlow({
+    searchSource: "companion",
+    sessionId: snapshot?.session.id ?? null,
+    withmateApi,
+    isSearchBlocked: isMergeView || selectedSessionRunState === "running" || snapshot?.session.status !== "active",
     isComposerImeComposing,
     isEditingPathReference,
-    isMergeView,
     normalizedActivePathQuery,
-    selectedSessionRunState,
-    snapshot?.session.id,
-    snapshot?.session.status,
-  ]);
-  useEffect(() => {
-    setActiveWorkspacePathMatchIndex(workspacePathMatches.length > 0 ? 0 : -1);
-  }, [workspacePathMatches]);
+    onWorkspacePathMatchStateChange: applyWorkspacePathMatchState,
+  });
   const {
     sessionWorkbenchRef,
     sessionWorkbenchStyle,
@@ -836,20 +1133,18 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const companionMessageListScrollSignature = useMemo(
     () =>
       [
-        snapshot?.session.id ?? "",
-        snapshot?.session.runState ?? "",
-        snapshot?.session.messages.map((message) => `${message.role}:${message.text.length}:${message.text}`).join("\u001d") ?? "",
-        selectedSessionLiveRun?.assistantText ?? "",
+        displayedSession?.id ?? "",
+        displayedSession?.runState ?? "",
+        messageListMessages.map((message) => `${message.role}:${message.text.length}:${message.text}`).join("\u001d"),
         selectedSessionLiveRun?.reasoningText ?? "",
         selectedSessionLiveRun?.errorMessage ?? "",
       ].join("\u001a"),
     [
-      selectedSessionLiveRun?.assistantText,
       selectedSessionLiveRun?.reasoningText,
       selectedSessionLiveRun?.errorMessage,
-      snapshot?.session.id,
-      snapshot?.session.messages,
-      snapshot?.session.runState,
+      displayedSession?.id,
+      displayedSession?.runState,
+      messageListMessages,
     ],
   );
   const {
@@ -858,7 +1153,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     handleMessageListScroll,
     handleJumpToMessageListBottom,
   } = useSessionMessageListFollowing({
-    ownerKey: snapshot?.session.id ?? null,
+    ownerKey: activeRunSessionId,
     scrollSignature: companionMessageListScrollSignature,
     enabled: !isMergeView,
   });
@@ -874,89 +1169,201 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const visibleMergeWarnings =
     snapshot?.mergeReadiness.warnings.filter((warning) => warning.kind !== "merge-simulation") ?? [];
   const runDisabled = isSelectedSessionRunning || operationRunning || !snapshot || snapshot.session.status !== "active";
-  const selectedProviderCatalog = getProviderCatalog(modelCatalog?.providers ?? [], snapshot?.session.provider);
+  const selectedProviderCatalog = getProviderCatalog(modelCatalog?.providers ?? [], displayedSession?.provider);
+  const selectedRuntimeModel = activeAuxiliarySession?.model ?? selectedModel;
+  const selectedRuntimeReasoningEffort = activeAuxiliarySession?.reasoningEffort ?? selectedReasoningEffort;
+  const selectedRuntimeApprovalMode = activeAuxiliarySession?.approvalMode ?? selectedApprovalMode;
+  const selectedRuntimeCodexSandboxMode = activeAuxiliarySession?.codexSandboxMode ?? selectedCodexSandboxMode;
   const selectedModelEntry =
-    selectedProviderCatalog?.models.find((model) => model.id === selectedModel) ??
+    selectedProviderCatalog?.models.find((model) => model.id === selectedRuntimeModel) ??
     selectedProviderCatalog?.models.find((model) => model.id === selectedProviderCatalog.defaultModelId) ??
     selectedProviderCatalog?.models[0] ??
     null;
   const reasoningEffortOptions = selectedModelEntry?.reasoningEfforts ?? [];
-  const modelSelectOptions = (selectedProviderCatalog?.models ?? []).map((model) => ({
-    value: model.id,
-    label: modelOptionLabel(model),
-  }));
-  const selectedModelFallbackLabel = selectedModelEntry ? modelOptionLabel(selectedModelEntry) : selectedModel;
-  const reasoningSelectOptions = reasoningEffortOptions.map((reasoningEffort) => ({
-    value: reasoningEffort,
-    label: reasoningDepthLabel(reasoningEffort),
-  }));
-  const approvalSelectOptions = useMemo(
-    () => {
-      const options = getApprovalOptionsForProvider(snapshot?.session.provider);
-      if (!snapshot || options.some((option) => option.value === selectedApprovalMode)) {
-        return options;
-      }
-
-      return [{ value: selectedApprovalMode, label: selectedApprovalMode }, ...options];
-    },
-    [selectedApprovalMode, snapshot?.session.provider],
+  const auxiliaryLaunchProviderItems = useMemo(
+    () => buildAuxiliaryLaunchProviderItems(
+      modelCatalog?.providers ?? [],
+      (provider) => provider.models.length > 0,
+    ),
+    [modelCatalog],
   );
-  const sandboxSelectOptions = useMemo(
-    () => snapshot
-      ? getSandboxOptionsForProviderSelection(snapshot.session.provider, selectedCodexSandboxMode)
-      : getSandboxOptionsForProvider(undefined),
-    [selectedCodexSandboxMode, snapshot?.session.provider],
+  const {
+    approvalChoiceOptions: approvalSelectOptions,
+    sandboxChoiceOptions: sandboxSelectOptions,
+    modelSelectOptions,
+    selectedModelFallbackLabel,
+    reasoningSelectOptions,
+  } = useMemo(
+    () => buildRuntimeSelectionOptions({
+      providerId: displayedSession?.provider,
+      providerCatalog: selectedProviderCatalog,
+      models: selectedProviderCatalog?.models ?? [],
+      selectedModel: selectedRuntimeModel,
+      reasoningEfforts: reasoningEffortOptions,
+      selectedApprovalMode: selectedRuntimeApprovalMode,
+      selectedCodexSandboxMode: selectedRuntimeCodexSandboxMode,
+    }),
+    [
+      displayedSession?.provider,
+      selectedRuntimeModel,
+      selectedProviderCatalog,
+      reasoningEffortOptions,
+      selectedRuntimeApprovalMode,
+      selectedRuntimeCodexSandboxMode,
+    ],
   );
   const companionComposerBlockedReason = snapshot?.session.status !== "active"
     ? "この Companion は active ではないよ。"
     : "";
-  const companionComposerSendabilityBase = useMemo(
-    () =>
-      buildComposerSendabilityState({
-        runState: selectedSessionRunState,
-        blockedReason: companionComposerBlockedReason,
-        inputErrors: composerPreview.errors,
-        draftText: composerText,
-      }),
-    [companionComposerBlockedReason, composerPreview.errors, composerText, selectedSessionRunState],
-  );
-  const companionComposerSendability = useMemo(
-    () => withForcedComposerBlockedFeedback(companionComposerSendabilityBase, forceComposerBlockedFeedback),
-    [companionComposerSendabilityBase, forceComposerBlockedFeedback],
-  );
-  const isCompanionSendDisabled = companionComposerSendability.isSendDisabled || operationRunning;
-  const companionSendButtonTitle = getComposerSendButtonTitle(companionComposerSendability);
-  const shouldForceActionDockExpanded =
-    isAgentPickerOpen ||
-    isSkillPickerOpen ||
-    isAdditionalDirectoryListOpen ||
-    workspacePathMatches.length > 0 ||
-    companionComposerSendability.shouldShowFeedback;
-  const isActionDockExpanded = isActionDockPinnedExpanded || shouldForceActionDockExpanded;
-  const canCollapseActionDock = !shouldForceActionDockExpanded;
-  const actionDockCompactPreview = useMemo(() => {
-    const normalizedDraft = composerText.replace(/\s+/g, " ").trim();
-    if (normalizedDraft) {
-      return normalizedDraft.length > 84 ? `${normalizedDraft.slice(0, 84)}...` : normalizedDraft;
-    }
-
-    if (isSelectedSessionRunning) {
-      return "実行中";
-    }
-
-    return "下書きなし";
-  }, [composerText, isSelectedSessionRunning]);
-  const companionCharacterProfile = snapshot ? buildCompanionCharacterProfile(snapshot.session) : null;
-  const selectedCustomAgent = useMemo(() => {
-    if (!snapshot?.session.customAgentName.trim()) {
+  const retryBanner = useMemo<RetryBannerState | null>(() => {
+    if (!snapshot || !shouldShowRetryBanner({
+      hasActiveAuxiliarySession: !!activeAuxiliarySession,
+      hasLastUserMessage: !!lastUserMessage,
+      isReadOnly: snapshot.session.status !== "active",
+      runState: selectedSessionRunState,
+    })) {
       return null;
     }
 
-    return availableCustomAgents.find((agent) => agent.name === snapshot.session.customAgentName) ?? null;
-  }, [availableCustomAgents, snapshot?.session.customAgentName]);
+    const retryLastUserMessage = lastUserMessage;
+    if (!retryLastUserMessage) {
+      return null;
+    }
+
+    const kind = resolveRetryBannerKind({
+      runState: selectedSessionRunState,
+      latestTerminalAuditLogPhase: latestTerminalAuditLog?.phase,
+    });
+    if (!kind) {
+      return null;
+    }
+
+    const stopSummary = buildRetryStopSummary(kind, selectedSessionLiveRun, latestTerminalAuditLog, lastAssistantMessage);
+    switch (kind) {
+      case "interrupted":
+        return {
+          kind,
+          badge: "中断",
+          title: "前回の依頼は中断されたままです",
+          stopSummary,
+          lastRequestText: retryLastUserMessage.text,
+        };
+      case "failed":
+        return {
+          kind,
+          badge: "失敗",
+          title: "前回の依頼は完了できませんでした",
+          stopSummary,
+          lastRequestText: retryLastUserMessage.text,
+        };
+      case "canceled":
+        return {
+          kind,
+          badge: "停止",
+          title: "この依頼は途中で停止しました",
+          stopSummary,
+          lastRequestText: retryLastUserMessage.text,
+        };
+      default:
+        return null;
+    }
+  }, [
+    activeAuxiliarySession,
+    lastAssistantMessage,
+    lastUserMessage,
+    latestTerminalAuditLog,
+    selectedSessionLiveRun,
+    selectedSessionRunState,
+    snapshot,
+  ]);
+  const shouldProtectDraftOnRetryEdit = shouldProtectRetryEditDraft({ retryBanner, draft: composerText });
+  const isRetryActionDisabled = resolveRetryActionDisabled({
+    retryBanner,
+    hasLastUserMessage: !!lastUserMessage,
+    composerBlocked: !!companionComposerBlockedReason || operationRunning || turnRunning,
+    isReadOnly: snapshot?.session.status !== "active",
+    runState: selectedSessionRunState,
+  });
+  const isRetryEditDisabled = isRetryActionDisabled || runDisabled;
+  const companionComposerSendability = useMemo(
+    () =>
+      resolveComposerSendabilityState({
+        runState: selectedSessionRunState,
+        blockedReason: companionComposerBlockedReason,
+        inputErrors: composerPreview.errors,
+        draftText: activeComposerText,
+        forceBlockedFeedback: forceComposerBlockedFeedback,
+      }),
+    [
+      activeComposerText,
+      companionComposerBlockedReason,
+      composerPreview.errors,
+      forceComposerBlockedFeedback,
+      selectedSessionRunState,
+    ],
+  );
+  const isCompanionSendDisabled = companionComposerSendability.isSendDisabled || operationRunning || isAuxiliaryActionPending;
+  const companionSendButtonTitle = getComposerSendButtonTitle(companionComposerSendability);
+  const actionDockRuntimeState = buildActionDockRuntimeState({
+    isActionDockPinnedExpanded,
+    forceReasons: [
+      isAgentPickerOpen,
+      isSkillPickerOpen,
+      isAdditionalDirectoryListOpen,
+      workspacePathMatches.length > 0,
+      isRetryDraftReplacePending,
+      !!retryBanner,
+      companionComposerSendability.shouldShowFeedback,
+    ],
+  });
+  const {
+    isActionDockExpanded,
+    canCollapseActionDock,
+  } = actionDockRuntimeState;
+  const retryBannerIdentity = useMemo(() => {
+    if (!retryBanner || !snapshot || !lastUserMessage) {
+      return null;
+    }
+
+    const lastUserMessageIdentity = `${
+      snapshot.session.messages.filter((message) => message.role === "user").length
+    }:${lastUserMessage.text}`;
+    const canceledAuditLogIdentity =
+      retryBanner.kind === "canceled" && latestTerminalAuditLog
+        ? `${latestTerminalAuditLog.id}:${latestTerminalAuditLog.phase}:${latestTerminalAuditLog.createdAt}`
+        : "";
+
+    return [retryBanner.kind, lastUserMessageIdentity, canceledAuditLogIdentity].join("\u001f");
+  }, [lastUserMessage, latestTerminalAuditLog, retryBanner, snapshot]);
+  useEffect(() => {
+    if (!composerText.trim() || !retryBanner) {
+      setIsRetryDraftReplacePending(false);
+    }
+  }, [composerText, retryBanner]);
+  useLayoutEffect(() => {
+    applyRetryDetailsReset({
+      retryBanner,
+      setRetryDetailsOpen: setIsRetryDetailsOpen,
+    });
+  }, [retryBanner?.kind, retryBannerIdentity, snapshot?.session.id]);
+  const actionDockCompactPreview = useMemo(
+    () =>
+      buildActionDockCompactPreview(activeComposerText, isSelectedSessionRunning, {
+        truncationSuffix: "...",
+      }),
+    [activeComposerText, isSelectedSessionRunning],
+  );
+  const companionCharacterProfile = displayedSession ? buildCompanionCharacterProfile(displayedSession) : null;
+  const selectedCustomAgent = useMemo(() => {
+    if (!displayedSession?.customAgentName.trim()) {
+      return null;
+    }
+
+    return availableCustomAgents.find((agent) => agent.name === displayedSession.customAgentName) ?? null;
+  }, [availableCustomAgents, displayedSession]);
   const selectedCustomAgentDisplay = useMemo(
-    () => buildSelectedCustomAgentDisplay(snapshot?.session ?? null, selectedCustomAgent),
-    [selectedCustomAgent, snapshot?.session],
+    () => buildSelectedCustomAgentDisplay(displayedSession, selectedCustomAgent),
+    [displayedSession, selectedCustomAgent],
   );
   const customAgentItems = useMemo(
     () => [
@@ -966,7 +1373,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         primaryLabel: "Default Agent",
         secondaryLabel: "Copilot 標準 agent",
         title: "Copilot の標準 agent を使う",
-        isSelected: !snapshot?.session.customAgentName.trim(),
+        isSelected: !displayedSession?.customAgentName.trim(),
       },
       ...availableCustomAgents.map((agent) => {
         const agentDisplay = buildCustomAgentMatchDisplay(agent);
@@ -976,11 +1383,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           primaryLabel: agentDisplay.primaryLabel,
           secondaryLabel: agentDisplay.secondaryLabel,
           title: agentDisplay.title,
-          isSelected: snapshot?.session.customAgentName === agent.name,
+          isSelected: displayedSession?.customAgentName === agent.name,
         };
       }),
     ],
-    [availableCustomAgents, snapshot?.session.customAgentName],
+    [availableCustomAgents, displayedSession],
   );
   const skillItems = useMemo(
     () =>
@@ -998,83 +1405,33 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   );
   const additionalDirectoryItems = useMemo(
     () =>
-      (snapshot?.session.allowedAdditionalDirectories ?? []).map((directoryPath) => {
-        const directoryDisplay = buildAdditionalDirectoryDisplay(directoryPath);
-        return {
-          key: directoryPath,
-          path: directoryPath,
-          primaryLabel: directoryDisplay.primaryLabel,
-          secondaryLabel: directoryDisplay.secondaryLabel,
-          title: directoryDisplay.title,
-          canRemove: snapshot?.session.provider === "codex",
-        };
-      }),
-    [snapshot?.session.allowedAdditionalDirectories],
+      buildAdditionalDirectoryItems(
+        displayedSession?.allowedAdditionalDirectories ?? [],
+        displayedSession?.provider === "codex",
+      ),
+    [displayedSession],
   );
   const composerAttachmentItems = useMemo(
     () =>
-      composerPreview.attachments.map((attachment) => {
-        const attachmentDisplay = buildComposerAttachmentDisplay(attachment);
-        return {
-          key: attachment.id,
-          kind: attachment.kind,
-          kindLabel: attachmentDisplay.kindLabel,
-          locationLabel: attachmentDisplay.locationLabel,
-          primaryLabel: attachmentDisplay.primaryLabel,
-          secondaryLabel: attachmentDisplay.secondaryLabel,
-          title: attachmentDisplay.title,
-          removeTargets: [
-            attachment.workspaceRelativePath,
-            attachment.displayPath,
-            normalizePathForReference(attachment.absolutePath),
-          ].filter((value): value is string => !!value),
-        };
-      }),
+      buildComposerAttachmentItems(composerPreview.attachments, { trimRemoveTargets: false }),
     [composerPreview.attachments],
   );
-  const workspacePathMatchItems = useMemo(
-    () =>
-      workspacePathMatches.map((match, index) => {
-        const matchDisplay = buildWorkspacePathMatchDisplay(match);
-        return {
-          key: `${match.kind}:${match.path}`,
-          path: match.path,
-          kind: match.kind,
-          kindLabel: matchDisplay.kindLabel,
-          primaryLabel: matchDisplay.primaryLabel,
-          secondaryLabel: matchDisplay.secondaryLabel,
-          title: matchDisplay.title,
-          isActive: index === activeWorkspacePathMatchIndex,
-        };
-      }),
-    [activeWorkspacePathMatchIndex, workspacePathMatches],
-  );
   const selectedProviderQuotaTelemetry =
-    snapshot?.session.provider && providerQuotaTelemetryState.ownerProviderId === snapshot.session.provider
-      ? providerQuotaTelemetryState.telemetry
-      : null;
+    resolveOwnedProviderQuotaTelemetry(providerQuotaTelemetryState, displayedSession?.provider);
   const selectedSessionContextTelemetry =
-    snapshot && sessionContextTelemetryState.ownerSessionId === snapshot.session.id
-      ? sessionContextTelemetryState.telemetry
-      : null;
-  const isCopilotSession = snapshot?.session.provider === "copilot";
+    resolveOwnedSessionContextTelemetry(sessionContextTelemetryState, displayedSession?.id);
+  const isCopilotSession = displayedSession?.provider === "copilot";
   const selectedCopilotQuotaProjection = buildCopilotQuotaProjection(selectedProviderQuotaTelemetry);
   const selectedSessionContextTelemetryProjection =
     buildSessionContextTelemetryProjection(selectedSessionContextTelemetry);
-  const latestLiveCommandStep = (() => {
-    const steps = selectedSessionLiveRun?.steps ?? [];
-    for (let index = steps.length - 1; index >= 0; index -= 1) {
-      if (steps[index]?.type === "command_execution") {
-        return steps[index] ?? null;
-      }
-    }
-    return null;
-  })();
-  const latestCommandView = buildLatestCommandView({
-    latestLiveCommandStep,
-    latestAuditCommandOperation: null,
-    latestTerminalAuditPhase: null,
+  const latestCommandProjection = buildLatestCommandProjection({
+    liveSteps: selectedSessionLiveRun?.steps ?? [],
+    auditOperations: latestTerminalAuditLog?.operations ?? [],
+    latestTerminalAuditPhase: latestTerminalAuditLog?.phase,
+    auditFallbackEnabled: !activeAuxiliarySession,
   });
+  const latestLiveCommandStep = latestCommandProjection.latestLiveCommandStep;
+  const latestCommandView = latestCommandProjection.latestCommandView;
   const orderedLiveRunSteps = useMemo(
     () => (selectedSessionLiveRun?.steps ?? [])
       .map((step, index) => ({ step, index }))
@@ -1122,21 +1479,21 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   );
 
   useEffect(() => {
-    if (!availableContextPaneTabs.includes(activeContextPaneTab)) {
-      setActiveContextPaneTab(availableContextPaneTabs[0] ?? "latest-command");
-    }
+    applyUnavailableContextPaneTabFallbackCommand({
+      activeTab: activeContextPaneTab,
+      availableTabs: availableContextPaneTabs,
+      setActiveTab: setActiveContextPaneTab,
+    });
   }, [activeContextPaneTab, availableContextPaneTabs]);
 
-  function handleCycleContextPaneTab(direction: -1 | 1): void {
-    setActiveContextPaneTab((current) => cycleContextPaneTab(current, direction, availableContextPaneTabs));
-  }
+  const handleCycleContextPaneTab = createContextPaneTabCycleHandler({
+    availableTabs: availableContextPaneTabs,
+    setActiveTab: setActiveContextPaneTab,
+  });
 
-  function toggleArtifact(artifactKey: string): void {
-    setExpandedArtifacts((current) => ({
-      ...current,
-      [artifactKey]: !current[artifactKey],
-    }));
-  }
+  const toggleArtifact = createExpandedArtifactToggleHandler({
+    setExpandedArtifacts,
+  });
 
   async function openDiffWindow(payload: DiffPreviewPayload): Promise<void> {
     const withmateApi = getWithMateApi();
@@ -1147,81 +1504,68 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     await withmateApi.openDiffWindow(payload);
   }
 
-  function handleCopyMessageText(text: string): void {
-    const normalized = text.trim();
-    if (!normalized) {
-      return;
-    }
-
-    void navigator.clipboard.writeText(normalized).catch((error) => {
+  const handleCopyMessageText = createCopyMessageTextHandler({
+    writeText: (normalized) => navigator.clipboard.writeText(normalized),
+    onFailure: (error) => {
       console.error(error);
       setErrorMessage("コピーに失敗したよ。");
-    });
-  }
+    },
+  });
 
-  function handleQuoteMessageText(text: string): void {
-    if (runDisabled) {
+  const handleQuoteMessageText = createQuoteMessageTextHandler({
+    isBlocked: () => runDisabled,
+    notifyBlocked: () => {
       setForceComposerBlockedFeedback(true);
       composerTextareaRef.current?.focus();
-      return;
-    }
-
-    const quote = formatMarkdownQuote(text);
-    if (!quote) {
-      return;
-    }
-
-    const textarea = composerTextareaRef.current;
-    const { draft: nextDraft, caret: nextCaret } = insertComposerTextAtCaret(
-      composerText,
-      quote,
-      textarea?.selectionStart ?? composerCaret,
-    );
-    setComposerText(nextDraft);
-    setComposerCaret(nextCaret);
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
-
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
+    },
+    getComposerState: () => ({
+      draft: activeComposerText,
+      fallbackCaret: composerCaret,
+      textarea: composerTextareaRef.current,
+    }),
+    applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
+      if (activeAuxiliarySession) {
+        setComposerCaret(nextCaret);
+        applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
+        void handleAuxiliaryDraftChange(nextDraft, nextCaret);
         return;
       }
 
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
-  }
+      applyComposerDraftChangeCommand({
+        value: nextDraft,
+        selectionStart: nextCaret,
+        setDraft: setComposerText,
+        setComposerCaret,
+      });
+      applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
+    },
+    restoreComposerTextareaFocusAndCaret,
+  });
 
   function insertReferencePaths(selectedPaths: string[]): void {
-    if (selectedPaths.length === 0) {
-      return;
-    }
-
     const textarea = composerTextareaRef.current;
-    const currentCaret = textarea?.selectionStart ?? composerCaret;
-    const referenceTokens = selectedPaths.map((selectedPath) => {
-      const referencePath = snapshot
-        ? toWorkspaceRelativeReference(snapshot.session.worktreePath, selectedPath) ?? normalizePathForReference(selectedPath)
-        : normalizePathForReference(selectedPath);
-      return formatPathReference(referencePath);
-    });
-    const leadingSpacer = currentCaret > 0 && !/\s/.test(composerText[currentCaret - 1] ?? "") ? " " : "";
-    const trailingSpacer = composerText.length > currentCaret && !/\s/.test(composerText[currentCaret] ?? "") ? " " : "";
-    const insertion = `${leadingSpacer}${referenceTokens.join(" ")}${trailingSpacer}`;
-    const nextDraft = `${composerText.slice(0, currentCaret)}${insertion}${composerText.slice(currentCaret)}`;
-    const nextCaret = currentCaret + insertion.length;
-
-    setComposerText(nextDraft);
-    setComposerCaret(nextCaret);
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
-
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
+    applySelectedPathReferenceInsertionCommand({
+      draft: activeComposerText,
+      fallbackCaret: composerCaret,
+      selectedPaths,
+      textarea,
+      workspacePath: snapshot?.session.worktreePath ?? null,
+      applyInsertion: (insertionState) => {
+        const { draft: nextDraft, caret: nextCaret } = insertionState;
+        if (activeAuxiliarySession) {
+          setComposerCaret(nextCaret);
+          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+        } else {
+          applyComposerDraftChangeCommand({
+            value: nextDraft,
+            selectionStart: nextCaret,
+            setDraft: setComposerText,
+            setComposerCaret,
+          });
+        }
+        applyWorkspacePathMatchState(insertionState);
+      },
+      restoreComposerTextareaFocusAndCaret,
     });
   }
 
@@ -1229,21 +1573,19 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     insertReferencePaths([selectedPath]);
   }
 
-  async function pickAndInsertPath(kind: "file" | "folder" | "image"): Promise<void> {
+  async function pickAndInsertPath(kind: ComposerPathPickerKind): Promise<void> {
     const withmateApi = getWithMateApi();
     if (!withmateApi || !snapshot || runDisabled) {
       return;
     }
     const basePath = pickerBaseDirectory || snapshot.session.worktreePath || snapshot.session.repoRoot;
-    const selectedPath = kind === "folder"
-      ? await withmateApi.pickDirectory(basePath)
-      : kind === "image"
-        ? await withmateApi.pickImageFile(basePath)
-        : await withmateApi.pickFile(basePath);
-    if (selectedPath) {
-      setPickerBaseDirectory(kind === "folder" ? selectedPath : toDirectoryPath(selectedPath));
-      insertReferencePath(selectedPath);
-    }
+    const selectedPath = await pickComposerReferencePath(kind, basePath, withmateApi);
+    applyPickedComposerReferencePathCommand({
+      kind,
+      selectedPath,
+      setPickerBaseDirectory,
+      insertReferencePath: (path) => insertReferencePath(path),
+    });
   }
 
   async function addToSessionFiles(): Promise<void> {
@@ -1263,8 +1605,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
-    insertReferencePaths(savedPaths);
+    applySessionFilesReferencePathsCommand({
+      selectedPaths,
+      referencePaths: savedPaths,
+      setPickerBaseDirectory,
+      insertReferencePaths,
+    });
   }
 
   async function pickSessionFiles(): Promise<void> {
@@ -1278,150 +1624,137 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
-    insertReferencePaths(selectedPaths);
+    applySessionFilesReferencePathsCommand({
+      selectedPaths,
+      referencePaths: selectedPaths,
+      setPickerBaseDirectory,
+      insertReferencePaths,
+    });
   }
 
-  async function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>): Promise<void> {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !snapshot || runDisabled) {
-      return;
-    }
-
-    const files = Array.from(event.clipboardData.files);
-    const itemFiles = Array.from(event.clipboardData.items)
-      .filter((item) => item.kind === "file")
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => file !== null);
-    const pastedFiles = files.length > 0 ? files : itemFiles;
-    if (pastedFiles.length === 0) {
-      return;
-    }
-
-    event.preventDefault();
-    const savedPaths: string[] = [];
-    for (const file of pastedFiles) {
-      const buffer = await file.arrayBuffer();
-      const fileName = file.name.trim() || `pasted-${currentTimestampLabel().replace(/[:/\\\s]+/g, "-")}.png`;
-      const savedPath = await withmateApi.savePastedSessionFile({
-        sessionId: snapshot.session.id,
-        fileName,
-        data: buffer,
-      });
-      savedPaths.push(savedPath);
-    }
-
-    insertReferencePaths(savedPaths);
-  }
+  const handleComposerPaste = createPastedSessionAttachmentHandler({
+    alertError: (message) => window.alert(message),
+    canPaste: () => !!getWithMateApi() && !!snapshot && !runDisabled,
+    currentTimestampLabel,
+    fallbackErrorMessage: "貼り付けたファイルの保存に失敗したよ。",
+    getSavePastedSessionFile: () => {
+      const withmateApi = getWithMateApi();
+      return withmateApi ? (request) => withmateApi.savePastedSessionFile(request) : null;
+    },
+    getSessionId: () => snapshot?.session.id,
+    insertReferencePaths,
+  });
 
   async function handleAddAdditionalDirectory(): Promise<void> {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !snapshot || isSelectedSessionRunning) {
-      return;
-    }
-
-    const selectedPath = await withmateApi.pickDirectory(pickerBaseDirectory || snapshot.session.worktreePath || snapshot.session.repoRoot);
-    if (!selectedPath) {
-      return;
-    }
-
-    const currentDirectories = snapshot.session.allowedAdditionalDirectories ?? [];
-    const nextDirectories = Array.from(new Set([...currentDirectories, selectedPath]));
-    await persistCompanionSession({
-      ...snapshot.session,
-      allowedAdditionalDirectories: nextDirectories,
-      updatedAt: currentTimestampLabel(),
+    await runPickedAdditionalDirectoryOperation({
+      canPickDirectory: () => !!getWithMateApi() && !!snapshot && !isSelectedSessionRunning,
+      getPickerBaseDirectory: () => (
+        resolveAdditionalDirectoryPickerBase(
+          pickerBaseDirectory,
+          snapshot?.session.worktreePath,
+          snapshot?.session.repoRoot,
+        )
+      ),
+      pickDirectory: (baseDirectory) => getWithMateApi()?.pickDirectory(baseDirectory) ?? Promise.resolve(null),
+      applyPickedDirectory: async (selectedPath) => {
+        if (!snapshot) {
+          return;
+        }
+        const nextSession = buildSessionWithAddedAdditionalDirectory(snapshot.session, selectedPath);
+        await persistCompanionSession({
+          ...nextSession,
+          updatedAt: currentTimestampLabel(),
+        });
+        applyPickedAdditionalDirectoryUiStateCommand({
+          selectedPath,
+          setPickerBaseDirectory,
+        });
+      },
     });
-    setPickerBaseDirectory(selectedPath);
   }
 
   async function handleRemoveAdditionalDirectory(directoryPath: string): Promise<void> {
-    if (!snapshot || snapshot.session.provider !== "codex" || isSelectedSessionRunning) {
-      return;
-    }
+    await runAdditionalDirectoryRemovalOperation({
+      directoryPath,
+      canRemoveDirectory: () => !!snapshot && snapshot.session.provider === "codex" && !isSelectedSessionRunning,
+      removeDirectory: async (targetPath) => {
+        if (!snapshot) {
+          return false;
+        }
+        const nextSession = buildSessionWithRemovedAdditionalDirectory(snapshot.session, targetPath);
+        if (!nextSession) {
+          return false;
+        }
 
-    const currentDirectories = snapshot.session.allowedAdditionalDirectories ?? [];
-    const nextDirectories = currentDirectories.filter((entry) => entry !== directoryPath);
-    if (nextDirectories.length === currentDirectories.length) {
-      return;
-    }
-
-    await persistCompanionSession({
-      ...snapshot.session,
-      allowedAdditionalDirectories: nextDirectories,
-      updatedAt: currentTimestampLabel(),
+        await persistCompanionSession({
+          ...nextSession,
+          updatedAt: currentTimestampLabel(),
+        });
+        return true;
+      },
     });
   }
 
-  function handleSelectWorkspacePathMatch(match: string): void {
-    const textarea = composerTextareaRef.current;
-    const activeReference = getActivePathReference(composerText, composerCaret);
-    if (!textarea || !activeReference) {
-      return;
-    }
-
-    const replacement = formatPathReference(match);
-    const nextDraft = `${composerText.slice(0, activeReference.start)}${replacement}${composerText.slice(activeReference.end)}`;
-    const nextCaret = activeReference.start + replacement.length;
-    setComposerText(nextDraft);
-    setComposerCaret(nextCaret);
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
-
-    window.requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
-  }
-
-  function handleRemoveAttachmentReference(attachmentPathCandidates: string[]): void {
-    const escapedCandidates = attachmentPathCandidates
-      .map((candidate) => formatPathReference(candidate))
-      .map((candidate) => candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-
-    let nextDraft = composerText;
-    for (const escapedCandidate of escapedCandidates) {
-      nextDraft = nextDraft.replace(
-        new RegExp(`(^|[\\s(])${escapedCandidate}(?=\\s|$|[),.;:!?])`),
-        (_match, leadingWhitespace: string) => leadingWhitespace || "",
-      );
-    }
-
-    nextDraft = nextDraft
-      .replace(/[ \t]{2,}/g, " ")
-      .replace(/\n{3,}/g, "\n\n");
-
-    setComposerText(nextDraft);
-    setComposerCaret(nextDraft.length);
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
-  }
-
-  function handleSelectSkill(skill: DiscoveredSkill): void {
-    const textarea = composerTextareaRef.current;
-    if (!snapshot) {
-      return;
-    }
-
-    const snippet = buildSkillPromptSnippet(snapshot.session.provider, skill.name);
-    const trimmedDraft = composerText.trimStart();
-    const nextDraft = trimmedDraft ? `${snippet}\n\n${trimmedDraft}` : `${snippet}\n`;
-    const nextCaret = nextDraft.length;
-
-    setIsActionDockPinnedExpanded(true);
-    setComposerText(nextDraft);
-    setComposerCaret(nextCaret);
-    setIsSkillPickerOpen(false);
-
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
+  const handleSelectWorkspacePathMatch = createWorkspacePathMatchSelectionHandler({
+    getDraft: () => activeComposerText,
+    getCaret: () => composerCaret,
+    getTextarea: () => composerTextareaRef.current,
+    applySelection: (nextState) => {
+      const { draft: nextDraft, caret: nextCaret } = nextState;
+      if (activeAuxiliarySession) {
+        setComposerCaret(nextCaret);
+        void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+      } else {
+        applyComposerDraftChangeCommand({
+          value: nextDraft,
+          selectionStart: nextCaret,
+          setDraft: setComposerText,
+          setComposerCaret,
+        });
       }
+      applyWorkspacePathMatchState(nextState);
+    },
+    restoreComposerTextareaFocusAndCaret,
+  });
 
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
-  }
+  const handleRemoveAttachmentReference = createPathReferenceRemovalHandler({
+    getDraft: () => activeComposerText,
+    applyRemoval: (nextState) => {
+      const { draft: nextDraft, caret: nextCaret } = nextState;
+      if (activeAuxiliarySession) {
+        setComposerCaret(nextCaret);
+        void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+      } else {
+        applyComposerDraftChangeCommand({
+          value: nextDraft,
+          selectionStart: nextCaret,
+          setDraft: setComposerText,
+          setComposerCaret,
+        });
+      }
+      applyWorkspacePathMatchState(nextState);
+    },
+  });
+
+  const handleSelectSkill = createSkillPromptInsertionHandler<DiscoveredSkill>({
+    getProvider: () => snapshot?.session.provider,
+    getDraft: () => composerText,
+    getTextarea: () => composerTextareaRef.current,
+    setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+    setCaret: setComposerCaret,
+    setSkillPickerOpen: setIsSkillPickerOpen,
+    applyDraft: (nextDraft) => {
+      applyComposerDraftChangeCommand({
+        value: nextDraft,
+        setDraft: setComposerText,
+      });
+    },
+    restoreComposerTextareaFocusAndCaret,
+  });
+
+  const closeAgentPicker = createAgentPickerCloseHandler({
+    setAgentPickerOpen: setIsAgentPickerOpen,
+  });
 
   async function handleSelectCustomAgent(agent: DiscoveredCustomAgent | null): Promise<void> {
     if (!snapshot || snapshot.session.provider !== "copilot") {
@@ -1430,7 +1763,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     const nextCustomAgentName = agent?.name ?? "";
     if (nextCustomAgentName === snapshot.session.customAgentName) {
-      setIsAgentPickerOpen(false);
+      closeAgentPicker();
       return;
     }
 
@@ -1439,36 +1772,45 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       customAgentName: nextCustomAgentName,
       updatedAt: currentTimestampLabel(),
     });
-    setIsAgentPickerOpen(false);
+    closeAgentPicker();
   }
 
   async function handleChangeApproval(approvalMode: ApprovalMode): Promise<void> {
-    if (!snapshot || isSelectedSessionRunning || approvalMode === snapshot.session.approvalMode) {
+    if (!snapshot || isSelectedSessionRunning) {
       return;
     }
 
-    await persistCompanionSession({
-      ...snapshot.session,
+    const nextSession = buildSessionWithApprovalMode(
+      snapshot.session,
       approvalMode,
-      updatedAt: currentTimestampLabel(),
-    });
+      currentTimestampLabel(),
+    );
+    if (!nextSession) {
+      return;
+    }
+
+    await persistCompanionSession(nextSession);
   }
 
   async function handleChangeCodexSandboxMode(codexSandboxMode: CodexSandboxMode): Promise<void> {
     if (
       !snapshot ||
       snapshot.session.provider !== "codex" ||
-      isSelectedSessionRunning ||
-      codexSandboxMode === snapshot.session.codexSandboxMode
+      isSelectedSessionRunning
     ) {
       return;
     }
 
-    await persistCompanionSession({
-      ...snapshot.session,
+    const nextSession = buildSessionWithCodexSandboxMode(
+      snapshot.session,
       codexSandboxMode,
-      updatedAt: currentTimestampLabel(),
-    });
+      currentTimestampLabel(),
+    );
+    if (!nextSession) {
+      return;
+    }
+
+    await persistCompanionSession(nextSession);
   }
 
   async function handleChangeSelectedModel(model: string): Promise<void> {
@@ -1476,14 +1818,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const selection = resolveModelChangeSelection(selectedProviderCatalog, model, snapshot.session.reasoningEffort);
-    await persistCompanionSession({
-      ...snapshot.session,
-      catalogRevision: modelCatalog.revision,
-      model: selection.resolvedModel,
-      reasoningEffort: selection.resolvedReasoningEffort,
-      updatedAt: currentTimestampLabel(),
-    });
+    const nextSession = buildSessionWithModelChange(
+      snapshot.session,
+      selectedProviderCatalog,
+      model,
+      modelCatalog.revision,
+      currentTimestampLabel(),
+    );
+    await persistCompanionSession(nextSession);
   }
 
   async function handleChangeReasoningEffort(reasoningEffort: ModelReasoningEffort): Promise<void> {
@@ -1491,14 +1833,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const selection = resolveModelSelection(selectedProviderCatalog, snapshot.session.model, reasoningEffort);
-    await persistCompanionSession({
-      ...snapshot.session,
-      catalogRevision: modelCatalog.revision,
-      model: selection.resolvedModel,
-      reasoningEffort: selection.resolvedReasoningEffort,
-      updatedAt: currentTimestampLabel(),
-    });
+    const nextSession = buildSessionWithReasoningEffort(
+      snapshot.session,
+      selectedProviderCatalog,
+      reasoningEffort,
+      modelCatalog.revision,
+      currentTimestampLabel(),
+    );
+    await persistCompanionSession(nextSession);
   }
 
   async function persistCompanionSession(nextSession: CompanionSession): Promise<CompanionSession> {
@@ -1516,20 +1858,326 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     return savedSession;
   }
 
-  function handleStartTitleEdit(): void {
-    if (!snapshot || isSelectedSessionRunning) {
+  async function updateActiveAuxiliarySession(recipe: (current: AuxiliarySession) => AuxiliarySession): Promise<void> {
+    await createGuardedActiveAuxiliarySessionUpdater({
+      activeSession: activeAuxiliarySession,
+      getCurrentSession: () => activeAuxiliarySessionRef.current,
+      getApi: () => getWithMateApi(),
+      activeSessionRef: activeAuxiliarySessionRef,
+      setActiveSession: setActiveAuxiliarySession,
+      draftSaveQueue: auxiliaryDraftSaveQueueRef,
+      sessionSaveQueue: auxiliarySessionSaveQueueRef,
+      mutationRevision: auxiliarySessionMutationRevisionRef,
+    })(recipe);
+  }
+
+  const handleOpenAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogOpenHandler({
+    canOpen: () => !!snapshot && !isAuxiliaryActionPending && !operationRunning && !isSelectedSessionRunning,
+    providers: auxiliaryLaunchProviderItems,
+    getSelectedProviderId: () => snapshot?.session.provider,
+    openAuxiliaryLaunchDialog,
+  });
+
+  const handleCloseAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogCloseHandler({
+    canClose: () => !isAuxiliaryActionPending,
+    closeAuxiliaryLaunchDialog,
+  });
+
+  const handleSelectAuxiliaryLaunchProvider = createAuxiliaryLaunchProviderSelectHandler({
+    selectAuxiliaryLaunchProvider,
+  });
+
+  async function handleStartAuxiliarySession(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !snapshot || isAuxiliaryActionPending) {
+      return;
+    }
+    const setAuxiliaryStartError = createAuxiliarySessionStartErrorHandler({
+      setLaunchStartError: setAuxiliaryLaunchStartError,
+    });
+    const startProvider = resolveAuxiliaryLaunchStartProvider({
+      providerId: auxiliaryLaunchProviderId,
+      blockedFeedback: operationRunning || isSelectedSessionRunning || snapshot.session.status !== "active"
+        ? "Companion が操作中のため Auxiliary Session を開始できないよ。"
+        : null,
+    });
+    if (startProvider.status === "blocked") {
+      setAuxiliaryStartError(startProvider.error);
+      return;
+    }
+    const launchProviderId = startProvider.providerId;
+
+    const loadRevision = beginAuxiliarySessionStartOperation({
+      loadRevision: auxiliaryLoadRevisionRef,
+      resetLaunchFeedback: resetAuxiliaryLaunchFeedback,
+      setActionPending: setIsAuxiliaryActionPending,
+    });
+    const parentSessionId = snapshot.session.id;
+    const canApplyLoadResult = createAuxiliaryLoadRevisionGuard({
+      loadRevision: auxiliaryLoadRevisionRef,
+      expectedRevision: loadRevision,
+    });
+    try {
+      const launchDefaults = resolveAuxiliaryLaunchSessionDefaults({
+        providerId: launchProviderId,
+        defaultsProviderId: snapshot.session.provider,
+        defaults: {
+          model: selectedModel,
+          reasoningEffort: selectedReasoningEffort,
+          customAgentName: snapshot.session.customAgentName,
+        },
+      });
+      await runAuxiliarySessionStartOperation({
+        parentSessionId,
+        provider: launchProviderId,
+        defaults: launchDefaults,
+        createAuxiliarySession: (request) => withmateApi.createAuxiliarySession(request),
+        applyStartedSession: createActiveAuxiliarySessionStartResultApplier({
+          mutationRevision: auxiliarySessionMutationRevisionRef,
+          activeSessionRef: activeAuxiliarySessionRef,
+          setActiveSession: setActiveAuxiliarySession,
+          setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+          setForceComposerBlockedFeedback,
+          closeLaunchDialog: closeAuxiliaryLaunchDialog,
+        }),
+      });
+    } catch (error) {
+      setAuxiliaryStartError(error);
+    } finally {
+      finishAuxiliarySessionStartClosedLoadWithApi({
+        parentSessionId,
+        api: withmateApi,
+        isActive: canApplyLoadResult,
+        setClosedSessions: setClosedAuxiliarySessions,
+        setActionPending: setIsAuxiliaryActionPending,
+      });
+    }
+  }
+
+  async function handleReturnToMainSession(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    await runGuardedAuxiliarySessionReturnToMainOperationWithApi({
+      api: withmateApi,
+      activeSession: activeAuxiliarySession,
+      isActionPending: isAuxiliaryActionPending,
+      alertError: (message) => window.alert(message),
+      setActionPending: setIsAuxiliaryActionPending,
+      loadRevision: auxiliaryLoadRevisionRef,
+      setClosedSessions: setClosedAuxiliarySessions,
+      mutationRevision: auxiliarySessionMutationRevisionRef,
+      activeSessionRef: activeAuxiliarySessionRef,
+      setActiveSession: setActiveAuxiliarySession,
+      mainDraft: composerText,
+      mainCaret: composerCaret,
+      setComposerCaret,
+      setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+      setForceComposerBlockedFeedback,
+    });
+  }
+
+  async function handleAuxiliaryDraftChange(value: string, selectionStart: number): Promise<void> {
+    const withmateApi = getWithMateApi();
+    await runAuxiliaryDraftChangeAndSaveOperation({
+      draft: value,
+      selectionStart,
+      clearBlockedFeedback: () => setForceComposerBlockedFeedback(false),
+      setComposerCaret,
+      currentSession: activeAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+      draftSaveQueue: auxiliaryDraftSaveQueueRef.current,
+      getCurrentSession: () => activeAuxiliarySessionRef.current,
+      saveAuxiliarySession: withmateApi
+        ? (request) => enqueueAuxiliarySessionSaveWithQueue(
+            auxiliarySessionSaveQueueRef,
+            () => withmateApi.updateAuxiliarySession(request),
+          )
+        : null,
+      mutationRevision: auxiliarySessionMutationRevisionRef,
+      activeSessionRef: activeAuxiliarySessionRef,
+      draftSaveQueueRef: auxiliaryDraftSaveQueueRef,
+      setActiveSession: setActiveAuxiliarySession,
+      compareStatus: true,
+      onError: (error) => {
+        console.error(error);
+      },
+    });
+  }
+
+  async function sendAuxiliaryMessage(messageText: string): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !snapshot || !activeAuxiliarySession) {
+      setForceComposerBlockedFeedback(true);
       return;
     }
 
-    setTitleDraft(snapshot.session.taskTitle);
-    setIsHeaderExpanded(true);
-    setIsEditingTitle(true);
+    const result = await runAuxiliarySessionSendOperationWithApi({
+      activeSession: activeAuxiliarySession,
+      messageText,
+      parentMessageCount: snapshot.session.messages.length,
+      updatedAt: currentTimestampLabel(),
+      draftSaveQueue: auxiliaryDraftSaveQueueRef,
+      sessionSaveQueue: auxiliarySessionSaveQueueRef,
+      mutationRevision: auxiliarySessionMutationRevisionRef,
+      getCurrentSession: () => activeAuxiliarySessionRef.current,
+      applyRunningSession: createAuxiliarySessionRunningApplier({
+        activeSessionRef: activeAuxiliarySessionRef,
+        setActiveSession: setActiveAuxiliarySession,
+        updateLiveRunState: (update) => setLiveRunState(update),
+        buildRuntimeSession: (runningSession) => buildCompanionAuxiliaryRuntimeSession(
+          snapshot.session,
+          runningSession,
+        ),
+      }),
+      afterRunningSessionApplied: () => {
+        setForceComposerBlockedFeedback(false);
+      },
+      ...createAuxiliarySessionSendResultAppliers({
+        activeSessionRef: activeAuxiliarySessionRef,
+        setActiveSession: setActiveAuxiliarySession,
+      }),
+      clearPendingLiveRun: createAuxiliarySessionPendingLiveRunClearer({
+        updateLiveRunState: (update) => setLiveRunState(update),
+      }),
+      api: withmateApi,
+    });
+    handleAuxiliarySessionSendOperationResult({
+      result,
+      onBlocked: () => {
+        setForceComposerBlockedFeedback(true);
+      },
+      onError: (error) => {
+        console.error(error);
+        setErrorMessage(resolveSessionRunErrorMessage(error, "Auxiliary Session の実行に失敗したよ。"));
+      },
+    });
   }
 
-  function handleCancelTitleEdit(): void {
-    setTitleDraft(snapshot?.session.taskTitle ?? "");
-    setIsEditingTitle(false);
+  async function cancelAuxiliaryRun(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    await runRunningSessionCancelOperation({
+      target: buildAuxiliarySessionCancelTarget({ session: activeAuxiliarySession }),
+      cancelRun: withmateApi ? (sessionId) => withmateApi.cancelAuxiliarySessionRun(sessionId) : null,
+    });
   }
+
+  async function handleChangeAuxiliaryApproval(approvalMode: ApprovalMode): Promise<void> {
+    await runAuxiliaryApprovalModeChangeOperation({
+      approvalMode,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
+  }
+
+  async function handleChangeAuxiliarySandboxMode(codexSandboxMode: CodexSandboxMode): Promise<void> {
+    await runAuxiliarySandboxModeChangeOperation({
+      codexSandboxMode,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
+  }
+
+  async function handleChangeAuxiliaryModel(model: string): Promise<void> {
+    if (!selectedProviderCatalog || !modelCatalog) {
+      return;
+    }
+
+    await runAuxiliaryModelChangeOperation({
+      model,
+      providerCatalog: selectedProviderCatalog,
+      catalogRevision: modelCatalog.revision,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
+  }
+
+  async function handleChangeAuxiliaryReasoningEffort(reasoningEffort: ModelReasoningEffort): Promise<void> {
+    if (!selectedProviderCatalog || !modelCatalog) {
+      return;
+    }
+
+    await runAuxiliaryReasoningEffortChangeOperation({
+      reasoningEffort,
+      providerCatalog: selectedProviderCatalog,
+      catalogRevision: modelCatalog.revision,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
+  }
+
+  async function handleSelectAuxiliaryCustomAgent(agent: DiscoveredCustomAgent | null): Promise<void> {
+    const nextCustomAgentName = agent?.name ?? "";
+    await runAuxiliaryCustomAgentSelectionOperation({
+      activeSession: activeAuxiliarySession,
+      customAgentName: nextCustomAgentName,
+      updateCustomAgent: async (customAgentName) => {
+        await runAuxiliaryCustomAgentPatchOperation({
+          customAgentName,
+          updateActiveAuxiliarySession,
+          createTimestampLabel: currentTimestampLabel,
+        });
+      },
+      closeAgentPicker,
+    });
+  }
+
+  async function handleSelectAuxiliarySkill(skill: DiscoveredSkill): Promise<void> {
+    await runAuxiliarySkillPromptInsertionOperation({
+      activeSession: activeAuxiliarySession,
+      skillName: skill.name,
+      applyUiState: (nextState) => {
+        applySkillPromptInsertionUiState({
+          state: nextState,
+          setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+          setCaret: setComposerCaret,
+          setSkillPickerOpen: setIsSkillPickerOpen,
+        });
+      },
+      updateDraft: async (draft) => {
+        await runAuxiliaryDraftPatchOperation({
+          draft,
+          updateActiveAuxiliarySession,
+          createTimestampLabel: currentTimestampLabel,
+        });
+      },
+    });
+  }
+
+  async function handleAddAuxiliaryAdditionalDirectory(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    await runAddAuxiliaryAdditionalDirectoryOperationWithApi({
+      api: withmateApi,
+      hasParentSession: !!snapshot,
+      activeAuxiliarySession,
+      pickerBaseDirectory,
+      workspacePath: snapshot?.session.worktreePath,
+      fallbackPath: snapshot?.session.repoRoot,
+      setPickerBaseDirectory,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
+  }
+
+  async function handleRemoveAuxiliaryAdditionalDirectory(directoryPath: string): Promise<void> {
+    await runRemoveAuxiliaryAdditionalDirectoryOperation({
+      directoryPath,
+      updateActiveAuxiliarySession,
+      createTimestampLabel: currentTimestampLabel,
+    });
+  }
+
+  const handleStartTitleEdit = createStartTitleEditHandler({
+    getTitle: () => snapshot?.session.taskTitle,
+    canStart: () => !!snapshot && !isSelectedSessionRunning,
+    setTitleDraft,
+    setHeaderExpanded: setIsHeaderExpanded,
+    setEditingTitle: setIsEditingTitle,
+  });
+
+  const handleCancelTitleEdit = createCancelTitleEditHandler({
+    getTitle: () => snapshot?.session.taskTitle,
+    setTitleDraft,
+    setEditingTitle: setIsEditingTitle,
+  });
 
   async function handleSaveTitle(): Promise<void> {
     if (!snapshot) {
@@ -1553,53 +2201,44 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setIsEditingTitle(false);
   }
 
-  const handleTitleInputKeyDown: KeyboardEventHandler<HTMLInputElement> = (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      void handleSaveTitle();
-      return;
-    }
+  const handleTitleInputKeyDown: KeyboardEventHandler<HTMLInputElement> = createTitleInputKeyHandler({
+    saveTitle: () => void handleSaveTitle(),
+    cancelTitleEdit: handleCancelTitleEdit,
+  });
 
-    if (event.key === "Escape") {
-      event.preventDefault();
-      handleCancelTitleEdit();
-    }
-  };
+  const handleToggleHeaderExpanded = createHeaderExpandedToggleHandler({
+    isEditingTitle,
+    setHeaderExpanded: setIsHeaderExpanded,
+  });
 
-  function handleToggleHeaderExpanded(): void {
-    if (isEditingTitle) {
-      return;
-    }
+  const handleToggleContextPaneHeaderExpanded = createHeaderExpandedToggleHandler({
+    isEditingTitle: false,
+    setHeaderExpanded: setIsHeaderExpanded,
+  });
 
-    setIsHeaderExpanded((current) => !current);
-  }
+  const handleExpandActionDock = createActionDockExpandHandler({
+    setPinnedExpanded: setIsActionDockPinnedExpanded,
+    focusComposer: () => restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current),
+  });
 
-  function handleExpandActionDock(options?: { focusComposer?: boolean }): void {
-    setIsActionDockPinnedExpanded(true);
+  const handleCollapseActionDock = createActionDockCollapseHandler({
+    canCollapse: canCollapseActionDock,
+    setPinnedExpanded: setIsActionDockPinnedExpanded,
+  });
 
-    if (!options?.focusComposer) {
-      return;
-    }
+  const handleToggleAgentPicker = createAgentPickerToggleHandler({
+    setAgentPickerOpen: setIsAgentPickerOpen,
+    setSkillPickerOpen: setIsSkillPickerOpen,
+  });
 
-    window.requestAnimationFrame(() => {
-      const textarea = composerTextareaRef.current;
-      if (!textarea) {
-        return;
-      }
+  const handleToggleSkillPicker = createSkillPickerToggleHandler({
+    setAgentPickerOpen: setIsAgentPickerOpen,
+    setSkillPickerOpen: setIsSkillPickerOpen,
+  });
 
-      textarea.focus();
-      const caret = textarea.value.length;
-      textarea.setSelectionRange(caret, caret);
-    });
-  }
-
-  function handleCollapseActionDock(): void {
-    if (!canCollapseActionDock) {
-      return;
-    }
-
-    setIsActionDockPinnedExpanded(false);
-  }
+  const handleToggleAdditionalDirectoryList = createAdditionalDirectoryListToggleHandler({
+    setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
+  });
 
   async function reloadSnapshot(preferredPath = selectedPath, options: { preserveSelectionOnly?: boolean } = {}): Promise<void> {
     const withmateApi = getWithMateApi();
@@ -1918,30 +2557,74 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
   }
 
-  async function sendCompanionTurn(): Promise<void> {
+  async function sendCompanionTurn(
+    messageText = composerText,
+    options: { clearDraft?: boolean } = {},
+  ): Promise<void> {
     const withmateApi = getWithMateApi();
-    const userMessage = composerText.trim();
-    if (!snapshot || !withmateApi || isCompanionSendDisabled || !userMessage) {
+    const shouldClearDraft = options.clearDraft ?? true;
+    const preflight = resolveSessionTurnStartPreflight({
+      hasSession: !!snapshot,
+      hasApi: !!withmateApi,
+      operationRunning,
+      turnRunning,
+      runState: selectedSessionRunState,
+      sessionStatus: snapshot?.session.status,
+      messageText,
+    });
+    if (preflight.status === "blocked") {
       setForceComposerBlockedFeedback(true);
       return;
     }
+    if (!snapshot || !withmateApi) {
+      return;
+    }
+    const userMessage = preflight.userMessage;
 
+    const previousSnapshot = snapshot;
+    let appliedOptimisticState = false;
     setTurnRunning(true);
     setForceComposerBlockedFeedback(false);
     setErrorMessage("");
     setOperationMessage("");
     try {
-      const preview = await withmateApi.previewCompanionComposerInput(snapshot.session.id, composerText);
-      setComposerPreview(preview);
-      const sendability = buildComposerSendabilityState({
+      const previewRequest = createComposerPreviewRequest({
+        api: withmateApi,
+        mode: "companion",
+        sessionId: snapshot.session.id,
+      });
+      if (!previewRequest) {
+        return;
+      }
+
+      const preview = await previewRequest(messageText);
+      if (shouldClearDraft || messageText === composerText) {
+        setComposerPreview(preview);
+      }
+      const { blockedMessage } = resolveComposerSendPreflight({
         runState: selectedSessionRunState,
         blockedReason: companionComposerBlockedReason,
         inputErrors: preview.errors,
-        draftText: composerText,
+        draftText: messageText,
       });
-      if (sendability.isSendDisabled) {
-        throw new Error(sendability.primaryFeedback || "送信できない状態だよ。");
+      if (blockedMessage) {
+        throw new Error(blockedMessage);
       }
+
+      applyOptimisticSessionRunUpdate({
+        session: snapshot.session,
+        userMessage,
+        updatedAt: currentTimestampLabel(),
+        updateLiveRunState: (update) => setLiveRunState(update),
+        applyRunningSession: (nextSession) =>
+          setSnapshot((current) => current ? { ...current, session: nextSession } : current),
+      });
+      if (shouldClearDraft) {
+        applyComposerDraftClearCommand({
+          setDraft: setComposerText,
+        });
+      }
+      appliedOptimisticState = true;
 
       const nextSession = await withmateApi.runCompanionSessionTurn(snapshot.session.id, {
         userMessage,
@@ -1950,11 +2633,32 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         approvalMode: selectedApprovalMode,
         codexSandboxMode: selectedCodexSandboxMode,
       });
-      setComposerText("");
-      setSnapshot((current) => current ? { ...current, session: nextSession } : current);
-      await reloadSnapshot();
+      applyResolvedSessionRunUpdate({
+        savedSession: nextSession,
+        applySavedSession: (savedSession) =>
+          setSnapshot((current) => current ? { ...current, session: savedSession } : current),
+      });
+      try {
+        await reloadSnapshot();
+      } catch (error) {
+        setErrorMessage(resolveSessionRunErrorMessage(error, "Companion の再読み込みに失敗したよ。"));
+      }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Companion の実行に失敗したよ。");
+      if (appliedOptimisticState) {
+        if (shouldClearDraft) {
+          applyComposerDraftChangeCommand({
+            value: userMessage,
+            setDraft: setComposerText,
+          });
+        }
+        rollbackOptimisticSessionRunUpdate({
+          sessionId: previousSnapshot.session.id,
+          updateLiveRunState: (update) => setLiveRunState(update),
+          restoreSession: () =>
+            setSnapshot((current) => current?.session.id === previousSnapshot.session.id ? previousSnapshot : current),
+        });
+      }
+      setErrorMessage(resolveSessionRunErrorMessage(error, "Companion の実行に失敗したよ。"));
     } finally {
       setTurnRunning(false);
     }
@@ -1962,11 +2666,58 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   async function cancelCompanionTurn(): Promise<void> {
     const withmateApi = getWithMateApi();
-    if (!snapshot || !withmateApi || !isSelectedSessionRunning) {
-      return;
-    }
-    await withmateApi.cancelCompanionSessionRun(snapshot.session.id);
+    await runRunningSessionCancelOperation({
+      target: buildRunningSessionCancelTarget({
+        sessionId: snapshot?.session.id,
+        runState: selectedSessionRunState,
+        isRunning: isSelectedSessionRunning,
+      }),
+      cancelRun: withmateApi ? (sessionId) => withmateApi.cancelCompanionSessionRun(sessionId) : null,
+    });
   }
+
+  async function handleResendLastMessage(): Promise<void> {
+    await runRetryResendCommand({
+      isDisabled: isRetryActionDisabled,
+      messageText: lastUserMessage?.text,
+      resendMessage: (messageText) => sendCompanionTurn(messageText, { clearDraft: false }),
+    });
+  }
+
+  function restoreLastUserMessageToDraft(messageText: string): void {
+    const textarea = composerTextareaRef.current;
+    applyRetryDraftRestoreCommand({
+      messageText,
+      setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+      setDraft: setComposerText,
+      setCaret: setComposerCaret,
+      applyWorkspacePathMatchState,
+      setRetryDraftReplacePending: setIsRetryDraftReplacePending,
+      focusComposer: (caret) => restoreComposerTextareaFocusAndCaret(textarea, caret),
+    });
+  }
+
+  const handleEditLastMessage = createRetryEditHandler({
+    isDisabled: !retryBanner || isRetryEditDisabled,
+    messageText: lastUserMessage?.text,
+    shouldProtectDraft: shouldProtectDraftOnRetryEdit,
+    requestDraftReplaceConfirmation: () => setIsRetryDraftReplacePending(true),
+    restoreDraft: restoreLastUserMessageToDraft,
+  });
+
+  const handleConfirmRetryDraftReplace = createRetryDraftReplaceConfirmationHandler({
+    isDisabled: !retryBanner || isRetryEditDisabled,
+    messageText: lastUserMessage?.text,
+    restoreDraft: restoreLastUserMessageToDraft,
+  });
+
+  const handleCancelRetryDraftReplace = createCancelRetryDraftReplaceHandler({
+    setRetryDraftReplacePending: setIsRetryDraftReplacePending,
+  });
+
+  const handleToggleRetryDetails = createRetryDetailsToggleHandler({
+    setRetryDetailsOpen: setIsRetryDetailsOpen,
+  });
 
   async function handleResolveCompanionLiveApproval(
     request: LiveApprovalRequest,
@@ -1977,21 +2728,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const sessionId = snapshot.session.id;
+    const sessionId = activeRunSessionId ?? snapshot.session.id;
     setApprovalActionRequestId(request.requestId);
     try {
       await withmateApi.resolveLiveApproval(sessionId, request.requestId, decision);
       const latestLiveRun = await withmateApi.getLiveSessionRun(sessionId);
-      setLiveRunState((current) => {
-        if (
-          current.ownerSessionId !== sessionId
-          || current.state?.approvalRequest?.requestId !== request.requestId
-        ) {
-          return current;
-        }
-
-        return { ownerSessionId: sessionId, state: latestLiveRun };
-      });
+      setLiveRunState((current) => replaceLiveRunAfterResolvedRequest(current, {
+        sessionId,
+        requestId: request.requestId,
+        requestKind: "approval",
+        latestLiveRun,
+      }));
       setApprovalActionRequestId(null);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "承認要求の処理に失敗したよ。");
@@ -2008,21 +2755,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const sessionId = snapshot.session.id;
+    const sessionId = activeRunSessionId ?? snapshot.session.id;
     setElicitationActionRequestId(request.requestId);
     try {
       await withmateApi.resolveLiveElicitation(sessionId, request.requestId, response);
       const latestLiveRun = await withmateApi.getLiveSessionRun(sessionId);
-      setLiveRunState((current) => {
-        if (
-          current.ownerSessionId !== sessionId
-          || current.state?.elicitationRequest?.requestId !== request.requestId
-        ) {
-          return current;
-        }
-
-        return { ownerSessionId: sessionId, state: latestLiveRun };
-      });
+      setLiveRunState((current) => replaceLiveRunAfterResolvedRequest(current, {
+        sessionId,
+        requestId: request.requestId,
+        requestKind: "elicitation",
+        latestLiveRun,
+      }));
       setElicitationActionRequestId(null);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "入力要求の処理に失敗したよ。");
@@ -2030,54 +2773,23 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
   }
 
-  const handleCompanionDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (event) => {
-    const canNavigatePathMatches =
-      workspacePathMatches.length > 0 &&
-      !isComposerImeComposing &&
-      !event.nativeEvent.isComposing;
+  const handleCompanionSubmitKey = createComposerSubmitKeyHandler({
+    submit: () => void (
+      activeAuxiliarySession
+        ? sendAuxiliaryMessage(activeAuxiliarySession.composerDraft)
+        : sendCompanionTurn()
+    ),
+  });
 
-    if (canNavigatePathMatches) {
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setActiveWorkspacePathMatchIndex((current) => Math.min(current + 1, workspacePathMatches.length - 1));
-        return;
-      }
-
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setActiveWorkspacePathMatchIndex((current) => Math.max(current - 1, 0));
-        return;
-      }
-
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setWorkspacePathMatches([]);
-        setActiveWorkspacePathMatchIndex(-1);
-        return;
-      }
-
-      if (event.key === "Tab") {
-        setWorkspacePathMatches([]);
-        setActiveWorkspacePathMatchIndex(-1);
-        return;
-      }
-
-      if (event.key === "Enter" && !event.ctrlKey && !event.metaKey) {
-        const activeMatch =
-          workspacePathMatches[activeWorkspacePathMatchIndex] ?? workspacePathMatches[0] ?? null;
-        if (activeMatch) {
-          event.preventDefault();
-          handleSelectWorkspacePathMatch(activeMatch.path);
-          return;
-        }
-      }
-    }
-
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      void sendCompanionTurn();
-    }
-  };
+  const handleCompanionDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = buildComposerDraftKeyDownHandler({
+    pathMatches: workspacePathMatches,
+    activeIndex: activeWorkspacePathMatchIndex,
+    isComposerImeComposing,
+    onActiveIndexChange: setActiveWorkspacePathMatchIndex,
+    onWorkspacePathMatchStateChange: applyWorkspacePathMatchState,
+    onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
+    submit: handleCompanionSubmitKey,
+  });
 
   async function openCompanionWorktree(): Promise<void> {
     const withmateApi = getWithMateApi();
@@ -2103,29 +2815,29 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
   }
 
-  async function openCompanionSessionFilesDirectory(): Promise<void> {
-    const withmateApi = getWithMateApi();
-    if (!snapshot || !withmateApi) {
-      return;
-    }
-    try {
-      await withmateApi.openSessionFilesDirectory(snapshot.session.id);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "session files directory を開けなかったよ。");
-    }
-  }
+  const openCompanionSessionFilesDirectory = createSessionFilesOpenHandler({
+    getSessionId: () => snapshot?.session.id,
+    getOpenSessionFiles: () => {
+      const withmateApi = getWithMateApi();
+      return withmateApi
+        ? (sessionId) => withmateApi.openSessionFilesDirectory(sessionId)
+        : null;
+    },
+    alertError: (message) => window.alert(message),
+    fallbackErrorMessage: "session files directory を開けなかったよ。",
+  });
 
-  async function openCompanionSessionFilesTerminal(): Promise<void> {
-    const withmateApi = getWithMateApi();
-    if (!snapshot || !withmateApi) {
-      return;
-    }
-    try {
-      await withmateApi.openSessionFilesTerminal(snapshot.session.id);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "session files terminal を開けなかったよ。");
-    }
-  }
+  const openCompanionSessionFilesTerminal = createSessionFilesOpenHandler({
+    getSessionId: () => snapshot?.session.id,
+    getOpenSessionFiles: () => {
+      const withmateApi = getWithMateApi();
+      return withmateApi
+        ? (sessionId) => withmateApi.openSessionFilesTerminal(sessionId)
+        : null;
+    },
+    alertError: (message) => window.alert(message),
+    fallbackErrorMessage: "session files terminal を開けなかったよ。",
+  });
 
   async function openCompanionMergeWindow(): Promise<void> {
     const withmateApi = getWithMateApi();
@@ -2155,6 +2867,20 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
   }
 
+  const auxiliaryHeaderActions = snapshot
+    ? createAuxiliaryHeaderActions({
+        ...resolveAuxiliaryHeaderActionState({
+          isActive: !!activeAuxiliarySession,
+          showIdleLabel: true,
+          isActionPending: isAuxiliaryActionPending,
+          isStartBlocked: operationRunning || isSelectedSessionRunning || snapshot.session.status !== "active",
+          activeRunState: activeAuxiliarySession?.runState,
+        }),
+        onStart: handleOpenAuxiliaryLaunchDialog,
+        onReturnToMain: () => void handleReturnToMainSession(),
+      })
+    : null;
+
   if (!desktopRuntime) {
     return isMergeView ? (
       <div className="page-shell companion-review-page">
@@ -2182,9 +2908,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   if (!isMergeView) {
     return (
+      <>
       <ChatWindow {...buildCompanionChatWindowProps({
-        session: snapshot.session,
-        character: companionCharacterProfile ?? buildCompanionCharacterProfile(snapshot.session),
+        session: displayedSession ?? snapshot.session,
+        character: companionCharacterProfile ?? buildCompanionCharacterProfile(displayedSession ?? snapshot.session),
+        displayedMessages: messageListMessages,
+        displayedMessageKeys: messageListKeys,
+        displayedMessageGroups: messageListGroups,
         expandedArtifacts,
         themeStyle,
         workbenchRef: sessionWorkbenchRef,
@@ -2192,8 +2922,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         isHeaderExpanded,
         isEditingTitle,
         titleDraft,
-        isRunning: isSelectedSessionRunning,
-        isHeaderActionDisabled: operationRunning || turnRunning,
+        isSelectedSessionRunning,
+        isHeaderActionDisabled: operationRunning || turnRunning || isAuxiliaryActionPending,
         messageListRef,
         liveApprovalRequest: selectedSessionLiveRun?.approvalRequest ?? null,
         approvalActionRequestId,
@@ -2201,13 +2931,20 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         elicitationActionRequestId,
         liveRunAssistantText: selectedSessionLiveRun?.assistantText ?? "",
         liveRunErrorMessage: selectedSessionLiveRun?.errorMessage ?? "",
+        pendingMessageText: COMPANION_PENDING_MESSAGE_TEXT,
+        pendingMessageGroupId: resolvePendingAuxiliaryMessageGroupId(activeAuxiliarySession),
         isMessageListFollowing,
+        retryBanner,
+        isRetryDetailsOpen,
+        isRetryActionDisabled,
+        isRetryEditDisabled,
+        isRetryDraftReplacePending,
         isActionDockExpanded,
         composerBlocked: snapshot.session.status !== "active" || operationRunning,
         isAgentPickerOpen,
         isSkillPickerOpen,
         isAdditionalDirectoryListOpen,
-        selectedCustomAgentLabel: snapshot.session.provider === "copilot" ? selectedCustomAgentDisplay.label : "Agent",
+        selectedCustomAgentLabel: displayedSession?.provider === "copilot" ? selectedCustomAgentDisplay.label : "Agent",
         selectedCustomAgentTitle: selectedCustomAgentDisplay.title ?? "Copilot custom agent を選択",
         canCollapseActionDock,
         isCustomAgentListLoading,
@@ -2217,22 +2954,24 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         attachmentItems: composerAttachmentItems,
         additionalDirectoryItems,
         workspacePathMatchItems,
-        draft: composerText,
+        draft: activeComposerText,
         composerTextareaRef,
         isComposerDisabled: runDisabled,
         isSendDisabled: isCompanionSendDisabled,
         composerSendability: companionComposerSendability,
-        sendButtonTitle: isSelectedSessionRunning ? "Companion を停止" : companionSendButtonTitle,
+        sendButtonTitle: isSelectedSessionRunning
+          ? (activeAuxiliarySession ? "Auxiliary を停止" : "Companion を停止")
+          : companionSendButtonTitle,
         isComposerBlockedFeedbackActive: companionComposerSendability.shouldShowFeedback,
         approvalOptions: approvalSelectOptions,
-        selectedApprovalMode,
+        selectedApprovalMode: selectedRuntimeApprovalMode,
         sandboxOptions: sandboxSelectOptions,
-        selectedCodexSandboxMode,
+        selectedCodexSandboxMode: selectedRuntimeCodexSandboxMode,
         modelOptions: modelSelectOptions,
-        selectedModel: selectedModelEntry?.id ?? selectedModel,
+        selectedModel: selectedRuntimeModel,
         selectedModelFallbackLabel,
         reasoningOptions: reasoningSelectOptions,
-        selectedReasoningEffort,
+        selectedReasoningEffort: selectedRuntimeReasoningEffort,
         actionDockCompactPreview,
         attachmentCount: composerPreview.attachments.length,
         isContextRailResizing,
@@ -2254,6 +2993,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         selectedDiffThemeStyle,
         auditLogsOpen,
         displayedSessionAuditLogs,
+        auditLogSourceLabel: "Companion",
         auditLogDetails,
         auditLogOperationDetails,
         auditLogsHasMore: auditLogsState.ownerSessionId === snapshot.session.id ? auditLogsState.hasMore : false,
@@ -2264,8 +3004,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         auditLogsErrorMessage: auditLogsState.ownerSessionId === snapshot.session.id ? auditLogsState.errorMessage : null,
         toastMessage: errorMessage || operationMessage,
         toastTone: errorMessage ? "error" : "success",
+        headerActions: auxiliaryHeaderActions,
+        isAuxiliaryMode,
         onToggleHeaderExpanded: handleToggleHeaderExpanded,
-        onToggleContextPaneHeaderExpanded: () => setIsHeaderExpanded((current) => !current),
+        onToggleContextPaneHeaderExpanded: handleToggleContextPaneHeaderExpanded,
         onOpenAuditLog: () => setAuditLogsOpen(true),
         onOpenTerminal: () => void openCompanionTerminal(),
         onOpenSessionFilesTerminal: () => void openCompanionSessionFilesTerminal(),
@@ -2280,7 +3022,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onMessageListScroll: handleMessageListScroll,
         onToggleArtifact: toggleArtifact,
         onLoadArtifactDetail: (messageIndex) =>
-          withmateApi?.getCompanionMessageArtifact(snapshot.session.id, messageIndex) ?? Promise.resolve(null),
+          loadProjectedMessageArtifact({
+            source: messageListSources[messageIndex],
+            loadSessionArtifact: (sourceMessageIndex) =>
+              withmateApi?.getCompanionMessageArtifact(snapshot.session.id, sourceMessageIndex) ?? null,
+          }),
         onOpenDiff: (title, file) =>
           setSelectedDiff({
             title,
@@ -2292,56 +3038,101 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onOpenInlinePath: (target) => openCompanionInlinePath(getWithMateApi(), target, snapshot.session.worktreePath),
         onCopyMessageText: handleCopyMessageText,
         onQuoteMessageText: handleQuoteMessageText,
+        onToggleRetryDetails: handleToggleRetryDetails,
+        onResendLastMessage: () => void handleResendLastMessage(),
+        onEditLastMessage: handleEditLastMessage,
+        onConfirmRetryDraftReplace: handleConfirmRetryDraftReplace,
+        onCancelRetryDraftReplace: handleCancelRetryDraftReplace,
         onPickFile: () => void pickAndInsertPath("file"),
         onPickFolder: () => void pickAndInsertPath("folder"),
         onPickImage: () => void pickAndInsertPath("image"),
         onAddToSessionFiles: () => void addToSessionFiles(),
         onPickSessionFiles: () => void pickSessionFiles(),
-        onToggleAgentPicker: () => {
-          setIsSkillPickerOpen(false);
-          setIsAgentPickerOpen((current) => !current);
-        },
-        onToggleSkillPicker: () => {
-          setIsAgentPickerOpen(false);
-          setIsSkillPickerOpen((current) => !current);
-        },
-        onAddAdditionalDirectory: () => void handleAddAdditionalDirectory(),
-        onToggleAdditionalDirectoryList: () => setIsAdditionalDirectoryListOpen((current) => !current),
+        onToggleAgentPicker: handleToggleAgentPicker,
+        onToggleSkillPicker: handleToggleSkillPicker,
+        onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
+        onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
         onCollapseActionDock: handleCollapseActionDock,
         onJumpToMessageListBottom: handleJumpToMessageListBottom,
-        onSelectCustomAgent: (value) => void handleSelectCustomAgent(
-          value ? availableCustomAgents.find((agent) => agent.name === value) ?? null : null,
-        ),
+        onSelectCustomAgent: (value) => {
+          const agent = value ? availableCustomAgents.find((entry) => entry.name === value) ?? null : null;
+          if (activeAuxiliarySession) {
+            void handleSelectAuxiliaryCustomAgent(agent);
+            return;
+          }
+          void handleSelectCustomAgent(agent);
+        },
         onSelectSkill: (skillId) => {
           const skill = availableSkills.find((entry) => entry.id === skillId);
           if (skill) {
+            if (activeAuxiliarySession) {
+              void handleSelectAuxiliarySkill(skill);
+              return;
+            }
             handleSelectSkill(skill);
           }
         },
         onRemoveAttachment: handleRemoveAttachmentReference,
-        onRemoveAdditionalDirectory: (path) => void handleRemoveAdditionalDirectory(path),
+        onRemoveAdditionalDirectory: (path) => void (activeAuxiliarySession ? handleRemoveAuxiliaryAdditionalDirectory(path) : handleRemoveAdditionalDirectory(path)),
         onDraftChange: (value, selectionStart) => {
-          setForceComposerBlockedFeedback(false);
-          setComposerText(value);
-          setComposerCaret(selectionStart);
+          if (activeAuxiliarySession) {
+            void handleAuxiliaryDraftChange(value, selectionStart);
+            return;
+          }
+          applyComposerDraftChangeCommand({
+            value,
+            selectionStart,
+            setDraft: setComposerText,
+            setComposerCaret,
+            clearFeedback: () => setForceComposerBlockedFeedback(false),
+          });
         },
-        onDraftFocus: () => setIsActionDockPinnedExpanded(true),
+        onDraftFocus: () => handleExpandActionDock({ focusComposer: false }),
         onDraftKeyDown: handleCompanionDraftKeyDown,
         onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleComposerPaste(event),
-        onDraftSelect: setComposerCaret,
-        onDraftCompositionStart: () => setIsComposerImeComposing(true),
-        onDraftCompositionEnd: () => {
-          setIsComposerImeComposing(false);
-          setComposerCaret(composerTextareaRef.current?.selectionStart ?? composerText.length);
-        },
-        onSendOrCancel: () => void (isSelectedSessionRunning ? cancelCompanionTurn() : sendCompanionTurn()),
-        onExpandActionDock: () => handleExpandActionDock({ focusComposer: !isSelectedSessionRunning }),
+        onDraftSelect: buildOnDraftSelectHandler({
+          setComposerCaret,
+        }),
+        ...buildOnDraftCompositionHandlers({
+          setComposerCaret,
+          setIsComposerImeComposing,
+          getSelectionStart: () => composerTextareaRef.current?.selectionStart,
+          getFallbackSelectionStart: () => activeComposerText.length,
+        }),
+        onSendOrCancel: buildAuxiliaryAwareSendOrCancelHandler({
+          shouldSendAuxiliary: !!activeAuxiliarySession,
+          isAuxiliarySessionRunning: activeAuxiliarySession?.runState === "running",
+          isSelectedSessionRunning,
+          onCancelAuxiliaryRun: cancelAuxiliaryRun,
+          onSendAuxiliary: () => sendAuxiliaryMessage(activeAuxiliarySession?.composerDraft ?? ""),
+          onCancelSelectedSessionRun: cancelCompanionTurn,
+          onSendSelectedSession: sendCompanionTurn,
+        }),
+        onExpandActionDock: () => handleExpandActionDock({
+          focusComposer: shouldFocusComposerForActionDockExpand({ isRunning: isSelectedSessionRunning }),
+        }),
         onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
         onActivateWorkspacePathMatch: setActiveWorkspacePathMatchIndex,
-        onChangeApprovalMode: (value) => void handleChangeApproval(value),
-        onChangeCodexSandboxMode: (value) => void handleChangeCodexSandboxMode(value),
-        onChangeModel: (value) => void handleChangeSelectedModel(value),
-        onChangeReasoningEffort: (value) => void handleChangeReasoningEffort(value as ModelReasoningEffort),
+        onChangeApprovalMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<ApprovalMode>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliaryApproval,
+          onSelectedSessionChange: handleChangeApproval,
+        }),
+        onChangeCodexSandboxMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<CodexSandboxMode>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliarySandboxMode,
+          onSelectedSessionChange: handleChangeCodexSandboxMode,
+        }),
+        onChangeModel: buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliaryModel,
+          onSelectedSessionChange: handleChangeSelectedModel,
+        }),
+        onChangeReasoningEffort: buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: (value) => handleChangeAuxiliaryReasoningEffort(value as ModelReasoningEffort),
+          onSelectedSessionChange: (value) => handleChangeReasoningEffort(value as ModelReasoningEffort),
+        }),
         onStartContextRailResize: handleStartContextRailResize,
         onCycleContextPaneTab: handleCycleContextPaneTab,
         onOpenCompanionReview: (sessionId) => void getWithMateApi()?.openCompanionReviewWindow(sessionId),
@@ -2352,6 +3143,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onLoadAuditLogOperationDetail: handleLoadAuditLogOperationDetail,
         onCloseAuditLog: () => setAuditLogsOpen(false),
       })} />
+      <AuxiliaryLaunchProviderDialog
+        open={auxiliaryLaunchDialogOpen}
+        providers={auxiliaryLaunchProviderItems}
+        selectedProviderId={auxiliaryLaunchProviderId}
+        feedback={auxiliaryLaunchFeedback}
+        starting={isAuxiliaryActionPending}
+        onClose={handleCloseAuxiliaryLaunchDialog}
+        onSelectProvider={handleSelectAuxiliaryLaunchProvider}
+        onStart={() => void handleStartAuxiliarySession()}
+      />
+      </>
     );
   }
 

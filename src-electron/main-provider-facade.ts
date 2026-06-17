@@ -54,7 +54,6 @@ export class MainProviderFacade {
     const resolvedProviderId = providerId?.trim() || DEFAULT_PROVIDER_ID;
     return getProviderRuntimeCapabilities({
       providerId: resolvedProviderId,
-      backgroundAdapter: this.getProviderBackgroundAdapter(resolvedProviderId),
     });
   }
 

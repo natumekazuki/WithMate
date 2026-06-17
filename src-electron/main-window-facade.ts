@@ -1,7 +1,6 @@
 import type { BrowserWindow } from "electron";
 
 import type { DiffPreviewPayload } from "../src/session-state.js";
-import type { MateTalkLaunchInput } from "../src/mate/mate-state.js";
 import type { AuxWindowService } from "./aux-window-service.js";
 import type { SessionWindowBridge } from "./session-window-bridge.js";
 
@@ -25,12 +24,8 @@ export class MainWindowFacade {
     return this.deps.getAuxWindowService().openSettingsWindow();
   }
 
-  async openMemoryManagementWindow(): Promise<BrowserWindow> {
-    return this.deps.getAuxWindowService().openMemoryManagementWindow();
-  }
-
-  async openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<BrowserWindow> {
-    return this.deps.getAuxWindowService().openMateTalkWindow(input);
+  async openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {
+    return this.deps.getAuxWindowService().openCharacterEditorWindow(characterId);
   }
 
   async openSessionWindow(sessionId: string): Promise<BrowserWindow> {

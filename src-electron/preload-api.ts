@@ -4,6 +4,7 @@ import type { RendererLogInput } from "../src/app-log-types.js";
 import type {
   WithMateWindowApi,
   WithMateWindowCatalogApi,
+  WithMateWindowCharacterApi,
   WithMateWindowCompanionApi,
   WithMateWindowNavigationApi,
   WithMateWindowObservabilityApi,
@@ -19,17 +20,11 @@ import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
+  WITHMATE_ARCHIVE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
-  WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
-  WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL,
-  WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL,
-  WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL,
-  WITHMATE_FORGET_MATE_GROWTH_EVENT_CHANNEL,
+  WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
-  WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
-  WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL,
-  WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
@@ -40,13 +35,12 @@ import {
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
-  WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
-  WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL,
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
-  WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
+  WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
@@ -55,8 +49,6 @@ import {
   WITHMATE_GET_COMPANION_SESSION_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
-  WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
-  WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
   WITHMATE_GET_MATE_PROFILE_CHANNEL,
   WITHMATE_GET_MATE_STATE_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
@@ -89,11 +81,10 @@ import {
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL,
   WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
+  WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
-  WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
-  WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_OPEN_SESSION_FILES_DIRECTORY_CHANNEL,
@@ -116,10 +107,10 @@ import {
   WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESET_MATE_CHANNEL,
+  WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
   WITHMATE_SET_MATE_AVATAR_CHANNEL,
+  WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
   WITHMATE_SAVE_PASTED_SESSION_FILE_CHANNEL,
-  WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
-  WITHMATE_RUN_MATE_TALK_TURN_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
@@ -133,14 +124,15 @@ import {
   WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
+  WITHMATE_START_CHARACTER_AUTHORING_SESSION_CHANNEL,
   WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL,
+  WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL,
   WITHMATE_UPDATE_MATE_CHANNEL,
-  WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL,
-  WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
 } from "../src/withmate-ipc-channels.js";
@@ -216,13 +208,8 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     openSettingsWindow() {
       return ipcRenderer.invoke(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL);
     },
-    openMemoryManagementWindow() {
-      return ipcRenderer.invoke(WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL);
-    },
-    openMateTalkWindow(input) {
-      return input === undefined
-        ? ipcRenderer.invoke(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL)
-        : ipcRenderer.invoke(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL, input);
+    openCharacterEditorWindow(characterId) {
+      return ipcRenderer.invoke(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL, characterId ?? null);
     },
     openDiffWindow(diffPreview) {
       return ipcRenderer.invoke(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, diffPreview);
@@ -496,26 +483,40 @@ function createMateApi(ipcRenderer: IpcRendererLike): WithMateWindowMateApi {
     setMateAvatar(input) {
       return ipcRenderer.invoke(WITHMATE_SET_MATE_AVATAR_CHANNEL, input);
     },
-    applyPendingGrowth() {
-      return ipcRenderer.invoke(WITHMATE_APPLY_MATE_GROWTH_CHANNEL);
-    },
-    listMateGrowthEvents(request) {
-      return ipcRenderer.invoke(WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL, request ?? null);
-    },
-    correctMateGrowthEvent(request) {
-      return ipcRenderer.invoke(WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL, request);
-    },
-    disableMateGrowthEvent(request) {
-      return ipcRenderer.invoke(WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL, request);
-    },
-    forgetMateGrowthEvent(request) {
-      return ipcRenderer.invoke(WITHMATE_FORGET_MATE_GROWTH_EVENT_CHANNEL, request);
-    },
-    runMateTalkTurn(input) {
-      return ipcRenderer.invoke(WITHMATE_RUN_MATE_TALK_TURN_CHANNEL, input);
-    },
     resetMate() {
       return ipcRenderer.invoke(WITHMATE_RESET_MATE_CHANNEL);
+    },
+  };
+}
+
+function createCharacterApi(ipcRenderer: IpcRendererLike): WithMateWindowCharacterApi {
+  return {
+    listCharacters(options) {
+      return ipcRenderer.invoke(WITHMATE_LIST_CHARACTERS_CHANNEL, options ?? null);
+    },
+    getCharacter(characterId) {
+      return ipcRenderer.invoke(WITHMATE_GET_CHARACTER_CHANNEL, characterId);
+    },
+    createCharacter(input) {
+      return ipcRenderer.invoke(WITHMATE_CREATE_CHARACTER_CHANNEL, input);
+    },
+    updateCharacterMetadata(input) {
+      return ipcRenderer.invoke(WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL, input);
+    },
+    updateCharacterDefinition(input) {
+      return ipcRenderer.invoke(WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL, input);
+    },
+    archiveCharacter(characterId) {
+      return ipcRenderer.invoke(WITHMATE_ARCHIVE_CHARACTER_CHANNEL, characterId);
+    },
+    setDefaultCharacter(characterId) {
+      return ipcRenderer.invoke(WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL, characterId);
+    },
+    resolveLaunchCharacter(input) {
+      return ipcRenderer.invoke(WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL, input ?? null);
+    },
+    startCharacterAuthoringSession(input) {
+      return ipcRenderer.invoke(WITHMATE_START_CHARACTER_AUTHORING_SESSION_CHANNEL, input);
     },
   };
 }
@@ -533,39 +534,6 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
     },
     resetAppDatabase(request) {
       return ipcRenderer.invoke(WITHMATE_RESET_APP_DATABASE_CHANNEL, request);
-    },
-    getMemoryManagementSnapshot() {
-      return ipcRenderer.invoke(WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL);
-    },
-    getMemoryManagementPage(request) {
-      return ipcRenderer.invoke(WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL, request);
-    },
-    getMateGrowthSettings() {
-      return ipcRenderer.invoke(WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL);
-    },
-    getMateEmbeddingSettings() {
-      return ipcRenderer.invoke(WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL);
-    },
-    updateMateGrowthSettings(input) {
-      return ipcRenderer.invoke(WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL, input);
-    },
-    listProviderInstructionTargets() {
-      return ipcRenderer.invoke(WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL);
-    },
-    upsertProviderInstructionTarget(input) {
-      return ipcRenderer.invoke(WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL, input);
-    },
-    startMateEmbeddingDownload() {
-      return ipcRenderer.invoke(WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL);
-    },
-    deleteSessionMemory(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_DELETE_SESSION_MEMORY_CHANNEL, sessionId);
-    },
-    deleteProjectMemoryEntry(entryId) {
-      return ipcRenderer.invoke(WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL, entryId);
-    },
-    forgetMateProfileItem(itemId) {
-      return ipcRenderer.invoke(WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL, itemId);
     },
   };
 }
@@ -729,5 +697,6 @@ export function createWithMateWindowApi(ipcRenderer: IpcRendererLike): WithMateW
     ...createPickerApi(ipcRenderer),
     ...createSubscriptionApi(ipcRenderer),
     ...createMateApi(ipcRenderer),
+    ...createCharacterApi(ipcRenderer),
   };
 }

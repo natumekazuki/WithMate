@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { Session, SessionSummary } from "../../src/app-state.js";
+import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import { MainQueryService } from "../../src-electron/main-query-service.js";
 
 function createSession(overrides?: Partial<Session>): Session {
@@ -143,6 +144,60 @@ test("MainQueryService は path 参照なし draft の preview を早期 return 
   const preview = await service.previewComposerInput("session-1", "hello");
   assert.deepEqual(preview, { attachments: [], errors: [] });
   assert.equal(getSessionSummariesCalls, 0);
+});
+
+test("MainQueryService は session provider ごとの skill directory を discovery に渡す", async () => {
+  const providerSkillRoots: Array<{ workspacePath: string; skillRootPath: string | null }> = [];
+  const settings = createDefaultAppSettings();
+  settings.codingProviderSettings.codex = {
+    enabled: true,
+    apiKey: "",
+    skillRootPath: "C:/provider-files/codex",
+    skillRelativePath: ".codex/skills",
+    instructionRelativePath: "AGENTS.md",
+  };
+  settings.codingProviderSettings.copilot = {
+    enabled: true,
+    apiKey: "",
+    skillRootPath: "C:/provider-files/copilot",
+    skillRelativePath: "skills",
+    instructionRelativePath: "copilot-instructions.md",
+  };
+  const service = new MainQueryService({
+    getSessionSummaries: () => [
+      createSessionSummary({ id: "codex-session", provider: "codex", workspacePath: "C:/workspace" }),
+      createSessionSummary({ id: "copilot-session", provider: "copilot", workspacePath: "C:/workspace" }),
+    ],
+    getSession: () => null,
+    getSessionMessageArtifact: () => null,
+    getAuditLogs: () => [],
+    getAuditLogSummaries: () => [],
+    getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
+    getAuditLogDetail: () => null,
+    getAuditLogDetailSection: () => null,
+    getAuditLogOperationDetail: () => null,
+    getAppSettings: () => settings,
+    async discoverSessionSkills(workspacePath, skillRootPath) {
+      providerSkillRoots.push({ workspacePath, skillRootPath });
+      return [];
+    },
+    discoverSessionCustomAgents: async () => [],
+    async resolveComposerPreview() {
+      return { attachments: [], errors: [] };
+    },
+    async searchWorkspaceFiles() {
+      return [];
+    },
+    async launchTerminalAtPath() {},
+  });
+
+  await service.listSessionSkills("codex-session");
+  await service.listSessionSkills("copilot-session");
+
+  assert.deepEqual(providerSkillRoots, [
+    { workspacePath: "C:/workspace", skillRootPath: "C:/provider-files/codex/.codex/skills" },
+    { workspacePath: "C:/workspace", skillRootPath: "C:/provider-files/copilot/skills" },
+  ]);
 });
 
 test("MainQueryService は一覧を summary に射影して detail payload を含めない", async () => {

@@ -194,6 +194,7 @@ function createSession(sessionIndex: number, options: ResolvedBenchmarkOptions):
     character: "Benchmark Character",
     characterIconPath: "",
     characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    characterRuntimeSnapshot: null,
     runState: "idle",
     approvalMode: "never",
     codexSandboxMode: "workspace-write",

@@ -20,13 +20,9 @@ test("MainWindowFacade は aux/session window service を束ねる", async () =>
           calls.push("settings");
           return { id: "settings" };
         },
-        async openMemoryManagementWindow() {
-          calls.push("memory");
-          return { id: "memory" };
-        },
-        async openMateTalkWindow() {
-          calls.push("mate-talk");
-          return { id: "mate-talk" };
+        async openCharacterEditorWindow(characterId?: string | null) {
+          calls.push(`character:${characterId ?? "new"}`);
+          return { id: characterId ?? "new" };
         },
         async openDiffWindow() {
           calls.push("diff");
@@ -55,8 +51,7 @@ test("MainWindowFacade は aux/session window service を束ねる", async () =>
   await facade.openHomeWindow();
   await facade.openSessionMonitorWindow();
   await facade.openSettingsWindow();
-  await facade.openMemoryManagementWindow();
-  await facade.openMateTalkWindow();
+  await facade.openCharacterEditorWindow("char-1");
   await facade.openSessionWindow("s-1");
   await facade.openDiffWindow({ token: "d-1" } as never);
   assert.deepEqual(facade.listOpenSessionWindowIds(), ["s-1", "s-2"]);
@@ -66,8 +61,7 @@ test("MainWindowFacade は aux/session window service を束ねる", async () =>
     "home",
     "monitor",
     "settings",
-    "memory",
-    "mate-talk",
+    "character:char-1",
     "session:s-1",
     "diff",
     "list-session",

@@ -17,6 +17,7 @@ import {
 } from "../src/model-catalog.js";
 import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
 import type { CompanionStorage } from "./companion-storage.js";
+import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
 import {
   buildCompanionGroupDisplayName,
   cleanupCompanionWorkspaceArtifacts,
@@ -36,6 +37,7 @@ export type CompanionSessionServiceDeps = {
     ensureGroup(group: CompanionGroup): Awaitable<CompanionGroup>;
     createSession(session: CompanionSession): Awaitable<CompanionSession>;
   };
+  createCharacterRuntimeSnapshot?(characterId: string): CharacterRuntimeSnapshot | null;
 };
 
 function safeId(id: string): string {
@@ -164,6 +166,8 @@ export class CompanionSessionService {
       characterRoleMarkdown: input.characterRoleMarkdown,
       characterIconPath: input.characterIconPath,
       characterThemeColors: input.characterThemeColors,
+      characterRuntimeSnapshot:
+        input.characterRuntimeSnapshot ?? this.deps.createCharacterRuntimeSnapshot?.(input.characterId) ?? null,
       createdAt: now,
       updatedAt: now,
       messages: [],

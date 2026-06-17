@@ -18,6 +18,20 @@ export type HomeRecentSessionsPanelProps = {
   canUsePrimaryFeatures?: boolean;
 };
 
+function getAgentSessionModeBadge(session: SessionSummary): { className: string; label: string } {
+  if (session.sessionKind === "character-authoring") {
+    return {
+      className: "session-mode-badge character",
+      label: "Character",
+    };
+  }
+
+  return {
+    className: "session-mode-badge agent",
+    label: "Agent",
+  };
+}
+
 export function HomeRecentSessionsPanel({
   filteredSessionEntries,
   companionSessions,
@@ -53,6 +67,7 @@ export function HomeRecentSessionsPanel({
       return true;
     }
     const haystack = [
+      "companion",
       session.taskTitle,
       session.character,
       session.repoRoot,
@@ -140,6 +155,7 @@ export function HomeRecentSessionsPanel({
 
           const { session, state } = item.entry;
           const isReadOnly = isLegacyReadOnlySession(session);
+          const modeBadge = getAgentSessionModeBadge(session);
           return (
             <button
               key={`agent-${session.id}`}
@@ -154,7 +170,7 @@ export function HomeRecentSessionsPanel({
                 <div className="session-card-topline home-session-card-topline">
                   <strong>{session.taskTitle}</strong>
                   <div className="home-session-card-badges">
-                    <span className="session-mode-badge agent">Agent</span>
+                    <span className={modeBadge.className}>{modeBadge.label}</span>
                     {isReadOnly ? <span className="session-status home-session-status neutral">閲覧専用</span> : null}
                     <span className={`session-status home-session-status ${state.kind}`.trim()}>{state.label}</span>
                   </div>

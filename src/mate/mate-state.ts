@@ -1,7 +1,3 @@
-import type { ModelReasoningEffort } from "../model-catalog.js";
-import type { ApprovalMode } from "../approval-mode.js";
-import type { CodexSandboxMode } from "../codex-sandbox-mode.js";
-
 export type MateProfileState = "draft" | "active" | "deleted";
 export type MateStorageState = "not_created" | MateProfileState;
 export type MateProfileSectionState = {
@@ -96,33 +92,4 @@ export type UpdateMateInput = {
 
 export type SetMateAvatarInput = {
   avatarFilePath?: string | null;
-};
-
-export type MateTalkTurnInput = {
-  message: string;
-  provider?: string;
-  model?: string;
-  reasoningEffort?: ModelReasoningEffort;
-  attachments?: MateTalkPathReference[];
-  additionalDirectories?: string[];
-  approvalMode?: ApprovalMode;
-  codexSandboxMode?: CodexSandboxMode;
-};
-
-export type MateTalkPathReference = {
-  path: string;
-  kind: "file" | "folder" | "image";
-};
-
-export type MateTalkLaunchInput = {
-  provider?: string;
-  model?: string;
-  reasoningEffort?: ModelReasoningEffort;
-};
-
-export type MateTalkTurnResult = {
-  mateId: string;
-  userMessage: string;
-  assistantMessage: string;
-  createdAt: string;
 };

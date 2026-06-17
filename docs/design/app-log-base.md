@@ -93,6 +93,29 @@ flowchart LR
 
 通常の `ipc.request` / `ipc.response`、画面ロード成功、API request / response は初期実装では記録しない。量と機密情報漏えいリスクが高く、クラッシュ調査の初期価値に対してノイズが多いため。
 
+## Provider Diagnostic Log Policy
+
+provider 実行ログは、通常運用では turn 単位の summary を残し、stream event 単位の詳細ログは出さない。
+
+Codex の通常ログに残す summary:
+
+- `codex.run.started`
+- `codex.run.completed`
+- `codex.run.failed`
+- `codex.run.provider-error`
+- `codex.run.stream-error`
+- `codex.run.parse-noise.ignored`
+
+`codex.run.completed` / `codex.run.failed` / `codex.run.provider-error` / `codex.run.stream-error` には、原因分析に必要な `providerErrorReason`、`turnCompleted`、`hasUsage`、`itemCount`、`liveStepCount`、`streamErrorMessage` などの構造化 summary を残す。
+
+Codex stream の event-level 診断ログは通常運用では出さない。
+
+- `codex.run.stream.opened`
+- `codex.run.stream.event`
+- `codex.run.stream.finished`
+
+上記 3 種は、provider stream の lifecycle や SDK event payload を調べる必要がある場合だけ、`WITHMATE_CODEX_STREAM_DEBUG=1` で再有効化する。
+
 ## Privacy And Redaction
 
 - IPC payload、API request / response body、API key、添付ファイル内容は記録しない。

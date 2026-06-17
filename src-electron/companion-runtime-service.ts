@@ -34,11 +34,6 @@ export type CompanionRuntimeServiceDeps = {
   updateCompanionSession(session: CompanionSession): Awaitable<CompanionSession>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
   resolveProviderSession?: (session: Session) => Session;
-  resolveProjectContextTextForPrompt?: (
-    session: Session,
-    userMessage: string,
-    sessionMemory: SessionMemory,
-  ) => Awaitable<string | null>;
   getAppSettings: () => AppSettings;
   resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): {
     snapshot: ModelCatalogSnapshot;
@@ -47,6 +42,7 @@ export type CompanionRuntimeServiceDeps = {
   getProviderCodingAdapter(providerId: string | null | undefined): ProviderCodingAdapter;
   createAuditLog?: (input: CreateAuditLogInput) => Awaitable<AuditLogEntry>;
   updateAuditLog?: (id: number, entry: CreateAuditLogInput) => Awaitable<void | AuditLogEntry>;
+  listAuditLogs?: (sessionId: string) => Awaitable<AuditLogEntry[]>;
   setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void;
   getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
   waitForApprovalDecision(
@@ -102,6 +98,7 @@ function buildProviderSession(session: CompanionSession): Session {
     character: session.character,
     characterIconPath: session.characterIconPath,
     characterThemeColors: session.characterThemeColors,
+    characterRuntimeSnapshot: session.characterRuntimeSnapshot,
     runState: session.runState,
     approvalMode: session.approvalMode,
     codexSandboxMode: session.codexSandboxMode,
@@ -274,6 +271,7 @@ export class CompanionRuntimeService {
         updatedAt: currentTimestampLabel(),
         messages,
       });
+      await this.closeRunningAuditLogsAfterRecovery(session.id, interruptedMessage);
       this.deps.setLiveSessionRun(session.id, null);
       recovered = true;
     }
@@ -285,6 +283,44 @@ export class CompanionRuntimeService {
 
   isRunInFlight(sessionId: string): boolean {
     return this.inFlightRuns.has(sessionId);
+  }
+
+  private async closeRunningAuditLogsAfterRecovery(sessionId: string, errorMessage: string): Promise<void> {
+    if (!this.deps.listAuditLogs || !this.deps.updateAuditLog) {
+      return;
+    }
+
+    try {
+      const auditLogs = await this.deps.listAuditLogs(sessionId);
+      for (const auditLog of auditLogs) {
+        if (auditLog.phase !== "running") {
+          continue;
+        }
+
+        const { id, ...entry } = auditLog;
+        await this.updateAuditLogSafely(id, {
+          ...entry,
+          phase: "failed",
+          errorMessage,
+        }, "failed to close recovered companion audit log");
+      }
+    } catch (error) {
+      console.warn("[companion] failed to recover running audit logs", error);
+    }
+  }
+
+  private async updateAuditLogSafely(id: number, entry: CreateAuditLogInput, logMessage: string): Promise<boolean> {
+    if (!this.deps.updateAuditLog) {
+      return false;
+    }
+
+    try {
+      await this.deps.updateAuditLog(id, entry);
+      return true;
+    } catch (error) {
+      console.warn(`[companion] ${logMessage}`, error);
+      return false;
+    }
   }
 
   cancelRun(sessionId: string): void {
@@ -330,13 +366,6 @@ export class CompanionRuntimeService {
     const providerAdapter = this.deps.getProviderCodingAdapter(provider.id);
     const character = buildCompanionCharacter(requestedSession);
     const sessionMemory = buildSessionMemory(requestedSession);
-    const projectContextSession: Session = {
-      ...providerSession,
-      workspacePath: sessionMemory.workspacePath,
-    };
-    const projectContextText = await Promise.resolve(
-      this.deps.resolveProjectContextTextForPrompt?.(projectContextSession, nextMessage, sessionMemory) ?? null,
-    );
     const runningSessionCandidate: CompanionSession = {
       ...requestedSession,
       runState: "running",
@@ -352,7 +381,6 @@ export class CompanionRuntimeService {
         executionWorkspacePath: turnSession.worktreePath,
         sessionMemory,
         projectMemoryEntries: [],
-        projectContextText,
         character,
         providerCatalog: provider,
         userMessage: nextMessage,
@@ -413,8 +441,14 @@ export class CompanionRuntimeService {
       if (!runningAuditLog || !this.deps.updateAuditLog) {
         return;
       }
-      await this.deps.updateAuditLog(runningAuditLog.id, entry);
-      runningAuditEntry = entry;
+      const updated = await this.updateAuditLogSafely(
+        runningAuditLog.id,
+        entry,
+        "failed to update companion audit log",
+      );
+      if (updated) {
+        runningAuditEntry = entry;
+      }
     };
 
     const runProviderTurn = (turnSession: CompanionSession) => {

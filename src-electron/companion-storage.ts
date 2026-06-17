@@ -16,6 +16,10 @@ import {
 } from "../src/companion-state.js";
 import type { ChangedFile, DiffRow } from "../src/runtime-state.js";
 import type { Message, MessageArtifact } from "../src/session-state.js";
+import {
+  parseCharacterRuntimeSnapshotJson,
+  stringifyCharacterRuntimeSnapshot,
+} from "../src/character/character-runtime-snapshot.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
@@ -60,6 +64,7 @@ type CompanionSessionRow = {
   character_icon_path: string;
   character_theme_main: string;
   character_theme_sub: string;
+  character_runtime_snapshot_json: string;
   created_at: string;
   updated_at: string;
 };
@@ -118,6 +123,7 @@ const COMPANION_SESSION_COLUMNS = `
   character_icon_path,
   character_theme_main,
   character_theme_sub,
+  character_runtime_snapshot_json,
   created_at,
   updated_at
 `;
@@ -193,6 +199,7 @@ function rowToSession(row: CompanionSessionRow): CompanionSession {
       main: row.character_theme_main,
       sub: row.character_theme_sub,
     },
+    characterRuntimeSnapshot: parseCharacterRuntimeSnapshotJson(row.character_runtime_snapshot_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     messages: [],
@@ -474,6 +481,7 @@ export class CompanionStorage {
         character_icon_path TEXT NOT NULL,
         character_theme_main TEXT NOT NULL DEFAULT '#6f8cff',
         character_theme_sub TEXT NOT NULL DEFAULT '#6fb8c7',
+        character_runtime_snapshot_json TEXT NOT NULL DEFAULT '',
         audit_log_count INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -555,6 +563,9 @@ export class CompanionStorage {
     if (!columns.has("audit_log_count")) {
       this.db.exec("ALTER TABLE companion_sessions ADD COLUMN audit_log_count INTEGER NOT NULL DEFAULT 0;");
     }
+    if (!columns.has("character_runtime_snapshot_json")) {
+      this.db.exec("ALTER TABLE companion_sessions ADD COLUMN character_runtime_snapshot_json TEXT NOT NULL DEFAULT '';");
+    }
 
     const mergeRunColumns = new Set(
       (this.db.prepare("PRAGMA table_info(companion_merge_runs)").all() as { name: string }[]).map(
@@ -588,7 +599,7 @@ export class CompanionStorage {
     this.db.prepare(`
       INSERT INTO companion_sessions (
         ${COMPANION_SESSION_COLUMNS}
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.id,
       session.groupId,
@@ -620,6 +631,7 @@ export class CompanionStorage {
       session.characterIconPath,
       session.characterThemeColors.main,
       session.characterThemeColors.sub,
+      stringifyCharacterRuntimeSnapshot(session.characterRuntimeSnapshot),
       session.createdAt,
       session.updatedAt,
     );
@@ -707,6 +719,7 @@ export class CompanionStorage {
         character_icon_path = ?,
         character_theme_main = ?,
         character_theme_sub = ?,
+        character_runtime_snapshot_json = ?,
         updated_at = ?
       WHERE id = ?
     `).run(
@@ -731,6 +744,7 @@ export class CompanionStorage {
       session.characterIconPath,
       session.characterThemeColors.main,
       session.characterThemeColors.sub,
+      stringifyCharacterRuntimeSnapshot(session.characterRuntimeSnapshot),
       session.updatedAt,
       session.id,
     );

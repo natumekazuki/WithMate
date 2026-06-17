@@ -1,25 +1,34 @@
 import { useRef } from "react";
 
 import { focusRovingItemByKey, useDialogA11y } from "../a11y.js";
+import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-shell.js";
+import { ProviderLaunchField } from "../launch/provider-launch-picker.js";
+import { buildCharacterThemeStyle } from "../theme-utils.js";
+import { CharacterAvatar } from "../ui-utils.js";
 import type { LaunchWorkspace } from "./home-launch-projection.js";
+import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 
 export type HomeLaunchDialogProps = {
   open: boolean;
-  mode: "session" | "companion" | "mate-talk";
+  mode: "session" | "companion";
   title: string;
   workspace: LaunchWorkspace | null;
   launchWorkspacePathLabel: string;
   enabledLaunchProviders: Array<{ id: string; label: string }>;
   selectedLaunchProviderId: string | null;
+  characterOptions: CharacterCatalogEntry[];
+  selectedCharacterId: string | null;
+  charactersLoaded: boolean;
   canStartSession: boolean;
   launchFeedback: string;
   launchStarting: boolean;
   onClose: () => void;
-  onSelectMode: (mode: "session" | "companion" | "mate-talk") => void;
+  onSelectMode: (mode: "session" | "companion") => void;
   onChangeTitle: (value: string) => void;
   onBrowseWorkspace: () => void;
   onSelectProvider: (providerId: string) => void;
-  onStartSession: (mode: "session" | "companion" | "mate-talk") => void;
+  onSelectCharacter: (characterId: string) => void;
+  onStartSession: (mode: "session" | "companion") => void;
 };
 
 export function HomeLaunchDialog({
@@ -30,6 +39,9 @@ export function HomeLaunchDialog({
   launchWorkspacePathLabel,
   enabledLaunchProviders,
   selectedLaunchProviderId,
+  characterOptions,
+  selectedCharacterId,
+  charactersLoaded,
   canStartSession,
   launchFeedback,
   launchStarting,
@@ -38,6 +50,7 @@ export function HomeLaunchDialog({
   onChangeTitle,
   onBrowseWorkspace,
   onSelectProvider,
+  onSelectCharacter,
   onStartSession,
 }: HomeLaunchDialogProps) {
   const titleInputRef = useRef<HTMLInputElement | null>(null);
@@ -50,134 +63,142 @@ export function HomeLaunchDialog({
   if (!open) {
     return null;
   }
-  const isMateTalkMode = mode === "mate-talk";
 
   return (
-    <div className="launch-modal" role="dialog" aria-modal="true" onClick={onClose}>
-      <section
-        ref={dialogRef}
-        className="launch-dialog panel"
-        onClick={(event) => event.stopPropagation()}
-        onKeyDown={handleDialogKeyDown}
-      >
-        <div className="launch-dialog-head minimal">
-          <button className="diff-close" type="button" onClick={onClose}>
-            Close
+    <LaunchDialogShell
+      onClose={onClose}
+      dialogRef={dialogRef}
+      onKeyDown={handleDialogKeyDown}
+      footer={
+        <LaunchDialogFooter
+          feedback={launchFeedback}
+          startButtonLabel={
+            launchStarting
+              ? "Starting..."
+              : mode === "companion"
+                  ? "Start Companion"
+                  : "Start New Session"
+          }
+          startButtonDisabled={!canStartSession || launchStarting}
+          startButtonAriaDisabled={!canStartSession || launchStarting}
+          onStart={() => onStartSession(mode)}
+        />
+      }
+    >
+      <section className="launch-section minimal">
+        <div
+          className="choice-list launch-provider-list"
+          role="tablist"
+          aria-label="Session mode"
+          onKeyDown={(event) => {
+            focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
+          }}
+        >
+          {[
+            { value: "session" as const, label: "Agent Mode" },
+            { value: "companion" as const, label: "Companion Mode" },
+          ].map((option) => (
+            <button
+              key={option.value}
+              className={`choice-chip${mode === option.value ? " active" : ""}`}
+              type="button"
+              role="tab"
+              aria-selected={mode === option.value}
+              tabIndex={mode === option.value ? 0 : -1}
+              onClick={() => onSelectMode(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="launch-section minimal">
+        <div className="launch-field">
+          <label className="launch-field-label" htmlFor="launch-session-title">
+            セッションタイトル
+          </label>
+          <input
+            id="launch-session-title"
+            ref={titleInputRef}
+            className="launch-field-input"
+            type="text"
+            value={title}
+            onChange={(event) => onChangeTitle(event.target.value)}
+          />
+        </div>
+      </section>
+
+      <section className="launch-section workspace-picker minimal">
+        <div className="section-head compact-actions">
+          <button className="browse-button" type="button" onClick={onBrowseWorkspace}>
+            Browse
           </button>
         </div>
+        <p className={`launch-path${workspace ? " selected" : ""}`}>{launchWorkspacePathLabel}</p>
+      </section>
 
-        <div className="launch-panel minimal">
-          {!isMateTalkMode ? (
-          <section className="launch-section minimal">
+      <ProviderLaunchField
+        fieldId="launch-provider-picker"
+        providers={enabledLaunchProviders}
+        selectedProviderId={selectedLaunchProviderId}
+        onSelectProvider={onSelectProvider}
+      />
+
+      <section className="launch-section minimal">
+        <div className="launch-field">
+          <span className="launch-field-label">Character</span>
+          {!charactersLoaded ? (
+            <div className="launch-character-neutral">
+              <span className="character-avatar tiny" aria-hidden="true">W</span>
+              <div className="launch-character-copy">
+                <strong>読み込み中</strong>
+                <span>Character を読み込んでるよ...</span>
+              </div>
+            </div>
+          ) : characterOptions.length === 0 ? (
+            <div className="launch-character-neutral">
+              <span className="character-avatar tiny" aria-hidden="true">W</span>
+              <div className="launch-character-copy">
+                <strong>WithMate</strong>
+                <span>Neutral</span>
+              </div>
+            </div>
+          ) : (
             <div
-              className="choice-list launch-provider-list"
-              role="tablist"
-              aria-label="Session mode"
+              className="launch-character-list"
+              role="radiogroup"
+              aria-label="Character"
               onKeyDown={(event) => {
-                focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
+                focusRovingItemByKey(event, { orientation: "vertical", activateOnFocus: true });
               }}
             >
-              {[
-                { value: "session" as const, label: "Agent Mode" },
-                { value: "companion" as const, label: "Companion Mode" },
-              ].map((option) => (
+              {characterOptions.map((character) => (
                 <button
-                  key={option.value}
-                  className={`choice-chip${mode === option.value ? " active" : ""}`}
+                  key={character.id}
+                  className={`launch-character-option${character.id === selectedCharacterId ? " selected" : ""}`}
                   type="button"
-                  role="tab"
-                  aria-selected={mode === option.value}
-                  tabIndex={mode === option.value ? 0 : -1}
-                  onClick={() => onSelectMode(option.value)}
+                  role="radio"
+                  aria-checked={character.id === selectedCharacterId}
+                  tabIndex={character.id === selectedCharacterId ? 0 : -1}
+                  style={buildCharacterThemeStyle(character.theme)}
+                  onClick={() => onSelectCharacter(character.id)}
                 >
-                  {option.label}
+                  <CharacterAvatar
+                    character={{ name: character.name, iconPath: character.iconFilePath }}
+                    size="tiny"
+                  />
+                  <span className="launch-character-copy">
+                    <strong>{character.name}</strong>
+                    <span>{character.description || character.id}</span>
+                  </span>
+                  {character.isDefault ? <span className="launch-character-badge">Default</span> : null}
                 </button>
               ))}
             </div>
-          </section>
-          ) : null}
-
-          {!isMateTalkMode ? (
-          <section className="launch-section minimal">
-            <div className="launch-field">
-              <label className="launch-field-label" htmlFor="launch-session-title">
-                セッションタイトル
-              </label>
-              <input
-                id="launch-session-title"
-                ref={titleInputRef}
-                className="launch-field-input"
-                type="text"
-                value={title}
-                onChange={(event) => onChangeTitle(event.target.value)}
-              />
-            </div>
-          </section>
-          ) : null}
-
-          {!isMateTalkMode ? (
-          <section className="launch-section workspace-picker minimal">
-            <div className="section-head compact-actions">
-              <button className="browse-button" type="button" onClick={onBrowseWorkspace}>
-                Browse
-              </button>
-            </div>
-            <p className={`launch-path${workspace ? " selected" : ""}`}>{launchWorkspacePathLabel}</p>
-          </section>
-          ) : null}
-
-          <section className="launch-section minimal">
-            <div className="launch-field">
-              <label className="launch-field-label" htmlFor="launch-provider-picker">
-                Coding Provider
-              </label>
-              {enabledLaunchProviders.length > 0 ? (
-                <div
-                  id="launch-provider-picker"
-                  className="choice-list launch-provider-list"
-                  role="listbox"
-                  aria-label="Coding Provider"
-                  aria-orientation="horizontal"
-                  onKeyDown={(event) => {
-                    focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
-                  }}
-                >
-                  {enabledLaunchProviders.map((provider) => (
-                    <button
-                      key={provider.id}
-                      className={`choice-chip${provider.id === selectedLaunchProviderId ? " active" : ""}`}
-                      type="button"
-                      role="option"
-                      aria-selected={provider.id === selectedLaunchProviderId}
-                      tabIndex={provider.id === selectedLaunchProviderId ? 0 : -1}
-                      onClick={() => onSelectProvider(provider.id)}
-                    >
-                      {provider.label}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <article className="empty-list-card compact">
-                  <p>有効な Coding Provider がないよ。</p>
-                </article>
-              )}
-            </div>
-          </section>
-        </div>
-
-        <div className="launch-dialog-foot minimal">
-          {launchFeedback ? <p className="launch-feedback">{launchFeedback}</p> : null}
-          <button
-            className="start-session-button"
-            type="button"
-            aria-disabled={!canStartSession || launchStarting}
-            disabled={!canStartSession || launchStarting}
-            onClick={() => onStartSession(mode)}
-          >
-            {launchStarting ? "Starting..." : mode === "mate-talk" ? "Start MateTalk" : mode === "companion" ? "Start Companion" : "Start New Session"}
-          </button>
+          )}
         </div>
       </section>
-    </div>
+    </LaunchDialogShell>
   );
 }

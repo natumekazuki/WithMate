@@ -3,11 +3,9 @@ import test from "node:test";
 
 import {
   MATE_PROFILE_SECTION_RULES,
-  MATE_TALK_PROFILE_SECTION_KEYS,
   PROVIDER_INSTRUCTION_PROFILE_SECTION_KEYS,
   getMateProfileSectionRule,
   isMateProfileRuntimeSectionKey,
-  isMateTalkProfileSectionKey,
   isProviderInstructionProfileSectionKey,
 } from "../../src/mate/mate-profile-sections.js";
 
@@ -22,11 +20,9 @@ test("Mate Profile section rules は runtime section の責務と投影境界を
   assert.equal(getMateProfileSectionRule("notes").role.includes("直接指示として扱わない"), true);
 });
 
-test("MateTalk は notes を含め、provider instruction は notes を含めない", () => {
-  assert.deepEqual(MATE_TALK_PROFILE_SECTION_KEYS, ["core", "bond", "work_style", "notes"]);
+test("provider instruction は notes を含めない", () => {
   assert.deepEqual(PROVIDER_INSTRUCTION_PROFILE_SECTION_KEYS, ["core", "bond", "work_style"]);
 
-  assert.equal(isMateTalkProfileSectionKey("notes"), true);
   assert.equal(isProviderInstructionProfileSectionKey("notes"), false);
   assert.equal(isProviderInstructionProfileSectionKey("project_digest"), false);
 });

@@ -12,6 +12,10 @@ import {
   type SessionSummary,
 } from "../src/session-state.js";
 import type { AuditLogOperation, ChangedFile, RunCheck } from "../src/runtime-state.js";
+import {
+  parseCharacterRuntimeSnapshotJson,
+  stringifyCharacterRuntimeSnapshot,
+} from "../src/character/character-runtime-snapshot.js";
 import { V3_SUMMARY_JSON_MAX_LENGTH, V3_TEXT_PREVIEW_MAX_LENGTH } from "./database-schema-v3.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import { type BlobRef, TextBlobStore } from "./text-blob-store.js";
@@ -32,6 +36,7 @@ type SessionHeaderRow = {
   character_icon_path: string;
   character_theme_main: string;
   character_theme_sub: string;
+  character_runtime_snapshot_json: string;
   run_state: string;
   approval_mode: string;
   codex_sandbox_mode: string;
@@ -41,6 +46,8 @@ type SessionHeaderRow = {
   allowed_additional_directories_json: string;
   thread_id: string;
 };
+
+type SessionSummaryHeaderRow = Omit<SessionHeaderRow, "character_runtime_snapshot_json">;
 
 type SessionAuditLogCountRow = {
   id: string;
@@ -67,6 +74,10 @@ type SessionMessageRow = {
 
 type BlobIdRow = {
   blob_id: string | null;
+};
+
+type TableColumnRow = {
+  name: string;
 };
 
 type SessionRowParseMode = "skip" | "throw";
@@ -104,6 +115,7 @@ const UPSERT_SESSION_SQL = `
     character_icon_path,
     character_theme_main,
     character_theme_sub,
+    character_runtime_snapshot_json,
     run_state,
     approval_mode,
     codex_sandbox_mode,
@@ -115,7 +127,7 @@ const UPSERT_SESSION_SQL = `
     message_count,
     audit_log_count,
     last_active_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     task_title = excluded.task_title,
     status = excluded.status,
@@ -131,6 +143,7 @@ const UPSERT_SESSION_SQL = `
     character_icon_path = excluded.character_icon_path,
     character_theme_main = excluded.character_theme_main,
     character_theme_sub = excluded.character_theme_sub,
+    character_runtime_snapshot_json = excluded.character_runtime_snapshot_json,
     run_state = excluded.run_state,
     approval_mode = excluded.approval_mode,
     codex_sandbox_mode = excluded.codex_sandbox_mode,
@@ -194,7 +207,7 @@ const INSERT_MESSAGE_ARTIFACT_SQL = `
 const GET_SESSION_AUDIT_LOG_COUNT_SQL = "SELECT audit_log_count FROM sessions WHERE id = ?";
 const LIST_SESSION_AUDIT_LOG_COUNTS_SQL = "SELECT id, audit_log_count FROM sessions";
 
-const SESSION_HEADER_COLUMNS = `
+const SESSION_SUMMARY_HEADER_COLUMNS = `
   id,
   task_title,
   status,
@@ -220,16 +233,43 @@ const SESSION_HEADER_COLUMNS = `
   thread_id
 `;
 
+const SESSION_DETAIL_HEADER_COLUMNS = `
+  id,
+  task_title,
+  status,
+  updated_at,
+  provider,
+  catalog_revision,
+  workspace_label,
+  workspace_path,
+  branch,
+  session_kind,
+  character_id,
+  character_name,
+  character_icon_path,
+  character_theme_main,
+  character_theme_sub,
+  character_runtime_snapshot_json,
+  run_state,
+  approval_mode,
+  codex_sandbox_mode,
+  model,
+  reasoning_effort,
+  custom_agent_name,
+  allowed_additional_directories_json,
+  thread_id
+`;
+
 const LIST_SESSION_SUMMARIES_SQL = `
   SELECT
-    ${SESSION_HEADER_COLUMNS}
+    ${SESSION_SUMMARY_HEADER_COLUMNS}
   FROM sessions
   ORDER BY last_active_at DESC, id DESC
 `;
 
 const GET_SESSION_HEADER_SQL = `
   SELECT
-    ${SESSION_HEADER_COLUMNS}
+    ${SESSION_DETAIL_HEADER_COLUMNS}
   FROM sessions
   WHERE id = ?
 `;
@@ -393,7 +433,10 @@ function preview(value: string): string {
   return value.length > V3_TEXT_PREVIEW_MAX_LENGTH ? value.slice(0, V3_TEXT_PREVIEW_MAX_LENGTH) : value;
 }
 
-function parseAllowedAdditionalDirectories(row: SessionHeaderRow, mode: SessionRowParseMode): string[] | null {
+function parseAllowedAdditionalDirectories(
+  row: Pick<SessionHeaderRow, "allowed_additional_directories_json" | "id">,
+  mode: SessionRowParseMode,
+): string[] | null {
   try {
     const parsed = JSON.parse(row.allowed_additional_directories_json);
     return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === "string") : null;
@@ -410,7 +453,7 @@ function parseAllowedAdditionalDirectories(row: SessionHeaderRow, mode: SessionR
   }
 }
 
-function rowToSessionSummary(row: SessionHeaderRow, mode: SessionRowParseMode = "skip"): SessionSummary | null {
+function rowToSessionSummary(row: SessionSummaryHeaderRow, mode: SessionRowParseMode = "skip"): SessionSummary | null {
   const allowedAdditionalDirectories = parseAllowedAdditionalDirectories(row, mode);
   if (!allowedAdditionalDirectories) {
     return null;
@@ -459,6 +502,7 @@ function rowToSession(row: SessionHeaderRow, messages: Message[], mode: SessionR
 
   const session = normalizeSession({
     ...summary,
+    characterRuntimeSnapshot: parseCharacterRuntimeSnapshotJson(row.character_runtime_snapshot_json),
     messages,
     stream: [],
   });
@@ -506,6 +550,7 @@ function writeSessionHeader(
     session.characterIconPath,
     session.characterThemeColors.main,
     session.characterThemeColors.sub,
+    stringifyCharacterRuntimeSnapshot(session.characterRuntimeSnapshot),
     session.runState,
     session.approvalMode,
     session.codexSandboxMode,
@@ -795,6 +840,7 @@ export class SessionStorageV3 {
   constructor(dbPath: string, blobRootPath: string) {
     this.db = openAppDatabase(dbPath);
     this.blobStore = new TextBlobStore(blobRootPath);
+    this.ensureSchema();
   }
 
   private withDb<T>(runner: (db: DatabaseSync) => T): T {
@@ -803,6 +849,17 @@ export class SessionStorageV3 {
     }
 
     return runner(this.db);
+  }
+
+  private ensureSchema(): void {
+    this.withDb((db) => {
+      const columns = new Set(
+        (db.prepare("PRAGMA table_info(sessions)").all() as TableColumnRow[]).map((column) => column.name),
+      );
+      if (!columns.has("character_runtime_snapshot_json")) {
+        db.exec("ALTER TABLE sessions ADD COLUMN character_runtime_snapshot_json TEXT NOT NULL DEFAULT '';");
+      }
+    });
   }
 
   private async rowToMessage(row: SessionMessageRow): Promise<Message | null> {
@@ -826,7 +883,7 @@ export class SessionStorageV3 {
 
   async listSessionSummaries(): Promise<SessionSummary[]> {
     return this.withDb((db) => {
-      const rows = db.prepare(LIST_SESSION_SUMMARIES_SQL).all() as SessionHeaderRow[];
+      const rows = db.prepare(LIST_SESSION_SUMMARIES_SQL).all() as SessionSummaryHeaderRow[];
       return cloneSessionSummaries(
         rows.map((row) => rowToSessionSummary(row)).filter((session): session is SessionSummary => session !== null),
       );

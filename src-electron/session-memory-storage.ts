@@ -6,7 +6,7 @@ import {
   type Session,
   type SessionMemory,
 } from "../src/app-state.js";
-import type { ManagedSessionMemoryItem, MemoryManagementPageRequest } from "../src/memory/memory-management-state.js";
+import type { ManagedSessionMemoryItem, MemoryPageRequest } from "../src/memory/memory-state.js";
 import { CREATE_SESSION_MEMORIES_TABLE_SQL } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
@@ -120,11 +120,11 @@ function rowToManagedSessionMemoryItem(row: ManagedSessionMemoryRow): ManagedSes
   };
 }
 
-function normalizePageCursor(cursor: MemoryManagementPageRequest["cursor"]): number {
+function normalizePageCursor(cursor: MemoryPageRequest["cursor"]): number {
   return typeof cursor === "number" && Number.isFinite(cursor) && cursor > 0 ? Math.floor(cursor) : 0;
 }
 
-function normalizePageLimit(limit: MemoryManagementPageRequest["limit"]): number {
+function normalizePageLimit(limit: MemoryPageRequest["limit"]): number {
   return typeof limit === "number" && Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 50;
 }
 
@@ -132,7 +132,7 @@ function pushSearchParam(params: SQLInputValue[], searchText: string): void {
   params.push(searchText);
 }
 
-function buildSessionMemoryPageWhere(request: MemoryManagementPageRequest): { sql: string; params: SQLInputValue[] } {
+function buildSessionMemoryPageWhere(request: MemoryPageRequest): { sql: string; params: SQLInputValue[] } {
   const clauses: string[] = [];
   const params: SQLInputValue[] = [];
   const searchText = typeof request.searchText === "string" ? request.searchText.trim().toLowerCase() : "";
@@ -196,7 +196,7 @@ export class SessionMemoryStorage {
     return rows.map(rowToSessionMemory).filter((memory): memory is SessionMemory => memory !== null);
   }
 
-  listSessionMemoryPage(request: MemoryManagementPageRequest = {}): { items: ManagedSessionMemoryItem[]; total: number } {
+  listSessionMemoryPage(request: MemoryPageRequest = {}): { items: ManagedSessionMemoryItem[]; total: number } {
     const cursor = normalizePageCursor(request.cursor);
     const limit = normalizePageLimit(request.limit);
     const direction = request.sort === "updated-asc" ? "ASC" : "DESC";

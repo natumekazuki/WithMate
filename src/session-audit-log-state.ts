@@ -196,7 +196,7 @@ export function useSessionAuditLogs({
   useEffect(() => {
     let active = true;
 
-    if (!enabled || !auditLogsOpen || !auditLogApi || !selectedSession) {
+    if (!enabled || !auditLogApi || !selectedSession) {
       setAuditLogsState(createEmptyAuditLogsState(null));
       setAuditLogDetails({});
       setAuditLogOperationDetails({});
@@ -248,7 +248,7 @@ export function useSessionAuditLogs({
     return () => {
       active = false;
     };
-  }, [auditLogApi, auditLogsOpen, enabled, refreshSignature, selectedSessionId]);
+  }, [auditLogApi, enabled, refreshSignature, selectedSessionId]);
 
   useEffect(() => {
     if (!auditLogsOpen) {

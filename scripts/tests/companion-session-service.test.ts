@@ -10,6 +10,7 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
+import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
 import { CompanionSessionService } from "../../src-electron/companion-session-service.js";
 import { CompanionStorage } from "../../src-electron/companion-storage.js";
 
@@ -61,6 +62,31 @@ function createModelCatalogSnapshot(): ModelCatalogSnapshot {
   };
 }
 
+function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnapshot>): CharacterRuntimeSnapshot {
+  return {
+    characterId: "char-1",
+    name: "Mia",
+    description: "保存済み Character",
+    iconFilePath: "icon.png",
+    theme: {
+      main: "#6f8cff",
+      sub: "#6fb8c7",
+    },
+    definitionMarkdown: [
+      "---",
+      "schema: withmate.character.v1",
+      "name: Mia",
+      "---",
+      "# Character",
+      "Companion 起動時に固定した character.md。",
+    ].join("\n"),
+    definitionSha256: "sha256-companion-definition",
+    definitionByteSize: 128,
+    snapshotAt: "2026-06-14T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 describe("CompanionSessionService", () => {
   it("CompanionSession 作成時に snapshot ref と shadow worktree を実体化する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-service-"));
@@ -81,6 +107,8 @@ describe("CompanionSessionService", () => {
       await writeFile(path.join(repoPath, "README.md"), "# demo\n\nservice\n", "utf8");
 
       storage = new CompanionStorage(dbPath);
+      const characterRuntimeSnapshot = createCharacterRuntimeSnapshot();
+      const snapshotCharacterIds: string[] = [];
       const service = new CompanionSessionService({
         appDataPath,
         getAppSettings: () => normalizeAppSettings({
@@ -90,6 +118,10 @@ describe("CompanionSessionService", () => {
         }),
         getModelCatalogSnapshot: createModelCatalogSnapshot,
         storage,
+        createCharacterRuntimeSnapshot(characterId) {
+          snapshotCharacterIds.push(characterId);
+          return characterRuntimeSnapshot;
+        },
       });
       const session = await service.createSession({
         taskTitle: "Shadow worktree",
@@ -115,10 +147,14 @@ describe("CompanionSessionService", () => {
       assert.equal(await gitOutput(repoPath, ["rev-parse", session.baseSnapshotRef]), session.baseSnapshotCommit);
       assert.equal(await gitOutput(repoPath, ["rev-parse", session.companionBranch]), session.baseSnapshotCommit);
       assert.equal((await readFile(path.join(session.worktreePath, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "# demo\n\nservice\n");
+      assert.deepEqual(snapshotCharacterIds, ["char-1"]);
+      assert.deepEqual(session.characterRuntimeSnapshot, characterRuntimeSnapshot);
+      assert.notEqual(session.characterRuntimeSnapshot, characterRuntimeSnapshot);
       assert.equal(storage.getSession(session.id)?.baseSnapshotRef, session.baseSnapshotRef);
       assert.equal(session.catalogRevision, 5);
       assert.equal(session.model, "gpt-5.5");
       assert.equal(session.reasoningEffort, "xhigh");
+      assert.deepEqual(storage.getSession(session.id)?.characterRuntimeSnapshot, characterRuntimeSnapshot);
     } finally {
       if (worktreePath) {
         await git(repoPath, ["worktree", "remove", "--force", worktreePath]).catch(() => undefined);

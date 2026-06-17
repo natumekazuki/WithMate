@@ -28,14 +28,11 @@ import { toAuditTextPreview } from "./audit-payload-limits.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
-type SessionMetadataForMemoryGeneration = Pick<
-  Session,
-  "id" | "workspacePath"
->;
 
 export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(session: Session): Awaitable<Session>;
+  resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
   resolveProviderSession?: (session: Session) => Session;
   resolveSessionCharacter?: (session: Session) => Promise<CharacterProfile | null>;
@@ -51,11 +48,6 @@ export type SessionRuntimeServiceDeps = {
     userMessage: string,
     sessionMemory: SessionMemory,
   ): ProjectMemoryEntry[];
-  resolveProjectContextTextForPrompt?(
-    session: Session,
-    userMessage: string,
-    sessionMemory: SessionMemory,
-  ): Awaitable<string | null>;
   createAuditLog(input: CreateAuditLogInput): Awaitable<AuditLogEntry>;
   updateAuditLog(id: number, entry: CreateAuditLogInput): Awaitable<void | AuditLogEntry>;
   setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void;
@@ -78,16 +70,6 @@ export type SessionRuntimeServiceDeps = {
   broadcastLiveSessionRun(sessionId: string): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
   resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
-  scheduleMateMemoryGeneration?: (params: {
-    session: SessionMetadataForMemoryGeneration;
-    userMessage: string;
-    assistantText: string;
-    auditLogId: number;
-    phase: "completed" | "failed" | "canceled";
-    provider: Session["provider"];
-    threadId: Session["threadId"];
-    logicalPrompt: CreateAuditLogInput["logicalPrompt"];
-  }) => Awaitable<void>;
   getMateState?: () => MateStorageState;
   currentTimestampLabel?: () => string;
 };
@@ -203,6 +185,56 @@ function shouldResetFailedSessionThread(
 
   const candidateThreadId = pickPreferredThreadId(partialResult?.threadId, currentThreadId);
   return candidateThreadId.length > 0;
+}
+
+function extractProviderUsageLimitRetryAt(message: string): string | null {
+  const match = /\btry again at\s+(.+?)(?:\.|$)/i.exec(message);
+  return match?.[1]?.trim() || null;
+}
+
+function formatProviderUsageLimitMessage(providerId: Session["provider"], message: string): string {
+  const providerLabel = providerId === "codex" ? "Codex" : "Provider";
+  const retryAt = extractProviderUsageLimitRetryAt(message);
+  if (retryAt) {
+    return `${providerLabel}の使用上限に達しました。\n再実行可能時刻: ${retryAt}`;
+  }
+
+  const preview = toAuditTextPreview(message) ?? message;
+  return `${providerLabel}の使用上限に達しました。\n詳細: ${preview}`;
+}
+
+function formatProviderFailureMessage(params: {
+  providerId: Session["provider"];
+  reason: ProviderTurnError["reason"] | null;
+  message: string;
+  canceled: boolean;
+}): string {
+  if (params.canceled) {
+    return "ユーザーがキャンセルしたよ。";
+  }
+
+  if (params.reason === "usage_limit") {
+    return formatProviderUsageLimitMessage(params.providerId, params.message);
+  }
+
+  return params.message;
+}
+
+function formatProviderFailureNotice(params: {
+  providerId: Session["provider"];
+  reason: ProviderTurnError["reason"] | null;
+  message: string;
+  canceled: boolean;
+}): string {
+  if (params.canceled) {
+    return "実行をキャンセルしたよ。";
+  }
+
+  if (params.reason === "usage_limit") {
+    return formatProviderUsageLimitMessage(params.providerId, params.message);
+  }
+
+  return `実行に失敗したよ。\n${params.message}`;
 }
 
 function pickPreferredThreadId(...candidates: Array<string | null | undefined>): string {
@@ -394,10 +426,11 @@ export class SessionRuntimeService {
   }
 
   async runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {
-    const session = await this.deps.getSession(sessionId);
-    if (!session) {
+    const storedSession = await this.deps.getSession(sessionId);
+    if (!storedSession) {
       throw new Error("対象セッションが見つからないよ。");
     }
+    const session = await Promise.resolve(this.deps.resolveRuntimeSessionForTurn?.(storedSession) ?? storedSession);
 
     if (session.runState === "running") {
       throw new Error("このセッションはまだ実行中だよ。");
@@ -427,14 +460,10 @@ export class SessionRuntimeService {
     const providerAdapter = this.deps.getProviderCodingAdapter(provider.id);
     const sessionMemory = this.deps.getSessionMemory(session);
     const projectMemoryEntries = this.deps.resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
-    const projectContextText = await Promise.resolve(
-      this.deps.resolveProjectContextTextForPrompt?.(session, nextMessage, sessionMemory) ?? null,
-    );
     const promptForAudit = providerAdapter.composePrompt({
       session: providerSession,
       sessionMemory,
       projectMemoryEntries,
-      projectContextText,
       providerCatalog: provider,
       userMessage: nextMessage,
       appSettings,
@@ -536,34 +565,6 @@ export class SessionRuntimeService {
 
       await enqueueAuditWrite(nextRunningAuditEntry, nextSignature);
     };
-    const scheduleMateMemoryGeneration = async (params: {
-      session: SessionMetadataForMemoryGeneration;
-      userMessage: string;
-      assistantText: string;
-      phase: "completed" | "failed" | "canceled";
-      threadId: Session["threadId"];
-      auditLogId: number;
-    }) => {
-      const { scheduleMateMemoryGeneration: schedule } = this.deps;
-      if (!schedule) {
-        return;
-      }
-      const appSettings = this.deps.getAppSettings();
-      const mateState = this.deps.getMateState?.();
-      if (!appSettings.memoryGenerationEnabled || (mateState && mateState !== "active")) {
-        return;
-      }
-
-      try {
-        await Promise.resolve(schedule({
-          ...params,
-          logicalPrompt: promptForAudit.logicalPrompt,
-          provider: activeRunningSession.provider,
-        }));
-      } catch {
-        console.warn("Failed to schedule Mate Memory generation", params.session.id);
-      }
-    };
     await syncRunningAuditFromLiveState(initialLiveState);
     const runProviderTurn = (turnSession: Session) => {
       const progressGeneration = ++liveProgressGeneration;
@@ -572,7 +573,6 @@ export class SessionRuntimeService {
         session: effectiveTurnSession,
         sessionMemory,
         projectMemoryEntries,
-        projectContextText,
         providerCatalog: provider,
         userMessage: nextMessage,
         appSettings,
@@ -731,23 +731,19 @@ export class SessionRuntimeService {
       };
 
       const storedCompletedSession = await this.deps.upsertSession(completedSession);
-      void scheduleMateMemoryGeneration({
-        session: {
-          id: storedCompletedSession.id,
-          workspacePath: storedCompletedSession.workspacePath,
-        },
-        userMessage: nextMessage,
-        assistantText: completedSession.messages.at(-1)?.text ?? "",
-        phase: "completed",
-        threadId: storedCompletedSession.threadId,
-        auditLogId: runningAuditLog.id,
-      });
       activeRunningSession = storedCompletedSession;
       return storedCompletedSession;
     } catch (error: unknown) {
       const providerTurnError = error instanceof ProviderTurnError ? error : null;
       const canceled = providerTurnError ? providerTurnError.canceled : isCanceledRunError(error);
       const message = error instanceof Error ? error.message : String(error);
+      const providerErrorReason = providerTurnError?.reason ?? null;
+      const failureMessage = formatProviderFailureMessage({
+        providerId: activeRunningSession.provider,
+        reason: providerErrorReason,
+        message,
+        canceled,
+      });
       const partialResult = providerTurnError?.partialResult;
       const failedAuditThreadId = pickPreferredThreadId(
         partialResult?.threadId,
@@ -799,12 +795,17 @@ export class SessionRuntimeService {
         operations: partialResult?.operations ?? [],
         rawItemsJson: partialResult?.rawItemsJson ?? "[]",
         usage: partialResult?.usage ?? null,
-        errorMessage: canceled ? "ユーザーがキャンセルしたよ。" : message,
+        errorMessage: failureMessage,
       });
       await this.deps.updateAuditLog(runningAuditLog.id, failedAuditEntry);
       runningAuditEntry = failedAuditEntry;
 
-      const fallbackNotice = canceled ? "実行をキャンセルしたよ。" : `実行に失敗したよ。\n${message}`;
+      const fallbackNotice = formatProviderFailureNotice({
+        providerId: activeRunningSession.provider,
+        reason: providerErrorReason,
+        message,
+        canceled,
+      });
       const assistantText = partialResult?.assistantText.trim()
         ? `${partialResult.assistantText}\n\n${fallbackNotice}`
         : fallbackNotice;
@@ -826,19 +827,6 @@ export class SessionRuntimeService {
       };
 
       const storedFailedSession = await this.deps.upsertSession(failedSession);
-      if (!canceled || partialResult?.assistantText.trim()) {
-        void scheduleMateMemoryGeneration({
-          session: {
-            id: storedFailedSession.id,
-            workspacePath: storedFailedSession.workspacePath,
-          },
-          userMessage: nextMessage,
-          assistantText: failedSession.messages.at(-1)?.text ?? "",
-          phase: canceled ? "canceled" : "failed",
-          threadId: storedFailedSession.threadId,
-          auditLogId: runningAuditLog.id,
-        });
-      }
       activeRunningSession = storedFailedSession;
       return storedFailedSession;
     } finally {

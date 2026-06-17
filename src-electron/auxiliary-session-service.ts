@@ -14,10 +14,10 @@ import {
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
 import type { Session } from "../src/session-state.js";
-import type { AuxiliarySessionStorageAccess } from "./persistent-store-lifecycle-service.js";
+import type { Awaitable, AuxiliarySessionStorageAccess } from "./persistent-store-lifecycle-service.js";
 
 type AuxiliarySessionServiceDeps = {
-  getSession(sessionId: string): Session | null;
+  getParentSession(parentSessionId: string): Awaitable<Session | null>;
   getStorage(): AuxiliarySessionStorageAccess;
   getModelCatalogSnapshot?(): ModelCatalogSnapshot | null;
 };
@@ -95,8 +95,8 @@ export class AuxiliarySessionService {
     return this.deps.getStorage().listRunningActiveAuxiliarySessions();
   }
 
-  createAuxiliarySession(input: CreateAuxiliarySessionInput): AuxiliarySession {
-    const parent = this.deps.getSession(input.parentSessionId);
+  async createAuxiliarySession(input: CreateAuxiliarySessionInput): Promise<AuxiliarySession> {
+    const parent = await this.deps.getParentSession(input.parentSessionId);
     if (!parent) {
       throw new Error("親セッションが見つからないよ。");
     }
@@ -138,13 +138,13 @@ export class AuxiliarySessionService {
     });
   }
 
-  getAuxiliaryRuntimeSession(auxiliarySessionId: string): Session | null {
+  async getAuxiliaryRuntimeSession(auxiliarySessionId: string): Promise<Session | null> {
     const auxiliary = this.getAuxiliarySession(auxiliarySessionId);
     if (!auxiliary) {
       return null;
     }
 
-    return this.toRuntimeSession(auxiliary);
+    return await this.toRuntimeSession(auxiliary);
   }
 
   upsertAuxiliaryRuntimeSession(runtimeSession: Session): AuxiliarySession {
@@ -295,8 +295,8 @@ export class AuxiliarySessionService {
     }
   }
 
-  private toRuntimeSession(auxiliary: AuxiliarySession): Session {
-    const parent = this.deps.getSession(auxiliary.parentSessionId);
+  private async toRuntimeSession(auxiliary: AuxiliarySession): Promise<Session> {
+    const parent = await this.deps.getParentSession(auxiliary.parentSessionId);
     if (!parent) {
       throw new Error("親セッションが見つからないよ。");
     }

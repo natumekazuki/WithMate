@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import type { CompanionGroup, CompanionMergeRun, CompanionSession } from "../../src/companion-state.js";
+import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../../src/model-catalog.js";
@@ -83,9 +84,28 @@ function createSession(groupId: string, overrides: Partial<CompanionSession> = {
       main: "#6f8cff",
       sub: "#6fb8c7",
     },
+    characterRuntimeSnapshot: null,
     createdAt: "2026-04-26 10:01",
     updatedAt: "2026-04-26 10:01",
     messages: [],
+    ...overrides,
+  };
+}
+
+function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnapshot>): CharacterRuntimeSnapshot {
+  return {
+    characterId: "char-1",
+    name: "Mia",
+    description: "保存済み Character",
+    iconFilePath: "icon.png",
+    theme: {
+      main: "#6f8cff",
+      sub: "#6fb8c7",
+    },
+    definitionMarkdown: "# Character\nCompanion V3 runtime snapshot",
+    definitionSha256: "sha256-companion-v3",
+    definitionByteSize: 52,
+    snapshotAt: "2026-06-14T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -155,8 +175,10 @@ describe("CompanionStorageV3", () => {
       createV3Database(dbPath);
       storage = new CompanionStorageV3(dbPath, blobPath);
       const group = await storage.ensureGroup(createGroup());
+      const characterRuntimeSnapshot = createCharacterRuntimeSnapshot();
       const session = await storage.createSession(createSession(group.id, {
         approvalMode: "never",
+        characterRuntimeSnapshot,
         messages: [
           { role: "user", text: "Companion user text" },
           {
@@ -182,7 +204,9 @@ describe("CompanionStorageV3", () => {
 
       assert.equal(session.groupId, group.id);
       assert.equal((await storage.getSession(session.id))?.approvalMode, "never");
+      assert.deepEqual((await storage.getSession(session.id))?.characterRuntimeSnapshot, characterRuntimeSnapshot);
       assert.equal((await storage.listActiveSessionSummaries())[0]?.approvalMode, "never");
+      assert.equal("characterRuntimeSnapshot" in ((await storage.listActiveSessionSummaries())[0] ?? {}), false);
       assert.equal((await storage.getSession(session.id))?.messages[1]?.artifact?.changedFiles[0]?.diffRows.length, 0);
       assert.equal((await storage.getMessageArtifact(session.id, 1))?.changedFiles[0]?.diffRows[0]?.rightText, "hello");
       assert.deepEqual(await storage.listMergeRunsForSession(session.id), [mergeRun]);

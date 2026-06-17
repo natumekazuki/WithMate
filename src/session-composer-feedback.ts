@@ -10,7 +10,13 @@ export type ComposerSendabilityState = {
   isSendDisabled: boolean;
 };
 
+export type TextComposerSubmitPreflightResult =
+  | { status: "ready"; message: string }
+  | { status: "blocked"; reason: "empty"; feedback: string }
+  | { status: "blocked"; reason: "running" };
+
 export const BLANK_DRAFT_FEEDBACK = "メッセージを入力してください。";
+export const COMPOSER_SEND_BLOCKED_FALLBACK = "送信できない状態だよ。";
 
 export function buildComposerSendabilityState({
   runState,
@@ -82,6 +88,30 @@ export function withForcedComposerBlockedFeedback(
   };
 }
 
+export function resolveComposerSendabilityState({
+  runState,
+  blockedReason,
+  inputErrors,
+  draftText,
+  forceBlockedFeedback,
+}: {
+  runState: string | null | undefined;
+  blockedReason: string;
+  inputErrors: string[];
+  draftText: string;
+  forceBlockedFeedback: boolean;
+}): ComposerSendabilityState {
+  return withForcedComposerBlockedFeedback(
+    buildComposerSendabilityState({
+      runState,
+      blockedReason,
+      inputErrors,
+      draftText,
+    }),
+    forceBlockedFeedback,
+  );
+}
+
 export function getComposerSendButtonTitle(state: ComposerSendabilityState): string | undefined {
   if (state.isRunning) {
     return "実行をキャンセル";
@@ -92,4 +122,69 @@ export function getComposerSendButtonTitle(state: ComposerSendabilityState): str
   }
 
   return state.primaryFeedback || (state.isBlankDraft ? BLANK_DRAFT_FEEDBACK : "送信できない状態だよ。");
+}
+
+export function getComposerSendBlockedMessage(
+  state: ComposerSendabilityState,
+  fallback = COMPOSER_SEND_BLOCKED_FALLBACK,
+): string | null {
+  if (!state.isSendDisabled) {
+    return null;
+  }
+
+  return state.primaryFeedback || fallback;
+}
+
+export function resolveComposerSendPreflight({
+  runState,
+  blockedReason,
+  inputErrors,
+  draftText,
+  fallbackBlockedMessage,
+}: {
+  runState: string | null | undefined;
+  blockedReason: string;
+  inputErrors: string[];
+  draftText: string;
+  fallbackBlockedMessage?: string;
+}): {
+  sendability: ComposerSendabilityState;
+  blockedMessage: string | null;
+} {
+  const sendability = buildComposerSendabilityState({
+    runState,
+    blockedReason,
+    inputErrors,
+    draftText,
+  });
+
+  return {
+    sendability,
+    blockedMessage: getComposerSendBlockedMessage(sendability, fallbackBlockedMessage),
+  };
+}
+
+export function resolveTextComposerSubmitPreflight({
+  draftText,
+  isRunning,
+  emptyFeedback = BLANK_DRAFT_FEEDBACK,
+}: {
+  draftText: string;
+  isRunning: boolean;
+  emptyFeedback?: string;
+}): TextComposerSubmitPreflightResult {
+  const message = draftText.trim();
+  if (!message) {
+    return {
+      status: "blocked",
+      reason: "empty",
+      feedback: emptyFeedback,
+    };
+  }
+
+  if (isRunning) {
+    return { status: "blocked", reason: "running" };
+  }
+
+  return { status: "ready", message };
 }

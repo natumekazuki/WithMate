@@ -5,6 +5,11 @@ import {
   type CodexSandboxMode,
 } from "./codex-sandbox-mode.js";
 import { normalizeCharacterThemeColors, type CharacterThemeColors } from "./character-state.js";
+import type { CharacterRuntimeSnapshot } from "./character/character-catalog.js";
+import {
+  cloneNullableCharacterRuntimeSnapshot,
+  normalizeCharacterRuntimeSnapshot,
+} from "./character/character-runtime-snapshot.js";
 import {
   DEFAULT_CATALOG_REVISION,
   DEFAULT_MODEL_ID,
@@ -44,7 +49,7 @@ export type StreamEntry = {
   text: string;
 };
 
-export type SessionKind = "default" | "character-update";
+export type SessionKind = "default" | "character-update" | "character-authoring";
 export const SESSION_ACCESS_MODE_VALUES = ["active", "legacy_readonly"] as const;
 export type SessionAccessMode = typeof SESSION_ACCESS_MODE_VALUES[number];
 
@@ -65,6 +70,7 @@ export type Session = {
   character: string;
   characterIconPath: string;
   characterThemeColors: CharacterThemeColors;
+  characterRuntimeSnapshot: CharacterRuntimeSnapshot | null;
   runState: string;
   approvalMode: ApprovalMode;
   codexSandboxMode: CodexSandboxMode;
@@ -77,7 +83,7 @@ export type Session = {
   stream: StreamEntry[];
 };
 
-export type SessionSummary = Omit<Session, "messages" | "stream">;
+export type SessionSummary = Omit<Session, "messages" | "stream" | "characterRuntimeSnapshot">;
 export type SessionDetail = Session;
 
 export type DiffPreviewPayload = {
@@ -98,6 +104,7 @@ export type CreateSessionInput = {
   character: string;
   characterIconPath: string;
   characterThemeColors: CharacterThemeColors;
+  characterRuntimeSnapshot?: CharacterRuntimeSnapshot | null;
   approvalMode: ApprovalMode;
   codexSandboxMode?: CodexSandboxMode;
   model?: string;
@@ -289,7 +296,10 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
         : "workspace",
     workspacePath: typeof candidate.workspacePath === "string" ? candidate.workspacePath : "",
     branch: typeof candidate.branch === "string" && candidate.branch.trim() ? candidate.branch : "main",
-    sessionKind: candidate.sessionKind === "character-update" ? "character-update" : "default",
+    sessionKind:
+      candidate.sessionKind === "character-update" || candidate.sessionKind === "character-authoring"
+        ? candidate.sessionKind
+        : "default",
     accessMode: normalizeSessionAccessMode((candidate as { accessMode?: unknown }).accessMode),
     sourceSchemaVersion:
       typeof candidate.sourceSchemaVersion === "number" &&
@@ -362,6 +372,9 @@ export function normalizeSession(value: unknown): Session | null {
   const candidate = value as Partial<Session>;
   return {
     ...summary,
+    characterRuntimeSnapshot: normalizeCharacterRuntimeSnapshot(
+      (candidate as { characterRuntimeSnapshot?: unknown }).characterRuntimeSnapshot,
+    ),
     messages: Array.isArray(candidate.messages)
       ? candidate.messages
           .map((message) => normalizeMessage(message))
@@ -424,6 +437,7 @@ export function buildNewSession(input: CreateSessionInput): Session {
     character: input.character,
     characterIconPath: input.characterIconPath,
     characterThemeColors: normalizeCharacterThemeColors(input.characterThemeColors),
+    characterRuntimeSnapshot: cloneNullableCharacterRuntimeSnapshot(input.characterRuntimeSnapshot),
     runState: "idle",
     approvalMode: normalizeApprovalMode(input.approvalMode, DEFAULT_APPROVAL_MODE),
     codexSandboxMode: normalizeCodexSandboxMode(input.codexSandboxMode, DEFAULT_CODEX_SANDBOX_MODE),

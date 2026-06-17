@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import type { Session } from "../../src/app-state.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
+import type { CompanionSession } from "../../src/companion-state.js";
 import { createDefaultAppSettings, type AppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { SettingsCatalogService } from "../../src-electron/settings-catalog-service.js";
@@ -55,6 +56,45 @@ function createAuxiliarySession(overrides?: Partial<AuxiliarySession>): Auxiliar
     createdAt: "2026-03-28T00:00:00.000Z",
     updatedAt: "2026-03-28T00:00:00.000Z",
     closedAt: "",
+    ...overrides,
+  };
+}
+
+function createCompanionSession(overrides?: Partial<CompanionSession>): CompanionSession {
+  return {
+    id: "companion-1",
+    groupId: "group-1",
+    taskTitle: "Companion",
+    status: "active",
+    repoRoot: "C:/workspace",
+    focusPath: "src",
+    targetBranch: "main",
+    baseSnapshotRef: "refs/withmate/companion/companion-1/base",
+    baseSnapshotCommit: "abc123",
+    companionBranch: "withmate/companion/companion-1",
+    worktreePath: "C:/workspace/.withmate/companion-1",
+    selectedPaths: [],
+    changedFiles: [],
+    siblingWarnings: [],
+    allowedAdditionalDirectories: [],
+    runState: "idle",
+    threadId: "companion-thread-1",
+    provider: "codex",
+    catalogRevision: 1,
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+    customAgentName: "",
+    approvalMode: "on-request",
+    codexSandboxMode: "workspace-write",
+    characterId: "char",
+    character: "A",
+    characterRoleMarkdown: "伴走する。",
+    characterIconPath: "",
+    characterThemeColors: { main: "#000", sub: "#111" },
+    characterRuntimeSnapshot: null,
+    createdAt: "2026-03-28T00:00:00.000Z",
+    updatedAt: "2026-03-28T00:00:00.000Z",
+    messages: [{ role: "assistant", text: "companion result" }],
     ...overrides,
   };
 }
@@ -476,6 +516,90 @@ describe("SettingsCatalogService", () => {
     assert.deepEqual(invalidated, ["codex:aux-1"]);
   });
 
+  it("model catalog import で companion metadata も新 revision に移行する", async () => {
+    const previousSessions = [createSession()];
+    const previousCompanionSessions = [
+      createCompanionSession({
+        model: "missing-model",
+        reasoningEffort: "high",
+        threadId: "companion-thread-1",
+      }),
+    ];
+    const importedDocument: ModelCatalogDocument = {
+      providers: createCatalogSnapshot(2).providers,
+    };
+    const invalidated: string[] = [];
+    let replacedCompanionSessions: CompanionSession[] = [];
+
+    const service = new SettingsCatalogService({
+      hasInFlightSessionRuns() {
+        return false;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      isRunningSession() {
+        return false;
+      },
+      listSessions() {
+        return previousSessions;
+      },
+      listAuxiliarySessions() {
+        return [];
+      },
+      listCompanionSessions() {
+        return previousCompanionSessions;
+      },
+      getAppSettings() {
+        return createDefaultAppSettings();
+      },
+      updateAppSettings(settings) {
+        return settings;
+      },
+      getModelCatalog() {
+        return createCatalogSnapshot(1);
+      },
+      ensureModelCatalogSeeded() {
+        return createCatalogSnapshot(1);
+      },
+      importModelCatalogDocument(document) {
+        return {
+          revision: 2,
+          providers: document.providers,
+        };
+      },
+      exportModelCatalogDocument() {
+        return { providers: createCatalogSnapshot(1).providers };
+      },
+      replaceAllSessions(nextSessions) {
+        return nextSessions;
+      },
+      replaceAuxiliarySessions(nextSessions) {
+        return nextSessions;
+      },
+      replaceCompanionSessions(nextSessions) {
+        replacedCompanionSessions = nextSessions;
+        return nextSessions;
+      },
+      clearProviderQuotaTelemetry() {},
+      clearSessionContextTelemetry() {},
+      invalidateProviderSessionThread(providerId, sessionId) {
+        invalidated.push(`${providerId}:${sessionId}`);
+      },
+      broadcastSessions() {},
+      broadcastAppSettings() {},
+      broadcastModelCatalog() {},
+    });
+
+    await service.importModelCatalogDocument(importedDocument);
+
+    assert.equal(replacedCompanionSessions[0]?.catalogRevision, 2);
+    assert.equal(replacedCompanionSessions[0]?.model, "gpt-5.4");
+    assert.equal(replacedCompanionSessions[0]?.threadId, "");
+    assert.deepEqual(replacedCompanionSessions[0]?.messages, previousCompanionSessions[0].messages);
+    assert.deepEqual(invalidated, ["codex:companion-1"]);
+  });
+
   it("model catalog export は storage の document をそのまま返す", () => {
     const document = { providers: createCatalogSnapshot(1).providers };
     const service = new SettingsCatalogService({
@@ -531,7 +655,6 @@ describe("SettingsCatalogService", () => {
       clearProjectMemories() {},
       clearCharacterMemories() {},
       resetSessionRuntime() {},
-      resetMemoryOrchestration() {},
       clearAllProviderQuotaTelemetry() {},
       clearAllSessionContextTelemetry() {},
       clearAllSessionBackgroundActivities() {},
@@ -622,9 +745,6 @@ describe("SettingsCatalogService", () => {
       resetSessionRuntime() {
         calls.push("resetRuntime");
       },
-      resetMemoryOrchestration() {
-        calls.push("resetMemory");
-      },
       clearAllProviderQuotaTelemetry() {
         calls.push("clearAllQuota");
       },
@@ -664,7 +784,6 @@ describe("SettingsCatalogService", () => {
       "closeResetWindows",
       "clearAudit",
       "replace:0",
-      "resetMemory",
       "resetRuntime",
       "clearAllActivity",
       "invalidateAllThreads",
@@ -745,7 +864,6 @@ describe("SettingsCatalogService", () => {
       clearProjectMemories() {},
       clearCharacterMemories() {},
       resetSessionRuntime() {},
-      resetMemoryOrchestration() {},
       clearAllProviderQuotaTelemetry() {},
       clearAllSessionContextTelemetry() {},
       clearAllSessionBackgroundActivities() {},
@@ -766,6 +884,101 @@ describe("SettingsCatalogService", () => {
     assert.equal(replacedAuxiliarySessions[0]?.threadId, "");
     assert.deepEqual(replacedAuxiliarySessions[0]?.messages, auxiliarySessions[0].messages);
     assert.deepEqual(invalidated, ["codex:aux-1"]);
+  });
+
+  it("model catalog reset で companion metadata も bundled catalog へ移行する", async () => {
+    const sessions = [createSession()];
+    const companionSessions = [
+      createCompanionSession({
+        model: "missing-model",
+        reasoningEffort: "high",
+        threadId: "companion-thread-1",
+      }),
+    ];
+    const invalidated: string[] = [];
+    let replacedCompanionSessions: CompanionSession[] = [];
+
+    const service = new SettingsCatalogService({
+      hasInFlightSessionRuns() {
+        return false;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      isRunningSession() {
+        return false;
+      },
+      listSessions() {
+        return sessions;
+      },
+      listAuxiliarySessions() {
+        return [];
+      },
+      listCompanionSessions() {
+        return companionSessions;
+      },
+      getAppSettings() {
+        return createDefaultAppSettings();
+      },
+      updateAppSettings(settings) {
+        return settings;
+      },
+      getModelCatalog() {
+        return createCatalogSnapshot(3);
+      },
+      ensureModelCatalogSeeded() {
+        return createCatalogSnapshot(3);
+      },
+      importModelCatalogDocument() {
+        return createCatalogSnapshot(3);
+      },
+      exportModelCatalogDocument() {
+        return { providers: createCatalogSnapshot(3).providers };
+      },
+      replaceAllSessions(nextSessions) {
+        return nextSessions;
+      },
+      replaceAuxiliarySessions(nextSessions) {
+        return nextSessions;
+      },
+      replaceCompanionSessions(nextSessions) {
+        replacedCompanionSessions = nextSessions;
+        return nextSessions;
+      },
+      clearProviderQuotaTelemetry() {},
+      clearSessionContextTelemetry() {},
+      invalidateProviderSessionThread(providerId, sessionId) {
+        invalidated.push(`${providerId}:${sessionId}`);
+      },
+      clearAuditLogs() {},
+      resetAppSettings() {
+        return createDefaultAppSettings();
+      },
+      resetModelCatalogToBundled() {
+        return createCatalogSnapshot(3);
+      },
+      clearProjectMemories() {},
+      resetSessionRuntime() {},
+      clearAllProviderQuotaTelemetry() {},
+      clearAllSessionContextTelemetry() {},
+      clearAllSessionBackgroundActivities() {},
+      invalidateAllProviderSessionThreads() {},
+      closeResetTargetWindows() {},
+      async recreateDatabaseFile() {
+        return createCatalogSnapshot(3);
+      },
+      broadcastSessions() {},
+      broadcastAppSettings() {},
+      broadcastModelCatalog() {},
+    });
+
+    await service.resetAppDatabase({ targets: ["modelCatalog"] });
+
+    assert.equal(replacedCompanionSessions[0]?.catalogRevision, 3);
+    assert.equal(replacedCompanionSessions[0]?.model, "gpt-5.4");
+    assert.equal(replacedCompanionSessions[0]?.threadId, "");
+    assert.deepEqual(replacedCompanionSessions[0]?.messages, companionSessions[0].messages);
+    assert.deepEqual(invalidated, ["codex:companion-1"]);
   });
 });
 
