@@ -282,7 +282,9 @@ const LIST_AUDIT_LOG_OPERATION_BLOB_IDS_SQL = `
   FROM companion_audit_log_operations
 `;
 
-const LIVE_BLOB_REF_QUERIES = [
+type LiveBlobRefQuery = string;
+
+const LIVE_BLOB_REF_QUERIES: readonly LiveBlobRefQuery[] = [
   "SELECT 1 FROM session_messages WHERE text_blob_id = ? LIMIT 1",
   "SELECT 1 FROM session_message_artifacts WHERE artifact_blob_id = ? LIMIT 1",
   "SELECT 1 FROM audit_log_details WHERE logical_prompt_blob_id = ? OR transport_payload_blob_id = ? OR assistant_text_blob_id = ? OR raw_items_blob_id = ? OR usage_blob_id = ? LIMIT 1",
@@ -291,6 +293,11 @@ const LIVE_BLOB_REF_QUERIES = [
   "SELECT 1 FROM companion_messages WHERE text_blob_id = ? LIMIT 1",
   "SELECT 1 FROM companion_message_artifacts WHERE artifact_blob_id = ? LIMIT 1",
   "SELECT 1 FROM companion_merge_runs WHERE diff_snapshot_blob_id = ? LIMIT 1",
+  "SELECT 1 FROM companion_audit_log_details WHERE logical_prompt_blob_id = ? OR transport_payload_blob_id = ? OR assistant_text_blob_id = ? OR raw_items_blob_id = ? OR usage_blob_id = ? LIMIT 1",
+  "SELECT 1 FROM companion_audit_log_operations WHERE details_blob_id = ? LIMIT 1",
+] as const;
+
+export const V4_COMPANION_AUDIT_LIVE_BLOB_REF_QUERIES: readonly LiveBlobRefQuery[] = [
   "SELECT 1 FROM companion_audit_log_details WHERE logical_prompt_blob_id = ? OR transport_payload_blob_id = ? OR assistant_text_blob_id = ? OR raw_items_blob_id = ? OR usage_blob_id = ? LIMIT 1",
   "SELECT 1 FROM companion_audit_log_operations WHERE details_blob_id = ? LIMIT 1",
 ] as const;
@@ -703,8 +710,8 @@ function collectAllAuditLogBlobIds(db: DatabaseSync): string[] {
   ]);
 }
 
-function isBlobReferenced(db: DatabaseSync, blobId: string): boolean {
-  return LIVE_BLOB_REF_QUERIES.some((query) => {
+function isBlobReferenced(db: DatabaseSync, blobId: string, liveBlobRefQueries: readonly LiveBlobRefQuery[]): boolean {
+  return liveBlobRefQueries.some((query) => {
     const parameterCount = (query.match(/\?/g) ?? []).length;
     try {
       return db.prepare(query).get(...Array.from({ length: parameterCount }, () => blobId)) !== undefined;
@@ -734,11 +741,15 @@ function ensureCompanionSessionAuditLogCountColumn(db: DatabaseSync): void {
   }
 }
 
-function deleteUnreferencedBlobObjectRows(db: DatabaseSync, blobIds: readonly string[]): string[] {
+function deleteUnreferencedBlobObjectRows(
+  db: DatabaseSync,
+  blobIds: readonly string[],
+  liveBlobRefQueries: readonly LiveBlobRefQuery[],
+): string[] {
   const deletedBlobIds: string[] = [];
   const deleteBlobObjectStatement = db.prepare(DELETE_BLOB_OBJECT_SQL);
   for (const blobId of compactBlobIds(blobIds)) {
-    if (isBlobReferenced(db, blobId)) {
+    if (isBlobReferenced(db, blobId, liveBlobRefQueries)) {
       continue;
     }
     deleteBlobObjectStatement.run(blobId);
@@ -767,7 +778,11 @@ export class CompanionAuditLogStorageV3 {
   private readonly dbPath: string;
   private readonly blobStore: TextBlobStore;
 
-  constructor(dbPath: string, blobRootPath: string) {
+  constructor(
+    dbPath: string,
+    blobRootPath: string,
+    private readonly liveBlobRefQueries: readonly LiveBlobRefQuery[] = LIVE_BLOB_REF_QUERIES,
+  ) {
     this.dbPath = dbPath;
     this.blobStore = new TextBlobStore(blobRootPath);
     this.withDb((db) => {
@@ -1171,7 +1186,7 @@ export class CompanionAuditLogStorageV3 {
             );
           });
 
-          const blobIdsToDelete = deleteUnreferencedBlobObjectRows(db, previousBlobIds);
+          const blobIdsToDelete = deleteUnreferencedBlobObjectRows(db, previousBlobIds, this.liveBlobRefQueries);
           db.exec("COMMIT");
           return blobIdsToDelete;
         } catch (error) {
@@ -1199,7 +1214,7 @@ export class CompanionAuditLogStorageV3 {
         const previousBlobIds = collectAllAuditLogBlobIds(db);
         db.prepare(DELETE_AUDIT_LOGS_SQL).run();
         db.prepare(RESET_SESSION_AUDIT_LOG_COUNTS_SQL).run();
-        const blobIdsToDelete = deleteUnreferencedBlobObjectRows(db, previousBlobIds);
+        const blobIdsToDelete = deleteUnreferencedBlobObjectRows(db, previousBlobIds, this.liveBlobRefQueries);
         db.exec("COMMIT");
         return blobIdsToDelete;
       } catch (error) {

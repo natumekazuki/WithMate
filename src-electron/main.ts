@@ -81,6 +81,7 @@ import { ProjectMemoryStorage } from "./project-memory-storage.js";
 import { CompanionReviewService } from "./companion-review-service.js";
 import { CompanionRuntimeService } from "./companion-runtime-service.js";
 import { CompanionSessionService } from "./companion-session-service.js";
+import { CompanionAuditLogStorage } from "./companion-audit-log-storage.js";
 import { CompanionAuditLogStorageV3 } from "./companion-audit-log-storage-v3.js";
 import { CompanionStorage } from "./companion-storage.js";
 import { CompanionStorageV3 } from "./companion-storage-v3.js";
@@ -234,7 +235,7 @@ let sessionElicitationService: SessionElicitationService | null = null;
 let auditLogService: AuditLogService | null = null;
 let sessionMemorySupportService: SessionMemorySupportService | null = null;
 let companionSessionService: CompanionSessionService | null = null;
-let companionAuditLogStorage: CompanionAuditLogStorageV3 | null = null;
+let companionAuditLogStorage: CompanionAuditLogStorage | CompanionAuditLogStorageV3 | null = null;
 let companionAuditLogService: AuditLogService | null = null;
 let companionRuntimeService: CompanionRuntimeService | null = null;
 let companionReviewService: CompanionReviewService | null = null;
@@ -1458,12 +1459,14 @@ function canUseCompanionAuditLogStorage(): boolean {
   return dbPath.length > 0 && (isValidV3Database(dbPath) || isValidV4Database(dbPath));
 }
 
-function requireCompanionAuditLogStorage(): CompanionAuditLogStorageV3 {
+function requireCompanionAuditLogStorage(): CompanionAuditLogStorage | CompanionAuditLogStorageV3 {
   if (!companionAuditLogStorage) {
     if (!canUseCompanionAuditLogStorage()) {
       throw new Error("companion audit log storage は V3/V4 DB でだけ利用できます。");
     }
-    companionAuditLogStorage = new CompanionAuditLogStorageV3(dbPath, path.join(path.dirname(dbPath), "blobs", "v3"));
+    companionAuditLogStorage = isValidV3Database(dbPath)
+      ? new CompanionAuditLogStorageV3(dbPath, path.join(path.dirname(dbPath), "blobs", "v3"))
+      : new CompanionAuditLogStorage(dbPath, path.join(path.dirname(dbPath), "blobs", "v3"));
   }
 
   return companionAuditLogStorage;
@@ -1672,6 +1675,7 @@ function requireCompanionRuntimeService(): CompanionRuntimeService {
         ? {
             createAuditLog: (entry) => requireCompanionAuditLogService().createAuditLog(entry),
             updateAuditLog: (id, entry) => requireCompanionAuditLogService().updateAuditLog(id, entry),
+            listAuditLogs: (sessionId) => requireCompanionAuditLogService().listSessionAuditLogs(sessionId),
           }
         : {}),
       setLiveSessionRun,
