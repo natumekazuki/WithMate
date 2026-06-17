@@ -1799,6 +1799,11 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       isRunningSession,
       listSessions: listFullStoredSessions,
       listAuxiliarySessions: () => requireAuxiliarySessionService().listAllAuxiliarySessions(),
+      listCompanionSessions: async () => {
+        const summaries = await requireCompanionStorage().listSessionSummaries();
+        const sessions = await Promise.all(summaries.map((summary) => requireCompanionStorage().getSession(summary.id)));
+        return sessions.filter((session): session is NonNullable<typeof session> => session !== null);
+      },
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       updateAppSettings,
       getModelCatalog,
@@ -1809,6 +1814,8 @@ function requireSettingsCatalogService(): SettingsCatalogService {
         requireMainSessionPersistenceFacade().replaceAllSessions(nextSessions, options),
       replaceAuxiliarySessions: (nextSessions) =>
         requireAuxiliarySessionService().replaceAuxiliarySessions(nextSessions),
+      replaceCompanionSessions: async (nextSessions) =>
+        Promise.all(nextSessions.map((session) => requireCompanionStorage().updateSession(session))),
       clearProviderQuotaTelemetry,
       clearSessionContextTelemetry,
       invalidateProviderSessionThread,
