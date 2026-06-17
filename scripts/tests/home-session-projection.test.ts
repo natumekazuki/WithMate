@@ -113,7 +113,7 @@ describe("home-session-projection", () => {
     assert.equal(projection.monitorCompletedEmptyMessage, "一致するセッションはないよ。");
   });
 
-  it("character-update / character-authoring session を Home 一覧と monitor から除外する", () => {
+  it("character-authoring session は Home に表示し、character-update session は除外する", () => {
     const projection = buildHomeSessionProjection(
       [
         createSession({ id: "main", taskTitle: "Main Task", branch: "main" }),
@@ -144,11 +144,27 @@ describe("home-session-projection", () => {
       false,
     );
     assert.equal(
-      shouldDisplayHomeSession(createSession({ id: "hidden-authoring", taskTitle: "hidden", branch: "main", sessionKind: "character-authoring" })),
-      false,
+      shouldDisplayHomeSession(createSession({ id: "visible-authoring", taskTitle: "visible", branch: "main", sessionKind: "character-authoring" })),
+      true,
     );
-    assert.deepEqual(projection.filteredSessionEntries.map(({ session }) => session.id), ["main"]);
-    assert.deepEqual(projection.monitorEntries.map(({ session }) => session.id), ["main"]);
+    assert.deepEqual(projection.filteredSessionEntries.map(({ session }) => session.id), ["main", "authoring"]);
+    assert.deepEqual(projection.monitorEntries.map(({ session }) => session.id), ["main", "authoring"]);
+  });
+
+  it("session kind label でも Home session を検索できる", () => {
+    const sessions = [
+      createSession({ id: "agent", taskTitle: "Main Task", sessionKind: "default" }),
+      createSession({ id: "authoring", taskTitle: "Muse の作成", sessionKind: "character-authoring" }),
+    ];
+
+    assert.deepEqual(
+      buildHomeSessionProjection(sessions, [], "agent").filteredSessionEntries.map(({ session }) => session.id),
+      ["agent", "authoring"],
+    );
+    assert.deepEqual(
+      buildHomeSessionProjection(sessions, [], "character").filteredSessionEntries.map(({ session }) => session.id),
+      ["authoring"],
+    );
   });
 
   it("Monitor entries に Companion session と group 表示情報を含める", () => {
