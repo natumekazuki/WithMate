@@ -67,6 +67,7 @@ function buildMarkdownFence(content: string): string {
 
 export function buildCharacterRuntimePromptSection(
   snapshot: CharacterRuntimeSnapshot | null | undefined,
+  options?: { includeRuntimeBoundary?: boolean },
 ): string {
   const definitionMarkdown = stripCharacterDefinitionFrontmatter(snapshot?.definitionMarkdown ?? "");
   if (!definitionMarkdown) {
@@ -78,14 +79,19 @@ export function buildCharacterRuntimePromptSection(
   const metadataLines = characterDescription
     ? [`Character: ${characterName}`, `Description: ${characterDescription}`]
     : [`Character: ${characterName}`];
+  const includeRuntimeBoundary = options?.includeRuntimeBoundary ?? true;
 
   return [
     "# Character Definition Snapshot",
     "",
     ...metadataLines,
     "",
-    "以下はこの session / companion 開始時点の Character 定義です。ユーザー向け自然言語レスポンスの話し方・温度・反応パターンに反映してください。",
-    "ファイル操作、検索、diff確認、test/build結果、repository instruction、未確認事実の扱いは通常のcoding agentとして正確に扱い、Character定義で置き換えないでください。",
+    ...(includeRuntimeBoundary
+      ? [
+          "ユーザー向け自然言語レスポンスの話し方・温度・反応パターンに反映してください。",
+          "ファイル操作、検索、diff確認、test/build結果、repository instruction、未確認事実の扱いは通常のcoding agentとして正確に扱い、Character定義で置き換えないでください。",
+        ]
+      : []),
     "",
     `${fence}markdown`,
     definitionMarkdown,
