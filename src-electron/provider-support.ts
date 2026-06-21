@@ -9,13 +9,7 @@ import type { AppSettings } from "../src/provider-settings-state.js";
 import type {
   ProviderBackgroundAdapter,
   ProviderCodingAdapter,
-  ProviderBackgroundStructuredPromptCapability,
-  ProviderBackgroundStructuredPromptCapabilitySummary,
   ProviderTurnAdapter,
-} from "./provider-runtime.js";
-import {
-  getMateTalkBackgroundStructuredPromptCapability,
-  summarizeMateTalkBackgroundStructuredPromptCapability,
 } from "./provider-runtime.js";
 
 type ResolveProviderCatalogArgs = {
@@ -42,9 +36,6 @@ export type ProviderRuntimeCapabilities = {
   providerSupported: boolean;
   instructionSyncSupported: boolean;
   tokenUsageSupported: boolean;
-  mateTalkBackgroundPromptSupported: boolean;
-  backgroundStructuredPrompt: ProviderBackgroundStructuredPromptCapability;
-  backgroundStructuredPromptSummary: ProviderBackgroundStructuredPromptCapabilitySummary;
 };
 
 const MATE_SUPPORTED_PROVIDER_IDS = new Set(["codex", "copilot"]);
@@ -82,21 +73,12 @@ export async function fetchProviderQuotaTelemetry(
   });
 }
 
-export function getProviderRuntimeCapabilities(args: {
-  providerId: string;
-  backgroundAdapter: ProviderBackgroundAdapter;
-}): ProviderRuntimeCapabilities {
+export function getProviderRuntimeCapabilities(args: { providerId: string }): ProviderRuntimeCapabilities {
   const providerSupported = MATE_SUPPORTED_PROVIDER_IDS.has(args.providerId);
-  const backgroundStructuredPrompt = getMateTalkBackgroundStructuredPromptCapability(args.backgroundAdapter);
   return {
     providerId: args.providerId,
     providerSupported,
     instructionSyncSupported: providerSupported,
     tokenUsageSupported: providerSupported,
-    mateTalkBackgroundPromptSupported: providerSupported && backgroundStructuredPrompt.compatible,
-    backgroundStructuredPrompt,
-    backgroundStructuredPromptSummary: summarizeMateTalkBackgroundStructuredPromptCapability(
-      backgroundStructuredPrompt.policy,
-    ),
   };
 }

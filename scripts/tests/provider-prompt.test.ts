@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { buildNewSession } from "../../src/app-state.js";
+import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
 import { createDefaultSessionMemory, type ProjectMemoryEntry } from "../../src/memory/memory-state.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
@@ -51,8 +52,30 @@ function assertSectionOrder(text: string, sections: string[]): void {
   }
 }
 
+function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnapshot>): CharacterRuntimeSnapshot {
+  return {
+    characterId: "character-1",
+    name: "Saved Character",
+    description: "保存済み Character",
+    iconFilePath: "icon.png",
+    theme: characterThemeColors,
+    definitionMarkdown: [
+      "---",
+      "schema: withmate.character.v1",
+      "name: Saved Character",
+      "---",
+      "# Character",
+      "保存済みの character.md だけを runtime persona として扱う。",
+    ].join("\n"),
+    definitionSha256: "sha256-character-definition",
+    definitionByteSize: 128,
+    snapshotAt: "2026-06-14T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 describe("composeProviderPrompt", () => {
-  it("System / User Input と Memory は注入しない", () => {
+  it("User Input 境界を明示し、Memory は注入しない", () => {
     const session = buildNewSession({
       taskTitle: "task",
       workspaceLabel: "workspace",
@@ -93,9 +116,9 @@ describe("composeProviderPrompt", () => {
     assert.doesNotMatch(prompt.systemBodyText, /# Character/);
     assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
     assert.doesNotMatch(prompt.logicalPrompt.systemText, /# Character/);
-    assert.equal(prompt.inputBodyText, "approval UI の次を進めて");
+    assert.equal(prompt.inputBodyText, "# User Input\n\napproval UI の次を進めて");
     assert.equal(prompt.logicalPrompt.inputText, prompt.inputBodyText);
-    assert.equal(prompt.logicalPrompt.inputText, "approval UI の次を進めて");
+    assert.equal(prompt.logicalPrompt.inputText, "# User Input\n\napproval UI の次を進めて");
     assert.equal(
       prompt.logicalPrompt.composedText,
       prompt.logicalPrompt.systemText
@@ -105,11 +128,12 @@ describe("composeProviderPrompt", () => {
     assert.doesNotMatch(prompt.logicalPrompt.composedText, /# Character/);
     assert.doesNotMatch(prompt.inputBodyText, /# Session Memory/);
     assert.doesNotMatch(prompt.inputBodyText, /# Project Memory/);
-    assert.doesNotMatch(prompt.inputBodyText, /# User Input/);
-    assertSectionOrder(prompt.logicalPrompt.composedText, ["approval UI の次を進めて"]);
+    assert.doesNotMatch(prompt.inputBodyText, /# Project Context/);
+    assert.match(prompt.inputBodyText, /^# User Input\n\napproval UI の次を進めて$/);
+    assertSectionOrder(prompt.logicalPrompt.composedText, ["# User Input", "approval UI の次を進めて"]);
   });
 
-  it("projectContextText がある場合、User Input より前に Project Context を注入する", () => {
+  it("空白のみの user input では User Input 見出しだけを注入しない", () => {
     const session = buildNewSession({
       taskTitle: "task",
       workspaceLabel: "workspace",
@@ -121,87 +145,21 @@ describe("composeProviderPrompt", () => {
       characterThemeColors,
       approvalMode: "untrusted",
     });
-    const sessionMemory = createDefaultSessionMemory(session);
 
     const prompt = composeProviderPrompt({
       session,
-      sessionMemory,
+      sessionMemory: createDefaultSessionMemory(session),
       projectMemoryEntries: [],
-      projectContextText: "  # Digest\n- item 1\n- item 2  ",
       providerCatalog,
-      userMessage: "次の実装を進めて",
+      userMessage: "   \n\t  ",
       appSettings: createDefaultAppSettings(),
       attachments: [],
     });
 
-    assert.match(prompt.inputBodyText, /# Project Context/);
-    assert.match(prompt.inputBodyText, /このセクションは参照用のプロジェクト情報です/);
-    assert.match(prompt.inputBodyText, /# Digest/);
-    assert.match(prompt.inputBodyText, /- item 1/);
-    assert.match(prompt.inputBodyText, /- item 2/);
-    assertSectionOrder(prompt.inputBodyText, ["# Project Context", "ユーザー入力と上位指示が最優先です。", "# Digest", "# User Input"]);
-    assertSectionOrder(prompt.inputBodyText, ["# Project Context", "# Digest"]);
-    assertSectionOrder(prompt.logicalPrompt.composedText, [
-      "# Project Context",
-      "ユーザー入力と上位指示が最優先です。",
-      "# Digest",
-      "# User Input",
-    ]);
-  });
-
-  it("空文字/null/undefined の projectContextText は注入しない", () => {
-    const session = buildNewSession({
-      taskTitle: "task",
-      workspaceLabel: "workspace",
-      workspacePath: "workspace",
-      branch: "",
-      characterId: "character-1",
-      character: "Test",
-      characterIconPath: "",
-      characterThemeColors,
-      approvalMode: "untrusted",
-    });
-    const sessionMemory = createDefaultSessionMemory(session);
-
-    const promptWithoutContext = composeProviderPrompt({
-      session,
-      sessionMemory,
-      projectMemoryEntries: [],
-      projectContextText: "",
-      providerCatalog,
-      userMessage: "次の実装を進めて",
-      appSettings: createDefaultAppSettings(),
-      attachments: [],
-    });
-
-    assert.doesNotMatch(promptWithoutContext.inputBodyText, /# Project Context/);
-    assert.equal(promptWithoutContext.inputBodyText, "次の実装を進めて");
-    assert.equal(promptWithoutContext.logicalPrompt.inputText, "次の実装を進めて");
-    assert.doesNotMatch(promptWithoutContext.inputBodyText, /# User Input/);
-    assertSectionOrder(promptWithoutContext.logicalPrompt.composedText, ["次の実装を進めて"]);
-
-    const promptWithNullContext = composeProviderPrompt({
-      session,
-      sessionMemory,
-      projectMemoryEntries: [],
-      projectContextText: null,
-      providerCatalog,
-      userMessage: "次の実装を進めて",
-      appSettings: createDefaultAppSettings(),
-      attachments: [],
-    });
-    assert.doesNotMatch(promptWithNullContext.inputBodyText, /# Project Context/);
-
-    const promptWithUndefinedContext = composeProviderPrompt({
-      session,
-      sessionMemory,
-      projectMemoryEntries: [],
-      providerCatalog,
-      userMessage: "次の実装を進めて",
-      appSettings: createDefaultAppSettings(),
-      attachments: [],
-    });
-    assert.doesNotMatch(promptWithUndefinedContext.inputBodyText, /# Project Context/);
+    assert.equal(prompt.inputBodyText, "");
+    assert.equal(prompt.logicalPrompt.inputText, "");
+    assert.equal(prompt.logicalPrompt.composedText, "");
+    assert.doesNotMatch(prompt.inputBodyText, /# User Input/);
   });
 
   it("共通 system prompt を空文字にする", () => {
@@ -235,15 +193,165 @@ describe("composeProviderPrompt", () => {
     assert.doesNotMatch(prompt.logicalPrompt.composedText, /# Character/);
     assert.doesNotMatch(prompt.logicalPrompt.composedText, /あなたは丁寧に説明する。/);
     assert.equal(prompt.logicalPrompt.inputText, prompt.inputBodyText);
-    assert.equal(prompt.inputBodyText, "system prompt が空でも user input は残ることを確認する");
+    assert.equal(prompt.inputBodyText, "# User Input\n\nsystem prompt が空でも user input は残ることを確認する");
     assert.equal(
       prompt.logicalPrompt.composedText,
       prompt.logicalPrompt.systemText
         ? `${prompt.logicalPrompt.systemText}\n\n${prompt.logicalPrompt.inputText}`
         : prompt.logicalPrompt.inputText,
     );
-    assert.doesNotMatch(prompt.logicalPrompt.composedText, /# User Input/);
     assert.match(prompt.logicalPrompt.composedText, /system prompt が空でも user input は残ることを確認する/);
-    assertSectionOrder(prompt.logicalPrompt.composedText, ["system prompt が空でも user input は残ることを確認する"]);
+    assertSectionOrder(prompt.logicalPrompt.composedText, [
+      "# User Input",
+      "system prompt が空でも user input は残ることを確認する",
+    ]);
+  });
+
+  it("保存済み CharacterRuntimeSnapshot の character.md だけを system prompt に注入する", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      characterId: "character-1",
+      character: "Current Catalog Name",
+      characterIconPath: "",
+      characterThemeColors,
+      characterRuntimeSnapshot: createCharacterRuntimeSnapshot({
+        name: "Saved Character",
+        description: "frontmatter に頼らず保持する説明",
+        definitionMarkdown: [
+          "---",
+          "schema: withmate.character.v1",
+          "name: Saved Character",
+          "description: frontmatter only description",
+          "---",
+          "# Runtime Definition",
+          "保存済み snapshot の口調で話す。",
+        ].join("\n"),
+      }),
+      approvalMode: "untrusted",
+    });
+
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "続けて",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+    });
+
+    assert.match(prompt.systemBodyText, /# Character Definition Snapshot/);
+    assert.match(prompt.systemBodyText, /Character: Saved Character/);
+    assert.match(prompt.systemBodyText, /Description: frontmatter に頼らず保持する説明/);
+    assert.match(prompt.systemBodyText, /保存済み snapshot の口調で話す。/);
+    assert.match(prompt.systemBodyText, /ユーザー向け自然言語レスポンスの話し方・温度・反応パターンに反映してください。/);
+    assert.match(prompt.systemBodyText, /通常のcoding agentとして正確に扱い、Character定義で置き換えないでください。/);
+    assert.doesNotMatch(prompt.systemBodyText, /開始時点の Character 定義/);
+    assert.match(prompt.systemBodyText, /# Output Boundary/);
+    assert.match(prompt.systemBodyText, /生成ファイル、diff、artifact summary には、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜないでください。/);
+    assert.match(prompt.systemBodyText, /成果物は repository instruction、既存文体、対象ファイルの目的を優先してください。/);
+    assert.doesNotMatch(prompt.systemBodyText, /厳密な無人格回答へ戻りすぎず/);
+    assert.doesNotMatch(prompt.systemBodyText, /character-notes\.md/);
+    assert.doesNotMatch(prompt.systemBodyText, /^---$/m);
+    assert.doesNotMatch(prompt.systemBodyText, /^schema:/m);
+    assert.doesNotMatch(prompt.systemBodyText, /^name: Saved Character$/m);
+    assert.doesNotMatch(prompt.systemBodyText, /frontmatter only description/);
+    assert.doesNotMatch(prompt.systemBodyText, /notes-only secret/);
+    assert.doesNotMatch(prompt.systemBodyText, /Current Catalog Name/);
+    assert.doesNotMatch(prompt.inputBodyText, /保存済み snapshot の口調で話す。/);
+    assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
+    assert.equal(prompt.logicalPrompt.inputText, prompt.inputBodyText);
+    assertSectionOrder(prompt.logicalPrompt.composedText, [
+      "# Character Definition Snapshot",
+      "# Output Boundary",
+      "# User Input",
+      "続けて",
+    ]);
+  });
+
+  it("character-authoring session では Character の成果物境界を注入しない", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      sessionKind: "character-authoring",
+      characterId: "character-1",
+      character: "Saved Character",
+      characterIconPath: "",
+      characterThemeColors,
+      characterRuntimeSnapshot: createCharacterRuntimeSnapshot({
+        definitionMarkdown: [
+          "# Runtime Definition",
+          "authoring 対象の character.md。",
+        ].join("\n"),
+      }),
+      approvalMode: "untrusted",
+    });
+
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "character.md を改善して",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+    });
+
+    assert.match(prompt.systemBodyText, /# Character Definition Snapshot/);
+    assert.match(prompt.systemBodyText, /authoring 対象の character\.md。/);
+    assert.doesNotMatch(prompt.systemBodyText, /開始時点の Character 定義/);
+    assert.doesNotMatch(prompt.systemBodyText, /# Output Boundary/);
+    assert.doesNotMatch(prompt.systemBodyText, /ユーザー向け自然言語レスポンスの話し方・温度・反応パターンに反映してください。/);
+    assert.doesNotMatch(prompt.systemBodyText, /通常のcoding agentとして正確に扱い、Character定義で置き換えないでください。/);
+    assert.doesNotMatch(prompt.systemBodyText, /生成ファイル、diff、artifact summary/);
+    assertSectionOrder(prompt.logicalPrompt.composedText, [
+      "# Character Definition Snapshot",
+      "# User Input",
+      "character.md を改善して",
+    ]);
+  });
+
+  it("character.md 内の code fence より長い外側 fence で snapshot を囲む", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      characterId: "character-1",
+      character: "Saved Character",
+      characterIconPath: "",
+      characterThemeColors,
+      characterRuntimeSnapshot: createCharacterRuntimeSnapshot({
+        definitionMarkdown: [
+          "# Examples",
+          "```ts",
+          "console.log(\"triple fence\");",
+          "```",
+          "````markdown",
+          "quad fence",
+          "````",
+        ].join("\n"),
+      }),
+      approvalMode: "untrusted",
+    });
+
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "続けて",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+    });
+
+    assert.match(prompt.systemBodyText, /`````markdown\n# Examples/);
+    assert.match(prompt.systemBodyText, /````\n`````\n\n# Output Boundary/);
+    assertSectionOrder(prompt.systemBodyText, ["`````markdown", "quad fence", "`````\n\n# Output Boundary"]);
   });
 });

@@ -29,7 +29,7 @@ WithMate は、`Codex CLI / GitHub Copilot CLI` 相当の coding agent 体験を
   - turn ごとの結果確認
   - 監査ログ確認
 - `Character Editor Window`
-  - キャラクター作成、編集、削除
+  - キャラクター作成、編集、既定設定、archive
 
 設計の詳細は `docs/design/window-architecture.md` を参照してください。
 
@@ -170,7 +170,9 @@ npm run typecheck
 
 - Electron 実行を正本とする desktop アプリ構成です
 - セッション情報は Electron 側で保持され、キャラクター情報はアプリ管理領域のストレージから読み込みます
-- Settings Window では `Session Window`、`Coding Agent Providers`、`Provider Instruction Sync`、`Skill Roots`、`Memory Extraction`、`Character Reflection`、`Diagnostics`、`Model Catalog` を管理します
+- Settings Window では `Session Window`、`Default Microcopy`、`Coding Agent Providers`、`Diagnostics`、`Mate Reset`、`Model Catalog` を管理します
+- Character 定義は Home の `Characters` panel から開く独立 `Character Editor Window` で管理し、V5 の runtime prompt には session / companion 開始時点の `CharacterRuntimeSnapshot` を使います
+- Provider Instruction Sync、Memory Extraction、Character Reflection の既存設定や保存領域は legacy 互換として残る場合がありますが、current UI には表示せず、V5 Character runtime prompt の主経路にも使いません
 
 ## 補足
 

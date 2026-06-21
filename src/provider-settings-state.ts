@@ -10,13 +10,6 @@ import {
   normalizeUserMicrocopyCatalog,
   type MicrocopyCatalog,
 } from "./microcopy-state.js";
-import type {
-  ProviderInstructionFailPolicy,
-  ProviderInstructionLastSyncState,
-  ProviderInstructionTarget,
-  ProviderInstructionTargetInput,
-  ProviderInstructionWriteMode,
-} from "./provider-instruction-target-state.js";
 
 export type AppSettings = {
   memoryGenerationEnabled: boolean;
@@ -27,33 +20,12 @@ export type AppSettings = {
   memoryExtractionProviderSettings: Record<string, MemoryExtractionProviderSettings>;
 };
 
-export const DEFAULT_PROVIDER_INSTRUCTION_TARGET_ID = "main";
-export const DEFAULT_PROVIDER_INSTRUCTION_RELATIVE_PATH_BY_PROVIDER: Record<string, string> = {
-  codex: "AGENTS.md",
-  copilot: ".github/copilot-instructions.md",
-};
-
-export type ProviderInstructionTargetSyncState = ProviderInstructionLastSyncState;
-export type ProviderInstructionTargetSettings = ProviderInstructionTarget;
-export type ProviderInstructionTargetUpsertInput = ProviderInstructionTargetInput;
-export type {
-  ProviderInstructionFailPolicy,
-  ProviderInstructionWriteMode,
-};
-
-export function getDefaultProviderInstructionRelativePath(providerId: string): string {
-  const normalizedProviderId = providerId.trim().toLowerCase();
-  return (
-    DEFAULT_PROVIDER_INSTRUCTION_RELATIVE_PATH_BY_PROVIDER[normalizedProviderId] ??
-    `.github/${normalizedProviderId || "provider"}-instructions.md`
-  );
-}
-
 export type ProviderAppSettings = {
   enabled: boolean;
   apiKey: string;
   skillRootPath: string;
   skillRelativePath?: string;
+  instructionRelativePath?: string;
 };
 
 export type MemoryExtractionProviderSettings = {
@@ -85,6 +57,7 @@ export const DEFAULT_PROVIDER_APP_SETTINGS: ProviderAppSettings = {
   apiKey: "",
   skillRootPath: "",
   skillRelativePath: "",
+  instructionRelativePath: "",
 };
 
 export const DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD = 300_000;
@@ -124,6 +97,7 @@ export function createDefaultAppSettings(): AppSettings {
         apiKey: "",
         skillRootPath: "",
         skillRelativePath: "",
+        instructionRelativePath: "",
       },
     },
     memoryExtractionProviderSettings: {
@@ -153,6 +127,7 @@ function normalizeProviderAppSettings(value: unknown, defaultEnabled: boolean): 
       apiKey: "",
       skillRootPath: "",
       skillRelativePath: "",
+      instructionRelativePath: "",
     };
   }
 
@@ -162,6 +137,7 @@ function normalizeProviderAppSettings(value: unknown, defaultEnabled: boolean): 
     apiKey: typeof candidate.apiKey === "string" ? candidate.apiKey : "",
     skillRootPath: typeof candidate.skillRootPath === "string" ? candidate.skillRootPath : "",
     skillRelativePath: typeof candidate.skillRelativePath === "string" ? candidate.skillRelativePath : "",
+    instructionRelativePath: typeof candidate.instructionRelativePath === "string" ? candidate.instructionRelativePath : "",
   };
 }
 

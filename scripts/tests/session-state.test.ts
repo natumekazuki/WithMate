@@ -8,6 +8,8 @@ import {
   applySessionModelMetadataUpdate,
   buildNewSession,
   buildSessionSummarySignature,
+  CURRENT_SESSION_SCHEMA_VERSION,
+  isReadOnlySession,
   selectHydrationTarget,
   type SessionSummary,
 } from "../../src/session-state.js";
@@ -68,6 +70,16 @@ function createSession(provider: string) {
 }
 
 describe("session-state custom agent selection", () => {
+  it("新規 session は V5 schema version で作成し、V4 以前は閲覧専用として扱う", () => {
+    const session = createSession("codex");
+
+    assert.equal(CURRENT_SESSION_SCHEMA_VERSION, 5);
+    assert.equal(session.sourceSchemaVersion, 5);
+    assert.equal(isReadOnlySession(session), false);
+    assert.equal(isReadOnlySession({ ...session, sourceSchemaVersion: 4 }), true);
+    assert.equal(isReadOnlySession({ ...session, accessMode: "legacy_readonly", sourceSchemaVersion: 5 }), true);
+  });
+
   it("Copilot custom agent 切り替え時は threadId を維持する", () => {
     const session = {
       ...buildNewSession({
@@ -91,6 +103,28 @@ describe("session-state custom agent selection", () => {
     assert.equal(next.customAgentName, "planner");
     assert.equal(next.threadId, "thread-keep");
     assert.equal(next.updatedAt, "2026-03-29 12:00");
+  });
+});
+
+describe("session-state session kind", () => {
+  it("character-authoring session kind を新規 session に保持する", () => {
+    const session = buildNewSession({
+      provider: "codex",
+      taskTitle: "authoring",
+      workspaceLabel: "workspace",
+      workspacePath: "F:/repo",
+      branch: "main",
+      sessionKind: "character-authoring",
+      characterId: "char-a",
+      character: "A",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      approvalMode: DEFAULT_APPROVAL_MODE,
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+    });
+
+    assert.equal(session.sessionKind, "character-authoring");
   });
 });
 

@@ -3,6 +3,8 @@ import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import type { ModelReasoningEffort } from "./model-catalog.js";
 import type { ChangedFile } from "./runtime-state.js";
 import type { Message } from "./session-state.js";
+import type { CharacterRuntimeSnapshot } from "./character/character-catalog.js";
+import { cloneNullableCharacterRuntimeSnapshot } from "./character/character-runtime-snapshot.js";
 
 export type CompanionSessionStatus = "active" | "merged" | "discarded" | "recovery-required";
 
@@ -54,6 +56,7 @@ export type CreateCompanionSessionInput = {
     main: string;
     sub: string;
   };
+  characterRuntimeSnapshot?: CharacterRuntimeSnapshot | null;
 };
 
 export type CompanionGroup = {
@@ -97,6 +100,7 @@ export type CompanionSession = {
     main: string;
     sub: string;
   };
+  characterRuntimeSnapshot: CharacterRuntimeSnapshot | null;
   createdAt: string;
   updatedAt: string;
   messages: Message[];
@@ -144,6 +148,7 @@ export function cloneCompanionSession(session: CompanionSession): CompanionSessi
     })),
     allowedAdditionalDirectories: [...(session.allowedAdditionalDirectories ?? [])],
     characterThemeColors: { ...session.characterThemeColors },
+    characterRuntimeSnapshot: cloneNullableCharacterRuntimeSnapshot(session.characterRuntimeSnapshot),
     messages: session.messages.map((message) => ({
       ...message,
       artifact: message.artifact

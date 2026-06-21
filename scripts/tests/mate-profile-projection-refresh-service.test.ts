@@ -7,15 +7,13 @@ import type { MateProfileItem } from "../../src-electron/mate-profile-item-stora
 import { MateProfileProjectionRefreshService } from "../../src-electron/mate-profile-projection-refresh-service.js";
 import type { ApplyMateProfileFilesInput } from "../../src-electron/mate-storage.js";
 
-test("forgetProfileItemAndRefreshProjection は対象 item を除いた Mate files を作り provider instruction を同期する", async () => {
+test("forgetProfileItemAndRefreshProjection は対象 item を除いた Mate files を作る", async () => {
   const profile = createProfile();
   const targetItem = createItem({ id: "item-forget", claimKey: "nickname", renderedText: "忘れる内容" });
   const keptItem = createItem({ id: "item-keep", claimKey: "tone", renderedText: "残す内容" });
   const forgetCalls: Array<{ itemId: string; revisionId?: string; now?: string }> = [];
   const tombstoneCalls: Array<{ itemId: string; revisionId?: string; now?: string }> = [];
   const appliedInputs: ApplyMateProfileFilesInput[] = [];
-  const syncedRevisionIds: Array<string | null> = [];
-  const syncedItemIds: string[][] = [];
 
   const service = new MateProfileProjectionRefreshService({
     mateStorage: {
@@ -23,11 +21,6 @@ test("forgetProfileItemAndRefreshProjection は対象 item を除いた Mate fil
       getUserDataPath: () => "user-data",
       applyProfileFiles: async (input) => {
         appliedInputs.push(input);
-        await input.beforeFinalize?.({
-          profile: { ...profile, activeRevisionId: "rev-forget", profileGeneration: 2 },
-          revisionId: "rev-forget",
-          now: "2026-05-10T00:00:00.000Z",
-        });
         input.finalizeInTransaction?.({
           db: {} as DatabaseSync,
           revisionId: "rev-forget",
@@ -44,12 +37,6 @@ test("forgetProfileItemAndRefreshProjection は対象 item を除いた Mate fil
       },
       forgetProfileItemInTransaction: (_db, itemId, revisionId, now) => {
         forgetCalls.push({ itemId, revisionId, now });
-      },
-    },
-    providerInstructionSyncer: {
-      syncEnabledProviderInstructionTargetsForMateProfile: async (updatedProfile, options) => {
-        syncedRevisionIds.push(updatedProfile.activeRevisionId);
-        syncedItemIds.push((options?.profileItems ?? []).map((item) => item.id));
       },
     },
   });
@@ -77,173 +64,6 @@ test("forgetProfileItemAndRefreshProjection は対象 item を除いた Mate fil
       now: "2026-05-10T00:00:00.000Z",
     },
   ]);
-  assert.deepEqual(syncedRevisionIds, ["rev-forget"]);
-  assert.deepEqual(syncedItemIds, [["item-keep"]]);
-});
-
-test("forgetProfileItemAndRefreshProjection は project digest item の Markdown 投影も更新する", async () => {
-  const profile = createProfile();
-  const targetItem = createItem({
-    id: "project-item-forget",
-    sectionKey: "project_digest",
-    projectDigestId: "digest-1",
-    category: "project_context",
-    claimKey: "old",
-    renderedText: "忘れるProject情報",
-  });
-  const keptItem = createItem({
-    id: "project-item-keep",
-    sectionKey: "project_digest",
-    projectDigestId: "digest-1",
-    category: "project_context",
-    claimKey: "new",
-    renderedText: "残すProject情報",
-  });
-  const rewrittenContents: string[] = [];
-
-  const service = new MateProfileProjectionRefreshService({
-    mateStorage: {
-      getMateProfile: () => profile,
-      getUserDataPath: () => "user-data",
-      applyProfileFiles: async (input) => {
-        input.finalizeInTransaction?.({
-          db: {} as DatabaseSync,
-          revisionId: "rev-project-forget",
-          now: "2026-05-10T00:00:00.000Z",
-        });
-        return { ...profile, activeRevisionId: "rev-project-forget", profileGeneration: 2 };
-      },
-    },
-    profileItemStorage: {
-      assertProfileItemMutationAllowed: () => {},
-      listProfileItems: () => [targetItem, keptItem],
-      createForgottenTombstoneForProfileItemInTransaction: () => {},
-      forgetProfileItemInTransaction: () => {},
-    },
-    projectDigestProjectionWriter: {
-      rewriteProjectDigestProjection: async (input) => {
-        rewrittenContents.push(input.content);
-        return {
-          digestFilePath: "mate/project-digests/digest-1.md",
-          sha256: "sha",
-          byteSize: input.content.length,
-          lastCompiledAt: "2026-05-10T00:00:00.000Z",
-          updatedAt: "2026-05-10T00:00:00.000Z",
-        };
-      },
-    },
-  });
-
-  await service.forgetProfileItemAndRefreshProjection("project-item-forget");
-
-  assert.equal(rewrittenContents.length, 1);
-  assert.match(rewrittenContents[0], /残すProject情報/);
-  assert.doesNotMatch(rewrittenContents[0], /忘れるProject情報/);
-});
-
-test("forgetProfileItemAndRefreshProjection は project digest 投影更新に失敗したら item を forgotten にしない", async () => {
-  const profile = createProfile();
-  const targetItem = createItem({
-    id: "project-item-forget",
-    sectionKey: "project_digest",
-    projectDigestId: "digest-1",
-    category: "project_context",
-    claimKey: "old",
-    renderedText: "忘れるProject情報",
-  });
-  const keptItem = createItem({
-    id: "project-item-keep",
-    sectionKey: "project_digest",
-    projectDigestId: "digest-1",
-    category: "project_context",
-    claimKey: "new",
-    renderedText: "残すProject情報",
-  });
-  let applyProfileFilesCalled = false;
-  let forgetCalled = false;
-
-  const service = new MateProfileProjectionRefreshService({
-    mateStorage: {
-      getMateProfile: () => profile,
-      getUserDataPath: () => "user-data",
-      applyProfileFiles: async () => {
-        applyProfileFilesCalled = true;
-        return profile;
-      },
-    },
-    profileItemStorage: {
-      assertProfileItemMutationAllowed: () => {},
-      listProfileItems: () => [targetItem, keptItem],
-      createForgottenTombstoneForProfileItemInTransaction: () => {},
-      forgetProfileItemInTransaction: () => {
-        forgetCalled = true;
-      },
-    },
-    projectDigestProjectionWriter: {
-      rewriteProjectDigestProjection: async () => {
-        throw new Error("project digest rewrite failed");
-      },
-    },
-  });
-
-  await assert.rejects(
-    () => service.forgetProfileItemAndRefreshProjection("project-item-forget"),
-    /project digest rewrite failed/,
-  );
-
-  assert.equal(applyProfileFilesCalled, false);
-  assert.equal(forgetCalled, false);
-});
-
-test("forgetProfileItemAndRefreshProjection は provider instruction 同期失敗を呼び出し元へ伝える", async () => {
-  const profile = createProfile();
-  const targetItem = createItem({ id: "item-forget", claimKey: "nickname", renderedText: "忘れる内容" });
-  const keptItem = createItem({ id: "item-keep", claimKey: "tone", renderedText: "残す内容" });
-  let forgetCalled = false;
-  let tombstoneCalled = false;
-
-  const service = new MateProfileProjectionRefreshService({
-    mateStorage: {
-      getMateProfile: () => profile,
-      getUserDataPath: () => "user-data",
-      applyProfileFiles: async (input) => {
-        await input.beforeFinalize?.({
-          profile: { ...profile, activeRevisionId: "rev-forget", profileGeneration: 2 },
-          revisionId: "rev-forget",
-          now: "2026-05-10T00:00:00.000Z",
-        });
-        input.finalizeInTransaction?.({
-          db: {} as DatabaseSync,
-          revisionId: "rev-forget",
-          now: "2026-05-10T00:00:00.000Z",
-        });
-        return { ...profile, activeRevisionId: "rev-forget", profileGeneration: 2 };
-      },
-    },
-    profileItemStorage: {
-      assertProfileItemMutationAllowed: () => {},
-      listProfileItems: () => [targetItem, keptItem],
-      createForgottenTombstoneForProfileItemInTransaction: () => {
-        tombstoneCalled = true;
-      },
-      forgetProfileItemInTransaction: () => {
-        forgetCalled = true;
-      },
-    },
-    providerInstructionSyncer: {
-      syncEnabledProviderInstructionTargetsForMateProfile: async () => {
-        throw new Error("provider sync failed");
-      },
-    },
-  });
-
-  await assert.rejects(
-    () => service.forgetProfileItemAndRefreshProjection("item-forget"),
-    /provider sync failed/,
-  );
-
-  assert.equal(tombstoneCalled, false);
-  assert.equal(forgetCalled, false);
 });
 
 function createProfile(): MateProfile {

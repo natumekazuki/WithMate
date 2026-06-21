@@ -79,6 +79,21 @@ describe("discoverSessionSkills", () => {
     assert.match(skills[0]?.sourcePath ?? "", /\.github\/skills\/docs-sync$/);
   });
 
+  it(".agents/skills の workspace skill を列挙できる", async () => {
+    const workspacePath = createTempDir();
+    const providerRootPath = createTempDir();
+    const workspaceSkillRootPath = path.join(workspacePath, ".agents", "skills");
+    fs.mkdirSync(workspaceSkillRootPath, { recursive: true });
+    writeSkill(workspaceSkillRootPath, "docs-sync", "workspace version");
+
+    const skills = await discoverSessionSkills(workspacePath, providerRootPath);
+
+    assert.equal(skills.length, 1);
+    assert.equal(skills[0]?.name, "docs-sync");
+    assert.equal(skills[0]?.source, "workspace");
+    assert.match(skills[0]?.sourcePath ?? "", /\.agents\/skills\/docs-sync$/);
+  });
+
   it("変更がない discovery は Markdown 再読込を避ける", async () => {
     const workspacePath = createTempDir();
     const providerRootPath = createTempDir();

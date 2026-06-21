@@ -22,6 +22,11 @@ export type LatestCommandView = {
   riskLabels: string[];
 };
 
+export type LatestCommandProjection = {
+  latestLiveCommandStep: LiveRunStep | null;
+  latestCommandView: LatestCommandView | null;
+};
+
 export type RunningDetailsEntry = {
   id: string;
   type: string;
@@ -114,6 +119,30 @@ export function buildCommandRiskLabels(command: string): string[] {
   return labels;
 }
 
+export function findLatestLiveCommandStep(steps: readonly LiveRunStep[]): LiveRunStep | null {
+  for (let index = steps.length - 1; index >= 0; index -= 1) {
+    const step = steps[index];
+    if (step?.type === "command_execution") {
+      return step;
+    }
+  }
+
+  return null;
+}
+
+export function findLatestAuditCommandOperation(
+  operations: readonly AuditLogOperation[],
+): AuditLogOperation | null {
+  for (let index = operations.length - 1; index >= 0; index -= 1) {
+    const operation = operations[index];
+    if (operation?.type === "command_execution") {
+      return operation;
+    }
+  }
+
+  return null;
+}
+
 export function buildLatestCommandView({
   latestLiveCommandStep,
   latestAuditCommandOperation,
@@ -148,6 +177,32 @@ export function buildLatestCommandView({
   }
 
   return null;
+}
+
+export function buildLatestCommandProjection({
+  liveSteps,
+  auditOperations,
+  latestTerminalAuditPhase,
+  auditFallbackEnabled = true,
+}: {
+  liveSteps: readonly LiveRunStep[];
+  auditOperations: readonly AuditLogOperation[];
+  latestTerminalAuditPhase: AuditLogPhase | null | undefined;
+  auditFallbackEnabled?: boolean;
+}): LatestCommandProjection {
+  const latestLiveCommandStep = findLatestLiveCommandStep(liveSteps);
+  const latestAuditCommandOperation = auditFallbackEnabled
+    ? findLatestAuditCommandOperation(auditOperations)
+    : null;
+
+  return {
+    latestLiveCommandStep,
+    latestCommandView: buildLatestCommandView({
+      latestLiveCommandStep,
+      latestAuditCommandOperation,
+      latestTerminalAuditPhase: auditFallbackEnabled ? latestTerminalAuditPhase : null,
+    }),
+  };
 }
 
 export function buildRunningDetailsEntries({

@@ -1,16 +1,14 @@
 import path from "node:path";
-import type { MateTalkLaunchInput } from "../src/mate/mate-state.js";
 
 export type WindowLike = {
   loadURL(url: string): Promise<unknown>;
   loadFile(filePath: string, options?: { search?: string }): Promise<unknown>;
 };
 
-export type HomeEntryMode = "home" | "monitor" | "settings" | "memory";
+export type HomeEntryMode = "home" | "monitor" | "settings";
 export type ChatEntryMode =
   | { kind: "agent"; sessionId: string }
-  | { kind: "companion"; sessionId: string }
-  | { kind: "mate-talk"; launch?: MateTalkLaunchInput | null };
+  | { kind: "companion"; sessionId: string };
 
 export type WindowEntryLoaderDeps = {
   devServerUrl?: string | null;
@@ -43,6 +41,12 @@ export class WindowEntryLoader {
     await this.load(window, "review.html", search);
   }
 
+  async loadCharacterEditorEntry(window: WindowLike, characterId?: string | null): Promise<void> {
+    const normalizedCharacterId = characterId?.trim() ?? "";
+    const search = normalizedCharacterId ? `?characterId=${encodeURIComponent(normalizedCharacterId)}` : "";
+    await this.load(window, "character-editor.html", search);
+  }
+
   private async load(window: WindowLike, entryFileName: string, search: string): Promise<void> {
     const { devServerUrl } = this.deps;
     if (devServerUrl) {
@@ -67,15 +71,5 @@ export function buildChatEntrySearch(mode: ChatEntryMode): string {
   if (mode.kind === "companion") {
     return `?companionSessionId=${encodeURIComponent(mode.sessionId)}&mode=companion`;
   }
-  const query = new URLSearchParams({ mode: "mate-talk" });
-  if (mode.launch?.provider) {
-    query.set("provider", mode.launch.provider);
-  }
-  if (mode.launch?.model) {
-    query.set("model", mode.launch.model);
-  }
-  if (mode.launch?.reasoningEffort) {
-    query.set("reasoningEffort", mode.launch.reasoningEffort);
-  }
-  return `?${query.toString()}`;
+  throw new Error(`Unsupported chat entry mode: ${(mode as { kind: string }).kind}`);
 }

@@ -10,6 +10,10 @@ import {
   type SessionSummary,
 } from "../src/session-state.js";
 import {
+  parseCharacterRuntimeSnapshotJson,
+  stringifyCharacterRuntimeSnapshot,
+} from "../src/character/character-runtime-snapshot.js";
+import {
   CREATE_SESSIONS_TABLE_SQL,
   LEGACY_SESSION_COLUMN_DEFINITIONS,
 } from "./database-schema-v1.js";
@@ -33,6 +37,7 @@ type SessionRow = {
   character_icon_path: string;
   character_theme_main: string;
   character_theme_sub: string;
+  character_runtime_snapshot_json: string;
   run_state: string;
   approval_mode: string;
   codex_sandbox_mode: string;
@@ -45,7 +50,11 @@ type SessionRow = {
   stream_json: string;
 };
 
-type SessionSummaryRow = Omit<SessionRow, "messages_json" | "stream_json">;
+type SessionIdRow = {
+  id: string;
+};
+
+type SessionSummaryRow = Omit<SessionRow, "character_runtime_snapshot_json" | "messages_json" | "stream_json">;
 
 type TableColumnRow = {
   name: string;
@@ -69,6 +78,7 @@ const SESSION_SELECT_COLUMNS = `
   character_icon_path,
   character_theme_main,
   character_theme_sub,
+  character_runtime_snapshot_json,
   run_state,
   approval_mode,
   codex_sandbox_mode,
@@ -149,6 +159,7 @@ const UPSERT_SESSION_SQL = `
     character_icon_path,
     character_theme_main,
     character_theme_sub,
+    character_runtime_snapshot_json,
     run_state,
     approval_mode,
     codex_sandbox_mode,
@@ -160,7 +171,7 @@ const UPSERT_SESSION_SQL = `
     messages_json,
     stream_json,
     last_active_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     task_title = excluded.task_title,
     status = excluded.status,
@@ -178,6 +189,7 @@ const UPSERT_SESSION_SQL = `
     character_icon_path = excluded.character_icon_path,
     character_theme_main = excluded.character_theme_main,
     character_theme_sub = excluded.character_theme_sub,
+    character_runtime_snapshot_json = excluded.character_runtime_snapshot_json,
     run_state = excluded.run_state,
     approval_mode = excluded.approval_mode,
     codex_sandbox_mode = excluded.codex_sandbox_mode,
@@ -197,6 +209,7 @@ const DELETE_SESSION_SQL = `
 `;
 
 const AUXILIARY_SESSIONS_TABLE_NAME = "auxiliary_sessions";
+const COMPANION_SESSIONS_TABLE_NAME = "companion_sessions";
 
 type SessionRowParseMode = "skip" | "throw";
 
@@ -247,6 +260,7 @@ function rowToSession(row: SessionRow, mode: SessionRowParseMode = "skip"): Sess
       main: row.character_theme_main,
       sub: row.character_theme_sub,
     },
+    characterRuntimeSnapshot: parseCharacterRuntimeSnapshotJson(row.character_runtime_snapshot_json),
     runState: row.run_state,
     approvalMode: row.approval_mode,
     codexSandboxMode: row.codex_sandbox_mode,
@@ -346,6 +360,7 @@ export class SessionStorage {
       normalized.characterIconPath,
       normalized.characterThemeColors.main,
       normalized.characterThemeColors.sub,
+      stringifyCharacterRuntimeSnapshot(normalized.characterRuntimeSnapshot),
       normalized.runState,
       normalized.approvalMode,
       normalized.codexSandboxMode,
@@ -395,6 +410,10 @@ export class SessionStorage {
 
     if (!columns.has("character_theme_sub")) {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN character_theme_sub ${LEGACY_SESSION_COLUMN_DEFINITIONS.character_theme_sub};`);
+    }
+
+    if (!columns.has("character_runtime_snapshot_json")) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN character_runtime_snapshot_json ${LEGACY_SESSION_COLUMN_DEFINITIONS.character_runtime_snapshot_json};`);
     }
 
     if (!columns.has("access_mode")) {
@@ -461,7 +480,7 @@ export class SessionStorage {
       normalizedSessions.forEach((session, index) => {
         this.writeSession(session, baseLastActiveAt - index);
       });
-      this.deleteOrphanedAuxiliarySessionsForRetainedParents(normalizedSessions.map((session) => session.id));
+      this.deleteAuxiliarySessionsWithoutValidParents(normalizedSessions.map((session) => session.id));
       this.db.exec("COMMIT");
       return cloneSessions(normalizedSessions);
     } catch (error) {
@@ -523,19 +542,42 @@ export class SessionStorage {
     this.db.prepare("DELETE FROM auxiliary_sessions").run();
   }
 
-  private deleteOrphanedAuxiliarySessionsForRetainedParents(parentSessionIds: Iterable<string>): void {
+  private companionSessionsTableExists(): boolean {
+    return Boolean(this.db.prepare(`
+      SELECT 1
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name = ?
+    `).get(COMPANION_SESSIONS_TABLE_NAME));
+  }
+
+  private listRetainedCompanionSessionIds(): string[] {
+    if (!this.companionSessionsTableExists()) {
+      return [];
+    }
+
+    const rows = this.db
+      .prepare("SELECT id FROM companion_sessions WHERE status NOT IN ('merged', 'discarded')")
+      .all() as SessionIdRow[];
+    return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
+  }
+
+  private deleteAuxiliarySessionsWithoutValidParents(retainedParentSessionIds: Iterable<string>): void {
     if (!this.auxiliarySessionsTableExists()) {
       return;
     }
 
-    const retainedParentSessionIds = Array.from(new Set(parentSessionIds));
-    if (retainedParentSessionIds.length === 0) {
+    const validParentSessionIds = Array.from(new Set([
+      ...retainedParentSessionIds,
+      ...this.listRetainedCompanionSessionIds(),
+    ]));
+    if (validParentSessionIds.length === 0) {
       this.db.prepare("DELETE FROM auxiliary_sessions").run();
       return;
     }
 
-    const placeholders = retainedParentSessionIds.map(() => "?").join(", ");
+    const placeholders = validParentSessionIds.map(() => "?").join(", ");
     this.db.prepare(`DELETE FROM auxiliary_sessions WHERE parent_session_id NOT IN (${placeholders})`)
-      .run(...retainedParentSessionIds);
+      .run(...validParentSessionIds);
   }
 }

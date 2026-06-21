@@ -7,8 +7,12 @@ import {
   normalizeProjectMemoryEntry,
   normalizeProjectScope,
 } from "../src/memory/memory-state.js";
-import type { ManagedProjectMemoryGroup, MemoryManagementPageRequest } from "../src/memory/memory-management-state.js";
-import type { ProjectMemoryEntry, ProjectScope } from "../src/memory/memory-state.js";
+import type {
+  ManagedProjectMemoryGroup,
+  MemoryPageRequest,
+  ProjectMemoryEntry,
+  ProjectScope,
+} from "../src/memory/memory-state.js";
 import { CREATE_PROJECT_MEMORY_TABLES_SQL } from "./database-schema-v1.js";
 import type { ResolvedProjectScopeInput } from "./project-scope.js";
 import { openAppDatabase } from "./sqlite-connection.js";
@@ -107,11 +111,11 @@ type ProjectMemoryPageRow = ProjectMemoryEntryRow & {
   scope_updated_at: string;
 };
 
-function normalizePageCursor(cursor: MemoryManagementPageRequest["cursor"]): number {
+function normalizePageCursor(cursor: MemoryPageRequest["cursor"]): number {
   return typeof cursor === "number" && Number.isFinite(cursor) && cursor > 0 ? Math.floor(cursor) : 0;
 }
 
-function normalizePageLimit(limit: MemoryManagementPageRequest["limit"]): number {
+function normalizePageLimit(limit: MemoryPageRequest["limit"]): number {
   return typeof limit === "number" && Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 50;
 }
 
@@ -119,7 +123,7 @@ function pushSearchParam(params: SQLInputValue[], searchText: string): void {
   params.push(searchText);
 }
 
-function buildProjectMemoryPageWhere(request: MemoryManagementPageRequest): { sql: string; params: SQLInputValue[] } {
+function buildProjectMemoryPageWhere(request: MemoryPageRequest): { sql: string; params: SQLInputValue[] } {
   const clauses: string[] = [];
   const params: SQLInputValue[] = [];
   const searchText = typeof request.searchText === "string" ? request.searchText.trim().toLowerCase() : "";
@@ -348,7 +352,7 @@ export class ProjectMemoryStorage {
     return cloneProjectMemoryEntries(rows.map(rowToProjectMemoryEntry).filter((row): row is ProjectMemoryEntry => row !== null));
   }
 
-  listProjectMemoryPage(request: MemoryManagementPageRequest = {}): { groups: ManagedProjectMemoryGroup[]; total: number } {
+  listProjectMemoryPage(request: MemoryPageRequest = {}): { groups: ManagedProjectMemoryGroup[]; total: number } {
     const cursor = normalizePageCursor(request.cursor);
     const limit = normalizePageLimit(request.limit);
     const direction = request.sort === "updated-asc" ? "ASC" : "DESC";

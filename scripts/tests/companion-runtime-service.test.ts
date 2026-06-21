@@ -192,191 +192,6 @@ describe("CompanionRuntimeService", () => {
     assert.equal(updatedAuditLogs[0]?.entry.threadId, "thread-1");
   });
 
-  it("project digest context resolver を runSessionTurn の composePrompt と runSessionTurn に渡す", async () => {
-    let storedSession = createCompanionSession();
-    const composeInputRef: { current: RunSessionTurnInput | null } = { current: null };
-    const runInputRef: { current: RunSessionTurnInput | null } = { current: null };
-    let resolveCallCount = 0;
-    let resolvedWorkspacePath = "";
-    let resolvedUserMessage = "";
-    let resolvedMemoryWorkspacePath = "";
-    const adapter: ProviderCodingAdapter = {
-      composePrompt(input) {
-        composeInputRef.current = input;
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
-      async runSessionTurn(input) {
-        runInputRef.current = input;
-        return {
-          threadId: "thread-1",
-          assistantText: "完了したよ。",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          transportPayload: null,
-          operations: [],
-          rawItemsJson: "[]",
-          usage: null,
-        };
-      },
-    };
-
-    const service = new CompanionRuntimeService({
-      getCompanionSession(sessionId) {
-        return sessionId === storedSession.id ? storedSession : null;
-      },
-      updateCompanionSession(nextSession) {
-        storedSession = nextSession;
-        return nextSession;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] } satisfies ComposerPreview;
-      },
-      resolveProjectContextTextForPrompt(session, userMessage, sessionMemory) {
-        resolveCallCount += 1;
-        resolvedWorkspacePath = session.workspacePath;
-        resolvedUserMessage = userMessage;
-        resolvedMemoryWorkspacePath = sessionMemory.workspacePath;
-        return "project digest context";
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        const provider = createProviderCatalog();
-        return { snapshot: { revision: 1, providers: [provider] }, provider };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      setLiveSessionRun() {},
-      getLiveSessionRun() {
-        return null;
-      },
-      async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
-        return "approve";
-      },
-      async waitForElicitationResponse() {
-        return { action: "cancel" } as const;
-      },
-      setProviderQuotaTelemetry(_telemetry: ProviderQuotaTelemetry) {},
-      setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
-      invalidateProviderSessionThread() {},
-      scheduleProviderQuotaTelemetryRefresh() {},
-      clearWorkspaceFileIndex() {},
-      broadcastCompanionSessions() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel: () => "2026-04-26 10:01",
-    });
-
-    await service.runSessionTurn(storedSession.id, { userMessage: "お願いします" });
-
-    assert.equal(resolveCallCount, 1);
-    assert.equal(resolvedWorkspacePath, "F:/repo");
-    assert.equal(resolvedUserMessage, "お願いします");
-    assert.equal(resolvedMemoryWorkspacePath, "F:/repo");
-    assert.equal(composeInputRef.current?.projectContextText, "project digest context");
-    assert.equal(runInputRef.current?.projectContextText, "project digest context");
-  });
-
-  it("resolveProjectContextTextForPrompt 失敗時は runSessionTurn を reject し、CompanionSession が running に更新されない", async () => {
-    let storedSession = createCompanionSession();
-    const updatedSessions: CompanionSession[] = [];
-    let composePromptCallCount = 0;
-    let runSessionTurnCallCount = 0;
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        composePromptCallCount += 1;
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
-      async runSessionTurn() {
-        runSessionTurnCallCount += 1;
-        return {
-          threadId: "thread-1",
-          assistantText: "この実行は行われない",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          transportPayload: null,
-          operations: [],
-          rawItemsJson: "[]",
-          usage: null,
-        };
-      },
-    };
-
-    const service = new CompanionRuntimeService({
-      getCompanionSession(sessionId) {
-        return sessionId === storedSession.id ? storedSession : null;
-      },
-      updateCompanionSession(nextSession) {
-        updatedSessions.push(nextSession);
-        storedSession = nextSession;
-        return nextSession;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] } satisfies ComposerPreview;
-      },
-      resolveProjectContextTextForPrompt() {
-        throw new Error("project context failed");
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        const provider = createProviderCatalog();
-        return { snapshot: { revision: 1, providers: [provider] }, provider };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      setLiveSessionRun() {},
-      getLiveSessionRun() {
-        return null;
-      },
-      async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
-        return "approve";
-      },
-      async waitForElicitationResponse() {
-        return { action: "cancel" } as const;
-      },
-      setProviderQuotaTelemetry(_telemetry: ProviderQuotaTelemetry) {},
-      setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
-      invalidateProviderSessionThread() {},
-      scheduleProviderQuotaTelemetryRefresh() {},
-      clearWorkspaceFileIndex() {},
-      broadcastCompanionSessions() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel: () => "2026-04-26 10:01",
-    });
-
-    await assert.rejects(() => service.runSessionTurn(storedSession.id, { userMessage: "お願いします" }), /project context failed/);
-    assert.equal(composePromptCallCount, 0);
-    assert.equal(runSessionTurnCallCount, 0);
-    assert.equal(updatedSessions.some((session) => session.runState === "running"), false);
-    assert.equal(storedSession.runState, "idle");
-  });
-
   it("起動時に running の CompanionSession を error に戻して操作可能にする", async () => {
     let storedSession = createCompanionSession({
       runState: "running",
@@ -540,5 +355,267 @@ describe("CompanionRuntimeService", () => {
     } finally {
       console.warn = originalWarn;
     }
+  });
+
+  it("完了時の audit 更新に失敗しても CompanionSession を completed 状態で保存する", async () => {
+    let storedSession = createCompanionSession();
+    const storedSessions: CompanionSession[] = [];
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        return {
+          threadId: "thread-after-update-failure",
+          assistantText: "完了したよ。",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          transportPayload: null,
+          operations: [],
+          rawItemsJson: "[]",
+          usage: null,
+        };
+      },
+    };
+    const originalWarn = console.warn;
+    console.warn = () => {};
+
+    try {
+      const service = new CompanionRuntimeService({
+        getCompanionSession(sessionId) {
+          return sessionId === storedSession.id ? storedSession : null;
+        },
+        updateCompanionSession(nextSession) {
+          storedSession = nextSession;
+          storedSessions.push(nextSession);
+          return nextSession;
+        },
+        async resolveComposerPreview() {
+          return { attachments: [], errors: [] } satisfies ComposerPreview;
+        },
+        getAppSettings() {
+          return normalizeAppSettings({});
+        },
+        resolveProviderCatalog() {
+          const provider = createProviderCatalog();
+          return { snapshot: { revision: 1, providers: [provider] }, provider };
+        },
+        getProviderCodingAdapter() {
+          return adapter;
+        },
+        createAuditLog(input) {
+          return { ...input, id: 7 };
+        },
+        async updateAuditLog() {
+          throw new Error("audit update failed");
+        },
+        setLiveSessionRun() {},
+        getLiveSessionRun() {
+          return null;
+        },
+        async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
+          return "approve";
+        },
+        async waitForElicitationResponse() {
+          return { action: "cancel" } as const;
+        },
+        setProviderQuotaTelemetry(_telemetry: ProviderQuotaTelemetry) {},
+        setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
+        invalidateProviderSessionThread() {},
+        scheduleProviderQuotaTelemetryRefresh() {},
+        clearWorkspaceFileIndex() {},
+        broadcastCompanionSessions() {},
+        resolvePendingApprovalRequest() {},
+        resolvePendingElicitationRequest() {},
+        currentTimestampLabel: () => "2026-04-26 10:04",
+      });
+
+      const result = await service.runSessionTurn(storedSession.id, { userMessage: "実行して" });
+
+      assert.equal(result.runState, "idle");
+      assert.equal(result.messages.at(-1)?.role, "assistant");
+      assert.equal(result.messages.at(-1)?.text, "完了したよ。");
+      assert.equal(storedSessions[0]?.runState, "running");
+      assert.equal(storedSessions[1]?.runState, "idle");
+      assert.equal(service.isRunInFlight(storedSession.id), false);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  it("失敗時の audit 更新に失敗しても CompanionSession を error 状態で保存する", async () => {
+    let storedSession = createCompanionSession();
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        throw new Error("provider failed");
+      },
+    };
+    const originalWarn = console.warn;
+    console.warn = () => {};
+
+    try {
+      const service = new CompanionRuntimeService({
+        getCompanionSession(sessionId) {
+          return sessionId === storedSession.id ? storedSession : null;
+        },
+        updateCompanionSession(nextSession) {
+          storedSession = nextSession;
+          return nextSession;
+        },
+        async resolveComposerPreview() {
+          return { attachments: [], errors: [] } satisfies ComposerPreview;
+        },
+        getAppSettings() {
+          return normalizeAppSettings({});
+        },
+        resolveProviderCatalog() {
+          const provider = createProviderCatalog();
+          return { snapshot: { revision: 1, providers: [provider] }, provider };
+        },
+        getProviderCodingAdapter() {
+          return adapter;
+        },
+        createAuditLog(input) {
+          return { ...input, id: 7 };
+        },
+        async updateAuditLog() {
+          throw new Error("audit update failed");
+        },
+        setLiveSessionRun() {},
+        getLiveSessionRun() {
+          return null;
+        },
+        async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
+          return "approve";
+        },
+        async waitForElicitationResponse() {
+          return { action: "cancel" } as const;
+        },
+        setProviderQuotaTelemetry(_telemetry: ProviderQuotaTelemetry) {},
+        setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
+        invalidateProviderSessionThread() {},
+        scheduleProviderQuotaTelemetryRefresh() {},
+        clearWorkspaceFileIndex() {},
+        broadcastCompanionSessions() {},
+        resolvePendingApprovalRequest() {},
+        resolvePendingElicitationRequest() {},
+        currentTimestampLabel: () => "2026-04-26 10:05",
+      });
+
+      const result = await service.runSessionTurn(storedSession.id, { userMessage: "実行して" });
+
+      assert.equal(result.runState, "error");
+      assert.match(result.messages.at(-1)?.text ?? "", /provider failed/);
+      assert.equal(service.isRunInFlight(storedSession.id), false);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  it("起動時 recovery は running の Companion audit log を failed に閉じる", async () => {
+    let storedSession = createCompanionSession({
+      runState: "running",
+      messages: [{ role: "user", text: "続けて" }],
+    });
+    const auditUpdates: Array<Omit<AuditLogEntry, "id">> = [];
+    const service = new CompanionRuntimeService({
+      getCompanionSession(sessionId) {
+        return sessionId === storedSession.id ? storedSession : null;
+      },
+      listCompanionSessionSummaries() {
+        return [{ ...storedSession, latestMergeRun: null }];
+      },
+      updateCompanionSession(nextSession) {
+        storedSession = nextSession;
+        return nextSession;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        const provider = createProviderCatalog();
+        return { snapshot: { revision: 1, providers: [provider] }, provider };
+      },
+      getProviderCodingAdapter() {
+        throw new Error("unexpected provider access");
+      },
+      listAuditLogs() {
+        return [{
+          id: 10,
+          sessionId: storedSession.id,
+          createdAt: "2026-04-26T10:00:00.000Z",
+          phase: "running",
+          provider: "codex",
+          model: "gpt-5.4",
+          reasoningEffort: "medium",
+          approvalMode: DEFAULT_APPROVAL_MODE,
+          threadId: "",
+          logicalPrompt: { systemText: "", inputText: "", composedText: "" },
+          transportPayload: null,
+          assistantText: "",
+          operations: [],
+          rawItemsJson: "[]",
+          usage: null,
+          errorMessage: "",
+        }];
+      },
+      updateAuditLog(_id, entry) {
+        auditUpdates.push(entry);
+        return { ...entry, id: 10 };
+      },
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry(_telemetry: ProviderQuotaTelemetry) {},
+      setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      clearWorkspaceFileIndex() {},
+      broadcastCompanionSessions() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel: () => "2026-04-26 10:06",
+    });
+
+    await service.recoverInterruptedSessions();
+
+    assert.equal(storedSession.runState, "error");
+    assert.equal(auditUpdates.length, 1);
+    assert.equal(auditUpdates[0]?.phase, "failed");
+    assert.match(auditUpdates[0]?.errorMessage ?? "", /中断/);
   });
 });

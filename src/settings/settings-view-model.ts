@@ -2,12 +2,6 @@ import {
   getResolvedProviderSettingsBundle,
   type AppSettings,
   type MemoryExtractionProviderSettings,
-  type ProviderInstructionFailPolicy,
-  type ProviderInstructionTargetUpsertInput,
-  type ProviderInstructionTargetSettings,
-  type ProviderInstructionWriteMode,
-  DEFAULT_PROVIDER_INSTRUCTION_TARGET_ID,
-  getDefaultProviderInstructionRelativePath,
   type ProviderAppSettings,
 } from "../provider-settings-state.js";
 import {
@@ -17,74 +11,56 @@ import {
   type ModelCatalogSnapshot,
 } from "../model-catalog.js";
 
+function normalizeSelectablePath(filePath: string): string {
+  return filePath.trim().replace(/\\/g, "/").replace(/\/+$/g, "");
+}
+
+function normalizePathComparisonKey(filePath: string): string {
+  const normalized = normalizeSelectablePath(filePath);
+  return /^[a-z]:\//i.test(normalized) ? normalized.toLowerCase() : normalized;
+}
+
+export function resolveProviderRelativePathFromSelection(
+  rootDirectory: string,
+  selectedPath: string,
+): string | null {
+  const normalizedRoot = normalizeSelectablePath(rootDirectory);
+  const normalizedSelectedPath = normalizeSelectablePath(selectedPath);
+  if (!normalizedRoot || !normalizedSelectedPath) {
+    return null;
+  }
+
+  const rootKey = normalizePathComparisonKey(normalizedRoot);
+  const selectedKey = normalizePathComparisonKey(normalizedSelectedPath);
+  if (selectedKey === rootKey) {
+    return "";
+  }
+
+  const prefix = `${rootKey}/`;
+  if (!selectedKey.startsWith(prefix)) {
+    return null;
+  }
+
+  return normalizedSelectedPath.slice(normalizedRoot.length + 1);
+}
+
 export type HomeProviderSettingRow = {
   provider: ModelCatalogProvider;
   settings: ProviderAppSettings;
   memoryExtractionSettings: MemoryExtractionProviderSettings;
-  instructionTarget: HomeProviderInstructionTargetSettings;
   resolvedMemoryExtractionModel: string;
   resolvedMemoryExtractionReasoningEffort: MemoryExtractionProviderSettings["reasoningEffort"];
   availableMemoryExtractionReasoningEfforts: readonly MemoryExtractionProviderSettings["reasoningEffort"][];
 };
 
-export type HomeProviderInstructionTargetSettings = ProviderInstructionTargetSettings;
-
-export type HomeProviderInstructionTargetUpsertInput = ProviderInstructionTargetUpsertInput;
-
-export function buildHomeProviderInstructionTargetUpsertInput(
-  target: HomeProviderInstructionTargetSettings,
-): HomeProviderInstructionTargetUpsertInput {
-  return {
-    providerId: target.providerId,
-    targetId: target.targetId,
-    enabled: target.enabled,
-    rootDirectory: target.rootDirectory,
-    instructionRelativePath: target.instructionRelativePath,
-    writeMode: target.writeMode,
-    failPolicy: target.failPolicy,
-  };
-}
-
-export function resolveInstructionRelativePathFromSelection(
-  rootDirectory: string,
-  selectedFilePath: string,
-): string | null {
-  const normalizedRoot = normalizePathForComparison(rootDirectory);
-  const normalizedSelected = normalizePathForComparison(selectedFilePath);
-  if (!normalizedRoot || !normalizedSelected) {
-    return null;
-  }
-
-  const rootForComparison = normalizedRoot.toLowerCase();
-  const selectedForComparison = normalizedSelected.toLowerCase();
-  if (!selectedForComparison.startsWith(`${rootForComparison}/`)) {
-    return null;
-  }
-
-  return normalizedSelected.slice(normalizedRoot.length + 1);
-}
-
-function normalizePathForComparison(pathValue: string): string {
-  return pathValue
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/\/+$/g, "");
-}
-
 export function buildHomeProviderSettingRows(
   modelCatalog: ModelCatalogSnapshot | null,
   appSettings: AppSettings,
-  instructionTargets: readonly HomeProviderInstructionTargetSettings[] = [],
 ): HomeProviderSettingRow[] {
-  const instructionTargetByProvider = new Map<string, HomeProviderInstructionTargetSettings>(
-    instructionTargets.map((target) => [target.providerId, target]),
-  );
-
   return (modelCatalog?.providers ?? []).map((provider) => {
     const resolvedSettings = getResolvedProviderSettingsBundle(appSettings, provider.id);
     const settings = resolvedSettings.coding;
     const memoryExtractionSettings = resolvedSettings.memoryExtraction;
-    const instructionTarget = resolveProviderInstructionTarget(provider.id, instructionTargetByProvider.get(provider.id));
     const memoryExtractionSelection = coerceModelSelection(
       provider,
       memoryExtractionSettings.model,
@@ -95,7 +71,6 @@ export function buildHomeProviderSettingRows(
       provider,
       settings,
       memoryExtractionSettings,
-      instructionTarget,
       resolvedMemoryExtractionModel: memoryExtractionSelection.resolvedModel,
       resolvedMemoryExtractionReasoningEffort: memoryExtractionSelection.resolvedReasoningEffort,
       availableMemoryExtractionReasoningEfforts: getReasoningEffortOptionsForModel(
@@ -104,32 +79,6 @@ export function buildHomeProviderSettingRows(
       ),
     };
   });
-}
-
-function resolveProviderInstructionTarget(
-  providerId: string,
-  instructionTarget?: HomeProviderInstructionTargetSettings,
-): HomeProviderInstructionTargetSettings {
-  if (instructionTarget) {
-    return instructionTarget;
-  }
-
-  return {
-    providerId,
-    targetId: DEFAULT_PROVIDER_INSTRUCTION_TARGET_ID,
-    enabled: false,
-    rootDirectory: "",
-    instructionRelativePath: getDefaultProviderInstructionRelativePath(providerId),
-    lastSyncState: "never",
-    lastSyncRunId: null,
-    lastSyncedRevisionId: null,
-    lastErrorPreview: "",
-    lastSyncedAt: null,
-    writeMode: "managed_block" satisfies ProviderInstructionWriteMode,
-    projectionScope: "mate_only",
-    failPolicy: "warn_continue" satisfies ProviderInstructionFailPolicy,
-    requiresRestart: false,
-  };
 }
 
 export function buildNormalizedMemoryExtractionProviderSettings(

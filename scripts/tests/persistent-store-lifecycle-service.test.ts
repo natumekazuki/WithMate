@@ -527,6 +527,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     createSessionStorage: () => null as never,
     createSessionMemoryStorage: () => null as never,
     createProjectMemoryStorage: () => null as never,
+    createCharacterStorage: () => null as never,
     createCharacterMemoryStorage: () => null as never,
     createAuditLogStorage: () => null as never,
     createAppSettingsStorage: () => null as never,
@@ -543,6 +544,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
   const bundle: PersistentStoreBundleLike = {
     modelCatalogStorage: createClosableStore("model", closeCalls) as never,
     sessionStorage: createClosableStore("session", closeCalls) as never,
+    characterStorage: createClosableStore("character", closeCalls) as never,
     sessionMemoryStorage: createClosableStore("session-memory", closeCalls) as never,
     projectMemoryStorage: createClosableStore("project-memory", closeCalls) as never,
     auditLogStorage: createClosableStore("audit", closeCalls) as never,
@@ -555,6 +557,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
   assert.deepEqual(closeCalls, [
     "before-close",
     "model",
+    "character",
     "session",
     "session-memory",
     "project-memory",
@@ -802,9 +805,10 @@ test("PersistentStoreLifecycleService は V3 DB 再生成時に blob root も削
   }
 });
 
-test("PersistentStoreLifecycleService は V4 DB 再生成時にも blob root を削除する", async () => {
+test("PersistentStoreLifecycleService は V4 DB 再生成時に blob root と Character root を削除する", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "withmate-v4-recreate-"));
   const dbPath = path.join(dir, APP_DATABASE_V4_FILENAME);
+  const userDataPath = path.join(dir, "user-data");
   const removedDirectories: string[] = [];
 
   try {
@@ -837,10 +841,13 @@ test("PersistentStoreLifecycleService は V4 DB 再生成時にも blob root を
       },
     });
 
-    const bundle = await service.recreate(dbPath, "model-catalog.json", {});
+    const bundle = await service.recreate(dbPath, "model-catalog.json", {}, userDataPath);
 
     assert.equal(bundle.activeModelCatalog.revision, 8);
-    assert.deepEqual(removedDirectories, [path.join(dir, "blobs", "v3")]);
+    assert.deepEqual(removedDirectories, [
+      path.join(dir, "blobs", "v3"),
+      path.join(userDataPath, "characters"),
+    ]);
     service.close(bundle, dbPath);
   } finally {
     await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });

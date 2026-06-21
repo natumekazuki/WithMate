@@ -1,4 +1,5 @@
 import { DEFAULT_APPROVAL_MODE } from "../approval-mode.js";
+import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../companion-state.js";
 import { createCompanionSessionSummary } from "../companion-state.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
@@ -22,6 +23,7 @@ export type StartHomeLaunchInput = {
   launchStarting: boolean;
   mateState: MateStorageState | null;
   mateProfile: MateProfile | null;
+  characterEntries: readonly CharacterCatalogEntry[];
   selectedProviderId: string | null;
   sessions: readonly SessionSummary[];
   createSession: HomeLaunchSessionCreator;
@@ -62,6 +64,7 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
         draft: input.draft,
         mateProfile: input.mateProfile,
         selectedProviderId: input.selectedProviderId,
+        characterEntries: input.characterEntries,
         lastUsedSelection,
       });
       if (!companionInput) {
@@ -86,6 +89,7 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
       mateProfile: input.mateProfile,
       selectedProviderId: input.selectedProviderId,
       approvalMode: DEFAULT_APPROVAL_MODE,
+      characterEntries: input.characterEntries,
       lastUsedSelection,
     });
     if (!sessionInput) {

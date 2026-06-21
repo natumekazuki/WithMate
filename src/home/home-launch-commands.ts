@@ -1,9 +1,4 @@
 import { withWithMateApi } from "../renderer-withmate-api.js";
-import type { MateTalkLaunchInput } from "../mate/mate-state.js";
-
-export async function openMateTalkWindow(input?: MateTalkLaunchInput | null) {
-  await withWithMateApi((api) => input ? api.openMateTalkWindow(input) : api.openMateTalkWindow());
-}
 
 export async function openSessionWindow(sessionId: string) {
   await withWithMateApi((api) => api.openSession(sessionId));
@@ -21,8 +16,8 @@ export async function openSettingsWindow() {
   await withWithMateApi((api) => api.openSettingsWindow());
 }
 
-export async function openMemoryManagementWindow() {
-  await withWithMateApi((api) => api.openMemoryManagementWindow());
+export async function openCharacterEditorWindow(characterId?: string | null) {
+  await withWithMateApi((api) => api.openCharacterEditorWindow(characterId ?? null));
 }
 
 export async function openCompanionReviewWindow(sessionId: string) {

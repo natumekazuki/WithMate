@@ -2,7 +2,7 @@ import { getProviderAppSettings, type AppSettings } from "../src/provider-settin
 import {
   buildNewSession,
   cloneSessions,
-  isLegacyReadOnlySession,
+  isReadOnlySession,
   projectSessionSummary,
   type CreateSessionInput,
   type Session,
@@ -17,6 +17,7 @@ import {
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import { sessionSummaryToSession } from "./session-summary-adapter.js";
+import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
 
 export type SessionPersistenceServiceDeps = {
   getSessions(): Session[];
@@ -30,6 +31,7 @@ export type SessionPersistenceServiceDeps = {
   deleteStoredSession(sessionId: string): Awaitable<void>;
   getAppSettings: () => AppSettings;
   getModelCatalogSnapshot(): ModelCatalogSnapshot;
+  createCharacterRuntimeSnapshot?(characterId: string): CharacterRuntimeSnapshot | null;
   syncSessionDependencies(session: Session): void;
   clearSessionContextTelemetry(sessionId: string): void;
   clearSessionBackgroundActivities(sessionId: string): void;
@@ -55,8 +57,8 @@ function toCachedSessions(sessions: Session[]): Session[] {
 }
 
 function assertSessionWritable(session: Session): void {
-  if (isLegacyReadOnlySession(session)) {
-    throw new Error("旧バージョンから移行された閲覧専用セッションは更新できないよ。");
+  if (isReadOnlySession(session)) {
+    throw new Error("閲覧専用セッションは更新できないよ。新しいセッションを作成してください。");
   }
 }
 
@@ -84,6 +86,8 @@ export class SessionPersistenceService {
       catalogRevision: snapshot.revision,
       model: selection.resolvedModel,
       reasoningEffort: selection.resolvedReasoningEffort,
+      characterRuntimeSnapshot:
+        input.characterRuntimeSnapshot ?? this.deps.createCharacterRuntimeSnapshot?.(input.characterId) ?? null,
       allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
         input.workspacePath,
         input.allowedAdditionalDirectories ?? [],

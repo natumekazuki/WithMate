@@ -7,11 +7,11 @@ describe("home-window-mode", () => {
   it("known mode を解決する", () => {
     assert.equal(resolveHomeWindowModeFromSearch("?mode=monitor"), "monitor");
     assert.equal(resolveHomeWindowModeFromSearch("?mode=settings"), "settings");
-    assert.equal(resolveHomeWindowModeFromSearch("?mode=memory"), "memory");
   });
 
   it("unknown mode は home に戻す", () => {
     assert.equal(resolveHomeWindowModeFromSearch(""), "home");
+    assert.equal(resolveHomeWindowModeFromSearch("?mode=memory"), "home");
     assert.equal(resolveHomeWindowModeFromSearch("?mode=mate-talk"), "home");
   });
 });

@@ -2,9 +2,11 @@ export {
   buildNewSession,
   cloneSessionSummaries,
   cloneSessions,
+  CURRENT_SESSION_SCHEMA_VERSION,
   getDiffTokenFromLocation,
   getSessionIdFromLocation,
   isLegacyReadOnlySession,
+  isReadOnlySession,
   normalizeSession,
   normalizeSessionAccessMode,
   normalizeSessionSummary,
@@ -130,6 +132,9 @@ export {
   normalizeSessionMemoryDelta,
 } from "./memory/memory-state.js";
 export type {
+  ManagedProjectMemoryGroup,
+  ManagedSessionMemoryItem,
+  MemoryPageRequest,
   ProjectMemoryCategory,
   ProjectMemoryEntry,
   ProjectScope,

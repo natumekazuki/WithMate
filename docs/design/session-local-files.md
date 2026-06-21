@@ -14,10 +14,11 @@ WithMate の Session ごとに、repo へ入れない一時資料を置ける ma
 - 保存先は WithMate app data 配下の managed directory とする
 - session local files は user-managed additional directories ではなく、runtime が常に暗黙許可する directory として扱う
 - prompt 本文には保存済み file path の reference だけを入れ、file 内容の常設 inline 展開はしない
+- V5 preview では legacy MateTalk runtime / window を current runtime として提供しない。本文中の MateTalk 記述は stale `mate-talk-*` directory cleanup などの legacy compatibility として扱う
 
 ## Directory Layout
 
-通常 Session、Companion Session、MateTalk は同じ layout で保存する。
+通常 Session、Companion Session、legacy MateTalk は同じ layout で保存する。
 
 ```text
 session-files/{sessionId}/
@@ -34,7 +35,7 @@ Session local files directory は次の経路で常に effective allowed directo
 - Codex thread options
 - Copilot session config / attachment roots
 - Companion runtime の composer preview と provider runtime
-- MateTalk の picker / paste 由来 attachment と provider runtime
+- legacy MateTalk の picker / paste 由来 attachment と provider runtime
 
 DB の `allowedAdditionalDirectories` へは保存しない。
 これはユーザーが明示追加した external directory と、WithMate が管理する session-local directory を分けるためである。
@@ -86,7 +87,7 @@ composer は戻り値を既存の `@path` reference 挿入処理へ渡す。
 
 Session 削除時の cleanup は session ID 単位で directory を削除する。
 削除に失敗しても session 削除自体は失敗させず、best-effort cleanup として扱う。
-MateTalk は永続 session record を持たないため、window ごとの一時 session ID を使う。
+legacy MateTalk は永続 session record を持たないため、window ごとの一時 session ID を使っていた。
 `mate-talk-*` の session files directory は使い捨て扱いとし、次回起動時に stale directory を削除する。
 
 ## Validation

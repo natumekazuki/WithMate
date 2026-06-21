@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { buildNewSession, type MessageArtifact, type Session } from "../../src/app-state.js";
+import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
 import {
   CREATE_V3_SCHEMA_SQL,
   V3_SUMMARY_JSON_MAX_LENGTH,
@@ -53,6 +54,21 @@ function createSession(input: { id: string; taskTitle: string; workspaceLabel: s
     ...session,
     id: input.id,
     threadId: `thread-${input.id}`,
+  };
+}
+
+function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnapshot>): CharacterRuntimeSnapshot {
+  return {
+    characterId: "char-v3",
+    name: "V3",
+    description: "保存済み Character",
+    iconFilePath: "",
+    theme: { main: "#6f8cff", sub: "#6fb8c7" },
+    definitionMarkdown: "# Character\nV3 session runtime snapshot",
+    definitionSha256: "sha256-session-v3",
+    definitionByteSize: 48,
+    snapshotAt: "2026-06-14T00:00:00.000Z",
+    ...overrides,
   };
 }
 
@@ -181,10 +197,12 @@ describe("SessionStorageV3", () => {
         taskTitle: "V3 roundtrip",
         workspaceLabel: "workspace-v3",
       });
+      const characterRuntimeSnapshot = createCharacterRuntimeSnapshot();
 
       try {
         const saved = await storage.upsertSession({
           ...session,
+          characterRuntimeSnapshot,
           messages: [
             {
               role: "user",
@@ -206,9 +224,11 @@ describe("SessionStorageV3", () => {
         assert.equal(summaries.length, 1);
         assert.equal(summaries[0]?.id, "session-v3-roundtrip");
         assert.equal(summaries[0]?.taskTitle, "V3 roundtrip");
+        assert.equal("characterRuntimeSnapshot" in (summaries[0] ?? {}), false);
 
         const loaded = await storage.getSession("session-v3-roundtrip");
         assert.ok(loaded);
+        assert.deepEqual(loaded.characterRuntimeSnapshot, characterRuntimeSnapshot);
         assert.deepEqual(loaded.stream, []);
         assert.deepEqual(loaded.messages.map((message) => message.text), [longText, "short assistant reply"]);
         assert.equal(loaded.messages[0]?.accent, true);

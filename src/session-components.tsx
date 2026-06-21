@@ -1946,27 +1946,119 @@ export type SessionMessageColumnProps = {
   onQuoteMessageText?: (text: string) => void;
 };
 
-function getSelectedTextWithin(element: Element | null): string {
+function getSelectionDetailsWithinMessageList(element: Element | null): { anchorRect: DOMRect; text: string } | null {
   if (!element || typeof window === "undefined") {
-    return "";
+    return null;
   }
 
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
-    return "";
+    return null;
   }
 
   const range = selection.getRangeAt(0);
   const commonAncestor = range.commonAncestorContainer;
   const commonElement =
     commonAncestor.nodeType === Node.ELEMENT_NODE
-      ? commonAncestor
+      ? commonAncestor as Element
       : commonAncestor.parentElement;
-  if (!commonElement || !element.contains(commonElement)) {
-    return "";
+  const messageBody = commonElement?.closest("[data-message-body='true']") ?? null;
+  if (
+    !messageBody ||
+    !element.contains(messageBody) ||
+    messageBody.getAttribute("data-message-text-actions") !== "true"
+  ) {
+    return null;
   }
 
-  return selection.toString().trim();
+  const text = selection.toString().trim();
+  if (!text) {
+    return null;
+  }
+
+  const rangeRect = range.getBoundingClientRect();
+  if (rangeRect.width > 0 || rangeRect.height > 0) {
+    return { anchorRect: rangeRect, text };
+  }
+
+  const fallbackRect = range.getClientRects()[0] ?? null;
+  return fallbackRect ? { anchorRect: fallbackRect, text } : null;
+}
+
+function clampToolbarPosition(input: {
+  anchorRect: DOMRect;
+  boundaryRect: DOMRect;
+  toolbarRect: Pick<DOMRect, "width" | "height">;
+  padding?: number;
+}): CSSProperties {
+  const padding = input.padding ?? 8;
+  const toolbarWidth = input.toolbarRect.width || 112;
+  const toolbarHeight = input.toolbarRect.height || 32;
+  const preferredLeft = input.anchorRect.left + (input.anchorRect.width - toolbarWidth) / 2;
+  const preferredTop =
+    input.anchorRect.top - toolbarHeight - padding >= input.boundaryRect.top + padding
+      ? input.anchorRect.top - toolbarHeight - padding
+      : input.anchorRect.bottom + padding;
+  const left = Math.min(
+    input.boundaryRect.right - toolbarWidth - padding,
+    Math.max(input.boundaryRect.left + padding, preferredLeft),
+  );
+  const top = Math.min(
+    input.boundaryRect.bottom - toolbarHeight - padding,
+    Math.max(input.boundaryRect.top + padding, preferredTop),
+  );
+
+  return { left, top };
+}
+
+function rectsIntersect(a: DOMRect, b: DOMRect): boolean {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+type MessageResponseActionsProps = {
+  actionText: string;
+  onCopyMessageText?: (text: string) => void;
+  onQuoteMessageText?: (text: string) => void;
+  style?: CSSProperties;
+  toolbarRef?: RefObject<HTMLDivElement | null>;
+};
+
+function MessageResponseActions({
+  actionText,
+  onCopyMessageText,
+  onQuoteMessageText,
+  style,
+  toolbarRef,
+}: MessageResponseActionsProps) {
+  return (
+    <div
+      ref={toolbarRef}
+      className="message-response-actions"
+      aria-label="Response actions"
+      style={style}
+    >
+      {onCopyMessageText ? (
+        <button
+          className="message-response-action"
+          type="button"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => onCopyMessageText(actionText)}
+        >
+          Copy
+        </button>
+      ) : null}
+      {onQuoteMessageText ? (
+        <button
+          className="message-response-action"
+          type="button"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => onQuoteMessageText(actionText)}
+        >
+          Quote
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
 export function SessionMessageColumn({
@@ -1982,7 +2074,6 @@ export function SessionMessageColumn({
   approvalActionRequestId,
   liveElicitationRequest,
   elicitationActionRequestId,
-  liveRunAssistantText,
   hasLiveRunAssistantText,
   liveRunErrorMessage,
   pendingMessageText = "",
@@ -2002,6 +2093,8 @@ export function SessionMessageColumn({
   const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
   const [loadedArtifactDetails, setLoadedArtifactDetails] = useState<Record<string, MessageArtifact>>({});
   const [loadingArtifactDetails, setLoadingArtifactDetails] = useState<Record<string, boolean>>({});
+  const [selectionToolbar, setSelectionToolbar] = useState<{ style: CSSProperties; text: string } | null>(null);
+  const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const [messageWindowStartIndex, setMessageWindowStartIndex] = useState(() =>
     Math.max(0, messages.length - SESSION_MESSAGE_INITIAL_RENDER_COUNT),
   );
@@ -2015,12 +2108,17 @@ export function SessionMessageColumn({
     [latestMessageWindowStartIndex, messages],
   );
   const hasOlderMessages = latestMessageWindowStartIndex > 0;
+  const hasPendingMessageText =
+    !hasLiveRunAssistantText &&
+    liveApprovalRequest === null &&
+    liveElicitationRequest === null &&
+    !liveRunErrorMessage.trim() &&
+    pendingMessageText.trim().length > 0;
   const hasPendingInlineContent =
     liveApprovalRequest !== null ||
     liveElicitationRequest !== null ||
-    hasLiveRunAssistantText ||
     liveRunErrorMessage.trim().length > 0 ||
-    pendingMessageText.trim().length > 0;
+    hasPendingMessageText;
   const canRenderGroupedPendingInlineContent = useMemo(
     () =>
       hasPendingInlineContent &&
@@ -2058,6 +2156,49 @@ export function SessionMessageColumn({
     }
     onMessageListScroll(event);
   };
+
+  const updateSelectionToolbar = useCallback(() => {
+    const messageListElement = messageListRef.current;
+    const selectionDetails = getSelectionDetailsWithinMessageList(messageListElement);
+    const boundaryRect = messageListElement?.getBoundingClientRect() ?? null;
+    const toolbarRect =
+      selectionToolbarRef.current?.getBoundingClientRect() ??
+      { width: 112, height: 32 };
+    if (
+      !selectionDetails ||
+      !boundaryRect ||
+      !rectsIntersect(selectionDetails.anchorRect, boundaryRect)
+    ) {
+      setSelectionToolbar(null);
+      return;
+    }
+
+    setSelectionToolbar({
+      style: clampToolbarPosition({
+        anchorRect: selectionDetails.anchorRect,
+        boundaryRect,
+        toolbarRect,
+      }),
+      text: selectionDetails.text,
+    });
+  }, [messageListRef]);
+
+  useEffect(() => {
+    if (typeof document === "undefined" || typeof window === "undefined") {
+      return;
+    }
+
+    document.addEventListener("selectionchange", updateSelectionToolbar);
+    window.addEventListener("resize", updateSelectionToolbar);
+    const messageListElement = messageListRef.current;
+    messageListElement?.addEventListener("scroll", updateSelectionToolbar, { passive: true });
+
+    return () => {
+      document.removeEventListener("selectionchange", updateSelectionToolbar);
+      window.removeEventListener("resize", updateSelectionToolbar);
+      messageListElement?.removeEventListener("scroll", updateSelectionToolbar);
+    };
+  }, [messageListRef, updateSelectionToolbar]);
 
   useLayoutEffect(() => {
     setMessageWindowStartIndex((current) => {
@@ -2181,8 +2322,7 @@ export function SessionMessageColumn({
             onOpenPath={onOpenPath}
           />
         ) : null}
-        {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} onOpenPath={onOpenPath} /> : null}
-        {!liveApprovalRequest && !liveElicitationRequest && !hasLiveRunAssistantText && !liveRunErrorMessage.trim() && pendingMessageText.trim() ? (
+        {hasPendingMessageText ? (
           <MessageRichText text={pendingMessageText} onOpenPath={onOpenPath} />
         ) : null}
         {liveRunErrorMessage ? (
@@ -2236,13 +2376,7 @@ export function SessionMessageColumn({
                 details: undefined,
               })) ??
               [];
-            const hasMessageTextActions = isAssistant && (onCopyMessageText || onQuoteMessageText);
-            const pickMessageActionText = (button: HTMLButtonElement) => {
-              const messageBody = button
-                .closest(".message-card")
-                ?.querySelector("[data-message-body='true']") ?? null;
-              return getSelectedTextWithin(messageBody) || message.text;
-            };
+            const canUseMessageTextActions = isAssistant && (onCopyMessageText || onQuoteMessageText);
 
             return (
               <Fragment key={`${message.role}-${messageKey}`}>
@@ -2304,31 +2438,12 @@ export function SessionMessageColumn({
                       {artifactExpanded ? "−" : "i"}
                     </button>
                   ) : null}
-                  <div data-message-body="true">
+                  <div
+                    data-message-body="true"
+                    data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
+                  >
                     <MessageRichText text={message.text} onOpenPath={onOpenPath} />
                   </div>
-                  {hasMessageTextActions ? (
-                    <div className="message-response-actions" aria-label="Response actions">
-                      {onCopyMessageText ? (
-                        <button
-                          className="message-response-action"
-                          type="button"
-                          onClick={(event) => onCopyMessageText(pickMessageActionText(event.currentTarget))}
-                        >
-                          Copy
-                        </button>
-                      ) : null}
-                      {onQuoteMessageText ? (
-                        <button
-                          className="message-response-action"
-                          type="button"
-                          onClick={(event) => onQuoteMessageText(pickMessageActionText(event.currentTarget))}
-                        >
-                          Quote
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
 
                   {artifact ? (
                     <section className="artifact-shell">
@@ -2469,6 +2584,15 @@ export function SessionMessageColumn({
             </div>
           </div>
         ) : null}
+        {selectionToolbar ? (
+          <MessageResponseActions
+            actionText={selectionToolbar.text}
+            onCopyMessageText={onCopyMessageText}
+            onQuoteMessageText={onQuoteMessageText}
+            style={selectionToolbar.style}
+            toolbarRef={selectionToolbarRef}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -2522,6 +2646,15 @@ export function SessionActionDockCompactRow({
           />
         </button>
         <div className="session-action-dock-compact-actions">
+          {showJumpToBottom ? (
+            <button
+              className="drawer-toggle compact secondary message-jump-bottom-button"
+              type="button"
+              onClick={onJumpToBottom}
+            >
+              末尾へ移動
+            </button>
+          ) : null}
           <button
             className="danger session-send-button"
             type="button"

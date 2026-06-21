@@ -1,17 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { MateGrowthApplyResult } from "../../src/mate/mate-growth-apply-result.js";
 import { createMainIpcRegistrationDeps } from "../../src-electron/main-ipc-deps.js";
 
-const zeroGrowthResult: MateGrowthApplyResult = {
-  candidateCount: 0,
-  appliedCount: 0,
-  skippedCount: 0,
-  revisionId: null,
-};
-
-test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化して delegate する", async () => {
+test("createMainIpcRegistrationDeps は残存する window / mate delegate を組み立てる", async () => {
   const calls: string[] = [];
 
   const deps = createMainIpcRegistrationDeps({
@@ -30,14 +22,6 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
         return {} as never;
       },
       async openSettingsWindow() {
-        return {} as never;
-      },
-      async openMemoryManagementWindow() {
-        calls.push("openMemory");
-        return {} as never;
-      },
-      async openMateTalkWindow() {
-        calls.push("openMateTalk");
         return {} as never;
       },
       async openCharacterEditorWindow() {
@@ -89,31 +73,9 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
         ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} }) as never,
       updateAppSettings: (settings) => settings,
       getAppDatabaseDiagnostics: () => ({}) as never,
-      listProviderInstructionTargets: () => [],
-      upsertProviderInstructionTarget: (input) => input as never,
       async resetAppDatabase() {
         return null;
       },
-      getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], characterMemories: [] }),
-      getMemoryManagementPage: () => ({
-        snapshot: { sessionMemories: [], projectMemories: [], characterMemories: [] },
-        pages: {
-          session: { nextCursor: null, hasMore: false, total: 0 },
-          project: { nextCursor: null, hasMore: false, total: 0 },
-          character: { nextCursor: null, hasMore: false, total: 0 },
-          mate_profile: { nextCursor: null, hasMore: false, total: 0 },
-        },
-      }),
-      getMateGrowthSettings: () => null,
-      updateMateGrowthSettings: () => null,
-      getMateEmbeddingSettings: () => null,
-      startMateEmbeddingDownload: () => {
-        calls.push("startMateEmbeddingDownload");
-      },
-      deleteSessionMemory: () => {},
-      deleteProjectMemoryEntry: () => {},
-      deleteCharacterMemoryEntry: () => {},
-      forgetMateProfileItem: () => {},
     },
     sessionQuery: {
       listSessionSummaries: () => [],
@@ -211,22 +173,24 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
       async getCharacter() {
         return null;
       },
-      async getCharacterUpdateWorkspace() {
-        return null;
-      },
-      async extractCharacterUpdateMemory() {
-        return { characterId: "char-1", generatedAt: "", entryCount: 0, text: "" };
-      },
-      async createCharacterUpdateSession() {
-        return {} as never;
-      },
       async createCharacter() {
         return {} as never;
       },
-      async updateCharacter() {
+      async updateCharacterMetadata() {
         return {} as never;
       },
-      async deleteCharacter() {},
+      async updateCharacterDefinition() {
+        return {} as never;
+      },
+      async archiveCharacter() {
+        return {} as never;
+      },
+      async setDefaultCharacter() {
+        return {} as never;
+      },
+      async resolveLaunchCharacter() {
+        return null;
+      },
     },
     mate: {
       getMateState() {
@@ -249,35 +213,6 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
         calls.push(`setMateAvatar:${input.avatarFilePath ?? "clear"}`);
         return {} as never;
       },
-      async applyPendingGrowth() {
-        calls.push("applyPendingGrowth");
-        return zeroGrowthResult;
-      },
-      async listMateGrowthEvents(request) {
-        calls.push(`listMateGrowthEvents:${request?.limit ?? "default"}`);
-        return { events: [], limit: request?.limit ?? 20 };
-      },
-      async correctMateGrowthEvent(request) {
-        calls.push(`correctMateGrowthEvent:${request.eventId}:${request.statement}`);
-        return { event: null };
-      },
-      async disableMateGrowthEvent(request) {
-        calls.push(`disableMateGrowthEvent:${request.eventId}`);
-        return { event: null };
-      },
-      async forgetMateGrowthEvent(request) {
-        calls.push(`forgetMateGrowthEvent:${request.eventId}`);
-        return { event: null };
-      },
-      async runMateTalkTurn(input) {
-        calls.push(`runMateTalk:${input.message}`);
-        return {
-          mateId: "mate-1",
-          userMessage: input.message,
-          assistantMessage: "受け取ったよ。",
-          createdAt: "2026-05-04T00:00:00.000Z",
-        };
-      },
       async resetMate() {
         calls.push("resetMate");
       },
@@ -285,39 +220,21 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
   });
 
   assert.equal(await deps.openHomeWindow(), undefined);
-  assert.equal(await deps.openMemoryManagementWindow(), undefined);
-  assert.equal(await deps.openMateTalkWindow(), undefined);
   assert.equal(await deps.openSessionWindow("session-1"), undefined);
   await deps.getMateState();
   await deps.getMateProfile();
   await deps.createMate({ displayName: "Buddy" });
   await deps.updateMate({ displayName: "Buddy 2" });
   await deps.setMateAvatar({ avatarFilePath: "C:/avatar.png" });
-  await deps.applyPendingGrowth();
-  await deps.listMateGrowthEvents({ limit: 5 });
-  await deps.correctMateGrowthEvent({ eventId: "event-0", statement: "修正後" });
-  await deps.disableMateGrowthEvent({ eventId: "event-1" });
-  await deps.forgetMateGrowthEvent({ eventId: "event-2" });
-  await deps.runMateTalkTurn({ message: "hello" });
   await deps.resetMate();
-  deps.startMateEmbeddingDownload();
   assert.deepEqual(calls, [
     "openHome",
-    "openMemory",
-    "openMateTalk",
     "openSession:session-1",
     "getMateState",
     "getMateProfile",
     "createMate:Buddy",
     "updateMate:Buddy 2",
     "setMateAvatar:C:/avatar.png",
-    "applyPendingGrowth",
-    "listMateGrowthEvents:5",
-    "correctMateGrowthEvent:event-0:修正後",
-    "disableMateGrowthEvent:event-1",
-    "forgetMateGrowthEvent:event-2",
-    "runMateTalk:hello",
     "resetMate",
-    "startMateEmbeddingDownload",
   ]);
 });

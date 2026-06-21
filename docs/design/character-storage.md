@@ -1,248 +1,164 @@
 # Character Storage
 
-> 4.0.0 note:
-> WithMate 4.0.0 は完全 SingleMate とし、runtime の正本は `docs/design/single-mate-architecture.md` の Mate Profile へ移す。
-> この文書は 3.x の character catalog と character update workspace の supporting / legacy detail として扱う。
-> 4.0.0 では既存 character catalog から Mate への自動 migration は行わず、初回利用時に新しい Mate 作成から開始する。
+- 作成日: 2026-03-12
+- 更新日: 2026-06-15
+- 対象: V5 Core の Character catalog / storage / snapshot 境界
 
 ## Goal
-WithMate 専用ディレクトリ配下でキャラクターデータを永続化し、Home / Character Editor / Session / Character Stream が共通で参照できる character catalog を提供する。
 
-## Directory Policy
-- キャラクターデータの正本は Codex 本体の `characters/` ではなく、WithMate 専用ディレクトリに置く。
-- 保存先は Electron Main Process から `app.getPath("userData")` を基準に解決する。
-- `userData` は `<appData>/WithMate/` へ固定する。
-- 基本パスは `<userData>/characters/` とする。
+V5 Core では、SingleMate の `current` 固定ではなく、複数 Character を保存、列挙、取得、更新できる catalog boundary を提供する。
 
-## Directory Layout
-```text
-<userData>/
-  characters/
-    <character-id>/
-      meta.json
-      character.md
-      character-notes.md
-      character.png
-      AGENTS.md
-      copilot-instructions.md
-      skills/
-        character-definition-update/
-          SKILL.md
-```
+この文書は V5 Core の Character storage 正本である。current runtime の session / companion prompt injection は後続 branch で接続するが、Character 実装ではこの storage 境界を優先する。
 
-## File Responsibilities
-### `meta.json`
-アプリが軽量に読む機械向け情報を持つ。
+## Scope
 
-想定項目:
-```json
-{
-  "id": "kuramochi-melto",
-  "name": "倉持めると",
-  "description": "Home 一覧用の短い説明",
-  "theme": {
-    "main": "#6f8cff",
-    "sub": "#6fb8c7"
-  },
-  "iconFile": "character.png",
-  "roleFile": "character.md",
-  "createdAt": "2026-03-12T12:00:00.000Z",
-  "updatedAt": "2026-03-12T12:00:00.000Z"
-}
-```
+V5 Core に含める:
 
-用途:
-- Home の character list
-- New Session の character picker
-- Session header / avatar 表示
-- Session の color theme snapshot 生成
-- Editor の一覧取得
+- SQLite 上の Character metadata
+- `characters/<character-id>/character.md` file body
+- optional `characters/<character-id>/character-notes.md`
+- optional managed icon file `characters/<character-id>/icon.<ext>`
+- default Character selection
+- archive
+- session / companion snapshot 用 domain model
+- renderer から Main Process 経由で使う IPC / preload API
 
-### `character.md`
-キャラクターロール定義の正本。実行時 prompt 合成や Character Stream 生成で参照する。
+V5 Core に含めない:
 
-詳細な合成ルールは `docs/design/prompt-composition.md` を参照する。
-標準構成は `docs/design/character-definition-format.md` を参照する。
-
-責務:
-- 会話用ロール定義
-- キャラクター性の本文
-- 実行時 prompt 合成の主要入力
-- 独り言の温度感や話し方の基準
-
-非責務:
-- 一覧表示専用の更新日時
-- Editor の軽量表示用メタデータ
-- 固定の実行制御指示
-- 調査メモ、採用理由、改稿履歴
-- 現行 Editor では `Role` 入力欄の本文をそのまま `character.md` へ保存する。
-
-### `character-notes.md`
-調査メモ、採用理由、出典、未確定事項、改稿履歴を持つ補助ファイル。
-
-責務:
-- 調査結果の蓄積
-- 採用しなかった解釈の退避
-- 次回更新時の引き継ぎ
-
-非責務:
-- prompt 合成の直接入力
-- Home 一覧表示用 metadata
-
-補足:
-- current 実装では character 保存時に seed される
-- Character Editor の `character-notes` タブから編集できる
-- 標準構成は `docs/design/character-definition-format.md` を参照する
-
-### `character.png`
-Home / Session / Character Stream で使うアイコン画像の正本。
-
-実装上は source image を character directory へコピーし、実際のファイル名は `meta.json` の `iconFile` を正本とする。
-Renderer 側では browser 標準の file picker で画像を選び、保存時に Main Process へ渡す。
-
-補足:
-- Character Update workflow では paired asset として扱う
-- current 実装では workspace 内に `character.png` がある場合、表示時はそれを優先して使う
-
-### `AGENTS.md` / `copilot-instructions.md`
-character 保存時に character directory へ同期する update 用 instruction file。  
-Character Update Workspace 起動前から存在し、初期作成直後でもそのまま update workspace として使える状態にする。
-
-責務:
-- workspace 内の fixed skill を前提に使うことを明示する
-- `character.md` と `character-notes.md` の役割を短く示す
-- prompt にどう入るかを短く示す
-
-非責務:
-- character catalog の一覧表示
-- Session 実行時の通常 prompt 合成
-- hidden な自動更新
-
-### `skills/character-definition-update/SKILL.md`
-character 保存時に character directory へ同期する固定 workflow の正本。
-
-責務:
-- `character.md` 更新の手順
-- `character-notes.md` へ逃がす情報の判断
-- 外部調査の許可範囲と source 優先順位
-- 更新後の自己チェック
-
-非責務:
-- provider 固有の instruction
-- 一覧表示用 metadata
+- `meta.json` 正本の file-only catalog
+- Character 定義自動生成
+- 詳細 Editor / section Editor
+- Character Update Workspace
+- provider instruction sync への Character 書き込み
+- Memory / Growth / MateTalk 再設計
 
 ## Source Of Truth
-- Character catalog の source of truth は file system 上の `meta.json + character.md + character.png`。
-- current 実装では `character-notes.md` を補助ファイルとして加える。
-- Character Update Workspace では同じ character directory を workspace として再利用する。
-- provider 向け instruction file と update skill は create / update の保存時に同期しておき、workspace 起動時はそのまま使う。
-- Renderer は Main Process 経由で catalog を読む。
-- Renderer が直接ディレクトリを走査しない。
 
-## Main Process Responsibilities
-Main Process は以下を担当する。
+| Data | Source of truth |
+| --- | --- |
+| catalog metadata | SQLite `characters` table |
+| runtime definition body | `characters/<character-id>/character.md` |
+| authoring notes | `characters/<character-id>/character-notes.md` |
+| managed icon body | `characters/<character-id>/icon.<ext>` |
+| launch default | SQLite `characters.is_default` |
+| session runtime input | session / companion 作成時に保存する `CharacterRuntimeSnapshot` |
 
-1. character root directory の解決
-2. character directory 一覧の走査
-3. `meta.json` とファイル存在確認による catalog 組み立て
-4. character 作成時のディレクトリ生成
-5. 編集時の `meta.json` / `character.md` / `character.png` 更新
-6. 削除時の character directory 削除
-7. Renderer 向けの安全な表示用パス返却
-8. Character Update Workspace 用の instruction file 生成
-9. Character Update Workspace 用 skill file の生成
+Renderer は filesystem を直接走査しない。Character catalog は Main Process service 経由で取得する。
 
-## Renderer Responsibilities
-### Home
-- character list を表示する
-- `Add Character` と card 全体クリックによる編集導線を出す
-- catalog の編集ロジック自体は持たない
+## Directory Layout
 
-### Character Editor
-- 入力フォームを出す
-- 保存時は Main Process API を呼ぶ
-- ファイルシステム操作はしない
-- image picker は browser 標準の file input を使う
-
-### Session
-- session に保存された `characterId` または snapshot metadata を使って avatar を表示する
-- 実行時に必要なら Main Process から最新 character metadata を再取得する
-
-### Character Update Session
-- Character Editor から provider を選んで起動する
-- `workspacePath` は character directory をそのまま使う
-- 表示面は専用 window ではなく `Session Window` の `character-update` variant とする
-- 右ペインでは `LatestCommand / MemoryExtract` を表示する
-- file system 直接操作はしない
-
-## Data Model
-最低限の catalog 返却型:
-```ts
-export type CharacterCatalogEntry = {
-  id: string;
-  name: string;
-  iconPath: string;
-  updatedAt: string;
-};
+```text
+<userData>/
+  withmate-v4.db
+  characters/
+    <character-id>/
+      character.md
+      character-notes.md
+      icon.<ext>
 ```
 
-Editor 用の詳細型:
-```ts
-export type CharacterDetail = {
-  id: string;
-  name: string;
-  iconPath: string;
-  roleMarkdown: string;
-  notesMarkdown: string;
-  updatedAt: string;
-};
-```
+Character icon は保存時に Main Process が app data 配下へ materialize する。
 
-## Save Rules
-- 新規作成時は `<character-id>/` を作成する。
-- `character-id` は name から slug 化して作る。
-- 同名衝突時は suffix を付与して回避する。
-- 保存は `meta.json` と本文ファイルを同一操作として扱う。
-- `character.md` が未作成かつ入力が空の場合は、最小テンプレートを seed する。
-- `character-notes.md` が未作成かつ入力が空の場合は、notes テンプレートを seed する。
-- `character.png` 未設定時は placeholder ではなく空ファイルを作らず、icon なしとして扱う。
-- 画像が指定された場合は source path から character directory 配下へコピーし、Renderer には保存後の絶対パスを返す。
+- 外部絶対 path が指定された場合、`characters/<character-id>/icon.<ext>` へコピーする。
+- DB の `icon_file_path` は managed icon では `characters/<character-id>/icon.<ext>` の app data 相対 path を保存する。
+- API / renderer へ返す `iconFilePath` は `userData` 基準の表示可能な path に materialize する。
+- 相対 path は `userData` 基準として扱う。`data:` / `file://` などの scheme path はコピーせず、そのまま返す。
+- managed icon の許可拡張子は `png`, `jpg`, `jpeg`, `gif`, `webp`, `bmp`, `svg` とし、絶対 path から取り込む場合は regular file かつ 10 MiB 以下であることを Main Process 側で検証する。
+- managed icon を別拡張子へ置換した場合は、旧 `icon.<ext>` を best-effort で削除する。削除失敗は保存成功を妨げない。
 
-## Delete Rules
-- 削除は character directory 単位で行う。
-- Home からは直接削除せず、Character Editor からのみ実行する。
-- character を解決できない session は新規 turn を続行しない。
-- ただし session 自体は削除せず、過去ログ / audit / diff を読むための `browse-only` / `view-only` 相当状態を許容する。
-- 同名 character の再作成時でも、`name` fallback で別 character へ自動再接続させない。
+## SQLite Metadata
 
-## Current Implementation と future 方針
+`characters` table:
 
-- session 側に character snapshot が残るため、一覧表示は継続できる場合がある。
-- `characterId` を正本とし、未解決時は `閲覧のみ可能 / 実行不可` として扱う。
-- `name` だけを使った再接続は行わない。
-- Home / Session では「過去の session 記録を読む導線」と「今後の実行可否」を分けて表現する。
+| Column | Meaning |
+| --- | --- |
+| `id` | stable Character id |
+| `name` | display name |
+| `description` | list / picker 用の短い説明 |
+| `icon_file_path` | optional icon path。managed icon は `characters/<character-id>/icon.<ext>` の app data 相対 path |
+| `theme_main` / `theme_sub` | UI theme color snapshot の元値 |
+| `state` | `active` / `archived` |
+| `is_default` | launch selector の default |
+| `created_at` / `updated_at` / `archived_at` | lifecycle timestamps |
 
-## Migration Policy
-- Electron 実行時は file-based storage を正本にする。
-- character root が空でも、そのまま empty state を表示して新規作成を促す。
+`is_default = 1` は active Character で最大 1 件にする。default Character を archive した場合は、残る active Character から fallback default を選ぶ。active Character が 0 件なら default なしを許容する。
 
-## Current / Target Boundary
+既存 V4 DB への安全な追加にするため、`characters` table は V4 required table 判定には入れず、`CharacterStorage` 初期化時に `CREATE TABLE IF NOT EXISTS` で作成する。
 
-### Current
+## Files
 
-- `meta.json`
-- `character.md`
-- `character-notes.md`
-- `character.png`
-- `AGENTS.md`
-- `copilot-instructions.md`
-- `skills/character-definition-update/SKILL.md`
+### `character.md`
 
-### Target
+- V5 Character runtime definition の正本。
+- format と validation は `docs/design/character-definition-format.md` に従う。
+- storage / import / raw editor は schema、name、body、size、null byte、path safety を検証する。
 
-- Character Update Workspace で `character-notes.md` も前提にした更新運用
-- `character-notes.md` のテンプレートや revision 補助をどこまで UI に持たせるかの判断
+### `character-notes.md`
 
-## Open Questions
-- import/export をどの形式で扱うか
-- Session が character snapshot をどこまで保持するか
+- authoring notes / evidence / revision notes 用の補助ファイル。
+- runtime prompt の常設入力にしない。
+- V5 Core では null byte と size limit だけを検証する。
+
+### `icon.<ext>`
+
+- Character 一覧、Editor preview、session / companion snapshot の avatar 表示に使う代表画像。
+- Renderer は filesystem を直接解決せず、storage service が materialize した `iconFilePath` を受け取る。
+- 外部絶対 path の取り込みは保存時にコピーし、保存後の正本は app data 配下の managed icon とする。
+
+## Service API
+
+V5 Core の storage service は次を提供する:
+
+- `listCharacters({ includeArchived? })`
+- `getCharacter(characterId)`
+- `createCharacter(input)`
+- `updateCharacterMetadata(input)`
+- `updateCharacterDefinition(input)`
+- `archiveCharacter(characterId)`
+- `setDefaultCharacter(characterId)`
+- `resolveLaunchCharacter({ characterId? })`
+- `createRuntimeSnapshot(characterId)`
+
+`resolveLaunchCharacter` は次の順で active Character を返す:
+
+1. 明示された `characterId`
+2. default Character
+3. 更新日時順の active Character
+4. `null`
+
+Character 0 件時は `null` を返し、Home / launch branch 側で neutral fallback を維持する。
+
+## Runtime Snapshot
+
+`CharacterRuntimeSnapshot` は session / companion 作成時に保存する immutable input である。
+
+最低限含める:
+
+- `characterId`
+- `name`
+- `description`
+- `iconFilePath`
+- `theme`
+- `definitionMarkdown`
+- `definitionSha256`
+- `definitionByteSize`
+- `snapshotAt`
+
+Runtime prompt injection は catalog 現在値ではなく saved snapshot を使う。実際の injection 接続は Branch 6 で扱う。
+
+## Data Safety
+
+- Character id は storage 側で生成し、path traversal を許さない。
+- Renderer は `character.md` file path を直接指定しない。
+- `character.md` の invalid update は metadata update と分離して拒否する。
+- Character 作成中に icon コピー後の validation / DB update が失敗した場合は、作成中の `characters/<character-id>/` directory を削除する。
+- Character metadata 更新で managed icon を置換した場合は旧 icon file を best-effort で削除する。削除に失敗しても DB は新しい icon を指し、保存全体は失敗させない。
+- archive は directory を削除しない。過去 session snapshot と audit 参照を優先する。
+- 同名 Character を再作成しても、過去 session を name fallback で自動再接続しない。
+- app database reset / recreate では SQLite metadata と `characters/` file body を同時に削除する。DB だけを消して orphan `character.md` / `character-notes.md` / `icon.<ext>` を残さない。
+
+## Related Docs
+
+- `docs/design/character-definition-format.md`
+- `docs/design/v5-character-transition.md`
+- `docs/plans/20260613-v5-character-core-branches.md`

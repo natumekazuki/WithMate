@@ -7,6 +7,7 @@ import {
   type CreateSessionInput,
   type Session,
 } from "../../src/app-state.js";
+import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src/model-catalog.js";
@@ -55,12 +56,37 @@ function createSnapshot(): ModelCatalogSnapshot {
   };
 }
 
+function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnapshot>): CharacterRuntimeSnapshot {
+  return {
+    characterId: "char-a",
+    name: "A",
+    description: "保存済み Character",
+    iconFilePath: "",
+    theme: { main: "#6f8cff", sub: "#6fb8c7" },
+    definitionMarkdown: [
+      "---",
+      "schema: withmate.character.v1",
+      "name: A",
+      "---",
+      "# Character",
+      "保存済み snapshot の character.md。",
+    ].join("\n"),
+    definitionSha256: "sha256-character-definition",
+    definitionByteSize: 128,
+    snapshotAt: "2026-06-14T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 describe("SessionPersistenceService", () => {
   it("createSession は有効な provider と model を解決して保存する", async () => {
     const storedSessions: Session[] = [];
     const syncedSessionIds: string[] = [];
     const broadcastedSessionIds: string[][] = [];
     const snapshot = createSnapshot();
+    const characterRuntimeSnapshot = createCharacterRuntimeSnapshot();
+    const snapshotCharacterIds: string[] = [];
+    let persistedSession: Session | null = null;
 
     const service = new SessionPersistenceService({
       getSessions() {
@@ -76,6 +102,7 @@ describe("SessionPersistenceService", () => {
         return false;
       },
       upsertStoredSession(session) {
+        persistedSession = session;
         storedSessions.splice(0, storedSessions.length, session);
         return session;
       },
@@ -96,6 +123,10 @@ describe("SessionPersistenceService", () => {
       },
       getModelCatalogSnapshot() {
         return snapshot;
+      },
+      createCharacterRuntimeSnapshot(characterId) {
+        snapshotCharacterIds.push(characterId);
+        return characterRuntimeSnapshot;
       },
       syncSessionDependencies(session) {
         syncedSessionIds.push(session.id);
@@ -134,8 +165,87 @@ describe("SessionPersistenceService", () => {
     assert.equal(created.customAgentName, "");
     assert.equal(created.catalogRevision, 2);
     assert.equal(created.allowedAdditionalDirectories.length, 1);
+    assert.deepEqual(snapshotCharacterIds, ["char-a"]);
+    assert.deepEqual(created.characterRuntimeSnapshot, characterRuntimeSnapshot);
+    assert.notEqual(created.characterRuntimeSnapshot, characterRuntimeSnapshot);
+    assert.deepEqual(persistedSession?.characterRuntimeSnapshot, characterRuntimeSnapshot);
+    assert.equal(storedSessions[0]?.characterRuntimeSnapshot, null);
     assert.deepEqual(syncedSessionIds, [created.id]);
     assert.deepEqual(broadcastedSessionIds, [[created.id]]);
+  });
+
+  it("createSession は input の CharacterRuntimeSnapshot を優先して保存する", async () => {
+    const storedSessions: Session[] = [];
+    const inputSnapshot = createCharacterRuntimeSnapshot({
+      definitionMarkdown: "# Character\ninput snapshot",
+      definitionSha256: "sha256-input",
+    });
+    let fallbackSnapshotCalls = 0;
+    let persistedSession: Session | null = null;
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession() {
+        return null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      upsertStoredSession(session) {
+        persistedSession = session;
+        storedSessions.splice(0, storedSessions.length, session);
+        return session;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      deleteStoredSession() {},
+      getAppSettings() {
+        return normalizeAppSettings();
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      createCharacterRuntimeSnapshot() {
+        fallbackSnapshotCalls += 1;
+        return createCharacterRuntimeSnapshot({ definitionSha256: "sha256-fallback" });
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      clearCharacterReflectionCheckpoint() {},
+      clearInFlightCharacterReflection() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    const created = await service.createSession({
+      taskTitle: "New Session",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "char-a",
+      character: "A",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      characterRuntimeSnapshot: inputSnapshot,
+      approvalMode: DEFAULT_APPROVAL_MODE,
+    } satisfies CreateSessionInput);
+
+    assert.equal(fallbackSnapshotCalls, 0);
+    assert.deepEqual(created.characterRuntimeSnapshot, inputSnapshot);
+    assert.notEqual(created.characterRuntimeSnapshot, inputSnapshot);
+    assert.deepEqual(persistedSession?.characterRuntimeSnapshot, inputSnapshot);
+    assert.equal(storedSessions[0]?.characterRuntimeSnapshot, null);
   });
 
   it("upsertSession は summary-only session 更新でも既存 messages を保持する", async () => {

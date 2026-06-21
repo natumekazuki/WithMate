@@ -7,17 +7,17 @@ import {
   importHomeModelCatalog,
   resetHomeDatabase,
   saveHomeSettings,
-  syncProviderInstructionTargetRoots,
   type HomeSettingsApi,
 } from "../../src/settings/settings-actions.js";
-import type { HomeProviderInstructionTargetDraft } from "../../src/settings/provider-instruction-target-draft.js";
+import { buildSettingsCommandHandlers } from "../../src/settings/settings-command-handlers.js";
+import type { AppSettings } from "../../src/provider-settings-state.js";
+import type { WithMateWindowApi } from "../../src/withmate-window-api.js";
 
 function createApi(overrides?: Partial<HomeSettingsApi>): HomeSettingsApi {
   return {
     importModelCatalogFile: async () => null,
     exportModelCatalogFile: async () => null,
     updateAppSettings: async (settings) => settings,
-    upsertProviderInstructionTarget: async () => null as never,
     resetAppDatabase: async () => ({
       resetTargets: ["sessions", "auditLogs"],
       sessions: [],
@@ -28,24 +28,8 @@ function createApi(overrides?: Partial<HomeSettingsApi>): HomeSettingsApi {
   };
 }
 
-function createProviderInstructionTarget(overrides?: Partial<HomeProviderInstructionTargetDraft>): HomeProviderInstructionTargetDraft {
-  return {
-    providerId: "codex",
-    targetId: "main",
-    enabled: false,
-    rootDirectory: "",
-    instructionRelativePath: ".github/copilot-instructions.md",
-    lastSyncState: "never",
-    lastSyncRunId: null,
-    lastSyncedRevisionId: null,
-    lastErrorPreview: "",
-    lastSyncedAt: null,
-    writeMode: "managed_block",
-    projectionScope: "mate_only",
-    failPolicy: "warn_continue",
-    requiresRestart: false,
-    ...overrides,
-  };
+async function flushAsyncHandlers(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("home-settings-actions", () => {
@@ -79,7 +63,7 @@ describe("home-settings-actions", () => {
 
     assert.equal(result.kind, "success");
     if (result.kind === "success") {
-      assert.equal(result.feedback, "sessions / audit logs を初期状態へ戻したよ。characters は保持したよ。");
+      assert.equal(result.feedback, "sessions / audit logs を初期状態へ戻したよ。characters file body は保持したよ。");
       assert.deepEqual(result.result.resetTargets, ["sessions", "auditLogs"]);
     }
   });
@@ -107,65 +91,173 @@ describe("home-settings-actions", () => {
     });
   });
 
-  it("syncProviderInstructionTargetRoots は既存 root が一致すれば upsert しない", async () => {
-    const api = createApi();
+  it("provider skill root picker は選択 path を draft に反映する", async () => {
     const settings = createDefaultAppSettings();
-    settings.codingProviderSettings = {
-      ...settings.codingProviderSettings,
-      codex: {
-        ...settings.codingProviderSettings.codex,
-        skillRootPath: "/workspace",
-      },
+    settings.codingProviderSettings.codex = {
+      enabled: true,
+      apiKey: "key",
+      skillRootPath: "C:/before",
+      skillRelativePath: ".codex/skills",
+      instructionRelativePath: "AGENTS.md",
     };
-
-    const providerInstructionTargets = [createProviderInstructionTarget({ rootDirectory: "/workspace" })];
-    const upsertCalls: unknown[] = [];
-    const syncApi = createApi({
-      ...api,
-      upsertProviderInstructionTarget: async (input) => {
-        upsertCalls.push(input);
-        return null as never;
+    let draft: AppSettings = settings;
+    let feedback = "";
+    const handlers = buildSettingsCommandHandlers({
+      getApi: () => ({
+        pickDirectory: async (initialPath) => {
+          assert.equal(initialPath, "C:/before");
+          return "C:/after";
+        },
+      } as Partial<WithMateWindowApi> as WithMateWindowApi),
+      persistedSettingsDraft: settings,
+      setAppSettings: () => undefined,
+      setSettingsDraft: (nextSettings) => {
+        draft = nextSettings;
+      },
+      setSettingsFeedback: (nextFeedback) => {
+        feedback = nextFeedback;
       },
     });
 
-    const nextTargets = await syncProviderInstructionTargetRoots({
-      api: syncApi,
-      nextSettings: settings,
-      providerInstructionTargets,
-    });
+    handlers.onBrowseProviderSkillRootPath("codex");
+    await flushAsyncHandlers();
 
-    assert.equal(upsertCalls.length, 0);
-    assert.equal(nextTargets.length, 1);
-    assert.equal(nextTargets[0].rootDirectory, "/workspace");
+    assert.equal(draft.codingProviderSettings.codex.skillRootPath, "C:/after");
+    assert.equal(draft.codingProviderSettings.codex.skillRelativePath, ".codex/skills");
+    assert.equal(draft.codingProviderSettings.codex.instructionRelativePath, "AGENTS.md");
+    assert.equal(draft.codingProviderSettings.codex.enabled, true);
+    assert.match(feedback, /反映した/);
   });
 
-  it("syncProviderInstructionTargetRoots は root 変更分だけ upsert して更新した target を返す", async () => {
+  it("provider skill relative picker は Root Directory 配下の相対 path を draft に反映する", async () => {
     const settings = createDefaultAppSettings();
-    settings.codingProviderSettings = {
-      ...settings.codingProviderSettings,
-      codex: {
-        ...settings.codingProviderSettings.codex,
-        skillRootPath: "/workspace/new-root",
-      },
+    settings.codingProviderSettings.codex = {
+      enabled: true,
+      apiKey: "key",
+      skillRootPath: "C:/workspace",
+      skillRelativePath: "",
+      instructionRelativePath: "AGENTS.md",
     };
-
-    const providerInstructionTargets = [createProviderInstructionTarget({ rootDirectory: "/workspace/old-root" })];
-    const upsertInputs: HomeProviderInstructionTargetDraft[] = [];
-    const syncApi = createApi({
-      upsertProviderInstructionTarget: async (input) => {
-        upsertInputs.push(input as HomeProviderInstructionTargetDraft);
-        return null as never;
+    let draft: AppSettings = settings;
+    let feedback = "";
+    const handlers = buildSettingsCommandHandlers({
+      getApi: () => ({
+        pickDirectory: async (initialPath) => {
+          assert.equal(initialPath, "C:/workspace");
+          return "C:/workspace/.codex/skills";
+        },
+      } as Partial<WithMateWindowApi> as WithMateWindowApi),
+      persistedSettingsDraft: settings,
+      setAppSettings: () => undefined,
+      setSettingsDraft: (nextSettings) => {
+        draft = nextSettings;
+      },
+      setSettingsFeedback: (nextFeedback) => {
+        feedback = nextFeedback;
       },
     });
 
-    const nextTargets = await syncProviderInstructionTargetRoots({
-      api: syncApi,
-      nextSettings: settings,
-      providerInstructionTargets,
+    handlers.onBrowseProviderSkillRelativePath("codex");
+    await flushAsyncHandlers();
+
+    assert.equal(draft.codingProviderSettings.codex.skillRootPath, "C:/workspace");
+    assert.equal(draft.codingProviderSettings.codex.skillRelativePath, ".codex/skills");
+    assert.equal(draft.codingProviderSettings.codex.instructionRelativePath, "AGENTS.md");
+    assert.match(feedback, /Skill Relative Path/);
+  });
+
+  it("provider instruction relative picker は Root Directory 配下の相対 path を draft に反映する", async () => {
+    const settings = createDefaultAppSettings();
+    settings.codingProviderSettings.codex = {
+      enabled: true,
+      apiKey: "key",
+      skillRootPath: "C:/workspace",
+      skillRelativePath: ".codex/skills",
+      instructionRelativePath: "",
+    };
+    let draft: AppSettings = settings;
+    let feedback = "";
+    const handlers = buildSettingsCommandHandlers({
+      getApi: () => ({
+        pickFile: async (initialPath) => {
+          assert.equal(initialPath, "C:/workspace");
+          return "C:/workspace/AGENTS.md";
+        },
+      } as Partial<WithMateWindowApi> as WithMateWindowApi),
+      persistedSettingsDraft: settings,
+      setAppSettings: () => undefined,
+      setSettingsDraft: (nextSettings) => {
+        draft = nextSettings;
+      },
+      setSettingsFeedback: (nextFeedback) => {
+        feedback = nextFeedback;
+      },
     });
 
-    assert.equal(upsertInputs.length, 1);
-    assert.equal(upsertInputs[0].rootDirectory, "/workspace/new-root");
-    assert.equal(nextTargets[0].rootDirectory, "/workspace/new-root");
+    handlers.onBrowseProviderInstructionRelativePath("codex");
+    await flushAsyncHandlers();
+
+    assert.equal(draft.codingProviderSettings.codex.skillRootPath, "C:/workspace");
+    assert.equal(draft.codingProviderSettings.codex.skillRelativePath, ".codex/skills");
+    assert.equal(draft.codingProviderSettings.codex.instructionRelativePath, "AGENTS.md");
+    assert.match(feedback, /Instruction Relative Path/);
   });
+
+  it("provider instruction relative picker は Root Directory 外の選択を反映しない", async () => {
+    const settings = createDefaultAppSettings();
+    settings.codingProviderSettings.codex = {
+      enabled: true,
+      apiKey: "key",
+      skillRootPath: "C:/workspace",
+      skillRelativePath: ".codex/skills",
+      instructionRelativePath: "AGENTS.md",
+    };
+    let draft: AppSettings = settings;
+    let feedback = "";
+    const handlers = buildSettingsCommandHandlers({
+      getApi: () => ({
+        pickFile: async () => "D:/other/AGENTS.md",
+      } as Partial<WithMateWindowApi> as WithMateWindowApi),
+      persistedSettingsDraft: settings,
+      setAppSettings: () => undefined,
+      setSettingsDraft: (nextSettings) => {
+        draft = nextSettings;
+      },
+      setSettingsFeedback: (nextFeedback) => {
+        feedback = nextFeedback;
+      },
+    });
+
+    handlers.onBrowseProviderInstructionRelativePath("codex");
+    await flushAsyncHandlers();
+
+    assert.equal(draft, settings);
+    assert.match(feedback, /Root Directory 配下/);
+  });
+
+  it("provider skill root picker cancel は draft を変更しない", async () => {
+    const settings = createDefaultAppSettings();
+    let draft: AppSettings = settings;
+    let feedback = "";
+    const handlers = buildSettingsCommandHandlers({
+      getApi: () => ({
+        pickDirectory: async () => null,
+      } as Partial<WithMateWindowApi> as WithMateWindowApi),
+      persistedSettingsDraft: settings,
+      setAppSettings: () => undefined,
+      setSettingsDraft: (nextSettings) => {
+        draft = nextSettings;
+      },
+      setSettingsFeedback: (nextFeedback) => {
+        feedback = nextFeedback;
+      },
+    });
+
+    handlers.onBrowseProviderSkillRootPath("codex");
+    await flushAsyncHandlers();
+
+    assert.equal(draft, settings);
+    assert.match(feedback, /キャンセル/);
+  });
+
 });

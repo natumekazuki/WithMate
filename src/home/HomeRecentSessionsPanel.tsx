@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 
-import { isLegacyReadOnlySession, type SessionSummary } from "../app-state.js";
+import { isReadOnlySession, type SessionSummary } from "../app-state.js";
 import type { CompanionSessionSummary } from "../companion-state.js";
 import { getHomeCompanionSessionState, type HomeSessionState } from "./home-session-projection.js";
-import { buildCardThemeStyle } from "../ui-utils.js";
+import { buildCardThemeStyle, CharacterAvatar } from "../ui-utils.js";
 
 export type HomeRecentSessionsPanelProps = {
   filteredSessionEntries: Array<{ session: SessionSummary; state: HomeSessionState }>;
@@ -17,6 +17,20 @@ export type HomeRecentSessionsPanelProps = {
   onOpenCompanionReview: (sessionId: string) => void;
   canUsePrimaryFeatures?: boolean;
 };
+
+function getAgentSessionModeBadge(session: SessionSummary): { className: string; label: string } {
+  if (session.sessionKind === "character-authoring") {
+    return {
+      className: "session-mode-badge character",
+      label: "Character",
+    };
+  }
+
+  return {
+    className: "session-mode-badge agent",
+    label: "Agent",
+  };
+}
 
 export function HomeRecentSessionsPanel({
   filteredSessionEntries,
@@ -53,6 +67,7 @@ export function HomeRecentSessionsPanel({
       return true;
     }
     const haystack = [
+      "companion",
       session.taskTitle,
       session.character,
       session.repoRoot,
@@ -121,6 +136,11 @@ export function HomeRecentSessionsPanel({
                 aria-disabled={!canUsePrimaryFeatures}
                 disabled={!canUsePrimaryFeatures}
               >
+                <CharacterAvatar
+                  character={{ name: session.character, iconPath: session.characterIconPath }}
+                  size="tiny"
+                  className="home-session-card-avatar"
+                />
                 <div className="session-card-copy">
                   <div className="session-card-topline home-session-card-topline">
                     <strong>{session.taskTitle}</strong>
@@ -139,7 +159,8 @@ export function HomeRecentSessionsPanel({
           }
 
           const { session, state } = item.entry;
-          const isReadOnly = isLegacyReadOnlySession(session);
+          const isReadOnly = isReadOnlySession(session);
+          const modeBadge = getAgentSessionModeBadge(session);
           return (
             <button
               key={`agent-${session.id}`}
@@ -150,11 +171,16 @@ export function HomeRecentSessionsPanel({
               aria-disabled={!canUsePrimaryFeatures}
               disabled={!canUsePrimaryFeatures}
             >
+              <CharacterAvatar
+                character={{ name: session.character, iconPath: session.characterIconPath }}
+                size="tiny"
+                className="home-session-card-avatar"
+              />
               <div className="session-card-copy">
                 <div className="session-card-topline home-session-card-topline">
                   <strong>{session.taskTitle}</strong>
                   <div className="home-session-card-badges">
-                    <span className="session-mode-badge agent">Agent</span>
+                    <span className={modeBadge.className}>{modeBadge.label}</span>
                     {isReadOnly ? <span className="session-status home-session-status neutral">閲覧専用</span> : null}
                     <span className={`session-status home-session-status ${state.kind}`.trim()}>{state.label}</span>
                   </div>

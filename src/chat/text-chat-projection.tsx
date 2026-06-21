@@ -13,6 +13,7 @@ import {
   createStaticTextChatCompactActionDockProps,
   createStaticTextConversationMessageColumnProps,
   isStaticChatSendDisabled,
+  type StaticTextChatComposerCapabilityProps,
 } from "./chat-window-adapter.js";
 
 export type TextChatWindowMessage = {
@@ -40,8 +41,8 @@ export type TextChatWindowProjectionInput = {
   selectedModelFallbackLabel: string;
   reasoningOptions: ChatSelectOption[];
   selectedReasoningEffort: string;
-  pendingRunIndicatorAnnouncement: string;
-  pendingRunIndicatorText: string;
+  pendingRunIndicatorAnnouncement?: string;
+  pendingRunIndicatorText?: string;
   messageListRef: RefObject<HTMLDivElement | null>;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   onDraftChange: (value: string) => void;
@@ -61,30 +62,7 @@ export type TextChatWindowProjectionInput = {
   rightPaneHeaderTitle?: string;
   rightPaneAriaLabel?: string;
   rightPaneClassName?: string;
-  composerCapabilityProps?: Partial<
-    Omit<
-      ChatWindowProps["composerProps"],
-      | "draft"
-      | "placeholder"
-      | "composerTextareaRef"
-      | "isRunning"
-      | "composerBlocked"
-      | "isComposerDisabled"
-      | "isSendDisabled"
-      | "composerSendability"
-      | "sendButtonTitle"
-      | "modelOptions"
-      | "selectedModel"
-      | "selectedModelFallbackLabel"
-      | "reasoningOptions"
-      | "selectedReasoningEffort"
-      | "onDraftChange"
-      | "onDraftKeyDown"
-      | "onSendOrCancel"
-      | "onChangeModel"
-      | "onChangeReasoningEffort"
-    >
-  >;
+  composerCapabilityProps?: StaticTextChatComposerCapabilityProps;
 };
 
 export function buildTextChatWindowProps({

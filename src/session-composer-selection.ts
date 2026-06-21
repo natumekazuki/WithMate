@@ -22,10 +22,58 @@ export type SelectedCustomAgentDisplay = {
   title?: string;
 };
 
+export type SkillPromptInsertionState = {
+  draft: string;
+  caret: number;
+  isActionDockPinnedExpanded: true;
+  isSkillPickerOpen: false;
+};
+
+export type ComposerPickerToggleTarget = "agent" | "skill";
+
+export type ComposerPickerOpenState = {
+  isAgentPickerOpen: boolean;
+  isSkillPickerOpen: boolean;
+};
+
+export function buildExclusiveComposerPickerToggleState(
+  target: ComposerPickerToggleTarget,
+  isTargetPickerOpen: boolean,
+): ComposerPickerOpenState {
+  if (target === "agent") {
+    return {
+      isAgentPickerOpen: !isTargetPickerOpen,
+      isSkillPickerOpen: false,
+    };
+  }
+
+  return {
+    isAgentPickerOpen: false,
+    isSkillPickerOpen: !isTargetPickerOpen,
+  };
+}
+
 export function buildSkillPromptSnippet(providerId: string, skillName: string): string {
   return providerId === "codex"
     ? `$${skillName}`
     : `Use the skill "${skillName}" for this task.`;
+}
+
+export function buildSkillPromptInsertionState(
+  providerId: string,
+  skillName: string,
+  draft: string,
+): SkillPromptInsertionState {
+  const snippet = buildSkillPromptSnippet(providerId, skillName);
+  const trimmedDraft = draft.trimStart();
+  const nextDraft = trimmedDraft ? `${snippet}\n\n${trimmedDraft}` : `${snippet}\n`;
+
+  return {
+    draft: nextDraft,
+    caret: nextDraft.length,
+    isActionDockPinnedExpanded: true,
+    isSkillPickerOpen: false,
+  };
 }
 
 export function buildSkillMatchDisplay(skill: DiscoveredSkill): SkillMatchDisplay {

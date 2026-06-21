@@ -44,9 +44,10 @@ import { normalizeCodexTokenUsage } from "./provider-token-usage.js";
 import {
   ProviderTurnError,
   resolveRunWorkspacePath,
-  MATE_TALK_BACKGROUND_STRUCTURED_PROMPT_POLICY,
+  BACKGROUND_STRUCTURED_PROMPT_POLICY,
   type ExtractSessionMemoryResult,
   type ExtractSessionMemoryInput,
+  type ProviderErrorReason,
   type ProviderPromptComposition,
   type RunBackgroundStructuredPromptInput,
   type RunBackgroundStructuredPromptResult,
@@ -139,9 +140,36 @@ type CodexAdapterLogger = (input: CodexAdapterLogInput) => void;
 
 const CODEX_WINDOWS_TASKKILL_SUCCESS_PARSE_NOISE_PATTERN =
   /^Failed to parse item:\s*SUCCESS:\s+The process with PID \d+ \(child process of PID \d+\) has been terminated\.\s*$/;
+const CODEX_USAGE_LIMIT_MESSAGE_PATTERN = /you['’]ve hit your usage limit\./i;
+const CODEX_USAGE_LIMIT_PURCHASE_PATTERN = /purchase more credits/i;
+const CODEX_USAGE_LIMIT_RETRY_PATTERN = /try again at/i;
+const CODEX_STREAM_DEBUG_ENV = "WITHMATE_CODEX_STREAM_DEBUG";
 
 export function isCodexWindowsTaskkillSuccessParseNoiseMessage(message: string): boolean {
   return CODEX_WINDOWS_TASKKILL_SUCCESS_PARSE_NOISE_PATTERN.test(message.trim());
+}
+
+export function isCodexUsageLimitMessage(message: string): boolean {
+  return CODEX_USAGE_LIMIT_MESSAGE_PATTERN.test(message)
+    && CODEX_USAGE_LIMIT_PURCHASE_PATTERN.test(message)
+    && CODEX_USAGE_LIMIT_RETRY_PATTERN.test(message);
+}
+
+function resolveCodexProviderErrorReason(message: string, canceled: boolean): ProviderErrorReason {
+  if (canceled) {
+    return "canceled";
+  }
+
+  if (isCodexUsageLimitMessage(message)) {
+    return "usage_limit";
+  }
+
+  return "unknown";
+}
+
+function isCodexStreamDebugLogEnabled(): boolean {
+  const value = process.env[CODEX_STREAM_DEBUG_ENV]?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
 function shouldIgnoreCodexWindowsTaskkillParseNoise(
@@ -167,7 +195,6 @@ function errorToCodexAdapterLogError(error: unknown): CodexAdapterLogInput["erro
     message: typeof error === "string" ? error : String(error),
   };
 }
-
 export type CodexThreadOptions = {
   workingDirectory: string;
   skipGitRepoCheck: true;
@@ -1327,7 +1354,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
   }
 
   getBackgroundStructuredPromptPolicy() {
-    return MATE_TALK_BACKGROUND_STRUCTURED_PROMPT_POLICY;
+    return BACKGROUND_STRUCTURED_PROMPT_POLICY;
   }
 
   async runBackgroundStructuredPrompt<TOutput = unknown>(
@@ -1638,20 +1665,23 @@ export class CodexAdapter implements ProviderTurnAdapter {
       const { events } = await thread.runStreamed(turnInput, {
         signal: input.signal,
       });
-      this.writeLog({
-        level: "debug",
-        kind: "codex.run.stream.opened",
-        message: "Codex session turn stream opened",
-        data: {
-          sessionId: input.session.id,
-          threadId: streamState.threadId,
-        },
-      });
+      const streamDebugLogEnabled = isCodexStreamDebugLogEnabled();
+      if (streamDebugLogEnabled) {
+        this.writeLog({
+          level: "debug",
+          kind: "codex.run.stream.opened",
+          message: "Codex session turn stream opened",
+          data: {
+            sessionId: input.session.id,
+            threadId: streamState.threadId,
+          },
+        });
+      }
 
       for await (const event of events) {
         applyCodexTurnEvent(streamState, event);
-        const eventLogData = buildCodexTurnEventLogData(event);
-        if (eventLogData) {
+        const eventLogData = streamDebugLogEnabled ? buildCodexTurnEventLogData(event) : null;
+        if (streamDebugLogEnabled && eventLogData) {
           this.writeLog({
             level: event.type === "turn.failed" || event.type === "error" ? "warn" : "debug",
             kind: "codex.run.stream.event",
@@ -1674,15 +1704,17 @@ export class CodexAdapter implements ProviderTurnAdapter {
           getLiveStreamErrorMessage(streamState),
         );
       }
-      this.writeLog({
-        level: "info",
-        kind: "codex.run.stream.finished",
-        message: "Codex session turn stream finished",
-        data: {
-          sessionId: input.session.id,
-          ...summarizeCodexTurnStreamState(streamState),
-        },
-      });
+      if (streamDebugLogEnabled) {
+        this.writeLog({
+          level: "info",
+          kind: "codex.run.stream.finished",
+          message: "Codex session turn stream finished",
+          data: {
+            sessionId: input.session.id,
+            ...summarizeCodexTurnStreamState(streamState),
+          },
+        });
+      }
 
       if (streamState.streamErrorMessage) {
         const shouldIgnoreWindowsTaskkillParseNoise = shouldIgnoreCodexWindowsTaskkillParseNoise(
@@ -1712,6 +1744,8 @@ export class CodexAdapter implements ProviderTurnAdapter {
           });
           return partialResult;
         }
+        const canceled = Boolean(input.signal?.aborted) || isCanceledProviderMessage(streamState.streamErrorMessage);
+        const reason = resolveCodexProviderErrorReason(streamState.streamErrorMessage, canceled);
 
         this.writeLog({
           level: "error",
@@ -1719,13 +1753,15 @@ export class CodexAdapter implements ProviderTurnAdapter {
           message: "Codex session turn stream ended with an error message",
           data: {
             sessionId: input.session.id,
+            providerErrorReason: reason,
             ...summarizeCodexTurnStreamState(streamState),
           },
         });
         throw new ProviderTurnError(
           streamState.streamErrorMessage,
           partialResult,
-          Boolean(input.signal?.aborted) || isCanceledProviderMessage(streamState.streamErrorMessage),
+          canceled,
+          reason,
         );
       }
 
@@ -1761,6 +1797,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
           data: {
             sessionId: input.session.id,
             canceled: error.canceled,
+            providerErrorReason: error.reason,
             ...summarizeCodexTurnStreamState(streamState),
           },
           error: errorToCodexAdapterLogError(error),
@@ -1769,6 +1806,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
       }
 
       const message = error instanceof Error ? error.message : String(error);
+      const candidateProviderMessage = streamState.streamErrorMessage || message;
+      const canceled = Boolean(input.signal?.aborted) || isCanceledProviderMessage(candidateProviderMessage);
+      const reason = resolveCodexProviderErrorReason(candidateProviderMessage, canceled);
+      const providerMessage = reason === "usage_limit" ? candidateProviderMessage : message;
       const shouldIgnoreWindowsTaskkillParseNoise = shouldIgnoreCodexWindowsTaskkillParseNoise(
         streamState,
         message,
@@ -1799,21 +1840,23 @@ export class CodexAdapter implements ProviderTurnAdapter {
       }
 
       this.writeLog({
-        level: Boolean(input.signal?.aborted) || isCanceledProviderMessage(message) ? "warn" : "error",
+        level: canceled ? "warn" : "error",
         kind: "codex.run.failed",
         message: "Codex session turn failed",
         data: {
           sessionId: input.session.id,
           aborted: Boolean(input.signal?.aborted),
-          canceledMessage: isCanceledProviderMessage(message),
+          canceledMessage: isCanceledProviderMessage(candidateProviderMessage),
+          providerErrorReason: reason,
           ...summarizeCodexTurnStreamState(streamState),
         },
         error: errorToCodexAdapterLogError(error),
       });
       throw new ProviderTurnError(
-        message,
+        providerMessage,
         partialResult,
-        Boolean(input.signal?.aborted) || isCanceledProviderMessage(message),
+        canceled,
+        reason,
       );
     }
   }
@@ -1888,4 +1931,3 @@ export function resolveCodexThreadForSettings(args: {
     reusedCached: false,
   };
 }
-

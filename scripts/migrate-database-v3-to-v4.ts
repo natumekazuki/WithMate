@@ -11,6 +11,7 @@ import { APP_DATABASE_V3_FILENAME, isValidV3Database } from "../src-electron/dat
 import { APP_DATABASE_V4_FILENAME, CREATE_V4_SCHEMA_SQL } from "../src-electron/database-schema-v4.js";
 import { AuditLogStorage } from "../src-electron/audit-log-storage.js";
 import { AuditLogStorageV3 } from "../src-electron/audit-log-storage-v3.js";
+import { CompanionAuditLogStorage } from "../src-electron/companion-audit-log-storage.js";
 import { CompanionAuditLogStorageV3 } from "../src-electron/companion-audit-log-storage-v3.js";
 import { CompanionStorage } from "../src-electron/companion-storage.js";
 import { CompanionStorageV3 } from "../src-electron/companion-storage-v3.js";
@@ -383,7 +384,7 @@ async function migrateCompanionData(input: {
     input.sourceDatabaseFile,
     input.sourceBlobRootPath,
   );
-  const targetCompanionAuditStorage = new CompanionAuditLogStorageV3(
+  const targetCompanionAuditStorage = new CompanionAuditLogStorage(
     input.targetDatabaseFile,
     input.targetBlobRootPath,
   );
