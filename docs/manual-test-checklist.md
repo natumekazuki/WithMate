@@ -32,7 +32,7 @@ npm run electron:start
 | V5C-006 | Snapshot boundary | Character A で session を作成した後、Character Editor Window で Character A の `character.md` を別内容へ変更し、既存 session で 1 turn 実行する | provider prompt は session 作成時点の saved snapshot を使い、現在の catalog 内容へ置き換わらない |
 | V5C-007 | Prompt boundary | `character.md` と `character-notes.md` の両方を持つ Character で 1 turn 実行し、Audit Log の `Logical Prompt` / `Transport Payload` を確認する | `character.md` snapshot は system 側に入る。`character-notes.md`、Memory / Growth history、provider instruction sync 由来の Character 書き込みは常設注入されない |
 | V5C-008 | Markdown fence boundary | `character.md` に triple backtick と quadruple backtick の code fence を含め、session を作成して 1 turn 実行する | Character Definition Snapshot section の外側 fence が壊れず、definition 全体が 1 つの markdown block として扱われる |
-| V5C-009 | Legacy compatibility | V5 Core 前に作られた session、または `CharacterRuntimeSnapshot` を持たない session を開いて 1 turn 実行する | session は壊れず実行できる。snapshot が無い session は Character system prompt を空として扱い、messages / audit / approval / thread は従来通り動く |
+| V5C-009 | Legacy read-only compatibility | V5 Core 前に作られた session、または `source_schema_version < 5` / `legacy_readonly` の session を Home から開く | Home 履歴に `閲覧専用` として残り、Session Window で messages / audit / diff など既存情報を確認できる。send、model 変更、approval 変更、その他永続更新は拒否され、新しい V5 session 作成へ誘導される |
 | V5C-010 | Summary performance boundary | Character A / B の `character.md` を大きめにして複数 session / companion session を作り、Home session list と Companion summaries を表示する | summary 表示は `character.md` 本文を読み込む必要がなく、一覧表示で大きな定義本文が UI cache や summary payload に出ない |
 
 ## 項目
@@ -47,7 +47,7 @@ npm run electron:start
 | MT-003B | Character Editor Window edit | Home の Character card または `Edit` を押す | 該当 Character の Editor Window が edit mode で開き、同じ Character を再度開いた場合は既存 window が前面に出る |
 | MT-003C | Character editor validation / notes boundary | Character Editor Window で invalid `character.md` と `character-notes.md` を編集する | 保存前 validation issue が読め、`character-notes.md` は runtime prompt に常設注入しない補助メモであることが表示される |
 | MT-003D | Character editor archive / dirty close | 既存 Character を編集し、未保存のまま close と archive をそれぞれ試す | close は未保存変更の破棄確認を出し、archive は destructive confirmation を挟む。archive 後は Home list と launch selector から消える |
-| MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `Session Window` / `Default Microcopy` / `Coding Agent Providers` / `Diagnostics` / `Model Catalog` が既存値で表示され、Character editor と `Mate Reset` は出ない |
+| MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `Session Window` / `Default Microcopy` / `Coding Agent Providers` / `Diagnostics` / `Mate Reset` / `Model Catalog` が既存値で表示され、Character editor は出ない |
 | MT-004H | Settings window shell layout | `Settings Window` を wide 幅で開き、縦に長い内容まで scroll する | panel は window 幅に追従し、`Home / Close` の header は出ない。本文は inner scroll で最後まで到達でき、scrollbar が shell の角丸に隠れない |
 | MT-004A | Settings provider row layout | `Settings Window` を開いて `Coding Agent Providers` を確認する | provider 名が左、checkbox が右の row で揃って見え、どの provider を on/off しているか即判別できる |
 | MT-004G | Cursor-based window placement | cursor を画面端寄りへ移動してから `Settings Window`、`Session Window`、`Diff Window`、`Session Monitor Window` を新規に開く | `Home Window` 以外の新規 window は cursor がある display 付近に開き、workArea 外へはみ出さない。既に開いている window を再度開いた時は位置を変えず focus だけが前面へ来る |

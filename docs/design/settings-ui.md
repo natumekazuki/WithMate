@@ -1,7 +1,7 @@
 # Settings UI
 
 - 作成日: 2026-03-14
-- 更新日: 2026-06-16
+- 更新日: 2026-06-21
 - 対象: 独立した `Settings Window`
 
 ## Goal
@@ -80,8 +80,8 @@
 - Settings Window の `loading` 派生状態は `HomeApp.tsx` が組み立てる
 - Settings Window の `import / export / save` の文言組み立てと戻り値解釈は `home-settings-actions` が担当する
 - Settings 保存成功時は renderer 側で戻り値の `appSettings` を draft に同期し、dirty 状態を解消する
-- Character editor は app settings draft とは分離し、`CharacterStorage` IPC を直接呼び出して保存する。
-- `character.md` の validation error は raw editor の操作結果として Settings Window 内に表示する。
+- Character editor は Settings Window から分離し、Home の `Characters` panel から開く独立 `Character Editor Window` で扱う。
+- `character.md` の validation error は `Character Editor Window` の raw editor 操作結果として表示する。
 
 ## Future Scope
 
