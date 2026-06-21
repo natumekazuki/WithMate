@@ -478,7 +478,7 @@ describe("HomeRecentSessionsPanel", () => {
     branch: "main",
     sessionKind: "default",
     accessMode: "active",
-    sourceSchemaVersion: 4,
+    sourceSchemaVersion: 5,
     characterId: "char-1",
     character: "Mia",
     characterIconPath: "",
@@ -593,6 +593,37 @@ describe("HomeRecentSessionsPanel", () => {
 
     assert.ok(html.includes("Review task"));
     assert.ok(html.includes(">Companion<"));
+  });
+
+  it("履歴カードに Mate アイコンを表示し、V4 以前の Agent session は閲覧専用として開ける", () => {
+    const html = renderHomeRecentSessions({
+      filteredSessionEntries: [
+        {
+          kind: "agent",
+          session: createSessionSummary({
+            id: "session-v4",
+            taskTitle: "Legacy task",
+            sourceSchemaVersion: 4,
+            character: "Solo Mate",
+            characterIconPath: "mate.png",
+          }),
+          state: { kind: "neutral", label: "idle" },
+        },
+      ],
+      companionSessions: [
+        createCompanionSummary({
+          id: "companion-1",
+          taskTitle: "Companion task",
+          character: "Solo Mate",
+          characterIconPath: "mate.png",
+        }),
+      ],
+    });
+
+    assert.equal((html.match(/character-avatar tiny home-session-card-avatar/g) ?? []).length, 2);
+    assert.ok(html.includes("mate.png"));
+    assert.ok(html.includes("閲覧専用"));
+    assert.ok(!html.includes("disabled=\"\""));
   });
 });
 

@@ -1170,8 +1170,13 @@ button:disabled {
 
 .home-page .home-session-card {
   align-items: start;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: 40px minmax(0, 1fr);
   min-height: 108px;
+}
+
+.home-page .home-session-card-avatar {
+  align-self: start;
+  margin-top: 2px;
 }
 
 .home-page .home-session-card-topline {

@@ -20,6 +20,8 @@ function createSession(partial: Partial<Session> & Pick<Session, "id" | "taskTit
     workspacePath: "F:/workspace",
     branch: "main",
     sessionKind: "default",
+    accessMode: "active",
+    sourceSchemaVersion: 5,
     characterId: "char-1",
     character: "Mia",
     characterIconPath: "icon.png",
@@ -260,4 +262,3 @@ describe("home-session-projection", () => {
     assert.deepEqual(entries.map((entry) => entry.session.id), ["opened", "sibling"]);
   });
 });
-

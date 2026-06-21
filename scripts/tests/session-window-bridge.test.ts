@@ -187,6 +187,40 @@ describe("SessionWindowBridge", () => {
     assert.equal(createdWindow.focusCount, 1);
   });
 
+  it("V4 以前の session でも履歴閲覧用に window を開ける", async () => {
+    const legacySession = createSession({ sourceSchemaVersion: 4 });
+    let createCount = 0;
+    let loadedChatMode: unknown = null;
+
+    const bridge = new SessionWindowBridge({
+      createWindow() {
+        createCount += 1;
+        return new StubWindow();
+      },
+      async loadChatEntry(_window, mode) {
+        loadedChatMode = mode;
+      },
+      getSession() {
+        return legacySession;
+      },
+      isRunInFlight() {
+        return false;
+      },
+      getAllowQuitWithInFlightRuns() {
+        return false;
+      },
+      confirmCloseWhileRunning() {
+        return false;
+      },
+      broadcastOpenSessionWindowIds() {},
+    });
+
+    await bridge.openSessionWindow(legacySession.id);
+
+    assert.equal(createCount, 1);
+    assert.deepEqual(loadedChatMode, { kind: "agent", sessionId: legacySession.id });
+  });
+
   it("running 中の close は確認ダイアログで継続可否を決める", async () => {
     const session = createSession();
     const window = new StubWindow();

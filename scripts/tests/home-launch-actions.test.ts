@@ -107,7 +107,7 @@ function createSessionSummary(): SessionSummary {
     branch: "main",
     sessionKind: "default",
     accessMode: "active",
-    sourceSchemaVersion: 4,
+    sourceSchemaVersion: 5,
     characterId: "mate-1",
     character: "Mia",
     characterIconPath: "avatar.png",

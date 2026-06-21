@@ -17,7 +17,7 @@ import {
 import { type CharacterProfile } from "../src/character-state.js";
 import { buildLiveRunAuditOperations } from "../src/live-run-audit-operations.js";
 import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
-import { isLegacyReadOnlySession, type Session } from "../src/session-state.js";
+import { isReadOnlySession, type Session } from "../src/session-state.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { MateStorageState } from "../src/mate/mate-state.js";
 import { ProviderTurnError, type ProviderCodingAdapter, type RunSessionTurnResult } from "./provider-runtime.js";
@@ -436,8 +436,8 @@ export class SessionRuntimeService {
       throw new Error("このセッションはまだ実行中だよ。");
     }
 
-    if (isLegacyReadOnlySession(session)) {
-      throw new Error("旧バージョンから移行された閲覧専用セッションには送信できないよ。");
+    if (isReadOnlySession(session)) {
+      throw new Error("閲覧専用セッションには送信できないよ。新しいセッションを作成してください。");
     }
 
     const nextMessage = request.userMessage.trim();
