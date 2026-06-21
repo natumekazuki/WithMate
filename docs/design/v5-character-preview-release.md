@@ -8,12 +8,12 @@
 
 ### V5 Character Core Preview
 
-WithMate V5 preview では、Character-first の初期実装として、複数 Character catalog、Settings の最低限 Character editor、New Session / Companion での Character 選択、session 開始時点の runtime snapshot、provider prompt への `character.md` 注入を追加した。
+WithMate V5 preview では、Character-first の初期実装として、複数 Character catalog、Home 起点の独立 Character Editor Window、New Session / Companion での Character 選択、session 開始時点の runtime snapshot、provider prompt への `character.md` 注入を追加した。
 
 Added:
 
 - 複数 Character catalog を再導入
-- Settings の `Characters` section
+- Home の `Characters` panel と独立 `Character Editor Window`
   - Character 一覧
   - 新規作成
   - name / description / icon path / theme 編集
@@ -45,7 +45,8 @@ Not included:
 
 Compatibility:
 
-- `CharacterRuntimeSnapshot` を持たない既存 session は、Character system prompt なしで従来通り実行できる。
+- V4 以前の agent session、または `source_schema_version < 5` / `legacy_readonly` の session は閲覧専用で開ける。messages / audit / diff など既存情報は確認できるが、send / update / model 変更 / approval 変更は拒否する。
+- `CharacterRuntimeSnapshot` を持たない V5 active session は、Character system prompt なしで実行できる。
 - Character catalog 更新は既存 session へ自動反映されない。既存 session は開始時点の snapshot を runtime 正本として使う。
 - `character-notes.md`、Memory / Growth history、provider instruction sync 由来の Character 書き込みは V5 Core runtime prompt へ常設注入されない。
 
@@ -84,7 +85,7 @@ Manual V5C Gate:
 - [ ] V5C-006 Snapshot boundary
 - [ ] V5C-007 Prompt boundary
 - [ ] V5C-008 Markdown fence boundary
-- [ ] V5C-009 Legacy compatibility
+- [ ] V5C-009 Legacy read-only compatibility
 - [ ] V5C-010 Summary performance boundary
 
 Cleanup confirmation:

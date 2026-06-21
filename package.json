@@ -1,6 +1,6 @@
 {
   "name": "withmate",
-  "version": "5.0.0-preview.13",
+  "version": "5.0.0",
   "description": "キャラクターロールプレイ対応 coding agent デスクトップアプリ",
   "private": true,
   "main": "dist-electron/src-electron/main.js",

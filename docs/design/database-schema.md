@@ -698,7 +698,7 @@ Settings の `DB を初期化` で対象にできるのは次の 6 系統。
 - V4 DB は V1 互換 runtime table と V4 Mate table を同じ DB に持つ
 - V4 DB の作成時は `PRAGMA user_version = 4` を設定する
 - DB file は `withmate-v4.db` のまま維持するが、新規 agent session の `sessions.source_schema_version` は 5 とする
-- `source_schema_version < 5` または `access_mode = 'legacy_readonly'` の agent session は旧互換 session として扱い、Home では `閲覧専用` 表示にする。履歴閲覧のため Session Window は開けるが、update / send は拒否する
+- `source_schema_version < 5` または `access_mode = 'legacy_readonly'` の agent session は旧互換 session として扱い、Home では `閲覧専用` 表示にする。履歴閲覧のため Session Window は開けるが、update / send / model 変更 / approval 変更などの永続更新は拒否する
 - Mate Profile / Growth / provider instruction sync の SQLite schema は `docs/design/mate-storage-schema.md` を正本にする
 - `mate/*.md` と provider instruction block は generated projection であり、正本は SQLite の Mate table と revision である
 - fresh install では `withmate-v4.db` を選ぶが、path 解決だけでは DB file を作成しない

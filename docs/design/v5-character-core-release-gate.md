@@ -52,7 +52,7 @@ npm run dist:win
 - Settings Window に Character raw editor は表示されない
 - session / companion は開始時点の Character snapshot を保存し、catalog 現在値ではなく saved snapshot を runtime prompt に使う
 - `character-notes.md`、Memory / Growth history、provider instruction sync は V5 Core runtime prompt に常設注入されない
-- legacy session / legacy DB / existing session summary が壊れず、snapshot が無い session は空 system prompt のまま動く
+- legacy session / legacy DB / existing session summary が壊れず、`source_schema_version < 5` または `legacy_readonly` の agent session は閲覧専用として開ける。messages / audit / diff など既存情報は確認できるが、send / update / model 変更 / approval 変更は拒否される
 
 ## Release Note Draft
 
@@ -62,6 +62,7 @@ npm run dist:win
 - 複数 Character catalog を再導入し、Home から Character 一覧を確認して、独立した Character Editor Window で作成・編集・既定設定・archive できるようにしました。
 - New Session と Companion 起動時に Character を選択できるようにしました。Character が 0 件の場合も neutral fallback で起動できます。
 - session / companion 開始時点の `character.md` を runtime snapshot として保存し、その保存済み snapshot を coding agent prompt に注入します。後から Character catalog を編集しても、既存 session の人格定義は開始時点の snapshot を使います。
+- V4 以前の agent session は V5 では閲覧専用として扱います。Home 履歴と Session Window から過去の messages / audit / diff は確認できますが、旧 session への送信や設定更新は行わず、新しい V5 session を作成して続行します。
 - `character-notes.md`、Memory / Growth history、provider instruction sync への Character 書き込みは V5 Core では未実装です。
 - Character 定義自動生成、詳細 section editor、revision / diff / rollback、Character Update Workspace は後続 scope です。
 ```
@@ -72,7 +73,7 @@ npm run dist:win
 | --- | --- |
 | Character 定義品質の自動評価がない | V5 Core では Character Editor Window の raw `character.md` editor / import validation までを scope とし、自動生成・人格品質 validator は後続 scope に送る |
 | `character-notes.md` が runtime prompt に入らない | 意図した境界。補助ファイルとして保存するが、常設 prompt 注入はしない |
-| 既存 session は CharacterRuntimeSnapshot を持たない | legacy compatibility として許容。snapshot が無い session は従来通り空 system prompt で動く |
+| V4 以前の agent session は `CharacterRuntimeSnapshot` を持たない | legacy compatibility として閲覧専用で許容。messages / audit / diff の確認は維持し、send / update は拒否する |
 | Character catalog 更新が既存 session に反映されない | 意図した snapshot 境界。既存 session は開始時点の `character.md` を正本にする |
 | Windows packaging は native module rebuild、cross build、外部 download、signing に左右される | release candidate 前に `npm run dist:win` を別 gate として実行し、失敗時は packaging environment / installer / binary download / signing 由来かを切り分ける |
 
