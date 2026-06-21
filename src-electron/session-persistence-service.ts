@@ -2,7 +2,7 @@ import { getProviderAppSettings, type AppSettings } from "../src/provider-settin
 import {
   buildNewSession,
   cloneSessions,
-  isLegacyReadOnlySession,
+  isReadOnlySession,
   projectSessionSummary,
   type CreateSessionInput,
   type Session,
@@ -57,8 +57,8 @@ function toCachedSessions(sessions: Session[]): Session[] {
 }
 
 function assertSessionWritable(session: Session): void {
-  if (isLegacyReadOnlySession(session)) {
-    throw new Error("旧バージョンから移行された閲覧専用セッションは更新できないよ。");
+  if (isReadOnlySession(session)) {
+    throw new Error("閲覧専用セッションは更新できないよ。新しいセッションを作成してください。");
   }
 }
 

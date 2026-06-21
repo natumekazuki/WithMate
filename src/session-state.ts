@@ -49,6 +49,8 @@ export type StreamEntry = {
   text: string;
 };
 
+export const CURRENT_SESSION_SCHEMA_VERSION = 5;
+
 export type SessionKind = "default" | "character-update" | "character-authoring";
 export const SESSION_ACCESS_MODE_VALUES = ["active", "legacy_readonly"] as const;
 export type SessionAccessMode = typeof SESSION_ACCESS_MODE_VALUES[number];
@@ -119,6 +121,12 @@ export function normalizeSessionAccessMode(value: unknown, fallback: SessionAcce
 
 export function isLegacyReadOnlySession(session: Pick<Session, "accessMode"> | Pick<SessionSummary, "accessMode">): boolean {
   return session.accessMode === "legacy_readonly";
+}
+
+export function isReadOnlySession(
+  session: Pick<Session, "accessMode" | "sourceSchemaVersion"> | Pick<SessionSummary, "accessMode" | "sourceSchemaVersion">,
+): boolean {
+  return isLegacyReadOnlySession(session) || session.sourceSchemaVersion < CURRENT_SESSION_SCHEMA_VERSION;
 }
 
 function getLocationSearch(): string {
@@ -306,7 +314,7 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
       Number.isInteger(candidate.sourceSchemaVersion) &&
       candidate.sourceSchemaVersion > 0
         ? candidate.sourceSchemaVersion
-        : 4,
+        : CURRENT_SESSION_SCHEMA_VERSION - 1,
     characterId:
       typeof candidate.characterId === "string" && candidate.characterId.trim()
         ? candidate.characterId
@@ -432,7 +440,7 @@ export function buildNewSession(input: CreateSessionInput): Session {
     branch: input.branch,
     sessionKind: input.sessionKind ?? "default",
     accessMode: "active",
-    sourceSchemaVersion: 4,
+    sourceSchemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
     characterId: input.characterId,
     character: input.character,
     characterIconPath: input.characterIconPath,

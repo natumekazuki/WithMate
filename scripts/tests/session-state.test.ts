@@ -8,6 +8,8 @@ import {
   applySessionModelMetadataUpdate,
   buildNewSession,
   buildSessionSummarySignature,
+  CURRENT_SESSION_SCHEMA_VERSION,
+  isReadOnlySession,
   selectHydrationTarget,
   type SessionSummary,
 } from "../../src/session-state.js";
@@ -68,6 +70,16 @@ function createSession(provider: string) {
 }
 
 describe("session-state custom agent selection", () => {
+  it("新規 session は V5 schema version で作成し、V4 以前は閲覧専用として扱う", () => {
+    const session = createSession("codex");
+
+    assert.equal(CURRENT_SESSION_SCHEMA_VERSION, 5);
+    assert.equal(session.sourceSchemaVersion, 5);
+    assert.equal(isReadOnlySession(session), false);
+    assert.equal(isReadOnlySession({ ...session, sourceSchemaVersion: 4 }), true);
+    assert.equal(isReadOnlySession({ ...session, accessMode: "legacy_readonly", sourceSchemaVersion: 5 }), true);
+  });
+
   it("Copilot custom agent 切り替え時は threadId を維持する", () => {
     const session = {
       ...buildNewSession({

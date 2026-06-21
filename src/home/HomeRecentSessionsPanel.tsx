@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 
-import { isLegacyReadOnlySession, type SessionSummary } from "../app-state.js";
+import { isReadOnlySession, type SessionSummary } from "../app-state.js";
 import type { CompanionSessionSummary } from "../companion-state.js";
 import { getHomeCompanionSessionState, type HomeSessionState } from "./home-session-projection.js";
-import { buildCardThemeStyle } from "../ui-utils.js";
+import { buildCardThemeStyle, CharacterAvatar } from "../ui-utils.js";
 
 export type HomeRecentSessionsPanelProps = {
   filteredSessionEntries: Array<{ session: SessionSummary; state: HomeSessionState }>;
@@ -136,6 +136,11 @@ export function HomeRecentSessionsPanel({
                 aria-disabled={!canUsePrimaryFeatures}
                 disabled={!canUsePrimaryFeatures}
               >
+                <CharacterAvatar
+                  character={{ name: session.character, iconPath: session.characterIconPath }}
+                  size="tiny"
+                  className="home-session-card-avatar"
+                />
                 <div className="session-card-copy">
                   <div className="session-card-topline home-session-card-topline">
                     <strong>{session.taskTitle}</strong>
@@ -154,7 +159,7 @@ export function HomeRecentSessionsPanel({
           }
 
           const { session, state } = item.entry;
-          const isReadOnly = isLegacyReadOnlySession(session);
+          const isReadOnly = isReadOnlySession(session);
           const modeBadge = getAgentSessionModeBadge(session);
           return (
             <button
@@ -166,6 +171,11 @@ export function HomeRecentSessionsPanel({
               aria-disabled={!canUsePrimaryFeatures}
               disabled={!canUsePrimaryFeatures}
             >
+              <CharacterAvatar
+                character={{ name: session.character, iconPath: session.characterIconPath }}
+                size="tiny"
+                className="home-session-card-avatar"
+              />
               <div className="session-card-copy">
                 <div className="session-card-topline home-session-card-topline">
                   <strong>{session.taskTitle}</strong>

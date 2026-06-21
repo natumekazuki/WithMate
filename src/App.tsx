@@ -40,7 +40,7 @@ import {
   type DiffPreviewPayload,
   type Message,
   applyCopilotCustomAgentSelection,
-  isLegacyReadOnlySession,
+  isReadOnlySession,
   type Session,
 } from "./session-state.js";
 import {
@@ -685,7 +685,7 @@ export default function AgentSessionWindowApp() {
         : null,
     [selectedSession],
   );
-  const isSelectedSessionReadOnly = selectedSession ? isLegacyReadOnlySession(selectedSession) : false;
+  const isSelectedSessionReadOnly = selectedSession ? isReadOnlySession(selectedSession) : false;
   const sessionThemeStyle = useMemo(
     () => (selectedSession ? buildCharacterThemeStyle(selectedSession.characterThemeColors) : undefined),
     [selectedSession],
@@ -720,7 +720,7 @@ export default function AgentSessionWindowApp() {
     }
 
     if (isSelectedSessionReadOnly) {
-      return "この session は旧バージョンから移行された閲覧専用だよ。";
+      return "この session は旧バージョンのため閲覧専用です。追加メッセージを送る場合は新しいセッションを作成してください。";
     }
 
     if (!isSelectedProviderEnabled) {
@@ -1642,7 +1642,7 @@ export default function AgentSessionWindowApp() {
     }
 
     if (isSelectedSessionReadOnly) {
-      throw new Error("旧バージョンから移行された閲覧専用セッションには送信できないよ。");
+      throw new Error("閲覧専用セッションには送信できないよ。新しいセッションを作成してください。");
     }
 
     const previewRequest = createComposerPreviewRequest({
@@ -1907,7 +1907,7 @@ export default function AgentSessionWindowApp() {
     if (!withmateApi || isSelectedSessionReadOnly) {
       throw new Error(
         isSelectedSessionReadOnly
-          ? "旧バージョンから移行された閲覧専用セッションは更新できないよ。"
+          ? "閲覧専用セッションは更新できないよ。新しいセッションを作成してください。"
           : "Session Window は Electron から開いてね。",
       );
     }
