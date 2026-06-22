@@ -180,21 +180,24 @@ type MemoryEntryKind =
   | "boundary"
   | "note";
 
-type MemoryEntry = {
+type MemoryEntrySummary = {
   id: string;
   owner: MemoryOwnerRef;
   scope: MemoryScopeRef;
   kind: MemoryEntryKind;
   title: string;
-  body: string;
   preview: string;
   state: MemoryEntryState;
   tags: MemoryTag[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+type MemoryEntryDetail = MemoryEntrySummary & {
+  body: string;
   source: MemorySource;
   supersedes: string[];
   supersededBy: string | null;
-  createdAt: string;
-  updatedAt: string;
   forgottenAt: string | null;
 };
 
@@ -353,7 +356,7 @@ type MemorySearchHit = {
 ```ts
 type MemoryGetEntryResponse = {
   schemaVersion: "withmate-memory-v1";
-  entry: MemoryEntry;
+  entry: MemoryEntryDetail;
 };
 ```
 
@@ -396,7 +399,7 @@ type MemoryAppendRequest = {
 ```ts
 type MemoryAppendResponse = {
   schemaVersion: "withmate-memory-v1";
-  entry: MemoryEntry;
+  entry: MemoryEntrySummary;
   created: boolean;
 };
 ```
