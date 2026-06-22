@@ -33,6 +33,8 @@ WithMate が現在どこに何を保存しているかを、1 枚で把握でき
 ## Scope
 
 この文書は current 実装を対象にする。
+V6ではSQLite DB定義全体を再設計し、V5以前のsession履歴やlegacy Memory互換を保持要件にしない。
+V6 DB再設計の正本は`docs/design/v6-database-foundation.md`とし、この文書のV1〜V4 schema説明をV6設計へ持ち込まない。
 
 2026-05-19 時点で、4.0 runtime の新規作成 DB は `<userData>/withmate-v4.db` を canonical path とする。`withmate-v4.db` が存在しない状態で既存の V3 / V2 / V1 DB がある場合は、起動時に同じ `<userData>` 配下へ V4 DB を自動作成する。migration 元の DB と blob / character file は削除せず、そのまま残す。current 実装の `<userData>/characters/` は 3.x legacy storage として記載し、Mate 関連の SQLite schema 詳細は `docs/design/mate-storage-schema.md` を参照する。
 

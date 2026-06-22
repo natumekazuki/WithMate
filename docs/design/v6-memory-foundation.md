@@ -21,11 +21,12 @@ V6 foundationは次を成立させる。
 ## Position
 
 - 本書をV6 Memory foundationのsource of truthとする。
+- V6 DB全体再設計、destructive reset、legacy data境界は`docs/design/v6-database-foundation.md`を優先する。
 - V5 Character catalog / definition / snapshotは既存V5 source of truthを優先する。
 - `docs/design/memory-architecture.md`のV1〜V4 Memory / Growth記述はhistorical / legacy contextとして扱う。
-- project identity detailは`docs/design/project-memory-storage.md`を参考にするが、V6 schemaの正本にはしない。
+- legacy project identity detailは`docs/design/project-memory-storage.md`をhistorical contextとして参照できるが、V6 project scopeの正本にはしない。
 - provider runtime boundaryは`docs/design/provider-adapter.md`へ反映する。
-- current保存構造は`docs/design/database-schema.md`へ反映する。
+- current保存構造の棚卸しは`docs/design/database-schema.md`を参照する。
 
 ## Product Principles
 
@@ -40,6 +41,8 @@ V6 foundationは次を成立させる。
 foundationでは次を扱わない。
 
 - Memoryの毎turn prompt常設注入
+- mutableなSession working state管理
+- session summary / next actionsの自動更新
 - turn完了後の自動Memory抽出
 - background Memory generation
 - Mate Profile / Growthの復活
@@ -159,6 +162,7 @@ OwnerとScopeは別概念とする。
 | `project` | `project` | Characterに依存しないproject decision / convention |
 
 `project` owner + `character` scope、`user` owner、`session` scope、`global` scopeはschema上予約してもよいが、初期append対象にはしない。
+session中に得た決定・制約・継続文脈をagentがdurable Memory entryとしてappendすることは許可するが、V6 foundationはmutableなSession working stateをfirst-class domainとして扱わない。
 
 ### Entry
 
@@ -254,8 +258,7 @@ Request:
 
 ```json
 {
-  "schemaVersion": "withmate-memory-v1",
-  "context": { "mode": "self" }
+  "schemaVersion": "withmate-memory-v1"
 }
 ```
 
@@ -266,24 +269,42 @@ Response:
   "schemaVersion": "withmate-memory-v1",
   "session": { "id": "..." },
   "character": { "id": "...", "name": "..." },
-  "project": { "id": "...", "displayName": "..." },
+  "sessionProject": { "id": "...", "displayName": "..." },
   "permissions": ["memory.search", "memory.append"]
 }
 ```
+
+`memory.resolve_context`は、transport metadataから解決できるprincipal、permissions、current Character、session project、runtime状態を返す。
+ここで返す`sessionProject`はdiagnostics / convenience用途であり、search / appendのtargetを暗黙決定しない。
+CLI commandとしては`withmate-memory context --json`で呼ぶ。
+`--self` flagは採用しない。
 
 ### `memory.search`
 
 ```ts
 type MemorySearchRequest = {
   schemaVersion: "withmate-memory-v1";
-  context: { mode: "self" } | ExplicitMemoryContext;
+  targets: MemoryTargetSelector[];
   query: string;
-  domains?: Array<"project" | "character">;
   kinds?: MemoryEntryKind[];
   tags?: MemoryTag[];
   limit?: number;
   cursor?: string;
 };
+
+type MemoryTargetSelector =
+  | { owner: "project"; project: ProjectTargetRef; scope: "project" }
+  | { owner: "character"; character: CharacterTargetRef; scope: "character" }
+  | { owner: "character"; character: CharacterTargetRef; scope: "project"; project: ProjectTargetRef };
+
+type ProjectTargetRef =
+  | { type: "id"; id: string }
+  | { type: "path"; path: string }
+  | { type: "alias"; alias: string };
+
+type CharacterTargetRef =
+  | { type: "id"; id: string }
+  | { type: "current" };
 ```
 
 Responseはpreview中心とする。
@@ -317,7 +338,7 @@ type MemorySearchHit = {
 
 ### `memory.list_tags`
 
-- current contextで利用可能なactive tag catalogを返す。
+- 明示targetで利用可能なactive tag catalogを返す。
 - search refinementとappend時のtag reuseに使う。
 
 ### `memory.append`
@@ -325,9 +346,7 @@ type MemorySearchHit = {
 ```ts
 type MemoryAppendRequest = {
   schemaVersion: "withmate-memory-v1";
-  context: { mode: "self" } | ExplicitMemoryContext;
-  owner: "character" | "project";
-  scope: "character" | "project";
+  target: MemoryTargetSelector;
   kind: MemoryEntryKind;
   title: string;
   body: string;
@@ -343,10 +362,28 @@ app側validation:
 
 - length / null byte / invalid Unicode
 - owner / scope allowlist
-- binding permission
-- referenced entry ownership
 - tag normalization
 - idempotency
+- transaction integrity
+
+contract / pure validationで扱う:
+
+- schemaVersion
+- required fields
+- enum values
+- owner / scope allowlist shape
+- duplicate tags
+- length / null byte
+- provider-specific unknown field rejection
+
+service層で扱う:
+
+- runtime binding検証
+- permission
+- `--character current`解決
+- project path / alias / id解決
+- referenced entry ownership
+- idempotency persistence
 - transaction integrity
 
 app側で行わないこと:
@@ -361,7 +398,6 @@ app側で行わないこと:
 ```ts
 type MemoryForgetRequest = {
   schemaVersion: "withmate-memory-v1";
-  context: { mode: "self" } | ExplicitMemoryContext;
   entryIds: string[];
   reason?: "user_request" | "incorrect" | "outdated" | "privacy" | "other";
   sourceMessageId?: string;
@@ -371,44 +407,97 @@ type MemoryForgetRequest = {
 
 ## CLI Contract
 
+CLIはuser-facing entrypointであり、app外の人間やagentが自由に呼べる薄いclientとする。
+CLIはDBを直接触らず、起動中のWithMateが提供するruntime Memory APIへ接続する。
+WithMateが起動していない場合、CLIはすべてのMemory操作を拒否し、machine-readable errorを返す。
+`--self` flagは採用しない。
+CLIは毎回、process environmentに短命runtime bindingがあれば自動検証する。
+bindingはprincipal / permission / current Character解決にだけ使い、Memoryのowner / scope targetはcommand引数またはinput payloadで明示する。
+
 例:
 
 ```text
-withmate-memory context --self --json
-withmate-memory search --self --query "approval modeの方針" --domain project --json
-withmate-memory get --self --id <entry-id> --json
-withmate-memory tags --self --json
-withmate-memory append --self --input <payload.json> --json
-withmate-memory forget --self --input <payload.json> --json
+withmate-memory status --json
+withmate-memory context --json
+withmate-memory search --project ../repo-a --query "approval modeの方針" --json
+withmate-memory search --project-id <project-id> --query "approval modeの方針" --json
+withmate-memory search --character current --query "呼び方の好み" --json
+withmate-memory get --id <entry-id> --json
+withmate-memory tags --project ../repo-a --json
+withmate-memory append --project ../repo-a --input <payload.json> --json
+withmate-memory forget --input <payload.json> --json
 ```
 
-### Bound Mode
+### Runtime Binding
 
-次のいずれかからbindingを解決する。
+WithMate内で起動したagent向けに、provider turnごとに短命runtime bindingを発行する。
+WithMateはprovider process / runへopaque binding referenceを環境変数としてセットする。
+agent / Skillにはbinding値を読ませず、Skill本文にも環境変数名や値の意味を書かない。
+CLIだけが`--character current`やprincipal検証の実装詳細としてprocess environmentを読む。
 
-- `WITHMATE_MEMORY_ENDPOINT`
-- `WITHMATE_MEMORY_BINDING`
-- `WITHMATE_MEMORY_CONTEXT_FILE`
-- `WITHMATE_MEMORY_CLI`
+bindingは次のlifecycleで失効する。
 
-実際に採用する変数はprovider spike後に固定する。
+- turn終了
+- session終了
+- app終了
+- 次turnのbinding発行
+- provider execution invalidation
 
-### Explicit Mode
+環境変数に入れる値はcredentialではなく、短命opaque referenceとする。
+runtime API側はbinding reference、active session lifecycle、provider run、permission、owner / scope accessを再検証する。
 
-bindingが無い通常CLIでは、`--owner`、`--scope`、認証情報の明示を要求する。
+providerへのbinding伝達はprovider spikeで確認する。
+第一候補はturnごとのenv injection、fallbackはsession-local context file、どちらも無理なproviderはunsupportedとする。
 
-`--self`をbinding無しで実行した場合はmachine-readable errorを返す。
+### Target Selection
+
+WithMate内外どちらのCLIでも、Memory targetはcallerが明示する。
+CLI利用者に認証tokenやcredential管理を要求しない。
+ただし、CLIは起動中のWithMate runtime Memory APIにのみ接続し、offline CLI / direct DB accessは提供しない。
+
+project target:
+
+- `--project <path>`
+- `--project-id <id>`
+- `--project-alias <alias>`
+
+character target:
+
+- `--character <character-id>`
+- `--character current`
+
+`--character current`はruntime bindingがある場合だけ使える。
+WithMate外CLIではCharacterを暗黙解決せず、必要な場合はCharacter IDを明示する。
+project targetはcurrent working directoryから暗黙推定しない。
+`--project .`はcurrent directoryを使う明示指定として許可する。
+
+appendはfirst releaseでは単一target必須とする。
+searchは複数target対応を将来検討してよいが、初期実装では単一targetから始めてよい。
+owner / scopeのallowlist、entry access、mutation permissionはapp service側で再検証する。
+
+runtime bindingが必要なtargetをbinding無しで実行した場合はmachine-readable errorを返す。
 
 ```json
 {
   "error": {
     "code": "MEMORY_BINDING_REQUIRED",
-    "message": "--self requires a WithMate session binding"
+    "message": "current character requires a WithMate runtime binding"
   }
 }
 ```
 
-## Runtime Binding
+WithMateが起動していない場合:
+
+```json
+{
+  "error": {
+    "code": "WITHMATE_NOT_RUNNING",
+    "message": "WithMate must be running to use withmate-memory."
+  }
+}
+```
+
+## Runtime Binding Registry
 
 ### Registry
 
@@ -417,7 +506,8 @@ Main Process memoryに次を保持する。
 ```ts
 type MemoryBindingRecord = {
   bindingId: string;
-  tokenHash: string;
+  bindingReferenceHash: string;
+  runId: string | null;
   sessionId: string;
   characterId: string | null;
   projectScopeId: string | null;
@@ -429,7 +519,7 @@ type MemoryBindingRecord = {
 };
 ```
 
-- token本体はDBへ保存しない。
+- binding reference本体はDBへ保存しない。
 - binding IDは意味を持たないopaque valueにする。
 - session closeだけではrunning turnが継続する可能性があるため、revoke timingはsession lifecycleと合わせる。
 - app quit、session delete、provider execution invalidation時に失効させる。
@@ -446,27 +536,35 @@ type MemoryBindingInjectionStrategy = {
 };
 ```
 
-- provider SDKがchild process envを受けられるかを確認する。
-- env不可の場合はsession-local context fileを検討する。
+- provider SDKからprovider process / agent shell childへturnごとの環境変数を注入できるか確認する。
+- env injection不可の場合だけsession-local context fileを検討する。
 - working directoryから暗黙探索しない。
-- provider runtimeがbinding非対応なら、V6 bound modeをそのproviderへ表示しない。
+- provider runtimeがbinding非対応なら、current Characterなどruntime binding必須のcapabilityをそのproviderへ表示しない。
 
-## Localhost Transport Security
+## Runtime Memory API Security
 
-- `127.0.0.1` / `::1`のみlistenする。
-- LAN interfaceへbindしない。
-- binding tokenは十分なrandomnessを持つ。
-- tokenはAuthorization headerまたは同等の専用headerで送る。
-- URL queryへtokenを載せない。
-- token、context file内容、endpoint secretをaudit / app logへ出さない。
+runtime Memory APIはCLIや将来のMCP adapterが使うapp/service内部境界であり、public APIとして公開しない。
+CLIはuser-facingだが、API endpointはユーザーが直接叩く前提にしない。
+
+- 可能ならUnix domain socket / named pipeなどOS-local IPCを優先する。
+- HTTPを使う場合も`127.0.0.1` / `::1`のみlistenし、LAN interfaceへbindしない。
+- 固定portを避け、WithMateが管理するruntime discovery fileからCLIがendpointを取得する。
+- discovery fileはOS userだけが読めるruntime directoryへ置く。
+- CLIは認証tokenをユーザーに要求しない。
+- API側は必要に応じてapp内部のruntime secret / nonce / handshakeで公式CLIまたはmanaged adapterからの呼び出しを識別してよい。
+- runtime secretを使う場合もDBへ保存せず、URL query、audit、app logへ出さない。
+- CORSは許可しない。
+- browser originからのrequestを拒否する。
 - request body size、rate、concurrencyを制限する。
 - state-changing requestはidempotency keyを受けられるようにする。
-- bindingごとにpermissionとowner / scope accessを検証する。
+- principal、permission、owner / scope targetを検証する。
 - app shutdownでserverを停止する。
 
 ## Storage
 
-既存legacy tableをV6の正本として意味変更しない。V6用tableを新設する。
+V6 MemoryはV6 DB foundation上の新規tableとして実装する。
+legacy Memory tableは読まない、書かない、意味変更しない。
+V5以前のsession / legacy MemoryはV6 first releaseのmigration対象にしない。
 
 ```sql
 CREATE TABLE IF NOT EXISTS memory_entries_v6 (
@@ -623,13 +721,8 @@ full entry閲覧、manual correction、forget、restore、exportは後続UI phas
 - V4 Mate Growth table
 
 これらを自動的にV6 active Memoryとして扱わない。
-
-後続で次を設計する。
-
-1. read-only legacy viewer
-2. import preview
-3. explicit migration
-4. source / confidence / legacy marker
+V6 first releaseではlegacy Memory import / viewer / migration compatibilityを提供しない。
+V6 DB migration boundaryは`docs/design/v6-database-foundation.md`を正本にする。
 
 ## Failure Policy
 
@@ -659,6 +752,7 @@ full entry閲覧、manual correction、forget、restore、exportは後続UI phas
 
 - `docs/design/documentation-map.md`
 - `docs/design/memory-architecture.md`
+- `docs/design/v6-database-foundation.md`
 - `docs/design/database-schema.md`
 - `docs/design/provider-adapter.md`
 - `docs/design/coding-agent-capability-matrix.md`
@@ -693,8 +787,5 @@ npm run build
 
 ## Open Questions
 
-- Session working stateをfoundationに含めるか。
-- provider SDKからCLI child processへenvを渡せるか。
+- provider SDKからprovider process / agent shell childへturnごとの環境変数を注入できるか。
 - global Skill / CLIのpackagingとupdate単位。
-- explicit modeをfirst releaseで公開するか。
-- project scopeの既存table再利用範囲。
