@@ -374,7 +374,11 @@ contract / pure validationで扱う:
 - owner / scope allowlist shape
 - duplicate tags
 - length / null byte
+- well-formed Unicode
 - provider-specific unknown field rejection
+
+Phase 1aではrequest contractとpure request validationに限定する。
+response / state contractはPhase 1bで固定する。
 
 service層で扱う:
 
@@ -385,6 +389,9 @@ service層で扱う:
 - referenced entry ownership
 - idempotency persistence
 - transaction integrity
+
+文字列長のPhase 1a validationはJavaScript文字列のUTF-16 code unit数を基準にする。
+transport / HTTP / IPCのbyte size limitはAPI境界で別途検証する。
 
 app側で行わないこと:
 
@@ -404,6 +411,22 @@ type MemoryForgetRequest = {
   idempotencyKey?: string;
 };
 ```
+
+### Tag Canonicalization
+
+request上のtagはdisplay valueとして`type` / `value`を保持する。
+同一性判定にはcanonical keyを使う。
+
+Phase 1aのcanonical algorithm:
+
+```ts
+value.normalize("NFC").toLowerCase()
+```
+
+- 同一request内のduplicate tagはcanonical keyでdedupeする。
+- 最初に現れたdisplay valueを保持する。
+- Phase 2 storageではraw display valueだけをunique keyにしない。
+- tag catalogはcanonical type / valueへunique constraintを持つ。
 
 ## CLI Contract
 

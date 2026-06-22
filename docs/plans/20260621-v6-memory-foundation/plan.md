@@ -83,21 +83,20 @@ scripts/tests/database-schema-v6.test.ts
 - V6 project scopeを専用tableで新設する。
 - legacy `project_scopes` / `project_memory_entries`を再利用しない。
 
-## Phase 1: Shared Contract
+## Phase 1a: Request Contract And Validation
 
 候補path:
 
 ```text
 src/memory-v6/memory-contract.ts
-src/memory-v6/memory-state.ts
 src/memory-v6/memory-validation.ts
 scripts/tests/memory-v6-contract.test.ts
 ```
 
 内容:
 
-- versioned request / response
-- refs / kind / state / tags
+- search / append / forget request contract
+- refs / kind / tags
 - machine-readable error
 - normalization / validation
 - pure TypeScriptのみで、DB / provider / CLI / runtime bindingに依存しない
@@ -108,6 +107,34 @@ scripts/tests/memory-v6-contract.test.ts
 - null byte / size / duplicate tagsを正規化する。
 - contractにprovider固有型を含めない。
 - project pathのGit解決、Character `current`解決、permission判定はservice層に残す。
+
+## Phase 1b: Response And State Contract
+
+候補path:
+
+```text
+src/memory-v6/memory-state.ts
+src/memory-v6/memory-response-contract.ts
+scripts/tests/memory-v6-response-contract.test.ts
+```
+
+内容:
+
+- `MemoryEntry`
+- owner / scope / source
+- search hit / pagination
+- get / tags / append / forget response
+- versioned error envelope
+- responseに含めるstate / body / preview境界
+
+完了条件:
+
+- all responseに`schemaVersion`がある。
+- search hitにfull bodyを含めない。
+- normal search responseにforgotten / superseded entryを出さない。
+- cursorはopaque stringとして扱う。
+- append retryで同じentry responseを返せるshapeを持つ。
+- forget responseで対象IDごとの結果を表現できる。
 
 ## Phase 2: Storage
 
