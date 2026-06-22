@@ -37,7 +37,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.ok, true);
     assert.equal(result.value.query, "approval mode");
     assert.deepEqual(result.value.kinds, ["decision", "context"]);
-    assert.deepEqual(result.value.tags, [{ type: "topic", value: "V6" }]);
+    assert.deepEqual(result.value.tags, [{ type: "topic", value: "V6", canonicalType: "topic", canonicalValue: "v6" }]);
   });
 
   it("valid append request を正規化できる", () => {
@@ -57,6 +57,31 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.value.title, "呼び方");
     assert.deepEqual(result.value.supersedes, ["entry-a"]);
     assert.equal(result.value.idempotencyKey, "key-1");
+  });
+
+  it("appendでtags省略を拒否し、空tagsは許可する", () => {
+    const missingTags = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "decision",
+      title: "title",
+      body: "body",
+      preview: "preview",
+    });
+    assert.equal(missingTags.ok, false);
+    assert.equal(missingTags.error.field, "tags");
+
+    const emptyTags = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "decision",
+      title: "title",
+      body: "body",
+      preview: "preview",
+      tags: [],
+    });
+    assert.equal(emptyTags.ok, true);
+    assert.deepEqual(emptyTags.value.tags, []);
   });
 
   it("valid forget request を正規化できる", () => {
@@ -124,6 +149,116 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.error.code, "MEMORY_INVALID_TARGET");
   });
 
+  it("target variant外fieldを拒否する", () => {
+    const characterCurrentWithId = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: {
+        owner: "character",
+        scope: "character",
+        character: { type: "current", id: "char-a" },
+      },
+      kind: "preference",
+      title: "title",
+      body: "body",
+      preview: "preview",
+      tags: [],
+    });
+    assert.equal(characterCurrentWithId.ok, false);
+    assert.equal(characterCurrentWithId.error.field, "target.character.id");
+
+    const characterScopeWithProject = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: {
+        owner: "character",
+        scope: "character",
+        character: { type: "id", id: "char-a" },
+        project: { type: "id", id: "project-a" },
+      },
+      kind: "preference",
+      title: "title",
+      body: "body",
+      preview: "preview",
+      tags: [],
+    });
+    assert.equal(characterScopeWithProject.ok, false);
+    assert.equal(characterScopeWithProject.error.field, "target.project");
+
+    const projectIdWithPath = validateMemorySearchRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a", path: "." } }],
+      query: "test",
+    });
+    assert.equal(projectIdWithPath.ok, false);
+    assert.equal(projectIdWithPath.error.field, "targets[0].project.path");
+
+    const projectTargetWithCharacter = validateMemorySearchRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [{
+        owner: "project",
+        scope: "project",
+        project: { type: "id", id: "project-a" },
+        character: { type: "id", id: "char-a" },
+      }],
+      query: "test",
+    });
+    assert.equal(projectTargetWithCharacter.ok, false);
+    assert.equal(projectTargetWithCharacter.error.field, "targets[0].character");
+  });
+
+  it("targets上限とduplicate targetを拒否する", () => {
+    const tooManyTargets = validateMemorySearchRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: Array.from({ length: 6 }, (_, index) => ({
+        owner: "project",
+        scope: "project",
+        project: { type: "id", id: `project-${index}` },
+      })),
+      query: "test",
+    });
+    assert.equal(tooManyTargets.ok, false);
+    assert.equal(tooManyTargets.error.field, "targets");
+
+    const duplicateTargets = validateMemorySearchRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [
+        { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      ],
+      query: "test",
+    });
+    assert.equal(duplicateTargets.ok, false);
+    assert.equal(duplicateTargets.error.code, "MEMORY_DUPLICATE_TARGET");
+  });
+
+  it("kindsのempty / duplicate / 上限を固定する", () => {
+    const emptyKinds = validateMemorySearchRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [projectTarget],
+      query: "test",
+      kinds: [],
+    });
+    assert.equal(emptyKinds.ok, true);
+    assert.equal(emptyKinds.value.kinds, undefined);
+
+    const duplicateKinds = validateMemorySearchRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [projectTarget],
+      query: "test",
+      kinds: ["decision", "decision", "note"],
+    });
+    assert.equal(duplicateKinds.ok, true);
+    assert.deepEqual(duplicateKinds.value.kinds, ["decision", "note"]);
+
+    const tooManyKinds = validateMemorySearchRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [projectTarget],
+      query: "test",
+      kinds: Array.from({ length: 10 }, () => "decision"),
+    });
+    assert.equal(tooManyKinds.ok, false);
+    assert.equal(tooManyKinds.error.field, "kinds");
+  });
+
   it("oversized title / body / preview を拒否する", () => {
     const titleResult = validateMemoryAppendRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -175,6 +310,63 @@ describe("memory-v6 contract validation", () => {
 
     assert.equal(result.ok, false);
     assert.equal(result.error.field, "body");
+  });
+
+  it("well-formedでないUnicodeを拒否し、valid surrogate pairは許可する", () => {
+    const highSurrogate = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "decision",
+      title: "title",
+      body: "\uD800",
+      preview: "preview",
+      tags: [],
+    });
+    assert.equal(highSurrogate.ok, false);
+    assert.equal(highSurrogate.error.field, "body");
+
+    const lowSurrogate = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "decision",
+      title: "title",
+      body: "\uDC00",
+      preview: "preview",
+      tags: [],
+    });
+    assert.equal(lowSurrogate.ok, false);
+    assert.equal(lowSurrogate.error.field, "body");
+
+    const validPair = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "decision",
+      title: "title",
+      body: "emoji 😀",
+      preview: "emoji 😀",
+      tags: [{ type: "mood", value: "😀" }],
+    });
+    assert.equal(validPair.ok, true);
+  });
+
+  it("tag canonical keyをNFC lowercaseで固定する", () => {
+    const result = validateMemorySearchRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [projectTarget],
+      query: "test",
+      tags: [
+        { type: "Topic", value: "e\u0301" },
+        { type: "topic", value: "\u00e9" },
+      ],
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.value.tags, [{
+      type: "Topic",
+      value: "e\u0301",
+      canonicalType: "topic",
+      canonicalValue: "\u00e9",
+    }]);
   });
 
   it("invalid forget reason を拒否する", () => {

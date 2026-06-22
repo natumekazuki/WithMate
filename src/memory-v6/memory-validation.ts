@@ -6,9 +6,9 @@ import {
   type MemoryForgetReason,
   type MemoryForgetRequest,
   type MemorySearchRequest,
-  type MemoryTag,
   type MemoryTargetSelector,
   type MemoryValidationResult,
+  type NormalizedMemoryTag,
   type ProjectTargetRef,
 } from "./memory-contract.js";
 
@@ -46,10 +46,15 @@ const APPEND_REQUEST_KEYS = new Set([
   "idempotencyKey",
 ]);
 const FORGET_REQUEST_KEYS = new Set(["schemaVersion", "entryIds", "reason", "sourceMessageId", "idempotencyKey"]);
-const PROJECT_TARGET_KEYS = new Set(["type", "id", "path", "alias"]);
-const CHARACTER_TARGET_KEYS = new Set(["type", "id"]);
+const PROJECT_TARGET_ID_KEYS = new Set(["type", "id"]);
+const PROJECT_TARGET_PATH_KEYS = new Set(["type", "path"]);
+const PROJECT_TARGET_ALIAS_KEYS = new Set(["type", "alias"]);
+const CHARACTER_TARGET_ID_KEYS = new Set(["type", "id"]);
+const CHARACTER_TARGET_CURRENT_KEYS = new Set(["type"]);
 const MEMORY_TAG_KEYS = new Set(["type", "value"]);
-const MEMORY_TARGET_KEYS = new Set(["owner", "scope", "project", "character"]);
+const PROJECT_PROJECT_TARGET_KEYS = new Set(["owner", "scope", "project"]);
+const CHARACTER_CHARACTER_TARGET_KEYS = new Set(["owner", "scope", "character"]);
+const CHARACTER_PROJECT_TARGET_KEYS = new Set(["owner", "scope", "character", "project"]);
 
 const MAX_SEARCH_QUERY_LENGTH = 500;
 const MAX_TITLE_LENGTH = 160;
@@ -63,6 +68,7 @@ const MAX_LIMIT = 50;
 const MAX_TAGS = 20;
 const MAX_SUPERSEDES = 20;
 const MAX_FORGET_ENTRY_IDS = 50;
+const MAX_TARGETS = 5;
 
 function error(code: string, message: string, field?: string): MemoryValidationResult<never> {
   return {
@@ -85,6 +91,29 @@ function rejectUnknownKeys(value: Record<string, unknown>, allowedKeys: Set<stri
   return { ok: true, value: undefined };
 }
 
+function hasUnpairedSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) {
+        return true;
+      }
+      index += 1;
+      continue;
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function canonicalizeMemoryTagPart(value: string): string {
+  return value.normalize("NFC").toLowerCase();
+}
+
 function normalizeText(value: unknown, field: string, options: { maxLength: number; required?: boolean }): MemoryValidationResult<string> {
   if (typeof value !== "string") {
     if (options.required === false && value === undefined) {
@@ -95,6 +124,9 @@ function normalizeText(value: unknown, field: string, options: { maxLength: numb
 
   if (value.includes("\0")) {
     return error("MEMORY_INVALID_FIELD", `${field} must not contain null bytes.`, field);
+  }
+  if (hasUnpairedSurrogate(value)) {
+    return error("MEMORY_INVALID_FIELD", `${field} must be well-formed Unicode.`, field);
   }
 
   const normalized = value.trim();
@@ -172,20 +204,28 @@ function normalizeProjectTarget(value: unknown, field: string): MemoryValidation
   if (!isRecord(value)) {
     return error("MEMORY_INVALID_FIELD", `${field} must be an object.`, field);
   }
-  const unknownKeys = rejectUnknownKeys(value, PROJECT_TARGET_KEYS, field);
-  if (!unknownKeys.ok) {
-    return unknownKeys;
-  }
 
   if (value.type === "id") {
+    const unknownKeys = rejectUnknownKeys(value, PROJECT_TARGET_ID_KEYS, field);
+    if (!unknownKeys.ok) {
+      return unknownKeys;
+    }
     const id = normalizeText(value.id, `${field}.id`, { maxLength: MAX_ID_LENGTH });
     return id.ok ? { ok: true, value: { type: "id", id: id.value } } : id;
   }
   if (value.type === "path") {
+    const unknownKeys = rejectUnknownKeys(value, PROJECT_TARGET_PATH_KEYS, field);
+    if (!unknownKeys.ok) {
+      return unknownKeys;
+    }
     const projectPath = normalizeText(value.path, `${field}.path`, { maxLength: 1_000 });
     return projectPath.ok ? { ok: true, value: { type: "path", path: projectPath.value } } : projectPath;
   }
   if (value.type === "alias") {
+    const unknownKeys = rejectUnknownKeys(value, PROJECT_TARGET_ALIAS_KEYS, field);
+    if (!unknownKeys.ok) {
+      return unknownKeys;
+    }
     const alias = normalizeText(value.alias, `${field}.alias`, { maxLength: MAX_ID_LENGTH });
     return alias.ok ? { ok: true, value: { type: "alias", alias: alias.value } } : alias;
   }
@@ -197,15 +237,19 @@ function normalizeCharacterTarget(value: unknown, field: string): MemoryValidati
   if (!isRecord(value)) {
     return error("MEMORY_INVALID_FIELD", `${field} must be an object.`, field);
   }
-  const unknownKeys = rejectUnknownKeys(value, CHARACTER_TARGET_KEYS, field);
-  if (!unknownKeys.ok) {
-    return unknownKeys;
-  }
 
   if (value.type === "current") {
+    const unknownKeys = rejectUnknownKeys(value, CHARACTER_TARGET_CURRENT_KEYS, field);
+    if (!unknownKeys.ok) {
+      return unknownKeys;
+    }
     return { ok: true, value: { type: "current" } };
   }
   if (value.type === "id") {
+    const unknownKeys = rejectUnknownKeys(value, CHARACTER_TARGET_ID_KEYS, field);
+    if (!unknownKeys.ok) {
+      return unknownKeys;
+    }
     const id = normalizeText(value.id, `${field}.id`, { maxLength: MAX_ID_LENGTH });
     return id.ok ? { ok: true, value: { type: "id", id: id.value } } : id;
   }
@@ -217,22 +261,30 @@ function normalizeMemoryTarget(value: unknown, field: string): MemoryValidationR
   if (!isRecord(value)) {
     return error("MEMORY_INVALID_FIELD", `${field} must be an object.`, field);
   }
-  const unknownKeys = rejectUnknownKeys(value, MEMORY_TARGET_KEYS, field);
-  if (!unknownKeys.ok) {
-    return unknownKeys;
-  }
 
   if (value.owner === "project" && value.scope === "project") {
+    const unknownKeys = rejectUnknownKeys(value, PROJECT_PROJECT_TARGET_KEYS, field);
+    if (!unknownKeys.ok) {
+      return unknownKeys;
+    }
     const project = normalizeProjectTarget(value.project, `${field}.project`);
     return project.ok ? { ok: true, value: { owner: "project", scope: "project", project: project.value } } : project;
   }
 
   if (value.owner === "character" && value.scope === "character") {
+    const unknownKeys = rejectUnknownKeys(value, CHARACTER_CHARACTER_TARGET_KEYS, field);
+    if (!unknownKeys.ok) {
+      return unknownKeys;
+    }
     const character = normalizeCharacterTarget(value.character, `${field}.character`);
     return character.ok ? { ok: true, value: { owner: "character", scope: "character", character: character.value } } : character;
   }
 
   if (value.owner === "character" && value.scope === "project") {
+    const unknownKeys = rejectUnknownKeys(value, CHARACTER_PROJECT_TARGET_KEYS, field);
+    if (!unknownKeys.ok) {
+      return unknownKeys;
+    }
     const character = normalizeCharacterTarget(value.character, `${field}.character`);
     if (!character.ok) {
       return character;
@@ -250,21 +302,33 @@ function normalizeTargets(value: unknown): MemoryValidationResult<MemoryTargetSe
   if (!Array.isArray(value) || value.length === 0) {
     return error("MEMORY_TARGET_REQUIRED", "At least one memory target is required.", "targets");
   }
+  if (value.length > MAX_TARGETS) {
+    return error("MEMORY_FIELD_TOO_LARGE", `targets supports at most ${MAX_TARGETS} items.`, "targets");
+  }
 
   const normalized: MemoryTargetSelector[] = [];
+  const seen = new Set<string>();
   for (let index = 0; index < value.length; index += 1) {
     const target = normalizeMemoryTarget(value[index], `targets[${index}]`);
     if (!target.ok) {
       return target;
     }
+    const key = JSON.stringify(target.value);
+    if (seen.has(key)) {
+      return error("MEMORY_DUPLICATE_TARGET", "targets must not contain duplicates.", `targets[${index}]`);
+    }
+    seen.add(key);
     normalized.push(target.value);
   }
 
   return { ok: true, value: normalized };
 }
 
-function normalizeTags(value: unknown, field = "tags"): MemoryValidationResult<MemoryTag[]> {
+function normalizeTags(value: unknown, field = "tags", options: { required?: boolean } = {}): MemoryValidationResult<NormalizedMemoryTag[]> {
   if (value === undefined) {
+    if (options.required) {
+      return error("MEMORY_INVALID_FIELD", `${field} is required.`, field);
+    }
     return { ok: true, value: [] };
   }
   if (!Array.isArray(value)) {
@@ -274,7 +338,7 @@ function normalizeTags(value: unknown, field = "tags"): MemoryValidationResult<M
     return error("MEMORY_FIELD_TOO_LARGE", `${field} has too many items.`, field);
   }
 
-  const normalized: MemoryTag[] = [];
+  const normalized: NormalizedMemoryTag[] = [];
   const seen = new Set<string>();
   for (let index = 0; index < value.length; index += 1) {
     const tag = value[index];
@@ -293,12 +357,14 @@ function normalizeTags(value: unknown, field = "tags"): MemoryValidationResult<M
     if (!tagValue.ok) {
       return tagValue;
     }
-    const key = `${type.value.toLowerCase()}\0${tagValue.value.toLowerCase()}`;
+    const canonicalType = canonicalizeMemoryTagPart(type.value);
+    const canonicalValue = canonicalizeMemoryTagPart(tagValue.value);
+    const key = `${canonicalType}\0${canonicalValue}`;
     if (seen.has(key)) {
       continue;
     }
     seen.add(key);
-    normalized.push({ type: type.value, value: tagValue.value });
+    normalized.push({ type: type.value, value: tagValue.value, canonicalType, canonicalValue });
   }
 
   return { ok: true, value: normalized };
@@ -310,6 +376,9 @@ function normalizeKinds(value: unknown): MemoryValidationResult<MemoryEntryKind[
   }
   if (!Array.isArray(value)) {
     return error("MEMORY_INVALID_FIELD", "kinds must be an array.", "kinds");
+  }
+  if (value.length > MEMORY_ENTRY_KINDS.size) {
+    return error("MEMORY_FIELD_TOO_LARGE", "kinds has too many items.", "kinds");
   }
 
   const normalized: MemoryEntryKind[] = [];
@@ -326,7 +395,7 @@ function normalizeKinds(value: unknown): MemoryValidationResult<MemoryEntryKind[
     normalized.push(kind.value);
   }
 
-  return { ok: true, value: normalized };
+  return { ok: true, value: normalized.length > 0 ? normalized : undefined };
 }
 
 export function validateMemorySearchRequest(value: unknown): MemoryValidationResult<MemorySearchRequest> {
@@ -416,7 +485,7 @@ export function validateMemoryAppendRequest(value: unknown): MemoryValidationRes
   if (!preview.ok) {
     return preview;
   }
-  const tags = normalizeTags(value.tags);
+  const tags = normalizeTags(value.tags, "tags", { required: true });
   if (!tags.ok) {
     return tags;
   }

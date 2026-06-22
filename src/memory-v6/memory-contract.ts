@@ -34,12 +34,17 @@ export type MemoryTag = {
   value: string;
 };
 
+export type NormalizedMemoryTag = MemoryTag & {
+  canonicalType: string;
+  canonicalValue: string;
+};
+
 export type MemorySearchRequest = {
   schemaVersion: MemoryV6SchemaVersion;
   targets: MemoryTargetSelector[];
   query: string;
   kinds?: MemoryEntryKind[];
-  tags?: MemoryTag[];
+  tags?: NormalizedMemoryTag[];
   limit?: number;
   cursor?: string;
 };
@@ -51,7 +56,7 @@ export type MemoryAppendRequest = {
   title: string;
   body: string;
   preview: string;
-  tags: MemoryTag[];
+  tags: NormalizedMemoryTag[];
   supersedes?: string[];
   sourceMessageId?: string;
   idempotencyKey?: string;
