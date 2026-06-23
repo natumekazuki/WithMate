@@ -156,23 +156,17 @@ scripts/tests/memory-v6-response-contract.test.ts
 - owner / scope / source
 - search hit / pagination
 - get / tags / append / forget response
-- command-specific response shape
-- machine-readable error
+- versioned error envelope
 - responseに含めるstate / body / preview境界
-- Skill / CLI reference / user-level AGENTS.mdの責務境界
 
 完了条件:
 
 - all responseに`schemaVersion`がある。
 - search hitにfull bodyを含めない。
 - normal search responseにforgotten / superseded entryを出さない。
-- `forgotten`はbody削除を意味しない論理状態として扱う。
-- response shapeを無理に共通envelopeへ揃えない。
 - cursorはopaque stringとして扱う。
 - append retryで同じentry responseを返せるshapeを持つ。
 - forget responseで対象IDごとの結果を表現できる。
-- Skill内にCLI referenceとwhen-to-useを分けて定義する方針が明記されている。
-- user-level AGENTS.mdはMemory Skillを使うトリガー制御に限定する方針が明記されている。
 
 ## Phase 2: Storage
 
