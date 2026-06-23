@@ -1,4 +1,5 @@
 export type AppDatabaseCompatibilityMode =
+  | "v6-foundation"
   | "v4"
   | "legacy-v3"
   | "legacy-v2"

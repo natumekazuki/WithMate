@@ -81,6 +81,8 @@ future design だけで未実装のものは、最後に別枠で注記する。
   - `withmate-v6.db`、`PRAGMA user_version = 6`、V6専用 `project_scopes_v6` / `sessions_v6` / `session_messages_v6` / `audit_events_v6` / `memory_*_v6` table を固定する
   - V6継続tableのDDLもこのファイルが所有し、legacy schema fileからimportしない
   - `isValidV6Database()` は forbidden legacy table、主要column / index / FK / CHECK、`PRAGMA foreign_key_check` を確認する
+  - `src-electron/app-database-v6-bootstrap.ts` は `<userData>/withmate-v6.db` の fresh 作成と既存 V6 DB の検証だけを行う。既存 invalid V6 DB は上書きしない
+  - `withmate:get-app-database-diagnostics` は `withmate-v6.db` を既知 file として表示できるが、V6 foundation DB は runtime generation warning の対象にしない
   - active runtime DB path selection はまだ V4 のまま維持する
 - V2 migration policy:
   - `docs/design/database-v2-migration.md`
