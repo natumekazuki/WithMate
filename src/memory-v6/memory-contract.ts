@@ -15,6 +15,14 @@ export type MemoryEntryKind =
   | "boundary"
   | "note";
 
+export type MemoryPermission =
+  | "memory.search"
+  | "memory.append"
+  | "memory.forget"
+  | "memory.get_entry"
+  | "memory.list_tags"
+  | "memory.resolve_context";
+
 export type ProjectTargetRef =
   | { type: "id"; id: string }
   | { type: "path"; path: string }
