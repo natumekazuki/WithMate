@@ -1,7 +1,7 @@
 # Database Schema
 
 - 作成日: 2026-03-27
-- 更新日: 2026-06-16
+- 更新日: 2026-06-23
 - 対象: WithMate の current 保存構造
 
 ## Goal
@@ -39,6 +39,7 @@ V6 DB再設計の正本は`docs/design/v6-database-foundation.md`とし、この
 2026-05-19 時点で、4.0 runtime の新規作成 DB は `<userData>/withmate-v4.db` を canonical path とする。`withmate-v4.db` が存在しない状態で既存の V3 / V2 / V1 DB がある場合は、起動時に同じ `<userData>` 配下へ V4 DB を自動作成する。migration 元の DB と blob / character file は削除せず、そのまま残す。current 実装の `<userData>/characters/` は 3.x legacy storage として記載し、Mate 関連の SQLite schema 詳細は `docs/design/mate-storage-schema.md` を参照する。
 
 V1 schema の SQL 正本は `src-electron/database-schema-v1.ts`、V2 schema の SQL 正本は `src-electron/database-schema-v2.ts`、V3 schema の SQL 正本は `src-electron/database-schema-v3.ts`、V4 schema の SQL 正本は `src-electron/database-schema-v4.ts` に置く。
+V6 foundation schema の SQL 正本は `src-electron/database-schema-v6.ts` に置くが、current runtime の active DB path selection にはまだ接続しない。V6 DB の設計判断は `docs/design/v6-database-foundation.md` を優先する。
 
 - SQLite DB に存在する table
 - DB 外の file-based storage
@@ -75,6 +76,12 @@ future design だけで未実装のものは、最後に別枠で注記する。
   - `src-electron/database-schema-v3.ts`
 - V4 schema source:
   - `src-electron/database-schema-v4.ts`
+- V6 foundation schema source:
+  - `src-electron/database-schema-v6.ts`
+  - `withmate-v6.db`、`PRAGMA user_version = 6`、V6専用 `project_scopes_v6` / `sessions_v6` / `session_messages_v6` / `audit_events_v6` / `memory_*_v6` table を固定する
+  - V6継続tableのDDLもこのファイルが所有し、legacy schema fileからimportしない
+  - `isValidV6Database()` は forbidden legacy table、主要column / index / FK / CHECK、`PRAGMA foreign_key_check` を確認する
+  - active runtime DB path selection はまだ V4 のまま維持する
 - V2 migration policy:
   - `docs/design/database-v2-migration.md`
 - V4 upgrade / import policy:
