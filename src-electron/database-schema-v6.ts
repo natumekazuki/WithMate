@@ -195,6 +195,33 @@ export function isValidV6Database(dbPath: string): boolean {
   }
 }
 
+export function isValidV6DatabaseShallow(dbPath: string): boolean {
+  if (basename(dbPath) !== APP_DATABASE_V6_FILENAME) {
+    return false;
+  }
+
+  let db: DatabaseSync | null = null;
+  try {
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+    if (row?.user_version !== APP_DATABASE_V6_SCHEMA_VERSION) {
+      return false;
+    }
+
+    const existingTables = new Set(
+      (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all() as Array<{ name?: unknown }>)
+        .map((table) => table.name)
+        .filter((name): name is string => typeof name === "string"),
+    );
+    return REQUIRED_V6_TABLES.every((tableName) => existingTables.has(tableName))
+      && !FORBIDDEN_V6_TABLES.some((tableName) => existingTables.has(tableName));
+  } catch {
+    return false;
+  } finally {
+    db?.close();
+  }
+}
+
 function hasRequiredColumns(db: DatabaseSync): boolean {
   for (const [tableName, expectedColumns] of Object.entries(REQUIRED_V6_TABLE_COLUMNS)) {
     const columns = new Set(

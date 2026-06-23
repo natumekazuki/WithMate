@@ -197,7 +197,7 @@ describe("resolveAppDatabasePath", () => {
     try {
       const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
       const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
-      createOrVerifyV6FreshDatabase(userDataPath);
+      await createOrVerifyV6FreshDatabase(userDataPath);
 
       const selectedPath = resolveAppDatabasePath(userDataPath);
       assert.equal(selectedPath, v4Path);
@@ -347,7 +347,7 @@ describe("resolveOrMigrateAppDatabasePath", () => {
     try {
       const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
       const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
-      createOrVerifyV6FreshDatabase(userDataPath);
+      await createOrVerifyV6FreshDatabase(userDataPath);
 
       const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
       assert.equal(selectedPath, v4Path);

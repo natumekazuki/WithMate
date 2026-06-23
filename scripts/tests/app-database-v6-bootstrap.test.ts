@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -18,7 +18,7 @@ describe("createOrVerifyV6FreshDatabase", () => {
   it("userData 配下に fresh V6 DB を作成し、V4 active path には触れない", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-v6-bootstrap-"));
     try {
-      const result = createOrVerifyV6FreshDatabase(userDataPath);
+      const result = await createOrVerifyV6FreshDatabase(userDataPath);
       const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
       const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
 
@@ -34,8 +34,8 @@ describe("createOrVerifyV6FreshDatabase", () => {
   it("既存の valid V6 DB は再作成せず検証だけ行う", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-v6-bootstrap-"));
     try {
-      const created = createOrVerifyV6FreshDatabase(userDataPath);
-      const verified = createOrVerifyV6FreshDatabase(userDataPath);
+      const created = await createOrVerifyV6FreshDatabase(userDataPath);
+      const verified = await createOrVerifyV6FreshDatabase(userDataPath);
 
       assert.equal(created.created, true);
       assert.deepEqual(verified, { dbPath: created.dbPath, created: false });
@@ -51,11 +51,79 @@ describe("createOrVerifyV6FreshDatabase", () => {
       const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
       await writeFile(v6Path, "not sqlite");
 
-      assert.throws(
+      await assert.rejects(
         () => createOrVerifyV6FreshDatabase(userDataPath),
         /does not match the V6 foundation schema/,
       );
       assert.equal(isValidV6Database(v6Path), false);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("schema 途中失敗後に final DB を残さず、再実行で正常作成できる", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-v6-bootstrap-"));
+    try {
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+
+      await assert.rejects(
+        () => createOrVerifyV6FreshDatabase(userDataPath, {
+          schemaSql: [
+            "CREATE TABLE app_settings (setting_key TEXT PRIMARY KEY);",
+            "CREATE TABLE broken (",
+          ],
+        }),
+        /incomplete input|syntax error/,
+      );
+      assert.equal(existsSync(v6Path), false);
+
+      const result = await createOrVerifyV6FreshDatabase(userDataPath);
+      assert.deepEqual(result, { dbPath: v6Path, created: true });
+      assert.equal(isValidV6Database(v6Path), true);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("validation failure 時に final DB と sidecar を残さない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-v6-bootstrap-"));
+    try {
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+
+      await assert.rejects(
+        () => createOrVerifyV6FreshDatabase(userDataPath, {
+          schemaSql: [
+            "CREATE TABLE app_settings (setting_key TEXT PRIMARY KEY);",
+            `PRAGMA user_version = ${APP_DATABASE_V6_SCHEMA_VERSION};`,
+          ],
+        }),
+        /Failed to create a valid/,
+      );
+
+      const files = await readdir(userDataPath);
+      assert.equal(existsSync(v6Path), false);
+      assert.equal(existsSync(`${v6Path}-wal`), false);
+      assert.equal(existsSync(`${v6Path}-shm`), false);
+      assert.deepEqual(files.filter((fileName) => fileName.includes("withmate-v6")), []);
+      assert.deepEqual(files.filter((fileName) => fileName.startsWith(".withmate-v6-bootstrap-")), []);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("concurrent bootstrap では final DB を1つだけ作成する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-v6-bootstrap-"));
+    try {
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+
+      const results = await Promise.all([
+        createOrVerifyV6FreshDatabase(userDataPath),
+        createOrVerifyV6FreshDatabase(userDataPath),
+      ]);
+
+      assert.equal(results.filter((result) => result.created).length, 1);
+      assert.deepEqual(results.map((result) => result.dbPath), [v6Path, v6Path]);
+      assert.equal(isValidV6Database(v6Path), true);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
