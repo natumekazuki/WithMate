@@ -692,6 +692,7 @@ CLIはuser-facingだが、API endpointはユーザーが直接叩く前提にし
 V6 MemoryはV6 DB foundation上の新規tableとして実装する。
 legacy Memory tableは読まない、書かない、意味変更しない。
 V5以前のsession / legacy MemoryはV6 first releaseのmigration対象にしない。
+SQL正本は`src-electron/database-schema-v6.ts`に置く。
 
 ```sql
 CREATE TABLE IF NOT EXISTS memory_entries_v6 (
@@ -708,20 +709,28 @@ CREATE TABLE IF NOT EXISTS memory_entries_v6 (
   state TEXT NOT NULL,
   source_type TEXT NOT NULL,
   source_session_id TEXT,
-  source_message_id TEXT,
+  source_app_message_id INTEGER,
+  source_provider_message_id TEXT,
   source_provider_id TEXT,
   superseded_by_id TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  forgotten_at TEXT
+  forgotten_at TEXT,
+  FOREIGN KEY (source_app_message_id, source_session_id)
+    REFERENCES session_messages_v6(id, session_id) ON DELETE SET NULL,
+  FOREIGN KEY (superseded_by_id)
+    REFERENCES memory_entries_v6(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS memory_entry_tags_v6 (
-  entry_id TEXT NOT NULL REFERENCES memory_entries_v6(id) ON DELETE CASCADE,
+  entry_id TEXT NOT NULL,
   tag_type TEXT NOT NULL,
   tag_value TEXT NOT NULL,
+  tag_type_canonical TEXT NOT NULL,
+  tag_value_canonical TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  PRIMARY KEY (entry_id, tag_type, tag_value)
+  PRIMARY KEY (entry_id, tag_type_canonical, tag_value_canonical),
+  FOREIGN KEY (entry_id) REFERENCES memory_entries_v6(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS memory_entry_relations_v6 (
@@ -735,13 +744,15 @@ CREATE TABLE IF NOT EXISTS memory_entry_relations_v6 (
 CREATE TABLE IF NOT EXISTS memory_tag_catalog_v6 (
   tag_type TEXT NOT NULL,
   tag_value TEXT NOT NULL,
+  tag_type_canonical TEXT NOT NULL,
+  tag_value_canonical TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   aliases_json TEXT NOT NULL DEFAULT '[]',
   state TEXT NOT NULL,
   usage_count INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  PRIMARY KEY (tag_type, tag_value)
+  PRIMARY KEY (tag_type_canonical, tag_value_canonical)
 );
 
 CREATE TABLE IF NOT EXISTS memory_mutation_events_v6 (
@@ -750,6 +761,7 @@ CREATE TABLE IF NOT EXISTS memory_mutation_events_v6 (
   entry_id TEXT,
   binding_id_hash TEXT,
   session_id TEXT,
+  result_status TEXT NOT NULL,
   reason TEXT,
   created_at TEXT NOT NULL
 );
@@ -757,6 +769,7 @@ CREATE TABLE IF NOT EXISTS memory_mutation_events_v6 (
 CREATE TABLE IF NOT EXISTS memory_idempotency_keys_v6 (
   key TEXT NOT NULL,
   operation TEXT NOT NULL,
+  binding_id_hash TEXT NOT NULL,
   owner_type TEXT NOT NULL,
   owner_id TEXT NOT NULL,
   scope_type TEXT NOT NULL,
@@ -765,11 +778,29 @@ CREATE TABLE IF NOT EXISTS memory_idempotency_keys_v6 (
   operation_created INTEGER NOT NULL,
   request_fingerprint TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  PRIMARY KEY (key, operation, owner_type, owner_id, scope_type, scope_id)
+  PRIMARY KEY (binding_id_hash, key, operation, owner_type, owner_id, scope_type, scope_id)
+);
+
+CREATE TABLE IF NOT EXISTS memory_idempotency_forget_results_v6 (
+  key TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  binding_id_hash TEXT NOT NULL,
+  owner_type TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  scope_type TEXT NOT NULL,
+  scope_id TEXT NOT NULL,
+  entry_id TEXT NOT NULL,
+  result_status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (binding_id_hash, key, operation, owner_type, owner_id, scope_type, scope_id, entry_id)
 );
 ```
 
-実装時にtable名へversion suffixを付けるかはmigration方針と合わせて決める。重要なのはlegacy tableとの意味分離である。
+重要なのはlegacy tableとの意味分離である。
+idempotencyは`binding_id_hash / key / operation / owner / scope`をidentityに含め、別bindingの同一keyが衝突しないようにする。
+`request_fingerprint`が同一idempotency identityで一致しない場合は、retryではなくconflictとして扱う。
+batch forgetの再現結果は`memory_idempotency_forget_results_v6`にentryごとに保存する。
+`binding_id_hash`はbinding本体ではなく短命referenceのhashだけを保存する。
 
 ## Retrieval
 

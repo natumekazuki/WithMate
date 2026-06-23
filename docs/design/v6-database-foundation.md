@@ -93,7 +93,9 @@ first foundationでは、active runtime DB path selectionには接続せず、`w
 - targeted test: `scripts/tests/database-schema-v6.test.ts`
 
 V6 schemaは`app_settings`、`model_catalog_*`、`characters`を継続する。
+継続tableのDDLも`database-schema-v6.ts`が所有し、V1などlegacy schema fileからimportしない。
 V6 runtime固有のproject / session / message / audit / Memoryは、legacy tableと混同しないようにV6専用tableで定義する。
+`isValidV6Database()`はfilename / `user_version` / required tableに加え、forbidden legacy table、主要column、主要index、主要foreign key、主要CHECK、`PRAGMA foreign_key_check`を確認する。
 
 ## V6 Project Scope
 
@@ -133,13 +135,23 @@ Foundation schemaでは次を作る。
 - `memory_tag_catalog_v6`
 - `memory_mutation_events_v6`
 - `memory_idempotency_keys_v6`
+- `memory_idempotency_forget_results_v6`
+
+Memory idempotencyは`binding_id_hash / key / operation / owner / scope`をidentityに含める。
+`binding_id_hash`はbinding本体ではなく短命referenceのhashだけを保存する。
+同じidentityで`request_fingerprint`が一致しない場合はretryではなくconflictとして扱う。
+batch forgetのentry別結果は`memory_idempotency_forget_results_v6`へ保存する。
+Memory mutation ledgerは`result_status`をfirst-class columnとして持つ。
 
 ## Session And Audit
 
 V6ではsession履歴も再設計対象にする。
 V5以前sessionは移行しない。
 V6 session tableは`sessions_v6`とし、V6 runtimeで必要なmetadata、provider thread identity、Character snapshot reference、workspace/project contextを明示的に保持する。
+resume時に実行policyがdefaultへ戻らないよう、`catalog_revision`、`approval_mode`、`codex_sandbox_mode`、`allowed_additional_directories_json`、`session_kind`、`custom_agent_name`、`runtime_policy_json`を保存する。
+Character付きsessionでは`character_snapshot_json`をvalid JSONとして必須にし、neutral sessionでは`NULL`を許可する。
 message tableは`session_messages_v6`とし、V5以前message履歴は移行しない。
+Memory provenanceはapp messageを指す`source_app_message_id`とprovider外部IDを指す`source_provider_message_id`を分ける。
 
 auditは`audit_events_v6`で通常turn、Memory mutation、runtime binding、diagnosticsを分離して設計する。
 legacy MemoryGeneration / Character Reflection / Monologue auditは移行しない。

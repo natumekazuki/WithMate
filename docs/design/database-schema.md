@@ -79,6 +79,8 @@ future design だけで未実装のものは、最後に別枠で注記する。
 - V6 foundation schema source:
   - `src-electron/database-schema-v6.ts`
   - `withmate-v6.db`、`PRAGMA user_version = 6`、V6専用 `project_scopes_v6` / `sessions_v6` / `session_messages_v6` / `audit_events_v6` / `memory_*_v6` table を固定する
+  - V6継続tableのDDLもこのファイルが所有し、legacy schema fileからimportしない
+  - `isValidV6Database()` は forbidden legacy table、主要column / index / FK / CHECK、`PRAGMA foreign_key_check` を確認する
   - active runtime DB path selection はまだ V4 のまま維持する
 - V2 migration policy:
   - `docs/design/database-v2-migration.md`
