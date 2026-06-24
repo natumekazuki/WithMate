@@ -39,12 +39,12 @@ PR #221以外で次に検討が必要な情報:
 
 - provider binding spike: provider process / agent shell childへturnごとのbindingを注入できるか
 - Skill / CLI packaging: global Skill、CLI shim、Skill内`reference/`の配布と更新単位
-- V6 DB foundation: DB file name、V5以前DBの扱い、settings / model catalog移行、V6 session / message schema、Character file storage root
+- V6 DB foundation: DB file name、必要データのみの自動移行、V6 session / message schema
 
 再開時の推奨順序:
 
 1. PR #221が未マージなら先にレビュー / マージする。
-2. Phase 0.5としてV6 DB foundationの未決事項を固定する。
+2. Phase 0.5としてV6 DB foundationの固定済み境界を確認する。
 3. Storage実装前にprovider binding spikeでCLI実装可否を確認する。
 4. Skill / CLI referenceはCLI contract確定後に実ファイル化する。
 
@@ -104,14 +104,16 @@ scripts/tests/database-schema-v6.test.ts
 内容:
 
 - V6 DB file naming
-- destructive reset / backup policy
-- Character / app settings / provider settings / model catalogの継続範囲
+- migration boundary
+- Character / app settings / provider settings / model catalogの自動移行範囲
 - V6 sessions / messages / audit / project scope / Memory schema
-- legacy storage / UI / reset targetの削除方針
+- legacy session / Memory / GrowthをV6正本へ持ち込まない方針
 
 完了条件:
 
 - V5以前session / legacy Memoryをmigration対象にしない。
+- Character catalog、Character definition files、app settings、provider settings、model catalogは必要なデータだけ自動移行する。
+- Character file storage rootは現行`<userData>/characters/<character-id>/`を継続する。
 - V6 project scopeを専用tableで新設する。
 - legacy `project_scopes` / `project_memory_entries`を再利用しない。
 
@@ -170,6 +172,8 @@ scripts/tests/memory-v6-response-contract.test.ts
 
 ## Phase 2: Storage
 
+Status: 完了
+
 候補path:
 
 ```text
@@ -195,6 +199,16 @@ scripts/tests/memory-v6-storage.test.ts
 - forgotten / supersededを通常searchから除外する。
 - legacy tableへwriteしない。
 - V6 DB foundationで定義したtableだけへwriteする。
+
+実装:
+
+- `src-electron/memory-v6-storage.ts`
+- `src-electron/memory-v6-schema.ts`
+- `scripts/tests/memory-v6-storage.test.ts`
+
+検証:
+
+- `node --test --import tsx scripts/tests/memory-v6-storage.test.ts scripts/tests/memory-v6-contract.test.ts scripts/tests/memory-v6-response-contract.test.ts scripts/tests/database-schema-v6.test.ts scripts/tests/app-database-v6-bootstrap.test.ts`
 
 ## Phase 3: Application Service
 
@@ -339,6 +353,6 @@ Electron manual:
 ## Rollback
 
 - feature flagでagent-facing entrypointを無効化できるようにする。
-- V6 DBは既存runtime DBと分離し、必要なら旧DBをarchive / backupとして残す。
+- V6 DBは既存runtime DBと分離し、旧DBはV6 runtimeの正本にしない。backup renameするか、そのまま残して無視するかはrelease packagingで決めてよい。
 - global Skillはmanaged markerを確認してuninstall可能にする。
 - V5 Character prompt pathは変更前のまま維持する。

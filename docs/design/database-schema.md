@@ -1,7 +1,7 @@
 # Database Schema
 
 - 作成日: 2026-03-27
-- 更新日: 2026-06-23
+- 更新日: 2026-06-24
 - 対象: WithMate の current 保存構造
 
 ## Goal
@@ -40,6 +40,7 @@ V6 DB再設計の正本は`docs/design/v6-database-foundation.md`とし、この
 
 V1 schema の SQL 正本は `src-electron/database-schema-v1.ts`、V2 schema の SQL 正本は `src-electron/database-schema-v2.ts`、V3 schema の SQL 正本は `src-electron/database-schema-v3.ts`、V4 schema の SQL 正本は `src-electron/database-schema-v4.ts` に置く。
 V6 foundation schema の SQL 正本は `src-electron/database-schema-v6.ts` に置くが、current runtime の active DB path selection にはまだ接続しない。V6 DB の設計判断は `docs/design/v6-database-foundation.md` を優先する。
+V6 release migrationでは、V6 runtimeに必要なCharacter catalog、Character definition files、app settings、provider settings、model catalogだけを自動移行する。V5以前のsession履歴、legacy Memory、GrowthはV6正本へ移行しない。Character file storage rootは現行`<userData>/characters/<character-id>/`を継続する。
 
 - SQLite DB に存在する table
 - DB 外の file-based storage
@@ -80,6 +81,8 @@ future design だけで未実装のものは、最後に別枠で注記する。
   - `src-electron/database-schema-v6.ts`
   - `withmate-v6.db`、`PRAGMA user_version = 6`、V6専用 `project_scopes_v6` / `sessions_v6` / `session_messages_v6` / `audit_events_v6` / `memory_*_v6` table を固定する
   - V6継続tableのDDLもこのファイルが所有し、legacy schema fileからimportしない
+  - V6 release migrationでは必要な継続データだけをV6 DBへ自動移行し、旧 DB はV6 runtimeの正本として開かない
+  - Character file storage rootは現行`<userData>/characters/<character-id>/`を継続し、V6用の別rootへ分けない
   - `isValidV6Database()` は forbidden legacy table、主要column / index / FK / CHECK、`PRAGMA foreign_key_check` を確認する
   - `isValidV6DatabaseShallow()` は boot diagnostics 用に filename、`user_version`、required / forbidden table だけを確認する
   - `src-electron/app-database-v6-bootstrap.ts` は `<userData>/withmate-v6.db` の fresh 作成と既存 V6 DB の検証だけを行う。fresh作成は一時directory内でtransaction実行し、deep validation後にfinal pathへ既存file非上書きでpublishする。既存 invalid V6 DB は上書きしない
