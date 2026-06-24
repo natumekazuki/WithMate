@@ -7,7 +7,6 @@ import {
   createMemoryResolveContextResponse,
   createMemorySearchResponse,
   type MemoryAppendResponse,
-  type MemoryForgetResult,
   type MemoryErrorResponse,
   type MemoryForgetResponse,
   type MemoryGetEntryResponse,
@@ -25,7 +24,7 @@ import {
 } from "../src/memory-v6/memory-validation.js";
 import type { MemoryEntryDetail } from "../src/memory-v6/memory-state.js";
 import { resolveMemoryV6Target, targetMatchesPrincipal, type MemoryV6TargetResolverDeps } from "./memory-v6-context-resolver.js";
-import { targetKey, type MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
+import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
 import {
   requireMemoryPermission,
   type MemoryV6Principal,
@@ -221,48 +220,23 @@ export class MemoryV6Service {
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
     }
-
-    const targetResults = new Map<string, { target: MemoryV6ResolvedTarget; items: Array<{ entryId: string; index: number }> }>();
-    const results: Array<MemoryForgetResult | null> = validated.value.entryIds.map((entryId, index) => {
-      const entry = this.deps.storage.getEntry(entryId);
-      if (!entry || !targetMatchesPrincipal(principal, entryTarget(entry))) {
-        return { entryId, status: "not_found" };
-      }
-      const target = entryTarget(entry);
-      const key = targetKey(target);
-      const existing = targetResults.get(key);
-      if (existing) {
-        existing.items.push({ entryId, index });
-      } else {
-        targetResults.set(key, { target, items: [{ entryId, index }] });
-      }
-      return null;
-    });
+    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps);
+    if (!resolved.ok) {
+      return toMemoryErrorResponse(resolved.error);
+    }
 
     try {
-      for (const group of targetResults.values()) {
-        const groupResults = this.deps.storage.forgetEntries({
-          target: group.target,
-          entryIds: group.items.map((item) => item.entryId),
-          reason: validated.value.reason,
-          idempotencyKey: validated.value.idempotencyKey,
-          bindingIdHash: principal.bindingIdHash,
-          sessionId: principal.sessionId,
-        });
-        for (const groupResult of groupResults) {
-          const item = group.items.find((candidate) => candidate.entryId === groupResult.entryId);
-          if (item) {
-            results[item.index] = groupResult;
-          }
-        }
-      }
+      const results = this.deps.storage.forgetEntries({
+        target: resolved.target,
+        entryIds: validated.value.entryIds,
+        reason: validated.value.reason,
+        idempotencyKey: validated.value.idempotencyKey,
+        bindingIdHash: principal.bindingIdHash,
+        sessionId: principal.sessionId,
+      });
+      return createMemoryForgetResponse(results);
     } catch (error) {
       return storageErrorResponse(error);
     }
-
-    return createMemoryForgetResponse(results.map((result, index) => result ?? {
-      entryId: validated.value.entryIds[index],
-      status: "not_found" as const,
-    }));
   }
 }

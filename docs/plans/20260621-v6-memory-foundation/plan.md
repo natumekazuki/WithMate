@@ -236,6 +236,7 @@ scripts/tests/memory-v6-service.test.ts
 
 - agent payloadをそのままSQLへ流さない。
 - owner / scope accessをserviceで再検証する。
+- `memory.forget`は単一target requestとしてstorage transaction / idempotencyへ委譲する。
 
 実装:
 

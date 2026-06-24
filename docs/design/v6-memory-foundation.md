@@ -495,6 +495,7 @@ app側で行わないこと:
 ```ts
 type MemoryForgetRequest = {
   schemaVersion: "withmate-memory-v1";
+  target: MemoryTargetSelector;
   entryIds: string[];
   reason?: "user_request" | "incorrect" | "outdated" | "privacy" | "other";
   sourceMessageId?: string;
@@ -513,6 +514,7 @@ type MemoryForgetResponse = {
 ```
 
 request-levelのbinding不足、operation permission不足、target permission不足は`MEMORY_BINDING_REQUIRED` / `MEMORY_UNAUTHORIZED` / `MEMORY_FORBIDDEN`のerrorとして返す。
+`memory.forget`はfirst releaseでは単一target必須とし、serviceがentry IDからtargetを推論して複数targetへ分割しない。
 entry単位では、現在のbindingからアクセス不能なIDを`not_found`へ畳む。
 内部auditではアクセス不能とnot foundを区別してよいが、agent-facing responseで他ownerのentry存在確認に使える差分を出さない。
 
@@ -712,6 +714,7 @@ service層で扱う:
 - Character `current`のbinding context解決
 - owner / scope access再検証
 - storage idempotency conflictやmissing entryのmachine-readable error変換
+- `memory.forget`の単一target制約を保ち、全entry resultをstorage transaction / idempotency recordへ委譲する
 - target外entry IDをagent-facing responseでは`not_found`へ畳むexistence oracle防止
 
 service層で扱わない:

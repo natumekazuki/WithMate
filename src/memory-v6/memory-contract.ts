@@ -84,6 +84,7 @@ export type MemoryForgetReason = "user_request" | "incorrect" | "outdated" | "pr
 
 export type MemoryForgetRequest = {
   schemaVersion: MemoryV6SchemaVersion;
+  target: MemoryTargetSelector;
   entryIds: string[];
   reason?: MemoryForgetReason;
   sourceMessageId?: string;

@@ -234,6 +234,7 @@ describe("MemoryV6Service", () => {
 
       const forget = service.forget(principal(), {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
         entryIds: ["mem-other-project", "missing-entry"],
         reason: "privacy",
       });
@@ -243,6 +244,77 @@ describe("MemoryV6Service", () => {
         { entryId: "missing-entry", status: "not_found" },
       ]);
       assert.equal(storage.getEntry("mem-other-project")?.state, "active");
+    });
+  });
+
+  it("forget はall-not-found resultもidempotentに保存してretryで新規mutationしない", async () => {
+    await withService(({ service, storage }) => {
+      const request = {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        entryIds: ["mem-created-after-not-found"],
+        reason: "privacy",
+        idempotencyKey: "forget-key-all-not-found",
+      };
+
+      const first = service.forget(principal(), request);
+      assert.equal("error" in first, false);
+      assert.deepEqual(first.results, [{ entryId: "mem-created-after-not-found", status: "not_found" }]);
+
+      storage.appendEntry({
+        target: projectTarget,
+        id: "mem-created-after-not-found",
+        kind: "decision",
+        title: "後から作られたentry",
+        body: "後から作られたbody",
+        preview: "後から作られたentry",
+        tags: [tag("topic", "retry")],
+        source: {
+          type: "agent",
+          sessionId: null,
+          messageId: null,
+          providerId: "codex",
+        },
+      });
+
+      const retry = service.forget(principal(), request);
+      assert.equal("error" in retry, false);
+      assert.deepEqual(retry.results, [{ entryId: "mem-created-after-not-found", status: "not_found" }]);
+      assert.equal(storage.getEntry("mem-created-after-not-found")?.state, "active");
+    });
+  });
+
+  it("resolverが明示的にnot-foundを返すproject / character targetは拒否する", async () => {
+    await withService(({ storage }) => {
+      const service = new MemoryV6Service({
+        storage,
+        resolveProjectById: (id) => id === "project-a" ? { id, displayName: "Project A" } : null,
+        resolveProjectByPath: () => null,
+        resolveProjectByAlias: () => null,
+        resolveCharacterById: (id) => id === "character-a" ? { id, name: "Character A" } : null,
+      });
+
+      const missingProject = service.append(principal({ accessibleProjectIds: ["project-stale"] }), appendRequest({
+        target: {
+          owner: "project",
+          scope: "project",
+          project: { type: "id", id: "project-stale" },
+        },
+      }));
+      assert.equal("error" in missingProject, true);
+      assert.equal(missingProject.error.code, "MEMORY_TARGET_NOT_FOUND");
+      assert.equal(missingProject.error.field, "target.project");
+
+      const missingCharacter = service.append(principal({ accessibleCharacterIds: ["character-stale"] }), appendRequest({
+        target: {
+          owner: "character",
+          scope: "character",
+          character: { type: "id", id: "character-stale" },
+        },
+      }));
+      assert.equal("error" in missingCharacter, true);
+      assert.equal(missingCharacter.error.code, "MEMORY_TARGET_NOT_FOUND");
+      assert.equal(missingCharacter.error.field, "target.character");
     });
   });
 

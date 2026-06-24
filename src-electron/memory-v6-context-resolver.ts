@@ -38,7 +38,10 @@ function targetNotFoundError(field: string): MemoryError {
 
 function resolveProject(ref: ProjectTargetRef, deps: MemoryV6TargetResolverDeps, field: string): MemoryV6ProjectContext | MemoryError {
   if (ref.type === "id") {
-    return deps.resolveProjectById?.(ref.id) ?? { id: ref.id, displayName: ref.id };
+    if (deps.resolveProjectById) {
+      return deps.resolveProjectById(ref.id) ?? targetNotFoundError(field);
+    }
+    return { id: ref.id, displayName: ref.id };
   }
   if (ref.type === "path") {
     return deps.resolveProjectByPath?.(ref.path) ?? targetNotFoundError(field);
@@ -55,7 +58,10 @@ function resolveCharacter(
   if (ref.type === "current") {
     return principal.character ?? memoryBindingRequiredError("current character requires a WithMate runtime binding.");
   }
-  return deps.resolveCharacterById?.(ref.id) ?? { id: ref.id, name: ref.id };
+  if (deps.resolveCharacterById) {
+    return deps.resolveCharacterById(ref.id) ?? targetNotFoundError(field);
+  }
+  return { id: ref.id, name: ref.id };
 }
 
 function withAccessCheck(principal: MemoryV6Principal, target: MemoryV6ResolvedTarget): MemoryV6TargetResolutionResult {

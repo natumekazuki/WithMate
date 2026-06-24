@@ -49,7 +49,7 @@ const APPEND_REQUEST_KEYS = new Set([
   "sourceMessageId",
   "idempotencyKey",
 ]);
-const FORGET_REQUEST_KEYS = new Set(["schemaVersion", "entryIds", "reason", "sourceMessageId", "idempotencyKey"]);
+const FORGET_REQUEST_KEYS = new Set(["schemaVersion", "target", "entryIds", "reason", "sourceMessageId", "idempotencyKey"]);
 const PROJECT_TARGET_ID_KEYS = new Set(["type", "id"]);
 const PROJECT_TARGET_PATH_KEYS = new Set(["type", "path"]);
 const PROJECT_TARGET_ALIAS_KEYS = new Set(["type", "alias"]);
@@ -587,6 +587,10 @@ export function validateMemoryForgetRequest(value: unknown): MemoryValidationRes
   if (!schema.ok) {
     return schema;
   }
+  const target = normalizeMemoryTarget(value.target, "target");
+  if (!target.ok) {
+    return target;
+  }
   const entryIds = normalizeStringArray(value.entryIds, "entryIds", { maxItems: MAX_FORGET_ENTRY_IDS, maxLength: MAX_ID_LENGTH });
   if (!entryIds.ok) {
     return entryIds;
@@ -610,6 +614,7 @@ export function validateMemoryForgetRequest(value: unknown): MemoryValidationRes
     ok: true,
     value: {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: target.value,
       entryIds: entryIds.value,
       ...(value.reason !== undefined ? { reason: value.reason as MemoryForgetReason } : {}),
       ...(sourceMessageId.value !== undefined ? { sourceMessageId: sourceMessageId.value } : {}),

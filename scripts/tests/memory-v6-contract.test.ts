@@ -89,13 +89,27 @@ describe("memory-v6 contract validation", () => {
   it("valid forget request を正規化できる", () => {
     const result = validateMemoryForgetRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
       entryIds: [" entry-a ", "entry-a", "entry-b"],
       reason: "privacy",
     });
 
     assert.equal(result.ok, true);
+    assert.deepEqual(result.value.target, projectTarget);
     assert.deepEqual(result.value.entryIds, ["entry-a", "entry-b"]);
     assert.equal(result.value.reason, "privacy");
+  });
+
+  it("forget request は単一targetを必須にする", () => {
+    const result = validateMemoryForgetRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      entryIds: ["entry-a"],
+      reason: "privacy",
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, "MEMORY_INVALID_FIELD");
+    assert.equal(result.error.field, "target");
   });
 
   it("valid get_entry / list_tags request を正規化できる", () => {
@@ -390,6 +404,7 @@ describe("memory-v6 contract validation", () => {
   it("invalid forget reason を拒否する", () => {
     const result = validateMemoryForgetRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
       entryIds: ["entry-a"],
       reason: "purge",
     });
