@@ -5,6 +5,8 @@ import {
   type MemoryEntryKind,
   type MemoryForgetReason,
   type MemoryForgetRequest,
+  type MemoryGetEntryRequest,
+  type MemoryListTagsRequest,
   type MemorySearchRequest,
   type MemoryTargetSelector,
   type MemoryValidationResult,
@@ -33,6 +35,8 @@ const MEMORY_FORGET_REASONS = new Set<MemoryForgetReason>([
 ]);
 
 const SEARCH_REQUEST_KEYS = new Set(["schemaVersion", "targets", "query", "kinds", "tags", "limit", "cursor"]);
+const GET_ENTRY_REQUEST_KEYS = new Set(["schemaVersion", "entryId"]);
+const LIST_TAGS_REQUEST_KEYS = new Set(["schemaVersion", "targets"]);
 const APPEND_REQUEST_KEYS = new Set([
   "schemaVersion",
   "target",
@@ -45,7 +49,7 @@ const APPEND_REQUEST_KEYS = new Set([
   "sourceMessageId",
   "idempotencyKey",
 ]);
-const FORGET_REQUEST_KEYS = new Set(["schemaVersion", "entryIds", "reason", "sourceMessageId", "idempotencyKey"]);
+const FORGET_REQUEST_KEYS = new Set(["schemaVersion", "target", "entryIds", "reason", "sourceMessageId", "idempotencyKey"]);
 const PROJECT_TARGET_ID_KEYS = new Set(["type", "id"]);
 const PROJECT_TARGET_PATH_KEYS = new Set(["type", "path"]);
 const PROJECT_TARGET_ALIAS_KEYS = new Set(["type", "alias"]);
@@ -453,6 +457,58 @@ export function validateMemorySearchRequest(value: unknown): MemoryValidationRes
   };
 }
 
+export function validateMemoryGetEntryRequest(value: unknown): MemoryValidationResult<MemoryGetEntryRequest> {
+  if (!isRecord(value)) {
+    return error("MEMORY_INVALID_REQUEST", "Get entry request must be an object.");
+  }
+  const unknownKeys = rejectUnknownKeys(value, GET_ENTRY_REQUEST_KEYS, "request");
+  if (!unknownKeys.ok) {
+    return unknownKeys;
+  }
+  const schema = validateSchemaVersion(value);
+  if (!schema.ok) {
+    return schema;
+  }
+  const entryId = normalizeText(value.entryId, "entryId", { maxLength: MAX_ID_LENGTH });
+  if (!entryId.ok) {
+    return entryId;
+  }
+
+  return {
+    ok: true,
+    value: {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      entryId: entryId.value,
+    },
+  };
+}
+
+export function validateMemoryListTagsRequest(value: unknown): MemoryValidationResult<MemoryListTagsRequest> {
+  if (!isRecord(value)) {
+    return error("MEMORY_INVALID_REQUEST", "List tags request must be an object.");
+  }
+  const unknownKeys = rejectUnknownKeys(value, LIST_TAGS_REQUEST_KEYS, "request");
+  if (!unknownKeys.ok) {
+    return unknownKeys;
+  }
+  const schema = validateSchemaVersion(value);
+  if (!schema.ok) {
+    return schema;
+  }
+  const targets = normalizeTargets(value.targets);
+  if (!targets.ok) {
+    return targets;
+  }
+
+  return {
+    ok: true,
+    value: {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: targets.value,
+    },
+  };
+}
+
 export function validateMemoryAppendRequest(value: unknown): MemoryValidationResult<MemoryAppendRequest> {
   if (!isRecord(value)) {
     return error("MEMORY_INVALID_REQUEST", "Append request must be an object.");
@@ -531,6 +587,10 @@ export function validateMemoryForgetRequest(value: unknown): MemoryValidationRes
   if (!schema.ok) {
     return schema;
   }
+  const target = normalizeMemoryTarget(value.target, "target");
+  if (!target.ok) {
+    return target;
+  }
   const entryIds = normalizeStringArray(value.entryIds, "entryIds", { maxItems: MAX_FORGET_ENTRY_IDS, maxLength: MAX_ID_LENGTH });
   if (!entryIds.ok) {
     return entryIds;
@@ -554,6 +614,7 @@ export function validateMemoryForgetRequest(value: unknown): MemoryValidationRes
     ok: true,
     value: {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: target.value,
       entryIds: entryIds.value,
       ...(value.reason !== undefined ? { reason: value.reason as MemoryForgetReason } : {}),
       ...(sourceMessageId.value !== undefined ? { sourceMessageId: sourceMessageId.value } : {}),

@@ -57,6 +57,16 @@ export type MemorySearchRequest = {
   cursor?: string;
 };
 
+export type MemoryGetEntryRequest = {
+  schemaVersion: MemoryV6SchemaVersion;
+  entryId: string;
+};
+
+export type MemoryListTagsRequest = {
+  schemaVersion: MemoryV6SchemaVersion;
+  targets: MemoryTargetSelector[];
+};
+
 export type MemoryAppendRequest = {
   schemaVersion: MemoryV6SchemaVersion;
   target: MemoryTargetSelector;
@@ -74,6 +84,7 @@ export type MemoryForgetReason = "user_request" | "incorrect" | "outdated" | "pr
 
 export type MemoryForgetRequest = {
   schemaVersion: MemoryV6SchemaVersion;
+  target: MemoryTargetSelector;
   entryIds: string[];
   reason?: MemoryForgetReason;
   sourceMessageId?: string;
