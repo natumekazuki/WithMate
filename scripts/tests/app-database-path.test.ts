@@ -6,6 +6,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
+import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { APP_DATABASE_V1_FILENAME } from "../../src-electron/database-schema-v1.js";
 import {
   APP_DATABASE_V2_FILENAME,
@@ -24,6 +25,7 @@ import {
   isValidV4Database,
   readV4DatabaseUserVersion,
 } from "../../src-electron/database-schema-v4.js";
+import { APP_DATABASE_V6_FILENAME, isValidV6Database } from "../../src-electron/database-schema-v6.js";
 import { resolveAppDatabasePath, resolveOrMigrateAppDatabasePath } from "../../src-electron/app-database-path.js";
 
 function createV2Database(dbPath: string): void {
@@ -189,6 +191,23 @@ describe("resolveAppDatabasePath", () => {
     }
   });
 
+  it("withmate-v6.db が存在しても active runtime DB path selection は V4 のまま維持する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+
+    try {
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+      await createOrVerifyV6FreshDatabase(userDataPath);
+
+      const selectedPath = resolveAppDatabasePath(userDataPath);
+      assert.equal(selectedPath, v4Path);
+      assert.equal(isValidV6Database(v6Path), true);
+      assert.equal(existsSync(v4Path), false);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
   it("どの DB も存在しない場合でも起動時 migration や DB 作成を呼び出さない", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
 
@@ -317,6 +336,23 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
       assert.equal(selectedPath, v4Path);
       assert.equal(isValidV4Database(v4Path), true);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("V6 foundation DB は起動時 migration target ではなく、V4 fresh path を返す", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+
+    try {
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+      await createOrVerifyV6FreshDatabase(userDataPath);
+
+      const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
+      assert.equal(selectedPath, v4Path);
+      assert.equal(isValidV6Database(v6Path), true);
+      assert.equal(existsSync(v4Path), false);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }

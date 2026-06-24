@@ -12,32 +12,44 @@ import { APP_DATABASE_V1_FILENAME, APP_DATABASE_V1_SCHEMA_VERSION } from "./data
 import { APP_DATABASE_V2_FILENAME, APP_DATABASE_V2_SCHEMA_VERSION, isValidV2Database } from "./database-schema-v2.js";
 import { APP_DATABASE_V3_FILENAME, APP_DATABASE_V3_SCHEMA_VERSION, isValidV3Database } from "./database-schema-v3.js";
 import { APP_DATABASE_V4_FILENAME, APP_DATABASE_V4_SCHEMA_VERSION, isValidV4Database } from "./database-schema-v4.js";
+import { APP_DATABASE_V6_FILENAME, APP_DATABASE_V6_SCHEMA_VERSION, isValidV6DatabaseShallow } from "./database-schema-v6.js";
 
 type KnownDatabaseDefinition = {
   fileName: string;
   schemaVersion: number;
+  runtimeGeneration: boolean;
   isValid(dbPath: string): boolean;
 };
 
 const KNOWN_DATABASE_DEFINITIONS: KnownDatabaseDefinition[] = [
   {
+    fileName: APP_DATABASE_V6_FILENAME,
+    schemaVersion: APP_DATABASE_V6_SCHEMA_VERSION,
+    runtimeGeneration: false,
+    isValid: isValidV6DatabaseShallow,
+  },
+  {
     fileName: APP_DATABASE_V4_FILENAME,
     schemaVersion: APP_DATABASE_V4_SCHEMA_VERSION,
+    runtimeGeneration: true,
     isValid: isValidV4Database,
   },
   {
     fileName: APP_DATABASE_V3_FILENAME,
     schemaVersion: APP_DATABASE_V3_SCHEMA_VERSION,
+    runtimeGeneration: true,
     isValid: isValidV3Database,
   },
   {
     fileName: APP_DATABASE_V2_FILENAME,
     schemaVersion: APP_DATABASE_V2_SCHEMA_VERSION,
+    runtimeGeneration: true,
     isValid: isValidV2Database,
   },
   {
     fileName: APP_DATABASE_V1_FILENAME,
     schemaVersion: APP_DATABASE_V1_SCHEMA_VERSION,
+    runtimeGeneration: true,
     isValid: (dbPath) => existsSync(dbPath),
   },
 ];
@@ -65,12 +77,16 @@ function statusForFile(input: {
   fileName: string;
   exists: boolean;
   valid: boolean;
+  runtimeGeneration: boolean;
 }): AppDatabaseFileStatus {
   if (!input.exists && input.fileName === APP_DATABASE_V4_FILENAME && input.dbPath === input.activeDatabasePath) {
     return "pending-create";
   }
   if (!input.exists) {
     return "missing";
+  }
+  if (input.valid && !input.runtimeGeneration) {
+    return "foundation-ready";
   }
   return input.valid ? "ready" : "invalid";
 }
@@ -82,25 +98,33 @@ function inspectKnownDatabaseFile(
 ): AppDatabaseFileDiagnostics {
   const dbPath = path.join(userDataPath, definition.fileName);
   const exists = existsSync(dbPath);
-  const valid = exists ? definition.isValid(dbPath) : false;
+  const schemaValid = exists ? definition.isValid(dbPath) : false;
+  const runtimeEligible = definition.runtimeGeneration && schemaValid;
   return {
     fileName: definition.fileName,
     path: dbPath,
     exists,
+    role: definition.runtimeGeneration ? "runtime" : "foundation",
     expectedSchemaVersion: definition.schemaVersion,
     userVersion: readUserVersion(dbPath),
-    valid,
+    schemaValid,
+    runtimeEligible,
+    valid: schemaValid,
     status: statusForFile({
       activeDatabasePath,
       dbPath,
       fileName: definition.fileName,
       exists,
-      valid,
+      valid: schemaValid,
+      runtimeGeneration: definition.runtimeGeneration,
     }),
   };
 }
 
 function compatibilityModeFor(fileName: string, valid: boolean, pendingCreate: boolean): AppDatabaseCompatibilityMode {
+  if (fileName === APP_DATABASE_V6_FILENAME && valid) {
+    return "v6-foundation";
+  }
   if (fileName === APP_DATABASE_V4_FILENAME && (valid || pendingCreate)) {
     return "v4";
   }
@@ -116,16 +140,23 @@ function compatibilityModeFor(fileName: string, valid: boolean, pendingCreate: b
   return "unsupported";
 }
 
-function buildWarnings(files: AppDatabaseFileDiagnostics[], activeFile: AppDatabaseFileDiagnostics): string[] {
+function buildWarnings(
+  files: AppDatabaseFileDiagnostics[],
+  activeFile: AppDatabaseFileDiagnostics,
+): string[] {
   const warnings: string[] = [];
-  const invalidFiles = files.filter((file) => file.exists && !file.valid);
+  const invalidFiles = files.filter((file) => file.exists && !file.schemaValid);
   for (const file of invalidFiles) {
     warnings.push(`${file.fileName} exists but does not match its expected schema.`);
   }
 
-  const validFiles = files.filter((file) => file.valid);
+  const validFiles = files.filter((file) => file.runtimeEligible);
   if (validFiles.length > 1) {
     warnings.push(`Multiple valid app database generations exist: ${validFiles.map((file) => file.fileName).join(", ")}.`);
+  }
+
+  if (activeFile.role === "foundation" && activeFile.schemaValid) {
+    warnings.push(`Active database ${activeFile.fileName} is a foundation schema and is not supported by the current runtime.`);
   }
 
   if (activeFile.status === "unsupported" || activeFile.status === "invalid") {
@@ -149,14 +180,19 @@ export function inspectAppDatabase(
     fileName: activeFileName,
     path: activeDatabasePath,
     exists: activePathExists,
+    role: "runtime",
     expectedSchemaVersion: null,
     userVersion: readUserVersion(activeDatabasePath),
+    schemaValid: false,
+    runtimeEligible: false,
     valid: false,
     status: activePathExists ? "unsupported" : "missing",
   } satisfies AppDatabaseFileDiagnostics;
   const pendingCreate = activeFile.status === "pending-create";
   const compatibilityMode = compatibilityModeFor(activeFile.fileName, activeFile.valid, pendingCreate);
   const schemaVersion = pendingCreate ? APP_DATABASE_V4_SCHEMA_VERSION : activeFile.expectedSchemaVersion;
+  const schemaValid = activeFile.schemaValid || pendingCreate;
+  const runtimeCompatible = activeFile.runtimeEligible || pendingCreate;
 
   return {
     userDataPath,
@@ -167,7 +203,9 @@ export function inspectAppDatabase(
     schemaVersion: compatibilityMode === "unsupported" ? null : schemaVersion,
     userVersion: activeFile.userVersion,
     exists: activeFile.exists,
-    valid: activeFile.valid || pendingCreate,
+    schemaValid,
+    runtimeCompatible,
+    valid: runtimeCompatible,
     files,
     warnings: buildWarnings(files, activeFile),
   };

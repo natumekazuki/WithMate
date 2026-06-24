@@ -5,6 +5,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
+import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { inspectAppDatabase } from "../../src-electron/app-database-diagnostics.js";
 import { APP_DATABASE_V3_FILENAME, CREATE_V3_SCHEMA_SQL } from "../../src-electron/database-schema-v3.js";
 import {
@@ -12,6 +13,7 @@ import {
   APP_DATABASE_V4_SCHEMA_VERSION,
   CREATE_V4_SCHEMA_SQL,
 } from "../../src-electron/database-schema-v4.js";
+import { APP_DATABASE_V6_FILENAME, APP_DATABASE_V6_SCHEMA_VERSION } from "../../src-electron/database-schema-v6.js";
 
 function createDatabase(dbPath: string, statements: readonly string[]): void {
   const db = new DatabaseSync(dbPath);
@@ -39,8 +41,11 @@ describe("inspectAppDatabase", () => {
       assert.equal(diagnostics.compatibilityMode, "v4");
       assert.equal(diagnostics.schemaVersion, APP_DATABASE_V4_SCHEMA_VERSION);
       assert.equal(diagnostics.userVersion, null);
+      assert.equal(diagnostics.schemaValid, true);
+      assert.equal(diagnostics.runtimeCompatible, true);
       assert.equal(diagnostics.exists, false);
       assert.equal(diagnostics.valid, true);
+      assert.equal(diagnostics.files.find((file) => file.fileName === APP_DATABASE_V6_FILENAME)?.status, "missing");
       assert.equal(diagnostics.files.find((file) => file.fileName === APP_DATABASE_V4_FILENAME)?.status, "pending-create");
       assert.deepEqual(diagnostics.warnings, []);
     } finally {
@@ -59,6 +64,8 @@ describe("inspectAppDatabase", () => {
       assert.equal(diagnostics.compatibilityMode, "v4");
       assert.equal(diagnostics.schemaVersion, APP_DATABASE_V4_SCHEMA_VERSION);
       assert.equal(diagnostics.userVersion, APP_DATABASE_V4_SCHEMA_VERSION);
+      assert.equal(diagnostics.schemaValid, true);
+      assert.equal(diagnostics.runtimeCompatible, true);
       assert.equal(diagnostics.exists, true);
       assert.equal(diagnostics.valid, true);
       assert.deepEqual(diagnostics.warnings, []);
@@ -102,6 +109,58 @@ describe("inspectAppDatabase", () => {
       assert.equal(diagnostics.compatibilityMode, "v4");
       assert.equal(
         diagnostics.warnings.includes("Multiple valid app database generations exist: withmate-v4.db, withmate-v3.db."),
+        true,
+      );
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("V6 foundation DB は既知 file として診断するが V4 active compatibility を変えない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-diagnostics-"));
+    try {
+      const activeDatabasePath = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      createDatabase(activeDatabasePath, CREATE_V4_SCHEMA_SQL);
+      await createOrVerifyV6FreshDatabase(userDataPath);
+
+      const diagnostics = inspectAppDatabase(userDataPath, activeDatabasePath, false);
+      const v6File = diagnostics.files.find((file) => file.fileName === APP_DATABASE_V6_FILENAME);
+
+      assert.equal(diagnostics.compatibilityMode, "v4");
+      assert.equal(diagnostics.schemaVersion, APP_DATABASE_V4_SCHEMA_VERSION);
+      assert.equal(v6File?.expectedSchemaVersion, APP_DATABASE_V6_SCHEMA_VERSION);
+      assert.equal(v6File?.userVersion, APP_DATABASE_V6_SCHEMA_VERSION);
+      assert.equal(v6File?.role, "foundation");
+      assert.equal(v6File?.schemaValid, true);
+      assert.equal(v6File?.runtimeEligible, false);
+      assert.equal(v6File?.valid, true);
+      assert.equal(v6File?.status, "foundation-ready");
+      assert.equal(
+        diagnostics.warnings.includes("Multiple valid app database generations exist: withmate-v6.db, withmate-v4.db."),
+        false,
+      );
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("activeDatabasePath に V6 foundation DB を渡した場合は v6-foundation として診断する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-diagnostics-"));
+    try {
+      const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
+
+      const diagnostics = inspectAppDatabase(userDataPath, dbPath, false);
+
+      assert.equal(diagnostics.activeFileName, APP_DATABASE_V6_FILENAME);
+      assert.equal(diagnostics.compatibilityMode, "v6-foundation");
+      assert.equal(diagnostics.schemaVersion, APP_DATABASE_V6_SCHEMA_VERSION);
+      assert.equal(diagnostics.userVersion, APP_DATABASE_V6_SCHEMA_VERSION);
+      assert.equal(diagnostics.schemaValid, true);
+      assert.equal(diagnostics.runtimeCompatible, false);
+      assert.equal(diagnostics.exists, true);
+      assert.equal(diagnostics.valid, false);
+      assert.equal(
+        diagnostics.warnings.includes("Active database withmate-v6.db is a foundation schema and is not supported by the current runtime."),
         true,
       );
     } finally {
