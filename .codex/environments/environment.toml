@@ -4,8 +4,6 @@ name = "WithMate"
 
 [setup]
 script = '''
-git fetch
-git pull
 npm install
 
 '''
