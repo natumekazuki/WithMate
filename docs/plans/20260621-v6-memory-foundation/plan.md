@@ -212,12 +212,15 @@ scripts/tests/memory-v6-storage.test.ts
 
 ## Phase 3: Application Service
 
+Status: 完了
+
 候補path:
 
 ```text
 src-electron/memory-v6-service.ts
 src-electron/memory-v6-context-resolver.ts
 src-electron/memory-v6-permission.ts
+scripts/tests/memory-v6-service.test.ts
 ```
 
 内容:
@@ -233,6 +236,19 @@ src-electron/memory-v6-permission.ts
 
 - agent payloadをそのままSQLへ流さない。
 - owner / scope accessをserviceで再検証する。
+
+実装:
+
+- `src-electron/memory-v6-service.ts`
+- `src-electron/memory-v6-context-resolver.ts`
+- `src-electron/memory-v6-permission.ts`
+- `scripts/tests/memory-v6-service.test.ts`
+
+検証:
+
+- `node --test --import tsx scripts/tests/memory-v6-service.test.ts scripts/tests/memory-v6-storage.test.ts scripts/tests/memory-v6-contract.test.ts scripts/tests/memory-v6-response-contract.test.ts`
+- `npx tsc --noEmit --pretty false`
+- `npx tsc -p tsconfig.electron.json --noEmit --pretty false`
 
 ## Phase 4: Localhost API And CLI
 

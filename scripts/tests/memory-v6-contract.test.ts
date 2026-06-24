@@ -5,6 +5,8 @@ import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js
 import {
   validateMemoryAppendRequest,
   validateMemoryForgetRequest,
+  validateMemoryGetEntryRequest,
+  validateMemoryListTagsRequest,
   validateMemorySearchRequest,
 } from "../../src/memory-v6/memory-validation.js";
 
@@ -94,6 +96,22 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.ok, true);
     assert.deepEqual(result.value.entryIds, ["entry-a", "entry-b"]);
     assert.equal(result.value.reason, "privacy");
+  });
+
+  it("valid get_entry / list_tags request を正規化できる", () => {
+    const getEntry = validateMemoryGetEntryRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      entryId: " entry-a ",
+    });
+    assert.equal(getEntry.ok, true);
+    assert.equal(getEntry.value.entryId, "entry-a");
+
+    const listTags = validateMemoryListTagsRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [projectTarget],
+    });
+    assert.equal(listTags.ok, true);
+    assert.deepEqual(listTags.value.targets, [projectTarget]);
   });
 
   it("invalid schemaVersion を拒否する", () => {

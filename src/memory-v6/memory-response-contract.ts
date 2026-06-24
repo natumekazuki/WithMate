@@ -89,7 +89,7 @@ export function createMemoryGetEntryResponse(entry: MemoryEntryDetail | null): M
 export function createMemoryListTagsResponse(tags: readonly MemoryTag[]): MemoryListTagsResponse {
   return {
     schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-    tags: [...tags],
+    tags: tags.map((tag) => ({ type: tag.type, value: tag.value })),
   };
 }
 

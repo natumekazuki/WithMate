@@ -57,6 +57,16 @@ export type MemorySearchRequest = {
   cursor?: string;
 };
 
+export type MemoryGetEntryRequest = {
+  schemaVersion: MemoryV6SchemaVersion;
+  entryId: string;
+};
+
+export type MemoryListTagsRequest = {
+  schemaVersion: MemoryV6SchemaVersion;
+  targets: MemoryTargetSelector[];
+};
+
 export type MemoryAppendRequest = {
   schemaVersion: MemoryV6SchemaVersion;
   target: MemoryTargetSelector;
