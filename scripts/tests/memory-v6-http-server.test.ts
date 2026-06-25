@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
+import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -71,6 +72,10 @@ function seedRuntimeContext(dbPath: string): void {
 async function withMemoryApi<T>(
   runner: (input: { baseUrl: string; storage: MemoryV6Storage; server: MemoryV6HttpServer }) => T | Promise<T>,
   principalOverride: MemoryV6Principal | null = principal(),
+  serverOptions: {
+    maxConcurrentRequests?: number;
+    resolvePrincipal?: (request: IncomingMessage) => MemoryV6Principal | null | Promise<MemoryV6Principal | null>;
+  } = {},
 ): Promise<T> {
   const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-v6-http-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(tempDirectory);
@@ -86,7 +91,8 @@ async function withMemoryApi<T>(
   const server = createMemoryV6HttpServer({
     service,
     maxBodyBytes: 512,
-    resolvePrincipal: () => principalOverride,
+    maxConcurrentRequests: serverOptions.maxConcurrentRequests,
+    resolvePrincipal: serverOptions.resolvePrincipal ?? (() => principalOverride),
   });
 
   try {
@@ -256,6 +262,88 @@ describe("MemoryV6HttpServer", () => {
       });
       assert.equal(tooLarge.status, 413);
       assert.equal((await tooLarge.json()).error.code, "MEMORY_REQUEST_TOO_LARGE");
+    });
+  });
+
+  it("browser-origin request とJSON以外のPOSTをservice到達前に拒否する", async () => {
+    let resolverCalls = 0;
+    await withMemoryApi(async ({ baseUrl }) => {
+      const browserRequest = await fetch(`${baseUrl}/v1/append`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain",
+          "Origin": "https://example.invalid",
+          "Sec-Fetch-Site": "cross-site",
+        },
+        body: JSON.stringify(appendRequest()),
+      });
+      assert.equal(browserRequest.status, 403);
+      assert.equal((await browserRequest.json()).error.code, "MEMORY_BROWSER_REQUEST_FORBIDDEN");
+      assert.equal(resolverCalls, 0);
+
+      const nullOriginRequest = await fetch(`${baseUrl}/v1/context`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Origin": "null",
+        },
+        body: "{}",
+      });
+      assert.equal(nullOriginRequest.status, 403);
+      assert.equal((await nullOriginRequest.json()).error.code, "MEMORY_BROWSER_REQUEST_FORBIDDEN");
+      assert.equal(resolverCalls, 0);
+
+      const unsupportedMediaType = await fetch(`${baseUrl}/v1/search`, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
+          query: "memory",
+        }),
+      });
+      assert.equal(unsupportedMediaType.status, 415);
+      assert.equal((await unsupportedMediaType.json()).error.code, "MEMORY_UNSUPPORTED_MEDIA_TYPE");
+      assert.equal(resolverCalls, 0);
+    }, principal(), {
+      resolvePrincipal: () => {
+        resolverCalls += 1;
+        return principal();
+      },
+    });
+  });
+
+  it("同時実行上限を超えたrequestはresolverへ到達しない", async () => {
+    let releaseFirstRequest!: () => void;
+    const firstRequestGate = new Promise<void>((resolve) => {
+      releaseFirstRequest = resolve;
+    });
+    let resolverCalls = 0;
+
+    await withMemoryApi(async ({ baseUrl }) => {
+      const firstRequest = postJson(baseUrl, "/v1/context", {});
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+      const rejected = await postJson(baseUrl, "/v1/search", {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
+        query: "memory",
+      });
+      assert.equal(rejected.status, 429);
+      assert.equal(rejected.json.error.code, "MEMORY_TOO_MANY_REQUESTS");
+      assert.equal(resolverCalls, 1);
+
+      releaseFirstRequest();
+      const firstResponse = await firstRequest;
+      assert.equal(firstResponse.status, 200);
+      assert.equal(firstResponse.json.session.id, "session-a");
+    }, principal(), {
+      maxConcurrentRequests: 1,
+      resolvePrincipal: async () => {
+        resolverCalls += 1;
+        await firstRequestGate;
+        return principal();
+      },
     });
   });
 });

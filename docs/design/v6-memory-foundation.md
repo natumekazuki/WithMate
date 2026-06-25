@@ -983,7 +983,8 @@ npm run build
 - service get / forget existence oracle防止
 - service idempotency conflict error mapping
 - localhost API loopback guard
-- localhost API method / route / JSON / body size guard
+- localhost API browser-origin / content-type guard
+- localhost API method / route / JSON / body size / concurrency guard
 - localhost API service dispatch
 
 追加すべきtest:

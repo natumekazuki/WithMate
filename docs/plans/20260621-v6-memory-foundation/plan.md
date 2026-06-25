@@ -269,13 +269,14 @@ scripts/tests/withmate-memory-cli.test.ts
 - loopback-only server - 完了
 - runtime discovery / app-internal API guard
 - WithMate起動中チェック
-- body / timeout limits - 完了
+- body / timeout / concurrency limits - 完了
 - JSON CLI
 - stable exit codes
 
 完了条件:
 
 - LAN bindしない。localhost API transportでは`127.0.0.1` default bindとremote address guardで固定済み。
+- browser-origin requestを拒否し、POSTは`application/json`だけを受ける。
 - CLIはWithMate未起動時に`WITHMATE_NOT_RUNNING`を返す。
 - runtime endpoint / app-internal secretをlogに出さない。
 - idempotency retryで二重appendしない。

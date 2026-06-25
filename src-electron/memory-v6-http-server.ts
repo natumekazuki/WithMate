@@ -12,6 +12,7 @@ export type MemoryV6HttpServerOptions = {
   port?: number;
   maxBodyBytes?: number;
   requestTimeoutMs?: number;
+  maxConcurrentRequests?: number;
 };
 
 export type MemoryV6HttpServer = {
@@ -26,6 +27,7 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 0;
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+const DEFAULT_MAX_CONCURRENT_REQUESTS = 8;
 
 const routeByPath = new Map<string, MemoryV6Route>([
   ["/v1/context", "context"],
@@ -48,6 +50,28 @@ function writeJson(response: ServerResponse, statusCode: number, value: unknown)
     "Content-Length": Buffer.byteLength(body),
   });
   response.end(body);
+}
+
+function rejectBrowserRequest(request: IncomingMessage): MemoryErrorResponse | null {
+  if (request.headers.origin !== undefined) {
+    return memoryTransportError("MEMORY_BROWSER_REQUEST_FORBIDDEN", "Memory API does not accept browser-origin requests.");
+  }
+
+  for (const header of ["sec-fetch-site", "sec-fetch-dest", "sec-fetch-user"]) {
+    if (request.headers[header] !== undefined) {
+      return memoryTransportError("MEMORY_BROWSER_REQUEST_FORBIDDEN", "Memory API does not accept browser fetch metadata.");
+    }
+  }
+
+  return null;
+}
+
+function acceptsJsonRequest(request: IncomingMessage): boolean {
+  const contentType = request.headers["content-type"];
+  if (typeof contentType !== "string") {
+    return false;
+  }
+  return contentType.split(";", 1)[0]?.trim().toLowerCase() === "application/json";
 }
 
 function isMemoryErrorResponse(value: unknown): value is MemoryErrorResponse {
@@ -130,6 +154,10 @@ function statusForMemoryResponse(value: unknown): number {
       return 404;
     case "MEMORY_REQUEST_TOO_LARGE":
       return 413;
+    case "MEMORY_UNSUPPORTED_MEDIA_TYPE":
+      return 415;
+    case "MEMORY_TOO_MANY_REQUESTS":
+      return 429;
     case "MEMORY_INVALID_JSON":
       return 400;
     default:
@@ -142,13 +170,28 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
   const port = options.port ?? DEFAULT_PORT;
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const maxConcurrentRequests = options.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS;
+  let activeRequests = 0;
 
   const server = createServer(async (request, response) => {
+    let admitted = false;
     try {
       if (!isLoopbackRemoteAddress(request.socket.remoteAddress)) {
         writeJson(response, 403, memoryTransportError("MEMORY_FORBIDDEN", "Memory API only accepts loopback requests."));
         return;
       }
+      const browserRequestError = rejectBrowserRequest(request);
+      if (browserRequestError) {
+        writeJson(response, 403, browserRequestError);
+        return;
+      }
+
+      if (activeRequests >= maxConcurrentRequests) {
+        writeJson(response, 429, memoryTransportError("MEMORY_TOO_MANY_REQUESTS", "Memory API has too many in-flight requests."));
+        return;
+      }
+      activeRequests += 1;
+      admitted = true;
 
       const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
       if (pathname === "/v1/status") {
@@ -169,6 +212,10 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory API route does not support this method."));
         return;
       }
+      if (!acceptsJsonRequest(request)) {
+        writeJson(response, 415, memoryTransportError("MEMORY_UNSUPPORTED_MEDIA_TYPE", "Memory API POST requests must use application/json."));
+        return;
+      }
 
       const principal = await options.resolvePrincipal(request);
       const body = await readJsonBody(request, maxBodyBytes);
@@ -180,6 +227,10 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         return;
       }
       writeJson(response, 500, memoryTransportError("MEMORY_INTERNAL_ERROR", "Memory API request failed."));
+    } finally {
+      if (admitted) {
+        activeRequests -= 1;
+      }
     }
   });
 
