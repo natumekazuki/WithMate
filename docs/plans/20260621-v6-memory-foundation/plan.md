@@ -270,7 +270,7 @@ scripts/tests/withmate-memory-cli.test.ts
 - runtime discovery - 完了。CLI defaultはruntime directoryのdiscovery fileを読む。永続userData pathは既定にしない。
 - app起動配線 - 完了。app ready時にV6 DBをbest-effortでbootstrapし、localhost APIを起動してruntime discovery fileをpublishする。
 - app shutdown cleanup - 完了。quit時にdiscovery fileをbest-effortで削除し、server / storageを停止する。
-- app-internal API guard - 完了。runtime APIは短命secretを要求し、CLIはsecure runtime directoryのdiscovery fileまたは`WITHMATE_MEMORY_API_SECRET`からsecretを取得してheaderで送る。
+- app-internal API guard - 完了。runtime APIは短命secretとruntimeInstanceIdを要求し、CLIはsecret/body送信前にnonce challengeでruntime identityを検証してからheaderを送る。
 - WithMate起動中チェック - CLI側の`WITHMATE_NOT_RUNNING`は完了
 - body / timeout / concurrency limits - 完了
 - JSON CLI - 完了
@@ -281,7 +281,7 @@ scripts/tests/withmate-memory-cli.test.ts
 - LAN bindしない。localhost API transportでは`127.0.0.1` default bindとremote address guardで固定済み。
 - browser-origin requestを拒否し、POSTは`application/json`だけを受ける。
 - CLIはWithMate未起動時に`WITHMATE_NOT_RUNNING`を返す。
-- CLIはinvalid `--api-url`をdiscovery fallbackせずusage errorにし、HTTP redirectを追従しない。
+- CLIはinvalid `--api-url` / `WITHMATE_MEMORY_API_URL`をdiscovery fallbackせずusage errorにし、HTTP redirectを追従しない。
 - runtime endpoint / app-internal secretをlogに出さない。
 - idempotency retryで二重appendしない。
 

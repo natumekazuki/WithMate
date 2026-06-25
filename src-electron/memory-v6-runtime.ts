@@ -1,8 +1,9 @@
 import { chmod, lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 
 import {
+  normalizeWithMateMemoryApiBaseUrl,
   resolveDefaultWithMateMemoryDiscoveryFilePath,
   resolveDefaultWithMateMemoryRuntimeDirectory,
   WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
@@ -13,7 +14,6 @@ import type { AppLogInput } from "../src/app-log-types.js";
 import { createOrVerifyV6FreshDatabase } from "./app-database-v6-bootstrap.js";
 import {
   createMemoryV6HttpServer,
-  WITHMATE_MEMORY_API_SECRET_HEADER,
   type MemoryV6HttpServer,
 } from "./memory-v6-http-server.js";
 import { MemoryV6Service } from "./memory-v6-service.js";
@@ -123,6 +123,10 @@ function createRuntimeApiSecret(): string {
   return randomBytes(32).toString("base64url");
 }
 
+function createStatusChallenge(apiSecret: string, nonce: string): string {
+  return createHmac("sha256", apiSecret).update(nonce, "utf8").digest("base64url");
+}
+
 function readDiscoveryApiSecret(document: Partial<WithMateMemoryDiscoveryDocument> | null): string | undefined {
   return typeof document?.apiSecret === "string" && document.apiSecret.trim().length > 0
     ? document.apiSecret
@@ -130,7 +134,16 @@ function readDiscoveryApiSecret(document: Partial<WithMateMemoryDiscoveryDocumen
 }
 
 async function isLiveDiscoveryDocument(document: Partial<WithMateMemoryDiscoveryDocument> | null): Promise<boolean> {
-  if (!document || typeof document.baseUrl !== "string") {
+  if (
+    !document
+    || document.schemaVersion !== WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION
+    || typeof document.baseUrl !== "string"
+    || typeof document.runtimeInstanceId !== "string"
+  ) {
+    return false;
+  }
+  const baseUrl = normalizeWithMateMemoryApiBaseUrl(document.baseUrl);
+  if (!baseUrl) {
     return false;
   }
 
@@ -138,13 +151,25 @@ async function isLiveDiscoveryDocument(document: Partial<WithMateMemoryDiscovery
   const timeout = setTimeout(() => abortController.abort(), 500);
   try {
     const apiSecret = readDiscoveryApiSecret(document);
-    const response = await fetch(`${document.baseUrl.replace(/\/+$/, "")}/v1/status`, {
+    if (!apiSecret) {
+      return false;
+    }
+    const nonce = randomBytes(16).toString("base64url");
+    const response = await fetch(`${baseUrl}/v1/status?nonce=${encodeURIComponent(nonce)}`, {
       method: "GET",
-      headers: apiSecret ? { [WITHMATE_MEMORY_API_SECRET_HEADER]: apiSecret } : undefined,
       redirect: "error",
       signal: abortController.signal,
     });
-    return response.ok;
+    if (!response.ok) {
+      return false;
+    }
+    const status = await response.json() as {
+      runtimeInstanceId?: unknown;
+      challenge?: { nonce?: unknown; hmacSha256?: unknown };
+    };
+    return status.runtimeInstanceId === document.runtimeInstanceId
+      && status.challenge?.nonce === nonce
+      && status.challenge.hmacSha256 === createStatusChallenge(apiSecret, nonce);
   } catch {
     return false;
   } finally {
@@ -219,10 +244,12 @@ export async function startMemoryV6RuntimeApi(
     storage = new MemoryV6Storage(bootstrap.dbPath);
     const service = new MemoryV6Service({ storage });
     const apiSecret = createRuntimeApiSecret();
+    const runtimeInstanceId = randomUUID();
     server = createMemoryV6HttpServer({
       service,
       resolvePrincipal: () => null,
       apiSecret,
+      runtimeInstanceId,
     });
     await server.start();
 
@@ -234,6 +261,7 @@ export async function startMemoryV6RuntimeApi(
     discoveryFile = await publishMemoryV6DiscoveryFile({
       baseUrl,
       apiSecret,
+      runtimeInstanceId,
       runtimeDirectoryPath,
     });
 

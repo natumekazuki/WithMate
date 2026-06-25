@@ -542,11 +542,11 @@ WithMateが起動していない場合、CLIはすべてのMemory操作を拒否
 `--self` flagは採用しない。
 current CLIは`WITHMATE_MEMORY_API_URL`またはruntime discovery fileからlocalhost APIを発見する。
 discovery fileは`withmate-memory-discovery-v1` documentとして`baseUrl`、`apiSecret`、`runtimeInstanceId`、`publishedAt`を公開し、CLIはloopback HTTP URL以外を拒否する。
-`--api-url`で明示したURLがloopback HTTP URLでない場合、CLIはusage errorで終了し、discovery fileへfallbackしない。
+`--api-url`または`WITHMATE_MEMORY_API_URL`で明示したURLがloopback HTTP URLでない場合、CLIはusage errorで終了し、discovery fileへfallbackしない。
 既定のdiscovery fileは`WITHMATE_MEMORY_RUNTIME_DIR`があればその直下、なければOS temp配下のuser-specific runtime directoryに置く。
 app側writerはruntime directoryをOS userだけが読める権限で作成し、POSIXではsymlink directory、他user所有、group / other readableなdirectoryを拒否または修正する。discovery fileは0600相当でexclusive temporary fileから置き換える。
-current app起動配線は`src-electron/memory-v6-runtime.ts`で行う。app ready後に`withmate-v6.db`をbest-effortでbootstrapし、localhost APIを起動してdiscovery fileをpublishする。起動時は既存discovery fileのendpointが生きていない場合だけstaleとして回収し、app shutdown時はcurrent fileの`runtimeInstanceId`が自分のpublishと一致する場合だけ削除する。V6 DBがinvalidなどでMemory runtimeだけ起動できない場合でも、通常app bootは継続し、discovery fileは残さない。
-runtime APIはapp起動ごとの短命`apiSecret`を要求し、CLIはdiscovery fileまたは`WITHMATE_MEMORY_API_SECRET`から取得したsecretを`X-WithMate-Memory-Api-Secret` headerで送る。app logにはruntime endpoint URLやapp-internal secretを出さず、discovery file publishの成否とaddress familyだけを記録する。V6 bootstrap後はboot diagnosticsを再取得し、fresh userDataでも`withmate-v6.db`が`foundation-ready`として見える状態にする。
+current app起動配線は`src-electron/memory-v6-runtime.ts`で行う。app ready後に`withmate-v6.db`をbest-effortでbootstrapし、localhost APIを起動してdiscovery fileをpublishする。起動時は既存discovery fileのschema、loopback HTTP URL、`runtimeInstanceId`、nonce challengeを確認し、生きていないendpointだけstaleとして回収する。app shutdown時はcurrent fileの`runtimeInstanceId`が自分のpublishと一致する場合だけ削除する。V6 DBがinvalidなどでMemory runtimeだけ起動できない場合でも、通常app bootは継続し、discovery fileは残さない。
+runtime APIはapp起動ごとの短命`apiSecret`と`runtimeInstanceId`を要求する。CLIはmutation bodyやsecret headerを送る前に、secretを送らない`GET /v1/status?nonce=...`で`runtimeInstanceId`と`HMAC-SHA256(apiSecret, nonce)` challengeを検証し、成功した場合だけdiscovery fileまたは`WITHMATE_MEMORY_API_SECRET`から取得したsecretを`X-WithMate-Memory-Api-Secret` headerで送る。app logにはruntime endpoint URLやapp-internal secretを出さず、discovery file publishの成否とaddress familyだけを記録する。V6 bootstrap後はboot diagnosticsを再取得し、fresh userDataでも`withmate-v6.db`が`foundation-ready`として見える状態にする。
 CLIは毎回、process environmentに短命runtime bindingがあれば自動検証する。
 bindingはprincipal / permission / current Character解決にだけ使い、Memoryのowner / scope targetはcommand引数またはinput payloadで明示する。
 

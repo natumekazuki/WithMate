@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -9,9 +9,10 @@ import type { MemoryV6Principal } from "./memory-v6-permission.js";
 export type MemoryV6HttpServerOptions = {
   service: MemoryV6Service;
   resolvePrincipal(request: IncomingMessage): MemoryV6Principal | null | Promise<MemoryV6Principal | null>;
+  apiSecret: string;
+  runtimeInstanceId: string;
   host?: string;
   port?: number;
-  apiSecret?: string;
   maxBodyBytes?: number;
   requestTimeoutMs?: number;
   maxConcurrentRequests?: number;
@@ -31,6 +32,7 @@ const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_CONCURRENT_REQUESTS = 8;
 export const WITHMATE_MEMORY_API_SECRET_HEADER = "x-withmate-memory-api-secret";
+const STATUS_CHALLENGE_NONCE_QUERY = "nonce";
 
 const routeByPath = new Map<string, MemoryV6Route>([
   ["/v1/context", "context"],
@@ -86,11 +88,7 @@ function timingSafeStringEqual(left: string, right: string): boolean {
   return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function authenticateInternalApiRequest(request: IncomingMessage, apiSecret: string | undefined): MemoryErrorResponse | null {
-  if (!apiSecret) {
-    return null;
-  }
-
+function authenticateInternalApiRequest(request: IncomingMessage, apiSecret: string): MemoryErrorResponse | null {
   const header = request.headers[WITHMATE_MEMORY_API_SECRET_HEADER];
   if (typeof header !== "string" || !timingSafeStringEqual(header, apiSecret)) {
     return memoryTransportError("MEMORY_UNAUTHORIZED", "Memory API request is not authorized.");
@@ -189,10 +187,35 @@ function statusForMemoryResponse(value: unknown): number {
   }
 }
 
+function requireNonEmptySecret(value: string, name: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(`Memory API ${name} must be non-empty.`);
+  }
+  return trimmed;
+}
+
+function createStatusChallenge(apiSecret: string, nonce: string): string {
+  return createHmac("sha256", apiSecret).update(nonce, "utf8").digest("base64url");
+}
+
+function buildStatusResponse(input: { apiSecret: string; runtimeInstanceId: string; requestUrl: string | undefined }): unknown {
+  const url = new URL(input.requestUrl ?? "/", "http://127.0.0.1");
+  const nonce = url.searchParams.get(STATUS_CHALLENGE_NONCE_QUERY)?.trim() ?? "";
+  return {
+    ok: true,
+    runtimeInstanceId: input.runtimeInstanceId,
+    ...(nonce
+      ? { challenge: { nonce, hmacSha256: createStatusChallenge(input.apiSecret, nonce) } }
+      : {}),
+  };
+}
+
 export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): MemoryV6HttpServer {
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
-  const apiSecret = options.apiSecret;
+  const apiSecret = requireNonEmptySecret(options.apiSecret, "apiSecret");
+  const runtimeInstanceId = requireNonEmptySecret(options.runtimeInstanceId, "runtimeInstanceId");
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const maxConcurrentRequests = options.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS;
@@ -210,6 +233,16 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         writeJson(response, 403, browserRequestError);
         return;
       }
+      const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+      if (pathname === "/v1/status") {
+        if (request.method !== "GET") {
+          writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory API route does not support this method."));
+          return;
+        }
+        writeJson(response, 200, buildStatusResponse({ apiSecret, runtimeInstanceId, requestUrl: request.url }));
+        return;
+      }
+
       const authenticationError = authenticateInternalApiRequest(request, apiSecret);
       if (authenticationError) {
         writeJson(response, 401, authenticationError);
@@ -222,16 +255,6 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
       }
       activeRequests += 1;
       admitted = true;
-
-      const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
-      if (pathname === "/v1/status") {
-        if (request.method !== "GET") {
-          writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory API route does not support this method."));
-          return;
-        }
-        writeJson(response, 200, { ok: true });
-        return;
-      }
 
       const route = routeByPath.get(pathname);
       if (!route) {

@@ -12,6 +12,38 @@ export type WithMateMemoryDiscoveryDocument = {
   publishedAt?: string;
 };
 
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  if (normalized === "localhost" || normalized === "::1" || normalized === "[::1]") {
+    return true;
+  }
+
+  const ipv4Parts = normalized.split(".");
+  return ipv4Parts.length === 4
+    && ipv4Parts[0] === "127"
+    && ipv4Parts.every((part) => /^\d+$/.test(part) && Number(part) <= 255);
+}
+
+export function normalizeWithMateMemoryApiBaseUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" || !isLoopbackHostname(url.hostname)) {
+      return null;
+    }
+    url.pathname = url.pathname.replace(/\/+$/, "");
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
 export function resolveDefaultWithMateMemoryRuntimeDirectory(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
