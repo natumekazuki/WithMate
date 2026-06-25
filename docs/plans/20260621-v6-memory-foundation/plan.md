@@ -267,7 +267,7 @@ scripts/tests/withmate-memory-cli.test.ts
 内容:
 
 - loopback-only server - 完了
-- runtime discovery - 完了
+- runtime discovery - 完了。CLI defaultはruntime directoryのdiscovery fileを読む。永続userData pathは既定にしない。
 - app-internal API guard
 - WithMate起動中チェック - CLI側の`WITHMATE_NOT_RUNNING`は完了
 - body / timeout / concurrency limits - 完了
@@ -279,6 +279,7 @@ scripts/tests/withmate-memory-cli.test.ts
 - LAN bindしない。localhost API transportでは`127.0.0.1` default bindとremote address guardで固定済み。
 - browser-origin requestを拒否し、POSTは`application/json`だけを受ける。
 - CLIはWithMate未起動時に`WITHMATE_NOT_RUNNING`を返す。
+- CLIはinvalid `--api-url`をdiscovery fallbackせずusage errorにし、HTTP redirectを追従しない。
 - runtime endpoint / app-internal secretをlogに出さない。
 - idempotency retryで二重appendしない。
 

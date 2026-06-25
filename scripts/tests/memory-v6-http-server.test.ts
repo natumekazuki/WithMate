@@ -170,7 +170,7 @@ describe("MemoryV6HttpServer", () => {
       assert.equal(status.status, 200);
       assert.deepEqual(await status.json(), { ok: true });
 
-      const context = await postJson(baseUrl, "/v1/context", {});
+      const context = await postJson(baseUrl, "/v1/context", { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
       assert.equal(context.status, 200);
       assert.deepEqual(context.json, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -179,6 +179,15 @@ describe("MemoryV6HttpServer", () => {
         sessionProject: { id: "project-a", displayName: "Project A" },
         permissions: allPermissions,
       });
+    });
+  });
+
+  it("context requestのschemaVersion不一致を422で返す", async () => {
+    await withMemoryApi(async ({ baseUrl }) => {
+      const context = await postJson(baseUrl, "/v1/context", {});
+
+      assert.equal(context.status, 422);
+      assert.equal(context.json.error.code, "MEMORY_INVALID_SCHEMA_VERSION");
     });
   });
 
@@ -321,7 +330,7 @@ describe("MemoryV6HttpServer", () => {
     let resolverCalls = 0;
 
     await withMemoryApi(async ({ baseUrl }) => {
-      const firstRequest = postJson(baseUrl, "/v1/context", {});
+      const firstRequest = postJson(baseUrl, "/v1/context", { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
       await new Promise<void>((resolve) => setTimeout(resolve, 20));
 
       const rejected = await postJson(baseUrl, "/v1/search", {

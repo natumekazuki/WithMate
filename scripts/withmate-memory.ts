@@ -1,12 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
-import { homedir } from "node:os";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { MEMORY_V6_SCHEMA_VERSION } from "../src/memory-v6/memory-contract.js";
 import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
 
 export const WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION = "withmate-memory-discovery-v1" as const;
+export const WITHMATE_MEMORY_DISCOVERY_FILE_NAME = "memory-v6-api.json" as const;
 
 export const WITHMATE_MEMORY_CLI_EXIT_CODES = {
   ok: 0,
@@ -122,24 +124,18 @@ function isLoopbackHostname(hostname: string): boolean {
   return isIP(normalized) === 4 && normalized.startsWith("127.");
 }
 
+function defaultRequestBody(command: WithMateMemoryCliCommand): unknown {
+  return command === "context" ? { schemaVersion: MEMORY_V6_SCHEMA_VERSION } : {};
+}
+
 function defaultDiscoveryFilePath(env: NodeJS.ProcessEnv): string {
-  const userDataPath = env.WITHMATE_USER_DATA_PATH?.trim();
-  if (userDataPath) {
-    return path.resolve(userDataPath, "memory-v6-api.json");
+  const runtimeDirectoryPath = env.WITHMATE_MEMORY_RUNTIME_DIR?.trim();
+  if (runtimeDirectoryPath) {
+    return path.resolve(runtimeDirectoryPath, WITHMATE_MEMORY_DISCOVERY_FILE_NAME);
   }
 
-  if (process.platform === "win32") {
-    const appData = env.APPDATA?.trim();
-    if (appData) {
-      return path.join(appData, "WithMate", "memory-v6-api.json");
-    }
-  }
-
-  if (process.platform === "darwin") {
-    return path.join(homedir(), "Library", "Application Support", "WithMate", "memory-v6-api.json");
-  }
-
-  return path.join(env.XDG_CONFIG_HOME?.trim() || path.join(homedir(), ".config"), "WithMate", "memory-v6-api.json");
+  const ownerSegment = typeof process.getuid === "function" ? `uid-${process.getuid()}` : "local-user";
+  return path.join(tmpdir(), "withmate-memory", ownerSegment, WITHMATE_MEMORY_DISCOVERY_FILE_NAME);
 }
 
 async function readStdin(stdin: NodeJS.ReadStream): Promise<string> {
@@ -172,9 +168,17 @@ export async function discoverWithMateMemoryApi(
   } = {},
 ): Promise<string | null> {
   const env = options.env ?? process.env;
-  const directUrl = normalizeBaseUrl(options.apiUrl ?? env.WITHMATE_MEMORY_API_URL ?? "");
-  if (directUrl) {
-    return directUrl;
+  if (options.apiUrl !== undefined) {
+    const explicitUrl = normalizeBaseUrl(options.apiUrl);
+    if (!explicitUrl) {
+      throw usageError("--api-url must be a valid loopback HTTP URL.");
+    }
+    return explicitUrl;
+  }
+
+  const envUrl = normalizeBaseUrl(env.WITHMATE_MEMORY_API_URL ?? "");
+  if (envUrl) {
+    return envUrl;
   }
 
   const discoveryFilePath = options.discoveryFilePath
@@ -227,7 +231,7 @@ export async function parseWithMateMemoryCliArgs(
     throw usageError("--json and --file cannot be used together.");
   }
 
-  let body: unknown = {};
+  let body: unknown = defaultRequestBody(command);
   if (command !== "status") {
     if (jsonInput !== null) {
       body = await parseJsonInput(jsonInput);
@@ -298,6 +302,7 @@ export async function runWithMateMemoryCli(
         method: route.method,
         headers: route.method === "POST" ? { "Content-Type": "application/json" } : undefined,
         body: route.method === "POST" ? JSON.stringify(request.body) : undefined,
+        redirect: "error",
         signal: abortController.signal,
       });
       responseJson = await readJsonResponse(response);

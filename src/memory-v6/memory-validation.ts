@@ -7,6 +7,7 @@ import {
   type MemoryForgetRequest,
   type MemoryGetEntryRequest,
   type MemoryListTagsRequest,
+  type MemoryResolveContextRequest,
   type MemorySearchRequest,
   type MemoryTargetSelector,
   type MemoryValidationResult,
@@ -34,6 +35,7 @@ const MEMORY_FORGET_REASONS = new Set<MemoryForgetReason>([
   "other",
 ]);
 
+const RESOLVE_CONTEXT_REQUEST_KEYS = new Set(["schemaVersion"]);
 const SEARCH_REQUEST_KEYS = new Set(["schemaVersion", "targets", "query", "kinds", "tags", "limit", "cursor"]);
 const GET_ENTRY_REQUEST_KEYS = new Set(["schemaVersion", "entryId"]);
 const LIST_TAGS_REQUEST_KEYS = new Set(["schemaVersion", "targets"]);
@@ -453,6 +455,27 @@ export function validateMemorySearchRequest(value: unknown): MemoryValidationRes
       ...(tags.value.length > 0 ? { tags: tags.value } : {}),
       ...(limit !== undefined ? { limit } : {}),
       ...(cursor.value !== undefined ? { cursor: cursor.value } : {}),
+    },
+  };
+}
+
+export function validateMemoryResolveContextRequest(value: unknown): MemoryValidationResult<MemoryResolveContextRequest> {
+  if (!isRecord(value)) {
+    return error("MEMORY_INVALID_REQUEST", "Resolve context request must be an object.");
+  }
+  const unknownKeys = rejectUnknownKeys(value, RESOLVE_CONTEXT_REQUEST_KEYS, "request");
+  if (!unknownKeys.ok) {
+    return unknownKeys;
+  }
+  const schema = validateSchemaVersion(value);
+  if (!schema.ok) {
+    return schema;
+  }
+
+  return {
+    ok: true,
+    value: {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
     },
   };
 }

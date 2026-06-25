@@ -121,7 +121,7 @@ async function readJsonBody(request: IncomingMessage, maxBodyBytes: number): Pro
 
 function routeServiceRequest(service: MemoryV6Service, principal: MemoryV6Principal | null, route: MemoryV6Route, body: unknown): unknown {
   if (route === "context") {
-    return service.resolveContext(principal);
+    return service.resolveContext(principal, body);
   }
   if (route === "search") {
     return service.search(principal, body);

@@ -542,6 +542,9 @@ WithMateが起動していない場合、CLIはすべてのMemory操作を拒否
 `--self` flagは採用しない。
 current CLIは`WITHMATE_MEMORY_API_URL`またはruntime discovery fileからlocalhost APIを発見する。
 discovery fileは`withmate-memory-discovery-v1` documentとして`baseUrl`だけを公開し、CLIはloopback HTTP URL以外を拒否する。
+`--api-url`で明示したURLがloopback HTTP URLでない場合、CLIはusage errorで終了し、discovery fileへfallbackしない。
+既定のdiscovery fileは`WITHMATE_MEMORY_RUNTIME_DIR`があればその直下、なければOS temp配下のuser-specific runtime directoryに置く。
+app側writerはruntime directoryをOS userだけが読める権限で作成し、discovery fileも0600相当で作成して、app shutdown時にbest effortで削除する。
 CLIは毎回、process environmentに短命runtime bindingがあれば自動検証する。
 bindingはprincipal / permission / current Character解決にだけ使い、Memoryのowner / scope targetはcommand引数またはinput payloadで明示する。
 
@@ -561,6 +564,7 @@ withmate-memory search --file payload.json
 `--json`と`--file`はrequest bodyの入力方法であり、output format指定ではない。CLI outputは常にJSONをstdoutへ出す。
 API errorもtransportできた場合はruntime APIのJSON responseをそのままstdoutへ出す。
 CLI request timeoutは10秒を既定とし、discovery endpointへ接続できない、または応答が戻らない場合は`WITHMATE_NOT_RUNNING`として扱う。
+CLI fetchはHTTP redirectを追従しない。初期URLがloopbackでも、POST bodyを別endpointへ転送しないためにredirectは接続失敗と同じ扱いにする。
 stable exit codeは次とする。
 
 | Exit code | Meaning |
@@ -705,7 +709,7 @@ CLIはuser-facingだが、API endpointはユーザーが直接叩く前提にし
 - 可能ならUnix domain socket / named pipeなどOS-local IPCを優先する。
 - HTTPを使う場合も`127.0.0.1` / `::1`のみlistenし、LAN interfaceへbindしない。
 - 固定portを避け、WithMateが管理するruntime discovery fileからCLIがendpointを取得する。
-- discovery fileはOS userだけが読めるruntime directoryへ置く。
+- discovery fileはOS userだけが読めるruntime directoryへ置き、永続userData pathを既定にしない。
 - CLIは認証tokenをユーザーに要求しない。
 - API側は必要に応じてapp内部のruntime secret / nonce / handshakeで公式CLIまたはmanaged adapterからの呼び出しを識別してよい。
 - runtime secretを使う場合もDBへ保存せず、URL query、audit、app logへ出さない。

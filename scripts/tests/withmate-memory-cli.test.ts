@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -28,6 +30,28 @@ function createOutputCapture(): { stream: { write(chunk: string): boolean }; lin
       return JSON.parse(output.trim());
     },
   };
+}
+
+async function withHttpServer<T>(
+  handler: (request: IncomingMessage, response: ServerResponse) => void,
+  runner: (baseUrl: string) => T | Promise<T>,
+): Promise<T> {
+  const server = createServer(handler);
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  try {
+    const address = server.address() as AddressInfo;
+    return await runner(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }
 }
 
 describe("withmate-memory CLI", () => {
@@ -83,6 +107,53 @@ describe("withmate-memory CLI", () => {
         await discoverWithMateMemoryApi({ env: {}, discoveryFilePath }),
         "http://localhost:4567",
       );
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("runtime directoryのdiscovery fileを既定で読む", async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-runtime-"));
+    try {
+      await writeFile(join(tempDirectory, "memory-v6-api.json"), JSON.stringify({
+        schemaVersion: WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
+        baseUrl: "http://127.0.0.1:4567",
+      }));
+
+      assert.equal(
+        await discoverWithMateMemoryApi({
+          env: { WITHMATE_MEMORY_RUNTIME_DIR: tempDirectory },
+        }),
+        "http://127.0.0.1:4567",
+      );
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("明示された--api-urlが不正な場合はdiscovery fileへfallbackしない", async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-"));
+    const discoveryFilePath = join(tempDirectory, "memory-v6-api.json");
+    const stdout = createOutputCapture();
+    let fetchCalls = 0;
+    try {
+      await writeFile(discoveryFilePath, JSON.stringify({
+        schemaVersion: WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
+        baseUrl: "http://127.0.0.1:4567",
+      }));
+
+      const exitCode = await runWithMateMemoryCli(["status", "--api-url", "http://example.com", "--discovery-file", discoveryFilePath], {
+        env: {},
+        stdout: stdout.stream,
+        fetch: async () => {
+          fetchCalls += 1;
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        },
+      });
+
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
+      assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_CLI_USAGE");
+      assert.equal(fetchCalls, 0);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
@@ -172,6 +243,65 @@ describe("withmate-memory CLI", () => {
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
     assert.deepEqual(capturedBody, requestBody);
     assert.deepEqual(stdout.json(), { schemaVersion: MEMORY_V6_SCHEMA_VERSION, items: [] });
+  });
+
+  it("contextはschemaVersionつきJSON bodyをPOSTで送る", async () => {
+    const stdout = createOutputCapture();
+    let capturedBody: unknown = null;
+
+    const exitCode = await runWithMateMemoryCli(["context"], {
+      env: { WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777" },
+      stdout: stdout.stream,
+      fetch: async (url, init) => {
+        assert.equal(String(url), "http://127.0.0.1:7777/v1/context");
+        assert.equal(init?.method, "POST");
+        capturedBody = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          session: { id: "session-a" },
+          permissions: [],
+        }), { status: 200 });
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+    assert.deepEqual(capturedBody, { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
+  });
+
+  it("POST redirectは追従せずrequest bodyを転送しない", async () => {
+    let destinationRequests = 0;
+
+    await withHttpServer((request, response) => {
+      destinationRequests += 1;
+      request.resume();
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ ok: true }));
+    }, async (destinationUrl) => {
+      await withHttpServer((request, response) => {
+        request.resume();
+        response.writeHead(307, { Location: `${destinationUrl}/leaked` });
+        response.end();
+      }, async (redirectUrl) => {
+        const stdout = createOutputCapture();
+        const exitCode = await runWithMateMemoryCli(["append", "--json", JSON.stringify({
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+          kind: "decision",
+          title: "redirect",
+          body: "redirect body",
+          preview: "redirect",
+          tags: [],
+        })], {
+          env: { WITHMATE_MEMORY_API_URL: redirectUrl },
+          stdout: stdout.stream,
+        });
+
+        assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning);
+        assert.equal(stdout.json().error.code, "WITHMATE_NOT_RUNNING");
+      });
+    });
+
+    assert.equal(destinationRequests, 0);
   });
 
   it("API errorはレスポンスJSONをそのまま出し、apiErrorで終了する", async () => {
