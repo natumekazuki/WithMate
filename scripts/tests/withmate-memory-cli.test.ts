@@ -56,20 +56,20 @@ async function withHttpServer<T>(
 
 describe("withmate-memory CLI", () => {
   it("loopbackの環境変数URLをdiscovery結果として使う", async () => {
-    assert.equal(
+    assert.deepEqual(
       await discoverWithMateMemoryApi({
         env: { WITHMATE_MEMORY_API_URL: "http://127.0.0.1:3456/" },
         readFile: async () => {
           throw new Error("should not read discovery file");
         },
       }),
-      "http://127.0.0.1:3456",
+      { baseUrl: "http://127.0.0.1:3456" },
     );
-    assert.equal(
+    assert.deepEqual(
       await discoverWithMateMemoryApi({
         env: { WITHMATE_MEMORY_API_URL: "http://[::1]:3456/" },
       }),
-      "http://[::1]:3456",
+      { baseUrl: "http://[::1]:3456" },
     );
     assert.equal(
       await discoverWithMateMemoryApi({
@@ -101,11 +101,12 @@ describe("withmate-memory CLI", () => {
       await writeFile(discoveryFilePath, JSON.stringify({
         schemaVersion: WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
         baseUrl: "http://localhost:4567",
+        apiSecret: "discovery-secret",
       }));
 
-      assert.equal(
+      assert.deepEqual(
         await discoverWithMateMemoryApi({ env: {}, discoveryFilePath }),
-        "http://localhost:4567",
+        { baseUrl: "http://localhost:4567", apiSecret: "discovery-secret" },
       );
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
@@ -120,11 +121,11 @@ describe("withmate-memory CLI", () => {
         baseUrl: "http://127.0.0.1:4567",
       }));
 
-      assert.equal(
+      assert.deepEqual(
         await discoverWithMateMemoryApi({
           env: { WITHMATE_MEMORY_RUNTIME_DIR: tempDirectory },
         }),
-        "http://127.0.0.1:4567",
+        { baseUrl: "http://127.0.0.1:4567" },
       );
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
@@ -217,6 +218,29 @@ describe("withmate-memory CLI", () => {
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
     assert.deepEqual(stdout.json(), { ok: true });
     assert.deepEqual(requests, [{ url: "http://127.0.0.1:7777/v1/status", method: "GET", body: undefined }]);
+  });
+
+  it("discovery/envのapiSecretを内部API headerとして送る", async () => {
+    const stdout = createOutputCapture();
+    const requests: Array<{ url: string; method: string | undefined; headers: HeadersInit | undefined }> = [];
+    const exitCode = await runWithMateMemoryCli(["status"], {
+      env: {
+        WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777",
+        WITHMATE_MEMORY_API_SECRET: "env-secret",
+      },
+      stdout: stdout.stream,
+      fetch: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method, headers: init?.headers });
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+    assert.deepEqual(requests, [{
+      url: "http://127.0.0.1:7777/v1/status",
+      method: "GET",
+      headers: { "x-withmate-memory-api-secret": "env-secret" },
+    }]);
   });
 
   it("searchはJSON bodyをPOSTで送る", async () => {

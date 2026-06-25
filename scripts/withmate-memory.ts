@@ -41,6 +41,11 @@ export type WithMateMemoryCliRequest = {
   apiUrl?: string;
 };
 
+export type WithMateMemoryApiConnection = {
+  baseUrl: string;
+  apiSecret?: string;
+};
+
 export type WithMateMemoryCliDeps = {
   env?: NodeJS.ProcessEnv;
   stdin?: NodeJS.ReadStream;
@@ -62,6 +67,7 @@ const routeByCommand: Record<WithMateMemoryCliCommand, { method: "GET" | "POST";
 };
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+const WITHMATE_MEMORY_API_SECRET_HEADER = "x-withmate-memory-api-secret";
 
 const commandAliases = new Map<string, WithMateMemoryCliCommand>([
   ["status", "status"],
@@ -158,19 +164,25 @@ export async function discoverWithMateMemoryApi(
     discoveryFilePath?: string;
     readFile?: typeof readFile;
   } = {},
-): Promise<string | null> {
+): Promise<WithMateMemoryApiConnection | null> {
   const env = options.env ?? process.env;
   if (options.apiUrl !== undefined) {
     const explicitUrl = normalizeBaseUrl(options.apiUrl);
     if (!explicitUrl) {
       throw usageError("--api-url must be a valid loopback HTTP URL.");
     }
-    return explicitUrl;
+    return {
+      baseUrl: explicitUrl,
+      ...(env.WITHMATE_MEMORY_API_SECRET?.trim() ? { apiSecret: env.WITHMATE_MEMORY_API_SECRET.trim() } : {}),
+    };
   }
 
   const envUrl = normalizeBaseUrl(env.WITHMATE_MEMORY_API_URL ?? "");
   if (envUrl) {
-    return envUrl;
+    return {
+      baseUrl: envUrl,
+      ...(env.WITHMATE_MEMORY_API_SECRET?.trim() ? { apiSecret: env.WITHMATE_MEMORY_API_SECRET.trim() } : {}),
+    };
   }
 
   const discoveryFilePath = options.discoveryFilePath
@@ -183,7 +195,16 @@ export async function discoverWithMateMemoryApi(
     if (document.schemaVersion !== WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION || typeof document.baseUrl !== "string") {
       return null;
     }
-    return normalizeBaseUrl(document.baseUrl);
+    const baseUrl = normalizeBaseUrl(document.baseUrl);
+    if (!baseUrl) {
+      return null;
+    }
+    return {
+      baseUrl,
+      ...(typeof document.apiSecret === "string" && document.apiSecret.trim()
+        ? { apiSecret: document.apiSecret.trim() }
+        : {}),
+    };
   } catch {
     return null;
   }
@@ -273,13 +294,13 @@ export async function runWithMateMemoryCli(
 
   try {
     const request = await parseWithMateMemoryCliArgs(args, deps);
-    const baseUrl = await discoverWithMateMemoryApi({
+    const connection = await discoverWithMateMemoryApi({
       env: deps.env,
       apiUrl: request.apiUrl,
       discoveryFilePath: request.discoveryFilePath,
       readFile: deps.readFile,
     });
-    if (!baseUrl) {
+    if (!connection) {
       stdout.write(`${JSON.stringify(notRunningError())}\n`);
       return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
     }
@@ -290,9 +311,16 @@ export async function runWithMateMemoryCli(
     const abortController = new AbortController();
     const requestTimeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
     try {
-      response = await fetchImpl(`${baseUrl}${route.path}`, {
+      const headers: Record<string, string> = {};
+      if (route.method === "POST") {
+        headers["Content-Type"] = "application/json";
+      }
+      if (connection.apiSecret) {
+        headers[WITHMATE_MEMORY_API_SECRET_HEADER] = connection.apiSecret;
+      }
+      response = await fetchImpl(`${connection.baseUrl}${route.path}`, {
         method: route.method,
-        headers: route.method === "POST" ? { "Content-Type": "application/json" } : undefined,
+        headers: Object.keys(headers).length > 0 ? headers : undefined,
         body: route.method === "POST" ? JSON.stringify(request.body) : undefined,
         redirect: "error",
         signal: abortController.signal,

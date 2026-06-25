@@ -19,6 +19,7 @@ describe("Memory V6 runtime API", () => {
     try {
       const published = await publishMemoryV6DiscoveryFile({
         baseUrl: "http://127.0.0.1:12345",
+        apiSecret: "test-api-secret",
         runtimeInstanceId: "test-runtime-instance",
         runtimeDirectoryPath,
       });
@@ -26,6 +27,7 @@ describe("Memory V6 runtime API", () => {
 
       assert.equal(document.schemaVersion, WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION);
       assert.equal(document.baseUrl, "http://127.0.0.1:12345");
+      assert.equal(document.apiSecret, "test-api-secret");
       assert.equal(document.runtimeInstanceId, "test-runtime-instance");
       assert.equal(typeof document.publishedAt, "string");
       assert.equal(path.dirname(published.discoveryFilePath), runtimeDirectoryPath);
@@ -118,15 +120,26 @@ describe("Memory V6 runtime API", () => {
         const discovery = JSON.parse(await readFile(runtime.discoveryFilePath, "utf8"));
         assert.equal(discovery.schemaVersion, WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION);
         assert.equal(discovery.baseUrl, runtime.baseUrl);
+        assert.equal(typeof discovery.apiSecret, "string");
+        assert.equal(discovery.apiSecret.length > 20, true);
         assert.equal(runtime.dbPath, path.join(userDataPath, "withmate-v6.db"));
 
         const status = await fetch(`${runtime.baseUrl}/v1/status`);
-        assert.equal(status.status, 200);
-        assert.deepEqual(await status.json(), { ok: true });
+        assert.equal(status.status, 401);
+        assert.equal((await status.json()).error.code, "MEMORY_UNAUTHORIZED");
+
+        const authorizedStatus = await fetch(`${runtime.baseUrl}/v1/status`, {
+          headers: { "X-WithMate-Memory-Api-Secret": discovery.apiSecret },
+        });
+        assert.equal(authorizedStatus.status, 200);
+        assert.deepEqual(await authorizedStatus.json(), { ok: true });
 
         const context = await fetch(`${runtime.baseUrl}/v1/context`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
+          },
           body: JSON.stringify({ schemaVersion: "withmate-memory-v1" }),
         });
         assert.equal(context.status, 401);

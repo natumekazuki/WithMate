@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -10,6 +11,7 @@ export type MemoryV6HttpServerOptions = {
   resolvePrincipal(request: IncomingMessage): MemoryV6Principal | null | Promise<MemoryV6Principal | null>;
   host?: string;
   port?: number;
+  apiSecret?: string;
   maxBodyBytes?: number;
   requestTimeoutMs?: number;
   maxConcurrentRequests?: number;
@@ -28,6 +30,7 @@ const DEFAULT_PORT = 0;
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_CONCURRENT_REQUESTS = 8;
+export const WITHMATE_MEMORY_API_SECRET_HEADER = "x-withmate-memory-api-secret";
 
 const routeByPath = new Map<string, MemoryV6Route>([
   ["/v1/context", "context"],
@@ -72,6 +75,27 @@ function acceptsJsonRequest(request: IncomingMessage): boolean {
     return false;
   }
   return contentType.split(";", 1)[0]?.trim().toLowerCase() === "application/json";
+}
+
+function timingSafeStringEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left, "utf8");
+  const rightBuffer = Buffer.from(right, "utf8");
+  if (leftBuffer.byteLength !== rightBuffer.byteLength) {
+    return false;
+  }
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function authenticateInternalApiRequest(request: IncomingMessage, apiSecret: string | undefined): MemoryErrorResponse | null {
+  if (!apiSecret) {
+    return null;
+  }
+
+  const header = request.headers[WITHMATE_MEMORY_API_SECRET_HEADER];
+  if (typeof header !== "string" || !timingSafeStringEqual(header, apiSecret)) {
+    return memoryTransportError("MEMORY_UNAUTHORIZED", "Memory API request is not authorized.");
+  }
+  return null;
 }
 
 function isMemoryErrorResponse(value: unknown): value is MemoryErrorResponse {
@@ -168,6 +192,7 @@ function statusForMemoryResponse(value: unknown): number {
 export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): MemoryV6HttpServer {
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
+  const apiSecret = options.apiSecret;
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const maxConcurrentRequests = options.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS;
@@ -183,6 +208,11 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
       const browserRequestError = rejectBrowserRequest(request);
       if (browserRequestError) {
         writeJson(response, 403, browserRequestError);
+        return;
+      }
+      const authenticationError = authenticateInternalApiRequest(request, apiSecret);
+      if (authenticationError) {
+        writeJson(response, 401, authenticationError);
         return;
       }
 

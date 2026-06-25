@@ -7,6 +7,7 @@ export const WITHMATE_MEMORY_DISCOVERY_FILE_NAME = "memory-v6-api.json" as const
 export type WithMateMemoryDiscoveryDocument = {
   schemaVersion: typeof WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION;
   baseUrl: string;
+  apiSecret?: string;
   runtimeInstanceId?: string;
   publishedAt?: string;
 };

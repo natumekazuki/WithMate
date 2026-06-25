@@ -73,6 +73,7 @@ async function withMemoryApi<T>(
   runner: (input: { baseUrl: string; storage: MemoryV6Storage; server: MemoryV6HttpServer }) => T | Promise<T>,
   principalOverride: MemoryV6Principal | null = principal(),
   serverOptions: {
+    apiSecret?: string;
     maxConcurrentRequests?: number;
     resolvePrincipal?: (request: IncomingMessage) => MemoryV6Principal | null | Promise<MemoryV6Principal | null>;
   } = {},
@@ -90,6 +91,7 @@ async function withMemoryApi<T>(
   });
   const server = createMemoryV6HttpServer({
     service,
+    apiSecret: serverOptions.apiSecret,
     maxBodyBytes: 512,
     maxConcurrentRequests: serverOptions.maxConcurrentRequests,
     resolvePrincipal: serverOptions.resolvePrincipal ?? (() => principalOverride),
@@ -111,6 +113,21 @@ async function postJson(baseUrl: string, path: string, body: unknown): Promise<{
   const response = await fetch(`${baseUrl}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return {
+    status: response.status,
+    json: await response.json(),
+  };
+}
+
+async function postJsonWithSecret(baseUrl: string, path: string, body: unknown, apiSecret: string): Promise<{ status: number; json: any }> {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-WithMate-Memory-Api-Secret": apiSecret,
+    },
     body: JSON.stringify(body),
   });
   return {
@@ -179,6 +196,44 @@ describe("MemoryV6HttpServer", () => {
         sessionProject: { id: "project-a", displayName: "Project A" },
         permissions: allPermissions,
       });
+    });
+  });
+
+  it("apiSecret設定時はsecretなしのrequestをservice到達前に拒否する", async () => {
+    let resolverCalls = 0;
+    await withMemoryApi(async ({ baseUrl }) => {
+      const missingSecret = await fetch(`${baseUrl}/v1/status`);
+      assert.equal(missingSecret.status, 401);
+      assert.equal((await missingSecret.json()).error.code, "MEMORY_UNAUTHORIZED");
+      assert.equal(resolverCalls, 0);
+
+      const wrongSecret = await fetch(`${baseUrl}/v1/context`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-WithMate-Memory-Api-Secret": "wrong-secret",
+        },
+        body: JSON.stringify({ schemaVersion: MEMORY_V6_SCHEMA_VERSION }),
+      });
+      assert.equal(wrongSecret.status, 401);
+      assert.equal((await wrongSecret.json()).error.code, "MEMORY_UNAUTHORIZED");
+      assert.equal(resolverCalls, 0);
+
+      const context = await postJsonWithSecret(
+        baseUrl,
+        "/v1/context",
+        { schemaVersion: MEMORY_V6_SCHEMA_VERSION },
+        "test-secret",
+      );
+      assert.equal(context.status, 200);
+      assert.equal(context.json.session.id, "session-a");
+      assert.equal(resolverCalls, 1);
+    }, principal(), {
+      apiSecret: "test-secret",
+      resolvePrincipal: () => {
+        resolverCalls += 1;
+        return principal();
+      },
     });
   });
 
