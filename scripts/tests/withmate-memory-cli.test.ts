@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -13,6 +14,14 @@ import {
   WITHMATE_MEMORY_CLI_EXIT_CODES,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
 } from "../withmate-memory.js";
+
+const TEST_API_SECRET = "test-api-secret";
+const TEST_RUNTIME_INSTANCE_ID = "test-runtime";
+const TEST_RUNTIME_ENV = {
+  WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777",
+  WITHMATE_MEMORY_API_SECRET: TEST_API_SECRET,
+  WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: TEST_RUNTIME_INSTANCE_ID,
+};
 
 function createOutputCapture(): { stream: { write(chunk: string): boolean }; lines(): string[]; json(): any } {
   let output = "";
@@ -30,6 +39,30 @@ function createOutputCapture(): { stream: { write(chunk: string): boolean }; lin
       return JSON.parse(output.trim());
     },
   };
+}
+
+function createStatusChallengeResponse(url: string): Response {
+  const nonce = new URL(url).searchParams.get("nonce") ?? "";
+  return new Response(JSON.stringify({
+    ok: true,
+    runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID,
+    challenge: {
+      nonce,
+      hmacSha256: createHmac("sha256", TEST_API_SECRET).update(nonce, "utf8").digest("base64url"),
+    },
+  }), { status: 200 });
+}
+
+function isStatusChallengeRequest(url: string): boolean {
+  const parsed = new URL(url);
+  return parsed.pathname === "/v1/status" && parsed.searchParams.has("nonce");
+}
+
+function assertUsageError(error: unknown, messagePattern: RegExp): true {
+  assert.equal(typeof error, "object");
+  assert.equal((error as { error?: { code?: unknown } }).error?.code, "WITHMATE_MEMORY_CLI_USAGE");
+  assert.match(String((error as { error?: { message?: unknown } }).error?.message), messagePattern);
+  return true;
 }
 
 async function withHttpServer<T>(
@@ -56,41 +89,41 @@ async function withHttpServer<T>(
 
 describe("withmate-memory CLI", () => {
   it("loopbackの環境変数URLをdiscovery結果として使う", async () => {
-    assert.equal(
+    assert.deepEqual(
       await discoverWithMateMemoryApi({
         env: { WITHMATE_MEMORY_API_URL: "http://127.0.0.1:3456/" },
         readFile: async () => {
           throw new Error("should not read discovery file");
         },
       }),
-      "http://127.0.0.1:3456",
+      { baseUrl: "http://127.0.0.1:3456" },
     );
-    assert.equal(
+    assert.deepEqual(
       await discoverWithMateMemoryApi({
         env: { WITHMATE_MEMORY_API_URL: "http://[::1]:3456/" },
       }),
-      "http://[::1]:3456",
+      { baseUrl: "http://[::1]:3456" },
     );
-    assert.equal(
-      await discoverWithMateMemoryApi({
+    await assert.rejects(
+      () => discoverWithMateMemoryApi({
         env: { WITHMATE_MEMORY_API_URL: "http://192.168.0.20:3456" },
         readFile: async () => {
-          throw new Error("missing");
+          throw new Error("should not read discovery file");
         },
       }),
-      null,
+      (error) => assertUsageError(error, /WITHMATE_MEMORY_API_URL/),
     );
-    assert.equal(
-      await discoverWithMateMemoryApi({
-        env: { WITHMATE_MEMORY_API_URL: "http://127.0.0.1.evil.com:3456" },
-      }),
-      null,
+    await assert.rejects(
+      () => discoverWithMateMemoryApi({ env: { WITHMATE_MEMORY_API_URL: "http://127.0.0.1.evil.com:3456" } }),
+      (error) => assertUsageError(error, /WITHMATE_MEMORY_API_URL/),
     );
-    assert.equal(
-      await discoverWithMateMemoryApi({
-        env: { WITHMATE_MEMORY_API_URL: "http://127.evil.com:3456" },
-      }),
-      null,
+    await assert.rejects(
+      () => discoverWithMateMemoryApi({ env: { WITHMATE_MEMORY_API_URL: "http://127.evil.com:3456" } }),
+      (error) => assertUsageError(error, /WITHMATE_MEMORY_API_URL/),
+    );
+    await assert.rejects(
+      () => discoverWithMateMemoryApi({ env: { WITHMATE_MEMORY_API_URL: "http://127.999.0.1:3456" } }),
+      (error) => assertUsageError(error, /WITHMATE_MEMORY_API_URL/),
     );
   });
 
@@ -101,11 +134,13 @@ describe("withmate-memory CLI", () => {
       await writeFile(discoveryFilePath, JSON.stringify({
         schemaVersion: WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
         baseUrl: "http://localhost:4567",
+        apiSecret: "discovery-secret",
+        runtimeInstanceId: "runtime-from-discovery",
       }));
 
-      assert.equal(
+      assert.deepEqual(
         await discoverWithMateMemoryApi({ env: {}, discoveryFilePath }),
-        "http://localhost:4567",
+        { baseUrl: "http://localhost:4567", apiSecret: "discovery-secret", runtimeInstanceId: "runtime-from-discovery" },
       );
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
@@ -120,11 +155,11 @@ describe("withmate-memory CLI", () => {
         baseUrl: "http://127.0.0.1:4567",
       }));
 
-      assert.equal(
+      assert.deepEqual(
         await discoverWithMateMemoryApi({
           env: { WITHMATE_MEMORY_RUNTIME_DIR: tempDirectory },
         }),
-        "http://127.0.0.1:4567",
+        { baseUrl: "http://127.0.0.1:4567" },
       );
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
@@ -176,7 +211,7 @@ describe("withmate-memory CLI", () => {
   it("stale discovery endpointへ接続できない場合もWITHMATE_NOT_RUNNINGを返す", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["status"], {
-      env: { WITHMATE_MEMORY_API_URL: "http://127.0.0.1:9" },
+      env: TEST_RUNTIME_ENV,
       stdout: stdout.stream,
       fetch: async () => {
         throw new TypeError("fetch failed");
@@ -190,7 +225,7 @@ describe("withmate-memory CLI", () => {
   it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT_RUNNINGを返す", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["status"], {
-      env: { WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777" },
+      env: TEST_RUNTIME_ENV,
       stdout: stdout.stream,
       requestTimeoutMs: 5,
       fetch: async (_url, init) => new Promise<Response>((_resolve, reject) => {
@@ -204,19 +239,94 @@ describe("withmate-memory CLI", () => {
 
   it("statusはGETで/v1/statusへ送る", async () => {
     const stdout = createOutputCapture();
-    const requests: Array<{ url: string; method: string | undefined; body: BodyInit | null | undefined }> = [];
+    const requests: Array<{ url: string; method: string | undefined; body: BodyInit | null | undefined; headers: HeadersInit | undefined }> = [];
     const exitCode = await runWithMateMemoryCli(["status"], {
-      env: { WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777" },
+      env: TEST_RUNTIME_ENV,
       stdout: stdout.stream,
       fetch: async (url, init) => {
-        requests.push({ url: String(url), method: init?.method, body: init?.body });
+        requests.push({ url: String(url), method: init?.method, body: init?.body, headers: init?.headers });
+        if (isStatusChallengeRequest(String(url))) {
+          return createStatusChallengeResponse(String(url));
+        }
         return new Response(JSON.stringify({ ok: true }), { status: 200 });
       },
     });
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
     assert.deepEqual(stdout.json(), { ok: true });
-    assert.deepEqual(requests, [{ url: "http://127.0.0.1:7777/v1/status", method: "GET", body: undefined }]);
+    assert.equal(requests.length, 2);
+    assert.match(requests[0].url, /^http:\/\/127\.0\.0\.1:7777\/v1\/status\?nonce=/);
+    assert.deepEqual({ method: requests[0].method, body: requests[0].body, headers: requests[0].headers }, {
+      method: "GET",
+      body: undefined,
+      headers: undefined,
+    });
+    assert.deepEqual(requests[1], {
+      url: "http://127.0.0.1:7777/v1/status",
+      method: "GET",
+      body: undefined,
+      headers: { "x-withmate-memory-api-secret": TEST_API_SECRET },
+    });
+  });
+
+  it("環境変数URLが不正な場合はdefault discovery fileへfallbackしない", async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-runtime-"));
+    const stdout = createOutputCapture();
+    let fetchCalls = 0;
+    try {
+      await writeFile(join(tempDirectory, "memory-v6-api.json"), JSON.stringify({
+        schemaVersion: WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
+        baseUrl: "http://127.0.0.1:4567",
+        apiSecret: TEST_API_SECRET,
+        runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID,
+      }));
+
+      const exitCode = await runWithMateMemoryCli(["status"], {
+        env: {
+          WITHMATE_MEMORY_RUNTIME_DIR: tempDirectory,
+          WITHMATE_MEMORY_API_URL: "http://example.com",
+        },
+        stdout: stdout.stream,
+        fetch: async () => {
+          fetchCalls += 1;
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        },
+      });
+
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
+      assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_CLI_USAGE");
+      assert.equal(fetchCalls, 0);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("discovery/envのapiSecretを内部API headerとして送る", async () => {
+    const stdout = createOutputCapture();
+    const requests: Array<{ url: string; method: string | undefined; headers: HeadersInit | undefined }> = [];
+    const exitCode = await runWithMateMemoryCli(["status"], {
+      env: {
+        WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777",
+        WITHMATE_MEMORY_API_SECRET: TEST_API_SECRET,
+        WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: TEST_RUNTIME_INSTANCE_ID,
+      },
+      stdout: stdout.stream,
+      fetch: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method, headers: init?.headers });
+        if (isStatusChallengeRequest(String(url))) {
+          return createStatusChallengeResponse(String(url));
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+    assert.equal(requests.length, 2);
+    assert.deepEqual(requests[1], {
+      url: "http://127.0.0.1:7777/v1/status",
+      method: "GET",
+      headers: { "x-withmate-memory-api-secret": TEST_API_SECRET },
+    });
   });
 
   it("searchはJSON bodyをPOSTで送る", async () => {
@@ -229,12 +339,18 @@ describe("withmate-memory CLI", () => {
     let capturedBody: unknown = null;
 
     const exitCode = await runWithMateMemoryCli(["search", "--json", JSON.stringify(requestBody)], {
-      env: { WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777" },
+      env: TEST_RUNTIME_ENV,
       stdout: stdout.stream,
       fetch: async (url, init) => {
+        if (isStatusChallengeRequest(String(url))) {
+          return createStatusChallengeResponse(String(url));
+        }
         assert.equal(String(url), "http://127.0.0.1:7777/v1/search");
         assert.equal(init?.method, "POST");
-        assert.deepEqual(init?.headers, { "Content-Type": "application/json" });
+        assert.deepEqual(init?.headers, {
+          "Content-Type": "application/json",
+          "x-withmate-memory-api-secret": TEST_API_SECRET,
+        });
         capturedBody = JSON.parse(String(init?.body));
         return new Response(JSON.stringify({ schemaVersion: MEMORY_V6_SCHEMA_VERSION, items: [] }), { status: 200 });
       },
@@ -250,9 +366,12 @@ describe("withmate-memory CLI", () => {
     let capturedBody: unknown = null;
 
     const exitCode = await runWithMateMemoryCli(["context"], {
-      env: { WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777" },
+      env: TEST_RUNTIME_ENV,
       stdout: stdout.stream,
       fetch: async (url, init) => {
+        if (isStatusChallengeRequest(String(url))) {
+          return createStatusChallengeResponse(String(url));
+        }
         assert.equal(String(url), "http://127.0.0.1:7777/v1/context");
         assert.equal(init?.method, "POST");
         capturedBody = JSON.parse(String(init?.body));
@@ -292,7 +411,11 @@ describe("withmate-memory CLI", () => {
           preview: "redirect",
           tags: [],
         })], {
-          env: { WITHMATE_MEMORY_API_URL: redirectUrl },
+          env: {
+            WITHMATE_MEMORY_API_URL: redirectUrl,
+            WITHMATE_MEMORY_API_SECRET: TEST_API_SECRET,
+            WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: TEST_RUNTIME_INSTANCE_ID,
+          },
           stdout: stdout.stream,
         });
 
@@ -304,15 +427,64 @@ describe("withmate-memory CLI", () => {
     assert.equal(destinationRequests, 0);
   });
 
+  it("runtime identityを検証できないport再利用先へmutation bodyやsecretを送らない", async () => {
+    const stdout = createOutputCapture();
+    const requestBody = {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      kind: "decision",
+      title: "stale",
+      body: "must not leak",
+      preview: "stale",
+      tags: [],
+    };
+    const requests: Array<{ url: string; method: string | undefined; headers: HeadersInit | undefined; body: BodyInit | null | undefined }> = [];
+
+    const exitCode = await runWithMateMemoryCli(["append", "--json", JSON.stringify(requestBody)], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fetch: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method, headers: init?.headers, body: init?.body });
+        return new Response(JSON.stringify({
+          ok: true,
+          runtimeInstanceId: "other-runtime",
+          challenge: {
+            nonce: new URL(String(url)).searchParams.get("nonce"),
+            hmacSha256: "not-the-expected-challenge",
+          },
+        }), { status: 200 });
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning);
+    assert.equal(stdout.json().error.code, "WITHMATE_NOT_RUNNING");
+    assert.equal(requests.length, 1);
+    assert.match(requests[0].url, /^http:\/\/127\.0\.0\.1:7777\/v1\/status\?nonce=/);
+    assert.deepEqual({
+      method: requests[0].method,
+      headers: requests[0].headers,
+      body: requests[0].body,
+    }, {
+      method: "GET",
+      headers: undefined,
+      body: undefined,
+    });
+  });
+
   it("API errorはレスポンスJSONをそのまま出し、apiErrorで終了する", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["context"], {
-      env: { WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777" },
+      env: TEST_RUNTIME_ENV,
       stdout: stdout.stream,
-      fetch: async () => new Response(JSON.stringify({
-        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        error: { code: "MEMORY_BINDING_REQUIRED", message: "binding required" },
-      }), { status: 401 }),
+      fetch: async (url) => {
+        if (isStatusChallengeRequest(String(url))) {
+          return createStatusChallengeResponse(String(url));
+        }
+        return new Response(JSON.stringify({
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          error: { code: "MEMORY_BINDING_REQUIRED", message: "binding required" },
+        }), { status: 401 });
+      },
     });
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
@@ -322,7 +494,7 @@ describe("withmate-memory CLI", () => {
   it("APIが非JSONを返した場合もstdoutにはJSON errorだけを出す", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["status"], {
-      env: { WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777" },
+      env: TEST_RUNTIME_ENV,
       stdout: stdout.stream,
       stderr: createOutputCapture().stream,
       fetch: async () => new Response("<html>not memory api</html>", { status: 200 }),

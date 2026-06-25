@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
@@ -21,6 +22,8 @@ const allPermissions: MemoryPermission[] = [
   "memory.list_tags",
   "memory.resolve_context",
 ];
+const TEST_API_SECRET = "test-secret";
+const TEST_RUNTIME_INSTANCE_ID = "test-runtime";
 
 function principal(overrides: Partial<MemoryV6Principal> = {}): MemoryV6Principal {
   return {
@@ -73,6 +76,8 @@ async function withMemoryApi<T>(
   runner: (input: { baseUrl: string; storage: MemoryV6Storage; server: MemoryV6HttpServer }) => T | Promise<T>,
   principalOverride: MemoryV6Principal | null = principal(),
   serverOptions: {
+    apiSecret?: string;
+    runtimeInstanceId?: string;
     maxConcurrentRequests?: number;
     resolvePrincipal?: (request: IncomingMessage) => MemoryV6Principal | null | Promise<MemoryV6Principal | null>;
   } = {},
@@ -90,6 +95,8 @@ async function withMemoryApi<T>(
   });
   const server = createMemoryV6HttpServer({
     service,
+    apiSecret: serverOptions.apiSecret ?? TEST_API_SECRET,
+    runtimeInstanceId: serverOptions.runtimeInstanceId ?? TEST_RUNTIME_INSTANCE_ID,
     maxBodyBytes: 512,
     maxConcurrentRequests: serverOptions.maxConcurrentRequests,
     resolvePrincipal: serverOptions.resolvePrincipal ?? (() => principalOverride),
@@ -107,10 +114,28 @@ async function withMemoryApi<T>(
   }
 }
 
-async function postJson(baseUrl: string, path: string, body: unknown): Promise<{ status: number; json: any }> {
+async function postJson(baseUrl: string, path: string, body: unknown, apiSecret = TEST_API_SECRET): Promise<{ status: number; json: any }> {
   const response = await fetch(`${baseUrl}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-WithMate-Memory-Api-Secret": apiSecret,
+    },
+    body: JSON.stringify(body),
+  });
+  return {
+    status: response.status,
+    json: await response.json(),
+  };
+}
+
+async function postJsonWithSecret(baseUrl: string, path: string, body: unknown, apiSecret: string): Promise<{ status: number; json: any }> {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-WithMate-Memory-Api-Secret": apiSecret,
+    },
     body: JSON.stringify(body),
   });
   return {
@@ -155,6 +180,8 @@ describe("MemoryV6HttpServer", () => {
       const unsafeServer = createMemoryV6HttpServer({
         host: "0.0.0.0",
         service,
+        apiSecret: TEST_API_SECRET,
+        runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID,
         resolvePrincipal: () => principal(),
       });
 
@@ -168,7 +195,19 @@ describe("MemoryV6HttpServer", () => {
     await withMemoryApi(async ({ baseUrl }) => {
       const status = await fetch(`${baseUrl}/v1/status`);
       assert.equal(status.status, 200);
-      assert.deepEqual(await status.json(), { ok: true });
+      assert.deepEqual(await status.json(), { ok: true, runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID });
+
+      const nonce = "nonce-a";
+      const challengedStatus = await fetch(`${baseUrl}/v1/status?nonce=${nonce}`);
+      assert.equal(challengedStatus.status, 200);
+      assert.deepEqual(await challengedStatus.json(), {
+        ok: true,
+        runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID,
+        challenge: {
+          nonce,
+          hmacSha256: createHmac("sha256", TEST_API_SECRET).update(nonce, "utf8").digest("base64url"),
+        },
+      });
 
       const context = await postJson(baseUrl, "/v1/context", { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
       assert.equal(context.status, 200);
@@ -179,6 +218,56 @@ describe("MemoryV6HttpServer", () => {
         sessionProject: { id: "project-a", displayName: "Project A" },
         permissions: allPermissions,
       });
+    });
+  });
+
+  it("apiSecretなしではserverを作成できず、secretなしのrequestはservice到達前に拒否する", async () => {
+    let resolverCalls = 0;
+    await withMemoryApi(async ({ baseUrl }) => {
+      assert.throws(() => createMemoryV6HttpServer({
+        service: {} as MemoryV6Service,
+        apiSecret: "",
+        runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID,
+        resolvePrincipal: () => principal(),
+      }), /apiSecret/);
+
+      const missingSecret = await fetch(`${baseUrl}/v1/context`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ schemaVersion: MEMORY_V6_SCHEMA_VERSION }),
+      });
+      assert.equal(missingSecret.status, 401);
+      assert.equal((await missingSecret.json()).error.code, "MEMORY_UNAUTHORIZED");
+      assert.equal(resolverCalls, 0);
+
+      const wrongSecret = await fetch(`${baseUrl}/v1/context`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-WithMate-Memory-Api-Secret": "wrong-secret",
+        },
+        body: JSON.stringify({ schemaVersion: MEMORY_V6_SCHEMA_VERSION }),
+      });
+      assert.equal(wrongSecret.status, 401);
+      assert.equal((await wrongSecret.json()).error.code, "MEMORY_UNAUTHORIZED");
+      assert.equal(resolverCalls, 0);
+
+      const context = await postJsonWithSecret(
+        baseUrl,
+        "/v1/context",
+        { schemaVersion: MEMORY_V6_SCHEMA_VERSION },
+        "test-secret",
+      );
+      assert.equal(context.status, 200);
+      assert.equal(context.json.session.id, "session-a");
+      assert.equal(resolverCalls, 1);
+    }, principal(), {
+      apiSecret: "test-secret",
+      runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID,
+      resolvePrincipal: () => {
+        resolverCalls += 1;
+        return principal();
+      },
     });
   });
 
@@ -248,17 +337,26 @@ describe("MemoryV6HttpServer", () => {
 
   it("invalid route / method / JSON / body sizeをtransport errorで返す", async () => {
     await withMemoryApi(async ({ baseUrl }) => {
-      const missing = await fetch(`${baseUrl}/v1/missing`, { method: "POST", body: "{}" });
+      const missing = await fetch(`${baseUrl}/v1/missing`, {
+        method: "POST",
+        headers: { "X-WithMate-Memory-Api-Secret": TEST_API_SECRET },
+        body: "{}",
+      });
       assert.equal(missing.status, 404);
       assert.equal((await missing.json()).error.code, "MEMORY_ROUTE_NOT_FOUND");
 
-      const invalidMethod = await fetch(`${baseUrl}/v1/search`);
+      const invalidMethod = await fetch(`${baseUrl}/v1/search`, {
+        headers: { "X-WithMate-Memory-Api-Secret": TEST_API_SECRET },
+      });
       assert.equal(invalidMethod.status, 405);
       assert.equal((await invalidMethod.json()).error.code, "MEMORY_METHOD_NOT_ALLOWED");
 
       const invalidJson = await fetch(`${baseUrl}/v1/search`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-WithMate-Memory-Api-Secret": TEST_API_SECRET,
+        },
         body: "{",
       });
       assert.equal(invalidJson.status, 400);
@@ -266,7 +364,10 @@ describe("MemoryV6HttpServer", () => {
 
       const tooLarge = await fetch(`${baseUrl}/v1/search`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-WithMate-Memory-Api-Secret": TEST_API_SECRET,
+        },
         body: JSON.stringify({ payload: "x".repeat(800) }),
       });
       assert.equal(tooLarge.status, 413);
@@ -304,7 +405,10 @@ describe("MemoryV6HttpServer", () => {
 
       const unsupportedMediaType = await fetch(`${baseUrl}/v1/search`, {
         method: "POST",
-        headers: { "Content-Type": "text/plain" },
+        headers: {
+          "Content-Type": "text/plain",
+          "X-WithMate-Memory-Api-Secret": TEST_API_SECRET,
+        },
         body: JSON.stringify({
           schemaVersion: MEMORY_V6_SCHEMA_VERSION,
           targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],

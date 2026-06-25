@@ -1,10 +1,11 @@
+import { createHmac, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { isIP } from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { MEMORY_V6_SCHEMA_VERSION } from "../src/memory-v6/memory-contract.js";
 import {
+  normalizeWithMateMemoryApiBaseUrl,
   resolveDefaultWithMateMemoryDiscoveryFilePath,
   WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
@@ -41,6 +42,12 @@ export type WithMateMemoryCliRequest = {
   apiUrl?: string;
 };
 
+export type WithMateMemoryApiConnection = {
+  baseUrl: string;
+  apiSecret?: string;
+  runtimeInstanceId?: string;
+};
+
 export type WithMateMemoryCliDeps = {
   env?: NodeJS.ProcessEnv;
   stdin?: NodeJS.ReadStream;
@@ -62,6 +69,7 @@ const routeByCommand: Record<WithMateMemoryCliCommand, { method: "GET" | "POST";
 };
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+const WITHMATE_MEMORY_API_SECRET_HEADER = "x-withmate-memory-api-secret";
 
 const commandAliases = new Map<string, WithMateMemoryCliCommand>([
   ["status", "status"],
@@ -97,37 +105,18 @@ function transportError(message: string): MemoryErrorResponse {
   });
 }
 
-function normalizeBaseUrl(value: string): string | null {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  try {
-    const url = new URL(trimmed);
-    if (url.protocol !== "http:" || !isLoopbackHostname(url.hostname)) {
-      return null;
-    }
-    url.pathname = url.pathname.replace(/\/+$/, "");
-    url.search = "";
-    url.hash = "";
-    return url.toString().replace(/\/$/, "");
-  } catch {
-    return null;
-  }
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  const normalized = hostname.toLowerCase();
-  if (normalized === "localhost" || normalized === "::1" || normalized === "[::1]") {
-    return true;
-  }
-
-  return isIP(normalized) === 4 && normalized.startsWith("127.");
-}
-
 function defaultRequestBody(command: WithMateMemoryCliCommand): unknown {
   return command === "context" ? { schemaVersion: MEMORY_V6_SCHEMA_VERSION } : {};
+}
+
+function readEnvSecret(env: NodeJS.ProcessEnv): string | undefined {
+  const value = env.WITHMATE_MEMORY_API_SECRET?.trim();
+  return value ? value : undefined;
+}
+
+function readEnvRuntimeInstanceId(env: NodeJS.ProcessEnv): string | undefined {
+  const value = env.WITHMATE_MEMORY_RUNTIME_INSTANCE_ID?.trim();
+  return value ? value : undefined;
 }
 
 async function readStdin(stdin: NodeJS.ReadStream): Promise<string> {
@@ -158,19 +147,31 @@ export async function discoverWithMateMemoryApi(
     discoveryFilePath?: string;
     readFile?: typeof readFile;
   } = {},
-): Promise<string | null> {
+): Promise<WithMateMemoryApiConnection | null> {
   const env = options.env ?? process.env;
   if (options.apiUrl !== undefined) {
-    const explicitUrl = normalizeBaseUrl(options.apiUrl);
+    const explicitUrl = normalizeWithMateMemoryApiBaseUrl(options.apiUrl);
     if (!explicitUrl) {
       throw usageError("--api-url must be a valid loopback HTTP URL.");
     }
-    return explicitUrl;
+    return {
+      baseUrl: explicitUrl,
+      ...(readEnvSecret(env) ? { apiSecret: readEnvSecret(env) } : {}),
+      ...(readEnvRuntimeInstanceId(env) ? { runtimeInstanceId: readEnvRuntimeInstanceId(env) } : {}),
+    };
   }
 
-  const envUrl = normalizeBaseUrl(env.WITHMATE_MEMORY_API_URL ?? "");
-  if (envUrl) {
-    return envUrl;
+  const rawEnvUrl = env.WITHMATE_MEMORY_API_URL?.trim();
+  if (rawEnvUrl) {
+    const envUrl = normalizeWithMateMemoryApiBaseUrl(rawEnvUrl);
+    if (!envUrl) {
+      throw usageError("WITHMATE_MEMORY_API_URL must be a valid loopback HTTP URL.");
+    }
+    return {
+      baseUrl: envUrl,
+      ...(readEnvSecret(env) ? { apiSecret: readEnvSecret(env) } : {}),
+      ...(readEnvRuntimeInstanceId(env) ? { runtimeInstanceId: readEnvRuntimeInstanceId(env) } : {}),
+    };
   }
 
   const discoveryFilePath = options.discoveryFilePath
@@ -183,7 +184,19 @@ export async function discoverWithMateMemoryApi(
     if (document.schemaVersion !== WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION || typeof document.baseUrl !== "string") {
       return null;
     }
-    return normalizeBaseUrl(document.baseUrl);
+    const baseUrl = normalizeWithMateMemoryApiBaseUrl(document.baseUrl);
+    if (!baseUrl) {
+      return null;
+    }
+    return {
+      baseUrl,
+      ...(typeof document.apiSecret === "string" && document.apiSecret.trim()
+        ? { apiSecret: document.apiSecret.trim() }
+        : {}),
+      ...(typeof document.runtimeInstanceId === "string" && document.runtimeInstanceId.trim()
+        ? { runtimeInstanceId: document.runtimeInstanceId.trim() }
+        : {}),
+    };
   } catch {
     return null;
   }
@@ -263,6 +276,45 @@ async function readJsonResponse(response: Response): Promise<unknown> {
   }
 }
 
+function createStatusChallenge(apiSecret: string, nonce: string): string {
+  return createHmac("sha256", apiSecret).update(nonce, "utf8").digest("base64url");
+}
+
+function hasVerifiableRuntimeIdentity(connection: WithMateMemoryApiConnection): connection is WithMateMemoryApiConnection & {
+  apiSecret: string;
+  runtimeInstanceId: string;
+} {
+  return Boolean(connection.apiSecret?.trim() && connection.runtimeInstanceId?.trim());
+}
+
+async function verifyRuntimeIdentity(
+  connection: WithMateMemoryApiConnection,
+  fetchImpl: typeof fetch,
+  signal: AbortSignal,
+): Promise<boolean> {
+  if (!hasVerifiableRuntimeIdentity(connection)) {
+    return false;
+  }
+
+  const nonce = randomBytes(16).toString("base64url");
+  const response = await fetchImpl(`${connection.baseUrl}/v1/status?nonce=${encodeURIComponent(nonce)}`, {
+    method: "GET",
+    redirect: "error",
+    signal,
+  });
+  if (!response.ok) {
+    return false;
+  }
+
+  const status = await readJsonResponse(response) as {
+    runtimeInstanceId?: unknown;
+    challenge?: { nonce?: unknown; hmacSha256?: unknown };
+  };
+  return status.runtimeInstanceId === connection.runtimeInstanceId
+    && status.challenge?.nonce === nonce
+    && status.challenge.hmacSha256 === createStatusChallenge(connection.apiSecret, nonce);
+}
+
 export async function runWithMateMemoryCli(
   args: readonly string[],
   deps: WithMateMemoryCliDeps = {},
@@ -273,13 +325,13 @@ export async function runWithMateMemoryCli(
 
   try {
     const request = await parseWithMateMemoryCliArgs(args, deps);
-    const baseUrl = await discoverWithMateMemoryApi({
+    const connection = await discoverWithMateMemoryApi({
       env: deps.env,
       apiUrl: request.apiUrl,
       discoveryFilePath: request.discoveryFilePath,
       readFile: deps.readFile,
     });
-    if (!baseUrl) {
+    if (!connection) {
       stdout.write(`${JSON.stringify(notRunningError())}\n`);
       return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
     }
@@ -290,9 +342,21 @@ export async function runWithMateMemoryCli(
     const abortController = new AbortController();
     const requestTimeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
     try {
-      response = await fetchImpl(`${baseUrl}${route.path}`, {
+      if (!await verifyRuntimeIdentity(connection, fetchImpl, abortController.signal)) {
+        stdout.write(`${JSON.stringify(notRunningError())}\n`);
+        return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
+      }
+
+      const headers: Record<string, string> = {};
+      if (route.method === "POST") {
+        headers["Content-Type"] = "application/json";
+      }
+      if (connection.apiSecret) {
+        headers[WITHMATE_MEMORY_API_SECRET_HEADER] = connection.apiSecret;
+      }
+      response = await fetchImpl(`${connection.baseUrl}${route.path}`, {
         method: route.method,
-        headers: route.method === "POST" ? { "Content-Type": "application/json" } : undefined,
+        headers: Object.keys(headers).length > 0 ? headers : undefined,
         body: route.method === "POST" ? JSON.stringify(request.body) : undefined,
         redirect: "error",
         signal: abortController.signal,

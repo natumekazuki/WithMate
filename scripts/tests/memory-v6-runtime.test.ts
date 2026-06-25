@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -19,6 +20,7 @@ describe("Memory V6 runtime API", () => {
     try {
       const published = await publishMemoryV6DiscoveryFile({
         baseUrl: "http://127.0.0.1:12345",
+        apiSecret: "test-api-secret",
         runtimeInstanceId: "test-runtime-instance",
         runtimeDirectoryPath,
       });
@@ -26,6 +28,7 @@ describe("Memory V6 runtime API", () => {
 
       assert.equal(document.schemaVersion, WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION);
       assert.equal(document.baseUrl, "http://127.0.0.1:12345");
+      assert.equal(document.apiSecret, "test-api-secret");
       assert.equal(document.runtimeInstanceId, "test-runtime-instance");
       assert.equal(typeof document.publishedAt, "string");
       assert.equal(path.dirname(published.discoveryFilePath), runtimeDirectoryPath);
@@ -118,15 +121,33 @@ describe("Memory V6 runtime API", () => {
         const discovery = JSON.parse(await readFile(runtime.discoveryFilePath, "utf8"));
         assert.equal(discovery.schemaVersion, WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION);
         assert.equal(discovery.baseUrl, runtime.baseUrl);
+        assert.equal(typeof discovery.apiSecret, "string");
+        assert.equal(discovery.apiSecret.length > 20, true);
+        assert.equal(typeof discovery.runtimeInstanceId, "string");
         assert.equal(runtime.dbPath, path.join(userDataPath, "withmate-v6.db"));
 
         const status = await fetch(`${runtime.baseUrl}/v1/status`);
         assert.equal(status.status, 200);
-        assert.deepEqual(await status.json(), { ok: true });
+        assert.deepEqual(await status.json(), { ok: true, runtimeInstanceId: discovery.runtimeInstanceId });
+
+        const nonce = "runtime-nonce";
+        const challengedStatus = await fetch(`${runtime.baseUrl}/v1/status?nonce=${nonce}`);
+        assert.equal(challengedStatus.status, 200);
+        assert.deepEqual(await challengedStatus.json(), {
+          ok: true,
+          runtimeInstanceId: discovery.runtimeInstanceId,
+          challenge: {
+            nonce,
+            hmacSha256: createHmac("sha256", discovery.apiSecret).update(nonce, "utf8").digest("base64url"),
+          },
+        });
 
         const context = await fetch(`${runtime.baseUrl}/v1/context`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
+          },
           body: JSON.stringify({ schemaVersion: "withmate-memory-v1" }),
         });
         assert.equal(context.status, 401);
@@ -206,6 +227,38 @@ describe("Memory V6 runtime API", () => {
       );
       await assert.rejects(() => stat(discoveryFilePath));
     } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("stale discovery fileの外部URLには起動時確認を送らず削除する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    const discoveryFilePath = path.join(runtimeDirectoryPath, "memory-v6-api.json");
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    try {
+      await writeFile(path.join(userDataPath, "withmate-v6.db"), "not sqlite", "utf8");
+      await writeFile(discoveryFilePath, JSON.stringify({
+        schemaVersion: WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
+        baseUrl: "http://192.168.0.10:7777",
+        apiSecret: "stale-secret",
+        runtimeInstanceId: "stale-runtime",
+      }), "utf8");
+      globalThis.fetch = (async () => {
+        fetchCalls += 1;
+        throw new Error("external URL should not be fetched");
+      }) as typeof fetch;
+
+      await assert.rejects(
+        () => startMemoryV6RuntimeApi({ userDataPath, runtimeDirectoryPath }),
+        /does not match the V6 foundation schema/,
+      );
+      assert.equal(fetchCalls, 0);
+      await assert.rejects(() => stat(discoveryFilePath));
+    } finally {
+      globalThis.fetch = originalFetch;
       await rm(userDataPath, { recursive: true, force: true });
       await rm(runtimeDirectoryPath, { recursive: true, force: true });
     }

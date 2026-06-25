@@ -1,8 +1,9 @@
 import { chmod, lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 
 import {
+  normalizeWithMateMemoryApiBaseUrl,
   resolveDefaultWithMateMemoryDiscoveryFilePath,
   resolveDefaultWithMateMemoryRuntimeDirectory,
   WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
@@ -11,7 +12,10 @@ import {
 } from "../src/memory-v6/memory-discovery.js";
 import type { AppLogInput } from "../src/app-log-types.js";
 import { createOrVerifyV6FreshDatabase } from "./app-database-v6-bootstrap.js";
-import { createMemoryV6HttpServer, type MemoryV6HttpServer } from "./memory-v6-http-server.js";
+import {
+  createMemoryV6HttpServer,
+  type MemoryV6HttpServer,
+} from "./memory-v6-http-server.js";
 import { MemoryV6Service } from "./memory-v6-service.js";
 import { MemoryV6Storage } from "./memory-v6-storage.js";
 
@@ -30,6 +34,7 @@ export type StartMemoryV6RuntimeApiOptions = {
 
 export type PublishMemoryV6DiscoveryFileOptions = {
   baseUrl: string;
+  apiSecret?: string;
   runtimeInstanceId?: string;
   runtimeDirectoryPath?: string;
 };
@@ -114,16 +119,57 @@ async function removeDiscoveryFileIfOwned(input: DiscoveryFileOwnership): Promis
   await rm(input.discoveryFilePath, { force: true });
 }
 
-async function isLiveDiscoveryEndpoint(baseUrl: string): Promise<boolean> {
+function createRuntimeApiSecret(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+function createStatusChallenge(apiSecret: string, nonce: string): string {
+  return createHmac("sha256", apiSecret).update(nonce, "utf8").digest("base64url");
+}
+
+function readDiscoveryApiSecret(document: Partial<WithMateMemoryDiscoveryDocument> | null): string | undefined {
+  return typeof document?.apiSecret === "string" && document.apiSecret.trim().length > 0
+    ? document.apiSecret
+    : undefined;
+}
+
+async function isLiveDiscoveryDocument(document: Partial<WithMateMemoryDiscoveryDocument> | null): Promise<boolean> {
+  if (
+    !document
+    || document.schemaVersion !== WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION
+    || typeof document.baseUrl !== "string"
+    || typeof document.runtimeInstanceId !== "string"
+  ) {
+    return false;
+  }
+  const baseUrl = normalizeWithMateMemoryApiBaseUrl(document.baseUrl);
+  if (!baseUrl) {
+    return false;
+  }
+
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), 500);
   try {
-    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/v1/status`, {
+    const apiSecret = readDiscoveryApiSecret(document);
+    if (!apiSecret) {
+      return false;
+    }
+    const nonce = randomBytes(16).toString("base64url");
+    const response = await fetch(`${baseUrl}/v1/status?nonce=${encodeURIComponent(nonce)}`, {
       method: "GET",
       redirect: "error",
       signal: abortController.signal,
     });
-    return response.ok;
+    if (!response.ok) {
+      return false;
+    }
+    const status = await response.json() as {
+      runtimeInstanceId?: unknown;
+      challenge?: { nonce?: unknown; hmacSha256?: unknown };
+    };
+    return status.runtimeInstanceId === document.runtimeInstanceId
+      && status.challenge?.nonce === nonce
+      && status.challenge.hmacSha256 === createStatusChallenge(apiSecret, nonce);
   } catch {
     return false;
   } finally {
@@ -133,7 +179,7 @@ async function isLiveDiscoveryEndpoint(baseUrl: string): Promise<boolean> {
 
 async function removeStaleDiscoveryFile(discoveryFilePath: string): Promise<void> {
   const document = await readDiscoveryDocument(discoveryFilePath);
-  if (!document || typeof document.baseUrl !== "string" || !(await isLiveDiscoveryEndpoint(document.baseUrl))) {
+  if (!(await isLiveDiscoveryDocument(document))) {
     await rm(discoveryFilePath, { force: true, recursive: true });
   }
 }
@@ -157,6 +203,7 @@ export async function publishMemoryV6DiscoveryFile(
   const document: WithMateMemoryDiscoveryDocument = {
     schemaVersion: WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
     baseUrl: options.baseUrl,
+    ...(options.apiSecret ? { apiSecret: options.apiSecret } : {}),
     runtimeInstanceId,
     publishedAt: new Date().toISOString(),
   };
@@ -196,9 +243,13 @@ export async function startMemoryV6RuntimeApi(
     const bootstrap = await createOrVerifyV6FreshDatabase(options.userDataPath);
     storage = new MemoryV6Storage(bootstrap.dbPath);
     const service = new MemoryV6Service({ storage });
+    const apiSecret = createRuntimeApiSecret();
+    const runtimeInstanceId = randomUUID();
     server = createMemoryV6HttpServer({
       service,
       resolvePrincipal: () => null,
+      apiSecret,
+      runtimeInstanceId,
     });
     await server.start();
 
@@ -209,6 +260,8 @@ export async function startMemoryV6RuntimeApi(
     const baseUrl = `http://127.0.0.1:${address.port}`;
     discoveryFile = await publishMemoryV6DiscoveryFile({
       baseUrl,
+      apiSecret,
+      runtimeInstanceId,
       runtimeDirectoryPath,
     });
 
