@@ -7,6 +7,7 @@ import {
   validateMemoryForgetRequest,
   validateMemoryGetEntryRequest,
   validateMemoryListTagsRequest,
+  validateMemoryResolveContextRequest,
   validateMemorySearchRequest,
 } from "../../src/memory-v6/memory-validation.js";
 
@@ -23,6 +24,15 @@ const characterTarget = {
 };
 
 describe("memory-v6 contract validation", () => {
+  it("valid resolve_context request を検証できる", () => {
+    const result = validateMemoryResolveContextRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.value, { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
+  });
+
   it("valid search request を正規化できる", () => {
     const result = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -129,11 +139,7 @@ describe("memory-v6 contract validation", () => {
   });
 
   it("invalid schemaVersion を拒否する", () => {
-    const result = validateMemorySearchRequest({
-      schemaVersion: "withmate-memory-v0",
-      targets: [projectTarget],
-      query: "test",
-    });
+    const result = validateMemoryResolveContextRequest({ schemaVersion: "withmate-memory-v0" });
 
     assert.equal(result.ok, false);
     assert.equal(result.error.code, "MEMORY_INVALID_SCHEMA_VERSION");

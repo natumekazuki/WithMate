@@ -127,7 +127,7 @@ function appendRequest(overrides: Record<string, unknown> = {}): Record<string, 
 describe("MemoryV6Service", () => {
   it("resolve_context はprincipalからsession / character / project / permissionsを返す", async () => {
     await withService(({ service }) => {
-      const response = service.resolveContext(principal());
+      const response = service.resolveContext(principal(), { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
 
       assert.equal("error" in response, false);
       assert.deepEqual(response, {
@@ -137,6 +137,15 @@ describe("MemoryV6Service", () => {
         sessionProject: { id: "project-a", displayName: "Project A" },
         permissions: allPermissions,
       });
+    });
+  });
+
+  it("resolve_context はrequest schemaVersionを検証する", async () => {
+    await withService(({ service }) => {
+      const response = service.resolveContext(principal(), {});
+
+      assert.equal("error" in response, true);
+      assert.equal(response.error.code, "MEMORY_INVALID_SCHEMA_VERSION");
     });
   });
 

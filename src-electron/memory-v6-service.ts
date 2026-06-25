@@ -20,6 +20,7 @@ import {
   validateMemoryForgetRequest,
   validateMemoryGetEntryRequest,
   validateMemoryListTagsRequest,
+  validateMemoryResolveContextRequest,
   validateMemorySearchRequest,
 } from "../src/memory-v6/memory-validation.js";
 import type { MemoryEntryDetail } from "../src/memory-v6/memory-state.js";
@@ -71,13 +72,17 @@ function storageErrorResponse(error: unknown): MemoryErrorResponse {
 export class MemoryV6Service {
   constructor(private readonly deps: MemoryV6ServiceDeps) {}
 
-  resolveContext(principal: MemoryV6Principal | null): MemoryV6ServiceResult<MemoryResolveContextResponse> {
+  resolveContext(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryResolveContextResponse> {
     const permissionError = requireMemoryPermission(principal, "memory.resolve_context");
     if (permissionError || !principal) {
       return toMemoryErrorResponse(permissionError ?? {
         code: "MEMORY_BINDING_REQUIRED",
         message: "WithMate runtime binding is required.",
       });
+    }
+    const validated = validateMemoryResolveContextRequest(request);
+    if (!validated.ok) {
+      return toMemoryErrorResponse(validated.error);
     }
 
     return createMemoryResolveContextResponse({

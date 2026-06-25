@@ -253,7 +253,7 @@ scripts/tests/memory-v6-service.test.ts
 
 ## Phase 4: Localhost API And CLI
 
-Status: localhost API transport は完了。CLI / runtime discovery / app起動配線は未完了。
+Status: localhost API transport と CLI discovery thin client は完了。app起動配線 / binding runtime / app-internal API guard は未完了。
 
 候補path:
 
@@ -267,28 +267,35 @@ scripts/tests/withmate-memory-cli.test.ts
 内容:
 
 - loopback-only server - 完了
-- runtime discovery / app-internal API guard
-- WithMate起動中チェック
+- runtime discovery - 完了。CLI defaultはruntime directoryのdiscovery fileを読む。永続userData pathは既定にしない。
+- app-internal API guard
+- WithMate起動中チェック - CLI側の`WITHMATE_NOT_RUNNING`は完了
 - body / timeout / concurrency limits - 完了
-- JSON CLI
-- stable exit codes
+- JSON CLI - 完了
+- stable exit codes - 完了
 
 完了条件:
 
 - LAN bindしない。localhost API transportでは`127.0.0.1` default bindとremote address guardで固定済み。
 - browser-origin requestを拒否し、POSTは`application/json`だけを受ける。
 - CLIはWithMate未起動時に`WITHMATE_NOT_RUNNING`を返す。
+- CLIはinvalid `--api-url`をdiscovery fallbackせずusage errorにし、HTTP redirectを追従しない。
 - runtime endpoint / app-internal secretをlogに出さない。
 - idempotency retryで二重appendしない。
 
 実装:
 
 - `src-electron/memory-v6-http-server.ts`
+- `scripts/withmate-memory.ts`
 - `scripts/tests/memory-v6-http-server.test.ts`
+- `scripts/tests/withmate-memory-cli.test.ts`
 
 検証:
 
 - `node --test --import tsx scripts/tests/memory-v6-http-server.test.ts scripts/tests/memory-v6-service.test.ts scripts/tests/memory-v6-storage.test.ts scripts/tests/memory-v6-contract.test.ts scripts/tests/memory-v6-response-contract.test.ts`
+- `node --test --import tsx scripts/tests/withmate-memory-cli.test.ts scripts/tests/memory-v6-http-server.test.ts scripts/tests/memory-v6-service.test.ts`
+- `npx tsc --noEmit --pretty false`
+- `npx tsc -p tsconfig.electron.json --noEmit --pretty false`
 
 ## Phase 5: Provider Binding Spike
 

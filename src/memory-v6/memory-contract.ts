@@ -47,6 +47,10 @@ export type NormalizedMemoryTag = MemoryTag & {
   canonicalValue: string;
 };
 
+export type MemoryResolveContextRequest = {
+  schemaVersion: MemoryV6SchemaVersion;
+};
+
 export type MemorySearchRequest = {
   schemaVersion: MemoryV6SchemaVersion;
   targets: MemoryTargetSelector[];
