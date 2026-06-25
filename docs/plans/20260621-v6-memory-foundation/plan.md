@@ -253,6 +253,8 @@ scripts/tests/memory-v6-service.test.ts
 
 ## Phase 4: Localhost API And CLI
 
+Status: localhost API transport は完了。CLI / runtime discovery / app起動配線は未完了。
+
 候補path:
 
 ```text
@@ -264,19 +266,28 @@ scripts/tests/withmate-memory-cli.test.ts
 
 内容:
 
-- loopback-only server
+- loopback-only server - 完了
 - runtime discovery / app-internal API guard
 - WithMate起動中チェック
-- body / timeout limits
+- body / timeout limits - 完了
 - JSON CLI
 - stable exit codes
 
 完了条件:
 
-- LAN bindしない。
+- LAN bindしない。localhost API transportでは`127.0.0.1` default bindとremote address guardで固定済み。
 - CLIはWithMate未起動時に`WITHMATE_NOT_RUNNING`を返す。
 - runtime endpoint / app-internal secretをlogに出さない。
 - idempotency retryで二重appendしない。
+
+実装:
+
+- `src-electron/memory-v6-http-server.ts`
+- `scripts/tests/memory-v6-http-server.test.ts`
+
+検証:
+
+- `node --test --import tsx scripts/tests/memory-v6-http-server.test.ts scripts/tests/memory-v6-service.test.ts scripts/tests/memory-v6-storage.test.ts scripts/tests/memory-v6-contract.test.ts scripts/tests/memory-v6-response-contract.test.ts`
 
 ## Phase 5: Provider Binding Spike
 
