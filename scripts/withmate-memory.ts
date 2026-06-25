@@ -1,14 +1,21 @@
 import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { MEMORY_V6_SCHEMA_VERSION } from "../src/memory-v6/memory-contract.js";
+import {
+  resolveDefaultWithMateMemoryDiscoveryFilePath,
+  WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
+  WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
+  type WithMateMemoryDiscoveryDocument,
+} from "../src/memory-v6/memory-discovery.js";
 import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
 
-export const WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION = "withmate-memory-discovery-v1" as const;
-export const WITHMATE_MEMORY_DISCOVERY_FILE_NAME = "memory-v6-api.json" as const;
+export {
+  WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
+  WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
+};
 
 export const WITHMATE_MEMORY_CLI_EXIT_CODES = {
   ok: 0,
@@ -42,11 +49,6 @@ export type WithMateMemoryCliDeps = {
   fetch?: typeof fetch;
   readFile?: typeof readFile;
   requestTimeoutMs?: number;
-};
-
-type DiscoveryDocument = {
-  schemaVersion: typeof WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION;
-  baseUrl: string;
 };
 
 const routeByCommand: Record<WithMateMemoryCliCommand, { method: "GET" | "POST"; path: string }> = {
@@ -128,16 +130,6 @@ function defaultRequestBody(command: WithMateMemoryCliCommand): unknown {
   return command === "context" ? { schemaVersion: MEMORY_V6_SCHEMA_VERSION } : {};
 }
 
-function defaultDiscoveryFilePath(env: NodeJS.ProcessEnv): string {
-  const runtimeDirectoryPath = env.WITHMATE_MEMORY_RUNTIME_DIR?.trim();
-  if (runtimeDirectoryPath) {
-    return path.resolve(runtimeDirectoryPath, WITHMATE_MEMORY_DISCOVERY_FILE_NAME);
-  }
-
-  const ownerSegment = typeof process.getuid === "function" ? `uid-${process.getuid()}` : "local-user";
-  return path.join(tmpdir(), "withmate-memory", ownerSegment, WITHMATE_MEMORY_DISCOVERY_FILE_NAME);
-}
-
 async function readStdin(stdin: NodeJS.ReadStream): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of stdin) {
@@ -183,11 +175,11 @@ export async function discoverWithMateMemoryApi(
 
   const discoveryFilePath = options.discoveryFilePath
     ?? env.WITHMATE_MEMORY_DISCOVERY_FILE?.trim()
-    ?? defaultDiscoveryFilePath(env);
+    ?? resolveDefaultWithMateMemoryDiscoveryFilePath(env);
   const read = options.readFile ?? readFile;
 
   try {
-    const document = JSON.parse(await read(discoveryFilePath, "utf8")) as Partial<DiscoveryDocument>;
+    const document = JSON.parse(await read(discoveryFilePath, "utf8")) as Partial<WithMateMemoryDiscoveryDocument>;
     if (document.schemaVersion !== WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION || typeof document.baseUrl !== "string") {
       return null;
     }

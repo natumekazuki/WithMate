@@ -145,6 +145,10 @@ import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-sta
 import { inspectAppDatabase } from "./app-database-diagnostics.js";
 import { resolveOrMigrateAppDatabasePath } from "./app-database-path.js";
 import {
+  startMemoryV6RuntimeApi,
+  type MemoryV6RuntimeApiHandle,
+} from "./memory-v6-runtime.js";
+import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
 } from "../src/withmate-ipc-channels.js";
@@ -213,6 +217,7 @@ let companionStorage: CompanionStorageHandle | null = null;
 let allowQuitWithInFlightRuns = false;
 let dbPath = "";
 let appDatabaseDiagnostics: AppDatabaseDiagnostics | null = null;
+let memoryV6RuntimeApi: MemoryV6RuntimeApiHandle | null = null;
 let bootWindow: BrowserWindow | null = null;
 let appBootStatus: AppBootStatus = {
   kind: "running",
@@ -289,6 +294,54 @@ function getAppDatabaseDiagnostics(): AppDatabaseDiagnostics {
     appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
   }
   return appDatabaseDiagnostics;
+}
+
+async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
+  if (memoryV6RuntimeApi) {
+    return;
+  }
+
+  try {
+    memoryV6RuntimeApi = await startMemoryV6RuntimeApi({
+      userDataPath: app.getPath("userData"),
+      log: writeAppLog,
+    });
+    appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
+  } catch (error) {
+    writeAppLog({
+      level: "warn",
+      kind: "memory-v6.runtime-api.start-failed",
+      process: "main",
+      message: "Memory V6 runtime API did not start",
+      error: appLogService.errorToLogError(error),
+    });
+  }
+}
+
+async function stopMemoryV6RuntimeApiBestEffort(): Promise<void> {
+  const runtimeApi = memoryV6RuntimeApi;
+  memoryV6RuntimeApi = null;
+  if (!runtimeApi) {
+    return;
+  }
+
+  try {
+    await runtimeApi.stop();
+    writeAppLog({
+      level: "info",
+      kind: "memory-v6.runtime-api.stopped",
+      process: "main",
+      message: "Memory V6 runtime API stopped",
+    });
+  } catch (error) {
+    writeAppLog({
+      level: "warn",
+      kind: "memory-v6.runtime-api.stop-failed",
+      process: "main",
+      message: "Memory V6 runtime API cleanup failed",
+      error: appLogService.errorToLogError(error),
+    });
+  }
 }
 
 function resolveCrashDumpsPath(): string {
@@ -2899,6 +2952,7 @@ app.whenReady().then(async () => {
       message: "App database selected",
       data: appDatabaseDiagnostics,
     });
+    await startMemoryV6RuntimeApiBestEffort();
     await requireMainBootstrapService().handleReady();
     publishAppBootStatus({
       kind: "completed",
@@ -2961,4 +3015,5 @@ app.on("will-quit", () => {
     process: "main",
     message: "App will quit",
   });
+  void stopMemoryV6RuntimeApiBestEffort();
 });
