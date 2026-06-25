@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -19,19 +19,46 @@ describe("Memory V6 runtime API", () => {
     try {
       const published = await publishMemoryV6DiscoveryFile({
         baseUrl: "http://127.0.0.1:12345",
+        runtimeInstanceId: "test-runtime-instance",
         runtimeDirectoryPath,
       });
       const document = JSON.parse(await readFile(published.discoveryFilePath, "utf8"));
 
-      assert.deepEqual(document, {
-        schemaVersion: WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
-        baseUrl: "http://127.0.0.1:12345",
-      });
+      assert.equal(document.schemaVersion, WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION);
+      assert.equal(document.baseUrl, "http://127.0.0.1:12345");
+      assert.equal(document.runtimeInstanceId, "test-runtime-instance");
+      assert.equal(typeof document.publishedAt, "string");
       assert.equal(path.dirname(published.discoveryFilePath), runtimeDirectoryPath);
       assert.equal((await stat(published.discoveryFilePath)).isFile(), true);
 
       await published.cleanup();
       await assert.rejects(() => stat(published.discoveryFilePath));
+    } finally {
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("cleanupは自分がpublishしたdiscovery fileだけを削除する", async () => {
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    try {
+      const first = await publishMemoryV6DiscoveryFile({
+        baseUrl: "http://127.0.0.1:11111",
+        runtimeInstanceId: "first-runtime",
+        runtimeDirectoryPath,
+      });
+      const second = await publishMemoryV6DiscoveryFile({
+        baseUrl: "http://127.0.0.1:22222",
+        runtimeInstanceId: "second-runtime",
+        runtimeDirectoryPath,
+      });
+
+      await first.cleanup();
+      const remaining = JSON.parse(await readFile(second.discoveryFilePath, "utf8"));
+      assert.equal(remaining.runtimeInstanceId, "second-runtime");
+      assert.equal(remaining.baseUrl, "http://127.0.0.1:22222");
+
+      await second.cleanup();
+      await assert.rejects(() => stat(second.discoveryFilePath));
     } finally {
       await rm(runtimeDirectoryPath, { recursive: true, force: true });
     }
@@ -51,6 +78,27 @@ describe("Memory V6 runtime API", () => {
       assert.deepEqual(entries, ["memory-v6-api.json"]);
     } finally {
       await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("POSIXではsymlinkのruntime directoryを拒否する", { skip: process.platform === "win32" }, async () => {
+    const parentPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-parent-"));
+    const targetPath = path.join(parentPath, "target");
+    const runtimeDirectoryPath = path.join(parentPath, "runtime-link");
+    try {
+      await mkdir(targetPath);
+      await symlink(targetPath, runtimeDirectoryPath, "dir");
+
+      await assert.rejects(
+        () => publishMemoryV6DiscoveryFile({
+          baseUrl: "http://127.0.0.1:12345",
+          runtimeDirectoryPath,
+        }),
+        /real directory/,
+      );
+      await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6-api.json")));
+    } finally {
+      await rm(parentPath, { recursive: true, force: true });
     }
   });
 
@@ -94,6 +142,35 @@ describe("Memory V6 runtime API", () => {
     }
   });
 
+  it("別runtimeが同じdirectoryへpublishした後に先行runtimeを停止してもdiscovery fileを残す", async () => {
+    const firstUserDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
+    const secondUserDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    let firstRuntime: Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null = null;
+    let secondRuntime: Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null = null;
+    try {
+      firstRuntime = await startMemoryV6RuntimeApi({ userDataPath: firstUserDataPath, runtimeDirectoryPath });
+      const firstDiscovery = JSON.parse(await readFile(firstRuntime.discoveryFilePath, "utf8"));
+      secondRuntime = await startMemoryV6RuntimeApi({ userDataPath: secondUserDataPath, runtimeDirectoryPath });
+      const secondDiscovery = JSON.parse(await readFile(secondRuntime.discoveryFilePath, "utf8"));
+
+      assert.notEqual(firstDiscovery.runtimeInstanceId, secondDiscovery.runtimeInstanceId);
+      assert.equal(secondDiscovery.baseUrl, secondRuntime.baseUrl);
+
+      await firstRuntime.stop();
+      firstRuntime = null;
+      const remaining = JSON.parse(await readFile(secondRuntime.discoveryFilePath, "utf8"));
+      assert.equal(remaining.runtimeInstanceId, secondDiscovery.runtimeInstanceId);
+      assert.equal(remaining.baseUrl, secondRuntime.baseUrl);
+    } finally {
+      await firstRuntime?.stop().catch(() => undefined);
+      await secondRuntime?.stop().catch(() => undefined);
+      await rm(firstUserDataPath, { recursive: true, force: true });
+      await rm(secondUserDataPath, { recursive: true, force: true });
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("invalid V6 DBがある場合は起動せずdiscovery fileを残さない", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
     const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
@@ -105,6 +182,29 @@ describe("Memory V6 runtime API", () => {
         /does not match the V6 foundation schema/,
       );
       await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6-api.json")));
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("stale discovery fileがある状態でinvalid V6 DBの場合はstale fileも残さない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    const discoveryFilePath = path.join(runtimeDirectoryPath, "memory-v6-api.json");
+    try {
+      await writeFile(path.join(userDataPath, "withmate-v6.db"), "not sqlite", "utf8");
+      await writeFile(discoveryFilePath, JSON.stringify({
+        schemaVersion: WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
+        baseUrl: "http://127.0.0.1:9",
+        runtimeInstanceId: "stale-runtime",
+      }), "utf8");
+
+      await assert.rejects(
+        () => startMemoryV6RuntimeApi({ userDataPath, runtimeDirectoryPath }),
+        /does not match the V6 foundation schema/,
+      );
+      await assert.rejects(() => stat(discoveryFilePath));
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
       await rm(runtimeDirectoryPath, { recursive: true, force: true });

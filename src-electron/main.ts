@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { readFile, rm, stat, writeFile } from "node:fs/promises";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -306,6 +306,7 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
       userDataPath: app.getPath("userData"),
       log: writeAppLog,
     });
+    appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
   } catch (error) {
     writeAppLog({
       level: "warn",
@@ -322,12 +323,6 @@ async function stopMemoryV6RuntimeApiBestEffort(): Promise<void> {
   memoryV6RuntimeApi = null;
   if (!runtimeApi) {
     return;
-  }
-
-  try {
-    rmSync(runtimeApi.discoveryFilePath, { force: true });
-  } catch {
-    // The async runtime cleanup below will log a warning if cleanup still fails.
   }
 
   try {
