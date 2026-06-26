@@ -607,8 +607,12 @@ bindingは次のlifecycleで失効する。
 環境変数に入れる値はcredentialではなく、短命opaque referenceとする。
 runtime API側はbinding reference、active session lifecycle、provider run、permission、owner / scope accessを再検証する。
 
-providerへのbinding伝達はprovider spikeで確認する。
-第一候補はturnごとのenv injection、fallbackはsession-local context file、どちらも無理なproviderはunsupportedとする。
+providerへのbinding伝達はPhase 5 spikeで確認済み。
+Codex / GitHub Copilot CLIはいずれもSDK client construction時のenvironment injectionを使う。
+WithMateはprovider turnごとの`ProviderMemoryBindingRuntimeProjection`を`RunSessionTurnInput`へ渡し、adapterはbinding IDベースのsettings keyをclient cache keyに含めてturn / binding境界を分離する。
+env injectionに載せるのは短命opaque referenceだけで、runtime API secretやprincipal detailは載せない。
+fallbackとして`context_file` transportを型として予約するが、Codex / Copilotのcurrent strategyでは使わない。
+binding transport未確認のproviderは`unsupported`として扱う。
 
 ### Target Selection
 
@@ -699,6 +703,11 @@ type MemoryBindingInjectionStrategy = {
 ```
 
 - provider SDKからprovider process / agent shell childへturnごとの環境変数を注入できるか確認する。
+- current Codex / GitHub Copilot CLIは`env` injectionを使う。
+- binding projectionは`src-electron/provider-memory-binding.ts`で共有し、`src-electron/session-runtime-service.ts`のoptional hookからadapterへ渡す。
+- Codexは`Codex` client optionsの`env`へprojectionを重ねる。SDKが`env`指定時に`process.env`を継承しないため、WithMate側でdefined envだけをmergeする。
+- GitHub Copilot CLIは`CopilotClient` optionsの`env`へprojectionを重ねる。
+- どちらもbinding settings keyをprovider client/session cache keyへ含め、異なるbindingでcached provider process/sessionを再利用しない。settings keyにはbinding reference本体を含めない。
 - env injection不可の場合だけsession-local context fileを検討する。
 - working directoryから暗黙探索しない。
 - provider runtimeがbinding非対応なら、current Characterなどruntime binding必須のcapabilityをそのproviderへ表示しない。

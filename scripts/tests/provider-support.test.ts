@@ -131,6 +131,7 @@ test("getProviderRuntimeCapabilities は provider と background policy から�
   assert.equal(capabilities.providerSupported, true);
   assert.equal(capabilities.instructionSyncSupported, true);
   assert.equal(capabilities.tokenUsageSupported, true);
+  assert.equal(capabilities.memoryBindingTransport, "env");
 });
 
 test("getProviderRuntimeCapabilities は MVP 対象外 provider の support flag を false にする", () => {
@@ -139,4 +140,5 @@ test("getProviderRuntimeCapabilities は MVP 対象外 provider の support flag
   assert.equal(capabilities.instructionSyncSupported, false);
   assert.equal(capabilities.tokenUsageSupported, false);
   assert.equal(capabilities.providerSupported, false);
+  assert.equal(capabilities.memoryBindingTransport, "unsupported");
 });

@@ -20,7 +20,13 @@ import { getProviderAppSettings, type AppSettings } from "../src/provider-settin
 import { isReadOnlySession, type Session } from "../src/session-state.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { MateStorageState } from "../src/mate/mate-state.js";
-import { ProviderTurnError, type ProviderCodingAdapter, type RunSessionTurnResult } from "./provider-runtime.js";
+import {
+  ProviderTurnError,
+  type ProviderCodingAdapter,
+  type ProviderPromptComposition,
+  type RunSessionTurnResult,
+} from "./provider-runtime.js";
+import type { ProviderMemoryBindingRuntimeProjection } from "./provider-memory-binding.js";
 import { appendQuotaTelemetryToTransportPayload } from "./audit-log-quota.js";
 import { appendTransportPayloadFields, calculateAuditDurationMs } from "./audit-log-metadata.js";
 import { estimateLogicalPromptTokens } from "./prompt-token-estimate.js";
@@ -67,6 +73,12 @@ export type SessionRuntimeServiceDeps = {
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
   scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void;
   clearWorkspaceFileIndex(workspacePath: string): void;
+  createProviderMemoryBinding?(input: {
+    session: Session;
+    provider: ModelCatalogProvider;
+    character: CharacterProfile | null;
+  }): Awaitable<ProviderMemoryBindingRuntimeProjection | null>;
+  revokeProviderMemoryBinding?(binding: ProviderMemoryBindingRuntimeProjection): Awaitable<void>;
   broadcastLiveSessionRun(sessionId: string): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
   resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
@@ -460,43 +472,96 @@ export class SessionRuntimeService {
     const providerAdapter = this.deps.getProviderCodingAdapter(provider.id);
     const sessionMemory = this.deps.getSessionMemory(session);
     const projectMemoryEntries = this.deps.resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
-    const promptForAudit = providerAdapter.composePrompt({
-      session: providerSession,
-      sessionMemory,
-      projectMemoryEntries,
-      providerCatalog: provider,
-      userMessage: nextMessage,
-      appSettings,
-      attachments: composerPreview.attachments,
-    });
-
+    const sessionCharacter = await this.deps.resolveSessionCharacter?.(session) ?? null;
+    const memoryBinding = await Promise.resolve(this.deps.createProviderMemoryBinding?.({
+      session,
+      provider,
+      character: sessionCharacter,
+    }) ?? null);
     const currentTimestampLabel = this.deps.currentTimestampLabel ?? defaultCurrentTimestampLabel;
-    const runningSession: Session = {
-      ...session,
-      updatedAt: currentTimestampLabel(),
-      status: "running",
-      runState: "running",
-      messages: [...session.messages, { role: "user", text: nextMessage }],
+    let memoryBindingRevoked = false;
+    const revokeMemoryBinding = async () => {
+      if (!memoryBinding || memoryBinding.transport === "unsupported" || memoryBindingRevoked) {
+        return;
+      }
+      memoryBindingRevoked = true;
+      await Promise.resolve()
+        .then(() => this.deps.revokeProviderMemoryBinding?.(memoryBinding))
+        .catch((error) => {
+          console.warn("Provider memory binding revoke failed", error);
+        });
     };
 
-    await this.deps.upsertSession(runningSession);
-    this.inFlightSessionRuns.add(sessionId);
-    const runAbortController = new AbortController();
-    this.sessionRunControllers.set(sessionId, runAbortController);
-    const initialLiveState: LiveSessionRunState = {
-      ...buildEmptyLiveSessionRunState(sessionId, runningSession.threadId),
-      backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
-      reasoningText: "",
-    };
-    this.deps.setLiveSessionRun(sessionId, initialLiveState);
+    let promptForAudit: ProviderPromptComposition;
+    let runningSession: Session;
+    let runAbortController: AbortController;
+    let initialLiveState: LiveSessionRunState;
+    let runningAuditEntry: CreateAuditLogInput;
+    let runningAuditLog: AuditLogEntry;
+    let setupLiveRun = false;
+    let setupRunningSessionSaved = false;
+    try {
+      promptForAudit = providerAdapter.composePrompt({
+        session: providerSession,
+        sessionMemory,
+        projectMemoryEntries,
+        character: sessionCharacter ?? undefined,
+        providerCatalog: provider,
+        userMessage: nextMessage,
+        appSettings,
+        attachments: composerPreview.attachments,
+        memoryBinding,
+      });
 
-    let runningAuditEntry: CreateAuditLogInput = buildRunningAuditEntry({
-      sessionId,
-      createdAt: new Date().toISOString(),
-      session: runningSession,
-      logicalPrompt: promptForAudit.logicalPrompt,
-    });
-    const runningAuditLog = await this.deps.createAuditLog(runningAuditEntry);
+      runningSession = {
+        ...session,
+        updatedAt: currentTimestampLabel(),
+        status: "running",
+        runState: "running",
+        messages: [...session.messages, { role: "user", text: nextMessage }],
+      };
+
+      await this.deps.upsertSession(runningSession);
+      setupRunningSessionSaved = true;
+      this.inFlightSessionRuns.add(sessionId);
+      runAbortController = new AbortController();
+      this.sessionRunControllers.set(sessionId, runAbortController);
+      initialLiveState = {
+        ...buildEmptyLiveSessionRunState(sessionId, runningSession.threadId),
+        backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
+        reasoningText: "",
+      };
+      this.deps.setLiveSessionRun(sessionId, initialLiveState);
+      setupLiveRun = true;
+
+      runningAuditEntry = buildRunningAuditEntry({
+        sessionId,
+        createdAt: new Date().toISOString(),
+        session: runningSession,
+        logicalPrompt: promptForAudit.logicalPrompt,
+      });
+      runningAuditLog = await this.deps.createAuditLog(runningAuditEntry);
+    } catch (error) {
+      await revokeMemoryBinding();
+      this.deps.resolvePendingApprovalRequest(sessionId, "deny");
+      this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
+      this.inFlightSessionRuns.delete(sessionId);
+      this.sessionRunControllers.delete(sessionId);
+      if (setupLiveRun) {
+        this.deps.setLiveSessionRun(sessionId, null);
+      }
+      if (setupRunningSessionSaved) {
+        await Promise.resolve(this.deps.upsertSession({
+          ...runningSession!,
+          updatedAt: currentTimestampLabel(),
+          status: "idle",
+          runState: "error",
+        })).catch((cleanupError) => {
+          console.warn("Session setup failure cleanup failed", cleanupError);
+        });
+      }
+      throw error;
+    }
     let runningAuditProgressSignature = buildRunningAuditProgressSignature(runningAuditEntry);
     let terminalAuditSettled = false;
     let liveProgressGeneration = 0;
@@ -577,6 +642,7 @@ export class SessionRuntimeService {
         userMessage: nextMessage,
         appSettings,
         attachments: composerPreview.attachments,
+        memoryBinding,
         signal: runAbortController.signal,
         onApprovalRequest: (approvalRequest) => {
           const decision = this.deps.waitForApprovalDecision(sessionId, approvalRequest, runAbortController.signal);
@@ -830,6 +896,7 @@ export class SessionRuntimeService {
       activeRunningSession = storedFailedSession;
       return storedFailedSession;
     } finally {
+      await revokeMemoryBinding();
       if (runningSession.provider === "copilot") {
         this.deps.scheduleProviderQuotaTelemetryRefresh(runningSession.provider, [0, 3000, 10000]);
       }

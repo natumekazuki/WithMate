@@ -22,6 +22,7 @@ import type {
 import type { ModelReasoningEffort, ModelCatalogProvider } from "../src/model-catalog.js";
 import type { ApprovalMode } from "../src/approval-mode.js";
 import type { CodexSandboxMode } from "../src/codex-sandbox-mode.js";
+import type { ProviderMemoryBindingRuntimeProjection } from "./provider-memory-binding.js";
 import type { SessionMemoryExtractionPrompt } from "./session-memory-extraction.js";
 
 export type ProviderPromptComposition = {
@@ -42,6 +43,7 @@ export type RunSessionTurnInput = {
   userMessage: string;
   appSettings: AppSettings;
   attachments: ComposerAttachment[];
+  memoryBinding?: ProviderMemoryBindingRuntimeProjection | null;
   signal?: AbortSignal;
   onApprovalRequest?: RunSessionTurnApprovalRequestHandler;
   onElicitationRequest?: RunSessionTurnElicitationRequestHandler;

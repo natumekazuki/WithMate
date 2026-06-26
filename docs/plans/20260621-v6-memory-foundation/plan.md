@@ -305,6 +305,8 @@ scripts/tests/withmate-memory-cli.test.ts
 
 ## Phase 5: Provider Binding Spike
 
+Status: 完了。Codex / GitHub Copilot CLI はどちらも env injection を採用する。`context_file` はfallback transportとして型予約し、未確認 provider は `unsupported` とする。
+
 Codex / Copilotで別々に確認する。
 このspikeは実装branchと混ぜず、Phase 0/1と並行して早期に行う。CLI contract確定後に最終検証するが、turnごとのenv injection / session-local context file / unsupportedの見通しはstorage実装前に固定する。
 
@@ -320,9 +322,23 @@ Codex / Copilotで別々に確認する。
 
 成果物:
 
-- capability matrix更新
-- provider別strategy決定
-- unsupported時のfallback
+- capability matrix更新 - 完了
+- provider別strategy決定 - 完了。Codex / GitHub Copilot CLI は env injection
+- unsupported時のfallback - 完了。`ProviderMemoryBindingTransport`で`context_file`と`unsupported`を予約
+
+実装:
+
+- `src-electron/provider-memory-binding.ts`
+- `src-electron/provider-runtime.ts`
+- `src-electron/session-runtime-service.ts`
+- `src-electron/codex-adapter.ts`
+- `src-electron/copilot-adapter.ts`
+- `src-electron/provider-support.ts`
+- `scripts/tests/provider-memory-binding.test.ts`
+
+検証:
+
+- `node --test --import tsx scripts/tests/provider-memory-binding.test.ts scripts/tests/provider-support.test.ts scripts/tests/copilot-adapter.test.ts scripts/tests/session-runtime-service.test.ts`
 
 ## Phase 6: Binding Runtime
 
