@@ -648,7 +648,9 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      clearWorkspaceFileIndex() {},
+      clearWorkspaceFileIndex() {
+        calls.push("clearWorkspaceFileIndex");
+      },
       createProviderMemoryBinding() {
         calls.push("create");
         return {
@@ -660,7 +662,9 @@ describe("SessionRuntimeService", () => {
       revokeProviderMemoryBinding(nextBinding) {
         calls.push(`revoke:${nextBinding.bindingId}`);
       },
-      broadcastLiveSessionRun() {},
+      broadcastLiveSessionRun() {
+        calls.push("broadcast");
+      },
       resolvePendingApprovalRequest() {
         calls.push("approval:deny");
       },
@@ -684,6 +688,8 @@ describe("SessionRuntimeService", () => {
       "approval:deny",
       "elicitation:cancel",
       "upsert:error",
+      "clearWorkspaceFileIndex",
+      "broadcast",
     ]);
     assert.equal(liveStates.at(-1), null);
   });

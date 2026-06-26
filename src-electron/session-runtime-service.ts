@@ -559,6 +559,8 @@ export class SessionRuntimeService {
         })).catch((cleanupError) => {
           console.warn("Session setup failure cleanup failed", cleanupError);
         });
+        this.deps.clearWorkspaceFileIndex(session.workspacePath);
+        this.deps.broadcastLiveSessionRun(sessionId);
       }
       throw error;
     }

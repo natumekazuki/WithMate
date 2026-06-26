@@ -67,6 +67,7 @@ import {
 import {
   buildProviderMemoryBindingEnv,
   buildProviderMemoryBindingSettingsKey,
+  mergeDefinedEnv,
   type ProviderMemoryBindingRuntimeProjection,
 } from "./provider-memory-binding.js";
 import {
@@ -139,11 +140,10 @@ export function buildCopilotClientEnv(
 ): NodeJS.ProcessEnv {
   // Copilot SDK は child CLI の stderr を bootstrap failure 扱いするため、
   // Node.js の ExperimentalWarning だけで false error にならないように抑止する。
-  return {
-    ...baseEnv,
+  return mergeDefinedEnv(baseEnv, {
     NODE_NO_WARNINGS: "1",
     ...buildProviderMemoryBindingEnv(memoryBinding),
-  };
+  });
 }
 
 export function resolveNativeCopilotPackageName(

@@ -80,6 +80,12 @@ export function mergeDefinedEnv(
 ): Record<string, string> {
   const merged: Record<string, string> = {};
   for (const [key, value] of Object.entries(baseEnv)) {
+    if (
+      key === WITHMATE_MEMORY_BINDING_REFERENCE_ENV ||
+      key === WITHMATE_MEMORY_BINDING_CONTEXT_FILE_ENV
+    ) {
+      continue;
+    }
     if (value !== undefined) {
       merged[key] = value;
     }

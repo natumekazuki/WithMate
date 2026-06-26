@@ -49,12 +49,31 @@ test("binding settings key は reference 本体を含めず provider cache 分�
   );
 });
 
-test("Codex client env 用 merge は undefined を落として binding env を重ねる", () => {
+test("provider client env 用 merge は undefined と stale binding env を落として binding env を重ねる", () => {
   assert.deepEqual(
     mergeDefinedEnv(
-      { PATH: "bin", EMPTY: undefined },
+      {
+        PATH: "bin",
+        EMPTY: undefined,
+        [WITHMATE_MEMORY_BINDING_REFERENCE_ENV]: "stale-ref",
+        [WITHMATE_MEMORY_BINDING_CONTEXT_FILE_ENV]: "C:/stale/binding.json",
+      },
       { [WITHMATE_MEMORY_BINDING_REFERENCE_ENV]: "ref-1" },
     ),
     { PATH: "bin", [WITHMATE_MEMORY_BINDING_REFERENCE_ENV]: "ref-1" },
+  );
+});
+
+test("provider client env 用 merge は binding overlay が無い場合も stale binding env を落とす", () => {
+  assert.deepEqual(
+    mergeDefinedEnv(
+      {
+        PATH: "bin",
+        [WITHMATE_MEMORY_BINDING_REFERENCE_ENV]: "stale-ref",
+        [WITHMATE_MEMORY_BINDING_CONTEXT_FILE_ENV]: "C:/stale/binding.json",
+      },
+      {},
+    ),
+    { PATH: "bin" },
   );
 });

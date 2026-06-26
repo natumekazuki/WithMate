@@ -266,6 +266,17 @@ describe("CopilotAdapter env", () => {
     assert.equal(env[WITHMATE_MEMORY_BINDING_REFERENCE_ENV], "ref-1");
   });
 
+  it("Copilot child CLI env は baseEnv の stale Memory binding env を引き継がない", () => {
+    const env = buildCopilotClientEnv({
+      PATH: "test-path",
+      [WITHMATE_MEMORY_BINDING_REFERENCE_ENV]: "stale-ref",
+    });
+
+    assert.equal(env.NODE_NO_WARNINGS, "1");
+    assert.equal(env.PATH, "test-path");
+    assert.equal(env[WITHMATE_MEMORY_BINDING_REFERENCE_ENV], undefined);
+  });
+
   it("Memory binding 付き Copilot client は turn-local として cache に残さない", () => {
     const adapter = new CopilotAdapter() as unknown as {
       clients: Map<string, unknown>;
