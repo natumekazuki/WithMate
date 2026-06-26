@@ -63,6 +63,7 @@
 | apps / mcp / plugins | provider 拡張機能を session から扱う | 一部対応 | 一部対応 | 未着手 | Codex は `/apps` `/mcp`、Copilot は plugin 系がある |
 | sandbox / allowlist 拡張 | read dir 追加や tool allowlist を wrapper から制御する | 一部対応 | 一部対応 | 一部実装 | Codex は `read-only / workspace-write / workspace-write + network / danger-full-access` を session metadata から SDK runtime option へ渡す。Copilot は現時点で sandbox dropdown を出さない |
 | app-level approval callback | app 側で approve / deny を返す | 非対応 | 一部対応 | 一部実装 | Copilot provider-controlled では Session UI の approval card から `approve / deny` を返せる。Codex は current SDK surface では未対応 |
+| Memory runtime binding injection | turn ごとの短命 opaque reference を provider process へ渡す | 対応 | 対応 | 一部実装 | Codex は `Codex` client options、Copilot は `CopilotClient` options の env injection を使う。WithMate は `ProviderMemoryBindingRuntimeProjection` と provider cache key 分離まで実装済み。binding registry / principal 解決は次 phase |
 
 ## Current Read
 

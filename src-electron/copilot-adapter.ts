@@ -65,6 +65,12 @@ import {
   resolveProviderBinarySpec,
 } from "./provider-binary-paths.js";
 import {
+  buildProviderMemoryBindingEnv,
+  buildProviderMemoryBindingSettingsKey,
+  mergeDefinedEnv,
+  type ProviderMemoryBindingRuntimeProjection,
+} from "./provider-memory-binding.js";
+import {
   boundAuditRawItem,
   stringifyBoundedAuditRawItems,
   toAuditTextPreview,
@@ -128,13 +134,16 @@ const COPILOT_DROPPED_RAW_EVENT_TYPES = new Set([
 
 const require = createRequire(import.meta.url);
 
-export function buildCopilotClientEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function buildCopilotClientEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  memoryBinding?: ProviderMemoryBindingRuntimeProjection | null,
+): NodeJS.ProcessEnv {
   // Copilot SDK は child CLI の stderr を bootstrap failure 扱いするため、
   // Node.js の ExperimentalWarning だけで false error にならないように抑止する。
-  return {
-    ...baseEnv,
+  return mergeDefinedEnv(baseEnv, {
     NODE_NO_WARNINGS: "1",
-  };
+    ...buildProviderMemoryBindingEnv(memoryBinding),
+  });
 }
 
 export function resolveNativeCopilotPackageName(
@@ -170,13 +179,17 @@ export function resolveCopilotCliPath(
   return commandFileName;
 }
 
-function buildCopilotClientKeyFromAppSettings(providerId: string, appSettings: RunSessionTurnInput["appSettings"]): string {
+function buildCopilotClientKeyFromAppSettings(
+  providerId: string,
+  appSettings: RunSessionTurnInput["appSettings"],
+  memoryBinding?: ProviderMemoryBindingRuntimeProjection | null,
+): string {
   const codingApiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
-  return JSON.stringify([providerId, codingApiKey || null]);
+  return JSON.stringify([providerId, codingApiKey || null, buildProviderMemoryBindingSettingsKey(memoryBinding)]);
 }
 
 function buildCopilotClientKey(providerId: string, input: RunSessionTurnInput): string {
-  return buildCopilotClientKeyFromAppSettings(providerId, input.appSettings);
+  return buildCopilotClientKeyFromAppSettings(providerId, input.appSettings, input.memoryBinding);
 }
 
 export function isRecoverableCopilotConnectionErrorMessage(message: string): boolean {
@@ -2002,18 +2015,24 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   private getClient(providerId: string, input: RunSessionTurnInput): { client: CopilotClient; clientKey: string } {
     const codingApiKey = getProviderAppSettings(input.appSettings, providerId).apiKey.trim();
     const clientKey = buildCopilotClientKey(providerId, input);
-    const cached = this.clients.get(clientKey);
-    if (cached) {
-      return { client: cached, clientKey };
+    const memoryBindingEnv = buildProviderMemoryBindingEnv(input.memoryBinding);
+    const isMemoryBoundClient = Object.keys(memoryBindingEnv).length > 0;
+    if (!isMemoryBoundClient) {
+      const cached = this.clients.get(clientKey);
+      if (cached) {
+        return { client: cached, clientKey };
+      }
     }
 
     const cliPath = resolveCopilotCliPath();
     const client = new CopilotClient({
       connection: RuntimeConnection.forStdio({ path: cliPath }),
-      env: buildCopilotClientEnv(process.env),
+      env: buildCopilotClientEnv(process.env, input.memoryBinding),
       ...(codingApiKey ? { gitHubToken: codingApiKey, useLoggedInUser: false } : {}),
     });
-    this.clients.set(clientKey, client);
+    if (!isMemoryBoundClient) {
+      this.clients.set(clientKey, client);
+    }
     return { client, clientKey };
   }
 
@@ -2184,8 +2203,12 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     prompt: ProviderPromptComposition,
   ): Promise<{ session: CopilotSession; selection: ResolvedModelSelection }> {
     const { client, clientKey } = this.getClient(input.providerCatalog.id, input);
+    const isMemoryBoundSession = Object.keys(buildProviderMemoryBindingEnv(input.memoryBinding)).length > 0;
+    if (isMemoryBoundSession) {
+      await this.disposeSessionCache(input.session.id);
+    }
     const nextSettings = buildCopilotSessionSettings(input, prompt, clientKey);
-    const cached = this.sessions.get(input.session.id);
+    const cached = isMemoryBoundSession ? undefined : this.sessions.get(input.session.id);
     const resolved = await resolveCopilotSessionForSettings({
       cached,
       nextSettingsKey: nextSettings.settingsKey,
@@ -2200,14 +2223,16 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       };
     }
 
-    this.sessions.set(input.session.id, {
-      session: resolved.session,
-      settingsKey: nextSettings.settingsKey,
-      backgroundTasks: new Map<string, LiveBackgroundTask>(),
-    });
-    const nextCached = this.sessions.get(input.session.id);
-    if (nextCached) {
-      this.attachBackgroundTaskObserver(input.session.id, nextCached);
+    if (!isMemoryBoundSession) {
+      this.sessions.set(input.session.id, {
+        session: resolved.session,
+        settingsKey: nextSettings.settingsKey,
+        backgroundTasks: new Map<string, LiveBackgroundTask>(),
+      });
+      const nextCached = this.sessions.get(input.session.id);
+      if (nextCached) {
+        this.attachBackgroundTaskObserver(input.session.id, nextCached);
+      }
     }
 
     return {
@@ -2468,6 +2493,9 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     } finally {
       unsubscribe();
       input.signal?.removeEventListener("abort", handleAbort);
+      if (Object.keys(buildProviderMemoryBindingEnv(input.memoryBinding)).length > 0) {
+        await session.disconnect().catch(() => undefined);
+      }
     }
   }
 

@@ -379,6 +379,321 @@ describe("SessionRuntimeService", () => {
     assert.equal(hasCharacterKey, false);
     assert.equal(result.runState, "idle");
   });
+
+  it("provider memory binding を turn input に渡し、完了時に revoke する", async () => {
+    const session = createSession();
+    const binding = {
+      bindingId: "binding-1",
+      bindingReference: "ref-1",
+      transport: "env" as const,
+    };
+    const calls: string[] = [];
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt(input) {
+        calls.push(`compose:${input.memoryBinding?.bindingId ?? ""}`);
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      runSessionTurn(input) {
+        calls.push(`run:${input.memoryBinding?.bindingReference ?? ""}`);
+        return Promise.resolve(createPartialResult({
+          threadId: "thread-1",
+          assistantText: "完了したよ。",
+        }));
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      clearWorkspaceFileIndex() {},
+      createProviderMemoryBinding(input) {
+        calls.push(`create:${input.session.id}:${input.provider.id}:${input.character?.id ?? "none"}`);
+        return binding;
+      },
+      revokeProviderMemoryBinding(nextBinding) {
+        calls.push(`revoke:${nextBinding.bindingId}`);
+      },
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "お願い" });
+
+    assert.equal(result.runState, "idle");
+    assert.deepEqual(calls, [
+      `create:${session.id}:codex:none`,
+      "compose:binding-1",
+      "run:ref-1",
+      "revoke:binding-1",
+    ]);
+  });
+
+  it("provider memory binding revoke が失敗しても turn cleanup は継続する", async () => {
+    const session = createSession();
+    const liveStates: Array<LiveSessionRunState | null> = [];
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      runSessionTurn() {
+        return Promise.resolve(createPartialResult({
+          threadId: "thread-1",
+          assistantText: "完了したよ。",
+        }));
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun(_sessionId, state) {
+        liveStates.push(state);
+      },
+      getLiveSessionRun() {
+        return liveStates.at(-1) ?? null;
+      },
+      async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      clearWorkspaceFileIndex() {},
+      createProviderMemoryBinding() {
+        return {
+          bindingId: "binding-1",
+          bindingReference: "ref-1",
+          transport: "env",
+        };
+      },
+      revokeProviderMemoryBinding() {
+        throw new Error("revoke failed");
+      },
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "お願い" });
+
+    assert.equal(result.runState, "idle");
+    assert.equal(liveStates.at(-1), null);
+  });
+
+  it("provider memory binding 作成後の setup 失敗でも revoke して live state を掃除する", async () => {
+    const session = createSession();
+    const calls: string[] = [];
+    const liveStates: Array<LiveSessionRunState | null> = [];
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        calls.push("compose");
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      runSessionTurn() {
+        throw new Error("provider should not run");
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        calls.push(`upsert:${next.runState}`);
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog() {
+        calls.push("createAuditLog");
+        throw new Error("audit failed");
+      },
+      updateAuditLog() {},
+      setLiveSessionRun(_sessionId, state) {
+        liveStates.push(state);
+      },
+      getLiveSessionRun() {
+        return liveStates.at(-1) ?? null;
+      },
+      async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      clearWorkspaceFileIndex() {
+        calls.push("clearWorkspaceFileIndex");
+      },
+      createProviderMemoryBinding() {
+        calls.push("create");
+        return {
+          bindingId: "binding-1",
+          bindingReference: "ref-1",
+          transport: "env",
+        };
+      },
+      revokeProviderMemoryBinding(nextBinding) {
+        calls.push(`revoke:${nextBinding.bindingId}`);
+      },
+      broadcastLiveSessionRun() {
+        calls.push("broadcast");
+      },
+      resolvePendingApprovalRequest() {
+        calls.push("approval:deny");
+      },
+      resolvePendingElicitationRequest() {
+        calls.push("elicitation:cancel");
+      },
+      currentTimestampLabel,
+    });
+
+    await assert.rejects(
+      service.runSessionTurn(session.id, { userMessage: "お願い" }),
+      /audit failed/,
+    );
+
+    assert.deepEqual(calls, [
+      "create",
+      "compose",
+      "upsert:running",
+      "createAuditLog",
+      "revoke:binding-1",
+      "approval:deny",
+      "elicitation:cancel",
+      "upsert:error",
+      "clearWorkspaceFileIndex",
+      "broadcast",
+    ]);
+    assert.equal(liveStates.at(-1), null);
+  });
+
   it("成功時に running -> idle を保存し、Memory / reflection background task は起動しない", async () => {
     const session = createSession();
     const storedSessions: Session[] = [];
