@@ -692,7 +692,7 @@ type MemoryBindingRecord = {
 
 current実装では`src-electron/memory-binding-registry.ts`がmain process memory内でbindingを管理する。`SessionRuntimeService`のprovider execution開始時hookがregistryから`ProviderMemoryBindingRuntimeProjection`を作成し、provider adapterはopaque binding referenceだけをenv injectionする。`withmate-memory` CLIは`WITHMATE_MEMORY_BINDING_REFERENCE`を内部的にHTTP headerへ変換し、runtime APIは短命API secret検証後にbinding referenceをregistryでprincipalへ解決する。binding reference本体はDBへ保存せず、registry lookup用のhashだけを保持する。
 
-失効は新しいsession binding発行時、provider execution invalidation時、turn終了時の`revokeProviderMemoryBinding`、session delete時のsession単位revoke、runtime stop / app quit相当の全revokeで行う。stale thread retryなどでprovider executionをinvalidateした場合、旧bindingを失効してからretry用の新しいbindingを発行する。revoke後または期限切れ後のbinding referenceはprincipalへ解決されず、Memory serviceは`MEMORY_BINDING_REQUIRED`として扱う。
+失効は新しいsession binding発行時、provider execution invalidation時、turn終了時の`revokeProviderMemoryBinding`、session delete時のsession単位revoke、runtime stop / app quit相当の全revokeで行う。stale thread retryなどでprovider executionをinvalidateした場合、旧bindingを失効してからretry用の新しいbindingを発行する。provider adapter内のrecoverable retryも`refreshMemoryBindingForRetry` hookを通して同じ失効 / 再発行契約に揃える。revoke後または期限切れ後のbinding referenceはprincipalへ解決されず、Memory serviceは`MEMORY_BINDING_REQUIRED`として扱う。
 
 ### Provider Injection Strategy
 

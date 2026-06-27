@@ -1061,6 +1061,64 @@ describe("CopilotAdapter env", () => {
     assert.deepEqual(resetCalls, [input.session.id]);
   });
 
+  it("CopilotAdapter は Memory binding 付き internal retry 前に binding を更新する", async () => {
+    const adapter = {
+      composePrompt() {
+        return EMPTY_PROMPT;
+      },
+      runSessionTurn: CopilotAdapter.prototype.runSessionTurn,
+      runSessionTurnOnce: async () => {
+        throw new Error("not replaced");
+      },
+      resetRecoverableConnection: async () => undefined,
+    } as unknown as {
+      composePrompt(input: RunSessionTurnInput): ProviderPromptComposition;
+      runSessionTurn(input: RunSessionTurnInput): Promise<RunSessionTurnResult>;
+      runSessionTurnOnce(input: RunSessionTurnInput, prompt: ProviderPromptComposition): Promise<RunSessionTurnResult>;
+      resetRecoverableConnection(input: RunSessionTurnInput): Promise<void>;
+    };
+
+    const attempts: Array<string | undefined> = [];
+    const resetCalls: string[] = [];
+    const refreshCalls: string[] = [];
+    const expected = createPartialResult({ threadId: "thread-fresh", assistantText: "回復したよ。" });
+    const input: RunSessionTurnInput = {
+      ...createRunSessionInput({ threadId: "thread-stale" }),
+      memoryBinding: {
+        bindingId: "binding-1",
+        bindingReference: "ref-1",
+        transport: "env",
+      },
+      refreshMemoryBindingForRetry: async () => {
+        refreshCalls.push("refresh");
+        return {
+          bindingId: "binding-2",
+          bindingReference: "ref-2",
+          transport: "env",
+        };
+      },
+    };
+
+    adapter.runSessionTurnOnce = async (nextInput) => {
+      attempts.push(nextInput.memoryBinding?.bindingReference);
+      if (attempts.length === 1) {
+        throw new ProviderTurnError("SessionNotFound: session not found", createPartialResult(), false);
+      }
+
+      return expected;
+    };
+    adapter.resetRecoverableConnection = async (nextInput) => {
+      resetCalls.push(nextInput.session.id);
+    };
+
+    const result = await adapter.runSessionTurn(input);
+
+    assert.equal(result, expected);
+    assert.deepEqual(attempts, ["ref-1", "ref-2"]);
+    assert.deepEqual(resetCalls, [input.session.id]);
+    assert.deepEqual(refreshCalls, ["refresh"]);
+  });
+
   it("Copilot elicitation schema の enum / anyOf / number を live field へ正規化する", () => {
     assert.deepEqual(
       buildLiveElicitationFieldFromCopilotSchema("environment", {

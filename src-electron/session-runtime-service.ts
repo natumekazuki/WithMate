@@ -493,6 +493,11 @@ export class SessionRuntimeService {
       memoryBinding = await this.createProviderMemoryBindingForSession(nextSession, provider, sessionCharacter);
       memoryBindingRevoked = false;
     };
+    const refreshMemoryBindingForProviderRetry = async () => {
+      this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId);
+      await resetMemoryBindingAfterProviderInvalidation(activeRunningSession);
+      return memoryBinding;
+    };
 
     let promptForAudit: ProviderPromptComposition;
     let runningSession: Session;
@@ -647,6 +652,7 @@ export class SessionRuntimeService {
         appSettings,
         attachments: composerPreview.attachments,
         memoryBinding,
+        refreshMemoryBindingForRetry: refreshMemoryBindingForProviderRetry,
         signal: runAbortController.signal,
         onApprovalRequest: (approvalRequest) => {
           const decision = this.deps.waitForApprovalDecision(sessionId, approvalRequest, runAbortController.signal);

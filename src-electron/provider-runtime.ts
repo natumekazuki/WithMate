@@ -44,6 +44,7 @@ export type RunSessionTurnInput = {
   appSettings: AppSettings;
   attachments: ComposerAttachment[];
   memoryBinding?: ProviderMemoryBindingRuntimeProjection | null;
+  refreshMemoryBindingForRetry?: () => Promise<ProviderMemoryBindingRuntimeProjection | null>;
   signal?: AbortSignal;
   onApprovalRequest?: RunSessionTurnApprovalRequestHandler;
   onElicitationRequest?: RunSessionTurnElicitationRequestHandler;
