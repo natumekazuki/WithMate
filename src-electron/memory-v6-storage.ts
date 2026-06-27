@@ -6,6 +6,11 @@ import type {
   MemoryForgetReason,
   NormalizedMemoryTag,
 } from "../src/memory-v6/memory-contract.js";
+import type {
+  MemoryV6ReviewForgetResult,
+  MemoryV6ReviewSearchHit,
+  MemoryV6ReviewSearchResult,
+} from "../src/memory-v6/memory-review-state.js";
 import { toMemorySearchHit, type ActiveMemoryEntryDetail, type MemoryEntryDetail, type MemorySearchHit } from "../src/memory-v6/memory-state.js";
 import { isValidV6Database } from "./database-schema-v6.js";
 import {
@@ -71,6 +76,19 @@ export type MemoryV6SearchInput = {
 export type MemoryV6SearchResult = {
   items: MemorySearchHit[];
   nextCursor?: string;
+};
+
+export type MemoryV6ReviewSearchInput = {
+  query: string;
+  kinds?: readonly MemoryEntryKind[];
+  limit?: number;
+  cursor?: string;
+};
+
+export type MemoryV6ReviewForgetInput = {
+  entryId: string;
+  reason?: MemoryForgetReason;
+  now?: string;
 };
 
 export class MemoryV6IdempotencyConflictError extends Error {
@@ -406,6 +424,72 @@ export class MemoryV6Storage {
     };
   }
 
+  searchEntriesForReview(input: MemoryV6ReviewSearchInput): MemoryV6ReviewSearchResult {
+    const limit = normalizeLimit(input.limit);
+    const cursor = decodeCursor(input.cursor);
+    const clauses = [`e.state = 'active'`];
+    const params: SQLInputValue[] = [];
+    const query = input.query.trim().toLowerCase();
+
+    if (query) {
+      clauses.push(`
+        (
+          instr(lower(e.title), ?) > 0
+          OR instr(lower(e.preview), ?) > 0
+          OR instr(lower(e.body), ?) > 0
+          OR instr(lower(e.owner_id), ?) > 0
+          OR instr(lower(e.scope_id), ?) > 0
+          OR EXISTS (
+            SELECT 1
+            FROM memory_entry_tags_v6 AS t
+            WHERE t.entry_id = e.id
+              AND (
+                instr(lower(t.tag_type), ?) > 0
+                OR instr(lower(t.tag_value), ?) > 0
+              )
+          )
+        )
+      `);
+      params.push(query, query, query, query, query, query, query);
+    }
+
+    if (input.kinds && input.kinds.length > 0) {
+      clauses.push(`e.kind IN (${input.kinds.map(() => "?").join(", ")})`);
+      params.push(...input.kinds);
+    }
+
+    if (cursor) {
+      clauses.push(`(e.updated_at < ? OR (e.updated_at = ? AND e.id < ?))`);
+      params.push(cursor.updatedAt, cursor.updatedAt, cursor.id);
+    }
+
+    const rows = this.db.prepare(`
+      SELECT ${MEMORY_V6_ENTRY_SELECT_COLUMNS}
+      FROM memory_entries_v6 AS e
+      WHERE ${clauses.join(" AND ")}
+      ORDER BY e.updated_at DESC, e.id DESC
+      LIMIT ?
+    `).all(...params, limit + 1) as MemoryV6EntryRow[];
+
+    const pageRows = rows.slice(0, limit);
+    const lastRow = pageRows[pageRows.length - 1];
+    return {
+      items: pageRows.map((row) => {
+        const entry = this.rowToEntry(row);
+        if (entry.state !== "active") {
+          throw new Error(`Memory V6 review search returned inactive entry: ${entry.id}`);
+        }
+        const hit = toMemorySearchHit(entry);
+        return {
+          ...hit,
+          sourceSessionId: entry.source.sessionId,
+          sourceProviderId: entry.source.providerId,
+        } satisfies MemoryV6ReviewSearchHit;
+      }),
+      ...(rows.length > limit && lastRow ? { nextCursor: encodeCursor({ updatedAt: lastRow.updated_at, id: lastRow.id }) } : {}),
+    };
+  }
+
   listTags(targets: readonly MemoryV6ResolvedTarget[]): NormalizedMemoryTag[] {
     const targetWhere = targetWhereSql("e", targets);
     const rows = this.db.prepare(`
@@ -528,6 +612,28 @@ export class MemoryV6Storage {
 
       return results;
     });
+  }
+
+  forgetEntryForReview(input: MemoryV6ReviewForgetInput): MemoryV6ReviewForgetResult {
+    const row = this.getEntryRow(input.entryId);
+    const reason = input.reason ?? "user_request";
+    if (!row || row.state !== "active") {
+      return { entryId: input.entryId, status: "not_found", reason };
+    }
+
+    const [result] = this.forgetEntries({
+      target: { owner: ownerRef(row), scope: scopeRef(row) },
+      entryIds: [input.entryId],
+      reason,
+      bindingIdHash: "",
+      sessionId: row.source_session_id,
+      now: input.now,
+    });
+    return {
+      entryId: input.entryId,
+      status: result?.status ?? "not_found",
+      reason,
+    };
   }
 
   private redactForgottenEntryForPrivacy(entryId: string, updatedAt: string): void {

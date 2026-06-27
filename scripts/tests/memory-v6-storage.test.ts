@@ -160,6 +160,114 @@ describe("MemoryV6Storage", () => {
     });
   });
 
+  it("review search / get / forget はactive entryの閲覧とforgetに限定する", async () => {
+    await withStorage(({ storage }) => {
+      storage.appendEntry(baseAppend({
+        id: "mem-review-a",
+        title: "Review対象",
+        body: "Memory Review UIから確認する本文。",
+        preview: "Review UI本文",
+        tags: [tag("topic", "review")],
+        source: {
+          type: "agent",
+          sessionId: null,
+          messageId: "provider-message-review",
+          providerId: "codex",
+        },
+      }));
+      storage.appendEntry(baseAppend({
+        id: "mem-review-other",
+        target: characterTarget,
+        title: "Character側",
+        body: "Character memory body",
+        preview: "Character memory",
+        tags: [tag("topic", "character")],
+      }));
+
+      const search = storage.searchEntriesForReview({ query: "memory", limit: 10 });
+      assert.deepEqual(search.items.map((item) => item.id).sort(), ["mem-review-a", "mem-review-other"]);
+      assert.equal(search.items.find((item) => item.id === "mem-review-a")?.sourceSessionId, null);
+      assert.equal(search.items.find((item) => item.id === "mem-review-a")?.sourceProviderId, "codex");
+
+      const entry = storage.getEntry("mem-review-a");
+      assert.equal(entry?.body, "Memory Review UIから確認する本文。");
+
+      assert.deepEqual(storage.forgetEntryForReview({
+        entryId: "mem-review-a",
+        reason: "incorrect",
+        now: "2026-06-24T00:03:00.000Z",
+      }), {
+        entryId: "mem-review-a",
+        status: "forgotten",
+        reason: "incorrect",
+      });
+      assert.equal(storage.getEntry("mem-review-a")?.state, "forgotten");
+      assert.deepEqual(storage.searchEntriesForReview({ query: "Review対象" }).items, []);
+    });
+  });
+
+  it("review forget はsuperseded / forgotten entryを更新しない", async () => {
+    await withStorage(({ storage }) => {
+      storage.appendEntry(baseAppend({
+        id: "mem-review-old",
+        title: "古いReview対象",
+        body: "superseded body",
+        preview: "old preview",
+        tags: [tag("topic", "old-review")],
+      }));
+      storage.appendEntry(baseAppend({
+        id: "mem-review-new",
+        title: "新しいReview対象",
+        body: "active body",
+        preview: "new preview",
+        tags: [tag("topic", "new-review")],
+        supersedes: ["mem-review-old"],
+        now: "2026-06-24T00:04:00.000Z",
+      }));
+      storage.appendEntry(baseAppend({
+        id: "mem-review-forgotten",
+        title: "忘却済みReview対象",
+        body: "forgotten body should remain",
+        preview: "forgotten preview",
+        tags: [tag("topic", "forgotten-review")],
+        now: "2026-06-24T00:05:00.000Z",
+      }));
+      assert.deepEqual(storage.forgetEntryForReview({
+        entryId: "mem-review-forgotten",
+        reason: "incorrect",
+        now: "2026-06-24T00:06:00.000Z",
+      }), {
+        entryId: "mem-review-forgotten",
+        status: "forgotten",
+        reason: "incorrect",
+      });
+
+      assert.deepEqual(storage.forgetEntryForReview({
+        entryId: "mem-review-old",
+        reason: "privacy",
+        now: "2026-06-24T00:07:00.000Z",
+      }), {
+        entryId: "mem-review-old",
+        status: "not_found",
+        reason: "privacy",
+      });
+      assert.deepEqual(storage.forgetEntryForReview({
+        entryId: "mem-review-forgotten",
+        reason: "privacy",
+        now: "2026-06-24T00:08:00.000Z",
+      }), {
+        entryId: "mem-review-forgotten",
+        status: "not_found",
+        reason: "privacy",
+      });
+
+      assert.equal(storage.getEntry("mem-review-old")?.state, "superseded");
+      assert.equal(storage.getEntry("mem-review-old")?.body, "superseded body");
+      assert.equal(storage.getEntry("mem-review-forgotten")?.state, "forgotten");
+      assert.equal(storage.getEntry("mem-review-forgotten")?.body, "forgotten body should remain");
+    });
+  });
+
   it("supersede は旧entryを通常searchから除外し、transaction内でrelation / tag catalog / mutation eventを更新する", async () => {
     await withStorage(({ storage, dbPath }) => {
       storage.appendEntry(baseAppend({

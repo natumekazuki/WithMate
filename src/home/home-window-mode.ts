@@ -1,8 +1,8 @@
-export type HomeWindowMode = "home" | "monitor" | "settings";
+export type HomeWindowMode = "home" | "monitor" | "settings" | "memory-review";
 
 export function resolveHomeWindowModeFromSearch(search: string): HomeWindowMode {
   const mode = new URLSearchParams(search).get("mode");
-  return mode === "monitor" || mode === "settings" ? mode : "home";
+  return mode === "monitor" || mode === "settings" || mode === "memory-review" ? mode : "home";
 }
 
 export function getHomeWindowMode(): HomeWindowMode {

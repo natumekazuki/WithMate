@@ -95,6 +95,13 @@ export type MemoryForgetRequest = {
   idempotencyKey?: string;
 };
 
+export type MemoryV6ReviewSearchRequest = {
+  query: string;
+  kinds?: MemoryEntryKind[];
+  limit?: number;
+  cursor?: string;
+};
+
 export type MemoryError = {
   code: string;
   message: string;

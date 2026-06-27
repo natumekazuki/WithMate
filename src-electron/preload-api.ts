@@ -95,6 +95,7 @@ import {
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
   WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
+  WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL,
   WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
   WITHMATE_PICK_FILE_CHANNEL,
@@ -136,6 +137,9 @@ import {
   WITHMATE_UPDATE_MATE_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
+  WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL,
+  WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL,
+  WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL,
 } from "../src/withmate-ipc-channels.js";
 
 type IpcRendererLike = Pick<IpcRenderer, "invoke" | "on" | "removeListener" | "send">;
@@ -208,6 +212,9 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     },
     openSettingsWindow() {
       return ipcRenderer.invoke(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL);
+    },
+    openMemoryV6ReviewWindow() {
+      return ipcRenderer.invoke(WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL);
     },
     openCharacterEditorWindow(characterId) {
       return ipcRenderer.invoke(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL, characterId ?? null);
@@ -542,6 +549,23 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
   };
 }
 
+function createMemoryV6ReviewApi(ipcRenderer: IpcRendererLike): Pick<
+  WithMateWindowApi,
+  "searchMemoryV6Entries" | "getMemoryV6Entry" | "forgetMemoryV6Entry"
+> {
+  return {
+    searchMemoryV6Entries(request) {
+      return ipcRenderer.invoke(WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL, request);
+    },
+    getMemoryV6Entry(entryId) {
+      return ipcRenderer.invoke(WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL, entryId);
+    },
+    forgetMemoryV6Entry(entryId, reason) {
+      return ipcRenderer.invoke(WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL, entryId, reason ?? "user_request");
+    },
+  };
+}
+
 function createPickerApi(ipcRenderer: IpcRendererLike): WithMateWindowPickerApi {
   return {
     pickDirectory(initialPath) {
@@ -692,6 +716,7 @@ export function createWithMateWindowApi(ipcRenderer: IpcRendererLike): WithMateW
   installRendererErrorLogging(ipcRenderer);
   return {
     ...createWindowApi(ipcRenderer),
+    ...createMemoryV6ReviewApi(ipcRenderer),
     ...createCatalogApi(ipcRenderer),
     ...createSessionApi(ipcRenderer),
     ...createAuxiliaryApi(ipcRenderer),

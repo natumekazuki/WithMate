@@ -4,8 +4,6 @@ import { MICROCOPY_SLOTS, type MicrocopySlot } from "../microcopy-state.js";
 import type { HomeProviderSettingRow } from "./settings-view-model.js";
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
-  SETTINGS_MATE_RESET_HELP,
-  SETTINGS_MATE_RESET_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
   SETTINGS_OPEN_LOG_FOLDER_LABEL,
   SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
@@ -42,9 +40,7 @@ export type HomeSettingsContentProps = {
   onExportModelCatalog: () => void;
   onOpenAppLogFolder: () => void;
   onOpenCrashDumpFolder: () => void;
-  onResetMate?: () => void;
-  mateResetBusy?: boolean;
-  canResetMate?: boolean;
+  onOpenMemoryV6Review: () => void;
   onSaveSettings: () => void;
 };
 
@@ -92,9 +88,7 @@ export function HomeSettingsContent({
   onExportModelCatalog,
   onOpenAppLogFolder,
   onOpenCrashDumpFolder,
-  onResetMate,
-  mateResetBusy = false,
-  canResetMate = false,
+  onOpenMemoryV6Review,
   onSaveSettings,
 }: HomeSettingsContentProps) {
   return (
@@ -268,28 +262,14 @@ export function HomeSettingsContent({
                 <p className="settings-note">Memory V6 diagnostics を読み込んでいます。</p>
               )}
               <div className="settings-actions">
+                <button className="launch-toggle" type="button" onClick={onOpenMemoryV6Review}>
+                  Review Memory
+                </button>
                 <button className="launch-toggle" type="button" onClick={onOpenAppLogFolder}>
                   {SETTINGS_OPEN_LOG_FOLDER_LABEL}
                 </button>
                 <button className="launch-toggle" type="button" onClick={onOpenCrashDumpFolder}>
                   {SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <section className="settings-section-card danger-zone">
-            <div className="settings-field">
-              <strong>{SETTINGS_MATE_RESET_LABEL}</strong>
-              <p className="settings-help">{SETTINGS_MATE_RESET_HELP}</p>
-              <div className="settings-actions">
-                <button
-                  className="launch-toggle danger-button"
-                  type="button"
-                  onClick={() => onResetMate?.()}
-                  disabled={!canResetMate || mateResetBusy}
-                >
-                  {mateResetBusy ? "リセット中..." : SETTINGS_MATE_RESET_LABEL}
                 </button>
               </div>
             </div>
