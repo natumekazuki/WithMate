@@ -126,9 +126,11 @@ describe("memory-v6 contract validation", () => {
     const getEntry = validateMemoryGetEntryRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       entryId: " entry-a ",
+      target: projectTarget,
     });
     assert.equal(getEntry.ok, true);
     assert.equal(getEntry.value.entryId, "entry-a");
+    assert.deepEqual(getEntry.value.target, projectTarget);
 
     const listTags = validateMemoryListTagsRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,

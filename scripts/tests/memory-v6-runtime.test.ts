@@ -239,11 +239,89 @@ describe("Memory V6 runtime API", () => {
           body: JSON.stringify({ schemaVersion: "withmate-memory-v1" }),
         });
         assert.equal(context.status, 200);
-        assert.deepEqual(await context.json(), {
+        const contextJson = await context.json();
+        assert.equal(contextJson.schemaVersion, "withmate-memory-v1");
+        assert.deepEqual(contextJson.session, { id: bindingRegistry.resolvePrincipal(binding.bindingReference)?.sessionId });
+        assert.deepEqual(contextJson.character, { id: "character-a", name: "Character A" });
+        assert.equal(contextJson.sessionProject.displayName, "Workspace A");
+        assert.match(contextJson.sessionProject.id, /^project-/);
+        assert.deepEqual(contextJson.permissions, [
+          "memory.resolve_context",
+          "memory.search",
+          "memory.get_entry",
+          "memory.list_tags",
+          "memory.append",
+          "memory.forget",
+        ]);
+
+        const append = await fetch(`${runtime.baseUrl}/v1/append`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
+            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
+          },
+          body: JSON.stringify({
+            schemaVersion: "withmate-memory-v1",
+            target: {
+              owner: "project",
+              scope: "project",
+              project: { type: "id", id: contextJson.sessionProject.id },
+            },
+            kind: "note",
+            title: "Runtime binding project id",
+            body: "context.sessionProject.id can be reused as a project target.",
+            preview: "sessionProject.id is reusable.",
+            tags: [{ type: "topic", value: "runtime" }],
+          }),
+        });
+        assert.equal(append.status, 200);
+        const appendJson = await append.json();
+        assert.equal(appendJson.entry.owner.id, contextJson.sessionProject.id);
+
+        const search = await fetch(`${runtime.baseUrl}/v1/search`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
+            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
+          },
+          body: JSON.stringify({
+            schemaVersion: "withmate-memory-v1",
+            targets: [{
+              owner: "project",
+              scope: "project",
+              project: { type: "id", id: contextJson.sessionProject.id },
+            }],
+            query: "reusable",
+          }),
+        });
+        assert.equal(search.status, 200);
+        const searchJson = await search.json();
+        assert.equal(searchJson.items.length, 1);
+        assert.equal(searchJson.items[0].id, appendJson.entry.id);
+
+        const detail = await fetch(`${runtime.baseUrl}/v1/get_entry`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
+            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
+          },
+          body: JSON.stringify({
+            schemaVersion: "withmate-memory-v1",
+            entryId: appendJson.entry.id,
+          }),
+        });
+        assert.equal(detail.status, 200);
+        const detailJson = await detail.json();
+        assert.equal(detailJson.entry.source.sessionId, null);
+
+        assert.deepEqual({
           schemaVersion: "withmate-memory-v1",
           session: { id: bindingRegistry.resolvePrincipal(binding.bindingReference)?.sessionId },
           character: { id: "character-a", name: "Character A" },
-          sessionProject: { id: "C:/workspace/a", displayName: "Workspace A" },
+          sessionProject: contextJson.sessionProject,
           permissions: [
             "memory.resolve_context",
             "memory.search",
@@ -252,7 +330,7 @@ describe("Memory V6 runtime API", () => {
             "memory.append",
             "memory.forget",
           ],
-        });
+        }, contextJson);
 
         bindingRegistry.revokeBinding(binding);
         const revokedContext = await fetch(`${runtime.baseUrl}/v1/context`, {

@@ -1,6 +1,7 @@
 # WithMate Memory Helper Reference
 
 The bundled helper is a thin client for the running WithMate V6 Memory API. It does not read or write database files directly.
+Project-scoped Memory can be used from external Codex or shell sessions while WithMate is running. Current character and current session context require a WithMate-launched session binding.
 
 Run it from this skill directory:
 
@@ -55,7 +56,7 @@ Search returns active entry previews only. Use `get-entry` when the exact body m
 ### get-entry
 
 ```bash
-node bin/withmate-memory.mjs get-entry --json '{"schemaVersion":"withmate-memory-v1","entryId":"<entry-id>"}'
+node bin/withmate-memory.mjs get-entry --json '{"schemaVersion":"withmate-memory-v1","entryId":"<entry-id>","target":{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}}'
 ```
 
 Request shape:
@@ -63,14 +64,17 @@ Request shape:
 ```json
 {
   "schemaVersion": "withmate-memory-v1",
-  "entryId": "<entry-id>"
+  "entryId": "<entry-id>",
+  "target": { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" }
 }
 ```
+
+External Codex or shell sessions must include `target`. WithMate-launched sessions with a binding may omit it.
 
 ### list-tags
 
 ```bash
-node bin/withmate-memory.mjs list-tags --json '{"schemaVersion":"withmate-memory-v1","target":{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}}'
+node bin/withmate-memory.mjs list-tags --json '{"schemaVersion":"withmate-memory-v1","targets":[{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}]}'
 ```
 
 Request shape:
@@ -78,7 +82,9 @@ Request shape:
 ```json
 {
   "schemaVersion": "withmate-memory-v1",
-  "target": { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" }
+  "targets": [
+    { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" }
+  ]
 }
 ```
 
@@ -134,6 +140,11 @@ Input shape:
 ## Notes
 
 - Search results exclude forgotten and superseded entries.
+- Project targets with `{ "type": "path", "path": "." }` are valid from external Codex sessions.
+- Relative project paths are resolved by the helper against the CLI process cwd before being sent to WithMate.
+- External `get-entry` requests require an explicit project target.
+- Character targets and `context` require a WithMate-launched session binding.
+- External Codex or shell sessions currently support project memory only; explicit Character ID access needs a separate principal and authorization design.
 - Append is idempotent when an idempotency key is supplied.
 - Forget hides entries from normal search and skill results.
 - Memory failures should not fail unrelated coding work.

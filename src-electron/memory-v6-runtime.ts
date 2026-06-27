@@ -16,6 +16,7 @@ import {
   createMemoryV6HttpServer,
   type MemoryV6HttpServer,
 } from "./memory-v6-http-server.js";
+import { createMemoryV6ProjectResolver } from "./memory-v6-project-resolver.js";
 import type { MemoryBindingRegistry } from "./memory-binding-registry.js";
 import { MemoryV6Service } from "./memory-v6-service.js";
 import { MemoryV6Storage } from "./memory-v6-storage.js";
@@ -244,7 +245,12 @@ export async function startMemoryV6RuntimeApi(
 
     const bootstrap = await createOrVerifyV6FreshDatabase(options.userDataPath);
     storage = new MemoryV6Storage(bootstrap.dbPath);
-    const service = new MemoryV6Service({ storage });
+    const projectResolver = createMemoryV6ProjectResolver(bootstrap.dbPath);
+    options.bindingRegistry?.setProjectResolver(projectResolver);
+    const service = new MemoryV6Service({
+      storage,
+      ...projectResolver,
+    });
     const apiSecret = createRuntimeApiSecret();
     const runtimeInstanceId = randomUUID();
     server = createMemoryV6HttpServer({

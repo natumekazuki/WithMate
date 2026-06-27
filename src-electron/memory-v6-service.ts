@@ -27,6 +27,7 @@ import type { MemoryEntryDetail } from "../src/memory-v6/memory-state.js";
 import { resolveMemoryV6Target, targetMatchesPrincipal, type MemoryV6TargetResolverDeps } from "./memory-v6-context-resolver.js";
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
 import {
+  isSessionBindingPrincipal,
   requireMemoryPermission,
   type MemoryV6Principal,
 } from "./memory-v6-permission.js";
@@ -38,6 +39,7 @@ import {
 
 export type MemoryV6ServiceDeps = MemoryV6TargetResolverDeps & {
   storage: MemoryV6Storage;
+  resolveSessionById?(id: string): boolean;
 };
 
 type MemoryV6ServiceResult<T> = T | MemoryErrorResponse;
@@ -49,8 +51,33 @@ function entryTarget(entry: MemoryEntryDetail): MemoryV6ResolvedTarget {
   };
 }
 
+function sameTarget(left: MemoryV6ResolvedTarget, right: MemoryV6ResolvedTarget): boolean {
+  return left.owner.type === right.owner.type
+    && left.owner.id === right.owner.id
+    && left.scope.type === right.scope.type
+    && left.scope.id === right.scope.id;
+}
+
 function toMemoryErrorResponse(error: MemoryError): MemoryErrorResponse {
   return createMemoryErrorResponse(error);
+}
+
+function bindingIdHashForPrincipal(principal: MemoryV6Principal): string {
+  return principal.bindingIdHash;
+}
+
+function sessionIdForPrincipal(principal: MemoryV6Principal, deps: MemoryV6ServiceDeps): string | null {
+  if (!isSessionBindingPrincipal(principal)) {
+    return null;
+  }
+  if (deps.resolveSessionById && !deps.resolveSessionById(principal.sessionId)) {
+    return null;
+  }
+  return principal.sessionId;
+}
+
+function providerIdForPrincipal(principal: MemoryV6Principal): string | null {
+  return principal.providerId;
 }
 
 function storageErrorResponse(error: unknown): MemoryErrorResponse {
@@ -73,6 +100,12 @@ export class MemoryV6Service {
   constructor(private readonly deps: MemoryV6ServiceDeps) {}
 
   resolveContext(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryResolveContextResponse> {
+    if (principal && !isSessionBindingPrincipal(principal)) {
+      return toMemoryErrorResponse({
+        code: "MEMORY_BINDING_REQUIRED",
+        message: "WithMate runtime binding is required.",
+      });
+    }
     const permissionError = requireMemoryPermission(principal, "memory.resolve_context");
     if (permissionError || !principal) {
       return toMemoryErrorResponse(permissionError ?? {
@@ -139,8 +172,31 @@ export class MemoryV6Service {
       return toMemoryErrorResponse(validated.error);
     }
 
+    let requestedTarget: MemoryV6ResolvedTarget | null = null;
+    if (!isSessionBindingPrincipal(principal)) {
+      if (!validated.value.target) {
+        return toMemoryErrorResponse({
+          code: "MEMORY_TARGET_REQUIRED",
+          message: "Project target is required for external get-entry.",
+          field: "target",
+        });
+      }
+      const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps);
+      if (!resolved.ok) {
+        return toMemoryErrorResponse(resolved.error);
+      }
+      requestedTarget = resolved.target;
+    }
+
     const entry = this.deps.storage.getEntry(validated.value.entryId);
-    if (!entry || entry.state !== "active" || !targetMatchesPrincipal(principal, entryTarget(entry))) {
+    if (!entry || entry.state !== "active") {
+      return createMemoryGetEntryResponse(null);
+    }
+    const target = entryTarget(entry);
+    if (requestedTarget && !sameTarget(requestedTarget, target)) {
+      return createMemoryGetEntryResponse(null);
+    }
+    if (!targetMatchesPrincipal(principal, target)) {
       return createMemoryGetEntryResponse(null);
     }
     return createMemoryGetEntryResponse(entry);
@@ -198,12 +254,12 @@ export class MemoryV6Service {
         tags: validated.value.tags,
         supersedes: validated.value.supersedes,
         idempotencyKey: validated.value.idempotencyKey,
-        bindingIdHash: principal.bindingIdHash,
+        bindingIdHash: bindingIdHashForPrincipal(principal),
         source: {
           type: "agent",
-          sessionId: principal.sessionId,
+          sessionId: sessionIdForPrincipal(principal, this.deps),
           messageId: validated.value.sourceMessageId ?? null,
-          providerId: principal.providerId,
+          providerId: providerIdForPrincipal(principal),
           appMessageId: null,
         },
       });
@@ -236,8 +292,8 @@ export class MemoryV6Service {
         entryIds: validated.value.entryIds,
         reason: validated.value.reason,
         idempotencyKey: validated.value.idempotencyKey,
-        bindingIdHash: principal.bindingIdHash,
-        sessionId: principal.sessionId,
+        bindingIdHash: bindingIdHashForPrincipal(principal),
+        sessionId: sessionIdForPrincipal(principal, this.deps),
       });
       return createMemoryForgetResponse(results);
     } catch (error) {

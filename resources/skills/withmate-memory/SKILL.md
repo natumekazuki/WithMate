@@ -10,6 +10,7 @@ Use this skill when a task may depend on durable WithMate Memory or when the use
 ## Principles
 
 - Use the bundled helper script instead of reading WithMate database files directly.
+- Project Memory is available from external Codex or shell sessions while WithMate is running; use explicit project targets.
 - Search before relying on remembered project or character decisions.
 - Use `get-entry` only for search hits whose exact body matters.
 - Append only durable decisions, constraints, conventions, preferences, or context that will matter in future sessions.
@@ -24,8 +25,8 @@ Run the helper from this skill directory:
 node bin/withmate-memory.mjs status
 node bin/withmate-memory.mjs context
 node bin/withmate-memory.mjs search --json '{"schemaVersion":"withmate-memory-v1","targets":[{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}],"query":"release workflow"}'
-node bin/withmate-memory.mjs get-entry --json '{"schemaVersion":"withmate-memory-v1","entryId":"<entry-id>"}'
-node bin/withmate-memory.mjs list-tags --json '{"schemaVersion":"withmate-memory-v1","target":{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}}'
+node bin/withmate-memory.mjs get-entry --json '{"schemaVersion":"withmate-memory-v1","entryId":"<entry-id>","target":{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}}'
+node bin/withmate-memory.mjs list-tags --json '{"schemaVersion":"withmate-memory-v1","targets":[{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}]}'
 node bin/withmate-memory.mjs append --file memory-entry.json
 node bin/withmate-memory.mjs forget --file forget-request.json
 ```
@@ -36,12 +37,13 @@ Read `reference/cli.md` for JSON shapes and error handling.
 
 ## Target Selection
 
-- Use a project target with `{ "project": { "type": "path", "path": "." } }` when the current directory is the intended project.
-- Use `{ "character": { "type": "current" } }` only inside a WithMate-launched session where current character context is available.
+- Use a project target with `{ "project": { "type": "path", "path": "." } }` when the current directory is the intended project, including from outside WithMate-launched sessions. The helper resolves relative project paths against its own cwd before sending the request.
+- Use character targets only inside a WithMate-launched session where session binding context is available.
+- External Codex or shell sessions can use project memory only; explicit character IDs are not supported for `local_user` principals yet.
 - Do not infer project or character targets silently when a command requires an explicit target.
 
 ## Error Handling
 
 - If WithMate is not running or Memory is unavailable, continue the task and mention that Memory could not be used.
-- If current character context is unavailable, retry with an explicit character or project target when appropriate.
+- If current character context is unavailable, use an explicit project target when the task can be answered from project memory; otherwise continue without Character Memory.
 - Do not expose internal runtime identifiers, secrets, headers, or local discovery details in user-facing output.

@@ -258,10 +258,30 @@ export async function parseWithMateMemoryCliArgs(
 
   return {
     command,
-    body,
+    body: normalizeProjectPathTargets(body),
     ...(apiUrl ? { apiUrl } : {}),
     ...(discoveryFilePath ? { discoveryFilePath } : {}),
   };
+}
+
+function normalizeProjectPathTargets(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeProjectPathTargets(item));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  const normalized: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(record)) {
+    normalized[key] = normalizeProjectPathTargets(item);
+  }
+
+  if (record.type === "path" && typeof record.path === "string") {
+    normalized.path = path.resolve(record.path);
+  }
+  return normalized;
 }
 
 function requireOptionValue(args: readonly string[], index: number, option: string): string {

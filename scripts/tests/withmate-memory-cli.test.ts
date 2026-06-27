@@ -365,6 +365,38 @@ describe("withmate-memory CLI", () => {
     assert.deepEqual(stdout.json(), { schemaVersion: MEMORY_V6_SCHEMA_VERSION, items: [] });
   });
 
+  it("project.pathの相対pathはCLI起動cwd基準の絶対pathへ正規化して送る", async () => {
+    const stdout = createOutputCapture();
+    const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-cwd-"));
+    const previousCwd = process.cwd();
+    let capturedBody: any = null;
+    try {
+      process.chdir(tempDirectory);
+      const exitCode = await runWithMateMemoryCli(["search", "--json", JSON.stringify({
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [{ owner: "project", scope: "project", project: { type: "path", path: "." } }],
+        query: "cli",
+      })], {
+        env: TEST_RUNTIME_ENV,
+        stdout: stdout.stream,
+        fetch: async (url, init) => {
+          if (isStatusChallengeRequest(String(url))) {
+            return createStatusChallengeResponse(String(url));
+          }
+          assert.equal(String(url), "http://127.0.0.1:7777/v1/search");
+          capturedBody = JSON.parse(String(init?.body));
+          return new Response(JSON.stringify({ schemaVersion: MEMORY_V6_SCHEMA_VERSION, items: [] }), { status: 200 });
+        },
+      });
+
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+      assert.equal(capturedBody.targets[0].project.path, tempDirectory);
+    } finally {
+      process.chdir(previousCwd);
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("contextはschemaVersionつきJSON bodyをPOSTで送る", async () => {
     const stdout = createOutputCapture();
     let capturedBody: unknown = null;

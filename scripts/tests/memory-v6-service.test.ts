@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -8,7 +8,11 @@ import { describe, it } from "node:test";
 import { MEMORY_V6_SCHEMA_VERSION, type MemoryPermission, type NormalizedMemoryTag } from "../../src/memory-v6/memory-contract.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { MemoryV6Service } from "../../src-electron/memory-v6-service.js";
-import type { MemoryV6Principal } from "../../src-electron/memory-v6-permission.js";
+import {
+  createLocalUserMemoryPrincipal,
+  type MemoryV6SessionBindingPrincipal,
+} from "../../src-electron/memory-v6-permission.js";
+import { createMemoryV6ProjectResolver } from "../../src-electron/memory-v6-project-resolver.js";
 import type { MemoryV6ResolvedTarget } from "../../src-electron/memory-v6-schema.js";
 import { MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
 
@@ -40,8 +44,9 @@ function tag(type: string, value: string): NormalizedMemoryTag {
   };
 }
 
-function principal(overrides: Partial<MemoryV6Principal> = {}): MemoryV6Principal {
+function principal(overrides: Partial<MemoryV6SessionBindingPrincipal> = {}): MemoryV6SessionBindingPrincipal {
   return {
+    type: "session_binding",
     bindingIdHash: "binding-hash-a",
     sessionId: "session-a",
     providerId: "codex",
@@ -291,6 +296,189 @@ describe("MemoryV6Service", () => {
       assert.deepEqual(retry.results, [{ entryId: "mem-created-after-not-found", status: "not_found" }]);
       assert.equal(storage.getEntry("mem-created-after-not-found")?.state, "active");
     });
+  });
+
+  it("local_user は明示project targetで外部CLI相当の操作ができる", async () => {
+    await withService(({ service }) => {
+      const localUser = createLocalUserMemoryPrincipal();
+      const append = service.append(localUser, appendRequest({
+        idempotencyKey: "local-user-append",
+        sourceMessageId: "external-message-1",
+      }));
+      assert.equal("error" in append, false);
+      assert.equal(append.entry.owner.type, "project");
+      assert.equal(append.entry.owner.id, "project-a");
+      assert.equal(append.entry.state, "active");
+
+      const search = service.search(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [{ owner: "project", scope: "project", project: { type: "path", path: "C:/workspace/project-a" } }],
+        query: "payload",
+      });
+      assert.equal("error" in search, false);
+      assert.equal(search.items.length, 1);
+      assert.equal(search.items[0]?.id, append.entry.id);
+
+      const tags = service.listTags(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
+      });
+      assert.equal("error" in tags, false);
+      assert.deepEqual(tags.tags, [{ type: "topic", value: "memory" }]);
+
+      const detail = service.getEntry(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: append.entry.id,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      });
+      assert.equal("error" in detail, false);
+      assert.equal(detail.entry.source.sessionId, null);
+      assert.equal(detail.entry.source.providerId, "local-user");
+
+      const missingTarget = service.getEntry(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: append.entry.id,
+      });
+      assert.equal("error" in missingTarget, true);
+      assert.equal(missingTarget.error.code, "MEMORY_TARGET_REQUIRED");
+
+      const missingTargetForMissingEntry = service.getEntry(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: "missing-entry",
+      });
+      assert.equal("error" in missingTargetForMissingEntry, true);
+      assert.equal(missingTargetForMissingEntry.error.code, "MEMORY_TARGET_REQUIRED");
+
+      const forbiddenTarget = {
+        owner: "character" as const,
+        scope: "character" as const,
+        character: { type: "id" as const, id: "character-a" },
+      };
+      const forbiddenExisting = service.getEntry(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: append.entry.id,
+        target: forbiddenTarget,
+      });
+      const forbiddenMissing = service.getEntry(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: "missing-entry",
+        target: forbiddenTarget,
+      });
+      assert.equal("error" in forbiddenExisting, true);
+      assert.equal("error" in forbiddenMissing, true);
+      assert.equal(forbiddenExisting.error.code, "MEMORY_FORBIDDEN");
+      assert.equal(forbiddenMissing.error.code, "MEMORY_FORBIDDEN");
+
+      const forget = service.forget(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        entryIds: [append.entry.id],
+        reason: "user_request",
+      });
+      assert.equal("error" in forget, false);
+      assert.deepEqual(forget.results, [{ entryId: append.entry.id, status: "forgotten" }]);
+    });
+  });
+
+  it("local_user のget-entryは明示project target外のentryを返さない", async () => {
+    await withService(({ service, storage }) => {
+      const localUser = createLocalUserMemoryPrincipal();
+      storage.appendEntry({
+        id: "mem-local-other-project",
+        target: {
+          owner: { type: "project", id: "project-b" },
+          scope: { type: "project", id: "project-b" },
+        },
+        kind: "note",
+        title: "別project",
+        body: "別projectのbody",
+        preview: "別project",
+        tags: [tag("topic", "secret")],
+        source: {
+          type: "agent",
+          sessionId: null,
+          messageId: null,
+          providerId: "codex",
+        },
+      });
+
+      const detail = service.getEntry(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: "mem-local-other-project",
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      });
+      assert.equal("error" in detail, true);
+      assert.equal(detail.error.code, "MEMORY_ENTRY_NOT_FOUND");
+    });
+  });
+
+  it("local_user はcurrent character / character target / contextを使えない", async () => {
+    await withService(({ service }) => {
+      const localUser = createLocalUserMemoryPrincipal();
+
+      const context = service.resolveContext(localUser, { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
+      assert.equal("error" in context, true);
+      assert.equal(context.error.code, "MEMORY_BINDING_REQUIRED");
+
+      const currentCharacter = service.search(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [{ owner: "character", scope: "character", character: { type: "current" } }],
+        query: "memory",
+      });
+      assert.equal("error" in currentCharacter, true);
+      assert.equal(currentCharacter.error.code, "MEMORY_BINDING_REQUIRED");
+
+      const explicitCharacter = service.search(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [{ owner: "character", scope: "character", character: { type: "id", id: "character-a" } }],
+        query: "memory",
+      });
+      assert.equal("error" in explicitCharacter, true);
+      assert.equal(explicitCharacter.error.code, "MEMORY_FORBIDDEN");
+    });
+  });
+
+  it("runtime project resolver はproject.pathからV6 project scopeを作成して解決する", async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-v6-project-resolver-"));
+    const workspacePath = join(tempDirectory, "repo");
+    await mkdir(join(workspacePath, ".git"), { recursive: true });
+    const { dbPath } = await createOrVerifyV6FreshDatabase(tempDirectory);
+    const storage = new MemoryV6Storage(dbPath);
+    const service = new MemoryV6Service({
+      storage,
+      ...createMemoryV6ProjectResolver(dbPath),
+    });
+    try {
+      const localUser = createLocalUserMemoryPrincipal();
+      const append = service.append(localUser, appendRequest({
+        target: {
+          owner: "project",
+          scope: "project",
+          project: { type: "path", path: workspacePath },
+        },
+      }));
+      assert.equal("error" in append, false);
+      assert.equal(append.entry.owner.type, "project");
+
+      const search = service.search(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [{ owner: "project", scope: "project", project: { type: "path", path: workspacePath } }],
+        query: "agent payload",
+      });
+      assert.equal("error" in search, false);
+      assert.equal(search.items.length, 1);
+      assert.equal(search.items[0]?.id, append.entry.id);
+
+      const resolver = createMemoryV6ProjectResolver(dbPath);
+      const first = resolver.resolveProjectByPath(workspacePath);
+      const second = resolver.resolveProjectByPath(workspacePath);
+      assert.ok(first);
+      assert.ok(second);
+      assert.equal(second.id, first.id);
+    } finally {
+      storage.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
   });
 
   it("resolverが明示的にnot-foundを返すproject / character targetは拒否する", async () => {

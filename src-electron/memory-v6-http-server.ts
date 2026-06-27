@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
 import type { MemoryV6Service } from "./memory-v6-service.js";
 import type { MemoryV6Principal } from "./memory-v6-permission.js";
+import { createLocalUserMemoryPrincipal } from "./memory-v6-permission.js";
 import { WITHMATE_MEMORY_BINDING_REFERENCE_HEADER } from "./provider-memory-binding.js";
 
 export type MemoryV6HttpServerOptions = {
@@ -279,10 +280,10 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         return;
       }
 
-      const principal = await options.resolvePrincipal({
-        request,
-        bindingReference: readBindingReference(request),
-      });
+      const bindingReference = readBindingReference(request);
+      const principal = bindingReference
+        ? await options.resolvePrincipal({ request, bindingReference }) ?? createLocalUserMemoryPrincipal()
+        : createLocalUserMemoryPrincipal();
       const body = await readJsonBody(request, maxBodyBytes);
       const result = routeServiceRequest(options.service, principal, route, body);
       writeJson(response, statusForMemoryResponse(result), result);

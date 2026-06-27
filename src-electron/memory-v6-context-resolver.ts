@@ -7,6 +7,7 @@ import type {
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
 import {
   canAccessMemoryTarget,
+  isSessionBindingPrincipal,
   memoryBindingRequiredError,
   memoryForbiddenError,
   type MemoryV6Principal,
@@ -56,7 +57,9 @@ function resolveCharacter(
   field: string,
 ): { id: string; name: string } | MemoryError {
   if (ref.type === "current") {
-    return principal.character ?? memoryBindingRequiredError("current character requires a WithMate runtime binding.");
+    return isSessionBindingPrincipal(principal) && principal.character
+      ? principal.character
+      : memoryBindingRequiredError("current character requires a WithMate runtime binding.");
   }
   if (deps.resolveCharacterById) {
     return deps.resolveCharacterById(ref.id) ?? targetNotFoundError(field);
