@@ -254,6 +254,11 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   }
 
   closeResetTargetWindows(): void {
+    if (this.memoryV6ReviewWindow && !this.memoryV6ReviewWindow.isDestroyed()) {
+      this.memoryV6ReviewWindow.close();
+    }
+    this.memoryV6ReviewWindow = null;
+
     for (const [token, window] of this.diffWindows.entries()) {
       if (!window.isDestroyed()) {
         window.close();

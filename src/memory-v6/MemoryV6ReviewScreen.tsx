@@ -48,11 +48,13 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
   const [query, setQuery] = useState("");
   const [selectedKind, setSelectedKind] = useState<MemoryEntryKind | "">("");
   const [items, setItems] = useState<MemoryV6ReviewSearchHit[]>([]);
+  const [nextCursor, setNextCursor] = useState("");
   const [selectedEntry, setSelectedEntry] = useState<MemoryV6ReviewEntryDetail | null>(null);
   const [selectedEntryId, setSelectedEntryId] = useState("");
   const [forgetReason, setForgetReason] = useState<MemoryForgetReason>("user_request");
   const [feedback, setFeedback] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [forgetting, setForgetting] = useState(false);
   const [confirmForgetOpen, setConfirmForgetOpen] = useState(false);
   const cancelForgetButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -78,25 +80,39 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
     limit: 50,
   }), [query, selectedKind]);
 
-  const runSearch = async () => {
+  const runSearch = async (options?: { cursor?: string; append?: boolean }) => {
     const api = getApi();
     if (!api) {
       setFeedback("Memory Review には desktop runtime が必要です。");
       return;
     }
-    setLoading(true);
+    const append = options?.append === true;
+    if (append) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+      setNextCursor("");
+    }
     try {
-      const result = await api.searchMemoryV6Entries(searchRequest);
-      setItems(result.items);
-      setFeedback(result.items.length === 0 ? "一致する active Memory はありません。" : "");
-      if (selectedEntryId && !result.items.some((item) => item.id === selectedEntryId)) {
+      const result = await api.searchMemoryV6Entries({
+        ...searchRequest,
+        ...(options?.cursor ? { cursor: options.cursor } : {}),
+      });
+      setItems((currentItems) => append ? [...currentItems, ...result.items] : result.items);
+      setNextCursor(result.nextCursor ?? "");
+      setFeedback(!append && result.items.length === 0 ? "一致する active Memory はありません。" : "");
+      if (!append && selectedEntryId && !result.items.some((item) => item.id === selectedEntryId)) {
         setSelectedEntry(null);
         setSelectedEntryId("");
       }
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Memory の検索に失敗しました。");
     } finally {
-      setLoading(false);
+      if (append) {
+        setLoadingMore(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
@@ -198,6 +214,16 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   <span className="memory-review-item-meta">{formatTags(item)}</span>
                 </button>
               ))}
+              {nextCursor ? (
+                <button
+                  className="memory-review-load-more"
+                  type="button"
+                  onClick={() => void runSearch({ cursor: nextCursor, append: true })}
+                  disabled={loading || loadingMore}
+                >
+                  {loadingMore ? "Loading more" : "Load more"}
+                </button>
+              ) : null}
               {items.length === 0 && !loading ? <p className="settings-note">active Memory entry はありません。</p> : null}
             </section>
 

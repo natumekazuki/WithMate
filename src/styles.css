@@ -2023,6 +2023,23 @@ button:disabled {
   margin-top: 10px;
 }
 
+.memory-review-load-more {
+  width: 100%;
+  margin-top: 10px;
+  border: 1px solid rgba(203, 213, 225, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #edf3fb;
+  padding: 10px 12px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.memory-review-load-more:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+}
+
 .memory-review-item:hover,
 .memory-review-item.active {
   border-color: color-mix(in srgb, var(--teal) 42%, rgba(203, 213, 225, 0.18));
