@@ -155,6 +155,25 @@ async function parseArgs(argv) {
   return { route, body, apiUrl, discoveryFilePath };
 }
 
+function normalizeProjectPathTargets(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeProjectPathTargets(item));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const normalized = {};
+  for (const [key, item] of Object.entries(value)) {
+    normalized[key] = normalizeProjectPathTargets(item);
+  }
+
+  if (value.type === "path" && typeof value.path === "string") {
+    normalized.path = path.resolve(value.path);
+  }
+  return normalized;
+}
+
 function requireOptionValue(args, index, option) {
   const value = args[index];
   if (!value || value.startsWith("--")) {
@@ -233,7 +252,7 @@ async function main() {
       const response = await fetch(`${connection.baseUrl}${request.route.path}`, {
         method: request.route.method,
         headers,
-        body: request.route.method === "POST" ? JSON.stringify(request.body) : undefined,
+        body: request.route.method === "POST" ? JSON.stringify(normalizeProjectPathTargets(request.body)) : undefined,
         redirect: "error",
         signal: abortController.signal,
       });

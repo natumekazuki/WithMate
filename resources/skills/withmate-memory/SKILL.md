@@ -37,7 +37,7 @@ Read `reference/cli.md` for JSON shapes and error handling.
 
 ## Target Selection
 
-- Use a project target with `{ "project": { "type": "path", "path": "." } }` when the current directory is the intended project, including from outside WithMate-launched sessions.
+- Use a project target with `{ "project": { "type": "path", "path": "." } }` when the current directory is the intended project, including from outside WithMate-launched sessions. The helper resolves relative project paths against its own cwd before sending the request.
 - Use `{ "character": { "type": "current" } }` only inside a WithMate-launched session where current character context is available.
 - Do not infer project or character targets silently when a command requires an explicit target.
 

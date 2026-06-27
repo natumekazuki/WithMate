@@ -301,6 +301,22 @@ describe("Memory V6 runtime API", () => {
         assert.equal(searchJson.items.length, 1);
         assert.equal(searchJson.items[0].id, appendJson.entry.id);
 
+        const detail = await fetch(`${runtime.baseUrl}/v1/get_entry`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
+            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
+          },
+          body: JSON.stringify({
+            schemaVersion: "withmate-memory-v1",
+            entryId: appendJson.entry.id,
+          }),
+        });
+        assert.equal(detail.status, 200);
+        const detailJson = await detail.json();
+        assert.equal(detailJson.entry.source.sessionId, null);
+
         assert.deepEqual({
           schemaVersion: "withmate-memory-v1",
           session: { id: bindingRegistry.resolvePrincipal(binding.bindingReference)?.sessionId },

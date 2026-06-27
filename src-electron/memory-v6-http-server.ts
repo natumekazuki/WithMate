@@ -282,7 +282,7 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
 
       const bindingReference = readBindingReference(request);
       const principal = bindingReference
-        ? await options.resolvePrincipal({ request, bindingReference })
+        ? await options.resolvePrincipal({ request, bindingReference }) ?? createLocalUserMemoryPrincipal()
         : createLocalUserMemoryPrincipal();
       const body = await readJsonBody(request, maxBodyBytes);
       const result = routeServiceRequest(options.service, principal, route, body);

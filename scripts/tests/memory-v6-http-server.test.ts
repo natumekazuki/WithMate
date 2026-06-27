@@ -364,6 +364,36 @@ describe("MemoryV6HttpServer", () => {
     }, null);
   });
 
+  it("stale binding header付きでも明示project targetはlocal_userとして使える", async () => {
+    await withMemoryApi(async ({ baseUrl }) => {
+      const append = await postJsonWithSecret(
+        baseUrl,
+        "/v1/append",
+        appendRequest({ idempotencyKey: "stale-binding-local-user" }),
+        TEST_API_SECRET,
+        { [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: "stale-binding-ref" },
+      );
+      assert.equal(append.status, 200);
+      assert.equal(append.json.entry.owner.id, "project-a");
+
+      const currentCharacter = await postJsonWithSecret(
+        baseUrl,
+        "/v1/search",
+        {
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          targets: [{ owner: "character", scope: "character", character: { type: "current" } }],
+          query: "memory",
+        },
+        TEST_API_SECRET,
+        { [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: "stale-binding-ref" },
+      );
+      assert.equal(currentCharacter.status, 401);
+      assert.equal(currentCharacter.json.error.code, "MEMORY_BINDING_REQUIRED");
+    }, null, {
+      resolvePrincipal: () => null,
+    });
+  });
+
   it("invalid route / method / JSON / body sizeをtransport errorで返す", async () => {
     await withMemoryApi(async ({ baseUrl }) => {
       const missing = await fetch(`${baseUrl}/v1/missing`, {

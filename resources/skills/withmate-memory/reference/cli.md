@@ -141,6 +141,7 @@ Input shape:
 
 - Search results exclude forgotten and superseded entries.
 - Project targets with `{ "type": "path", "path": "." }` are valid from external Codex sessions.
+- Relative project paths are resolved by the helper against the CLI process cwd before being sent to WithMate.
 - External `get-entry` requests require an explicit project target.
 - `{ "character": { "type": "current" } }` and `context` require a WithMate-launched session binding.
 - Append is idempotent when an idempotency key is supplied.

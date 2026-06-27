@@ -544,6 +544,7 @@ WithMate起動中は、WithMate外のCodex / shell / CLIからもproject owner +
 session bindingはCLI利用全体の認可ではなく、current Characterやcurrent WithMate session contextを解決するための追加contextである。
 binding referenceがない外部CLI requestは、runtime secretとnonce challengeを通過した同一OS userの`local_user` principalとして扱う。
 `local_user` principalは`project` owner + `project` scopeだけを扱い、`character: current`、WithMate session context、session-bound project inferenceは使えない。
+runtime binding由来のappend / forgetでも、対応するV6 `sessions_v6` rowがまだ存在しない段階ではMemory entryの`source.sessionId`は`null`として保存する。
 `--self` flagは採用しない。
 current CLIは`WITHMATE_MEMORY_API_URL`またはruntime discovery fileからlocalhost APIを発見する。
 discovery fileは`withmate-memory-discovery-v1` documentとして`baseUrl`、`apiSecret`、`runtimeInstanceId`、`publishedAt`を公開し、CLIはloopback HTTP URL以外を拒否する。
