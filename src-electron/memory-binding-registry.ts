@@ -50,6 +50,8 @@ export class MemoryBindingRegistry {
   private readonly bindingIdsByReferenceHash = new Map<string, string>();
 
   createBinding(input: CreateMemoryBindingInput): ProviderMemoryBindingRuntimeProjection | null {
+    this.revokeSessionBindings(input.session.id);
+
     const capability = getProviderMemoryBindingCapability(input.provider.id);
     if (capability.transport === "unsupported") {
       return {

@@ -147,17 +147,47 @@ describe("MemoryBindingRegistry", () => {
     assert.equal(registry.resolvePrincipal(otherBinding.bindingReference), null);
   });
 
+  it("同一sessionで新しいbindingを作ると古いbindingを失効する", () => {
+    const registry = new MemoryBindingRegistry();
+    const session = createSession({ id: "session-a" });
+    const firstBinding = registry.createBinding({
+      session,
+      provider: createProvider("codex"),
+      character: createCharacter(),
+      runId: "run-a",
+    });
+    const secondBinding = registry.createBinding({
+      session,
+      provider: createProvider("codex"),
+      character: createCharacter(),
+      runId: "run-b",
+    });
+
+    assert.ok(firstBinding);
+    assert.ok(secondBinding);
+    assert.notEqual(firstBinding.bindingReference, secondBinding.bindingReference);
+    assert.equal(registry.resolvePrincipal(firstBinding.bindingReference), null);
+    assert.equal(registry.resolvePrincipal(secondBinding.bindingReference)?.sessionId, "session-a");
+  });
+
   it("binding未確認providerはunsupported projectionにしてprincipalを作らない", () => {
     const registry = new MemoryBindingRegistry();
+    const staleBinding = registry.createBinding({
+      session: createSession(),
+      provider: createProvider("codex"),
+      character: createCharacter(),
+    });
     const binding = registry.createBinding({
       session: createSession(),
       provider: createProvider("unknown"),
       character: createCharacter(),
     });
 
+    assert.ok(staleBinding);
     assert.ok(binding);
     assert.equal(binding.transport, "unsupported");
     assert.equal(binding.bindingReference, "");
+    assert.equal(registry.resolvePrincipal(staleBinding.bindingReference), null);
     assert.equal(registry.resolvePrincipal(binding.bindingReference), null);
   });
 });
