@@ -143,7 +143,8 @@ Input shape:
 - Project targets with `{ "type": "path", "path": "." }` are valid from external Codex sessions.
 - Relative project paths are resolved by the helper against the CLI process cwd before being sent to WithMate.
 - External `get-entry` requests require an explicit project target.
-- `{ "character": { "type": "current" } }` and `context` require a WithMate-launched session binding.
+- Character targets and `context` require a WithMate-launched session binding.
+- External Codex or shell sessions currently support project memory only; explicit Character ID access needs a separate principal and authorization design.
 - Append is idempotent when an idempotency key is supplied.
 - Forget hides entries from normal search and skill results.
 - Memory failures should not fail unrelated coding work.

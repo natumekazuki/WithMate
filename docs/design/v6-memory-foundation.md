@@ -637,8 +637,10 @@ character target:
 - `--character <character-id>`
 - `--character current`
 
+character targetはWithMate-launched session binding内に限定する。
 `--character current`はruntime bindingがある場合だけ使える。
-WithMate外CLIではCharacterを暗黙解決せず、必要な場合はCharacter IDを明示する。
+WithMate外CLI / `local_user` principalは現時点ではproject owner + project scopeのMemoryだけを扱い、明示Character IDを指定したCharacter Memory利用も許可しない。
+外部CLIからの明示Character ID対応は、別途principal / 認可設計を定義してから扱う。
 project targetはcurrent working directoryから暗黙推定しない。
 `--project .`はcurrent directoryを使う明示指定として許可する。
 

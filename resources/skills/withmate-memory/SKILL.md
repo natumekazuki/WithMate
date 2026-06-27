@@ -38,11 +38,12 @@ Read `reference/cli.md` for JSON shapes and error handling.
 ## Target Selection
 
 - Use a project target with `{ "project": { "type": "path", "path": "." } }` when the current directory is the intended project, including from outside WithMate-launched sessions. The helper resolves relative project paths against its own cwd before sending the request.
-- Use `{ "character": { "type": "current" } }` only inside a WithMate-launched session where current character context is available.
+- Use character targets only inside a WithMate-launched session where session binding context is available.
+- External Codex or shell sessions can use project memory only; explicit character IDs are not supported for `local_user` principals yet.
 - Do not infer project or character targets silently when a command requires an explicit target.
 
 ## Error Handling
 
 - If WithMate is not running or Memory is unavailable, continue the task and mention that Memory could not be used.
-- If current character context is unavailable, retry with an explicit character or project target when appropriate.
+- If current character context is unavailable, use an explicit project target when the task can be answered from project memory; otherwise continue without Character Memory.
 - Do not expose internal runtime identifiers, secrets, headers, or local discovery details in user-facing output.
