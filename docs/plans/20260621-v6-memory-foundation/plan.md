@@ -373,11 +373,13 @@ scripts/withmate-memory.ts
 
 ## Phase 7: Global Skill
 
+Status: 完了。設定済み provider skill root へ app 管理の `withmate-memory` Skill を同期し、未設定 provider は skip、同名 user Skill は上書きせず collision として記録する。Skill内にcurrent raw JSON CLI contract用のstandalone helper scriptを同梱する。
+
 候補:
 
 ```text
 resources/skills/withmate-memory/SKILL.md
-src-electron/managed-skill-service.ts
+src-electron/managed-memory-skill-service.ts
 ```
 
 内容:
@@ -390,8 +392,22 @@ src-electron/managed-skill-service.ts
 
 完了条件:
 
-- user Skillを無断上書きしない。
-- binding情報をSkill本文へ書かない。
+- user Skillを無断上書きしない。完了。managed marker がある `withmate-memory` だけ更新し、非管理同名Skillは `skipped-collision` にする。
+- binding情報をSkill本文へ書かない。完了。Skill本文はCLI利用方針とtarget selectionだけを説明し、secret / binding reference / discovery detailは書かない。
+
+実装:
+
+- `resources/skills/withmate-memory/SKILL.md`
+- `resources/skills/withmate-memory/reference/cli.md`
+- `resources/skills/withmate-memory/bin/withmate-memory.mjs`
+- `resources/skills/withmate-memory/bin/withmate-memory.cmd`
+- `src-electron/managed-memory-skill-service.ts`
+- `scripts/tests/managed-memory-skill-service.test.ts`
+
+検証:
+
+- `node --test --import tsx scripts/tests/managed-memory-skill-service.test.ts scripts/tests/skill-discovery.test.ts scripts/tests/main-query-service.test.ts`
+- `npm run typecheck`
 
 ## Phase 8: Diagnostics
 

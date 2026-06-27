@@ -130,6 +130,10 @@ import { MainSessionCommandFacade } from "./main-session-command-facade.js";
 import { MainSessionPersistenceFacade } from "./main-session-persistence-facade.js";
 import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
+import {
+  ManagedMemorySkillService,
+  WITHMATE_MEMORY_SKILL_NAME,
+} from "./managed-memory-skill-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
 import {
   type AppSettings,
@@ -192,6 +196,9 @@ const bundledModelCatalogPath = devServerUrl
 const bundledCharacterAuthoringSkillPath = app.isPackaged
   ? path.join(process.resourcesPath, "resources", "skills", CHARACTER_AUTHORING_SKILL_NAME)
   : path.resolve(currentDir, "../../resources/skills", CHARACTER_AUTHORING_SKILL_NAME);
+const bundledMemorySkillPath = app.isPackaged
+  ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_MEMORY_SKILL_NAME)
+  : path.resolve(currentDir, "../../resources/skills", WITHMATE_MEMORY_SKILL_NAME);
 const codexAdapter = new CodexAdapter((input) => writeAppLog({
   ...input,
   process: "main",
@@ -207,6 +214,7 @@ let modelCatalogStorage: ModelCatalogStorage | null = null;
 let characterStorage: CharacterStorageAccess | null = null;
 let characterService: CharacterService | null = null;
 let characterAuthoringService: CharacterAuthoringService | null = null;
+let managedMemorySkillService: ManagedMemorySkillService | null = null;
 let auditLogStorage: AuditLogStorageRead | null = null;
 let auxiliarySessionStorage: AuxiliarySessionStorageAccess | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
@@ -342,6 +350,31 @@ async function stopMemoryV6RuntimeApiBestEffort(): Promise<void> {
       kind: "memory-v6.runtime-api.stop-failed",
       process: "main",
       message: "Memory V6 runtime API cleanup failed",
+      error: appLogService.errorToLogError(error),
+    });
+  }
+}
+
+async function syncManagedMemorySkillBestEffort(): Promise<void> {
+  try {
+    const results = await requireManagedMemorySkillService().syncConfiguredProviderSkills();
+    const failed = results.filter((result) => result.status === "failed");
+    const collisions = results.filter((result) => result.status === "skipped-collision");
+    writeAppLog({
+      level: failed.length > 0 || collisions.length > 0 ? "warn" : "info",
+      kind: "memory-v6.skill.sync.completed",
+      process: "main",
+      message: "Memory V6 managed skill sync completed",
+      data: {
+        results,
+      },
+    });
+  } catch (error) {
+    writeAppLog({
+      level: "warn",
+      kind: "memory-v6.skill.sync.failed",
+      process: "main",
+      message: "Memory V6 managed skill sync failed",
       error: appLogService.errorToLogError(error),
     });
   }
@@ -1419,7 +1452,9 @@ function requireAppSettingsStorage(): AppSettingsStorage {
 }
 
 async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
-  return requireAppSettingsStorage().updateSettings(settings);
+  const savedSettings = await requireAppSettingsStorage().updateSettings(settings);
+  await syncManagedMemorySkillBestEffort();
+  return savedSettings;
 }
 
 async function resetAppSettings(): Promise<AppSettings> {
@@ -1461,6 +1496,18 @@ function requireCharacterAuthoringService(): CharacterAuthoringService {
   }
 
   return characterAuthoringService;
+}
+
+function requireManagedMemorySkillService(): ManagedMemorySkillService {
+  if (!managedMemorySkillService) {
+    managedMemorySkillService = new ManagedMemorySkillService({
+      bundledSkillPath: bundledMemorySkillPath,
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      getAppVersion: () => app.getVersion(),
+    });
+  }
+
+  return managedMemorySkillService;
 }
 
 async function createMate(input: Parameters<MateStorage["createMate"]>[0]): ReturnType<MateStorage["createMate"]> {
@@ -2093,6 +2140,7 @@ function closePersistentStores(): void {
   characterStorage = null;
   characterService = null;
   characterAuthoringService = null;
+  managedMemorySkillService = null;
   sessionStorage = null;
   sessionMemoryStorage = null;
   projectMemoryStorage = null;
@@ -2965,6 +3013,7 @@ app.whenReady().then(async () => {
     });
     await startMemoryV6RuntimeApiBestEffort();
     await requireMainBootstrapService().handleReady();
+    await syncManagedMemorySkillBestEffort();
     publishAppBootStatus({
       kind: "completed",
       stage: "home",
