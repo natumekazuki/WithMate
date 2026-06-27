@@ -59,6 +59,12 @@ import {
 import { parseSessionMemoryDeltaText } from "./session-memory-extraction.js";
 import { resolvePackagedProviderBinaryPath } from "./provider-binary-paths.js";
 import {
+  buildProviderMemoryBindingEnv,
+  buildProviderMemoryBindingSettingsKey,
+  mergeDefinedEnv,
+  type ProviderMemoryBindingRuntimeProjection,
+} from "./provider-memory-binding.js";
+import {
   boundAuditRawItem,
   stringifyBoundedAuditValue,
   stringifyBoundedAuditRawItems,
@@ -1467,26 +1473,44 @@ export class CodexAdapter implements ProviderTurnAdapter {
     };
   }
 
-  private getClient(providerId: string, appSettings: AppSettings): { client: Codex; clientKey: string } {
+  private getClient(
+    providerId: string,
+    appSettings: AppSettings,
+    memoryBinding?: ProviderMemoryBindingRuntimeProjection | null,
+  ): { client: Codex; clientKey: string } {
     const codingApiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
     const codexPathOverride = resolvePackagedProviderBinaryPath("codex");
-    const clientKey = JSON.stringify([providerId, codingApiKey || null, codexPathOverride]);
-    const cached = this.clients.get(clientKey);
-    if (cached) {
-      return { client: cached, clientKey };
+    const memoryBindingKey = buildProviderMemoryBindingSettingsKey(memoryBinding);
+    const clientKey = JSON.stringify([providerId, codingApiKey || null, codexPathOverride, memoryBindingKey]);
+    const memoryBindingEnv = buildProviderMemoryBindingEnv(memoryBinding);
+    const isMemoryBoundClient = Object.keys(memoryBindingEnv).length > 0;
+    if (!isMemoryBoundClient) {
+      const cached = this.clients.get(clientKey);
+      if (cached) {
+        return { client: cached, clientKey };
+      }
     }
 
     const clientOptions = {
       ...(codingApiKey ? { apiKey: codingApiKey } : {}),
       ...(codexPathOverride ? { codexPathOverride } : {}),
+      ...(Object.keys(memoryBindingEnv).length > 0
+        ? { env: mergeDefinedEnv(process.env, memoryBindingEnv) }
+        : {}),
     };
     const client = new Codex(clientOptions);
-    this.clients.set(clientKey, client);
+    if (!isMemoryBoundClient) {
+      this.clients.set(clientKey, client);
+    }
     return { client, clientKey };
   }
 
   private getThread(input: RunSessionTurnInput): { thread: Thread; selection: ResolvedModelSelection } {
-    const { client, clientKey } = this.getClient(input.providerCatalog.id, input.appSettings);
+    const { client, clientKey } = this.getClient(input.providerCatalog.id, input.appSettings, input.memoryBinding);
+    const isMemoryBoundThread = Object.keys(buildProviderMemoryBindingEnv(input.memoryBinding)).length > 0;
+    if (isMemoryBoundThread) {
+      this.threads.delete(input.session.id);
+    }
     const nextSettings = buildCodexThreadSettings(
       input.session,
       input.providerCatalog,
@@ -1494,17 +1518,19 @@ export class CodexAdapter implements ProviderTurnAdapter {
       resolveRunWorkspacePath(input),
     );
     const resolved = resolveCodexThreadForSettings({
-      cached: this.threads.get(input.session.id),
+      cached: isMemoryBoundThread ? undefined : this.threads.get(input.session.id),
       nextSettingsKey: nextSettings.settingsKey,
       threadId: input.session.threadId,
       options: nextSettings.options,
       client,
     });
 
-    this.threads.set(input.session.id, {
-      thread: resolved.thread,
-      settingsKey: nextSettings.settingsKey,
-    });
+    if (!isMemoryBoundThread) {
+      this.threads.set(input.session.id, {
+        thread: resolved.thread,
+        settingsKey: nextSettings.settingsKey,
+      });
+    }
     return {
       thread: resolved.thread,
       selection: nextSettings.selection,

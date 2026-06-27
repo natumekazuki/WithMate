@@ -1,0 +1,433 @@
+import { createHmac, randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+import { MEMORY_V6_SCHEMA_VERSION } from "../src/memory-v6/memory-contract.js";
+import {
+  normalizeWithMateMemoryApiBaseUrl,
+  resolveDefaultWithMateMemoryDiscoveryFilePath,
+  WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
+  WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
+  type WithMateMemoryDiscoveryDocument,
+} from "../src/memory-v6/memory-discovery.js";
+import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
+import {
+  WITHMATE_MEMORY_BINDING_REFERENCE_ENV,
+  WITHMATE_MEMORY_BINDING_REFERENCE_HEADER,
+} from "../src-electron/provider-memory-binding.js";
+
+export {
+  WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
+  WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
+};
+
+export const WITHMATE_MEMORY_CLI_EXIT_CODES = {
+  ok: 0,
+  usage: 1,
+  notRunning: 2,
+  apiError: 3,
+  transportError: 4,
+} as const;
+
+export type WithMateMemoryCliCommand =
+  | "status"
+  | "context"
+  | "search"
+  | "get_entry"
+  | "list_tags"
+  | "append"
+  | "forget";
+
+export type WithMateMemoryCliRequest = {
+  command: WithMateMemoryCliCommand;
+  body: unknown;
+  discoveryFilePath?: string;
+  apiUrl?: string;
+};
+
+export type WithMateMemoryApiConnection = {
+  baseUrl: string;
+  apiSecret?: string;
+  runtimeInstanceId?: string;
+};
+
+export type WithMateMemoryCliDeps = {
+  env?: NodeJS.ProcessEnv;
+  stdin?: NodeJS.ReadStream;
+  stdout?: Pick<NodeJS.WriteStream, "write">;
+  stderr?: Pick<NodeJS.WriteStream, "write">;
+  fetch?: typeof fetch;
+  readFile?: typeof readFile;
+  requestTimeoutMs?: number;
+};
+
+const routeByCommand: Record<WithMateMemoryCliCommand, { method: "GET" | "POST"; path: string }> = {
+  status: { method: "GET", path: "/v1/status" },
+  context: { method: "POST", path: "/v1/context" },
+  search: { method: "POST", path: "/v1/search" },
+  get_entry: { method: "POST", path: "/v1/get_entry" },
+  list_tags: { method: "POST", path: "/v1/list_tags" },
+  append: { method: "POST", path: "/v1/append" },
+  forget: { method: "POST", path: "/v1/forget" },
+};
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+const WITHMATE_MEMORY_API_SECRET_HEADER = "x-withmate-memory-api-secret";
+
+const commandAliases = new Map<string, WithMateMemoryCliCommand>([
+  ["status", "status"],
+  ["context", "context"],
+  ["resolve-context", "context"],
+  ["search", "search"],
+  ["get-entry", "get_entry"],
+  ["get_entry", "get_entry"],
+  ["list-tags", "list_tags"],
+  ["list_tags", "list_tags"],
+  ["append", "append"],
+  ["forget", "forget"],
+]);
+
+function usageError(message: string): MemoryErrorResponse {
+  return createMemoryErrorResponse({
+    code: "WITHMATE_MEMORY_CLI_USAGE",
+    message,
+  });
+}
+
+function notRunningError(): MemoryErrorResponse {
+  return createMemoryErrorResponse({
+    code: "WITHMATE_NOT_RUNNING",
+    message: "WithMate Memory API is not running or could not be discovered.",
+  });
+}
+
+function transportError(message: string): MemoryErrorResponse {
+  return createMemoryErrorResponse({
+    code: "WITHMATE_MEMORY_TRANSPORT_ERROR",
+    message,
+  });
+}
+
+function defaultRequestBody(command: WithMateMemoryCliCommand): unknown {
+  return command === "context" ? { schemaVersion: MEMORY_V6_SCHEMA_VERSION } : {};
+}
+
+function readEnvSecret(env: NodeJS.ProcessEnv): string | undefined {
+  const value = env.WITHMATE_MEMORY_API_SECRET?.trim();
+  return value ? value : undefined;
+}
+
+function readEnvRuntimeInstanceId(env: NodeJS.ProcessEnv): string | undefined {
+  const value = env.WITHMATE_MEMORY_RUNTIME_INSTANCE_ID?.trim();
+  return value ? value : undefined;
+}
+
+function readEnvBindingReference(env: NodeJS.ProcessEnv): string | undefined {
+  const value = env[WITHMATE_MEMORY_BINDING_REFERENCE_ENV]?.trim();
+  return value ? value : undefined;
+}
+
+async function readStdin(stdin: NodeJS.ReadStream): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function parseJsonInput(input: string): Promise<unknown> {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    throw usageError("Request JSON must be valid JSON.");
+  }
+}
+
+export async function discoverWithMateMemoryApi(
+  options: {
+    env?: NodeJS.ProcessEnv;
+    apiUrl?: string;
+    discoveryFilePath?: string;
+    readFile?: typeof readFile;
+  } = {},
+): Promise<WithMateMemoryApiConnection | null> {
+  const env = options.env ?? process.env;
+  if (options.apiUrl !== undefined) {
+    const explicitUrl = normalizeWithMateMemoryApiBaseUrl(options.apiUrl);
+    if (!explicitUrl) {
+      throw usageError("--api-url must be a valid loopback HTTP URL.");
+    }
+    return {
+      baseUrl: explicitUrl,
+      ...(readEnvSecret(env) ? { apiSecret: readEnvSecret(env) } : {}),
+      ...(readEnvRuntimeInstanceId(env) ? { runtimeInstanceId: readEnvRuntimeInstanceId(env) } : {}),
+    };
+  }
+
+  const rawEnvUrl = env.WITHMATE_MEMORY_API_URL?.trim();
+  if (rawEnvUrl) {
+    const envUrl = normalizeWithMateMemoryApiBaseUrl(rawEnvUrl);
+    if (!envUrl) {
+      throw usageError("WITHMATE_MEMORY_API_URL must be a valid loopback HTTP URL.");
+    }
+    return {
+      baseUrl: envUrl,
+      ...(readEnvSecret(env) ? { apiSecret: readEnvSecret(env) } : {}),
+      ...(readEnvRuntimeInstanceId(env) ? { runtimeInstanceId: readEnvRuntimeInstanceId(env) } : {}),
+    };
+  }
+
+  const discoveryFilePath = options.discoveryFilePath
+    ?? env.WITHMATE_MEMORY_DISCOVERY_FILE?.trim()
+    ?? resolveDefaultWithMateMemoryDiscoveryFilePath(env);
+  const read = options.readFile ?? readFile;
+
+  try {
+    const document = JSON.parse(await read(discoveryFilePath, "utf8")) as Partial<WithMateMemoryDiscoveryDocument>;
+    if (document.schemaVersion !== WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION || typeof document.baseUrl !== "string") {
+      return null;
+    }
+    const baseUrl = normalizeWithMateMemoryApiBaseUrl(document.baseUrl);
+    if (!baseUrl) {
+      return null;
+    }
+    return {
+      baseUrl,
+      ...(typeof document.apiSecret === "string" && document.apiSecret.trim()
+        ? { apiSecret: document.apiSecret.trim() }
+        : {}),
+      ...(typeof document.runtimeInstanceId === "string" && document.runtimeInstanceId.trim()
+        ? { runtimeInstanceId: document.runtimeInstanceId.trim() }
+        : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function parseWithMateMemoryCliArgs(
+  args: readonly string[],
+  deps: Pick<WithMateMemoryCliDeps, "stdin" | "readFile"> = {},
+): Promise<WithMateMemoryCliRequest> {
+  const [rawCommand, ...rest] = args;
+  const command = rawCommand ? commandAliases.get(rawCommand) : undefined;
+  if (!command) {
+    throw usageError("Usage: withmate-memory <status|context|search|get-entry|list-tags|append|forget> [--json <json> | --file <path>] [--api-url <url>] [--discovery-file <path>]");
+  }
+
+  let jsonInput: string | null = null;
+  let filePath: string | null = null;
+  let apiUrl: string | undefined;
+  let discoveryFilePath: string | undefined;
+
+  for (let index = 0; index < rest.length; index += 1) {
+    const arg = rest[index];
+    if (arg === "--json") {
+      jsonInput = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--file") {
+      filePath = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--api-url") {
+      apiUrl = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--discovery-file") {
+      discoveryFilePath = requireOptionValue(rest, ++index, arg);
+    } else {
+      throw usageError(`Unknown option: ${arg}`);
+    }
+  }
+
+  if (jsonInput !== null && filePath !== null) {
+    throw usageError("--json and --file cannot be used together.");
+  }
+
+  let body: unknown = defaultRequestBody(command);
+  if (command !== "status") {
+    if (jsonInput !== null) {
+      body = await parseJsonInput(jsonInput);
+    } else if (filePath !== null) {
+      body = await parseJsonInput(await (deps.readFile ?? readFile)(filePath, "utf8"));
+    } else if (deps.stdin && !deps.stdin.isTTY) {
+      body = await parseJsonInput(await readStdin(deps.stdin));
+    }
+  }
+
+  return {
+    command,
+    body: normalizeProjectPathTargets(body),
+    ...(apiUrl ? { apiUrl } : {}),
+    ...(discoveryFilePath ? { discoveryFilePath } : {}),
+  };
+}
+
+function normalizeProjectPathTargets(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeProjectPathTargets(item));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  const normalized: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(record)) {
+    normalized[key] = normalizeProjectPathTargets(item);
+  }
+
+  if (record.type === "path" && typeof record.path === "string") {
+    normalized.path = path.resolve(record.path);
+  }
+  return normalized;
+}
+
+function requireOptionValue(args: readonly string[], index: number, option: string): string {
+  const value = args[index];
+  if (!value || value.startsWith("--")) {
+    throw usageError(`${option} requires a value.`);
+  }
+  return value;
+}
+
+async function readJsonResponse(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text.trim()) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw transportError("Memory API returned a non-JSON response.");
+  }
+}
+
+function createStatusChallenge(apiSecret: string, nonce: string): string {
+  return createHmac("sha256", apiSecret).update(nonce, "utf8").digest("base64url");
+}
+
+function hasVerifiableRuntimeIdentity(connection: WithMateMemoryApiConnection): connection is WithMateMemoryApiConnection & {
+  apiSecret: string;
+  runtimeInstanceId: string;
+} {
+  return Boolean(connection.apiSecret?.trim() && connection.runtimeInstanceId?.trim());
+}
+
+async function verifyRuntimeIdentity(
+  connection: WithMateMemoryApiConnection,
+  fetchImpl: typeof fetch,
+  signal: AbortSignal,
+): Promise<boolean> {
+  if (!hasVerifiableRuntimeIdentity(connection)) {
+    return false;
+  }
+
+  const nonce = randomBytes(16).toString("base64url");
+  const response = await fetchImpl(`${connection.baseUrl}/v1/status?nonce=${encodeURIComponent(nonce)}`, {
+    method: "GET",
+    redirect: "error",
+    signal,
+  });
+  if (!response.ok) {
+    return false;
+  }
+
+  const status = await readJsonResponse(response) as {
+    runtimeInstanceId?: unknown;
+    challenge?: { nonce?: unknown; hmacSha256?: unknown };
+  };
+  return status.runtimeInstanceId === connection.runtimeInstanceId
+    && status.challenge?.nonce === nonce
+    && status.challenge.hmacSha256 === createStatusChallenge(connection.apiSecret, nonce);
+}
+
+export async function runWithMateMemoryCli(
+  args: readonly string[],
+  deps: WithMateMemoryCliDeps = {},
+): Promise<number> {
+  const stdout = deps.stdout ?? process.stdout;
+  const stderr = deps.stderr ?? process.stderr;
+  const fetchImpl = deps.fetch ?? fetch;
+
+  try {
+    const request = await parseWithMateMemoryCliArgs(args, deps);
+    const connection = await discoverWithMateMemoryApi({
+      env: deps.env,
+      apiUrl: request.apiUrl,
+      discoveryFilePath: request.discoveryFilePath,
+      readFile: deps.readFile,
+    });
+    if (!connection) {
+      stdout.write(`${JSON.stringify(notRunningError())}\n`);
+      return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
+    }
+
+    const route = routeByCommand[request.command];
+    let response: Response;
+    let responseJson: unknown;
+    const abortController = new AbortController();
+    const requestTimeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
+    try {
+      if (!await verifyRuntimeIdentity(connection, fetchImpl, abortController.signal)) {
+        stdout.write(`${JSON.stringify(notRunningError())}\n`);
+        return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
+      }
+
+      const headers: Record<string, string> = {};
+      if (route.method === "POST") {
+        headers["Content-Type"] = "application/json";
+      }
+      if (connection.apiSecret) {
+        headers[WITHMATE_MEMORY_API_SECRET_HEADER] = connection.apiSecret;
+      }
+      const bindingReference = readEnvBindingReference(deps.env ?? process.env);
+      if (bindingReference) {
+        headers[WITHMATE_MEMORY_BINDING_REFERENCE_HEADER] = bindingReference;
+      }
+      response = await fetchImpl(`${connection.baseUrl}${route.path}`, {
+        method: route.method,
+        headers: Object.keys(headers).length > 0 ? headers : undefined,
+        body: route.method === "POST" ? JSON.stringify(request.body) : undefined,
+        redirect: "error",
+        signal: abortController.signal,
+      });
+      responseJson = await readJsonResponse(response);
+    } catch (error) {
+      if (isMemoryErrorResponse(error)) {
+        throw error;
+      }
+      stdout.write(`${JSON.stringify(notRunningError())}\n`);
+      return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
+    } finally {
+      clearTimeout(requestTimeout);
+    }
+
+    stdout.write(`${JSON.stringify(responseJson)}\n`);
+    return response.ok ? WITHMATE_MEMORY_CLI_EXIT_CODES.ok : WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
+  } catch (error) {
+    const response = isMemoryErrorResponse(error)
+      ? error
+      : transportError(error instanceof Error ? error.message : "Memory CLI request failed.");
+    stdout.write(`${JSON.stringify(response)}\n`);
+    if (!isMemoryErrorResponse(error)) {
+      stderr.write("withmate-memory transport failed\n");
+    }
+    if (!isMemoryErrorResponse(error)) {
+      return WITHMATE_MEMORY_CLI_EXIT_CODES.transportError;
+    }
+    return error.error.code === "WITHMATE_MEMORY_CLI_USAGE"
+      ? WITHMATE_MEMORY_CLI_EXIT_CODES.usage
+      : WITHMATE_MEMORY_CLI_EXIT_CODES.transportError;
+  }
+}
+
+function isMemoryErrorResponse(value: unknown): value is MemoryErrorResponse {
+  return typeof value === "object" && value !== null && "error" in value;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = await runWithMateMemoryCli(process.argv.slice(2));
+}

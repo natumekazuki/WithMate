@@ -3,4 +3,7 @@ version = 1
 name = "WithMate"
 
 [setup]
-script = "npm install"
+script = '''
+npm install
+
+'''

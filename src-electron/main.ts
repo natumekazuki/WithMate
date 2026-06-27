@@ -130,8 +130,14 @@ import { MainSessionCommandFacade } from "./main-session-command-facade.js";
 import { MainSessionPersistenceFacade } from "./main-session-persistence-facade.js";
 import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
+import {
+  ManagedMemorySkillService,
+  type ManagedMemorySkillSyncResult,
+  WITHMATE_MEMORY_SKILL_NAME,
+} from "./managed-memory-skill-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
 import {
+  resolveProviderSkillRootPath,
   type AppSettings,
 } from "../src/provider-settings-state.js";
 import { discoverSessionSkills } from "./skill-discovery.js";
@@ -142,8 +148,20 @@ import { clearWorkspaceFileIndex, searchWorkspacePathCandidates } from "./worksp
 import { AppLogService } from "./app-log-service.js";
 import type { AppBootStatus } from "../src/app-boot-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
+import type {
+  MemoryV6DiagnosticEvent,
+  MemoryV6Diagnostics,
+} from "../src/memory-v6/memory-diagnostics-state.js";
+import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
 import { inspectAppDatabase } from "./app-database-diagnostics.js";
 import { resolveOrMigrateAppDatabasePath } from "./app-database-path.js";
+import {
+  startMemoryV6RuntimeApi,
+  type MemoryV6RuntimeApiHandle,
+} from "./memory-v6-runtime.js";
+import { MemoryV6ReviewService } from "./memory-v6-review-service.js";
+import { MemoryBindingRegistry } from "./memory-binding-registry.js";
+import { getProviderRuntimeCapabilities } from "./provider-support.js";
 import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
@@ -187,6 +205,9 @@ const bundledModelCatalogPath = devServerUrl
 const bundledCharacterAuthoringSkillPath = app.isPackaged
   ? path.join(process.resourcesPath, "resources", "skills", CHARACTER_AUTHORING_SKILL_NAME)
   : path.resolve(currentDir, "../../resources/skills", CHARACTER_AUTHORING_SKILL_NAME);
+const bundledMemorySkillPath = app.isPackaged
+  ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_MEMORY_SKILL_NAME)
+  : path.resolve(currentDir, "../../resources/skills", WITHMATE_MEMORY_SKILL_NAME);
 const codexAdapter = new CodexAdapter((input) => writeAppLog({
   ...input,
   process: "main",
@@ -202,6 +223,7 @@ let modelCatalogStorage: ModelCatalogStorage | null = null;
 let characterStorage: CharacterStorageAccess | null = null;
 let characterService: CharacterService | null = null;
 let characterAuthoringService: CharacterAuthoringService | null = null;
+let managedMemorySkillService: ManagedMemorySkillService | null = null;
 let auditLogStorage: AuditLogStorageRead | null = null;
 let auxiliarySessionStorage: AuxiliarySessionStorageAccess | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
@@ -213,6 +235,11 @@ let companionStorage: CompanionStorageHandle | null = null;
 let allowQuitWithInFlightRuns = false;
 let dbPath = "";
 let appDatabaseDiagnostics: AppDatabaseDiagnostics | null = null;
+let memoryV6RuntimeApi: MemoryV6RuntimeApiHandle | null = null;
+let memoryV6RuntimeStatus: MemoryV6Diagnostics["runtime"]["status"] = "stopped";
+let managedMemorySkillSyncResults: ManagedMemorySkillSyncResult[] = [];
+let memoryV6DiagnosticErrors: MemoryV6DiagnosticEvent[] = [];
+const memoryBindingRegistry = new MemoryBindingRegistry();
 let bootWindow: BrowserWindow | null = null;
 let appBootStatus: AppBootStatus = {
   kind: "running",
@@ -289,6 +316,182 @@ function getAppDatabaseDiagnostics(): AppDatabaseDiagnostics {
     appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
   }
   return appDatabaseDiagnostics;
+}
+
+function recordMemoryV6DiagnosticError(kind: string, message: string): void {
+  memoryV6DiagnosticErrors = [
+    {
+      kind,
+      message,
+      occurredAt: new Date().toISOString(),
+    },
+    ...memoryV6DiagnosticErrors,
+  ].slice(0, 3);
+}
+
+function getConfiguredProviderSettings(): AppSettings["codingProviderSettings"] {
+  try {
+    return requireAppSettingsStorage().getSettings().codingProviderSettings;
+  } catch {
+    return {};
+  }
+}
+
+function getMemoryV6Diagnostics(): MemoryV6Diagnostics {
+  const configuredProviderSettings = getConfiguredProviderSettings();
+  const configuredProviderIds = Object.keys(configuredProviderSettings).sort();
+  const latestSkillResultByProvider = new Map(
+    managedMemorySkillSyncResults.map((result) => [result.providerId, result]),
+  );
+
+  return {
+    generatedAt: new Date().toISOString(),
+    runtime: {
+      status: memoryV6RuntimeApi ? "running" : memoryV6RuntimeStatus,
+      baseUrl: memoryV6RuntimeApi?.baseUrl ?? null,
+      dbPath: memoryV6RuntimeApi?.dbPath ?? null,
+      discoveryFilePath: memoryV6RuntimeApi?.discoveryFilePath ?? null,
+      hasApiSecret: Boolean(memoryV6RuntimeApi),
+    },
+    binding: {
+      activeBindingCount: memoryBindingRegistry.getActiveBindingCount(),
+    },
+    providers: configuredProviderIds.map((providerId) => {
+      const capabilities = getProviderRuntimeCapabilities({ providerId });
+      return {
+        providerId,
+        providerSupported: capabilities.providerSupported,
+        memoryBindingTransport: capabilities.memoryBindingTransport,
+      };
+    }),
+    skillSync: configuredProviderIds.map((providerId) => {
+      const result = latestSkillResultByProvider.get(providerId);
+      const configuredSkillRootPath = resolveProviderSkillRootPath(configuredProviderSettings[providerId]);
+      return {
+        providerId,
+        skillRootConfigured: Boolean(result?.skillRootPath ?? configuredSkillRootPath.trim()),
+        skillPath: result?.skillPath ?? null,
+        status: result?.status ?? "not-run",
+        ...(result?.errorMessage ? { errorMessage: result.errorMessage } : {}),
+      };
+    }),
+    lastErrors: memoryV6DiagnosticErrors,
+  };
+}
+
+function createMemoryV6ReviewService(): MemoryV6ReviewService {
+  return new MemoryV6ReviewService({
+    resolveDbPath: () => memoryV6RuntimeApi?.dbPath ?? null,
+  });
+}
+
+function searchMemoryV6Entries(request: MemoryV6ReviewSearchRequest | null | undefined) {
+  return createMemoryV6ReviewService().searchEntries(request);
+}
+
+function getMemoryV6Entry(entryId: string) {
+  return createMemoryV6ReviewService().getEntry(entryId);
+}
+
+function forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null) {
+  return createMemoryV6ReviewService().forgetEntry(entryId, reason);
+}
+
+async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
+  if (memoryV6RuntimeApi) {
+    return;
+  }
+
+  try {
+    memoryV6RuntimeStatus = "stopped";
+    memoryV6RuntimeApi = await startMemoryV6RuntimeApi({
+      userDataPath: app.getPath("userData"),
+      bindingRegistry: memoryBindingRegistry,
+      log: writeAppLog,
+    });
+    memoryV6RuntimeStatus = "running";
+    appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
+  } catch (error) {
+    memoryV6RuntimeStatus = "failed";
+    recordMemoryV6DiagnosticError(
+      "memory-v6.runtime-api.start-failed",
+      error instanceof Error ? error.message : String(error),
+    );
+    writeAppLog({
+      level: "warn",
+      kind: "memory-v6.runtime-api.start-failed",
+      process: "main",
+      message: "Memory V6 runtime API did not start",
+      error: appLogService.errorToLogError(error),
+    });
+  }
+}
+
+async function stopMemoryV6RuntimeApiBestEffort(): Promise<void> {
+  const runtimeApi = memoryV6RuntimeApi;
+  memoryV6RuntimeApi = null;
+  memoryV6RuntimeStatus = "stopped";
+  if (!runtimeApi) {
+    return;
+  }
+
+  try {
+    await runtimeApi.stop();
+    writeAppLog({
+      level: "info",
+      kind: "memory-v6.runtime-api.stopped",
+      process: "main",
+      message: "Memory V6 runtime API stopped",
+    });
+  } catch (error) {
+    recordMemoryV6DiagnosticError(
+      "memory-v6.runtime-api.stop-failed",
+      error instanceof Error ? error.message : String(error),
+    );
+    writeAppLog({
+      level: "warn",
+      kind: "memory-v6.runtime-api.stop-failed",
+      process: "main",
+      message: "Memory V6 runtime API cleanup failed",
+      error: appLogService.errorToLogError(error),
+    });
+  }
+}
+
+async function syncManagedMemorySkillBestEffort(): Promise<void> {
+  try {
+    const results = await requireManagedMemorySkillService().syncConfiguredProviderSkills();
+    managedMemorySkillSyncResults = results;
+    const failed = results.filter((result) => result.status === "failed");
+    const collisions = results.filter((result) => result.status === "skipped-collision");
+    for (const result of failed) {
+      recordMemoryV6DiagnosticError(
+        "memory-v6.skill.sync.provider-failed",
+        `${result.providerId}: ${result.errorMessage ?? "managed skill sync failed"}`,
+      );
+    }
+    writeAppLog({
+      level: failed.length > 0 || collisions.length > 0 ? "warn" : "info",
+      kind: "memory-v6.skill.sync.completed",
+      process: "main",
+      message: "Memory V6 managed skill sync completed",
+      data: {
+        results,
+      },
+    });
+  } catch (error) {
+    recordMemoryV6DiagnosticError(
+      "memory-v6.skill.sync.failed",
+      error instanceof Error ? error.message : String(error),
+    );
+    writeAppLog({
+      level: "warn",
+      kind: "memory-v6.skill.sync.failed",
+      process: "main",
+      message: "Memory V6 managed skill sync failed",
+      error: appLogService.errorToLogError(error),
+    });
+  }
 }
 
 function resolveCrashDumpsPath(): string {
@@ -927,6 +1130,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openHomeWindow: createHomeWindow,
                 openSessionMonitorWindow,
                 openSettingsWindow,
+                openMemoryV6ReviewWindow,
+                isMemoryV6ReviewWindow: (window) => requireMainWindowFacade().isMemoryV6ReviewWindow(window),
                 openCharacterEditorWindow,
                 openDiffWindow,
                 openCompanionReviewWindow,
@@ -963,6 +1168,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
                 getAppDatabaseDiagnostics,
+                getMemoryV6Diagnostics,
+                searchMemoryV6Entries,
+                getMemoryV6Entry,
+                forgetMemoryV6Entry,
                 resetAppDatabase: async (request) => requireSettingsCatalogService().resetAppDatabase(request),
               },
               sessionQuery: {
@@ -1245,6 +1454,12 @@ function requireMainProviderFacade(): MainProviderFacade {
       ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
       codexAdapter,
       copilotAdapter,
+      revokeSessionMemoryBindings: (sessionId) => {
+        memoryBindingRegistry.revokeSessionBindings(sessionId);
+      },
+      revokeAllMemoryBindings: () => {
+        memoryBindingRegistry.revokeAll();
+      },
     });
   }
 
@@ -1260,6 +1475,9 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       getProviderQuotaTelemetry: (providerId) => getProviderQuotaTelemetry(providerId),
       isProviderQuotaTelemetryStale: (telemetry) => isProviderQuotaTelemetryStale(telemetry),
       refreshProviderQuotaTelemetry: (providerId) => refreshProviderQuotaTelemetry(providerId),
+      revokeSessionMemoryBindings: (sessionId) => {
+        memoryBindingRegistry.revokeSessionBindings(sessionId);
+      },
     });
   }
 
@@ -1360,7 +1578,9 @@ function requireAppSettingsStorage(): AppSettingsStorage {
 }
 
 async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
-  return requireAppSettingsStorage().updateSettings(settings);
+  const savedSettings = await requireAppSettingsStorage().updateSettings(settings);
+  await syncManagedMemorySkillBestEffort();
+  return savedSettings;
 }
 
 async function resetAppSettings(): Promise<AppSettings> {
@@ -1402,6 +1622,18 @@ function requireCharacterAuthoringService(): CharacterAuthoringService {
   }
 
   return characterAuthoringService;
+}
+
+function requireManagedMemorySkillService(): ManagedMemorySkillService {
+  if (!managedMemorySkillService) {
+    managedMemorySkillService = new ManagedMemorySkillService({
+      bundledSkillPath: bundledMemorySkillPath,
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      getAppVersion: () => app.getVersion(),
+    });
+  }
+
+  return managedMemorySkillService;
 }
 
 async function createMate(input: Parameters<MateStorage["createMate"]>[0]): ReturnType<MateStorage["createMate"]> {
@@ -1552,6 +1784,11 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       invalidateProviderSessionThread,
       scheduleProviderQuotaTelemetryRefresh,
       clearWorkspaceFileIndex,
+      createProviderMemoryBinding: ({ session, provider, character }) =>
+        memoryBindingRegistry.createBinding({ session, provider, character }),
+      revokeProviderMemoryBinding: (binding) => {
+        memoryBindingRegistry.revokeBinding(binding);
+      },
       broadcastLiveSessionRun,
       resolvePendingApprovalRequest: (sessionId, decision) => {
         const liveRun = getLiveSessionRun(sessionId);
@@ -2029,6 +2266,7 @@ function closePersistentStores(): void {
   characterStorage = null;
   characterService = null;
   characterAuthoringService = null;
+  managedMemorySkillService = null;
   sessionStorage = null;
   sessionMemoryStorage = null;
   projectMemoryStorage = null;
@@ -2806,6 +3044,10 @@ async function openSettingsWindow(): Promise<BrowserWindow> {
   return requireMainWindowFacade().openSettingsWindow();
 }
 
+async function openMemoryV6ReviewWindow(): Promise<BrowserWindow> {
+  return requireMainWindowFacade().openMemoryV6ReviewWindow();
+}
+
 async function openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {
   return requireMainWindowFacade().openCharacterEditorWindow(characterId);
 }
@@ -2899,7 +3141,9 @@ app.whenReady().then(async () => {
       message: "App database selected",
       data: appDatabaseDiagnostics,
     });
+    await startMemoryV6RuntimeApiBestEffort();
     await requireMainBootstrapService().handleReady();
+    await syncManagedMemorySkillBestEffort();
     publishAppBootStatus({
       kind: "completed",
       stage: "home",
@@ -2961,4 +3205,5 @@ app.on("will-quit", () => {
     process: "main",
     message: "App will quit",
   });
+  void stopMemoryV6RuntimeApiBestEffort();
 });

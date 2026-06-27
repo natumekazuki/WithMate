@@ -13,6 +13,8 @@ type MainProviderFacadeDeps = {
   ensureModelCatalogSeeded(): ModelCatalogSnapshot;
   codexAdapter: ProviderTurnAdapter;
   copilotAdapter: ProviderTurnAdapter;
+  revokeSessionMemoryBindings?(sessionId: string): void;
+  revokeAllMemoryBindings?(): void;
 };
 
 export class MainProviderFacade {
@@ -58,11 +60,19 @@ export class MainProviderFacade {
   }
 
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void {
-    this.getProviderCodingAdapter(providerId).invalidateSessionThread(sessionId);
+    try {
+      this.getProviderCodingAdapter(providerId).invalidateSessionThread(sessionId);
+    } finally {
+      this.deps.revokeSessionMemoryBindings?.(sessionId);
+    }
   }
 
   invalidateAllProviderSessionThreads(): void {
-    this.deps.codexAdapter.invalidateAllSessionThreads();
-    this.deps.copilotAdapter.invalidateAllSessionThreads();
+    try {
+      this.deps.codexAdapter.invalidateAllSessionThreads();
+      this.deps.copilotAdapter.invalidateAllSessionThreads();
+    } finally {
+      this.deps.revokeAllMemoryBindings?.();
+    }
   }
 }

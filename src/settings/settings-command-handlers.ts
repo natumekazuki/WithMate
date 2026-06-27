@@ -14,6 +14,7 @@ type SettingsCommandHandlersContext = {
   setAppSettings: (settings: AppSettings) => void;
   setSettingsDraft: (settings: AppSettings) => void;
   setSettingsFeedback: (feedback: string) => void;
+  onSettingsSaved?: () => void;
 };
 
 export type SettingsCommandHandlers = Pick<
@@ -34,6 +35,7 @@ export function buildSettingsCommandHandlers({
   setAppSettings,
   setSettingsDraft,
   setSettingsFeedback,
+  onSettingsSaved,
 }: SettingsCommandHandlersContext): SettingsCommandHandlers {
   const withApi = async (callback: (api: WithMateWindowApi) => Promise<void>) => {
     const api = getApi();
@@ -195,6 +197,7 @@ export function buildSettingsCommandHandlers({
           setAppSettings(result.nextSettings);
           setSettingsDraft(result.nextSettings);
           setSettingsFeedback(result.feedback);
+          onSettingsSaved?.();
         } catch (error) {
           setSettingsFeedback(error instanceof Error ? error.message : "設定の保存に失敗したよ。");
         }

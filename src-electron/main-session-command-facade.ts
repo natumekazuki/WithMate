@@ -10,6 +10,7 @@ type MainSessionCommandFacadeDeps = {
   getProviderQuotaTelemetry(providerId: string): ProviderQuotaTelemetry | null;
   isProviderQuotaTelemetryStale(telemetry: ProviderQuotaTelemetry | null): boolean;
   refreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
+  revokeSessionMemoryBindings?(sessionId: string): void;
 };
 
 export class MainSessionCommandFacade {
@@ -25,6 +26,7 @@ export class MainSessionCommandFacade {
 
   async deleteSession(sessionId: string): Promise<void> {
     await this.deps.getSessionPersistenceService().deleteSession(sessionId);
+    this.deps.revokeSessionMemoryBindings?.(sessionId);
   }
 
   cancelSessionRun(sessionId: string): void {

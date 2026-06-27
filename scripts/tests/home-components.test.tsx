@@ -14,12 +14,9 @@ import { HomeMateSetupPanel } from "../../src/mate/MateSetupPanel.js";
 import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
+import type { MemoryV6Diagnostics } from "../../src/memory-v6/memory-diagnostics-state.js";
 import { buildHomeProviderSettingRows } from "../../src/settings/settings-view-model.js";
 import { formatTimestampLabel } from "../../src/time-state.js";
-import {
-  SETTINGS_MATE_RESET_HELP,
-  SETTINGS_MATE_RESET_LABEL,
-} from "../../src/settings/settings-ui.js";
 
 describe("HomeSettingsContent", () => {
   const modelCatalog: ModelCatalogSnapshot = {
@@ -56,37 +53,7 @@ describe("HomeSettingsContent", () => {
     settingsDraft?: typeof settingsDraft;
     providerSettingRows?: typeof providerSettingRows;
     providerCatalogLoaded?: boolean;
-    canResetMate?: boolean;
-    mateResetBusy?: boolean;
-    onResetMate?: () => void;
-  };
-
-  const collectElementsById = (node: ReactNode, predicate: (element: React.ReactElement) => boolean): React.ReactElement[] => {
-    const result: React.ReactElement[] = [];
-    const visitNode = (currentNode: ReactNode) => {
-      if (!isValidElement(currentNode)) {
-        return;
-      }
-
-      if (predicate(currentNode)) {
-        result.push(currentNode);
-      }
-
-      const children = currentNode.props.children;
-      if (Array.isArray(children)) {
-        children.forEach((child) => visitNode(child as ReactNode));
-        return;
-      }
-
-      if (children === null || children === undefined || typeof children === "boolean") {
-        return;
-      }
-
-      visitNode(children as ReactNode);
-    };
-
-    visitNode(node);
-    return result;
+    memoryV6Diagnostics?: MemoryV6Diagnostics | null;
   };
 
   const buildSettingsContent = (params?: RenderSettingsParams) => HomeSettingsContent({
@@ -94,6 +61,7 @@ describe("HomeSettingsContent", () => {
     providerSettingRows: params?.providerSettingRows ?? providerSettingRows,
     providerCatalogLoaded: params?.providerCatalogLoaded ?? true,
     modelCatalogRevisionLabel: String(modelCatalog.revision),
+    memoryV6Diagnostics: params?.memoryV6Diagnostics ?? null,
     settingsDirty: false,
     settingsFeedback: "",
     onChangeAutoCollapseActionDockOnSend: noOp,
@@ -109,41 +77,16 @@ describe("HomeSettingsContent", () => {
     onExportModelCatalog: noOp,
     onOpenAppLogFolder: noOp,
     onOpenCrashDumpFolder: noOp,
-    onResetMate: params?.onResetMate ?? noOp,
-    canResetMate: params?.canResetMate ?? false,
-    mateResetBusy: params?.mateResetBusy ?? false,
+    onOpenMemoryV6Review: noOp,
     onSaveSettings: noOp,
   });
 
   const renderSettings = (params?: RenderSettingsParams) => renderToStaticMarkup(buildSettingsContent(params));
 
-  const extractResetButton = (html: string) => {
-    const resetLabelIndex = html.indexOf(`<strong>${SETTINGS_MATE_RESET_LABEL}</strong>`);
-    const resetButtonIndex = html.indexOf('<button class="launch-toggle danger-button"', resetLabelIndex);
-    const resetButtonEndIndex = html.indexOf("</button>", resetButtonIndex);
-    assert.ok(resetLabelIndex >= 0 && resetButtonIndex >= 0 && resetButtonEndIndex >= 0);
-    return html.slice(resetButtonIndex, resetButtonEndIndex + 9);
-  };
-
-  const extractResetButtonElement = (params?: RenderSettingsParams): React.ReactElement => {
-    const content = buildSettingsContent(params);
-    const buttons = collectElementsById(content, (element) => element.type === "button");
-    const resetButton = buttons.find((button) =>
-      button.props.type === "button" &&
-      button.props.className === "launch-toggle danger-button" &&
-      typeof button.props.children === "string"
-    );
-    if (!resetButton) {
-      throw new Error("Mate Reset ボタンが見つからないためテストを実行できません。");
-    }
-
-    return resetButton;
-  };
-
-  it("Mate Reset のラベルとヘルプが表示される", () => {
+  it("Mate Reset の危険操作は Settings に表示されない", () => {
     const html = renderSettings();
-    assert.ok(html.includes(`<strong>${SETTINGS_MATE_RESET_LABEL}</strong>`));
-    assert.ok(html.includes(`<p class="settings-help">${SETTINGS_MATE_RESET_HELP}</p>`));
+    assert.ok(!html.includes("Mate を初期化"));
+    assert.ok(!html.includes("保存済みの Mate の状態を破壊的に初期化する"));
   });
 
   it("削除対象の Settings surface は表示しない", () => {
@@ -169,6 +112,43 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("Root Directory"));
     assert.ok(html.includes("Skill Relative Path"));
     assert.ok(html.includes("Instruction Relative Path"));
+  });
+
+  it("Memory V6 diagnostics はredacted summaryとして表示する", () => {
+    const html = renderSettings({
+      memoryV6Diagnostics: {
+        generatedAt: "2026-06-27T00:00:00.000Z",
+        runtime: {
+          status: "running",
+          baseUrl: "http://127.0.0.1:12345",
+          dbPath: "C:/userdata/withmate-v6.db",
+          discoveryFilePath: "C:/runtime/memory-v6-api.json",
+          hasApiSecret: true,
+        },
+        binding: { activeBindingCount: 2 },
+        providers: [
+          { providerId: "codex", providerSupported: true, memoryBindingTransport: "env" },
+          { providerId: "custom", providerSupported: false, memoryBindingTransport: "unsupported" },
+        ],
+        skillSync: [
+          { providerId: "codex", skillRootConfigured: true, skillPath: "C:/skills/withmate-memory", status: "unchanged" },
+          { providerId: "custom", skillRootConfigured: true, skillPath: null, status: "skipped-collision" },
+        ],
+        lastErrors: [
+          { kind: "memory-v6.runtime-api.start-failed", message: "startup failed", occurredAt: "2026-06-27T00:00:00.000Z" },
+        ],
+      },
+    });
+
+    assert.ok(html.includes("Memory API"));
+    assert.ok(html.includes("running"));
+    assert.ok(html.includes("Active Bindings"));
+    assert.ok(html.includes("2"));
+    assert.ok(html.includes("codex: env / custom: unsupported"));
+    assert.ok(html.includes("codex: unchanged / custom: skipped-collision"));
+    assert.ok(html.includes("memory-v6.runtime-api.start-failed"));
+    assert.ok(!html.includes("apiSecret"));
+    assert.ok(!html.includes("bindingReference"));
   });
 
   it("provider row が 0 件でも Coding Agent Providers section と empty state を表示する", () => {

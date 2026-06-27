@@ -2,6 +2,13 @@ import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
+import type { MemoryV6Diagnostics } from "../src/memory-v6/memory-diagnostics-state.js";
+import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
+import type {
+  MemoryV6ReviewEntryDetail,
+  MemoryV6ReviewForgetResult,
+  MemoryV6ReviewSearchResult,
+} from "../src/memory-v6/memory-review-state.js";
 import type {
   AuditLogDetail,
   AuditLogDetailFragment,
@@ -73,6 +80,10 @@ import {
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
+  WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL,
+  WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL,
+  WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL,
+  WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_COMPANION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
@@ -131,6 +142,7 @@ import {
   WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
+  WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL,
   WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL,
   WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
@@ -192,6 +204,8 @@ export type MainIpcRegistrationDeps = {
   openHomeWindow(): Promise<void>;
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
+  openMemoryV6ReviewWindow(): Promise<void>;
+  isMemoryV6ReviewWindow(window: BrowserWindow): boolean;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
@@ -249,6 +263,10 @@ export type MainIpcRegistrationDeps = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
+  getMemoryV6Diagnostics(): MemoryV6Diagnostics;
+  searchMemoryV6Entries(request: MemoryV6ReviewSearchRequest | null | undefined): Awaitable<MemoryV6ReviewSearchResult>;
+  getMemoryV6Entry(entryId: string): Awaitable<MemoryV6ReviewEntryDetail | null>;
+  forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null): Awaitable<MemoryV6ReviewForgetResult>;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
   getModelCatalog(revision: number | null): ModelCatalogSnapshot | null;
   importModelCatalogDocument(document: ModelCatalogDocument): Awaitable<ModelCatalogSnapshot>;
@@ -330,6 +348,7 @@ type MainIpcWindowDeps = Pick<
   | "openHomeWindow"
   | "openSessionMonitorWindow"
   | "openSettingsWindow"
+  | "openMemoryV6ReviewWindow"
   | "openCharacterEditorWindow"
   | "openDiffWindow"
   | "openCompanionReviewWindow"
@@ -363,9 +382,15 @@ type MainIpcCatalogDeps = Pick<
 
 type MainIpcSettingsDeps = Pick<
   MainIpcRegistrationDeps,
+  | "resolveEventWindow"
+  | "isMemoryV6ReviewWindow"
   | "getAppSettings"
   | "updateAppSettings"
   | "getAppDatabaseDiagnostics"
+  | "getMemoryV6Diagnostics"
+  | "searchMemoryV6Entries"
+  | "getMemoryV6Entry"
+  | "forgetMemoryV6Entry"
   | "resetAppDatabase"
 >;
 
@@ -490,6 +515,17 @@ function resolveTargetWindow(
   return deps.resolveEventWindow(event) ?? deps.resolveHomeWindow() ?? undefined;
 }
 
+function assertMemoryV6ReviewSender(
+  event: IpcMainInvokeEvent,
+  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "isMemoryV6ReviewWindow">,
+): void {
+  const window = deps.resolveEventWindow(event);
+  if (window && deps.isMemoryV6ReviewWindow(window)) {
+    return;
+  }
+  throw new Error("Memory V6 Review IPC is only available from the Memory Review window.");
+}
+
 function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindowDeps): void {
   ipcMain.handle(WITHMATE_OPEN_SESSION_CHANNEL, async (_event, sessionId: string) => {
     if (!sessionId) {
@@ -505,6 +541,9 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   });
   ipcMain.handle(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL, async () => {
     await deps.openSettingsWindow();
+  });
+  ipcMain.handle(WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL, async () => {
+    await deps.openMemoryV6ReviewWindow();
   });
   ipcMain.handle(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL, async (_event, characterId?: string | null) => {
     await deps.openCharacterEditorWindow(characterId ?? null);
@@ -654,6 +693,19 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => deps.getAppSettings());
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => deps.updateAppSettings(settings));
   ipcMain.handle(WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL, () => deps.getAppDatabaseDiagnostics());
+  ipcMain.handle(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL, () => deps.getMemoryV6Diagnostics());
+  ipcMain.handle(WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL, (event, request: MemoryV6ReviewSearchRequest | null | undefined) => {
+    assertMemoryV6ReviewSender(event, deps);
+    return deps.searchMemoryV6Entries(request);
+  });
+  ipcMain.handle(WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL, (event, entryId: string) => {
+    assertMemoryV6ReviewSender(event, deps);
+    return deps.getMemoryV6Entry(entryId);
+  });
+  ipcMain.handle(WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL, (event, entryId: string, reason?: MemoryForgetReason | null) => {
+    assertMemoryV6ReviewSender(event, deps);
+    return deps.forgetMemoryV6Entry(entryId, reason);
+  });
   ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, (_event, request: ResetAppDatabaseRequest | null | undefined) =>
     deps.resetAppDatabase(request),
   );

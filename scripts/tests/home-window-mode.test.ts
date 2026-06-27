@@ -7,6 +7,7 @@ describe("home-window-mode", () => {
   it("known mode を解決する", () => {
     assert.equal(resolveHomeWindowModeFromSearch("?mode=monitor"), "monitor");
     assert.equal(resolveHomeWindowModeFromSearch("?mode=settings"), "settings");
+    assert.equal(resolveHomeWindowModeFromSearch("?mode=memory-review"), "memory-review");
   });
 
   it("unknown mode は home に戻す", () => {

@@ -50,6 +50,26 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:reset-app-database",
     args: [{ targets: ["appSettings"] }],
   });
+  assert.deepEqual(await api.getMemoryV6Diagnostics(), {
+    channel: "withmate:get-memory-v6-diagnostics",
+    args: [],
+  });
+  assert.deepEqual(await api.openMemoryV6ReviewWindow(), {
+    channel: "withmate:open-memory-v6-review-window",
+    args: [],
+  });
+  assert.deepEqual(await api.searchMemoryV6Entries({ query: "release" }), {
+    channel: "withmate:search-memory-v6-entries",
+    args: [{ query: "release" }],
+  });
+  assert.deepEqual(await api.getMemoryV6Entry("mem-1"), {
+    channel: "withmate:get-memory-v6-entry",
+    args: ["mem-1"],
+  });
+  assert.deepEqual(await api.forgetMemoryV6Entry("mem-1", "incorrect"), {
+    channel: "withmate:forget-memory-v6-entry",
+    args: ["mem-1", "incorrect"],
+  });
   assert.deepEqual(await api.getMateState(), {
     channel: "withmate:get-mate-state",
     args: [],
@@ -223,6 +243,8 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getSessionAuditLogOperationDetail",
     "getMateProfile",
     "getMateState",
+    "getMemoryV6Diagnostics",
+    "getMemoryV6Entry",
     "getSessionBackgroundActivity",
     "getSessionContextTelemetry",
     "getSessionMessageArtifact",
@@ -259,6 +281,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "openSessionMonitorWindow",
     "openSessionTerminal",
     "openSettingsWindow",
+    "openMemoryV6ReviewWindow",
     "openTerminalAtPath",
     "pickDirectory",
     "pickFile",
@@ -280,6 +303,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "savePastedSessionFile",
     "searchCompanionWorkspaceFiles",
     "searchWorkspaceFiles",
+    "searchMemoryV6Entries",
     "setMateAvatar",
     "setDefaultCharacter",
     "startCharacterAuthoringSession",
@@ -297,6 +321,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeSessionBackgroundActivity",
     "subscribeSessionContextTelemetry",
     "syncCompanionTarget",
+    "forgetMemoryV6Entry",
     "updateAppSettings",
     "updateAuxiliarySession",
     "updateCharacterDefinition",

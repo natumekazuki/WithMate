@@ -1,7 +1,7 @@
 # Settings UI
 
 - 作成日: 2026-03-14
-- 更新日: 2026-06-21
+- 更新日: 2026-06-27
 - 対象: 独立した `Settings Window`
 
 ## Goal
@@ -44,6 +44,12 @@
       - `Instruction Relative Path`
   - `Diagnostics`
     - app log / crash dump folder
+    - Memory V6 read-only diagnostics
+      - runtime API status / base URL / DB path / discovery file path
+      - active binding count
+      - provider memory binding support
+      - managed `withmate-memory` Skill sync status
+      - latest Memory V6 diagnostic errors
   - `Mate Reset`
     - legacy Mate state reset
 - `Model Catalog`
@@ -61,6 +67,12 @@
   - `Instruction Relative Path` は root 配下の instruction file 設定として保持される
   - V5 current では skill folder だけが runtime の skill 探索元になり、instruction file は Provider Instruction Sync を再起動せず設定値として保持する
 - Diagnostics の folder open
+- Diagnostics の Memory V6 read-only summary
+  - runtime API は `running` / `stopped` / `failed` と、公開済み discovery / DB path を表示する
+  - binding は active binding count だけを表示し、binding reference は表示しない
+  - provider ごとの memory binding transport と support 状態を表示する
+  - managed `withmate-memory` Skill sync は provider ごとの `not-run` / `synced` / `failed` / `skipped-collision` を表示する
+  - runtime API secret は表示せず、`hasApiSecret` の boolean だけを診断 state に含める
 - legacy Mate reset
 - `model catalog` の import
 - `model catalog` の export
@@ -80,6 +92,9 @@
 - Settings Window の `loading` 派生状態は `HomeApp.tsx` が組み立てる
 - Settings Window の `import / export / save` の文言組み立てと戻り値解釈は `home-settings-actions` が担当する
 - Settings 保存成功時は renderer 側で戻り値の `appSettings` を draft に同期し、dirty 状態を解消する
+- Memory V6 diagnostics は Main Process 側の `getMemoryV6Diagnostics()` が集約し、renderer 側の `HomeApp.tsx` が初回表示時と Settings 保存成功後に再取得する
+- Memory V6 diagnostics は secret や binding reference を返さず、runtime status / path / support / sync status / error summary の read-only projection として扱う
+- Settings Window の Diagnostics 表示は `SettingsContent.tsx` が担当し、操作導線は既存の folder open と Settings save に限定する
 - Character editor は Settings Window から分離し、Home の `Characters` panel から開く独立 `Character Editor Window` で扱う。
 - `character.md` の validation error は `Character Editor Window` の raw editor 操作結果として表示する。
 

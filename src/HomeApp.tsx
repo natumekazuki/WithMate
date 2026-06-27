@@ -9,6 +9,7 @@ import { type SessionSummary } from "./session-state.js";
 import { startSessionSummariesSubscription } from "./session-summary-subscription.js";
 import { type ModelCatalogSnapshot } from "./model-catalog.js";
 import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
+import type { MemoryV6Diagnostics } from "./memory-v6/memory-diagnostics-state.js";
 import {
   buildHomeLaunchProjection,
 } from "./home/home-launch-projection.js";
@@ -42,6 +43,7 @@ import { useHomeOpenWindowSubscriptions } from "./home/use-home-open-window-subs
 import {
   openCharacterEditorWindow,
   openCompanionReviewWindow,
+  openMemoryV6ReviewWindow,
   openSessionMonitorWindow,
   openSessionWindow,
   openSettingsWindow,
@@ -58,7 +60,6 @@ import {
   type MateStorageState,
 } from "./mate/mate-state.js";
 import { buildHomeMateSetupContentProps } from "./mate/home-mate-setup-props.js";
-import { buildMateMaintenanceHandlers } from "./mate/mate-maintenance-handlers.js";
 import { buildMateStatusRefreshers } from "./mate/mate-status-refreshers.js";
 import { buildHomeMonitorContentProps } from "./home/home-monitor-content-props.js";
 import { renderHomeMonitorWindowIcon, renderHomeSearchIcon } from "./home/home-icons.js";
@@ -70,6 +71,7 @@ export default function HomeApp() {
   const homeWindowMode = useMemo(() => getHomeWindowMode(), []);
   const isMonitorWindowMode = homeWindowMode === "monitor";
   const isSettingsWindowMode = homeWindowMode === "settings";
+  const isMemoryReviewWindowMode = homeWindowMode === "memory-review";
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
   const [openSessionWindowIds, setOpenSessionWindowIds] = useState<string[]>([]);
@@ -79,6 +81,7 @@ export default function HomeApp() {
   const [settingsFeedback, setSettingsFeedback] = useState("");
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(createDefaultAppSettings());
+  const [memoryV6Diagnostics, setMemoryV6Diagnostics] = useState<MemoryV6Diagnostics | null>(null);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [characterEntries, setCharacterEntries] = useState<CharacterCatalogEntry[]>([]);
   const [characterListFeedback, setCharacterListFeedback] = useState("");
@@ -93,7 +96,6 @@ export default function HomeApp() {
   const [mateDisplayName, setMateDisplayName] = useState("");
   const [mateCreating, setMateCreating] = useState(false);
   const [mateAvatarUpdating, setMateAvatarUpdating] = useState(false);
-  const [mateResetting, setMateResetting] = useState(false);
   const [mateCreationFeedback, setMateCreationFeedback] = useState("");
   const [mateProfileEditorOpen, setMateProfileEditorOpen] = useState(false);
   const settingsDirtyRef = useRef(false);
@@ -135,6 +137,12 @@ export default function HomeApp() {
     setCharacterListFeedback("");
     setCharactersLoaded(true);
     return entries;
+  };
+
+  const refreshMemoryV6Diagnostics = async (
+    api: NonNullable<ReturnType<typeof getWithMateApi>>,
+  ): Promise<void> => {
+    setMemoryV6Diagnostics(await api.getMemoryV6Diagnostics());
   };
 
   useEffect(() => {
@@ -194,6 +202,13 @@ export default function HomeApp() {
 
       setCharacterListFeedback(error instanceof Error ? error.message : "Character 一覧の読み込みに失敗したよ。");
     });
+    void refreshMemoryV6Diagnostics(withmateApi).catch((error) => {
+      if (!active) {
+        return;
+      }
+
+      setSettingsFeedback(error instanceof Error ? error.message : "Memory V6 diagnostics の読み込みに失敗したよ。");
+    });
 
     const unsubscribeModelCatalog = startModelCatalogSubscription({
       api: withmateApi,
@@ -231,7 +246,7 @@ export default function HomeApp() {
 
   useEffect(() => {
     const withmateApi = getWithMateApi();
-    if (!withmateApi || isSettingsWindowMode || isMonitorWindowMode) {
+    if (!withmateApi || isSettingsWindowMode || isMonitorWindowMode || isMemoryReviewWindowMode) {
       return;
     }
 
@@ -250,7 +265,7 @@ export default function HomeApp() {
 
     window.addEventListener("focus", refreshCharactersOnFocus);
     return () => window.removeEventListener("focus", refreshCharactersOnFocus);
-  }, [isMonitorWindowMode, isSettingsWindowMode]);
+  }, [isMemoryReviewWindowMode, isMonitorWindowMode, isSettingsWindowMode]);
 
   useHomeOpenWindowSubscriptions({
     getApi: getWithMateApi,
@@ -396,15 +411,15 @@ export default function HomeApp() {
     setAppSettings,
     setSettingsDraft,
     setSettingsFeedback,
-  });
-
-  const mateMaintenanceHandlers = buildMateMaintenanceHandlers({
-    getApi: getWithMateApi,
-    mateState,
-    mateResetting,
-    setMateResetting,
-    setSettingsFeedback,
-    refreshMateStatus,
+    onSettingsSaved: () => {
+      const api = getWithMateApi();
+      if (!api) {
+        return;
+      }
+      void refreshMemoryV6Diagnostics(api).catch((error) => {
+        setSettingsFeedback(error instanceof Error ? error.message : "Memory V6 diagnostics の再読み込みに失敗したよ。");
+      });
+    },
   });
 
   const isMateStateLoading = mateState === null;
@@ -415,19 +430,16 @@ export default function HomeApp() {
     providerSettingRows,
     providerCatalogLoaded: modelCatalog !== null,
     modelCatalogRevisionLabel: String(modelCatalog?.revision ?? "-"),
+    memoryV6Diagnostics,
     settingsDirty,
     settingsFeedback,
+    onOpenMemoryV6Review: () => void openMemoryV6ReviewWindow(),
     ...settingsDraftHandlers,
     ...settingsCommandHandlers,
   };
 
   const { settingsContent, mateSetupContent, monitorContent } = buildHomeWindowContentSlots({
-    settingsContent: buildHomeSettingsContentProps({
-      ...baseSettingsContentProps,
-      onResetMate: mateMaintenanceHandlers.onResetMate,
-      mateResetBusy: mateResetting,
-      canResetMate: mateState !== "not_created",
-    }),
+    settingsContent: buildHomeSettingsContentProps(baseSettingsContentProps),
     mateSetupContent: buildHomeMateSetupContentProps({
       mateState,
       mateProfile,
@@ -504,6 +516,8 @@ export default function HomeApp() {
       desktopRuntime={desktopRuntime}
       homePageClassName={homePageClassName}
       isSettingsWindowMode={isSettingsWindowMode}
+      isMemoryReviewWindowMode={isMemoryReviewWindowMode}
+      getMemoryReviewApi={getWithMateApi}
       settingsWindowReady={settingsWindowReady}
       settingsContent={settingsContent}
       isMateStateLoading={isMateStateLoading}

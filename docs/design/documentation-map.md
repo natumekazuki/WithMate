@@ -14,7 +14,7 @@
 
 current 実装の正本として維持する文書。  
 仕様変更やコード変更に追従して更新する前提で扱う。
-V5 Character Core に関しては `A2. V5 Character Core Source Of Truth` を優先し、V4 SingleMate / MateTalk / Growth / provider instruction sync と矛盾する記述は V5 preview では legacy / deferred として扱う。
+V5 Character Core に関しては `A2. V5 Character Core Source Of Truth` を優先し、V6 Memory / DB foundation に関しては `A3. V6 Foundation Source Of Truth` を優先する。V4 SingleMate / MateTalk / Growth / provider instruction sync と矛盾する記述は V5 preview 以降では legacy / deferred として扱う。
 
 | Doc | Role |
 | --- | --- |
@@ -28,10 +28,10 @@ V5 Character Core に関しては `A2. V5 Character Core Source Of Truth` を優
 | `desktop-ui.md` | current UI の全体像 |
 | `provider-adapter.md` | provider 差分と adapter 責務 |
 | `coding-agent-capability-matrix.md` | current の provider capability 一覧 |
-| `memory-architecture.md` | Memory 全体設計の正本 |
+| `memory-architecture.md` | V1〜V4 Memory / Growth と V5 current runtime policy の入口。V6 Memory foundation では `v6-memory-foundation.md` を優先する |
 | `settings-ui.md` | Settings Window と設定責務 |
 | `audit-log.md` | audit 記録の current 仕様 |
-| `database-schema.md` | current 保存構造と DB 定義の正本 |
+| `database-schema.md` | current 保存構造と DB 定義の正本。V6 DB再設計では `v6-database-foundation.md` を優先する |
 | `model-catalog.md` | model catalog 保存 / 解決ロジック |
 | `session-run-lifecycle.md` | session 実行 lifecycle と background task のつながり |
 
@@ -47,6 +47,16 @@ Character catalog、definition format、snapshot、prompt boundary、release gat
 | `character-storage.md` | V5 Core の Character catalog / storage / snapshot 境界の正本 |
 | `v5-character-core-release-gate.md` | V5 Core の automated checks、manual checklist、release note、known risks を固定する release gate 正本 |
 | `v5-character-preview-release.md` | V5 Character Core preview release note、verification checklist、known risks の正本 |
+
+### A3. V6 Foundation Source Of Truth
+
+V6で採用するDB再設計、Skill-first Memory access、runtime binding、contract、storage 境界の正本。
+旧 MemoryGeneration / V4 Growth / V5以前session互換を戻すのではなく、V5 Character-first資産を中心にV6 runtimeを新規構築する。
+
+| Doc | Role |
+| --- | --- |
+| `v6-database-foundation.md` | V6 DB全体再設計、destructive reset、legacy data境界、project scope再設計の正本 |
+| `v6-memory-foundation.md` | V6 Memory foundation の owner / scope / entry / API / CLI / binding / storage / privacy / verification 正本 |
 
 ### B. Supporting / Domain Detail
 
