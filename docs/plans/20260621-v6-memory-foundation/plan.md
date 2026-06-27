@@ -342,20 +342,34 @@ Codex / Copilotで別々に確認する。
 
 ## Phase 6: Binding Runtime
 
+Status: 前半完了。main process memoryのbinding registry、CLIのbinding reference header送信、runtime APIのprincipal解決、turn終了 / session delete / app quit相当の失効を接続した。provider別専用binding moduleとcontext_file transport実体は未実装。
+
 候補path:
 
 ```text
 src-electron/memory-binding-registry.ts
 src-electron/provider-memory-binding.ts
-src-electron/codex-memory-binding.ts
-src-electron/copilot-memory-binding.ts
+src-electron/memory-v6-runtime.ts
+src-electron/memory-v6-http-server.ts
+scripts/withmate-memory.ts
 ```
 
 完了条件:
 
-- 1 sessionのbindingを別sessionから使えない。
-- revoke後は即時拒否する。
-- app quit / session deleteで失効する。
+- 1 sessionのbindingを別sessionから使えない - 前半完了
+- revoke後は即時拒否する - 前半完了
+- app quit / session deleteで失効する - 前半完了
+
+後続:
+
+- provider execution invalidationとの専用接続を確認する。
+- `context_file` transportを実際に使うproviderが出た時点で専用moduleを追加する。
+- runtime binding必須capabilityのUI/diagnostics露出はPhase 8へ回す。
+
+検証:
+
+- `node --test --import tsx scripts/tests/memory-binding-registry.test.ts scripts/tests/memory-v6-http-server.test.ts scripts/tests/memory-v6-runtime.test.ts scripts/tests/withmate-memory-cli.test.ts scripts/tests/session-runtime-service.test.ts`
+- `npm run typecheck`
 
 ## Phase 7: Global Skill
 

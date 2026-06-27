@@ -16,6 +16,7 @@ import {
   createMemoryV6HttpServer,
   type MemoryV6HttpServer,
 } from "./memory-v6-http-server.js";
+import type { MemoryBindingRegistry } from "./memory-binding-registry.js";
 import { MemoryV6Service } from "./memory-v6-service.js";
 import { MemoryV6Storage } from "./memory-v6-storage.js";
 
@@ -29,6 +30,7 @@ export type MemoryV6RuntimeApiHandle = {
 export type StartMemoryV6RuntimeApiOptions = {
   userDataPath: string;
   runtimeDirectoryPath?: string;
+  bindingRegistry?: MemoryBindingRegistry;
   log?: (input: AppLogInput) => void;
 };
 
@@ -247,7 +249,8 @@ export async function startMemoryV6RuntimeApi(
     const runtimeInstanceId = randomUUID();
     server = createMemoryV6HttpServer({
       service,
-      resolvePrincipal: () => null,
+      resolvePrincipal: ({ bindingReference }) =>
+        options.bindingRegistry?.resolvePrincipal(bindingReference) ?? null,
       apiSecret,
       runtimeInstanceId,
     });
@@ -295,6 +298,7 @@ export async function startMemoryV6RuntimeApi(
         } catch (error) {
           cleanupErrors.push(error);
         }
+        options.bindingRegistry?.revokeAll();
         storage?.close();
 
         if (cleanupErrors.length > 0) {

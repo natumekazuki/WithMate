@@ -1,7 +1,6 @@
 import { createHmac } from "node:crypto";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -13,6 +12,7 @@ import { createMemoryV6HttpServer, isLoopbackListenHost, isLoopbackRemoteAddress
 import type { MemoryV6Principal } from "../../src-electron/memory-v6-permission.js";
 import { MemoryV6Service } from "../../src-electron/memory-v6-service.js";
 import { MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
+import { WITHMATE_MEMORY_BINDING_REFERENCE_HEADER } from "../../src-electron/provider-memory-binding.js";
 
 const allPermissions: MemoryPermission[] = [
   "memory.search",
@@ -79,7 +79,7 @@ async function withMemoryApi<T>(
     apiSecret?: string;
     runtimeInstanceId?: string;
     maxConcurrentRequests?: number;
-    resolvePrincipal?: (request: IncomingMessage) => MemoryV6Principal | null | Promise<MemoryV6Principal | null>;
+    resolvePrincipal?: (input: { bindingReference: string | null }) => MemoryV6Principal | null | Promise<MemoryV6Principal | null>;
   } = {},
 ): Promise<T> {
   const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-v6-http-"));
@@ -129,12 +129,19 @@ async function postJson(baseUrl: string, path: string, body: unknown, apiSecret 
   };
 }
 
-async function postJsonWithSecret(baseUrl: string, path: string, body: unknown, apiSecret: string): Promise<{ status: number; json: any }> {
+async function postJsonWithSecret(
+  baseUrl: string,
+  path: string,
+  body: unknown,
+  apiSecret: string,
+  extraHeaders: Record<string, string> = {},
+): Promise<{ status: number; json: any }> {
   const response = await fetch(`${baseUrl}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-WithMate-Memory-Api-Secret": apiSecret,
+      ...extraHeaders,
     },
     body: JSON.stringify(body),
   });
@@ -223,6 +230,7 @@ describe("MemoryV6HttpServer", () => {
 
   it("apiSecretなしではserverを作成できず、secretなしのrequestはservice到達前に拒否する", async () => {
     let resolverCalls = 0;
+    const bindingReferences: Array<string | null> = [];
     await withMemoryApi(async ({ baseUrl }) => {
       assert.throws(() => createMemoryV6HttpServer({
         service: {} as MemoryV6Service,
@@ -257,15 +265,18 @@ describe("MemoryV6HttpServer", () => {
         "/v1/context",
         { schemaVersion: MEMORY_V6_SCHEMA_VERSION },
         "test-secret",
+        { [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: "binding-ref-a" },
       );
       assert.equal(context.status, 200);
       assert.equal(context.json.session.id, "session-a");
       assert.equal(resolverCalls, 1);
+      assert.deepEqual(bindingReferences, ["binding-ref-a"]);
     }, principal(), {
       apiSecret: "test-secret",
       runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID,
-      resolvePrincipal: () => {
+      resolvePrincipal: ({ bindingReference }) => {
         resolverCalls += 1;
+        bindingReferences.push(bindingReference);
         return principal();
       },
     });

@@ -1,5 +1,6 @@
 export const WITHMATE_MEMORY_BINDING_REFERENCE_ENV = "WITHMATE_MEMORY_BINDING_REFERENCE";
 export const WITHMATE_MEMORY_BINDING_CONTEXT_FILE_ENV = "WITHMATE_MEMORY_BINDING_CONTEXT_FILE";
+export const WITHMATE_MEMORY_BINDING_REFERENCE_HEADER = "x-withmate-memory-binding-reference";
 
 export type ProviderMemoryBindingTransport = "env" | "context_file" | "unsupported";
 
