@@ -253,7 +253,7 @@ scripts/tests/memory-v6-service.test.ts
 
 ## Phase 4: Localhost API And CLI
 
-Status: localhost API transport、CLI discovery thin client、app起動配線、runtime discovery file publish、app-internal API guardは完了。binding runtimeは未完了。
+Status: localhost API transport、CLI discovery thin client、app起動配線、runtime discovery file publish、app-internal API guard、binding runtimeは完了。
 
 候補path:
 
