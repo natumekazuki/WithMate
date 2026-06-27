@@ -5,7 +5,7 @@ export type WindowLike = {
   loadFile(filePath: string, options?: { search?: string }): Promise<unknown>;
 };
 
-export type HomeEntryMode = "home" | "monitor" | "settings";
+export type HomeEntryMode = "home" | "monitor" | "settings" | "memory-review";
 export type ChatEntryMode =
   | { kind: "agent"; sessionId: string }
   | { kind: "companion"; sessionId: string };

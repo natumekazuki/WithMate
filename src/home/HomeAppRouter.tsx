@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 
 import { MateProfileScreen } from "../mate/MateProfileScreen.js";
+import { MemoryV6ReviewScreen } from "../memory-v6/MemoryV6ReviewScreen.js";
 import { SettingsWindowScreen } from "../settings/SettingsWindowScreen.js";
 import { HomeDashboardScreen } from "./HomeDashboardScreen.js";
 import { HomeMonitorWindowScreen } from "./HomeMonitorWindowScreen.js";
@@ -10,6 +11,8 @@ type HomeAppRouterProps = {
   desktopRuntime: boolean;
   homePageClassName: string;
   isSettingsWindowMode: boolean;
+  isMemoryReviewWindowMode: boolean;
+  getMemoryReviewApi: ComponentProps<typeof MemoryV6ReviewScreen>["getApi"];
   settingsWindowReady: boolean;
   settingsContent: ReactNode;
   isMateStateLoading: boolean;
@@ -26,6 +29,8 @@ export function HomeAppRouter({
   desktopRuntime,
   homePageClassName,
   isSettingsWindowMode,
+  isMemoryReviewWindowMode,
+  getMemoryReviewApi,
   settingsWindowReady,
   settingsContent,
   isMateStateLoading,
@@ -49,6 +54,10 @@ export function HomeAppRouter({
         content={settingsContent}
       />
     );
+  }
+
+  if (isMemoryReviewWindowMode) {
+    return <MemoryV6ReviewScreen homePageClassName={homePageClassName} getApi={getMemoryReviewApi} />;
   }
 
   if (isMateStateLoading) {

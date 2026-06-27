@@ -21,6 +21,12 @@ import type {
 } from "../src/app-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
 import type { MemoryV6Diagnostics } from "../src/memory-v6/memory-diagnostics-state.js";
+import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
+import type {
+  MemoryV6ReviewEntryDetail,
+  MemoryV6ReviewForgetResult,
+  MemoryV6ReviewSearchResult,
+} from "../src/memory-v6/memory-review-state.js";
 import type {
   AuxiliarySession,
   AuxiliarySessionSummary,
@@ -75,6 +81,8 @@ export type MainIpcWindowDepsArgs = {
   openHomeWindow(): Promise<BrowserWindow>;
   openSessionMonitorWindow(): Promise<BrowserWindow>;
   openSettingsWindow(): Promise<BrowserWindow>;
+  openMemoryV6ReviewWindow(): Promise<BrowserWindow>;
+  isMemoryV6ReviewWindow(window: BrowserWindow): boolean;
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
   openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow>;
@@ -110,6 +118,9 @@ export type MainIpcSettingsDepsArgs = {
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   getMemoryV6Diagnostics(): MemoryV6Diagnostics;
+  searchMemoryV6Entries(request: MemoryV6ReviewSearchRequest | null | undefined): Awaitable<MemoryV6ReviewSearchResult>;
+  getMemoryV6Entry(entryId: string): Awaitable<MemoryV6ReviewEntryDetail | null>;
+  forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null): Awaitable<MemoryV6ReviewForgetResult>;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
 };
 
@@ -279,6 +290,10 @@ export function createMainIpcRegistrationDeps(
     openSettingsWindow: async () => {
       await args.window.openSettingsWindow();
     },
+    openMemoryV6ReviewWindow: async () => {
+      await args.window.openMemoryV6ReviewWindow();
+    },
+    isMemoryV6ReviewWindow: args.window.isMemoryV6ReviewWindow,
     openCharacterEditorWindow: async (characterId) => {
       await args.window.openCharacterEditorWindow(characterId);
     },
@@ -316,6 +331,9 @@ export function createMainIpcRegistrationDeps(
     updateAppSettings: args.settings.updateAppSettings,
     getAppDatabaseDiagnostics: args.settings.getAppDatabaseDiagnostics,
     getMemoryV6Diagnostics: args.settings.getMemoryV6Diagnostics,
+    searchMemoryV6Entries: args.settings.searchMemoryV6Entries,
+    getMemoryV6Entry: args.settings.getMemoryV6Entry,
+    forgetMemoryV6Entry: args.settings.forgetMemoryV6Entry,
     resetAppDatabase: args.settings.resetAppDatabase,
     listSessionSummaries: args.sessionQuery.listSessionSummaries,
     listCompanionSessionSummaries: args.sessionQuery.listCompanionSessionSummaries,

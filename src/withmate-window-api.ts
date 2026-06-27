@@ -39,6 +39,7 @@ import type { RendererLogInput } from "./app-log-types.js";
 import type { AppBootStatus } from "./app-boot-state.js";
 import type { AppDatabaseDiagnostics } from "./app-database-diagnostics-state.js";
 import type { MemoryV6Diagnostics } from "./memory-v6/memory-diagnostics-state.js";
+import type { MemoryV6ReviewApi } from "./memory-v6/memory-review-state.js";
 import type {
   AuxiliarySession,
   AuxiliarySessionSummary,
@@ -76,6 +77,7 @@ export type WithMateWindowNavigationApi = {
   openHomeWindow(): Promise<void>;
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
+  openMemoryV6ReviewWindow(): Promise<void>;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
@@ -257,6 +259,7 @@ export type WithMateWindowCharacterApi = {
 
 export type WithMateWindowApi =
   & WithMateWindowNavigationApi
+  & MemoryV6ReviewApi
   & WithMateWindowCatalogApi
   & WithMateWindowAuxiliaryApi
   & WithMateWindowSessionApi

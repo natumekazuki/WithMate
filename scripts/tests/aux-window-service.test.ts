@@ -91,11 +91,17 @@ test("AuxWindowService は singleton window を再利用する", async () => {
   const first = await service.openHomeWindow();
   const second = await service.openHomeWindow();
   const settings = await service.openSettingsWindow();
+  const memoryReview = await service.openMemoryV6ReviewWindow();
 
   assert.equal(first, second);
   assert.notEqual(first, settings);
-  assert.deepEqual(homeLoads, ["home", "settings"]);
-  assert.equal(created.length, 2);
+  assert.notEqual(settings, memoryReview);
+  assert.equal(service.isMemoryV6ReviewWindow(memoryReview), true);
+  assert.equal(service.isMemoryV6ReviewWindow(settings), false);
+  assert.deepEqual(homeLoads, ["home", "settings", "memory-review"]);
+  assert.equal(created.length, 3);
+  memoryReview.close();
+  assert.equal(service.isMemoryV6ReviewWindow(memoryReview), false);
 });
 
 test("AuxWindowService は diff preview を保持し reset 時に close する", async () => {

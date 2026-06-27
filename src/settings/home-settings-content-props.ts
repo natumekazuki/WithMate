@@ -12,6 +12,7 @@ export const buildHomeSettingsContentProps = (
     onResetMate: () => void;
     mateResetBusy: boolean;
     canResetMate: boolean;
+    onOpenMemoryV6Review: () => void;
   },
 ): HomeSettingsContentProps => ({
   ...input,

@@ -42,6 +42,7 @@ export type HomeSettingsContentProps = {
   onExportModelCatalog: () => void;
   onOpenAppLogFolder: () => void;
   onOpenCrashDumpFolder: () => void;
+  onOpenMemoryV6Review: () => void;
   onResetMate?: () => void;
   mateResetBusy?: boolean;
   canResetMate?: boolean;
@@ -92,6 +93,7 @@ export function HomeSettingsContent({
   onExportModelCatalog,
   onOpenAppLogFolder,
   onOpenCrashDumpFolder,
+  onOpenMemoryV6Review,
   onResetMate,
   mateResetBusy = false,
   canResetMate = false,
@@ -268,6 +270,9 @@ export function HomeSettingsContent({
                 <p className="settings-note">Memory V6 diagnostics を読み込んでいます。</p>
               )}
               <div className="settings-actions">
+                <button className="launch-toggle" type="button" onClick={onOpenMemoryV6Review}>
+                  Review Memory
+                </button>
                 <button className="launch-toggle" type="button" onClick={onOpenAppLogFolder}>
                   {SETTINGS_OPEN_LOG_FOLDER_LABEL}
                 </button>

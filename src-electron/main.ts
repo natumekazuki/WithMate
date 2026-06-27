@@ -152,12 +152,14 @@ import type {
   MemoryV6DiagnosticEvent,
   MemoryV6Diagnostics,
 } from "../src/memory-v6/memory-diagnostics-state.js";
+import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
 import { inspectAppDatabase } from "./app-database-diagnostics.js";
 import { resolveOrMigrateAppDatabasePath } from "./app-database-path.js";
 import {
   startMemoryV6RuntimeApi,
   type MemoryV6RuntimeApiHandle,
 } from "./memory-v6-runtime.js";
+import { MemoryV6ReviewService } from "./memory-v6-review-service.js";
 import { MemoryBindingRegistry } from "./memory-binding-registry.js";
 import { getProviderRuntimeCapabilities } from "./provider-support.js";
 import {
@@ -375,6 +377,24 @@ function getMemoryV6Diagnostics(): MemoryV6Diagnostics {
     }),
     lastErrors: memoryV6DiagnosticErrors,
   };
+}
+
+function createMemoryV6ReviewService(): MemoryV6ReviewService {
+  return new MemoryV6ReviewService({
+    resolveDbPath: () => memoryV6RuntimeApi?.dbPath ?? null,
+  });
+}
+
+function searchMemoryV6Entries(request: MemoryV6ReviewSearchRequest | null | undefined) {
+  return createMemoryV6ReviewService().searchEntries(request);
+}
+
+function getMemoryV6Entry(entryId: string) {
+  return createMemoryV6ReviewService().getEntry(entryId);
+}
+
+function forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null) {
+  return createMemoryV6ReviewService().forgetEntry(entryId, reason);
 }
 
 async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
@@ -1110,6 +1130,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openHomeWindow: createHomeWindow,
                 openSessionMonitorWindow,
                 openSettingsWindow,
+                openMemoryV6ReviewWindow,
+                isMemoryV6ReviewWindow: (window) => requireMainWindowFacade().isMemoryV6ReviewWindow(window),
                 openCharacterEditorWindow,
                 openDiffWindow,
                 openCompanionReviewWindow,
@@ -1147,6 +1169,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
                 getAppDatabaseDiagnostics,
                 getMemoryV6Diagnostics,
+                searchMemoryV6Entries,
+                getMemoryV6Entry,
+                forgetMemoryV6Entry,
                 resetAppDatabase: async (request) => requireSettingsCatalogService().resetAppDatabase(request),
               },
               sessionQuery: {
@@ -3017,6 +3042,10 @@ async function openSessionMonitorWindow(): Promise<BrowserWindow> {
 
 async function openSettingsWindow(): Promise<BrowserWindow> {
   return requireMainWindowFacade().openSettingsWindow();
+}
+
+async function openMemoryV6ReviewWindow(): Promise<BrowserWindow> {
+  return requireMainWindowFacade().openMemoryV6ReviewWindow();
 }
 
 async function openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {

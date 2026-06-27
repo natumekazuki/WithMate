@@ -38,6 +38,8 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         openHomeWindow: async () => ({}) as never,
         openSessionMonitorWindow: async () => ({}) as never,
         openSettingsWindow: async () => ({}) as never,
+        openMemoryV6ReviewWindow: async () => ({}) as never,
+        isMemoryV6ReviewWindow: () => false,
         openCharacterEditorWindow: async () => ({}) as never,
         openDiffWindow: async () => ({}) as never,
         openCompanionReviewWindow: async () => ({}) as never,
@@ -64,6 +66,9 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         updateAppSettings: (settings) => settings,
         getAppDatabaseDiagnostics: () => ({}) as never,
         getMemoryV6Diagnostics: () => ({}) as never,
+        searchMemoryV6Entries: () => ({ items: [] }),
+        getMemoryV6Entry: () => null,
+        forgetMemoryV6Entry: (entryId: string) => ({ entryId, status: "not_found", reason: "user_request" }),
         resetAppDatabase: async () => null,
       },
       sessionQuery: {

@@ -43,6 +43,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   private homeWindow: TWindow | null = null;
   private sessionMonitorWindow: TWindow | null = null;
   private settingsWindow: TWindow | null = null;
+  private memoryV6ReviewWindow: TWindow | null = null;
   private readonly diffWindows = new Map<string, TWindow>();
   private readonly companionReviewWindows = new Map<string, TWindow>();
   private readonly companionMergeWindows = new Map<string, TWindow>();
@@ -55,11 +56,16 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return this.homeWindow && !this.homeWindow.isDestroyed() ? this.homeWindow : null;
   }
 
+  isMemoryV6ReviewWindow(window: TWindow): boolean {
+    return this.memoryV6ReviewWindow === window && !window.isDestroyed();
+  }
+
   listHomeWindows(): TWindow[] {
     return [
       this.homeWindow,
       this.sessionMonitorWindow,
       this.settingsWindow,
+      this.memoryV6ReviewWindow,
     ].filter((window): window is TWindow => !!window && !window.isDestroyed());
   }
 
@@ -143,6 +149,28 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       this.settingsWindow = null;
     });
     await this.deps.loadHomeEntry(window, "settings");
+    return window;
+  }
+
+  async openMemoryV6ReviewWindow(): Promise<TWindow> {
+    const existing = this.reuseWindow(this.memoryV6ReviewWindow);
+    if (existing) {
+      return existing;
+    }
+
+    const window = this.deps.createWindow({
+      width: 1120,
+      height: 880,
+      minWidth: 860,
+      minHeight: 680,
+      title: "WithMate Memory Review",
+    });
+    this.memoryV6ReviewWindow = window;
+    window.once("ready-to-show", () => window.show());
+    window.on("closed", () => {
+      this.memoryV6ReviewWindow = null;
+    });
+    await this.deps.loadHomeEntry(window, "memory-review");
     return window;
   }
 

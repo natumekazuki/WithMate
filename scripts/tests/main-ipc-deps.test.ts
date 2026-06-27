@@ -24,6 +24,14 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async openSettingsWindow() {
         return {} as never;
       },
+      async openMemoryV6ReviewWindow() {
+        calls.push("openMemoryReview");
+        return {} as never;
+      },
+      isMemoryV6ReviewWindow() {
+        calls.push("isMemoryReview");
+        return true;
+      },
       async openCharacterEditorWindow() {
         return {} as never;
       },
@@ -74,6 +82,9 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       updateAppSettings: (settings) => settings,
       getAppDatabaseDiagnostics: () => ({}) as never,
       getMemoryV6Diagnostics: () => ({}) as never,
+      searchMemoryV6Entries: () => ({ items: [] }),
+      getMemoryV6Entry: () => null,
+      forgetMemoryV6Entry: (entryId) => ({ entryId, status: "not_found", reason: "user_request" }),
       async resetAppDatabase() {
         return null;
       },
@@ -221,6 +232,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
   });
 
   assert.equal(await deps.openHomeWindow(), undefined);
+  assert.equal(await deps.openMemoryV6ReviewWindow(), undefined);
+  assert.equal(deps.isMemoryV6ReviewWindow({} as never), true);
   assert.equal(await deps.openSessionWindow("session-1"), undefined);
   await deps.getMateState();
   await deps.getMateProfile();
@@ -230,6 +243,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
   await deps.resetMate();
   assert.deepEqual(calls, [
     "openHome",
+    "openMemoryReview",
+    "isMemoryReview",
     "openSession:session-1",
     "getMateState",
     "getMateProfile",

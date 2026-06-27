@@ -43,6 +43,7 @@ import { useHomeOpenWindowSubscriptions } from "./home/use-home-open-window-subs
 import {
   openCharacterEditorWindow,
   openCompanionReviewWindow,
+  openMemoryV6ReviewWindow,
   openSessionMonitorWindow,
   openSessionWindow,
   openSettingsWindow,
@@ -71,6 +72,7 @@ export default function HomeApp() {
   const homeWindowMode = useMemo(() => getHomeWindowMode(), []);
   const isMonitorWindowMode = homeWindowMode === "monitor";
   const isSettingsWindowMode = homeWindowMode === "settings";
+  const isMemoryReviewWindowMode = homeWindowMode === "memory-review";
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
   const [openSessionWindowIds, setOpenSessionWindowIds] = useState<string[]>([]);
@@ -246,7 +248,7 @@ export default function HomeApp() {
 
   useEffect(() => {
     const withmateApi = getWithMateApi();
-    if (!withmateApi || isSettingsWindowMode || isMonitorWindowMode) {
+    if (!withmateApi || isSettingsWindowMode || isMonitorWindowMode || isMemoryReviewWindowMode) {
       return;
     }
 
@@ -265,7 +267,7 @@ export default function HomeApp() {
 
     window.addEventListener("focus", refreshCharactersOnFocus);
     return () => window.removeEventListener("focus", refreshCharactersOnFocus);
-  }, [isMonitorWindowMode, isSettingsWindowMode]);
+  }, [isMemoryReviewWindowMode, isMonitorWindowMode, isSettingsWindowMode]);
 
   useHomeOpenWindowSubscriptions({
     getApi: getWithMateApi,
@@ -442,6 +444,7 @@ export default function HomeApp() {
     memoryV6Diagnostics,
     settingsDirty,
     settingsFeedback,
+    onOpenMemoryV6Review: () => void openMemoryV6ReviewWindow(),
     ...settingsDraftHandlers,
     ...settingsCommandHandlers,
   };
@@ -529,6 +532,8 @@ export default function HomeApp() {
       desktopRuntime={desktopRuntime}
       homePageClassName={homePageClassName}
       isSettingsWindowMode={isSettingsWindowMode}
+      isMemoryReviewWindowMode={isMemoryReviewWindowMode}
+      getMemoryReviewApi={getWithMateApi}
       settingsWindowReady={settingsWindowReady}
       settingsContent={settingsContent}
       isMateStateLoading={isMateStateLoading}
