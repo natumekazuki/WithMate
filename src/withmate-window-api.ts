@@ -38,6 +38,7 @@ import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog
 import type { RendererLogInput } from "./app-log-types.js";
 import type { AppBootStatus } from "./app-boot-state.js";
 import type { AppDatabaseDiagnostics } from "./app-database-diagnostics-state.js";
+import type { MemoryV6Diagnostics } from "./memory-v6/memory-diagnostics-state.js";
 import type {
   AuxiliarySession,
   AuxiliarySessionSummary,
@@ -195,6 +196,7 @@ export type WithMateWindowSettingsApi = {
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
   getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics>;
+  getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics>;
   resetAppDatabase(request: ResetAppDatabaseRequest): Promise<ResetAppDatabaseResult>;
 };
 

@@ -9,6 +9,7 @@ import { type SessionSummary } from "./session-state.js";
 import { startSessionSummariesSubscription } from "./session-summary-subscription.js";
 import { type ModelCatalogSnapshot } from "./model-catalog.js";
 import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
+import type { MemoryV6Diagnostics } from "./memory-v6/memory-diagnostics-state.js";
 import {
   buildHomeLaunchProjection,
 } from "./home/home-launch-projection.js";
@@ -79,6 +80,7 @@ export default function HomeApp() {
   const [settingsFeedback, setSettingsFeedback] = useState("");
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(createDefaultAppSettings());
+  const [memoryV6Diagnostics, setMemoryV6Diagnostics] = useState<MemoryV6Diagnostics | null>(null);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [characterEntries, setCharacterEntries] = useState<CharacterCatalogEntry[]>([]);
   const [characterListFeedback, setCharacterListFeedback] = useState("");
@@ -137,6 +139,12 @@ export default function HomeApp() {
     return entries;
   };
 
+  const refreshMemoryV6Diagnostics = async (
+    api: NonNullable<ReturnType<typeof getWithMateApi>>,
+  ): Promise<void> => {
+    setMemoryV6Diagnostics(await api.getMemoryV6Diagnostics());
+  };
+
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
@@ -193,6 +201,13 @@ export default function HomeApp() {
       }
 
       setCharacterListFeedback(error instanceof Error ? error.message : "Character 一覧の読み込みに失敗したよ。");
+    });
+    void refreshMemoryV6Diagnostics(withmateApi).catch((error) => {
+      if (!active) {
+        return;
+      }
+
+      setSettingsFeedback(error instanceof Error ? error.message : "Memory V6 diagnostics の読み込みに失敗したよ。");
     });
 
     const unsubscribeModelCatalog = startModelCatalogSubscription({
@@ -396,6 +411,15 @@ export default function HomeApp() {
     setAppSettings,
     setSettingsDraft,
     setSettingsFeedback,
+    onSettingsSaved: () => {
+      const api = getWithMateApi();
+      if (!api) {
+        return;
+      }
+      void refreshMemoryV6Diagnostics(api).catch((error) => {
+        setSettingsFeedback(error instanceof Error ? error.message : "Memory V6 diagnostics の再読み込みに失敗したよ。");
+      });
+    },
   });
 
   const mateMaintenanceHandlers = buildMateMaintenanceHandlers({
@@ -415,6 +439,7 @@ export default function HomeApp() {
     providerSettingRows,
     providerCatalogLoaded: modelCatalog !== null,
     modelCatalogRevisionLabel: String(modelCatalog?.revision ?? "-"),
+    memoryV6Diagnostics,
     settingsDirty,
     settingsFeedback,
     ...settingsDraftHandlers,

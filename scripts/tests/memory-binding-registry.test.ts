@@ -90,6 +90,7 @@ describe("MemoryBindingRegistry", () => {
     const principalA = registry.resolvePrincipal(bindingA.bindingReference);
     const principalB = registry.resolvePrincipal(bindingB.bindingReference);
 
+    assert.equal(registry.getActiveBindingCount(), 2);
     assert.equal(principalA?.sessionId, "session-a");
     assert.equal(principalA?.providerId, "codex");
     assert.equal(principalA?.character?.id, "character-a");
@@ -111,8 +112,10 @@ describe("MemoryBindingRegistry", () => {
     });
 
     assert.ok(binding);
+    assert.equal(registry.getActiveBindingCount(new Date("2026-06-27T00:00:30.000Z")), 1);
     assert.ok(registry.resolvePrincipal(binding.bindingReference, new Date("2026-06-27T00:00:30.000Z")));
     assert.equal(registry.resolvePrincipal(binding.bindingReference, new Date("2026-06-27T00:01:00.000Z")), null);
+    assert.equal(registry.getActiveBindingCount(new Date("2026-06-27T00:01:00.000Z")), 0);
 
     const nextBinding = registry.createBinding({
       session: createSession({ id: "session-next" }),
@@ -172,13 +175,14 @@ describe("MemoryBindingRegistry", () => {
 
   it("binding未確認providerはunsupported projectionにしてprincipalを作らない", () => {
     const registry = new MemoryBindingRegistry();
+    const session = createSession({ id: "session-a" });
     const staleBinding = registry.createBinding({
-      session: createSession(),
+      session,
       provider: createProvider("codex"),
       character: createCharacter(),
     });
     const binding = registry.createBinding({
-      session: createSession(),
+      session,
       provider: createProvider("unknown"),
       character: createCharacter(),
     });

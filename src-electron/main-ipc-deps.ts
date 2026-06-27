@@ -20,6 +20,7 @@ import type {
   SessionSummary,
 } from "../src/app-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
+import type { MemoryV6Diagnostics } from "../src/memory-v6/memory-diagnostics-state.js";
 import type {
   AuxiliarySession,
   AuxiliarySessionSummary,
@@ -108,6 +109,7 @@ export type MainIpcSettingsDepsArgs = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
+  getMemoryV6Diagnostics(): MemoryV6Diagnostics;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
 };
 
@@ -313,6 +315,7 @@ export function createMainIpcRegistrationDeps(
     getAppSettings: args.settings.getAppSettings,
     updateAppSettings: args.settings.updateAppSettings,
     getAppDatabaseDiagnostics: args.settings.getAppDatabaseDiagnostics,
+    getMemoryV6Diagnostics: args.settings.getMemoryV6Diagnostics,
     resetAppDatabase: args.settings.resetAppDatabase,
     listSessionSummaries: args.sessionQuery.listSessionSummaries,
     listCompanionSessionSummaries: args.sessionQuery.listCompanionSessionSummaries,

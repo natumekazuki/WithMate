@@ -126,6 +126,18 @@ export class MemoryBindingRegistry {
     this.bindingIdsByReferenceHash.clear();
   }
 
+  getActiveBindingCount(now = new Date()): number {
+    let count = 0;
+    for (const record of [...this.recordsByBindingId.values()]) {
+      if (record.revokedAt || isExpired(record, now)) {
+        this.revokeBinding(record);
+        continue;
+      }
+      count += 1;
+    }
+    return count;
+  }
+
   resolvePrincipal(bindingReference: string | null | undefined, now = new Date()): MemoryV6Principal | null {
     const normalizedReference = bindingReference?.trim();
     if (!normalizedReference) {

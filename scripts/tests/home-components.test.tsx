@@ -14,6 +14,7 @@ import { HomeMateSetupPanel } from "../../src/mate/MateSetupPanel.js";
 import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
+import type { MemoryV6Diagnostics } from "../../src/memory-v6/memory-diagnostics-state.js";
 import { buildHomeProviderSettingRows } from "../../src/settings/settings-view-model.js";
 import { formatTimestampLabel } from "../../src/time-state.js";
 import {
@@ -56,6 +57,7 @@ describe("HomeSettingsContent", () => {
     settingsDraft?: typeof settingsDraft;
     providerSettingRows?: typeof providerSettingRows;
     providerCatalogLoaded?: boolean;
+    memoryV6Diagnostics?: MemoryV6Diagnostics | null;
     canResetMate?: boolean;
     mateResetBusy?: boolean;
     onResetMate?: () => void;
@@ -94,6 +96,7 @@ describe("HomeSettingsContent", () => {
     providerSettingRows: params?.providerSettingRows ?? providerSettingRows,
     providerCatalogLoaded: params?.providerCatalogLoaded ?? true,
     modelCatalogRevisionLabel: String(modelCatalog.revision),
+    memoryV6Diagnostics: params?.memoryV6Diagnostics ?? null,
     settingsDirty: false,
     settingsFeedback: "",
     onChangeAutoCollapseActionDockOnSend: noOp,
@@ -169,6 +172,43 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("Root Directory"));
     assert.ok(html.includes("Skill Relative Path"));
     assert.ok(html.includes("Instruction Relative Path"));
+  });
+
+  it("Memory V6 diagnostics はredacted summaryとして表示する", () => {
+    const html = renderSettings({
+      memoryV6Diagnostics: {
+        generatedAt: "2026-06-27T00:00:00.000Z",
+        runtime: {
+          status: "running",
+          baseUrl: "http://127.0.0.1:12345",
+          dbPath: "C:/userdata/withmate-v6.db",
+          discoveryFilePath: "C:/runtime/memory-v6-api.json",
+          hasApiSecret: true,
+        },
+        binding: { activeBindingCount: 2 },
+        providers: [
+          { providerId: "codex", providerSupported: true, memoryBindingTransport: "env" },
+          { providerId: "custom", providerSupported: false, memoryBindingTransport: "unsupported" },
+        ],
+        skillSync: [
+          { providerId: "codex", skillRootConfigured: true, skillPath: "C:/skills/withmate-memory", status: "unchanged" },
+          { providerId: "custom", skillRootConfigured: true, skillPath: null, status: "skipped-collision" },
+        ],
+        lastErrors: [
+          { kind: "memory-v6.runtime-api.start-failed", message: "startup failed", occurredAt: "2026-06-27T00:00:00.000Z" },
+        ],
+      },
+    });
+
+    assert.ok(html.includes("Memory API"));
+    assert.ok(html.includes("running"));
+    assert.ok(html.includes("Active Bindings"));
+    assert.ok(html.includes("2"));
+    assert.ok(html.includes("codex: env / custom: unsupported"));
+    assert.ok(html.includes("codex: unchanged / custom: skipped-collision"));
+    assert.ok(html.includes("memory-v6.runtime-api.start-failed"));
+    assert.ok(!html.includes("apiSecret"));
+    assert.ok(!html.includes("bindingReference"));
   });
 
   it("provider row が 0 件でも Coding Agent Providers section と empty state を表示する", () => {
