@@ -1042,16 +1042,23 @@ npm run build
 - invalid V6 DB時にdiscovery fileを残さない
 - Settings DiagnosticsでMemory V6 runtime / provider binding capability / managed Skill sync / last errorを表示する
 - Memory V6 diagnostics stateにruntime API secretやbinding referenceを含めない
+- binding referenceから現在sessionのprincipalを解決し、別sessionと混線しない
+- revoke後、期限切れ後、runtime stop後のbinding referenceを拒否する
+- provider execution invalidationとCopilot internal retryで旧bindingを失効し、新bindingを使う
+- binding env projectionとprovider cache keyにruntime API secretやbinding reference本体を含めない
+- binding未確認providerを`unsupported`として扱い、principalを作らない
+- user-created同名`withmate-memory` Skillを上書きせずcollisionとしてskipする
 
-追加すべきtest:
+手動smoke gate:
 
-- binding isolation
-- binding revoke
-- token redaction
-- provider capability fallback
-- Skill install collision
+- Settings DiagnosticsでMemory V6 runtime、active binding count、provider binding capability、managed Skill sync、latest error summaryを確認する。
+- Codex / Copilot sessionで`withmate-memory` CLIがcurrent Character / project targetへ接続できることを確認する。別session binding referenceの流用拒否はhidden valueをUI/logへ出さない方針のため、targeted testで確認する。
+- stale thread retry相当のinternal retry後に通常turnが継続し、Memory CLI利用が壊れないことを確認する。旧binding拒否と新binding再発行はtargeted testで確認する。
+- session deleteまたはapp quit後に通常の新turnで新bindingが使えることを確認する。旧binding referenceの`MEMORY_BINDING_REQUIRED`拒否はtargeted testで確認する。
+- user-created同名Skillがあるprovider rootでmanaged Skill syncが`skipped-collision`になり、既存Skillが上書きされないことを確認する。
+- binding transport未確認providerが`unsupported`として診断され、principalを作らないことを開発用fixtureまたはtargeted testで確認する。
 
 ## Open Questions
 
-- provider別専用binding moduleをどのタイミングで分離するか。
 - `context_file` transportを実際に使うproviderが出た場合のfile lifecycle。
+- full entry閲覧、manual correction、forget、restore、exportをどのUI phaseで扱うか。
