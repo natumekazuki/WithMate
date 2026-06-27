@@ -73,6 +73,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
         ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} }) as never,
       updateAppSettings: (settings) => settings,
       getAppDatabaseDiagnostics: () => ({}) as never,
+      getMemoryV6Diagnostics: () => ({}) as never,
       async resetAppDatabase() {
         return null;
       },

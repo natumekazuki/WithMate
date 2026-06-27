@@ -411,11 +411,31 @@ src-electron/managed-memory-skill-service.ts
 
 ## Phase 8: Diagnostics
 
-- endpoint状態
-- binding capability
-- Skill install状態
-- last error summary
-- secret redaction
+Status: 完了。Settings DiagnosticsにMemory V6 runtime / binding / provider capability / managed Skill sync / last error summaryをread-onlyで表示する。secret、binding reference、API secretは公開diagnosticsへ返さない。
+
+内容:
+
+- endpoint状態 - 完了。runtime APIのrunning / stopped / failed、baseUrl、DB path、discovery file pathを表示し、secretは`hasApiSecret`へ畳む。
+- binding capability - 完了。configured providerごとにbinding transportを表示する。
+- Skill install状態 - 完了。直近managed Skill sync結果をproviderごとに表示する。
+- last error summary - 完了。runtime起動/停止とSkill sync失敗の直近errorを最大3件保持する。
+- secret redaction - 完了。runtime API secretとbinding referenceはdiagnostics stateへ含めない。
+
+実装:
+
+- `src/memory-v6/memory-diagnostics-state.ts`
+- `src-electron/main.ts`
+- `src-electron/main-ipc-registration.ts`
+- `src-electron/main-ipc-deps.ts`
+- `src-electron/preload-api.ts`
+- `src/withmate-window-api.ts`
+- `src/settings/SettingsContent.tsx`
+- `src/HomeApp.tsx`
+
+検証:
+
+- `node --test --import tsx scripts/tests/preload-api.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/memory-binding-registry.test.ts scripts/tests/home-components.test.tsx`
+- `npm run typecheck`
 
 ## Verification
 

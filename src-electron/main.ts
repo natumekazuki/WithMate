@@ -132,10 +132,12 @@ import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
 import {
   ManagedMemorySkillService,
+  type ManagedMemorySkillSyncResult,
   WITHMATE_MEMORY_SKILL_NAME,
 } from "./managed-memory-skill-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
 import {
+  resolveProviderSkillRootPath,
   type AppSettings,
 } from "../src/provider-settings-state.js";
 import { discoverSessionSkills } from "./skill-discovery.js";
@@ -146,6 +148,10 @@ import { clearWorkspaceFileIndex, searchWorkspacePathCandidates } from "./worksp
 import { AppLogService } from "./app-log-service.js";
 import type { AppBootStatus } from "../src/app-boot-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
+import type {
+  MemoryV6DiagnosticEvent,
+  MemoryV6Diagnostics,
+} from "../src/memory-v6/memory-diagnostics-state.js";
 import { inspectAppDatabase } from "./app-database-diagnostics.js";
 import { resolveOrMigrateAppDatabasePath } from "./app-database-path.js";
 import {
@@ -153,6 +159,7 @@ import {
   type MemoryV6RuntimeApiHandle,
 } from "./memory-v6-runtime.js";
 import { MemoryBindingRegistry } from "./memory-binding-registry.js";
+import { getProviderRuntimeCapabilities } from "./provider-support.js";
 import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
@@ -227,6 +234,9 @@ let allowQuitWithInFlightRuns = false;
 let dbPath = "";
 let appDatabaseDiagnostics: AppDatabaseDiagnostics | null = null;
 let memoryV6RuntimeApi: MemoryV6RuntimeApiHandle | null = null;
+let memoryV6RuntimeStatus: MemoryV6Diagnostics["runtime"]["status"] = "stopped";
+let managedMemorySkillSyncResults: ManagedMemorySkillSyncResult[] = [];
+let memoryV6DiagnosticErrors: MemoryV6DiagnosticEvent[] = [];
 const memoryBindingRegistry = new MemoryBindingRegistry();
 let bootWindow: BrowserWindow | null = null;
 let appBootStatus: AppBootStatus = {
@@ -306,19 +316,87 @@ function getAppDatabaseDiagnostics(): AppDatabaseDiagnostics {
   return appDatabaseDiagnostics;
 }
 
+function recordMemoryV6DiagnosticError(kind: string, message: string): void {
+  memoryV6DiagnosticErrors = [
+    {
+      kind,
+      message,
+      occurredAt: new Date().toISOString(),
+    },
+    ...memoryV6DiagnosticErrors,
+  ].slice(0, 3);
+}
+
+function getConfiguredProviderSettings(): AppSettings["codingProviderSettings"] {
+  try {
+    return requireAppSettingsStorage().getSettings().codingProviderSettings;
+  } catch {
+    return {};
+  }
+}
+
+function getMemoryV6Diagnostics(): MemoryV6Diagnostics {
+  const configuredProviderSettings = getConfiguredProviderSettings();
+  const configuredProviderIds = Object.keys(configuredProviderSettings).sort();
+  const latestSkillResultByProvider = new Map(
+    managedMemorySkillSyncResults.map((result) => [result.providerId, result]),
+  );
+
+  return {
+    generatedAt: new Date().toISOString(),
+    runtime: {
+      status: memoryV6RuntimeApi ? "running" : memoryV6RuntimeStatus,
+      baseUrl: memoryV6RuntimeApi?.baseUrl ?? null,
+      dbPath: memoryV6RuntimeApi?.dbPath ?? null,
+      discoveryFilePath: memoryV6RuntimeApi?.discoveryFilePath ?? null,
+      hasApiSecret: Boolean(memoryV6RuntimeApi),
+    },
+    binding: {
+      activeBindingCount: memoryBindingRegistry.getActiveBindingCount(),
+    },
+    providers: configuredProviderIds.map((providerId) => {
+      const capabilities = getProviderRuntimeCapabilities({ providerId });
+      return {
+        providerId,
+        providerSupported: capabilities.providerSupported,
+        memoryBindingTransport: capabilities.memoryBindingTransport,
+      };
+    }),
+    skillSync: configuredProviderIds.map((providerId) => {
+      const result = latestSkillResultByProvider.get(providerId);
+      const configuredSkillRootPath = resolveProviderSkillRootPath(configuredProviderSettings[providerId]);
+      return {
+        providerId,
+        skillRootConfigured: Boolean(result?.skillRootPath ?? configuredSkillRootPath.trim()),
+        skillPath: result?.skillPath ?? null,
+        status: result?.status ?? "not-run",
+        ...(result?.errorMessage ? { errorMessage: result.errorMessage } : {}),
+      };
+    }),
+    lastErrors: memoryV6DiagnosticErrors,
+  };
+}
+
 async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
   if (memoryV6RuntimeApi) {
     return;
   }
 
   try {
+    memoryV6RuntimeStatus = "stopped";
     memoryV6RuntimeApi = await startMemoryV6RuntimeApi({
       userDataPath: app.getPath("userData"),
       bindingRegistry: memoryBindingRegistry,
       log: writeAppLog,
     });
+    memoryV6RuntimeStatus = "running";
     appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
   } catch (error) {
+    memoryV6RuntimeStatus = "failed";
+    recordMemoryV6DiagnosticError(
+      "memory-v6.runtime-api.start-failed",
+      error instanceof Error ? error.message : String(error),
+    );
     writeAppLog({
       level: "warn",
       kind: "memory-v6.runtime-api.start-failed",
@@ -332,6 +410,7 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
 async function stopMemoryV6RuntimeApiBestEffort(): Promise<void> {
   const runtimeApi = memoryV6RuntimeApi;
   memoryV6RuntimeApi = null;
+  memoryV6RuntimeStatus = "stopped";
   if (!runtimeApi) {
     return;
   }
@@ -345,6 +424,10 @@ async function stopMemoryV6RuntimeApiBestEffort(): Promise<void> {
       message: "Memory V6 runtime API stopped",
     });
   } catch (error) {
+    recordMemoryV6DiagnosticError(
+      "memory-v6.runtime-api.stop-failed",
+      error instanceof Error ? error.message : String(error),
+    );
     writeAppLog({
       level: "warn",
       kind: "memory-v6.runtime-api.stop-failed",
@@ -358,8 +441,15 @@ async function stopMemoryV6RuntimeApiBestEffort(): Promise<void> {
 async function syncManagedMemorySkillBestEffort(): Promise<void> {
   try {
     const results = await requireManagedMemorySkillService().syncConfiguredProviderSkills();
+    managedMemorySkillSyncResults = results;
     const failed = results.filter((result) => result.status === "failed");
     const collisions = results.filter((result) => result.status === "skipped-collision");
+    for (const result of failed) {
+      recordMemoryV6DiagnosticError(
+        "memory-v6.skill.sync.provider-failed",
+        `${result.providerId}: ${result.errorMessage ?? "managed skill sync failed"}`,
+      );
+    }
     writeAppLog({
       level: failed.length > 0 || collisions.length > 0 ? "warn" : "info",
       kind: "memory-v6.skill.sync.completed",
@@ -370,6 +460,10 @@ async function syncManagedMemorySkillBestEffort(): Promise<void> {
       },
     });
   } catch (error) {
+    recordMemoryV6DiagnosticError(
+      "memory-v6.skill.sync.failed",
+      error instanceof Error ? error.message : String(error),
+    );
     writeAppLog({
       level: "warn",
       kind: "memory-v6.skill.sync.failed",
@@ -1052,6 +1146,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
                 getAppDatabaseDiagnostics,
+                getMemoryV6Diagnostics,
                 resetAppDatabase: async (request) => requireSettingsCatalogService().resetAppDatabase(request),
               },
               sessionQuery: {

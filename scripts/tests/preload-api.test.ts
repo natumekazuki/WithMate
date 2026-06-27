@@ -50,6 +50,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:reset-app-database",
     args: [{ targets: ["appSettings"] }],
   });
+  assert.deepEqual(await api.getMemoryV6Diagnostics(), {
+    channel: "withmate:get-memory-v6-diagnostics",
+    args: [],
+  });
   assert.deepEqual(await api.getMateState(), {
     channel: "withmate:get-mate-state",
     args: [],
@@ -223,6 +227,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getSessionAuditLogOperationDetail",
     "getMateProfile",
     "getMateState",
+    "getMemoryV6Diagnostics",
     "getSessionBackgroundActivity",
     "getSessionContextTelemetry",
     "getSessionMessageArtifact",
