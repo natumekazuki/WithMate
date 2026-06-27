@@ -5,10 +5,14 @@ import type { AddressInfo } from "node:net";
 import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
 import type { MemoryV6Service } from "./memory-v6-service.js";
 import type { MemoryV6Principal } from "./memory-v6-permission.js";
+import { WITHMATE_MEMORY_BINDING_REFERENCE_HEADER } from "./provider-memory-binding.js";
 
 export type MemoryV6HttpServerOptions = {
   service: MemoryV6Service;
-  resolvePrincipal(request: IncomingMessage): MemoryV6Principal | null | Promise<MemoryV6Principal | null>;
+  resolvePrincipal(input: {
+    request: IncomingMessage;
+    bindingReference: string | null;
+  }): MemoryV6Principal | null | Promise<MemoryV6Principal | null>;
   apiSecret: string;
   runtimeInstanceId: string;
   host?: string;
@@ -94,6 +98,11 @@ function authenticateInternalApiRequest(request: IncomingMessage, apiSecret: str
     return memoryTransportError("MEMORY_UNAUTHORIZED", "Memory API request is not authorized.");
   }
   return null;
+}
+
+function readBindingReference(request: IncomingMessage): string | null {
+  const header = request.headers[WITHMATE_MEMORY_BINDING_REFERENCE_HEADER];
+  return typeof header === "string" && header.trim() ? header.trim() : null;
 }
 
 function isMemoryErrorResponse(value: unknown): value is MemoryErrorResponse {
@@ -270,7 +279,10 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         return;
       }
 
-      const principal = await options.resolvePrincipal(request);
+      const principal = await options.resolvePrincipal({
+        request,
+        bindingReference: readBindingReference(request),
+      });
       const body = await readJsonBody(request, maxBodyBytes);
       const result = routeServiceRequest(options.service, principal, route, body);
       writeJson(response, statusForMemoryResponse(result), result);

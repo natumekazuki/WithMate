@@ -5,14 +5,55 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
+import { buildNewSession, type CharacterProfile } from "../../src/app-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import {
   resolveDefaultWithMateMemoryDiscoveryFilePath,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
 } from "../../src/memory-v6/memory-discovery.js";
+import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
   publishMemoryV6DiscoveryFile,
   startMemoryV6RuntimeApi,
 } from "../../src-electron/memory-v6-runtime.js";
+import { MemoryBindingRegistry } from "../../src-electron/memory-binding-registry.js";
+import { WITHMATE_MEMORY_BINDING_REFERENCE_HEADER } from "../../src-electron/provider-memory-binding.js";
+
+function createProvider(id = "codex"): ModelCatalogProvider {
+  return {
+    id,
+    label: id,
+    defaultModelId: "gpt-5.4",
+    defaultReasoningEffort: "high",
+    models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["medium", "high"] }],
+  };
+}
+
+function createCharacter(): CharacterProfile {
+  return {
+    id: "character-a",
+    name: "Character A",
+    iconPath: "",
+    description: "",
+    roleMarkdown: "",
+    notesMarkdown: "",
+    updatedAt: "2026-06-27T00:00:00.000Z",
+    themeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    sessionCopy: {
+      pendingApproval: [],
+      pendingWorking: [],
+      pendingResponding: [],
+      pendingPreparing: [],
+      retryInterruptedTitle: [],
+      retryFailedTitle: [],
+      retryCanceledTitle: [],
+      latestCommandWaiting: [],
+      latestCommandEmpty: [],
+      changedFilesEmpty: [],
+      contextEmpty: [],
+    },
+  };
+}
 
 describe("Memory V6 runtime API", () => {
   it("runtime directoryへdiscovery fileをpublishしcleanupできる", async () => {
@@ -157,6 +198,109 @@ describe("Memory V6 runtime API", () => {
       }
 
       await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6-api.json")));
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("runtime APIはregistry binding referenceをprincipalへ解決し、revoke後は拒否する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    const bindingRegistry = new MemoryBindingRegistry();
+    try {
+      const runtime = await startMemoryV6RuntimeApi({ userDataPath, runtimeDirectoryPath, bindingRegistry });
+      try {
+        const discovery = JSON.parse(await readFile(runtime.discoveryFilePath, "utf8"));
+        const binding = bindingRegistry.createBinding({
+          session: buildNewSession({
+            taskTitle: "Memory Binding Runtime",
+            workspaceLabel: "Workspace A",
+            workspacePath: "C:/workspace/a",
+            branch: "main",
+            characterId: "character-a",
+            character: "Character A",
+            characterIconPath: "",
+            characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+            approvalMode: DEFAULT_APPROVAL_MODE,
+          }),
+          provider: createProvider("codex"),
+          character: createCharacter(),
+        });
+        assert.ok(binding);
+
+        const context = await fetch(`${runtime.baseUrl}/v1/context`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
+            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
+          },
+          body: JSON.stringify({ schemaVersion: "withmate-memory-v1" }),
+        });
+        assert.equal(context.status, 200);
+        assert.deepEqual(await context.json(), {
+          schemaVersion: "withmate-memory-v1",
+          session: { id: bindingRegistry.resolvePrincipal(binding.bindingReference)?.sessionId },
+          character: { id: "character-a", name: "Character A" },
+          sessionProject: { id: "C:/workspace/a", displayName: "Workspace A" },
+          permissions: [
+            "memory.resolve_context",
+            "memory.search",
+            "memory.get_entry",
+            "memory.list_tags",
+            "memory.append",
+            "memory.forget",
+          ],
+        });
+
+        bindingRegistry.revokeBinding(binding);
+        const revokedContext = await fetch(`${runtime.baseUrl}/v1/context`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
+            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
+          },
+          body: JSON.stringify({ schemaVersion: "withmate-memory-v1" }),
+        });
+        assert.equal(revokedContext.status, 401);
+        assert.equal((await revokedContext.json()).error.code, "MEMORY_BINDING_REQUIRED");
+      } finally {
+        await runtime.stop();
+      }
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("runtime stopはregistry bindingを全失効する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    const bindingRegistry = new MemoryBindingRegistry();
+    try {
+      const runtime = await startMemoryV6RuntimeApi({ userDataPath, runtimeDirectoryPath, bindingRegistry });
+      const binding = bindingRegistry.createBinding({
+        session: buildNewSession({
+          taskTitle: "Memory Binding Runtime",
+          workspaceLabel: "Workspace A",
+          workspacePath: "C:/workspace/a",
+          branch: "main",
+          characterId: "character-a",
+          character: "Character A",
+          characterIconPath: "",
+          characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+          approvalMode: DEFAULT_APPROVAL_MODE,
+        }),
+        provider: createProvider("codex"),
+        character: createCharacter(),
+      });
+      assert.ok(binding);
+      assert.ok(bindingRegistry.resolvePrincipal(binding.bindingReference));
+
+      await runtime.stop();
+      assert.equal(bindingRegistry.resolvePrincipal(binding.bindingReference), null);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
       await rm(runtimeDirectoryPath, { recursive: true, force: true });

@@ -12,6 +12,10 @@ import {
   type WithMateMemoryDiscoveryDocument,
 } from "../src/memory-v6/memory-discovery.js";
 import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
+import {
+  WITHMATE_MEMORY_BINDING_REFERENCE_ENV,
+  WITHMATE_MEMORY_BINDING_REFERENCE_HEADER,
+} from "../src-electron/provider-memory-binding.js";
 
 export {
   WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
@@ -116,6 +120,11 @@ function readEnvSecret(env: NodeJS.ProcessEnv): string | undefined {
 
 function readEnvRuntimeInstanceId(env: NodeJS.ProcessEnv): string | undefined {
   const value = env.WITHMATE_MEMORY_RUNTIME_INSTANCE_ID?.trim();
+  return value ? value : undefined;
+}
+
+function readEnvBindingReference(env: NodeJS.ProcessEnv): string | undefined {
+  const value = env[WITHMATE_MEMORY_BINDING_REFERENCE_ENV]?.trim();
   return value ? value : undefined;
 }
 
@@ -353,6 +362,10 @@ export async function runWithMateMemoryCli(
       }
       if (connection.apiSecret) {
         headers[WITHMATE_MEMORY_API_SECRET_HEADER] = connection.apiSecret;
+      }
+      const bindingReference = readEnvBindingReference(deps.env ?? process.env);
+      if (bindingReference) {
+        headers[WITHMATE_MEMORY_BINDING_REFERENCE_HEADER] = bindingReference;
       }
       response = await fetchImpl(`${connection.baseUrl}${route.path}`, {
         method: route.method,

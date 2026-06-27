@@ -14,6 +14,10 @@ import {
   WITHMATE_MEMORY_CLI_EXIT_CODES,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
 } from "../withmate-memory.js";
+import {
+  WITHMATE_MEMORY_BINDING_REFERENCE_ENV,
+  WITHMATE_MEMORY_BINDING_REFERENCE_HEADER,
+} from "../../src-electron/provider-memory-binding.js";
 
 const TEST_API_SECRET = "test-api-secret";
 const TEST_RUNTIME_INSTANCE_ID = "test-runtime";
@@ -364,9 +368,13 @@ describe("withmate-memory CLI", () => {
   it("contextはschemaVersionつきJSON bodyをPOSTで送る", async () => {
     const stdout = createOutputCapture();
     let capturedBody: unknown = null;
+    let capturedBindingReference: string | null = null;
 
     const exitCode = await runWithMateMemoryCli(["context"], {
-      env: TEST_RUNTIME_ENV,
+      env: {
+        ...TEST_RUNTIME_ENV,
+        [WITHMATE_MEMORY_BINDING_REFERENCE_ENV]: "binding-ref-a",
+      },
       stdout: stdout.stream,
       fetch: async (url, init) => {
         if (isStatusChallengeRequest(String(url))) {
@@ -374,6 +382,7 @@ describe("withmate-memory CLI", () => {
         }
         assert.equal(String(url), "http://127.0.0.1:7777/v1/context");
         assert.equal(init?.method, "POST");
+        capturedBindingReference = new Headers(init?.headers).get(WITHMATE_MEMORY_BINDING_REFERENCE_HEADER);
         capturedBody = JSON.parse(String(init?.body));
         return new Response(JSON.stringify({
           schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -385,6 +394,7 @@ describe("withmate-memory CLI", () => {
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
     assert.deepEqual(capturedBody, { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
+    assert.equal(capturedBindingReference, "binding-ref-a");
   });
 
   it("POST redirectは追従せずrequest bodyを転送しない", async () => {

@@ -148,6 +148,7 @@ import {
   startMemoryV6RuntimeApi,
   type MemoryV6RuntimeApiHandle,
 } from "./memory-v6-runtime.js";
+import { MemoryBindingRegistry } from "./memory-binding-registry.js";
 import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
@@ -218,6 +219,7 @@ let allowQuitWithInFlightRuns = false;
 let dbPath = "";
 let appDatabaseDiagnostics: AppDatabaseDiagnostics | null = null;
 let memoryV6RuntimeApi: MemoryV6RuntimeApiHandle | null = null;
+const memoryBindingRegistry = new MemoryBindingRegistry();
 let bootWindow: BrowserWindow | null = null;
 let appBootStatus: AppBootStatus = {
   kind: "running",
@@ -304,6 +306,7 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
   try {
     memoryV6RuntimeApi = await startMemoryV6RuntimeApi({
       userDataPath: app.getPath("userData"),
+      bindingRegistry: memoryBindingRegistry,
       log: writeAppLog,
     });
     appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
@@ -1313,6 +1316,9 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       getProviderQuotaTelemetry: (providerId) => getProviderQuotaTelemetry(providerId),
       isProviderQuotaTelemetryStale: (telemetry) => isProviderQuotaTelemetryStale(telemetry),
       refreshProviderQuotaTelemetry: (providerId) => refreshProviderQuotaTelemetry(providerId),
+      revokeSessionMemoryBindings: (sessionId) => {
+        memoryBindingRegistry.revokeSessionBindings(sessionId);
+      },
     });
   }
 
@@ -1605,6 +1611,11 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       invalidateProviderSessionThread,
       scheduleProviderQuotaTelemetryRefresh,
       clearWorkspaceFileIndex,
+      createProviderMemoryBinding: ({ session, provider, character }) =>
+        memoryBindingRegistry.createBinding({ session, provider, character }),
+      revokeProviderMemoryBinding: (binding) => {
+        memoryBindingRegistry.revokeBinding(binding);
+      },
       broadcastLiveSessionRun,
       resolvePendingApprovalRequest: (sessionId, decision) => {
         const liveRun = getLiveSessionRun(sessionId);
