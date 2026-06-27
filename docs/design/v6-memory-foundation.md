@@ -402,6 +402,7 @@ type MemoryGetEntryResponse = {
 
 - ID指定でfull bodyを取得する。
 - binding permissionとowner / scope accessを再検証する。
+- binding referenceがない`local_user` requestでは明示project targetを必須とし、entryのowner / scopeがtargetと一致する場合だけ返す。
 - search hitのpreviewが現在の回答、実装、判断に影響しそうな場合に使う。
 - 正確な文言、理由、制約、過去の決定が重要な場合はpreviewだけで断定しない。
 - search hitを全件機械的に取得しない。必要な最小件数を、関係ありそうなpreviewから順に取得する。
@@ -539,6 +540,10 @@ value.normalize("NFC").toLowerCase()
 CLIはuser-facing entrypointであり、app外の人間やagentが自由に呼べる薄いclientとする。
 CLIはDBを直接触らず、起動中のWithMateが提供するruntime Memory APIへ接続する。
 WithMateが起動していない場合、CLIはすべてのMemory操作を拒否し、machine-readable errorを返す。
+WithMate起動中は、WithMate外のCodex / shell / CLIからもproject owner + project scopeのMemoryを明示targetで検索、取得、tag一覧、append、forgetできる。
+session bindingはCLI利用全体の認可ではなく、current Characterやcurrent WithMate session contextを解決するための追加contextである。
+binding referenceがない外部CLI requestは、runtime secretとnonce challengeを通過した同一OS userの`local_user` principalとして扱う。
+`local_user` principalは`project` owner + `project` scopeだけを扱い、`character: current`、WithMate session context、session-bound project inferenceは使えない。
 `--self` flagは採用しない。
 current CLIは`WITHMATE_MEMORY_API_URL`またはruntime discovery fileからlocalhost APIを発見する。
 discovery fileは`withmate-memory-discovery-v1` documentとして`baseUrl`、`apiSecret`、`runtimeInstanceId`、`publishedAt`を公開し、CLIはloopback HTTP URL以外を拒否する。

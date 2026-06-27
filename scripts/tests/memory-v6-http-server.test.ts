@@ -9,7 +9,7 @@ import { describe, it } from "node:test";
 import { MEMORY_V6_SCHEMA_VERSION, type MemoryPermission } from "../../src/memory-v6/memory-contract.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { createMemoryV6HttpServer, isLoopbackListenHost, isLoopbackRemoteAddress, type MemoryV6HttpServer } from "../../src-electron/memory-v6-http-server.js";
-import type { MemoryV6Principal } from "../../src-electron/memory-v6-permission.js";
+import type { MemoryV6Principal, MemoryV6SessionBindingPrincipal } from "../../src-electron/memory-v6-permission.js";
 import { MemoryV6Service } from "../../src-electron/memory-v6-service.js";
 import { MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
 import { WITHMATE_MEMORY_BINDING_REFERENCE_HEADER } from "../../src-electron/provider-memory-binding.js";
@@ -25,8 +25,9 @@ const allPermissions: MemoryPermission[] = [
 const TEST_API_SECRET = "test-secret";
 const TEST_RUNTIME_INSTANCE_ID = "test-runtime";
 
-function principal(overrides: Partial<MemoryV6Principal> = {}): MemoryV6Principal {
+function principal(overrides: Partial<MemoryV6SessionBindingPrincipal> = {}): MemoryV6SessionBindingPrincipal {
   return {
+    type: "session_binding",
     bindingIdHash: "binding-hash-a",
     sessionId: "session-a",
     providerId: "codex",
@@ -216,7 +217,13 @@ describe("MemoryV6HttpServer", () => {
         },
       });
 
-      const context = await postJson(baseUrl, "/v1/context", { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
+      const context = await postJsonWithSecret(
+        baseUrl,
+        "/v1/context",
+        { schemaVersion: MEMORY_V6_SCHEMA_VERSION },
+        TEST_API_SECRET,
+        { [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: "binding-ref-a" },
+      );
       assert.equal(context.status, 200);
       assert.deepEqual(context.json, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -284,7 +291,13 @@ describe("MemoryV6HttpServer", () => {
 
   it("context requestのschemaVersion不一致を422で返す", async () => {
     await withMemoryApi(async ({ baseUrl }) => {
-      const context = await postJson(baseUrl, "/v1/context", {});
+      const context = await postJsonWithSecret(
+        baseUrl,
+        "/v1/context",
+        {},
+        TEST_API_SECRET,
+        { [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: "binding-ref-a" },
+      );
 
       assert.equal(context.status, 422);
       assert.equal(context.json.error.code, "MEMORY_INVALID_SCHEMA_VERSION");
@@ -311,6 +324,7 @@ describe("MemoryV6HttpServer", () => {
       const detail = await postJson(baseUrl, "/v1/get_entry", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         entryId: append.json.entry.id,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
       });
       assert.equal(detail.status, 200);
       assert.equal(detail.json.entry.body, "Memory localhost APIはservice境界を薄く包む。");
@@ -334,15 +348,19 @@ describe("MemoryV6HttpServer", () => {
     });
   });
 
-  it("bindingなしのservice errorをHTTP statusへ写像する", async () => {
+  it("bindingなしでもvalid secretがあればlocal_userとしてproject targetを使える", async () => {
     await withMemoryApi(async ({ baseUrl }) => {
       const response = await postJson(baseUrl, "/v1/search", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
         query: "memory",
       });
-      assert.equal(response.status, 401);
-      assert.equal(response.json.error.code, "MEMORY_BINDING_REQUIRED");
+      assert.equal(response.status, 200);
+      assert.deepEqual(response.json.items, []);
+
+      const context = await postJson(baseUrl, "/v1/context", { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
+      assert.equal(context.status, 401);
+      assert.equal(context.json.error.code, "MEMORY_BINDING_REQUIRED");
     }, null);
   });
 
@@ -445,7 +463,13 @@ describe("MemoryV6HttpServer", () => {
     let resolverCalls = 0;
 
     await withMemoryApi(async ({ baseUrl }) => {
-      const firstRequest = postJson(baseUrl, "/v1/context", { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
+      const firstRequest = postJsonWithSecret(
+        baseUrl,
+        "/v1/context",
+        { schemaVersion: MEMORY_V6_SCHEMA_VERSION },
+        TEST_API_SECRET,
+        { [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: "binding-ref-a" },
+      );
       await new Promise<void>((resolve) => setTimeout(resolve, 20));
 
       const rejected = await postJson(baseUrl, "/v1/search", {

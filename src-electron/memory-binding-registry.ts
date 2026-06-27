@@ -8,6 +8,7 @@ import {
   getProviderMemoryBindingCapability,
   type ProviderMemoryBindingRuntimeProjection,
 } from "./provider-memory-binding.js";
+import type { MemoryV6ProjectContext } from "./memory-v6-context-resolver.js";
 import type { MemoryV6Principal } from "./memory-v6-permission.js";
 
 const DEFAULT_MEMORY_PERMISSIONS: readonly MemoryPermission[] = [
@@ -45,9 +46,19 @@ export type CreateMemoryBindingInput = {
   expiresAt?: string | null;
 };
 
+export type MemoryBindingProjectResolver = {
+  resolveProjectByPath?(projectPath: string): MemoryV6ProjectContext | null;
+};
+
 export class MemoryBindingRegistry {
   private readonly recordsByBindingId = new Map<string, MemoryBindingRecord>();
   private readonly bindingIdsByReferenceHash = new Map<string, string>();
+
+  constructor(private projectResolver: MemoryBindingProjectResolver = {}) {}
+
+  setProjectResolver(projectResolver: MemoryBindingProjectResolver): void {
+    this.projectResolver = projectResolver;
+  }
 
   createBinding(input: CreateMemoryBindingInput): ProviderMemoryBindingRuntimeProjection | null {
     this.revokeSessionBindings(input.session.id);
@@ -65,10 +76,14 @@ export class MemoryBindingRegistry {
     const bindingReference = randomBytes(32).toString("base64url");
     const bindingReferenceHash = hashBindingReference(bindingReference);
     const createdAt = (input.now ?? new Date()).toISOString();
-    const sessionProject = input.session.workspacePath.trim()
+    const workspacePath = input.session.workspacePath.trim();
+    const resolvedProject = workspacePath
+      ? this.projectResolver.resolveProjectByPath?.(workspacePath) ?? null
+      : null;
+    const sessionProject = workspacePath
       ? {
-          id: input.session.workspacePath,
-          displayName: input.session.workspaceLabel.trim() || input.session.workspacePath,
+          id: resolvedProject?.id ?? workspacePath,
+          displayName: input.session.workspaceLabel.trim() || resolvedProject?.displayName || workspacePath,
         }
       : null;
     const character = input.character
@@ -158,6 +173,7 @@ export class MemoryBindingRegistry {
     }
 
     return {
+      type: "session_binding",
       bindingIdHash: record.bindingReferenceHash,
       sessionId: record.sessionId,
       providerId: record.providerId,

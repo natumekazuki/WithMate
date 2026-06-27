@@ -1,7 +1,8 @@
 import type { MemoryError, MemoryPermission } from "../src/memory-v6/memory-contract.js";
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
 
-export type MemoryV6Principal = {
+export type MemoryV6SessionBindingPrincipal = {
+  type: "session_binding";
   bindingIdHash: string;
   sessionId: string;
   providerId: string;
@@ -11,6 +12,38 @@ export type MemoryV6Principal = {
   accessibleCharacterIds?: readonly string[];
   accessibleProjectIds?: readonly string[];
 };
+
+export type MemoryV6LocalUserPrincipal = {
+  type: "local_user";
+  bindingIdHash: "local-user";
+  providerId: "local-user";
+  permissions: readonly MemoryPermission[];
+};
+
+export type MemoryV6Principal = MemoryV6SessionBindingPrincipal | MemoryV6LocalUserPrincipal;
+
+export const LOCAL_USER_MEMORY_PERMISSIONS: readonly MemoryPermission[] = [
+  "memory.search",
+  "memory.get_entry",
+  "memory.list_tags",
+  "memory.append",
+  "memory.forget",
+];
+
+export function createLocalUserMemoryPrincipal(): MemoryV6LocalUserPrincipal {
+  return {
+    type: "local_user",
+    bindingIdHash: "local-user",
+    providerId: "local-user",
+    permissions: LOCAL_USER_MEMORY_PERMISSIONS,
+  };
+}
+
+export function isSessionBindingPrincipal(
+  principal: MemoryV6Principal,
+): principal is MemoryV6SessionBindingPrincipal {
+  return principal.type === "session_binding";
+}
 
 export function memoryBindingRequiredError(message = "WithMate runtime binding is required."): MemoryError {
   return {
@@ -44,6 +77,10 @@ export function requireMemoryPermission(principal: MemoryV6Principal | null, per
 }
 
 export function canAccessMemoryTarget(principal: MemoryV6Principal, target: MemoryV6ResolvedTarget): boolean {
+  if (principal.type === "local_user") {
+    return target.owner.type === "project" && target.scope.type === "project";
+  }
+
   if (target.owner.type === "user" || target.scope.type === "session" || target.scope.type === "global") {
     return false;
   }

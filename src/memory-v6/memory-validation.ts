@@ -37,7 +37,7 @@ const MEMORY_FORGET_REASONS = new Set<MemoryForgetReason>([
 
 const RESOLVE_CONTEXT_REQUEST_KEYS = new Set(["schemaVersion"]);
 const SEARCH_REQUEST_KEYS = new Set(["schemaVersion", "targets", "query", "kinds", "tags", "limit", "cursor"]);
-const GET_ENTRY_REQUEST_KEYS = new Set(["schemaVersion", "entryId"]);
+const GET_ENTRY_REQUEST_KEYS = new Set(["schemaVersion", "entryId", "target"]);
 const LIST_TAGS_REQUEST_KEYS = new Set(["schemaVersion", "targets"]);
 const APPEND_REQUEST_KEYS = new Set([
   "schemaVersion",
@@ -496,12 +496,19 @@ export function validateMemoryGetEntryRequest(value: unknown): MemoryValidationR
   if (!entryId.ok) {
     return entryId;
   }
+  const target = value.target === undefined
+    ? undefined
+    : normalizeMemoryTarget(value.target, "target");
+  if (target && !target.ok) {
+    return target;
+  }
 
   return {
     ok: true,
     value: {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       entryId: entryId.value,
+      ...(target ? { target: target.value } : {}),
     },
   };
 }
