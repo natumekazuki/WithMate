@@ -175,13 +175,14 @@ describe("MemoryBindingRegistry", () => {
 
   it("binding未確認providerはunsupported projectionにしてprincipalを作らない", () => {
     const registry = new MemoryBindingRegistry();
+    const session = createSession({ id: "session-a" });
     const staleBinding = registry.createBinding({
-      session: createSession(),
+      session,
       provider: createProvider("codex"),
       character: createCharacter(),
     });
     const binding = registry.createBinding({
-      session: createSession(),
+      session,
       provider: createProvider("unknown"),
       character: createCharacter(),
     });
