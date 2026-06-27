@@ -1429,6 +1429,12 @@ function requireMainProviderFacade(): MainProviderFacade {
       ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
       codexAdapter,
       copilotAdapter,
+      revokeSessionMemoryBindings: (sessionId) => {
+        memoryBindingRegistry.revokeSessionBindings(sessionId);
+      },
+      revokeAllMemoryBindings: () => {
+        memoryBindingRegistry.revokeAll();
+      },
     });
   }
 

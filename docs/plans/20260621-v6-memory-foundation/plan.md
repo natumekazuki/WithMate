@@ -342,7 +342,7 @@ Codex / Copilotで別々に確認する。
 
 ## Phase 6: Binding Runtime
 
-Status: 前半完了。main process memoryのbinding registry、CLIのbinding reference header送信、runtime APIのprincipal解決、turn終了 / session delete / app quit相当の失効を接続した。provider別専用binding moduleとcontext_file transport実体は未実装。
+Status: 完了。main process memoryのbinding registry、CLIのbinding reference header送信、runtime APIのprincipal解決、turn終了 / session delete / app quit相当の失効、provider execution invalidation時の失効とretry用binding再発行を接続した。provider別専用binding moduleとcontext_file transport実体は、実際に`context_file` transportを使うproviderが出た時点で追加する。
 
 候補path:
 
@@ -356,13 +356,13 @@ scripts/withmate-memory.ts
 
 完了条件:
 
-- 1 sessionのbindingを別sessionから使えない - 前半完了
-- revoke後は即時拒否する - 前半完了
-- app quit / session deleteで失効する - 前半完了
+- 1 sessionのbindingを別sessionから使えない - 完了
+- revoke後は即時拒否する - 完了
+- app quit / session deleteで失効する - 完了
+- provider execution invalidation時に旧bindingを失効し、internal retryでは新しいbindingを使う - 完了
 
 後続:
 
-- provider execution invalidationとの専用接続を確認する。
 - `context_file` transportを実際に使うproviderが出た時点で専用moduleを追加する。
 - runtime binding必須capabilityのUI/diagnostics露出はPhase 8へ回す。
 

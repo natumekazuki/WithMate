@@ -473,23 +473,25 @@ export class SessionRuntimeService {
     const sessionMemory = this.deps.getSessionMemory(session);
     const projectMemoryEntries = this.deps.resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
     const sessionCharacter = await this.deps.resolveSessionCharacter?.(session) ?? null;
-    const memoryBinding = await Promise.resolve(this.deps.createProviderMemoryBinding?.({
-      session,
-      provider,
-      character: sessionCharacter,
-    }) ?? null);
+    let memoryBinding = await this.createProviderMemoryBindingForSession(session, provider, sessionCharacter);
     const currentTimestampLabel = this.deps.currentTimestampLabel ?? defaultCurrentTimestampLabel;
     let memoryBindingRevoked = false;
     const revokeMemoryBinding = async () => {
       if (!memoryBinding || memoryBinding.transport === "unsupported" || memoryBindingRevoked) {
         return;
       }
+      const bindingToRevoke = memoryBinding;
       memoryBindingRevoked = true;
       await Promise.resolve()
-        .then(() => this.deps.revokeProviderMemoryBinding?.(memoryBinding))
+        .then(() => this.deps.revokeProviderMemoryBinding?.(bindingToRevoke))
         .catch((error) => {
           console.warn("Provider memory binding revoke failed", error);
         });
+    };
+    const resetMemoryBindingAfterProviderInvalidation = async (nextSession: Session) => {
+      await revokeMemoryBinding();
+      memoryBinding = await this.createProviderMemoryBindingForSession(nextSession, provider, sessionCharacter);
+      memoryBindingRevoked = false;
     };
 
     let promptForAudit: ProviderPromptComposition;
@@ -715,6 +717,7 @@ export class SessionRuntimeService {
           didInternalRetry = true;
           liveProgressGeneration += 1;
           this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId);
+          await resetMemoryBindingAfterProviderInvalidation(activeRunningSession);
           if (activeRunningSession.threadId) {
             activeRunningSession = await this.deps.upsertSession({
               ...activeRunningSession,
@@ -832,6 +835,7 @@ export class SessionRuntimeService {
       const failedLogicalPromptEstimate = estimateLogicalPromptTokens(failedLogicalPrompt);
       if (canceled || shouldResetFailedThread) {
         this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId);
+        await revokeMemoryBinding();
       }
 
       await flushAuditWrites();
@@ -921,5 +925,17 @@ export class SessionRuntimeService {
       this.deps.clearWorkspaceFileIndex(session.workspacePath);
       this.deps.broadcastLiveSessionRun(sessionId);
     }
+  }
+
+  private async createProviderMemoryBindingForSession(
+    session: Session,
+    provider: ModelCatalogProvider,
+    character: CharacterProfile | null,
+  ): Promise<ProviderMemoryBindingRuntimeProjection | null> {
+    return Promise.resolve(this.deps.createProviderMemoryBinding?.({
+      session,
+      provider,
+      character,
+    }) ?? null);
   }
 }
