@@ -6,12 +6,9 @@ import {
   SETTINGS_API_KEY_PLACEHOLDER,
   SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE,
   SETTINGS_CODING_CREDENTIALS_HELP,
-  SETTINGS_MATE_RESET_LABEL,
-  SETTINGS_MATE_RESET_HELP,
   SETTINGS_RELEASE_COMPATIBILITY_NOTE,
   SETTINGS_RESET_DATABASE_HELP,
   SETTINGS_RESET_DATABASE_LABEL,
-  buildResetMateConfirmMessage,
   buildResetDatabaseConfirmMessage,
   buildResetDatabaseSuccessMessage,
 } from "../../src/settings/settings-ui.js";
@@ -34,13 +31,6 @@ describe("Settings UI constants", () => {
     assert.match(buildResetDatabaseConfirmMessage(ALL_RESET_APP_DATABASE_TARGETS), /本当に続ける/);
     assert.match(buildResetDatabaseConfirmMessage(ALL_RESET_APP_DATABASE_TARGETS), /実行中の session がある間は初期化できない/);
     assert.match(buildResetDatabaseSuccessMessage(ALL_RESET_APP_DATABASE_TARGETS), /初期状態へ戻した/);
-  });
-
-  it("Mate Reset は破壊的操作として意図と再確認文言が含まれる", () => {
-    assert.equal(SETTINGS_MATE_RESET_LABEL, "Mate を初期化");
-    assert.match(SETTINGS_MATE_RESET_HELP, /Danger Zone/);
-    assert.match(SETTINGS_MATE_RESET_HELP, /破壊的/);
-    assert.match(buildResetMateConfirmMessage(), /本当に続ける/);
   });
 
   it("Home Window は Settings overlay の余裕を確保する既定サイズを使う", () => {

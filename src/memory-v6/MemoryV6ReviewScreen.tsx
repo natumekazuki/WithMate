@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useDialogA11y } from "../a11y.js";
 import type { MemoryEntryKind, MemoryForgetReason } from "./memory-contract.js";
 import type {
   MemoryV6ReviewApi,
@@ -53,6 +54,23 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
   const [feedback, setFeedback] = useState("");
   const [loading, setLoading] = useState(false);
   const [forgetting, setForgetting] = useState(false);
+  const [confirmForgetOpen, setConfirmForgetOpen] = useState(false);
+  const cancelForgetButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  const closeForgetConfirm = () => {
+    if (!forgetting) {
+      setConfirmForgetOpen(false);
+    }
+  };
+
+  const {
+    dialogRef: forgetDialogRef,
+    handleDialogKeyDown: handleForgetDialogKeyDown,
+  } = useDialogA11y<HTMLElement>({
+    open: confirmForgetOpen,
+    onClose: closeForgetConfirm,
+    initialFocusRef: cancelForgetButtonRef,
+  });
 
   const searchRequest = useMemo(() => ({
     query,
@@ -86,6 +104,10 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
     void runSearch();
   }, [searchRequest]);
 
+  useEffect(() => {
+    document.title = "WithMate Memory Review";
+  }, []);
+
   const selectEntry = async (entryId: string) => {
     const api = getApi();
     if (!api) {
@@ -111,18 +133,13 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
       setFeedback("Memory Review には desktop runtime が必要です。");
       return;
     }
-    const privacyNote = forgetReason === "privacy"
-      ? "\n\nprivacy reason では title、body、preview、tags も削除されます。"
-      : "";
-    if (!window.confirm(`Memory entry「${selectedEntry.title || selectedEntry.id}」を forget しますか？\n\nreason: ${forgetReason}${privacyNote}`)) {
-      return;
-    }
     setForgetting(true);
     try {
       const result = await api.forgetMemoryV6Entry(selectedEntryId, forgetReason);
       setFeedback(`Forget result: ${result.status}`);
       setSelectedEntry(null);
       setSelectedEntryId("");
+      setConfirmForgetOpen(false);
       await runSearch();
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Memory entry の forget に失敗しました。");
@@ -214,18 +231,69 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                         {FORGET_REASON_OPTIONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
                       </select>
                     </label>
-                    <button className="launch-toggle danger-button" type="button" onClick={() => void forgetSelectedEntry()} disabled={forgetting}>
+                    <button
+                      className="launch-toggle danger-button"
+                      type="button"
+                      onClick={() => setConfirmForgetOpen(true)}
+                      disabled={forgetting}
+                    >
                       {forgetting ? "Forgetting" : "Forget Entry"}
                     </button>
                   </div>
                 </>
-              ) : (
-                <p className="settings-note">左の一覧から entry を選択すると full body を確認できます。</p>
-              )}
+              ) : null}
             </section>
           </div>
         </section>
       </main>
+      {confirmForgetOpen && selectedEntry ? (
+        <div className="memory-review-modal-backdrop" role="presentation" onClick={closeForgetConfirm}>
+          <section
+            ref={forgetDialogRef}
+            className="memory-review-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="memory-review-forget-title"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={handleForgetDialogKeyDown}
+          >
+            <header>
+              <h2 id="memory-review-forget-title">Memory entry を検索対象から除外</h2>
+              <button
+                className="diff-close"
+                type="button"
+                aria-label="Close"
+                onClick={closeForgetConfirm}
+                disabled={forgetting}
+              >
+                x
+              </button>
+            </header>
+            <div className="memory-review-modal-body">
+              <p>この memory entry を検索対象から除外しますか？</p>
+              <strong>{selectedEntry.title || selectedEntry.id}</strong>
+              <span>reason: {forgetReason}</span>
+              {forgetReason === "privacy" ? (
+                <span>privacy reason では title、body、preview、tags も削除されます。</span>
+              ) : null}
+            </div>
+            <footer>
+              <button
+                ref={cancelForgetButtonRef}
+                className="launch-toggle"
+                type="button"
+                onClick={closeForgetConfirm}
+                disabled={forgetting}
+              >
+                Cancel
+              </button>
+              <button className="launch-toggle danger-button" type="button" onClick={() => void forgetSelectedEntry()} disabled={forgetting}>
+                {forgetting ? "Forgetting" : "Forget Entry"}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

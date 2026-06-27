@@ -17,10 +17,6 @@ import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { MemoryV6Diagnostics } from "../../src/memory-v6/memory-diagnostics-state.js";
 import { buildHomeProviderSettingRows } from "../../src/settings/settings-view-model.js";
 import { formatTimestampLabel } from "../../src/time-state.js";
-import {
-  SETTINGS_MATE_RESET_HELP,
-  SETTINGS_MATE_RESET_LABEL,
-} from "../../src/settings/settings-ui.js";
 
 describe("HomeSettingsContent", () => {
   const modelCatalog: ModelCatalogSnapshot = {
@@ -58,37 +54,6 @@ describe("HomeSettingsContent", () => {
     providerSettingRows?: typeof providerSettingRows;
     providerCatalogLoaded?: boolean;
     memoryV6Diagnostics?: MemoryV6Diagnostics | null;
-    canResetMate?: boolean;
-    mateResetBusy?: boolean;
-    onResetMate?: () => void;
-  };
-
-  const collectElementsById = (node: ReactNode, predicate: (element: React.ReactElement) => boolean): React.ReactElement[] => {
-    const result: React.ReactElement[] = [];
-    const visitNode = (currentNode: ReactNode) => {
-      if (!isValidElement(currentNode)) {
-        return;
-      }
-
-      if (predicate(currentNode)) {
-        result.push(currentNode);
-      }
-
-      const children = currentNode.props.children;
-      if (Array.isArray(children)) {
-        children.forEach((child) => visitNode(child as ReactNode));
-        return;
-      }
-
-      if (children === null || children === undefined || typeof children === "boolean") {
-        return;
-      }
-
-      visitNode(children as ReactNode);
-    };
-
-    visitNode(node);
-    return result;
   };
 
   const buildSettingsContent = (params?: RenderSettingsParams) => HomeSettingsContent({
@@ -112,41 +77,16 @@ describe("HomeSettingsContent", () => {
     onExportModelCatalog: noOp,
     onOpenAppLogFolder: noOp,
     onOpenCrashDumpFolder: noOp,
-    onResetMate: params?.onResetMate ?? noOp,
-    canResetMate: params?.canResetMate ?? false,
-    mateResetBusy: params?.mateResetBusy ?? false,
+    onOpenMemoryV6Review: noOp,
     onSaveSettings: noOp,
   });
 
   const renderSettings = (params?: RenderSettingsParams) => renderToStaticMarkup(buildSettingsContent(params));
 
-  const extractResetButton = (html: string) => {
-    const resetLabelIndex = html.indexOf(`<strong>${SETTINGS_MATE_RESET_LABEL}</strong>`);
-    const resetButtonIndex = html.indexOf('<button class="launch-toggle danger-button"', resetLabelIndex);
-    const resetButtonEndIndex = html.indexOf("</button>", resetButtonIndex);
-    assert.ok(resetLabelIndex >= 0 && resetButtonIndex >= 0 && resetButtonEndIndex >= 0);
-    return html.slice(resetButtonIndex, resetButtonEndIndex + 9);
-  };
-
-  const extractResetButtonElement = (params?: RenderSettingsParams): React.ReactElement => {
-    const content = buildSettingsContent(params);
-    const buttons = collectElementsById(content, (element) => element.type === "button");
-    const resetButton = buttons.find((button) =>
-      button.props.type === "button" &&
-      button.props.className === "launch-toggle danger-button" &&
-      typeof button.props.children === "string"
-    );
-    if (!resetButton) {
-      throw new Error("Mate Reset ボタンが見つからないためテストを実行できません。");
-    }
-
-    return resetButton;
-  };
-
-  it("Mate Reset のラベルとヘルプが表示される", () => {
+  it("Mate Reset の危険操作は Settings に表示されない", () => {
     const html = renderSettings();
-    assert.ok(html.includes(`<strong>${SETTINGS_MATE_RESET_LABEL}</strong>`));
-    assert.ok(html.includes(`<p class="settings-help">${SETTINGS_MATE_RESET_HELP}</p>`));
+    assert.ok(!html.includes("Mate を初期化"));
+    assert.ok(!html.includes("保存済みの Mate の状態を破壊的に初期化する"));
   });
 
   it("削除対象の Settings surface は表示しない", () => {

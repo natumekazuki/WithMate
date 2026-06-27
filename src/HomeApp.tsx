@@ -60,7 +60,6 @@ import {
   type MateStorageState,
 } from "./mate/mate-state.js";
 import { buildHomeMateSetupContentProps } from "./mate/home-mate-setup-props.js";
-import { buildMateMaintenanceHandlers } from "./mate/mate-maintenance-handlers.js";
 import { buildMateStatusRefreshers } from "./mate/mate-status-refreshers.js";
 import { buildHomeMonitorContentProps } from "./home/home-monitor-content-props.js";
 import { renderHomeMonitorWindowIcon, renderHomeSearchIcon } from "./home/home-icons.js";
@@ -97,7 +96,6 @@ export default function HomeApp() {
   const [mateDisplayName, setMateDisplayName] = useState("");
   const [mateCreating, setMateCreating] = useState(false);
   const [mateAvatarUpdating, setMateAvatarUpdating] = useState(false);
-  const [mateResetting, setMateResetting] = useState(false);
   const [mateCreationFeedback, setMateCreationFeedback] = useState("");
   const [mateProfileEditorOpen, setMateProfileEditorOpen] = useState(false);
   const settingsDirtyRef = useRef(false);
@@ -424,15 +422,6 @@ export default function HomeApp() {
     },
   });
 
-  const mateMaintenanceHandlers = buildMateMaintenanceHandlers({
-    getApi: getWithMateApi,
-    mateState,
-    mateResetting,
-    setMateResetting,
-    setSettingsFeedback,
-    refreshMateStatus,
-  });
-
   const isMateStateLoading = mateState === null;
   const canUsePrimaryFeatures = mateState !== null;
 
@@ -450,12 +439,7 @@ export default function HomeApp() {
   };
 
   const { settingsContent, mateSetupContent, monitorContent } = buildHomeWindowContentSlots({
-    settingsContent: buildHomeSettingsContentProps({
-      ...baseSettingsContentProps,
-      onResetMate: mateMaintenanceHandlers.onResetMate,
-      mateResetBusy: mateResetting,
-      canResetMate: mateState !== "not_created",
-    }),
+    settingsContent: buildHomeSettingsContentProps(baseSettingsContentProps),
     mateSetupContent: buildHomeMateSetupContentProps({
       mateState,
       mateProfile,

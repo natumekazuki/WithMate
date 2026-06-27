@@ -4,8 +4,6 @@ import { MICROCOPY_SLOTS, type MicrocopySlot } from "../microcopy-state.js";
 import type { HomeProviderSettingRow } from "./settings-view-model.js";
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
-  SETTINGS_MATE_RESET_HELP,
-  SETTINGS_MATE_RESET_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
   SETTINGS_OPEN_LOG_FOLDER_LABEL,
   SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
@@ -43,9 +41,6 @@ export type HomeSettingsContentProps = {
   onOpenAppLogFolder: () => void;
   onOpenCrashDumpFolder: () => void;
   onOpenMemoryV6Review: () => void;
-  onResetMate?: () => void;
-  mateResetBusy?: boolean;
-  canResetMate?: boolean;
   onSaveSettings: () => void;
 };
 
@@ -94,9 +89,6 @@ export function HomeSettingsContent({
   onOpenAppLogFolder,
   onOpenCrashDumpFolder,
   onOpenMemoryV6Review,
-  onResetMate,
-  mateResetBusy = false,
-  canResetMate = false,
   onSaveSettings,
 }: HomeSettingsContentProps) {
   return (
@@ -278,23 +270,6 @@ export function HomeSettingsContent({
                 </button>
                 <button className="launch-toggle" type="button" onClick={onOpenCrashDumpFolder}>
                   {SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <section className="settings-section-card danger-zone">
-            <div className="settings-field">
-              <strong>{SETTINGS_MATE_RESET_LABEL}</strong>
-              <p className="settings-help">{SETTINGS_MATE_RESET_HELP}</p>
-              <div className="settings-actions">
-                <button
-                  className="launch-toggle danger-button"
-                  type="button"
-                  onClick={() => onResetMate?.()}
-                  disabled={!canResetMate || mateResetBusy}
-                >
-                  {mateResetBusy ? "リセット中..." : SETTINGS_MATE_RESET_LABEL}
                 </button>
               </div>
             </div>
