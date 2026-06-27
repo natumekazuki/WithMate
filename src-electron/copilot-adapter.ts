@@ -2517,7 +2517,11 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         message: error instanceof Error ? error.message : String(error),
       });
       await this.resetRecoverableConnection(input);
-      return this.runSessionTurnOnce(input, prompt, onProgress);
+      const refreshedMemoryBinding = await input.refreshMemoryBindingForRetry?.();
+      const retryInput = refreshedMemoryBinding === undefined
+        ? input
+        : { ...input, memoryBinding: refreshedMemoryBinding };
+      return this.runSessionTurnOnce(retryInput, prompt, onProgress);
     }
   }
 

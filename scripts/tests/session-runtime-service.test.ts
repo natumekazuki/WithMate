@@ -1498,6 +1498,8 @@ describe("SessionRuntimeService", () => {
     const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
     const auditUpdates: UpdateAuditLogInput[] = [];
     const seenThreadIds: string[] = [];
+    const seenBindingReferences: Array<string | undefined> = [];
+    const bindingEvents: string[] = [];
     let attempt = 0;
 
     const adapter: ProviderCodingAdapter = {
@@ -1518,6 +1520,7 @@ describe("SessionRuntimeService", () => {
       async runSessionTurn(input) {
         attempt += 1;
         seenThreadIds.push(input.session.threadId);
+        seenBindingReferences.push(input.memoryBinding?.bindingReference);
         if (attempt === 1) {
           throw new ProviderTurnError("thread not found", createPartialResult({ threadId: "thread-stale" }), false);
         }
@@ -1582,6 +1585,19 @@ describe("SessionRuntimeService", () => {
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
       clearWorkspaceFileIndex() {},
+      createProviderMemoryBinding() {
+        const bindingNumber = bindingEvents.filter((event) => event.startsWith("create:")).length + 1;
+        const binding = {
+          bindingId: `binding-${bindingNumber}`,
+          bindingReference: `ref-${bindingNumber}`,
+          transport: "env" as const,
+        };
+        bindingEvents.push(`create:${binding.bindingId}`);
+        return binding;
+      },
+      revokeProviderMemoryBinding(binding) {
+        bindingEvents.push(`revoke:${binding.bindingId}`);
+      },
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1595,6 +1611,8 @@ describe("SessionRuntimeService", () => {
     assert.equal(result.messages.filter((message) => message.role === "user").length, 1);
     assert.equal(result.messages.filter((message) => message.role === "assistant").length, 1);
     assert.deepEqual(seenThreadIds, ["thread-stale", ""]);
+    assert.deepEqual(seenBindingReferences, ["ref-1", "ref-2"]);
+    assert.deepEqual(bindingEvents, ["create:binding-1", "revoke:binding-1", "create:binding-2", "revoke:binding-2"]);
     assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
     assert.equal(storedSessions.length, 3);
     assert.equal(storedSessions[1]?.threadId, "");
