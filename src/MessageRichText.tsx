@@ -3,6 +3,7 @@ import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform 
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import type { PluggableList } from "unified";
 
 import { getWithMateApi } from "./renderer-withmate-api.js";
 
@@ -11,6 +12,8 @@ type MessageRichTextProps = {
   className?: string;
   onOpenPath?: (target: string) => void;
 };
+
+type MarkdownRenderMode = "light" | "full";
 
 type MermaidRenderState =
   | { status: "pending" }
@@ -295,9 +298,63 @@ const markdownComponents: Components = {
   img: () => null,
 };
 
-function createMarkdownComponents(onOpenPath?: (target: string) => void): Components {
+function shouldDeferRichMarkdownRender(): boolean {
+  return typeof window !== "undefined";
+}
+
+function scheduleFullMarkdownRender(callback: () => void): () => void {
+  if (typeof window === "undefined") {
+    return () => undefined;
+  }
+
+  const browserWindow = window as Window & {
+    requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+    cancelIdleCallback?: (handle: number) => void;
+  };
+  let canceled = false;
+  let frameId: number | null = null;
+  let idleId: number | null = null;
+  const run = () => {
+    if (!canceled) {
+      callback();
+    }
+  };
+
+  if (typeof browserWindow.requestIdleCallback === "function") {
+    idleId = browserWindow.requestIdleCallback(run, { timeout: 500 });
+  } else {
+    frameId = browserWindow.requestAnimationFrame(() => {
+      frameId = browserWindow.requestAnimationFrame(run);
+    });
+  }
+
+  return () => {
+    canceled = true;
+    if (idleId !== null && typeof browserWindow.cancelIdleCallback === "function") {
+      browserWindow.cancelIdleCallback(idleId);
+    }
+    if (frameId !== null) {
+      browserWindow.cancelAnimationFrame(frameId);
+    }
+  };
+}
+
+function createMarkdownComponents(
+  onOpenPath?: (target: string) => void,
+  options?: { enableMermaid?: boolean },
+): Components {
+  const enableMermaid = options?.enableMermaid ?? true;
   return {
     ...markdownComponents,
+    ...(enableMermaid
+      ? {}
+      : {
+          pre: ({ children, node, ...props }) => (
+            <pre {...props} className={mergeClassName("message-code-block", props.className)}>
+              {children}
+            </pre>
+          ),
+        }),
     a: ({ children, href, node, ...props }) => {
       const target = href?.trim() ?? "";
       const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
@@ -317,16 +374,49 @@ export function MessageRichText({ text, className = "message-body", onOpenPath }
   const reactId = useId();
   const footnotePrefix = useMemo(() => `message-footnote-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}-`, [reactId]);
   const footnoteLabelId = `${footnotePrefix}footnote-label`;
-  const components = useMemo(() => createMarkdownComponents(onOpenPath), [onOpenPath]);
-  const rehypePlugins = useMemo(() => [rehypeKatex, createFootnoteLabelIdPlugin(footnoteLabelId)], [footnoteLabelId]);
+  const shouldDefer = shouldDeferRichMarkdownRender();
+  const [renderState, setRenderState] = useState<{ text: string; mode: MarkdownRenderMode }>(() => ({
+    text,
+    mode: shouldDefer ? "light" : "full",
+  }));
+  const renderMode = renderState.text === text ? renderState.mode : shouldDefer ? "light" : "full";
+  const isFullRender = renderMode === "full";
+  const components = useMemo(
+    () => createMarkdownComponents(onOpenPath, { enableMermaid: isFullRender }),
+    [isFullRender, onOpenPath],
+  );
+  const rehypePlugins = useMemo<PluggableList>(
+    () => (isFullRender ? [rehypeKatex, createFootnoteLabelIdPlugin(footnoteLabelId)] : []),
+    [footnoteLabelId, isFullRender],
+  );
+  const remarkPlugins = useMemo<PluggableList>(
+    () => (isFullRender ? [remarkGfm, [remarkMath, { singleDollarTextMath: false }]] : []),
+    [isFullRender],
+  );
+
+  useEffect(() => {
+    if (!shouldDefer) {
+      setRenderState({ text, mode: "full" });
+      return;
+    }
+
+    setRenderState({ text, mode: "light" });
+    return scheduleFullMarkdownRender(() => {
+      setRenderState((current) => (
+        current.text === text
+          ? { text, mode: "full" }
+          : current
+      ));
+    });
+  }, [shouldDefer, text]);
 
   return (
-    <div className={`${className} rich-text`.trim()}>
+    <div className={`${className} rich-text`.trim()} data-markdown-render-mode={renderMode}>
       <ReactMarkdown
         components={components}
         rehypePlugins={rehypePlugins}
         urlTransform={markdownUrlTransform}
-        remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]}
+        remarkPlugins={remarkPlugins}
         remarkRehypeOptions={{ clobberPrefix: footnotePrefix }}
       >
         {text}
