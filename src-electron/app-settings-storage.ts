@@ -6,6 +6,7 @@ import { openAppDatabase } from "./sqlite-connection.js";
 
 const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
 const MEMORY_GENERATION_ENABLED_KEY = "memory_generation_enabled";
+const LAUNCH_AT_LOGIN_ENABLED_KEY = "launch_at_login_enabled";
 const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
@@ -35,6 +36,13 @@ export class AppSettingsStorage {
         ON CONFLICT(setting_key) DO NOTHING
       `)
       .run(MEMORY_GENERATION_ENABLED_KEY, String(DEFAULT_APP_SETTINGS.memoryGenerationEnabled), updatedAt);
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(LAUNCH_AT_LOGIN_ENABLED_KEY, String(DEFAULT_APP_SETTINGS.launchAtLoginEnabled), updatedAt);
     this.db
       .prepare(`
         INSERT INTO app_settings (setting_key, setting_value, updated_at)
@@ -100,6 +108,10 @@ export class AppSettingsStorage {
     for (const row of rows) {
       if (row.setting_key === MEMORY_GENERATION_ENABLED_KEY) {
         settings.memoryGenerationEnabled = row.setting_value === "true";
+        continue;
+      }
+      if (row.setting_key === LAUNCH_AT_LOGIN_ENABLED_KEY) {
+        settings.launchAtLoginEnabled = row.setting_value === "true";
         continue;
       }
       if (row.setting_key === AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY) {
@@ -178,6 +190,15 @@ export class AppSettingsStorage {
             updated_at = excluded.updated_at
         `)
         .run(MEMORY_GENERATION_ENABLED_KEY, String(normalized.memoryGenerationEnabled), updatedAt);
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(LAUNCH_AT_LOGIN_ENABLED_KEY, String(normalized.launchAtLoginEnabled), updatedAt);
       this.db
         .prepare(`
           INSERT INTO app_settings (setting_key, setting_value, updated_at)

@@ -42,6 +42,7 @@ import {
   type RunSessionTurnInput,
   type RunSessionTurnResult,
 } from "../../src-electron/provider-runtime.js";
+import { WITHMATE_MEMORY_BINDING_REFERENCE_ENV } from "../../src-electron/provider-memory-binding.js";
 
 const TEST_STRUCTURED_OUTPUT_SCHEMA = {
   type: "object",
@@ -248,6 +249,105 @@ describe("CopilotAdapter env", () => {
     assert.equal(env.NODE_NO_WARNINGS, "1");
     assert.equal(env.PATH, "test-path");
     assert.equal(env.ELECTRON_RUN_AS_NODE, "1");
+  });
+
+  it("Copilot child CLI env に Memory binding reference を重ねる", () => {
+    const env = buildCopilotClientEnv(
+      { PATH: "test-path" },
+      {
+        bindingId: "binding-1",
+        bindingReference: "ref-1",
+        transport: "env",
+      },
+    );
+
+    assert.equal(env.NODE_NO_WARNINGS, "1");
+    assert.equal(env.PATH, "test-path");
+    assert.equal(env[WITHMATE_MEMORY_BINDING_REFERENCE_ENV], "ref-1");
+  });
+
+  it("Copilot child CLI env は baseEnv の stale Memory binding env を引き継がない", () => {
+    const env = buildCopilotClientEnv({
+      PATH: "test-path",
+      [WITHMATE_MEMORY_BINDING_REFERENCE_ENV]: "stale-ref",
+    });
+
+    assert.equal(env.NODE_NO_WARNINGS, "1");
+    assert.equal(env.PATH, "test-path");
+    assert.equal(env[WITHMATE_MEMORY_BINDING_REFERENCE_ENV], undefined);
+  });
+
+  it("Memory binding 付き Copilot client は turn-local として cache に残さない", () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      clients: Map<string, unknown>;
+      getClient(providerId: string, input: RunSessionTurnInput): { client: unknown; clientKey: string };
+    };
+    const input = createRunSessionInput();
+    const boundInput: RunSessionTurnInput = {
+      ...input,
+      memoryBinding: {
+        bindingId: "binding-1",
+        bindingReference: "ref-1",
+        transport: "env",
+      },
+    };
+
+    const unboundClient = adapter.getClient("copilot", input);
+    const nextUnboundClient = adapter.getClient("copilot", input);
+    const boundClient = adapter.getClient("copilot", boundInput);
+    const nextBoundClient = adapter.getClient("copilot", boundInput);
+
+    assert.equal(nextUnboundClient.client, unboundClient.client);
+    assert.notEqual(nextBoundClient.client, boundClient.client);
+    assert.equal(adapter.clients.size, 1);
+  });
+
+  it("Memory binding 付き Copilot session は turn-local として cache に残さない", async () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      sessions: Map<string, unknown>;
+      getClient(): { client: unknown; clientKey: string };
+      getSession(input: RunSessionTurnInput, prompt: ProviderPromptComposition): Promise<{ session: { sessionId: string } }>;
+    };
+    let sessionIndex = 0;
+    const createSession = () => ({
+      sessionId: `session-${++sessionIndex}`,
+      disconnect: async () => undefined,
+      on: () => () => undefined,
+    });
+    adapter.getClient = () => ({
+      client: {
+        createSession,
+        resumeSession: async (threadId: string) => ({ ...createSession(), sessionId: threadId }),
+      },
+      clientKey: "client-key",
+    });
+    const input = createRunSessionInput();
+    const boundInput: RunSessionTurnInput = {
+      ...input,
+      memoryBinding: {
+        bindingId: "binding-1",
+        bindingReference: "ref-1",
+        transport: "env",
+      },
+    };
+
+    const unboundSession = await adapter.getSession(input, EMPTY_PROMPT);
+    const nextUnboundSession = await adapter.getSession(input, EMPTY_PROMPT);
+    const boundSession = await adapter.getSession(boundInput, EMPTY_PROMPT);
+    const nextBoundSession = await adapter.getSession(boundInput, EMPTY_PROMPT);
+    const unboundAfterBoundSession = await adapter.getSession({
+      ...input,
+      session: {
+        ...input.session,
+        threadId: boundSession.session.sessionId,
+      },
+    }, EMPTY_PROMPT);
+
+    assert.equal(nextUnboundSession.session, unboundSession.session);
+    assert.notEqual(nextBoundSession.session, boundSession.session);
+    assert.equal(unboundAfterBoundSession.session.sessionId, boundSession.session.sessionId);
+    assert.notEqual(unboundAfterBoundSession.session, unboundSession.session);
+    assert.equal(adapter.sessions.size, 1);
   });
 
   it("platform / arch から native Copilot package 名を決める", () => {
@@ -959,6 +1059,64 @@ describe("CopilotAdapter env", () => {
     assert.equal(result, expected);
     assert.equal(attempts.length, 2);
     assert.deepEqual(resetCalls, [input.session.id]);
+  });
+
+  it("CopilotAdapter は Memory binding 付き internal retry 前に binding を更新する", async () => {
+    const adapter = {
+      composePrompt() {
+        return EMPTY_PROMPT;
+      },
+      runSessionTurn: CopilotAdapter.prototype.runSessionTurn,
+      runSessionTurnOnce: async () => {
+        throw new Error("not replaced");
+      },
+      resetRecoverableConnection: async () => undefined,
+    } as unknown as {
+      composePrompt(input: RunSessionTurnInput): ProviderPromptComposition;
+      runSessionTurn(input: RunSessionTurnInput): Promise<RunSessionTurnResult>;
+      runSessionTurnOnce(input: RunSessionTurnInput, prompt: ProviderPromptComposition): Promise<RunSessionTurnResult>;
+      resetRecoverableConnection(input: RunSessionTurnInput): Promise<void>;
+    };
+
+    const attempts: Array<string | undefined> = [];
+    const resetCalls: string[] = [];
+    const refreshCalls: string[] = [];
+    const expected = createPartialResult({ threadId: "thread-fresh", assistantText: "回復したよ。" });
+    const input: RunSessionTurnInput = {
+      ...createRunSessionInput({ threadId: "thread-stale" }),
+      memoryBinding: {
+        bindingId: "binding-1",
+        bindingReference: "ref-1",
+        transport: "env",
+      },
+      refreshMemoryBindingForRetry: async () => {
+        refreshCalls.push("refresh");
+        return {
+          bindingId: "binding-2",
+          bindingReference: "ref-2",
+          transport: "env",
+        };
+      },
+    };
+
+    adapter.runSessionTurnOnce = async (nextInput) => {
+      attempts.push(nextInput.memoryBinding?.bindingReference);
+      if (attempts.length === 1) {
+        throw new ProviderTurnError("SessionNotFound: session not found", createPartialResult(), false);
+      }
+
+      return expected;
+    };
+    adapter.resetRecoverableConnection = async (nextInput) => {
+      resetCalls.push(nextInput.session.id);
+    };
+
+    const result = await adapter.runSessionTurn(input);
+
+    assert.equal(result, expected);
+    assert.deepEqual(attempts, ["ref-1", "ref-2"]);
+    assert.deepEqual(resetCalls, [input.session.id]);
+    assert.deepEqual(refreshCalls, ["refresh"]);
   });
 
   it("Copilot elicitation schema の enum / anyOf / number を live field へ正規化する", () => {

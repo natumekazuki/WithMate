@@ -136,6 +136,10 @@ export function buildHomeMateProfileHandlers({
       });
     },
     onOpenProfileEditor: () => {
+      if (mateState === "profile_unavailable") {
+        setMateCreationFeedback("V6 Memory foundation では Mate Profile はまだ利用できません。");
+        return;
+      }
       setMateDisplayName(mateProfile?.displayName ?? "");
       setMateCreationFeedback("");
       setMateProfileEditorOpen(true);

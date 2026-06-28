@@ -6,15 +6,14 @@ import {
   SETTINGS_API_KEY_PLACEHOLDER,
   SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE,
   SETTINGS_CODING_CREDENTIALS_HELP,
-  SETTINGS_MATE_RESET_LABEL,
-  SETTINGS_MATE_RESET_HELP,
+  SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP,
   SETTINGS_RELEASE_COMPATIBILITY_NOTE,
   SETTINGS_RESET_DATABASE_HELP,
   SETTINGS_RESET_DATABASE_LABEL,
-  buildResetMateConfirmMessage,
   buildResetDatabaseConfirmMessage,
   buildResetDatabaseSuccessMessage,
 } from "../../src/settings/settings-ui.js";
+import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "../../src/memory-v6/provider-instruction-sample.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS } from "../../src-electron/window-defaults.js";
 import { ALL_RESET_APP_DATABASE_TARGETS } from "../../src/withmate-window-types.js";
 
@@ -36,13 +35,6 @@ describe("Settings UI constants", () => {
     assert.match(buildResetDatabaseSuccessMessage(ALL_RESET_APP_DATABASE_TARGETS), /初期状態へ戻した/);
   });
 
-  it("Mate Reset は破壊的操作として意図と再確認文言が含まれる", () => {
-    assert.equal(SETTINGS_MATE_RESET_LABEL, "Mate を初期化");
-    assert.match(SETTINGS_MATE_RESET_HELP, /Danger Zone/);
-    assert.match(SETTINGS_MATE_RESET_HELP, /破壊的/);
-    assert.match(buildResetMateConfirmMessage(), /本当に続ける/);
-  });
-
   it("Home Window は Settings overlay の余裕を確保する既定サイズを使う", () => {
     assert.deepEqual(HOME_WINDOW_DEFAULT_BOUNDS, {
       width: 1440,
@@ -50,6 +42,19 @@ describe("Settings UI constants", () => {
       minWidth: 900,
       minHeight: 680,
     });
+  });
+
+  it("Memory provider instruction sample は手動コピー方針で secret や内部 env を含めない", () => {
+    assert.match(SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP, /自動編集しない/);
+    assert.match(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /withmate-memory/);
+    assert.match(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /Do not read or write WithMate database files directly/);
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /WITHMATE_MEMORY_/);
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /x-withmate-memory/i);
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /binding reference/i);
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /api secret/i);
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /discovery file path/i);
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /internal header/i);
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /local runtime identifier/i);
   });
 
 });

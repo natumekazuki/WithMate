@@ -24,6 +24,14 @@ export class MainWindowFacade {
     return this.deps.getAuxWindowService().openSettingsWindow();
   }
 
+  async openMemoryV6ReviewWindow(): Promise<BrowserWindow> {
+    return this.deps.getAuxWindowService().openMemoryV6ReviewWindow();
+  }
+
+  isMemoryV6ReviewWindow(window: BrowserWindow): boolean {
+    return this.deps.getAuxWindowService().isMemoryV6ReviewWindow(window);
+  }
+
   async openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {
     return this.deps.getAuxWindowService().openCharacterEditorWindow(characterId);
   }

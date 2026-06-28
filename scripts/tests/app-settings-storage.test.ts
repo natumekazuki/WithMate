@@ -17,6 +17,7 @@ describe("AppSettingsStorage", () => {
       const updated = storage.updateSettings({
         ...createDefaultAppSettings(),
         memoryGenerationEnabled: false,
+        launchAtLoginEnabled: true,
         autoCollapseActionDockOnSend: false,
         userMicrocopyCatalog: {
           ...createDefaultAppSettings().userMicrocopyCatalog,
@@ -103,6 +104,7 @@ describe("AppSettingsStorage", () => {
       storage.updateSettings({
         ...createDefaultAppSettings(),
         memoryGenerationEnabled: false,
+        launchAtLoginEnabled: true,
         autoCollapseActionDockOnSend: false,
         userMicrocopyCatalog: {
           ...createDefaultAppSettings().userMicrocopyCatalog,

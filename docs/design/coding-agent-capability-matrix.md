@@ -63,11 +63,13 @@
 | apps / mcp / plugins | provider 拡張機能を session から扱う | 一部対応 | 一部対応 | 未着手 | Codex は `/apps` `/mcp`、Copilot は plugin 系がある |
 | sandbox / allowlist 拡張 | read dir 追加や tool allowlist を wrapper から制御する | 一部対応 | 一部対応 | 一部実装 | Codex は `read-only / workspace-write / workspace-write + network / danger-full-access` を session metadata から SDK runtime option へ渡す。Copilot は現時点で sandbox dropdown を出さない |
 | app-level approval callback | app 側で approve / deny を返す | 非対応 | 一部対応 | 一部実装 | Copilot provider-controlled では Session UI の approval card から `approve / deny` を返せる。Codex は current SDK surface では未対応 |
+| Memory runtime binding injection | turn ごとの短命 opaque reference を provider process へ渡す | 対応 | 対応 | 実装済み | Codex は `Codex` client options、Copilot は `CopilotClient` options の env injection を使う。WithMate は binding registry、provider cache key 分離、runtime API の principal 解決、turn終了 / session delete / app quit 相当の失効、provider execution invalidation と internal retry 時の binding 再発行まで接続済み。`context_file` transport は対応 provider が出るまで型予約に留める |
 
 ## Current Read
 
-2026-03-22 時点では、WithMate の Codex 対応は日常利用に足る範囲まで入っている。  
-一方で cross-provider matrix として見ると、未着手が多いのは `Copilot runtime`, `approval detail`, `slash command`, `agent/apps/mcp/plugins` まわり。
+2026-06-27 時点では、WithMate の Codex / GitHub Copilot 対応は同じ Session UI で通常turnを実行できる範囲まで入っている。
+Memory V6 は Skill-first local Memory service として、runtime API、CLI discovery、app-internal guard、provider binding injection、binding registry / principal解決、managed Skill sync、Settings Diagnostics まで接続済みである。
+一方で cross-provider matrix として見ると、未着手が多いのは `slash command`, `agent/apps/mcp/plugins` まわり。
 
 ## Update Rule
 

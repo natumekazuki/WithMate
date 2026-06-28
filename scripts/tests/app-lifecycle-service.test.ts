@@ -23,6 +23,26 @@ test("AppLifecycleService は activate で Home Window を開く", async () => {
   assert.deepEqual(calls, ["createHomeWindow"]);
 });
 
+test("AppLifecycleService は second-instance で Home Window を開く", async () => {
+  const calls: string[] = [];
+  const service = new AppLifecycleService({
+    hasInFlightSessionRuns: () => false,
+    getAllowQuitWithInFlightRuns: () => false,
+    setAllowQuitWithInFlightRuns: () => {},
+    async createHomeWindow() {
+      calls.push("createHomeWindow");
+    },
+    quitApp() {},
+    shouldQuitWhenAllWindowsClosed: () => false,
+    confirmQuitWhileRunning: () => false,
+    closePersistentStores() {},
+  });
+
+  await service.handleSecondInstance();
+
+  assert.deepEqual(calls, ["createHomeWindow"]);
+});
+
 test("AppLifecycleService は実行中 session があると window-all-closed で Home Window を再度開く", async () => {
   const calls: string[] = [];
   const service = new AppLifecycleService({
@@ -44,6 +64,28 @@ test("AppLifecycleService は実行中 session があると window-all-closed �
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.deepEqual(calls, ["createHomeWindow"]);
+});
+
+test("AppLifecycleService は window-all-closed で終了不要なら app を終了しない", () => {
+  const calls: string[] = [];
+  const service = new AppLifecycleService({
+    hasInFlightSessionRuns: () => false,
+    getAllowQuitWithInFlightRuns: () => false,
+    setAllowQuitWithInFlightRuns: () => {},
+    async createHomeWindow() {
+      calls.push("createHomeWindow");
+    },
+    quitApp() {
+      calls.push("quitApp");
+    },
+    shouldQuitWhenAllWindowsClosed: () => false,
+    confirmQuitWhileRunning: () => false,
+    closePersistentStores() {},
+  });
+
+  service.handleWindowAllClosed();
+
+  assert.deepEqual(calls, []);
 });
 
 test("AppLifecycleService は before-quit で実行中 session があり confirm が false なら終了しない", () => {

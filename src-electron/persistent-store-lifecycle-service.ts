@@ -16,10 +16,12 @@ import type {
 import { APP_DATABASE_V2_FILENAME, CREATE_V2_SCHEMA_SQL, isValidV2Database } from "./database-schema-v2.js";
 import { APP_DATABASE_V3_FILENAME, CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
 import { APP_DATABASE_V4_FILENAME } from "./database-schema-v4.js";
+import { APP_DATABASE_V6_FILENAME, CREATE_V6_SCHEMA_SQL, isValidV6Database } from "./database-schema-v6.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogStorageV2 } from "./audit-log-storage-v2.js";
 import { AuditLogStorageV3 } from "./audit-log-storage-v3.js";
+import { AuditLogStorageV6 } from "./audit-log-storage-v6.js";
 import { AuxiliarySessionStorage } from "./auxiliary-session-storage.js";
 import { CharacterStorage } from "./character-storage.js";
 import { MateStorage, type MateProfileFileMismatch } from "./mate-storage.js";
@@ -33,6 +35,7 @@ import { SessionMemoryStorage } from "./session-memory-storage.js";
 import { SessionStorage } from "./session-storage.js";
 import { SessionStorageV2 } from "./session-storage-v2.js";
 import { SessionStorageV3 } from "./session-storage-v3.js";
+import { SessionStorageV6 } from "./session-storage-v6.js";
 import { sessionSummariesToSessions } from "./session-summary-adapter.js";
 import { openAppDatabase, truncateAppDatabaseWal } from "./sqlite-connection.js";
 
@@ -131,6 +134,7 @@ type PersistentStoreLifecycleDeps = {
   createMateStorage(dbPath: string, userDataPath: string): MateStorage;
   ensureV2Schema?(dbPath: string): void;
   ensureV3Schema?(dbPath: string): void;
+  ensureV6Schema?(dbPath: string): void;
   onBeforeClose(): void;
   truncateWal(dbPath: string): void;
   removeFile(filePath: string): Promise<void>;
@@ -143,8 +147,11 @@ export class PersistentStoreLifecycleService {
   async initialize(dbPath: string, bundledModelCatalogPath: string, userDataPath?: string): Promise<PersistentStoreBundle> {
     const isV3Database = isValidV3Database(dbPath);
     const isV2Database = isValidV2Database(dbPath);
+    const isV6Database = isValidV6Database(dbPath);
     const resolvedUserDataPath = userDataPath ?? dirname(dbPath);
-    if (isV3Database) {
+    if (isV6Database) {
+      this.deps.ensureV6Schema?.(dbPath);
+    } else if (isV3Database) {
       this.deps.ensureV3Schema?.(dbPath);
     } else if (isV2Database) {
       this.deps.ensureV2Schema?.(dbPath);
@@ -152,26 +159,33 @@ export class PersistentStoreLifecycleService {
 
     const modelCatalogStorage = this.deps.createModelCatalogStorage(dbPath, bundledModelCatalogPath);
     const activeModelCatalog = modelCatalogStorage.ensureSeeded();
-    const sessionStorage = isV3Database
+    const sessionStorage = isV6Database
+      ? new SessionStorageV6(dbPath)
+      : isV3Database
       ? new SessionStorageV3(dbPath, this.v3BlobRootPath(dbPath))
       : isV2Database
       ? new SessionStorageV2(dbPath)
       : this.deps.createSessionStorage(dbPath);
-    const sessionMemoryStorage = isV3Database || isV2Database
+    const sessionMemoryStorage = isV6Database || isV3Database || isV2Database
       ? new SessionMemoryStorageV2Read()
       : this.deps.createSessionMemoryStorage(dbPath);
-    const projectMemoryStorage = isV3Database || isV2Database
+    const projectMemoryStorage = isV6Database || isV3Database || isV2Database
       ? new ProjectMemoryStorageV2Read()
       : this.deps.createProjectMemoryStorage(dbPath);
-    const auditLogStorage = isV3Database
+    const auditLogStorage = isV6Database
+      ? new AuditLogStorageV6(dbPath)
+      : isV3Database
       ? new AuditLogStorageV3(dbPath, this.v3BlobRootPath(dbPath))
       : isV2Database
       ? new AuditLogStorageV2(dbPath)
       : this.deps.createAuditLogStorage(dbPath);
-    const auxiliarySessionStorage = isV3Database || isV2Database || basename(dbPath) !== APP_DATABASE_V4_FILENAME
+    const auxiliarySessionStorage = isV6Database || isV3Database || isV2Database || basename(dbPath) !== APP_DATABASE_V4_FILENAME
       ? new LegacyAuxiliarySessionStorage()
       : this.deps.createAuxiliarySessionStorage?.(dbPath) ?? new AuxiliarySessionStorage(dbPath);
-    const characterStorage = isV3Database || isV2Database || basename(dbPath) !== APP_DATABASE_V4_FILENAME
+    const characterStorage = isV3Database || isV2Database || (
+        basename(dbPath) !== APP_DATABASE_V4_FILENAME
+        && basename(dbPath) !== APP_DATABASE_V6_FILENAME
+      )
       ? new LegacyCharacterStorage()
       : this.deps.createCharacterStorage?.(dbPath, resolvedUserDataPath)
         ?? new CharacterStorage(dbPath, resolvedUserDataPath);
@@ -244,7 +258,9 @@ export class PersistentStoreLifecycleService {
         : Promise.resolve(),
     ]);
 
-    if (this.isV3DatabasePath(dbPath)) {
+    if (this.isV6DatabasePath(dbPath)) {
+      this.deps.ensureV6Schema?.(dbPath);
+    } else if (this.isV3DatabasePath(dbPath)) {
       this.deps.ensureV3Schema?.(dbPath);
     } else if (this.isV2DatabasePath(dbPath)) {
       this.deps.ensureV2Schema?.(dbPath);
@@ -261,13 +277,18 @@ export class PersistentStoreLifecycleService {
     return basename(dbPath) === APP_DATABASE_V3_FILENAME;
   }
 
+  private isV6DatabasePath(dbPath: string): boolean {
+    return basename(dbPath) === APP_DATABASE_V6_FILENAME;
+  }
+
   private isBlobBackedDatabasePath(dbPath: string): boolean {
     const databaseFilename = basename(dbPath);
     return databaseFilename === APP_DATABASE_V3_FILENAME || databaseFilename === APP_DATABASE_V4_FILENAME;
   }
 
   private isCharacterBackedDatabasePath(dbPath: string): boolean {
-    return basename(dbPath) === APP_DATABASE_V4_FILENAME;
+    const databaseFilename = basename(dbPath);
+    return databaseFilename === APP_DATABASE_V4_FILENAME || databaseFilename === APP_DATABASE_V6_FILENAME;
   }
 
   private removeBlobRoot(dbPath: string): Promise<void> {
@@ -417,6 +438,16 @@ export function createPersistentStoreLifecycleService(): PersistentStoreLifecycl
       const db = openAppDatabase(dbPath);
       try {
         for (const statement of CREATE_V3_SCHEMA_SQL) {
+          db.exec(statement);
+        }
+      } finally {
+        db.close();
+      }
+    },
+    ensureV6Schema: (dbPath) => {
+      const db = openAppDatabase(dbPath);
+      try {
+        for (const statement of CREATE_V6_SCHEMA_SQL) {
           db.exec(statement);
         }
       } finally {

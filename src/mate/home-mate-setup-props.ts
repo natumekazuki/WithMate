@@ -31,20 +31,21 @@ export function buildHomeMateSetupContentProps({
   onClearAvatar,
 }: HomeMateSetupContentInput): HomeMateSetupPanelProps {
   const isMateNotCreated = mateState === "not_created";
+  const isMateProfileUnavailable = mateState === "profile_unavailable";
 
   return {
-    mode: isMateNotCreated ? "create" : "edit",
+    mode: isMateProfileUnavailable ? "unavailable" : isMateNotCreated ? "create" : "edit",
     displayName: mateDisplayName,
     creating: mateCreating,
     feedback: mateCreationFeedback,
     onChangeDisplayName,
     onSubmit,
     onOpenSettings,
-    onCancel: isMateNotCreated ? undefined : onCancelEdit,
+    onCancel: isMateNotCreated || isMateProfileUnavailable ? undefined : onCancelEdit,
     mateDisplayName: mateProfile?.displayName ?? null,
     mateAvatarFilePath: mateProfile?.avatarFilePath ?? "",
     avatarUpdating: mateAvatarUpdating,
-    onSelectAvatar: isMateNotCreated ? undefined : onSelectAvatar,
-    onClearAvatar: isMateNotCreated ? undefined : onClearAvatar,
+    onSelectAvatar: isMateNotCreated || isMateProfileUnavailable ? undefined : onSelectAvatar,
+    onClearAvatar: isMateNotCreated || isMateProfileUnavailable ? undefined : onClearAvatar,
   };
 }

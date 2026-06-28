@@ -67,6 +67,7 @@ export type SettingsCatalogServiceDeps = {
   invalidateAllProviderSessionThreads(): void;
   closeResetTargetWindows(): void;
   recreateDatabaseFile(): Promise<ModelCatalogSnapshot>;
+  applyAppSettingsSideEffects?: (settings: AppSettings) => void;
   broadcastSessions(sessionIds?: Iterable<string>): void;
   broadcastAppSettings(settings?: AppSettings): void;
   broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): void;
@@ -460,6 +461,7 @@ export class SettingsCatalogService {
       appSettings = this.deps.getAppSettings();
     }
 
+    this.deps.applyAppSettingsSideEffects?.(appSettings);
     this.deps.broadcastSessions(previousSessionIds);
     this.deps.broadcastAppSettings(appSettings);
     this.deps.broadcastModelCatalog(modelCatalog);

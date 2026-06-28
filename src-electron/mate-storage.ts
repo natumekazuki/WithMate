@@ -5,6 +5,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import {
   CREATE_V4_SCHEMA_SQL,
+  APP_DATABASE_V4_FILENAME,
   isLegacyAppDatabasePath,
 } from "./database-schema-v4.js";
 import { openAppDatabase } from "./sqlite-connection.js";
@@ -37,7 +38,7 @@ const MATE_SECTION_FILES = [
 export type MateSectionKey = (typeof MATE_SECTION_FILES)[number]["key"];
 
 export type MateProfileState = "draft" | "active" | "deleted";
-export type MateStorageState = "not_created" | MateProfileState;
+export type MateStorageState = "not_created" | "profile_unavailable" | MateProfileState;
 
 type MateProfileRow = {
   id: string;
@@ -357,7 +358,7 @@ export class MateStorage {
 
   constructor(dbPath: string, userDataPath: string, fileSystem: MateStorageFileSystem = {}) {
     this.userDataPath = userDataPath;
-    this.isLegacyDatabase = isLegacyAppDatabasePath(dbPath);
+    this.isLegacyDatabase = isLegacyAppDatabasePath(dbPath) || !dbPath.endsWith(APP_DATABASE_V4_FILENAME);
     this.removeFileSystemEntry = fileSystem.rm ?? rm;
     this.db = openAppDatabase(dbPath);
     if (!this.isLegacyDatabase) {
@@ -452,6 +453,10 @@ export class MateStorage {
   }
 
   getMateState(): MateStorageState {
+    if (this.isLegacyDatabase) {
+      return "profile_unavailable";
+    }
+
     const profile = this.getMateProfile();
     return profile ? profile.state : "not_created";
   }

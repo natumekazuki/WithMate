@@ -91,11 +91,17 @@ test("AuxWindowService は singleton window を再利用する", async () => {
   const first = await service.openHomeWindow();
   const second = await service.openHomeWindow();
   const settings = await service.openSettingsWindow();
+  const memoryReview = await service.openMemoryV6ReviewWindow();
 
   assert.equal(first, second);
   assert.notEqual(first, settings);
-  assert.deepEqual(homeLoads, ["home", "settings"]);
-  assert.equal(created.length, 2);
+  assert.notEqual(settings, memoryReview);
+  assert.equal(service.isMemoryV6ReviewWindow(memoryReview), true);
+  assert.equal(service.isMemoryV6ReviewWindow(settings), false);
+  assert.deepEqual(homeLoads, ["home", "settings", "memory-review"]);
+  assert.equal(created.length, 3);
+  memoryReview.close();
+  assert.equal(service.isMemoryV6ReviewWindow(memoryReview), false);
 });
 
 test("AuxWindowService は diff preview を保持し reset 時に close する", async () => {
@@ -132,6 +138,33 @@ test("AuxWindowService は diff preview を保持し reset 時に close する",
 
   service.closeResetTargetWindows();
   assert.equal(service.getDiffPreview("diff-token"), null);
+});
+
+test("AuxWindowService は reset 時に Memory Review window を close する", async () => {
+  const service = new AuxWindowService({
+    createWindow() {
+      const stub = createWindowStub();
+      return stub.window;
+    },
+    async loadHomeEntry() {},
+    async loadDiffEntry() {},
+    async loadChatEntry() {},
+    async loadCompanionMergeReviewEntry() {},
+    async loadCharacterEditorEntry() {},
+    onCompanionReviewWindowsChanged() {},
+    generateDiffToken() {
+      return "diff-token";
+    },
+  });
+
+  const memoryReview = await service.openMemoryV6ReviewWindow();
+  assert.equal(service.isMemoryV6ReviewWindow(memoryReview), true);
+
+  service.closeResetTargetWindows();
+
+  assert.equal(memoryReview.isDestroyed(), true);
+  assert.equal(service.isMemoryV6ReviewWindow(memoryReview), false);
+  assert.deepEqual(service.listHomeWindows(), []);
 });
 
 test("AuxWindowService は companion chat と merge の entry を分けて開く", async () => {

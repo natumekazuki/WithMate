@@ -102,6 +102,30 @@ describe("home-mate-profile-actions", () => {
     assert.deepEqual(feedback, ["Mate 作成中...", ""]);
   });
 
+  it("profile_unavailable では Mate 保存 API を呼ばず feedback を返す", async () => {
+    const feedback: string[] = [];
+
+    await saveHomeMateProfile({
+      api: createApi({
+        createMate: async () => assert.fail("createMate should not be called"),
+        updateMate: async () => assert.fail("updateMate should not be called"),
+      }),
+      displayName: "Mia",
+      mateState: "profile_unavailable",
+      setMateState: () => assert.fail("setMateState should not be called"),
+      setMateProfile: () => assert.fail("setMateProfile should not be called"),
+      setMateDisplayName: () => assert.fail("setMateDisplayName should not be called"),
+      setMateCreationFeedback: (message) => feedback.push(message),
+      setMateProfileEditorOpen: () => assert.fail("setMateProfileEditorOpen should not be called"),
+      setMateCreating: () => assert.fail("setMateCreating should not be called"),
+      setLaunchFeedback: () => assert.fail("setLaunchFeedback should not be called"),
+      hydrateHomeData: async () => assert.fail("hydrateHomeData should not be called"),
+      clearMateGrowthViewState: () => assert.fail("clearMateGrowthViewState should not be called"),
+    });
+
+    assert.deepEqual(feedback, ["V6 Memory foundation では Mate Profile はまだ利用できません。"]);
+  });
+
   it("アイコン選択で avatar を更新して session summary を refresh する", async () => {
     const feedback: string[] = [];
     const updatingStates: boolean[] = [];
@@ -135,6 +159,27 @@ describe("home-mate-profile-actions", () => {
     assert.equal(refreshed, true);
     assert.deepEqual(updatingStates, [true, false]);
     assert.deepEqual(feedback, ["", "Mate のアイコンを更新中...", "Mate のアイコンを更新したよ。"]);
+  });
+
+  it("profile_unavailable では avatar 選択 API を呼ばず feedback を返す", async () => {
+    const feedback: string[] = [];
+
+    await selectHomeMateAvatar({
+      api: createApi({
+        pickImageFile: async () => assert.fail("pickImageFile should not be called"),
+        setMateAvatar: async () => assert.fail("setMateAvatar should not be called"),
+      }),
+      mateState: "profile_unavailable",
+      currentAvatarFilePath: "old.png",
+      setMateProfile: () => assert.fail("setMateProfile should not be called"),
+      setMateDisplayName: () => assert.fail("setMateDisplayName should not be called"),
+      setMateCreationFeedback: (message) => feedback.push(message),
+      setMateAvatarUpdating: () => assert.fail("setMateAvatarUpdating should not be called"),
+      setLaunchFeedback: () => assert.fail("setLaunchFeedback should not be called"),
+      refreshSessionSummaries: async () => assert.fail("refreshSessionSummaries should not be called"),
+    });
+
+    assert.deepEqual(feedback, ["V6 Memory foundation では Mate Profile はまだ利用できません。"]);
   });
 
   it("アイコン解除で avatar を null に更新する", async () => {

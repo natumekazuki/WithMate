@@ -120,6 +120,7 @@ import {
 } from "./persistent-store-lifecycle-service.js";
 import { AppLifecycleService } from "./app-lifecycle-service.js";
 import { createAppLifecycleDeps } from "./app-lifecycle-deps.js";
+import { applyLaunchAtLoginSetting, shouldLaunchInBackground } from "./app-login-item.js";
 import { createMainBootstrapDeps } from "./main-bootstrap-deps.js";
 import { MainInfrastructureRegistry } from "./main-infrastructure-registry.js";
 import { MainBootstrapService } from "./main-bootstrap-service.js";
@@ -130,8 +131,14 @@ import { MainSessionCommandFacade } from "./main-session-command-facade.js";
 import { MainSessionPersistenceFacade } from "./main-session-persistence-facade.js";
 import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
+import {
+  ManagedMemorySkillService,
+  type ManagedMemorySkillSyncResult,
+  WITHMATE_MEMORY_SKILL_NAME,
+} from "./managed-memory-skill-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
 import {
+  resolveProviderSkillRootPath,
   type AppSettings,
 } from "../src/provider-settings-state.js";
 import { discoverSessionSkills } from "./skill-discovery.js";
@@ -142,8 +149,20 @@ import { clearWorkspaceFileIndex, searchWorkspacePathCandidates } from "./worksp
 import { AppLogService } from "./app-log-service.js";
 import type { AppBootStatus } from "../src/app-boot-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
+import type {
+  MemoryV6DiagnosticEvent,
+  MemoryV6Diagnostics,
+} from "../src/memory-v6/memory-diagnostics-state.js";
+import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
 import { inspectAppDatabase } from "./app-database-diagnostics.js";
 import { resolveOrMigrateAppDatabasePath } from "./app-database-path.js";
+import {
+  startMemoryV6RuntimeApi,
+  type MemoryV6RuntimeApiHandle,
+} from "./memory-v6-runtime.js";
+import { MemoryV6ReviewService } from "./memory-v6-review-service.js";
+import { MemoryBindingRegistry } from "./memory-binding-registry.js";
+import { getProviderRuntimeCapabilities } from "./provider-support.js";
 import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
@@ -151,6 +170,7 @@ import {
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
 import { isValidV4Database } from "./database-schema-v4.js";
+import { CREATE_V6_SCHEMA_SQL } from "./database-schema-v6.js";
 import {
   openAppDatabase,
   SQLITE_MAINTENANCE_BUSY_TIMEOUT_MS,
@@ -187,6 +207,9 @@ const bundledModelCatalogPath = devServerUrl
 const bundledCharacterAuthoringSkillPath = app.isPackaged
   ? path.join(process.resourcesPath, "resources", "skills", CHARACTER_AUTHORING_SKILL_NAME)
   : path.resolve(currentDir, "../../resources/skills", CHARACTER_AUTHORING_SKILL_NAME);
+const bundledMemorySkillPath = app.isPackaged
+  ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_MEMORY_SKILL_NAME)
+  : path.resolve(currentDir, "../../resources/skills", WITHMATE_MEMORY_SKILL_NAME);
 const codexAdapter = new CodexAdapter((input) => writeAppLog({
   ...input,
   process: "main",
@@ -202,6 +225,7 @@ let modelCatalogStorage: ModelCatalogStorage | null = null;
 let characterStorage: CharacterStorageAccess | null = null;
 let characterService: CharacterService | null = null;
 let characterAuthoringService: CharacterAuthoringService | null = null;
+let managedMemorySkillService: ManagedMemorySkillService | null = null;
 let auditLogStorage: AuditLogStorageRead | null = null;
 let auxiliarySessionStorage: AuxiliarySessionStorageAccess | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
@@ -213,6 +237,12 @@ let companionStorage: CompanionStorageHandle | null = null;
 let allowQuitWithInFlightRuns = false;
 let dbPath = "";
 let appDatabaseDiagnostics: AppDatabaseDiagnostics | null = null;
+let memoryV6RuntimeApi: MemoryV6RuntimeApiHandle | null = null;
+let memoryV6RuntimeStatus: MemoryV6Diagnostics["runtime"]["status"] = "stopped";
+const isBackgroundLaunch = shouldLaunchInBackground(process.argv);
+let managedMemorySkillSyncResults: ManagedMemorySkillSyncResult[] = [];
+let memoryV6DiagnosticErrors: MemoryV6DiagnosticEvent[] = [];
+const memoryBindingRegistry = new MemoryBindingRegistry();
 let bootWindow: BrowserWindow | null = null;
 let appBootStatus: AppBootStatus = {
   kind: "running",
@@ -220,6 +250,7 @@ let appBootStatus: AppBootStatus = {
   title: "WithMate を起動しています",
   detail: "起動状態を確認しています。",
 };
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 ipcMain.handle(WITHMATE_GET_APP_BOOT_STATUS_CHANNEL, () => appBootStatus);
 const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
@@ -289,6 +320,182 @@ function getAppDatabaseDiagnostics(): AppDatabaseDiagnostics {
     appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
   }
   return appDatabaseDiagnostics;
+}
+
+function recordMemoryV6DiagnosticError(kind: string, message: string): void {
+  memoryV6DiagnosticErrors = [
+    {
+      kind,
+      message,
+      occurredAt: new Date().toISOString(),
+    },
+    ...memoryV6DiagnosticErrors,
+  ].slice(0, 3);
+}
+
+function getConfiguredProviderSettings(): AppSettings["codingProviderSettings"] {
+  try {
+    return requireAppSettingsStorage().getSettings().codingProviderSettings;
+  } catch {
+    return {};
+  }
+}
+
+function getMemoryV6Diagnostics(): MemoryV6Diagnostics {
+  const configuredProviderSettings = getConfiguredProviderSettings();
+  const configuredProviderIds = Object.keys(configuredProviderSettings).sort();
+  const latestSkillResultByProvider = new Map(
+    managedMemorySkillSyncResults.map((result) => [result.providerId, result]),
+  );
+
+  return {
+    generatedAt: new Date().toISOString(),
+    runtime: {
+      status: memoryV6RuntimeApi ? "running" : memoryV6RuntimeStatus,
+      baseUrl: memoryV6RuntimeApi?.baseUrl ?? null,
+      dbPath: memoryV6RuntimeApi?.dbPath ?? null,
+      discoveryFilePath: memoryV6RuntimeApi?.discoveryFilePath ?? null,
+      hasApiSecret: Boolean(memoryV6RuntimeApi),
+    },
+    binding: {
+      activeBindingCount: memoryBindingRegistry.getActiveBindingCount(),
+    },
+    providers: configuredProviderIds.map((providerId) => {
+      const capabilities = getProviderRuntimeCapabilities({ providerId });
+      return {
+        providerId,
+        providerSupported: capabilities.providerSupported,
+        memoryBindingTransport: capabilities.memoryBindingTransport,
+      };
+    }),
+    skillSync: configuredProviderIds.map((providerId) => {
+      const result = latestSkillResultByProvider.get(providerId);
+      const configuredSkillRootPath = resolveProviderSkillRootPath(configuredProviderSettings[providerId]);
+      return {
+        providerId,
+        skillRootConfigured: Boolean(result?.skillRootPath ?? configuredSkillRootPath.trim()),
+        skillPath: result?.skillPath ?? null,
+        status: result?.status ?? "not-run",
+        ...(result?.errorMessage ? { errorMessage: result.errorMessage } : {}),
+      };
+    }),
+    lastErrors: memoryV6DiagnosticErrors,
+  };
+}
+
+function createMemoryV6ReviewService(): MemoryV6ReviewService {
+  return new MemoryV6ReviewService({
+    resolveDbPath: () => memoryV6RuntimeApi?.dbPath ?? null,
+  });
+}
+
+function searchMemoryV6Entries(request: MemoryV6ReviewSearchRequest | null | undefined) {
+  return createMemoryV6ReviewService().searchEntries(request);
+}
+
+function getMemoryV6Entry(entryId: string) {
+  return createMemoryV6ReviewService().getEntry(entryId);
+}
+
+function forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null) {
+  return createMemoryV6ReviewService().forgetEntry(entryId, reason);
+}
+
+async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
+  if (memoryV6RuntimeApi) {
+    return;
+  }
+
+  try {
+    memoryV6RuntimeStatus = "stopped";
+    memoryV6RuntimeApi = await startMemoryV6RuntimeApi({
+      userDataPath: app.getPath("userData"),
+      bindingRegistry: memoryBindingRegistry,
+      log: writeAppLog,
+    });
+    memoryV6RuntimeStatus = "running";
+    appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
+  } catch (error) {
+    memoryV6RuntimeStatus = "failed";
+    recordMemoryV6DiagnosticError(
+      "memory-v6.runtime-api.start-failed",
+      error instanceof Error ? error.message : String(error),
+    );
+    writeAppLog({
+      level: "warn",
+      kind: "memory-v6.runtime-api.start-failed",
+      process: "main",
+      message: "Memory V6 runtime API did not start",
+      error: appLogService.errorToLogError(error),
+    });
+  }
+}
+
+async function stopMemoryV6RuntimeApiBestEffort(): Promise<void> {
+  const runtimeApi = memoryV6RuntimeApi;
+  memoryV6RuntimeApi = null;
+  memoryV6RuntimeStatus = "stopped";
+  if (!runtimeApi) {
+    return;
+  }
+
+  try {
+    await runtimeApi.stop();
+    writeAppLog({
+      level: "info",
+      kind: "memory-v6.runtime-api.stopped",
+      process: "main",
+      message: "Memory V6 runtime API stopped",
+    });
+  } catch (error) {
+    recordMemoryV6DiagnosticError(
+      "memory-v6.runtime-api.stop-failed",
+      error instanceof Error ? error.message : String(error),
+    );
+    writeAppLog({
+      level: "warn",
+      kind: "memory-v6.runtime-api.stop-failed",
+      process: "main",
+      message: "Memory V6 runtime API cleanup failed",
+      error: appLogService.errorToLogError(error),
+    });
+  }
+}
+
+async function syncManagedMemorySkillBestEffort(): Promise<void> {
+  try {
+    const results = await requireManagedMemorySkillService().syncConfiguredProviderSkills();
+    managedMemorySkillSyncResults = results;
+    const failed = results.filter((result) => result.status === "failed");
+    const collisions = results.filter((result) => result.status === "skipped-collision");
+    for (const result of failed) {
+      recordMemoryV6DiagnosticError(
+        "memory-v6.skill.sync.provider-failed",
+        `${result.providerId}: ${result.errorMessage ?? "managed skill sync failed"}`,
+      );
+    }
+    writeAppLog({
+      level: failed.length > 0 || collisions.length > 0 ? "warn" : "info",
+      kind: "memory-v6.skill.sync.completed",
+      process: "main",
+      message: "Memory V6 managed skill sync completed",
+      data: {
+        results,
+      },
+    });
+  } catch (error) {
+    recordMemoryV6DiagnosticError(
+      "memory-v6.skill.sync.failed",
+      error instanceof Error ? error.message : String(error),
+    );
+    writeAppLog({
+      level: "warn",
+      kind: "memory-v6.skill.sync.failed",
+      process: "main",
+      message: "Memory V6 managed skill sync failed",
+      error: appLogService.errorToLogError(error),
+    });
+  }
 }
 
 function resolveCrashDumpsPath(): string {
@@ -865,6 +1072,16 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               db.close();
             }
           },
+          ensureV6Schema: (nextDbPath) => {
+            const db = openAppDatabase(nextDbPath);
+            try {
+              for (const statement of CREATE_V6_SCHEMA_SQL) {
+                db.exec(statement);
+              }
+            } finally {
+              db.close();
+            }
+          },
           onBeforeClose: () => {
             sessionApprovalService?.reset();
             sessionElicitationService?.reset();
@@ -892,7 +1109,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             quitApp: () => {
               app.quit();
             },
-            shouldQuitWhenAllWindowsClosed: () => process.platform !== "darwin",
+            shouldQuitWhenAllWindowsClosed: () => false,
             confirmQuitWhileRunning: () => {
               const choice = dialog.showMessageBoxSync({
                 type: "warning",
@@ -916,7 +1133,12 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             registerMainIpcHandlers,
             initializePersistentStores,
             recoverInterruptedSessions,
-            createHomeWindow,
+            createHomeWindow: async () => {
+              if (isBackgroundLaunch) {
+                return null;
+              }
+              return createHomeWindow();
+            },
             broadcastModelCatalog,
             onBootStatus: publishAppBootStatus,
             ipcRegistration: {
@@ -927,6 +1149,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openHomeWindow: createHomeWindow,
                 openSessionMonitorWindow,
                 openSettingsWindow,
+                openMemoryV6ReviewWindow,
+                isMemoryV6ReviewWindow: (window) => requireMainWindowFacade().isMemoryV6ReviewWindow(window),
                 openCharacterEditorWindow,
                 openDiffWindow,
                 openCompanionReviewWindow,
@@ -963,6 +1187,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
                 getAppDatabaseDiagnostics,
+                getMemoryV6Diagnostics,
+                searchMemoryV6Entries,
+                getMemoryV6Entry,
+                forgetMemoryV6Entry,
                 resetAppDatabase: async (request) => requireSettingsCatalogService().resetAppDatabase(request),
               },
               sessionQuery: {
@@ -1245,6 +1473,12 @@ function requireMainProviderFacade(): MainProviderFacade {
       ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
       codexAdapter,
       copilotAdapter,
+      revokeSessionMemoryBindings: (sessionId) => {
+        memoryBindingRegistry.revokeSessionBindings(sessionId);
+      },
+      revokeAllMemoryBindings: () => {
+        memoryBindingRegistry.revokeAll();
+      },
     });
   }
 
@@ -1260,6 +1494,9 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       getProviderQuotaTelemetry: (providerId) => getProviderQuotaTelemetry(providerId),
       isProviderQuotaTelemetryStale: (telemetry) => isProviderQuotaTelemetryStale(telemetry),
       refreshProviderQuotaTelemetry: (providerId) => refreshProviderQuotaTelemetry(providerId),
+      revokeSessionMemoryBindings: (sessionId) => {
+        memoryBindingRegistry.revokeSessionBindings(sessionId);
+      },
     });
   }
 
@@ -1360,11 +1597,16 @@ function requireAppSettingsStorage(): AppSettingsStorage {
 }
 
 async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
-  return requireAppSettingsStorage().updateSettings(settings);
+  const savedSettings = await requireAppSettingsStorage().updateSettings(settings);
+  applyLaunchAtLoginSetting(app, savedSettings.launchAtLoginEnabled);
+  await syncManagedMemorySkillBestEffort();
+  return savedSettings;
 }
 
 async function resetAppSettings(): Promise<AppSettings> {
-  return requireAppSettingsStorage().resetSettings();
+  const settings = requireAppSettingsStorage().resetSettings();
+  applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled);
+  return settings;
 }
 
 function requireMateStorage(): MateStorage {
@@ -1402,6 +1644,18 @@ function requireCharacterAuthoringService(): CharacterAuthoringService {
   }
 
   return characterAuthoringService;
+}
+
+function requireManagedMemorySkillService(): ManagedMemorySkillService {
+  if (!managedMemorySkillService) {
+    managedMemorySkillService = new ManagedMemorySkillService({
+      bundledSkillPath: bundledMemorySkillPath,
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      getAppVersion: () => app.getVersion(),
+    });
+  }
+
+  return managedMemorySkillService;
 }
 
 async function createMate(input: Parameters<MateStorage["createMate"]>[0]): ReturnType<MateStorage["createMate"]> {
@@ -1552,6 +1806,11 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       invalidateProviderSessionThread,
       scheduleProviderQuotaTelemetryRefresh,
       clearWorkspaceFileIndex,
+      createProviderMemoryBinding: ({ session, provider, character }) =>
+        memoryBindingRegistry.createBinding({ session, provider, character }),
+      revokeProviderMemoryBinding: (binding) => {
+        memoryBindingRegistry.revokeBinding(binding);
+      },
       broadcastLiveSessionRun,
       resolvePendingApprovalRequest: (sessionId, decision) => {
         const liveRun = getLiveSessionRun(sessionId);
@@ -1837,6 +2096,9 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       invalidateAllProviderSessionThreads,
       closeResetTargetWindows,
       recreateDatabaseFile,
+      applyAppSettingsSideEffects: (settings) => {
+        applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled);
+      },
       broadcastSessions,
       broadcastAppSettings,
       broadcastModelCatalog,
@@ -2029,6 +2291,7 @@ function closePersistentStores(): void {
   characterStorage = null;
   characterService = null;
   characterAuthoringService = null;
+  managedMemorySkillService = null;
   sessionStorage = null;
   sessionMemoryStorage = null;
   projectMemoryStorage = null;
@@ -2806,6 +3069,10 @@ async function openSettingsWindow(): Promise<BrowserWindow> {
   return requireMainWindowFacade().openSettingsWindow();
 }
 
+async function openMemoryV6ReviewWindow(): Promise<BrowserWindow> {
+  return requireMainWindowFacade().openMemoryV6ReviewWindow();
+}
+
 async function openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {
   return requireMainWindowFacade().openCharacterEditorWindow(characterId);
 }
@@ -2858,107 +3125,126 @@ async function openCompanionMergeWindow(sessionId: string): Promise<BrowserWindo
   return window;
 }
 
-app.whenReady().then(async () => {
-  await openBootWindow();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!app.isReady()) {
+      return;
+    }
+    void requireAppLifecycleService().handleSecondInstance();
+  });
 
-  try {
-    dbPath = await resolveOrMigrateAppDatabasePath(app.getPath("userData"), (progress) => {
-      publishAppBootStatus({
-        kind: "running",
-        stage: "database",
-        title: progress.title,
-        detail: progress.detail,
-      });
-    });
-    publishAppBootStatus({
-      kind: "running",
-      stage: "diagnostics",
-      title: "データベース診断を確認しています",
-      detail: "利用するデータベースと schema version を確認しています。",
-    });
-    appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
-    writeAppLog({
-      level: "info",
-      kind: "app.ready",
-      process: "main",
-      message: "App ready",
-      data: {
-        userDataPath: app.getPath("userData"),
-        userDataPathOverrideApplied: appDatabaseDiagnostics.userDataPathOverrideApplied,
-        activeDatabasePath: appDatabaseDiagnostics.activeDatabasePath,
-        activeDatabaseSchemaVersion: appDatabaseDiagnostics.schemaVersion,
-        activeDatabaseCompatibilityMode: appDatabaseDiagnostics.compatibilityMode,
-        logsPath: appLogsPath,
-        crashDumpsPath,
-      },
-    });
-    writeAppLog({
-      level: appDatabaseDiagnostics.warnings.length > 0 ? "warn" : "info",
-      kind: "app.database.selected",
-      process: "main",
-      message: "App database selected",
-      data: appDatabaseDiagnostics,
-    });
-    await requireMainBootstrapService().handleReady();
-    publishAppBootStatus({
-      kind: "completed",
-      stage: "home",
-      title: "起動が完了しました",
-      detail: "Home を表示しました。",
-    });
-    closeBootWindow();
-
-    if (process.env.WITHMATE_DEBUG_OPEN_SESSION_ID) {
-      await openSessionWindow(process.env.WITHMATE_DEBUG_OPEN_SESSION_ID);
+  app.whenReady().then(async () => {
+    if (!isBackgroundLaunch) {
+      await openBootWindow();
     }
 
-    app.on("activate", async () => {
-      await requireAppLifecycleService().handleActivate();
-    });
-  } catch (error) {
-    const serializedError = serializeBootError(error);
+    try {
+      dbPath = await resolveOrMigrateAppDatabasePath(app.getPath("userData"), (progress) => {
+        publishAppBootStatus({
+          kind: "running",
+          stage: "database",
+          title: progress.title,
+          detail: progress.detail,
+        });
+      });
+      publishAppBootStatus({
+        kind: "running",
+        stage: "diagnostics",
+        title: "データベース診断を確認しています",
+        detail: "利用するデータベースと schema version を確認しています。",
+      });
+      appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
+      writeAppLog({
+        level: "info",
+        kind: "app.ready",
+        process: "main",
+        message: "App ready",
+        data: {
+          userDataPath: app.getPath("userData"),
+          userDataPathOverrideApplied: appDatabaseDiagnostics.userDataPathOverrideApplied,
+          activeDatabasePath: appDatabaseDiagnostics.activeDatabasePath,
+          activeDatabaseSchemaVersion: appDatabaseDiagnostics.schemaVersion,
+          activeDatabaseCompatibilityMode: appDatabaseDiagnostics.compatibilityMode,
+          logsPath: appLogsPath,
+          crashDumpsPath,
+        },
+      });
+      writeAppLog({
+        level: appDatabaseDiagnostics.warnings.length > 0 ? "warn" : "info",
+        kind: "app.database.selected",
+        process: "main",
+        message: "App database selected",
+        data: appDatabaseDiagnostics,
+      });
+      await startMemoryV6RuntimeApiBestEffort();
+      await requireMainBootstrapService().handleReady();
+      applyLaunchAtLoginSetting(app, requireAppSettingsStorage().getSettings().launchAtLoginEnabled);
+      await syncManagedMemorySkillBestEffort();
+      publishAppBootStatus({
+        kind: "completed",
+        stage: "home",
+        title: "起動が完了しました",
+        detail: isBackgroundLaunch ? "バックグラウンドで起動しました。" : "Home を表示しました。",
+      });
+      closeBootWindow();
+
+      if (process.env.WITHMATE_DEBUG_OPEN_SESSION_ID) {
+        await openSessionWindow(process.env.WITHMATE_DEBUG_OPEN_SESSION_ID);
+      }
+
+      app.on("activate", async () => {
+        await requireAppLifecycleService().handleActivate();
+      });
+    } catch (error) {
+      const serializedError = serializeBootError(error);
+      writeAppLog({
+        level: "fatal",
+        kind: "app.boot.failed",
+        process: "main",
+        message: serializedError?.message ?? "App boot failed",
+        error: appLogService.errorToLogError(error),
+        data: {
+          userDataPath: app.getPath("userData"),
+          logsPath: appLogsPath,
+          crashDumpsPath,
+        },
+      });
+      if (!isBackgroundLaunch) {
+        await openBootWindow();
+      }
+      publishAppBootStatus({
+        kind: "failed",
+        stage: "failed",
+        title: "WithMate の起動に失敗しました",
+        detail: "データベース移行または起動初期化でエラーが発生しました。ログに詳細を記録しました。",
+        error: serializedError,
+      });
+    }
+  });
+
+  app.on("window-all-closed", () => {
+    requireAppLifecycleService().handleWindowAllClosed();
+  });
+
+  app.on("before-quit", (event) => {
     writeAppLog({
-      level: "fatal",
-      kind: "app.boot.failed",
+      level: "info",
+      kind: "app.before-quit",
       process: "main",
-      message: serializedError?.message ?? "App boot failed",
-      error: appLogService.errorToLogError(error),
-      data: {
-        userDataPath: app.getPath("userData"),
-        logsPath: appLogsPath,
-        crashDumpsPath,
-      },
+      message: "App before quit",
     });
-    await openBootWindow();
-    publishAppBootStatus({
-      kind: "failed",
-      stage: "failed",
-      title: "WithMate の起動に失敗しました",
-      detail: "データベース移行または起動初期化でエラーが発生しました。ログに詳細を記録しました。",
-      error: serializedError,
+    requireAppLifecycleService().handleBeforeQuit(event);
+  });
+
+  app.on("will-quit", () => {
+    writeAppLog({
+      level: "info",
+      kind: "app.will-quit",
+      process: "main",
+      message: "App will quit",
     });
-  }
-});
-
-app.on("window-all-closed", () => {
-  requireAppLifecycleService().handleWindowAllClosed();
-});
-
-app.on("before-quit", (event) => {
-  writeAppLog({
-    level: "info",
-    kind: "app.before-quit",
-    process: "main",
-    message: "App before quit",
+    void stopMemoryV6RuntimeApiBestEffort();
   });
-  requireAppLifecycleService().handleBeforeQuit(event);
-});
-
-app.on("will-quit", () => {
-  writeAppLog({
-    level: "info",
-    kind: "app.will-quit",
-    process: "main",
-    message: "App will quit",
-  });
-});
+}

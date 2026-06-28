@@ -1,7 +1,7 @@
 # Settings UI
 
 - 作成日: 2026-03-14
-- 更新日: 2026-06-21
+- 更新日: 2026-06-28
 - 対象: 独立した `Settings Window`
 
 ## Goal
@@ -15,7 +15,8 @@
 - app 共通 system prompt を編集する旧設定項目は廃止する
 - V5 current では Character 定義は `Characters` editor で管理し、session / companion 開始時の `CharacterRuntimeSnapshot` を runtime prompt の主経路にする
 - provider instruction sync は V5 Character 注入の主経路ではなく、Settings current UI には置かない
-- current 実装では `Session Window`、`Default Microcopy`、`Coding Agent Providers`、`Diagnostics`、`Mate Reset`、`Model Catalog` を置く
+- current 実装では `Session Window`、`Default Microcopy`、`Coding Agent Providers`、`Diagnostics`、`Model Catalog` を置く
+- V6 Memory provider instructionは自動同期せず、Diagnostics内に手動貼り付け用sampleとcopy導線を置く
 - `Settings Window` は縦方向の余白を少し増やしつつ、内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - file picker / save dialog は Main Process 側で開く
 - current 実装では Main Process 側の settings / catalog 更新は `src-electron/settings-catalog-service.ts` に寄せ、renderer 側の provider row 組み立ては `src/home-settings-view-model.ts` に寄せる
@@ -44,8 +45,13 @@
       - `Instruction Relative Path`
   - `Diagnostics`
     - app log / crash dump folder
-  - `Mate Reset`
-    - legacy Mate state reset
+    - Memory V6 read-only diagnostics
+      - runtime API status / base URL / DB path / discovery file path
+      - active binding count
+      - provider memory binding support
+      - managed `withmate-memory` Skill sync status
+      - latest Memory V6 diagnostic errors
+      - provider instruction sample preview / copy action
 - `Model Catalog`
   - import / export
 - `Save Settings`
@@ -54,6 +60,7 @@
 ## Current Scope
 
 - `Session Window` の `送信後に Action Dock を自動で閉じる` の保存
+- `PC 起動時に WithMate をバックグラウンドで起動する` の保存。保存後は Electron login item 設定へ反映し、起動時は `--background` で Boot / Home window を表示しない
 - coding provider ごとの enable / disable
 - coding provider ごとの provider file settings
   - `Root Directory` は provider ごとの file 設定の基準 directory として保持される
@@ -61,7 +68,13 @@
   - `Instruction Relative Path` は root 配下の instruction file 設定として保持される
   - V5 current では skill folder だけが runtime の skill 探索元になり、instruction file は Provider Instruction Sync を再起動せず設定値として保持する
 - Diagnostics の folder open
-- legacy Mate reset
+- Diagnostics の Memory V6 read-only summary
+  - runtime API は `running` / `stopped` / `failed` と、公開済み discovery / DB path を表示する
+  - binding は active binding count だけを表示し、binding reference は表示しない
+  - provider ごとの memory binding transport と support 状態を表示する
+  - managed `withmate-memory` Skill sync は provider ごとの `not-run` / `synced` / `failed` / `skipped-collision` を表示する
+  - runtime API secret は表示せず、`hasApiSecret` の boolean だけを診断 state に含める
+  - provider instruction sample を表示し、必要な provider の instruction file へ手動で貼り付けるために clipboard copy できる
 - `model catalog` の import
 - `model catalog` の export
 
@@ -80,6 +93,10 @@
 - Settings Window の `loading` 派生状態は `HomeApp.tsx` が組み立てる
 - Settings Window の `import / export / save` の文言組み立てと戻り値解釈は `home-settings-actions` が担当する
 - Settings 保存成功時は renderer 側で戻り値の `appSettings` を draft に同期し、dirty 状態を解消する
+- Memory V6 diagnostics は Main Process 側の `getMemoryV6Diagnostics()` が集約し、renderer 側の `HomeApp.tsx` が初回表示時と Settings 保存成功後に再取得する
+- Memory V6 diagnostics は secret や binding reference を返さず、runtime status / path / support / sync status / error summary の read-only projection として扱う
+- Settings Window の Diagnostics 表示は `SettingsContent.tsx` が担当し、操作導線は既存の folder open、Memory Review、provider instruction sample copy、Settings save に限定する
+- provider instruction sampleは `withmate-memory` Skill利用トリガー、DB直読み禁止、append / forget判断、secret非露出を短く示す。WithMateはprovider instruction fileを自動編集しない
 - Character editor は Settings Window から分離し、Home の `Characters` panel から開く独立 `Character Editor Window` で扱う。
 - `character.md` の validation error は `Character Editor Window` の raw editor 操作結果として表示する。
 
@@ -89,7 +106,8 @@
 - 新規 workspace の root directory 設定
 - provider ごとの既定値
 - MemoryGeneration を再設計する場合の専用設定
-- provider instruction sync を V5 で再導入する場合の専用設定
+- provider instruction fileをWithMateが自動編集する同期設定
+- destructive maintenance / DB reset をSettingsへ戻す場合の専用導線
 
 ## Non Goals
 

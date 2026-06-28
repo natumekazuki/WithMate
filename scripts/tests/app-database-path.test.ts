@@ -6,6 +6,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
+import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { APP_DATABASE_V1_FILENAME } from "../../src-electron/database-schema-v1.js";
 import {
   APP_DATABASE_V2_FILENAME,
@@ -24,7 +25,9 @@ import {
   isValidV4Database,
   readV4DatabaseUserVersion,
 } from "../../src-electron/database-schema-v4.js";
+import { APP_DATABASE_V6_FILENAME, isValidV6Database } from "../../src-electron/database-schema-v6.js";
 import { resolveAppDatabasePath, resolveOrMigrateAppDatabasePath } from "../../src-electron/app-database-path.js";
+import { hasV4ToV6ReleaseDataMigrationMarker } from "../migrate-database-v4-to-v6.js";
 
 function createV2Database(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
@@ -177,13 +180,28 @@ describe("resolveAppDatabasePath", () => {
     }
   });
 
-  it("どの DB も無い場合は withmate-v4.db を返す（初回起動 canonical path）", async () => {
+  it("どの DB も無い場合は withmate-v6.db を返す（初回起動 canonical path）", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
 
     try {
-      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
       const selectedPath = resolveAppDatabasePath(userDataPath);
-      assert.equal(selectedPath, v4Path);
+      assert.equal(selectedPath, v6Path);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("有効な withmate-v6.db が存在すれば active runtime DB path selection は V6 を選ぶ", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+
+    try {
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+      await createOrVerifyV6FreshDatabase(userDataPath);
+
+      const selectedPath = resolveAppDatabasePath(userDataPath);
+      assert.equal(selectedPath, v6Path);
+      assert.equal(isValidV6Database(v6Path), true);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
@@ -196,14 +214,14 @@ describe("resolveAppDatabasePath", () => {
       const v1Path = path.join(userDataPath, APP_DATABASE_V1_FILENAME);
       const v2Path = path.join(userDataPath, APP_DATABASE_V2_FILENAME);
       const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
-      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
 
       const selectedPath = resolveAppDatabasePath(userDataPath);
-      assert.equal(selectedPath, v4Path);
+      assert.equal(selectedPath, v6Path);
       assert.equal(existsSync(v1Path), false);
       assert.equal(existsSync(v2Path), false);
       assert.equal(existsSync(v3Path), false);
-      assert.equal(existsSync(v4Path), false);
+      assert.equal(existsSync(v6Path), false);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
@@ -305,7 +323,7 @@ describe("resolveAppDatabasePath", () => {
 });
 
 describe("resolveOrMigrateAppDatabasePath", () => {
-  it("有効な withmate-v4.db が存在する場合は legacy DB を読まずに V4 を返す", async () => {
+  it("有効な withmate-v4.db が存在する場合は V6 へ移行して V6 を返す", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
 
     try {
@@ -315,8 +333,52 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       createV4Database(v4Path);
 
       const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
-      assert.equal(selectedPath, v4Path);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+      assert.equal(selectedPath, v6Path);
       assert.equal(isValidV4Database(v4Path), true);
+      assert.equal(isValidV6Database(v6Path), true);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("V6 DB は起動時 migration target として選ばれる", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+
+    try {
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+      await createOrVerifyV6FreshDatabase(userDataPath);
+
+      const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
+      assert.equal(selectedPath, v6Path);
+      assert.equal(isValidV6Database(v6Path), true);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("V6 DB と V4 DB が併存しても release data migration marker 済みなら再移行しない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+
+    try {
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      createV4Database(v4Path);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+
+      const firstProgress: string[] = [];
+      const firstSelectedPath = await resolveOrMigrateAppDatabasePath(userDataPath, (progress) => {
+        firstProgress.push(progress.title);
+      });
+      assert.equal(firstSelectedPath, v6Path);
+      assert.equal(hasV4ToV6ReleaseDataMigrationMarker(v6Path), true);
+      assert.equal(firstProgress.includes("データベースを移行しています"), true);
+
+      const secondProgress: string[] = [];
+      const secondSelectedPath = await resolveOrMigrateAppDatabasePath(userDataPath, (progress) => {
+        secondProgress.push(progress.title);
+      });
+      assert.equal(secondSelectedPath, v6Path);
+      assert.equal(secondProgress.includes("データベースを移行しています"), false);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
@@ -332,8 +394,10 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       await writeFile(v4Path, "not sqlite");
 
       const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
-      assert.equal(selectedPath, v4Path);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+      assert.equal(selectedPath, v6Path);
       assert.equal(isValidV4Database(v4Path), true);
+      assert.equal(isValidV6Database(v6Path), true);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
@@ -350,8 +414,10 @@ describe("resolveOrMigrateAppDatabasePath", () => {
 
       assert.equal(isValidV4Database(v4Path), false);
       const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
-      assert.equal(selectedPath, v4Path);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+      assert.equal(selectedPath, v6Path);
       assert.equal(isValidV4Database(v4Path), true);
+      assert.equal(isValidV6Database(v6Path), true);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
@@ -387,9 +453,11 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       createV3Database(v3Path);
 
       const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
-      assert.equal(selectedPath, v4Path);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+      assert.equal(selectedPath, v6Path);
       assert.equal(existsSync(v3Path), true);
       assert.equal(isValidV4Database(v4Path), true);
+      assert.equal(isValidV6Database(v6Path), true);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
@@ -404,8 +472,10 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       createLegacyV3DatabaseWithoutUserVersion(v3Path);
 
       const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
-      assert.equal(selectedPath, v4Path);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+      assert.equal(selectedPath, v6Path);
       assert.equal(isValidV4Database(v4Path), true);
+      assert.equal(isValidV6Database(v6Path), true);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
@@ -421,10 +491,12 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       createV2Database(v2Path);
 
       const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
-      assert.equal(selectedPath, v4Path);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+      assert.equal(selectedPath, v6Path);
       assert.equal(existsSync(v2Path), true);
       assert.equal(existsSync(v3Path), true);
       assert.equal(isValidV4Database(v4Path), true);
+      assert.equal(isValidV6Database(v6Path), true);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
@@ -440,10 +512,12 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       createLegacyV2DatabaseWithoutUserVersion(v2Path);
 
       const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
-      assert.equal(selectedPath, v4Path);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+      assert.equal(selectedPath, v6Path);
       assert.equal(existsSync(v2Path), true);
       assert.equal(existsSync(v3Path), true);
       assert.equal(isValidV4Database(v4Path), true);
+      assert.equal(isValidV6Database(v6Path), true);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
@@ -460,11 +534,13 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       await writeFile(v1Path, "");
 
       const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
-      assert.equal(selectedPath, v4Path);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+      assert.equal(selectedPath, v6Path);
       assert.equal(existsSync(v1Path), true);
       assert.equal(existsSync(v2Path), true);
       assert.equal(existsSync(v3Path), true);
       assert.equal(isValidV4Database(v4Path), true);
+      assert.equal(isValidV6Database(v6Path), true);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }

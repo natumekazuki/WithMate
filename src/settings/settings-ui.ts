@@ -28,9 +28,7 @@ export const SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE =
   "他 provider 対応は future scope として、いまは OpenAI 前提で扱う。";
 export const SETTINGS_RELEASE_COMPATIBILITY_NOTE =
   "初回リリース前のため、設定 schema の後方互換性は考慮しない。";
-export const SETTINGS_MATE_RESET_LABEL = "Mate を初期化";
-export const SETTINGS_MATE_RESET_HELP =
-  "Danger Zone: 保存済みの Mate の状態を破壊的に初期化する。";
+export const SETTINGS_LAUNCH_AT_LOGIN_LABEL = "PC 起動時に WithMate をバックグラウンドで起動する";
 export const SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL = "送信後に Action Dock を自動で閉じる";
 export const SETTINGS_RESET_DATABASE_LABEL = "DB を初期化";
 export const SETTINGS_RESET_DATABASE_HELP =
@@ -38,14 +36,10 @@ export const SETTINGS_RESET_DATABASE_HELP =
 export const SETTINGS_DIAGNOSTICS_LABEL = "Diagnostics";
 export const SETTINGS_OPEN_LOG_FOLDER_LABEL = "Open Logs";
 export const SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL = "Open Crash Dumps";
-
-export function buildResetMateConfirmMessage(): string {
-  return [
-    "Mate を初期化すると、保存済みのプロフィールと状態が削除され、復元できなくなるよ。",
-    "進行中のメッセージや将来の学習に使う状態も初期化されるため、取り消せない破壊的な操作だよ。",
-    "本当に続ける？",
-  ].join("\n\n");
-}
+export const SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL = "Provider Instruction Sample";
+export const SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP =
+  "必要な provider の user-level instruction file へ手動で貼り付けるための WithMate Memory 利用方針。WithMate は instruction file を自動編集しない。";
+export const SETTINGS_COPY_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL = "Copy Sample";
 
 export const SETTINGS_RESET_DATABASE_TARGET_LABELS: Record<ResetAppDatabaseTarget, string> = {
   sessions: "sessions",

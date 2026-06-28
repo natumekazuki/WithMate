@@ -3,6 +3,7 @@ import type { AppSettings } from "../provider-settings-state.js";
 import type { HomeSettingsContentBaseProps } from "./home-settings-content-props.js";
 import {
   handleChangeAutoCollapseActionDockOnSend,
+  handleChangeLaunchAtLoginEnabled,
   handleChangeProviderInstructionRelativePath,
   handleChangeProviderEnabled,
   handleChangeProviderSkillRelativePath,
@@ -17,6 +18,7 @@ type SettingsDraftHandlersContext = {
 export type SettingsDraftHandlers = Pick<
   HomeSettingsContentBaseProps,
   | "onChangeAutoCollapseActionDockOnSend"
+  | "onChangeLaunchAtLoginEnabled"
   | "onChangeUserMicrocopySlot"
   | "onChangeProviderEnabled"
   | "onChangeProviderInstructionRelativePath"
@@ -30,6 +32,9 @@ export function buildSettingsDraftHandlers({
   return {
     onChangeAutoCollapseActionDockOnSend: (enabled) => {
       handleChangeAutoCollapseActionDockOnSend({ enabled, setSettingsDraft });
+    },
+    onChangeLaunchAtLoginEnabled: (enabled) => {
+      handleChangeLaunchAtLoginEnabled({ enabled, setSettingsDraft });
     },
     onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => {
       handleChangeUserMicrocopySlot({ slot, value, setSettingsDraft });

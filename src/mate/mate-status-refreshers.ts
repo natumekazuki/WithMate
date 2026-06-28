@@ -29,8 +29,8 @@ export function buildMateStatusRefreshers({
       return result.mateState;
     }
 
-    if (result.mateState === "not_created") {
-      setMateState("not_created");
+    if (result.mateState === "not_created" || result.mateState === "profile_unavailable") {
+      setMateState(result.mateState);
       setMateProfile(null);
       setMateDisplayName("");
       setMateAvatarUpdating(false);

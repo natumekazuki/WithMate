@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   openCompanionReviewWindow,
   openHomeWindow,
+  openMemoryV6ReviewWindow,
   openSessionMonitorWindow,
   openSessionWindow,
   openSettingsWindow,
@@ -55,6 +56,12 @@ const windowCommandCases = [
     name: "openSettingsWindow",
     apiName: "openSettingsWindow",
     command: () => openSettingsWindow(),
+    expectedArgs: [],
+  },
+  {
+    name: "openMemoryV6ReviewWindow",
+    apiName: "openMemoryV6ReviewWindow",
+    command: () => openMemoryV6ReviewWindow(),
     expectedArgs: [],
   },
   {

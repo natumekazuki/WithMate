@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import React, { isValidElement, type ReactNode } from "react";
+import { JSDOM } from "jsdom";
+import React, { act, isValidElement, type ReactNode } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { HomeLaunchDialog } from "../../src/home/HomeLaunchDialog.js";
@@ -14,12 +16,12 @@ import { HomeMateSetupPanel } from "../../src/mate/MateSetupPanel.js";
 import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
+import type { MemoryV6Diagnostics } from "../../src/memory-v6/memory-diagnostics-state.js";
+import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "../../src/memory-v6/provider-instruction-sample.js";
 import { buildHomeProviderSettingRows } from "../../src/settings/settings-view-model.js";
 import { formatTimestampLabel } from "../../src/time-state.js";
-import {
-  SETTINGS_MATE_RESET_HELP,
-  SETTINGS_MATE_RESET_LABEL,
-} from "../../src/settings/settings-ui.js";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("HomeSettingsContent", () => {
   const modelCatalog: ModelCatalogSnapshot = {
@@ -56,37 +58,8 @@ describe("HomeSettingsContent", () => {
     settingsDraft?: typeof settingsDraft;
     providerSettingRows?: typeof providerSettingRows;
     providerCatalogLoaded?: boolean;
-    canResetMate?: boolean;
-    mateResetBusy?: boolean;
-    onResetMate?: () => void;
-  };
-
-  const collectElementsById = (node: ReactNode, predicate: (element: React.ReactElement) => boolean): React.ReactElement[] => {
-    const result: React.ReactElement[] = [];
-    const visitNode = (currentNode: ReactNode) => {
-      if (!isValidElement(currentNode)) {
-        return;
-      }
-
-      if (predicate(currentNode)) {
-        result.push(currentNode);
-      }
-
-      const children = currentNode.props.children;
-      if (Array.isArray(children)) {
-        children.forEach((child) => visitNode(child as ReactNode));
-        return;
-      }
-
-      if (children === null || children === undefined || typeof children === "boolean") {
-        return;
-      }
-
-      visitNode(children as ReactNode);
-    };
-
-    visitNode(node);
-    return result;
+    memoryV6Diagnostics?: MemoryV6Diagnostics | null;
+    onCopyMemoryProviderInstructionSample?: () => void;
   };
 
   const buildSettingsContent = (params?: RenderSettingsParams) => HomeSettingsContent({
@@ -94,9 +67,11 @@ describe("HomeSettingsContent", () => {
     providerSettingRows: params?.providerSettingRows ?? providerSettingRows,
     providerCatalogLoaded: params?.providerCatalogLoaded ?? true,
     modelCatalogRevisionLabel: String(modelCatalog.revision),
+    memoryV6Diagnostics: params?.memoryV6Diagnostics ?? null,
     settingsDirty: false,
     settingsFeedback: "",
     onChangeAutoCollapseActionDockOnSend: noOp,
+    onChangeLaunchAtLoginEnabled: noOp,
     onChangeUserMicrocopySlot: noOp,
     onChangeProviderEnabled: noOp,
     onChangeProviderSkillRootPath: noOp,
@@ -109,41 +84,17 @@ describe("HomeSettingsContent", () => {
     onExportModelCatalog: noOp,
     onOpenAppLogFolder: noOp,
     onOpenCrashDumpFolder: noOp,
-    onResetMate: params?.onResetMate ?? noOp,
-    canResetMate: params?.canResetMate ?? false,
-    mateResetBusy: params?.mateResetBusy ?? false,
+    onOpenMemoryV6Review: noOp,
+    onCopyMemoryProviderInstructionSample: params?.onCopyMemoryProviderInstructionSample ?? noOp,
     onSaveSettings: noOp,
   });
 
   const renderSettings = (params?: RenderSettingsParams) => renderToStaticMarkup(buildSettingsContent(params));
 
-  const extractResetButton = (html: string) => {
-    const resetLabelIndex = html.indexOf(`<strong>${SETTINGS_MATE_RESET_LABEL}</strong>`);
-    const resetButtonIndex = html.indexOf('<button class="launch-toggle danger-button"', resetLabelIndex);
-    const resetButtonEndIndex = html.indexOf("</button>", resetButtonIndex);
-    assert.ok(resetLabelIndex >= 0 && resetButtonIndex >= 0 && resetButtonEndIndex >= 0);
-    return html.slice(resetButtonIndex, resetButtonEndIndex + 9);
-  };
-
-  const extractResetButtonElement = (params?: RenderSettingsParams): React.ReactElement => {
-    const content = buildSettingsContent(params);
-    const buttons = collectElementsById(content, (element) => element.type === "button");
-    const resetButton = buttons.find((button) =>
-      button.props.type === "button" &&
-      button.props.className === "launch-toggle danger-button" &&
-      typeof button.props.children === "string"
-    );
-    if (!resetButton) {
-      throw new Error("Mate Reset ボタンが見つからないためテストを実行できません。");
-    }
-
-    return resetButton;
-  };
-
-  it("Mate Reset のラベルとヘルプが表示される", () => {
+  it("Mate Reset の危険操作は Settings に表示されない", () => {
     const html = renderSettings();
-    assert.ok(html.includes(`<strong>${SETTINGS_MATE_RESET_LABEL}</strong>`));
-    assert.ok(html.includes(`<p class="settings-help">${SETTINGS_MATE_RESET_HELP}</p>`));
+    assert.ok(!html.includes("Mate を初期化"));
+    assert.ok(!html.includes("保存済みの Mate の状態を破壊的に初期化する"));
   });
 
   it("削除対象の Settings surface は表示しない", () => {
@@ -169,6 +120,113 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("Root Directory"));
     assert.ok(html.includes("Skill Relative Path"));
     assert.ok(html.includes("Instruction Relative Path"));
+  });
+
+  it("Memory V6 diagnostics はredacted summaryとして表示する", () => {
+    const html = renderSettings({
+      memoryV6Diagnostics: {
+        generatedAt: "2026-06-27T00:00:00.000Z",
+        runtime: {
+          status: "running",
+          baseUrl: "http://127.0.0.1:12345",
+          dbPath: "C:/userdata/withmate-v6.db",
+          discoveryFilePath: "C:/runtime/memory-v6-api.json",
+          hasApiSecret: true,
+        },
+        binding: { activeBindingCount: 2 },
+        providers: [
+          { providerId: "codex", providerSupported: true, memoryBindingTransport: "env" },
+          { providerId: "custom", providerSupported: false, memoryBindingTransport: "unsupported" },
+        ],
+        skillSync: [
+          { providerId: "codex", skillRootConfigured: true, skillPath: "C:/skills/withmate-memory", status: "unchanged" },
+          { providerId: "custom", skillRootConfigured: true, skillPath: null, status: "skipped-collision" },
+        ],
+        lastErrors: [
+          { kind: "memory-v6.runtime-api.start-failed", message: "startup failed", occurredAt: "2026-06-27T00:00:00.000Z" },
+        ],
+      },
+    });
+
+    assert.ok(html.includes("Memory API"));
+    assert.ok(html.includes("running"));
+    assert.ok(html.includes("Active Bindings"));
+    assert.ok(html.includes("2"));
+    assert.ok(html.includes("codex: env / custom: unsupported"));
+    assert.ok(html.includes("codex: unchanged / custom: skipped-collision"));
+    assert.ok(html.includes("memory-v6.runtime-api.start-failed"));
+    assert.ok(html.includes("Provider Instruction Sample"));
+    assert.ok(html.includes("Copy Sample"));
+    assert.ok(html.includes("WithMate Memory Usage"));
+    assert.ok(html.includes("Do not read or write WithMate database files directly."));
+    assert.ok(!html.includes("apiSecret"));
+    assert.ok(!html.includes("bindingReference"));
+    assert.ok(!WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE.includes("WITHMATE_MEMORY_BINDING_REFERENCE"));
+    assert.ok(!WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE.includes("WITHMATE_MEMORY_API_SECRET"));
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /binding reference/i);
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /api secret/i);
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /discovery file path/i);
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /internal header/i);
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /local runtime identifier/i);
+  });
+
+  it("Provider Instruction Sample の copy button は handler を呼ぶ", async () => {
+    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const previousHTMLElement = globalThis.HTMLElement;
+
+    Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+    Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+
+    const rootElement = dom.window.document.getElementById("root");
+    assert.ok(rootElement);
+    let root: Root | null = null;
+    let copyCount = 0;
+
+    try {
+      await act(async () => {
+        root = createRoot(rootElement);
+        root.render(buildSettingsContent({
+          onCopyMemoryProviderInstructionSample: () => {
+            copyCount += 1;
+          },
+          memoryV6Diagnostics: {
+            generatedAt: "2026-06-27T00:00:00.000Z",
+            runtime: {
+              status: "running",
+              baseUrl: "http://127.0.0.1:12345",
+              dbPath: "C:/userdata/withmate-v6.db",
+              discoveryFilePath: "C:/runtime/memory-v6-api.json",
+              hasApiSecret: true,
+            },
+            binding: { activeBindingCount: 0 },
+            providers: [],
+            skillSync: [],
+            lastErrors: [],
+          },
+        }));
+      });
+
+      const copyButton = Array.from(rootElement.querySelectorAll("button")).find((button) =>
+        button.textContent?.trim() === "Copy Sample"
+      );
+      assert.ok(copyButton);
+
+      await act(async () => {
+        copyButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      });
+
+      assert.equal(copyCount, 1);
+    } finally {
+      await act(async () => {
+        root?.unmount();
+      });
+      Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
+      Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+      Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+    }
   });
 
   it("provider row が 0 件でも Coding Agent Providers section と empty state を表示する", () => {
@@ -216,7 +274,7 @@ describe("HomeMateSetupPanel", () => {
   };
 
   const renderPanel = (params?: {
-    mode?: "create" | "edit";
+    mode?: "create" | "edit" | "unavailable";
     creating?: boolean;
     feedback?: string;
     displayName?: string;
@@ -337,6 +395,23 @@ describe("HomeMateSetupPanel", () => {
     assert.ok(cancelButton);
     cancelButton.props.onClick();
     assert.equal(canceled, 1);
+  });
+
+  it("unavailable mode では Mate 作成/保存ボタンを表示しない", () => {
+    const panel = renderPanel({
+      mode: "unavailable",
+      displayName: "",
+      feedback: "ignored",
+    });
+    const html = renderToStaticMarkup(panel);
+    const input = collectElements(panel, (element) => element.type === "input" && element.props.id === "mate-display-name")[0];
+    const submitButton = collectElements(panel, (element) => element.type === "button" && element.props.type === "submit")[0];
+
+    assert.ok(html.includes("V6 Memory foundation では Mate Profile はまだ利用できません。"));
+    assert.equal(input?.props.disabled, true);
+    assert.equal(submitButton, undefined);
+    assert.equal(html.includes("Mate を作成"), false);
+    assert.equal(html.includes("Mate を保存"), false);
   });
 
   it("edit mode では Mate アイコンの選択と解除を実行できる", () => {

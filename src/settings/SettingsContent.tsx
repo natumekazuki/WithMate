@@ -1,11 +1,15 @@
 import type { AppSettings } from "../app-state.js";
+import type { MemoryV6Diagnostics } from "../memory-v6/memory-diagnostics-state.js";
+import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "../memory-v6/provider-instruction-sample.js";
 import { MICROCOPY_SLOTS, type MicrocopySlot } from "../microcopy-state.js";
 import type { HomeProviderSettingRow } from "./settings-view-model.js";
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
-  SETTINGS_MATE_RESET_HELP,
-  SETTINGS_MATE_RESET_LABEL,
+  SETTINGS_COPY_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
+  SETTINGS_LAUNCH_AT_LOGIN_LABEL,
+  SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP,
+  SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL,
   SETTINGS_OPEN_LOG_FOLDER_LABEL,
   SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
   SETTINGS_PROVIDER_FILE_SETTINGS_HELP,
@@ -25,9 +29,11 @@ export type HomeSettingsContentProps = {
   providerSettingRows: HomeProviderSettingRow[];
   providerCatalogLoaded: boolean;
   modelCatalogRevisionLabel: string;
+  memoryV6Diagnostics: MemoryV6Diagnostics | null;
   settingsDirty: boolean;
   settingsFeedback: string;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
+  onChangeLaunchAtLoginEnabled: (enabled: boolean) => void;
   onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
@@ -40,9 +46,8 @@ export type HomeSettingsContentProps = {
   onExportModelCatalog: () => void;
   onOpenAppLogFolder: () => void;
   onOpenCrashDumpFolder: () => void;
-  onResetMate?: () => void;
-  mateResetBusy?: boolean;
-  canResetMate?: boolean;
+  onOpenMemoryV6Review: () => void;
+  onCopyMemoryProviderInstructionSample: () => void;
   onSaveSettings: () => void;
 };
 
@@ -74,9 +79,11 @@ export function HomeSettingsContent({
   providerSettingRows,
   providerCatalogLoaded,
   modelCatalogRevisionLabel,
+  memoryV6Diagnostics,
   settingsDirty,
   settingsFeedback,
   onChangeAutoCollapseActionDockOnSend,
+  onChangeLaunchAtLoginEnabled,
   onChangeUserMicrocopySlot,
   onChangeProviderEnabled,
   onChangeProviderSkillRootPath,
@@ -89,9 +96,8 @@ export function HomeSettingsContent({
   onExportModelCatalog,
   onOpenAppLogFolder,
   onOpenCrashDumpFolder,
-  onResetMate,
-  mateResetBusy = false,
-  canResetMate = false,
+  onOpenMemoryV6Review,
+  onCopyMemoryProviderInstructionSample,
   onSaveSettings,
 }: HomeSettingsContentProps) {
   return (
@@ -101,7 +107,15 @@ export function HomeSettingsContent({
           <section className="settings-section">
           <section className="settings-section-card">
             <div className="settings-field">
-              <strong>Session Window</strong>
+              <strong>App</strong>
+              <label className="settings-provider-toggle-row settings-section-toggle">
+                <span className="settings-provider-name">{SETTINGS_LAUNCH_AT_LOGIN_LABEL}</span>
+                <input
+                  type="checkbox"
+                  checked={settingsDraft.launchAtLoginEnabled}
+                  onChange={(event) => onChangeLaunchAtLoginEnabled(event.target.checked)}
+                />
+              </label>
               <label className="settings-provider-toggle-row settings-section-toggle">
                 <span className="settings-provider-name">{SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL}</span>
                 <input
@@ -233,7 +247,41 @@ export function HomeSettingsContent({
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>{SETTINGS_DIAGNOSTICS_LABEL}</strong>
+              {memoryV6Diagnostics ? (
+                <div className="settings-diagnostics-grid">
+                  <div className="settings-diagnostics-item">
+                    <span>Memory API</span>
+                    <strong>{memoryV6Diagnostics.runtime.status}</strong>
+                    <small>{memoryV6Diagnostics.runtime.discoveryFilePath ? "discovery published" : "discovery unavailable"}</small>
+                  </div>
+                  <div className="settings-diagnostics-item">
+                    <span>Active Bindings</span>
+                    <strong>{memoryV6Diagnostics.binding.activeBindingCount}</strong>
+                    <small>session-scoped runtime bindings</small>
+                  </div>
+                  <div className="settings-diagnostics-item">
+                    <span>Provider Binding</span>
+                    <strong>{formatProviderBindingSummary(memoryV6Diagnostics)}</strong>
+                    <small>{formatProviderBindingDetail(memoryV6Diagnostics)}</small>
+                  </div>
+                  <div className="settings-diagnostics-item">
+                    <span>Managed Skill</span>
+                    <strong>{formatSkillSyncSummary(memoryV6Diagnostics)}</strong>
+                    <small>{formatSkillSyncDetail(memoryV6Diagnostics)}</small>
+                  </div>
+                  <div className="settings-diagnostics-item settings-diagnostics-wide">
+                    <span>Last Error</span>
+                    <strong>{memoryV6Diagnostics.lastErrors[0]?.kind ?? "none"}</strong>
+                    <small>{memoryV6Diagnostics.lastErrors[0]?.message ?? "Memory V6 diagnostics has no recorded error."}</small>
+                  </div>
+                </div>
+              ) : (
+                <p className="settings-note">Memory V6 diagnostics を読み込んでいます。</p>
+              )}
               <div className="settings-actions">
+                <button className="launch-toggle" type="button" onClick={onOpenMemoryV6Review}>
+                  Review Memory
+                </button>
                 <button className="launch-toggle" type="button" onClick={onOpenAppLogFolder}>
                   {SETTINGS_OPEN_LOG_FOLDER_LABEL}
                 </button>
@@ -241,23 +289,22 @@ export function HomeSettingsContent({
                   {SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
                 </button>
               </div>
-            </div>
-          </section>
-
-          <section className="settings-section-card danger-zone">
-            <div className="settings-field">
-              <strong>{SETTINGS_MATE_RESET_LABEL}</strong>
-              <p className="settings-help">{SETTINGS_MATE_RESET_HELP}</p>
-              <div className="settings-actions">
-                <button
-                  className="launch-toggle danger-button"
-                  type="button"
-                  onClick={() => onResetMate?.()}
-                  disabled={!canResetMate || mateResetBusy}
-                >
-                  {mateResetBusy ? "リセット中..." : SETTINGS_MATE_RESET_LABEL}
-                </button>
-              </div>
+              <section className="settings-provider-instruction-sample">
+                <div className="settings-provider-instruction-sample-head">
+                  <div>
+                    <strong>{SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL}</strong>
+                    <p className="settings-help">{SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP}</p>
+                  </div>
+                  <button
+                    className="launch-toggle compact"
+                    type="button"
+                    onClick={onCopyMemoryProviderInstructionSample}
+                  >
+                    {SETTINGS_COPY_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL}
+                  </button>
+                </div>
+                <pre>{WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE}</pre>
+              </section>
             </div>
           </section>
 
@@ -287,4 +334,34 @@ export function HomeSettingsContent({
       </div>
     </>
   );
+}
+
+function formatProviderBindingSummary(diagnostics: MemoryV6Diagnostics): string {
+  const supported = diagnostics.providers.filter((provider) => provider.memoryBindingTransport !== "unsupported").length;
+  return `${supported}/${diagnostics.providers.length}`;
+}
+
+function formatProviderBindingDetail(diagnostics: MemoryV6Diagnostics): string {
+  if (diagnostics.providers.length === 0) {
+    return "configured providers are unavailable";
+  }
+  return diagnostics.providers
+    .map((provider) => `${provider.providerId}: ${provider.memoryBindingTransport}`)
+    .join(" / ");
+}
+
+function formatSkillSyncSummary(diagnostics: MemoryV6Diagnostics): string {
+  const ready = diagnostics.skillSync.filter((result) =>
+    result.status === "installed" || result.status === "updated" || result.status === "unchanged"
+  ).length;
+  return `${ready}/${diagnostics.skillSync.length}`;
+}
+
+function formatSkillSyncDetail(diagnostics: MemoryV6Diagnostics): string {
+  if (diagnostics.skillSync.length === 0) {
+    return "configured providers are unavailable";
+  }
+  return diagnostics.skillSync
+    .map((result) => `${result.providerId}: ${result.status}`)
+    .join(" / ");
 }
