@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { JSDOM } from "jsdom";
 import React from "react";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { handleMarkdownLinkClick, MessageRichText } from "../../src/MessageRichText.js";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function clickMarkdownLink(target: string) {
   const opened: string[] = [];
@@ -24,6 +29,43 @@ function clickMarkdownLink(target: string) {
   );
 
   return { defaultPrevented, opened };
+}
+
+function installDomGlobals(dom: JSDOM): () => void {
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousNavigator = globalThis.navigator;
+  const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
+  const previousHTMLElement = globalThis.HTMLElement;
+
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "requestAnimationFrame", {
+    configurable: true,
+    value: dom.window.requestAnimationFrame.bind(dom.window),
+  });
+  Object.defineProperty(globalThis, "cancelAnimationFrame", {
+    configurable: true,
+    value: dom.window.cancelAnimationFrame.bind(dom.window),
+  });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+
+  return () => {
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: previousRequestAnimationFrame });
+    Object.defineProperty(globalThis, "cancelAnimationFrame", { configurable: true, value: previousCancelAnimationFrame });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+  };
+}
+
+function waitForAnimationFrame(window: Window): Promise<void> {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
 }
 
 test("MessageRichText は **bold** を strong として render する", () => {
@@ -150,6 +192,43 @@ test("MessageRichText は GFM table を table 要素として render する", ()
   assert.match(html, /<th class="message-table-heading">置き場<\/th>/);
   assert.match(html, /<td class="message-table-cell"><code class="message-inline-code">history<\/code><\/td>/);
   assert.doesNotMatch(html, /\| --- \| --- \|/);
+});
+
+test("MessageRichText は browser 初回 render を light markdown にして後から full markdown に差し替える", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        text: ["| A | B |", "| --- | --- |", "| 1 | 2 |"].join("\n"),
+      }));
+    });
+
+    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "light");
+    assert.equal(container.querySelector("table"), null);
+
+    await act(async () => {
+      await waitForAnimationFrame(dom.window);
+      await waitForAnimationFrame(dom.window);
+    });
+
+    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "full");
+    assert.notEqual(container.querySelector("table.message-table"), null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
 });
 
 test("MessageRichText は GFM 拡張記法を render する", () => {
