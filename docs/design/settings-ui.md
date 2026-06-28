@@ -15,7 +15,7 @@
 - app 共通 system prompt を編集する旧設定項目は廃止する
 - V5 current では Character 定義は `Characters` editor で管理し、session / companion 開始時の `CharacterRuntimeSnapshot` を runtime prompt の主経路にする
 - provider instruction sync は V5 Character 注入の主経路ではなく、Settings current UI には置かない
-- current 実装では `Session Window`、`Default Microcopy`、`Coding Agent Providers`、`Diagnostics`、`Mate Reset`、`Model Catalog` を置く
+- current 実装では `Session Window`、`Default Microcopy`、`Coding Agent Providers`、`Diagnostics`、`Model Catalog` を置く
 - V6 Memory provider instructionは自動同期せず、Diagnostics内に手動貼り付け用sampleとcopy導線を置く
 - `Settings Window` は縦方向の余白を少し増やしつつ、内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - file picker / save dialog は Main Process 側で開く
@@ -52,8 +52,6 @@
       - managed `withmate-memory` Skill sync status
       - latest Memory V6 diagnostic errors
       - provider instruction sample preview / copy action
-  - `Mate Reset`
-    - legacy Mate state reset
 - `Model Catalog`
   - import / export
 - `Save Settings`
@@ -76,7 +74,6 @@
   - managed `withmate-memory` Skill sync は provider ごとの `not-run` / `synced` / `failed` / `skipped-collision` を表示する
   - runtime API secret は表示せず、`hasApiSecret` の boolean だけを診断 state に含める
   - provider instruction sample を表示し、必要な provider の instruction file へ手動で貼り付けるために clipboard copy できる
-- legacy Mate reset
 - `model catalog` の import
 - `model catalog` の export
 
@@ -109,6 +106,7 @@
 - provider ごとの既定値
 - MemoryGeneration を再設計する場合の専用設定
 - provider instruction fileをWithMateが自動編集する同期設定
+- destructive maintenance / DB reset をSettingsへ戻す場合の専用導線
 
 ## Non Goals
 

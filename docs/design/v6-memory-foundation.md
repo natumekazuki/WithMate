@@ -93,16 +93,29 @@ Skill、CLI、MCPはentrypointであり、Memory capabilityの正本ではない
 
 ### Memory Principal
 
-Memory requestを実行する主体。初期実装ではWithMate session bindingだけを扱う。
+Memory requestを実行する主体。初期agent-facing runtimeでは、principalは`session_binding`と`local_user`の2種類を扱う。
 
 ```ts
-type MemoryPrincipal = {
-  bindingId: string;
+type SessionBindingMemoryPrincipal = {
+  type: "session_binding";
+  bindingIdHash: string;
   sessionId: string;
   providerId: string;
   permissions: MemoryPermission[];
-  expiresAt: string | null;
+  character: { id: string; name: string } | null;
+  sessionProject: { id: string; displayName: string } | null;
+  accessibleCharacterIds?: string[];
+  accessibleProjectIds?: string[];
 };
+
+type LocalUserMemoryPrincipal = {
+  type: "local_user";
+  bindingIdHash: "local-user";
+  providerId: "local-user";
+  permissions: MemoryPermission[];
+};
+
+type MemoryPrincipal = SessionBindingMemoryPrincipal | LocalUserMemoryPrincipal;
 
 type MemoryPermission =
   | "memory.search"
@@ -112,6 +125,12 @@ type MemoryPermission =
   | "memory.list_tags"
   | "memory.resolve_context";
 ```
+
+`session_binding`はWithMate-launched provider turnから発行される短命bindingに基づく。current Character、session project、provider ID、permissionを解決でき、Character targetや`character: current`を使える。
+
+`local_user`は起動中WithMate runtime APIのsecret / status challengeを通過した同一OS userを表す。明示された`project` owner + `project` scopeのMemoryだけを扱い、current Character、session context、Character Memory、session-bound project inferenceは使えない。
+
+binding referenceが存在しない、または失効済みbinding referenceをprincipalへ解決できない場合でも、runtime API secret検証済みでrequest targetが明示`project` owner + `project` scopeなら`local_user` principalとして処理してよい。`character: current`、Character owner、session-bound contextを要求するrequestは`MEMORY_BINDING_REQUIRED`または`MEMORY_FORBIDDEN`で拒否する。
 
 ### Owner
 
