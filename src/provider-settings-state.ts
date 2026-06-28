@@ -13,6 +13,7 @@ import {
 
 export type AppSettings = {
   memoryGenerationEnabled: boolean;
+  launchAtLoginEnabled: boolean;
   autoCollapseActionDockOnSend: boolean;
   userMicrocopyCatalog: MicrocopyCatalog;
   mateMemoryGenerationSettings: MateMemoryGenerationSettings;
@@ -85,6 +86,7 @@ export const DEFAULT_MATE_MEMORY_GENERATION_SETTINGS: MateMemoryGenerationSettin
 export function createDefaultAppSettings(): AppSettings {
   return {
     memoryGenerationEnabled: true,
+    launchAtLoginEnabled: false,
     autoCollapseActionDockOnSend: true,
     userMicrocopyCatalog: createDefaultUserMicrocopyCatalog(),
     mateMemoryGenerationSettings: {
@@ -293,6 +295,8 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   return {
     memoryGenerationEnabled:
       typeof candidate.memoryGenerationEnabled === "boolean" ? candidate.memoryGenerationEnabled : true,
+    launchAtLoginEnabled:
+      typeof candidate.launchAtLoginEnabled === "boolean" ? candidate.launchAtLoginEnabled : false,
     autoCollapseActionDockOnSend:
       typeof candidate.autoCollapseActionDockOnSend === "boolean" ? candidate.autoCollapseActionDockOnSend : true,
     userMicrocopyCatalog: normalizeUserMicrocopyCatalog(candidate.userMicrocopyCatalog),

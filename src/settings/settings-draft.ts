@@ -30,6 +30,16 @@ export function updateAutoCollapseActionDockOnSend(
   };
 }
 
+export function updateLaunchAtLoginEnabled(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return {
+    ...draft,
+    launchAtLoginEnabled: enabled,
+  };
+}
+
 export function updateUserMicrocopySlotDraft(
   draft: AppSettings,
   slot: MicrocopySlot,

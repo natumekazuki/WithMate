@@ -120,6 +120,7 @@ import {
 } from "./persistent-store-lifecycle-service.js";
 import { AppLifecycleService } from "./app-lifecycle-service.js";
 import { createAppLifecycleDeps } from "./app-lifecycle-deps.js";
+import { applyLaunchAtLoginSetting, shouldLaunchInBackground } from "./app-login-item.js";
 import { createMainBootstrapDeps } from "./main-bootstrap-deps.js";
 import { MainInfrastructureRegistry } from "./main-infrastructure-registry.js";
 import { MainBootstrapService } from "./main-bootstrap-service.js";
@@ -238,6 +239,7 @@ let dbPath = "";
 let appDatabaseDiagnostics: AppDatabaseDiagnostics | null = null;
 let memoryV6RuntimeApi: MemoryV6RuntimeApiHandle | null = null;
 let memoryV6RuntimeStatus: MemoryV6Diagnostics["runtime"]["status"] = "stopped";
+const isBackgroundLaunch = shouldLaunchInBackground(process.argv);
 let managedMemorySkillSyncResults: ManagedMemorySkillSyncResult[] = [];
 let memoryV6DiagnosticErrors: MemoryV6DiagnosticEvent[] = [];
 const memoryBindingRegistry = new MemoryBindingRegistry();
@@ -1106,7 +1108,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             quitApp: () => {
               app.quit();
             },
-            shouldQuitWhenAllWindowsClosed: () => process.platform !== "darwin",
+            shouldQuitWhenAllWindowsClosed: () => false,
             confirmQuitWhileRunning: () => {
               const choice = dialog.showMessageBoxSync({
                 type: "warning",
@@ -1130,7 +1132,12 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             registerMainIpcHandlers,
             initializePersistentStores,
             recoverInterruptedSessions,
-            createHomeWindow,
+            createHomeWindow: async () => {
+              if (isBackgroundLaunch) {
+                return null;
+              }
+              return createHomeWindow();
+            },
             broadcastModelCatalog,
             onBootStatus: publishAppBootStatus,
             ipcRegistration: {
@@ -1590,12 +1597,15 @@ function requireAppSettingsStorage(): AppSettingsStorage {
 
 async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   const savedSettings = await requireAppSettingsStorage().updateSettings(settings);
+  applyLaunchAtLoginSetting(app, savedSettings.launchAtLoginEnabled);
   await syncManagedMemorySkillBestEffort();
   return savedSettings;
 }
 
 async function resetAppSettings(): Promise<AppSettings> {
-  return requireAppSettingsStorage().resetSettings();
+  const settings = requireAppSettingsStorage().resetSettings();
+  applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled);
+  return settings;
 }
 
 function requireMateStorage(): MateStorage {
@@ -2085,6 +2095,9 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       invalidateAllProviderSessionThreads,
       closeResetTargetWindows,
       recreateDatabaseFile,
+      applyAppSettingsSideEffects: (settings) => {
+        applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled);
+      },
       broadcastSessions,
       broadcastAppSettings,
       broadcastModelCatalog,
@@ -3154,6 +3167,7 @@ app.whenReady().then(async () => {
     });
     await startMemoryV6RuntimeApiBestEffort();
     await requireMainBootstrapService().handleReady();
+    applyLaunchAtLoginSetting(app, requireAppSettingsStorage().getSettings().launchAtLoginEnabled);
     await syncManagedMemorySkillBestEffort();
     publishAppBootStatus({
       kind: "completed",

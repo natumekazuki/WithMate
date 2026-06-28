@@ -93,6 +93,12 @@ describe("provider-settings-state", () => {
     assert.equal(normalizeAppSettings({}).autoCollapseActionDockOnSend, true);
   });
 
+  it("launch at login は default false で boolean を保持する", () => {
+    assert.equal(createDefaultAppSettings().launchAtLoginEnabled, false);
+    assert.equal(normalizeAppSettings({ launchAtLoginEnabled: true }).launchAtLoginEnabled, true);
+    assert.equal(normalizeAppSettings({ launchAtLoginEnabled: "true" }).launchAtLoginEnabled, false);
+  });
+
   it("user microcopy catalog は複数 copy を保持し、空 slot は default に戻す", () => {
     const settings = normalizeAppSettings({
       userMicrocopyCatalog: {
