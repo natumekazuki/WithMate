@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHmac } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -35,11 +35,24 @@ async function createBundle(): Promise<string> {
     ].join("\n"),
     "utf8",
   );
+  await mkdir(path.join(bundlePath, "bin"), { recursive: true });
+  await mkdir(path.join(bundlePath, "reference"), { recursive: true });
+  await writeFile(path.join(bundlePath, "bin", "withmate-memory.mjs"), "console.log('bundle helper');\n", "utf8");
+  await writeFile(path.join(bundlePath, "reference", "cli.md"), "# CLI\n", "utf8");
   return bundlePath;
 }
 
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 describe("ManagedMemorySkillService", () => {
-  it("設定済み provider skill root に bundled skill と managed marker を install する", async () => {
+  it("設定済み provider skill root に Skill.md と managed marker だけを install する", async () => {
     const bundlePath = await createBundle();
     const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
     try {
@@ -64,6 +77,8 @@ describe("ManagedMemorySkillService", () => {
       assert.equal(result?.status, "installed");
       assert.equal(await readFile(path.join(skillPath, "SKILL.md"), "utf8"), await readFile(path.join(bundlePath, "SKILL.md"), "utf8"));
       assert.match(await readFile(path.join(skillPath, ".withmate-managed-skill.json"), "utf8"), /"managedBy": "WithMate"/);
+      assert.equal(await pathExists(path.join(skillPath, "bin")), false);
+      assert.equal(await pathExists(path.join(skillPath, "reference")), false);
     } finally {
       await rm(bundlePath, { recursive: true, force: true });
       await rm(rootPath, { recursive: true, force: true });
@@ -122,6 +137,40 @@ describe("ManagedMemorySkillService", () => {
 
       assert.equal(result?.status, "updated");
       assert.equal(await readFile(installedSkillPath, "utf8"), await readFile(path.join(bundlePath, "SKILL.md"), "utf8"));
+    } finally {
+      await rm(bundlePath, { recursive: true, force: true });
+      await rm(rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it("古い managed skill に残った同梱 helper は次回 sync で除去する", async () => {
+    const bundlePath = await createBundle();
+    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
+    try {
+      const settings = createDefaultAppSettings();
+      settings.codingProviderSettings.codex = {
+        enabled: true,
+        apiKey: "",
+        skillRootPath: rootPath,
+        skillRelativePath: "skills",
+        instructionRelativePath: "",
+      };
+      const service = new ManagedMemorySkillService({
+        bundledSkillPath: bundlePath,
+        getAppSettings: () => settings,
+        getAppVersion: () => "5.0.0-test",
+      });
+
+      assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "installed");
+      const skillPath = path.join(rootPath, "skills", WITHMATE_MEMORY_SKILL_NAME);
+      await mkdir(path.join(skillPath, "bin"), { recursive: true });
+      await writeFile(path.join(skillPath, "bin", "withmate-memory.mjs"), "old helper\n", "utf8");
+
+      const result = (await service.syncConfiguredProviderSkills())[0];
+
+      assert.equal(result?.status, "updated");
+      assert.equal(await pathExists(path.join(skillPath, "bin")), false);
+      assert.equal(await readFile(path.join(skillPath, "SKILL.md"), "utf8"), await readFile(path.join(bundlePath, "SKILL.md"), "utf8"));
     } finally {
       await rm(bundlePath, { recursive: true, force: true });
       await rm(rootPath, { recursive: true, force: true });
@@ -303,6 +352,26 @@ describe("withmate-memory bundled helper", () => {
     assert.equal(JSON.parse(stdout).error.code, "WITHMATE_NOT_RUNNING");
   });
 
+  it("stale discovery endpoint へ接続できない場合は JSON not running error を返す", async () => {
+    const { stdout } = await execFileAsync(process.execPath, [
+      helperPath,
+      "status",
+    ], {
+      env: {
+        ...process.env,
+        WITHMATE_MEMORY_API_URL: "http://127.0.0.1:9",
+        WITHMATE_MEMORY_API_SECRET: "stale-secret",
+        WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "stale-runtime",
+      },
+    }).catch((error: unknown) => {
+      const execError = error as { code?: number; stdout?: string };
+      assert.equal(execError.code, 2);
+      return { stdout: execError.stdout ?? "" };
+    });
+
+    assert.equal(JSON.parse(stdout).error.code, "WITHMATE_NOT_RUNNING");
+  });
+
   it("future helper flags ではなく raw JSON/file contract を要求する", async () => {
     await execFileAsync(process.execPath, [helperPath, "search", "--project", "."], {
       env: process.env,
@@ -314,5 +383,20 @@ describe("withmate-memory bundled helper", () => {
         assert.equal(JSON.parse(execError.stdout ?? "{}").error.code, "WITHMATE_MEMORY_CLI_USAGE");
       },
     );
+  });
+
+  it("usage error は PATH CLI command 形式を案内する", async () => {
+    const { stdout } = await execFileAsync(process.execPath, [helperPath, "nope"], {
+      env: process.env,
+    }).catch((error: unknown) => {
+      const execError = error as { code?: number; stdout?: string };
+      assert.equal(execError.code, 1);
+      return { stdout: execError.stdout ?? "" };
+    });
+
+    const error = JSON.parse(stdout).error;
+    assert.equal(error.code, "WITHMATE_MEMORY_CLI_USAGE");
+    assert.match(error.message, /^Usage: withmate-memory /);
+    assert.doesNotMatch(error.message, /node bin\/withmate-memory\.mjs/);
   });
 });

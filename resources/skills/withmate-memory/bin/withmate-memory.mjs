@@ -119,7 +119,7 @@ async function parseArgs(argv) {
   const [rawCommand, ...rest] = argv;
   const route = rawCommand ? commands.get(rawCommand) : undefined;
   if (!route) {
-    throw usage("Usage: node bin/withmate-memory.mjs <status|context|search|get-entry|list-tags|append|forget> [--json <json> | --file <path>] [--api-url <url>] [--discovery-file <path>]");
+    throw usage("Usage: withmate-memory <status|context|search|get-entry|list-tags|append|forget> [--json <json> | --file <path>] [--api-url <url>] [--discovery-file <path>]");
   }
 
   let jsonInput = null;
@@ -199,7 +199,11 @@ async function readJsonResponse(response) {
   if (!text.trim()) {
     return {};
   }
-  return JSON.parse(text);
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw memoryError("WITHMATE_MEMORY_TRANSPORT_ERROR", "Memory API returned a non-JSON response.");
+  }
 }
 
 async function verifyRuntime(connection, signal) {
@@ -234,30 +238,38 @@ async function main() {
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), 10_000);
     try {
-      if (!await verifyRuntime(connection, abortController.signal)) {
+      try {
+        if (!await verifyRuntime(connection, abortController.signal)) {
+          console.log(JSON.stringify(notRunning()));
+          return exitCodes.notRunning;
+        }
+        const headers = {};
+        if (request.route.method === "POST") {
+          headers["Content-Type"] = "application/json";
+        }
+        if (connection.apiSecret) {
+          headers[apiSecretHeader] = connection.apiSecret;
+        }
+        const bindingReference = process.env[bindingReferenceEnv]?.trim();
+        if (bindingReference) {
+          headers[bindingReferenceHeader] = bindingReference;
+        }
+        const response = await fetch(`${connection.baseUrl}${request.route.path}`, {
+          method: request.route.method,
+          headers,
+          body: request.route.method === "POST" ? JSON.stringify(normalizeProjectPathTargets(request.body)) : undefined,
+          redirect: "error",
+          signal: abortController.signal,
+        });
+        console.log(JSON.stringify(await readJsonResponse(response)));
+        return response.ok ? exitCodes.ok : exitCodes.apiError;
+      } catch (error) {
+        if (error && typeof error === "object" && "error" in error) {
+          throw error;
+        }
         console.log(JSON.stringify(notRunning()));
         return exitCodes.notRunning;
       }
-      const headers = {};
-      if (request.route.method === "POST") {
-        headers["Content-Type"] = "application/json";
-      }
-      if (connection.apiSecret) {
-        headers[apiSecretHeader] = connection.apiSecret;
-      }
-      const bindingReference = process.env[bindingReferenceEnv]?.trim();
-      if (bindingReference) {
-        headers[bindingReferenceHeader] = bindingReference;
-      }
-      const response = await fetch(`${connection.baseUrl}${request.route.path}`, {
-        method: request.route.method,
-        headers,
-        body: request.route.method === "POST" ? JSON.stringify(normalizeProjectPathTargets(request.body)) : undefined,
-        redirect: "error",
-        signal: abortController.signal,
-      });
-      console.log(JSON.stringify(await readJsonResponse(response)));
-      return response.ok ? exitCodes.ok : exitCodes.apiError;
     } finally {
       clearTimeout(timeout);
     }

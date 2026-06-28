@@ -1,6 +1,6 @@
 {
   "name": "withmate",
-  "version": "6.0.0",
+  "version": "6.0.1",
   "description": "キャラクターロールプレイ対応 coding agent デスクトップアプリ",
   "private": true,
   "main": "dist-electron/src-electron/main.js",
@@ -84,6 +84,12 @@
         "to": "provider-binaries"
       }
     ],
+    "extraFiles": [
+      {
+        "from": "build/cli/withmate-memory.cmd",
+        "to": "withmate-memory.cmd"
+      }
+    ],
     "win": {
       "icon": "build/icon.ico",
       "artifactName": "${productName} Setup ${version}.${ext}",
@@ -93,6 +99,7 @@
     },
     "nsis": {
       "createStartMenuShortcut": true,
+      "include": "build/installer.nsh",
       "shortcutName": "WithMate"
     },
     "mac": {

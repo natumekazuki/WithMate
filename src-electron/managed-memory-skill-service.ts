@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { readdir } from "node:fs/promises";
@@ -8,6 +8,7 @@ import { resolveProviderSkillRootPath, type AppSettings } from "../src/provider-
 export const WITHMATE_MEMORY_SKILL_NAME = "withmate-memory";
 const MANAGED_MARKER_FILE = ".withmate-managed-skill.json";
 const MANAGED_MARKER_VERSION = 1;
+const MANAGED_SKILL_FILE_NAME = "SKILL.md";
 
 export type ManagedMemorySkillSyncStatus =
   | "installed"
@@ -97,7 +98,12 @@ export class ManagedMemorySkillService {
         `.${WITHMATE_MEMORY_SKILL_NAME}-${process.pid}-${Date.now()}.tmp`,
       );
       await rm(tempPath, { recursive: true, force: true });
-      await cp(this.deps.bundledSkillPath, tempPath, { recursive: true });
+      await mkdir(tempPath, { recursive: true });
+      await writeFile(
+        path.join(tempPath, MANAGED_SKILL_FILE_NAME),
+        await readFile(path.join(this.deps.bundledSkillPath, MANAGED_SKILL_FILE_NAME), "utf8"),
+        "utf8",
+      );
       await writeFile(path.join(tempPath, MANAGED_MARKER_FILE), `${JSON.stringify(nextMarker, null, 2)}\n`, "utf8");
       await rm(skillPath, { recursive: true, force: true });
       await rename(tempPath, skillPath);
@@ -125,7 +131,7 @@ export class ManagedMemorySkillService {
       managedBy: "WithMate",
       skillName: WITHMATE_MEMORY_SKILL_NAME,
       bundleVersion: this.deps.getAppVersion(),
-      bundleDigest: await digestDirectory(this.deps.bundledSkillPath),
+      bundleDigest: await digestManagedSkillSource(this.deps.bundledSkillPath),
     };
   }
 
@@ -156,7 +162,7 @@ export class ManagedMemorySkillService {
     }
 
     try {
-      await readFile(path.join(skillPath, "SKILL.md"), "utf8");
+      await readFile(path.join(skillPath, MANAGED_SKILL_FILE_NAME), "utf8");
       return "unmanaged";
     } catch (error) {
       const errnoError = error as NodeJS.ErrnoException;
@@ -166,6 +172,15 @@ export class ManagedMemorySkillService {
       throw error;
     }
   }
+}
+
+async function digestManagedSkillSource(rootPath: string): Promise<string> {
+  const hash = createHash("sha256");
+  hash.update(MANAGED_SKILL_FILE_NAME);
+  hash.update("\0");
+  hash.update(await readFile(path.join(rootPath, MANAGED_SKILL_FILE_NAME)));
+  hash.update("\0");
+  return hash.digest("hex");
 }
 
 async function digestDirectory(rootPath: string, excludedRelativePaths: ReadonlySet<string> = new Set()): Promise<string> {
