@@ -7,6 +7,7 @@ import {
 } from "./settings-actions.js";
 import { resolveProviderRelativePathFromSelection } from "./settings-view-model.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
+import type { MemoryV6Diagnostics } from "../memory-v6/memory-diagnostics-state.js";
 
 type SettingsCommandHandlersContext = {
   getApi: () => WithMateWindowApi | null;
@@ -14,6 +15,7 @@ type SettingsCommandHandlersContext = {
   setAppSettings: (settings: AppSettings) => void;
   setSettingsDraft: (settings: AppSettings) => void;
   setSettingsFeedback: (feedback: string) => void;
+  setMemoryV6Diagnostics: (diagnostics: MemoryV6Diagnostics) => void;
   onSettingsSaved?: () => void;
 };
 
@@ -23,6 +25,8 @@ export type SettingsCommandHandlers = Pick<
   | "onExportModelCatalog"
   | "onOpenAppLogFolder"
   | "onOpenCrashDumpFolder"
+  | "onInstallMemoryV6CliShim"
+  | "onUninstallMemoryV6CliShim"
   | "onBrowseProviderSkillRootPath"
   | "onBrowseProviderSkillRelativePath"
   | "onBrowseProviderInstructionRelativePath"
@@ -35,6 +39,7 @@ export function buildSettingsCommandHandlers({
   setAppSettings,
   setSettingsDraft,
   setSettingsFeedback,
+  setMemoryV6Diagnostics,
   onSettingsSaved,
 }: SettingsCommandHandlersContext): SettingsCommandHandlers {
   const withApi = async (callback: (api: WithMateWindowApi) => Promise<void>) => {
@@ -114,6 +119,28 @@ export function buildSettingsCommandHandlers({
           setSettingsFeedback("クラッシュダンプフォルダを開いたよ。");
         } catch (error) {
           setSettingsFeedback(error instanceof Error ? error.message : "クラッシュダンプフォルダを開けなかったよ。");
+        }
+      });
+    },
+    onInstallMemoryV6CliShim: () => {
+      void withApi(async (api) => {
+        try {
+          const diagnostics = await api.installMemoryV6CliShim();
+          setMemoryV6Diagnostics(diagnostics);
+          setSettingsFeedback(formatCliShimActionFeedback(diagnostics, "install"));
+        } catch (error) {
+          setSettingsFeedback(error instanceof Error ? error.message : "CLI shim のインストールに失敗したよ。");
+        }
+      });
+    },
+    onUninstallMemoryV6CliShim: () => {
+      void withApi(async (api) => {
+        try {
+          const diagnostics = await api.uninstallMemoryV6CliShim();
+          setMemoryV6Diagnostics(diagnostics);
+          setSettingsFeedback(formatCliShimActionFeedback(diagnostics, "uninstall"));
+        } catch (error) {
+          setSettingsFeedback(error instanceof Error ? error.message : "CLI shim のアンインストールに失敗したよ。");
         }
       });
     },
@@ -204,4 +231,19 @@ export function buildSettingsCommandHandlers({
       });
     },
   };
+}
+
+function formatCliShimActionFeedback(
+  diagnostics: MemoryV6Diagnostics,
+  action: "install" | "uninstall",
+): string {
+  if (diagnostics.cliShim.status === "installed-path-missing") {
+    return "CLI shim を作成したよ。~/.local/bin が PATH に無いので、PATH 反映後に有効になるよ。";
+  }
+
+  if (action === "install") {
+    return "withmate-memory CLI shim をインストールしたよ。";
+  }
+
+  return "withmate-memory CLI shim をアンインストールしたよ。";
 }

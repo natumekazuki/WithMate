@@ -39,6 +39,7 @@ export type ManagedMemorySkillServiceDeps = {
   getAppSettings(): AppSettings;
   getAppVersion(): string;
   platform?: NodeJS.Platform;
+  shouldSyncSkillMarkdownOnly?: () => boolean | Promise<boolean>;
 };
 
 export class ManagedMemorySkillService {
@@ -99,7 +100,7 @@ export class ManagedMemorySkillService {
         `.${WITHMATE_MEMORY_SKILL_NAME}-${process.pid}-${Date.now()}.tmp`,
       );
       await rm(tempPath, { recursive: true, force: true });
-      if (this.shouldSyncSkillMarkdownOnly()) {
+      if (await this.shouldSyncSkillMarkdownOnly()) {
         await mkdir(tempPath, { recursive: true });
         await writeFile(
           path.join(tempPath, MANAGED_SKILL_FILE_NAME),
@@ -136,14 +137,18 @@ export class ManagedMemorySkillService {
       managedBy: "WithMate",
       skillName: WITHMATE_MEMORY_SKILL_NAME,
       bundleVersion: this.deps.getAppVersion(),
-      bundleDigest: this.shouldSyncSkillMarkdownOnly()
+      bundleDigest: await this.shouldSyncSkillMarkdownOnly()
         ? await digestManagedSkillSource(this.deps.bundledSkillPath)
         : await digestDirectory(this.deps.bundledSkillPath),
     };
   }
 
-  private shouldSyncSkillMarkdownOnly(): boolean {
-    return (this.deps.platform ?? process.platform) === "win32";
+  private async shouldSyncSkillMarkdownOnly(): Promise<boolean> {
+    if ((this.deps.platform ?? process.platform) === "win32") {
+      return true;
+    }
+
+    return Boolean(await this.deps.shouldSyncSkillMarkdownOnly?.());
   }
 
   private async readMarker(skillPath: string): Promise<ManagedSkillMarker | "unmanaged" | null> {

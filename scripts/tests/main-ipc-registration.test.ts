@@ -13,6 +13,7 @@ import {
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL,
+  WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
   WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL,
   WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL,
   WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL,
@@ -25,6 +26,7 @@ import {
   WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
+  WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
 } from "../../src/withmate-ipc-channels.js";
 
 type Handler = (...args: unknown[]) => unknown;
@@ -46,6 +48,7 @@ function createDeps(overrides: Record<string, unknown> = {}) {
   const deps = new Proxy({
     resolveEventWindow: () => null,
     resolveHomeWindow: () => null,
+    isSettingsWindow: () => false,
     isMemoryV6ReviewWindow: () => false,
     getMateState: async () => "active",
     logIpcError: (input: { channel: string }) => calls.push(`log:${input.channel}`),
@@ -86,6 +89,8 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_APP_SETTINGS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL));
   assert.ok(handlers.has(WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL));
@@ -160,6 +165,63 @@ test("Memory V6 Review IPC は memory-review window からだけ呼び出せる"
     reason: "user_request",
   });
   assert.deepEqual(calls, []);
+});
+
+test("Memory V6 CLI shim IPC は Settings window からだけ呼び出せる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const settingsWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => settingsWindow,
+    isSettingsWindow: (window: unknown) => window === settingsWindow,
+    installMemoryV6CliShim: async () => {
+      calls.push("install");
+      return { cliShim: { status: "installed" } };
+    },
+    uninstallMemoryV6CliShim: async () => {
+      calls.push("uninstall");
+      return { cliShim: { status: "not-installed" } };
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(await handlers.get(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL)?.({}), {
+    cliShim: { status: "installed" },
+  });
+  assert.deepEqual(await handlers.get(WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL)?.({}), {
+    cliShim: { status: "not-installed" },
+  });
+  assert.deepEqual(calls, ["install", "uninstall"]);
+});
+
+test("Memory V6 CLI shim IPC は Settings window 以外からの呼び出しを拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => homeWindow,
+    isSettingsWindow: () => false,
+    installMemoryV6CliShim: async () => {
+      calls.push("install");
+      return null;
+    },
+    uninstallMemoryV6CliShim: async () => {
+      calls.push("uninstall");
+      return null;
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL)?.({}) as Promise<unknown>,
+    /Settings IPC is only available/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL)?.({}) as Promise<unknown>,
+    /Settings IPC is only available/,
+  );
+  assert.equal(calls.includes("install"), false);
+  assert.equal(calls.includes("uninstall"), false);
 });
 
 test("Memory V6 Review IPC は通常 window からの呼び出しを拒否する", async () => {

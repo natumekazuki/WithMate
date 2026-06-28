@@ -304,6 +304,39 @@ describe("ManagedMemorySkillService", () => {
       await rm(rootPath, { recursive: true, force: true });
     }
   });
+
+  it("macOS でも PATH shim が利用可能なら Skill.md と managed marker だけを同期する", async () => {
+    const bundlePath = await createBundle();
+    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
+    try {
+      const settings = createDefaultAppSettings();
+      settings.codingProviderSettings.codex = {
+        enabled: true,
+        apiKey: "",
+        skillRootPath: rootPath,
+        skillRelativePath: "skills",
+        instructionRelativePath: "",
+      };
+      const service = new ManagedMemorySkillService({
+        bundledSkillPath: bundlePath,
+        getAppSettings: () => settings,
+        getAppVersion: () => "5.0.0-test",
+        platform: "darwin",
+        shouldSyncSkillMarkdownOnly: () => true,
+      });
+
+      const result = (await service.syncConfiguredProviderSkills())[0];
+      const skillPath = path.join(rootPath, "skills", WITHMATE_MEMORY_SKILL_NAME);
+
+      assert.equal(result?.status, "installed");
+      assert.equal(await pathExists(path.join(skillPath, "SKILL.md")), true);
+      assert.equal(await pathExists(path.join(skillPath, "bin", "withmate-memory.mjs")), false);
+      assert.equal(await pathExists(path.join(skillPath, "reference", "cli.md")), false);
+    } finally {
+      await rm(bundlePath, { recursive: true, force: true });
+      await rm(rootPath, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("withmate-memory bundled helper", () => {

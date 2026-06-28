@@ -32,6 +32,10 @@ export class MainWindowFacade {
     return this.deps.getAuxWindowService().isMemoryV6ReviewWindow(window);
   }
 
+  isSettingsWindow(window: BrowserWindow): boolean {
+    return this.deps.getAuxWindowService().isSettingsWindow(window);
+  }
+
   async openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {
     return this.deps.getAuxWindowService().openCharacterEditorWindow(characterId);
   }

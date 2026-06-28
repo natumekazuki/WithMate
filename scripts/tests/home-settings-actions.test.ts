@@ -117,6 +117,7 @@ describe("home-settings-actions", () => {
       setSettingsFeedback: (nextFeedback) => {
         feedback = nextFeedback;
       },
+      setMemoryV6Diagnostics: () => undefined,
     });
 
     handlers.onBrowseProviderSkillRootPath("codex");
@@ -155,6 +156,7 @@ describe("home-settings-actions", () => {
       setSettingsFeedback: (nextFeedback) => {
         feedback = nextFeedback;
       },
+      setMemoryV6Diagnostics: () => undefined,
     });
 
     handlers.onBrowseProviderSkillRelativePath("codex");
@@ -192,6 +194,7 @@ describe("home-settings-actions", () => {
       setSettingsFeedback: (nextFeedback) => {
         feedback = nextFeedback;
       },
+      setMemoryV6Diagnostics: () => undefined,
     });
 
     handlers.onBrowseProviderInstructionRelativePath("codex");
@@ -226,6 +229,7 @@ describe("home-settings-actions", () => {
       setSettingsFeedback: (nextFeedback) => {
         feedback = nextFeedback;
       },
+      setMemoryV6Diagnostics: () => undefined,
     });
 
     handlers.onBrowseProviderInstructionRelativePath("codex");
@@ -251,6 +255,7 @@ describe("home-settings-actions", () => {
       setSettingsFeedback: (nextFeedback) => {
         feedback = nextFeedback;
       },
+      setMemoryV6Diagnostics: () => undefined,
     });
 
     handlers.onBrowseProviderSkillRootPath("codex");
@@ -258,6 +263,73 @@ describe("home-settings-actions", () => {
 
     assert.equal(draft, settings);
     assert.match(feedback, /キャンセル/);
+  });
+
+  it("CLI shim install/uninstall は diagnostics state と feedback を更新する", async () => {
+    const settings = createDefaultAppSettings();
+    let feedback = "";
+    let status = "";
+    const handlers = buildSettingsCommandHandlers({
+      getApi: () => ({
+        installMemoryV6CliShim: async () => ({
+          generatedAt: "2026-06-28T00:00:00.000Z",
+          runtime: { status: "running", baseUrl: null, dbPath: null, discoveryFilePath: null, hasApiSecret: false },
+          binding: { activeBindingCount: 0 },
+          providers: [],
+          skillSync: [],
+          cliShim: {
+            platform: "darwin",
+            commandName: "withmate-memory",
+            supported: true,
+            status: "installed-path-missing",
+            shimDirectory: "/Users/test/.local/bin",
+            shimPath: "/Users/test/.local/bin/withmate-memory",
+            pathContainsShimDirectory: false,
+            message: "withmate-memory shim is installed, but the shim directory is not on PATH.",
+          },
+          lastErrors: [],
+        }),
+        uninstallMemoryV6CliShim: async () => ({
+          generatedAt: "2026-06-28T00:00:00.000Z",
+          runtime: { status: "running", baseUrl: null, dbPath: null, discoveryFilePath: null, hasApiSecret: false },
+          binding: { activeBindingCount: 0 },
+          providers: [],
+          skillSync: [],
+          cliShim: {
+            platform: "darwin",
+            commandName: "withmate-memory",
+            supported: true,
+            status: "not-installed",
+            shimDirectory: "/Users/test/.local/bin",
+            shimPath: "/Users/test/.local/bin/withmate-memory",
+            pathContainsShimDirectory: false,
+            message: "withmate-memory shim is not installed, and ~/.local/bin is not on PATH.",
+          },
+          lastErrors: [],
+        }),
+      } as Partial<WithMateWindowApi> as WithMateWindowApi),
+      persistedSettingsDraft: settings,
+      setAppSettings: () => undefined,
+      setSettingsDraft: () => undefined,
+      setSettingsFeedback: (nextFeedback) => {
+        feedback = nextFeedback;
+      },
+      setMemoryV6Diagnostics: (diagnostics) => {
+        status = diagnostics.cliShim.status;
+      },
+    });
+
+    handlers.onInstallMemoryV6CliShim();
+    await flushAsyncHandlers();
+
+    assert.equal(status, "installed-path-missing");
+    assert.match(feedback, /PATH/);
+
+    handlers.onUninstallMemoryV6CliShim();
+    await flushAsyncHandlers();
+
+    assert.equal(status, "not-installed");
+    assert.match(feedback, /アンインストール/);
   });
 
 });
