@@ -117,7 +117,7 @@ describe("inspectAppDatabase", () => {
     }
   });
 
-  it("V6 foundation DB は既知 file として診断するが V4 active compatibility を変えない", async () => {
+  it("V6 DB は既知 runtime file として診断する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-diagnostics-"));
     try {
       const activeDatabasePath = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
@@ -131,21 +131,21 @@ describe("inspectAppDatabase", () => {
       assert.equal(diagnostics.schemaVersion, APP_DATABASE_V4_SCHEMA_VERSION);
       assert.equal(v6File?.expectedSchemaVersion, APP_DATABASE_V6_SCHEMA_VERSION);
       assert.equal(v6File?.userVersion, APP_DATABASE_V6_SCHEMA_VERSION);
-      assert.equal(v6File?.role, "foundation");
+      assert.equal(v6File?.role, "runtime");
       assert.equal(v6File?.schemaValid, true);
-      assert.equal(v6File?.runtimeEligible, false);
+      assert.equal(v6File?.runtimeEligible, true);
       assert.equal(v6File?.valid, true);
-      assert.equal(v6File?.status, "foundation-ready");
+      assert.equal(v6File?.status, "ready");
       assert.equal(
         diagnostics.warnings.includes("Multiple valid app database generations exist: withmate-v6.db, withmate-v4.db."),
-        false,
+        true,
       );
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
   });
 
-  it("Memory V6 runtime bootstrap後のfresh diagnosticsはV6 foundation DBを返す", async () => {
+  it("Memory V6 runtime bootstrap後のfresh diagnosticsはV6 runtime DBを返す", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-diagnostics-"));
     const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
     try {
@@ -160,8 +160,8 @@ describe("inspectAppDatabase", () => {
         assert.equal(diagnostics.valid, true);
         assert.equal(v6File?.exists, true);
         assert.equal(v6File?.schemaValid, true);
-        assert.equal(v6File?.runtimeEligible, false);
-        assert.equal(v6File?.status, "foundation-ready");
+        assert.equal(v6File?.runtimeEligible, true);
+        assert.equal(v6File?.status, "ready");
       } finally {
         await runtime.stop();
       }
@@ -171,7 +171,7 @@ describe("inspectAppDatabase", () => {
     }
   });
 
-  it("activeDatabasePath に V6 foundation DB を渡した場合は v6-foundation として診断する", async () => {
+  it("activeDatabasePath に V6 DB を渡した場合は v6 として診断する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-diagnostics-"));
     try {
       const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
@@ -179,17 +179,14 @@ describe("inspectAppDatabase", () => {
       const diagnostics = inspectAppDatabase(userDataPath, dbPath, false);
 
       assert.equal(diagnostics.activeFileName, APP_DATABASE_V6_FILENAME);
-      assert.equal(diagnostics.compatibilityMode, "v6-foundation");
+      assert.equal(diagnostics.compatibilityMode, "v6");
       assert.equal(diagnostics.schemaVersion, APP_DATABASE_V6_SCHEMA_VERSION);
       assert.equal(diagnostics.userVersion, APP_DATABASE_V6_SCHEMA_VERSION);
       assert.equal(diagnostics.schemaValid, true);
-      assert.equal(diagnostics.runtimeCompatible, false);
+      assert.equal(diagnostics.runtimeCompatible, true);
       assert.equal(diagnostics.exists, true);
-      assert.equal(diagnostics.valid, false);
-      assert.equal(
-        diagnostics.warnings.includes("Active database withmate-v6.db is a foundation schema and is not supported by the current runtime."),
-        true,
-      );
+      assert.equal(diagnostics.valid, true);
+      assert.deepEqual(diagnostics.warnings, []);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }

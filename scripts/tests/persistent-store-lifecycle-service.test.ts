@@ -18,6 +18,8 @@ import {
   CREATE_V3_SCHEMA_SQL,
 } from "../../src-electron/database-schema-v3.js";
 import { APP_DATABASE_V4_FILENAME } from "../../src-electron/database-schema-v4.js";
+import { APP_DATABASE_V6_FILENAME } from "../../src-electron/database-schema-v6.js";
+import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { MateStorage } from "../../src-electron/mate-storage.js";
 import { AuditLogStorageV2 } from "../../src-electron/audit-log-storage-v2.js";
 import { AuditLogStorageV3 } from "../../src-electron/audit-log-storage-v3.js";
@@ -26,6 +28,7 @@ import { SessionStorageV2 } from "../../src-electron/session-storage-v2.js";
 import { SessionStorageV3 } from "../../src-electron/session-storage-v3.js";
 import {
   PersistentStoreLifecycleService,
+  createPersistentStoreLifecycleService,
   type PersistentStoreBundleLike,
 } from "../../src-electron/persistent-store-lifecycle-service.js";
 
@@ -179,6 +182,16 @@ async function withTempLegacyDatabase<T>(fn: (dbPath: string, userDataPath: stri
     return await fn(dbPath, userDataPath);
   } finally {
     await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+}
+
+function readTableNames(dbPath: string): string[] {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    return (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>)
+      .map((row) => row.name);
+  } finally {
+    db.close();
   }
 }
 
@@ -1057,6 +1070,51 @@ test("PersistentStoreLifecycleService は V2 DB に legacy memory table を作�
       service.close(bundle, dbPath);
     }
   });
+});
+
+test("PersistentStoreLifecycleService は V6 DB に legacy session/audit/memory/Mate table を作成しない", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "withmate-v6-lifecycle-"));
+  try {
+    const userDataPath = path.join(dir, "user-data");
+    const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
+    assert.equal(path.basename(dbPath), APP_DATABASE_V6_FILENAME);
+    const bundledModelCatalogPath = path.join(dir, "model-catalog.json");
+    await writeFile(
+      bundledModelCatalogPath,
+      JSON.stringify({
+        providers: [
+          {
+            id: "codex",
+            label: "Codex",
+            defaultModelId: "gpt-5.4",
+            defaultReasoningEffort: "medium",
+            models: [
+              {
+                id: "gpt-5.4",
+                label: "GPT 5.4",
+                reasoningEfforts: ["medium"],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    const service = createPersistentStoreLifecycleService();
+    const bundle = await service.initialize(dbPath, bundledModelCatalogPath, userDataPath);
+    service.close(bundle, dbPath);
+
+    const tables = readTableNames(dbPath);
+    assert.equal(tables.includes("sessions_v6"), true);
+    assert.equal(tables.includes("audit_events_v6"), true);
+    assert.equal(tables.includes("sessions"), false);
+    assert.equal(tables.includes("audit_logs"), false);
+    assert.equal(tables.includes("session_memories"), false);
+    assert.equal(tables.includes("project_memory_entries"), false);
+    assert.equal(tables.includes("mate_profile"), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
 });
 
 test("PersistentStoreLifecycleService は V3 DB では V1 storages を生成せず V3 storages を返して schema hook を呼ぶ", async () => {

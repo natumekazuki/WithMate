@@ -169,6 +169,7 @@ import {
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
 import { isValidV4Database } from "./database-schema-v4.js";
+import { CREATE_V6_SCHEMA_SQL } from "./database-schema-v6.js";
 import {
   openAppDatabase,
   SQLITE_MAINTENANCE_BUSY_TIMEOUT_MS,
@@ -1062,6 +1063,16 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             const db = openAppDatabase(nextDbPath);
             try {
               for (const statement of CREATE_V3_SCHEMA_SQL) {
+                db.exec(statement);
+              }
+            } finally {
+              db.close();
+            }
+          },
+          ensureV6Schema: (nextDbPath) => {
+            const db = openAppDatabase(nextDbPath);
+            try {
+              for (const statement of CREATE_V6_SCHEMA_SQL) {
                 db.exec(statement);
               }
             } finally {

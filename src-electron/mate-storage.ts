@@ -5,6 +5,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import {
   CREATE_V4_SCHEMA_SQL,
+  APP_DATABASE_V4_FILENAME,
   isLegacyAppDatabasePath,
 } from "./database-schema-v4.js";
 import { openAppDatabase } from "./sqlite-connection.js";
@@ -357,7 +358,7 @@ export class MateStorage {
 
   constructor(dbPath: string, userDataPath: string, fileSystem: MateStorageFileSystem = {}) {
     this.userDataPath = userDataPath;
-    this.isLegacyDatabase = isLegacyAppDatabasePath(dbPath);
+    this.isLegacyDatabase = isLegacyAppDatabasePath(dbPath) || !dbPath.endsWith(APP_DATABASE_V4_FILENAME);
     this.removeFileSystemEntry = fileSystem.rm ?? rm;
     this.db = openAppDatabase(dbPath);
     if (!this.isLegacyDatabase) {
