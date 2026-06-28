@@ -92,8 +92,9 @@ export class AuditLogStorageV6 {
     return { ...input, id: Number(result.lastInsertRowid) };
   }
 
-  updateAuditLog(entry: AuditLogEntry): AuditLogEntry {
-    this.db.prepare(`
+  updateAuditLog(id: number, input: Omit<AuditLogEntry, "id">): AuditLogEntry {
+    const entry = { ...input, id };
+    const result = this.db.prepare(`
       UPDATE audit_events_v6
       SET session_id = ?,
           provider_id = ?,
@@ -105,10 +106,13 @@ export class AuditLogStorageV6 {
       entry.sessionId,
       entry.provider,
       entry.transportPayload?.summary ?? entry.phase,
-      JSON.stringify(entry),
+      JSON.stringify(input),
       entry.createdAt,
-      entry.id,
+      id,
     );
+    if (result.changes !== 1) {
+      throw new Error(`audit log not found: ${id}`);
+    }
     return entry;
   }
 

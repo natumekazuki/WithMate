@@ -69,11 +69,14 @@ export async function resolveOrMigrateAppDatabasePath(
   if (v6Exists && isValidV6Database(v6Path)) {
     const v4PathForExistingV6 = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
     if (existsSync(v4PathForExistingV6) && isValidV4Database(v4PathForExistingV6)) {
-      onProgress?.({
-        title: "データベースを移行しています",
-        detail: `${APP_DATABASE_V4_FILENAME} から ${APP_DATABASE_V6_FILENAME} へ継続データを移行しています。`,
-      });
-      await migrateV4ToV6(v4PathForExistingV6, v6Path);
+      const alreadyMigrated = await hasV4ToV6MigrationMarker(v6Path);
+      if (!alreadyMigrated) {
+        onProgress?.({
+          title: "データベースを移行しています",
+          detail: `${APP_DATABASE_V4_FILENAME} から ${APP_DATABASE_V6_FILENAME} へ継続データを移行しています。`,
+        });
+        await migrateV4ToV6(v4PathForExistingV6, v6Path);
+      }
     }
     return v6Path;
   }
@@ -219,4 +222,9 @@ async function migrateV4ToV6(
     targetDatabaseFile: v6Path,
     overwrite: options.overwrite,
   });
+}
+
+async function hasV4ToV6MigrationMarker(v6Path: string): Promise<boolean> {
+  const { hasV4ToV6ReleaseDataMigrationMarker } = await import("../scripts/migrate-database-v4-to-v6.js");
+  return hasV4ToV6ReleaseDataMigrationMarker(v6Path);
 }

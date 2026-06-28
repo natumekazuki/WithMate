@@ -56,8 +56,10 @@ export type V4ToV6MigrationWriteReport = {
 const MIGRATED_APP_SETTING_KEYS = new Set([
   "auto_collapse_action_dock_on_send",
   "coding_provider_settings_json",
+  "launch_at_login_enabled",
   "user_microcopy_catalog_json",
 ]);
+const V4_TO_V6_RELEASE_DATA_MIGRATED_AT_KEY = "v4_to_v6_release_data_migrated_at";
 
 const APP_SETTING_COLUMNS = ["setting_key", "setting_value", "updated_at"] as const;
 const MODEL_CATALOG_REVISION_COLUMNS = ["revision", "source", "imported_at", "is_active"] as const;
@@ -315,10 +317,37 @@ function copyTableRows(
     .prepare(`SELECT ${columnSql} FROM ${tableName}${whereSql}`)
     .all(...whereParams) as Array<Record<string, SQLInputValue>>;
   const insert = targetDb.prepare(`INSERT OR IGNORE INTO ${tableName} (${columnSql}) VALUES (${placeholders})`);
+  let inserted = 0;
   for (const row of rows) {
-    insert.run(...columns.map((column) => row[column]));
+    inserted += Number(insert.run(...columns.map((column) => row[column])).changes);
   }
-  return rows.length;
+  return inserted;
+}
+
+function writeV4ToV6MigrationMarker(targetDb: DatabaseSync): void {
+  targetDb.prepare(`
+    INSERT INTO app_settings (setting_key, setting_value, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(setting_key) DO NOTHING
+  `).run(
+    V4_TO_V6_RELEASE_DATA_MIGRATED_AT_KEY,
+    new Date().toISOString(),
+    new Date().toISOString(),
+  );
+}
+
+export function hasV4ToV6ReleaseDataMigrationMarker(databaseFile: string): boolean {
+  if (!existsSync(databaseFile) || !isValidV6Database(databaseFile)) {
+    return false;
+  }
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return db.prepare("SELECT 1 FROM app_settings WHERE setting_key = ?").get(
+      V4_TO_V6_RELEASE_DATA_MIGRATED_AT_KEY,
+    ) !== undefined;
+  } finally {
+    db.close();
+  }
 }
 
 function copyReleaseData(sourceDb: DatabaseSync, targetDb: DatabaseSync): Pick<
@@ -354,6 +383,7 @@ function copyReleaseDataInTransaction(sourceDb: DatabaseSync, targetDb: Database
   targetDb.exec("BEGIN IMMEDIATE TRANSACTION");
   try {
     const copied = copyReleaseData(sourceDb, targetDb);
+    writeV4ToV6MigrationMarker(targetDb);
     targetDb.exec("COMMIT");
     return zeroSkippedCounts({
       ...copied,

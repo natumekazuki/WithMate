@@ -274,7 +274,7 @@ describe("HomeMateSetupPanel", () => {
   };
 
   const renderPanel = (params?: {
-    mode?: "create" | "edit";
+    mode?: "create" | "edit" | "unavailable";
     creating?: boolean;
     feedback?: string;
     displayName?: string;
@@ -395,6 +395,23 @@ describe("HomeMateSetupPanel", () => {
     assert.ok(cancelButton);
     cancelButton.props.onClick();
     assert.equal(canceled, 1);
+  });
+
+  it("unavailable mode では Mate 作成/保存ボタンを表示しない", () => {
+    const panel = renderPanel({
+      mode: "unavailable",
+      displayName: "",
+      feedback: "ignored",
+    });
+    const html = renderToStaticMarkup(panel);
+    const input = collectElements(panel, (element) => element.type === "input" && element.props.id === "mate-display-name")[0];
+    const submitButton = collectElements(panel, (element) => element.type === "button" && element.props.type === "submit")[0];
+
+    assert.ok(html.includes("V6 Memory foundation では Mate Profile はまだ利用できません。"));
+    assert.equal(input?.props.disabled, true);
+    assert.equal(submitButton, undefined);
+    assert.equal(html.includes("Mate を作成"), false);
+    assert.equal(html.includes("Mate を保存"), false);
   });
 
   it("edit mode では Mate アイコンの選択と解除を実行できる", () => {

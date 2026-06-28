@@ -27,6 +27,7 @@ import {
 } from "../../src-electron/database-schema-v4.js";
 import { APP_DATABASE_V6_FILENAME, isValidV6Database } from "../../src-electron/database-schema-v6.js";
 import { resolveAppDatabasePath, resolveOrMigrateAppDatabasePath } from "../../src-electron/app-database-path.js";
+import { hasV4ToV6ReleaseDataMigrationMarker } from "../migrate-database-v4-to-v6.js";
 
 function createV2Database(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
@@ -351,6 +352,33 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
       assert.equal(selectedPath, v6Path);
       assert.equal(isValidV6Database(v6Path), true);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("V6 DB と V4 DB が併存しても release data migration marker 済みなら再移行しない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+
+    try {
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      createV4Database(v4Path);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+
+      const firstProgress: string[] = [];
+      const firstSelectedPath = await resolveOrMigrateAppDatabasePath(userDataPath, (progress) => {
+        firstProgress.push(progress.title);
+      });
+      assert.equal(firstSelectedPath, v6Path);
+      assert.equal(hasV4ToV6ReleaseDataMigrationMarker(v6Path), true);
+      assert.equal(firstProgress.includes("データベースを移行しています"), true);
+
+      const secondProgress: string[] = [];
+      const secondSelectedPath = await resolveOrMigrateAppDatabasePath(userDataPath, (progress) => {
+        secondProgress.push(progress.title);
+      });
+      assert.equal(secondSelectedPath, v6Path);
+      assert.equal(secondProgress.includes("データベースを移行しています"), false);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }

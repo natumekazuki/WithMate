@@ -400,7 +400,7 @@ test("PersistentStoreLifecycleService は legacy DB 起動時に Mate schema を
 
     const bundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
     try {
-      assert.equal(bundle.mateStorage.getMateState(), "not_created");
+      assert.equal(bundle.mateStorage.getMateState(), "profile_unavailable");
 
       const db = new DatabaseSync(dbPath, { readOnly: true });
       try {
@@ -460,7 +460,7 @@ test("PersistentStoreLifecycleService は V3 legacy DB 起動時に Mate schema 
 
     const bundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
     try {
-      assert.equal(bundle.mateStorage.getMateState(), "not_created");
+      assert.equal(bundle.mateStorage.getMateState(), "profile_unavailable");
 
       const db = new DatabaseSync(dbPath, { readOnly: true });
       try {

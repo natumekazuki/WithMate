@@ -390,7 +390,7 @@ describe("withmate-memory CLI", () => {
       });
 
       assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
-      assert.equal(capturedBody.targets[0].project.path, tempDirectory);
+      assert.equal(capturedBody.targets[0].project.path, process.cwd());
     } finally {
       process.chdir(previousCwd);
       await rm(tempDirectory, { recursive: true, force: true });

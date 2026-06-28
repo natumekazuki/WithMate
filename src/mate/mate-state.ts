@@ -1,5 +1,5 @@
 export type MateProfileState = "draft" | "active" | "deleted";
-export type MateStorageState = "not_created" | MateProfileState;
+export type MateStorageState = "not_created" | "profile_unavailable" | MateProfileState;
 export type MateProfileSectionState = {
   sectionKey: "core" | "bond" | "work_style" | "notes" | "project_digest";
   filePath: string;

@@ -71,6 +71,27 @@ test("loadMateStatusSnapshot は not_created では profile を取得しない",
   });
 });
 
+test("loadMateStatusSnapshot は profile_unavailable では profile を取得しない", async () => {
+  let profileCallCount = 0;
+  const api: MateStatusLoadApi = {
+    getMateState: async () => "profile_unavailable",
+    getMateProfile: async () => {
+      profileCallCount += 1;
+      return createMateProfile("stale");
+    },
+  };
+
+  const result = await loadMateStatusSnapshot({ api });
+
+  assert.equal(profileCallCount, 0);
+  assert.deepEqual(result, {
+    status: "ready",
+    mateState: "profile_unavailable",
+    mateProfile: null,
+  });
+});
+
+
 test("loadMateStatusSnapshot は state 取得後に inactive なら stale として profile を取得しない", async () => {
   let active = true;
   let profileCallCount = 0;

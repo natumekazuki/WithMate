@@ -27,6 +27,11 @@ export type SaveHomeMateProfileInput = {
 };
 
 export async function saveHomeMateProfile(input: SaveHomeMateProfileInput): Promise<void> {
+  if (input.mateState === "profile_unavailable") {
+    input.setMateCreationFeedback("V6 Memory foundation では Mate Profile はまだ利用できません。");
+    return;
+  }
+
   const displayName = input.displayName.trim();
   if (!displayName) {
     input.setMateCreationFeedback("displayName を入力してね。");
@@ -45,7 +50,7 @@ export async function saveHomeMateProfile(input: SaveHomeMateProfileInput): Prom
 
     try {
       nextMateState = await input.api.getMateState();
-      if (nextMateState !== "not_created") {
+      if (nextMateState !== "not_created" && nextMateState !== "profile_unavailable") {
         const loadedProfile = await input.api.getMateProfile();
         if (loadedProfile) {
           nextMateProfile = loadedProfile;
@@ -60,7 +65,7 @@ export async function saveHomeMateProfile(input: SaveHomeMateProfileInput): Prom
     input.setMateCreationFeedback(creatingMate ? "" : "Mate を保存したよ。");
     input.setMateProfileEditorOpen(false);
 
-    if (nextMateState !== "not_created") {
+    if (nextMateState !== "not_created" && nextMateState !== "profile_unavailable") {
       try {
         await input.hydrateHomeData();
       } catch (error) {
@@ -89,6 +94,10 @@ export type UpdateHomeMateAvatarInput = {
 };
 
 export async function selectHomeMateAvatar(input: UpdateHomeMateAvatarInput): Promise<void> {
+  if (input.mateState === "profile_unavailable") {
+    input.setMateCreationFeedback("V6 Memory foundation では Mate Profile はまだ利用できません。");
+    return;
+  }
   if (input.mateState === "not_created") {
     input.setMateCreationFeedback("Mate を作成してからアイコンを設定してね。");
     return;
@@ -112,6 +121,10 @@ export async function selectHomeMateAvatar(input: UpdateHomeMateAvatarInput): Pr
 }
 
 export async function clearHomeMateAvatar(input: UpdateHomeMateAvatarInput): Promise<void> {
+  if (input.mateState === "profile_unavailable") {
+    input.setMateCreationFeedback("V6 Memory foundation では Mate Profile はまだ利用できません。");
+    return;
+  }
   if (input.mateState === "not_created") {
     input.setMateCreationFeedback("Mate を作成してからアイコンを設定してね。");
     return;

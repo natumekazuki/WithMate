@@ -8,6 +8,7 @@ import { describe, it } from "node:test";
 import {
   createMigrationDryRunReport,
   createMigrationWriteReport,
+  hasV4ToV6ReleaseDataMigrationMarker,
 } from "../migrate-database-v4-to-v6.js";
 import { CREATE_APP_SETTINGS_TABLE_SQL, CREATE_MODEL_CATALOG_TABLES_SQL } from "../../src-electron/database-schema-v1.js";
 import { CREATE_V4_SCHEMA_SQL } from "../../src-electron/database-schema-v4.js";
@@ -65,6 +66,11 @@ function createV4FixtureDatabase(dbPath: string): void {
     );
     db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
       "auto_collapse_action_dock_on_send",
+      "true",
+      "2026-06-28T00:00:00.000Z",
+    );
+    db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
+      "launch_at_login_enabled",
       "true",
       "2026-06-28T00:00:00.000Z",
     );
@@ -132,6 +138,18 @@ function tableExists(dbPath: string, tableName: string): boolean {
   }
 }
 
+function readAppSetting(dbPath: string, settingKey: string): string | null {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const row = db.prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?").get(settingKey) as {
+      setting_value: string;
+    } | undefined;
+    return row?.setting_value ?? null;
+  } finally {
+    db.close();
+  }
+}
+
 describe("migrate-database-v4-to-v6", () => {
   it("dry-run で V6 移行対象と skip 対象を分けて返す", () => {
     const fixture = createFixture();
@@ -140,7 +158,7 @@ describe("migrate-database-v4-to-v6", () => {
 
       const report = createMigrationDryRunReport(fixture.v4Path);
 
-      assert.equal(report.plannedV6Counts.appSettings, 2);
+      assert.equal(report.plannedV6Counts.appSettings, 3);
       assert.equal(report.plannedV6Counts.modelCatalogModels, 1);
       assert.equal(report.plannedV6Counts.characters, 1);
       assert.equal(report.v4Counts.skippedAppSettings, 1);
@@ -162,11 +180,13 @@ describe("migrate-database-v4-to-v6", () => {
         targetDatabaseFile: fixture.v6Path,
       });
 
-      assert.equal(report.migratedV6Counts.appSettings, 2);
+      assert.equal(report.migratedV6Counts.appSettings, 3);
       assert.equal(report.migratedV6Counts.modelCatalogRevisions, 1);
       assert.equal(report.migratedV6Counts.characters, 1);
       assert.equal(isValidV6Database(fixture.v6Path), true);
-      assert.equal(readCount(fixture.v6Path, "app_settings"), 2);
+      assert.equal(readCount(fixture.v6Path, "app_settings"), 4);
+      assert.equal(readAppSetting(fixture.v6Path, "launch_at_login_enabled"), "true");
+      assert.equal(hasV4ToV6ReleaseDataMigrationMarker(fixture.v6Path), true);
       assert.equal(readCount(fixture.v6Path, "model_catalog_models"), 1);
       assert.equal(readCount(fixture.v6Path, "characters"), 1);
       assert.equal(readCount(fixture.v6Path, "sessions_v6"), 0);
@@ -197,7 +217,7 @@ describe("migrate-database-v4-to-v6", () => {
         targetDatabaseFile: fixture.v6Path,
       });
 
-      assert.equal(readCount(fixture.v6Path, "app_settings"), 2);
+      assert.equal(readCount(fixture.v6Path, "app_settings"), 4);
       assert.equal(readCount(fixture.v6Path, "characters"), 1);
     } finally {
       fixture.cleanup();

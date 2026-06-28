@@ -1,7 +1,7 @@
 import { CharacterAvatar } from "../ui-utils.js";
 
 export type HomeMateSetupPanelProps = {
-  mode?: "create" | "edit";
+  mode?: "create" | "edit" | "unavailable";
   displayName: string;
   creating: boolean;
   avatarUpdating?: boolean;
@@ -32,6 +32,7 @@ export function HomeMateSetupPanel({
   onClearAvatar,
 }: HomeMateSetupPanelProps) {
   const isEditMode = mode === "edit";
+  const isUnavailableMode = mode === "unavailable";
   const canEditAvatar = isEditMode && Boolean(onSelectAvatar);
   const canClearAvatar = canEditAvatar && Boolean(onClearAvatar) && Boolean(mateAvatarFilePath);
   const avatarBusy = creating || avatarUpdating;
@@ -39,7 +40,9 @@ export function HomeMateSetupPanel({
 
   return (
     <section className="home-mate-setup-panel">
-      <h2 className="home-mate-setup-head">{isEditMode ? "Mate プロフィール" : "Mate 作成"}</h2>
+      <h2 className="home-mate-setup-head">
+        {isUnavailableMode ? "Mate プロフィール" : isEditMode ? "Mate プロフィール" : "Mate 作成"}
+      </h2>
       <form
         className="home-mate-setup-form"
         onSubmit={(event) => {
@@ -80,15 +83,21 @@ export function HomeMateSetupPanel({
             autoComplete="off"
             spellCheck={false}
             placeholder="あなたの Mate"
-            disabled={creating}
+            disabled={creating || isUnavailableMode}
           />
         </label>
         {mateDisplayName ? <p className="home-mate-current-name">現在の Mate: {mateDisplayName}</p> : null}
-        {feedback ? <p className="settings-feedback home-mate-feedback">{feedback}</p> : null}
+        {isUnavailableMode ? (
+          <p className="settings-feedback home-mate-feedback">
+            V6 Memory foundation では Mate Profile はまだ利用できません。
+          </p>
+        ) : feedback ? <p className="settings-feedback home-mate-feedback">{feedback}</p> : null}
         <div className="home-mate-setup-actions">
-          <button className="start-session-button" type="submit" disabled={creating}>
-            {creating ? (isEditMode ? "保存中..." : "作成中...") : isEditMode ? "Mate を保存" : "Mate を作成"}
-          </button>
+          {isUnavailableMode ? null : (
+            <button className="start-session-button" type="submit" disabled={creating}>
+              {creating ? (isEditMode ? "保存中..." : "作成中...") : isEditMode ? "Mate を保存" : "Mate を作成"}
+            </button>
+          )}
           {onCancel ? (
             <button className="launch-toggle" type="button" onClick={onCancel} disabled={creating}>
               戻る

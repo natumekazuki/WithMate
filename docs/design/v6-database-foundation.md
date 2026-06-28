@@ -35,6 +35,7 @@ V6 runtimeに必要な継続データだけを新規V6 DBへ自動移行し、V5
 
 上記はV6 release migrationで自動移行する。
 Character filesは現行の`<userData>/characters/<character-id>/` rootを継続し、V6用に別rootへ分けない。
+app settingsの継続対象には、provider / UI基本設定に加えてOS連携の`launch_at_login_enabled`を含める。
 
 引き継がない:
 
@@ -49,6 +50,10 @@ Character filesは現行の`<userData>/characters/<character-id>/` rootを継続
 - provider instruction sync projection
 - legacy Memory UI state
 - legacy Project Memory import / viewer
+
+V6 runtime DBがactiveな間、Mate Profile / Growthは未対応domainとして扱う。
+HomeはMate未作成として作成・編集UIへ誘導せず、Mate ProfileがV6 foundationでは利用できない状態を表示する。
+Mate作成・更新・avatar操作IPCはV6 DBでは保存先を持たないため、操作可能なUIから直接到達させない。
 
 ## Destructive Reset Policy
 
@@ -104,7 +109,7 @@ V6 runtime固有のproject / session / message / audit / Memoryは、legacy tabl
 `isValidV6Database()`はfilename / `user_version` / required tableに加え、forbidden legacy table、主要column、主要index、主要foreign key、主要CHECK、`PRAGMA foreign_key_check`を確認する。
 `isValidV6DatabaseShallow()`はboot diagnostics用にfilename / `user_version` / required table / forbidden legacy tableだけを確認し、inactive V6 DBへ毎回 `PRAGMA foreign_key_check` を実行しない。
 `createOrVerifyV6FreshDatabase()`はfresh V6 DB作成と既存valid V6 DB検証を行う。fresh作成は一時directory内の`withmate-v6.db`へtransactionでschemaを作り、deep validation後にfinal pathへ既存file非上書きでpublishする。失敗時はtemporary DBとsidecarを削除し、既存invalid V6 DBは破壊的に上書きしない。
-V6 release migrationでは、active runtime DB path selectionを`withmate-v6.db`へ接続する。既存V4 DBがある場合は`app_settings`の継続対象key、`model_catalog_*`、`characters` metadataだけをV6 DBへ移行し、V5以前session、legacy Memory、Growth、provider instruction projectionはV6正本へ持ち込まない。既存の空V6 bootstrap DBがある場合も、valid V6 DBであれば同じrelease migrationで継続データを投入する。
+V6 release migrationでは、active runtime DB path selectionを`withmate-v6.db`へ接続する。既存V4 DBがある場合は`app_settings`の継続対象key、`model_catalog_*`、`characters` metadataだけをV6 DBへ移行し、V5以前session、legacy Memory、Growth、provider instruction projectionはV6正本へ持ち込まない。既存の空V6 bootstrap DBがある場合も、valid V6 DBであれば同じrelease migrationで継続データを投入する。release data copy後は`app_settings.v4_to_v6_release_data_migrated_at`をmarkerとして残し、valid V6 DBとV4 DBが併存する起動ではmarker済みなら再copyとmigration progress表示を行わない。
 diagnosticsは`withmate-v6.db`をruntime fileとして表示し、schema-validなら`runtimeEligible: true`として扱う。V4 DBと並存する場合は複数runtime generation warningの対象にする。
 
 ## V6 Project Scope

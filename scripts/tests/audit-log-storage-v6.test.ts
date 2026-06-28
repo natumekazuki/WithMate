@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import type { AuditLogEntry } from "../../src/runtime-state.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { AuditLogStorageV6 } from "../../src-electron/audit-log-storage-v6.js";
+import { AuditLogService } from "../../src-electron/audit-log-service.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 
 function baseAuditLog(overrides: Partial<Omit<AuditLogEntry, "id">> = {}): Omit<AuditLogEntry, "id"> {
@@ -34,42 +35,49 @@ function baseAuditLog(overrides: Partial<Omit<AuditLogEntry, "id">> = {}): Omit<
   };
 }
 
+function seedSession(dbPath: string): void {
+  const sessionStorage = new SessionStorageV6(dbPath);
+  try {
+    sessionStorage.upsertSession({
+      id: "session-v6",
+      taskTitle: "V6 audit",
+      status: "idle",
+      updatedAt: "2026-06-28T00:00:00.000Z",
+      provider: "codex",
+      catalogRevision: 1,
+      workspaceLabel: "workspace",
+      workspacePath: "",
+      branch: "main",
+      sessionKind: "default",
+      accessMode: "active",
+      sourceSchemaVersion: 5,
+      characterId: "",
+      character: "キャラクター",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      characterRuntimeSnapshot: null,
+      runState: "idle",
+      approvalMode: "untrusted",
+      codexSandboxMode: "workspace-write",
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      customAgentName: "",
+      allowedAdditionalDirectories: [],
+      threadId: "thread-v6",
+      messages: [],
+      stream: [],
+    });
+  } finally {
+    sessionStorage.close();
+  }
+}
+
 describe("AuditLogStorageV6", () => {
   it("summary では operation details を落とし、detail では保持する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-audit-log-v6-"));
     try {
       const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
-      const sessionStorage = new SessionStorageV6(dbPath);
-      sessionStorage.upsertSession({
-        id: "session-v6",
-        taskTitle: "V6 audit",
-        status: "idle",
-        updatedAt: "2026-06-28T00:00:00.000Z",
-        provider: "codex",
-        catalogRevision: 1,
-        workspaceLabel: "workspace",
-        workspacePath: "",
-        branch: "main",
-        sessionKind: "default",
-        accessMode: "active",
-        sourceSchemaVersion: 5,
-        characterId: "",
-        character: "キャラクター",
-        characterIconPath: "",
-        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-        characterRuntimeSnapshot: null,
-        runState: "idle",
-        approvalMode: "untrusted",
-        codexSandboxMode: "workspace-write",
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
-        customAgentName: "",
-        allowedAdditionalDirectories: [],
-        threadId: "thread-v6",
-        messages: [],
-        stream: [],
-      });
-      sessionStorage.close();
+      seedSession(dbPath);
       const storage = new AuditLogStorageV6(dbPath);
       try {
         const created = storage.createAuditLog(baseAuditLog({
@@ -88,6 +96,38 @@ describe("AuditLogStorageV6", () => {
 
         const detail = storage.getSessionAuditLogOperationDetail("session-v6", created.id, 0);
         assert.equal(detail?.details.includes("stdout"), true);
+      } finally {
+        storage.close();
+      }
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("AuditLogService 経由の update contract で terminal audit を保存する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-audit-log-v6-"));
+    try {
+      const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
+      seedSession(dbPath);
+      const storage = new AuditLogStorageV6(dbPath);
+      try {
+        const service = new AuditLogService(storage);
+        const created = await service.createAuditLog(baseAuditLog({ phase: "running", assistantText: "" }));
+        const updated = await service.updateAuditLog(created.id, baseAuditLog({
+          phase: "completed",
+          assistantText: "done",
+          operations: [{ type: "provider", summary: "completed", details: "details" }],
+        }));
+
+        assert.equal(updated.id, created.id);
+        assert.equal(updated.phase, "completed");
+        const summary = storage.listSessionAuditLogSummaries("session-v6")[0];
+        assert.equal(summary?.phase, "completed");
+        assert.equal(summary?.assistantTextPreview, "done");
+        assert.deepEqual(summary?.operations, [{ type: "provider", summary: "completed" }]);
+        const detail = storage.getSessionAuditLogDetail("session-v6", created.id);
+        assert.equal(detail?.assistantText, "done");
+        assert.equal(detail?.operations[0]?.details, "details");
       } finally {
         storage.close();
       }

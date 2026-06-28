@@ -26,7 +26,7 @@ export async function loadMateStatusSnapshot({
     return { status: "stale", mateState };
   }
 
-  if (mateState === "not_created") {
+  if (mateState === "not_created" || mateState === "profile_unavailable") {
     return { status: "ready", mateState, mateProfile: null };
   }
 

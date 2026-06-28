@@ -38,7 +38,7 @@ const MATE_SECTION_FILES = [
 export type MateSectionKey = (typeof MATE_SECTION_FILES)[number]["key"];
 
 export type MateProfileState = "draft" | "active" | "deleted";
-export type MateStorageState = "not_created" | MateProfileState;
+export type MateStorageState = "not_created" | "profile_unavailable" | MateProfileState;
 
 type MateProfileRow = {
   id: string;
@@ -453,6 +453,10 @@ export class MateStorage {
   }
 
   getMateState(): MateStorageState {
+    if (this.isLegacyDatabase) {
+      return "profile_unavailable";
+    }
+
     const profile = this.getMateProfile();
     return profile ? profile.state : "not_created";
   }
