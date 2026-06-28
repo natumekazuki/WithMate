@@ -68,6 +68,7 @@ describe("ManagedMemorySkillService", () => {
         bundledSkillPath: bundlePath,
         getAppSettings: () => settings,
         getAppVersion: () => "5.0.0-test",
+        platform: "win32",
       });
 
       const results = await service.syncConfiguredProviderSkills();
@@ -101,6 +102,7 @@ describe("ManagedMemorySkillService", () => {
         bundledSkillPath: bundlePath,
         getAppSettings: () => settings,
         getAppVersion: () => "5.0.0-test",
+        platform: "win32",
       });
 
       assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "installed");
@@ -127,6 +129,7 @@ describe("ManagedMemorySkillService", () => {
         bundledSkillPath: bundlePath,
         getAppSettings: () => settings,
         getAppVersion: () => "5.0.0-test",
+        platform: "win32",
       });
 
       assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "installed");
@@ -159,6 +162,7 @@ describe("ManagedMemorySkillService", () => {
         bundledSkillPath: bundlePath,
         getAppSettings: () => settings,
         getAppVersion: () => "5.0.0-test",
+        platform: "win32",
       });
 
       assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "installed");
@@ -193,6 +197,7 @@ describe("ManagedMemorySkillService", () => {
         bundledSkillPath: bundlePath,
         getAppSettings: () => settings,
         getAppVersion: () => "5.0.0-test",
+        platform: "win32",
       });
 
       assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "installed");
@@ -235,6 +240,7 @@ describe("ManagedMemorySkillService", () => {
           return settings;
         },
         getAppVersion: () => "5.0.0-test",
+        platform: "win32",
       });
 
       const result = (await service.syncConfiguredProviderSkills())[0];
@@ -254,6 +260,7 @@ describe("ManagedMemorySkillService", () => {
         bundledSkillPath: bundlePath,
         getAppSettings: () => createDefaultAppSettings(),
         getAppVersion: () => "5.0.0-test",
+        platform: "win32",
       });
 
       const result = (await service.syncConfiguredProviderSkills())[0];
@@ -262,6 +269,39 @@ describe("ManagedMemorySkillService", () => {
       assert.equal(result?.skillPath, null);
     } finally {
       await rm(bundlePath, { recursive: true, force: true });
+    }
+  });
+
+  it("macOS では PATH shim 未整備の fallback として bundled helper を同期する", async () => {
+    const bundlePath = await createBundle();
+    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
+    try {
+      const settings = createDefaultAppSettings();
+      settings.codingProviderSettings.codex = {
+        enabled: true,
+        apiKey: "",
+        skillRootPath: rootPath,
+        skillRelativePath: "skills",
+        instructionRelativePath: "",
+      };
+      const service = new ManagedMemorySkillService({
+        bundledSkillPath: bundlePath,
+        getAppSettings: () => settings,
+        getAppVersion: () => "5.0.0-test",
+        platform: "darwin",
+      });
+
+      const result = (await service.syncConfiguredProviderSkills())[0];
+      const skillPath = path.join(rootPath, "skills", WITHMATE_MEMORY_SKILL_NAME);
+
+      assert.equal(result?.status, "installed");
+      assert.equal(await readFile(path.join(skillPath, "SKILL.md"), "utf8"), await readFile(path.join(bundlePath, "SKILL.md"), "utf8"));
+      assert.equal(await readFile(path.join(skillPath, "bin", "withmate-memory.mjs"), "utf8"), "console.log('bundle helper');\n");
+      assert.equal(await readFile(path.join(skillPath, "reference", "cli.md"), "utf8"), "# CLI\n");
+      assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "unchanged");
+    } finally {
+      await rm(bundlePath, { recursive: true, force: true });
+      await rm(rootPath, { recursive: true, force: true });
     }
   });
 });

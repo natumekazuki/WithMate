@@ -21,6 +21,7 @@ Do not use Memory for trivial local edits where the current files and user messa
 ## Principles
 
 - Use the installed `withmate-memory` CLI instead of reading WithMate database files directly.
+- Prefer `withmate-memory ...` commands. If the command is not on `PATH` and this managed skill includes `bin/withmate-memory.mjs`, use `node bin/withmate-memory.mjs ...` as a temporary bundled-helper fallback.
 - Project Memory is available from external Codex or shell sessions while WithMate is running; use explicit project targets.
 - Search before relying on remembered project or character decisions.
 - Use `get-entry` only for search hits whose exact body matters.
@@ -64,6 +65,8 @@ withmate-memory forget --file forget-request.json
 ```
 
 Commands write one JSON object to stdout.
+
+If `withmate-memory` is not found and `bin/withmate-memory.mjs` exists in this skill directory, replace `withmate-memory` with `node bin/withmate-memory.mjs` in the commands above.
 
 ### Request Shapes
 
@@ -155,6 +158,6 @@ Commands write one JSON object to stdout.
 ## Error Handling
 
 - If WithMate is not running or Memory is unavailable, continue the task and mention that Memory could not be used.
-- If `withmate-memory` is not found on `PATH`, ask the user to install or update WithMate and continue without Memory unless Memory access itself is required.
+- If `withmate-memory` is not found on `PATH` and no local bundled helper exists, ask the user to install or update WithMate and continue without Memory unless Memory access itself is required.
 - If current character context is unavailable, use an explicit project target when the task can be answered from project memory; otherwise continue without Character Memory.
 - Do not expose internal runtime identifiers, secrets, headers, or local discovery details in user-facing output.

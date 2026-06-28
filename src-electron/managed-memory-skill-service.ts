@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { readdir } from "node:fs/promises";
@@ -38,6 +38,7 @@ export type ManagedMemorySkillServiceDeps = {
   bundledSkillPath: string;
   getAppSettings(): AppSettings;
   getAppVersion(): string;
+  platform?: NodeJS.Platform;
 };
 
 export class ManagedMemorySkillService {
@@ -98,12 +99,16 @@ export class ManagedMemorySkillService {
         `.${WITHMATE_MEMORY_SKILL_NAME}-${process.pid}-${Date.now()}.tmp`,
       );
       await rm(tempPath, { recursive: true, force: true });
-      await mkdir(tempPath, { recursive: true });
-      await writeFile(
-        path.join(tempPath, MANAGED_SKILL_FILE_NAME),
-        await readFile(path.join(this.deps.bundledSkillPath, MANAGED_SKILL_FILE_NAME), "utf8"),
-        "utf8",
-      );
+      if (this.shouldSyncSkillMarkdownOnly()) {
+        await mkdir(tempPath, { recursive: true });
+        await writeFile(
+          path.join(tempPath, MANAGED_SKILL_FILE_NAME),
+          await readFile(path.join(this.deps.bundledSkillPath, MANAGED_SKILL_FILE_NAME), "utf8"),
+          "utf8",
+        );
+      } else {
+        await cp(this.deps.bundledSkillPath, tempPath, { recursive: true });
+      }
       await writeFile(path.join(tempPath, MANAGED_MARKER_FILE), `${JSON.stringify(nextMarker, null, 2)}\n`, "utf8");
       await rm(skillPath, { recursive: true, force: true });
       await rename(tempPath, skillPath);
@@ -131,8 +136,14 @@ export class ManagedMemorySkillService {
       managedBy: "WithMate",
       skillName: WITHMATE_MEMORY_SKILL_NAME,
       bundleVersion: this.deps.getAppVersion(),
-      bundleDigest: await digestManagedSkillSource(this.deps.bundledSkillPath),
+      bundleDigest: this.shouldSyncSkillMarkdownOnly()
+        ? await digestManagedSkillSource(this.deps.bundledSkillPath)
+        : await digestDirectory(this.deps.bundledSkillPath),
     };
+  }
+
+  private shouldSyncSkillMarkdownOnly(): boolean {
+    return (this.deps.platform ?? process.platform) === "win32";
   }
 
   private async readMarker(skillPath: string): Promise<ManagedSkillMarker | "unmanaged" | null> {

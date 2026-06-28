@@ -11,6 +11,8 @@ withmate-memory <command> [--json <json> | --file <path>]
 
 On Windows, the installer places `withmate-memory.cmd` in the WithMate install directory and creates a user-level alias at `%LOCALAPPDATA%\Microsoft\WindowsApps\withmate-memory.cmd`. It does not edit the user's `Path` registry value. A new terminal may be required after install or uninstall.
 
+When a managed skill includes `bin/withmate-memory.mjs` and no `withmate-memory` command is available on `PATH`, use `node bin/withmate-memory.mjs <command>` as a temporary fallback.
+
 ## Commands
 
 ### status
