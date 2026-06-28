@@ -54,6 +54,14 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-memory-v6-diagnostics",
     args: [],
   });
+  assert.deepEqual(await api.installMemoryV6CliShim(), {
+    channel: "withmate:install-memory-v6-cli-shim",
+    args: [],
+  });
+  assert.deepEqual(await api.uninstallMemoryV6CliShim(), {
+    channel: "withmate:uninstall-memory-v6-cli-shim",
+    args: [],
+  });
   assert.deepEqual(await api.openMemoryV6ReviewWindow(), {
     channel: "withmate:open-memory-v6-review-window",
     args: [],
@@ -250,6 +258,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getSessionMessageArtifact",
     "importModelCatalog",
     "importModelCatalogFile",
+    "installMemoryV6CliShim",
     "listAuxiliarySessions",
     "listCharacters",
     "listCompanionAuditLogSummaries",
@@ -322,6 +331,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeSessionContextTelemetry",
     "syncCompanionTarget",
     "forgetMemoryV6Entry",
+    "uninstallMemoryV6CliShim",
     "updateAppSettings",
     "updateAuxiliarySession",
     "updateCharacterDefinition",

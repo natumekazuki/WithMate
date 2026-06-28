@@ -81,6 +81,7 @@ import {
   WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL,
+  WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
   WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL,
   WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL,
   WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL,
@@ -106,6 +107,7 @@ import {
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
+  WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
   WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL,
@@ -205,6 +207,7 @@ export type MainIpcRegistrationDeps = {
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
   openMemoryV6ReviewWindow(): Promise<void>;
+  isSettingsWindow(window: BrowserWindow): boolean;
   isMemoryV6ReviewWindow(window: BrowserWindow): boolean;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
@@ -263,7 +266,9 @@ export type MainIpcRegistrationDeps = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
-  getMemoryV6Diagnostics(): MemoryV6Diagnostics;
+  getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
+  installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
+  uninstallMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
   searchMemoryV6Entries(request: MemoryV6ReviewSearchRequest | null | undefined): Awaitable<MemoryV6ReviewSearchResult>;
   getMemoryV6Entry(entryId: string): Awaitable<MemoryV6ReviewEntryDetail | null>;
   forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null): Awaitable<MemoryV6ReviewForgetResult>;
@@ -383,11 +388,14 @@ type MainIpcCatalogDeps = Pick<
 type MainIpcSettingsDeps = Pick<
   MainIpcRegistrationDeps,
   | "resolveEventWindow"
+  | "isSettingsWindow"
   | "isMemoryV6ReviewWindow"
   | "getAppSettings"
   | "updateAppSettings"
   | "getAppDatabaseDiagnostics"
   | "getMemoryV6Diagnostics"
+  | "installMemoryV6CliShim"
+  | "uninstallMemoryV6CliShim"
   | "searchMemoryV6Entries"
   | "getMemoryV6Entry"
   | "forgetMemoryV6Entry"
@@ -524,6 +532,17 @@ function assertMemoryV6ReviewSender(
     return;
   }
   throw new Error("Memory V6 Review IPC is only available from the Memory Review window.");
+}
+
+function assertSettingsWindowSender(
+  event: IpcMainInvokeEvent,
+  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "isSettingsWindow">,
+): void {
+  const window = deps.resolveEventWindow(event);
+  if (window && deps.isSettingsWindow(window)) {
+    return;
+  }
+  throw new Error("Settings IPC is only available from the Settings window.");
 }
 
 function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindowDeps): void {
@@ -694,6 +713,14 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => deps.updateAppSettings(settings));
   ipcMain.handle(WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL, () => deps.getAppDatabaseDiagnostics());
   ipcMain.handle(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL, () => deps.getMemoryV6Diagnostics());
+  ipcMain.handle(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL, (event) => {
+    assertSettingsWindowSender(event, deps);
+    return deps.installMemoryV6CliShim();
+  });
+  ipcMain.handle(WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL, (event) => {
+    assertSettingsWindowSender(event, deps);
+    return deps.uninstallMemoryV6CliShim();
+  });
   ipcMain.handle(WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL, (event, request: MemoryV6ReviewSearchRequest | null | undefined) => {
     assertMemoryV6ReviewSender(event, deps);
     return deps.searchMemoryV6Entries(request);

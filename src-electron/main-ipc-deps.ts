@@ -82,6 +82,7 @@ export type MainIpcWindowDepsArgs = {
   openSessionMonitorWindow(): Promise<BrowserWindow>;
   openSettingsWindow(): Promise<BrowserWindow>;
   openMemoryV6ReviewWindow(): Promise<BrowserWindow>;
+  isSettingsWindow(window: BrowserWindow): boolean;
   isMemoryV6ReviewWindow(window: BrowserWindow): boolean;
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
@@ -117,7 +118,9 @@ export type MainIpcSettingsDepsArgs = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
-  getMemoryV6Diagnostics(): MemoryV6Diagnostics;
+  getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
+  installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
+  uninstallMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
   searchMemoryV6Entries(request: MemoryV6ReviewSearchRequest | null | undefined): Awaitable<MemoryV6ReviewSearchResult>;
   getMemoryV6Entry(entryId: string): Awaitable<MemoryV6ReviewEntryDetail | null>;
   forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null): Awaitable<MemoryV6ReviewForgetResult>;
@@ -293,6 +296,7 @@ export function createMainIpcRegistrationDeps(
     openMemoryV6ReviewWindow: async () => {
       await args.window.openMemoryV6ReviewWindow();
     },
+    isSettingsWindow: args.window.isSettingsWindow,
     isMemoryV6ReviewWindow: args.window.isMemoryV6ReviewWindow,
     openCharacterEditorWindow: async (characterId) => {
       await args.window.openCharacterEditorWindow(characterId);
@@ -331,6 +335,8 @@ export function createMainIpcRegistrationDeps(
     updateAppSettings: args.settings.updateAppSettings,
     getAppDatabaseDiagnostics: args.settings.getAppDatabaseDiagnostics,
     getMemoryV6Diagnostics: args.settings.getMemoryV6Diagnostics,
+    installMemoryV6CliShim: args.settings.installMemoryV6CliShim,
+    uninstallMemoryV6CliShim: args.settings.uninstallMemoryV6CliShim,
     searchMemoryV6Entries: args.settings.searchMemoryV6Entries,
     getMemoryV6Entry: args.settings.getMemoryV6Entry,
     forgetMemoryV6Entry: args.settings.forgetMemoryV6Entry,

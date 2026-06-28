@@ -28,6 +28,10 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
         calls.push("openMemoryReview");
         return {} as never;
       },
+      isSettingsWindow() {
+        calls.push("isSettings");
+        return true;
+      },
       isMemoryV6ReviewWindow() {
         calls.push("isMemoryReview");
         return true;
@@ -82,6 +86,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       updateAppSettings: (settings) => settings,
       getAppDatabaseDiagnostics: () => ({}) as never,
       getMemoryV6Diagnostics: () => ({}) as never,
+      installMemoryV6CliShim: () => ({}) as never,
+      uninstallMemoryV6CliShim: () => ({}) as never,
       searchMemoryV6Entries: () => ({ items: [] }),
       getMemoryV6Entry: () => null,
       forgetMemoryV6Entry: (entryId) => ({ entryId, status: "not_found", reason: "user_request" }),
@@ -234,6 +240,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
   assert.equal(await deps.openHomeWindow(), undefined);
   assert.equal(await deps.openMemoryV6ReviewWindow(), undefined);
   assert.equal(deps.isMemoryV6ReviewWindow({} as never), true);
+  assert.equal(deps.isSettingsWindow({} as never), true);
   assert.equal(await deps.openSessionWindow("session-1"), undefined);
   await deps.getMateState();
   await deps.getMateProfile();
@@ -245,6 +252,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
     "openHome",
     "openMemoryReview",
     "isMemoryReview",
+    "isSettings",
     "openSession:session-1",
     "getMateState",
     "getMateProfile",

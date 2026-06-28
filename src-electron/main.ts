@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -136,6 +137,7 @@ import {
   type ManagedMemorySkillSyncResult,
   WITHMATE_MEMORY_SKILL_NAME,
 } from "./managed-memory-skill-service.js";
+import { MemoryCliShimService } from "./memory-cli-shim-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
 import {
   resolveProviderSkillRootPath,
@@ -226,6 +228,7 @@ let characterStorage: CharacterStorageAccess | null = null;
 let characterService: CharacterService | null = null;
 let characterAuthoringService: CharacterAuthoringService | null = null;
 let managedMemorySkillService: ManagedMemorySkillService | null = null;
+let memoryCliShimService: MemoryCliShimService | null = null;
 let auditLogStorage: AuditLogStorageRead | null = null;
 let auxiliarySessionStorage: AuxiliarySessionStorageAccess | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
@@ -341,7 +344,7 @@ function getConfiguredProviderSettings(): AppSettings["codingProviderSettings"] 
   }
 }
 
-function getMemoryV6Diagnostics(): MemoryV6Diagnostics {
+async function getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics> {
   const configuredProviderSettings = getConfiguredProviderSettings();
   const configuredProviderIds = Object.keys(configuredProviderSettings).sort();
   const latestSkillResultByProvider = new Map(
@@ -379,8 +382,21 @@ function getMemoryV6Diagnostics(): MemoryV6Diagnostics {
         ...(result?.errorMessage ? { errorMessage: result.errorMessage } : {}),
       };
     }),
+    cliShim: await requireMemoryCliShimService().getDiagnostics(),
     lastErrors: memoryV6DiagnosticErrors,
   };
+}
+
+async function installMemoryV6CliShim(): Promise<MemoryV6Diagnostics> {
+  await requireMemoryCliShimService().install();
+  await syncManagedMemorySkillBestEffort();
+  return getMemoryV6Diagnostics();
+}
+
+async function uninstallMemoryV6CliShim(): Promise<MemoryV6Diagnostics> {
+  await requireMemoryCliShimService().uninstall();
+  await syncManagedMemorySkillBestEffort();
+  return getMemoryV6Diagnostics();
 }
 
 function createMemoryV6ReviewService(): MemoryV6ReviewService {
@@ -1150,6 +1166,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openSessionMonitorWindow,
                 openSettingsWindow,
                 openMemoryV6ReviewWindow,
+                isSettingsWindow: (window) => requireMainWindowFacade().isSettingsWindow(window),
                 isMemoryV6ReviewWindow: (window) => requireMainWindowFacade().isMemoryV6ReviewWindow(window),
                 openCharacterEditorWindow,
                 openDiffWindow,
@@ -1188,6 +1205,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
                 getAppDatabaseDiagnostics,
                 getMemoryV6Diagnostics,
+                installMemoryV6CliShim,
+                uninstallMemoryV6CliShim,
                 searchMemoryV6Entries,
                 getMemoryV6Entry,
                 forgetMemoryV6Entry,
@@ -1652,10 +1671,24 @@ function requireManagedMemorySkillService(): ManagedMemorySkillService {
       bundledSkillPath: bundledMemorySkillPath,
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       getAppVersion: () => app.getVersion(),
+      shouldSyncSkillMarkdownOnly: () => requireMemoryCliShimService().isPathShimUsable(),
     });
   }
 
   return managedMemorySkillService;
+}
+
+function requireMemoryCliShimService(): MemoryCliShimService {
+  if (!memoryCliShimService) {
+    memoryCliShimService = new MemoryCliShimService({
+      appExecutablePath: process.execPath,
+      bundledCliScriptPath: path.join(bundledMemorySkillPath, "bin", "withmate-memory.mjs"),
+      homeDirectory: homedir(),
+      pathEnv: process.env.PATH,
+    });
+  }
+
+  return memoryCliShimService;
 }
 
 async function createMate(input: Parameters<MateStorage["createMate"]>[0]): ReturnType<MateStorage["createMate"]> {
@@ -2292,6 +2325,7 @@ function closePersistentStores(): void {
   characterService = null;
   characterAuthoringService = null;
   managedMemorySkillService = null;
+  memoryCliShimService = null;
   sessionStorage = null;
   sessionMemoryStorage = null;
   projectMemoryStorage = null;

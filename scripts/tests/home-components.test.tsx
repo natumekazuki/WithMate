@@ -85,6 +85,8 @@ describe("HomeSettingsContent", () => {
     onOpenAppLogFolder: noOp,
     onOpenCrashDumpFolder: noOp,
     onOpenMemoryV6Review: noOp,
+    onInstallMemoryV6CliShim: noOp,
+    onUninstallMemoryV6CliShim: noOp,
     onCopyMemoryProviderInstructionSample: params?.onCopyMemoryProviderInstructionSample ?? noOp,
     onSaveSettings: noOp,
   });
@@ -142,6 +144,16 @@ describe("HomeSettingsContent", () => {
           { providerId: "codex", skillRootConfigured: true, skillPath: "C:/skills/withmate-memory", status: "unchanged" },
           { providerId: "custom", skillRootConfigured: true, skillPath: null, status: "skipped-collision" },
         ],
+        cliShim: {
+          platform: "darwin",
+          commandName: "withmate-memory",
+          supported: true,
+          status: "installed",
+          shimDirectory: "/Users/test/.local/bin",
+          shimPath: "/Users/test/.local/bin/withmate-memory",
+          pathContainsShimDirectory: true,
+          message: "withmate-memory is available from the configured shim directory.",
+        },
         lastErrors: [
           { kind: "memory-v6.runtime-api.start-failed", message: "startup failed", occurredAt: "2026-06-27T00:00:00.000Z" },
         ],
@@ -154,6 +166,8 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("2"));
     assert.ok(html.includes("codex: env / custom: unsupported"));
     assert.ok(html.includes("codex: unchanged / custom: skipped-collision"));
+    assert.ok(html.includes("CLI Shim"));
+    assert.ok(html.includes("PATH ready"));
     assert.ok(html.includes("memory-v6.runtime-api.start-failed"));
     assert.ok(html.includes("Provider Instruction Sample"));
     assert.ok(html.includes("Copy Sample"));
@@ -204,6 +218,16 @@ describe("HomeSettingsContent", () => {
             binding: { activeBindingCount: 0 },
             providers: [],
             skillSync: [],
+            cliShim: {
+              platform: "win32",
+              commandName: "withmate-memory",
+              supported: false,
+              status: "managed-by-installer",
+              shimDirectory: null,
+              shimPath: null,
+              pathContainsShimDirectory: true,
+              message: "Windows installer manages the withmate-memory command alias.",
+            },
             lastErrors: [],
           },
         }));

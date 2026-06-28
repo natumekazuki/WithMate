@@ -31,6 +31,25 @@ export type MemoryV6SkillSyncDiagnostics = {
   errorMessage?: string;
 };
 
+export type MemoryV6CliShimDiagnostics = {
+  platform: NodeJS.Platform;
+  commandName: "withmate-memory";
+  supported: boolean;
+  status:
+    | "managed-by-installer"
+    | "installed"
+    | "installed-path-missing"
+    | "not-installed"
+    | "stale"
+    | "blocked-existing"
+    | "unsupported"
+    | "failed";
+  shimDirectory: string | null;
+  shimPath: string | null;
+  pathContainsShimDirectory: boolean;
+  message: string;
+};
+
 export type MemoryV6DiagnosticEvent = {
   kind: string;
   message: string;
@@ -43,5 +62,6 @@ export type MemoryV6Diagnostics = {
   binding: MemoryV6BindingDiagnostics;
   providers: MemoryV6ProviderBindingDiagnostics[];
   skillSync: MemoryV6SkillSyncDiagnostics[];
+  cliShim: MemoryV6CliShimDiagnostics;
   lastErrors: MemoryV6DiagnosticEvent[];
 };

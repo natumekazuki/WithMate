@@ -47,6 +47,8 @@ export type HomeSettingsContentProps = {
   onOpenAppLogFolder: () => void;
   onOpenCrashDumpFolder: () => void;
   onOpenMemoryV6Review: () => void;
+  onInstallMemoryV6CliShim: () => void;
+  onUninstallMemoryV6CliShim: () => void;
   onCopyMemoryProviderInstructionSample: () => void;
   onSaveSettings: () => void;
 };
@@ -97,6 +99,8 @@ export function HomeSettingsContent({
   onOpenAppLogFolder,
   onOpenCrashDumpFolder,
   onOpenMemoryV6Review,
+  onInstallMemoryV6CliShim,
+  onUninstallMemoryV6CliShim,
   onCopyMemoryProviderInstructionSample,
   onSaveSettings,
 }: HomeSettingsContentProps) {
@@ -269,6 +273,11 @@ export function HomeSettingsContent({
                     <strong>{formatSkillSyncSummary(memoryV6Diagnostics)}</strong>
                     <small>{formatSkillSyncDetail(memoryV6Diagnostics)}</small>
                   </div>
+                  <div className="settings-diagnostics-item">
+                    <span>CLI Shim</span>
+                    <strong>{memoryV6Diagnostics.cliShim.status}</strong>
+                    <small>{formatCliShimDetail(memoryV6Diagnostics)}</small>
+                  </div>
                   <div className="settings-diagnostics-item settings-diagnostics-wide">
                     <span>Last Error</span>
                     <strong>{memoryV6Diagnostics.lastErrors[0]?.kind ?? "none"}</strong>
@@ -281,6 +290,22 @@ export function HomeSettingsContent({
               <div className="settings-actions">
                 <button className="launch-toggle" type="button" onClick={onOpenMemoryV6Review}>
                   Review Memory
+                </button>
+                <button
+                  className="launch-toggle"
+                  type="button"
+                  onClick={onInstallMemoryV6CliShim}
+                  disabled={!memoryV6Diagnostics?.cliShim.supported}
+                >
+                  Install CLI Shim
+                </button>
+                <button
+                  className="launch-toggle"
+                  type="button"
+                  onClick={onUninstallMemoryV6CliShim}
+                  disabled={!canUninstallCliShim(memoryV6Diagnostics)}
+                >
+                  Uninstall CLI Shim
                 </button>
                 <button className="launch-toggle" type="button" onClick={onOpenAppLogFolder}>
                   {SETTINGS_OPEN_LOG_FOLDER_LABEL}
@@ -364,4 +389,22 @@ function formatSkillSyncDetail(diagnostics: MemoryV6Diagnostics): string {
   return diagnostics.skillSync
     .map((result) => `${result.providerId}: ${result.status}`)
     .join(" / ");
+}
+
+function formatCliShimDetail(diagnostics: MemoryV6Diagnostics): string {
+  const shim = diagnostics.cliShim;
+  if (!shim.supported) {
+    return shim.message;
+  }
+
+  const pathStatus = shim.pathContainsShimDirectory ? "PATH ready" : "PATH missing";
+  return `${pathStatus}: ${shim.shimPath ?? shim.shimDirectory ?? shim.message}`;
+}
+
+function canUninstallCliShim(diagnostics: MemoryV6Diagnostics | null): boolean {
+  return diagnostics?.cliShim.supported === true && [
+    "installed",
+    "installed-path-missing",
+    "stale",
+  ].includes(diagnostics.cliShim.status);
 }

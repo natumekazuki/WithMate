@@ -60,6 +60,10 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return this.memoryV6ReviewWindow === window && !window.isDestroyed();
   }
 
+  isSettingsWindow(window: TWindow): boolean {
+    return this.settingsWindow === window && !window.isDestroyed();
+  }
+
   listHomeWindows(): TWindow[] {
     return [
       this.homeWindow,

@@ -3,20 +3,22 @@
 The bundled helper is a thin client for the running WithMate V6 Memory API. It does not read or write database files directly.
 Project-scoped Memory can be used from external Codex or shell sessions while WithMate is running. Current character and current session context require a WithMate-launched session binding.
 
-Run it from this skill directory:
+Run it from the target project directory after WithMate is installed:
 
 ```bash
-node bin/withmate-memory.mjs <command> [--json <json> | --file <path>]
+withmate-memory <command> [--json <json> | --file <path>]
 ```
 
-On Windows, `bin/withmate-memory.cmd` wraps the same script.
+On Windows, the installer places `withmate-memory.cmd` in the WithMate install directory and creates a user-level alias at `%LOCALAPPDATA%\Microsoft\WindowsApps\withmate-memory.cmd`. It does not edit the user's `Path` registry value. A new terminal may be required after install or uninstall.
+
+When a managed skill includes `bin/withmate-memory.mjs` and no `withmate-memory` command is available on `PATH`, use `node bin/withmate-memory.mjs <command>` as a temporary fallback.
 
 ## Commands
 
 ### status
 
 ```bash
-node bin/withmate-memory.mjs status
+withmate-memory status
 ```
 
 Returns runtime status.
@@ -24,7 +26,7 @@ Returns runtime status.
 ### context
 
 ```bash
-node bin/withmate-memory.mjs context
+withmate-memory context
 ```
 
 Sends:
@@ -36,7 +38,7 @@ Sends:
 ### search
 
 ```bash
-node bin/withmate-memory.mjs search --json '{"schemaVersion":"withmate-memory-v1","targets":[{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}],"query":"approval mode"}'
+withmate-memory search --json '{"schemaVersion":"withmate-memory-v1","targets":[{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}],"query":"approval mode"}'
 ```
 
 Request shape:
@@ -56,7 +58,7 @@ Search returns active entry previews only. Use `get-entry` when the exact body m
 ### get-entry
 
 ```bash
-node bin/withmate-memory.mjs get-entry --json '{"schemaVersion":"withmate-memory-v1","entryId":"<entry-id>","target":{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}}'
+withmate-memory get-entry --json '{"schemaVersion":"withmate-memory-v1","entryId":"<entry-id>","target":{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}}'
 ```
 
 Request shape:
@@ -74,7 +76,7 @@ External Codex or shell sessions must include `target`. WithMate-launched sessio
 ### list-tags
 
 ```bash
-node bin/withmate-memory.mjs list-tags --json '{"schemaVersion":"withmate-memory-v1","targets":[{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}]}'
+withmate-memory list-tags --json '{"schemaVersion":"withmate-memory-v1","targets":[{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}]}'
 ```
 
 Request shape:
@@ -91,7 +93,7 @@ Request shape:
 ### append
 
 ```bash
-node bin/withmate-memory.mjs append --file memory-entry.json
+withmate-memory append --file memory-entry.json
 ```
 
 Input shape:
@@ -112,7 +114,7 @@ Input shape:
 ### forget
 
 ```bash
-node bin/withmate-memory.mjs forget --file forget-request.json
+withmate-memory forget --file forget-request.json
 ```
 
 Input shape:

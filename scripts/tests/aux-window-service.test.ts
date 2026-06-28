@@ -96,12 +96,16 @@ test("AuxWindowService は singleton window を再利用する", async () => {
   assert.equal(first, second);
   assert.notEqual(first, settings);
   assert.notEqual(settings, memoryReview);
+  assert.equal(service.isSettingsWindow(settings), true);
+  assert.equal(service.isSettingsWindow(memoryReview), false);
   assert.equal(service.isMemoryV6ReviewWindow(memoryReview), true);
   assert.equal(service.isMemoryV6ReviewWindow(settings), false);
   assert.deepEqual(homeLoads, ["home", "settings", "memory-review"]);
   assert.equal(created.length, 3);
   memoryReview.close();
   assert.equal(service.isMemoryV6ReviewWindow(memoryReview), false);
+  settings.close();
+  assert.equal(service.isSettingsWindow(settings), false);
 });
 
 test("AuxWindowService は diff preview を保持し reset 時に close する", async () => {

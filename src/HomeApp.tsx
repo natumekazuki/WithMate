@@ -412,6 +412,7 @@ export default function HomeApp() {
     setAppSettings,
     setSettingsDraft,
     setSettingsFeedback,
+    setMemoryV6Diagnostics,
     onSettingsSaved: () => {
       const api = getWithMateApi();
       if (!api) {

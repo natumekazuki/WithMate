@@ -1,6 +1,6 @@
 ---
 name: withmate-memory
-description: Search, append, inspect, and forget WithMate V6 Memory through the bundled local helper when durable project or character context is useful.
+description: Search, append, inspect, and forget WithMate V6 Memory through the installed WithMate Memory CLI when durable project or character context is useful.
 ---
 
 # WithMate Memory
@@ -20,7 +20,8 @@ Do not use Memory for trivial local edits where the current files and user messa
 
 ## Principles
 
-- Use the bundled helper script instead of reading WithMate database files directly.
+- Use the installed `withmate-memory` CLI instead of reading WithMate database files directly.
+- Prefer `withmate-memory ...` commands. If the command is not on `PATH` and this managed skill includes `bin/withmate-memory.mjs`, use `node bin/withmate-memory.mjs ...` as a temporary bundled-helper fallback.
 - Project Memory is available from external Codex or shell sessions while WithMate is running; use explicit project targets.
 - Search before relying on remembered project or character decisions.
 - Use `get-entry` only for search hits whose exact body matters.
@@ -49,23 +50,103 @@ Before append, check:
 
 When correcting a previous entry, append a replacement with `supersedes` instead of creating ambiguous duplicates when possible.
 
-## Helper
+## CLI
 
-Run the helper from this skill directory:
+Run the installed command from the target project directory:
 
 ```bash
-node bin/withmate-memory.mjs status
-node bin/withmate-memory.mjs context
-node bin/withmate-memory.mjs search --json '{"schemaVersion":"withmate-memory-v1","targets":[{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}],"query":"release workflow"}'
-node bin/withmate-memory.mjs get-entry --json '{"schemaVersion":"withmate-memory-v1","entryId":"<entry-id>","target":{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}}'
-node bin/withmate-memory.mjs list-tags --json '{"schemaVersion":"withmate-memory-v1","targets":[{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}]}'
-node bin/withmate-memory.mjs append --file memory-entry.json
-node bin/withmate-memory.mjs forget --file forget-request.json
+withmate-memory status
+withmate-memory context
+withmate-memory search --json '{"schemaVersion":"withmate-memory-v1","targets":[{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}],"query":"release workflow"}'
+withmate-memory get-entry --json '{"schemaVersion":"withmate-memory-v1","entryId":"<entry-id>","target":{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}}'
+withmate-memory list-tags --json '{"schemaVersion":"withmate-memory-v1","targets":[{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}]}'
+withmate-memory append --file memory-entry.json
+withmate-memory forget --file forget-request.json
 ```
 
-On Windows, `bin/withmate-memory.cmd` wraps the same helper.
+Commands write one JSON object to stdout.
 
-Read `reference/cli.md` for JSON shapes and error handling.
+If `withmate-memory` is not found and `bin/withmate-memory.mjs` exists in this skill directory, replace `withmate-memory` with `node bin/withmate-memory.mjs` in the commands above.
+
+### Request Shapes
+
+`status` does not require a request body.
+
+`context` sends this default body when no JSON is supplied:
+
+```json
+{ "schemaVersion": "withmate-memory-v1" }
+```
+
+`search`:
+
+```json
+{
+  "schemaVersion": "withmate-memory-v1",
+  "targets": [
+    { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" }
+  ],
+  "query": "approval mode"
+}
+```
+
+`get-entry`:
+
+```json
+{
+  "schemaVersion": "withmate-memory-v1",
+  "entryId": "<entry-id>",
+  "target": { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" }
+}
+```
+
+`list-tags`:
+
+```json
+{
+  "schemaVersion": "withmate-memory-v1",
+  "targets": [
+    { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" }
+  ]
+}
+```
+
+`append`:
+
+```json
+{
+  "schemaVersion": "withmate-memory-v1",
+  "target": { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" },
+  "kind": "decision",
+  "title": "Short title",
+  "body": "Durable details for future sessions.",
+  "preview": "Short preview.",
+  "tags": [{ "type": "topic", "value": "release" }],
+  "idempotencyKey": "optional-stable-key"
+}
+```
+
+`forget`:
+
+```json
+{
+  "schemaVersion": "withmate-memory-v1",
+  "target": { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" },
+  "entryIds": ["entry-id"],
+  "reason": "user_request",
+  "idempotencyKey": "optional-stable-key"
+}
+```
+
+### Exit Codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success |
+| `1` | Usage or validation error |
+| `2` | WithMate Memory API is not running or could not be discovered |
+| `3` | Runtime API returned a non-success JSON response |
+| `4` | Transport failure |
 
 ## Target Selection
 
@@ -77,5 +158,6 @@ Read `reference/cli.md` for JSON shapes and error handling.
 ## Error Handling
 
 - If WithMate is not running or Memory is unavailable, continue the task and mention that Memory could not be used.
+- If `withmate-memory` is not found on `PATH` and no local bundled helper exists, ask the user to install or update WithMate and continue without Memory unless Memory access itself is required.
 - If current character context is unavailable, use an explicit project target when the task can be answered from project memory; otherwise continue without Character Memory.
 - Do not expose internal runtime identifiers, secrets, headers, or local discovery details in user-facing output.

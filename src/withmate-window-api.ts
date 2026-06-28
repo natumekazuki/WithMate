@@ -199,6 +199,8 @@ export type WithMateWindowSettingsApi = {
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
   getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics>;
   getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics>;
+  installMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;
+  uninstallMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;
   resetAppDatabase(request: ResetAppDatabaseRequest): Promise<ResetAppDatabaseResult>;
 };
 
