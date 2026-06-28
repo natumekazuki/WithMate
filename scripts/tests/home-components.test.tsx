@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import React, { isValidElement, type ReactNode } from "react";
+import { JSDOM } from "jsdom";
+import React, { act, isValidElement, type ReactNode } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { HomeLaunchDialog } from "../../src/home/HomeLaunchDialog.js";
@@ -15,8 +17,11 @@ import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { MemoryV6Diagnostics } from "../../src/memory-v6/memory-diagnostics-state.js";
+import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "../../src/memory-v6/provider-instruction-sample.js";
 import { buildHomeProviderSettingRows } from "../../src/settings/settings-view-model.js";
 import { formatTimestampLabel } from "../../src/time-state.js";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("HomeSettingsContent", () => {
   const modelCatalog: ModelCatalogSnapshot = {
@@ -54,6 +59,7 @@ describe("HomeSettingsContent", () => {
     providerSettingRows?: typeof providerSettingRows;
     providerCatalogLoaded?: boolean;
     memoryV6Diagnostics?: MemoryV6Diagnostics | null;
+    onCopyMemoryProviderInstructionSample?: () => void;
   };
 
   const buildSettingsContent = (params?: RenderSettingsParams) => HomeSettingsContent({
@@ -78,6 +84,7 @@ describe("HomeSettingsContent", () => {
     onOpenAppLogFolder: noOp,
     onOpenCrashDumpFolder: noOp,
     onOpenMemoryV6Review: noOp,
+    onCopyMemoryProviderInstructionSample: params?.onCopyMemoryProviderInstructionSample ?? noOp,
     onSaveSettings: noOp,
   });
 
@@ -147,8 +154,78 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("codex: env / custom: unsupported"));
     assert.ok(html.includes("codex: unchanged / custom: skipped-collision"));
     assert.ok(html.includes("memory-v6.runtime-api.start-failed"));
+    assert.ok(html.includes("Provider Instruction Sample"));
+    assert.ok(html.includes("Copy Sample"));
+    assert.ok(html.includes("WithMate Memory Usage"));
+    assert.ok(html.includes("Do not read or write WithMate database files directly."));
     assert.ok(!html.includes("apiSecret"));
     assert.ok(!html.includes("bindingReference"));
+    assert.ok(!WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE.includes("WITHMATE_MEMORY_BINDING_REFERENCE"));
+    assert.ok(!WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE.includes("WITHMATE_MEMORY_API_SECRET"));
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /binding reference/i);
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /api secret/i);
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /discovery file path/i);
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /internal header/i);
+    assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /local runtime identifier/i);
+  });
+
+  it("Provider Instruction Sample の copy button は handler を呼ぶ", async () => {
+    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const previousHTMLElement = globalThis.HTMLElement;
+
+    Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+    Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+
+    const rootElement = dom.window.document.getElementById("root");
+    assert.ok(rootElement);
+    let root: Root | null = null;
+    let copyCount = 0;
+
+    try {
+      await act(async () => {
+        root = createRoot(rootElement);
+        root.render(buildSettingsContent({
+          onCopyMemoryProviderInstructionSample: () => {
+            copyCount += 1;
+          },
+          memoryV6Diagnostics: {
+            generatedAt: "2026-06-27T00:00:00.000Z",
+            runtime: {
+              status: "running",
+              baseUrl: "http://127.0.0.1:12345",
+              dbPath: "C:/userdata/withmate-v6.db",
+              discoveryFilePath: "C:/runtime/memory-v6-api.json",
+              hasApiSecret: true,
+            },
+            binding: { activeBindingCount: 0 },
+            providers: [],
+            skillSync: [],
+            lastErrors: [],
+          },
+        }));
+      });
+
+      const copyButton = Array.from(rootElement.querySelectorAll("button")).find((button) =>
+        button.textContent?.trim() === "Copy Sample"
+      );
+      assert.ok(copyButton);
+
+      await act(async () => {
+        copyButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      });
+
+      assert.equal(copyCount, 1);
+    } finally {
+      await act(async () => {
+        root?.unmount();
+      });
+      Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
+      Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+      Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+    }
   });
 
   it("provider row が 0 件でも Coding Agent Providers section と empty state を表示する", () => {
