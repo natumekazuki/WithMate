@@ -35,6 +35,10 @@ export const SETTINGS_RESET_DATABASE_HELP =
 export const SETTINGS_DIAGNOSTICS_LABEL = "Diagnostics";
 export const SETTINGS_OPEN_LOG_FOLDER_LABEL = "Open Logs";
 export const SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL = "Open Crash Dumps";
+export const SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL = "Provider Instruction Sample";
+export const SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP =
+  "必要な provider の user-level instruction file へ手動で貼り付けるための WithMate Memory 利用方針。WithMate は instruction file を自動編集しない。";
+export const SETTINGS_COPY_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL = "Copy Sample";
 
 export const SETTINGS_RESET_DATABASE_TARGET_LABELS: Record<ResetAppDatabaseTarget, string> = {
   sessions: "sessions",

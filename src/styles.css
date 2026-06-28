@@ -2435,6 +2435,44 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.settings-provider-instruction-sample {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.settings-provider-instruction-sample-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-provider-instruction-sample-head > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-provider-instruction-sample pre {
+  max-height: 320px;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 8px;
+  background: rgba(5, 8, 13, 0.64);
+  padding: 12px;
+  color: var(--ink);
+  font: 0.78rem/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
 .settings-dialog-foot {
   align-items: center;
   justify-content: space-between;

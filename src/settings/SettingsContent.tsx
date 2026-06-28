@@ -1,10 +1,14 @@
 import type { AppSettings } from "../app-state.js";
 import type { MemoryV6Diagnostics } from "../memory-v6/memory-diagnostics-state.js";
+import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "../memory-v6/provider-instruction-sample.js";
 import { MICROCOPY_SLOTS, type MicrocopySlot } from "../microcopy-state.js";
 import type { HomeProviderSettingRow } from "./settings-view-model.js";
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
+  SETTINGS_COPY_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
+  SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP,
+  SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL,
   SETTINGS_OPEN_LOG_FOLDER_LABEL,
   SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
   SETTINGS_PROVIDER_FILE_SETTINGS_HELP,
@@ -41,6 +45,7 @@ export type HomeSettingsContentProps = {
   onOpenAppLogFolder: () => void;
   onOpenCrashDumpFolder: () => void;
   onOpenMemoryV6Review: () => void;
+  onCopyMemoryProviderInstructionSample: () => void;
   onSaveSettings: () => void;
 };
 
@@ -89,6 +94,7 @@ export function HomeSettingsContent({
   onOpenAppLogFolder,
   onOpenCrashDumpFolder,
   onOpenMemoryV6Review,
+  onCopyMemoryProviderInstructionSample,
   onSaveSettings,
 }: HomeSettingsContentProps) {
   return (
@@ -272,6 +278,22 @@ export function HomeSettingsContent({
                   {SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
                 </button>
               </div>
+              <section className="settings-provider-instruction-sample">
+                <div className="settings-provider-instruction-sample-head">
+                  <div>
+                    <strong>{SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL}</strong>
+                    <p className="settings-help">{SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP}</p>
+                  </div>
+                  <button
+                    className="launch-toggle compact"
+                    type="button"
+                    onClick={onCopyMemoryProviderInstructionSample}
+                  >
+                    {SETTINGS_COPY_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL}
+                  </button>
+                </div>
+                <pre>{WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE}</pre>
+              </section>
             </div>
           </section>
 

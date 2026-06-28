@@ -1,7 +1,7 @@
 # Settings UI
 
 - 作成日: 2026-03-14
-- 更新日: 2026-06-27
+- 更新日: 2026-06-28
 - 対象: 独立した `Settings Window`
 
 ## Goal
@@ -16,6 +16,7 @@
 - V5 current では Character 定義は `Characters` editor で管理し、session / companion 開始時の `CharacterRuntimeSnapshot` を runtime prompt の主経路にする
 - provider instruction sync は V5 Character 注入の主経路ではなく、Settings current UI には置かない
 - current 実装では `Session Window`、`Default Microcopy`、`Coding Agent Providers`、`Diagnostics`、`Mate Reset`、`Model Catalog` を置く
+- V6 Memory provider instructionは自動同期せず、Diagnostics内に手動貼り付け用sampleとcopy導線を置く
 - `Settings Window` は縦方向の余白を少し増やしつつ、内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - file picker / save dialog は Main Process 側で開く
 - current 実装では Main Process 側の settings / catalog 更新は `src-electron/settings-catalog-service.ts` に寄せ、renderer 側の provider row 組み立ては `src/home-settings-view-model.ts` に寄せる
@@ -50,6 +51,7 @@
       - provider memory binding support
       - managed `withmate-memory` Skill sync status
       - latest Memory V6 diagnostic errors
+      - provider instruction sample preview / copy action
   - `Mate Reset`
     - legacy Mate state reset
 - `Model Catalog`
@@ -73,6 +75,7 @@
   - provider ごとの memory binding transport と support 状態を表示する
   - managed `withmate-memory` Skill sync は provider ごとの `not-run` / `synced` / `failed` / `skipped-collision` を表示する
   - runtime API secret は表示せず、`hasApiSecret` の boolean だけを診断 state に含める
+  - provider instruction sample を表示し、必要な provider の instruction file へ手動で貼り付けるために clipboard copy できる
 - legacy Mate reset
 - `model catalog` の import
 - `model catalog` の export
@@ -94,7 +97,8 @@
 - Settings 保存成功時は renderer 側で戻り値の `appSettings` を draft に同期し、dirty 状態を解消する
 - Memory V6 diagnostics は Main Process 側の `getMemoryV6Diagnostics()` が集約し、renderer 側の `HomeApp.tsx` が初回表示時と Settings 保存成功後に再取得する
 - Memory V6 diagnostics は secret や binding reference を返さず、runtime status / path / support / sync status / error summary の read-only projection として扱う
-- Settings Window の Diagnostics 表示は `SettingsContent.tsx` が担当し、操作導線は既存の folder open と Settings save に限定する
+- Settings Window の Diagnostics 表示は `SettingsContent.tsx` が担当し、操作導線は既存の folder open、Memory Review、provider instruction sample copy、Settings save に限定する
+- provider instruction sampleは `withmate-memory` Skill利用トリガー、DB直読み禁止、append / forget判断、secret非露出を短く示す。WithMateはprovider instruction fileを自動編集しない
 - Character editor は Settings Window から分離し、Home の `Characters` panel から開く独立 `Character Editor Window` で扱う。
 - `character.md` の validation error は `Character Editor Window` の raw editor 操作結果として表示する。
 
@@ -104,7 +108,7 @@
 - 新規 workspace の root directory 設定
 - provider ごとの既定値
 - MemoryGeneration を再設計する場合の専用設定
-- provider instruction sync を V5 で再導入する場合の専用設定
+- provider instruction fileをWithMateが自動編集する同期設定
 
 ## Non Goals
 
