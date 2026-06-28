@@ -15,7 +15,7 @@ type CreateMainBootstrapDepsArgs = {
   registerMainIpcHandlers: typeof registerMainIpcHandlers;
   initializePersistentStores(): Promise<ModelCatalogSnapshot>;
   recoverInterruptedSessions(): Promise<void>;
-  createHomeWindow(): Promise<BrowserWindow>;
+  createHomeWindow(): Promise<BrowserWindow | null>;
   broadcastModelCatalog(snapshot: ModelCatalogSnapshot): void;
   getMateState?: () => MateStorageState | Promise<MateStorageState>;
   onBootStatus?: (status: AppBootStatus) => void;

@@ -269,6 +269,8 @@ scripts/tests/withmate-memory-cli.test.ts
 - loopback-only server - 完了
 - runtime discovery - 完了。CLI defaultはruntime directoryのdiscovery fileを読む。永続userData pathは既定にしない。
 - app起動配線 - 完了。app ready時にV6 DBをbest-effortでbootstrapし、localhost APIを起動してruntime discovery fileをpublishする。
+- window close lifecycle - 完了。全windowを閉じてもapp processは終了せず、Windowsでもruntime API / CLI discoveryを維持する。明示的なapp quit時だけshutdown cleanupへ進む。
+- login startup lifecycle - 完了。SettingsからPC起動時のバックグラウンド起動を切り替え、起動時はHome windowを開かずruntime API / CLI discoveryだけを立ち上げる。
 - app shutdown cleanup - 完了。quit時にdiscovery fileをbest-effortで削除し、server / storageを停止する。
 - app-internal API guard - 完了。runtime APIは短命secretとruntimeInstanceIdを要求し、CLIはsecret/body送信前にnonce challengeでruntime identityを検証してからheaderを送る。
 - WithMate起動中チェック - CLI側の`WITHMATE_NOT_RUNNING`は完了

@@ -71,6 +71,7 @@ describe("HomeSettingsContent", () => {
     settingsDirty: false,
     settingsFeedback: "",
     onChangeAutoCollapseActionDockOnSend: noOp,
+    onChangeLaunchAtLoginEnabled: noOp,
     onChangeUserMicrocopySlot: noOp,
     onChangeProviderEnabled: noOp,
     onChangeProviderSkillRootPath: noOp,

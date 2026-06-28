@@ -7,6 +7,7 @@ import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
   SETTINGS_COPY_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
+  SETTINGS_LAUNCH_AT_LOGIN_LABEL,
   SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP,
   SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL,
   SETTINGS_OPEN_LOG_FOLDER_LABEL,
@@ -32,6 +33,7 @@ export type HomeSettingsContentProps = {
   settingsDirty: boolean;
   settingsFeedback: string;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
+  onChangeLaunchAtLoginEnabled: (enabled: boolean) => void;
   onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
@@ -81,6 +83,7 @@ export function HomeSettingsContent({
   settingsDirty,
   settingsFeedback,
   onChangeAutoCollapseActionDockOnSend,
+  onChangeLaunchAtLoginEnabled,
   onChangeUserMicrocopySlot,
   onChangeProviderEnabled,
   onChangeProviderSkillRootPath,
@@ -104,7 +107,15 @@ export function HomeSettingsContent({
           <section className="settings-section">
           <section className="settings-section-card">
             <div className="settings-field">
-              <strong>Session Window</strong>
+              <strong>App</strong>
+              <label className="settings-provider-toggle-row settings-section-toggle">
+                <span className="settings-provider-name">{SETTINGS_LAUNCH_AT_LOGIN_LABEL}</span>
+                <input
+                  type="checkbox"
+                  checked={settingsDraft.launchAtLoginEnabled}
+                  onChange={(event) => onChangeLaunchAtLoginEnabled(event.target.checked)}
+                />
+              </label>
               <label className="settings-provider-toggle-row settings-section-toggle">
                 <span className="settings-provider-name">{SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL}</span>
                 <input

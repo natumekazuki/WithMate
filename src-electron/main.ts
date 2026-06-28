@@ -120,6 +120,7 @@ import {
 } from "./persistent-store-lifecycle-service.js";
 import { AppLifecycleService } from "./app-lifecycle-service.js";
 import { createAppLifecycleDeps } from "./app-lifecycle-deps.js";
+import { applyLaunchAtLoginSetting, shouldLaunchInBackground } from "./app-login-item.js";
 import { createMainBootstrapDeps } from "./main-bootstrap-deps.js";
 import { MainInfrastructureRegistry } from "./main-infrastructure-registry.js";
 import { MainBootstrapService } from "./main-bootstrap-service.js";
@@ -238,6 +239,7 @@ let dbPath = "";
 let appDatabaseDiagnostics: AppDatabaseDiagnostics | null = null;
 let memoryV6RuntimeApi: MemoryV6RuntimeApiHandle | null = null;
 let memoryV6RuntimeStatus: MemoryV6Diagnostics["runtime"]["status"] = "stopped";
+const isBackgroundLaunch = shouldLaunchInBackground(process.argv);
 let managedMemorySkillSyncResults: ManagedMemorySkillSyncResult[] = [];
 let memoryV6DiagnosticErrors: MemoryV6DiagnosticEvent[] = [];
 const memoryBindingRegistry = new MemoryBindingRegistry();
@@ -248,6 +250,7 @@ let appBootStatus: AppBootStatus = {
   title: "WithMate を起動しています",
   detail: "起動状態を確認しています。",
 };
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 ipcMain.handle(WITHMATE_GET_APP_BOOT_STATUS_CHANNEL, () => appBootStatus);
 const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
@@ -1106,7 +1109,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             quitApp: () => {
               app.quit();
             },
-            shouldQuitWhenAllWindowsClosed: () => process.platform !== "darwin",
+            shouldQuitWhenAllWindowsClosed: () => false,
             confirmQuitWhileRunning: () => {
               const choice = dialog.showMessageBoxSync({
                 type: "warning",
@@ -1130,7 +1133,12 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             registerMainIpcHandlers,
             initializePersistentStores,
             recoverInterruptedSessions,
-            createHomeWindow,
+            createHomeWindow: async () => {
+              if (isBackgroundLaunch) {
+                return null;
+              }
+              return createHomeWindow();
+            },
             broadcastModelCatalog,
             onBootStatus: publishAppBootStatus,
             ipcRegistration: {
@@ -1590,12 +1598,15 @@ function requireAppSettingsStorage(): AppSettingsStorage {
 
 async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   const savedSettings = await requireAppSettingsStorage().updateSettings(settings);
+  applyLaunchAtLoginSetting(app, savedSettings.launchAtLoginEnabled);
   await syncManagedMemorySkillBestEffort();
   return savedSettings;
 }
 
 async function resetAppSettings(): Promise<AppSettings> {
-  return requireAppSettingsStorage().resetSettings();
+  const settings = requireAppSettingsStorage().resetSettings();
+  applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled);
+  return settings;
 }
 
 function requireMateStorage(): MateStorage {
@@ -2085,6 +2096,9 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       invalidateAllProviderSessionThreads,
       closeResetTargetWindows,
       recreateDatabaseFile,
+      applyAppSettingsSideEffects: (settings) => {
+        applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled);
+      },
       broadcastSessions,
       broadcastAppSettings,
       broadcastModelCatalog,
@@ -3111,110 +3125,126 @@ async function openCompanionMergeWindow(sessionId: string): Promise<BrowserWindo
   return window;
 }
 
-app.whenReady().then(async () => {
-  await openBootWindow();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!app.isReady()) {
+      return;
+    }
+    void requireAppLifecycleService().handleSecondInstance();
+  });
 
-  try {
-    dbPath = await resolveOrMigrateAppDatabasePath(app.getPath("userData"), (progress) => {
-      publishAppBootStatus({
-        kind: "running",
-        stage: "database",
-        title: progress.title,
-        detail: progress.detail,
-      });
-    });
-    publishAppBootStatus({
-      kind: "running",
-      stage: "diagnostics",
-      title: "データベース診断を確認しています",
-      detail: "利用するデータベースと schema version を確認しています。",
-    });
-    appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
-    writeAppLog({
-      level: "info",
-      kind: "app.ready",
-      process: "main",
-      message: "App ready",
-      data: {
-        userDataPath: app.getPath("userData"),
-        userDataPathOverrideApplied: appDatabaseDiagnostics.userDataPathOverrideApplied,
-        activeDatabasePath: appDatabaseDiagnostics.activeDatabasePath,
-        activeDatabaseSchemaVersion: appDatabaseDiagnostics.schemaVersion,
-        activeDatabaseCompatibilityMode: appDatabaseDiagnostics.compatibilityMode,
-        logsPath: appLogsPath,
-        crashDumpsPath,
-      },
-    });
-    writeAppLog({
-      level: appDatabaseDiagnostics.warnings.length > 0 ? "warn" : "info",
-      kind: "app.database.selected",
-      process: "main",
-      message: "App database selected",
-      data: appDatabaseDiagnostics,
-    });
-    await startMemoryV6RuntimeApiBestEffort();
-    await requireMainBootstrapService().handleReady();
-    await syncManagedMemorySkillBestEffort();
-    publishAppBootStatus({
-      kind: "completed",
-      stage: "home",
-      title: "起動が完了しました",
-      detail: "Home を表示しました。",
-    });
-    closeBootWindow();
-
-    if (process.env.WITHMATE_DEBUG_OPEN_SESSION_ID) {
-      await openSessionWindow(process.env.WITHMATE_DEBUG_OPEN_SESSION_ID);
+  app.whenReady().then(async () => {
+    if (!isBackgroundLaunch) {
+      await openBootWindow();
     }
 
-    app.on("activate", async () => {
-      await requireAppLifecycleService().handleActivate();
-    });
-  } catch (error) {
-    const serializedError = serializeBootError(error);
+    try {
+      dbPath = await resolveOrMigrateAppDatabasePath(app.getPath("userData"), (progress) => {
+        publishAppBootStatus({
+          kind: "running",
+          stage: "database",
+          title: progress.title,
+          detail: progress.detail,
+        });
+      });
+      publishAppBootStatus({
+        kind: "running",
+        stage: "diagnostics",
+        title: "データベース診断を確認しています",
+        detail: "利用するデータベースと schema version を確認しています。",
+      });
+      appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
+      writeAppLog({
+        level: "info",
+        kind: "app.ready",
+        process: "main",
+        message: "App ready",
+        data: {
+          userDataPath: app.getPath("userData"),
+          userDataPathOverrideApplied: appDatabaseDiagnostics.userDataPathOverrideApplied,
+          activeDatabasePath: appDatabaseDiagnostics.activeDatabasePath,
+          activeDatabaseSchemaVersion: appDatabaseDiagnostics.schemaVersion,
+          activeDatabaseCompatibilityMode: appDatabaseDiagnostics.compatibilityMode,
+          logsPath: appLogsPath,
+          crashDumpsPath,
+        },
+      });
+      writeAppLog({
+        level: appDatabaseDiagnostics.warnings.length > 0 ? "warn" : "info",
+        kind: "app.database.selected",
+        process: "main",
+        message: "App database selected",
+        data: appDatabaseDiagnostics,
+      });
+      await startMemoryV6RuntimeApiBestEffort();
+      await requireMainBootstrapService().handleReady();
+      applyLaunchAtLoginSetting(app, requireAppSettingsStorage().getSettings().launchAtLoginEnabled);
+      await syncManagedMemorySkillBestEffort();
+      publishAppBootStatus({
+        kind: "completed",
+        stage: "home",
+        title: "起動が完了しました",
+        detail: isBackgroundLaunch ? "バックグラウンドで起動しました。" : "Home を表示しました。",
+      });
+      closeBootWindow();
+
+      if (process.env.WITHMATE_DEBUG_OPEN_SESSION_ID) {
+        await openSessionWindow(process.env.WITHMATE_DEBUG_OPEN_SESSION_ID);
+      }
+
+      app.on("activate", async () => {
+        await requireAppLifecycleService().handleActivate();
+      });
+    } catch (error) {
+      const serializedError = serializeBootError(error);
+      writeAppLog({
+        level: "fatal",
+        kind: "app.boot.failed",
+        process: "main",
+        message: serializedError?.message ?? "App boot failed",
+        error: appLogService.errorToLogError(error),
+        data: {
+          userDataPath: app.getPath("userData"),
+          logsPath: appLogsPath,
+          crashDumpsPath,
+        },
+      });
+      if (!isBackgroundLaunch) {
+        await openBootWindow();
+      }
+      publishAppBootStatus({
+        kind: "failed",
+        stage: "failed",
+        title: "WithMate の起動に失敗しました",
+        detail: "データベース移行または起動初期化でエラーが発生しました。ログに詳細を記録しました。",
+        error: serializedError,
+      });
+    }
+  });
+
+  app.on("window-all-closed", () => {
+    requireAppLifecycleService().handleWindowAllClosed();
+  });
+
+  app.on("before-quit", (event) => {
     writeAppLog({
-      level: "fatal",
-      kind: "app.boot.failed",
+      level: "info",
+      kind: "app.before-quit",
       process: "main",
-      message: serializedError?.message ?? "App boot failed",
-      error: appLogService.errorToLogError(error),
-      data: {
-        userDataPath: app.getPath("userData"),
-        logsPath: appLogsPath,
-        crashDumpsPath,
-      },
+      message: "App before quit",
     });
-    await openBootWindow();
-    publishAppBootStatus({
-      kind: "failed",
-      stage: "failed",
-      title: "WithMate の起動に失敗しました",
-      detail: "データベース移行または起動初期化でエラーが発生しました。ログに詳細を記録しました。",
-      error: serializedError,
+    requireAppLifecycleService().handleBeforeQuit(event);
+  });
+
+  app.on("will-quit", () => {
+    writeAppLog({
+      level: "info",
+      kind: "app.will-quit",
+      process: "main",
+      message: "App will quit",
     });
-  }
-});
-
-app.on("window-all-closed", () => {
-  requireAppLifecycleService().handleWindowAllClosed();
-});
-
-app.on("before-quit", (event) => {
-  writeAppLog({
-    level: "info",
-    kind: "app.before-quit",
-    process: "main",
-    message: "App before quit",
+    void stopMemoryV6RuntimeApiBestEffort();
   });
-  requireAppLifecycleService().handleBeforeQuit(event);
-});
-
-app.on("will-quit", () => {
-  writeAppLog({
-    level: "info",
-    kind: "app.will-quit",
-    process: "main",
-    message: "App will quit",
-  });
-  void stopMemoryV6RuntimeApiBestEffort();
-});
+}

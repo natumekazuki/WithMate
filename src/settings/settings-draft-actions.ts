@@ -9,6 +9,7 @@ import {
   updateCodingProviderInstructionRelativePathDraft,
   updateCodingProviderSkillRelativePathDraft,
   updateCodingProviderSkillRootPathDraft,
+  updateLaunchAtLoginEnabled,
   updateMateMemoryGenerationPriorityModelDraft,
   updateMateMemoryGenerationPriorityProviderDraft,
   updateMateMemoryGenerationPriorityReasoningEffortDraft,
@@ -76,6 +77,12 @@ export function handleChangeAutoCollapseActionDockOnSend(input: SettingsDraftAct
   enabled: boolean;
 }): void {
   input.setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, input.enabled));
+}
+
+export function handleChangeLaunchAtLoginEnabled(input: SettingsDraftActionInput & {
+  enabled: boolean;
+}): void {
+  input.setSettingsDraft((current) => updateLaunchAtLoginEnabled(current, input.enabled));
 }
 
 export function handleChangeUserMicrocopySlot(input: SettingsDraftActionInput & {

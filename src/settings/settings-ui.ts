@@ -28,6 +28,7 @@ export const SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE =
   "他 provider 対応は future scope として、いまは OpenAI 前提で扱う。";
 export const SETTINGS_RELEASE_COMPATIBILITY_NOTE =
   "初回リリース前のため、設定 schema の後方互換性は考慮しない。";
+export const SETTINGS_LAUNCH_AT_LOGIN_LABEL = "PC 起動時に WithMate をバックグラウンドで起動する";
 export const SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL = "送信後に Action Dock を自動で閉じる";
 export const SETTINGS_RESET_DATABASE_LABEL = "DB を初期化";
 export const SETTINGS_RESET_DATABASE_HELP =
