@@ -60,6 +60,7 @@
 ## Current Scope
 
 - `Session Window` の `送信後に Action Dock を自動で閉じる` の保存
+- `PC 起動時に WithMate をバックグラウンドで起動する` の保存。保存後は Electron login item 設定へ反映し、起動時は `--background` で Boot / Home window を表示しない
 - coding provider ごとの enable / disable
 - coding provider ごとの provider file settings
   - `Root Directory` は provider ごとの file 設定の基準 directory として保持される

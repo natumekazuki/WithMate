@@ -65,12 +65,16 @@ flowchart LR
 - app ready 後の bootstrap
 - store 初期化
 - IPC / lifecycle / window wiring
+- `--background` 起動では Boot / Home window を表示せず、runtime API と discovery publish だけを初期化する
 
 ### AppLifecycleService
 
 - `activate`
+- `second-instance`
 - `window-all-closed`
 - `before-quit`
+
+Main Process は `app.requestSingleInstanceLock()` を取得し、2 つ目以降の起動は既存 process の `second-instance` handler へ集約する。`second-instance` では `Home Window` を再生成または再表示・focus し、Windows で全 window close 後に Start Menu から戻れる導線を維持する。
 
 ### SessionWindowBridge
 

@@ -20,6 +20,10 @@ export class AppLifecycleService {
     await this.deps.createHomeWindow();
   }
 
+  async handleSecondInstance(): Promise<void> {
+    await this.deps.createHomeWindow();
+  }
+
   handleWindowAllClosed(): void {
     if (this.deps.hasInFlightSessionRuns()) {
       void this.deps.createHomeWindow();

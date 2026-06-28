@@ -145,8 +145,9 @@ V5 preview では Session Memory extraction / Character Reflection trigger を c
 
 ## Background Continuation
 
-current 実装では tray 常駐までは行わない。  
-その代わり、全 window が閉じても実行中 session がある場合は `Home Window` を再表示し、処理の継続を優先する。
+current 実装では tray 常駐までは行わない。
+全 window が閉じても app process は終了せず、Memory V6 runtime API / CLI discovery を維持する。Windows では single instance lock と `second-instance` handler により、Start Menu などから再起動されたときに既存 process の `Home Window` を再表示・focus する。
+実行中 session がある場合は `window-all-closed` 時点でも `Home Window` を再表示し、処理の継続を優先する。
 
 ## Persistence Expectations
 

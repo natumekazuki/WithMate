@@ -23,6 +23,26 @@ test("AppLifecycleService は activate で Home Window を開く", async () => {
   assert.deepEqual(calls, ["createHomeWindow"]);
 });
 
+test("AppLifecycleService は second-instance で Home Window を開く", async () => {
+  const calls: string[] = [];
+  const service = new AppLifecycleService({
+    hasInFlightSessionRuns: () => false,
+    getAllowQuitWithInFlightRuns: () => false,
+    setAllowQuitWithInFlightRuns: () => {},
+    async createHomeWindow() {
+      calls.push("createHomeWindow");
+    },
+    quitApp() {},
+    shouldQuitWhenAllWindowsClosed: () => false,
+    confirmQuitWhileRunning: () => false,
+    closePersistentStores() {},
+  });
+
+  await service.handleSecondInstance();
+
+  assert.deepEqual(calls, ["createHomeWindow"]);
+});
+
 test("AppLifecycleService は実行中 session があると window-all-closed で Home Window を再度開く", async () => {
   const calls: string[] = [];
   const service = new AppLifecycleService({
