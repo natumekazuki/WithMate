@@ -25,7 +25,7 @@ const KNOWN_DATABASE_DEFINITIONS: KnownDatabaseDefinition[] = [
   {
     fileName: APP_DATABASE_V6_FILENAME,
     schemaVersion: APP_DATABASE_V6_SCHEMA_VERSION,
-    runtimeGeneration: false,
+    runtimeGeneration: true,
     isValid: isValidV6DatabaseShallow,
   },
   {
@@ -79,14 +79,15 @@ function statusForFile(input: {
   valid: boolean;
   runtimeGeneration: boolean;
 }): AppDatabaseFileStatus {
-  if (!input.exists && input.fileName === APP_DATABASE_V4_FILENAME && input.dbPath === input.activeDatabasePath) {
+  if (
+    !input.exists
+    && (input.fileName === APP_DATABASE_V6_FILENAME || input.fileName === APP_DATABASE_V4_FILENAME)
+    && input.dbPath === input.activeDatabasePath
+  ) {
     return "pending-create";
   }
   if (!input.exists) {
     return "missing";
-  }
-  if (input.valid && !input.runtimeGeneration) {
-    return "foundation-ready";
   }
   return input.valid ? "ready" : "invalid";
 }
@@ -122,8 +123,8 @@ function inspectKnownDatabaseFile(
 }
 
 function compatibilityModeFor(fileName: string, valid: boolean, pendingCreate: boolean): AppDatabaseCompatibilityMode {
-  if (fileName === APP_DATABASE_V6_FILENAME && valid) {
-    return "v6-foundation";
+  if (fileName === APP_DATABASE_V6_FILENAME && (valid || pendingCreate)) {
+    return "v6";
   }
   if (fileName === APP_DATABASE_V4_FILENAME && (valid || pendingCreate)) {
     return "v4";
@@ -153,10 +154,6 @@ function buildWarnings(
   const validFiles = files.filter((file) => file.runtimeEligible);
   if (validFiles.length > 1) {
     warnings.push(`Multiple valid app database generations exist: ${validFiles.map((file) => file.fileName).join(", ")}.`);
-  }
-
-  if (activeFile.role === "foundation" && activeFile.schemaValid) {
-    warnings.push(`Active database ${activeFile.fileName} is a foundation schema and is not supported by the current runtime.`);
   }
 
   if (activeFile.status === "unsupported" || activeFile.status === "invalid") {
@@ -190,7 +187,11 @@ export function inspectAppDatabase(
   } satisfies AppDatabaseFileDiagnostics;
   const pendingCreate = activeFile.status === "pending-create";
   const compatibilityMode = compatibilityModeFor(activeFile.fileName, activeFile.valid, pendingCreate);
-  const schemaVersion = pendingCreate ? APP_DATABASE_V4_SCHEMA_VERSION : activeFile.expectedSchemaVersion;
+  const schemaVersion = pendingCreate && activeFile.fileName === APP_DATABASE_V6_FILENAME
+    ? APP_DATABASE_V6_SCHEMA_VERSION
+    : pendingCreate
+    ? APP_DATABASE_V4_SCHEMA_VERSION
+    : activeFile.expectedSchemaVersion;
   const schemaValid = activeFile.schemaValid || pendingCreate;
   const runtimeCompatible = activeFile.runtimeEligible || pendingCreate;
 

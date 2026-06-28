@@ -39,7 +39,7 @@ V6 DB再設計の正本は`docs/design/v6-database-foundation.md`とし、この
 2026-05-19 時点で、4.0 runtime の新規作成 DB は `<userData>/withmate-v4.db` を canonical path とする。`withmate-v4.db` が存在しない状態で既存の V3 / V2 / V1 DB がある場合は、起動時に同じ `<userData>` 配下へ V4 DB を自動作成する。migration 元の DB と blob / character file は削除せず、そのまま残す。current 実装の `<userData>/characters/` は 3.x legacy storage として記載し、Mate 関連の SQLite schema 詳細は `docs/design/mate-storage-schema.md` を参照する。
 
 V1 schema の SQL 正本は `src-electron/database-schema-v1.ts`、V2 schema の SQL 正本は `src-electron/database-schema-v2.ts`、V3 schema の SQL 正本は `src-electron/database-schema-v3.ts`、V4 schema の SQL 正本は `src-electron/database-schema-v4.ts` に置く。
-V6 foundation schema の SQL 正本は `src-electron/database-schema-v6.ts` に置くが、current runtime の active DB path selection にはまだ接続しない。Memory V6 runtime API は app ready 時に V6 foundation DB を best-effort で作成または検証する。V6 DB の設計判断は `docs/design/v6-database-foundation.md` を優先する。
+V6 schema の SQL 正本は `src-electron/database-schema-v6.ts` に置き、current runtime の active DB path selection は `withmate-v6.db` を最終 migration target とする。Memory V6 runtime API は app ready 時に V6 DB を best-effort で作成または検証する。V6 DB の設計判断は `docs/design/v6-database-foundation.md` を優先する。
 V6 release migrationでは、V6 runtimeに必要なCharacter catalog、Character definition files、app settings、provider settings、model catalogだけを自動移行する。V5以前のsession履歴、legacy Memory、GrowthはV6正本へ移行しない。Character file storage rootは現行`<userData>/characters/<character-id>/`を継続する。
 
 - SQLite DB に存在する table
@@ -86,9 +86,10 @@ future design だけで未実装のものは、最後に別枠で注記する。
   - `isValidV6Database()` は forbidden legacy table、主要column / index / FK / CHECK、`PRAGMA foreign_key_check` を確認する
   - `isValidV6DatabaseShallow()` は boot diagnostics 用に filename、`user_version`、required / forbidden table だけを確認する
   - `src-electron/app-database-v6-bootstrap.ts` は `<userData>/withmate-v6.db` の fresh 作成と既存 V6 DB の検証だけを行う。fresh作成は一時directory内でtransaction実行し、deep validation後にfinal pathへ既存file非上書きでpublishする。既存 invalid V6 DB は上書きしない
-  - `src-electron/memory-v6-runtime.ts` は app ready 時に V6 DB bootstrap を best-effort で実行し、Memory V6 localhost API と runtime discovery file を publish する。V6 DB bootstrap が失敗しても V4 active runtime boot は継続する
-  - `withmate:get-app-database-diagnostics` は `withmate-v6.db` を既知 file として表示できるが、V6 foundation DB は `foundation-ready` / `runtimeEligible: false` として扱い、runtime generation warning の対象にしない
-  - active runtime DB path selection はまだ V4 のまま維持する
+  - `src-electron/app-database-path.ts` は起動時に V4/V3/V2/V1 から最終的に `withmate-v6.db` を作成または選択する。V3以下は既存 migration でV4へ到達した後、V4→V6 release migrationを実行する
+  - `src-electron/memory-v6-runtime.ts` は app ready 時に V6 DB bootstrap を best-effort で実行し、Memory V6 localhost API と runtime discovery file を publish する
+  - `withmate:get-app-database-diagnostics` は `withmate-v6.db` を runtime file として表示し、schema-validなら `runtimeEligible: true` として扱う
+  - active runtime DB path selection は `withmate-v6.db` を current runtime DB として扱う
 - V2 migration policy:
   - `docs/design/database-v2-migration.md`
 - V4 upgrade / import policy:

@@ -1,5 +1,5 @@
 export type AppDatabaseCompatibilityMode =
-  | "v6-foundation"
+  | "v6"
   | "v4"
   | "legacy-v3"
   | "legacy-v2"
@@ -9,7 +9,6 @@ export type AppDatabaseCompatibilityMode =
 export type AppDatabaseFileStatus =
   | "missing"
   | "pending-create"
-  | "foundation-ready"
   | "ready"
   | "invalid"
   | "unsupported";
