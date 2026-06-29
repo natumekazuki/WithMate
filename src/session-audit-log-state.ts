@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   AuditLogDetailFragment,
@@ -193,7 +193,7 @@ export function useSessionAuditLogs({
     [selectedSession],
   );
 
-  useEffect(() => {
+  const refreshAuditLogSummary = useCallback((reason: "signature" | "modal-open") => {
     let active = true;
 
     if (!enabled || !auditLogApi || !selectedSession) {
@@ -206,24 +206,35 @@ export function useSessionAuditLogs({
       };
     }
 
+    const ownerSessionId = selectedSession.id;
     setAuditLogsState((current) =>
-      current.ownerSessionId === selectedSession.id
+      current.ownerSessionId === ownerSessionId
         ? { ...current, loading: true, errorMessage: null }
-        : { ...createEmptyAuditLogsState(selectedSession.id), loading: true },
+        : { ...createEmptyAuditLogsState(ownerSessionId), loading: true },
     );
-    if (auditLogDetailOwnerRef.current !== selectedSession.id) {
+    if (auditLogDetailOwnerRef.current !== ownerSessionId) {
       setAuditLogDetails({});
       setAuditLogOperationDetails({});
-      auditLogDetailOwnerRef.current = selectedSession.id;
+      auditLogDetailOwnerRef.current = ownerSessionId;
     }
-    void auditLogApi.listSessionAuditLogSummaryPage(selectedSession.id, {
+
+    reportAuditLogDetailLog(withmateApi, {
+      kind: "audit-log.summary.load-started",
+      message: "Audit log summary load started",
+      data: {
+        reason,
+        selectedSessionId: ownerSessionId,
+      },
+    });
+
+    void auditLogApi.listSessionAuditLogSummaryPage(ownerSessionId, {
       cursor: 0,
       limit: AUDIT_LOG_PAGE_LIMIT,
     }).then(
       (page) => {
         if (active) {
           setAuditLogsState({
-            ownerSessionId: selectedSession.id,
+            ownerSessionId,
             entries: page.entries,
             nextCursor: page.nextCursor,
             hasMore: page.hasMore,
@@ -231,16 +242,39 @@ export function useSessionAuditLogs({
             loading: false,
             errorMessage: null,
           });
+          reportAuditLogDetailLog(withmateApi, {
+            kind: "audit-log.summary.ipc-completed",
+            message: "Audit log summary IPC completed",
+            data: {
+              reason,
+              selectedSessionId: ownerSessionId,
+              returnedEntryIds: page.entries.map((entry) => entry.id),
+              total: page.total,
+              hasMore: page.hasMore,
+            },
+          });
         }
       },
       (error: unknown) => {
         if (active) {
           setAuditLogsState((current) => ({
             ...current,
-            ownerSessionId: selectedSession.id,
+            ownerSessionId,
             loading: false,
             errorMessage: error instanceof Error ? error.message : "audit log summary の取得に失敗したよ。",
           }));
+          reportAuditLogDetailLog(withmateApi, {
+            level: "error",
+            kind: "audit-log.summary.ipc-failed",
+            message: "Audit log summary IPC failed",
+            data: {
+              reason,
+              selectedSessionId: ownerSessionId,
+            },
+            error: error instanceof Error
+              ? { name: error.name, message: error.message, stack: error.stack }
+              : { message: "audit log summary IPC failed" },
+          });
         }
       },
     );
@@ -248,7 +282,19 @@ export function useSessionAuditLogs({
     return () => {
       active = false;
     };
-  }, [auditLogApi, enabled, refreshSignature, selectedSessionId]);
+  }, [auditLogApi, enabled, selectedSession, withmateApi]);
+
+  useEffect(() => {
+    return refreshAuditLogSummary("signature");
+  }, [refreshAuditLogSummary, refreshSignature, selectedSessionId]);
+
+  useEffect(() => {
+    if (!auditLogsOpen) {
+      return;
+    }
+
+    return refreshAuditLogSummary("modal-open");
+  }, [auditLogsOpen, refreshAuditLogSummary]);
 
   useEffect(() => {
     if (!auditLogsOpen) {

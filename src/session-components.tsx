@@ -1048,9 +1048,11 @@ export function SessionAuditLogModal({
               const logicalSystemOpen = Boolean(openAuditLogFolds[auditLogLogicalPromptFieldFoldKey(entry, "system")]);
               const logicalInputOpen = Boolean(openAuditLogFolds[auditLogLogicalPromptFieldFoldKey(entry, "input")]);
               const logicalComposedOpen = Boolean(openAuditLogFolds[auditLogLogicalPromptFieldFoldKey(entry, "composed")]);
-              const displayedOperations = operationsOpen
-                ? operations.slice(0, AUDIT_LOG_OPERATION_RENDER_LIMIT)
-                : [];
+              const displayedOperations = entry.detailAvailable
+                ? operationsOpen
+                  ? operations.slice(0, AUDIT_LOG_OPERATION_RENDER_LIMIT)
+                  : []
+                : operations.slice(0, AUDIT_LOG_OPERATION_RENDER_LIMIT);
               const hiddenOperationCount = Math.max(0, operations.length - displayedOperations.length);
 
               return (
@@ -1078,6 +1080,43 @@ export function SessionAuditLogModal({
                   <span>{displayApprovalValue(entry.approvalMode)}</span>
                 </div>
 
+                {!entry.detailAvailable ? (
+                  <section className="audit-log-section audit-log-live-preview" aria-label="Live preview">
+                    <p className="audit-log-empty">
+                      Live preview only. Persisted audit log detail is not available yet.
+                    </p>
+                    {assistantText ? (
+                      <pre>{previewAuditLogText(assistantText)}</pre>
+                    ) : null}
+                    {operations.length > 0 ? (
+                      <ul className="audit-log-operations">
+                        {displayedOperations.map((operation, index) => (
+                          <li key={`${entry.id}-${operation.type}-${index}`}>
+                            <div className="audit-log-operation-head">
+                              <span>{operation.type}</span>
+                              <strong>{operation.summary}</strong>
+                            </div>
+                            {operation.details ? <pre>{previewAuditLogText(operation.details)}</pre> : null}
+                          </li>
+                        ))}
+                        {hiddenOperationCount > 0 ? (
+                          <li className="audit-log-operation-more">
+                            {hiddenOperationCount} more operations hidden for performance
+                          </li>
+                        ) : null}
+                      </ul>
+                    ) : null}
+                    {usage ? (
+                      <div className="audit-log-meta">
+                        <span>input {usage.inputTokens}</span>
+                        <span>cached {usage.cachedInputTokens}</span>
+                        <span>output {usage.outputTokens}</span>
+                      </div>
+                    ) : null}
+                    {errorMessage ? <pre>{previewAuditLogText(errorMessage)}</pre> : null}
+                  </section>
+                ) : (
+                  <>
                 <details
                   className="audit-log-fold"
                   open={logicalOpen}
@@ -1308,6 +1347,8 @@ export function SessionAuditLogModal({
                     <pre>{previewAuditLogText(detail?.rawItemsJson ?? (sectionLoading("raw") ? "loading..." : sectionError("raw") ?? "[]"))}</pre>
                   ) : null}
                 </details>
+                  </>
+                )}
                 </article>
               );
                 })}

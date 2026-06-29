@@ -136,7 +136,7 @@ export function buildDisplayedAuditLogs(input: BuildDisplayedAuditLogsInput): Au
     return input.persistedEntries.map(suppressIncompleteRunningDetail);
   }
 
-  if (input.selectedSession?.runState !== "running") {
+  if (input.selectedSession?.runState !== "running" || liveRun.sessionId !== input.selectedSession.id) {
     return input.persistedEntries.map(suppressIncompleteRunningDetail);
   }
 
