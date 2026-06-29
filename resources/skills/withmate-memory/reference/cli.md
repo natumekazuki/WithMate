@@ -57,6 +57,8 @@ Sends:
 
 ```bash
 withmate-memory search --project . --query "approval mode"
+withmate-memory search --project . --query "delivery cleanup" --tag delivery-cleanup
+withmate-memory search --project . --tags topic:delivery-cleanup,topic:relaygraph
 withmate-memory search --file memory-search.json
 ```
 
@@ -73,6 +75,7 @@ Request shape:
 ```
 
 Search returns active entry previews only. Use `get-entry` when the exact body matters.
+Search uses natural-language terms across title, preview, body, and tags. Hyphenated and spaced tag words such as `delivery-cleanup` and `delivery cleanup` are treated as related candidates. Shorthand `--tag <tag>` defaults to `topic:<tag>`, and `--tags` accepts comma-separated `<type>:<tag>` values. Search results may include matched fields and a short snippet; body matches may be reported in `match.fields`, but snippets are limited to tags, title, and preview. 0-result responses may include related tag candidates.
 
 ### get-entry
 

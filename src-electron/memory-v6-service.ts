@@ -156,7 +156,10 @@ export class MemoryV6Service {
       limit: validated.value.limit,
       cursor: validated.value.cursor,
     });
-    return createMemorySearchResponse(result.items, result.nextCursor);
+    return createMemorySearchResponse(result.items, {
+      nextCursor: result.nextCursor,
+      relatedTags: result.relatedTags,
+    });
   }
 
   getEntry(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryGetEntryResponse> {

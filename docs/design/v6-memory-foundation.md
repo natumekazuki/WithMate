@@ -386,6 +386,7 @@ Responseはpreview中心とする。
 type MemorySearchResponse = {
   schemaVersion: "withmate-memory-v1";
   items: MemorySearchHit[];
+  relatedTags?: MemoryTag[];
   nextCursor?: string;
 };
 
@@ -399,13 +400,21 @@ type MemorySearchHit = {
   tags: MemoryTag[];
   createdAt: string;
   updatedAt: string;
+  match?: {
+    fields: ("title" | "preview" | "body" | "tags")[];
+    snippet?: string;
+  };
 };
 ```
 
 - search hitにfull `body`を含めない。
+- `match.fields`はbody hitを示してよいが、`match.snippet`はtags / title / preview由来に限定し、body断片は`memory.search`権限だけでは返さない。
+- public APIの`query`は非空文字列を必須とする。storage層は防御的に空queryでもactive entry pageを返すが、agent-facing contractでは空queryをsearch requestとして受け付けない。
 - active filterはSQL / search service側でpagination前に行う。
 - response builderはpagination済みのactive hit pageだけを受け取り、inactive entryを黙って捨てない。
-- relevance scoreはpublic contractに含めない。
+- searchはtitle / preview / body / tagsをtoken単位で照合し、`delivery-cleanup`と`delivery cleanup`のようなtag表記揺れを吸収する。
+- 0件時は近いtag候補を`relatedTags`で返してよい。
+- relevance scoreはpublic contractに含めない。match metadataはmatched fieldsと短いsnippetに限定する。
 - V4以前のautomatic relevance selection / prompt injectionは復活させない。
 - 初期searchはtarget / kind / tag / query filterを優先し、agentがpreviewを見て必要なら`get_entry`する。
 - forgotten / superseded entryは通常結果へ出さない。
@@ -592,6 +601,8 @@ withmate-memory forget --json '<MemoryForgetRequest>'
 withmate-memory search --file payload.json
 withmate-memory search @payload.json
 withmate-memory search --project ../repo-a --query "approval modeの方針"
+withmate-memory search --project ../repo-a --query "delivery cleanup" --tag delivery-cleanup
+withmate-memory search --project ../repo-a --tags topic:delivery-cleanup,topic:relaygraph
 ```
 
 `--json`、`--file`、`@file`、`--stdin`はrequest bodyの入力方法であり、output format指定ではない。CLI outputは常にJSONをstdoutへ出す。
@@ -615,6 +626,8 @@ current convenience flags:
 ```text
 withmate-memory search --project ../repo-a --query "approval modeの方針"
 withmate-memory search --project-id <project-id> --query "approval modeの方針"
+withmate-memory search --project ../repo-a --query "delivery cleanup" --tag delivery-cleanup
+withmate-memory search --project ../repo-a --tags topic:delivery-cleanup,topic:relaygraph
 withmate-memory get-entry --project ../repo-a --entry-id <entry-id>
 withmate-memory list-tags --project ../repo-a
 ```

@@ -11,7 +11,14 @@ import type {
   MemoryV6ReviewSearchHit,
   MemoryV6ReviewSearchResult,
 } from "../src/memory-v6/memory-review-state.js";
-import { toMemorySearchHit, type ActiveMemoryEntryDetail, type MemoryEntryDetail, type MemorySearchHit } from "../src/memory-v6/memory-state.js";
+import {
+  toMemorySearchHit,
+  type ActiveMemoryEntryDetail,
+  type MemoryEntryDetail,
+  type MemorySearchHit,
+  type MemorySearchMatch,
+  type MemorySearchMatchField,
+} from "../src/memory-v6/memory-state.js";
 import { isValidV6Database } from "./database-schema-v6.js";
 import {
   MEMORY_V6_ENTRY_SELECT_COLUMNS,
@@ -75,6 +82,7 @@ export type MemoryV6SearchInput = {
 
 export type MemoryV6SearchResult = {
   items: MemorySearchHit[];
+  relatedTags?: NormalizedMemoryTag[];
   nextCursor?: string;
 };
 
@@ -149,6 +157,17 @@ type SearchCursor = {
   id: string;
 };
 
+type SearchQueryPlan = {
+  normalizedQuery: string;
+  tokens: string[];
+};
+
+type ScoredSearchEntry = {
+  row: MemoryV6EntryRow;
+  entry: ActiveMemoryEntryDetail;
+  match: MemorySearchMatch;
+};
+
 function encodeCursor(cursor: SearchCursor): string {
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
@@ -166,6 +185,102 @@ function decodeCursor(cursor: string | undefined): SearchCursor | null {
   } catch {
     return null;
   }
+}
+
+function normalizeSearchText(value: string): string {
+  return value
+    .normalize("NFC")
+    .toLowerCase()
+    .replace(/[\u2010-\u2015_-]+/g, " ")
+    .replace(/[/:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function expandSearchToken(token: string): string[] {
+  switch (token) {
+    case "delivery":
+      return [token, "納品"];
+    case "納品":
+      return [token, "delivery"];
+    case "branch":
+      return [token, "ブランチ"];
+    case "ブランチ":
+      return [token, "branch"];
+    default:
+      return [token];
+  }
+}
+
+function buildSearchQueryPlan(query: string): SearchQueryPlan {
+  const normalizedQuery = normalizeSearchText(query);
+  const tokens = new Set<string>();
+  for (const token of normalizedQuery.split(" ")) {
+    if (!token) {
+      continue;
+    }
+    for (const expanded of expandSearchToken(token)) {
+      tokens.add(expanded);
+    }
+  }
+
+  return {
+    normalizedQuery,
+    tokens: [...tokens],
+  };
+}
+
+function scoreNormalizedText(text: string, plan: SearchQueryPlan, weight: number): number {
+  if (!text) {
+    return 0;
+  }
+  let score = 0;
+  if (plan.normalizedQuery && text.includes(plan.normalizedQuery)) {
+    score += weight * 2;
+  }
+  for (const token of plan.tokens) {
+    if (text.includes(token)) {
+      score += weight;
+    }
+  }
+  return score;
+}
+
+function buildSnippet(value: string, plan: SearchQueryPlan): string | undefined {
+  const normalizedValue = normalizeSearchText(value);
+  const token = plan.tokens.find((item) => normalizedValue.includes(item));
+  if (!token) {
+    return undefined;
+  }
+  const normalizedIndex = normalizedValue.indexOf(token);
+  const start = Math.max(0, normalizedIndex - 48);
+  const end = Math.min(value.length, normalizedIndex + token.length + 96);
+  const snippet = value.slice(start, end).trim();
+  if (!snippet) {
+    return undefined;
+  }
+  return `${start > 0 ? "..." : ""}${snippet}${end < value.length ? "..." : ""}`;
+}
+
+function tagSearchText(tag: NormalizedMemoryTag): string {
+  return normalizeSearchText([
+    tag.type,
+    tag.value,
+    tag.canonicalType,
+    tag.canonicalValue,
+    `${tag.type}:${tag.value}`,
+  ].join(" "));
+}
+
+function tagSnippet(tags: readonly NormalizedMemoryTag[], plan: SearchQueryPlan): string | undefined {
+  const matchedTags = tags
+    .filter((tag) => scoreNormalizedText(tagSearchText(tag), plan, 1) > 0)
+    .map((tag) => `${tag.type}:${tag.value}`);
+  return matchedTags.length > 0 ? `tags: ${matchedTags.join(", ")}` : undefined;
+}
+
+function uniqueSearchTokens(plan: SearchQueryPlan): string[] {
+  return plan.tokens.filter((token, index, tokens) => token.length > 0 && tokens.indexOf(token) === index);
 }
 
 function ownerRef(row: MemoryV6EntryRow): MemoryEntryDetail["owner"] {
@@ -360,11 +475,14 @@ export class MemoryV6Storage {
     const targetWhere = targetWhereSql("e", input.targets);
     const clauses = [`e.state = 'active'`, `(${targetWhere.sql})`];
     const params: SQLInputValue[] = [...targetWhere.params];
-    const query = input.query.trim().toLowerCase();
+    const queryPlan = buildSearchQueryPlan(input.query);
+    const queryTokens = uniqueSearchTokens(queryPlan);
+    const isQuerySearch = queryTokens.length > 0;
 
-    if (query) {
-      clauses.push(`
-        (
+    if (isQuerySearch) {
+      const tokenClauses: string[] = [];
+      for (const token of queryTokens) {
+        tokenClauses.push(`
           instr(lower(e.title), ?) > 0
           OR instr(lower(e.preview), ?) > 0
           OR instr(lower(e.body), ?) > 0
@@ -375,11 +493,14 @@ export class MemoryV6Storage {
               AND (
                 instr(lower(t.tag_type), ?) > 0
                 OR instr(lower(t.tag_value), ?) > 0
+                OR instr(lower(t.tag_type_canonical), ?) > 0
+                OR instr(lower(t.tag_value_canonical), ?) > 0
               )
           )
-        )
-      `);
-      params.push(query, query, query, query, query);
+        `);
+        params.push(token, token, token, token, token, token, token);
+      }
+      clauses.push(`(${tokenClauses.map((clause) => `(${clause})`).join(" OR ")})`);
     }
 
     if (input.kinds && input.kinds.length > 0) {
@@ -413,14 +534,30 @@ export class MemoryV6Storage {
       LIMIT ?
     `).all(...params, limit + 1) as MemoryV6EntryRow[];
 
-    const pageRows = rows.slice(0, limit);
-    const lastRow = pageRows[pageRows.length - 1];
+    const scoredEntries: ScoredSearchEntry[] = [];
+    for (const row of rows) {
+      const tags = this.getEntryTags(row.id);
+      const entry = this.rowToEntry(row, tags);
+      if (entry.state !== "active") {
+        continue;
+      }
+      if (!isQuerySearch) {
+        scoredEntries.push({ row, entry, match: { fields: [] } });
+        continue;
+      }
+      const match = this.scoreSearchEntry(entry, queryPlan, tags);
+      if (!match) {
+        continue;
+      }
+      scoredEntries.push({ row, entry, match });
+    }
+
+    const pageEntries = scoredEntries.slice(0, limit);
+    const lastRow = pageEntries[pageEntries.length - 1]?.row;
     return {
-      items: pageRows
-        .map((row) => this.rowToEntry(row))
-        .filter((entry): entry is ActiveMemoryEntryDetail => entry.state === "active")
-        .map(toMemorySearchHit),
-      ...(rows.length > limit && lastRow ? { nextCursor: encodeCursor({ updatedAt: lastRow.updated_at, id: lastRow.id }) } : {}),
+      items: pageEntries.map((item) => toMemorySearchHit(item.entry, item.match.fields.length > 0 ? item.match : undefined)),
+      ...(scoredEntries.length > limit && lastRow ? { nextCursor: encodeCursor({ updatedAt: lastRow.updated_at, id: lastRow.id }) } : {}),
+      ...(isQuerySearch && scoredEntries.length === 0 ? { relatedTags: this.relatedTags(input.targets, queryPlan) } : {}),
     };
   }
 
@@ -488,6 +625,65 @@ export class MemoryV6Storage {
       }),
       ...(rows.length > limit && lastRow ? { nextCursor: encodeCursor({ updatedAt: lastRow.updated_at, id: lastRow.id }) } : {}),
     };
+  }
+
+  private scoreSearchEntry(
+    entry: ActiveMemoryEntryDetail,
+    queryPlan: SearchQueryPlan,
+    tags: readonly NormalizedMemoryTag[],
+  ): MemorySearchMatch | null {
+    const normalizedTitle = normalizeSearchText(entry.title);
+    const normalizedPreview = normalizeSearchText(entry.preview);
+    const normalizedBody = normalizeSearchText(entry.body);
+    const normalizedTags = normalizeSearchText(tags.map((tag) => tagSearchText(tag)).join(" "));
+    const fields: MemorySearchMatchField[] = [];
+    let score = 0;
+
+    const titleScore = scoreNormalizedText(normalizedTitle, queryPlan, 6);
+    if (titleScore > 0) {
+      fields.push("title");
+      score += titleScore;
+    }
+
+    const previewScore = scoreNormalizedText(normalizedPreview, queryPlan, 4);
+    if (previewScore > 0) {
+      fields.push("preview");
+      score += previewScore;
+    }
+
+    const bodyScore = scoreNormalizedText(normalizedBody, queryPlan, 2);
+    if (bodyScore > 0) {
+      fields.push("body");
+      score += bodyScore;
+    }
+
+    const tagScore = scoreNormalizedText(normalizedTags, queryPlan, 8);
+    if (tagScore > 0) {
+      fields.push("tags");
+      score += tagScore;
+    }
+
+    if (score === 0) {
+      return null;
+    }
+
+    const snippet = tagSnippet(tags, queryPlan)
+      ?? buildSnippet(entry.title, queryPlan)
+      ?? buildSnippet(entry.preview, queryPlan);
+
+    return {
+      fields,
+      ...(snippet ? { snippet } : {}),
+    };
+  }
+
+  private relatedTags(targets: readonly MemoryV6ResolvedTarget[], queryPlan: SearchQueryPlan): NormalizedMemoryTag[] {
+    return this.listTags(targets)
+      .map((tag) => ({ tag, score: scoreNormalizedText(tagSearchText(tag), queryPlan, 1) }))
+      .filter((item) => item.score > 0)
+      .sort((left, right) => right.score - left.score || left.tag.canonicalValue.localeCompare(right.tag.canonicalValue))
+      .slice(0, 5)
+      .map((item) => item.tag);
   }
 
   listTags(targets: readonly MemoryV6ResolvedTarget[]): NormalizedMemoryTag[] {
@@ -675,7 +871,7 @@ export class MemoryV6Storage {
     return row ?? null;
   }
 
-  private rowToEntry(row: MemoryV6EntryRow): MemoryEntryDetail {
+  private rowToEntry(row: MemoryV6EntryRow, tags = this.getEntryTags(row.id)): MemoryEntryDetail {
     const base = {
       id: row.id,
       owner: ownerRef(row),
@@ -684,7 +880,7 @@ export class MemoryV6Storage {
       title: row.title,
       body: row.body,
       preview: row.preview,
-      tags: this.getEntryTags(row.id).map((tag) => ({ type: tag.type, value: tag.value })),
+      tags: tags.map((tag) => ({ type: tag.type, value: tag.value })),
       source: {
         type: row.source_type,
         sessionId: row.source_session_id,

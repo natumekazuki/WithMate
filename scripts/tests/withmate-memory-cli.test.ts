@@ -535,6 +535,43 @@ describe("withmate-memory CLI", () => {
     }
   });
 
+  it("search shorthandは--tag / --tagsからtagsを作り、query未指定時はtag値をqueryに使う", async () => {
+    const stdout = createOutputCapture();
+    const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-tags-"));
+    let capturedBody: any = null;
+    try {
+      const exitCode = await runWithMateMemoryCli([
+        "search",
+        "--project",
+        tempDirectory,
+        "--tag",
+        "delivery-cleanup",
+        "--tags",
+        "topic:relaygraph,source:docs",
+      ], {
+        env: TEST_RUNTIME_ENV,
+        stdout: stdout.stream,
+        fetch: async (url, init) => {
+          if (isStatusChallengeRequest(String(url))) {
+            return createStatusChallengeResponse(String(url));
+          }
+          capturedBody = JSON.parse(String(init?.body));
+          return new Response(JSON.stringify({ schemaVersion: MEMORY_V6_SCHEMA_VERSION, items: [] }), { status: 200 });
+        },
+      });
+
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+      assert.equal(capturedBody.query, "delivery-cleanup relaygraph docs");
+      assert.deepEqual(capturedBody.tags, [
+        { type: "topic", value: "delivery-cleanup" },
+        { type: "topic", value: "relaygraph" },
+        { type: "source", value: "docs" },
+      ]);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("project.pathの相対pathはCLI起動cwd基準の絶対pathへ正規化して送る", async () => {
     const stdout = createOutputCapture();
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-cwd-"));
@@ -751,5 +788,6 @@ describe("withmate-memory CLI", () => {
     assert.match(message, /@file/);
     assert.match(message, /--stdin/);
     assert.match(message, /--project/);
+    assert.match(message, /--tag/);
   });
 });
