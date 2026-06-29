@@ -46,6 +46,7 @@ const MEMORY_TAG_KEYS = new Set(["type", "value"]);
 const PROJECT_PROJECT_TARGET_KEYS = new Set(["owner", "scope", "project"]);
 const CHARACTER_CHARACTER_TARGET_KEYS = new Set(["owner", "scope", "character"]);
 const CHARACTER_PROJECT_TARGET_KEYS = new Set(["owner", "scope", "character", "project"]);
+const USER_GLOBAL_TARGET_KEYS = new Set(["owner", "scope"]);
 
 const MAX_SEARCH_QUERY_LENGTH = 500;
 const MAX_TITLE_LENGTH = 160;
@@ -251,6 +252,14 @@ function normalizeCharacterTarget(value: unknown, field: string): MemoryValidati
 function normalizeMemoryTarget(value: unknown, field: string): MemoryValidationResult<MemoryTargetSelector> {
   if (!isRecord(value)) {
     return error("MEMORY_INVALID_FIELD", `${field} must be an object.`, field);
+  }
+
+  if (value.owner === "user" && value.scope === "global") {
+    const unknownKeys = rejectUnknownKeys(value, USER_GLOBAL_TARGET_KEYS, field);
+    if (!unknownKeys.ok) {
+      return unknownKeys;
+    }
+    return { ok: true, value: { owner: "user", scope: "global" } };
   }
 
   if (value.owner === "project" && value.scope === "project") {

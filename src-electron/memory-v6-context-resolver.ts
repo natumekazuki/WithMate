@@ -79,6 +79,13 @@ export function resolveMemoryV6Target(
   principal: MemoryV6Principal,
   deps: MemoryV6TargetResolverDeps = {},
 ): MemoryV6TargetResolutionResult {
+  if (selector.owner === "user" && selector.scope === "global") {
+    return withAccessCheck(principal, {
+      owner: { type: "user", id: "local-user" },
+      scope: { type: "global", id: "global" },
+    });
+  }
+
   if (selector.owner === "project" && selector.scope === "project") {
     const project = resolveProject(selector.project, deps, "target.project");
     if ("code" in project) {
@@ -99,6 +106,10 @@ export function resolveMemoryV6Target(
       owner: { type: "character", id: character.id },
       scope: { type: "character", id: character.id },
     });
+  }
+
+  if (selector.owner !== "character" || selector.scope !== "project") {
+    return { ok: false, error: memoryForbiddenError() };
   }
 
   const character = resolveCharacter(selector.character, principal, deps, "target.character");

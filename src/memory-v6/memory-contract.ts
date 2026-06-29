@@ -38,7 +38,8 @@ export type CharacterTargetRef =
 export type MemoryTargetSelector =
   | { owner: "project"; project: ProjectTargetRef; scope: "project" }
   | { owner: "character"; character: CharacterTargetRef; scope: "character" }
-  | { owner: "character"; character: CharacterTargetRef; scope: "project"; project: ProjectTargetRef };
+  | { owner: "character"; character: CharacterTargetRef; scope: "project"; project: ProjectTargetRef }
+  | { owner: "user"; scope: "global" };
 
 export type MemoryTag = {
   type: string;

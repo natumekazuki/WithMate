@@ -24,6 +24,11 @@ const characterTarget = {
   scope: { type: "character", id: "character-a" },
 } satisfies MemoryV6ResolvedTarget;
 
+const userGlobalTarget = {
+  owner: { type: "user", id: "local-user" },
+  scope: { type: "global", id: "global" },
+} satisfies MemoryV6ResolvedTarget;
+
 function tag(type: string, value: string): NormalizedMemoryTag {
   return {
     type,
@@ -157,6 +162,42 @@ describe("MemoryV6Storage", () => {
       assert.deepEqual(storage.listTags([projectTarget]), [tag("topic", "memory")]);
       assert.equal(tableNames(dbPath).includes("session_memories"), false);
       assert.equal(tableNames(dbPath).includes("project_memory_entries"), false);
+    });
+  });
+
+  it("user-global target のappend / search / tag catalog / forgetを扱う", async () => {
+    await withStorage(({ storage }) => {
+      const appended = storage.appendEntry(baseAppend({
+        id: "mem-user-global",
+        target: userGlobalTarget,
+        kind: "preference",
+        title: "共通検証方針",
+        body: "全projectで検証結果を短く添える。",
+        preview: "検証結果を短く添える。",
+        tags: [tag("topic", "global-preference")],
+      }));
+
+      assert.equal(appended.entry.owner.type, "user");
+      assert.equal(appended.entry.owner.id, "local-user");
+      assert.equal(appended.entry.scope.type, "global");
+      assert.equal(appended.entry.scope.id, "global");
+
+      const search = storage.searchEntries({
+        targets: [userGlobalTarget],
+        query: "検証結果",
+      });
+      assert.deepEqual(search.items.map((item) => item.id), ["mem-user-global"]);
+      assert.deepEqual(storage.listTags([userGlobalTarget]), [tag("topic", "global-preference")]);
+
+      const forget = storage.forgetEntries({
+        target: userGlobalTarget,
+        entryIds: ["mem-user-global", "missing-entry"],
+        reason: "user_request",
+      });
+      assert.deepEqual(forget, [
+        { entryId: "mem-user-global", status: "forgotten" },
+        { entryId: "missing-entry", status: "not_found" },
+      ]);
     });
   });
 

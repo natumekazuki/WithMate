@@ -128,9 +128,9 @@ type MemoryPermission =
 
 `session_binding`はWithMate-launched provider turnから発行される短命bindingに基づく。current Character、session project、provider ID、permissionを解決でき、Character targetや`character: current`を使える。
 
-`local_user`は起動中WithMate runtime APIのsecret / status challengeを通過した同一OS userを表す。明示された`project` owner + `project` scopeのMemoryだけを扱い、current Character、session context、Character Memory、session-bound project inferenceは使えない。
+`local_user`は起動中WithMate runtime APIのsecret / status challengeを通過した同一OS userを表す。明示された`project` owner + `project` scope、または`user` owner + `global` scopeのMemoryだけを扱い、current Character、session context、Character Memory、session-bound project inferenceは使えない。
 
-binding referenceが存在しない、または失効済みbinding referenceをprincipalへ解決できない場合でも、runtime API secret検証済みでrequest targetが明示`project` owner + `project` scopeなら`local_user` principalとして処理してよい。`character: current`、Character owner、session-bound contextを要求するrequestは`MEMORY_BINDING_REQUIRED`または`MEMORY_FORBIDDEN`で拒否する。
+binding referenceが存在しない、または失効済みbinding referenceをprincipalへ解決できない場合でも、runtime API secret検証済みでrequest targetが明示`project` owner + `project` scope、または`user` owner + `global` scopeなら`local_user` principalとして処理してよい。`character: current`、Character owner、session-bound contextを要求するrequestは`MEMORY_BINDING_REQUIRED`または`MEMORY_FORBIDDEN`で拒否する。
 
 ### Owner
 
@@ -179,8 +179,9 @@ OwnerとScopeは別概念とする。
 | `character` | `character` | Character単位の関係性、好み、継続境界 |
 | `character` | `project` | 特定projectでそのCharacterと共有した作業文脈 |
 | `project` | `project` | Characterに依存しないproject decision / convention |
+| `user` | `global` | provider / host / projectに依存しないuser preference / convention / constraint |
 
-`project` owner + `character` scope、`user` owner、`session` scope、`global` scopeはschema上予約してもよいが、初期append対象にはしない。
+`project` owner + `character` scope、`session` scope、`user` owner + `global` scope以外の`user` owner、`user` owner以外の`global` scopeはschema上予約してもよいが、append対象にはしない。`user` owner + `global` scopeはexact pairだけを許可し、secret、token、project固有の非公開情報ではなく、user共通のpreference / convention / constraintに限定して扱う。
 session中に得た決定・制約・継続文脈をagentがdurable Memory entryとしてappendすることは許可するが、V6 foundationはmutableなSession working stateをfirst-class domainとして扱わない。
 
 ### Entry
@@ -368,7 +369,8 @@ type MemorySearchRequest = {
 type MemoryTargetSelector =
   | { owner: "project"; project: ProjectTargetRef; scope: "project" }
   | { owner: "character"; character: CharacterTargetRef; scope: "character" }
-  | { owner: "character"; character: CharacterTargetRef; scope: "project"; project: ProjectTargetRef };
+  | { owner: "character"; character: CharacterTargetRef; scope: "project"; project: ProjectTargetRef }
+  | { owner: "user"; scope: "global" };
 
 type ProjectTargetRef =
   | { type: "id"; id: string }
@@ -430,7 +432,7 @@ type MemoryGetEntryResponse = {
 
 - ID指定でfull bodyを取得する。
 - binding permissionとowner / scope accessを再検証する。
-- binding referenceがない`local_user` requestでは明示project targetを必須とし、entryのowner / scopeがtargetと一致する場合だけ返す。
+- binding referenceがない`local_user` requestでは明示targetを必須とし、entryのowner / scopeがtargetと一致する場合だけ返す。targetなしはentry存在に関係なく`MEMORY_TARGET_REQUIRED`、target不一致は`not_found`に畳む。
 - search hitのpreviewが現在の回答、実装、判断に影響しそうな場合に使う。
 - 正確な文言、理由、制約、過去の決定が重要な場合はpreviewだけで断定しない。
 - search hitを全件機械的に取得しない。必要な最小件数を、関係ありそうなpreviewから順に取得する。
@@ -568,10 +570,11 @@ value.normalize("NFC").toLowerCase()
 CLIはuser-facing entrypointであり、app外の人間やagentが自由に呼べる薄いclientとする。
 CLIはDBを直接触らず、起動中のWithMateが提供するruntime Memory APIへ接続する。
 WithMateが起動していない場合、CLIはすべてのMemory操作を拒否し、machine-readable errorを返す。
-WithMate起動中は、WithMate外のCodex / shell / CLIからもproject owner + project scopeのMemoryを明示targetで検索、取得、tag一覧、append、forgetできる。
+WithMate起動中は、WithMate外のCodex / shell / CLIからもproject owner + project scope、またはuser owner + global scopeのMemoryを明示targetで検索、取得、tag一覧、append、forgetできる。
 session bindingはCLI利用全体の認可ではなく、current Characterやcurrent WithMate session contextを解決するための追加contextである。
 binding referenceがない外部CLI requestは、runtime secretとnonce challengeを通過した同一OS userの`local_user` principalとして扱う。
-`local_user` principalは`project` owner + `project` scopeだけを扱い、`character: current`、WithMate session context、session-bound project inferenceは使えない。
+`local_user` principalは`project` owner + `project` scope、または`user` owner + `global` scopeだけを扱い、`character: current`、WithMate session context、session-bound project inferenceは使えない。
+`session_binding` principalでも`user` owner + `global` scopeを扱うには、`memory.search`、`memory.append`、`memory.get_entry`、`memory.list_tags`、`memory.forget`など操作別permissionを満たす必要がある。retrieval ranking、暗黙target注入、毎turn prompt注入は行わない。
 runtime binding由来のappend / forgetでも、対応するV6 `sessions_v6` rowがまだ存在しない段階ではMemory entryの`source.sessionId`は`null`として保存する。
 `--self` flagは採用しない。
 current CLIは`WITHMATE_MEMORY_API_URL`またはruntime discovery fileからlocalhost APIを発見する。
@@ -678,7 +681,13 @@ character target:
 
 character targetはWithMate-launched session binding内に限定する。
 `--character current`はruntime bindingがある場合だけ使える。
-WithMate外CLI / `local_user` principalは現時点ではproject owner + project scopeのMemoryだけを扱い、明示Character IDを指定したCharacter Memory利用も許可しない。
+user-global target:
+
+- request bodyの`target`または`targets[]`に`{ "owner": "user", "scope": "global" }`を明示する。
+- CLI shorthandは用意せず、`--file` / `--stdin` / `--json`でrequest bodyを渡す。
+- user-global Memoryは全project / provider bindingから見えるため、user-level preference / convention / constraintに限定し、secret、token、project固有の非公開情報は保存しない。
+
+WithMate外CLI / `local_user` principalは現時点ではproject owner + project scope、またはuser owner + global scopeのMemoryだけを扱い、明示Character IDを指定したCharacter Memory利用も許可しない。
 外部CLIからの明示Character ID対応は、別途principal / 認可設計を定義してから扱う。
 project targetはcurrent working directoryから暗黙推定しない。
 `--project .`はcurrent directoryを使う明示指定として許可する。

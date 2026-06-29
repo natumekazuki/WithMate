@@ -22,7 +22,7 @@ Do not use Memory for trivial local edits where the current files and user messa
 
 - Use the installed `withmate-memory` CLI instead of reading WithMate database files directly.
 - Prefer `withmate-memory ...` commands. If the command is not on `PATH` and this managed skill includes `bin/withmate-memory.mjs`, use `node bin/withmate-memory.mjs ...` as a temporary bundled-helper fallback.
-- Project Memory is available from external Codex or shell sessions while WithMate is running; use explicit project targets.
+- Project Memory and user-global Memory are available from external Codex or shell sessions while WithMate is running; use explicit targets.
 - Search before relying on remembered project or character decisions.
 - Use `get-entry` only for search hits whose exact body matters.
 - Append only durable decisions, constraints, conventions, preferences, or context that will matter in future sessions.
@@ -111,7 +111,7 @@ $request | withmate-memory search --stdin
 
 `status` does not require a request body.
 
-`schema` does not require a request body and returns supported commands, request body input modes, memory entry kinds, and forget reasons.
+`schema` does not require a request body and returns supported commands, request body input modes, target selector forms, memory entry kinds, and forget reasons.
 
 `validate` validates a request body locally without writing Memory:
 
@@ -140,6 +140,18 @@ withmate-memory validate --command append --stdin
 Search supports natural-language terms across title, preview, body, and tags. Hyphenated and spaced tag words such as `delivery-cleanup` and `delivery cleanup` are treated as related candidates. Shorthand `--tag <tag>` defaults to `topic:<tag>`, and `--tags` accepts comma-separated `<type>:<tag>` values.
 
 Search results may include `match` on each hit with matched fields and a short snippet. `match.fields` can report body matches, but snippets are limited to tags, title, and preview; use `get-entry` when the exact body matters. When no entries match, the response may include `relatedTags`.
+
+For provider-independent user preferences, conventions, constraints, or other cross-project context, use an explicit user-global target:
+
+```json
+{
+  "schemaVersion": "withmate-memory-v1",
+  "targets": [
+    { "owner": "user", "scope": "global" }
+  ],
+  "query": "shared preference"
+}
+```
 
 `get-entry`:
 
@@ -202,8 +214,9 @@ Search results may include `match` on each hit with matched fields and a short s
 ## Target Selection
 
 - Use a project target with `{ "project": { "type": "path", "path": "." } }` when the current directory is the intended project, including from outside WithMate-launched sessions. The helper resolves relative project paths against its own cwd before sending the request.
+- Use a user-global target with `{ "owner": "user", "scope": "global" }` only for provider-independent user preferences, conventions, constraints, or other cross-project context. Do not store secrets, tokens, or project-specific private details there.
 - Use character targets only inside a WithMate-launched session where session binding context is available.
-- External Codex or shell sessions can use project memory only; explicit character IDs are not supported for `local_user` principals yet.
+- External Codex or shell sessions can use project Memory and user-global Memory; explicit character IDs are not supported for `local_user` principals yet.
 - Do not infer project or character targets silently when a command requires an explicit target.
 
 ## Error Handling

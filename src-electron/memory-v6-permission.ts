@@ -77,12 +77,13 @@ export function requireMemoryPermission(principal: MemoryV6Principal | null, per
 }
 
 export function canAccessMemoryTarget(principal: MemoryV6Principal, target: MemoryV6ResolvedTarget): boolean {
+  const isUserGlobalTarget = target.owner.type === "user" && target.scope.type === "global";
   if (principal.type === "local_user") {
-    return target.owner.type === "project" && target.scope.type === "project";
+    return isUserGlobalTarget || (target.owner.type === "project" && target.scope.type === "project");
   }
 
   if (target.owner.type === "user" || target.scope.type === "session" || target.scope.type === "global") {
-    return false;
+    return isUserGlobalTarget;
   }
 
   const characterIds = new Set([

@@ -363,6 +363,32 @@ function buildSchemaResponse() {
     forgetReasons,
     commands: ["status", "context", "search", "get-entry", "list-tags", "append", "forget", "schema", "validate"],
     requestBodyInputs: ["--json", "--file", "@file", "--stdin"],
+    targetSelectors: [
+      {
+        owner: "project",
+        scope: "project",
+        requiredFields: ["project"],
+        projectTypes: ["id", "path", "alias"],
+      },
+      {
+        owner: "character",
+        scope: "character",
+        requiredFields: ["character"],
+        characterTypes: ["id", "current"],
+      },
+      {
+        owner: "character",
+        scope: "project",
+        requiredFields: ["character", "project"],
+        characterTypes: ["id", "current"],
+        projectTypes: ["id", "path", "alias"],
+      },
+      {
+        owner: "user",
+        scope: "global",
+        requiredFields: [],
+      },
+    ],
   };
 }
 
@@ -394,6 +420,7 @@ const memoryTagKeys = new Set(["type", "value"]);
 const projectProjectTargetKeys = new Set(["owner", "scope", "project"]);
 const characterCharacterTargetKeys = new Set(["owner", "scope", "character"]);
 const characterProjectTargetKeys = new Set(["owner", "scope", "character", "project"]);
+const userGlobalTargetKeys = new Set(["owner", "scope"]);
 
 const maxSearchQueryLength = 500;
 const maxTitleLength = 160;
@@ -570,6 +597,13 @@ function normalizeCharacterTarget(value, field) {
 function normalizeMemoryTarget(value, field) {
   if (!isRecord(value)) {
     return validationError("MEMORY_INVALID_FIELD", `${field} must be an object.`, field);
+  }
+  if (value.owner === "user" && value.scope === "global") {
+    const unknownKeys = rejectUnknownKeys(value, userGlobalTargetKeys, field);
+    if (!unknownKeys.ok) {
+      return unknownKeys;
+    }
+    return { ok: true, value: { owner: "user", scope: "global" } };
   }
   if (value.owner === "project" && value.scope === "project") {
     const unknownKeys = rejectUnknownKeys(value, projectProjectTargetKeys, field);

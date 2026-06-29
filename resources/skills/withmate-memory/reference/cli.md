@@ -1,7 +1,7 @@
 # WithMate Memory Helper Reference
 
 The bundled helper is a thin client for the running WithMate V6 Memory API. It does not read or write database files directly.
-Project-scoped Memory can be used from external Codex or shell sessions while WithMate is running. Current character and current session context require a WithMate-launched session binding.
+Project-scoped Memory and user-global Memory can be used from external Codex or shell sessions while WithMate is running. Current character and current session context require a WithMate-launched session binding.
 
 Run it from the target project directory after WithMate is installed:
 
@@ -23,7 +23,7 @@ When a managed skill includes `bin/withmate-memory.mjs` and no `withmate-memory`
 withmate-memory schema
 ```
 
-Returns supported commands, request body input modes, memory entry kinds, and forget reasons.
+Returns supported commands, request body input modes, target selector forms, memory entry kinds, and forget reasons.
 
 ### validate
 
@@ -77,6 +77,18 @@ Request shape:
 Search returns active entry previews only. Use `get-entry` when the exact body matters.
 Search uses natural-language terms across title, preview, body, and tags. Hyphenated and spaced tag words such as `delivery-cleanup` and `delivery cleanup` are treated as related candidates. Shorthand `--tag <tag>` defaults to `topic:<tag>`, and `--tags` accepts comma-separated `<type>:<tag>` values. Search results may include matched fields and a short snippet; body matches may be reported in `match.fields`, but snippets are limited to tags, title, and preview. 0-result responses may include related tag candidates.
 
+For provider-independent user preferences, conventions, constraints, or other cross-project context, use an explicit user-global target:
+
+```json
+{
+  "schemaVersion": "withmate-memory-v1",
+  "targets": [
+    { "owner": "user", "scope": "global" }
+  ],
+  "query": "shared preference"
+}
+```
+
 ### get-entry
 
 ```bash
@@ -94,7 +106,7 @@ Request shape:
 }
 ```
 
-External Codex or shell sessions must include `target`. WithMate-launched sessions with a binding may omit it.
+External Codex or shell sessions must include `target`, using either a project target or `{ "owner": "user", "scope": "global" }`. WithMate-launched sessions with a binding may omit it.
 
 ### list-tags
 
@@ -168,9 +180,10 @@ Input shape:
 - Search results exclude forgotten and superseded entries.
 - Project targets with `{ "type": "path", "path": "." }` are valid from external Codex sessions.
 - Relative project paths are resolved by the helper against the CLI process cwd before being sent to WithMate.
-- External `get-entry` requests require an explicit project target.
+- External `get-entry` requests require an explicit target.
 - Character targets and `context` require a WithMate-launched session binding.
-- External Codex or shell sessions currently support project memory only; explicit Character ID access needs a separate principal and authorization design.
+- External Codex or shell sessions currently support project Memory and user-global Memory; explicit Character ID access needs a separate principal and authorization design.
+- User-global Memory is visible across projects and provider bindings. Store only user-level preferences, conventions, constraints, or other cross-project context there; do not store secrets, tokens, or project-specific private details.
 - Append is idempotent when an idempotency key is supplied.
 - Forget hides entries from normal search and skill results.
 - Memory failures should not fail unrelated coding work.
