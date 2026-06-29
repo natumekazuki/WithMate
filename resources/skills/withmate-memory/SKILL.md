@@ -57,6 +57,9 @@ Run the installed command from the target project directory:
 ```bash
 withmate-memory status
 withmate-memory context
+withmate-memory schema
+withmate-memory validate --command append --stdin
+withmate-memory search --project . --query "release workflow"
 withmate-memory search --file memory-search.json
 withmate-memory get-entry --file memory-get-entry.json
 withmate-memory list-tags --file memory-list-tags.json
@@ -66,7 +69,7 @@ withmate-memory forget --file forget-request.json
 
 Commands write one JSON object to stdout.
 
-For commands that require a request body, prefer `--file <path>`. Inline `--json` is supported, but it is shell-sensitive. On Windows PowerShell or `.cmd` wrappers, double quotes inside JSON can be consumed before the CLI receives the argument. If `--json` fails with invalid JSON or a CLI usage error, write the request to a temporary JSON file and retry with `--file`.
+For commands that require a request body, prefer `--stdin` or `--file <path>`. Inline `--json` is supported, but it is shell-sensitive. On Windows PowerShell or `.cmd` wrappers, double quotes inside JSON can be consumed before the CLI receives the argument. If `--json` fails with invalid JSON or a CLI usage error, pipe the request through `--stdin`, or write it to a temporary JSON file and retry with `--file`.
 
 If `withmate-memory` is not found and `bin/withmate-memory.mjs` exists in this skill directory, replace `withmate-memory` with `node bin/withmate-memory.mjs` in the commands above.
 
@@ -85,15 +88,20 @@ $request = @{
   query = "release workflow"
 } | ConvertTo-Json -Depth 10
 
-$requestPath = Join-Path $env:TEMP "withmate-memory-search.json"
-Set-Content -LiteralPath $requestPath -Value $request -Encoding utf8
-withmate-memory search --file $requestPath
-Remove-Item -LiteralPath $requestPath -Force
+$request | withmate-memory search --stdin
 ```
 
 ### Request Shapes
 
 `status` does not require a request body.
+
+`schema` does not require a request body and returns supported commands, request body input modes, memory entry kinds, and forget reasons.
+
+`validate` validates a request body locally without writing Memory:
+
+```bash
+withmate-memory validate --command append --stdin
+```
 
 `context` sends this default body when no JSON is supplied:
 

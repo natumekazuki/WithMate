@@ -445,17 +445,53 @@ describe("withmate-memory bundled helper", () => {
     assert.equal(JSON.parse(stdout).error.code, "WITHMATE_NOT_RUNNING");
   });
 
-  it("future helper flags ではなく raw JSON/file contract を要求する", async () => {
-    await execFileAsync(process.execPath, [helperPath, "search", "--project", "."], {
+  it("schema は helper 単体で capability を返す", async () => {
+    const { stdout } = await execFileAsync(process.execPath, [helperPath, "schema"], {
       env: process.env,
-    }).then(
-      () => assert.fail("unknown option should fail"),
-      (error: unknown) => {
-        const execError = error as { code?: number; stdout?: string };
-        assert.equal(execError.code, 1);
-        assert.equal(JSON.parse(execError.stdout ?? "{}").error.code, "WITHMATE_MEMORY_CLI_USAGE");
+    });
+
+    const schema = JSON.parse(stdout);
+    assert.deepEqual(schema.requestBodyInputs, ["--json", "--file", "@file", "--stdin"]);
+    assert(schema.entryKinds.includes("decision"));
+    assert(schema.forgetReasons.includes("user_request"));
+  });
+
+  it("validate は helper 単体で request を検証する", async () => {
+    const request = JSON.stringify({
+      schemaVersion: "withmate-memory-v1",
+      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      kind: "investigation",
+      title: "Invalid",
+      body: "Invalid",
+      preview: "Invalid",
+      tags: [],
+    });
+    const { stdout } = await execFileAsync(process.execPath, [helperPath, "validate", "--command", "append", "--json", request], {
+      env: process.env,
+    }).catch((error: unknown) => {
+      const execError = error as { code?: number; stdout?: string };
+      assert.equal(execError.code, 3);
+      return { stdout: execError.stdout ?? "" };
+    });
+
+    const error = JSON.parse(stdout).error;
+    assert.equal(error.code, "MEMORY_INVALID_FIELD");
+    assert.equal(error.field, "kind");
+  });
+
+  it("read shorthand は helper でも request body を組み立てる", async () => {
+    const { stdout } = await execFileAsync(process.execPath, [helperPath, "search", "--project", ".", "--query", "cli"], {
+      env: {
+        ...process.env,
+        WITHMATE_MEMORY_DISCOVERY_FILE: path.join(tmpdir(), "withmate-memory-missing.json"),
       },
-    );
+    }).catch((error: unknown) => {
+      const execError = error as { code?: number; stdout?: string };
+      assert.equal(execError.code, 2);
+      return { stdout: execError.stdout ?? "" };
+    });
+
+    assert.equal(JSON.parse(stdout).error.code, "WITHMATE_NOT_RUNNING");
   });
 
   it("usage error は PATH CLI command 形式を案内する", async () => {
