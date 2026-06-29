@@ -27,8 +27,10 @@ describe("withmate-memory bundled skill document", () => {
     assert.match(skill, /## User-Facing Memory Behavior/);
     assert.match(skill, /Treat routine Memory search\/read as background recall/);
     assert.match(skill, /Do not announce MemorySkill or CLI usage/);
+    assert.match(skill, /creating or correcting\/superseding Memory entries/);
     assert.match(skill, /meaningful durable side effect/);
     assert.match(skill, /Do not hide Memory failures/);
+    assert.doesNotMatch(skill, /updating Memory/);
   });
 });
 

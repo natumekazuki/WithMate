@@ -44,7 +44,7 @@ Treat routine Memory search/read as background recall. Do not announce MemorySki
 
 Use retrieved Memory naturally, and mention it only when it materially affects the answer, conflicts with current context, needs traceability, or the user asks what context was used.
 
-When creating or updating Memory, mention the durable change only when the user asked for it, privacy or traceability matters, or the final response would otherwise hide a meaningful durable side effect.
+When creating or correcting/superseding Memory entries, mention the durable change only when the user asked for it, privacy or traceability matters, or the final response would otherwise hide a meaningful durable side effect.
 
 Forget and correction operations should be explicit when they affect future behavior, unless the user requested silent cleanup.
 
