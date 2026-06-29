@@ -147,8 +147,9 @@ type MemoryOwnerRef =
 
 - `character`
 - `project`
+- `user` owner + `global` scope
 
-`user`はschemaで予約してもよいが、初期APIでのappend対象にはしない。
+`user` ownerは`global` scopeとのexact pairだけを初期公開し、それ以外の`user` owner組み合わせは予約扱いにする。
 
 ### Scope
 

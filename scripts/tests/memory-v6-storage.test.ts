@@ -201,6 +201,64 @@ describe("MemoryV6Storage", () => {
     });
   });
 
+  it("malformed user-global row はhydrationで公開しない", async () => {
+    await withStorage(({ storage, dbPath }) => {
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.exec("PRAGMA ignore_check_constraints = ON;");
+        db.prepare(`
+          INSERT INTO memory_entries_v6 (
+            id,
+            owner_type,
+            owner_id,
+            scope_type,
+            scope_id,
+            kind,
+            title,
+            body,
+            body_sha256,
+            preview,
+            state,
+            source_type,
+            source_session_id,
+            source_app_message_id,
+            source_provider_message_id,
+            source_provider_id,
+            superseded_by_id,
+            created_at,
+            updated_at,
+            forgotten_at
+          ) VALUES (
+            'mem-malformed-user-global',
+            'user',
+            'other-user',
+            'global',
+            'global',
+            'note',
+            'bad',
+            'bad',
+            'sha',
+            'bad',
+            'active',
+            'agent',
+            NULL,
+            NULL,
+            NULL,
+            'codex',
+            NULL,
+            '2026-06-29T00:00:00.000Z',
+            '2026-06-29T00:00:00.000Z',
+            NULL
+          )
+        `).run();
+      } finally {
+        db.close();
+      }
+
+      assert.equal(storage.getEntry("mem-malformed-user-global"), null);
+    });
+  });
+
   it("search は自然文queryをtoken化し、タグ表記揺れとmatch情報と0件時候補を返す", async () => {
     await withStorage(({ storage }) => {
       storage.appendEntry(baseAppend({

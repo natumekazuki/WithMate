@@ -297,6 +297,18 @@ function scopeRef(row: MemoryV6EntryRow): MemoryEntryDetail["scope"] {
   return { type: row.scope_type, id: row.scope_id };
 }
 
+function hasValidTargetInvariant(row: MemoryV6EntryRow): boolean {
+  const hasUserOwner = row.owner_type === "user";
+  const hasGlobalScope = row.scope_type === "global";
+  if (!hasUserOwner && !hasGlobalScope) {
+    return true;
+  }
+  return hasUserOwner
+    && row.owner_id === "local-user"
+    && hasGlobalScope
+    && row.scope_id === "global";
+}
+
 function buildAppendFingerprint(input: AppendMemoryEntryInput): string {
   return fingerprint({
     operation: "append",
@@ -366,7 +378,7 @@ export class MemoryV6Storage {
       const supersedes = uniqueIds(input.supersedes ?? []);
       const supersededRows = supersedes.map((supersededId) => {
         const row = this.getEntryRow(supersededId);
-        if (!row || row.state !== "active" || targetKey({ owner: ownerRef(row), scope: scopeRef(row) }) !== targetKey(input.target)) {
+        if (!row || row.state !== "active" || !this.rowMatchesTarget(row, input.target)) {
           throw new MemoryV6EntryNotFoundError(supersededId);
         }
         return row;
@@ -536,6 +548,9 @@ export class MemoryV6Storage {
 
     const scoredEntries: ScoredSearchEntry[] = [];
     for (const row of rows) {
+      if (!hasValidTargetInvariant(row)) {
+        continue;
+      }
       const tags = this.getEntryTags(row.id);
       const entry = this.rowToEntry(row, tags);
       if (entry.state !== "active") {
@@ -608,7 +623,8 @@ export class MemoryV6Storage {
       LIMIT ?
     `).all(...params, limit + 1) as MemoryV6EntryRow[];
 
-    const pageRows = rows.slice(0, limit);
+    const validRows = rows.filter((row) => hasValidTargetInvariant(row));
+    const pageRows = validRows.slice(0, limit);
     const lastRow = pageRows[pageRows.length - 1];
     return {
       items: pageRows.map((row) => {
@@ -623,7 +639,7 @@ export class MemoryV6Storage {
           sourceProviderId: entry.source.providerId,
         } satisfies MemoryV6ReviewSearchHit;
       }),
-      ...(rows.length > limit && lastRow ? { nextCursor: encodeCursor({ updatedAt: lastRow.updated_at, id: lastRow.id }) } : {}),
+      ...(validRows.length > limit && lastRow ? { nextCursor: encodeCursor({ updatedAt: lastRow.updated_at, id: lastRow.id }) } : {}),
     };
   }
 
@@ -729,7 +745,7 @@ export class MemoryV6Storage {
 
       const results: MemoryV6ForgetResult[] = entryIds.map((entryId) => {
         const row = this.getEntryRow(entryId);
-        if (!row || targetKey({ owner: ownerRef(row), scope: scopeRef(row) }) !== targetKey(input.target)) {
+        if (!row || !this.rowMatchesTarget(row, input.target)) {
           this.insertMutationEvent("forget", null, bindingIdHash, input.sessionId ?? null, "not_found", reason, updatedAt);
           return { entryId, status: "not_found" };
         }
@@ -868,7 +884,11 @@ export class MemoryV6Storage {
       FROM memory_entries_v6
       WHERE id = ?
     `).get(entryId) as MemoryV6EntryRow | undefined;
-    return row ?? null;
+    return row && hasValidTargetInvariant(row) ? row : null;
+  }
+
+  private rowMatchesTarget(row: MemoryV6EntryRow, target: MemoryV6ResolvedTarget): boolean {
+    return hasValidTargetInvariant(row) && targetKey({ owner: ownerRef(row), scope: scopeRef(row) }) === targetKey(target);
   }
 
   private rowToEntry(row: MemoryV6EntryRow, tags = this.getEntryTags(row.id)): MemoryEntryDetail {

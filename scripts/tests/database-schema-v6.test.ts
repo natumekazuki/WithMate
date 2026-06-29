@@ -266,6 +266,55 @@ describe("database-schema-v6", () => {
       assert.equal(tableSql(db, "memory_entries_v6").includes("'active', 'superseded', 'forgotten'"), true);
       assert.equal(tableSql(db, "memory_entries_v6").includes("superseded_by_id IS NOT NULL"), true);
       assert.equal(tableSql(db, "memory_entries_v6").includes("forgotten_at IS NOT NULL"), true);
+      assert.equal(tableSql(db, "memory_entries_v6").includes("owner_type <> 'user' OR owner_id = 'local-user'"), true);
+      assert.equal(tableSql(db, "memory_entries_v6").includes("scope_type <> 'global' OR scope_id = 'global'"), true);
+      assert.throws(() => {
+        db.prepare(`
+          INSERT INTO memory_entries_v6 (
+            id,
+            owner_type,
+            owner_id,
+            scope_type,
+            scope_id,
+            kind,
+            title,
+            body,
+            body_sha256,
+            preview,
+            state,
+            source_type,
+            source_session_id,
+            source_app_message_id,
+            source_provider_message_id,
+            source_provider_id,
+            superseded_by_id,
+            created_at,
+            updated_at,
+            forgotten_at
+          ) VALUES (
+            'mem-malformed-user-global',
+            'user',
+            'other-user',
+            'global',
+            'global',
+            'note',
+            'bad',
+            'bad',
+            'sha',
+            'bad',
+            'active',
+            'agent',
+            NULL,
+            NULL,
+            NULL,
+            'codex',
+            NULL,
+            '2026-06-29T00:00:00.000Z',
+            '2026-06-29T00:00:00.000Z',
+            NULL
+          )
+        `).run();
+      });
       assert.equal(hasForeignKey(db, "memory_entries_v6", "source_session_id", "sessions_v6"), true);
       assert.equal(hasForeignKey(db, "memory_entries_v6", "source_session_id", "session_messages_v6"), true);
       assert.equal(findForeignKey(db, "memory_entries_v6", "source_app_message_id")?.table, "session_messages_v6");
