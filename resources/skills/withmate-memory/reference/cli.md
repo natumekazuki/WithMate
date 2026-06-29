@@ -9,6 +9,8 @@ Run it from the target project directory after WithMate is installed:
 withmate-memory <command> [--json <json> | --file <path>]
 ```
 
+For commands that require a request body, prefer `--file <path>`. Inline `--json` is supported, but it is shell-sensitive. On Windows PowerShell or `.cmd` wrappers, double quotes inside JSON can be consumed before the CLI receives the argument. If `--json` fails with invalid JSON or a CLI usage error, write the request to a temporary JSON file and retry with `--file`.
+
 On Windows, the installer places `withmate-memory.cmd` in the WithMate install directory and creates a user-level alias at `%LOCALAPPDATA%\Microsoft\WindowsApps\withmate-memory.cmd`. It does not edit the user's `Path` registry value. A new terminal may be required after install or uninstall.
 
 When a managed skill includes `bin/withmate-memory.mjs` and no `withmate-memory` command is available on `PATH`, use `node bin/withmate-memory.mjs <command>` as a temporary fallback.
@@ -38,7 +40,7 @@ Sends:
 ### search
 
 ```bash
-withmate-memory search --json '{"schemaVersion":"withmate-memory-v1","targets":[{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}],"query":"approval mode"}'
+withmate-memory search --file memory-search.json
 ```
 
 Request shape:
@@ -58,7 +60,7 @@ Search returns active entry previews only. Use `get-entry` when the exact body m
 ### get-entry
 
 ```bash
-withmate-memory get-entry --json '{"schemaVersion":"withmate-memory-v1","entryId":"<entry-id>","target":{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}}'
+withmate-memory get-entry --file memory-get-entry.json
 ```
 
 Request shape:
@@ -76,7 +78,7 @@ External Codex or shell sessions must include `target`. WithMate-launched sessio
 ### list-tags
 
 ```bash
-withmate-memory list-tags --json '{"schemaVersion":"withmate-memory-v1","targets":[{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}]}'
+withmate-memory list-tags --file memory-list-tags.json
 ```
 
 Request shape:
