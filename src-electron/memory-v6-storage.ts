@@ -669,8 +669,7 @@ export class MemoryV6Storage {
 
     const snippet = tagSnippet(tags, queryPlan)
       ?? buildSnippet(entry.title, queryPlan)
-      ?? buildSnippet(entry.preview, queryPlan)
-      ?? buildSnippet(entry.body, queryPlan);
+      ?? buildSnippet(entry.preview, queryPlan);
 
     return {
       fields,

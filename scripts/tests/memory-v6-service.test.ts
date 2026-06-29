@@ -223,6 +223,31 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  it("search はbody matchを示してもbody由来snippetを返さない", async () => {
+    await withService(({ service }) => {
+      service.append(principal(), appendRequest({
+        title: "権限境界",
+        body: "search権限だけでは直接読ませない秘密の本文断片",
+        preview: "検索結果の要約",
+        tags: [{ type: "topic", value: "permission" }],
+      }));
+
+      const search = service.search(principal(), {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [{ owner: "project", scope: "project", project: { type: "alias", alias: "main" } }],
+        query: "秘密の本文断片",
+      });
+
+      assert.equal("error" in search, false);
+      if ("error" in search) {
+        return;
+      }
+      assert.equal(search.items.length, 1);
+      assert.deepEqual(search.items[0]?.match?.fields, ["body"]);
+      assert.equal(search.items[0]?.match?.snippet, undefined);
+    });
+  });
+
   it("permission不足とtarget access違反をstorageへ渡す前に拒否する", async () => {
     await withService(({ service }) => {
       const unauthorized = service.search(principal({ permissions: ["memory.resolve_context"] }), {

@@ -139,7 +139,7 @@ withmate-memory validate --command append --stdin
 
 Search supports natural-language terms across title, preview, body, and tags. Hyphenated and spaced tag words such as `delivery-cleanup` and `delivery cleanup` are treated as related candidates. Shorthand `--tag <tag>` defaults to `topic:<tag>`, and `--tags` accepts comma-separated `<type>:<tag>` values.
 
-Search results may include `match` on each hit with matched fields and a short snippet. When no entries match, the response may include `relatedTags`.
+Search results may include `match` on each hit with matched fields and a short snippet. `match.fields` can report body matches, but snippets are limited to tags, title, and preview; use `get-entry` when the exact body matters. When no entries match, the response may include `relatedTags`.
 
 `get-entry`:
 

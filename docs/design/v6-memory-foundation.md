@@ -408,6 +408,7 @@ type MemorySearchHit = {
 ```
 
 - search hitにfull `body`を含めない。
+- `match.fields`はbody hitを示してよいが、`match.snippet`はtags / title / preview由来に限定し、body断片は`memory.search`権限だけでは返さない。
 - public APIの`query`は非空文字列を必須とする。storage層は防御的に空queryでもactive entry pageを返すが、agent-facing contractでは空queryをsearch requestとして受け付けない。
 - active filterはSQL / search service側でpagination前に行う。
 - response builderはpagination済みのactive hit pageだけを受け取り、inactive entryを黙って捨てない。

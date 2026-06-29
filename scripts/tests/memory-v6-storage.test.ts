@@ -204,6 +204,28 @@ describe("MemoryV6Storage", () => {
     });
   });
 
+  it("search match snippet はbody由来の本文断片を返さない", async () => {
+    await withStorage(({ storage }) => {
+      storage.appendEntry(baseAppend({
+        id: "mem-body-only",
+        title: "権限境界",
+        body: "search権限だけでは直接読ませない秘密の本文断片",
+        preview: "検索結果の要約",
+        tags: [tag("topic", "permission")],
+      }));
+
+      const search = storage.searchEntries({
+        targets: [projectTarget],
+        query: "秘密の本文断片",
+      });
+
+      assert.equal(search.items.length, 1);
+      assert.equal(search.items[0]?.id, "mem-body-only");
+      assert.deepEqual(search.items[0]?.match?.fields, ["body"]);
+      assert.equal(search.items[0]?.match?.snippet, undefined);
+    });
+  });
+
   it("search storage は空queryでも防御的にactive entryをupdated_at順に返す", async () => {
     await withStorage(({ storage }) => {
       storage.appendEntry(baseAppend({
