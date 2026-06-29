@@ -1,4 +1,6 @@
 import {
+  MEMORY_ENTRY_KINDS,
+  MEMORY_FORGET_REASONS,
   MEMORY_V6_SCHEMA_VERSION,
   type CharacterTargetRef,
   type MemoryAppendRequest,
@@ -15,25 +17,8 @@ import {
   type ProjectTargetRef,
 } from "./memory-contract.js";
 
-const MEMORY_ENTRY_KINDS = new Set<MemoryEntryKind>([
-  "decision",
-  "constraint",
-  "convention",
-  "context",
-  "deferred",
-  "preference",
-  "relationship",
-  "boundary",
-  "note",
-]);
-
-const MEMORY_FORGET_REASONS = new Set<MemoryForgetReason>([
-  "user_request",
-  "incorrect",
-  "outdated",
-  "privacy",
-  "other",
-]);
+const MEMORY_ENTRY_KIND_SET = new Set<MemoryEntryKind>(MEMORY_ENTRY_KINDS);
+const MEMORY_FORGET_REASON_SET = new Set<MemoryForgetReason>(MEMORY_FORGET_REASONS);
 
 const RESOLVE_CONTEXT_REQUEST_KEYS = new Set(["schemaVersion"]);
 const SEARCH_REQUEST_KEYS = new Set(["schemaVersion", "targets", "query", "kinds", "tags", "limit", "cursor"]);
@@ -199,7 +184,7 @@ function normalizeStringArray(value: unknown, field: string, options: { maxItems
 }
 
 function validateMemoryKind(value: unknown, field: string): MemoryValidationResult<MemoryEntryKind> {
-  if (typeof value !== "string" || !MEMORY_ENTRY_KINDS.has(value as MemoryEntryKind)) {
+  if (typeof value !== "string" || !MEMORY_ENTRY_KIND_SET.has(value as MemoryEntryKind)) {
     return error("MEMORY_INVALID_FIELD", `${field} must be a valid memory kind.`, field);
   }
 
@@ -383,7 +368,7 @@ function normalizeKinds(value: unknown): MemoryValidationResult<MemoryEntryKind[
   if (!Array.isArray(value)) {
     return error("MEMORY_INVALID_FIELD", "kinds must be an array.", "kinds");
   }
-  if (value.length > MEMORY_ENTRY_KINDS.size) {
+  if (value.length > MEMORY_ENTRY_KINDS.length) {
     return error("MEMORY_FIELD_TOO_LARGE", "kinds has too many items.", "kinds");
   }
 
@@ -628,7 +613,7 @@ export function validateMemoryForgetRequest(value: unknown): MemoryValidationRes
   if (!entryIds.value || entryIds.value.length === 0) {
     return error("MEMORY_INVALID_FIELD", "entryIds must not be empty.", "entryIds");
   }
-  if (value.reason !== undefined && (typeof value.reason !== "string" || !MEMORY_FORGET_REASONS.has(value.reason as MemoryForgetReason))) {
+  if (value.reason !== undefined && (typeof value.reason !== "string" || !MEMORY_FORGET_REASON_SET.has(value.reason as MemoryForgetReason))) {
     return error("MEMORY_INVALID_FIELD", "reason must be a valid forget reason.", "reason");
   }
   const sourceMessageId = normalizeOptionalText(value.sourceMessageId, "sourceMessageId");

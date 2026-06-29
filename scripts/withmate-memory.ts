@@ -3,7 +3,12 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { MEMORY_V6_SCHEMA_VERSION } from "../src/memory-v6/memory-contract.js";
+import {
+  MEMORY_ENTRY_KINDS,
+  MEMORY_FORGET_REASONS,
+  MEMORY_V6_SCHEMA_VERSION,
+  type MemoryValidationResult,
+} from "../src/memory-v6/memory-contract.js";
 import {
   normalizeWithMateMemoryApiBaseUrl,
   resolveDefaultWithMateMemoryDiscoveryFilePath,
@@ -12,6 +17,14 @@ import {
   type WithMateMemoryDiscoveryDocument,
 } from "../src/memory-v6/memory-discovery.js";
 import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
+import {
+  validateMemoryAppendRequest,
+  validateMemoryForgetRequest,
+  validateMemoryGetEntryRequest,
+  validateMemoryListTagsRequest,
+  validateMemoryResolveContextRequest,
+  validateMemorySearchRequest,
+} from "../src/memory-v6/memory-validation.js";
 import {
   WITHMATE_MEMORY_BINDING_REFERENCE_ENV,
   WITHMATE_MEMORY_BINDING_REFERENCE_HEADER,
@@ -37,11 +50,17 @@ export type WithMateMemoryCliCommand =
   | "get_entry"
   | "list_tags"
   | "append"
-  | "forget";
+  | "forget"
+  | "schema"
+  | "validate";
+
+export type WithMateMemoryApiCommand = Exclude<WithMateMemoryCliCommand, "schema" | "validate">;
+export type WithMateMemoryValidatedCommand = Exclude<WithMateMemoryApiCommand, "status">;
 
 export type WithMateMemoryCliRequest = {
   command: WithMateMemoryCliCommand;
   body: unknown;
+  validateCommand?: WithMateMemoryValidatedCommand;
   discoveryFilePath?: string;
   apiUrl?: string;
 };
@@ -62,7 +81,7 @@ export type WithMateMemoryCliDeps = {
   requestTimeoutMs?: number;
 };
 
-const routeByCommand: Record<WithMateMemoryCliCommand, { method: "GET" | "POST"; path: string }> = {
+const routeByCommand: Record<WithMateMemoryApiCommand, { method: "GET" | "POST"; path: string }> = {
   status: { method: "GET", path: "/v1/status" },
   context: { method: "POST", path: "/v1/context" },
   search: { method: "POST", path: "/v1/search" },
@@ -86,6 +105,18 @@ const commandAliases = new Map<string, WithMateMemoryCliCommand>([
   ["list_tags", "list_tags"],
   ["append", "append"],
   ["forget", "forget"],
+  ["schema", "schema"],
+  ["capabilities", "schema"],
+  ["validate", "validate"],
+]);
+
+const validatableCommands = new Set<WithMateMemoryValidatedCommand>([
+  "context",
+  "search",
+  "get_entry",
+  "list_tags",
+  "append",
+  "forget",
 ]);
 
 function usageError(message: string): MemoryErrorResponse {
@@ -145,8 +176,20 @@ async function parseJsonInput(input: string): Promise<unknown> {
   try {
     return JSON.parse(trimmed) as unknown;
   } catch {
-    throw usageError("Request JSON must be valid JSON.");
+    throw usageError("Request JSON must be valid JSON. If shell quoting changed the JSON, retry with --file <path> or --stdin.");
   }
+}
+
+function normalizeCommandName(value: string): WithMateMemoryCliCommand | undefined {
+  return commandAliases.get(value);
+}
+
+function normalizeValidatableCommand(value: string): WithMateMemoryValidatedCommand | undefined {
+  const command = normalizeCommandName(value);
+  if (command && validatableCommands.has(command as WithMateMemoryValidatedCommand)) {
+    return command as WithMateMemoryValidatedCommand;
+  }
+  return undefined;
 }
 
 export async function discoverWithMateMemoryApi(
@@ -218,13 +261,20 @@ export async function parseWithMateMemoryCliArgs(
   const [rawCommand, ...rest] = args;
   const command = rawCommand ? commandAliases.get(rawCommand) : undefined;
   if (!command) {
-    throw usageError("Usage: withmate-memory <status|context|search|get-entry|list-tags|append|forget> [--json <json> | --file <path>] [--api-url <url>] [--discovery-file <path>]");
+    throw usageError("Usage: withmate-memory <status|context|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <path> | --project-id <id>] [--query <text>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
   }
 
   let jsonInput: string | null = null;
   let filePath: string | null = null;
+  let stdinRequested = false;
   let apiUrl: string | undefined;
   let discoveryFilePath: string | undefined;
+  let validateCommand: WithMateMemoryValidatedCommand | undefined;
+  let projectPath: string | undefined;
+  let projectId: string | undefined;
+  let query: string | undefined;
+  let entryId: string | undefined;
+  let limit: number | undefined;
 
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
@@ -232,25 +282,61 @@ export async function parseWithMateMemoryCliArgs(
       jsonInput = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--file") {
       filePath = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--stdin") {
+      stdinRequested = true;
+    } else if (arg.startsWith("@") && arg.length > 1) {
+      filePath = arg.slice(1);
     } else if (arg === "--api-url") {
       apiUrl = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--discovery-file") {
       discoveryFilePath = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--command") {
+      const value = requireOptionValue(rest, ++index, arg);
+      validateCommand = normalizeValidatableCommand(value);
+      if (!validateCommand) {
+        throw usageError(`--command must be one of: ${Array.from(validatableCommands).join(", ")}.`);
+      }
+    } else if (arg === "--project") {
+      projectPath = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--project-id") {
+      projectId = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--query") {
+      query = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--entry-id") {
+      entryId = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--limit") {
+      limit = parseLimitOption(requireOptionValue(rest, ++index, arg));
     } else {
       throw usageError(`Unknown option: ${arg}`);
     }
   }
 
-  if (jsonInput !== null && filePath !== null) {
-    throw usageError("--json and --file cannot be used together.");
+  const bodyInputCount = [jsonInput !== null, filePath !== null, stdinRequested].filter(Boolean).length;
+  if (bodyInputCount > 1) {
+    throw usageError("--json, --file, @file, and --stdin cannot be used together.");
+  }
+
+  if (projectPath && projectId) {
+    throw usageError("--project and --project-id cannot be used together.");
+  }
+
+  if (command === "validate" && !validateCommand) {
+    throw usageError("validate requires --command <context|search|get-entry|list-tags|append|forget>.");
   }
 
   let body: unknown = defaultRequestBody(command);
-  if (command !== "status") {
+  if (command !== "status" && command !== "schema") {
     if (jsonInput !== null) {
       body = await parseJsonInput(jsonInput);
     } else if (filePath !== null) {
       body = await parseJsonInput(await (deps.readFile ?? readFile)(filePath, "utf8"));
+    } else if (stdinRequested) {
+      if (!deps.stdin) {
+        throw usageError("--stdin requires stdin.");
+      }
+      body = await parseJsonInput(await readStdin(deps.stdin));
+    } else if (hasShorthandOptions({ projectPath, projectId, query, entryId, limit })) {
+      body = buildShorthandBody(command, { projectPath, projectId, query, entryId, limit });
     } else if (deps.stdin && !deps.stdin.isTTY) {
       body = await parseJsonInput(await readStdin(deps.stdin));
     }
@@ -259,9 +345,86 @@ export async function parseWithMateMemoryCliArgs(
   return {
     command,
     body: normalizeProjectPathTargets(body),
+    ...(validateCommand ? { validateCommand } : {}),
     ...(apiUrl ? { apiUrl } : {}),
     ...(discoveryFilePath ? { discoveryFilePath } : {}),
   };
+}
+
+function parseLimitOption(value: string): number {
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw usageError("--limit must be a positive integer.");
+  }
+  return limit;
+}
+
+function hasShorthandOptions(options: {
+  projectPath?: string;
+  projectId?: string;
+  query?: string;
+  entryId?: string;
+  limit?: number;
+}): boolean {
+  return Boolean(options.projectPath || options.projectId || options.query || options.entryId || options.limit !== undefined);
+}
+
+function buildProjectTarget(options: { projectPath?: string; projectId?: string }): unknown | null {
+  if (options.projectId) {
+    return { owner: "project", scope: "project", project: { type: "id", id: options.projectId } };
+  }
+  if (options.projectPath) {
+    return { owner: "project", scope: "project", project: { type: "path", path: options.projectPath } };
+  }
+  return null;
+}
+
+function buildShorthandBody(
+  command: WithMateMemoryCliCommand,
+  options: { projectPath?: string; projectId?: string; query?: string; entryId?: string; limit?: number },
+): unknown {
+  if (command === "validate") {
+    throw usageError("validate shorthand options are not supported. Use --json, --file, @file, or --stdin.");
+  }
+
+  const target = buildProjectTarget(options);
+  if (command === "search") {
+    if (!target) {
+      throw usageError("search shorthand requires --project <path> or --project-id <id>.");
+    }
+    if (!options.query) {
+      throw usageError("search shorthand requires --query <text>.");
+    }
+    return {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [target],
+      query: options.query,
+      ...(options.limit !== undefined ? { limit: options.limit } : {}),
+    };
+  }
+
+  if (command === "list_tags") {
+    if (!target) {
+      throw usageError("list-tags shorthand requires --project <path> or --project-id <id>.");
+    }
+    return {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [target],
+    };
+  }
+
+  if (command === "get_entry") {
+    if (!options.entryId) {
+      throw usageError("get-entry shorthand requires --entry-id <id>.");
+    }
+    return {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      entryId: options.entryId,
+      ...(target ? { target } : {}),
+    };
+  }
+
+  throw usageError(`${command} does not support shorthand options. Use --json, --file, @file, or --stdin.`);
 }
 
 function normalizeProjectPathTargets(value: unknown): unknown {
@@ -290,6 +453,70 @@ function requireOptionValue(args: readonly string[], index: number, option: stri
     throw usageError(`${option} requires a value.`);
   }
   return value;
+}
+
+function buildSchemaResponse(): unknown {
+  return {
+    schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+    entryKinds: [...MEMORY_ENTRY_KINDS],
+    forgetReasons: [...MEMORY_FORGET_REASONS],
+    commands: [
+      "status",
+      "context",
+      "search",
+      "get-entry",
+      "list-tags",
+      "append",
+      "forget",
+      "schema",
+      "validate",
+    ],
+    requestBodyInputs: ["--json", "--file", "@file", "--stdin"],
+  };
+}
+
+function validateMemoryCliRequestBody(
+  command: WithMateMemoryValidatedCommand,
+  body: unknown,
+): MemoryValidationResult<unknown> {
+  if (command === "context") {
+    return validateMemoryResolveContextRequest(body);
+  }
+  if (command === "search") {
+    return validateMemorySearchRequest(body);
+  }
+  if (command === "get_entry") {
+    return validateMemoryGetEntryRequest(body);
+  }
+  if (command === "list_tags") {
+    return validateMemoryListTagsRequest(body);
+  }
+  if (command === "append") {
+    return validateMemoryAppendRequest(body);
+  }
+  return validateMemoryForgetRequest(body);
+}
+
+function buildValidateResponse(command: WithMateMemoryValidatedCommand, body: unknown): {
+  exitCode: number;
+  response: unknown;
+} {
+  const validation = validateMemoryCliRequestBody(command, body);
+  if (!validation.ok) {
+    return {
+      exitCode: WITHMATE_MEMORY_CLI_EXIT_CODES.apiError,
+      response: createMemoryErrorResponse(validation.error),
+    };
+  }
+  return {
+    exitCode: WITHMATE_MEMORY_CLI_EXIT_CODES.ok,
+    response: {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      valid: true,
+      command,
+      value: validation.value,
+    },
+  };
 }
 
 async function readJsonResponse(response: Response): Promise<unknown> {
@@ -354,6 +581,16 @@ export async function runWithMateMemoryCli(
 
   try {
     const request = await parseWithMateMemoryCliArgs(args, deps);
+    if (request.command === "schema") {
+      stdout.write(`${JSON.stringify(buildSchemaResponse())}\n`);
+      return WITHMATE_MEMORY_CLI_EXIT_CODES.ok;
+    }
+    if (request.command === "validate") {
+      const result = buildValidateResponse(request.validateCommand!, request.body);
+      stdout.write(`${JSON.stringify(result.response)}\n`);
+      return result.exitCode;
+    }
+
     const connection = await discoverWithMateMemoryApi({
       env: deps.env,
       apiUrl: request.apiUrl,

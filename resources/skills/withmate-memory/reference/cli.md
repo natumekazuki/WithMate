@@ -6,16 +6,32 @@ Project-scoped Memory can be used from external Codex or shell sessions while Wi
 Run it from the target project directory after WithMate is installed:
 
 ```bash
-withmate-memory <command> [--json <json> | --file <path>]
+withmate-memory <command> [--json <json> | --file <path> | --stdin]
 ```
 
-For commands that require a request body, prefer `--file <path>`. Inline `--json` is supported, but it is shell-sensitive. On Windows PowerShell or `.cmd` wrappers, double quotes inside JSON can be consumed before the CLI receives the argument. If `--json` fails with invalid JSON or a CLI usage error, write the request to a temporary JSON file and retry with `--file`.
+For commands that require a request body, prefer `--stdin` or `--file <path>`. Inline `--json` is supported, but it is shell-sensitive. On Windows PowerShell or `.cmd` wrappers, double quotes inside JSON can be consumed before the CLI receives the argument. If `--json` fails with invalid JSON or a CLI usage error, pipe the request through `--stdin`, or write it to a temporary JSON file and retry with `--file`.
 
 On Windows, the installer places `withmate-memory.cmd` in the WithMate install directory and creates a user-level alias at `%LOCALAPPDATA%\Microsoft\WindowsApps\withmate-memory.cmd`. It does not edit the user's `Path` registry value. A new terminal may be required after install or uninstall.
 
 When a managed skill includes `bin/withmate-memory.mjs` and no `withmate-memory` command is available on `PATH`, use `node bin/withmate-memory.mjs <command>` as a temporary fallback.
 
 ## Commands
+
+### schema
+
+```bash
+withmate-memory schema
+```
+
+Returns supported commands, request body input modes, memory entry kinds, and forget reasons.
+
+### validate
+
+```bash
+withmate-memory validate --command append --stdin
+```
+
+Validates a request body locally and prints either `{ "valid": true, ... }` or a memory validation error. It does not create, update, or forget Memory.
 
 ### status
 
@@ -40,6 +56,7 @@ Sends:
 ### search
 
 ```bash
+withmate-memory search --project . --query "approval mode"
 withmate-memory search --file memory-search.json
 ```
 
@@ -60,6 +77,7 @@ Search returns active entry previews only. Use `get-entry` when the exact body m
 ### get-entry
 
 ```bash
+withmate-memory get-entry --project . --entry-id <entry-id>
 withmate-memory get-entry --file memory-get-entry.json
 ```
 
@@ -78,6 +96,7 @@ External Codex or shell sessions must include `target`. WithMate-launched sessio
 ### list-tags
 
 ```bash
+withmate-memory list-tags --project .
 withmate-memory list-tags --file memory-list-tags.json
 ```
 

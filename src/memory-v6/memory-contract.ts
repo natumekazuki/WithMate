@@ -4,16 +4,19 @@ export type MemoryV6SchemaVersion = typeof MEMORY_V6_SCHEMA_VERSION;
 
 export type MemoryEntryState = "active" | "superseded" | "forgotten";
 
-export type MemoryEntryKind =
-  | "decision"
-  | "constraint"
-  | "convention"
-  | "context"
-  | "deferred"
-  | "preference"
-  | "relationship"
-  | "boundary"
-  | "note";
+export const MEMORY_ENTRY_KINDS = [
+  "decision",
+  "constraint",
+  "convention",
+  "context",
+  "deferred",
+  "preference",
+  "relationship",
+  "boundary",
+  "note",
+] as const;
+
+export type MemoryEntryKind = typeof MEMORY_ENTRY_KINDS[number];
 
 export type MemoryPermission =
   | "memory.search"
@@ -85,7 +88,15 @@ export type MemoryAppendRequest = {
   idempotencyKey?: string;
 };
 
-export type MemoryForgetReason = "user_request" | "incorrect" | "outdated" | "privacy" | "other";
+export const MEMORY_FORGET_REASONS = [
+  "user_request",
+  "incorrect",
+  "outdated",
+  "privacy",
+  "other",
+] as const;
+
+export type MemoryForgetReason = typeof MEMORY_FORGET_REASONS[number];
 
 export type MemoryForgetRequest = {
   schemaVersion: MemoryV6SchemaVersion;

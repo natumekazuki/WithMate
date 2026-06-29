@@ -445,17 +445,178 @@ describe("withmate-memory bundled helper", () => {
     assert.equal(JSON.parse(stdout).error.code, "WITHMATE_NOT_RUNNING");
   });
 
-  it("future helper flags ではなく raw JSON/file contract を要求する", async () => {
-    await execFileAsync(process.execPath, [helperPath, "search", "--project", "."], {
+  it("schema は helper 単体で capability を返す", async () => {
+    const { stdout } = await execFileAsync(process.execPath, [helperPath, "schema"], {
       env: process.env,
-    }).then(
-      () => assert.fail("unknown option should fail"),
-      (error: unknown) => {
-        const execError = error as { code?: number; stdout?: string };
-        assert.equal(execError.code, 1);
-        assert.equal(JSON.parse(execError.stdout ?? "{}").error.code, "WITHMATE_MEMORY_CLI_USAGE");
+    });
+
+    const schema = JSON.parse(stdout);
+    assert.deepEqual(schema.requestBodyInputs, ["--json", "--file", "@file", "--stdin"]);
+    assert(schema.entryKinds.includes("decision"));
+    assert(schema.forgetReasons.includes("user_request"));
+  });
+
+  it("validate は helper 単体で request を検証する", async () => {
+    const request = JSON.stringify({
+      schemaVersion: "withmate-memory-v1",
+      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      kind: "investigation",
+      title: "Invalid",
+      body: "Invalid",
+      preview: "Invalid",
+      tags: [],
+    });
+    const { stdout } = await execFileAsync(process.execPath, [helperPath, "validate", "--command", "append", "--json", request], {
+      env: process.env,
+    }).catch((error: unknown) => {
+      const execError = error as { code?: number; stdout?: string };
+      assert.equal(execError.code, 3);
+      return { stdout: execError.stdout ?? "" };
+    });
+
+    const error = JSON.parse(stdout).error;
+    assert.equal(error.code, "MEMORY_INVALID_FIELD");
+    assert.equal(error.field, "kind");
+  });
+
+  it("validate は helper 側でも runtime validation と同じ失敗ケースを拒否する", async () => {
+    const invalidCases = [
+      {
+        name: "unknown append field",
+        command: "append",
+        request: {
+          schemaVersion: "withmate-memory-v1",
+          target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+          kind: "decision",
+          title: "Title",
+          body: "Body",
+          preview: "Preview",
+          tags: [],
+          extra: true,
+        },
+        code: "MEMORY_UNKNOWN_FIELD",
+        field: "request.extra",
       },
-    );
+      {
+        name: "invalid target shape",
+        command: "append",
+        request: {
+          schemaVersion: "withmate-memory-v1",
+          target: { owner: "project", scope: "project", project: { type: "id", id: "" } },
+          kind: "decision",
+          title: "Title",
+          body: "Body",
+          preview: "Preview",
+          tags: [],
+        },
+        code: "MEMORY_INVALID_FIELD",
+        field: "target.project.id",
+      },
+      {
+        name: "empty title",
+        command: "append",
+        request: {
+          schemaVersion: "withmate-memory-v1",
+          target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+          kind: "decision",
+          title: " ",
+          body: "Body",
+          preview: "Preview",
+          tags: [],
+        },
+        code: "MEMORY_INVALID_FIELD",
+        field: "title",
+      },
+      {
+        name: "invalid tag object",
+        command: "append",
+        request: {
+          schemaVersion: "withmate-memory-v1",
+          target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+          kind: "decision",
+          title: "Title",
+          body: "Body",
+          preview: "Preview",
+          tags: [{ type: "Topic", value: "CLI", extra: true }],
+        },
+        code: "MEMORY_UNKNOWN_FIELD",
+        field: "tags[0].extra",
+      },
+      {
+        name: "forget requires target",
+        command: "forget",
+        request: {
+          schemaVersion: "withmate-memory-v1",
+          entryIds: ["entry-a"],
+        },
+        code: "MEMORY_INVALID_FIELD",
+        field: "target",
+      },
+    ];
+
+    for (const testCase of invalidCases) {
+      const { stdout } = await execFileAsync(process.execPath, [
+        helperPath,
+        "validate",
+        "--command",
+        testCase.command,
+        "--json",
+        JSON.stringify(testCase.request),
+      ], {
+        env: process.env,
+      }).catch((error: unknown) => {
+        const execError = error as { code?: number; stdout?: string };
+        assert.equal(execError.code, 3, testCase.name);
+        return { stdout: execError.stdout ?? "" };
+      });
+
+      const response = JSON.parse(stdout);
+      assert.equal(response.error.code, testCase.code, testCase.name);
+      assert.equal(response.error.field, testCase.field, testCase.name);
+    }
+  });
+
+  it("validate は helper 側でも append request を正規化する", async () => {
+    const request = JSON.stringify({
+      schemaVersion: "withmate-memory-v1",
+      target: { owner: "project", scope: "project", project: { type: "id", id: " project-a " } },
+      kind: "decision",
+      title: " Title ",
+      body: " Body ",
+      preview: " Preview ",
+      tags: [{ type: "Topic", value: " Release " }, { type: "topic", value: "release" }],
+      supersedes: [" entry-a ", "entry-a"],
+    });
+    const { stdout } = await execFileAsync(process.execPath, [helperPath, "validate", "--command", "append", "--json", request], {
+      env: process.env,
+    });
+
+    const response = JSON.parse(stdout);
+    assert.equal(response.valid, true);
+    assert.equal(response.value.target.project.id, "project-a");
+    assert.equal(response.value.title, "Title");
+    assert.deepEqual(response.value.tags, [{
+      type: "Topic",
+      value: "Release",
+      canonicalType: "topic",
+      canonicalValue: "release",
+    }]);
+    assert.deepEqual(response.value.supersedes, ["entry-a"]);
+  });
+
+  it("read shorthand は helper でも request body を組み立てる", async () => {
+    const { stdout } = await execFileAsync(process.execPath, [helperPath, "search", "--project", ".", "--query", "cli"], {
+      env: {
+        ...process.env,
+        WITHMATE_MEMORY_DISCOVERY_FILE: path.join(tmpdir(), "withmate-memory-missing.json"),
+      },
+    }).catch((error: unknown) => {
+      const execError = error as { code?: number; stdout?: string };
+      assert.equal(execError.code, 2);
+      return { stdout: execError.stdout ?? "" };
+    });
+
+    assert.equal(JSON.parse(stdout).error.code, "WITHMATE_NOT_RUNNING");
   });
 
   it("usage error は PATH CLI command 形式を案内する", async () => {

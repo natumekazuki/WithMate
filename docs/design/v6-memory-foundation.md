@@ -582,16 +582,21 @@ current raw JSON CLI:
 ```text
 withmate-memory status
 withmate-memory context
+withmate-memory schema
+withmate-memory validate --command append --stdin
 withmate-memory search --json '<MemorySearchRequest>'
 withmate-memory get-entry --json '<MemoryGetEntryRequest>'
 withmate-memory list-tags --json '<MemoryListTagsRequest>'
 withmate-memory append --json '<MemoryAppendRequest>'
 withmate-memory forget --json '<MemoryForgetRequest>'
 withmate-memory search --file payload.json
+withmate-memory search @payload.json
+withmate-memory search --project ../repo-a --query "approval modeの方針"
 ```
 
-`--json`と`--file`はrequest bodyの入力方法であり、output format指定ではない。CLI outputは常にJSONをstdoutへ出す。
-Windows PowerShell / `.cmd` wrapper経由ではinline JSONのquoteが壊れやすいため、request bodyを渡すcommandでは`--file <path>`を推奨する。
+`--json`、`--file`、`@file`、`--stdin`はrequest bodyの入力方法であり、output format指定ではない。CLI outputは常にJSONをstdoutへ出す。
+Windows PowerShell / `.cmd` wrapper経由ではinline JSONのquoteが壊れやすいため、request bodyを渡すcommandでは`--stdin`または`--file <path>`を推奨する。
+`schema`と`validate`はruntime APIへ接続せずにCLI process内で完結する。`validate`はMemory entryを作成、更新、forgetしない。
 API errorもtransportできた場合はruntime APIのJSON responseをそのままstdoutへ出す。
 CLI request timeoutは10秒を既定とし、discovery endpointへ接続できない、または応答が戻らない場合は`WITHMATE_NOT_RUNNING`として扱う。
 CLI fetchはHTTP redirectを追従しない。初期URLがloopbackでも、POST bodyを別endpointへ転送しないためにredirectは接続失敗と同じ扱いにする。
@@ -605,17 +610,16 @@ stable exit codeは次とする。
 | `3` | runtime APIがnon-2xx JSON responseを返した |
 | `4` | transport failure |
 
-future helper flags:
+current convenience flags:
 
 ```text
-withmate-memory search --project ../repo-a --query "approval modeの方針" --json
-withmate-memory search --project-id <project-id> --query "approval modeの方針" --json
-withmate-memory search --character current --query "呼び方の好み" --json
-withmate-memory get --id <entry-id> --json
-withmate-memory tags --project ../repo-a --json
-withmate-memory append --project ../repo-a --input <payload.json> --json
-withmate-memory forget --input <payload.json> --json
+withmate-memory search --project ../repo-a --query "approval modeの方針"
+withmate-memory search --project-id <project-id> --query "approval modeの方針"
+withmate-memory get-entry --project ../repo-a --entry-id <entry-id>
+withmate-memory list-tags --project ../repo-a
 ```
+
+create / update / supersede系の複雑なrequestをすべてCLI flagsへ展開することは目指さない。write系の構造化requestは`--stdin`または`--file`を正本とする。
 
 ### Runtime Binding
 
