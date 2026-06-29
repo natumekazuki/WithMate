@@ -57,16 +57,39 @@ Run the installed command from the target project directory:
 ```bash
 withmate-memory status
 withmate-memory context
-withmate-memory search --json '{"schemaVersion":"withmate-memory-v1","targets":[{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}],"query":"release workflow"}'
-withmate-memory get-entry --json '{"schemaVersion":"withmate-memory-v1","entryId":"<entry-id>","target":{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}}'
-withmate-memory list-tags --json '{"schemaVersion":"withmate-memory-v1","targets":[{"owner":"project","project":{"type":"path","path":"."},"scope":"project"}]}'
+withmate-memory search --file memory-search.json
+withmate-memory get-entry --file memory-get-entry.json
+withmate-memory list-tags --file memory-list-tags.json
 withmate-memory append --file memory-entry.json
 withmate-memory forget --file forget-request.json
 ```
 
 Commands write one JSON object to stdout.
 
+For commands that require a request body, prefer `--file <path>`. Inline `--json` is supported, but it is shell-sensitive. On Windows PowerShell or `.cmd` wrappers, double quotes inside JSON can be consumed before the CLI receives the argument. If `--json` fails with invalid JSON or a CLI usage error, write the request to a temporary JSON file and retry with `--file`.
+
 If `withmate-memory` is not found and `bin/withmate-memory.mjs` exists in this skill directory, replace `withmate-memory` with `node bin/withmate-memory.mjs` in the commands above.
+
+PowerShell example:
+
+```powershell
+$request = @{
+  schemaVersion = "withmate-memory-v1"
+  targets = @(
+    @{
+      owner = "project"
+      project = @{ type = "path"; path = "." }
+      scope = "project"
+    }
+  )
+  query = "release workflow"
+} | ConvertTo-Json -Depth 10
+
+$requestPath = Join-Path $env:TEMP "withmate-memory-search.json"
+Set-Content -LiteralPath $requestPath -Value $request -Encoding utf8
+withmate-memory search --file $requestPath
+Remove-Item -LiteralPath $requestPath -Force
+```
 
 ### Request Shapes
 
