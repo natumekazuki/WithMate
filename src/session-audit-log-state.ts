@@ -196,7 +196,7 @@ export function useSessionAuditLogs({
   const refreshAuditLogSummary = useCallback((reason: "signature" | "modal-open") => {
     let active = true;
 
-    if (!enabled || !auditLogApi || !selectedSession) {
+    if (!enabled || !auditLogApi || !selectedSessionId) {
       setAuditLogsState(createEmptyAuditLogsState(null));
       setAuditLogDetails({});
       setAuditLogOperationDetails({});
@@ -206,7 +206,7 @@ export function useSessionAuditLogs({
       };
     }
 
-    const ownerSessionId = selectedSession.id;
+    const ownerSessionId = selectedSessionId;
     setAuditLogsState((current) =>
       current.ownerSessionId === ownerSessionId
         ? { ...current, loading: true, errorMessage: null }
@@ -282,7 +282,7 @@ export function useSessionAuditLogs({
     return () => {
       active = false;
     };
-  }, [auditLogApi, enabled, selectedSession, withmateApi]);
+  }, [auditLogApi, enabled, selectedSessionId, withmateApi]);
 
   useEffect(() => {
     return refreshAuditLogSummary("signature");

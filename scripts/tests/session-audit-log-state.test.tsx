@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { JSDOM } from "jsdom";
-import React, { act, useEffect } from "react";
+import React, { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { buildNewSession } from "../../src/app-state.js";
@@ -91,18 +91,21 @@ describe("useSessionAuditLogs", () => {
       },
     };
     let openAuditLogs: (() => void) | null = null;
+    let replaceSessionWithSameId: (() => void) | null = null;
     let root: Root | null = null;
 
     function Harness() {
+      const [currentSession, setCurrentSession] = useState(session);
       const auditLogs = useSessionAuditLogs({
         withmateApi: null,
-        selectedSession: session,
+        selectedSession: currentSession,
         liveRun: null,
         auditLogApi,
       });
 
       useEffect(() => {
         openAuditLogs = () => auditLogs.setAuditLogsOpen(true);
+        replaceSessionWithSameId = () => setCurrentSession((current) => ({ ...current }));
       }, [auditLogs]);
 
       return React.createElement("div");
@@ -123,6 +126,12 @@ describe("useSessionAuditLogs", () => {
 
       assert.equal(calls.length, 2);
       assert.deepEqual(calls.map((call) => call.cursor), [0, 0]);
+
+      await act(async () => {
+        replaceSessionWithSameId?.();
+      });
+
+      assert.equal(calls.length, 2);
     } finally {
       await act(async () => root?.unmount());
       Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
