@@ -38,6 +38,20 @@ Do not use Memory for trivial local edits where the current files and user messa
 5. Forget entries when the user requests removal, correction, privacy cleanup, or no-longer-use semantics.
 6. If Memory is unavailable, continue the task unless Memory access itself is the requested task.
 
+## User-Facing Memory Behavior
+
+Treat routine Memory search/read as background recall. Do not announce MemorySkill or CLI usage to the user just because a routine search/read happened.
+
+Use retrieved Memory naturally, and mention it only when it materially affects the answer, conflicts with current context, needs traceability, or the user asks what context was used.
+
+When creating or correcting/superseding Memory entries, mention the durable change only when the user asked for it, privacy or traceability matters, or the final response would otherwise hide a meaningful durable side effect.
+
+Forget and correction operations should be explicit when they affect future behavior, unless the user requested silent cleanup.
+
+Do not hide Memory failures, invent retrieved context, or treat Memory as a replacement for repository source-of-truth files.
+
+Prefer natural wording such as "Based on the previous decision..." or "For next time, I recorded the reusable point." Avoid routine tool narration such as "I will use the withmate-memory Skill" or "I searched MemorySkill."
+
 ## Append Safety
 
 Before append, check:

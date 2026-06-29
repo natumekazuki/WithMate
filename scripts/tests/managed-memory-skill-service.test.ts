@@ -20,6 +20,20 @@ import {
 
 const execFileAsync = promisify(execFile);
 
+describe("withmate-memory bundled skill document", () => {
+  it("routine Memory search/read を background recall として案内する", async () => {
+    const skill = await readFile(path.resolve("resources", "skills", WITHMATE_MEMORY_SKILL_NAME, "SKILL.md"), "utf8");
+
+    assert.match(skill, /## User-Facing Memory Behavior/);
+    assert.match(skill, /Treat routine Memory search\/read as background recall/);
+    assert.match(skill, /Do not announce MemorySkill or CLI usage/);
+    assert.match(skill, /creating or correcting\/superseding Memory entries/);
+    assert.match(skill, /meaningful durable side effect/);
+    assert.match(skill, /Do not hide Memory failures/);
+    assert.doesNotMatch(skill, /updating Memory/);
+  });
+});
+
 async function createBundle(): Promise<string> {
   const bundlePath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-bundle-"));
   await writeFile(
