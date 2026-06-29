@@ -261,7 +261,7 @@ export async function parseWithMateMemoryCliArgs(
   const [rawCommand, ...rest] = args;
   const command = rawCommand ? commandAliases.get(rawCommand) : undefined;
   if (!command) {
-    throw usageError("Usage: withmate-memory <status|context|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <path> | --project-id <id>] [--query <text>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
+    throw usageError("Usage: withmate-memory <status|context|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
   }
 
   let jsonInput: string | null = null;
@@ -273,6 +273,7 @@ export async function parseWithMateMemoryCliArgs(
   let projectPath: string | undefined;
   let projectId: string | undefined;
   let query: string | undefined;
+  const tagOptions: string[] = [];
   let entryId: string | undefined;
   let limit: number | undefined;
 
@@ -302,6 +303,10 @@ export async function parseWithMateMemoryCliArgs(
       projectId = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--query") {
       query = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--tag") {
+      tagOptions.push(requireOptionValue(rest, ++index, arg));
+    } else if (arg === "--tags") {
+      tagOptions.push(...parseTagsOption(requireOptionValue(rest, ++index, arg)));
     } else if (arg === "--entry-id") {
       entryId = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--limit") {
@@ -335,8 +340,8 @@ export async function parseWithMateMemoryCliArgs(
         throw usageError("--stdin requires stdin.");
       }
       body = await parseJsonInput(await readStdin(deps.stdin));
-    } else if (hasShorthandOptions({ projectPath, projectId, query, entryId, limit })) {
-      body = buildShorthandBody(command, { projectPath, projectId, query, entryId, limit });
+    } else if (hasShorthandOptions({ projectPath, projectId, query, tags: tagOptions, entryId, limit })) {
+      body = buildShorthandBody(command, { projectPath, projectId, query, tags: tagOptions, entryId, limit });
     } else if (deps.stdin && !deps.stdin.isTTY) {
       body = await parseJsonInput(await readStdin(deps.stdin));
     }
@@ -359,14 +364,46 @@ function parseLimitOption(value: string): number {
   return limit;
 }
 
+function parseTagsOption(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeCliTagOptions(values: readonly string[]): Array<{ type: string; value: string }> {
+  const tags: Array<{ type: string; value: string }> = [];
+  const seen = new Set<string>();
+  for (const rawValue of values) {
+    const trimmed = rawValue.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const separatorIndex = trimmed.indexOf(":");
+    const type = separatorIndex > 0 ? trimmed.slice(0, separatorIndex).trim() : "topic";
+    const value = separatorIndex > 0 ? trimmed.slice(separatorIndex + 1).trim() : trimmed;
+    if (!type || !value) {
+      throw usageError("--tag and --tags values must be <tag> or <type>:<tag>.");
+    }
+    const key = `${type.normalize("NFC").toLowerCase()}\0${value.normalize("NFC").toLowerCase()}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    tags.push({ type, value });
+  }
+  return tags;
+}
+
 function hasShorthandOptions(options: {
   projectPath?: string;
   projectId?: string;
   query?: string;
+  tags?: readonly string[];
   entryId?: string;
   limit?: number;
 }): boolean {
-  return Boolean(options.projectPath || options.projectId || options.query || options.entryId || options.limit !== undefined);
+  return Boolean(options.projectPath || options.projectId || options.query || (options.tags && options.tags.length > 0) || options.entryId || options.limit !== undefined);
 }
 
 function buildProjectTarget(options: { projectPath?: string; projectId?: string }): unknown | null {
@@ -381,7 +418,7 @@ function buildProjectTarget(options: { projectPath?: string; projectId?: string 
 
 function buildShorthandBody(
   command: WithMateMemoryCliCommand,
-  options: { projectPath?: string; projectId?: string; query?: string; entryId?: string; limit?: number },
+  options: { projectPath?: string; projectId?: string; query?: string; tags?: readonly string[]; entryId?: string; limit?: number },
 ): unknown {
   if (command === "validate") {
     throw usageError("validate shorthand options are not supported. Use --json, --file, @file, or --stdin.");
@@ -392,13 +429,16 @@ function buildShorthandBody(
     if (!target) {
       throw usageError("search shorthand requires --project <path> or --project-id <id>.");
     }
-    if (!options.query) {
-      throw usageError("search shorthand requires --query <text>.");
+    const tags = normalizeCliTagOptions(options.tags ?? []);
+    const query = options.query ?? tags.map((tag) => tag.value).join(" ");
+    if (!query) {
+      throw usageError("search shorthand requires --query <text> or --tag <tag>.");
     }
     return {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       targets: [target],
-      query: options.query,
+      query,
+      ...(tags.length > 0 ? { tags } : {}),
       ...(options.limit !== undefined ? { limit: options.limit } : {}),
     };
   }

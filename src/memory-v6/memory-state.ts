@@ -64,7 +64,16 @@ export type MemoryEntryDetail =
   | SupersededMemoryEntryDetail
   | ForgottenMemoryEntryDetail;
 
-export type MemorySearchHit = Omit<MemoryEntrySummary, "state">;
+export type MemorySearchMatchField = "title" | "preview" | "body" | "tags";
+
+export type MemorySearchMatch = {
+  fields: MemorySearchMatchField[];
+  snippet?: string;
+};
+
+export type MemorySearchHit = Omit<MemoryEntrySummary, "state"> & {
+  match?: MemorySearchMatch;
+};
 
 export function toMemoryEntrySummary(entry: MemoryEntryDetail): MemoryEntrySummary {
   return {
@@ -81,7 +90,7 @@ export function toMemoryEntrySummary(entry: MemoryEntryDetail): MemoryEntrySumma
   };
 }
 
-export function toMemorySearchHit(entry: ActiveMemoryEntryDetail): MemorySearchHit {
+export function toMemorySearchHit(entry: ActiveMemoryEntryDetail, match?: MemorySearchMatch): MemorySearchHit {
   return {
     id: entry.id,
     owner: entry.owner,
@@ -92,6 +101,7 @@ export function toMemorySearchHit(entry: ActiveMemoryEntryDetail): MemorySearchH
     tags: entry.tags,
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
+    ...(match ? { match } : {}),
   };
 }
 

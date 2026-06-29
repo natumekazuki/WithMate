@@ -74,6 +74,8 @@ withmate-memory context
 withmate-memory schema
 withmate-memory validate --command append --stdin
 withmate-memory search --project . --query "release workflow"
+withmate-memory search --project . --query "delivery cleanup" --tag delivery-cleanup
+withmate-memory search --project . --tags topic:delivery-cleanup,topic:relaygraph
 withmate-memory search --file memory-search.json
 withmate-memory get-entry --file memory-get-entry.json
 withmate-memory list-tags --file memory-list-tags.json
@@ -134,6 +136,10 @@ withmate-memory validate --command append --stdin
   "query": "approval mode"
 }
 ```
+
+Search supports natural-language terms across title, preview, body, and tags. Hyphenated and spaced tag words such as `delivery-cleanup` and `delivery cleanup` are treated as related candidates. Shorthand `--tag <tag>` defaults to `topic:<tag>`, and `--tags` accepts comma-separated `<type>:<tag>` values.
+
+Search results may include `match` on each hit with matched fields and a short snippet. When no entries match, the response may include `relatedTags`.
 
 `get-entry`:
 

@@ -135,7 +135,7 @@ async function parseArgs(argv) {
   const [rawCommand, ...rest] = argv;
   const route = rawCommand ? commands.get(rawCommand) : undefined;
   if (!route) {
-    throw usage("Usage: withmate-memory <status|context|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <path> | --project-id <id>] [--query <text>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
+    throw usage("Usage: withmate-memory <status|context|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
   }
 
   let jsonInput = null;
@@ -147,6 +147,7 @@ async function parseArgs(argv) {
   let projectPath;
   let projectId;
   let query;
+  const tagOptions = [];
   let entryId;
   let limit;
   for (let index = 0; index < rest.length; index += 1) {
@@ -174,6 +175,10 @@ async function parseArgs(argv) {
       projectId = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--query") {
       query = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--tag") {
+      tagOptions.push(requireOptionValue(rest, ++index, arg));
+    } else if (arg === "--tags") {
+      tagOptions.push(...parseTagsOption(requireOptionValue(rest, ++index, arg)));
     } else if (arg === "--entry-id") {
       entryId = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--limit") {
@@ -201,8 +206,8 @@ async function parseArgs(argv) {
       body = parseJson(await readFile(filePath, "utf8"));
     } else if (stdinRequested) {
       body = parseJson(await readStdin(process.stdin));
-    } else if (hasShorthandOptions({ projectPath, projectId, query, entryId, limit })) {
-      body = buildShorthandBody(route.name, { projectPath, projectId, query, entryId, limit });
+    } else if (hasShorthandOptions({ projectPath, projectId, query, tags: tagOptions, entryId, limit })) {
+      body = buildShorthandBody(route.name, { projectPath, projectId, query, tags: tagOptions, entryId, limit });
     }
   }
   return { route, body, apiUrl, discoveryFilePath, validateCommand };
@@ -221,8 +226,39 @@ function parseLimit(value) {
   return limit;
 }
 
+function parseTagsOption(value) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeCliTagOptions(values) {
+  const tags = [];
+  const seen = new Set();
+  for (const rawValue of values) {
+    const trimmed = rawValue.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const separatorIndex = trimmed.indexOf(":");
+    const type = separatorIndex > 0 ? trimmed.slice(0, separatorIndex).trim() : "topic";
+    const value = separatorIndex > 0 ? trimmed.slice(separatorIndex + 1).trim() : trimmed;
+    if (!type || !value) {
+      throw usage("--tag and --tags values must be <tag> or <type>:<tag>.");
+    }
+    const key = `${type.normalize("NFC").toLowerCase()}\0${value.normalize("NFC").toLowerCase()}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    tags.push({ type, value });
+  }
+  return tags;
+}
+
 function hasShorthandOptions(options) {
-  return Boolean(options.projectPath || options.projectId || options.query || options.entryId || options.limit !== undefined);
+  return Boolean(options.projectPath || options.projectId || options.query || (options.tags && options.tags.length > 0) || options.entryId || options.limit !== undefined);
 }
 
 function buildProjectTarget(options) {
@@ -241,13 +277,16 @@ function buildShorthandBody(command, options) {
     if (!target) {
       throw usage("search shorthand requires --project <path> or --project-id <id>.");
     }
-    if (!options.query) {
-      throw usage("search shorthand requires --query <text>.");
+    const tags = normalizeCliTagOptions(options.tags || []);
+    const query = options.query || tags.map((tag) => tag.value).join(" ");
+    if (!query) {
+      throw usage("search shorthand requires --query <text> or --tag <tag>.");
     }
     return {
       schemaVersion,
       targets: [target],
-      query: options.query,
+      query,
+      ...(tags.length > 0 ? { tags } : {}),
       ...(options.limit !== undefined ? { limit: options.limit } : {}),
     };
   }

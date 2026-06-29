@@ -16,6 +16,7 @@ import {
 export type MemorySearchResponse = {
   schemaVersion: MemoryV6SchemaVersion;
   items: MemorySearchHit[];
+  relatedTags?: MemoryTag[];
   nextCursor?: string;
 };
 
@@ -64,11 +65,18 @@ export type MemoryResolveContextResponse = {
   permissions: MemoryPermission[];
 };
 
-export function createMemorySearchResponse(items: readonly MemorySearchHit[], nextCursor?: string): MemorySearchResponse {
+export function createMemorySearchResponse(
+  items: readonly MemorySearchHit[],
+  options: string | { nextCursor?: string; relatedTags?: readonly MemoryTag[] } = {},
+): MemorySearchResponse {
+  const normalizedOptions = typeof options === "string" ? { nextCursor: options } : options;
   return {
     schemaVersion: MEMORY_V6_SCHEMA_VERSION,
     items: [...items],
-    ...(nextCursor === undefined ? {} : { nextCursor }),
+    ...(normalizedOptions.relatedTags && normalizedOptions.relatedTags.length > 0
+      ? { relatedTags: normalizedOptions.relatedTags.map((tag) => ({ type: tag.type, value: tag.value })) }
+      : {}),
+    ...(normalizedOptions.nextCursor === undefined ? {} : { nextCursor: normalizedOptions.nextCursor }),
   };
 }
 

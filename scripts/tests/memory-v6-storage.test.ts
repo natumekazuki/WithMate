@@ -160,6 +160,78 @@ describe("MemoryV6Storage", () => {
     });
   });
 
+  it("search は自然文queryをtoken化し、タグ表記揺れとmatch情報と0件時候補を返す", async () => {
+    await withStorage(({ storage }) => {
+      storage.appendEntry(baseAppend({
+        id: "mem-delivery-cleanup",
+        title: "納品cleanup branch strategy",
+        body: "KMT prefix removal は納品用ブランチで進め、RelayGraph は削除可とする。",
+        preview: "納品cleanupのブランチ方針。",
+        tags: [
+          tag("topic", "delivery-cleanup"),
+          tag("topic", "branch-strategy"),
+          tag("topic", "relaygraph"),
+        ],
+      }));
+      storage.appendEntry(baseAppend({
+        id: "mem-unrelated",
+        title: "UI方針",
+        body: "Memory UIは既存のlayoutに揃える。",
+        preview: "UI方針",
+        tags: [tag("topic", "ui")],
+      }));
+
+      const naturalQuery = storage.searchEntries({
+        targets: [projectTarget],
+        query: "delivery cleanup branch relaygraph",
+      });
+      assert.equal(naturalQuery.items[0]?.id, "mem-delivery-cleanup");
+      assert.deepEqual(naturalQuery.items[0]?.match?.fields.includes("tags"), true);
+      assert.match(naturalQuery.items[0]?.match?.snippet ?? "", /delivery-cleanup|relaygraph/);
+
+      const hyphenated = storage.searchEntries({ targets: [projectTarget], query: "delivery-cleanup" });
+      const spaced = storage.searchEntries({ targets: [projectTarget], query: "delivery cleanup" });
+      assert.equal(hyphenated.items[0]?.id, "mem-delivery-cleanup");
+      assert.equal(spaced.items[0]?.id, "mem-delivery-cleanup");
+
+      const noEntry = storage.searchEntries({
+        targets: [projectTarget],
+        query: "delivery cleanup",
+        kinds: ["preference"],
+      });
+      assert.deepEqual(noEntry.items, []);
+      assert.deepEqual(noEntry.relatedTags?.map((item) => item.value), ["delivery-cleanup"]);
+    });
+  });
+
+  it("search storage は空queryでも防御的にactive entryをupdated_at順に返す", async () => {
+    await withStorage(({ storage }) => {
+      storage.appendEntry(baseAppend({
+        id: "mem-empty-query-old",
+        title: "Old",
+        body: "old body",
+        preview: "old",
+        now: "2026-06-24T00:00:00.000Z",
+      }));
+      storage.appendEntry(baseAppend({
+        id: "mem-empty-query-new",
+        title: "New",
+        body: "new body",
+        preview: "new",
+        now: "2026-06-24T00:01:00.000Z",
+      }));
+
+      const first = storage.searchEntries({ targets: [projectTarget], query: "", limit: 1 });
+      assert.deepEqual(first.items.map((item) => item.id), ["mem-empty-query-new"]);
+      assert.equal(first.items[0]?.match, undefined);
+      assert.ok(first.nextCursor);
+
+      const second = storage.searchEntries({ targets: [projectTarget], query: "", limit: 1, cursor: first.nextCursor });
+      assert.deepEqual(second.items.map((item) => item.id), ["mem-empty-query-old"]);
+      assert.equal(second.relatedTags, undefined);
+    });
+  });
+
   it("review search / get / forget はactive entryの閲覧とforgetに限定する", async () => {
     await withStorage(({ storage }) => {
       storage.appendEntry(baseAppend({
@@ -436,6 +508,52 @@ describe("MemoryV6Storage", () => {
 
       const second = storage.searchEntries({ targets: [projectTarget], query: "shared", limit: 1, cursor: first.nextCursor });
       assert.deepEqual(second.items.map((item) => item.id), ["mem-a"]);
+      assert.equal(second.nextCursor, undefined);
+    });
+  });
+
+  it("search pagination はmatch scoreに関係なくupdated_at cursor順で漏れなく進める", async () => {
+    await withStorage(({ storage }) => {
+      storage.appendEntry(baseAppend({
+        id: "mem-low-score-old",
+        title: "Delivery",
+        body: "Delivery only",
+        preview: "Delivery",
+        tags: [tag("topic", "delivery")],
+        now: "2026-06-24T00:00:00.000Z",
+      }));
+      storage.appendEntry(baseAppend({
+        id: "mem-high-score-middle",
+        title: "Delivery cleanup branch relaygraph",
+        body: "delivery cleanup branch relaygraph",
+        preview: "delivery cleanup branch relaygraph",
+        tags: [tag("topic", "delivery-cleanup"), tag("topic", "relaygraph")],
+        now: "2026-06-24T00:01:00.000Z",
+      }));
+      storage.appendEntry(baseAppend({
+        id: "mem-low-score-new",
+        title: "Delivery",
+        body: "Delivery only",
+        preview: "Delivery",
+        tags: [tag("topic", "delivery")],
+        now: "2026-06-24T00:02:00.000Z",
+      }));
+
+      const first = storage.searchEntries({
+        targets: [projectTarget],
+        query: "delivery cleanup branch relaygraph",
+        limit: 1,
+      });
+      assert.deepEqual(first.items.map((item) => item.id), ["mem-low-score-new"]);
+      assert.ok(first.nextCursor);
+
+      const second = storage.searchEntries({
+        targets: [projectTarget],
+        query: "delivery cleanup branch relaygraph",
+        limit: 2,
+        cursor: first.nextCursor,
+      });
+      assert.deepEqual(second.items.map((item) => item.id), ["mem-high-score-middle", "mem-low-score-old"]);
       assert.equal(second.nextCursor, undefined);
     });
   });
