@@ -261,7 +261,7 @@ export async function parseWithMateMemoryCliArgs(
   const [rawCommand, ...rest] = args;
   const command = rawCommand ? commandAliases.get(rawCommand) : undefined;
   if (!command) {
-    throw usageError("Usage: withmate-memory <status|context|search|get-entry|list-tags|append|forget> [--json <json> | --file <path>] [--api-url <url>] [--discovery-file <path>]");
+    throw usageError("Usage: withmate-memory <status|context|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <path> | --project-id <id>] [--query <text>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
   }
 
   let jsonInput: string | null = null;

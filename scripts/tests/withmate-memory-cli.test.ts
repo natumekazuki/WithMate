@@ -737,4 +737,19 @@ describe("withmate-memory CLI", () => {
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
     assert.match(stdout.json().error.message, /--json requires a value/);
   });
+
+  it("unknown commandは現行CLI surfaceを含むusage errorを返す", async () => {
+    const stdout = createOutputCapture();
+    const exitCode = await runWithMateMemoryCli(["nope"], {
+      env: { WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777" },
+      stdout: stdout.stream,
+    });
+
+    const message = stdout.json().error.message;
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
+    assert.match(message, /schema\|validate/);
+    assert.match(message, /@file/);
+    assert.match(message, /--stdin/);
+    assert.match(message, /--project/);
+  });
 });
