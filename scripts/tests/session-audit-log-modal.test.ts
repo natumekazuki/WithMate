@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { SessionAuditLogModal, shouldLoadAuditLogDetailForFold } from "../../src/session-components.js";
 import type { AuditLogSummary } from "../../src/runtime-state.js";
 
-function createAuditLogSummary(id: number): AuditLogSummary {
+function createAuditLogSummary(id: number, overrides?: Partial<AuditLogSummary>): AuditLogSummary {
   return {
     id,
     sessionId: "session-1",
@@ -22,6 +22,7 @@ function createAuditLogSummary(id: number): AuditLogSummary {
     usage: { inputTokens: id, cachedInputTokens: 0, outputTokens: id + 1 },
     errorMessage: "",
     detailAvailable: true,
+    ...overrides,
   };
 }
 
@@ -124,5 +125,38 @@ describe("SessionAuditLogModal", () => {
       html.indexOf("DONE") < html.indexOf("Main Session"),
       "source tag は phase label の後に描画する",
     );
+  });
+
+  it("detail unavailable entry は live preview として描画し、保存済み detail fold を出さない", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SessionAuditLogModal, {
+        open: true,
+        entries: [
+          createAuditLogSummary(1, {
+            id: -1,
+            phase: "running",
+            assistantTextPreview: "streaming response",
+            operations: [{ type: "command_execution", summary: "npm test", details: "running" }],
+            detailAvailable: false,
+          }),
+        ],
+        details: {},
+        operationDetails: {},
+        hasMore: false,
+        loadingMore: false,
+        total: 1,
+        errorMessage: null,
+        onLoadMore() {},
+        onLoadDetail() {},
+        onLoadOperationDetail() {},
+        onClose() {},
+      }),
+    );
+
+    assert.match(html, /Live preview only/);
+    assert.match(html, /streaming response/);
+    assert.match(html, /npm test/);
+    assert.doesNotMatch(html, /Logical Prompt/);
+    assert.doesNotMatch(html, /Raw Items/);
   });
 });

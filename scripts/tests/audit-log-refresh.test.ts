@@ -350,6 +350,25 @@ describe("buildDisplayedAuditLogs", () => {
     assert.deepEqual(result, persistedLogs);
   });
 
+  it("live run の sessionId が selected session と違う時は persisted をそのまま返す", () => {
+    const runningSession = {
+      ...selectedSession,
+      runState: "running" as const,
+    };
+    const persistedLogs = [makeAuditLog({ id: 10, sessionId: selectedSession.id, phase: "completed" })];
+
+    const result = buildDisplayedAuditLogs({
+      selectedSession: runningSession,
+      persistedEntries: persistedLogs,
+      liveRun: makeLiveRun({
+        sessionId: "other-session",
+        assistantText: "別 session の progress",
+      }),
+    });
+
+    assert.deepEqual(result, persistedLogs);
+  });
+
   it("session.runState が running で、先頭が terminal persisted の時は synthetic running row を先頭へ挿入する (新 run 対応)", () => {
     const runningSession = {
       ...selectedSession,
@@ -373,6 +392,7 @@ describe("buildDisplayedAuditLogs", () => {
     assert.equal(result[0]?.phase, "running");
     assert.equal(result[0]?.assistantText, "新しい run の progress");
     assert.equal(result[0]?.threadId, "thread-new-run");
+    assert.equal(result[0]?.detailAvailable, false);
     assert.equal(result[1]?.id, 10);
     assert.equal(result[1]?.phase, "completed");
   });
