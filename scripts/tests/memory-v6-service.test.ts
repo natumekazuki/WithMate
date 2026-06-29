@@ -35,6 +35,16 @@ const otherProjectTarget = {
   scope: { type: "project", id: "project-b" },
 } satisfies MemoryV6ResolvedTarget;
 
+const userGlobalResolvedTarget = {
+  owner: { type: "user", id: "local-user" },
+  scope: { type: "global", id: "global" },
+} satisfies MemoryV6ResolvedTarget;
+
+const userGlobalTarget = {
+  owner: "user",
+  scope: "global",
+};
+
 function tag(type: string, value: string): NormalizedMemoryTag {
   return {
     type,
@@ -258,6 +268,14 @@ describe("MemoryV6Service", () => {
       assert.equal("error" in unauthorized, true);
       assert.equal(unauthorized.error.code, "MEMORY_UNAUTHORIZED");
 
+      const unauthorizedUserGlobal = service.search(principal({ permissions: ["memory.resolve_context"] }), {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [userGlobalTarget],
+        query: "memory",
+      });
+      assert.equal("error" in unauthorizedUserGlobal, true);
+      assert.equal(unauthorizedUserGlobal.error.code, "MEMORY_UNAUTHORIZED");
+
       const forbidden = service.append(principal(), appendRequest({
         target: {
           owner: "project",
@@ -436,6 +454,106 @@ describe("MemoryV6Service", () => {
       });
       assert.equal("error" in forget, false);
       assert.deepEqual(forget.results, [{ entryId: append.entry.id, status: "forgotten" }]);
+    });
+  });
+
+  it("session_binding は明示user-global targetで共通Memoryを扱える", async () => {
+    await withService(({ service }) => {
+      const append = service.append(principal(), appendRequest({
+        target: userGlobalTarget,
+        title: "共通応答方針",
+        body: "全projectで短く検証結果を添える。",
+        preview: "全projectで短く検証結果を添える。",
+        tags: [{ type: "topic", value: "global-preference" }],
+      }));
+      assert.equal("error" in append, false);
+      assert.equal(append.entry.owner.type, "user");
+      assert.equal(append.entry.owner.id, "local-user");
+      assert.equal(append.entry.scope.type, "global");
+      assert.equal(append.entry.scope.id, "global");
+
+      const search = service.search(principal(), {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [userGlobalTarget],
+        query: "検証結果",
+      });
+      assert.equal("error" in search, false);
+      assert.deepEqual(search.items.map((item) => item.id), [append.entry.id]);
+
+      const tags = service.listTags(principal(), {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [userGlobalTarget],
+      });
+      assert.equal("error" in tags, false);
+      assert.deepEqual(tags.tags, [{ type: "topic", value: "global-preference" }]);
+
+      const detail = service.getEntry(principal(), {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: append.entry.id,
+      });
+      assert.equal("error" in detail, false);
+      assert.equal(detail.entry.body, "全projectで短く検証結果を添える。");
+
+      const forget = service.forget(principal(), {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: userGlobalTarget,
+        entryIds: [append.entry.id],
+        reason: "user_request",
+      });
+      assert.equal("error" in forget, false);
+      assert.deepEqual(forget.results, [{ entryId: append.entry.id, status: "forgotten" }]);
+    });
+  });
+
+  it("local_user は明示user-global targetで共通Memoryを扱える", async () => {
+    await withService(({ service, storage }) => {
+      const localUser = createLocalUserMemoryPrincipal();
+      storage.appendEntry({
+        id: "mem-user-global-local",
+        target: userGlobalResolvedTarget,
+        kind: "preference",
+        title: "共通検証方針",
+        body: "検証結果は短く添える。",
+        preview: "検証結果は短く添える。",
+        tags: [tag("topic", "global-preference")],
+        source: {
+          type: "agent",
+          sessionId: null,
+          messageId: null,
+          providerId: "codex",
+        },
+      });
+
+      const search = service.search(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [userGlobalTarget],
+        query: "検証結果",
+      });
+      assert.equal("error" in search, false);
+      assert.deepEqual(search.items.map((item) => item.id), ["mem-user-global-local"]);
+
+      const detail = service.getEntry(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: "mem-user-global-local",
+        target: userGlobalTarget,
+      });
+      assert.equal("error" in detail, false);
+      assert.equal(detail.entry.body, "検証結果は短く添える。");
+
+      const missingTarget = service.getEntry(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: "mem-user-global-local",
+      });
+      assert.equal("error" in missingTarget, true);
+      assert.equal(missingTarget.error.code, "MEMORY_TARGET_REQUIRED");
+
+      const mismatchTarget = service.getEntry(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: "mem-user-global-local",
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      });
+      assert.equal("error" in mismatchTarget, true);
+      assert.equal(mismatchTarget.error.code, "MEMORY_ENTRY_NOT_FOUND");
     });
   });
 

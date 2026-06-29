@@ -23,6 +23,11 @@ const characterTarget = {
   character: { type: "current" },
 };
 
+const userGlobalTarget = {
+  owner: "user",
+  scope: "global",
+};
+
 describe("memory-v6 contract validation", () => {
   it("valid resolve_context request を検証できる", () => {
     const result = validateMemoryResolveContextRequest({
@@ -140,6 +145,28 @@ describe("memory-v6 contract validation", () => {
     assert.deepEqual(listTags.value.targets, [projectTarget]);
   });
 
+  it("user-global target を正規化できる", () => {
+    const search = validateMemorySearchRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [userGlobalTarget],
+      query: "tone",
+    });
+    assert.equal(search.ok, true);
+    assert.deepEqual(search.value.targets, [userGlobalTarget]);
+
+    const append = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: userGlobalTarget,
+      kind: "preference",
+      title: "応答方針",
+      body: "ユーザー共通の応答方針。",
+      preview: "ユーザー共通の応答方針。",
+      tags: [],
+    });
+    assert.equal(append.ok, true);
+    assert.deepEqual(append.value.target, userGlobalTarget);
+  });
+
   it("invalid schemaVersion を拒否する", () => {
     const result = validateMemoryResolveContextRequest({ schemaVersion: "withmate-memory-v0" });
 
@@ -243,6 +270,18 @@ describe("memory-v6 contract validation", () => {
     });
     assert.equal(projectTargetWithCharacter.ok, false);
     assert.equal(projectTargetWithCharacter.error.field, "targets[0].character");
+
+    const userGlobalWithProject = validateMemorySearchRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [{
+        owner: "user",
+        scope: "global",
+        project: { type: "id", id: "project-a" },
+      }],
+      query: "test",
+    });
+    assert.equal(userGlobalWithProject.ok, false);
+    assert.equal(userGlobalWithProject.error.field, "targets[0].project");
   });
 
   it("targets上限とduplicate targetを拒否する", () => {

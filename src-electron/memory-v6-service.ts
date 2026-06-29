@@ -180,7 +180,7 @@ export class MemoryV6Service {
       if (!validated.value.target) {
         return toMemoryErrorResponse({
           code: "MEMORY_TARGET_REQUIRED",
-          message: "Project target is required for external get-entry.",
+          message: "Explicit memory target is required for external get-entry.",
           field: "target",
         });
       }

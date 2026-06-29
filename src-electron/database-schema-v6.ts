@@ -495,6 +495,12 @@ export const CREATE_V6_MEMORY_ENTRIES_TABLE_SQL = `
     FOREIGN KEY (source_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
     FOREIGN KEY (source_app_message_id, source_session_id) REFERENCES session_messages_v6(id, session_id) ON DELETE SET NULL,
     FOREIGN KEY (superseded_by_id) REFERENCES memory_entries_v6(id) ON DELETE RESTRICT,
+    CHECK (owner_type <> 'user' OR owner_id = 'local-user'),
+    CHECK (scope_type <> 'global' OR scope_id = 'global'),
+    CHECK (
+      (owner_type <> 'user' AND scope_type <> 'global')
+      OR (owner_type = 'user' AND owner_id = 'local-user' AND scope_type = 'global' AND scope_id = 'global')
+    ),
     CHECK ((state = 'active') = (superseded_by_id IS NULL AND forgotten_at IS NULL) OR state <> 'active'),
     CHECK (state <> 'superseded' OR (superseded_by_id IS NOT NULL AND forgotten_at IS NULL)),
     CHECK (state <> 'forgotten' OR forgotten_at IS NOT NULL)

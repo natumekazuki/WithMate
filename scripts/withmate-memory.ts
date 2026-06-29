@@ -512,6 +512,32 @@ function buildSchemaResponse(): unknown {
       "validate",
     ],
     requestBodyInputs: ["--json", "--file", "@file", "--stdin"],
+    targetSelectors: [
+      {
+        owner: "project",
+        scope: "project",
+        requiredFields: ["project"],
+        projectTypes: ["id", "path", "alias"],
+      },
+      {
+        owner: "character",
+        scope: "character",
+        requiredFields: ["character"],
+        characterTypes: ["id", "current"],
+      },
+      {
+        owner: "character",
+        scope: "project",
+        requiredFields: ["character", "project"],
+        characterTypes: ["id", "current"],
+        projectTypes: ["id", "path", "alias"],
+      },
+      {
+        owner: "user",
+        scope: "global",
+        requiredFields: [],
+      },
+    ],
   };
 }
 

@@ -397,6 +397,11 @@ describe("withmate-memory CLI", () => {
     ]);
     assert.deepEqual(stdout.json().forgetReasons, ["user_request", "incorrect", "outdated", "privacy", "other"]);
     assert.deepEqual(stdout.json().requestBodyInputs, ["--json", "--file", "@file", "--stdin"]);
+    assert.deepEqual(stdout.json().targetSelectors.at(-1), {
+      owner: "user",
+      scope: "global",
+      requiredFields: [],
+    });
   });
 
   it("validateはrequest bodyをruntimeへ送らずに検証する", async () => {
@@ -426,6 +431,27 @@ describe("withmate-memory CLI", () => {
     assert.equal(stdout.json().valid, true);
     assert.equal(stdout.json().command, "append");
     assert.equal(stdout.json().value.tags[0].canonicalValue, "cli");
+  });
+
+  it("validateはuser-global targetを受け付ける", async () => {
+    const stdout = createOutputCapture();
+    const requestBody = {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [{ owner: "user", scope: "global" }],
+      query: "global preference",
+    };
+
+    const exitCode = await runWithMateMemoryCli(["validate", "--command", "search", "--json", JSON.stringify(requestBody)], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fetch: async () => {
+        throw new Error("validate should not call runtime");
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+    assert.equal(stdout.json().valid, true);
+    assert.deepEqual(stdout.json().value.targets, [{ owner: "user", scope: "global" }]);
   });
 
   it("validateはinvalid requestをJSON errorで返す", async () => {
