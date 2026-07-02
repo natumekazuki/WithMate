@@ -217,9 +217,9 @@ Auxiliary 単体の明示削除 UI は初期実装では持たない。
 
 ## Database Version Impact
 
-初期実装では V5 へは上げない。
-Auxiliary transcript は current V4 DB の optional feature table として `auxiliary_sessions` に保存する。
-この table は `AuxiliarySessionStorage` が `withmate-v4.db` に対してだけ初期化し、V2 / V3 / invalid DB path では legacy no-op storage を使う。
+Auxiliary 自体は required schema table ではなく、V6 runtime DB の optional feature table として扱う。
+Auxiliary transcript は `withmate-v6.db` の `auxiliary_sessions` に保存する。
+この table は `AuxiliarySessionStorage` が `withmate-v6.db` に対して初期化し、V4 以前 / invalid DB path では legacy no-op storage を使う。
 
 理由:
 
