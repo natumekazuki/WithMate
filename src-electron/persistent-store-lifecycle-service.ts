@@ -179,9 +179,9 @@ export class PersistentStoreLifecycleService {
       : isV2Database
       ? new AuditLogStorageV2(dbPath)
       : this.deps.createAuditLogStorage(dbPath);
-    const auxiliarySessionStorage = isV6Database || isV3Database || isV2Database || basename(dbPath) !== APP_DATABASE_V4_FILENAME
-      ? new LegacyAuxiliarySessionStorage()
-      : this.deps.createAuxiliarySessionStorage?.(dbPath) ?? new AuxiliarySessionStorage(dbPath);
+    const auxiliarySessionStorage = isV6Database
+      ? this.deps.createAuxiliarySessionStorage?.(dbPath) ?? new AuxiliarySessionStorage(dbPath)
+      : new LegacyAuxiliarySessionStorage();
     const characterStorage = isV3Database || isV2Database || (
         basename(dbPath) !== APP_DATABASE_V4_FILENAME
         && basename(dbPath) !== APP_DATABASE_V6_FILENAME

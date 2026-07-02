@@ -7,6 +7,7 @@ import {
   normalizeMessage,
   normalizeSession,
   normalizeSessionSummary,
+  summarizeMessageArtifact,
   type Message,
   type MessageArtifact,
   type Session,
@@ -44,6 +45,12 @@ type SessionV6Row = {
 type MessageV6Row = {
   role: "user" | "assistant" | "tool" | "system";
   body: string;
+  artifact_body?: string | null;
+};
+
+type ExistingMessageArtifactRow = {
+  seq: number;
+  artifact_body: string | null;
 };
 
 function toV6State(session: Session): string {
@@ -72,7 +79,50 @@ function parseJsonArray(value: string): unknown[] {
 }
 
 function encodeMessage(message: Message): string {
-  return JSON.stringify(message);
+  return JSON.stringify(message.artifact
+    ? { ...message, artifact: summarizeMessageArtifact(message.artifact) }
+    : message);
+}
+
+function encodeMessageArtifact(message: Message): string | null {
+  return message.artifact ? JSON.stringify(message.artifact) : null;
+}
+
+function isSameArtifactSummary(source: MessageArtifact, summary: MessageArtifact): boolean {
+  return JSON.stringify(summarizeMessageArtifact(source)) === JSON.stringify(summary);
+}
+
+function isArtifactSummaryProjection(artifact: MessageArtifact): boolean {
+  return artifact.detailAvailable === true &&
+    (artifact.operationTimeline ?? []).every((operation) => operation.details === undefined) &&
+    artifact.changedFiles.every((file) => file.diffRows.length === 0);
+}
+
+function encodeMessageArtifactForWrite(message: Message, existingArtifactBody: string | null | undefined): string | null {
+  if (!message.artifact) {
+    return null;
+  }
+
+  if (isArtifactSummaryProjection(message.artifact) && existingArtifactBody) {
+    const existingArtifact = decodeMessageArtifact(existingArtifactBody);
+    if (existingArtifact && isSameArtifactSummary(existingArtifact, message.artifact)) {
+      return existingArtifactBody;
+    }
+  }
+
+  return encodeMessageArtifact(message);
+}
+
+function decodeMessageArtifact(value: string | null | undefined): MessageArtifact | null {
+  if (!value) {
+    return null;
+  }
+
+  return normalizeMessage({
+    role: "assistant",
+    text: "",
+    artifact: parseJsonObject(value),
+  })?.artifact ?? null;
 }
 
 function decodeMessage(row: MessageV6Row): Message | null {
@@ -94,6 +144,7 @@ export class SessionStorageV6 {
     for (const statement of CREATE_V6_SCHEMA_SQL) {
       this.db.exec(statement);
     }
+    this.ensureSchema();
   }
 
   listSessions(): Session[] {
@@ -121,11 +172,11 @@ export class SessionStorageV6 {
 
   getSessionMessageArtifact(sessionId: string, messageIndex: number): MessageArtifact | null {
     const row = this.db.prepare(`
-      SELECT role, body
+      SELECT role, body, artifact_body
       FROM session_messages_v6
       WHERE session_id = ? AND seq = ?
     `).get(sessionId, messageIndex) as MessageV6Row | undefined;
-    return row ? decodeMessage(row)?.artifact ?? null : null;
+    return row ? decodeMessageArtifact(row.artifact_body) ?? decodeMessage(row)?.artifact ?? null : null;
   }
 
   upsertSession(session: Session): Session {
@@ -261,14 +312,42 @@ export class SessionStorageV6 {
       session.updatedAt,
     );
 
+    const existingArtifactBodies = new Map(
+      (this.db.prepare(`
+        SELECT seq, artifact_body
+        FROM session_messages_v6
+        WHERE session_id = ?
+      `).all(session.id) as ExistingMessageArtifactRow[])
+        .map((row) => [row.seq, row.artifact_body] as const),
+    );
+
     this.db.prepare("DELETE FROM session_messages_v6 WHERE session_id = ?").run(session.id);
     const insertMessage = this.db.prepare(`
-      INSERT INTO session_messages_v6 (session_id, seq, role, body, created_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO session_messages_v6 (session_id, seq, role, body, artifact_body, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
     session.messages.forEach((message, index) => {
-      insertMessage.run(session.id, index, message.role, encodeMessage(message), session.updatedAt);
+      insertMessage.run(
+        session.id,
+        index,
+        message.role,
+        encodeMessage(message),
+        encodeMessageArtifactForWrite(message, existingArtifactBodies.get(index)),
+        session.updatedAt,
+      );
     });
+  }
+
+  private ensureSchema(): void {
+    const columns = new Set(
+      (this.db.prepare("PRAGMA table_info(session_messages_v6)").all() as Array<{ name?: unknown }>)
+        .map((column) => column.name)
+        .filter((name): name is string => typeof name === "string"),
+    );
+
+    if (!columns.has("artifact_body")) {
+      this.db.exec("ALTER TABLE session_messages_v6 ADD COLUMN artifact_body TEXT;");
+    }
   }
 
   private rowToSessionSummary(row: SessionV6Row): SessionSummary {

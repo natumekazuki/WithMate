@@ -122,6 +122,8 @@ export class MemoryV6Service {
       session: { id: principal.sessionId },
       character: principal.character,
       sessionProject: principal.sessionProject,
+      allowedProjectTargets: (principal.accessibleProjects ?? (principal.sessionProject ? [principal.sessionProject] : []))
+        .map((project) => ({ ...project })),
       permissions: [...principal.permissions],
     });
   }
@@ -176,19 +178,18 @@ export class MemoryV6Service {
     }
 
     let requestedTarget: MemoryV6ResolvedTarget | null = null;
-    if (!isSessionBindingPrincipal(principal)) {
-      if (!validated.value.target) {
-        return toMemoryErrorResponse({
-          code: "MEMORY_TARGET_REQUIRED",
-          message: "Explicit memory target is required for external get-entry.",
-          field: "target",
-        });
-      }
+    if (validated.value.target) {
       const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps);
       if (!resolved.ok) {
         return toMemoryErrorResponse(resolved.error);
       }
       requestedTarget = resolved.target;
+    } else if (!isSessionBindingPrincipal(principal)) {
+      return toMemoryErrorResponse({
+        code: "MEMORY_TARGET_REQUIRED",
+        message: "Explicit memory target is required for external get-entry.",
+        field: "target",
+      });
     }
 
     const entry = this.deps.storage.getEntry(validated.value.entryId);

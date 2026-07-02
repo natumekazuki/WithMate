@@ -151,6 +151,7 @@ describe("memory-v6 response contract", () => {
       session: { id: "session-a" },
       character: null,
       sessionProject: null,
+      allowedProjectTargets: [{ id: "project-a", displayName: "Project A" }],
       permissions: ["memory.resolve_context", "memory.search"],
     });
 
@@ -159,6 +160,7 @@ describe("memory-v6 response contract", () => {
       session: { id: "session-a" },
       character: null,
       sessionProject: null,
+      allowedProjectTargets: [{ id: "project-a", displayName: "Project A" }],
       permissions: ["memory.resolve_context", "memory.search"],
     });
   });

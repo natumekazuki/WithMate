@@ -106,6 +106,7 @@ type SessionBindingMemoryPrincipal = {
   sessionProject: { id: string; displayName: string } | null;
   accessibleCharacterIds?: string[];
   accessibleProjectIds?: string[];
+  accessibleProjects?: Array<{ id: string; displayName: string }>;
 };
 
 type LocalUserMemoryPrincipal = {
@@ -126,7 +127,7 @@ type MemoryPermission =
   | "memory.resolve_context";
 ```
 
-`session_binding`はWithMate-launched provider turnから発行される短命bindingに基づく。current Character、session project、provider ID、permissionを解決でき、Character targetや`character: current`を使える。
+`session_binding`はWithMate-launched provider turnから発行される短命bindingに基づく。current Character、session project、provider ID、permissionを解決でき、Character targetや`character: current`、project targetの`project: current`を使える。session projectに加えて、sessionの`allowedAdditionalDirectories`からGit repositoryとして解決できるattached projectも`accessibleProjects`として扱う。Git管理外directoryはproject targetとして扱わず、workspace target導線で扱う。
 
 `local_user`は起動中WithMate runtime APIのsecret / status challengeを通過した同一OS userを表す。明示された`project` owner + `project` scope、または`user` owner + `global` scopeのMemoryだけを扱い、current Character、session context、Character Memory、session-bound project inferenceは使えない。
 
@@ -335,6 +336,7 @@ type MemoryResolveContextResponse = {
   session: { id: string };
   character: { id: string; name: string } | null;
   sessionProject: { id: string; displayName: string } | null;
+  allowedProjectTargets: Array<{ id: string; displayName: string }>;
   permissions: MemoryPermission[];
 };
 ```
@@ -345,12 +347,13 @@ type MemoryResolveContextResponse = {
   "session": { "id": "..." },
   "character": { "id": "...", "name": "..." },
   "sessionProject": { "id": "...", "displayName": "..." },
+  "allowedProjectTargets": [{ "id": "...", "displayName": "..." }],
   "permissions": ["memory.search", "memory.append"]
 }
 ```
 
 `memory.resolve_context`は、transport metadataから解決できるprincipal、permissions、current Character、session project、runtime状態を返す。
-ここで返す`sessionProject`はdiagnostics / convenience用途であり、search / appendのtargetを暗黙決定しない。
+ここで返す`sessionProject`と`allowedProjectTargets`はdiagnostics / convenience用途であり、search / appendのtargetを暗黙決定しない。
 CLI commandとしては`withmate-memory context`で呼ぶ。
 `--self` flagは採用しない。
 
@@ -375,6 +378,7 @@ type MemoryTargetSelector =
 
 type ProjectTargetRef =
   | { type: "id"; id: string }
+  | { type: "current" }
   | { type: "path"; path: string }
   | { type: "alias"; alias: string };
 
@@ -604,9 +608,9 @@ withmate-memory append --json '<MemoryAppendRequest>'
 withmate-memory forget --json '<MemoryForgetRequest>'
 withmate-memory search --file payload.json
 withmate-memory search @payload.json
-withmate-memory search --project ../repo-a --query "approval modeの方針"
-withmate-memory search --project ../repo-a --query "delivery cleanup" --tag delivery-cleanup
-withmate-memory search --project ../repo-a --tags topic:delivery-cleanup,topic:relaygraph
+withmate-memory search --session-project --query "approval modeの方針"
+withmate-memory search --project C:\path\to\repo-a --query "delivery cleanup" --tag delivery-cleanup
+withmate-memory search --project C:\path\to\repo-a --tags topic:delivery-cleanup,topic:relaygraph
 ```
 
 `--json`、`--file`、`@file`、`--stdin`はrequest bodyの入力方法であり、output format指定ではない。CLI outputは常にJSONをstdoutへ出す。
@@ -628,12 +632,13 @@ stable exit codeは次とする。
 current convenience flags:
 
 ```text
-withmate-memory search --project ../repo-a --query "approval modeの方針"
+withmate-memory search --session-project --query "approval modeの方針"
+withmate-memory search --project C:\path\to\repo-a --query "approval modeの方針"
 withmate-memory search --project-id <project-id> --query "approval modeの方針"
-withmate-memory search --project ../repo-a --query "delivery cleanup" --tag delivery-cleanup
-withmate-memory search --project ../repo-a --tags topic:delivery-cleanup,topic:relaygraph
-withmate-memory get-entry --project ../repo-a --entry-id <entry-id>
-withmate-memory list-tags --project ../repo-a
+withmate-memory search --project C:\path\to\repo-a --query "delivery cleanup" --tag delivery-cleanup
+withmate-memory search --project C:\path\to\repo-a --tags topic:delivery-cleanup,topic:relaygraph
+withmate-memory get-entry --project C:\path\to\repo-a --entry-id <entry-id>
+withmate-memory list-tags --project C:\path\to\repo-a
 ```
 
 create / update / supersede系の複雑なrequestをすべてCLI flagsへ展開することは目指さない。write系の構造化requestは`--stdin`または`--file`を正本とする。
@@ -671,7 +676,8 @@ CLI利用者に認証tokenやcredential管理を要求しない。
 
 project target:
 
-- `--project <path>`
+- `--session-project`
+- `--project <absolute-path>`
 - `--project-id <id>`
 - `--project-alias <alias>`
 
@@ -682,6 +688,7 @@ character target:
 
 character targetはWithMate-launched session binding内に限定する。
 `--character current`はruntime bindingがある場合だけ使える。
+`--session-project`はruntime bindingがある場合だけ使える。
 user-global target:
 
 - request bodyの`target`または`targets[]`に`{ "owner": "user", "scope": "global" }`を明示する。
@@ -691,7 +698,10 @@ user-global target:
 WithMate外CLI / `local_user` principalは現時点ではproject owner + project scope、またはuser owner + global scopeのMemoryだけを扱い、明示Character IDを指定したCharacter Memory利用も許可しない。
 外部CLIからの明示Character ID対応は、別途principal / 認可設計を定義してから扱う。
 project targetはcurrent working directoryから暗黙推定しない。
-`--project .`はcurrent directoryを使う明示指定として許可する。
+`--project .`やrelative pathはCLI起動`cwd`に依存するため許可しない。callerは`--session-project`、`--project <absolute-path>`、または`--project-id <id>`を使う。
+`--project <absolute-path>`はWithMate runtime側でGit repositoryへ解決する。pathがrepository subdirectoryの場合もrepository root / common dir / remote情報からproject scopeを決定する。Git管理外directoryはproject targetとして解決せず、workspace target導線（例: `--workspace <path>`）を使う。
+同じrepositoryの別worktreeは同一project scopeとして扱う。
+WithMate-launched session bindingでは、session projectとsessionにattachedされたadditional directory / repositoryからGit repositoryとして解決できるproject targetだけを許可する。attachedされていないpathはsession projectへfallbackせず`MEMORY_FORBIDDEN`で拒否する。
 
 appendはfirst releaseでは単一target必須とする。
 searchは複数target対応を将来検討してよいが、初期実装では単一targetから始めてよい。
@@ -704,6 +714,19 @@ runtime bindingが必要なtargetをbinding無しで実行した場合はmachine
   "error": {
     "code": "MEMORY_BINDING_REQUIRED",
     "message": "current character requires a WithMate runtime binding"
+  }
+}
+```
+
+attachedされていないproject targetをsession bindingで指定した場合は、許可済みtargetと次の行動を含むmachine-readable errorを返す。
+
+```json
+{
+  "error": {
+    "code": "MEMORY_FORBIDDEN",
+    "message": "Project target is not attached to this session.",
+    "allowedProjectTargets": ["Session Repo", "attached-repo"],
+    "suggestion": "Attach the repository to this session or run the command from an allowed project."
   }
 }
 ```

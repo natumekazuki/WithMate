@@ -11,6 +11,7 @@ export type MemoryV6SessionBindingPrincipal = {
   sessionProject: { id: string; displayName: string } | null;
   accessibleCharacterIds?: readonly string[];
   accessibleProjectIds?: readonly string[];
+  accessibleProjects?: readonly { id: string; displayName: string }[];
 };
 
 export type MemoryV6LocalUserPrincipal = {
@@ -59,10 +60,18 @@ export function memoryUnauthorizedError(permission: MemoryPermission): MemoryErr
   };
 }
 
-export function memoryForbiddenError(): MemoryError {
+export function memoryForbiddenError(options: {
+  message?: string;
+  allowedProjectTargets?: readonly string[];
+  suggestion?: string;
+} = {}): MemoryError {
   return {
     code: "MEMORY_FORBIDDEN",
-    message: "Memory target is not accessible from the current binding.",
+    message: options.message ?? "Memory target is not accessible from the current binding.",
+    ...(options.allowedProjectTargets && options.allowedProjectTargets.length > 0
+      ? { allowedProjectTargets: [...options.allowedProjectTargets] }
+      : {}),
+    ...(options.suggestion ? { suggestion: options.suggestion } : {}),
   };
 }
 
@@ -93,6 +102,7 @@ export function canAccessMemoryTarget(principal: MemoryV6Principal, target: Memo
   const projectIds = new Set([
     ...(principal.sessionProject ? [principal.sessionProject.id] : []),
     ...(principal.accessibleProjectIds ?? []),
+    ...(principal.accessibleProjects ?? []).map((project) => project.id),
   ]);
 
   const ownerAllowed = target.owner.type === "character"

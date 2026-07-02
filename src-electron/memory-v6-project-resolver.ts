@@ -15,7 +15,7 @@ type ProjectScopeRow = {
 
 export function createMemoryV6ProjectResolver(dbPath: string): Pick<
   MemoryV6TargetResolverDeps,
-  "resolveProjectById" | "resolveProjectByPath" | "resolveProjectByAlias"
+  "resolveProjectById" | "resolveProjectByPath" | "resolveKnownProjectByPath" | "resolveProjectByAlias"
 > & { resolveSessionById(id: string): boolean } {
   return {
     resolveProjectById: (id) => withDatabase(dbPath, (db) => {
@@ -28,6 +28,9 @@ export function createMemoryV6ProjectResolver(dbPath: string): Pick<
     }),
     resolveProjectByPath: (projectPath) => withDatabase(dbPath, (db) => {
       const resolved = resolveProjectScope(projectPath);
+      if (resolved.projectType !== "git") {
+        return null;
+      }
       const now = new Date().toISOString();
       const existing = db.prepare(`
         SELECT id
@@ -76,6 +79,21 @@ export function createMemoryV6ProjectResolver(dbPath: string): Pick<
       return row
         ? { id: row.id, displayName: row.display_name }
         : { id: projectId, displayName: resolved.displayName };
+    }),
+    resolveKnownProjectByPath: (projectPath) => withDatabase(dbPath, (db) => {
+      const resolved = resolveProjectScope(projectPath);
+      if (resolved.projectType !== "git") {
+        return null;
+      }
+      const row = db.prepare(`
+        SELECT id, display_name
+        FROM project_scopes_v6
+        WHERE project_type = ?
+          AND project_key = ?
+      `).get(resolved.projectType, resolved.projectKey) as { id: string; display_name: string } | undefined;
+      return row
+        ? { id: row.id, displayName: row.display_name }
+        : { id: `unresolved:${resolved.projectKey}`, displayName: resolved.displayName };
     }),
     resolveProjectByAlias: (alias) => withDatabase(dbPath, (db) => {
       const row = db.prepare(`

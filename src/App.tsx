@@ -858,6 +858,7 @@ export default function AgentSessionWindowApp() {
         : false,
     [displayedMessages, liveAssistantBridge, projectedAuxiliarySessions, selectedSession?.id],
   );
+  const isLiveAssistantBridgeSettling = selectedSessionLiveRun === null && !hasPersistedLiveAssistantBridge;
   const projectedLiveAssistant = useMemo<LiveAssistantProjection | null>(() => {
     if (!activeRunSessionId) {
       return null;
@@ -883,12 +884,14 @@ export default function AgentSessionWindowApp() {
       activeSessionId: activeRunSessionId,
       hasLiveRun: selectedSessionLiveRun !== null,
       hasPersistedAssistant: hasPersistedLiveAssistantBridge,
+      isSettling: isLiveAssistantBridgeSettling,
     })
       ? liveAssistantBridge
       : null;
   }, [
     activeRunSessionId,
     hasPersistedLiveAssistantBridge,
+    isLiveAssistantBridgeSettling,
     liveAssistantBridge,
     liveAssistantMessageIndex,
     liveRunAssistantText,
@@ -933,13 +936,35 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    if (
-      liveAssistantBridge.sessionId !== activeRunSessionId ||
-      (selectedSessionLiveRun === null && !hasPersistedLiveAssistantBridge)
-    ) {
+    if (liveAssistantBridge.sessionId !== activeRunSessionId) {
       setLiveAssistantBridge(null);
+      return;
     }
-  }, [activeRunSessionId, hasPersistedLiveAssistantBridge, liveAssistantBridge, selectedSessionLiveRun]);
+
+    if (!isLiveAssistantBridgeSettling) {
+      return;
+    }
+
+    let secondFrameId: number | null = null;
+    const firstFrameId = requestAnimationFrame(() => {
+      secondFrameId = requestAnimationFrame(() => {
+        setLiveAssistantBridge((current) =>
+          current?.sessionId === liveAssistantBridge.sessionId &&
+          current.threadId === liveAssistantBridge.threadId &&
+          current.text === liveAssistantBridge.text
+            ? null
+            : current,
+        );
+      });
+    });
+
+    return () => {
+      cancelAnimationFrame(firstFrameId);
+      if (secondFrameId !== null) {
+        cancelAnimationFrame(secondFrameId);
+      }
+    };
+  }, [activeRunSessionId, isLiveAssistantBridgeSettling, liveAssistantBridge]);
   useEffect(() => {
     if (!liveAssistantBridge) {
       return;
@@ -2591,6 +2616,44 @@ export default function AgentSessionWindowApp() {
     });
   };
 
+  const handlePickSessionFolder = async () => {
+    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly) {
+      return;
+    }
+
+    setIsSkillPickerOpen(false);
+    const selectedPath = await withmateApi.pickSessionFolder(selectedSession.id);
+    if (!selectedPath) {
+      return;
+    }
+
+    applySessionFilesReferencePathsCommand({
+      selectedPaths: [selectedPath],
+      referencePaths: [selectedPath],
+      setPickerBaseDirectory,
+      insertReferencePaths,
+    });
+  };
+
+  const handlePickSessionImage = async () => {
+    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly) {
+      return;
+    }
+
+    setIsSkillPickerOpen(false);
+    const selectedPath = await withmateApi.pickSessionImageFile(selectedSession.id);
+    if (!selectedPath) {
+      return;
+    }
+
+    applySessionFilesReferencePathsCommand({
+      selectedPaths: [selectedPath],
+      referencePaths: [selectedPath],
+      setPickerBaseDirectory,
+      insertReferencePaths,
+    });
+  };
+
   const handleComposerPaste = createPastedSessionAttachmentHandler({
     alertError: (message) => window.alert(message),
     canPaste: () => {
@@ -3022,6 +3085,8 @@ export default function AgentSessionWindowApp() {
         onPickImage: () => void pickAndInsertPath("image"),
         onAddToSessionFiles: () => void handleAddToSessionFiles(),
         onPickSessionFiles: () => void handlePickSessionFiles(),
+        onPickSessionFolder: () => void handlePickSessionFolder(),
+        onPickSessionImage: () => void handlePickSessionImage(),
         onToggleAgentPicker: handleToggleAgentPicker,
         onToggleSkillPicker: handleToggleSkillPicker,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),

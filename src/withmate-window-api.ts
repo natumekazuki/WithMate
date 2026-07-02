@@ -209,6 +209,8 @@ export type WithMateWindowPickerApi = {
   pickFile(initialPath?: string | null): Promise<string | null>;
   pickFiles(initialPath?: string | null): Promise<string[]>;
   pickSessionFiles(sessionId: string): Promise<string[]>;
+  pickSessionFolder(sessionId: string): Promise<string | null>;
+  pickSessionImageFile(sessionId: string): Promise<string | null>;
   pickImageFile(initialPath?: string | null): Promise<string | null>;
   copyFilesToSessionFiles(sessionId: string, sourcePaths: string[]): Promise<string[]>;
   savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string>;

@@ -166,6 +166,8 @@ V6 session tableは`sessions_v6`とし、V6 runtimeで必要なmetadata、provid
 resume時に実行policyがdefaultへ戻らないよう、`catalog_revision`、`approval_mode`、`codex_sandbox_mode`、`allowed_additional_directories_json`、`session_kind`、`custom_agent_name`、`runtime_policy_json`を保存する。
 Character付きsessionでは`character_snapshot_json`をvalid JSONとして必須にし、neutral sessionでは`NULL`を許可する。
 message tableは`session_messages_v6`とし、V5以前message履歴は移行しない。
+message bodyはSession表示に必要な軽量projectionを保持し、assistant artifactのfull detailは`artifact_body`へ分離する。
+`getSession()`はartifact summaryだけを返し、operation detailsやdiff rowsなどの重いdetailはmessage artifact detail APIで遅延取得する。
 Memory provenanceはapp messageを指す`source_app_message_id`とprovider外部IDを指す`source_provider_message_id`を分ける。
 
 auditは`audit_events_v6`で通常turn、Memory mutation、runtime binding、diagnosticsを分離して設計する。
