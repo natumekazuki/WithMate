@@ -69,6 +69,7 @@ When correcting a previous entry, append a replacement with `supersedes` instead
 Run the installed command from the target project directory:
 
 ```bash
+withmate-memory --help
 withmate-memory status
 withmate-memory context
 withmate-memory schema
@@ -83,7 +84,7 @@ withmate-memory append --file memory-entry.json
 withmate-memory forget --file forget-request.json
 ```
 
-Commands write one JSON object to stdout.
+Commands write one JSON object to stdout, except `--help`, `-h`, and `help`, which print usage text.
 
 For commands that require a request body, prefer `--stdin` or `--file <path>`. Inline `--json` is supported, but it is shell-sensitive. On Windows PowerShell or `.cmd` wrappers, double quotes inside JSON can be consumed before the CLI receives the argument. If `--json` fails with invalid JSON or a CLI usage error, pipe the request through `--stdin`, or write it to a temporary JSON file and retry with `--file`.
 
@@ -108,6 +109,8 @@ $request | withmate-memory search --stdin
 ```
 
 ### Request Shapes
+
+`help`, `--help`, and `-h` do not require a request body or runtime connection.
 
 `status` does not require a request body.
 

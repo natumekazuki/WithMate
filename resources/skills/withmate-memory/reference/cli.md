@@ -7,6 +7,7 @@ Run it from the target project directory after WithMate is installed:
 
 ```bash
 withmate-memory <command> [--json <json> | --file <path> | --stdin]
+withmate-memory --help
 ```
 
 For commands that require a request body, prefer `--stdin` or `--file <path>`. Inline `--json` is supported, but it is shell-sensitive. On Windows PowerShell or `.cmd` wrappers, double quotes inside JSON can be consumed before the CLI receives the argument. If `--json` fails with invalid JSON or a CLI usage error, pipe the request through `--stdin`, or write it to a temporary JSON file and retry with `--file`.
@@ -16,6 +17,17 @@ On Windows, the installer places `withmate-memory.cmd` in the WithMate install d
 When a managed skill includes `bin/withmate-memory.mjs` and no `withmate-memory` command is available on `PATH`, use `node bin/withmate-memory.mjs <command>` as a temporary fallback.
 
 ## Commands
+
+### help
+
+```bash
+withmate-memory --help
+withmate-memory -h
+withmate-memory help
+withmate-memory search --help
+```
+
+Prints CLI usage text and exits without connecting to the runtime API.
 
 ### schema
 

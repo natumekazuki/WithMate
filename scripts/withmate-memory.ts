@@ -44,6 +44,7 @@ export const WITHMATE_MEMORY_CLI_EXIT_CODES = {
 } as const;
 
 export type WithMateMemoryCliCommand =
+  | "help"
   | "status"
   | "context"
   | "search"
@@ -54,7 +55,7 @@ export type WithMateMemoryCliCommand =
   | "schema"
   | "validate";
 
-export type WithMateMemoryApiCommand = Exclude<WithMateMemoryCliCommand, "schema" | "validate">;
+export type WithMateMemoryApiCommand = Exclude<WithMateMemoryCliCommand, "help" | "schema" | "validate">;
 export type WithMateMemoryValidatedCommand = Exclude<WithMateMemoryApiCommand, "status">;
 
 export type WithMateMemoryCliRequest = {
@@ -95,6 +96,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const WITHMATE_MEMORY_API_SECRET_HEADER = "x-withmate-memory-api-secret";
 
 const commandAliases = new Map<string, WithMateMemoryCliCommand>([
+  ["help", "help"],
   ["status", "status"],
   ["context", "context"],
   ["resolve-context", "context"],
@@ -109,6 +111,50 @@ const commandAliases = new Map<string, WithMateMemoryCliCommand>([
   ["capabilities", "schema"],
   ["validate", "validate"],
 ]);
+
+const WITHMATE_MEMORY_CLI_HELP = `Usage:
+  withmate-memory <command> [options]
+
+Commands:
+  help
+  status
+  context
+  search
+  get-entry
+  list-tags
+  append
+  forget
+  schema
+  validate
+
+Input options:
+  --json <json>       Read request body from an inline JSON string.
+  --file <path>       Read request body from a JSON file.
+  @file               Read request body from a JSON file.
+  --stdin             Read request body from standard input.
+
+Shorthand options:
+  --project <path>
+  --project-id <id>
+  --query <text>
+  --tag <tag>
+  --tags <tags>
+  --entry-id <id>
+  --limit <n>
+
+Connection options:
+  --api-url <url>
+  --discovery-file <path>
+
+Validation:
+  validate --command <context|search|get-entry|list-tags|append|forget>
+
+Examples:
+  withmate-memory status
+  withmate-memory search --project . --query "release workflow"
+  withmate-memory validate --command append --stdin
+  withmate-memory schema
+`;
 
 const validatableCommands = new Set<WithMateMemoryValidatedCommand>([
   "context",
@@ -259,9 +305,15 @@ export async function parseWithMateMemoryCliArgs(
   deps: Pick<WithMateMemoryCliDeps, "stdin" | "readFile"> = {},
 ): Promise<WithMateMemoryCliRequest> {
   const [rawCommand, ...rest] = args;
+  if (!rawCommand || rawCommand === "--help" || rawCommand === "-h") {
+    return { command: "help", body: {} };
+  }
   const command = rawCommand ? commandAliases.get(rawCommand) : undefined;
   if (!command) {
-    throw usageError("Usage: withmate-memory <status|context|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
+    throw usageError("Usage: withmate-memory <help|status|context|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
+  }
+  if (command === "help" || rest.includes("--help") || rest.includes("-h")) {
+    return { command: "help", body: {} };
   }
 
   let jsonInput: string | null = null;
@@ -501,6 +553,7 @@ function buildSchemaResponse(): unknown {
     entryKinds: [...MEMORY_ENTRY_KINDS],
     forgetReasons: [...MEMORY_FORGET_REASONS],
     commands: [
+      "help",
       "status",
       "context",
       "search",
@@ -647,6 +700,10 @@ export async function runWithMateMemoryCli(
 
   try {
     const request = await parseWithMateMemoryCliArgs(args, deps);
+    if (request.command === "help") {
+      stdout.write(WITHMATE_MEMORY_CLI_HELP);
+      return WITHMATE_MEMORY_CLI_EXIT_CODES.ok;
+    }
     if (request.command === "schema") {
       stdout.write(`${JSON.stringify(buildSchemaResponse())}\n`);
       return WITHMATE_MEMORY_CLI_EXIT_CODES.ok;
