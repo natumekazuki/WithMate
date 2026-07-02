@@ -151,6 +151,8 @@ import {
   WITHMATE_PICK_FILE_CHANNEL,
   WITHMATE_PICK_FILES_CHANNEL,
   WITHMATE_PICK_SESSION_FILES_CHANNEL,
+  WITHMATE_PICK_SESSION_FOLDER_CHANNEL,
+  WITHMATE_PICK_SESSION_IMAGE_FILE_CHANNEL,
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
   WITHMATE_COPY_FILES_TO_SESSION_FILES_CHANNEL,
   WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL,
@@ -331,6 +333,8 @@ export type MainIpcRegistrationDeps = {
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFiles(targetWindow: MaybeWindow, initialPath: string | null): Promise<string[]>;
   pickSessionFiles(targetWindow: MaybeWindow, sessionId: string): Promise<string[]>;
+  pickSessionFolder(targetWindow: MaybeWindow, sessionId: string): Promise<string | null>;
+  pickSessionImageFile(targetWindow: MaybeWindow, sessionId: string): Promise<string | null>;
   pickImageFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   copyFilesToSessionFiles(sessionId: string, sourcePaths: string[]): Promise<string[]>;
   savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string>;
@@ -367,6 +371,8 @@ type MainIpcWindowDeps = Pick<
   | "pickFile"
   | "pickFiles"
   | "pickSessionFiles"
+  | "pickSessionFolder"
+  | "pickSessionImageFile"
   | "pickImageFile"
   | "copyFilesToSessionFiles"
   | "savePastedSessionFile"
@@ -587,6 +593,12 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   );
   ipcMain.handle(WITHMATE_PICK_SESSION_FILES_CHANNEL, async (event, sessionId: string) =>
     deps.pickSessionFiles(resolveTargetWindow(event, deps), sessionId),
+  );
+  ipcMain.handle(WITHMATE_PICK_SESSION_FOLDER_CHANNEL, async (event, sessionId: string) =>
+    deps.pickSessionFolder(resolveTargetWindow(event, deps), sessionId),
+  );
+  ipcMain.handle(WITHMATE_PICK_SESSION_IMAGE_FILE_CHANNEL, async (event, sessionId: string) =>
+    deps.pickSessionImageFile(resolveTargetWindow(event, deps), sessionId),
   );
   ipcMain.handle(WITHMATE_PICK_IMAGE_FILE_CHANNEL, async (event, initialPath: string | null) =>
     deps.pickImageFile(resolveTargetWindow(event, deps), initialPath),

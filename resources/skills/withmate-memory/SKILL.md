@@ -16,6 +16,8 @@ Use Memory before making a durable project or character-sensitive decision when 
 - "remember", "forget", "do not use this anymore", "use the same policy as before", or similar user intent
 - a design or implementation review where prior repo-specific direction may matter
 
+Use Memory after an unexpected command, test, build, tool invocation, or environment check failure when a known failure pattern, tooling trap, environment constraint, or workaround could affect the next action.
+
 Do not use Memory for trivial local edits where the current files and user message fully determine the answer.
 
 ## Principles
@@ -34,9 +36,11 @@ Do not use Memory for trivial local edits where the current files and user messa
 1. Search first with an explicit target.
 2. Inspect only relevant hits with `get-entry` when exact wording or rationale matters.
 3. Use retrieved Memory as supporting context, not as a replacement for reading current repo files and source-of-truth docs.
-4. Append only durable, future-useful facts or decisions. Keep title and preview short, body precise, and tags reusable.
-5. Forget entries when the user requests removal, correction, privacy cleanup, or no-longer-use semantics.
-6. If Memory is unavailable, continue the task unless Memory access itself is the requested task.
+4. Before repeating the same failed command unchanged or escalating to a broader strategy, search Memory with the command/tool name, subsystem, and error signature when available.
+5. Append only durable, future-useful facts or decisions. Keep title and preview short, body precise, and tags reusable.
+6. If a failure reveals a reusable pattern or reliable workaround that is likely to matter in future sessions, append a concise Memory entry describing the failure signature, likely cause, and next-time guidance.
+7. Forget entries when the user requests removal, correction, privacy cleanup, or no-longer-use semantics.
+8. If Memory is unavailable, continue the task unless Memory access itself is the requested task.
 
 ## User-Facing Memory Behavior
 
@@ -75,6 +79,7 @@ withmate-memory context
 withmate-memory schema
 withmate-memory validate --command append --stdin
 withmate-memory search --session-project --query "release workflow"
+withmate-memory search --session-project --query "withmate-memory search MEMORY_UNKNOWN_FIELD target targets"
 withmate-memory search --project <absolute-repo-path> --query "delivery cleanup" --tag delivery-cleanup
 withmate-memory search --project <absolute-repo-path> --tags topic:delivery-cleanup,topic:relaygraph
 withmate-memory search --file memory-search.json

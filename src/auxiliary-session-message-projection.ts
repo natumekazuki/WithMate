@@ -50,6 +50,7 @@ export type LiveAssistantBridgeProjectionInput = {
   activeSessionId: string | null | undefined;
   hasLiveRun: boolean;
   hasPersistedAssistant: boolean;
+  isSettling?: boolean;
 };
 
 export type LoadProjectedMessageArtifactOptions = {
@@ -266,8 +267,9 @@ export function shouldProjectLiveAssistantBridge({
   activeSessionId,
   hasLiveRun,
   hasPersistedAssistant,
+  isSettling = false,
 }: LiveAssistantBridgeProjectionInput): boolean {
-  return !!bridge && bridge.sessionId === activeSessionId && (hasLiveRun || hasPersistedAssistant);
+  return !!bridge && bridge.sessionId === activeSessionId && (hasLiveRun || hasPersistedAssistant || isSettling);
 }
 
 function normalizeLiveAssistantProjection(

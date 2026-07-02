@@ -102,6 +102,8 @@ import {
   WITHMATE_PICK_FILE_CHANNEL,
   WITHMATE_PICK_FILES_CHANNEL,
   WITHMATE_PICK_SESSION_FILES_CHANNEL,
+  WITHMATE_PICK_SESSION_FOLDER_CHANNEL,
+  WITHMATE_PICK_SESSION_IMAGE_FILE_CHANNEL,
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
   WITHMATE_COPY_FILES_TO_SESSION_FILES_CHANNEL,
   WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL,
@@ -587,6 +589,12 @@ function createPickerApi(ipcRenderer: IpcRendererLike): WithMateWindowPickerApi 
     },
     pickSessionFiles(sessionId) {
       return ipcRenderer.invoke(WITHMATE_PICK_SESSION_FILES_CHANNEL, sessionId);
+    },
+    pickSessionFolder(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_PICK_SESSION_FOLDER_CHANNEL, sessionId);
+    },
+    pickSessionImageFile(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_PICK_SESSION_IMAGE_FILE_CHANNEL, sessionId);
     },
     pickImageFile(initialPath) {
       return ipcRenderer.invoke(WITHMATE_PICK_IMAGE_FILE_CHANNEL, initialPath ?? null);

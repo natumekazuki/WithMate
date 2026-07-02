@@ -60,6 +60,12 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async pickSessionFiles() {
         return [];
       },
+      async pickSessionFolder() {
+        return null;
+      },
+      async pickSessionImageFile() {
+        return null;
+      },
       async pickImageFile() {
         return null;
       },

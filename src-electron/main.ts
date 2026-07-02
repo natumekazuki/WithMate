@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, crashReporter, dialog, ipcMain, screen, shell } from "electron";
+import { app, BrowserWindow, crashReporter, dialog, ipcMain, Menu, screen, shell, Tray } from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
 import { summarizeAuditLogDetailFragment } from "../src/audit-log-detail-metrics.js";
@@ -122,6 +122,7 @@ import {
 import { AppLifecycleService } from "./app-lifecycle-service.js";
 import { createAppLifecycleDeps } from "./app-lifecycle-deps.js";
 import { applyLaunchAtLoginSetting, shouldLaunchInBackground } from "./app-login-item.js";
+import { AppTrayService } from "./app-tray-service.js";
 import { createMainBootstrapDeps } from "./main-bootstrap-deps.js";
 import { MainInfrastructureRegistry } from "./main-infrastructure-registry.js";
 import { MainBootstrapService } from "./main-bootstrap-service.js";
@@ -212,6 +213,7 @@ const bundledCharacterAuthoringSkillPath = app.isPackaged
 const bundledMemorySkillPath = app.isPackaged
   ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_MEMORY_SKILL_NAME)
   : path.resolve(currentDir, "../../resources/skills", WITHMATE_MEMORY_SKILL_NAME);
+const trayIconPath = path.resolve(currentDir, "../../build/icon.ico");
 const codexAdapter = new CodexAdapter((input) => writeAppLog({
   ...input,
   process: "main",
@@ -280,6 +282,7 @@ let mainSessionCommandFacade: MainSessionCommandFacade | null = null;
 let mainSessionPersistenceFacade: MainSessionPersistenceFacade | null = null;
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
+let appTrayService: AppTrayService | null = null;
 let walMaintenanceTimer: ReturnType<typeof setInterval> | null = null;
 let mainInfrastructureRegistry:
   | MainInfrastructureRegistry<
@@ -876,6 +879,22 @@ function createCursorPlacedWindow(
   });
 }
 
+function requireAppTrayService(): AppTrayService {
+  if (!appTrayService) {
+    appTrayService = new AppTrayService({
+      platform: process.platform,
+      iconPath: trayIconPath,
+      createTray: (iconPath) => new Tray(iconPath),
+      buildMenu: (items) => Menu.buildFromTemplate(items),
+      openHomeWindow: createHomeWindow,
+      quitApp: () => {
+        app.quit();
+      },
+    });
+  }
+  return appTrayService;
+}
+
 function publishAppBootStatus(status: AppBootStatus): void {
   appBootStatus = status;
   if (bootWindow && !bootWindow.isDestroyed()) {
@@ -1179,6 +1198,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 pickFiles: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickFiles(targetWindow, initialPath),
                 pickSessionFiles,
+                pickSessionFolder,
+                pickSessionImageFile,
                 pickImageFile: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickImageFile(targetWindow, initialPath),
                 copyFilesToSessionFiles,
@@ -2989,6 +3010,18 @@ async function pickSessionFiles(targetWindow: BrowserWindow | null, sessionId: s
   return selectedPaths.filter((selectedPath) => isPathInsideOrEqual(directoryPath, selectedPath));
 }
 
+async function pickSessionFolder(targetWindow: BrowserWindow | null, sessionId: string): Promise<string | null> {
+  const directoryPath = ensureSessionFilesDirectory(sessionId);
+  const selectedPath = await requireWindowDialogService().pickDirectory(targetWindow, directoryPath);
+  return selectedPath && isPathInsideOrEqual(directoryPath, selectedPath) ? selectedPath : null;
+}
+
+async function pickSessionImageFile(targetWindow: BrowserWindow | null, sessionId: string): Promise<string | null> {
+  const directoryPath = ensureSessionFilesDirectory(sessionId);
+  const selectedPath = await requireWindowDialogService().pickImageFile(targetWindow, directoryPath);
+  return selectedPath && isPathInsideOrEqual(directoryPath, selectedPath) ? selectedPath : null;
+}
+
 async function savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string> {
   return saveSessionFile(app.getPath("userData"), {
     sessionId: request.sessionId,
@@ -3214,6 +3247,7 @@ if (!hasSingleInstanceLock) {
       });
       await startMemoryV6RuntimeApiBestEffort();
       await requireMainBootstrapService().handleReady();
+      requireAppTrayService().initialize();
       applyLaunchAtLoginSetting(app, requireAppSettingsStorage().getSettings().launchAtLoginEnabled);
       await syncManagedMemorySkillBestEffort();
       publishAppBootStatus({
@@ -3279,6 +3313,7 @@ if (!hasSingleInstanceLock) {
       process: "main",
       message: "App will quit",
     });
+    appTrayService?.dispose();
     void stopMemoryV6RuntimeApiBestEffort();
   });
 }
