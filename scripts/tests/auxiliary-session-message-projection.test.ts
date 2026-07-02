@@ -384,6 +384,24 @@ test("shouldProjectLiveAssistantBridge は live run が消えて persisted assis
   );
 });
 
+test("shouldProjectLiveAssistantBridge は settling 中の bridge を投影する", () => {
+  assert.equal(
+    shouldProjectLiveAssistantBridge({
+      bridge: {
+        sessionId: "session-1",
+        threadId: "thread-1",
+        messageIndex: 1,
+        text: "streaming response",
+      },
+      activeSessionId: "session-1",
+      hasLiveRun: false,
+      hasPersistedAssistant: false,
+      isSettling: true,
+    }),
+    true,
+  );
+});
+
 test("shouldProjectLiveAssistantBridge は live run 中または persisted assistant 検知後だけ bridge を投影する", () => {
   const bridge = {
     sessionId: "session-1",
