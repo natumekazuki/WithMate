@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { Session } from "../../src/session-state.js";
 import {
@@ -195,6 +196,32 @@ function readTableNames(dbPath: string): string[] {
   }
 }
 
+function createAuxiliarySessionFixture(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
+  return {
+    id: "aux-v6",
+    parentSessionId: "session-v6",
+    status: "active",
+    runState: "idle",
+    title: "V6 auxiliary",
+    provider: "codex",
+    catalogRevision: 1,
+    model: "gpt-5.4",
+    reasoningEffort: "medium",
+    approvalMode: "untrusted",
+    codexSandboxMode: "workspace-write",
+    customAgentName: "",
+    allowedAdditionalDirectories: [],
+    threadId: "",
+    composerDraft: "",
+    messages: [],
+    displayAfterMessageIndex: null,
+    createdAt: "2026-07-02T00:00:00.000Z",
+    updatedAt: "2026-07-02T00:00:00.000Z",
+    closedAt: "",
+    ...overrides,
+  };
+}
+
 test("PersistentStoreLifecycleService は store を初期化して session dependency を同期する", async () => {
   const closeCalls: string[] = [];
   const sessionSummaries = [
@@ -358,6 +385,12 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate schema を初�
     const bundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
 
     assert.equal(bundle.mateStorage.getMateState(), "not_created");
+    assert.throws(
+      () => bundle.auxiliarySessionStorage.upsertAuxiliarySession(
+        createAuxiliarySessionFixture({ parentSessionId: "session-v4" }),
+      ),
+      /Auxiliary Session は legacy DB では利用できません/,
+    );
 
     const db = new DatabaseSync(dbPath);
     try {
@@ -1102,11 +1135,15 @@ test("PersistentStoreLifecycleService は V6 DB に legacy session/audit/memory/
 
     const service = createPersistentStoreLifecycleService();
     const bundle = await service.initialize(dbPath, bundledModelCatalogPath, userDataPath);
+    const auxiliary = bundle.auxiliarySessionStorage.upsertAuxiliarySession(createAuxiliarySessionFixture());
+    assert.equal(auxiliary.id, "aux-v6");
+    assert.equal(bundle.auxiliarySessionStorage.listAuxiliarySessions("session-v6")[0]?.id, "aux-v6");
     service.close(bundle, dbPath);
 
     const tables = readTableNames(dbPath);
     assert.equal(tables.includes("sessions_v6"), true);
     assert.equal(tables.includes("audit_events_v6"), true);
+    assert.equal(tables.includes("auxiliary_sessions"), true);
     assert.equal(tables.includes("sessions"), false);
     assert.equal(tables.includes("audit_logs"), false);
     assert.equal(tables.includes("session_memories"), false);
