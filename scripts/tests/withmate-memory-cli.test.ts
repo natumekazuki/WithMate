@@ -28,7 +28,7 @@ const TEST_RUNTIME_ENV = {
   WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: TEST_RUNTIME_INSTANCE_ID,
 };
 
-function createOutputCapture(): { stream: { write(chunk: string): boolean }; lines(): string[]; json(): any } {
+function createOutputCapture(): { stream: { write(chunk: string): boolean }; text(): string; lines(): string[]; json(): any } {
   let output = "";
   return {
     stream: {
@@ -36,6 +36,9 @@ function createOutputCapture(): { stream: { write(chunk: string): boolean }; lin
         output += chunk;
         return true;
       },
+    },
+    text() {
+      return output;
     },
     lines() {
       return output.trim().split(/\r?\n/).filter(Boolean);
@@ -402,6 +405,43 @@ describe("withmate-memory CLI", () => {
       scope: "global",
       requiredFields: [],
     });
+  });
+
+  it("--helpはruntime接続なしでusage textを返す", async () => {
+    const stdout = createOutputCapture();
+    let fetchCalls = 0;
+    const exitCode = await runWithMateMemoryCli(["--help"], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+    assert.equal(fetchCalls, 0);
+    assert.match(stdout.text(), /Usage:\s+withmate-memory <command> \[options\]/);
+    assert.match(stdout.text(), /search --project \. --query/);
+    assert.match(stdout.text(), /validate --command <context\|search\|get-entry\|list-tags\|append\|forget>/);
+  });
+
+  it("command --helpもruntime接続なしでusage textを返す", async () => {
+    const stdout = createOutputCapture();
+    let fetchCalls = 0;
+    const exitCode = await runWithMateMemoryCli(["search", "--help"], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+    assert.equal(fetchCalls, 0);
+    assert.match(stdout.text(), /Commands:/);
+    assert.match(stdout.text(), /--stdin/);
   });
 
   it("validateはrequest bodyをruntimeへ送らずに検証する", async () => {

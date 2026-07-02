@@ -31,7 +31,52 @@ const exitCodes = {
   transportError: 4,
 };
 
+const helpText = `Usage:
+  withmate-memory <command> [options]
+
+Commands:
+  help
+  status
+  context
+  search
+  get-entry
+  list-tags
+  append
+  forget
+  schema
+  validate
+
+Input options:
+  --json <json>       Read request body from an inline JSON string.
+  --file <path>       Read request body from a JSON file.
+  @file               Read request body from a JSON file.
+  --stdin             Read request body from standard input.
+
+Shorthand options:
+  --project <path>
+  --project-id <id>
+  --query <text>
+  --tag <tag>
+  --tags <tags>
+  --entry-id <id>
+  --limit <n>
+
+Connection options:
+  --api-url <url>
+  --discovery-file <path>
+
+Validation:
+  validate --command <context|search|get-entry|list-tags|append|forget>
+
+Examples:
+  withmate-memory status
+  withmate-memory search --project . --query "release workflow"
+  withmate-memory validate --command append --stdin
+  withmate-memory schema
+`;
+
 const commands = new Map([
+  ["help", { name: "help", local: true, defaultBody: {} }],
   ["status", { name: "status", method: "GET", path: "/v1/status", defaultBody: {} }],
   ["context", { name: "context", method: "POST", path: "/v1/context", defaultBody: { schemaVersion } }],
   ["resolve-context", { name: "context", method: "POST", path: "/v1/context", defaultBody: { schemaVersion } }],
@@ -133,9 +178,15 @@ async function readDiscovery(options) {
 
 async function parseArgs(argv) {
   const [rawCommand, ...rest] = argv;
+  if (!rawCommand || rawCommand === "--help" || rawCommand === "-h") {
+    return { route: { name: "help", local: true, defaultBody: {} }, body: {} };
+  }
   const route = rawCommand ? commands.get(rawCommand) : undefined;
   if (!route) {
-    throw usage("Usage: withmate-memory <status|context|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
+    throw usage("Usage: withmate-memory <help|status|context|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
+  }
+  if (route.name === "help" || rest.includes("--help") || rest.includes("-h")) {
+    return { route: { name: "help", local: true, defaultBody: {} }, body: {} };
   }
 
   let jsonInput = null;
@@ -361,7 +412,7 @@ function buildSchemaResponse() {
     schemaVersion,
     entryKinds,
     forgetReasons,
-    commands: ["status", "context", "search", "get-entry", "list-tags", "append", "forget", "schema", "validate"],
+    commands: ["help", "status", "context", "search", "get-entry", "list-tags", "append", "forget", "schema", "validate"],
     requestBodyInputs: ["--json", "--file", "@file", "--stdin"],
     targetSelectors: [
       {
@@ -991,6 +1042,10 @@ async function verifyRuntime(connection, signal) {
 async function main() {
   try {
     const request = await parseArgs(process.argv.slice(2));
+    if (request.route.name === "help") {
+      console.log(helpText.trimEnd());
+      return exitCodes.ok;
+    }
     if (request.route.name === "schema") {
       console.log(JSON.stringify(buildSchemaResponse()));
       return exitCodes.ok;
