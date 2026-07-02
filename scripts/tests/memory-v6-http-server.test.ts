@@ -230,6 +230,7 @@ describe("MemoryV6HttpServer", () => {
         session: { id: "session-a" },
         character: { id: "character-a", name: "Character A" },
         sessionProject: { id: "project-a", displayName: "Project A" },
+        allowedProjectTargets: [{ id: "project-a", displayName: "Project A" }],
         permissions: allPermissions,
       });
     });

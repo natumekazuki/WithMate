@@ -53,7 +53,8 @@ Input options:
   --stdin             Read request body from standard input.
 
 Shorthand options:
-  --project <path>
+  --session-project
+  --project <absolute-path>
   --project-id <id>
   --query <text>
   --tag <tag>
@@ -70,7 +71,8 @@ Validation:
 
 Examples:
   withmate-memory status
-  withmate-memory search --project . --query "release workflow"
+  withmate-memory search --session-project --query "release workflow"
+  withmate-memory search --project C:\\path\\to\\repo --query "release workflow"
   withmate-memory validate --command append --stdin
   withmate-memory schema
 `;
@@ -183,7 +185,7 @@ async function parseArgs(argv) {
   }
   const route = rawCommand ? commands.get(rawCommand) : undefined;
   if (!route) {
-    throw usage("Usage: withmate-memory <help|status|context|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
+    throw usage("Usage: withmate-memory <help|status|context|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--session-project | --project <absolute-path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
   }
   if (route.name === "help" || rest.includes("--help") || rest.includes("-h")) {
     return { route: { name: "help", local: true, defaultBody: {} }, body: {} };
@@ -195,6 +197,7 @@ async function parseArgs(argv) {
   let apiUrl;
   let discoveryFilePath;
   let validateCommand;
+  let sessionProject = false;
   let projectPath;
   let projectId;
   let query;
@@ -220,6 +223,8 @@ async function parseArgs(argv) {
       if (!validateCommand) {
         throw usage(`--command must be one of: ${Array.from(validatableCommands).join(", ")}.`);
       }
+    } else if (arg === "--session-project") {
+      sessionProject = true;
     } else if (arg === "--project") {
       projectPath = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--project-id") {
@@ -242,8 +247,8 @@ async function parseArgs(argv) {
   if (bodyInputCount > 1) {
     throw usage("--json, --file, @file, and --stdin cannot be used together.");
   }
-  if (projectPath && projectId) {
-    throw usage("--project and --project-id cannot be used together.");
+  if ([sessionProject, Boolean(projectPath), Boolean(projectId)].filter(Boolean).length > 1) {
+    throw usage("--session-project, --project, and --project-id cannot be used together.");
   }
   if (route.name === "validate" && !validateCommand) {
     throw usage("validate requires --command <context|search|get-entry|list-tags|append|forget>.");
@@ -257,8 +262,8 @@ async function parseArgs(argv) {
       body = parseJson(await readFile(filePath, "utf8"));
     } else if (stdinRequested) {
       body = parseJson(await readStdin(process.stdin));
-    } else if (hasShorthandOptions({ projectPath, projectId, query, tags: tagOptions, entryId, limit })) {
-      body = buildShorthandBody(route.name, { projectPath, projectId, query, tags: tagOptions, entryId, limit });
+    } else if (hasShorthandOptions({ sessionProject, projectPath, projectId, query, tags: tagOptions, entryId, limit })) {
+      body = buildShorthandBody(route.name, { sessionProject, projectPath, projectId, query, tags: tagOptions, entryId, limit });
     }
   }
   return { route, body, apiUrl, discoveryFilePath, validateCommand };
@@ -309,15 +314,31 @@ function normalizeCliTagOptions(values) {
 }
 
 function hasShorthandOptions(options) {
-  return Boolean(options.projectPath || options.projectId || options.query || (options.tags && options.tags.length > 0) || options.entryId || options.limit !== undefined);
+  return Boolean(options.sessionProject || options.projectPath || options.projectId || options.query || (options.tags && options.tags.length > 0) || options.entryId || options.limit !== undefined);
+}
+
+function isAbsoluteCliPath(value) {
+  return path.isAbsolute(value) || path.win32.isAbsolute(value);
+}
+
+function normalizeCliProjectPath(value) {
+  if (!isAbsoluteCliPath(value)) {
+    throw usage("--project requires an absolute path. Use --session-project for the current WithMate session project.");
+  }
+  return path.win32.isAbsolute(value)
+    ? path.win32.normalize(value).replace(/\\/g, "/")
+    : path.resolve(value);
 }
 
 function buildProjectTarget(options) {
+  if (options.sessionProject) {
+    return { owner: "project", scope: "project", project: { type: "current" } };
+  }
   if (options.projectId) {
     return { owner: "project", scope: "project", project: { type: "id", id: options.projectId } };
   }
   if (options.projectPath) {
-    return { owner: "project", scope: "project", project: { type: "path", path: options.projectPath } };
+    return { owner: "project", scope: "project", project: { type: "path", path: normalizeCliProjectPath(options.projectPath) } };
   }
   return null;
 }
@@ -326,7 +347,7 @@ function buildShorthandBody(command, options) {
   const target = buildProjectTarget(options);
   if (command === "search") {
     if (!target) {
-      throw usage("search shorthand requires --project <path> or --project-id <id>.");
+      throw usage("search shorthand requires --session-project, --project <absolute-path>, or --project-id <id>.");
     }
     const tags = normalizeCliTagOptions(options.tags || []);
     const query = options.query || tags.map((tag) => tag.value).join(" ");
@@ -343,7 +364,7 @@ function buildShorthandBody(command, options) {
   }
   if (command === "list_tags") {
     if (!target) {
-      throw usage("list-tags shorthand requires --project <path> or --project-id <id>.");
+      throw usage("list-tags shorthand requires --session-project, --project <absolute-path>, or --project-id <id>.");
     }
     return { schemaVersion, targets: [target] };
   }
@@ -382,7 +403,7 @@ function normalizeProjectPathTargets(value) {
   }
 
   if (value.type === "path" && typeof value.path === "string") {
-    normalized.path = path.resolve(value.path);
+    normalized.path = normalizeCliProjectPath(value.path);
   }
   return normalized;
 }
@@ -419,7 +440,7 @@ function buildSchemaResponse() {
         owner: "project",
         scope: "project",
         requiredFields: ["project"],
-        projectTypes: ["id", "path", "alias"],
+        projectTypes: ["id", "current", "path", "alias"],
       },
       {
         owner: "character",
@@ -432,7 +453,7 @@ function buildSchemaResponse() {
         scope: "project",
         requiredFields: ["character", "project"],
         characterTypes: ["id", "current"],
-        projectTypes: ["id", "path", "alias"],
+        projectTypes: ["id", "current", "path", "alias"],
       },
       {
         owner: "user",
@@ -463,6 +484,7 @@ const appendRequestKeys = new Set([
 ]);
 const forgetRequestKeys = new Set(["schemaVersion", "target", "entryIds", "reason", "sourceMessageId", "idempotencyKey"]);
 const projectTargetIdKeys = new Set(["type", "id"]);
+const projectTargetCurrentKeys = new Set(["type"]);
 const projectTargetPathKeys = new Set(["type", "path"]);
 const projectTargetAliasKeys = new Set(["type", "alias"]);
 const characterTargetIdKeys = new Set(["type", "id"]);
@@ -604,6 +626,13 @@ function normalizeProjectTarget(value, field) {
     const id = normalizeText(value.id, `${field}.id`, { maxLength: maxIdLength });
     return id.ok ? { ok: true, value: { type: "id", id: id.value } } : id;
   }
+  if (value.type === "current") {
+    const unknownKeys = rejectUnknownKeys(value, projectTargetCurrentKeys, field);
+    if (!unknownKeys.ok) {
+      return unknownKeys;
+    }
+    return { ok: true, value: { type: "current" } };
+  }
   if (value.type === "path") {
     const unknownKeys = rejectUnknownKeys(value, projectTargetPathKeys, field);
     if (!unknownKeys.ok) {
@@ -620,7 +649,7 @@ function normalizeProjectTarget(value, field) {
     const alias = normalizeText(value.alias, `${field}.alias`, { maxLength: maxIdLength });
     return alias.ok ? { ok: true, value: { type: "alias", alias: alias.value } } : alias;
   }
-  return validationError("MEMORY_INVALID_FIELD", `${field}.type must be id, path, or alias.`, `${field}.type`);
+  return validationError("MEMORY_INVALID_FIELD", `${field}.type must be id, current, path, or alias.`, `${field}.type`);
 }
 
 function normalizeCharacterTarget(value, field) {

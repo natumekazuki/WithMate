@@ -70,7 +70,7 @@ When correcting a previous entry, append a replacement with `supersedes` instead
 
 ## CLI
 
-Run the installed command from the target project directory:
+Run the installed command with an explicit target:
 
 ```bash
 withmate-memory --help
@@ -78,10 +78,10 @@ withmate-memory status
 withmate-memory context
 withmate-memory schema
 withmate-memory validate --command append --stdin
-withmate-memory search --project . --query "release workflow"
-withmate-memory search --project . --query "delivery cleanup" --tag delivery-cleanup
-withmate-memory search --project . --tags topic:delivery-cleanup,topic:relaygraph
-withmate-memory search --project . --query "withmate-memory search MEMORY_UNKNOWN_FIELD target targets"
+withmate-memory search --session-project --query "release workflow"
+withmate-memory search --session-project --query "withmate-memory search MEMORY_UNKNOWN_FIELD target targets"
+withmate-memory search --project <absolute-repo-path> --query "delivery cleanup" --tag delivery-cleanup
+withmate-memory search --project <absolute-repo-path> --tags topic:delivery-cleanup,topic:relaygraph
 withmate-memory search --file memory-search.json
 withmate-memory get-entry --file memory-get-entry.json
 withmate-memory list-tags --file memory-list-tags.json
@@ -103,7 +103,7 @@ $request = @{
   targets = @(
     @{
       owner = "project"
-      project = @{ type = "path"; path = "." }
+      project = @{ type = "current" }
       scope = "project"
     }
   )
@@ -139,7 +139,7 @@ withmate-memory validate --command append --stdin
 {
   "schemaVersion": "withmate-memory-v1",
   "targets": [
-    { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" }
+    { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" }
   ],
   "query": "approval mode"
 }
@@ -167,7 +167,7 @@ For provider-independent user preferences, conventions, constraints, or other cr
 {
   "schemaVersion": "withmate-memory-v1",
   "entryId": "<entry-id>",
-  "target": { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" }
+  "target": { "owner": "project", "project": { "type": "current" }, "scope": "project" }
 }
 ```
 
@@ -177,7 +177,7 @@ For provider-independent user preferences, conventions, constraints, or other cr
 {
   "schemaVersion": "withmate-memory-v1",
   "targets": [
-    { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" }
+    { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" }
   ]
 }
 ```
@@ -187,7 +187,7 @@ For provider-independent user preferences, conventions, constraints, or other cr
 ```json
 {
   "schemaVersion": "withmate-memory-v1",
-  "target": { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" },
+  "target": { "owner": "project", "project": { "type": "current" }, "scope": "project" },
   "kind": "decision",
   "title": "Short title",
   "body": "Durable details for future sessions.",
@@ -202,7 +202,7 @@ For provider-independent user preferences, conventions, constraints, or other cr
 ```json
 {
   "schemaVersion": "withmate-memory-v1",
-  "target": { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" },
+  "target": { "owner": "project", "project": { "type": "current" }, "scope": "project" },
   "entryIds": ["entry-id"],
   "reason": "user_request",
   "idempotencyKey": "optional-stable-key"
@@ -221,7 +221,8 @@ For provider-independent user preferences, conventions, constraints, or other cr
 
 ## Target Selection
 
-- Use a project target with `{ "project": { "type": "path", "path": "." } }` when the current directory is the intended project, including from outside WithMate-launched sessions. The helper resolves relative project paths against its own cwd before sending the request.
+- Use `--session-project` or `{ "project": { "type": "current" } }` inside a WithMate-launched session binding when the session project is the intended target.
+- Use `--project <absolute-repo-path>` or `{ "project": { "type": "path", "path": "<absolute-repo-path>" } }` for explicit project targets. Relative paths and `.` are not accepted.
 - Use a user-global target with `{ "owner": "user", "scope": "global" }` only for provider-independent user preferences, conventions, constraints, or other cross-project context. Do not store secrets, tokens, or project-specific private details there.
 - Use character targets only inside a WithMate-launched session where session binding context is available.
 - External Codex or shell sessions can use project Memory and user-global Memory; explicit character IDs are not supported for `local_user` principals yet.

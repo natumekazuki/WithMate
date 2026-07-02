@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -9,12 +9,17 @@ import { Readable } from "node:stream";
 import { describe, it } from "node:test";
 
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
+import { buildNewSession } from "../../src/app-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
   discoverWithMateMemoryApi,
   runWithMateMemoryCli,
   WITHMATE_MEMORY_CLI_EXIT_CODES,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
 } from "../withmate-memory.js";
+import { startMemoryV6RuntimeApi } from "../../src-electron/memory-v6-runtime.js";
+import { MemoryBindingRegistry } from "../../src-electron/memory-binding-registry.js";
 import {
   WITHMATE_MEMORY_BINDING_REFERENCE_ENV,
   WITHMATE_MEMORY_BINDING_REFERENCE_HEADER,
@@ -63,6 +68,16 @@ function createStatusChallengeResponse(url: string): Response {
 
 function createStdin(value: string): NodeJS.ReadStream {
   return Object.assign(Readable.from([value]), { isTTY: false }) as NodeJS.ReadStream;
+}
+
+function createProvider(id = "codex"): ModelCatalogProvider {
+  return {
+    id,
+    label: id,
+    defaultModelId: "gpt-5.4",
+    defaultReasoningEffort: "high",
+    models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["medium", "high"] }],
+  };
 }
 
 function isStatusChallengeRequest(url: string): boolean {
@@ -422,7 +437,7 @@ describe("withmate-memory CLI", () => {
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
     assert.equal(fetchCalls, 0);
     assert.match(stdout.text(), /Usage:\s+withmate-memory <command> \[options\]/);
-    assert.match(stdout.text(), /search --project \. --query/);
+    assert.match(stdout.text(), /search --session-project --query/);
     assert.match(stdout.text(), /validate --command <context\|search\|get-entry\|list-tags\|append\|forget>/);
   });
 
@@ -593,7 +608,7 @@ describe("withmate-memory CLI", () => {
 
       assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
       assert.equal(capturedBody.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
-      assert.equal(capturedBody.targets[0].project.path, tempDirectory);
+      assert.equal(capturedBody.targets[0].project.path, tempDirectory.replace(/\\/g, "/"));
       assert.equal(capturedBody.query, "release workflow");
       assert.equal(capturedBody.limit, 3);
     } finally {
@@ -638,11 +653,10 @@ describe("withmate-memory CLI", () => {
     }
   });
 
-  it("project.pathの相対pathはCLI起動cwd基準の絶対pathへ正規化して送る", async () => {
+  it("project.pathの相対pathはCLIで拒否する", async () => {
     const stdout = createOutputCapture();
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-cwd-"));
     const previousCwd = process.cwd();
-    let capturedBody: any = null;
     try {
       process.chdir(tempDirectory);
       const exitCode = await runWithMateMemoryCli(["search", "--json", JSON.stringify({
@@ -656,17 +670,140 @@ describe("withmate-memory CLI", () => {
           if (isStatusChallengeRequest(String(url))) {
             return createStatusChallengeResponse(String(url));
           }
-          assert.equal(String(url), "http://127.0.0.1:7777/v1/search");
-          capturedBody = JSON.parse(String(init?.body));
+          assert.fail(`relative project path should be rejected before runtime request: ${String(init?.body)}`);
           return new Response(JSON.stringify({ schemaVersion: MEMORY_V6_SCHEMA_VERSION, items: [] }), { status: 200 });
         },
       });
 
-      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
-      assert.equal(capturedBody.targets[0].project.path, process.cwd());
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
+      assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_CLI_USAGE");
+      assert.match(stdout.json().error.message, /absolute path/);
     } finally {
       process.chdir(previousCwd);
       await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("binding付きCLIは--session-projectとattached repositoryの絶対pathで操作でき、非attached pathは拒否する", async () => {
+    const userDataPath = await mkdtemp(join(tmpdir(), "withmate-memory-cli-userdata-"));
+    const runtimeDirectoryPath = await mkdtemp(join(tmpdir(), "withmate-memory-cli-runtime-"));
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "withmate-memory-cli-workspace-"));
+    const sessionRepoPath = join(workspaceRoot, "session-repo");
+    const attachedRepoPath = join(workspaceRoot, "attached-repo");
+    const attachedSubdirectoryPath = join(attachedRepoPath, "src");
+    const outsideRepoPath = join(workspaceRoot, "outside-repo");
+    const previousCwd = process.cwd();
+    const bindingRegistry = new MemoryBindingRegistry();
+    try {
+      await mkdir(join(sessionRepoPath, ".git"), { recursive: true });
+      await mkdir(join(attachedRepoPath, ".git"), { recursive: true });
+      await mkdir(attachedSubdirectoryPath, { recursive: true });
+      await mkdir(join(outsideRepoPath, ".git"), { recursive: true });
+
+      const runtime = await startMemoryV6RuntimeApi({ userDataPath, runtimeDirectoryPath, bindingRegistry });
+      try {
+        const binding = bindingRegistry.createBinding({
+          session: buildNewSession({
+            taskTitle: "CLI Attached Memory Binding",
+            workspaceLabel: "Session Repo",
+            workspacePath: sessionRepoPath,
+            branch: "main",
+            characterId: "character-a",
+            character: "Character A",
+            characterIconPath: "",
+            characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+            approvalMode: DEFAULT_APPROVAL_MODE,
+            allowedAdditionalDirectories: [attachedRepoPath],
+          }),
+          provider: createProvider("codex"),
+          character: null,
+        });
+        assert.ok(binding);
+        const env = {
+          WITHMATE_MEMORY_DISCOVERY_FILE: runtime.discoveryFilePath,
+          [WITHMATE_MEMORY_BINDING_REFERENCE_ENV]: binding.bindingReference,
+        };
+
+        const appendStdout = createOutputCapture();
+        const appendExitCode = await runWithMateMemoryCli(["append", "--json", JSON.stringify({
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          target: {
+            owner: "project",
+            scope: "project",
+            project: { type: "path", path: attachedSubdirectoryPath },
+          },
+          kind: "note",
+          title: "CLI attached repo note",
+          body: "CLI can write attached repository memory from an absolute path.",
+          preview: "CLI attached repo write.",
+          tags: [{ type: "topic", value: "attached-cli" }],
+        })], {
+          env,
+          stdout: appendStdout.stream,
+        });
+        assert.equal(appendExitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+        const appendJson = appendStdout.json();
+        assert.equal(appendJson.created, true);
+
+        const sessionSearchStdout = createOutputCapture();
+        const sessionSearchExitCode = await runWithMateMemoryCli(["search", "--session-project", "--query", "missing"], {
+          env,
+          stdout: sessionSearchStdout.stream,
+        });
+        assert.equal(sessionSearchExitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+        assert.deepEqual(sessionSearchStdout.json().items, []);
+
+        const searchStdout = createOutputCapture();
+        const searchExitCode = await runWithMateMemoryCli(["search", "--project", attachedRepoPath, "--query", "absolute"], {
+          env,
+          stdout: searchStdout.stream,
+        });
+        assert.equal(searchExitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+        assert.deepEqual(searchStdout.json().items.map((item: { id: string }) => item.id), [appendJson.entry.id]);
+
+        const detailStdout = createOutputCapture();
+        const detailExitCode = await runWithMateMemoryCli(["get-entry", "--project", attachedRepoPath, "--entry-id", appendJson.entry.id], {
+          env,
+          stdout: detailStdout.stream,
+        });
+        assert.equal(detailExitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+        assert.match(detailStdout.json().entry.body, /attached repository/);
+
+        const forgetStdout = createOutputCapture();
+        const forgetExitCode = await runWithMateMemoryCli(["forget", "--json", JSON.stringify({
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          target: {
+            owner: "project",
+            scope: "project",
+            project: { type: "path", path: attachedRepoPath },
+          },
+          entryIds: [appendJson.entry.id],
+          reason: "user_request",
+        })], {
+          env,
+          stdout: forgetStdout.stream,
+        });
+        assert.equal(forgetExitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+        assert.deepEqual(forgetStdout.json().results, [{ entryId: appendJson.entry.id, status: "forgotten" }]);
+
+        const forbiddenStdout = createOutputCapture();
+        const forbiddenExitCode = await runWithMateMemoryCli(["search", "--project", outsideRepoPath, "--query", "outside"], {
+          env,
+          stdout: forbiddenStdout.stream,
+        });
+        assert.equal(forbiddenExitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
+        assert.equal(forbiddenStdout.json().error.code, "MEMORY_FORBIDDEN");
+        assert.equal(forbiddenStdout.json().error.message, "Project target is not attached to this session.");
+        assert.deepEqual(forbiddenStdout.json().error.allowedProjectTargets, ["Session Repo", "attached-repo"]);
+      } finally {
+        process.chdir(previousCwd);
+        await runtime.stop();
+      }
+    } finally {
+      process.chdir(previousCwd);
+      await rm(userDataPath, { recursive: true, force: true });
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+      await rm(workspaceRoot, { recursive: true, force: true });
     }
   });
 

@@ -134,7 +134,8 @@ Input options:
   --stdin             Read request body from standard input.
 
 Shorthand options:
-  --project <path>
+  --session-project
+  --project <absolute-path>
   --project-id <id>
   --query <text>
   --tag <tag>
@@ -151,7 +152,8 @@ Validation:
 
 Examples:
   withmate-memory status
-  withmate-memory search --project . --query "release workflow"
+  withmate-memory search --session-project --query "release workflow"
+  withmate-memory search --project C:\\path\\to\\repo --query "release workflow"
   withmate-memory validate --command append --stdin
   withmate-memory schema
 `;
@@ -310,7 +312,7 @@ export async function parseWithMateMemoryCliArgs(
   }
   const command = rawCommand ? commandAliases.get(rawCommand) : undefined;
   if (!command) {
-    throw usageError("Usage: withmate-memory <help|status|context|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
+    throw usageError("Usage: withmate-memory <help|status|context|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--session-project | --project <absolute-path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
   }
   if (command === "help" || rest.includes("--help") || rest.includes("-h")) {
     return { command: "help", body: {} };
@@ -322,6 +324,7 @@ export async function parseWithMateMemoryCliArgs(
   let apiUrl: string | undefined;
   let discoveryFilePath: string | undefined;
   let validateCommand: WithMateMemoryValidatedCommand | undefined;
+  let sessionProject = false;
   let projectPath: string | undefined;
   let projectId: string | undefined;
   let query: string | undefined;
@@ -349,6 +352,8 @@ export async function parseWithMateMemoryCliArgs(
       if (!validateCommand) {
         throw usageError(`--command must be one of: ${Array.from(validatableCommands).join(", ")}.`);
       }
+    } else if (arg === "--session-project") {
+      sessionProject = true;
     } else if (arg === "--project") {
       projectPath = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--project-id") {
@@ -373,8 +378,8 @@ export async function parseWithMateMemoryCliArgs(
     throw usageError("--json, --file, @file, and --stdin cannot be used together.");
   }
 
-  if (projectPath && projectId) {
-    throw usageError("--project and --project-id cannot be used together.");
+  if ([sessionProject, Boolean(projectPath), Boolean(projectId)].filter(Boolean).length > 1) {
+    throw usageError("--session-project, --project, and --project-id cannot be used together.");
   }
 
   if (command === "validate" && !validateCommand) {
@@ -392,8 +397,8 @@ export async function parseWithMateMemoryCliArgs(
         throw usageError("--stdin requires stdin.");
       }
       body = await parseJsonInput(await readStdin(deps.stdin));
-    } else if (hasShorthandOptions({ projectPath, projectId, query, tags: tagOptions, entryId, limit })) {
-      body = buildShorthandBody(command, { projectPath, projectId, query, tags: tagOptions, entryId, limit });
+    } else if (hasShorthandOptions({ sessionProject, projectPath, projectId, query, tags: tagOptions, entryId, limit })) {
+      body = buildShorthandBody(command, { sessionProject, projectPath, projectId, query, tags: tagOptions, entryId, limit });
     } else if (deps.stdin && !deps.stdin.isTTY) {
       body = await parseJsonInput(await readStdin(deps.stdin));
     }
@@ -448,6 +453,7 @@ function normalizeCliTagOptions(values: readonly string[]): Array<{ type: string
 }
 
 function hasShorthandOptions(options: {
+  sessionProject?: boolean;
   projectPath?: string;
   projectId?: string;
   query?: string;
@@ -455,22 +461,38 @@ function hasShorthandOptions(options: {
   entryId?: string;
   limit?: number;
 }): boolean {
-  return Boolean(options.projectPath || options.projectId || options.query || (options.tags && options.tags.length > 0) || options.entryId || options.limit !== undefined);
+  return Boolean(options.sessionProject || options.projectPath || options.projectId || options.query || (options.tags && options.tags.length > 0) || options.entryId || options.limit !== undefined);
 }
 
-function buildProjectTarget(options: { projectPath?: string; projectId?: string }): unknown | null {
+function isAbsoluteCliPath(value: string): boolean {
+  return path.isAbsolute(value) || path.win32.isAbsolute(value);
+}
+
+function normalizeCliProjectPath(value: string): string {
+  if (!isAbsoluteCliPath(value)) {
+    throw usageError("--project requires an absolute path. Use --session-project for the current WithMate session project.");
+  }
+  return path.win32.isAbsolute(value)
+    ? path.win32.normalize(value).replace(/\\/g, "/")
+    : path.resolve(value);
+}
+
+function buildProjectTarget(options: { sessionProject?: boolean; projectPath?: string; projectId?: string }): unknown | null {
+  if (options.sessionProject) {
+    return { owner: "project", scope: "project", project: { type: "current" } };
+  }
   if (options.projectId) {
     return { owner: "project", scope: "project", project: { type: "id", id: options.projectId } };
   }
   if (options.projectPath) {
-    return { owner: "project", scope: "project", project: { type: "path", path: options.projectPath } };
+    return { owner: "project", scope: "project", project: { type: "path", path: normalizeCliProjectPath(options.projectPath) } };
   }
   return null;
 }
 
 function buildShorthandBody(
   command: WithMateMemoryCliCommand,
-  options: { projectPath?: string; projectId?: string; query?: string; tags?: readonly string[]; entryId?: string; limit?: number },
+  options: { sessionProject?: boolean; projectPath?: string; projectId?: string; query?: string; tags?: readonly string[]; entryId?: string; limit?: number },
 ): unknown {
   if (command === "validate") {
     throw usageError("validate shorthand options are not supported. Use --json, --file, @file, or --stdin.");
@@ -479,7 +501,7 @@ function buildShorthandBody(
   const target = buildProjectTarget(options);
   if (command === "search") {
     if (!target) {
-      throw usageError("search shorthand requires --project <path> or --project-id <id>.");
+      throw usageError("search shorthand requires --session-project, --project <absolute-path>, or --project-id <id>.");
     }
     const tags = normalizeCliTagOptions(options.tags ?? []);
     const query = options.query ?? tags.map((tag) => tag.value).join(" ");
@@ -497,7 +519,7 @@ function buildShorthandBody(
 
   if (command === "list_tags") {
     if (!target) {
-      throw usageError("list-tags shorthand requires --project <path> or --project-id <id>.");
+      throw usageError("list-tags shorthand requires --session-project, --project <absolute-path>, or --project-id <id>.");
     }
     return {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -534,7 +556,7 @@ function normalizeProjectPathTargets(value: unknown): unknown {
   }
 
   if (record.type === "path" && typeof record.path === "string") {
-    normalized.path = path.resolve(record.path);
+    normalized.path = normalizeCliProjectPath(record.path);
   }
   return normalized;
 }
@@ -570,7 +592,7 @@ function buildSchemaResponse(): unknown {
         owner: "project",
         scope: "project",
         requiredFields: ["project"],
-        projectTypes: ["id", "path", "alias"],
+        projectTypes: ["id", "current", "path", "alias"],
       },
       {
         owner: "character",
@@ -583,7 +605,7 @@ function buildSchemaResponse(): unknown {
         scope: "project",
         requiredFields: ["character", "project"],
         characterTypes: ["id", "current"],
-        projectTypes: ["id", "path", "alias"],
+        projectTypes: ["id", "current", "path", "alias"],
       },
       {
         owner: "user",

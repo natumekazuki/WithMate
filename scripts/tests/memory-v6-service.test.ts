@@ -76,6 +76,7 @@ async function withService<T>(runner: (input: { service: MemoryV6Service; storag
     storage,
     resolveProjectById: (id) => ({ id, displayName: id }),
     resolveProjectByPath: (projectPath) => projectPath === "C:/workspace/project-a" ? { id: "project-a", displayName: "Project A" } : null,
+    resolveKnownProjectByPath: (projectPath) => projectPath === "C:/workspace/project-a" ? { id: "project-a", displayName: "Project A" } : null,
     resolveProjectByAlias: (alias) => alias === "main" ? { id: "project-a", displayName: "Project A" } : null,
     resolveCharacterById: (id) => id === "character-a" ? { id, name: "Character A" } : null,
   });
@@ -150,6 +151,7 @@ describe("MemoryV6Service", () => {
         session: { id: "session-a" },
         character: { id: "character-a", name: "Character A" },
         sessionProject: { id: "project-a", displayName: "Project A" },
+        allowedProjectTargets: [{ id: "project-a", displayName: "Project A" }],
         permissions: allPermissions,
       });
     });
@@ -285,6 +287,25 @@ describe("MemoryV6Service", () => {
       }));
       assert.equal("error" in forbidden, true);
       assert.equal(forbidden.error.code, "MEMORY_FORBIDDEN");
+      assert.equal(forbidden.error.message, "Project target is not attached to this session.");
+      assert.deepEqual(forbidden.error.allowedProjectTargets, ["Project A"]);
+      assert.match(forbidden.error.suggestion ?? "", /Attach the repository/);
+
+      const characterProjectForbidden = service.append(principal({
+        character: { id: "character-b", name: "Character B" },
+        accessibleCharacterIds: [],
+      }), appendRequest({
+        target: {
+          owner: "character",
+          scope: "project",
+          character: { type: "id", id: "character-a" },
+          project: { type: "id", id: "project-a" },
+        },
+      }));
+      assert.equal("error" in characterProjectForbidden, true);
+      assert.equal(characterProjectForbidden.error.code, "MEMORY_FORBIDDEN");
+      assert.equal(characterProjectForbidden.error.message, "Memory target is not accessible from the current binding.");
+      assert.equal(characterProjectForbidden.error.allowedProjectTargets, undefined);
 
       const missingCurrentCharacter = service.append(principal({ character: null }), appendRequest({
         target: {
@@ -295,6 +316,83 @@ describe("MemoryV6Service", () => {
       }));
       assert.equal("error" in missingCurrentCharacter, true);
       assert.equal(missingCurrentCharacter.error.code, "MEMORY_BINDING_REQUIRED");
+    });
+  });
+
+  it("session_binding はattached project targetを扱える", async () => {
+    await withService(({ service, storage }) => {
+      const serviceWithAttachedResolver = new MemoryV6Service({
+        storage,
+        resolveProjectById: (id) => id === "project-a" || id === "project-b" ? { id, displayName: id } : null,
+        resolveProjectByPath: (projectPath) => {
+          if (projectPath === "C:/workspace/project-a") {
+            return { id: "project-a", displayName: "Project A" };
+          }
+          if (projectPath === "D:/delivery/repo") {
+            return { id: "project-b", displayName: "Delivery Repo" };
+          }
+          return null;
+        },
+        resolveKnownProjectByPath: (projectPath) => {
+          if (projectPath === "C:/workspace/project-a") {
+            return { id: "project-a", displayName: "Project A" };
+          }
+          if (projectPath === "D:/delivery/repo") {
+            return { id: "project-b", displayName: "Delivery Repo" };
+          }
+          return null;
+        },
+      });
+      const attachedPrincipal = principal({
+        accessibleProjectIds: ["project-a", "project-b"],
+        accessibleProjects: [
+          { id: "project-a", displayName: "Project A" },
+          { id: "project-b", displayName: "Delivery Repo" },
+        ],
+      });
+
+      const append = serviceWithAttachedResolver.append(attachedPrincipal, appendRequest({
+        target: {
+          owner: "project",
+          scope: "project",
+          project: { type: "path", path: "D:/delivery/repo" },
+        },
+        idempotencyKey: "attached-project-append",
+      }));
+      assert.equal("error" in append, false);
+      assert.equal(append.entry.owner.id, "project-b");
+
+      const search = serviceWithAttachedResolver.search(attachedPrincipal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [{ owner: "project", scope: "project", project: { type: "path", path: "D:/delivery/repo" } }],
+        query: "agent payload",
+      });
+      assert.equal("error" in search, false);
+      assert.deepEqual(search.items.map((item) => item.id), [append.entry.id]);
+    });
+  });
+
+  it("session_binding はcurrent project targetをsession projectへ解決する", async () => {
+    await withService(({ service }) => {
+      const append = service.append(principal(), appendRequest({
+        target: {
+          owner: "project",
+          scope: "project",
+          project: { type: "current" },
+        },
+        idempotencyKey: "current-project-append",
+      }));
+      assert.equal("error" in append, false);
+      assert.equal(append.entry.owner.id, "project-a");
+
+      const localUser = createLocalUserMemoryPrincipal();
+      const localCurrent = service.search(localUser, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [{ owner: "project", scope: "project", project: { type: "current" } }],
+        query: "payload",
+      });
+      assert.equal("error" in localCurrent, true);
+      assert.equal(localCurrent.error.code, "MEMORY_BINDING_REQUIRED");
     });
   });
 
@@ -322,6 +420,16 @@ describe("MemoryV6Service", () => {
       });
       assert.equal("error" in detail, true);
       assert.equal(detail.error.code, "MEMORY_ENTRY_NOT_FOUND");
+
+      const append = service.append(principal(), appendRequest({ idempotencyKey: "get-entry-target-entry" }));
+      assert.equal("error" in append, false);
+      const mismatchedDetail = service.getEntry(principal(), {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: append.entry.id,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-b" } },
+      });
+      assert.equal("error" in mismatchedDetail, true);
+      assert.equal(mismatchedDetail.error.code, "MEMORY_FORBIDDEN");
 
       const forget = service.forget(principal(), {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -652,6 +760,34 @@ describe("MemoryV6Service", () => {
       assert.ok(first);
       assert.ok(second);
       assert.equal(second.id, first.id);
+    } finally {
+      storage.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("runtime project resolver はGit管理外directoryをproject targetとして解決しない", async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-v6-non-git-project-"));
+    const workspacePath = join(tempDirectory, "notes");
+    await mkdir(workspacePath, { recursive: true });
+    const { dbPath } = await createOrVerifyV6FreshDatabase(tempDirectory);
+    const storage = new MemoryV6Storage(dbPath);
+    const service = new MemoryV6Service({
+      storage,
+      ...createMemoryV6ProjectResolver(dbPath),
+    });
+    try {
+      const localUser = createLocalUserMemoryPrincipal();
+      const append = service.append(localUser, appendRequest({
+        target: {
+          owner: "project",
+          scope: "project",
+          project: { type: "path", path: workspacePath },
+        },
+      }));
+      assert.equal("error" in append, true);
+      assert.equal(append.error.code, "MEMORY_TARGET_NOT_FOUND");
+      assert.equal(append.error.field, "target.project");
     } finally {
       storage.close();
       await rm(tempDirectory, { recursive: true, force: true });
