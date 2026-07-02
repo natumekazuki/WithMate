@@ -6,11 +6,13 @@ describe("package build config", () => {
   it("Windows installer exposes withmate-memory without editing the user Path value", async () => {
     const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
       build?: {
+        files?: string[];
         extraFiles?: Array<{ from?: string; to?: string }>;
         nsis?: { include?: string };
       };
     };
 
+    assert.ok(packageJson.build?.files?.includes("build/icon.ico"));
     assert.deepEqual(
       packageJson.build?.extraFiles?.find((entry) => entry.to === "withmate-memory.cmd"),
       { from: "build/cli/withmate-memory.cmd", to: "withmate-memory.cmd" },
