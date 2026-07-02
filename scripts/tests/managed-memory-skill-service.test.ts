@@ -619,7 +619,7 @@ describe("withmate-memory bundled helper", () => {
   });
 
   it("read shorthand は helper でも request body を組み立てる", async () => {
-    const { stdout } = await execFileAsync(process.execPath, [helperPath, "search", "--project", ".", "--query", "cli"], {
+    const { stdout } = await execFileAsync(process.execPath, [helperPath, "search", "--project", path.resolve("."), "--query", "cli"], {
       env: {
         ...process.env,
         WITHMATE_MEMORY_DISCOVERY_FILE: path.join(tmpdir(), "withmate-memory-missing.json"),

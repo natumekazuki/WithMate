@@ -139,7 +139,7 @@ withmate-memory validate --command append --stdin
 {
   "schemaVersion": "withmate-memory-v1",
   "targets": [
-    { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" }
+    { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" }
   ],
   "query": "approval mode"
 }
@@ -177,7 +177,7 @@ For provider-independent user preferences, conventions, constraints, or other cr
 {
   "schemaVersion": "withmate-memory-v1",
   "targets": [
-    { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" }
+    { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" }
   ]
 }
 ```
