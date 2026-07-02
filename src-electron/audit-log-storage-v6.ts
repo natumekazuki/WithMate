@@ -63,7 +63,9 @@ function normalizePageRequest(request?: AuditLogSummaryPageRequest | null): { cu
     ? Math.trunc(request.limit)
     : DEFAULT_PAGE_LIMIT;
   return {
-    cursor: typeof request?.cursor === "number" && Number.isFinite(request.cursor) ? Math.trunc(request.cursor) : null,
+    cursor: typeof request?.cursor === "number" && Number.isFinite(request.cursor) && request.cursor > 0
+      ? Math.trunc(request.cursor)
+      : null,
     limit: Math.max(1, Math.min(MAX_PAGE_LIMIT, requestedLimit)),
   };
 }

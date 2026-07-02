@@ -135,4 +135,49 @@ describe("AuditLogStorageV6", () => {
       await rm(userDataPath, { recursive: true, force: true });
     }
   });
+
+  it("summary page の cursor 0 は先頭ページとして扱う", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-audit-log-v6-"));
+    try {
+      const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
+      seedSession(dbPath);
+      const storage = new AuditLogStorageV6(dbPath);
+      try {
+        storage.createAuditLog(baseAuditLog({
+          createdAt: "2026-06-28T00:00:00.000Z",
+          assistantText: "first",
+        }));
+        const second = storage.createAuditLog(baseAuditLog({
+          createdAt: "2026-06-28T00:01:00.000Z",
+          assistantText: "second",
+        }));
+
+        const firstPage = storage.listSessionAuditLogSummaryPage("session-v6", {
+          cursor: 0,
+          limit: 1,
+        });
+
+        assert.equal(firstPage.total, 2);
+        assert.equal(firstPage.entries.length, 1);
+        assert.equal(firstPage.entries[0]?.id, second.id);
+        assert.equal(firstPage.entries[0]?.assistantTextPreview, "second");
+        assert.equal(firstPage.hasMore, true);
+        assert.equal(firstPage.nextCursor, second.id);
+
+        const secondPage = storage.listSessionAuditLogSummaryPage("session-v6", {
+          cursor: firstPage.nextCursor,
+          limit: 1,
+        });
+
+        assert.equal(secondPage.entries.length, 1);
+        assert.equal(secondPage.entries[0]?.assistantTextPreview, "first");
+        assert.equal(secondPage.hasMore, false);
+        assert.equal(secondPage.nextCursor, null);
+      } finally {
+        storage.close();
+      }
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
 });
