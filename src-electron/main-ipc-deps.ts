@@ -92,6 +92,8 @@ export type MainIpcWindowDepsArgs = {
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFiles(targetWindow: MaybeWindow, initialPath: string | null): Promise<string[]>;
   pickSessionFiles(targetWindow: MaybeWindow, sessionId: string): Promise<string[]>;
+  pickSessionFolder(targetWindow: MaybeWindow, sessionId: string): Promise<string | null>;
+  pickSessionImageFile(targetWindow: MaybeWindow, sessionId: string): Promise<string | null>;
   pickImageFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   copyFilesToSessionFiles(sessionId: string, sourcePaths: string[]): Promise<string[]>;
   savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string>;
@@ -314,6 +316,8 @@ export function createMainIpcRegistrationDeps(
     pickFile: args.window.pickFile,
     pickFiles: args.window.pickFiles,
     pickSessionFiles: args.window.pickSessionFiles,
+    pickSessionFolder: args.window.pickSessionFolder,
+    pickSessionImageFile: args.window.pickSessionImageFile,
     pickImageFile: args.window.pickImageFile,
     copyFilesToSessionFiles: args.window.copyFilesToSessionFiles,
     savePastedSessionFile: args.window.savePastedSessionFile,

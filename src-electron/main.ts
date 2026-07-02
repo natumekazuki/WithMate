@@ -1179,6 +1179,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 pickFiles: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickFiles(targetWindow, initialPath),
                 pickSessionFiles,
+                pickSessionFolder,
+                pickSessionImageFile,
                 pickImageFile: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickImageFile(targetWindow, initialPath),
                 copyFilesToSessionFiles,
@@ -2987,6 +2989,18 @@ async function pickSessionFiles(targetWindow: BrowserWindow | null, sessionId: s
   const directoryPath = ensureSessionFilesDirectory(sessionId);
   const selectedPaths = await requireWindowDialogService().pickFiles(targetWindow, directoryPath);
   return selectedPaths.filter((selectedPath) => isPathInsideOrEqual(directoryPath, selectedPath));
+}
+
+async function pickSessionFolder(targetWindow: BrowserWindow | null, sessionId: string): Promise<string | null> {
+  const directoryPath = ensureSessionFilesDirectory(sessionId);
+  const selectedPath = await requireWindowDialogService().pickDirectory(targetWindow, directoryPath);
+  return selectedPath && isPathInsideOrEqual(directoryPath, selectedPath) ? selectedPath : null;
+}
+
+async function pickSessionImageFile(targetWindow: BrowserWindow | null, sessionId: string): Promise<string | null> {
+  const directoryPath = ensureSessionFilesDirectory(sessionId);
+  const selectedPath = await requireWindowDialogService().pickImageFile(targetWindow, directoryPath);
+  return selectedPath && isPathInsideOrEqual(directoryPath, selectedPath) ? selectedPath : null;
 }
 
 async function savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string> {

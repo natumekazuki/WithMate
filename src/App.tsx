@@ -2591,6 +2591,44 @@ export default function AgentSessionWindowApp() {
     });
   };
 
+  const handlePickSessionFolder = async () => {
+    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly) {
+      return;
+    }
+
+    setIsSkillPickerOpen(false);
+    const selectedPath = await withmateApi.pickSessionFolder(selectedSession.id);
+    if (!selectedPath) {
+      return;
+    }
+
+    applySessionFilesReferencePathsCommand({
+      selectedPaths: [selectedPath],
+      referencePaths: [selectedPath],
+      setPickerBaseDirectory,
+      insertReferencePaths,
+    });
+  };
+
+  const handlePickSessionImage = async () => {
+    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly) {
+      return;
+    }
+
+    setIsSkillPickerOpen(false);
+    const selectedPath = await withmateApi.pickSessionImageFile(selectedSession.id);
+    if (!selectedPath) {
+      return;
+    }
+
+    applySessionFilesReferencePathsCommand({
+      selectedPaths: [selectedPath],
+      referencePaths: [selectedPath],
+      setPickerBaseDirectory,
+      insertReferencePaths,
+    });
+  };
+
   const handleComposerPaste = createPastedSessionAttachmentHandler({
     alertError: (message) => window.alert(message),
     canPaste: () => {
@@ -3022,6 +3060,8 @@ export default function AgentSessionWindowApp() {
         onPickImage: () => void pickAndInsertPath("image"),
         onAddToSessionFiles: () => void handleAddToSessionFiles(),
         onPickSessionFiles: () => void handlePickSessionFiles(),
+        onPickSessionFolder: () => void handlePickSessionFolder(),
+        onPickSessionImage: () => void handlePickSessionImage(),
         onToggleAgentPicker: handleToggleAgentPicker,
         onToggleSkillPicker: handleToggleSkillPicker,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
