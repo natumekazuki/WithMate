@@ -3,7 +3,7 @@
 The bundled helper is a thin client for the running WithMate V6 Memory API. It does not read or write database files directly.
 Project-scoped Memory and user-global Memory can be used from external Codex or shell sessions while WithMate is running. Current character and current session context require a WithMate-launched session binding.
 
-Run it from the target project directory after WithMate is installed:
+Run it with an explicit target after WithMate is installed:
 
 ```bash
 withmate-memory <command> [--json <json> | --file <path> | --stdin]
@@ -68,9 +68,9 @@ Sends:
 ### search
 
 ```bash
-withmate-memory search --project . --query "approval mode"
-withmate-memory search --project . --query "delivery cleanup" --tag delivery-cleanup
-withmate-memory search --project . --tags topic:delivery-cleanup,topic:relaygraph
+withmate-memory search --session-project --query "approval mode"
+withmate-memory search --project <absolute-repo-path> --query "delivery cleanup" --tag delivery-cleanup
+withmate-memory search --project <absolute-repo-path> --tags topic:delivery-cleanup,topic:relaygraph
 withmate-memory search --file memory-search.json
 ```
 
@@ -80,7 +80,7 @@ Request shape:
 {
   "schemaVersion": "withmate-memory-v1",
   "targets": [
-    { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" }
+    { "owner": "project", "project": { "type": "current" }, "scope": "project" }
   ],
   "query": "approval mode"
 }
@@ -104,7 +104,7 @@ For provider-independent user preferences, conventions, constraints, or other cr
 ### get-entry
 
 ```bash
-withmate-memory get-entry --project . --entry-id <entry-id>
+withmate-memory get-entry --session-project --entry-id <entry-id>
 withmate-memory get-entry --file memory-get-entry.json
 ```
 
@@ -114,7 +114,7 @@ Request shape:
 {
   "schemaVersion": "withmate-memory-v1",
   "entryId": "<entry-id>",
-  "target": { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" }
+  "target": { "owner": "project", "project": { "type": "current" }, "scope": "project" }
 }
 ```
 
@@ -123,7 +123,7 @@ External Codex or shell sessions must include `target`, using either a project t
 ### list-tags
 
 ```bash
-withmate-memory list-tags --project .
+withmate-memory list-tags --session-project
 withmate-memory list-tags --file memory-list-tags.json
 ```
 
@@ -133,7 +133,7 @@ Request shape:
 {
   "schemaVersion": "withmate-memory-v1",
   "targets": [
-    { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" }
+    { "owner": "project", "project": { "type": "current" }, "scope": "project" }
   ]
 }
 ```
@@ -149,7 +149,7 @@ Input shape:
 ```json
 {
   "schemaVersion": "withmate-memory-v1",
-  "target": { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" },
+  "target": { "owner": "project", "project": { "type": "current" }, "scope": "project" },
   "kind": "decision",
   "title": "Short title",
   "body": "Durable details for future sessions.",
@@ -170,7 +170,7 @@ Input shape:
 ```json
 {
   "schemaVersion": "withmate-memory-v1",
-  "target": { "owner": "project", "project": { "type": "path", "path": "." }, "scope": "project" },
+  "target": { "owner": "project", "project": { "type": "current" }, "scope": "project" },
   "entryIds": ["entry-id"],
   "reason": "user_request",
   "idempotencyKey": "optional-stable-key"
@@ -190,8 +190,8 @@ Input shape:
 ## Notes
 
 - Search results exclude forgotten and superseded entries.
-- Project targets with `{ "type": "path", "path": "." }` are valid from external Codex sessions.
-- Relative project paths are resolved by the helper against the CLI process cwd before being sent to WithMate.
+- Project targets use `--session-project` / `{ "type": "current" }` inside a WithMate-launched session binding, or `--project <absolute-repo-path>` / `{ "type": "path", "path": "<absolute-repo-path>" }` for explicit project paths.
+- Relative project paths and `.` are rejected by the helper.
 - External `get-entry` requests require an explicit target.
 - Character targets and `context` require a WithMate-launched session binding.
 - External Codex or shell sessions currently support project Memory and user-global Memory; explicit Character ID access needs a separate principal and authorization design.

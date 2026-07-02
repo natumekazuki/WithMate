@@ -63,7 +63,17 @@ function createProvider(id = "codex"): ModelCatalogProvider {
 
 describe("MemoryBindingRegistry", () => {
   it("binding reference から現在sessionのprincipalを解決し、別sessionとは混線しない", () => {
-    const registry = new MemoryBindingRegistry();
+    const registry = new MemoryBindingRegistry({
+      resolveProjectByPath: (projectPath) => {
+        if (projectPath === "C:/workspace/a") {
+          return { id: "project-a", displayName: "Workspace A" };
+        }
+        if (projectPath === "C:/workspace/b") {
+          return { id: "project-b", displayName: "Workspace B" };
+        }
+        return null;
+      },
+    });
     const sessionA = createSession({ id: "session-a" });
     const sessionB = createSession({
       id: "session-b",
@@ -94,12 +104,13 @@ describe("MemoryBindingRegistry", () => {
     assert.equal(principalA?.sessionId, "session-a");
     assert.equal(principalA?.providerId, "codex");
     assert.equal(principalA?.character?.id, "character-a");
-    assert.equal(principalA?.sessionProject?.id, "C:/workspace/a");
-    assert.deepEqual(principalA?.accessibleProjectIds, ["C:/workspace/a"]);
+    assert.equal(principalA?.sessionProject?.id, "project-a");
+    assert.deepEqual(principalA?.accessibleProjectIds, ["project-a"]);
+    assert.deepEqual(principalA?.accessibleProjects, [{ id: "project-a", displayName: "Workspace A" }]);
     assert.equal(principalB?.sessionId, "session-b");
     assert.equal(principalB?.providerId, "copilot");
     assert.equal(principalB?.character?.id, "character-b");
-    assert.equal(principalB?.sessionProject?.id, "C:/workspace/b");
+    assert.equal(principalB?.sessionProject?.id, "project-b");
   });
 
   it("revoke後と期限切れ後はbinding referenceをprincipalへ解決しない", () => {
@@ -193,5 +204,35 @@ describe("MemoryBindingRegistry", () => {
     assert.equal(binding.bindingReference, "");
     assert.equal(registry.resolvePrincipal(staleBinding.bindingReference), null);
     assert.equal(registry.resolvePrincipal(binding.bindingReference), null);
+  });
+
+  it("sessionの追加ディレクトリをGit project targetとして解決できる場合だけprincipalへ含める", () => {
+    const registry = new MemoryBindingRegistry({
+      resolveProjectByPath: (projectPath) => {
+        if (projectPath === "C:/workspace/a") {
+          return { id: "project-a", displayName: "Workspace A" };
+        }
+        if (projectPath === "D:/delivery/repo") {
+          return { id: "project-delivery", displayName: "Delivery Repo" };
+        }
+        return null;
+      },
+    });
+    const binding = registry.createBinding({
+      session: createSession({
+        allowedAdditionalDirectories: ["D:/delivery/repo", "E:/notes", "D:/delivery/repo"],
+      }),
+      provider: createProvider("codex"),
+      character: createCharacter(),
+    });
+
+    assert.ok(binding);
+    const principal = registry.resolvePrincipal(binding.bindingReference);
+    assert.deepEqual(principal?.sessionProject, { id: "project-a", displayName: "Workspace A" });
+    assert.deepEqual(principal?.accessibleProjectIds, ["project-a", "project-delivery"]);
+    assert.deepEqual(principal?.accessibleProjects, [
+      { id: "project-a", displayName: "Workspace A" },
+      { id: "project-delivery", displayName: "Delivery Repo" },
+    ]);
   });
 });

@@ -62,6 +62,7 @@ export type MemoryResolveContextResponse = {
   session: { id: string };
   character: { id: string; name: string } | null;
   sessionProject: { id: string; displayName: string } | null;
+  allowedProjectTargets: { id: string; displayName: string }[];
   permissions: MemoryPermission[];
 };
 
@@ -122,6 +123,7 @@ export function createMemoryResolveContextResponse(input: Omit<MemoryResolveCont
     session: input.session,
     character: input.character,
     sessionProject: input.sessionProject,
+    allowedProjectTargets: input.allowedProjectTargets.map((project) => ({ ...project })),
     permissions: [...input.permissions],
   };
 }

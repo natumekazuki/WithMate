@@ -28,6 +28,7 @@ export type MemoryPermission =
 
 export type ProjectTargetRef =
   | { type: "id"; id: string }
+  | { type: "current" }
   | { type: "path"; path: string }
   | { type: "alias"; alias: string };
 
@@ -119,6 +120,8 @@ export type MemoryError = {
   code: string;
   message: string;
   field?: string;
+  allowedProjectTargets?: string[];
+  suggestion?: string;
 };
 
 export type MemoryValidationResult<T> =

@@ -34,6 +34,7 @@ export type MemoryBindingRecord = {
   revokedAt: string | null;
   character: { id: string; name: string } | null;
   sessionProject: { id: string; displayName: string } | null;
+  accessibleProjects: readonly { id: string; displayName: string }[];
 };
 
 export type CreateMemoryBindingInput = {
@@ -49,6 +50,19 @@ export type CreateMemoryBindingInput = {
 export type MemoryBindingProjectResolver = {
   resolveProjectByPath?(projectPath: string): MemoryV6ProjectContext | null;
 };
+
+function uniqueProjects(projects: readonly (MemoryV6ProjectContext | null)[]): MemoryV6ProjectContext[] {
+  const seen = new Set<string>();
+  const unique: MemoryV6ProjectContext[] = [];
+  for (const project of projects) {
+    if (!project || seen.has(project.id)) {
+      continue;
+    }
+    seen.add(project.id);
+    unique.push(project);
+  }
+  return unique;
+}
 
 export class MemoryBindingRegistry {
   private readonly recordsByBindingId = new Map<string, MemoryBindingRecord>();
@@ -80,12 +94,19 @@ export class MemoryBindingRegistry {
     const resolvedProject = workspacePath
       ? this.projectResolver.resolveProjectByPath?.(workspacePath) ?? null
       : null;
-    const sessionProject = workspacePath
+    const sessionProject = workspacePath && resolvedProject
       ? {
-          id: resolvedProject?.id ?? workspacePath,
-          displayName: input.session.workspaceLabel.trim() || resolvedProject?.displayName || workspacePath,
+          id: resolvedProject.id,
+          displayName: input.session.workspaceLabel.trim() || resolvedProject.displayName,
         }
       : null;
+    const accessibleProjects = uniqueProjects([
+      sessionProject,
+      ...input.session.allowedAdditionalDirectories.map((directoryPath) => {
+        const normalizedDirectoryPath = directoryPath.trim();
+        return normalizedDirectoryPath ? this.projectResolver.resolveProjectByPath?.(normalizedDirectoryPath) ?? null : null;
+      }),
+    ]);
     const character = input.character
       ? { id: input.character.id, name: input.character.name }
       : input.session.characterId.trim()
@@ -105,6 +126,7 @@ export class MemoryBindingRegistry {
       revokedAt: null,
       character,
       sessionProject,
+      accessibleProjects,
     };
 
     this.recordsByBindingId.set(record.bindingId, record);
@@ -181,7 +203,8 @@ export class MemoryBindingRegistry {
       character: record.character,
       sessionProject: record.sessionProject,
       accessibleCharacterIds: record.character ? [record.character.id] : [],
-      accessibleProjectIds: record.sessionProject ? [record.sessionProject.id] : [],
+      accessibleProjectIds: record.accessibleProjects.map((project) => project.id),
+      accessibleProjects: record.accessibleProjects.map((project) => ({ ...project })),
     };
   }
 }
