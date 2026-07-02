@@ -1632,6 +1632,44 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
   }
 
+  async function pickSessionFolder(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !snapshot || runDisabled) {
+      return;
+    }
+
+    const selectedPath = await withmateApi.pickSessionFolder(snapshot.session.id);
+    if (!selectedPath) {
+      return;
+    }
+
+    applySessionFilesReferencePathsCommand({
+      selectedPaths: [selectedPath],
+      referencePaths: [selectedPath],
+      setPickerBaseDirectory,
+      insertReferencePaths,
+    });
+  }
+
+  async function pickSessionImage(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !snapshot || runDisabled) {
+      return;
+    }
+
+    const selectedPath = await withmateApi.pickSessionImageFile(snapshot.session.id);
+    if (!selectedPath) {
+      return;
+    }
+
+    applySessionFilesReferencePathsCommand({
+      selectedPaths: [selectedPath],
+      referencePaths: [selectedPath],
+      setPickerBaseDirectory,
+      insertReferencePaths,
+    });
+  }
+
   const handleComposerPaste = createPastedSessionAttachmentHandler({
     alertError: (message) => window.alert(message),
     canPaste: () => !!getWithMateApi() && !!snapshot && !runDisabled,
@@ -3048,6 +3086,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onPickImage: () => void pickAndInsertPath("image"),
         onAddToSessionFiles: () => void addToSessionFiles(),
         onPickSessionFiles: () => void pickSessionFiles(),
+        onPickSessionFolder: () => void pickSessionFolder(),
+        onPickSessionImage: () => void pickSessionImage(),
         onToggleAgentPicker: handleToggleAgentPicker,
         onToggleSkillPicker: handleToggleSkillPicker,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),

@@ -172,6 +172,14 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:pick-session-files",
     args: ["session-1"],
   });
+  assert.deepEqual(await api.pickSessionFolder("session-1"), {
+    channel: "withmate:pick-session-folder",
+    args: ["session-1"],
+  });
+  assert.deepEqual(await api.pickSessionImageFile("session-1"), {
+    channel: "withmate:pick-session-image-file",
+    args: ["session-1"],
+  });
   const pastedBuffer = new ArrayBuffer(3);
   assert.deepEqual(await api.savePastedSessionFile({
     sessionId: "session-1",
@@ -296,6 +304,8 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "pickFile",
     "pickFiles",
     "pickSessionFiles",
+    "pickSessionFolder",
+    "pickSessionImageFile",
     "pickImageFile",
     "resetMate",
     "previewCompanionComposerInput",

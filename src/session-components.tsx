@@ -2865,6 +2865,8 @@ export type SessionComposerExpandedProps = {
   onPickImage: () => void;
   onAddToSessionFiles?: () => void;
   onPickSessionFiles?: () => void;
+  onPickSessionFolder?: () => void;
+  onPickSessionImage?: () => void;
   onToggleAgentPicker: () => void;
   onToggleSkillPicker: () => void;
   onAddAdditionalDirectory: () => void;
@@ -2941,6 +2943,8 @@ export function SessionComposerExpanded({
   onPickImage,
   onAddToSessionFiles = () => {},
   onPickSessionFiles = () => {},
+  onPickSessionFolder = () => {},
+  onPickSessionImage = () => {},
   onToggleAgentPicker,
   onToggleSkillPicker,
   onAddAdditionalDirectory,
@@ -3040,6 +3044,24 @@ export function SessionComposerExpanded({
                 title="Pick files already in the session files directory and insert references"
               >
                 Session File
+              </button>
+              <button
+                className="drawer-toggle compact secondary composer-skill-button"
+                type="button"
+                onClick={onPickSessionFolder}
+                disabled={isRunning || composerBlocked}
+                title="Pick a folder already in the session files directory and insert a reference"
+              >
+                Session Folder
+              </button>
+              <button
+                className="drawer-toggle compact secondary composer-skill-button"
+                type="button"
+                onClick={onPickSessionImage}
+                disabled={isRunning || composerBlocked}
+                title="Pick an image already in the session files directory and insert a reference"
+              >
+                Session Image
               </button>
             </div>
           ) : null}

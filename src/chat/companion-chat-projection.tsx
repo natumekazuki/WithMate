@@ -158,6 +158,8 @@ export type CompanionChatProjectionInput = {
   onPickImage: () => void;
   onAddToSessionFiles: NonNullable<SessionComposerExpandedProps["onAddToSessionFiles"]>;
   onPickSessionFiles: NonNullable<SessionComposerExpandedProps["onPickSessionFiles"]>;
+  onPickSessionFolder: NonNullable<SessionComposerExpandedProps["onPickSessionFolder"]>;
+  onPickSessionImage: NonNullable<SessionComposerExpandedProps["onPickSessionImage"]>;
   onToggleAgentPicker: () => void;
   onToggleSkillPicker: () => void;
   onAddAdditionalDirectory: () => void;
@@ -291,6 +293,8 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       onPickImage: input.onPickImage,
       onAddToSessionFiles: input.onAddToSessionFiles,
       onPickSessionFiles: input.onPickSessionFiles,
+      onPickSessionFolder: input.onPickSessionFolder,
+      onPickSessionImage: input.onPickSessionImage,
       onToggleAgentPicker: input.onToggleAgentPicker,
       onToggleSkillPicker: input.onToggleSkillPicker,
       onAddAdditionalDirectory: input.onAddAdditionalDirectory,
