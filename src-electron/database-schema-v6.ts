@@ -426,6 +426,7 @@ export const CREATE_V6_SESSION_MESSAGES_TABLE_SQL = `
     seq INTEGER NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'tool', 'system')),
     body TEXT NOT NULL,
+    artifact_body TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
     UNIQUE (session_id, seq),

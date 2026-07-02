@@ -218,6 +218,7 @@ describe("database-schema-v6", () => {
         "seq",
         "role",
         "body",
+        "artifact_body",
         "created_at",
       ]);
       assert.equal(findForeignKey(db, "session_messages_v6", "session_id")?.on_delete.toUpperCase(), "CASCADE");
