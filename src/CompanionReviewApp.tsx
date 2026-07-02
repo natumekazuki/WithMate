@@ -687,6 +687,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         : false,
     [liveAssistantBridge, projectedAuxiliarySessions, snapshot?.session.id, snapshot?.session.messages],
   );
+  const isLiveAssistantBridgeSettling = selectedSessionLiveRun === null && !hasPersistedLiveAssistantBridge;
   const projectedLiveAssistant = useMemo<LiveAssistantProjection | null>(() => {
     if (!activeRunSessionId) {
       return null;
@@ -713,12 +714,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       activeSessionId: activeRunSessionId,
       hasLiveRun: selectedSessionLiveRun !== null,
       hasPersistedAssistant: hasPersistedLiveAssistantBridge,
+      isSettling: isLiveAssistantBridgeSettling,
     })
       ? liveAssistantBridge
       : null;
   }, [
     activeRunSessionId,
     hasPersistedLiveAssistantBridge,
+    isLiveAssistantBridgeSettling,
     liveAssistantBridge,
     liveAssistantMessageIndex,
     selectedSessionLiveRun,
@@ -762,13 +765,35 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    if (
-      liveAssistantBridge.sessionId !== activeRunSessionId ||
-      (selectedSessionLiveRun === null && !hasPersistedLiveAssistantBridge)
-    ) {
+    if (liveAssistantBridge.sessionId !== activeRunSessionId) {
       setLiveAssistantBridge(null);
+      return;
     }
-  }, [activeRunSessionId, hasPersistedLiveAssistantBridge, liveAssistantBridge, selectedSessionLiveRun]);
+
+    if (!isLiveAssistantBridgeSettling) {
+      return;
+    }
+
+    let secondFrameId: number | null = null;
+    const firstFrameId = requestAnimationFrame(() => {
+      secondFrameId = requestAnimationFrame(() => {
+        setLiveAssistantBridge((current) =>
+          current?.sessionId === liveAssistantBridge.sessionId &&
+          current.threadId === liveAssistantBridge.threadId &&
+          current.text === liveAssistantBridge.text
+            ? null
+            : current,
+        );
+      });
+    });
+
+    return () => {
+      cancelAnimationFrame(firstFrameId);
+      if (secondFrameId !== null) {
+        cancelAnimationFrame(secondFrameId);
+      }
+    };
+  }, [activeRunSessionId, isLiveAssistantBridgeSettling, liveAssistantBridge]);
   useEffect(() => {
     if (!liveAssistantBridge) {
       return;
