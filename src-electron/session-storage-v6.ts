@@ -48,6 +48,11 @@ type MessageV6Row = {
   artifact_body?: string | null;
 };
 
+type ExistingMessageArtifactRow = {
+  seq: number;
+  artifact_body: string | null;
+};
+
 function toV6State(session: Session): string {
   if (session.status === "running") {
     return "active";
@@ -81,6 +86,31 @@ function encodeMessage(message: Message): string {
 
 function encodeMessageArtifact(message: Message): string | null {
   return message.artifact ? JSON.stringify(message.artifact) : null;
+}
+
+function isSameArtifactSummary(source: MessageArtifact, summary: MessageArtifact): boolean {
+  return JSON.stringify(summarizeMessageArtifact(source)) === JSON.stringify(summary);
+}
+
+function isArtifactSummaryProjection(artifact: MessageArtifact): boolean {
+  return artifact.detailAvailable === true &&
+    (artifact.operationTimeline ?? []).every((operation) => operation.details === undefined) &&
+    artifact.changedFiles.every((file) => file.diffRows.length === 0);
+}
+
+function encodeMessageArtifactForWrite(message: Message, existingArtifactBody: string | null | undefined): string | null {
+  if (!message.artifact) {
+    return null;
+  }
+
+  if (isArtifactSummaryProjection(message.artifact) && existingArtifactBody) {
+    const existingArtifact = decodeMessageArtifact(existingArtifactBody);
+    if (existingArtifact && isSameArtifactSummary(existingArtifact, message.artifact)) {
+      return existingArtifactBody;
+    }
+  }
+
+  return encodeMessageArtifact(message);
 }
 
 function decodeMessageArtifact(value: string | null | undefined): MessageArtifact | null {
@@ -282,6 +312,15 @@ export class SessionStorageV6 {
       session.updatedAt,
     );
 
+    const existingArtifactBodies = new Map(
+      (this.db.prepare(`
+        SELECT seq, artifact_body
+        FROM session_messages_v6
+        WHERE session_id = ?
+      `).all(session.id) as ExistingMessageArtifactRow[])
+        .map((row) => [row.seq, row.artifact_body] as const),
+    );
+
     this.db.prepare("DELETE FROM session_messages_v6 WHERE session_id = ?").run(session.id);
     const insertMessage = this.db.prepare(`
       INSERT INTO session_messages_v6 (session_id, seq, role, body, artifact_body, created_at)
@@ -293,7 +332,7 @@ export class SessionStorageV6 {
         index,
         message.role,
         encodeMessage(message),
-        encodeMessageArtifact(message),
+        encodeMessageArtifactForWrite(message, existingArtifactBodies.get(index)),
         session.updatedAt,
       );
     });

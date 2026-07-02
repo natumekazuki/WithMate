@@ -179,4 +179,100 @@ describe("SessionStorageV6", () => {
       await removeDirectoryWithRetry(tempDirectory);
     }
   });
+
+  it("summary artifact を再保存しても既存 artifact_body の detail を保持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const artifact = createArtifact();
+      const session = storage.upsertSession({
+        ...buildNewSession({
+          taskTitle: "preserve artifact detail",
+          workspaceLabel: "workspace",
+          workspacePath: "C:/workspace",
+          branch: "main",
+          characterId: "char-a",
+          character: "A",
+          characterIconPath: "",
+          characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+          approvalMode: DEFAULT_APPROVAL_MODE,
+        }),
+        messages: [{ role: "assistant", text: "done", artifact }],
+      });
+
+      const loaded = storage.getSession(session.id);
+      assert.ok(loaded);
+      assert.equal(loaded.messages[0]?.artifact?.detailAvailable, true);
+
+      storage.upsertSession({
+        ...loaded,
+        taskTitle: "metadata only update",
+        updatedAt: "2026-07-02T15:30:00.000Z",
+      });
+
+      const preservedArtifact = storage.getSessionMessageArtifact(session.id, 0);
+      assert.equal(preservedArtifact?.operationTimeline?.[0]?.details, "large operation details");
+      assert.equal(preservedArtifact?.changedFiles[0]?.diffRows[0]?.rightText, "const value = true;");
+      assert.deepEqual(preservedArtifact?.runChecks, artifact.runChecks);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("summary が同じ full artifact 更新は既存 artifact_body で上書きしない", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const artifact = createArtifact();
+      const session = storage.upsertSession({
+        ...buildNewSession({
+          taskTitle: "replace artifact detail",
+          workspaceLabel: "workspace",
+          workspacePath: "C:/workspace",
+          branch: "main",
+          characterId: "char-a",
+          character: "A",
+          characterIconPath: "",
+          characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+          approvalMode: DEFAULT_APPROVAL_MODE,
+        }),
+        messages: [{ role: "assistant", text: "done", artifact }],
+      });
+      const updatedArtifact: MessageArtifact = {
+        ...artifact,
+        detailAvailable: true,
+        operationTimeline: artifact.operationTimeline?.map((operation) => ({
+          ...operation,
+          details: "updated operation details",
+        })),
+        changedFiles: artifact.changedFiles.map((file) => ({
+          ...file,
+          diffRows: file.diffRows.map((row) => ({
+            ...row,
+            rightText: "const value = false;",
+          })),
+        })),
+      };
+
+      storage.upsertSession({
+        ...session,
+        updatedAt: "2026-07-02T15:31:00.000Z",
+        messages: [{ role: "assistant", text: "done", artifact: updatedArtifact }],
+      });
+
+      const replacedArtifact = storage.getSessionMessageArtifact(session.id, 0);
+      assert.equal(replacedArtifact?.operationTimeline?.[0]?.details, "updated operation details");
+      assert.equal(replacedArtifact?.changedFiles[0]?.diffRows[0]?.rightText, "const value = false;");
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
 });
