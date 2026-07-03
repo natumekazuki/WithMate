@@ -4,11 +4,10 @@ import { describe, it } from "node:test";
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
 import {
   createMemoryAppendResponse,
-  createMemoryErrorResponse,
   createMemoryForgetResponse,
   createMemoryGetEntryResponse,
+  createMemoryListCharactersResponse,
   createMemoryListTagsResponse,
-  createMemoryResolveContextResponse,
   createMemorySearchResponse,
   type MemoryAppendResponse,
   type MemoryGetEntryResponse,
@@ -131,6 +130,25 @@ describe("memory-v6 response contract", () => {
     });
   });
 
+  it("characters responseはCharacter catalog entryを返す", () => {
+    const response = createMemoryListCharactersResponse([{
+      id: "character-a",
+      name: "Character A",
+      description: "Test",
+      iconFilePath: "",
+      theme: { main: "#111111", sub: "#222222" },
+      state: "active",
+      isDefault: true,
+      createdAt: "2026-07-03T00:00:00.000Z",
+      updatedAt: "2026-07-03T00:00:00.000Z",
+      archivedAt: null,
+    }]);
+
+    assert.equal(response.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
+    assert.deepEqual(response.characters.map((character) => character.id), ["character-a"]);
+    assert.deepEqual(response.characters[0].theme, { main: "#111111", sub: "#222222" });
+  });
+
   it("forget responseは複数entryの結果をentryIdごとに返す", () => {
     const response = createMemoryForgetResponse([
       { entryId: "mem_1", status: "forgotten" },
@@ -146,32 +164,4 @@ describe("memory-v6 response contract", () => {
     ]);
   });
 
-  it("resolve_context responseはsession、任意のcharacter/project、permissionsを返す", () => {
-    const response = createMemoryResolveContextResponse({
-      session: { id: "session-a" },
-      character: null,
-      sessionProject: null,
-      allowedProjectTargets: [{ id: "project-a", displayName: "Project A" }],
-      permissions: ["memory.resolve_context", "memory.search"],
-    });
-
-    assert.deepEqual(response, {
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      session: { id: "session-a" },
-      character: null,
-      sessionProject: null,
-      allowedProjectTargets: [{ id: "project-a", displayName: "Project A" }],
-      permissions: ["memory.resolve_context", "memory.search"],
-    });
-  });
-
-  it("期限切れbindingなどのresolve_context失敗はmachine-readable errorとして返す", () => {
-    const response = createMemoryErrorResponse({
-      code: "MEMORY_BINDING_EXPIRED",
-      message: "Memory binding has expired.",
-    });
-
-    assert.equal(response.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
-    assert.equal(response.error.code, "MEMORY_BINDING_EXPIRED");
-  });
 });

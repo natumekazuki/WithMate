@@ -8,8 +8,6 @@ const schemaVersion = "withmate-memory-v1";
 const discoverySchemaVersion = "withmate-memory-discovery-v1";
 const discoveryFileName = "memory-v6-api.json";
 const apiSecretHeader = "x-withmate-memory-api-secret";
-const bindingReferenceHeader = "x-withmate-memory-binding-reference";
-const bindingReferenceEnv = "WITHMATE_MEMORY_BINDING_REFERENCE";
 const entryKinds = [
   "decision",
   "constraint",
@@ -37,7 +35,7 @@ const helpText = `Usage:
 Commands:
   help
   status
-  context
+  characters
   search
   get-entry
   list-tags
@@ -53,7 +51,6 @@ Input options:
   --stdin             Read request body from standard input.
 
 Shorthand options:
-  --session-project
   --project <absolute-path>
   --project-id <id>
   --query <text>
@@ -67,11 +64,11 @@ Connection options:
   --discovery-file <path>
 
 Validation:
-  validate --command <context|search|get-entry|list-tags|append|forget>
+  validate --command <search|get-entry|list-tags|append|forget>
 
 Examples:
   withmate-memory status
-  withmate-memory search --session-project --query "release workflow"
+  withmate-memory characters
   withmate-memory search --project C:\\path\\to\\repo --query "release workflow"
   withmate-memory validate --command append --stdin
   withmate-memory schema
@@ -80,8 +77,9 @@ Examples:
 const commands = new Map([
   ["help", { name: "help", local: true, defaultBody: {} }],
   ["status", { name: "status", method: "GET", path: "/v1/status", defaultBody: {} }],
-  ["context", { name: "context", method: "POST", path: "/v1/context", defaultBody: { schemaVersion } }],
-  ["resolve-context", { name: "context", method: "POST", path: "/v1/context", defaultBody: { schemaVersion } }],
+  ["characters", { name: "characters", method: "GET", path: "/v1/characters", defaultBody: {} }],
+  ["list-characters", { name: "characters", method: "GET", path: "/v1/characters", defaultBody: {} }],
+  ["list_characters", { name: "characters", method: "GET", path: "/v1/characters", defaultBody: {} }],
   ["search", { name: "search", method: "POST", path: "/v1/search", defaultBody: {} }],
   ["get-entry", { name: "get_entry", method: "POST", path: "/v1/get_entry", defaultBody: {} }],
   ["get_entry", { name: "get_entry", method: "POST", path: "/v1/get_entry", defaultBody: {} }],
@@ -93,7 +91,7 @@ const commands = new Map([
   ["capabilities", { name: "schema", local: true, defaultBody: {} }],
   ["validate", { name: "validate", local: true, defaultBody: {} }],
 ]);
-const validatableCommands = new Set(["context", "search", "get_entry", "list_tags", "append", "forget"]);
+const validatableCommands = new Set(["search", "get_entry", "list_tags", "append", "forget"]);
 
 function memoryError(code, message) {
   return { schemaVersion, error: { code, message } };
@@ -185,7 +183,7 @@ async function parseArgs(argv) {
   }
   const route = rawCommand ? commands.get(rawCommand) : undefined;
   if (!route) {
-    throw usage("Usage: withmate-memory <help|status|context|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--session-project | --project <absolute-path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
+    throw usage("Usage: withmate-memory <help|status|characters|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <absolute-path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
   }
   if (route.name === "help" || rest.includes("--help") || rest.includes("-h")) {
     return { route: { name: "help", local: true, defaultBody: {} }, body: {} };
@@ -197,7 +195,6 @@ async function parseArgs(argv) {
   let apiUrl;
   let discoveryFilePath;
   let validateCommand;
-  let sessionProject = false;
   let projectPath;
   let projectId;
   let query;
@@ -223,8 +220,6 @@ async function parseArgs(argv) {
       if (!validateCommand) {
         throw usage(`--command must be one of: ${Array.from(validatableCommands).join(", ")}.`);
       }
-    } else if (arg === "--session-project") {
-      sessionProject = true;
     } else if (arg === "--project") {
       projectPath = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--project-id") {
@@ -247,11 +242,11 @@ async function parseArgs(argv) {
   if (bodyInputCount > 1) {
     throw usage("--json, --file, @file, and --stdin cannot be used together.");
   }
-  if ([sessionProject, Boolean(projectPath), Boolean(projectId)].filter(Boolean).length > 1) {
-    throw usage("--session-project, --project, and --project-id cannot be used together.");
+  if ([Boolean(projectPath), Boolean(projectId)].filter(Boolean).length > 1) {
+    throw usage("--project and --project-id cannot be used together.");
   }
   if (route.name === "validate" && !validateCommand) {
-    throw usage("validate requires --command <context|search|get-entry|list-tags|append|forget>.");
+    throw usage("validate requires --command <search|get-entry|list-tags|append|forget>.");
   }
 
   let body = route.defaultBody;
@@ -262,8 +257,8 @@ async function parseArgs(argv) {
       body = parseJson(await readFile(filePath, "utf8"));
     } else if (stdinRequested) {
       body = parseJson(await readStdin(process.stdin));
-    } else if (hasShorthandOptions({ sessionProject, projectPath, projectId, query, tags: tagOptions, entryId, limit })) {
-      body = buildShorthandBody(route.name, { sessionProject, projectPath, projectId, query, tags: tagOptions, entryId, limit });
+    } else if (hasShorthandOptions({ projectPath, projectId, query, tags: tagOptions, entryId, limit })) {
+      body = buildShorthandBody(route.name, { projectPath, projectId, query, tags: tagOptions, entryId, limit });
     }
   }
   return { route, body, apiUrl, discoveryFilePath, validateCommand };
@@ -314,7 +309,7 @@ function normalizeCliTagOptions(values) {
 }
 
 function hasShorthandOptions(options) {
-  return Boolean(options.sessionProject || options.projectPath || options.projectId || options.query || (options.tags && options.tags.length > 0) || options.entryId || options.limit !== undefined);
+  return Boolean(options.projectPath || options.projectId || options.query || (options.tags && options.tags.length > 0) || options.entryId || options.limit !== undefined);
 }
 
 function isAbsoluteCliPath(value) {
@@ -323,7 +318,7 @@ function isAbsoluteCliPath(value) {
 
 function normalizeCliProjectPath(value) {
   if (!isAbsoluteCliPath(value)) {
-    throw usage("--project requires an absolute path. Use --session-project for the current WithMate session project.");
+    throw usage("--project requires an absolute path.");
   }
   return path.win32.isAbsolute(value)
     ? path.win32.normalize(value).replace(/\\/g, "/")
@@ -331,9 +326,6 @@ function normalizeCliProjectPath(value) {
 }
 
 function buildProjectTarget(options) {
-  if (options.sessionProject) {
-    return { owner: "project", scope: "project", project: { type: "current" } };
-  }
   if (options.projectId) {
     return { owner: "project", scope: "project", project: { type: "id", id: options.projectId } };
   }
@@ -347,7 +339,7 @@ function buildShorthandBody(command, options) {
   const target = buildProjectTarget(options);
   if (command === "search") {
     if (!target) {
-      throw usage("search shorthand requires --session-project, --project <absolute-path>, or --project-id <id>.");
+      throw usage("search shorthand requires --project <absolute-path> or --project-id <id>.");
     }
     const tags = normalizeCliTagOptions(options.tags || []);
     const query = options.query || tags.map((tag) => tag.value).join(" ");
@@ -364,7 +356,7 @@ function buildShorthandBody(command, options) {
   }
   if (command === "list_tags") {
     if (!target) {
-      throw usage("list-tags shorthand requires --session-project, --project <absolute-path>, or --project-id <id>.");
+      throw usage("list-tags shorthand requires --project <absolute-path> or --project-id <id>.");
     }
     return { schemaVersion, targets: [target] };
   }
@@ -433,27 +425,27 @@ function buildSchemaResponse() {
     schemaVersion,
     entryKinds,
     forgetReasons,
-    commands: ["help", "status", "context", "search", "get-entry", "list-tags", "append", "forget", "schema", "validate"],
+    commands: ["help", "status", "characters", "search", "get-entry", "list-tags", "append", "forget", "schema", "validate"],
     requestBodyInputs: ["--json", "--file", "@file", "--stdin"],
     targetSelectors: [
       {
         owner: "project",
         scope: "project",
         requiredFields: ["project"],
-        projectTypes: ["id", "current", "path", "alias"],
+        projectTypes: ["id", "path"],
       },
       {
         owner: "character",
         scope: "character",
         requiredFields: ["character"],
-        characterTypes: ["id", "current"],
+        characterTypes: ["id"],
       },
       {
         owner: "character",
         scope: "project",
         requiredFields: ["character", "project"],
-        characterTypes: ["id", "current"],
-        projectTypes: ["id", "current", "path", "alias"],
+        characterTypes: ["id"],
+        projectTypes: ["id", "path"],
       },
       {
         owner: "user",
@@ -466,7 +458,6 @@ function buildSchemaResponse() {
 
 const entryKindSet = new Set(entryKinds);
 const forgetReasonSet = new Set(forgetReasons);
-const resolveContextRequestKeys = new Set(["schemaVersion"]);
 const searchRequestKeys = new Set(["schemaVersion", "targets", "query", "kinds", "tags", "limit", "cursor"]);
 const getEntryRequestKeys = new Set(["schemaVersion", "entryId", "target"]);
 const listTagsRequestKeys = new Set(["schemaVersion", "targets"]);
@@ -484,11 +475,8 @@ const appendRequestKeys = new Set([
 ]);
 const forgetRequestKeys = new Set(["schemaVersion", "target", "entryIds", "reason", "sourceMessageId", "idempotencyKey"]);
 const projectTargetIdKeys = new Set(["type", "id"]);
-const projectTargetCurrentKeys = new Set(["type"]);
 const projectTargetPathKeys = new Set(["type", "path"]);
-const projectTargetAliasKeys = new Set(["type", "alias"]);
 const characterTargetIdKeys = new Set(["type", "id"]);
-const characterTargetCurrentKeys = new Set(["type"]);
 const memoryTagKeys = new Set(["type", "value"]);
 const projectProjectTargetKeys = new Set(["owner", "scope", "project"]);
 const characterCharacterTargetKeys = new Set(["owner", "scope", "character"]);
@@ -626,13 +614,6 @@ function normalizeProjectTarget(value, field) {
     const id = normalizeText(value.id, `${field}.id`, { maxLength: maxIdLength });
     return id.ok ? { ok: true, value: { type: "id", id: id.value } } : id;
   }
-  if (value.type === "current") {
-    const unknownKeys = rejectUnknownKeys(value, projectTargetCurrentKeys, field);
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    return { ok: true, value: { type: "current" } };
-  }
   if (value.type === "path") {
     const unknownKeys = rejectUnknownKeys(value, projectTargetPathKeys, field);
     if (!unknownKeys.ok) {
@@ -641,27 +622,12 @@ function normalizeProjectTarget(value, field) {
     const projectPath = normalizeText(value.path, `${field}.path`, { maxLength: 1_000 });
     return projectPath.ok ? { ok: true, value: { type: "path", path: projectPath.value } } : projectPath;
   }
-  if (value.type === "alias") {
-    const unknownKeys = rejectUnknownKeys(value, projectTargetAliasKeys, field);
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    const alias = normalizeText(value.alias, `${field}.alias`, { maxLength: maxIdLength });
-    return alias.ok ? { ok: true, value: { type: "alias", alias: alias.value } } : alias;
-  }
-  return validationError("MEMORY_INVALID_FIELD", `${field}.type must be id, current, path, or alias.`, `${field}.type`);
+  return validationError("MEMORY_INVALID_FIELD", `${field}.type must be id or path.`, `${field}.type`);
 }
 
 function normalizeCharacterTarget(value, field) {
   if (!isRecord(value)) {
     return validationError("MEMORY_INVALID_FIELD", `${field} must be an object.`, field);
-  }
-  if (value.type === "current") {
-    const unknownKeys = rejectUnknownKeys(value, characterTargetCurrentKeys, field);
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    return { ok: true, value: { type: "current" } };
   }
   if (value.type === "id") {
     const unknownKeys = rejectUnknownKeys(value, characterTargetIdKeys, field);
@@ -671,7 +637,7 @@ function normalizeCharacterTarget(value, field) {
     const id = normalizeText(value.id, `${field}.id`, { maxLength: maxIdLength });
     return id.ok ? { ok: true, value: { type: "id", id: id.value } } : id;
   }
-  return validationError("MEMORY_INVALID_FIELD", `${field}.type must be id or current.`, `${field}.type`);
+  return validationError("MEMORY_INVALID_FIELD", `${field}.type must be id.`, `${field}.type`);
 }
 
 function normalizeMemoryTarget(value, field) {
@@ -816,20 +782,8 @@ function validateRequest(command, body) {
   if (!isRecord(body)) {
     const label = command === "get_entry" ? "Get entry"
       : command === "list_tags" ? "List tags"
-        : command === "context" ? "Resolve context"
-          : command[0].toUpperCase() + command.slice(1);
+        : command[0].toUpperCase() + command.slice(1);
     return validationError("MEMORY_INVALID_REQUEST", `${label} request must be an object.`);
-  }
-  if (command === "context") {
-    const unknownKeys = rejectUnknownKeys(body, resolveContextRequestKeys, "request");
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    const schema = validateSchemaVersion(body);
-    if (!schema.ok) {
-      return schema;
-    }
-    return { ok: true, value: { schemaVersion } };
   }
   if (command === "search") {
     const unknownKeys = rejectUnknownKeys(body, searchRequestKeys, "request");
@@ -1105,10 +1059,6 @@ async function main() {
         }
         if (connection.apiSecret) {
           headers[apiSecretHeader] = connection.apiSecret;
-        }
-        const bindingReference = process.env[bindingReferenceEnv]?.trim();
-        if (bindingReference) {
-          headers[bindingReferenceHeader] = bindingReference;
         }
         const response = await fetch(`${connection.baseUrl}${request.route.path}`, {
           method: request.route.method,

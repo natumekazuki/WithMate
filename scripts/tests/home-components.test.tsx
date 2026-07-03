@@ -135,10 +135,9 @@ describe("HomeSettingsContent", () => {
           discoveryFilePath: "C:/runtime/memory-v6-api.json",
           hasApiSecret: true,
         },
-        binding: { activeBindingCount: 2 },
         providers: [
-          { providerId: "codex", providerSupported: true, memoryBindingTransport: "env" },
-          { providerId: "custom", providerSupported: false, memoryBindingTransport: "unsupported" },
+          { providerId: "codex", providerSupported: true },
+          { providerId: "custom", providerSupported: false },
         ],
         skillSync: [
           { providerId: "codex", skillRootConfigured: true, skillPath: "C:/skills/withmate-memory", status: "unchanged" },
@@ -162,9 +161,8 @@ describe("HomeSettingsContent", () => {
 
     assert.ok(html.includes("Memory API"));
     assert.ok(html.includes("running"));
-    assert.ok(html.includes("Active Bindings"));
-    assert.ok(html.includes("2"));
-    assert.ok(html.includes("codex: env / custom: unsupported"));
+    assert.ok(!html.includes("Active Bindings"));
+    assert.ok(!html.includes("codex: env / custom: unsupported"));
     assert.ok(html.includes("codex: unchanged / custom: skipped-collision"));
     assert.ok(html.includes("CLI Shim"));
     assert.ok(html.includes("PATH ready"));

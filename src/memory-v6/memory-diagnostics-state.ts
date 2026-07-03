@@ -6,16 +6,6 @@ export type MemoryV6RuntimeDiagnostics = {
   hasApiSecret: boolean;
 };
 
-export type MemoryV6BindingDiagnostics = {
-  activeBindingCount: number;
-};
-
-export type MemoryV6ProviderBindingDiagnostics = {
-  providerId: string;
-  providerSupported: boolean;
-  memoryBindingTransport: "env" | "context_file" | "unsupported";
-};
-
 export type MemoryV6SkillSyncDiagnostics = {
   providerId: string;
   skillRootConfigured: boolean;
@@ -59,8 +49,10 @@ export type MemoryV6DiagnosticEvent = {
 export type MemoryV6Diagnostics = {
   generatedAt: string;
   runtime: MemoryV6RuntimeDiagnostics;
-  binding: MemoryV6BindingDiagnostics;
-  providers: MemoryV6ProviderBindingDiagnostics[];
+  providers: Array<{
+    providerId: string;
+    providerSupported: boolean;
+  }>;
   skillSync: MemoryV6SkillSyncDiagnostics[];
   cliShim: MemoryV6CliShimDiagnostics;
   lastErrors: MemoryV6DiagnosticEvent[];

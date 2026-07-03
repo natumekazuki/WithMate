@@ -7,7 +7,6 @@ import {
   validateMemoryForgetRequest,
   validateMemoryGetEntryRequest,
   validateMemoryListTagsRequest,
-  validateMemoryResolveContextRequest,
   validateMemorySearchRequest,
 } from "../../src/memory-v6/memory-validation.js";
 
@@ -20,7 +19,7 @@ const projectTarget = {
 const characterTarget = {
   owner: "character",
   scope: "character",
-  character: { type: "current" },
+  character: { type: "id", id: "character-a" },
 };
 
 const userGlobalTarget = {
@@ -29,15 +28,6 @@ const userGlobalTarget = {
 };
 
 describe("memory-v6 contract validation", () => {
-  it("valid resolve_context request を検証できる", () => {
-    const result = validateMemoryResolveContextRequest({
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-    });
-
-    assert.equal(result.ok, true);
-    assert.deepEqual(result.value, { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
-  });
-
   it("valid search request を正規化できる", () => {
     const result = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -168,7 +158,11 @@ describe("memory-v6 contract validation", () => {
   });
 
   it("invalid schemaVersion を拒否する", () => {
-    const result = validateMemoryResolveContextRequest({ schemaVersion: "withmate-memory-v0" });
+    const result = validateMemorySearchRequest({
+      schemaVersion: "withmate-memory-v0",
+      targets: [projectTarget],
+      query: "test",
+    });
 
     assert.equal(result.ok, false);
     assert.equal(result.error.code, "MEMORY_INVALID_SCHEMA_VERSION");
@@ -217,12 +211,12 @@ describe("memory-v6 contract validation", () => {
   });
 
   it("target variant外fieldを拒否する", () => {
-    const characterCurrentWithId = validateMemoryAppendRequest({
+    const characterCurrent = validateMemoryAppendRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       target: {
         owner: "character",
         scope: "character",
-        character: { type: "current", id: "char-a" },
+        character: { type: "current" },
       },
       kind: "preference",
       title: "title",
@@ -230,8 +224,16 @@ describe("memory-v6 contract validation", () => {
       preview: "preview",
       tags: [],
     });
-    assert.equal(characterCurrentWithId.ok, false);
-    assert.equal(characterCurrentWithId.error.field, "target.character.id");
+    assert.equal(characterCurrent.ok, false);
+    assert.equal(characterCurrent.error.field, "target.character.type");
+
+    const projectCurrent = validateMemorySearchRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [{ owner: "project", scope: "project", project: { type: "current" } }],
+      query: "test",
+    });
+    assert.equal(projectCurrent.ok, false);
+    assert.equal(projectCurrent.error.field, "targets[0].project.type");
 
     const characterScopeWithProject = validateMemoryAppendRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,

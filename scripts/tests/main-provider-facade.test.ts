@@ -46,12 +46,6 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
     },
     codexAdapter: codexAdapter as never,
     copilotAdapter: copilotAdapter as never,
-    revokeSessionMemoryBindings(sessionId) {
-      calls.push(`revoke-memory:${sessionId}`);
-    },
-    revokeAllMemoryBindings() {
-      calls.push("revoke-memory:all");
-    },
   });
 
   const resolved = facade.resolveProviderCatalog("copilot");
@@ -62,12 +56,9 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
   assert.equal(resolved.provider.id, "copilot");
   assert.deepEqual(calls, [
     "copilot:s-1",
-    "revoke-memory:s-1",
     "codex:s-2",
-    "revoke-memory:s-2",
     "codex:all",
     "copilot:all",
-    "revoke-memory:all",
   ]);
 });
 

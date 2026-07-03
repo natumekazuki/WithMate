@@ -33,9 +33,6 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
     getProviderQuotaTelemetry: () => null,
     isProviderQuotaTelemetryStale: () => false,
     refreshProviderQuotaTelemetry: async () => null,
-    revokeSessionMemoryBindings(sessionId) {
-      calls.push(`revoke-memory:${sessionId}`);
-    },
   });
 
   facade.createSession({ id: "s-1" } as never);
@@ -43,7 +40,7 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
   await facade.deleteSession("s-1");
   facade.cancelSessionRun("s-1");
 
-  assert.deepEqual(calls, ["create:s-1", "update:s-1", "delete:s-1", "revoke-memory:s-1", "cancel:s-1"]);
+  assert.deepEqual(calls, ["create:s-1", "update:s-1", "delete:s-1", "cancel:s-1"]);
 });
 
 test("MainSessionCommandFacade は stale な Copilot quota を非同期更新して run を委譲する", async () => {

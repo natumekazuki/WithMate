@@ -259,16 +259,6 @@ export function HomeSettingsContent({
                     <small>{memoryV6Diagnostics.runtime.discoveryFilePath ? "discovery published" : "discovery unavailable"}</small>
                   </div>
                   <div className="settings-diagnostics-item">
-                    <span>Active Bindings</span>
-                    <strong>{memoryV6Diagnostics.binding.activeBindingCount}</strong>
-                    <small>session-scoped runtime bindings</small>
-                  </div>
-                  <div className="settings-diagnostics-item">
-                    <span>Provider Binding</span>
-                    <strong>{formatProviderBindingSummary(memoryV6Diagnostics)}</strong>
-                    <small>{formatProviderBindingDetail(memoryV6Diagnostics)}</small>
-                  </div>
-                  <div className="settings-diagnostics-item">
                     <span>Managed Skill</span>
                     <strong>{formatSkillSyncSummary(memoryV6Diagnostics)}</strong>
                     <small>{formatSkillSyncDetail(memoryV6Diagnostics)}</small>
@@ -359,20 +349,6 @@ export function HomeSettingsContent({
       </div>
     </>
   );
-}
-
-function formatProviderBindingSummary(diagnostics: MemoryV6Diagnostics): string {
-  const supported = diagnostics.providers.filter((provider) => provider.memoryBindingTransport !== "unsupported").length;
-  return `${supported}/${diagnostics.providers.length}`;
-}
-
-function formatProviderBindingDetail(diagnostics: MemoryV6Diagnostics): string {
-  if (diagnostics.providers.length === 0) {
-    return "configured providers are unavailable";
-  }
-  return diagnostics.providers
-    .map((provider) => `${provider.providerId}: ${provider.memoryBindingTransport}`)
-    .join(" / ");
 }
 
 function formatSkillSyncSummary(diagnostics: MemoryV6Diagnostics): string {

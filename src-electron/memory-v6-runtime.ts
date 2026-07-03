@@ -17,9 +17,9 @@ import {
   type MemoryV6HttpServer,
 } from "./memory-v6-http-server.js";
 import { createMemoryV6ProjectResolver } from "./memory-v6-project-resolver.js";
-import type { MemoryBindingRegistry } from "./memory-binding-registry.js";
 import { MemoryV6Service } from "./memory-v6-service.js";
 import { MemoryV6Storage } from "./memory-v6-storage.js";
+import type { CharacterCatalogEntry } from "../src/character/character-catalog.js";
 
 export type MemoryV6RuntimeApiHandle = {
   baseUrl: string;
@@ -31,7 +31,7 @@ export type MemoryV6RuntimeApiHandle = {
 export type StartMemoryV6RuntimeApiOptions = {
   userDataPath: string;
   runtimeDirectoryPath?: string;
-  bindingRegistry?: MemoryBindingRegistry;
+  listCharacters?: () => readonly CharacterCatalogEntry[];
   log?: (input: AppLogInput) => void;
 };
 
@@ -246,17 +246,15 @@ export async function startMemoryV6RuntimeApi(
     const bootstrap = await createOrVerifyV6FreshDatabase(options.userDataPath);
     storage = new MemoryV6Storage(bootstrap.dbPath);
     const projectResolver = createMemoryV6ProjectResolver(bootstrap.dbPath);
-    options.bindingRegistry?.setProjectResolver(projectResolver);
     const service = new MemoryV6Service({
       storage,
       ...projectResolver,
+      ...(options.listCharacters ? { listCharacters: options.listCharacters } : {}),
     });
     const apiSecret = createRuntimeApiSecret();
     const runtimeInstanceId = randomUUID();
     server = createMemoryV6HttpServer({
       service,
-      resolvePrincipal: ({ bindingReference }) =>
-        options.bindingRegistry?.resolvePrincipal(bindingReference) ?? null,
       apiSecret,
       runtimeInstanceId,
     });
@@ -304,7 +302,6 @@ export async function startMemoryV6RuntimeApi(
         } catch (error) {
           cleanupErrors.push(error);
         }
-        options.bindingRegistry?.revokeAll();
         storage?.close();
 
         if (cleanupErrors.length > 0) {

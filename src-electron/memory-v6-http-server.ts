@@ -6,14 +6,9 @@ import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memo
 import type { MemoryV6Service } from "./memory-v6-service.js";
 import type { MemoryV6Principal } from "./memory-v6-permission.js";
 import { createLocalUserMemoryPrincipal } from "./memory-v6-permission.js";
-import { WITHMATE_MEMORY_BINDING_REFERENCE_HEADER } from "./provider-memory-binding.js";
 
 export type MemoryV6HttpServerOptions = {
   service: MemoryV6Service;
-  resolvePrincipal(input: {
-    request: IncomingMessage;
-    bindingReference: string | null;
-  }): MemoryV6Principal | null | Promise<MemoryV6Principal | null>;
   apiSecret: string;
   runtimeInstanceId: string;
   host?: string;
@@ -29,7 +24,7 @@ export type MemoryV6HttpServer = {
   address(): AddressInfo | null;
 };
 
-type MemoryV6Route = "context" | "search" | "get_entry" | "list_tags" | "append" | "forget";
+type MemoryV6Route = "characters" | "search" | "get_entry" | "list_tags" | "append" | "forget";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 0;
@@ -40,7 +35,7 @@ export const WITHMATE_MEMORY_API_SECRET_HEADER = "x-withmate-memory-api-secret";
 const STATUS_CHALLENGE_NONCE_QUERY = "nonce";
 
 const routeByPath = new Map<string, MemoryV6Route>([
-  ["/v1/context", "context"],
+  ["/v1/characters", "characters"],
   ["/v1/search", "search"],
   ["/v1/get_entry", "get_entry"],
   ["/v1/list_tags", "list_tags"],
@@ -101,11 +96,6 @@ function authenticateInternalApiRequest(request: IncomingMessage, apiSecret: str
   return null;
 }
 
-function readBindingReference(request: IncomingMessage): string | null {
-  const header = request.headers[WITHMATE_MEMORY_BINDING_REFERENCE_HEADER];
-  return typeof header === "string" && header.trim() ? header.trim() : null;
-}
-
 function isMemoryErrorResponse(value: unknown): value is MemoryErrorResponse {
   return typeof value === "object" && value !== null && "error" in value;
 }
@@ -152,8 +142,8 @@ async function readJsonBody(request: IncomingMessage, maxBodyBytes: number): Pro
 }
 
 function routeServiceRequest(service: MemoryV6Service, principal: MemoryV6Principal | null, route: MemoryV6Route, body: unknown): unknown {
-  if (route === "context") {
-    return service.resolveContext(principal, body);
+  if (route === "characters") {
+    return service.listCharacters(principal);
   }
   if (route === "search") {
     return service.search(principal, body);
@@ -176,7 +166,7 @@ function statusForMemoryResponse(value: unknown): number {
   }
 
   switch (value.error.code) {
-    case "MEMORY_BINDING_REQUIRED":
+    case "MEMORY_PRINCIPAL_REQUIRED":
     case "MEMORY_UNAUTHORIZED":
       return 401;
     case "MEMORY_FORBIDDEN":
@@ -271,20 +261,21 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         writeJson(response, 404, memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Memory API route was not found."));
         return;
       }
-      if (request.method !== "POST") {
+      if (route === "characters" && request.method !== "GET") {
         writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory API route does not support this method."));
         return;
       }
-      if (!acceptsJsonRequest(request)) {
+      if (route !== "characters" && request.method !== "POST") {
+        writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory API route does not support this method."));
+        return;
+      }
+      if (route !== "characters" && !acceptsJsonRequest(request)) {
         writeJson(response, 415, memoryTransportError("MEMORY_UNSUPPORTED_MEDIA_TYPE", "Memory API POST requests must use application/json."));
         return;
       }
 
-      const bindingReference = readBindingReference(request);
-      const principal = bindingReference
-        ? await options.resolvePrincipal({ request, bindingReference }) ?? createLocalUserMemoryPrincipal()
-        : createLocalUserMemoryPrincipal();
-      const body = await readJsonBody(request, maxBodyBytes);
+      const principal = createLocalUserMemoryPrincipal();
+      const body = route === "characters" ? {} : await readJsonBody(request, maxBodyBytes);
       const result = routeServiceRequest(options.service, principal, route, body);
       writeJson(response, statusForMemoryResponse(result), result);
     } catch (error) {
