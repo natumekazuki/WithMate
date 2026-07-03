@@ -25,7 +25,13 @@ import {
   isValidV4Database,
   readV4DatabaseUserVersion,
 } from "../../src-electron/database-schema-v4.js";
-import { APP_DATABASE_V6_FILENAME, isValidV6Database } from "../../src-electron/database-schema-v6.js";
+import {
+  APP_DATABASE_V6_FILENAME,
+  CREATE_V6_AUDIT_EVENTS_TABLE_SQL,
+  CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
+  CREATE_V6_SCHEMA_SQL,
+  isValidV6Database,
+} from "../../src-electron/database-schema-v6.js";
 import { resolveAppDatabasePath, resolveOrMigrateAppDatabasePath } from "../../src-electron/app-database-path.js";
 import { hasV4ToV6ReleaseDataMigrationMarker } from "../migrate-database-v4-to-v6.js";
 
@@ -83,6 +89,71 @@ function createV4Database(dbPath: string): void {
     for (const statement of CREATE_V4_SCHEMA_SQL) {
       db.exec(statement);
     }
+  } finally {
+    db.close();
+  }
+}
+
+function createRepairableLegacyV6Database(dbPath: string): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec("PRAGMA foreign_keys = ON;");
+    for (const statement of CREATE_V6_SCHEMA_SQL) {
+      if (statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL) {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS auxiliary_sessions (
+            id TEXT PRIMARY KEY,
+            parent_session_id TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
+            updated_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_updated
+            ON auxiliary_sessions(parent_session_id, updated_at DESC);
+        `);
+        continue;
+      }
+      db.exec(statement === CREATE_V6_AUDIT_EVENTS_TABLE_SQL
+        ? `
+          CREATE TABLE IF NOT EXISTS audit_events_v6 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            event_type TEXT NOT NULL CHECK (event_type IN (
+              'session_turn',
+              'memory_mutation',
+              'runtime_binding',
+              'diagnostic'
+            )),
+            provider_id TEXT NOT NULL DEFAULT '',
+            summary TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_v6_audit_events_session_created
+            ON audit_events_v6(session_id, created_at DESC, id DESC);
+
+          CREATE INDEX IF NOT EXISTS idx_v6_audit_events_type_created
+            ON audit_events_v6(event_type, created_at DESC);
+        `
+        : statement);
+    }
+    db.exec("CREATE TABLE v6_only_sentinel (id TEXT PRIMARY KEY);");
+    db.prepare("INSERT INTO v6_only_sentinel (id) VALUES (?)").run("keep-v6");
+  } finally {
+    db.close();
+  }
+}
+
+function hasTable(dbPath: string, tableName: string): boolean {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const row = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?").get(tableName) as
+      | { name?: string }
+      | undefined;
+    return row?.name === tableName;
   } finally {
     db.close();
   }
@@ -352,6 +423,26 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
       assert.equal(selectedPath, v6Path);
       assert.equal(isValidV6Database(v6Path), true);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("旧 V6 DB と valid V4 が併存する場合は V6 を repair して overwrite migration しない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+
+    try {
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      createV4Database(v4Path);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+      createRepairableLegacyV6Database(v6Path);
+
+      assert.equal(isValidV6Database(v6Path), false);
+      const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
+
+      assert.equal(selectedPath, v6Path);
+      assert.equal(isValidV6Database(v6Path), true);
+      assert.equal(hasTable(v6Path, "v6_only_sentinel"), true);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }

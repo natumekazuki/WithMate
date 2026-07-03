@@ -201,6 +201,39 @@ describe("AuditLogStorageV6", () => {
     }
   });
 
+  it("updateAuditLog は audit log owner の main / auxiliary を移動しない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-audit-log-v6-"));
+    try {
+      const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
+      seedSession(dbPath);
+      seedAuxiliarySession(dbPath);
+      const storage = new AuditLogStorageV6(dbPath);
+      try {
+        const service = new AuditLogService(storage);
+        const created = await service.createAuditLog(baseAuditLog({
+          sessionId: "session-v6",
+          phase: "running",
+        }));
+
+        assert.throws(
+          () => service.updateAuditLog(created.id, baseAuditLog({
+            sessionId: "aux-session-v6",
+            phase: "completed",
+            assistantText: "moved",
+          })),
+          /target mismatch/,
+        );
+
+        assert.equal(storage.listSessionAuditLogSummaries("session-v6")[0]?.id, created.id);
+        assert.equal(storage.listSessionAuditLogSummaries("aux-session-v6").length, 0);
+      } finally {
+        storage.close();
+      }
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
   it("summary page の cursor 0 は先頭ページとして扱う", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-audit-log-v6-"));
     try {

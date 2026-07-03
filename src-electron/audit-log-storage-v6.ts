@@ -119,6 +119,8 @@ export class AuditLogStorageV6 {
           metadata_json = ?,
           created_at = ?
       WHERE id = ?
+        AND session_id IS ?
+        AND auxiliary_session_id IS ?
     `).run(
       target.sessionId,
       target.auxiliarySessionId,
@@ -127,9 +129,11 @@ export class AuditLogStorageV6 {
       JSON.stringify(input),
       entry.createdAt,
       id,
+      target.sessionId,
+      target.auxiliarySessionId,
     );
     if (result.changes !== 1) {
-      throw new Error(`audit log not found: ${id}`);
+      throw new Error(`audit log not found or target mismatch: ${id}`);
     }
     return entry;
   }
