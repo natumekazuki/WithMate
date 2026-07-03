@@ -1,5 +1,14 @@
 import type { LiveSessionRunState } from "./app-state.js";
 
+const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
+
+function logSessionRunStuckInvestigation(
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  console.info(SESSION_RUN_STUCK_INVESTIGATION_LOG, event, details);
+}
+
 export type LiveSessionRunSubscriptionApi = {
   getLiveSessionRun: (sessionId: string) => Promise<LiveSessionRunState | null>;
   subscribeLiveSessionRun: (
@@ -22,12 +31,33 @@ export function startLiveSessionRunSubscription(input: {
   let receivedSubscriptionUpdate = false;
 
   input.applyLiveRunState({ ownerSessionId: input.sessionId, state: null });
-  void input.api.getLiveSessionRun(input.sessionId).then((state) => {
-    if (active && !receivedSubscriptionUpdate) {
-      input.applyLiveRunState({ ownerSessionId: input.sessionId, state });
-      input.onSessionRunUpdated?.(input.sessionId);
-    }
+  logSessionRunStuckInvestigation("renderer.live-run-subscription.start", {
+    sessionId: input.sessionId,
   });
+  void input.api.getLiveSessionRun(input.sessionId)
+    .then((state) => {
+      logSessionRunStuckInvestigation("renderer.live-run-initial-get.done", {
+        sessionId: input.sessionId,
+        active,
+        receivedSubscriptionUpdate,
+        state: state ? "present" : "null",
+        assistantChars: state?.assistantText.length ?? 0,
+        stepCount: state?.steps.length ?? 0,
+        backgroundTaskCount: state?.backgroundTasks.length ?? 0,
+      });
+      if (active && !receivedSubscriptionUpdate) {
+        input.applyLiveRunState({ ownerSessionId: input.sessionId, state });
+        input.onSessionRunUpdated?.(input.sessionId);
+      }
+    })
+    .catch((error) => {
+      logSessionRunStuckInvestigation("renderer.live-run-initial-get.failed", {
+        sessionId: input.sessionId,
+        active,
+        receivedSubscriptionUpdate,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+    });
 
   const unsubscribe = input.api.subscribeLiveSessionRun((sessionId, state) => {
     if (!active || sessionId !== input.sessionId) {
@@ -35,6 +65,14 @@ export function startLiveSessionRunSubscription(input: {
     }
 
     receivedSubscriptionUpdate = true;
+    logSessionRunStuckInvestigation("renderer.live-run-subscription.event", {
+      sessionId,
+      state: state ? "present" : "null",
+      assistantChars: state?.assistantText.length ?? 0,
+      stepCount: state?.steps.length ?? 0,
+      backgroundTaskCount: state?.backgroundTasks.length ?? 0,
+      errorChars: state?.errorMessage.length ?? 0,
+    });
     input.applyLiveRunState({ ownerSessionId: sessionId, state });
     input.onSessionRunUpdated?.(sessionId);
   });

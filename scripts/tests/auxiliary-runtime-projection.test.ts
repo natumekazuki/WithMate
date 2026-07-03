@@ -53,6 +53,17 @@ function createSession(): Session {
     character: "Test",
     characterIconPath: "",
     characterThemeColors: { main: "#000", sub: "#fff" },
+    characterRuntimeSnapshot: {
+      characterId: "char-1",
+      name: "Test",
+      description: "Auxiliary projection character snapshot",
+      iconFilePath: "",
+      theme: { main: "#000", sub: "#fff" },
+      definitionMarkdown: "# Character\n\nAuxiliary projection keeps this prompt.",
+      definitionSha256: "character-sha",
+      definitionByteSize: 51,
+      snapshotAt: "2026-01-01T00:00:00.000Z",
+    },
     runState: "idle",
     approvalMode: "on-request",
     codexSandboxMode: "workspace-write",
@@ -97,6 +108,17 @@ function createCompanionSession(): CompanionSession {
     characterRoleMarkdown: "",
     characterIconPath: "",
     characterThemeColors: { main: "#000", sub: "#fff" },
+    characterRuntimeSnapshot: {
+      characterId: "companion-char",
+      name: "Companion",
+      description: "Companion auxiliary projection character snapshot",
+      iconFilePath: "",
+      theme: { main: "#000", sub: "#fff" },
+      definitionMarkdown: "# Character\n\nCompanion auxiliary projection keeps this prompt.",
+      definitionSha256: "companion-character-sha",
+      definitionByteSize: 61,
+      snapshotAt: "2026-01-01T00:00:00.000Z",
+    },
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     messages: [{ role: "assistant", text: "companion response" }],
@@ -117,6 +139,7 @@ test("buildAuxiliaryRuntimeSessionProjection main keeps runtime projection diff 
   assert.equal(projection.allowedAdditionalDirectories, auxiliary.allowedAdditionalDirectories);
   assert.equal(projection.status, "running");
   assert.equal(projection.taskTitle, parent.taskTitle);
+  assert.equal(projection.characterRuntimeSnapshot, parent.characterRuntimeSnapshot);
   assert.deepEqual(projection.stream, []);
 });
 
@@ -158,6 +181,7 @@ test("buildAuxiliaryRuntimeSessionProjection companion keeps companion projectio
   assert.notEqual(projection.allowedAdditionalDirectories, auxiliary.allowedAdditionalDirectories);
   assert.equal(projection.status, "active");
   assert.equal(projection.taskTitle, auxiliary.title);
+  assert.equal(projection.characterRuntimeSnapshot, parent.characterRuntimeSnapshot);
   assert.equal("stream" in projection, false);
 });
 

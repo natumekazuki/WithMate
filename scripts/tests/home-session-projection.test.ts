@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import type { Session } from "../../src/app-state.js";
+import type { AuxiliarySessionSummary } from "../../src/auxiliary-session-state.js";
 import type { CompanionSessionSummary } from "../../src/companion-state.js";
 import {
   buildCompanionGroupMonitorEntries,
   buildHomeSessionProjection,
   getHomeSessionState,
-  shouldDisplayHomeSession,
 } from "../../src/home/home-session-projection.js";
 
 function createSession(partial: Partial<Session> & Pick<Session, "id" | "taskTitle">): Session {
@@ -73,6 +73,28 @@ function createCompanionSession(partial: Partial<CompanionSessionSummary> & Pick
   };
 }
 
+function createAuxiliarySession(partial: Partial<AuxiliarySessionSummary> & Pick<AuxiliarySessionSummary, "id" | "parentSessionId">): AuxiliarySessionSummary {
+  return {
+    status: "active",
+    runState: "idle",
+    title: "Auxiliary",
+    provider: "codex",
+    catalogRevision: 1,
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+    approvalMode: "untrusted",
+    codexSandboxMode: "danger-full-access",
+    customAgentName: "",
+    allowedAdditionalDirectories: [],
+    threadId: "",
+    displayAfterMessageIndex: null,
+    createdAt: "2026-03-28T00:00:00.000Z",
+    updatedAt: "2026-03-30T00:00:00.000Z",
+    closedAt: "",
+    ...partial,
+  };
+}
+
 describe("home-session-projection", () => {
   it("runState に応じた Home session state を返す", () => {
     assert.deepEqual(
@@ -103,6 +125,64 @@ describe("home-session-projection", () => {
     assert.deepEqual(projection.nonRunningMonitorEntries.map(({ session }) => session.id), ["c"]);
   });
 
+  it("active Auxiliary が running の open session は running monitor に分類する", () => {
+    const projection = buildHomeSessionProjection(
+      [
+        createSession({ id: "main", taskTitle: "Main Task", runState: "idle", updatedAt: "2026-03-28T00:00:00.000Z" }),
+        createSession({ id: "other", taskTitle: "Other", runState: "idle" }),
+      ],
+      ["main"],
+      "",
+      [],
+      [],
+      [
+        createAuxiliarySession({
+          id: "aux-main",
+          parentSessionId: "main",
+          runState: "running",
+          updatedAt: "2026-03-30T00:00:00.000Z",
+        }),
+      ],
+    );
+
+    assert.deepEqual(projection.monitorEntries.map(({ session }) => session.id), ["main"]);
+    assert.deepEqual(projection.runningMonitorEntries.map(({ session }) => session.id), ["main"]);
+    assert.equal(projection.runningMonitorEntries[0]?.activeAuxiliarySession?.id, "aux-main");
+    assert.deepEqual(projection.nonRunningMonitorEntries.map(({ session }) => session.id), []);
+  });
+
+  it("active Auxiliary が running の open Companion は running monitor に分類する", () => {
+    const projection = buildHomeSessionProjection(
+      [],
+      [],
+      "",
+      [
+        createCompanionSession({
+          id: "companion",
+          groupId: "companion-group-1",
+          taskTitle: "Companion Task",
+          repoRoot: "F:/workspace/WithMate",
+          runState: "idle",
+          updatedAt: "2026-03-28T00:00:00.000Z",
+        }),
+      ],
+      ["companion"],
+      [
+        createAuxiliarySession({
+          id: "aux-companion",
+          parentSessionId: "companion",
+          runState: "running",
+          updatedAt: "2026-03-30T00:00:00.000Z",
+        }),
+      ],
+    );
+
+    assert.deepEqual(projection.monitorEntries.map(({ session }) => session.id), ["companion"]);
+    assert.deepEqual(projection.runningMonitorEntries.map(({ session }) => session.id), ["companion"]);
+    assert.equal(projection.runningMonitorEntries[0]?.activeAuxiliarySession?.id, "aux-companion");
+    assert.deepEqual(projection.nonRunningMonitorEntries.map(({ session }) => session.id), []);
+  });
+
   it("一致する monitor が無い時の empty message を返す", () => {
     const projection = buildHomeSessionProjection(
       [createSession({ id: "a", taskTitle: "Alpha" })],
@@ -115,18 +195,10 @@ describe("home-session-projection", () => {
     assert.equal(projection.monitorCompletedEmptyMessage, "一致するセッションはないよ。");
   });
 
-  it("character-authoring session は Home に表示し、character-update session は除外する", () => {
+  it("character-authoring session は Home に表示する", () => {
     const projection = buildHomeSessionProjection(
       [
         createSession({ id: "main", taskTitle: "Main Task", branch: "main" }),
-        createSession({
-          id: "update",
-          taskTitle: "Muse の更新",
-          branch: "main",
-          sessionKind: "character-update",
-          status: "running",
-          runState: "running",
-        }),
         createSession({
           id: "authoring",
           taskTitle: "Muse の作成",
@@ -136,19 +208,10 @@ describe("home-session-projection", () => {
           runState: "running",
         }),
       ],
-      ["main", "update", "authoring"],
+      ["main", "authoring"],
       "",
     );
 
-    assert.equal(shouldDisplayHomeSession(createSession({ id: "visible", taskTitle: "visible", branch: "main" })), true);
-    assert.equal(
-      shouldDisplayHomeSession(createSession({ id: "hidden", taskTitle: "hidden", branch: "main", sessionKind: "character-update" })),
-      false,
-    );
-    assert.equal(
-      shouldDisplayHomeSession(createSession({ id: "visible-authoring", taskTitle: "visible", branch: "main", sessionKind: "character-authoring" })),
-      true,
-    );
     assert.deepEqual(projection.filteredSessionEntries.map(({ session }) => session.id), ["main", "authoring"]);
     assert.deepEqual(projection.monitorEntries.map(({ session }) => session.id), ["main", "authoring"]);
   });

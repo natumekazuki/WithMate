@@ -87,7 +87,6 @@ V6 DBは次のdomainに分ける。
 | Audit | V6用に再設計。legacy background auditは移行しない |
 | Memory | V6専用tableで新設 |
 | Project scope | V6専用tableで新設 |
-| Runtime binding | V6専用tableまたはMain Process memoryで新設 |
 
 ## Schema Source
 
@@ -170,7 +169,7 @@ message bodyはSession表示に必要な軽量projectionを保持し、assistant
 `getSession()`はartifact summaryだけを返し、operation detailsやdiff rowsなどの重いdetailはmessage artifact detail APIで遅延取得する。
 Memory provenanceはapp messageを指す`source_app_message_id`とprovider外部IDを指す`source_provider_message_id`を分ける。
 
-auditは`audit_events_v6`で通常turn、Memory mutation、runtime binding、diagnosticsを分離して設計する。
+auditは`audit_events_v6`で通常turn、Memory mutation、diagnosticsを分離して設計する。
 legacy MemoryGeneration / Character Reflection / Monologue auditは移行しない。
 
 ## Implementation Order

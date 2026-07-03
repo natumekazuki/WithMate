@@ -18,7 +18,6 @@ import {
 } from "../src/app-state.js";
 import { getProviderAppSettings, resolveProviderSkillRootPath, type AppSettings } from "../src/provider-settings-state.js";
 import { extractTextReferenceCandidates } from "../src/path-reference.js";
-import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type MainQueryServiceDeps = {
@@ -43,7 +42,6 @@ type MainQueryServiceDeps = {
   discoverSessionSkills(workspacePath: string, skillRootPath: string | null): Promise<DiscoveredSkill[]>;
   discoverSessionCustomAgents(workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   resolveComposerPreview(session: SessionSummary, userMessage: string): Promise<ComposerPreview>;
-  searchWorkspaceFiles(workspacePath: string, query: string): Promise<WorkspacePathCandidate[]>;
   launchTerminalAtPath(workspacePath: string): Promise<void>;
 };
 
@@ -159,15 +157,6 @@ export class MainQueryService {
     }
 
     return this.deps.resolveComposerPreview(session, userMessage);
-  }
-
-  async searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]> {
-    const session = await this.getSessionSummary(sessionId);
-    if (!session) {
-      throw new Error("対象セッションが見つからないよ。");
-    }
-
-    return this.deps.searchWorkspaceFiles(session.workspacePath, query);
   }
 
   async openSessionTerminal(sessionId: string): Promise<void> {
