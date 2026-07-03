@@ -74,7 +74,6 @@ export type AgentSessionChatProjectionInput = {
   skillItems: SessionComposerExpandedProps["skillItems"];
   composerAttachmentItems: SessionComposerExpandedProps["attachmentItems"];
   additionalDirectoryItems: SessionComposerExpandedProps["additionalDirectoryItems"];
-  workspacePathMatchItems: SessionComposerExpandedProps["workspacePathMatchItems"];
   draft: string;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   isComposerDisabled: boolean;
@@ -171,8 +170,6 @@ export type AgentSessionChatProjectionInput = {
   onDraftCompositionEnd: () => void;
   onSendOrCancel: () => void;
   onExpandActionDock: () => void;
-  onSelectWorkspacePathMatch: SessionComposerExpandedProps["onSelectWorkspacePathMatch"];
-  onActivateWorkspacePathMatch: SessionComposerExpandedProps["onActivateWorkspacePathMatch"];
   onChangeApprovalMode: SessionComposerExpandedProps["onChangeApprovalMode"];
   onChangeCodexSandboxMode: SessionComposerExpandedProps["onChangeCodexSandboxMode"];
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
@@ -255,7 +252,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       skillItems: input.skillItems,
       attachmentItems: input.composerAttachmentItems,
       additionalDirectoryItems: input.additionalDirectoryItems,
-      workspacePathMatchItems: input.workspacePathMatchItems,
       draft: input.draft,
       composerTextareaRef: input.composerTextareaRef,
       isComposerDisabled: input.isComposerDisabled,
@@ -300,8 +296,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onDraftCompositionStart: input.onDraftCompositionStart,
       onDraftCompositionEnd: input.onDraftCompositionEnd,
       onSendOrCancel: input.onSendOrCancel,
-      onSelectWorkspacePathMatch: input.onSelectWorkspacePathMatch,
-      onActivateWorkspacePathMatch: input.onActivateWorkspacePathMatch,
       onChangeApprovalMode: input.onChangeApprovalMode,
       onChangeCodexSandboxMode: input.onChangeCodexSandboxMode,
       onChangeModel: input.onChangeModel,

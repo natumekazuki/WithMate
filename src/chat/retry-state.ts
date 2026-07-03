@@ -15,8 +15,6 @@ export type RetryBannerState = {
 export type RetryDraftRestoreState = {
   draft: string;
   caret: number;
-  workspacePathMatches: [];
-  activeWorkspacePathMatchIndex: -1;
   isRetryDraftReplacePending: false;
   isActionDockPinnedExpanded: true;
 };
@@ -25,8 +23,6 @@ export function buildRetryDraftRestoreState(messageText: string): RetryDraftRest
   return {
     draft: messageText,
     caret: messageText.length,
-    workspacePathMatches: [],
-    activeWorkspacePathMatchIndex: -1,
     isRetryDraftReplacePending: false,
     isActionDockPinnedExpanded: true,
   };
@@ -50,7 +46,6 @@ export function applyRetryDraftRestoreCommand(input: {
   setDraft: (draft: string) => void;
   setCaret: (caret: number) => void;
   syncCaret?: (caret: number) => void;
-  applyWorkspacePathMatchState: (state: RetryDraftRestoreState) => void;
   setRetryDraftReplacePending: (pending: boolean) => void;
   focusComposer: (caret: number) => void;
 }): void {
@@ -64,7 +59,6 @@ export function applyRetryDraftRestoreCommand(input: {
     setComposerCaret: input.setCaret,
     syncMainComposerCaret: input.syncCaret,
   });
-  input.applyWorkspacePathMatchState(nextState);
   input.setRetryDraftReplacePending(nextState.isRetryDraftReplacePending);
   input.focusComposer(nextState.caret);
 }

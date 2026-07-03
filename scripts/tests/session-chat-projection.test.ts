@@ -119,7 +119,6 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     skillItems: [],
     composerAttachmentItems: [],
     additionalDirectoryItems: [],
-    workspacePathMatchItems: [],
     draft: "",
     composerTextareaRef: React.createRef<HTMLTextAreaElement>(),
     isComposerDisabled: false,
@@ -224,8 +223,6 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     onDraftCompositionEnd: noop,
     onSendOrCancel: noop,
     onExpandActionDock: noop,
-    onSelectWorkspacePathMatch: noop,
-    onActivateWorkspacePathMatch: noop,
     onChangeApprovalMode: noop,
     onChangeCodexSandboxMode: noop,
     onChangeModel: noop,
@@ -257,30 +254,15 @@ test("buildAgentSessionChatWindowProps は Auxiliary mode でも attachment 経�
       removeTargets: ["src/App.tsx"],
     },
   ];
-  const workspacePathMatchItems: AgentSessionChatProjectionInput["workspacePathMatchItems"] = [
-    {
-      key: "match:session-file",
-      path: "C:/session-files/review.md",
-      kind: "file",
-      kindLabel: "File",
-      primaryLabel: "review.md",
-      secondaryLabel: "Session Files",
-      title: "review.md",
-      isActive: true,
-    },
-  ];
-
   const props = buildAgentSessionChatWindowProps(createProjectionInput({
     isAuxiliaryMode: true,
     composerAttachmentItems: attachmentItems,
-    workspacePathMatchItems,
     attachmentCount: 1,
     onDraftPaste,
   }));
 
   assert.equal(props.composerProps.showAttachmentControls, true);
   assert.deepEqual(props.composerProps.attachmentItems, attachmentItems);
-  assert.deepEqual(props.composerProps.workspacePathMatchItems, workspacePathMatchItems);
   assert.equal(props.composerProps.onDraftPaste, onDraftPaste);
   assert.equal(props.compactActionDockProps.attachmentCount, 1);
 });

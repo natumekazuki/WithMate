@@ -79,7 +79,6 @@ export type CompanionChatProjectionInput = {
   skillItems: SessionComposerExpandedProps["skillItems"];
   attachmentItems: SessionComposerExpandedProps["attachmentItems"];
   additionalDirectoryItems: SessionComposerExpandedProps["additionalDirectoryItems"];
-  workspacePathMatchItems: SessionComposerExpandedProps["workspacePathMatchItems"];
   draft: string;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   isComposerDisabled: boolean;
@@ -179,8 +178,6 @@ export type CompanionChatProjectionInput = {
   onDraftCompositionEnd: () => void;
   onSendOrCancel: () => void;
   onExpandActionDock: () => void;
-  onSelectWorkspacePathMatch: SessionComposerExpandedProps["onSelectWorkspacePathMatch"];
-  onActivateWorkspacePathMatch: SessionComposerExpandedProps["onActivateWorkspacePathMatch"];
   onChangeApprovalMode: SessionComposerExpandedProps["onChangeApprovalMode"];
   onChangeCodexSandboxMode: SessionComposerExpandedProps["onChangeCodexSandboxMode"];
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
@@ -269,7 +266,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       skillItems: input.skillItems,
       attachmentItems: input.attachmentItems,
       additionalDirectoryItems: input.additionalDirectoryItems,
-      workspacePathMatchItems: input.workspacePathMatchItems,
       draft: input.draft,
       composerTextareaRef: input.composerTextareaRef,
       isComposerDisabled: input.isComposerDisabled,
@@ -314,8 +310,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       onDraftCompositionStart: input.onDraftCompositionStart,
       onDraftCompositionEnd: input.onDraftCompositionEnd,
       onSendOrCancel: input.onSendOrCancel,
-      onSelectWorkspacePathMatch: input.onSelectWorkspacePathMatch,
-      onActivateWorkspacePathMatch: input.onActivateWorkspacePathMatch,
       onChangeApprovalMode: input.onChangeApprovalMode,
       onChangeCodexSandboxMode: input.onChangeCodexSandboxMode,
       onChangeModel: input.onChangeModel,
