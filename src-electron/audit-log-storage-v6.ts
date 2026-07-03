@@ -8,13 +8,18 @@ import type {
   AuditLogSummaryPageRequest,
   AuditLogSummaryPageResult,
 } from "../src/app-state.js";
-import { CREATE_V6_SCHEMA_SQL } from "./database-schema-v6.js";
+import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 type AuditEventV6Row = {
   id: number;
   session_id: string | null;
+  auxiliary_session_id: string | null;
   metadata_json: string;
+};
+
+type CountRow = {
+  count: number;
 };
 
 const DEFAULT_PAGE_LIMIT = 50;
@@ -31,7 +36,7 @@ function parseEntry(row: AuditEventV6Row): AuditLogEntry | null {
       id: row.id,
       sessionId: typeof (parsed as { sessionId?: unknown }).sessionId === "string"
         ? (parsed as { sessionId: string }).sessionId
-        : row.session_id ?? "",
+        : row.session_id ?? row.auxiliary_session_id ?? "",
     } as AuditLogEntry;
   } catch {
     return null;
@@ -75,17 +80,25 @@ export class AuditLogStorageV6 {
 
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
-    for (const statement of CREATE_V6_SCHEMA_SQL) {
-      this.db.exec(statement);
-    }
+    ensureV6Schema(this.db);
   }
 
   createAuditLog(input: Omit<AuditLogEntry, "id">): AuditLogEntry {
+    const target = this.resolveAuditTarget(input.sessionId);
     const result = this.db.prepare(`
-      INSERT INTO audit_events_v6 (session_id, event_type, provider_id, summary, metadata_json, created_at)
-      VALUES (?, 'session_turn', ?, ?, ?, ?)
+      INSERT INTO audit_events_v6 (
+        session_id,
+        auxiliary_session_id,
+        event_type,
+        provider_id,
+        summary,
+        metadata_json,
+        created_at
+      )
+      VALUES (?, ?, 'session_turn', ?, ?, ?, ?)
     `).run(
-      input.sessionId,
+      target.sessionId,
+      target.auxiliarySessionId,
       input.provider,
       input.transportPayload?.summary ?? input.phase,
       JSON.stringify(input),
@@ -96,24 +109,31 @@ export class AuditLogStorageV6 {
 
   updateAuditLog(id: number, input: Omit<AuditLogEntry, "id">): AuditLogEntry {
     const entry = { ...input, id };
+    const target = this.resolveAuditTarget(entry.sessionId);
     const result = this.db.prepare(`
       UPDATE audit_events_v6
       SET session_id = ?,
+          auxiliary_session_id = ?,
           provider_id = ?,
           summary = ?,
           metadata_json = ?,
           created_at = ?
       WHERE id = ?
+        AND session_id IS ?
+        AND auxiliary_session_id IS ?
     `).run(
-      entry.sessionId,
+      target.sessionId,
+      target.auxiliarySessionId,
       entry.provider,
       entry.transportPayload?.summary ?? entry.phase,
       JSON.stringify(input),
       entry.createdAt,
       id,
+      target.sessionId,
+      target.auxiliarySessionId,
     );
     if (result.changes !== 1) {
-      throw new Error(`audit log not found: ${id}`);
+      throw new Error(`audit log not found or target mismatch: ${id}`);
     }
     return entry;
   }
@@ -131,16 +151,16 @@ export class AuditLogStorageV6 {
     request?: AuditLogSummaryPageRequest | null,
   ): AuditLogSummaryPageResult {
     const { cursor, limit } = normalizePageRequest(request);
-    const params: Array<string | number> = [sessionId];
+    const params: Array<string | number> = [sessionId, sessionId];
     let cursorSql = "";
     if (cursor !== null) {
       cursorSql = "AND id < ?";
       params.push(cursor);
     }
     const rows = this.db.prepare(`
-      SELECT id, session_id, metadata_json
+      SELECT id, session_id, auxiliary_session_id, metadata_json
       FROM audit_events_v6
-      WHERE session_id = ?
+      WHERE (session_id = ? OR auxiliary_session_id = ?)
         ${cursorSql}
       ORDER BY id DESC
       LIMIT ?
@@ -153,8 +173,8 @@ export class AuditLogStorageV6 {
     const totalRow = this.db.prepare(`
       SELECT COUNT(*) AS count
       FROM audit_events_v6
-      WHERE session_id = ?
-    `).get(sessionId) as { count: number };
+      WHERE (session_id = ? OR auxiliary_session_id = ?)
+    `).get(sessionId, sessionId) as CountRow;
     return {
       entries,
       nextCursor: rows.length > limit ? visibleRows[visibleRows.length - 1]?.id ?? null : null,
@@ -231,20 +251,42 @@ export class AuditLogStorageV6 {
 
   private readEntries(sessionId: string): AuditLogEntry[] {
     const rows = this.db.prepare(`
-      SELECT id, session_id, metadata_json
+      SELECT id, session_id, auxiliary_session_id, metadata_json
       FROM audit_events_v6
-      WHERE session_id = ?
+      WHERE (session_id = ? OR auxiliary_session_id = ?)
       ORDER BY id DESC
-    `).all(sessionId) as AuditEventV6Row[];
+    `).all(sessionId, sessionId) as AuditEventV6Row[];
     return rows.map((row) => parseEntry(row)).filter((entry): entry is AuditLogEntry => entry !== null);
   }
 
   private readEntry(sessionId: string, auditLogId: number): AuditLogEntry | null {
     const row = this.db.prepare(`
-      SELECT id, session_id, metadata_json
+      SELECT id, session_id, auxiliary_session_id, metadata_json
       FROM audit_events_v6
-      WHERE session_id = ? AND id = ?
-    `).get(sessionId, auditLogId) as AuditEventV6Row | undefined;
+      WHERE (session_id = ? OR auxiliary_session_id = ?) AND id = ?
+    `).get(sessionId, sessionId, auditLogId) as AuditEventV6Row | undefined;
     return row ? parseEntry(row) : null;
+  }
+
+  private resolveAuditTarget(sessionId: string): { sessionId: string | null; auxiliarySessionId: string | null } {
+    const sessionRow = this.db.prepare(`
+      SELECT id
+      FROM sessions_v6
+      WHERE id = ?
+    `).get(sessionId) as { id: string } | undefined;
+    if (sessionRow) {
+      return { sessionId, auxiliarySessionId: null };
+    }
+
+    const auxiliaryRow = this.db.prepare(`
+      SELECT id
+      FROM auxiliary_sessions
+      WHERE id = ?
+    `).get(sessionId) as { id: string } | undefined;
+    if (auxiliaryRow) {
+      return { sessionId: null, auxiliarySessionId: sessionId };
+    }
+
+    throw new Error(`audit log target not found: ${sessionId}`);
   }
 }

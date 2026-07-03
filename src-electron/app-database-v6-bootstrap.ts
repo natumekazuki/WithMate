@@ -3,9 +3,10 @@ import { mkdtemp } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
-  CREATE_V6_SCHEMA_SQL,
   APP_DATABASE_V6_FILENAME,
+  ensureV6Schema,
   isValidV6Database,
+  readV6DatabaseUserVersion,
   resolveV6FreshDatabasePath,
 } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
@@ -25,6 +26,14 @@ export async function createOrVerifyV6FreshDatabase(
 ): Promise<V6FreshDatabaseBootstrapResult> {
   const dbPath = resolveV6FreshDatabasePath(userDataPath);
   if (existsSync(dbPath)) {
+    if (readV6DatabaseUserVersion(dbPath) === 6) {
+      const db = openAppDatabase(dbPath);
+      try {
+        ensureV6Schema(db);
+      } finally {
+        db.close();
+      }
+    }
     if (!isValidV6Database(dbPath)) {
       throw new Error("withmate-v6.db exists but does not match the V6 foundation schema.");
     }
@@ -40,8 +49,12 @@ export async function createOrVerifyV6FreshDatabase(
     let committed = false;
     try {
       db.exec("BEGIN IMMEDIATE TRANSACTION;");
-      for (const statement of options.schemaSql ?? CREATE_V6_SCHEMA_SQL) {
-        db.exec(statement);
+      if (options.schemaSql) {
+        for (const statement of options.schemaSql) {
+          db.exec(statement);
+        }
+      } else {
+        ensureV6Schema(db);
       }
       db.exec("COMMIT;");
       committed = true;

@@ -1138,9 +1138,8 @@ test("PersistentStoreLifecycleService は V6 DB に legacy session/audit/memory/
     const auxiliary = bundle.auxiliarySessionStorage.upsertAuxiliarySession(createAuxiliarySessionFixture());
     assert.equal(auxiliary.id, "aux-v6");
     assert.equal(bundle.auxiliarySessionStorage.listAuxiliarySessions("session-v6")[0]?.id, "aux-v6");
-    service.close(bundle, dbPath);
-
     const tables = readTableNames(dbPath);
+    service.close(bundle, dbPath);
     assert.equal(tables.includes("sessions_v6"), true);
     assert.equal(tables.includes("audit_events_v6"), true);
     assert.equal(tables.includes("auxiliary_sessions"), true);

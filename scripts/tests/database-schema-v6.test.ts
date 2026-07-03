@@ -223,15 +223,29 @@ describe("database-schema-v6", () => {
       ]);
       assert.equal(findForeignKey(db, "session_messages_v6", "session_id")?.on_delete.toUpperCase(), "CASCADE");
 
+      assert.deepEqual(columnNames(db, "auxiliary_sessions"), [
+        "id",
+        "parent_session_id",
+        "status",
+        "created_at",
+        "updated_at",
+        "payload_json",
+      ]);
+      assert.equal(findForeignKey(db, "auxiliary_sessions", "parent_session_id"), undefined);
+      assert.equal(tableSql(db, "auxiliary_sessions").includes("status IN ('active', 'closed')"), true);
+
       assert.deepEqual(columnNames(db, "audit_events_v6"), [
         "id",
         "session_id",
+        "auxiliary_session_id",
         "event_type",
         "provider_id",
         "summary",
         "metadata_json",
         "created_at",
       ]);
+      assert.equal(findForeignKey(db, "audit_events_v6", "session_id")?.table, "sessions_v6");
+      assert.equal(findForeignKey(db, "audit_events_v6", "auxiliary_session_id")?.table, "auxiliary_sessions");
       assert.equal(tableSql(db, "audit_events_v6").includes("'memory_mutation'"), true);
       assert.equal(tableSql(db, "audit_events_v6").includes("'runtime_binding'"), true);
     } finally {
