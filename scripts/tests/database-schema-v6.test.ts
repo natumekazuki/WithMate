@@ -231,8 +231,7 @@ describe("database-schema-v6", () => {
         "updated_at",
         "payload_json",
       ]);
-      assert.equal(findForeignKey(db, "auxiliary_sessions", "parent_session_id")?.table, "sessions_v6");
-      assert.equal(findForeignKey(db, "auxiliary_sessions", "parent_session_id")?.on_delete.toUpperCase(), "CASCADE");
+      assert.equal(findForeignKey(db, "auxiliary_sessions", "parent_session_id"), undefined);
       assert.equal(tableSql(db, "auxiliary_sessions").includes("status IN ('active', 'closed')"), true);
 
       assert.deepEqual(columnNames(db, "audit_events_v6"), [

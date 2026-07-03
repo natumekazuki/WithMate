@@ -264,7 +264,6 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
   return hasForeignKey(db, "sessions_v6", "character_id", "characters")
     && hasForeignKey(db, "sessions_v6", "project_scope_id", "project_scopes_v6")
     && hasForeignKey(db, "session_messages_v6", "session_id", "sessions_v6")
-    && hasForeignKey(db, "auxiliary_sessions", "parent_session_id", "sessions_v6")
     && hasForeignKey(db, "audit_events_v6", "session_id", "sessions_v6")
     && hasForeignKey(db, "audit_events_v6", "auxiliary_session_id", "auxiliary_sessions")
     && hasForeignKey(db, "memory_entries_v6", "source_app_message_id", "session_messages_v6")
@@ -455,8 +454,7 @@ export const CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL = `
     status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    FOREIGN KEY (parent_session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
+    payload_json TEXT NOT NULL
   );
 
   CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_updated
@@ -734,8 +732,7 @@ function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): 
       status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      payload_json TEXT NOT NULL,
-      FOREIGN KEY (parent_session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
+      payload_json TEXT NOT NULL
     );
   `);
   db.exec(`
@@ -772,7 +769,7 @@ export function ensureV6Schema(db: DatabaseSync): void {
     db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);
   } else {
     const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
-    const shouldRebuildAuxiliarySessions = !hasForeignKey(db, "auxiliary_sessions", "parent_session_id", "sessions_v6")
+    const shouldRebuildAuxiliarySessions = hasForeignKey(db, "auxiliary_sessions", "parent_session_id", "sessions_v6")
       || !tableSql(db, "auxiliary_sessions").includes("status IN ('active', 'closed')");
     if (shouldRebuildAuxiliarySessions) {
       rebuildAuxiliarySessionsTable(db, auxiliaryColumns);
