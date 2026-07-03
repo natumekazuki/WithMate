@@ -4,34 +4,17 @@ import test from "node:test";
 import {
   appendMissingPathReferenceAttachments,
   buildAdditionalDirectoryItems,
-  buildClosedWorkspacePathMatchState,
   buildComposerAttachmentItems,
-  buildComposerPathReferencePreviewState,
   buildPathReferenceAttachmentItems,
   buildPathReferenceInsertionState,
-  buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalState,
-  buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildSelectedPathReferenceInsertionState,
-  buildPathReferenceReplacementState,
-  buildWorkspacePathMatchSelectionState,
-  buildWorkspacePathMatchState,
-  buildWorkspacePathMatchItems,
-  canSearchWorkspacePathMatches,
-  canNavigateWorkspacePathMatches,
-  getInitialWorkspacePathMatchIndex,
-  getNextWorkspacePathMatchIndex,
-  getPreviousWorkspacePathMatchIndex,
-  getWorkspacePathMatchNavigationIndex,
   pickComposerReferencePath,
   removePathReferenceAttachments,
   removePathReferenceTokensFromDraft,
-  resolveActiveWorkspacePathMatch,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   resolvePathReferenceRemovalTargets,
-  resolveWorkspacePathMatchKeyAction,
-  resolveWorkspacePathMatchNavigation,
   type ComposerPathPickerKind,
 } from "../../src/session-composer-paths.js";
 
@@ -69,68 +52,7 @@ test("buildPathReferenceInsertionState は reference path が空なら null を�
   assert.equal(buildPathReferenceInsertionState("draft", 0, []), null);
 });
 
-test("buildClosedWorkspacePathMatchState は候補と active index を閉じる", () => {
-  assert.deepEqual(buildClosedWorkspacePathMatchState(), {
-    workspacePathMatches: [],
-    activeWorkspacePathMatchIndex: -1,
-  });
-});
-
-test("buildComposerPathReferencePreviewState は active path reference の preview を返す", () => {
-  assert.deepEqual(
-    buildComposerPathReferencePreviewState({
-      draft: "確認 @src/ して",
-      caret: "確認 @src/".length,
-      isEnabled: true,
-    }),
-    {
-      activePathReference: {
-        query: "src/",
-        start: "確認 ".length,
-        end: "確認 @src/".length,
-      },
-      isEditingPathReference: true,
-      normalizedActivePathQuery: "src/",
-      previewDraft: "確認  して",
-      previewUserMessage: "確認  して",
-    },
-  );
-});
-
-test("buildComposerPathReferencePreviewState は無効時に draft をそのまま preview に使う", () => {
-  assert.deepEqual(
-    buildComposerPathReferencePreviewState({
-      draft: "確認 @src/",
-      caret: "確認 @src/".length,
-      isEnabled: false,
-    }),
-    {
-      activePathReference: null,
-      isEditingPathReference: false,
-      normalizedActivePathQuery: "",
-      previewDraft: "確認 @src/",
-      previewUserMessage: "確認 @src/",
-    },
-  );
-});
-
-test("buildPathReferenceInsertionWithClosedWorkspaceMatchesState は挿入後に候補を閉じる", () => {
-  assert.deepEqual(
-    buildPathReferenceInsertionWithClosedWorkspaceMatchesState("確認 ", "確認 ".length, ["src/App.tsx"]),
-    {
-      draft: "確認 @src/App.tsx",
-      caret: "確認 @src/App.tsx".length,
-      workspacePathMatches: [],
-      activeWorkspacePathMatchIndex: -1,
-    },
-  );
-  assert.equal(
-    buildPathReferenceInsertionWithClosedWorkspaceMatchesState("確認 ", "確認 ".length, []),
-    null,
-  );
-});
-
-test("buildSelectedPathReferenceInsertionState は選択 path を解決して候補を閉じる", () => {
+test("buildSelectedPathReferenceInsertionState は選択 path を解決して挿入 state を作る", () => {
   assert.deepEqual(
     buildSelectedPathReferenceInsertionState({
       draft: "確認 ",
@@ -144,8 +66,6 @@ test("buildSelectedPathReferenceInsertionState は選択 path を解決して候
     {
       draft: "確認 @src/App.tsx @\"D:/assets/cover image.png\"",
       caret: "確認 @src/App.tsx @\"D:/assets/cover image.png\"".length,
-      workspacePathMatches: [],
-      activeWorkspacePathMatchIndex: -1,
     },
   );
   assert.equal(
@@ -288,234 +208,6 @@ test("removePathReferenceAttachments は削除対象以外の path reference を
   );
 });
 
-test("buildWorkspacePathMatchItems は path match display と active state を作る", () => {
-  assert.deepEqual(
-    buildWorkspacePathMatchItems(
-      [
-        { kind: "file", path: "C:\\workspace\\src\\App.tsx" },
-        { kind: "folder", path: "C:/workspace/docs" },
-      ],
-      1,
-    ),
-    [
-      {
-        key: "file:C:\\workspace\\src\\App.tsx",
-        path: "C:\\workspace\\src\\App.tsx",
-        kind: "file",
-        kindLabel: "File",
-        primaryLabel: "App.tsx",
-        secondaryLabel: "C:/workspace/src",
-        title: "C:/workspace/src/App.tsx",
-        isActive: false,
-      },
-      {
-        key: "folder:C:/workspace/docs",
-        path: "C:/workspace/docs",
-        kind: "folder",
-        kindLabel: "Dir",
-        primaryLabel: "docs",
-        secondaryLabel: "C:/workspace",
-        title: "C:/workspace/docs",
-        isActive: true,
-      },
-    ],
-  );
-});
-
-test("workspace path match index helpers は初期値と上下移動を clamp する", () => {
-  assert.equal(getInitialWorkspacePathMatchIndex(0), -1);
-  assert.equal(getInitialWorkspacePathMatchIndex(2), 0);
-  assert.equal(getNextWorkspacePathMatchIndex(-1, 3), 0);
-  assert.equal(getNextWorkspacePathMatchIndex(1, 3), 2);
-  assert.equal(getNextWorkspacePathMatchIndex(2, 3), 2);
-  assert.equal(getPreviousWorkspacePathMatchIndex(0), 0);
-  assert.equal(getPreviousWorkspacePathMatchIndex(2), 1);
-});
-
-test("buildWorkspacePathMatchState は候補と初期 active index を返す", () => {
-  const pathMatches = [
-    { kind: "file" as const, path: "src/App.tsx" },
-    { kind: "folder" as const, path: "src" },
-  ];
-  assert.deepEqual(buildWorkspacePathMatchState(pathMatches), {
-    workspacePathMatches: pathMatches,
-    activeWorkspacePathMatchIndex: 0,
-  });
-  assert.deepEqual(buildWorkspacePathMatchState([]), {
-    workspacePathMatches: [],
-    activeWorkspacePathMatchIndex: -1,
-  });
-});
-
-test("canSearchWorkspacePathMatches は検索 block と composer 状態から検索可否を返す", () => {
-  const baseInput = {
-    isSearchBlocked: false,
-    isComposerImeComposing: false,
-    isEditingPathReference: true,
-    normalizedActivePathQuery: "src",
-    minQueryLength: 2,
-  };
-
-  assert.equal(canSearchWorkspacePathMatches(baseInput), true);
-  assert.equal(canSearchWorkspacePathMatches({ ...baseInput, isSearchBlocked: true }), false);
-  assert.equal(canSearchWorkspacePathMatches({ ...baseInput, isComposerImeComposing: true }), false);
-  assert.equal(canSearchWorkspacePathMatches({ ...baseInput, isEditingPathReference: false }), false);
-  assert.equal(canSearchWorkspacePathMatches({ ...baseInput, normalizedActivePathQuery: "s" }), false);
-  assert.equal(canSearchWorkspacePathMatches({ ...baseInput, normalizedActivePathQuery: "sr" }), true);
-});
-
-test("resolveActiveWorkspacePathMatch は active index の候補または先頭候補を返す", () => {
-  const pathMatches = [
-    { kind: "file" as const, path: "src/App.tsx" },
-    { kind: "folder" as const, path: "src" },
-  ];
-
-  assert.deepEqual(resolveActiveWorkspacePathMatch(pathMatches, 1), pathMatches[1]);
-  assert.deepEqual(resolveActiveWorkspacePathMatch(pathMatches, -1), pathMatches[0]);
-  assert.deepEqual(resolveActiveWorkspacePathMatch(pathMatches, 9), pathMatches[0]);
-  assert.equal(resolveActiveWorkspacePathMatch([], 0), null);
-});
-
-test("canNavigateWorkspacePathMatches は候補数と IME 状態から navigation 可否を返す", () => {
-  assert.equal(
-    canNavigateWorkspacePathMatches({
-      matchCount: 1,
-      isComposerImeComposing: false,
-      isNativeComposing: false,
-    }),
-    true,
-  );
-  assert.equal(
-    canNavigateWorkspacePathMatches({
-      matchCount: 0,
-      isComposerImeComposing: false,
-      isNativeComposing: false,
-    }),
-    false,
-  );
-  assert.equal(
-    canNavigateWorkspacePathMatches({
-      matchCount: 1,
-      isComposerImeComposing: true,
-      isNativeComposing: false,
-    }),
-    false,
-  );
-  assert.equal(
-    canNavigateWorkspacePathMatches({
-      matchCount: 1,
-      isComposerImeComposing: false,
-      isNativeComposing: true,
-    }),
-    false,
-  );
-});
-
-test("resolveWorkspacePathMatchKeyAction は path match navigation key を action に変換する", () => {
-  assert.deepEqual(
-    resolveWorkspacePathMatchKeyAction({ key: "ArrowDown", ctrlKey: false, metaKey: false }),
-    { kind: "next", shouldPreventDefault: true },
-  );
-  assert.deepEqual(
-    resolveWorkspacePathMatchKeyAction({ key: "ArrowUp", ctrlKey: false, metaKey: false }),
-    { kind: "previous", shouldPreventDefault: true },
-  );
-  assert.deepEqual(
-    resolveWorkspacePathMatchKeyAction({ key: "Escape", ctrlKey: false, metaKey: false }),
-    { kind: "dismiss", shouldPreventDefault: true },
-  );
-  assert.deepEqual(
-    resolveWorkspacePathMatchKeyAction({ key: "Tab", ctrlKey: false, metaKey: false }),
-    { kind: "dismiss", shouldPreventDefault: false },
-  );
-  assert.deepEqual(
-    resolveWorkspacePathMatchKeyAction({ key: "Enter", ctrlKey: false, metaKey: false }),
-    { kind: "select", shouldPreventDefault: true },
-  );
-  assert.equal(resolveWorkspacePathMatchKeyAction({ key: "Enter", ctrlKey: true, metaKey: false }), null);
-  assert.equal(resolveWorkspacePathMatchKeyAction({ key: "Enter", ctrlKey: false, metaKey: true }), null);
-  assert.equal(resolveWorkspacePathMatchKeyAction({ key: "a", ctrlKey: false, metaKey: false }), null);
-});
-
-test("resolveWorkspacePathMatchNavigation は key action と候補状態から navigation 結果を返す", () => {
-  const pathMatches = [
-    { kind: "file" as const, path: "src/App.tsx" },
-    { kind: "folder" as const, path: "src" },
-  ];
-  const baseInput = {
-    pathMatches,
-    activeIndex: 0,
-    ctrlKey: false,
-    metaKey: false,
-    isComposerImeComposing: false,
-    isNativeComposing: false,
-  };
-
-  assert.deepEqual(
-    resolveWorkspacePathMatchNavigation({ ...baseInput, key: "ArrowDown" }),
-    { kind: "next", shouldPreventDefault: true },
-  );
-  assert.deepEqual(
-    resolveWorkspacePathMatchNavigation({ ...baseInput, activeIndex: 1, key: "ArrowUp" }),
-    { kind: "previous", shouldPreventDefault: true },
-  );
-  assert.deepEqual(
-    resolveWorkspacePathMatchNavigation({ ...baseInput, key: "Tab" }),
-    { kind: "dismiss", shouldPreventDefault: false },
-  );
-  assert.deepEqual(
-    resolveWorkspacePathMatchNavigation({ ...baseInput, key: "Escape" }),
-    { kind: "dismiss", shouldPreventDefault: true },
-  );
-  assert.deepEqual(
-    resolveWorkspacePathMatchNavigation({ ...baseInput, activeIndex: 9, key: "Enter" }),
-    { kind: "select", match: pathMatches[0], shouldPreventDefault: true },
-  );
-  assert.equal(
-    resolveWorkspacePathMatchNavigation({
-      ...baseInput,
-      key: "ArrowDown",
-      isComposerImeComposing: true,
-    }),
-    null,
-  );
-  assert.equal(
-    resolveWorkspacePathMatchNavigation({ ...baseInput, key: "Enter", ctrlKey: true }),
-    null,
-  );
-  assert.equal(
-    resolveWorkspacePathMatchNavigation({ ...baseInput, key: "ArrowDown", pathMatches: [] }),
-    null,
-  );
-});
-
-test("getWorkspacePathMatchNavigationIndex は最新 active index から次の index を返す", () => {
-  assert.equal(
-    getWorkspacePathMatchNavigationIndex(
-      { kind: "next", shouldPreventDefault: true },
-      1,
-      3,
-    ),
-    2,
-  );
-  assert.equal(
-    getWorkspacePathMatchNavigationIndex(
-      { kind: "previous", shouldPreventDefault: true },
-      2,
-      3,
-    ),
-    1,
-  );
-  assert.equal(
-    getWorkspacePathMatchNavigationIndex(
-      { kind: "dismiss", shouldPreventDefault: false },
-      2,
-      3,
-    ),
-    2,
-  );
-});
-
 test("buildAdditionalDirectoryItems は additional directory display と remove state を作る", () => {
   assert.deepEqual(
     buildAdditionalDirectoryItems(
@@ -581,53 +273,6 @@ test("resolveReferencePathsForInsertion は空 workspace path を旧 workspace-r
   );
 });
 
-test("buildPathReferenceReplacementState は active path reference を置換する", () => {
-  assert.deepEqual(
-    buildPathReferenceReplacementState(
-      "確認 @sr して",
-      { query: "sr", start: "確認 ".length, end: "確認 @sr".length },
-      "src/App.tsx",
-    ),
-    {
-      draft: "確認 @src/App.tsx して",
-      caret: "確認 @src/App.tsx".length,
-    },
-  );
-});
-
-test("buildPathReferenceReplacementState は空白を含む path を quote する", () => {
-  assert.deepEqual(
-    buildPathReferenceReplacementState(
-      "確認 @docs して",
-      { query: "docs", start: "確認 ".length, end: "確認 @docs".length },
-      "docs/my note.md",
-    ),
-    {
-      draft: "確認 @\"docs/my note.md\" して",
-      caret: "確認 @\"docs/my note.md\"".length,
-    },
-  );
-});
-
-test("buildWorkspacePathMatchSelectionState は active path reference を置換して候補を閉じる", () => {
-  assert.deepEqual(
-    buildWorkspacePathMatchSelectionState("確認 @src/ して", "確認 @src/".length, "src/App.tsx"),
-    {
-      draft: "確認 @src/App.tsx して",
-      caret: "確認 @src/App.tsx".length,
-      workspacePathMatches: [],
-      activeWorkspacePathMatchIndex: -1,
-    },
-  );
-});
-
-test("buildWorkspacePathMatchSelectionState は active path reference がなければ null を返す", () => {
-  assert.equal(
-    buildWorkspacePathMatchSelectionState("確認 src/ して", "確認 src/".length, "src/App.tsx"),
-    null,
-  );
-});
-
 test("removePathReferenceTokensFromDraft は path reference token を draft から削除する", () => {
   assert.equal(
     removePathReferenceTokensFromDraft("確認 @src/App.tsx して", ["src/App.tsx"]),
@@ -675,18 +320,6 @@ test("buildPathReferenceRemovalState は path reference 削除後の draft と�
     {
       draft: "確認 して",
       caret: "確認 して".length,
-    },
-  );
-});
-
-test("buildPathReferenceRemovalWithClosedWorkspaceMatchesState は削除後に候補を閉じる", () => {
-  assert.deepEqual(
-    buildPathReferenceRemovalWithClosedWorkspaceMatchesState("確認 @src/App.tsx して", ["src/App.tsx"]),
-    {
-      draft: "確認 して",
-      caret: "確認 して".length,
-      workspacePathMatches: [],
-      activeWorkspacePathMatchIndex: -1,
     },
   );
 });

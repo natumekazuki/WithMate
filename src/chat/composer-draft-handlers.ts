@@ -1,7 +1,5 @@
 import type { KeyboardEvent } from "react";
 
-import { handleWorkspacePathMatchKeyboardNavigation } from "./workspace-path-match-keyboard.js";
-
 export type ComposerDraftSelectionStartProvider = () => number | null | undefined;
 export type ComposerDraftCaretUpdater = (selectionStart: number) => void;
 
@@ -20,10 +18,7 @@ type ComposerDraftCompositionEndHandlerArgs = ComposerDraftSelectHandlerArgs & {
   getFallbackSelectionStart: () => number;
 };
 
-type ComposerDraftKeyDownHandlerArgs = Omit<
-  Parameters<typeof handleWorkspacePathMatchKeyboardNavigation>[0],
-  "event"
-> & {
+type ComposerDraftKeyDownHandlerArgs = {
   submit: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
 };
 
@@ -110,12 +105,5 @@ export const buildOnDraftCompositionHandlers = (args: ComposerDraftCompositionEn
 export const buildComposerDraftKeyDownHandler = (args: ComposerDraftKeyDownHandlerArgs) => (
   event: KeyboardEvent<HTMLTextAreaElement>,
 ) => {
-  if (handleWorkspacePathMatchKeyboardNavigation({
-    ...args,
-    event,
-  })) {
-    return;
-  }
-
   args.submit(event);
 };

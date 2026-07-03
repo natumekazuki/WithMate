@@ -165,8 +165,6 @@ import {
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
-  WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
-  WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SET_MATE_AVATAR_CHANNEL,
   WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
   WITHMATE_SAVE_PASTED_SESSION_FILE_CHANNEL,
@@ -187,7 +185,6 @@ import type {
   ResetAppDatabaseRequest,
   SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
-import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
 type IpcSenderEvent = Pick<IpcMainInvokeEvent, "sender">;
@@ -305,13 +302,11 @@ export type MainIpcRegistrationDeps = {
   discardCompanionSession(sessionId: string): Promise<CompanionSession>;
   updateCompanionSession(session: CompanionSession): Promise<CompanionSession>;
   previewCompanionComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
-  searchCompanionWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
   cancelCompanionSessionRun(sessionId: string): void;
   updateSession(session: Session): Awaitable<Session>;
   deleteSession(sessionId: string): Awaitable<void>;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
-  searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   cancelSessionRun(sessionId: string): void;
   getMateState(): Awaitable<MateStorageState>;
@@ -460,7 +455,6 @@ type MainIpcSessionQueryDeps = Pick<
   | "getSessionMessageArtifact"
   | "getDiffPreview"
   | "previewComposerInput"
-  | "searchWorkspaceFiles"
 >;
 
 type MainIpcCompanionDeps = Pick<
@@ -477,7 +471,6 @@ type MainIpcCompanionDeps = Pick<
   | "discardCompanionSession"
   | "updateCompanionSession"
   | "previewCompanionComposerInput"
-  | "searchCompanionWorkspaceFiles"
   | "runCompanionSessionTurn"
   | "cancelCompanionSessionRun"
 >;
@@ -832,9 +825,6 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
   ipcMain.handle(WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL, (_event, sessionId: string, userMessage: string) =>
     deps.previewComposerInput(sessionId, userMessage),
   );
-  ipcMain.handle(WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL, (_event, sessionId: string, query: string) =>
-    deps.searchWorkspaceFiles(sessionId, query),
-  );
 }
 
 function registerCompanionHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCompanionDeps): void {
@@ -879,9 +869,6 @@ function registerCompanionHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCom
   );
   ipcMain.handle(WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL, async (_event, sessionId: string, userMessage: string) =>
     deps.previewCompanionComposerInput(sessionId, userMessage),
-  );
-  ipcMain.handle(WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL, async (_event, sessionId: string, query: string) =>
-    deps.searchCompanionWorkspaceFiles(sessionId, query),
   );
   ipcMain.handle(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL, async (_event, input: CreateCompanionSessionInput) =>
     deps.createCompanionSession(input),
