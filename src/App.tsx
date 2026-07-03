@@ -641,6 +641,7 @@ export default function AgentSessionWindowApp() {
     runState: selectedSession?.runState,
     hasLiveRun: !!selectedSessionLiveRun,
   });
+  const visibleSessionRunState: Session["runState"] | null = activeAuxiliarySession?.runState ?? selectedSessionRunState;
   const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
   const liveApprovalRequest = selectedSessionLiveRun?.approvalRequest ?? null;
   const liveElicitationRequest = selectedSessionLiveRun?.elicitationRequest ?? null;
@@ -783,11 +784,11 @@ export default function AgentSessionWindowApp() {
   }, [selectedSessionId]);
 
   useEffect(() => {
-    if (selectedSessionRunState === "running") {
+    if (visibleSessionRunState === "running") {
       setIsAgentPickerOpen(false);
       setIsSkillPickerOpen(false);
     }
-  }, [selectedSessionRunState]);
+  }, [visibleSessionRunState]);
 
   useEffect(() => {
     return startModelCatalogSubscription({
@@ -1088,7 +1089,7 @@ export default function AgentSessionWindowApp() {
   }, [draft]);
 
   useLayoutEffect(() => {
-    const isActivityMonitorVisible = selectedSessionRunState === "running";
+    const isActivityMonitorVisible = visibleSessionRunState === "running";
     const activityMonitorElement = activityMonitorRef.current;
     const currentSignature = activityMonitorScrollSignature;
     const wasSameSession = activityMonitorSessionIdRef.current === selectedSessionId;
@@ -1129,7 +1130,7 @@ export default function AgentSessionWindowApp() {
     }
 
     setHasActivityMonitorUnread(true);
-  }, [activityMonitorScrollSignature, isActivityMonitorFollowing, selectedSessionRunState, selectedSessionId]);
+  }, [activityMonitorScrollSignature, isActivityMonitorFollowing, visibleSessionRunState, selectedSessionId]);
 
   useEffect(() => {
     let active = true;
@@ -1321,11 +1322,11 @@ export default function AgentSessionWindowApp() {
   );
   const latestCommandEmptyText = useMemo(
     () => resolveSessionMicrocopy(
-      selectedSessionRunState === "running" ? "empty.latest_command.waiting" : "empty.latest_command",
+      visibleSessionRunState === "running" ? "empty.latest_command.waiting" : "empty.latest_command",
       [
         "latest-command-empty",
         selectedSession?.id,
-        selectedSessionRunState,
+        visibleSessionRunState,
         latestTerminalAuditLog?.id,
       ],
     ),
@@ -1334,7 +1335,7 @@ export default function AgentSessionWindowApp() {
       latestTerminalAuditLog?.id,
       selectedSession?.id,
       selectedSessionCharacter?.name,
-      selectedSessionRunState,
+      visibleSessionRunState,
     ],
   );
   const retryBanner = useMemo<RetryBannerState | null>(() => {

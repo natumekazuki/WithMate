@@ -60,7 +60,6 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - 初期表示は `Session Monitor`
   - compact な session row を表示する
   - source は `src-electron/main.ts` の `sessionWindows: Map<string, BrowserWindow>` を truth source にした open session ids と、`Recent Sessions` と同じ filtered session list の交差集合を使う
-  - `sessionKind === "character-update"` の update 専用 session は monitor 対象から除外する
   - section
     - `実行中`: `running`
     - `停止・完了`: `interrupted` / `error` / `neutral` を含む non-running
@@ -75,7 +74,6 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
     - `taskTitle / workspace / kind label`
     - 部分一致
   - card list は全 session を正本として表示し、storage 既定の `last_active_at DESC` を崩さない
-  - `sessionKind === "character-update"` の update 専用 session はこの一覧から除外する
   - `sessionKind === "character-authoring"` の Character authoring session は通常 session と同じ削除・再開導線へ到達できるよう表示する
   - card 常時表示情報
     - `avatar / taskTitle / runState badge / workspacePath / updatedAt`
@@ -186,7 +184,6 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - チャット UI の実装正本は `chat` domain の単一 UI 定義だけとする
 - Agent / Companion / メイトークは同じ chat screen / header / message list / composer / right pane shell を使い、mode と service adapter で差分を切り替える
 - 新しい会話機能を追加する場合も、chat layout 実装を増やさず、Session UI の mode を追加する
-- `sessionKind === "character-update"` の時は update 用 mode に切り替える
 - session title の rename / delete
 - `Audit Log` overlay
   - approval 表示は `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording を使う
@@ -233,9 +230,6 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - right pane 上部には collapsed state の `title handle` を置く
 - right pane shell は Agent / Companion で共有する。表示する内容がない mode では pane 構造だけを残し、説明文や空メッセージを常設しない
 - `Generate Memory` は current UI では表示しない
-- `character-update` mode では right pane を `LatestCommand / MemoryExtract` の 2 面に切り替える
-- `character-update` mode では expanded header の `Terminal` を出さない
-- `character-update` mode では composer の `Skill / Agent` picker を出さない
 - command 実行中は `Latest Command` を最優先で自動表示する
 - MemoryGeneration / 独り言の right pane 自動切り替えは行わない
 - right pane の empty / idle copy は説明過多にせず、使えば分かる最小表現を優先する

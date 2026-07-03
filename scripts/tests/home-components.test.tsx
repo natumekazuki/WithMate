@@ -744,6 +744,38 @@ describe("HomeMonitorContent", () => {
         state: { kind: "running", label: "実行中" },
       } as HomeMonitorEntry,
       {
+        kind: "agent",
+        session: {
+          id: "session-2",
+          taskTitle: "Auxiliary task",
+          workspaceLabel: "workspace",
+          workspacePath: "C:/workspace",
+          character: "Solo Mate",
+          characterIconPath: "mate.png",
+        },
+        activeAuxiliarySession: {
+          id: "aux-1",
+          parentSessionId: "session-2",
+          status: "active",
+          runState: "running",
+          title: "Auxiliary",
+          provider: "codex",
+          catalogRevision: 1,
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+          approvalMode: "untrusted",
+          codexSandboxMode: "danger-full-access",
+          customAgentName: "",
+          allowedAdditionalDirectories: [],
+          threadId: "",
+          displayAfterMessageIndex: null,
+          createdAt: "2026-03-28T00:00:00.000Z",
+          updatedAt: "2026-03-30T00:00:00.000Z",
+          closedAt: "",
+        },
+        state: { kind: "running", label: "実行中" },
+      } as HomeMonitorEntry,
+      {
         kind: "companion",
         session: {
           id: "companion-1",
@@ -753,6 +785,38 @@ describe("HomeMonitorContent", () => {
           characterIconPath: "mate.png",
         },
         state: { kind: "neutral", label: "待機" },
+        groupLabel: "demo",
+      } as HomeMonitorEntry,
+      {
+        kind: "companion",
+        session: {
+          id: "companion-2",
+          groupId: "group-1",
+          taskTitle: "Companion Auxiliary task",
+          character: "Solo Mate",
+          characterIconPath: "mate.png",
+        },
+        activeAuxiliarySession: {
+          id: "aux-companion",
+          parentSessionId: "companion-2",
+          status: "active",
+          runState: "running",
+          title: "Auxiliary",
+          provider: "codex",
+          catalogRevision: 1,
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+          approvalMode: "untrusted",
+          codexSandboxMode: "danger-full-access",
+          customAgentName: "",
+          allowedAdditionalDirectories: [],
+          threadId: "",
+          displayAfterMessageIndex: null,
+          createdAt: "2026-03-28T00:00:00.000Z",
+          updatedAt: "2026-03-30T00:00:00.000Z",
+          closedAt: "",
+        },
+        state: { kind: "running", label: "実行中" },
         groupLabel: "demo",
       } as HomeMonitorEntry,
     ];
@@ -766,11 +830,16 @@ describe("HomeMonitorContent", () => {
     );
 
     assert.ok(html.includes("Agent task"));
+    assert.ok(html.includes("Auxiliary task"));
     assert.ok(html.includes("workspace"));
     assert.ok(html.includes("Companion task"));
+    assert.ok(html.includes("Companion Auxiliary task"));
     assert.ok(html.includes("demo"));
-    assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 2);
-    assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 2);
+    assert.ok(html.includes(">Agent</span>"));
+    assert.equal(html.match(/>Auxiliary<\/span>/g)?.length, 2);
+    assert.ok(html.includes(">Companion</span>"));
+    assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 4);
+    assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 4);
   });
 });
 
