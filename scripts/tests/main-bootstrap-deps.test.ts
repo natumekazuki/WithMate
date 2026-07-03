@@ -107,7 +107,6 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         getSessionMessageArtifact: () => null,
         getDiffPreview: () => null,
         previewComposerInput: async () => null,
-        searchWorkspaceFiles: async () => [],
       },
       companion: {
         createCompanionSession: async () => ({}) as never,
@@ -122,7 +121,6 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         discardCompanionSession: async () => ({}) as never,
         updateCompanionSession: async (session) => session,
         previewCompanionComposerInput: async () => ({ attachments: [], errors: [] }),
-        searchCompanionWorkspaceFiles: async () => [],
         runCompanionSessionTurn: async () => ({}) as never,
         cancelCompanionSessionRun: () => {},
       },

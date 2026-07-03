@@ -65,18 +65,9 @@ test("buildRetryDraftRestoreState は retry 編集復元時の composer state �
   assert.deepEqual(restoreState, {
     draft: "前回の依頼",
     caret: 5,
-    workspacePathMatches: [],
-    activeWorkspacePathMatchIndex: -1,
     isRetryDraftReplacePending: false,
     isActionDockPinnedExpanded: true,
   });
-});
-
-test("buildRetryDraftRestoreState は workspace path matches を呼び出しごとに新しくする", () => {
-  const first = buildRetryDraftRestoreState("a");
-  const second = buildRetryDraftRestoreState("a");
-
-  assert.notEqual(first.workspacePathMatches, second.workspacePathMatches);
 });
 
 test("runRetryResendCommand は有効な last user message だけ再送する", async () => {
@@ -123,7 +114,6 @@ test("applyRetryDraftRestoreCommand は retry draft restore state を UI setter 
     setDraft: (draft) => events.push(`draft:${draft}`),
     setCaret: (caret) => events.push(`caret:${caret}`),
     syncCaret: (caret) => events.push(`sync:${caret}`),
-    applyWorkspacePathMatchState: (state) => events.push(`matches:${state.activeWorkspacePathMatchIndex}`),
     setRetryDraftReplacePending: (pending) => events.push(`pending:${pending}`),
     focusComposer: (caret) => events.push(`focus:${caret}`),
   });
@@ -133,7 +123,6 @@ test("applyRetryDraftRestoreCommand は retry draft restore state を UI setter 
     "draft:前回の依頼",
     "caret:5",
     "sync:5",
-    "matches:-1",
     "pending:false",
     "focus:5",
   ]);

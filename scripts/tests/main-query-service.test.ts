@@ -40,7 +40,7 @@ function createSessionSummary(overrides?: Partial<SessionSummary>): SessionSumma
   return summary;
 }
 
-test("MainQueryService は session skills/custom agents と preview/search/terminal を解決する", async () => {
+test("MainQueryService は session skills/custom agents と preview/terminal を解決する", async () => {
   const calls: string[] = [];
   const sourceSessions = [
     createSession(),
@@ -79,10 +79,6 @@ test("MainQueryService は session skills/custom agents と preview/search/termi
       calls.push(`preview:${session.id}:${userMessage}`);
       return { attachments: [], errors: [] };
     },
-    async searchWorkspaceFiles(workspacePath, query) {
-      calls.push(`search:${workspacePath}:${query}`);
-      return [{ path: "a.ts", kind: "file" }];
-    },
     async launchTerminalAtPath(workspacePath) {
       calls.push(`terminal:${workspacePath}`);
     },
@@ -95,14 +91,12 @@ test("MainQueryService は session skills/custom agents と preview/search/termi
   await service.listSessionSkills("session-1");
   await service.listSessionCustomAgents("session-2");
   await service.previewComposerInput("session-1", "@src/main.ts");
-  await service.searchWorkspaceFiles("session-1", "main");
   await service.openSessionTerminal("session-1");
 
   assert.deepEqual(calls, [
     "skills:C:/workspace",
     "agents:C:/copilot",
     "preview:session-1:@src/main.ts",
-    "search:C:/workspace:main",
     "terminal:C:/workspace",
   ]);
   assert.deepEqual(fullSessionRequests, ["session-1"]);
@@ -134,9 +128,6 @@ test("MainQueryService は path 参照なし draft の preview を早期 return 
     discoverSessionCustomAgents: async () => [],
     async resolveComposerPreview() {
       throw new Error("path 参照なしでは preview 解決まで進まないはず");
-    },
-    async searchWorkspaceFiles() {
-      return [];
     },
     async launchTerminalAtPath() {},
   });
@@ -185,9 +176,6 @@ test("MainQueryService は session provider ごとの skill directory を discov
     async resolveComposerPreview() {
       return { attachments: [], errors: [] };
     },
-    async searchWorkspaceFiles() {
-      return [];
-    },
     async launchTerminalAtPath() {},
   });
 
@@ -222,9 +210,6 @@ test("MainQueryService は一覧を summary に射影して detail payload を�
     discoverSessionCustomAgents: async () => [],
     async resolveComposerPreview() {
       return { attachments: [], errors: [] };
-    },
-    async searchWorkspaceFiles() {
-      return [];
     },
     async launchTerminalAtPath() {},
   });
@@ -261,9 +246,6 @@ test("MainQueryService は対象 session detail だけを clone して返す", a
     discoverSessionCustomAgents: async () => [],
     async resolveComposerPreview() {
       return { attachments: [], errors: [] };
-    },
-    async searchWorkspaceFiles() {
-      return [];
     },
     async launchTerminalAtPath() {},
   });

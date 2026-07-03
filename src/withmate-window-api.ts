@@ -45,7 +45,6 @@ import type {
   AuxiliarySessionSummary,
   CreateAuxiliarySessionInput,
 } from "./auxiliary-session-state.js";
-import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import type {
   OpenPathOptions,
   DeleteSessionsLastActiveBeforeRequest,
@@ -109,7 +108,6 @@ export type WithMateWindowSessionApi = {
   deleteSession(sessionId: string): Promise<void>;
   deleteSessionsLastActiveBefore(request: DeleteSessionsLastActiveBeforeRequest): Promise<DeleteSessionsResult>;
   previewComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview>;
-  searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
@@ -163,7 +161,6 @@ export type WithMateWindowCompanionApi = {
   createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
   updateCompanionSession(session: CompanionSession): Promise<CompanionSession>;
   previewCompanionComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview>;
-  searchCompanionWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
   cancelCompanionSessionRun(sessionId: string): Promise<void>;
   listCompanionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;

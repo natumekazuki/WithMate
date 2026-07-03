@@ -143,7 +143,6 @@ describe("CompanionRuntimeService", () => {
       setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      clearWorkspaceFileIndex() {},
       broadcastCompanionSessions() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -242,7 +241,6 @@ describe("CompanionRuntimeService", () => {
       setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      clearWorkspaceFileIndex() {},
       broadcastCompanionSessions() {
         broadcastCount += 1;
       },
@@ -336,7 +334,6 @@ describe("CompanionRuntimeService", () => {
         setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
         invalidateProviderSessionThread() {},
         scheduleProviderQuotaTelemetryRefresh() {},
-        clearWorkspaceFileIndex() {},
         broadcastCompanionSessions() {
           broadcastCount += 1;
         },
@@ -433,7 +430,6 @@ describe("CompanionRuntimeService", () => {
         setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
         invalidateProviderSessionThread() {},
         scheduleProviderQuotaTelemetryRefresh() {},
-        clearWorkspaceFileIndex() {},
         broadcastCompanionSessions() {},
         resolvePendingApprovalRequest() {},
         resolvePendingElicitationRequest() {},
@@ -519,7 +515,6 @@ describe("CompanionRuntimeService", () => {
         setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
         invalidateProviderSessionThread() {},
         scheduleProviderQuotaTelemetryRefresh() {},
-        clearWorkspaceFileIndex() {},
         broadcastCompanionSessions() {},
         resolvePendingApprovalRequest() {},
         resolvePendingElicitationRequest() {},
@@ -604,7 +599,6 @@ describe("CompanionRuntimeService", () => {
       setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      clearWorkspaceFileIndex() {},
       broadcastCompanionSessions() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},

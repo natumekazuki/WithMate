@@ -8,7 +8,10 @@ import { buildNewSession } from "../../src/app-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { CompanionSession } from "../../src/companion-state.js";
-import { companionSessionToAuxiliaryParentSession } from "../../src-electron/auxiliary-parent-session.js";
+import {
+  companionSessionToAuxiliaryParentSession,
+  resolveAuxiliaryParentSession,
+} from "../../src-electron/auxiliary-parent-session.js";
 import { AuxiliarySessionService } from "../../src-electron/auxiliary-session-service.js";
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary-session-storage.js";
 import { CompanionStorage } from "../../src-electron/companion-storage.js";
@@ -95,6 +98,49 @@ async function removeDirectoryWithRetry(targetPath: string, attempts = 5): Promi
     }
   }
 }
+
+test("resolveAuxiliaryParentSession は cached summary より stored full session を優先する", async () => {
+  const storedSession = {
+    ...buildNewSession({
+      taskTitle: "main task",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "mate",
+      character: "Mate",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      characterRuntimeSnapshot: {
+        characterId: "mate",
+        name: "Mate",
+        description: "Stored snapshot",
+        iconFilePath: "",
+        theme: { main: "#6f8cff", sub: "#6fb8c7" },
+        definitionMarkdown: "# Character\n\nStored snapshot prompt.",
+        definitionSha256: "stored-character-sha",
+        definitionByteSize: 36,
+        snapshotAt: "2026-07-03T00:00:00.000Z",
+      },
+      approvalMode: DEFAULT_APPROVAL_MODE,
+    }),
+    id: "session-main",
+  };
+  const cachedSession = {
+    ...storedSession,
+    characterRuntimeSnapshot: null,
+    messages: [],
+  };
+
+  const resolved = await resolveAuxiliaryParentSession({
+    parentSessionId: storedSession.id,
+    getStoredSession: (sessionId) => sessionId === storedSession.id ? storedSession : null,
+    getCachedSession: (sessionId) => sessionId === cachedSession.id ? cachedSession : null,
+    getCompanionSession: () => null,
+  });
+
+  assert.equal(resolved, storedSession);
+  assert.equal(resolved?.characterRuntimeSnapshot?.definitionMarkdown, "# Character\n\nStored snapshot prompt.");
+});
 
 test("AuxiliarySessionService は親 session から実行 context を継承して active session を復元する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-session-"));

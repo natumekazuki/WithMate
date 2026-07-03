@@ -16,7 +16,7 @@ import type {
 import { APP_DATABASE_V2_FILENAME, CREATE_V2_SCHEMA_SQL, isValidV2Database } from "./database-schema-v2.js";
 import { APP_DATABASE_V3_FILENAME, CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
 import { APP_DATABASE_V4_FILENAME } from "./database-schema-v4.js";
-import { APP_DATABASE_V6_FILENAME, CREATE_V6_SCHEMA_SQL, isValidV6Database } from "./database-schema-v6.js";
+import { APP_DATABASE_V6_FILENAME, ensureV6Schema, isValidV6Database } from "./database-schema-v6.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogStorageV2 } from "./audit-log-storage-v2.js";
@@ -447,9 +447,7 @@ export function createPersistentStoreLifecycleService(): PersistentStoreLifecycl
     ensureV6Schema: (dbPath) => {
       const db = openAppDatabase(dbPath);
       try {
-        for (const statement of CREATE_V6_SCHEMA_SQL) {
-          db.exec(statement);
-        }
+        ensureV6Schema(db);
       } finally {
         db.close();
       }

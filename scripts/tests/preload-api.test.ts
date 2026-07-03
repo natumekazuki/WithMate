@@ -325,8 +325,6 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "runCompanionSessionTurn",
     "runSessionTurn",
     "savePastedSessionFile",
-    "searchCompanionWorkspaceFiles",
-    "searchWorkspaceFiles",
     "searchMemoryV6Entries",
     "setMateAvatar",
     "setDefaultCharacter",

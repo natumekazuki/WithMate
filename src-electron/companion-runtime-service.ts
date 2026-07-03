@@ -59,7 +59,6 @@ export type CompanionRuntimeServiceDeps = {
   setSessionContextTelemetry(telemetry: SessionContextTelemetry): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
   scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void;
-  clearWorkspaceFileIndex(workspacePath: string): void;
   broadcastCompanionSessions(): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
   resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
@@ -498,7 +497,6 @@ export class CompanionRuntimeService {
       this.inFlightRuns.delete(sessionId);
       this.runControllers.delete(sessionId);
       this.deps.setLiveSessionRun(sessionId, null);
-      this.deps.clearWorkspaceFileIndex(activeSession.worktreePath);
       this.deps.broadcastCompanionSessions();
     }
   }

@@ -275,7 +275,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -365,7 +364,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -457,7 +455,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      clearWorkspaceFileIndex() {},
       createProviderMemoryBinding(input) {
         calls.push(`create:${input.session.id}:${input.provider.id}:${input.character?.id ?? "none"}`);
         return binding;
@@ -553,7 +550,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      clearWorkspaceFileIndex() {},
       createProviderMemoryBinding() {
         return {
           bindingId: "binding-1",
@@ -648,9 +644,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      clearWorkspaceFileIndex() {
-        calls.push("clearWorkspaceFileIndex");
-      },
       createProviderMemoryBinding() {
         calls.push("create");
         return {
@@ -688,7 +681,6 @@ describe("SessionRuntimeService", () => {
       "approval:deny",
       "elicitation:cancel",
       "upsert:error",
-      "clearWorkspaceFileIndex",
       "broadcast",
     ]);
     assert.equal(liveStates.at(-1), null);
@@ -836,7 +828,6 @@ describe("SessionRuntimeService", () => {
       runCharacterReflection(nextSession, options) {
         reflectionTriggers.push({ sessionId: nextSession.id, triggerReason: options.triggerReason });
       },
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -996,7 +987,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1094,7 +1084,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1225,7 +1214,6 @@ describe("SessionRuntimeService", () => {
       },
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1345,7 +1333,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1466,7 +1453,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest(sessionId, decision) {
         approvalResolutions.push({ sessionId, decision });
@@ -1584,7 +1570,6 @@ describe("SessionRuntimeService", () => {
       },
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       createProviderMemoryBinding() {
         const bindingNumber = bindingEvents.filter((event) => event.startsWith("create:")).length + 1;
         const binding = {
@@ -1717,7 +1702,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1860,7 +1844,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1977,7 +1960,6 @@ describe("SessionRuntimeService", () => {
       },
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2082,7 +2064,6 @@ describe("SessionRuntimeService", () => {
       },
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2203,7 +2184,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2333,7 +2313,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2434,7 +2413,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2555,7 +2533,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2664,7 +2641,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2765,7 +2741,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2859,7 +2834,6 @@ describe("SessionRuntimeService", () => {
       },
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2954,7 +2928,6 @@ describe("SessionRuntimeService", () => {
       },
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -3099,7 +3072,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -3228,7 +3200,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -3336,7 +3307,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -3424,7 +3394,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},

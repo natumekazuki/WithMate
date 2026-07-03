@@ -7,6 +7,10 @@ import {
 import { startAppSettingsSubscription } from "./app-settings-subscription.js";
 import { type SessionSummary } from "./session-state.js";
 import { startSessionSummariesSubscription } from "./session-summary-subscription.js";
+import {
+  projectAuxiliarySessionSummary,
+  type AuxiliarySessionSummary,
+} from "./auxiliary-session-state.js";
 import { type ModelCatalogSnapshot } from "./model-catalog.js";
 import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
 import type { MemoryV6Diagnostics } from "./memory-v6/memory-diagnostics-state.js";
@@ -75,6 +79,7 @@ export default function HomeApp() {
   const isMemoryReviewWindowMode = homeWindowMode === "memory-review";
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
+  const [activeAuxiliarySessions, setActiveAuxiliarySessions] = useState<AuxiliarySessionSummary[]>([]);
   const [openSessionWindowIds, setOpenSessionWindowIds] = useState<string[]>([]);
   const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const [sessionSearchText, setSessionSearchText] = useState("");
@@ -276,6 +281,53 @@ export default function HomeApp() {
     setOpenCompanionReviewWindowIds,
   });
 
+  useEffect(() => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
+      setActiveAuxiliarySessions([]);
+      return;
+    }
+
+    let active = true;
+    let refreshQueued = false;
+    const refreshActiveAuxiliarySessions = () => {
+      if (refreshQueued) {
+        return;
+      }
+      refreshQueued = true;
+      const monitorParentSessionIds = Array.from(new Set([
+        ...openSessionWindowIds,
+        ...openCompanionReviewWindowIds,
+      ]));
+      void Promise.all(
+        monitorParentSessionIds.map((sessionId) => withmateApi.getActiveAuxiliarySession(sessionId)),
+      ).then((sessions) => {
+        if (!active) {
+          return;
+        }
+        setActiveAuxiliarySessions(
+          sessions
+            .filter((session): session is NonNullable<typeof session> => session !== null)
+            .map(projectAuxiliarySessionSummary),
+        );
+      }).catch((error) => {
+        console.error(error);
+      }).finally(() => {
+        refreshQueued = false;
+      });
+    };
+
+    refreshActiveAuxiliarySessions();
+    const unsubscribeLiveRun = withmateApi.subscribeLiveSessionRun(() => {
+      refreshActiveAuxiliarySessions();
+    });
+
+    return () => {
+      active = false;
+      unsubscribeLiveRun();
+    };
+  }, [openCompanionReviewWindowIds, openSessionWindowIds]);
+
   const sessionProjection = useMemo(
     () => buildHomeSessionProjection(
       sessions,
@@ -283,8 +335,16 @@ export default function HomeApp() {
       sessionSearchText,
       companionSessions,
       openCompanionReviewWindowIds,
+      activeAuxiliarySessions,
     ),
-    [companionSessions, openCompanionReviewWindowIds, openSessionWindowIds, sessionSearchText, sessions],
+    [
+      activeAuxiliarySessions,
+      companionSessions,
+      openCompanionReviewWindowIds,
+      openSessionWindowIds,
+      sessionSearchText,
+      sessions,
+    ],
   );
   const {
     filteredSessionEntries,

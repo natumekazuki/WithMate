@@ -1,6 +1,8 @@
 import type { CompanionSession } from "../src/companion-state.js";
 import type { Session } from "../src/session-state.js";
 
+type Awaitable<T> = T | Promise<T>;
+
 export function companionSessionToAuxiliaryParentSession(session: CompanionSession): Session | null {
   if (session.status !== "active" && session.status !== "recovery-required") {
     return null;
@@ -35,4 +37,24 @@ export function companionSessionToAuxiliaryParentSession(session: CompanionSessi
     messages: session.messages,
     stream: [],
   };
+}
+
+export async function resolveAuxiliaryParentSession(input: {
+  parentSessionId: string;
+  getStoredSession: (sessionId: string) => Awaitable<Session | null>;
+  getCachedSession: (sessionId: string) => Session | null;
+  getCompanionSession: (sessionId: string) => Awaitable<CompanionSession | null>;
+}): Promise<Session | null> {
+  const storedSession = await input.getStoredSession(input.parentSessionId);
+  if (storedSession) {
+    return storedSession;
+  }
+
+  const cachedSession = input.getCachedSession(input.parentSessionId);
+  if (cachedSession) {
+    return cachedSession;
+  }
+
+  const companionSession = await input.getCompanionSession(input.parentSessionId);
+  return companionSession ? companionSessionToAuxiliaryParentSession(companionSession) : null;
 }

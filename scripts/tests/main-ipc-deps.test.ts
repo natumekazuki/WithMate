@@ -128,9 +128,6 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async previewComposerInput() {
         return null;
       },
-      async searchWorkspaceFiles() {
-        return [];
-      },
     },
     companion: {
       async createCompanionSession() {
@@ -164,9 +161,6 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       },
       async previewCompanionComposerInput() {
         return { attachments: [], errors: [] };
-      },
-      async searchCompanionWorkspaceFiles() {
-        return [];
       },
       async runCompanionSessionTurn() {
         return {} as never;
