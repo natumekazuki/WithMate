@@ -80,6 +80,8 @@ export default function HomeApp() {
   const [sessionSearchText, setSessionSearchText] = useState("");
   const [rightPaneView, setRightPaneView] = useState<HomeRightPaneView>("monitor");
   const [settingsFeedback, setSettingsFeedback] = useState("");
+  const [sessionCleanupCutoffDate, setSessionCleanupCutoffDate] = useState("");
+  const [deletingOldSessions, setDeletingOldSessions] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(createDefaultAppSettings());
   const [memoryV6Diagnostics, setMemoryV6Diagnostics] = useState<MemoryV6Diagnostics | null>(null);
@@ -413,6 +415,15 @@ export default function HomeApp() {
     setSettingsDraft,
     setSettingsFeedback,
     setMemoryV6Diagnostics,
+    getSessionCleanupCutoffDate: () => sessionCleanupCutoffDate,
+    setDeletingOldSessions,
+    refreshSessionSummaries: async () => {
+      const api = getWithMateApi();
+      if (!api) {
+        return;
+      }
+      setSessions(await api.listSessionSummaries());
+    },
     onSettingsSaved: () => {
       const api = getWithMateApi();
       if (!api) {
@@ -435,6 +446,9 @@ export default function HomeApp() {
     memoryV6Diagnostics,
     settingsDirty,
     settingsFeedback,
+    sessionCleanupCutoffDate,
+    deletingOldSessions,
+    onChangeSessionCleanupCutoffDate: setSessionCleanupCutoffDate,
     onOpenMemoryV6Review: () => void openMemoryV6ReviewWindow(),
     onCopyMemoryProviderInstructionSample: () => {
       const clipboard = navigator.clipboard;

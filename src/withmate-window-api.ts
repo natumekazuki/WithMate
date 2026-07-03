@@ -48,6 +48,8 @@ import type {
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import type {
   OpenPathOptions,
+  DeleteSessionsLastActiveBeforeRequest,
+  DeleteSessionsResult,
   ResetAppDatabaseRequest,
   ResetAppDatabaseResult,
   SavePastedSessionFileRequest,
@@ -105,6 +107,7 @@ export type WithMateWindowSessionApi = {
   createSession(input: CreateSessionInput): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
   deleteSession(sessionId: string): Promise<void>;
+  deleteSessionsLastActiveBefore(request: DeleteSessionsLastActiveBeforeRequest): Promise<DeleteSessionsResult>;
   previewComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview>;
   searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;

@@ -136,6 +136,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         createSession: () => ({}) as never,
         updateSession: () => ({}) as never,
         deleteSession: () => {},
+        deleteSessionsLastActiveBefore: () => ({ deletedSessionIds: [], skippedRunningSessionIds: [] }),
         runSessionTurn: async () => ({}) as never,
         cancelSessionRun: () => {},
       },

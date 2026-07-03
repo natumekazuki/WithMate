@@ -6,6 +6,8 @@ import type { HomeProviderSettingRow } from "./settings-view-model.js";
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
   SETTINGS_COPY_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL,
+  SETTINGS_DELETE_OLD_SESSIONS_HELP,
+  SETTINGS_DELETE_OLD_SESSIONS_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
   SETTINGS_LAUNCH_AT_LOGIN_LABEL,
   SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP,
@@ -32,8 +34,11 @@ export type HomeSettingsContentProps = {
   memoryV6Diagnostics: MemoryV6Diagnostics | null;
   settingsDirty: boolean;
   settingsFeedback: string;
+  sessionCleanupCutoffDate: string;
+  deletingOldSessions: boolean;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeLaunchAtLoginEnabled: (enabled: boolean) => void;
+  onChangeSessionCleanupCutoffDate: (value: string) => void;
   onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
@@ -50,6 +55,7 @@ export type HomeSettingsContentProps = {
   onInstallMemoryV6CliShim: () => void;
   onUninstallMemoryV6CliShim: () => void;
   onCopyMemoryProviderInstructionSample: () => void;
+  onDeleteSessionsLastActiveBefore: () => void;
   onSaveSettings: () => void;
 };
 
@@ -84,8 +90,11 @@ export function HomeSettingsContent({
   memoryV6Diagnostics,
   settingsDirty,
   settingsFeedback,
+  sessionCleanupCutoffDate,
+  deletingOldSessions,
   onChangeAutoCollapseActionDockOnSend,
   onChangeLaunchAtLoginEnabled,
+  onChangeSessionCleanupCutoffDate,
   onChangeUserMicrocopySlot,
   onChangeProviderEnabled,
   onChangeProviderSkillRootPath,
@@ -102,6 +111,7 @@ export function HomeSettingsContent({
   onInstallMemoryV6CliShim,
   onUninstallMemoryV6CliShim,
   onCopyMemoryProviderInstructionSample,
+  onDeleteSessionsLastActiveBefore,
   onSaveSettings,
 }: HomeSettingsContentProps) {
   return (
@@ -345,6 +355,32 @@ export function HomeSettingsContent({
                   Export Models
                 </button>
               </div>
+            </div>
+          </section>
+
+          <section className="settings-section-card">
+            <div className="settings-field">
+              <strong>Storage Maintenance</strong>
+              <label className="settings-provider-input">
+                <span>{SETTINGS_DELETE_OLD_SESSIONS_LABEL}</span>
+                <div className="settings-inline-input-row">
+                  <input
+                    type="date"
+                    value={sessionCleanupCutoffDate}
+                    onChange={(event) => onChangeSessionCleanupCutoffDate(event.target.value)}
+                    disabled={deletingOldSessions}
+                  />
+                  <button
+                    className="launch-toggle"
+                    type="button"
+                    onClick={onDeleteSessionsLastActiveBefore}
+                    disabled={deletingOldSessions || !sessionCleanupCutoffDate}
+                  >
+                    Delete
+                  </button>
+                </div>
+                <p className="settings-help">{SETTINGS_DELETE_OLD_SESSIONS_HELP}</p>
+              </label>
             </div>
           </section>
 

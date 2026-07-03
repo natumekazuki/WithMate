@@ -1,5 +1,10 @@
 import type { ProviderQuotaTelemetry, RunSessionTurnRequest } from "../src/runtime-state.js";
 import type { CreateSessionInput, Session } from "../src/session-state.js";
+import {
+  resolveDeleteSessionsLastActiveBeforeCutoff,
+  type DeleteSessionsLastActiveBeforeRequest,
+  type DeleteSessionsResult,
+} from "../src/withmate-window-types.js";
 import type { SessionPersistenceService } from "./session-persistence-service.js";
 import type { SessionRuntimeService } from "./session-runtime-service.js";
 
@@ -11,6 +16,7 @@ type MainSessionCommandFacadeDeps = {
   isProviderQuotaTelemetryStale(telemetry: ProviderQuotaTelemetry | null): boolean;
   refreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
   revokeSessionMemoryBindings?(sessionId: string): void;
+  cleanupSessionFilesDirectory?(sessionId: string): Promise<void>;
 };
 
 export class MainSessionCommandFacade {
@@ -25,8 +31,18 @@ export class MainSessionCommandFacade {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    await this.deps.getSessionPersistenceService().deleteSession(sessionId);
-    this.deps.revokeSessionMemoryBindings?.(sessionId);
+    await this.cleanupDeletedSessions(
+      await this.deps.getSessionPersistenceService().deleteSession(sessionId),
+    );
+  }
+
+  async deleteSessionsLastActiveBefore(
+    request: DeleteSessionsLastActiveBeforeRequest | null | undefined,
+  ): Promise<DeleteSessionsResult> {
+    const cutoff = resolveDeleteSessionsLastActiveBeforeCutoff(request);
+    const result = await this.deps.getSessionPersistenceService().deleteSessionsLastActiveBefore(cutoff);
+    await this.cleanupDeletedSessions(result);
+    return result;
   }
 
   cancelSessionRun(sessionId: string): void {
@@ -43,5 +59,12 @@ export class MainSessionCommandFacade {
     }
 
     return this.deps.getSessionRuntimeService().runSessionTurn(sessionId, request);
+  }
+
+  private async cleanupDeletedSessions(result: DeleteSessionsResult): Promise<void> {
+    for (const sessionId of result.deletedSessionIds) {
+      this.deps.revokeSessionMemoryBindings?.(sessionId);
+      await this.deps.cleanupSessionFilesDirectory?.(sessionId);
+    }
   }
 }

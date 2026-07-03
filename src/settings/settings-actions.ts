@@ -1,9 +1,13 @@
 import type { AppSettings } from "../app-state.js";
 import {
+  buildDeleteOldSessionsConfirmMessage,
+  buildDeleteOldSessionsSuccessMessage,
   buildResetDatabaseConfirmMessage,
   buildResetDatabaseSuccessMessage,
 } from "./settings-ui.js";
 import {
+  type DeleteSessionsLastActiveBeforeRequest,
+  type DeleteSessionsResult,
   normalizeResetAppDatabaseTargets,
   type ResetAppDatabaseResult,
   type ResetAppDatabaseRequest,
@@ -15,6 +19,7 @@ export type HomeSettingsApi = {
   exportModelCatalogFile: () => Promise<string | null>;
   updateAppSettings: (settings: AppSettings) => Promise<AppSettings>;
   resetAppDatabase: (request: ResetAppDatabaseRequest) => Promise<ResetAppDatabaseResult>;
+  deleteSessionsLastActiveBefore: (request: DeleteSessionsLastActiveBeforeRequest) => Promise<DeleteSessionsResult>;
 };
 
 export async function importHomeModelCatalog(api: HomeSettingsApi): Promise<string> {
@@ -70,5 +75,40 @@ export async function resetHomeDatabase({
     kind: "success",
     result,
     feedback: buildResetDatabaseSuccessMessage(result.resetTargets),
+  };
+}
+
+export type DeleteOldSessionsActionResult =
+  | { kind: "noop"; feedback: string }
+  | { kind: "canceled" }
+  | { kind: "success"; result: DeleteSessionsResult; feedback: string };
+
+export async function deleteOldSessions({
+  api,
+  cutoffDate,
+  confirm,
+}: {
+  api: HomeSettingsApi;
+  cutoffDate: string;
+  confirm: (message: string) => boolean;
+}): Promise<DeleteOldSessionsActionResult> {
+  const normalizedCutoffDate = cutoffDate.trim();
+  if (!normalizedCutoffDate) {
+    return {
+      kind: "noop",
+      feedback: "削除基準日を選んでね。",
+    };
+  }
+
+  const confirmed = confirm(buildDeleteOldSessionsConfirmMessage(normalizedCutoffDate));
+  if (!confirmed) {
+    return { kind: "canceled" };
+  }
+
+  const result = await api.deleteSessionsLastActiveBefore({ cutoffDate: normalizedCutoffDate });
+  return {
+    kind: "success",
+    result,
+    feedback: buildDeleteOldSessionsSuccessMessage(result),
   };
 }

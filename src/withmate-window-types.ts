@@ -50,3 +50,40 @@ export type ResetAppDatabaseResult = {
   appSettings: AppSettings;
   modelCatalog: ModelCatalogSnapshot;
 };
+
+export type DeleteSessionsLastActiveBeforeRequest = {
+  cutoffDate: string;
+};
+
+export type DeleteSessionsLastActiveBeforeCutoff = {
+  cutoffDate: string;
+  cutoffTimestampMs: number;
+  cutoffIso: string;
+};
+
+export type DeleteSessionsResult = {
+  cutoffDate?: string;
+  cutoffTimestampMs?: number;
+  deletedSessionIds: string[];
+  skippedRunningSessionIds: string[];
+};
+
+export function resolveDeleteSessionsLastActiveBeforeCutoff(
+  request: DeleteSessionsLastActiveBeforeRequest | null | undefined,
+): DeleteSessionsLastActiveBeforeCutoff {
+  const cutoffDate = typeof request?.cutoffDate === "string" ? request.cutoffDate.trim() : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(cutoffDate)) {
+    throw new Error("削除基準日は YYYY-MM-DD 形式で指定してね。");
+  }
+
+  const cutoff = new Date(`${cutoffDate}T00:00:00`);
+  if (Number.isNaN(cutoff.getTime())) {
+    throw new Error("削除基準日を解釈できないよ。");
+  }
+
+  return {
+    cutoffDate,
+    cutoffTimestampMs: cutoff.getTime(),
+    cutoffIso: cutoff.toISOString(),
+  };
+}

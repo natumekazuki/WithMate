@@ -53,11 +53,11 @@ type AwaitableStorageMethods<TStorage, TKeys extends keyof TStorage> = {
 
 export type SessionStorageRead = AwaitableStorageMethods<
   SessionStorage,
-  "listSessions" | "listSessionSummaries" | "getSession" | "getSessionMessageArtifact"
+  "listSessions" | "listSessionSummaries" | "getSession" | "getSessionMessageArtifact" | "listSessionIdsLastActiveBefore"
 > & Pick<SessionStorage, "close">;
 export type SessionStorageWrite = AwaitableStorageMethods<
   SessionStorage,
-  "upsertSession" | "replaceSessions" | "deleteSession" | "clearSessions"
+  "upsertSession" | "replaceSessions" | "deleteSession" | "deleteSessions" | "clearSessions"
 > & SessionStorageRead;
 
 export type AuditLogStorageRead = AwaitableStorageMethods<

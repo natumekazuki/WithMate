@@ -19,6 +19,7 @@ import {
 } from "../src/character/character-runtime-snapshot.js";
 import { CREATE_V6_SCHEMA_SQL } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+import type { DeleteSessionsLastActiveBeforeCutoff } from "../src/withmate-window-types.js";
 
 type SessionV6Row = {
   id: string;
@@ -51,6 +52,10 @@ type MessageV6Row = {
 type ExistingMessageArtifactRow = {
   seq: number;
   artifact_body: string | null;
+};
+
+type SessionIdRow = {
+  id: string;
 };
 
 function toV6State(session: Session): string {
@@ -179,6 +184,16 @@ export class SessionStorageV6 {
     return row ? decodeMessageArtifact(row.artifact_body) ?? decodeMessage(row)?.artifact ?? null : null;
   }
 
+  listSessionIdsLastActiveBefore(cutoff: DeleteSessionsLastActiveBeforeCutoff): string[] {
+    const rows = this.db.prepare(`
+      SELECT id
+      FROM sessions_v6
+      WHERE last_active_at < ?
+      ORDER BY last_active_at ASC, id ASC
+    `).all(cutoff.cutoffIso) as SessionIdRow[];
+    return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
+  }
+
   upsertSession(session: Session): Session {
     const normalized = normalizeSession(session);
     if (!normalized) {
@@ -221,7 +236,24 @@ export class SessionStorageV6 {
   }
 
   deleteSession(sessionId: string): void {
-    this.db.prepare("DELETE FROM sessions_v6 WHERE id = ?").run(sessionId);
+    this.deleteSessions([sessionId]);
+  }
+
+  deleteSessions(sessionIds: readonly string[]): void {
+    const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
+    if (uniqueSessionIds.length === 0) {
+      return;
+    }
+
+    const placeholders = uniqueSessionIds.map(() => "?").join(", ");
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      this.db.prepare(`DELETE FROM sessions_v6 WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   clearSessions(): void {

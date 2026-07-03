@@ -92,6 +92,40 @@ describe("SessionStorage", () => {
     }
   });
 
+  it("last_active_at が cutoff より前の session id を列挙し、複数削除できる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new SessionStorage(dbPath);
+      const oldSession = storage.upsertSession(createSession("old", "workspace-old", "char-a", "A"));
+      const cutoffSession = storage.upsertSession(createSession("cutoff", "workspace-cutoff", "char-b", "B"));
+      const recentSession = storage.upsertSession(createSession("recent", "workspace-recent", "char-c", "C"));
+
+      const db = new DatabaseSync(dbPath);
+      db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(100, oldSession.id);
+      db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(200, cutoffSession.id);
+      db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(300, recentSession.id);
+      db.close();
+
+      assert.deepEqual(
+        storage.listSessionIdsLastActiveBefore({
+          cutoffDate: "2026-07-01",
+          cutoffTimestampMs: 200,
+          cutoffIso: "2026-07-01T00:00:00.000Z",
+        }),
+        [oldSession.id],
+      );
+
+      storage.deleteSessions([oldSession.id, recentSession.id]);
+
+      assert.deepEqual(storage.listSessions().map((session) => session.id), [cutoffSession.id]);
+      storage.close();
+    } finally {
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("legacy approval 値も read-path normalize で provider-neutral に読める", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");

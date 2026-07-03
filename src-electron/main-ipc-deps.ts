@@ -58,6 +58,8 @@ import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-stat
 import type { CreateSessionInput, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
 import type {
   OpenPathOptions,
+  DeleteSessionsLastActiveBeforeRequest,
+  DeleteSessionsResult,
   ResetAppDatabaseRequest,
   SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
@@ -221,6 +223,9 @@ export type MainIpcSessionRuntimeDepsArgs = {
   createSession(input: CreateSessionInput): Awaitable<Session>;
   updateSession(session: Session): Awaitable<Session>;
   deleteSession(sessionId: string): Awaitable<void>;
+  deleteSessionsLastActiveBefore(
+    request: DeleteSessionsLastActiveBeforeRequest | null | undefined,
+  ): Awaitable<DeleteSessionsResult>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   cancelSessionRun(sessionId: string): void;
 };
@@ -402,6 +407,7 @@ export function createMainIpcRegistrationDeps(
     createSession: args.sessionRuntime.createSession,
     updateSession: args.sessionRuntime.updateSession,
     deleteSession: args.sessionRuntime.deleteSession,
+    deleteSessionsLastActiveBefore: args.sessionRuntime.deleteSessionsLastActiveBefore,
     runSessionTurn: args.sessionRuntime.runSessionTurn,
     cancelSessionRun: args.sessionRuntime.cancelSessionRun,
     getMateState: args.mate.getMateState,
