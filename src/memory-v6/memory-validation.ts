@@ -9,7 +9,6 @@ import {
   type MemoryForgetRequest,
   type MemoryGetEntryRequest,
   type MemoryListTagsRequest,
-  type MemoryResolveContextRequest,
   type MemorySearchRequest,
   type MemoryTargetSelector,
   type MemoryValidationResult,
@@ -20,7 +19,6 @@ import {
 const MEMORY_ENTRY_KIND_SET = new Set<MemoryEntryKind>(MEMORY_ENTRY_KINDS);
 const MEMORY_FORGET_REASON_SET = new Set<MemoryForgetReason>(MEMORY_FORGET_REASONS);
 
-const RESOLVE_CONTEXT_REQUEST_KEYS = new Set(["schemaVersion"]);
 const SEARCH_REQUEST_KEYS = new Set(["schemaVersion", "targets", "query", "kinds", "tags", "limit", "cursor"]);
 const GET_ENTRY_REQUEST_KEYS = new Set(["schemaVersion", "entryId", "target"]);
 const LIST_TAGS_REQUEST_KEYS = new Set(["schemaVersion", "targets"]);
@@ -38,11 +36,8 @@ const APPEND_REQUEST_KEYS = new Set([
 ]);
 const FORGET_REQUEST_KEYS = new Set(["schemaVersion", "target", "entryIds", "reason", "sourceMessageId", "idempotencyKey"]);
 const PROJECT_TARGET_ID_KEYS = new Set(["type", "id"]);
-const PROJECT_TARGET_CURRENT_KEYS = new Set(["type"]);
 const PROJECT_TARGET_PATH_KEYS = new Set(["type", "path"]);
-const PROJECT_TARGET_ALIAS_KEYS = new Set(["type", "alias"]);
 const CHARACTER_TARGET_ID_KEYS = new Set(["type", "id"]);
-const CHARACTER_TARGET_CURRENT_KEYS = new Set(["type"]);
 const MEMORY_TAG_KEYS = new Set(["type", "value"]);
 const PROJECT_PROJECT_TARGET_KEYS = new Set(["owner", "scope", "project"]);
 const CHARACTER_CHARACTER_TARGET_KEYS = new Set(["owner", "scope", "character"]);
@@ -206,13 +201,6 @@ function normalizeProjectTarget(value: unknown, field: string): MemoryValidation
     const id = normalizeText(value.id, `${field}.id`, { maxLength: MAX_ID_LENGTH });
     return id.ok ? { ok: true, value: { type: "id", id: id.value } } : id;
   }
-  if (value.type === "current") {
-    const unknownKeys = rejectUnknownKeys(value, PROJECT_TARGET_CURRENT_KEYS, field);
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    return { ok: true, value: { type: "current" } };
-  }
   if (value.type === "path") {
     const unknownKeys = rejectUnknownKeys(value, PROJECT_TARGET_PATH_KEYS, field);
     if (!unknownKeys.ok) {
@@ -221,16 +209,7 @@ function normalizeProjectTarget(value: unknown, field: string): MemoryValidation
     const projectPath = normalizeText(value.path, `${field}.path`, { maxLength: 1_000 });
     return projectPath.ok ? { ok: true, value: { type: "path", path: projectPath.value } } : projectPath;
   }
-  if (value.type === "alias") {
-    const unknownKeys = rejectUnknownKeys(value, PROJECT_TARGET_ALIAS_KEYS, field);
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    const alias = normalizeText(value.alias, `${field}.alias`, { maxLength: MAX_ID_LENGTH });
-    return alias.ok ? { ok: true, value: { type: "alias", alias: alias.value } } : alias;
-  }
-
-  return error("MEMORY_INVALID_FIELD", `${field}.type must be id, current, path, or alias.`, `${field}.type`);
+  return error("MEMORY_INVALID_FIELD", `${field}.type must be id or path.`, `${field}.type`);
 }
 
 function normalizeCharacterTarget(value: unknown, field: string): MemoryValidationResult<CharacterTargetRef> {
@@ -238,13 +217,6 @@ function normalizeCharacterTarget(value: unknown, field: string): MemoryValidati
     return error("MEMORY_INVALID_FIELD", `${field} must be an object.`, field);
   }
 
-  if (value.type === "current") {
-    const unknownKeys = rejectUnknownKeys(value, CHARACTER_TARGET_CURRENT_KEYS, field);
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    return { ok: true, value: { type: "current" } };
-  }
   if (value.type === "id") {
     const unknownKeys = rejectUnknownKeys(value, CHARACTER_TARGET_ID_KEYS, field);
     if (!unknownKeys.ok) {
@@ -254,7 +226,7 @@ function normalizeCharacterTarget(value: unknown, field: string): MemoryValidati
     return id.ok ? { ok: true, value: { type: "id", id: id.value } } : id;
   }
 
-  return error("MEMORY_INVALID_FIELD", `${field}.type must be id or current.`, `${field}.type`);
+  return error("MEMORY_INVALID_FIELD", `${field}.type must be id.`, `${field}.type`);
 }
 
 function normalizeMemoryTarget(value: unknown, field: string): MemoryValidationResult<MemoryTargetSelector> {
@@ -457,27 +429,6 @@ export function validateMemorySearchRequest(value: unknown): MemoryValidationRes
       ...(tags.value.length > 0 ? { tags: tags.value } : {}),
       ...(limit !== undefined ? { limit } : {}),
       ...(cursor.value !== undefined ? { cursor: cursor.value } : {}),
-    },
-  };
-}
-
-export function validateMemoryResolveContextRequest(value: unknown): MemoryValidationResult<MemoryResolveContextRequest> {
-  if (!isRecord(value)) {
-    return error("MEMORY_INVALID_REQUEST", "Resolve context request must be an object.");
-  }
-  const unknownKeys = rejectUnknownKeys(value, RESOLVE_CONTEXT_REQUEST_KEYS, "request");
-  if (!unknownKeys.ok) {
-    return unknownKeys;
-  }
-  const schema = validateSchemaVersion(value);
-  if (!schema.ok) {
-    return schema;
-  }
-
-  return {
-    ok: true,
-    value: {
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
     },
   };
 }

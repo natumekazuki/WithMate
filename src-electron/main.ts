@@ -162,7 +162,6 @@ import {
   type MemoryV6RuntimeApiHandle,
 } from "./memory-v6-runtime.js";
 import { MemoryV6ReviewService } from "./memory-v6-review-service.js";
-import { MemoryBindingRegistry } from "./memory-binding-registry.js";
 import { getProviderRuntimeCapabilities } from "./provider-support.js";
 import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
@@ -245,7 +244,6 @@ let memoryV6RuntimeStatus: MemoryV6Diagnostics["runtime"]["status"] = "stopped";
 const isBackgroundLaunch = shouldLaunchInBackground(process.argv);
 let managedMemorySkillSyncResults: ManagedMemorySkillSyncResult[] = [];
 let memoryV6DiagnosticErrors: MemoryV6DiagnosticEvent[] = [];
-const memoryBindingRegistry = new MemoryBindingRegistry();
 let bootWindow: BrowserWindow | null = null;
 let appBootStatus: AppBootStatus = {
   kind: "running",
@@ -361,15 +359,11 @@ async function getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics> {
       discoveryFilePath: memoryV6RuntimeApi?.discoveryFilePath ?? null,
       hasApiSecret: Boolean(memoryV6RuntimeApi),
     },
-    binding: {
-      activeBindingCount: memoryBindingRegistry.getActiveBindingCount(),
-    },
     providers: configuredProviderIds.map((providerId) => {
       const capabilities = getProviderRuntimeCapabilities({ providerId });
       return {
         providerId,
         providerSupported: capabilities.providerSupported,
-        memoryBindingTransport: capabilities.memoryBindingTransport,
       };
     }),
     skillSync: configuredProviderIds.map((providerId) => {
@@ -427,7 +421,7 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
     memoryV6RuntimeStatus = "stopped";
     memoryV6RuntimeApi = await startMemoryV6RuntimeApi({
       userDataPath: app.getPath("userData"),
-      bindingRegistry: memoryBindingRegistry,
+      listCharacters: () => requireCharacterService().listCharacters(),
       log: writeAppLog,
     });
     memoryV6RuntimeStatus = "running";
@@ -1506,12 +1500,6 @@ function requireMainProviderFacade(): MainProviderFacade {
       ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
       codexAdapter,
       copilotAdapter,
-      revokeSessionMemoryBindings: (sessionId) => {
-        memoryBindingRegistry.revokeSessionBindings(sessionId);
-      },
-      revokeAllMemoryBindings: () => {
-        memoryBindingRegistry.revokeAll();
-      },
     });
   }
 
@@ -1527,9 +1515,6 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       getProviderQuotaTelemetry: (providerId) => getProviderQuotaTelemetry(providerId),
       isProviderQuotaTelemetryStale: (telemetry) => isProviderQuotaTelemetryStale(telemetry),
       refreshProviderQuotaTelemetry: (providerId) => refreshProviderQuotaTelemetry(providerId),
-      revokeSessionMemoryBindings: (sessionId) => {
-        memoryBindingRegistry.revokeSessionBindings(sessionId);
-      },
       cleanupSessionFilesDirectory,
     });
   }
@@ -1853,11 +1838,6 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       },
       invalidateProviderSessionThread,
       scheduleProviderQuotaTelemetryRefresh,
-      createProviderMemoryBinding: ({ session, provider, character }) =>
-        memoryBindingRegistry.createBinding({ session, provider, character }),
-      revokeProviderMemoryBinding: (binding) => {
-        memoryBindingRegistry.revokeBinding(binding);
-      },
       broadcastLiveSessionRun,
       resolvePendingApprovalRequest: (sessionId, decision) => {
         const liveRun = getLiveSessionRun(sessionId);

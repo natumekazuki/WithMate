@@ -15,8 +15,8 @@ type ProjectScopeRow = {
 
 export function createMemoryV6ProjectResolver(dbPath: string): Pick<
   MemoryV6TargetResolverDeps,
-  "resolveProjectById" | "resolveProjectByPath" | "resolveKnownProjectByPath" | "resolveProjectByAlias"
-> & { resolveSessionById(id: string): boolean } {
+  "resolveProjectById" | "resolveProjectByPath" | "resolveKnownProjectByPath"
+> {
   return {
     resolveProjectById: (id) => withDatabase(dbPath, (db) => {
       const row = db.prepare(`
@@ -94,27 +94,6 @@ export function createMemoryV6ProjectResolver(dbPath: string): Pick<
       return row
         ? { id: row.id, displayName: row.display_name }
         : { id: `unresolved:${resolved.projectKey}`, displayName: resolved.displayName };
-    }),
-    resolveProjectByAlias: (alias) => withDatabase(dbPath, (db) => {
-      const row = db.prepare(`
-        SELECT id, display_name
-        FROM project_scopes_v6
-        WHERE id = ?
-           OR project_key = ?
-           OR display_name = ?
-           OR workspace_path = ?
-        ORDER BY updated_at DESC
-        LIMIT 1
-      `).get(alias, alias, alias, alias) as { id: string; display_name: string } | undefined;
-      return row ? { id: row.id, displayName: row.display_name } : null;
-    }),
-    resolveSessionById: (id) => withDatabase(dbPath, (db) => {
-      const row = db.prepare(`
-        SELECT id
-        FROM sessions_v6
-        WHERE id = ?
-      `).get(id) as { id: string } | undefined;
-      return Boolean(row);
     }),
   };
 }

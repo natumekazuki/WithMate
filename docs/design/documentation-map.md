@@ -50,13 +50,13 @@ Character catalog、definition format、snapshot、prompt boundary、release gat
 
 ### A3. V6 Foundation Source Of Truth
 
-V6で採用するDB再設計、Skill-first Memory access、runtime binding、contract、storage 境界の正本。
+V6で採用するDB再設計、Skill-first Memory access、contract、storage 境界の正本。
 旧 MemoryGeneration / V4 Growth / V5以前session互換を戻すのではなく、V5 Character-first資産を中心にV6 runtimeを新規構築する。
 
 | Doc | Role |
 | --- | --- |
 | `v6-database-foundation.md` | V6 DB全体再設計、destructive reset、legacy data境界、project scope再設計の正本 |
-| `v6-memory-foundation.md` | V6 Memory foundation の owner / scope / entry / API / CLI / binding / storage / privacy / verification 正本 |
+| `v6-memory-foundation.md` | V6 Memory foundation の owner / scope / entry / API / CLI / explicit target / storage / privacy / verification 正本 |
 
 ### B. Supporting / Domain Detail
 

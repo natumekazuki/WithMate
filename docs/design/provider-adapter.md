@@ -45,7 +45,6 @@ type ProviderCodingAdapter = {
     userMessage: string;
     appSettings: AppSettings;
     attachments: ComposerAttachment[];
-    memoryBinding?: ProviderMemoryBindingRuntimeProjection | null;
     signal?: AbortSignal;
     onApprovalRequest?: (request: LiveApprovalRequest) => Promise<"approve" | "deny">;
     onProviderQuotaTelemetry?: (telemetry: ProviderQuotaTelemetry) => void | Promise<void>;
@@ -53,8 +52,6 @@ type ProviderCodingAdapter = {
   }, onProgress?: (state: LiveSessionRunState) => void | Promise<void>): Promise<ProviderTurnResult>;
 };
 ```
-
-`memoryBinding`はV6 Memory用の短命runtime projectionである。provider adapterはproviderごとのtransport差分を閉じ、Codex / GitHub Copilot CLIではclient construction時のenvironmentへopaque referenceだけを注入する。bindingの生成、revoke、principal / permission検証はadapterではなくMain Process側のbinding runtimeとMemory API側に置く。
 
 ```ts
 type ProviderBackgroundAdapter = {

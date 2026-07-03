@@ -24,17 +24,13 @@ export type MemoryPermission =
   | "memory.forget"
   | "memory.get_entry"
   | "memory.list_tags"
-  | "memory.resolve_context";
+  | "memory.list_characters";
 
 export type ProjectTargetRef =
   | { type: "id"; id: string }
-  | { type: "current" }
-  | { type: "path"; path: string }
-  | { type: "alias"; alias: string };
+  | { type: "path"; path: string };
 
-export type CharacterTargetRef =
-  | { type: "id"; id: string }
-  | { type: "current" };
+export type CharacterTargetRef = { type: "id"; id: string };
 
 export type MemoryTargetSelector =
   | { owner: "project"; project: ProjectTargetRef; scope: "project" }
@@ -50,10 +46,6 @@ export type MemoryTag = {
 export type NormalizedMemoryTag = MemoryTag & {
   canonicalType: string;
   canonicalValue: string;
-};
-
-export type MemoryResolveContextRequest = {
-  schemaVersion: MemoryV6SchemaVersion;
 };
 
 export type MemorySearchRequest = {

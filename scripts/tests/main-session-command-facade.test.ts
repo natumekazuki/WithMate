@@ -44,9 +44,6 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
     getProviderQuotaTelemetry: () => null,
     isProviderQuotaTelemetryStale: () => false,
     refreshProviderQuotaTelemetry: async () => null,
-    revokeSessionMemoryBindings(sessionId) {
-      calls.push(`revoke-memory:${sessionId}`);
-    },
     async cleanupSessionFilesDirectory(sessionId) {
       calls.push(`cleanup-files:${sessionId}`);
     },
@@ -61,7 +58,6 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
     "create:s-1",
     "update:s-1",
     "delete:s-1",
-    "revoke-memory:s-1",
     "cleanup-files:s-1",
     "cancel:s-1",
   ]);
@@ -87,9 +83,6 @@ test("MainSessionCommandFacade は cutoff delete の削除済み session だけ 
     getProviderQuotaTelemetry: () => null,
     isProviderQuotaTelemetryStale: () => false,
     refreshProviderQuotaTelemetry: async () => null,
-    revokeSessionMemoryBindings(sessionId) {
-      calls.push(`revoke-memory:${sessionId}`);
-    },
     async cleanupSessionFilesDirectory(sessionId) {
       calls.push(`cleanup-files:${sessionId}`);
     },
@@ -101,7 +94,6 @@ test("MainSessionCommandFacade は cutoff delete の削除済み session だけ 
   assert.deepEqual(result.skippedRunningSessionIds, ["s-running"]);
   assert.deepEqual(calls, [
     "delete-before:2026-07-01",
-    "revoke-memory:s-old",
     "cleanup-files:s-old",
   ]);
 });

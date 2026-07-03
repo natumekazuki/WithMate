@@ -15,7 +15,6 @@ type MainSessionCommandFacadeDeps = {
   getProviderQuotaTelemetry(providerId: string): ProviderQuotaTelemetry | null;
   isProviderQuotaTelemetryStale(telemetry: ProviderQuotaTelemetry | null): boolean;
   refreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
-  revokeSessionMemoryBindings?(sessionId: string): void;
   cleanupSessionFilesDirectory?(sessionId: string): Promise<void>;
 };
 
@@ -63,7 +62,6 @@ export class MainSessionCommandFacade {
 
   private async cleanupDeletedSessions(result: DeleteSessionsResult): Promise<void> {
     for (const sessionId of result.deletedSessionIds) {
-      this.deps.revokeSessionMemoryBindings?.(sessionId);
       await this.deps.cleanupSessionFilesDirectory?.(sessionId);
     }
   }
