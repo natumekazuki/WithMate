@@ -271,12 +271,8 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - 補足 path は副次表示へ回し、long path でも basename を先に読める
   - attachment list は高さ上限つき scroll にし、多数添付時も textarea と `Send` を押し流さない
 - textarea 内の `@path` 参照
-- `@path` 入力中の workspace file path 候補表示
-  - 候補表示条件は `@` 後 query 非空のまま維持する
-  - 候補には file と folder を含める
-  - row は basename 優先 + 親 path 補足で表示し、file / folder の kind label と背景色で種別を区別する
-  - 候補 open 中だけ `ArrowUp` / `ArrowDown` / `Enter` / `Escape` の keyboard navigation を有効にする
-  - `Tab` は候補採用に使わず、通常の focus 移動を優先する
+- `@path` 入力中の workspace file path 候補表示は持たない
+- 手入力または paste された `@path` は送信時に検証し、存在しない path は composer feedback として表示して送信しない
 - picker で選んだ file / folder / image も textarea に `@path` を挿入する
 - 添付 picker は初回だけ workspace を開き、以後は最後に選んだディレクトリを開く
 - composer toolbar に `Add Directory` を置き、その横の toggle から `Additional Directories` 一覧を既定 closed で開閉できるようにする
