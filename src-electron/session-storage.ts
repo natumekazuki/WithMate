@@ -18,6 +18,7 @@ import {
   LEGACY_SESSION_COLUMN_DEFINITIONS,
 } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+import type { DeleteSessionsLastActiveBeforeCutoff } from "../src/withmate-window-types.js";
 
 type SessionRow = {
   id: string;
@@ -203,9 +204,11 @@ const UPSERT_SESSION_SQL = `
     last_active_at = excluded.last_active_at
 `;
 
-const DELETE_SESSION_SQL = `
-  DELETE FROM sessions
-  WHERE id = ?
+const LIST_SESSION_IDS_LAST_ACTIVE_BEFORE_SQL = `
+  SELECT id
+  FROM sessions
+  WHERE last_active_at < ?
+  ORDER BY last_active_at ASC, id ASC
 `;
 
 const AUXILIARY_SESSIONS_TABLE_NAME = "auxiliary_sessions";
@@ -453,6 +456,11 @@ export class SessionStorage {
     return session?.messages[messageIndex]?.artifact ?? null;
   }
 
+  listSessionIdsLastActiveBefore(cutoff: DeleteSessionsLastActiveBeforeCutoff): string[] {
+    const rows = this.db.prepare(LIST_SESSION_IDS_LAST_ACTIVE_BEFORE_SQL).all(cutoff.cutoffTimestampMs) as SessionIdRow[];
+    return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
+  }
+
   upsertSession(session: Session): Session {
     const normalized = normalizeSession(session);
     if (!normalized) {
@@ -490,10 +498,20 @@ export class SessionStorage {
   }
 
   deleteSession(sessionId: string): void {
+    this.deleteSessions([sessionId]);
+  }
+
+  deleteSessions(sessionIds: readonly string[]): void {
+    const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
+    if (uniqueSessionIds.length === 0) {
+      return;
+    }
+
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      this.db.prepare(DELETE_SESSION_SQL).run(sessionId);
-      this.deleteAuxiliarySessionsForParentIfTableExists(sessionId);
+      const placeholders = uniqueSessionIds.map(() => "?").join(", ");
+      this.db.prepare(`DELETE FROM sessions WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
+      this.deleteAuxiliarySessionsForParentsIfTableExists(uniqueSessionIds);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -526,12 +544,18 @@ export class SessionStorage {
     `).get(AUXILIARY_SESSIONS_TABLE_NAME));
   }
 
-  private deleteAuxiliarySessionsForParentIfTableExists(parentSessionId: string): void {
+  private deleteAuxiliarySessionsForParentsIfTableExists(parentSessionIds: readonly string[]): void {
     if (!this.auxiliarySessionsTableExists()) {
       return;
     }
 
-    this.db.prepare("DELETE FROM auxiliary_sessions WHERE parent_session_id = ?").run(parentSessionId);
+    const uniqueParentIds = Array.from(new Set(parentSessionIds.map((parentSessionId) => parentSessionId.trim()).filter(Boolean)));
+    if (uniqueParentIds.length === 0) {
+      return;
+    }
+
+    const placeholders = uniqueParentIds.map(() => "?").join(", ");
+    this.db.prepare(`DELETE FROM auxiliary_sessions WHERE parent_session_id IN (${placeholders})`).run(...uniqueParentIds);
   }
 
   private deleteAllAuxiliarySessionsIfTableExists(): void {

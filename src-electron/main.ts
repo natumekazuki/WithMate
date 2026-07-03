@@ -1363,10 +1363,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 resolveLiveElicitation,
                 createSession: (input) => requireMainSessionCommandFacade().createSession(input),
                 updateSession: (session) => requireMainSessionCommandFacade().updateSession(session),
-                deleteSession: async (sessionId) => {
-                  await requireMainSessionCommandFacade().deleteSession(sessionId);
-                  await cleanupSessionFilesDirectory(sessionId);
-                },
+                deleteSession: (sessionId) => requireMainSessionCommandFacade().deleteSession(sessionId),
+                deleteSessionsLastActiveBefore: (request) =>
+                  requireMainSessionCommandFacade().deleteSessionsLastActiveBefore(request),
                 runSessionTurn: (sessionId, request) => requireMainSessionCommandFacade().runSessionTurn(sessionId, request),
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
               },
@@ -1422,6 +1421,7 @@ function isSessionStorageWritable(storage: SessionStorageRead): storage is Sessi
     typeof candidate.upsertSession === "function" &&
     typeof candidate.replaceSessions === "function" &&
     typeof candidate.deleteSession === "function" &&
+    typeof candidate.deleteSessions === "function" &&
     typeof candidate.clearSessions === "function"
   );
 }
@@ -1515,6 +1515,7 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       getProviderQuotaTelemetry: (providerId) => getProviderQuotaTelemetry(providerId),
       isProviderQuotaTelemetryStale: (telemetry) => isProviderQuotaTelemetryStale(telemetry),
       refreshProviderQuotaTelemetry: (providerId) => refreshProviderQuotaTelemetry(providerId),
+      cleanupSessionFilesDirectory,
     });
   }
 
@@ -2023,7 +2024,9 @@ function requireSessionPersistenceService(): SessionPersistenceService {
         await requireSessionStorageForWrite().replaceSessions(nextSessions);
       },
       listStoredSessions: () => requireSessionStorage().listSessions(),
-      deleteStoredSession: (sessionId) => requireSessionStorageForWrite().deleteSession(sessionId),
+      listStoredSessionIdsLastActiveBefore: (cutoff) =>
+        requireSessionStorage().listSessionIdsLastActiveBefore(cutoff),
+      deleteStoredSessions: (sessionIds) => requireSessionStorageForWrite().deleteSessions(sessionIds),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
       createCharacterRuntimeSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),

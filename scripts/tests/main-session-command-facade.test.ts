@@ -19,6 +19,17 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
         },
         deleteSession(sessionId) {
           calls.push(`delete:${sessionId}`);
+          return {
+            deletedSessionIds: [sessionId],
+            skippedRunningSessionIds: [],
+          };
+        },
+        deleteSessionsLastActiveBefore() {
+          calls.push("delete-old");
+          return {
+            deletedSessionIds: ["s-old"],
+            skippedRunningSessionIds: [],
+          };
         },
       }) as never,
     getSessionRuntimeService: () =>
@@ -33,6 +44,9 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
     getProviderQuotaTelemetry: () => null,
     isProviderQuotaTelemetryStale: () => false,
     refreshProviderQuotaTelemetry: async () => null,
+    async cleanupSessionFilesDirectory(sessionId) {
+      calls.push(`cleanup-files:${sessionId}`);
+    },
   });
 
   facade.createSession({ id: "s-1" } as never);
@@ -40,7 +54,48 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
   await facade.deleteSession("s-1");
   facade.cancelSessionRun("s-1");
 
-  assert.deepEqual(calls, ["create:s-1", "update:s-1", "delete:s-1", "cancel:s-1"]);
+  assert.deepEqual(calls, [
+    "create:s-1",
+    "update:s-1",
+    "delete:s-1",
+    "cleanup-files:s-1",
+    "cancel:s-1",
+  ]);
+});
+
+test("MainSessionCommandFacade は cutoff delete の削除済み session だけ cleanup する", async () => {
+  const calls: string[] = [];
+  const facade = new MainSessionCommandFacade({
+    getSession: () => null,
+    getSessionPersistenceService: () =>
+      ({
+        deleteSessionsLastActiveBefore(cutoff) {
+          calls.push(`delete-before:${cutoff.cutoffDate}`);
+          return {
+            cutoffDate: cutoff.cutoffDate,
+            cutoffTimestampMs: cutoff.cutoffTimestampMs,
+            deletedSessionIds: ["s-old"],
+            skippedRunningSessionIds: ["s-running"],
+          };
+        },
+      }) as never,
+    getSessionRuntimeService: () => ({} as never),
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    async cleanupSessionFilesDirectory(sessionId) {
+      calls.push(`cleanup-files:${sessionId}`);
+    },
+  });
+
+  const result = await facade.deleteSessionsLastActiveBefore({ cutoffDate: "2026-07-01" });
+
+  assert.deepEqual(result.deletedSessionIds, ["s-old"]);
+  assert.deepEqual(result.skippedRunningSessionIds, ["s-running"]);
+  assert.deepEqual(calls, [
+    "delete-before:2026-07-01",
+    "cleanup-files:s-old",
+  ]);
 });
 
 test("MainSessionCommandFacade は stale な Copilot quota を非同期更新して run を委譲する", async () => {

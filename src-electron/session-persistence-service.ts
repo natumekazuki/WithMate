@@ -18,6 +18,10 @@ import { normalizeAllowedAdditionalDirectories } from "./additional-directories.
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import { sessionSummaryToSession } from "./session-summary-adapter.js";
 import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
+import type {
+  DeleteSessionsLastActiveBeforeCutoff,
+  DeleteSessionsResult,
+} from "../src/withmate-window-types.js";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -37,7 +41,9 @@ export type SessionPersistenceServiceDeps = {
   upsertStoredSession(session: Session): Awaitable<Session>;
   replaceStoredSessions(sessions: Session[]): Awaitable<void>;
   listStoredSessions(): Awaitable<Session[]>;
-  deleteStoredSession(sessionId: string): Awaitable<void>;
+  listStoredSessionIdsLastActiveBefore?(cutoff: DeleteSessionsLastActiveBeforeCutoff): Awaitable<string[]>;
+  deleteStoredSession?(sessionId: string): Awaitable<void>;
+  deleteStoredSessions?(sessionIds: readonly string[]): Awaitable<void>;
   getAppSettings: () => AppSettings;
   getModelCatalogSnapshot(): ModelCatalogSnapshot;
   createCharacterRuntimeSnapshot?(characterId: string): CharacterRuntimeSnapshot | null;
@@ -141,22 +147,83 @@ export class SessionPersistenceService {
     return updatedSession;
   }
 
-  async deleteSession(sessionId: string): Promise<void> {
-    const session = this.deps.getSession(sessionId);
-    if (!session) {
-      return;
+  async deleteSession(sessionId: string): Promise<DeleteSessionsResult> {
+    return this.deleteSessionsByIds([sessionId], { runningPolicy: "throw" });
+  }
+
+  async deleteSessionsLastActiveBefore(cutoff: DeleteSessionsLastActiveBeforeCutoff): Promise<DeleteSessionsResult> {
+    const sessionIds = this.deps.listStoredSessionIdsLastActiveBefore
+      ? await this.deps.listStoredSessionIdsLastActiveBefore(cutoff)
+      : (await this.deps.listStoredSessions())
+          .filter((session) => Date.parse(session.updatedAt) < cutoff.cutoffTimestampMs)
+          .map((session) => session.id);
+    return this.deleteSessionsByIds(sessionIds, { runningPolicy: "skip", cutoff });
+  }
+
+  private async deleteSessionsByIds(
+    sessionIds: readonly string[],
+    options: {
+      runningPolicy: "throw" | "skip";
+      cutoff?: DeleteSessionsLastActiveBeforeCutoff;
+    },
+  ): Promise<DeleteSessionsResult> {
+    const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
+    const skippedRunningSessionIds: string[] = [];
+    const deletableSessionIds: string[] = [];
+    const currentSessionsById = new Map(this.deps.getSessions().map((session) => [session.id, session] as const));
+
+    for (const sessionId of uniqueSessionIds) {
+      const session = currentSessionsById.get(sessionId);
+      if (!session) {
+        continue;
+      }
+
+      if (this.deps.isSessionRunInFlight(sessionId) || isRunningSession(session)) {
+        if (options.runningPolicy === "throw") {
+          throw new Error("実行中のセッションは削除できないよ。");
+        }
+        skippedRunningSessionIds.push(sessionId);
+        continue;
+      }
+
+      deletableSessionIds.push(sessionId);
     }
 
-    if (this.deps.isSessionRunInFlight(sessionId) || isRunningSession(session)) {
-      throw new Error("実行中のセッションは削除できないよ。");
+    if (deletableSessionIds.length === 0) {
+      return {
+        cutoffDate: options.cutoff?.cutoffDate,
+        cutoffTimestampMs: options.cutoff?.cutoffTimestampMs,
+        deletedSessionIds: [],
+        skippedRunningSessionIds,
+      };
     }
 
-    await this.deps.deleteStoredSession(sessionId);
-    this.deps.setSessions(this.deps.getSessions().filter((entry) => entry.id !== sessionId));
-    this.deps.clearSessionContextTelemetry(sessionId);
-    this.deps.clearSessionBackgroundActivities(sessionId);
-    this.deps.closeSessionWindow(sessionId);
-    this.deps.broadcastSessions([sessionId]);
+    if (this.deps.deleteStoredSessions) {
+      await this.deps.deleteStoredSessions(deletableSessionIds);
+    } else if (this.deps.deleteStoredSession) {
+      for (const sessionId of deletableSessionIds) {
+        await this.deps.deleteStoredSession(sessionId);
+      }
+    } else {
+      throw new Error("session delete storage dependency is not configured.");
+    }
+    const deletableSessionIdSet = new Set(deletableSessionIds);
+    this.deps.setSessions(this.deps.getSessions().filter((entry) => !deletableSessionIdSet.has(entry.id)));
+
+    for (const sessionId of deletableSessionIds) {
+      this.deps.clearSessionContextTelemetry(sessionId);
+      this.deps.clearSessionBackgroundActivities(sessionId);
+      this.deps.closeSessionWindow(sessionId);
+    }
+
+    this.deps.broadcastSessions(deletableSessionIds);
+
+    return {
+      cutoffDate: options.cutoff?.cutoffDate,
+      cutoffTimestampMs: options.cutoff?.cutoffTimestampMs,
+      deletedSessionIds: deletableSessionIds,
+      skippedRunningSessionIds,
+    };
   }
 
   async upsertSession(nextSession: Session): Promise<Session> {

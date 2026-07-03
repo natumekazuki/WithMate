@@ -75,6 +75,7 @@ import {
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_UPDATE_MATE_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
+  WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
   WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
@@ -182,6 +183,8 @@ import {
 } from "../src/withmate-ipc-channels.js";
 import type {
   OpenPathOptions,
+  DeleteSessionsLastActiveBeforeRequest,
+  DeleteSessionsResult,
   ResetAppDatabaseRequest,
   SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
@@ -306,6 +309,9 @@ export type MainIpcRegistrationDeps = {
   cancelCompanionSessionRun(sessionId: string): void;
   updateSession(session: Session): Awaitable<Session>;
   deleteSession(sessionId: string): Awaitable<void>;
+  deleteSessionsLastActiveBefore(
+    request: DeleteSessionsLastActiveBeforeRequest | null | undefined,
+  ): Awaitable<DeleteSessionsResult>;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   cancelSessionRun(sessionId: string): void;
@@ -486,6 +492,7 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "createSession"
   | "updateSession"
   | "deleteSession"
+  | "deleteSessionsLastActiveBefore"
   | "runSessionTurn"
   | "cancelSessionRun"
 >;
@@ -924,6 +931,11 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
   ipcMain.handle(WITHMATE_CREATE_SESSION_CHANNEL, (_event, input: CreateSessionInput) => deps.createSession(input));
   ipcMain.handle(WITHMATE_UPDATE_SESSION_CHANNEL, (_event, session: Session) => deps.updateSession(session));
   ipcMain.handle(WITHMATE_DELETE_SESSION_CHANNEL, (_event, sessionId: string) => deps.deleteSession(sessionId));
+  ipcMain.handle(
+    WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
+    (_event, request: DeleteSessionsLastActiveBeforeRequest | null | undefined) =>
+      deps.deleteSessionsLastActiveBefore(request),
+  );
   ipcMain.handle(WITHMATE_RUN_SESSION_TURN_CHANNEL, async (_event, sessionId: string, request: RunSessionTurnRequest) =>
     deps.runSessionTurn(sessionId, request),
   );

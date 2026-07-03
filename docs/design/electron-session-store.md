@@ -64,12 +64,15 @@ flowchart LR
 - `createSession`
 - `updateSession`
 - `deleteSession`
+- `deleteSessionsLastActiveBefore`
 - `upsertSession`
 - `replaceAllSessions`
 - `listSessions`
 - `getSession`
 
 `sessions` table を正本にしつつ、Main Process 内の in-memory projection と同期する。
+session 削除の副作用は単一削除と cutoff bulk 削除で同じ内部経路を通す。
+cutoff bulk 削除では storage が `last_active_at` から対象 id を列挙し、実行中の session は削除対象から skip する。
 
 ### AuditLogService
 
@@ -132,6 +135,7 @@ Main Process 側では `MainQueryService`、`SessionRuntimeService`、`SessionPe
 - `createSession`
 - `updateSession`
 - `deleteSession`
+- `deleteSessionsLastActiveBefore`
 - `runSessionTurn`
 - `cancelSessionTurn`
 

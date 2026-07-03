@@ -26,6 +26,7 @@ import {
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
+  WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
   WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
   WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,
@@ -290,6 +291,9 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     deleteSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_DELETE_SESSION_CHANNEL, sessionId);
+    },
+    deleteSessionsLastActiveBefore(request) {
+      return ipcRenderer.invoke(WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL, request);
     },
     previewComposerInput(sessionId, userMessage) {
       return ipcRenderer.invoke(WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL, sessionId, userMessage);

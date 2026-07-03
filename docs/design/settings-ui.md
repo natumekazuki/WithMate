@@ -1,7 +1,7 @@
 # Settings UI
 
 - 作成日: 2026-03-14
-- 更新日: 2026-06-28
+- 更新日: 2026-07-03
 - 対象: 独立した `Settings Window`
 
 ## Goal
@@ -15,7 +15,7 @@
 - app 共通 system prompt を編集する旧設定項目は廃止する
 - V5 current では Character 定義は `Characters` editor で管理し、session / companion 開始時の `CharacterRuntimeSnapshot` を runtime prompt の主経路にする
 - provider instruction sync は V5 Character 注入の主経路ではなく、Settings current UI には置かない
-- current 実装では `Session Window`、`Default Microcopy`、`Coding Agent Providers`、`Diagnostics`、`Model Catalog` を置く
+- current 実装では `Session Window`、`Default Microcopy`、`Coding Agent Providers`、`Diagnostics`、`Model Catalog`、`Storage Maintenance` を置く
 - V6 Memory provider instructionは自動同期せず、Diagnostics内に手動貼り付け用sampleとcopy導線を置く
 - `Settings Window` は縦方向の余白を少し増やしつつ、内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - file picker / save dialog は Main Process 側で開く
@@ -54,6 +54,9 @@
       - provider instruction sample preview / copy action
 - `Model Catalog`
   - import / export
+- `Storage Maintenance`
+  - 指定日より前に最後に使われた Session の削除
+  - 実行中の Session は削除せず、結果フィードバックで skip 件数を返す
 - `Save Settings`
 - 結果フィードバック
 
@@ -75,6 +78,10 @@
   - provider instruction sample を表示し、必要な provider の instruction file へ手動で貼り付けるために clipboard copy できる
 - `model catalog` の import
 - `model catalog` の export
+- `Storage Maintenance` の古い Session 削除
+  - cutoff date は Settings Window 内の一時入力として扱い、app settings には保存しない
+  - cutoff date のローカル日付 00:00 より前に最後に使われた Session を対象にする
+  - 実行中の Session は削除しない
 
 ## Runtime Policy
 
@@ -90,6 +97,7 @@
 - save 時の payload は `home-settings-view-model` が resolved model / reasoning を反映した `persisted settings` として組み立てる
 - Settings Window の `loading` 派生状態は `HomeApp.tsx` が組み立てる
 - Settings Window の `import / export / save` の文言組み立てと戻り値解釈は `home-settings-actions` が担当する
+- Settings Window の古い Session 削除の確認文言と戻り値解釈は `home-settings-actions` が担当し、削除 orchestration は Main Process 側の session command API に委譲する
 - Settings 保存成功時は renderer 側で戻り値の `appSettings` を draft に同期し、dirty 状態を解消する
 - Memory V6 diagnostics は Main Process 側の `getMemoryV6Diagnostics()` が集約し、renderer 側の `HomeApp.tsx` が初回表示時と Settings 保存成功後に再取得する
 - Memory V6 diagnostics は secret を返さず、runtime status / path / support / sync status / error summary の read-only projection として扱う
@@ -105,7 +113,7 @@
 - provider ごとの既定値
 - MemoryGeneration を再設計する場合の専用設定
 - provider instruction fileをWithMateが自動編集する同期設定
-- destructive maintenance / DB reset をSettingsへ戻す場合の専用導線
+- DB reset をSettingsへ戻す場合の専用導線
 
 ## Non Goals
 
