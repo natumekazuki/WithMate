@@ -53,6 +53,15 @@ type ExistingMessageArtifactRow = {
   artifact_body: string | null;
 };
 
+const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
+
+function logSessionRunStuckInvestigation(
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  console.info(SESSION_RUN_STUCK_INVESTIGATION_LOG, event, details);
+}
+
 function toV6State(session: Session): string {
   if (session.status === "running") {
     return "active";
@@ -185,13 +194,32 @@ export class SessionStorageV6 {
       throw new Error("SessionStorageV6 に保存できない session 形式だよ。");
     }
 
+    const startedAt = Date.now();
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       this.writeSession(normalized);
       this.db.exec("COMMIT");
-      return this.getSession(normalized.id) ?? normalized;
+      const stored = this.getSession(normalized.id) ?? normalized;
+      logSessionRunStuckInvestigation("storage-v6.upsert-session.done", {
+        sessionId: normalized.id,
+        durationMs: Date.now() - startedAt,
+        messageCount: normalized.messages.length,
+        runState: normalized.runState,
+        status: normalized.status,
+        storedRunState: stored.runState,
+        storedStatus: stored.status,
+      });
+      return stored;
     } catch (error) {
       this.db.exec("ROLLBACK");
+      logSessionRunStuckInvestigation("storage-v6.upsert-session.failed", {
+        sessionId: normalized.id,
+        durationMs: Date.now() - startedAt,
+        messageCount: normalized.messages.length,
+        runState: normalized.runState,
+        status: normalized.status,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }
@@ -234,6 +262,7 @@ export class SessionStorageV6 {
   }
 
   private writeSession(session: Session): void {
+    const startedAt = Date.now();
     const snapshot = session.characterRuntimeSnapshot;
     const runtimePolicy = {
       appStatus: session.status,
@@ -335,6 +364,14 @@ export class SessionStorageV6 {
         encodeMessageArtifactForWrite(message, existingArtifactBodies.get(index)),
         session.updatedAt,
       );
+    });
+    logSessionRunStuckInvestigation("storage-v6.write-session.done", {
+      sessionId: session.id,
+      durationMs: Date.now() - startedAt,
+      messageCount: session.messages.length,
+      existingArtifactBodyCount: existingArtifactBodies.size,
+      runState: session.runState,
+      status: session.status,
     });
   }
 

@@ -272,6 +272,14 @@ import {
 } from "./chat/session-shell-handlers.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
+const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
+
+function logSessionRunStuckInvestigation(
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  console.info(SESSION_RUN_STUCK_INVESTIGATION_LOG, event, details);
+}
 
 function liveRunStepBucketPriority(status: string): number {
   switch (status) {
@@ -1662,6 +1670,16 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
+    const investigationStartedAt = Date.now();
+    logSessionRunStuckInvestigation("renderer.send.start", {
+      sessionId: selectedSession.id,
+      runState: selectedSession.runState,
+      status: selectedSession.status,
+      messageCount: selectedSession.messages.length,
+      hasLiveRun: !!selectedSessionLiveRun,
+      draftChars: messageText.length,
+    });
+
     if (composerBlockedReason) {
       throw new Error(composerBlockedReason);
     }
@@ -1681,6 +1699,12 @@ export default function AgentSessionWindowApp() {
 
     const nextMessage = messageText.trim();
     const preview = await previewRequest(messageText);
+    logSessionRunStuckInvestigation("renderer.composer-preview.done", {
+      sessionId: selectedSession.id,
+      elapsedMs: Date.now() - investigationStartedAt,
+      attachmentCount: preview.attachments.length,
+      errorCount: preview.errors.length,
+    });
     setComposerPreview(preview);
     const { blockedMessage } = resolveComposerSendPreflight({
       runState: selectedSessionRunState,
@@ -1708,17 +1732,38 @@ export default function AgentSessionWindowApp() {
       updateLiveRunState: (update) => setLiveRunState(update),
       applyRunningSession: (runningSession) => setSessions([runningSession]),
     });
+    logSessionRunStuckInvestigation("renderer.optimistic-running-applied", {
+      sessionId: updatedSession.id,
+      elapsedMs: Date.now() - investigationStartedAt,
+      messageCount: updatedSession.messages.length,
+      runState: updatedSession.runState,
+      status: updatedSession.status,
+    });
 
     try {
       const request: RunSessionTurnRequest = {
         userMessage: messageText,
       };
       const savedSession = await withmateApi.runSessionTurn(selectedSession.id, request);
+      logSessionRunStuckInvestigation("renderer.run-session-turn.resolved", {
+        sessionId: savedSession.id,
+        elapsedMs: Date.now() - investigationStartedAt,
+        messageCount: savedSession.messages.length,
+        runState: savedSession.runState,
+        status: savedSession.status,
+        hasLiveRun: !!selectedSessionLiveRun,
+      });
       applyResolvedSessionRunUpdate({
         savedSession,
         applySavedSession: (nextSession) => setSessions([nextSession]),
       });
     } catch (error) {
+      logSessionRunStuckInvestigation("renderer.run-session-turn.failed", {
+        sessionId: updatedSession.id,
+        elapsedMs: Date.now() - investigationStartedAt,
+        messageCount: updatedSession.messages.length,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
       console.error(error);
       rollbackOptimisticSessionRunUpdate({
         sessionId: updatedSession.id,

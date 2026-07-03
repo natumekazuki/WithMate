@@ -35,6 +35,15 @@ import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
+const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
+
+function logSessionRunStuckInvestigation(
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  console.info(SESSION_RUN_STUCK_INVESTIGATION_LOG, event, details);
+}
+
 export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(session: Session): Awaitable<Session>;
@@ -438,11 +447,20 @@ export class SessionRuntimeService {
   }
 
   async runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {
+    const investigationStartedAt = Date.now();
     const storedSession = await this.deps.getSession(sessionId);
     if (!storedSession) {
       throw new Error("対象セッションが見つからないよ。");
     }
     const session = await Promise.resolve(this.deps.resolveRuntimeSessionForTurn?.(storedSession) ?? storedSession);
+    logSessionRunStuckInvestigation("runtime.start", {
+      sessionId,
+      provider: session.provider,
+      runState: session.runState,
+      status: session.status,
+      messageCount: session.messages.length,
+      hasThreadId: session.threadId.trim().length > 0,
+    });
 
     if (session.runState === "running") {
       throw new Error("このセッションはまだ実行中だよ。");
@@ -528,7 +546,14 @@ export class SessionRuntimeService {
         messages: [...session.messages, { role: "user", text: nextMessage }],
       };
 
+      const runningUpsertStartedAt = Date.now();
       await this.deps.upsertSession(runningSession);
+      logSessionRunStuckInvestigation("runtime.running-session-upsert.done", {
+        sessionId,
+        durationMs: Date.now() - runningUpsertStartedAt,
+        elapsedMs: Date.now() - investigationStartedAt,
+        messageCount: runningSession.messages.length,
+      });
       setupRunningSessionSaved = true;
       this.inFlightSessionRuns.add(sessionId);
       runAbortController = new AbortController();
@@ -547,7 +572,14 @@ export class SessionRuntimeService {
         session: runningSession,
         logicalPrompt: promptForAudit.logicalPrompt,
       });
+      const runningAuditCreateStartedAt = Date.now();
       runningAuditLog = await this.deps.createAuditLog(runningAuditEntry);
+      logSessionRunStuckInvestigation("runtime.running-audit-create.done", {
+        sessionId,
+        auditLogId: runningAuditLog.id,
+        durationMs: Date.now() - runningAuditCreateStartedAt,
+        elapsedMs: Date.now() - investigationStartedAt,
+      });
     } catch (error) {
       await revokeMemoryBinding();
       this.deps.resolvePendingApprovalRequest(sessionId, "deny");
@@ -708,6 +740,14 @@ export class SessionRuntimeService {
       while (true) {
         try {
           result = await runProviderTurn(activeRunningSession);
+          logSessionRunStuckInvestigation("runtime.provider-turn.done", {
+            sessionId,
+            elapsedMs: Date.now() - investigationStartedAt,
+            assistantChars: result.assistantText.length,
+            operationCount: result.operations.length,
+            rawItemsChars: result.rawItemsJson.length,
+            hasThreadId: (result.threadId ?? "").trim().length > 0,
+          });
           break;
         } catch (error) {
           const providerTurnError = error instanceof ProviderTurnError ? error : null;
@@ -757,7 +797,13 @@ export class SessionRuntimeService {
       const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
       const logicalPromptEstimate = estimateLogicalPromptTokens(result.logicalPrompt);
 
+      const flushAuditStartedAt = Date.now();
       await flushAuditWrites();
+      logSessionRunStuckInvestigation("runtime.audit-flush.done", {
+        sessionId,
+        durationMs: Date.now() - flushAuditStartedAt,
+        elapsedMs: Date.now() - investigationStartedAt,
+      });
       terminalAuditSettled = true;
       const completedAuditEntry = buildTerminalAuditEntry({
         baseEntry: runningAuditEntry,
@@ -788,7 +834,15 @@ export class SessionRuntimeService {
         usage: result.usage,
         errorMessage: "",
       });
+      const completedAuditUpdateStartedAt = Date.now();
       await this.deps.updateAuditLog(runningAuditLog.id, completedAuditEntry);
+      logSessionRunStuckInvestigation("runtime.completed-audit-update.done", {
+        sessionId,
+        auditLogId: runningAuditLog.id,
+        durationMs: Date.now() - completedAuditUpdateStartedAt,
+        elapsedMs: Date.now() - investigationStartedAt,
+        operationCount: completedAuditEntry.operations.length,
+      });
       runningAuditEntry = completedAuditEntry;
 
       const completedSession: Session = {
@@ -807,7 +861,16 @@ export class SessionRuntimeService {
         ],
       };
 
+      const completedSessionUpsertStartedAt = Date.now();
       const storedCompletedSession = await this.deps.upsertSession(completedSession);
+      logSessionRunStuckInvestigation("runtime.completed-session-upsert.done", {
+        sessionId,
+        durationMs: Date.now() - completedSessionUpsertStartedAt,
+        elapsedMs: Date.now() - investigationStartedAt,
+        messageCount: completedSession.messages.length,
+        storedRunState: storedCompletedSession.runState,
+        storedStatus: storedCompletedSession.status,
+      });
       activeRunningSession = storedCompletedSession;
       return storedCompletedSession;
     } catch (error: unknown) {
@@ -844,7 +907,14 @@ export class SessionRuntimeService {
         await revokeMemoryBinding();
       }
 
+      const failedFlushAuditStartedAt = Date.now();
       await flushAuditWrites();
+      logSessionRunStuckInvestigation("runtime.audit-flush.done", {
+        sessionId,
+        durationMs: Date.now() - failedFlushAuditStartedAt,
+        elapsedMs: Date.now() - investigationStartedAt,
+        terminalPhase: canceled ? "canceled" : "failed",
+      });
       terminalAuditSettled = true;
       const failedAuditEntry = buildTerminalAuditEntry({
         baseEntry: runningAuditEntry,
@@ -875,7 +945,16 @@ export class SessionRuntimeService {
         usage: partialResult?.usage ?? null,
         errorMessage: failureMessage,
       });
+      const failedAuditUpdateStartedAt = Date.now();
       await this.deps.updateAuditLog(runningAuditLog.id, failedAuditEntry);
+      logSessionRunStuckInvestigation("runtime.terminal-audit-update.done", {
+        sessionId,
+        auditLogId: runningAuditLog.id,
+        durationMs: Date.now() - failedAuditUpdateStartedAt,
+        elapsedMs: Date.now() - investigationStartedAt,
+        phase: failedAuditEntry.phase,
+        operationCount: failedAuditEntry.operations.length,
+      });
       runningAuditEntry = failedAuditEntry;
 
       const fallbackNotice = formatProviderFailureNotice({
@@ -904,7 +983,16 @@ export class SessionRuntimeService {
         ],
       };
 
+      const failedSessionUpsertStartedAt = Date.now();
       const storedFailedSession = await this.deps.upsertSession(failedSession);
+      logSessionRunStuckInvestigation("runtime.terminal-session-upsert.done", {
+        sessionId,
+        durationMs: Date.now() - failedSessionUpsertStartedAt,
+        elapsedMs: Date.now() - investigationStartedAt,
+        messageCount: failedSession.messages.length,
+        storedRunState: storedFailedSession.runState,
+        storedStatus: storedFailedSession.status,
+      });
       activeRunningSession = storedFailedSession;
       return storedFailedSession;
     } finally {
@@ -930,6 +1018,15 @@ export class SessionRuntimeService {
       }
       this.deps.clearWorkspaceFileIndex(session.workspacePath);
       this.deps.broadcastLiveSessionRun(sessionId);
+      logSessionRunStuckInvestigation("runtime.finally.done", {
+        sessionId,
+        elapsedMs: Date.now() - investigationStartedAt,
+        activeRunState: activeRunningSession.runState,
+        activeStatus: activeRunningSession.status,
+        preservedBackgroundTaskCount: preservedBackgroundTasks.length,
+        preservedReasoningChars: preservedReasoningText.length,
+        liveRunAfterFinally: this.deps.getLiveSessionRun(sessionId) ? "present" : "null",
+      });
     }
   }
 
