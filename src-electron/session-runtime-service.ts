@@ -72,7 +72,6 @@ export type SessionRuntimeServiceDeps = {
   setSessionContextTelemetry(telemetry: SessionContextTelemetry): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
   scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void;
-  clearWorkspaceFileIndex(workspacePath: string): void;
   createProviderMemoryBinding?(input: {
     session: Session;
     provider: ModelCatalogProvider;
@@ -566,7 +565,6 @@ export class SessionRuntimeService {
         })).catch((cleanupError) => {
           console.warn("Session setup failure cleanup failed", cleanupError);
         });
-        this.deps.clearWorkspaceFileIndex(session.workspacePath);
         this.deps.broadcastLiveSessionRun(sessionId);
       }
       throw error;
@@ -928,7 +926,6 @@ export class SessionRuntimeService {
       } else {
         this.deps.setLiveSessionRun(sessionId, null);
       }
-      this.deps.clearWorkspaceFileIndex(session.workspacePath);
       this.deps.broadcastLiveSessionRun(sessionId);
     }
   }

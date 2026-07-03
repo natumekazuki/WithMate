@@ -61,7 +61,6 @@ import type {
   ResetAppDatabaseRequest,
   SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
-import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 import type {
   CreateMateInput,
   MateProfile,
@@ -176,7 +175,6 @@ export type MainIpcSessionQueryDepsArgs = {
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
-  searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
 };
 
 export type MainIpcCompanionDepsArgs = {
@@ -192,7 +190,6 @@ export type MainIpcCompanionDepsArgs = {
   discardCompanionSession(sessionId: string): Promise<CompanionSession>;
   updateCompanionSession(session: CompanionSession): Promise<CompanionSession>;
   previewCompanionComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
-  searchCompanionWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
   cancelCompanionSessionRun(sessionId: string): void;
 };
@@ -369,7 +366,6 @@ export function createMainIpcRegistrationDeps(
     getSessionMessageArtifact: args.sessionQuery.getSessionMessageArtifact,
     getDiffPreview: args.sessionQuery.getDiffPreview,
     previewComposerInput: args.sessionQuery.previewComposerInput,
-    searchWorkspaceFiles: args.sessionQuery.searchWorkspaceFiles,
     listAuxiliarySessions: auxiliary.listAuxiliarySessions,
     getActiveAuxiliarySession: auxiliary.getActiveAuxiliarySession,
     getAuxiliarySession: auxiliary.getAuxiliarySession,
@@ -390,7 +386,6 @@ export function createMainIpcRegistrationDeps(
     discardCompanionSession: args.companion.discardCompanionSession,
     updateCompanionSession: args.companion.updateCompanionSession,
     previewCompanionComposerInput: args.companion.previewCompanionComposerInput,
-    searchCompanionWorkspaceFiles: args.companion.searchCompanionWorkspaceFiles,
     runCompanionSessionTurn: args.companion.runCompanionSessionTurn,
     cancelCompanionSessionRun: args.companion.cancelCompanionSessionRun,
     getLiveSessionRun: args.sessionRuntime.getLiveSessionRun,

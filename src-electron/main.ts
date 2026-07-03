@@ -53,7 +53,6 @@ import type {
   OpenPathOptions,
   SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
-import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
@@ -148,7 +147,6 @@ import { discoverSessionSkills } from "./skill-discovery.js";
 import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
 import { resolveCursorAnchoredPosition } from "./window-placement.js";
-import { clearWorkspaceFileIndex, searchWorkspacePathCandidates } from "./workspace-file-search.js";
 import { AppLogService } from "./app-log-service.js";
 import type { AppBootStatus } from "../src/app-boot-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
@@ -1266,7 +1264,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getSessionMessageArtifact,
                 getDiffPreview: (token) => requireAuxWindowService().getDiffPreview(token),
                 previewComposerInput,
-                searchWorkspaceFiles,
               },
               auxiliary: {
                 listAuxiliarySessions: (parentSessionId) =>
@@ -1355,7 +1352,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 },
                 previewCompanionComposerInput: (sessionId, userMessage) =>
                   requireCompanionRuntimeService().previewComposerInput(sessionId, userMessage),
-                searchCompanionWorkspaceFiles,
                 discardCompanionSession: async (sessionId) => {
                   const session = await requireCompanionReviewService().discardSession(sessionId);
                   await cleanupSessionFilesDirectory(sessionId);
@@ -1459,7 +1455,6 @@ function requireMainQueryService(): MainQueryService {
       discoverSessionCustomAgents,
       resolveComposerPreview: (session, userMessage) =>
         resolveComposerPreview(appendSessionFilesDirectory(app.getPath("userData"), session), userMessage),
-      searchWorkspaceFiles: (workspacePath, query) => searchWorkspacePathCandidates(workspacePath, query),
       launchTerminalAtPath,
     });
   }
@@ -1859,7 +1854,6 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       },
       invalidateProviderSessionThread,
       scheduleProviderQuotaTelemetryRefresh,
-      clearWorkspaceFileIndex,
       createProviderMemoryBinding: ({ session, provider, character }) =>
         memoryBindingRegistry.createBinding({ session, provider, character }),
       revokeProviderMemoryBinding: (binding) => {
@@ -1938,7 +1932,6 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       },
       invalidateProviderSessionThread,
       scheduleProviderQuotaTelemetryRefresh,
-      clearWorkspaceFileIndex,
       broadcastLiveSessionRun,
       resolvePendingApprovalRequest: (sessionId, decision) => {
         const liveRun = getLiveSessionRun(sessionId);
@@ -2001,7 +1994,6 @@ function requireCompanionRuntimeService(): CompanionRuntimeService {
       setSessionContextTelemetry: (telemetry) => setSessionContextTelemetry(telemetry.sessionId, telemetry),
       invalidateProviderSessionThread,
       scheduleProviderQuotaTelemetryRefresh,
-      clearWorkspaceFileIndex,
       broadcastCompanionSessions,
       resolvePendingApprovalRequest: (sessionId, decision) => {
         const liveRun = getLiveSessionRun(sessionId);
@@ -2981,19 +2973,6 @@ async function previewComposerInput(
   }
 
   return requireMainQueryService().previewComposerInput(sessionId, userMessage);
-}
-
-async function searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]> {
-  return requireMainQueryService().searchWorkspaceFiles(sessionId, query);
-}
-
-async function searchCompanionWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]> {
-  const session = await requireCompanionStorage().getSession(sessionId);
-  if (!session) {
-    throw new Error("対象 CompanionSession が見つからないよ。");
-  }
-
-  return searchWorkspacePathCandidates(session.worktreePath, query);
 }
 
 async function copyFilesToSessionFiles(

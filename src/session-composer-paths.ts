@@ -1,11 +1,4 @@
 import type { ComposerAttachment } from "./runtime-state.js";
-import type { WorkspacePathCandidate, WorkspacePathCandidateKind } from "./workspace-path-candidate.js";
-
-export type ActivePathReference = {
-  query: string;
-  start: number;
-  end: number;
-};
 
 export type ComposerAttachmentDisplay = {
   kindLabel: string;
@@ -26,32 +19,6 @@ export type PathReferenceAttachmentInput = {
   path: string;
 };
 
-export type WorkspacePathMatchDisplay = {
-  kindLabel: string;
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-};
-
-export type WorkspacePathMatchItem = WorkspacePathMatchDisplay & {
-  isActive: boolean;
-  key: string;
-  kind: WorkspacePathCandidateKind;
-  path: string;
-};
-
-export type WorkspacePathMatchKeyAction =
-  | { kind: "dismiss"; shouldPreventDefault: boolean }
-  | { kind: "next"; shouldPreventDefault: true }
-  | { kind: "previous"; shouldPreventDefault: true }
-  | { kind: "select"; shouldPreventDefault: true };
-
-export type WorkspacePathMatchNavigationResult =
-  | { kind: "dismiss"; shouldPreventDefault: boolean }
-  | { kind: "next"; shouldPreventDefault: true }
-  | { kind: "previous"; shouldPreventDefault: true }
-  | { kind: "select"; match: WorkspacePathCandidate; shouldPreventDefault: true };
-
 export type AdditionalDirectoryDisplay = {
   primaryLabel: string;
   secondaryLabel: string;
@@ -69,26 +36,6 @@ export type PathReferenceInsertionState = {
   draft: string;
 };
 
-export type WorkspacePathMatchState = {
-  activeWorkspacePathMatchIndex: number;
-  workspacePathMatches: WorkspacePathCandidate[];
-};
-
-export type ClosedWorkspacePathMatchState = {
-  activeWorkspacePathMatchIndex: -1;
-  workspacePathMatches: WorkspacePathCandidate[];
-};
-
-export type WorkspacePathMatchSelectionState = PathReferenceInsertionState & ClosedWorkspacePathMatchState;
-
-export type ComposerPathReferencePreviewState = {
-  activePathReference: ActivePathReference | null;
-  isEditingPathReference: boolean;
-  normalizedActivePathQuery: string;
-  previewDraft: string;
-  previewUserMessage: string;
-};
-
 export type ComposerPathPickerKind = "file" | "folder" | "image";
 
 export type ComposerReferencePathPicker = {
@@ -96,50 +43,6 @@ export type ComposerReferencePathPicker = {
   pickFile(initialPath?: string | null): Promise<string | null>;
   pickImageFile(initialPath?: string | null): Promise<string | null>;
 };
-
-export function getActivePathReference(value: string, caret: number): ActivePathReference | null {
-  const prefix = value.slice(0, caret);
-  const match = /(^|[\s(])@(?:"([^"\r\n]*)|([^\s@"\r\n]*))$/.exec(prefix);
-  if (!match) {
-    return null;
-  }
-
-  const query = (match[2] ?? match[3] ?? "").replace(/\\/g, "/");
-  const start = (match.index ?? 0) + match[1].length;
-
-  return {
-    query,
-    start,
-    end: caret,
-  };
-}
-
-export function removeActivePathReference(value: string, activeReference: ActivePathReference | null): string {
-  if (!activeReference) {
-    return value;
-  }
-
-  return `${value.slice(0, activeReference.start)}${value.slice(activeReference.end)}`;
-}
-
-export function buildComposerPathReferencePreviewState(input: {
-  caret: number;
-  draft: string;
-  isEnabled: boolean;
-}): ComposerPathReferencePreviewState {
-  const activePathReference = input.isEnabled
-    ? getActivePathReference(input.draft, input.caret)
-    : null;
-  const isEditingPathReference = activePathReference !== null;
-  const previewDraft = removeActivePathReference(input.draft, activePathReference);
-  return {
-    activePathReference,
-    isEditingPathReference,
-    normalizedActivePathQuery: activePathReference?.query.trim() ?? "",
-    previewDraft,
-    previewUserMessage: isEditingPathReference ? previewDraft : input.draft,
-  };
-}
 
 export function formatPathReference(path: string): string {
   return /\s/.test(path) ? `@"${path}"` : `@${path}`;
@@ -165,56 +68,6 @@ export function buildPathReferenceInsertionState(
   return {
     draft: `${draft.slice(0, caret)}${insertion}${draft.slice(caret)}`,
     caret: caret + insertion.length,
-  };
-}
-
-export function buildClosedWorkspacePathMatchState(): ClosedWorkspacePathMatchState {
-  return {
-    workspacePathMatches: [],
-    activeWorkspacePathMatchIndex: -1,
-  };
-}
-
-export function buildPathReferenceInsertionWithClosedWorkspaceMatchesState(
-  draft: string,
-  caret: number,
-  referencePaths: readonly string[],
-): WorkspacePathMatchSelectionState | null {
-  const nextState = buildPathReferenceInsertionState(draft, caret, referencePaths);
-  return nextState
-    ? {
-        ...nextState,
-        ...buildClosedWorkspacePathMatchState(),
-      }
-    : null;
-}
-
-export function buildPathReferenceReplacementState(
-  draft: string,
-  activeReference: ActivePathReference,
-  referencePath: string,
-): PathReferenceInsertionState {
-  const replacement = formatPathReference(referencePath);
-  return {
-    draft: `${draft.slice(0, activeReference.start)}${replacement}${draft.slice(activeReference.end)}`,
-    caret: activeReference.start + replacement.length,
-  };
-}
-
-export function buildWorkspacePathMatchSelectionState(
-  draft: string,
-  caret: number,
-  matchPath: string,
-): WorkspacePathMatchSelectionState | null {
-  const activeReference = getActivePathReference(draft, caret);
-  if (!activeReference) {
-    return null;
-  }
-
-  const nextState = buildPathReferenceReplacementState(draft, activeReference, matchPath);
-  return {
-    ...nextState,
-    ...buildClosedWorkspacePathMatchState(),
   };
 }
 
@@ -246,17 +99,6 @@ export function buildPathReferenceRemovalState(
   return {
     draft: nextDraft,
     caret: nextDraft.length,
-  };
-}
-
-export function buildPathReferenceRemovalWithClosedWorkspaceMatchesState(
-  draft: string,
-  referencePaths: readonly string[],
-): WorkspacePathMatchSelectionState {
-  const nextState = buildPathReferenceRemovalState(draft, referencePaths);
-  return {
-    ...nextState,
-    ...buildClosedWorkspacePathMatchState(),
   };
 }
 
@@ -403,178 +245,6 @@ export function removePathReferenceAttachments(
   return current.filter((entry) => !removablePaths.has(normalizePathForReference(entry.path)));
 }
 
-function workspacePathCandidateKindLabel(kind: WorkspacePathCandidateKind): string {
-  return kind === "folder" ? "Dir" : "File";
-}
-
-export function buildWorkspacePathMatchDisplay(pathMatch: WorkspacePathCandidate): WorkspacePathMatchDisplay {
-  const normalizedPath = normalizePathForReference(pathMatch.path);
-  const { basename, parentPath } = splitPathForDisplay(normalizedPath);
-  return {
-    kindLabel: workspacePathCandidateKindLabel(pathMatch.kind),
-    primaryLabel: basename || normalizedPath,
-    secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 42) : "ワークスペース直下",
-    title: normalizedPath,
-  };
-}
-
-export function buildWorkspacePathMatchItems(
-  pathMatches: readonly WorkspacePathCandidate[],
-  activeIndex: number,
-): WorkspacePathMatchItem[] {
-  return pathMatches.map((match, index) => {
-    const matchDisplay = buildWorkspacePathMatchDisplay(match);
-    return {
-      key: `${match.kind}:${match.path}`,
-      path: match.path,
-      kind: match.kind,
-      kindLabel: matchDisplay.kindLabel,
-      primaryLabel: matchDisplay.primaryLabel,
-      secondaryLabel: matchDisplay.secondaryLabel,
-      title: matchDisplay.title,
-      isActive: index === activeIndex,
-    };
-  });
-}
-
-export function getInitialWorkspacePathMatchIndex(matchCount: number): number {
-  return matchCount > 0 ? 0 : -1;
-}
-
-export function buildWorkspacePathMatchState(
-  workspacePathMatches: WorkspacePathCandidate[],
-): WorkspacePathMatchState {
-  return {
-    workspacePathMatches,
-    activeWorkspacePathMatchIndex: getInitialWorkspacePathMatchIndex(workspacePathMatches.length),
-  };
-}
-
-export function canSearchWorkspacePathMatches(input: {
-  isComposerImeComposing: boolean;
-  isEditingPathReference: boolean;
-  isSearchBlocked: boolean;
-  minQueryLength: number;
-  normalizedActivePathQuery: string;
-}): boolean {
-  return (
-    !input.isSearchBlocked
-    && !input.isComposerImeComposing
-    && input.isEditingPathReference
-    && input.normalizedActivePathQuery.length >= input.minQueryLength
-  );
-}
-
-export function getNextWorkspacePathMatchIndex(currentIndex: number, matchCount: number): number {
-  return Math.min(currentIndex + 1, matchCount - 1);
-}
-
-export function getPreviousWorkspacePathMatchIndex(currentIndex: number): number {
-  return Math.max(currentIndex - 1, 0);
-}
-
-export function resolveActiveWorkspacePathMatch(
-  pathMatches: readonly WorkspacePathCandidate[],
-  activeIndex: number,
-): WorkspacePathCandidate | null {
-  return pathMatches[activeIndex] ?? pathMatches[0] ?? null;
-}
-
-export function canNavigateWorkspacePathMatches(input: {
-  isComposerImeComposing: boolean;
-  isNativeComposing: boolean;
-  matchCount: number;
-}): boolean {
-  return input.matchCount > 0 && !input.isComposerImeComposing && !input.isNativeComposing;
-}
-
-export function resolveWorkspacePathMatchKeyAction(input: {
-  ctrlKey: boolean;
-  key: string;
-  metaKey: boolean;
-}): WorkspacePathMatchKeyAction | null {
-  switch (input.key) {
-    case "ArrowDown":
-      return { kind: "next", shouldPreventDefault: true };
-    case "ArrowUp":
-      return { kind: "previous", shouldPreventDefault: true };
-    case "Escape":
-      return { kind: "dismiss", shouldPreventDefault: true };
-    case "Tab":
-      return { kind: "dismiss", shouldPreventDefault: false };
-    case "Enter":
-      return input.ctrlKey || input.metaKey
-        ? null
-        : { kind: "select", shouldPreventDefault: true };
-    default:
-      return null;
-  }
-}
-
-export function resolveWorkspacePathMatchNavigation(input: {
-  activeIndex: number;
-  ctrlKey: boolean;
-  isComposerImeComposing: boolean;
-  isNativeComposing: boolean;
-  key: string;
-  metaKey: boolean;
-  pathMatches: readonly WorkspacePathCandidate[];
-}): WorkspacePathMatchNavigationResult | null {
-  if (!canNavigateWorkspacePathMatches({
-    matchCount: input.pathMatches.length,
-    isComposerImeComposing: input.isComposerImeComposing,
-    isNativeComposing: input.isNativeComposing,
-  })) {
-    return null;
-  }
-
-  const action = resolveWorkspacePathMatchKeyAction({
-    key: input.key,
-    ctrlKey: input.ctrlKey,
-    metaKey: input.metaKey,
-  });
-  switch (action?.kind) {
-    case "next":
-      return {
-        kind: "next",
-        shouldPreventDefault: action.shouldPreventDefault,
-      };
-    case "previous":
-      return {
-        kind: "previous",
-        shouldPreventDefault: action.shouldPreventDefault,
-      };
-    case "dismiss":
-      return action;
-    case "select": {
-      const match = resolveActiveWorkspacePathMatch(input.pathMatches, input.activeIndex);
-      return match
-        ? {
-            kind: "select",
-            match,
-            shouldPreventDefault: action.shouldPreventDefault,
-          }
-        : null;
-    }
-    default:
-      return null;
-  }
-}
-
-export function getWorkspacePathMatchNavigationIndex(
-  navigation: WorkspacePathMatchNavigationResult,
-  currentIndex: number,
-  matchCount: number,
-): number {
-  if (navigation.kind === "next") {
-    return getNextWorkspacePathMatchIndex(currentIndex, matchCount);
-  }
-  if (navigation.kind === "previous") {
-    return getPreviousWorkspacePathMatchIndex(currentIndex);
-  }
-  return currentIndex;
-}
-
 export function buildAdditionalDirectoryDisplay(directoryPath: string): AdditionalDirectoryDisplay {
   const normalizedPath = normalizePathForReference(directoryPath).replace(/\/+$/, "");
   const { basename, parentPath } = splitPathForDisplay(normalizedPath);
@@ -629,13 +299,9 @@ export function buildSelectedPathReferenceInsertionState(input: {
   draft: string;
   selectedPaths: readonly string[];
   workspacePath: string | null;
-}): WorkspacePathMatchSelectionState | null {
+}): PathReferenceInsertionState | null {
   const referencePaths = resolveReferencePathsForInsertion(input.selectedPaths, input.workspacePath);
-  return buildPathReferenceInsertionWithClosedWorkspaceMatchesState(
-    input.draft,
-    input.caret,
-    referencePaths,
-  );
+  return buildPathReferenceInsertionState(input.draft, input.caret, referencePaths);
 }
 
 export function toDirectoryPath(selectedPath: string): string {
