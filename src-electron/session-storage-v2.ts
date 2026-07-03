@@ -11,6 +11,7 @@ import {
   type SessionSummary,
 } from "../src/session-state.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+import type { DeleteSessionsLastActiveBeforeCutoff } from "../src/withmate-window-types.js";
 
 type SessionHeaderRow = {
   id: string;
@@ -196,6 +197,13 @@ const LIST_SESSION_SUMMARIES_SQL = `
     ${SESSION_HEADER_COLUMNS}
   FROM sessions
   ORDER BY last_active_at DESC, id DESC
+`;
+
+const LIST_SESSION_IDS_LAST_ACTIVE_BEFORE_SQL = `
+  SELECT id
+  FROM sessions
+  WHERE last_active_at < ?
+  ORDER BY last_active_at ASC, id ASC
 `;
 
 const GET_SESSION_HEADER_SQL = `
@@ -471,6 +479,13 @@ export class SessionStorageV2 {
     });
   }
 
+  listSessionIdsLastActiveBefore(cutoff: DeleteSessionsLastActiveBeforeCutoff): string[] {
+    return this.withDb((db) => {
+      const rows = db.prepare(LIST_SESSION_IDS_LAST_ACTIVE_BEFORE_SQL).all(cutoff.cutoffTimestampMs) as SessionIdRow[];
+      return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
+    });
+  }
+
   upsertSession(session: Session): Session {
     const normalized = normalizeSession(session);
     if (!normalized) {
@@ -546,8 +561,18 @@ export class SessionStorageV2 {
   }
 
   deleteSession(sessionId: string): void {
+    this.deleteSessions([sessionId]);
+  }
+
+  deleteSessions(sessionIds: readonly string[]): void {
+    const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
+    if (uniqueSessionIds.length === 0) {
+      return;
+    }
+
     this.withDb((db) => {
-      db.prepare(DELETE_SESSION_SQL).run(sessionId);
+      const placeholders = uniqueSessionIds.map(() => "?").join(", ");
+      db.prepare(`DELETE FROM sessions WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
     });
   }
 

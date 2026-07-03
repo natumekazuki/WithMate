@@ -42,6 +42,7 @@ export const WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL = "withmate:update-compan
 export const WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL = "withmate:preview-companion-composer-input";
 export const WITHMATE_UPDATE_SESSION_CHANNEL = "withmate:update-session";
 export const WITHMATE_DELETE_SESSION_CHANNEL = "withmate:delete-session";
+export const WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL = "withmate:delete-sessions-last-active-before";
 export const WITHMATE_GET_MATE_STATE_CHANNEL = "withmate:get-mate-state";
 export const WITHMATE_GET_MATE_PROFILE_CHANNEL = "withmate:get-mate-profile";
 export const WITHMATE_CREATE_MATE_CHANNEL = "withmate:create-mate";

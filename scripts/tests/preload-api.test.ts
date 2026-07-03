@@ -50,6 +50,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:reset-app-database",
     args: [{ targets: ["appSettings"] }],
   });
+  assert.deepEqual(await api.deleteSessionsLastActiveBefore({ cutoffDate: "2026-07-01" }), {
+    channel: "withmate:delete-sessions-last-active-before",
+    args: [{ cutoffDate: "2026-07-01" }],
+  });
   assert.deepEqual(await api.getMemoryV6Diagnostics(), {
     channel: "withmate:get-memory-v6-diagnostics",
     args: [],
@@ -233,6 +237,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "createCompanionSession",
     "createSession",
     "deleteSession",
+    "deleteSessionsLastActiveBefore",
     "discardCompanionSession",
     "dropCompanionTargetStash",
     "exportModelCatalog",

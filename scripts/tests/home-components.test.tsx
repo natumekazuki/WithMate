@@ -70,8 +70,11 @@ describe("HomeSettingsContent", () => {
     memoryV6Diagnostics: params?.memoryV6Diagnostics ?? null,
     settingsDirty: false,
     settingsFeedback: "",
+    sessionCleanupCutoffDate: "",
+    deletingOldSessions: false,
     onChangeAutoCollapseActionDockOnSend: noOp,
     onChangeLaunchAtLoginEnabled: noOp,
+    onChangeSessionCleanupCutoffDate: noOp,
     onChangeUserMicrocopySlot: noOp,
     onChangeProviderEnabled: noOp,
     onChangeProviderSkillRootPath: noOp,
@@ -88,6 +91,7 @@ describe("HomeSettingsContent", () => {
     onInstallMemoryV6CliShim: noOp,
     onUninstallMemoryV6CliShim: noOp,
     onCopyMemoryProviderInstructionSample: params?.onCopyMemoryProviderInstructionSample ?? noOp,
+    onDeleteSessionsLastActiveBefore: noOp,
     onSaveSettings: noOp,
   });
 
@@ -122,6 +126,13 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("Root Directory"));
     assert.ok(html.includes("Skill Relative Path"));
     assert.ok(html.includes("Instruction Relative Path"));
+  });
+
+  it("古い Session の削除操作を Settings に表示する", () => {
+    const html = renderSettings();
+
+    assert.match(html, /古い Session を削除/);
+    assert.match(html, /指定日より前に最後に使われた Session を削除する/);
   });
 
   it("Memory V6 diagnostics はredacted summaryとして表示する", () => {

@@ -179,6 +179,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       createSession: () => ({}) as never,
       updateSession: () => ({}) as never,
       deleteSession: () => {},
+      deleteSessionsLastActiveBefore: () => ({ deletedSessionIds: [], skippedRunningSessionIds: [] }),
       async runSessionTurn() {
         return {} as never;
       },

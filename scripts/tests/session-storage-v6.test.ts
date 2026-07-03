@@ -138,6 +138,57 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  it("last_active_at が cutoff より前の session id を列挙し、複数削除できる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const baseInput = {
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      };
+      const oldSession = storage.upsertSession({
+        ...buildNewSession({ ...baseInput, taskTitle: "old" }),
+        id: "old",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      });
+      const cutoffSession = storage.upsertSession({
+        ...buildNewSession({ ...baseInput, taskTitle: "cutoff" }),
+        id: "cutoff",
+        updatedAt: "2026-07-01T00:00:00.000Z",
+      });
+      const recentSession = storage.upsertSession({
+        ...buildNewSession({ ...baseInput, taskTitle: "recent" }),
+        id: "recent",
+        updatedAt: "2026-07-02T00:00:00.000Z",
+      });
+
+      assert.deepEqual(
+        storage.listSessionIdsLastActiveBefore({
+          cutoffDate: "2026-07-01",
+          cutoffTimestampMs: Date.parse("2026-07-01T00:00:00.000Z"),
+          cutoffIso: "2026-07-01T00:00:00.000Z",
+        }),
+        [oldSession.id],
+      );
+
+      storage.deleteSessions([oldSession.id, recentSession.id]);
+
+      assert.deepEqual(storage.listSessions().map((session) => session.id), [cutoffSession.id]);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("artifact_body がない既存 row でも getSessionMessageArtifact は body から復元する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
