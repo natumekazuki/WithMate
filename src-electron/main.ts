@@ -57,7 +57,7 @@ import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js"
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
-import { companionSessionToAuxiliaryParentSession } from "./auxiliary-parent-session.js";
+import { resolveAuxiliaryParentSession } from "./auxiliary-parent-session.js";
 import { AuxiliarySessionService } from "./auxiliary-session-service.js";
 import { AuxiliarySessionStorage } from "./auxiliary-session-storage.js";
 import { CharacterService } from "./character-service.js";
@@ -2735,13 +2735,12 @@ function getSession(sessionId: string): Session | null {
 }
 
 async function getAuxiliaryParentSession(parentSessionId: string): Promise<Session | null> {
-  const session = getSession(parentSessionId);
-  if (session) {
-    return session;
-  }
-
-  const companionSession = await requireCompanionStorage().getSession(parentSessionId);
-  return companionSession ? companionSessionToAuxiliaryParentSession(companionSession) : null;
+  return resolveAuxiliaryParentSession({
+    parentSessionId,
+    getStoredSession: (sessionId) => requireSessionStorage().getSession(sessionId),
+    getCachedSession: getSession,
+    getCompanionSession: (sessionId) => requireCompanionStorage().getSession(sessionId),
+  });
 }
 
 async function getDisplaySession(sessionId: string): Promise<Session | null> {
