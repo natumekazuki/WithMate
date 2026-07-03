@@ -97,7 +97,6 @@ V5 Character Core で採用済みの文書は `A2. V5 Character Core Source Of T
 
 | Doc | Role |
 | --- | --- |
-| `character-update-workspace.md` | V5 Core には含めず、詳細 Editor / update workspace の deferred candidate として保持 |
 | `database-v2-migration.md` | V1 -> V2 migration と V2 schema 方針 |
 | `database-v3-blob-storage.md` | V3 DB と compressed blob store の方針 |
 

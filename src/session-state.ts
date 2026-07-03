@@ -51,7 +51,7 @@ export type StreamEntry = {
 
 export const CURRENT_SESSION_SCHEMA_VERSION = 5;
 
-export type SessionKind = "default" | "character-update" | "character-authoring";
+export type SessionKind = "default" | "character-authoring";
 export const SESSION_ACCESS_MODE_VALUES = ["active", "legacy_readonly"] as const;
 export type SessionAccessMode = typeof SESSION_ACCESS_MODE_VALUES[number];
 
@@ -304,10 +304,7 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
         : "workspace",
     workspacePath: typeof candidate.workspacePath === "string" ? candidate.workspacePath : "",
     branch: typeof candidate.branch === "string" && candidate.branch.trim() ? candidate.branch : "main",
-    sessionKind:
-      candidate.sessionKind === "character-update" || candidate.sessionKind === "character-authoring"
-        ? candidate.sessionKind
-        : "default",
+    sessionKind: candidate.sessionKind === "character-authoring" ? candidate.sessionKind : "default",
     accessMode: normalizeSessionAccessMode((candidate as { accessMode?: unknown }).accessMode),
     sourceSchemaVersion:
       typeof candidate.sourceSchemaVersion === "number" &&
