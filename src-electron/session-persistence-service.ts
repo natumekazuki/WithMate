@@ -19,6 +19,15 @@ import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import { sessionSummaryToSession } from "./session-summary-adapter.js";
 import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
 
+const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
+
+function logSessionRunStuckInvestigation(
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  console.info(SESSION_RUN_STUCK_INVESTIGATION_LOG, event, details);
+}
+
 export type SessionPersistenceServiceDeps = {
   getSessions(): Session[];
   setSessions(nextSessions: Session[]): void;
@@ -151,12 +160,14 @@ export class SessionPersistenceService {
   }
 
   async upsertSession(nextSession: Session): Promise<Session> {
+    const startedAt = Date.now();
     const currentSession = this.deps.getSession(nextSession.id);
     if (currentSession) {
       assertSessionWritable(currentSession);
     }
 
     const sessionToStore = await this.mergeStoredMessagesForSummaryOnlySession(nextSession);
+    const storeStartedAt = Date.now();
     const stored = await this.deps.upsertStoredSession({
       ...sessionToStore,
       allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
@@ -164,9 +175,25 @@ export class SessionPersistenceService {
         sessionToStore.allowedAdditionalDirectories,
       ),
     });
+    const storeDurationMs = Date.now() - storeStartedAt;
+    const cacheStartedAt = Date.now();
     this.syncStoredSession(stored);
     this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
+    const cacheDurationMs = Date.now() - cacheStartedAt;
+    const broadcastStartedAt = Date.now();
     this.deps.broadcastSessions([stored.id]);
+    logSessionRunStuckInvestigation("persistence.upsert-session.done", {
+      sessionId: stored.id,
+      durationMs: Date.now() - startedAt,
+      storeDurationMs,
+      cacheDurationMs,
+      broadcastDurationMs: Date.now() - broadcastStartedAt,
+      messageCount: stored.messages.length,
+      runState: stored.runState,
+      status: stored.status,
+      cachedRunState: this.deps.getSession(stored.id)?.runState ?? null,
+      cachedStatus: this.deps.getSession(stored.id)?.status ?? null,
+    });
     return cloneSessions([stored])[0];
   }
 
