@@ -171,6 +171,7 @@ message bodyはSession表示に必要な軽量projectionを保持し、assistant
 Memory provenanceはapp messageを指す`source_app_message_id`とprovider外部IDを指す`source_provider_message_id`を分ける。
 
 auditは`audit_events_v6`で通常turn、Memory mutation、runtime binding、diagnosticsを分離して設計する。
+通常Sessionのturn auditは`sessions_v6.id`を`session_id`で参照し、Auxiliary Sessionのturn auditはV6 schemaの`auxiliary_sessions.id`を`auxiliary_session_id`で参照する。
 legacy MemoryGeneration / Character Reflection / Monologue auditは移行しない。
 
 ## Implementation Order

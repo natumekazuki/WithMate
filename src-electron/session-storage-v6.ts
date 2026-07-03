@@ -17,7 +17,7 @@ import {
   parseCharacterRuntimeSnapshotJson,
   stringifyCharacterRuntimeSnapshot,
 } from "../src/character/character-runtime-snapshot.js";
-import { CREATE_V6_SCHEMA_SQL } from "./database-schema-v6.js";
+import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 type SessionV6Row = {
@@ -141,9 +141,7 @@ export class SessionStorageV6 {
 
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
-    for (const statement of CREATE_V6_SCHEMA_SQL) {
-      this.db.exec(statement);
-    }
+    ensureV6Schema(this.db);
     this.ensureSchema();
   }
 

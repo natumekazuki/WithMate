@@ -173,7 +173,7 @@ import {
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
 import { isValidV4Database } from "./database-schema-v4.js";
-import { CREATE_V6_SCHEMA_SQL } from "./database-schema-v6.js";
+import { ensureV6Schema } from "./database-schema-v6.js";
 import {
   openAppDatabase,
   SQLITE_MAINTENANCE_BUSY_TIMEOUT_MS,
@@ -1110,9 +1110,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           ensureV6Schema: (nextDbPath) => {
             const db = openAppDatabase(nextDbPath);
             try {
-              for (const statement of CREATE_V6_SCHEMA_SQL) {
-                db.exec(statement);
-              }
+              ensureV6Schema(db);
             } finally {
               db.close();
             }
@@ -1919,11 +1917,8 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         taskTitle: session.taskTitle,
       }),
       resolveProjectMemoryEntriesForPrompt: () => [],
-      createAuditLog: (entry) => ({
-        id: 0,
-        ...entry,
-      }),
-      updateAuditLog: () => {},
+      createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
+      updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
       setLiveSessionRun,
       getLiveSessionRun,
       waitForApprovalDecision: (sessionId, request, signal) =>

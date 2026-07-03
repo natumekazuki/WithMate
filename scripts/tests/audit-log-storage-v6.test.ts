@@ -8,6 +8,7 @@ import type { AuditLogEntry } from "../../src/runtime-state.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { AuditLogStorageV6 } from "../../src-electron/audit-log-storage-v6.js";
 import { AuditLogService } from "../../src-electron/audit-log-service.js";
+import { AuxiliarySessionStorage } from "../../src-electron/auxiliary-session-storage.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 
 function baseAuditLog(overrides: Partial<Omit<AuditLogEntry, "id">> = {}): Omit<AuditLogEntry, "id"> {
@@ -72,6 +73,36 @@ function seedSession(dbPath: string): void {
   }
 }
 
+function seedAuxiliarySession(dbPath: string): void {
+  const auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+  try {
+    auxiliaryStorage.upsertAuxiliarySession({
+      id: "aux-session-v6",
+      parentSessionId: "session-v6",
+      status: "active",
+      runState: "idle",
+      title: "Auxiliary audit",
+      provider: "codex",
+      catalogRevision: 1,
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      approvalMode: "untrusted",
+      codexSandboxMode: "workspace-write",
+      customAgentName: "",
+      allowedAdditionalDirectories: [],
+      threadId: "",
+      composerDraft: "",
+      messages: [],
+      displayAfterMessageIndex: -1,
+      createdAt: "2026-06-28T00:00:00.000Z",
+      updatedAt: "2026-06-28T00:00:00.000Z",
+      closedAt: "",
+    });
+  } finally {
+    auxiliaryStorage.close();
+  }
+}
+
 describe("AuditLogStorageV6", () => {
   it("summary では operation details を落とし、detail では保持する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-audit-log-v6-"));
@@ -128,6 +159,40 @@ describe("AuditLogStorageV6", () => {
         const detail = storage.getSessionAuditLogDetail("session-v6", created.id);
         assert.equal(detail?.assistantText, "done");
         assert.equal(detail?.operations[0]?.details, "details");
+      } finally {
+        storage.close();
+      }
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("Auxiliary session id の audit log も保存して sessionId で取得できる", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-audit-log-v6-"));
+    try {
+      const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
+      seedSession(dbPath);
+      seedAuxiliarySession(dbPath);
+      const storage = new AuditLogStorageV6(dbPath);
+      try {
+        const service = new AuditLogService(storage);
+        const created = await service.createAuditLog(baseAuditLog({
+          sessionId: "aux-session-v6",
+          phase: "running",
+          assistantText: "",
+        }));
+        await service.updateAuditLog(created.id, baseAuditLog({
+          sessionId: "aux-session-v6",
+          phase: "completed",
+          assistantText: "aux done",
+        }));
+
+        assert.equal(storage.listSessionAuditLogSummaries("session-v6").length, 0);
+        const summary = storage.listSessionAuditLogSummaries("aux-session-v6")[0];
+        assert.equal(summary?.id, created.id);
+        assert.equal(summary?.sessionId, "aux-session-v6");
+        assert.equal(summary?.phase, "completed");
+        assert.equal(summary?.assistantTextPreview, "aux done");
       } finally {
         storage.close();
       }
