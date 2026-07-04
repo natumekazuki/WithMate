@@ -1075,6 +1075,10 @@ export default function AgentSessionWindowApp() {
   }, [selectedSession?.provider, selectedSessionId]);
 
   useEffect(() => {
+    setComposerPreview(createEmptyComposerPreview());
+  }, [activeAuxiliarySession?.composerDraft, draft]);
+
+  useEffect(() => {
     setApprovalActionRequestId(null);
   }, [selectedSessionLiveRun?.approvalRequest?.requestId]);
 

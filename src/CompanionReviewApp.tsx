@@ -562,6 +562,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }, [activeAuxiliarySession]);
 
   useEffect(() => {
+    setComposerPreview(createEmptyComposerPreview());
+  }, [activeAuxiliarySession?.composerDraft, composerText]);
+
+  useEffect(() => {
     let active = true;
     const loadRevision = auxiliaryLoadRevisionRef.current + 1;
     auxiliaryLoadRevisionRef.current = loadRevision;
