@@ -723,8 +723,19 @@ function tableColumnNames(db: DatabaseSync, tableName: string): Set<string> {
 
 function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): void {
   const createdAtExpression = columns.has("created_at") ? "created_at" : "updated_at";
+  const shouldRestoreAuditAuxiliaryOwners =
+    tableExists(db, "audit_events_v6") && tableColumnNames(db, "audit_events_v6").has("auxiliary_session_id");
 
   db.exec("DROP TABLE IF EXISTS auxiliary_sessions_v6_rebuild;");
+  if (shouldRestoreAuditAuxiliaryOwners) {
+    db.exec("DROP TABLE IF EXISTS temp.audit_events_v6_auxiliary_owner_restore;");
+    db.exec(`
+      CREATE TEMP TABLE audit_events_v6_auxiliary_owner_restore AS
+      SELECT id AS audit_event_id, auxiliary_session_id
+      FROM audit_events_v6
+      WHERE auxiliary_session_id IS NOT NULL
+    `);
+  }
   db.exec(`
     CREATE TABLE auxiliary_sessions_v6_rebuild (
       id TEXT PRIMARY KEY,
@@ -755,6 +766,30 @@ function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): 
   `);
   db.exec("DROP TABLE auxiliary_sessions;");
   db.exec("ALTER TABLE auxiliary_sessions_v6_rebuild RENAME TO auxiliary_sessions;");
+  if (shouldRestoreAuditAuxiliaryOwners) {
+    db.exec(`
+      UPDATE audit_events_v6
+      SET auxiliary_session_id = (
+        SELECT auxiliary_session_id
+        FROM audit_events_v6_auxiliary_owner_restore
+        WHERE audit_event_id = audit_events_v6.id
+      )
+      WHERE id IN (
+        SELECT audit_event_id
+        FROM audit_events_v6_auxiliary_owner_restore
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM auxiliary_sessions
+        WHERE id = (
+          SELECT auxiliary_session_id
+          FROM audit_events_v6_auxiliary_owner_restore
+          WHERE audit_event_id = audit_events_v6.id
+        )
+      )
+    `);
+    db.exec("DROP TABLE temp.audit_events_v6_auxiliary_owner_restore;");
+  }
 }
 
 function backfillAuxiliarySessionsCreatedAt(db: DatabaseSync): void {
