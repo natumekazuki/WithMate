@@ -10,6 +10,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
     window: {
       resolveEventWindow: () => null,
       resolveHomeWindow: () => null,
+      resolveSessionWindow: () => null,
       async openSessionWindow(sessionId) {
         calls.push(`openSession:${sessionId}`);
         return {} as never;

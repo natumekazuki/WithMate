@@ -10,6 +10,7 @@ import {
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
+  WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
@@ -104,6 +105,7 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL));
   assert.ok(handlers.has(WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL));
   assert.ok(handlers.has(WITHMATE_CREATE_SESSION_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_DELETE_SESSION_CHANNEL));
   assert.ok(handlers.has(WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_RUN_SESSION_TURN_CHANNEL));
 
@@ -249,6 +251,61 @@ test("Storage Maintenance の bulk session delete IPC は Settings window から
     { deletedSessionIds: ["session-1"], skippedRunningSessionIds: [] },
   );
   assert.deepEqual(calls, ["deleteSessionsLastActiveBefore"]);
+});
+
+test("single session delete IPC は Home / Settings / 対象 Session window から呼び出せる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const settingsWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  let eventWindow: unknown = homeWindow;
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveHomeWindow: () => homeWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
+    isSettingsWindow: (window: unknown) => window === settingsWindow,
+    deleteSession: async (sessionId: string) => {
+      calls.push(`deleteSession:${sessionId}`);
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await handlers.get(WITHMATE_DELETE_SESSION_CHANNEL)?.({}, "session-1");
+  eventWindow = settingsWindow;
+  await handlers.get(WITHMATE_DELETE_SESSION_CHANNEL)?.({}, "session-1");
+  eventWindow = sessionWindow;
+  await handlers.get(WITHMATE_DELETE_SESSION_CHANNEL)?.({}, "session-1");
+
+  assert.deepEqual(calls, [
+    "deleteSession:session-1",
+    "deleteSession:session-1",
+    "deleteSession:session-1",
+  ]);
+});
+
+test("single session delete IPC は許可されていない window からの呼び出しを拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const otherWindow = createWindowStub("http://localhost:5173/?mode=memory-review");
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => otherWindow,
+    resolveHomeWindow: () => homeWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
+    isSettingsWindow: () => false,
+    deleteSession: async (sessionId: string) => {
+      calls.push(`deleteSession:${sessionId}`);
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_DELETE_SESSION_CHANNEL)?.({}, "session-1") as Promise<unknown>,
+    /Session delete IPC is only available/,
+  );
+  assert.equal(calls.includes("deleteSession:session-1"), false);
 });
 
 test("Storage Maintenance の bulk session delete IPC は Settings window 以外からの呼び出しを拒否する", async () => {

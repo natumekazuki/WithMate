@@ -78,6 +78,7 @@ type MaybeWindow = BrowserWindow | null | undefined;
 export type MainIpcWindowDepsArgs = {
   resolveEventWindow(event: IpcMainInvokeEvent): MaybeWindow;
   resolveHomeWindow(): MaybeWindow;
+  resolveSessionWindow(sessionId: string): MaybeWindow;
   openSessionWindow(sessionId: string): Promise<BrowserWindow>;
   openHomeWindow(): Promise<BrowserWindow>;
   openSessionMonitorWindow(): Promise<BrowserWindow>;
@@ -285,6 +286,7 @@ export function createMainIpcRegistrationDeps(
   return {
     resolveEventWindow: args.window.resolveEventWindow,
     resolveHomeWindow: args.window.resolveHomeWindow,
+    resolveSessionWindow: args.window.resolveSessionWindow,
     openSessionWindow: async (sessionId) => {
       await args.window.openSessionWindow(sessionId);
     },

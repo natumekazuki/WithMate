@@ -204,6 +204,7 @@ type IpcHandleRegistrar = {
 export type MainIpcRegistrationDeps = {
   resolveEventWindow(event: IpcSenderEvent): MaybeWindow;
   resolveHomeWindow(): MaybeWindow;
+  resolveSessionWindow(sessionId: string): MaybeWindow;
   openSessionWindow(sessionId: string): Promise<void>;
   openHomeWindow(): Promise<void>;
   openSessionMonitorWindow(): Promise<void>;
@@ -354,6 +355,7 @@ type MainIpcWindowDeps = Pick<
   MainIpcRegistrationDeps,
   | "resolveEventWindow"
   | "resolveHomeWindow"
+  | "resolveSessionWindow"
   | "openSessionWindow"
   | "openHomeWindow"
   | "openSessionMonitorWindow"
@@ -484,6 +486,8 @@ type MainIpcCompanionDeps = Pick<
 type MainIpcSessionRuntimeDeps = Pick<
   MainIpcRegistrationDeps,
   | "resolveEventWindow"
+  | "resolveHomeWindow"
+  | "resolveSessionWindow"
   | "isSettingsWindow"
   | "getLiveSessionRun"
   | "getProviderQuotaTelemetry"
@@ -551,6 +555,30 @@ function assertSettingsWindowSender(
     return;
   }
   throw new Error("Settings IPC is only available from the Settings window.");
+}
+
+function assertSessionDeleteSender(
+  event: IpcMainInvokeEvent,
+  sessionId: string,
+  deps: Pick<
+    MainIpcRegistrationDeps,
+    "resolveEventWindow" | "resolveHomeWindow" | "resolveSessionWindow" | "isSettingsWindow"
+  >,
+): void {
+  const window = deps.resolveEventWindow(event);
+  if (!window) {
+    throw new Error("Session delete IPC is only available from Home, Settings, or the target Session window.");
+  }
+  if (deps.isSettingsWindow(window)) {
+    return;
+  }
+  if (deps.resolveHomeWindow() === window) {
+    return;
+  }
+  if (deps.resolveSessionWindow(sessionId) === window) {
+    return;
+  }
+  throw new Error("Session delete IPC is only available from Home, Settings, or the target Session window.");
 }
 
 function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindowDeps): void {
@@ -933,7 +961,10 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
   );
   ipcMain.handle(WITHMATE_CREATE_SESSION_CHANNEL, (_event, input: CreateSessionInput) => deps.createSession(input));
   ipcMain.handle(WITHMATE_UPDATE_SESSION_CHANNEL, (_event, session: Session) => deps.updateSession(session));
-  ipcMain.handle(WITHMATE_DELETE_SESSION_CHANNEL, (_event, sessionId: string) => deps.deleteSession(sessionId));
+  ipcMain.handle(WITHMATE_DELETE_SESSION_CHANNEL, (event, sessionId: string) => {
+    assertSessionDeleteSender(event, sessionId, deps);
+    return deps.deleteSession(sessionId);
+  });
   ipcMain.handle(
     WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
     (event, request: DeleteSessionsLastActiveBeforeRequest | null | undefined) => {

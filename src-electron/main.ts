@@ -985,6 +985,22 @@ function isSessionRunInFlight(sessionId: string): boolean {
     : false;
 }
 
+function listRunningActiveAuxiliaryParentSessionIds(parentSessionIds: readonly string[]): Set<string> {
+  const runningParentSessionIds = new Set<string>();
+  if (!auxiliarySessionStorage) {
+    return runningParentSessionIds;
+  }
+
+  for (const parentSessionId of parentSessionIds) {
+    const activeAuxiliarySession = requireAuxiliarySessionService().getActiveAuxiliarySession(parentSessionId);
+    if (activeAuxiliarySession && requireAuxiliarySessionRuntimeService().isRunInFlight(activeAuxiliarySession.id)) {
+      runningParentSessionIds.add(parentSessionId);
+    }
+  }
+
+  return runningParentSessionIds;
+}
+
 function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
   WindowBroadcastService<BrowserWindow>,
   WindowDialogService,
@@ -1170,6 +1186,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               window: {
                 resolveEventWindow: (event) => BrowserWindow.fromWebContents(event.sender) ?? null,
                 resolveHomeWindow: () => requireAuxWindowService().getHomeWindow(),
+                resolveSessionWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId),
                 openSessionWindow,
                 openHomeWindow: createHomeWindow,
                 openSessionMonitorWindow,
@@ -2019,6 +2036,7 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       getSession,
       getStoredSession: (sessionId) => requireSessionStorage().getSession(sessionId),
       isSessionRunInFlight,
+      listRunningActiveAuxiliaryParentIds: listRunningActiveAuxiliaryParentSessionIds,
       upsertStoredSession: (session) => requireSessionStorageForWrite().upsertSession(session),
       replaceStoredSessions: async (nextSessions) => {
         await requireSessionStorageForWrite().replaceSessions(nextSessions);

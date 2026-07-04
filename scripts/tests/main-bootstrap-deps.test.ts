@@ -34,6 +34,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
       window: {
         resolveEventWindow: () => null,
         resolveHomeWindow: () => null,
+        resolveSessionWindow: () => null,
         openSessionWindow: async () => ({}) as never,
         openHomeWindow: async () => ({}) as never,
         openSessionMonitorWindow: async () => ({}) as never,

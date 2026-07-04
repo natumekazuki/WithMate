@@ -38,6 +38,7 @@ export type SessionPersistenceServiceDeps = {
   getSession(sessionId: string): Session | null;
   getStoredSession?(sessionId: string): Awaitable<Session | null>;
   isSessionRunInFlight(sessionId: string): boolean;
+  listRunningActiveAuxiliaryParentIds?(sessionIds: readonly string[]): Awaitable<ReadonlySet<string>>;
   upsertStoredSession(session: Session): Awaitable<Session>;
   replaceStoredSessions(sessions: Session[]): Awaitable<void>;
   listStoredSessions(): Awaitable<Session[]>;
@@ -172,10 +173,16 @@ export class SessionPersistenceService {
     const skippedRunningSessionIds: string[] = [];
     const deletableSessionIds: string[] = [];
     const currentSessionsById = new Map(this.deps.getSessions().map((session) => [session.id, session] as const));
+    const runningActiveAuxiliaryParentIds =
+      await this.deps.listRunningActiveAuxiliaryParentIds?.(uniqueSessionIds) ?? new Set<string>();
 
     for (const sessionId of uniqueSessionIds) {
       const session = currentSessionsById.get(sessionId);
-      if (this.deps.isSessionRunInFlight(sessionId) || (session ? isRunningSession(session) : false)) {
+      if (
+        this.deps.isSessionRunInFlight(sessionId) ||
+        runningActiveAuxiliaryParentIds.has(sessionId) ||
+        (session ? isRunningSession(session) : false)
+      ) {
         if (options.runningPolicy === "throw") {
           throw new Error("実行中のセッションは削除できないよ。");
         }
