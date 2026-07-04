@@ -154,7 +154,15 @@ describe("MemoryV6HttpServer", () => {
         headers: { "X-WithMate-Memory-Api-Secret": TEST_API_SECRET },
       });
       assert.equal(characters.status, 200);
-      assert.deepEqual((await characters.json()).characters.map((character: { id: string }) => character.id), ["mika"]);
+      const charactersJson = await characters.json();
+      assert.deepEqual(charactersJson.characters, [{
+        id: "mika",
+        name: "Mika",
+        description: "Guitar",
+        isDefault: true,
+      }]);
+      assert.equal("iconFilePath" in charactersJson.characters[0], false);
+      assert.equal("theme" in charactersJson.characters[0], false);
 
       const append = await postJson(baseUrl, "/v1/append", appendRequest({ idempotencyKey: "append-key-http" }));
       assert.equal(append.status, 200);

@@ -597,6 +597,7 @@ character target:
 
 - `--character <character-id>`
 - `withmate-memory characters`でactive Character catalogを取得し、明示IDを選択する。
+- `withmate-memory characters` / `memory.list_characters`はagent-facing responseとして`id`、`name`、必要な`description`、default表示だけを返す。renderer用の`iconFilePath`、theme、timestamps、archived metadataは返さない。
 user-global target:
 
 - request bodyの`target`または`targets[]`に`{ "owner": "user", "scope": "global" }`を明示する。

@@ -30,9 +30,16 @@ export type MemoryListTagsResponse = {
   tags: MemoryTag[];
 };
 
+export type MemoryCharacterSummary = {
+  id: string;
+  name: string;
+  description?: string;
+  isDefault?: boolean;
+};
+
 export type MemoryListCharactersResponse = {
   schemaVersion: MemoryV6SchemaVersion;
-  characters: CharacterCatalogEntry[];
+  characters: MemoryCharacterSummary[];
 };
 
 export type MemoryAppendResponse = {
@@ -101,10 +108,15 @@ export function createMemoryListTagsResponse(tags: readonly MemoryTag[]): Memory
 export function createMemoryListCharactersResponse(characters: readonly CharacterCatalogEntry[]): MemoryListCharactersResponse {
   return {
     schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-    characters: characters.map((character) => ({
-      ...character,
-      theme: { ...character.theme },
-    })),
+    characters: characters.map((character) => {
+      const description = character.description.trim();
+      return {
+        id: character.id,
+        name: character.name,
+        ...(description.length > 0 ? { description } : {}),
+        ...(character.isDefault ? { isDefault: true } : {}),
+      };
+    }),
   };
 }
 

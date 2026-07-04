@@ -115,7 +115,14 @@ describe("MemoryV6Service", () => {
 
       const characters = service.listCharacters(principal);
       assert.equal("error" in characters, false);
-      assert.deepEqual(characters.characters.map((character) => character.id), ["character-a"]);
+      assert.deepEqual(characters.characters, [{
+        id: "character-a",
+        name: "Character A",
+        description: "Test character",
+        isDefault: true,
+      }]);
+      assert.equal("iconFilePath" in characters.characters[0], false);
+      assert.equal("theme" in characters.characters[0], false);
 
       const forget = service.forget(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,

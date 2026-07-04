@@ -287,13 +287,7 @@ describe("withmate-memory CLI", () => {
           id: "mika",
           name: "Mika",
           description: "Guitar",
-          iconFilePath: "",
-          theme: { main: "#111111", sub: "#222222" },
-          state: "active",
           isDefault: true,
-          createdAt: "2026-07-03T00:00:00.000Z",
-          updatedAt: "2026-07-03T00:00:00.000Z",
-          archivedAt: null,
         },
       ],
     };

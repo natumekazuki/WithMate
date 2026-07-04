@@ -130,12 +130,12 @@ describe("memory-v6 response contract", () => {
     });
   });
 
-  it("characters responseはCharacter catalog entryを返す", () => {
+  it("characters responseはagent-safeなCharacter summaryだけを返す", () => {
     const response = createMemoryListCharactersResponse([{
       id: "character-a",
       name: "Character A",
       description: "Test",
-      iconFilePath: "",
+      iconFilePath: "C:/Users/example/AppData/Roaming/WithMate/characters/character-a/icon.png",
       theme: { main: "#111111", sub: "#222222" },
       state: "active",
       isDefault: true,
@@ -145,8 +145,17 @@ describe("memory-v6 response contract", () => {
     }]);
 
     assert.equal(response.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
-    assert.deepEqual(response.characters.map((character) => character.id), ["character-a"]);
-    assert.deepEqual(response.characters[0].theme, { main: "#111111", sub: "#222222" });
+    assert.deepEqual(response.characters, [{
+      id: "character-a",
+      name: "Character A",
+      description: "Test",
+      isDefault: true,
+    }]);
+    assert.equal("iconFilePath" in response.characters[0], false);
+    assert.equal("theme" in response.characters[0], false);
+    assert.equal("createdAt" in response.characters[0], false);
+    assert.equal("updatedAt" in response.characters[0], false);
+    assert.equal("archivedAt" in response.characters[0], false);
   });
 
   it("forget responseは複数entryの結果をentryIdごとに返す", () => {
