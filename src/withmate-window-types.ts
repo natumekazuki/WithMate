@@ -76,8 +76,17 @@ export function resolveDeleteSessionsLastActiveBeforeCutoff(
     throw new Error("削除基準日は YYYY-MM-DD 形式で指定してね。");
   }
 
-  const cutoff = new Date(`${cutoffDate}T00:00:00`);
-  if (Number.isNaN(cutoff.getTime())) {
+  const [yearText, monthText, dayText] = cutoffDate.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const cutoff = new Date(year, month - 1, day);
+  if (
+    Number.isNaN(cutoff.getTime()) ||
+    cutoff.getFullYear() !== year ||
+    cutoff.getMonth() !== month - 1 ||
+    cutoff.getDate() !== day
+  ) {
     throw new Error("削除基準日を解釈できないよ。");
   }
 

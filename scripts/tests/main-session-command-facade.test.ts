@@ -98,6 +98,36 @@ test("MainSessionCommandFacade は cutoff delete の削除済み session だけ 
   ]);
 });
 
+test("MainSessionCommandFacade は実在しない cutoff delete 日付を拒否する", async () => {
+  const calls: string[] = [];
+  const facade = new MainSessionCommandFacade({
+    getSession: () => null,
+    getSessionPersistenceService: () =>
+      ({
+        deleteSessionsLastActiveBefore() {
+          calls.push("delete-old");
+          return {
+            deletedSessionIds: ["s-old"],
+            skippedRunningSessionIds: [],
+          };
+        },
+      }) as never,
+    getSessionRuntimeService: () => ({} as never),
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    async cleanupSessionFilesDirectory(sessionId) {
+      calls.push(`cleanup-files:${sessionId}`);
+    },
+  });
+
+  await assert.rejects(
+    facade.deleteSessionsLastActiveBefore({ cutoffDate: "2026-02-31" }),
+    /削除基準日を解釈できないよ。/,
+  );
+  assert.deepEqual(calls, []);
+});
+
 test("MainSessionCommandFacade は stale な Copilot quota を非同期更新して run を委譲する", async () => {
   const calls: string[] = [];
   let refreshedProviderId: string | null = null;
