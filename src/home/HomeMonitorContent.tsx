@@ -47,6 +47,7 @@ export function HomeMonitorContent({
             </div>
             <div className="home-monitor-row-badges">
               <span className={`session-mode-badge ${modeClassName}`}>{modeLabel}</span>
+              <span className={`session-status home-monitor-status ${entry.state.kind}`.trim()}>{entry.state.label}</span>
               <span className={`home-monitor-group-chip ${groupClassName}`} aria-label="同じ Companion group の目印" />
             </div>
           </button>
@@ -74,6 +75,7 @@ export function HomeMonitorContent({
           </div>
           <div className="home-monitor-row-badges">
             <span className={`session-mode-badge ${modeClassName}`}>{modeLabel}</span>
+            <span className={`session-status home-monitor-status ${entry.state.kind}`.trim()}>{entry.state.label}</span>
           </div>
         </button>
       );

@@ -847,6 +847,10 @@ describe("HomeMonitorContent", () => {
     assert.ok(html.includes(">Agent</span>"));
     assert.equal(html.match(/>Auxiliary<\/span>/g)?.length, 2);
     assert.ok(html.includes(">Companion</span>"));
+    assert.equal(html.match(/class="session-status home-monitor-status running"/g)?.length, 3);
+    assert.equal(html.match(/class="session-status home-monitor-status neutral"/g)?.length, 1);
+    assert.equal(html.match(/>実行中<\/span>/g)?.length, 3);
+    assert.ok(html.includes(">待機</span>"));
     assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 4);
     assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 4);
   });
