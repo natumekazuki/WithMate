@@ -24,6 +24,7 @@ import {
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
+  WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
@@ -272,6 +273,54 @@ test("Storage Maintenance の bulk session delete IPC は Settings window 以外
     /Settings IPC is only available/,
   );
   assert.equal(calls.includes("deleteSessionsLastActiveBefore"), false);
+});
+
+test("DB reset IPC は Settings window からだけ呼び出せる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const settingsWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => settingsWindow,
+    isSettingsWindow: (window: unknown) => window === settingsWindow,
+    resetAppDatabase: async () => {
+      calls.push("resetAppDatabase");
+      return { ok: true };
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_RESET_APP_DATABASE_CHANNEL)?.(
+      {},
+      { targets: ["sessions"] },
+    ),
+    { ok: true },
+  );
+  assert.deepEqual(calls, ["resetAppDatabase"]);
+});
+
+test("DB reset IPC は Settings window 以外からの呼び出しを拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => homeWindow,
+    isSettingsWindow: () => false,
+    resetAppDatabase: async () => {
+      calls.push("resetAppDatabase");
+      return { ok: true };
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RESET_APP_DATABASE_CHANNEL)?.(
+      {},
+      { targets: ["sessions"] },
+    ) as Promise<unknown>,
+    /Settings IPC is only available/,
+  );
+  assert.equal(calls.includes("resetAppDatabase"), false);
 });
 
 test("Memory V6 Review IPC は通常 window からの呼び出しを拒否する", async () => {

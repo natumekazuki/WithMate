@@ -747,9 +747,10 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
     assertMemoryV6ReviewSender(event, deps);
     return deps.forgetMemoryV6Entry(entryId, reason);
   });
-  ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, (_event, request: ResetAppDatabaseRequest | null | undefined) =>
-    deps.resetAppDatabase(request),
-  );
+  ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, (event, request: ResetAppDatabaseRequest | null | undefined) => {
+    assertSettingsWindowSender(event, deps);
+    return deps.resetAppDatabase(request);
+  });
 }
 
 function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSessionQueryDeps): void {
