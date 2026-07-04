@@ -424,7 +424,7 @@ describe("withmate-memory bundled helper", () => {
       helperPath,
       "get-entry",
       "--json",
-      '{"schemaVersion":"withmate-memory-v1","entryId":"entry-1"}',
+      '{"schemaVersion":"withmate-memory-v1","entryId":"entry-1","target":{"owner":"project","scope":"project","project":{"type":"id","id":"project-a"}}}',
     ], {
       env: {
         ...process.env,
@@ -562,6 +562,16 @@ describe("withmate-memory bundled helper", () => {
         request: {
           schemaVersion: "withmate-memory-v1",
           entryIds: ["entry-a"],
+        },
+        code: "MEMORY_INVALID_FIELD",
+        field: "target",
+      },
+      {
+        name: "get-entry requires target",
+        command: "get-entry",
+        request: {
+          schemaVersion: "withmate-memory-v1",
+          entryId: "entry-a",
         },
         code: "MEMORY_INVALID_FIELD",
         field: "target",

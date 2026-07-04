@@ -483,6 +483,8 @@ type MainIpcCompanionDeps = Pick<
 
 type MainIpcSessionRuntimeDeps = Pick<
   MainIpcRegistrationDeps,
+  | "resolveEventWindow"
+  | "isSettingsWindow"
   | "getLiveSessionRun"
   | "getProviderQuotaTelemetry"
   | "getSessionContextTelemetry"
@@ -933,8 +935,10 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
   ipcMain.handle(WITHMATE_DELETE_SESSION_CHANNEL, (_event, sessionId: string) => deps.deleteSession(sessionId));
   ipcMain.handle(
     WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
-    (_event, request: DeleteSessionsLastActiveBeforeRequest | null | undefined) =>
-      deps.deleteSessionsLastActiveBefore(request),
+    (event, request: DeleteSessionsLastActiveBeforeRequest | null | undefined) => {
+      assertSettingsWindowSender(event, deps);
+      return deps.deleteSessionsLastActiveBefore(request);
+    },
   );
   ipcMain.handle(WITHMATE_RUN_SESSION_TURN_CHANNEL, async (_event, sessionId: string, request: RunSessionTurnRequest) =>
     deps.runSessionTurn(sessionId, request),

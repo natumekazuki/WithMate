@@ -61,7 +61,7 @@ export type MemorySearchRequest = {
 export type MemoryGetEntryRequest = {
   schemaVersion: MemoryV6SchemaVersion;
   entryId: string;
-  target?: MemoryTargetSelector;
+  target: MemoryTargetSelector;
 };
 
 export type MemoryListTagsRequest = {

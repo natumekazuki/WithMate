@@ -675,6 +675,52 @@ describe("withmate-memory CLI", () => {
     }
   });
 
+  it("get-entry shorthandはprojectとentry idからrequest bodyを作る", async () => {
+    const stdout = createOutputCapture();
+    const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-get-entry-"));
+    let capturedBody: any = null;
+    try {
+      const exitCode = await runWithMateMemoryCli([
+        "get-entry",
+        "--project",
+        tempDirectory,
+        "--entry-id",
+        "mem-1",
+      ], {
+        env: TEST_RUNTIME_ENV,
+        stdout: stdout.stream,
+        fetch: async (url, init) => {
+          if (isStatusChallengeRequest(String(url))) {
+            return createStatusChallengeResponse(String(url));
+          }
+          capturedBody = JSON.parse(String(init?.body));
+          return new Response(JSON.stringify({ schemaVersion: MEMORY_V6_SCHEMA_VERSION, entry: null }), { status: 200 });
+        },
+      });
+
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+      assert.equal(capturedBody.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
+      assert.equal(capturedBody.entryId, "mem-1");
+      assert.equal(capturedBody.target.project.path, tempDirectory.replace(/\\/g, "/"));
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("get-entry shorthandはtargetなしをusage errorにする", async () => {
+    const stdout = createOutputCapture();
+    const exitCode = await runWithMateMemoryCli(["get-entry", "--entry-id", "mem-1"], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fetch: async () => {
+        assert.fail("get-entry shorthand without target should not call runtime");
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
+    assertUsageError(stdout.json(), /get-entry shorthand requires --project/);
+  });
+
   it("project.pathの相対pathはCLIで拒否する", async () => {
     const stdout = createOutputCapture();
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-cwd-"));

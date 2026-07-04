@@ -135,6 +135,17 @@ describe("memory-v6 contract validation", () => {
     assert.deepEqual(listTags.value.targets, [projectTarget]);
   });
 
+  it("get_entry request は単一targetを必須にする", () => {
+    const result = validateMemoryGetEntryRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      entryId: "entry-a",
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, "MEMORY_INVALID_FIELD");
+    assert.equal(result.error.field, "target");
+  });
+
   it("user-global target を正規化できる", () => {
     const search = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,

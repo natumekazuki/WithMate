@@ -147,13 +147,6 @@ export class MemoryV6Service {
       return toMemoryErrorResponse(validated.error);
     }
 
-    if (!validated.value.target) {
-      return toMemoryErrorResponse({
-        code: "MEMORY_TARGET_REQUIRED",
-        message: "Explicit memory target is required for get-entry.",
-        field: "target",
-      });
-    }
     const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps);
     if (!resolved.ok) {
       return toMemoryErrorResponse(resolved.error);

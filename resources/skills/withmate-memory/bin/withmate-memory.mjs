@@ -364,10 +364,13 @@ function buildShorthandBody(command, options) {
     if (!options.entryId) {
       throw usage("get-entry shorthand requires --entry-id <id>.");
     }
+    if (!target) {
+      throw usage("get-entry shorthand requires --project <absolute-path> or --project-id <id>.");
+    }
     return {
       schemaVersion,
       entryId: options.entryId,
-      ...(target ? { target } : {}),
+      target,
     };
   }
   throw usage(`${command} does not support shorthand options. Use --json, --file, @file, or --stdin.`);
@@ -847,8 +850,8 @@ function validateRequest(command, body) {
     if (!entryId.ok) {
       return entryId;
     }
-    const target = body.target === undefined ? undefined : normalizeMemoryTarget(body.target, "target");
-    if (target && !target.ok) {
+    const target = normalizeMemoryTarget(body.target, "target");
+    if (!target.ok) {
       return target;
     }
     return {
@@ -856,7 +859,7 @@ function validateRequest(command, body) {
       value: {
         schemaVersion,
         entryId: entryId.value,
-        ...(target ? { target: target.value } : {}),
+        target: target.value,
       },
     };
   }

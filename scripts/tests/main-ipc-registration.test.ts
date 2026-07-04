@@ -226,6 +226,54 @@ test("Memory V6 CLI shim IPC は Settings window 以外からの呼び出しを�
   assert.equal(calls.includes("uninstall"), false);
 });
 
+test("Storage Maintenance の bulk session delete IPC は Settings window からだけ呼び出せる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const settingsWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => settingsWindow,
+    isSettingsWindow: (window: unknown) => window === settingsWindow,
+    deleteSessionsLastActiveBefore: async () => {
+      calls.push("deleteSessionsLastActiveBefore");
+      return { deletedSessionIds: ["session-1"], skippedRunningSessionIds: [] };
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL)?.(
+      {},
+      { cutoffDate: "2026-07-01" },
+    ),
+    { deletedSessionIds: ["session-1"], skippedRunningSessionIds: [] },
+  );
+  assert.deepEqual(calls, ["deleteSessionsLastActiveBefore"]);
+});
+
+test("Storage Maintenance の bulk session delete IPC は Settings window 以外からの呼び出しを拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => homeWindow,
+    isSettingsWindow: () => false,
+    deleteSessionsLastActiveBefore: async () => {
+      calls.push("deleteSessionsLastActiveBefore");
+      return { deletedSessionIds: ["session-1"], skippedRunningSessionIds: [] };
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL)?.(
+      {},
+      { cutoffDate: "2026-07-01" },
+    ) as Promise<unknown>,
+    /Settings IPC is only available/,
+  );
+  assert.equal(calls.includes("deleteSessionsLastActiveBefore"), false);
+});
+
 test("Memory V6 Review IPC は通常 window からの呼び出しを拒否する", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const homeWindow = createWindowStub("http://localhost:5173/?mode=settings");

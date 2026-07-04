@@ -449,10 +449,8 @@ export function validateMemoryGetEntryRequest(value: unknown): MemoryValidationR
   if (!entryId.ok) {
     return entryId;
   }
-  const target = value.target === undefined
-    ? undefined
-    : normalizeMemoryTarget(value.target, "target");
-  if (target && !target.ok) {
+  const target = normalizeMemoryTarget(value.target, "target");
+  if (!target.ok) {
     return target;
   }
 
@@ -461,7 +459,7 @@ export function validateMemoryGetEntryRequest(value: unknown): MemoryValidationR
     value: {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       entryId: entryId.value,
-      ...(target ? { target: target.value } : {}),
+      target: target.value,
     },
   };
 }

@@ -379,7 +379,7 @@ type MemoryGetEntryResponse = {
 
 - ID指定でfull bodyを取得する。
 - operation permissionとowner / scope accessを再検証する。
-- `local_user` requestでは明示targetを必須とし、entryのowner / scopeがtargetと一致する場合だけ返す。targetなしはentry存在に関係なく`MEMORY_TARGET_REQUIRED`、target不一致は`not_found`に畳む。
+- `local_user` requestでは明示targetを必須とし、entryのowner / scopeがtargetと一致する場合だけ返す。targetなしはshared validatorで`MEMORY_INVALID_FIELD` / `target`として拒否し、target不一致は`not_found`に畳む。
 - search hitのpreviewが現在の回答、実装、判断に影響しそうな場合に使う。
 - 正確な文言、理由、制約、過去の決定が重要な場合はpreviewだけで断定しない。
 - search hitを全件機械的に取得しない。必要な最小件数を、関係ありそうなpreviewから順に取得する。

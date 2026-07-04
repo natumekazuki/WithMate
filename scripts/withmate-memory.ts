@@ -509,10 +509,13 @@ function buildShorthandBody(
     if (!options.entryId) {
       throw usageError("get-entry shorthand requires --entry-id <id>.");
     }
+    if (!target) {
+      throw usageError("get-entry shorthand requires --project <absolute-path> or --project-id <id>.");
+    }
     return {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       entryId: options.entryId,
-      ...(target ? { target } : {}),
+      target,
     };
   }
 

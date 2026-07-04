@@ -159,7 +159,8 @@ describe("MemoryV6Service", () => {
         entryId: "mem-project-a",
       });
       assert.equal("error" in missingTarget, true);
-      assert.equal(missingTarget.error.code, "MEMORY_TARGET_REQUIRED");
+      assert.equal(missingTarget.error.code, "MEMORY_INVALID_FIELD");
+      assert.equal(missingTarget.error.field, "target");
 
       const mismatchTarget = service.getEntry(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
