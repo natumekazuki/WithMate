@@ -148,7 +148,7 @@ export class SessionPersistenceService {
   }
 
   async deleteSession(sessionId: string): Promise<DeleteSessionsResult> {
-    return this.deleteSessionsByIds([sessionId], { runningPolicy: "throw" });
+    return this.deleteSessionsByIds([sessionId], { runningPolicy: "throw", allowUncachedDeletion: false });
   }
 
   async deleteSessionsLastActiveBefore(cutoff: DeleteSessionsLastActiveBeforeCutoff): Promise<DeleteSessionsResult> {
@@ -157,7 +157,7 @@ export class SessionPersistenceService {
       : (await this.deps.listStoredSessions())
           .filter((session) => Date.parse(session.updatedAt) < cutoff.cutoffTimestampMs)
           .map((session) => session.id);
-    return this.deleteSessionsByIds(sessionIds, { runningPolicy: "skip", cutoff });
+    return this.deleteSessionsByIds(sessionIds, { runningPolicy: "skip", cutoff, allowUncachedDeletion: true });
   }
 
   private async deleteSessionsByIds(
@@ -165,6 +165,7 @@ export class SessionPersistenceService {
     options: {
       runningPolicy: "throw" | "skip";
       cutoff?: DeleteSessionsLastActiveBeforeCutoff;
+      allowUncachedDeletion: boolean;
     },
   ): Promise<DeleteSessionsResult> {
     const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
@@ -174,15 +175,15 @@ export class SessionPersistenceService {
 
     for (const sessionId of uniqueSessionIds) {
       const session = currentSessionsById.get(sessionId);
-      if (!session) {
-        continue;
-      }
-
-      if (this.deps.isSessionRunInFlight(sessionId) || isRunningSession(session)) {
+      if (this.deps.isSessionRunInFlight(sessionId) || (session ? isRunningSession(session) : false)) {
         if (options.runningPolicy === "throw") {
           throw new Error("実行中のセッションは削除できないよ。");
         }
         skippedRunningSessionIds.push(sessionId);
+        continue;
+      }
+
+      if (!session && !options.allowUncachedDeletion) {
         continue;
       }
 
