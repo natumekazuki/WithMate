@@ -26,6 +26,7 @@ import {
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
+  WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
   WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
   WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,
@@ -121,8 +122,6 @@ import {
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
-  WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
-  WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SESSIONS_CHANGED_EVENT,
   WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
   WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL,
@@ -296,9 +295,6 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     previewComposerInput(sessionId, userMessage) {
       return ipcRenderer.invoke(WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL, sessionId, userMessage);
     },
-    searchWorkspaceFiles(sessionId, query) {
-      return ipcRenderer.invoke(WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL, sessionId, query);
-    },
     listSessionSkills(sessionId) {
       return ipcRenderer.invoke(WITHMATE_LIST_SESSION_SKILLS_CHANNEL, sessionId);
     },
@@ -416,9 +412,6 @@ function createCompanionApi(ipcRenderer: IpcRendererLike): WithMateWindowCompani
     },
     previewCompanionComposerInput(sessionId, userMessage) {
       return ipcRenderer.invoke(WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL, sessionId, userMessage);
-    },
-    searchCompanionWorkspaceFiles(sessionId, query) {
-      return ipcRenderer.invoke(WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL, sessionId, query);
     },
     runCompanionSessionTurn(sessionId, request) {
       return ipcRenderer.invoke(WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL, sessionId, request);
@@ -555,6 +548,9 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
     },
     resetAppDatabase(request) {
       return ipcRenderer.invoke(WITHMATE_RESET_APP_DATABASE_CHANNEL, request);
+    },
+    deleteSessionsLastActiveBefore(request) {
+      return ipcRenderer.invoke(WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL, request);
     },
   };
 }

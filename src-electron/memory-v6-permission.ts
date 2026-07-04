@@ -1,19 +1,6 @@
 import type { MemoryError, MemoryPermission } from "../src/memory-v6/memory-contract.js";
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
 
-export type MemoryV6SessionBindingPrincipal = {
-  type: "session_binding";
-  bindingIdHash: string;
-  sessionId: string;
-  providerId: string;
-  permissions: readonly MemoryPermission[];
-  character: { id: string; name: string } | null;
-  sessionProject: { id: string; displayName: string } | null;
-  accessibleCharacterIds?: readonly string[];
-  accessibleProjectIds?: readonly string[];
-  accessibleProjects?: readonly { id: string; displayName: string }[];
-};
-
 export type MemoryV6LocalUserPrincipal = {
   type: "local_user";
   bindingIdHash: "local-user";
@@ -21,12 +8,13 @@ export type MemoryV6LocalUserPrincipal = {
   permissions: readonly MemoryPermission[];
 };
 
-export type MemoryV6Principal = MemoryV6SessionBindingPrincipal | MemoryV6LocalUserPrincipal;
+export type MemoryV6Principal = MemoryV6LocalUserPrincipal;
 
 export const LOCAL_USER_MEMORY_PERMISSIONS: readonly MemoryPermission[] = [
   "memory.search",
   "memory.get_entry",
   "memory.list_tags",
+  "memory.list_characters",
   "memory.append",
   "memory.forget",
 ];
@@ -40,15 +28,9 @@ export function createLocalUserMemoryPrincipal(): MemoryV6LocalUserPrincipal {
   };
 }
 
-export function isSessionBindingPrincipal(
-  principal: MemoryV6Principal,
-): principal is MemoryV6SessionBindingPrincipal {
-  return principal.type === "session_binding";
-}
-
-export function memoryBindingRequiredError(message = "WithMate runtime binding is required."): MemoryError {
+export function memoryPrincipalRequiredError(message = "Memory API principal is required."): MemoryError {
   return {
-    code: "MEMORY_BINDING_REQUIRED",
+    code: "MEMORY_PRINCIPAL_REQUIRED",
     message,
   };
 }
@@ -62,22 +44,16 @@ export function memoryUnauthorizedError(permission: MemoryPermission): MemoryErr
 
 export function memoryForbiddenError(options: {
   message?: string;
-  allowedProjectTargets?: readonly string[];
-  suggestion?: string;
 } = {}): MemoryError {
   return {
     code: "MEMORY_FORBIDDEN",
-    message: options.message ?? "Memory target is not accessible from the current binding.",
-    ...(options.allowedProjectTargets && options.allowedProjectTargets.length > 0
-      ? { allowedProjectTargets: [...options.allowedProjectTargets] }
-      : {}),
-    ...(options.suggestion ? { suggestion: options.suggestion } : {}),
+    message: options.message ?? "Memory target is not accessible.",
   };
 }
 
 export function requireMemoryPermission(principal: MemoryV6Principal | null, permission: MemoryPermission): MemoryError | null {
   if (!principal) {
-    return memoryBindingRequiredError();
+    return memoryPrincipalRequiredError();
   }
   if (!principal.permissions.includes(permission)) {
     return memoryUnauthorizedError(permission);
@@ -85,32 +61,10 @@ export function requireMemoryPermission(principal: MemoryV6Principal | null, per
   return null;
 }
 
-export function canAccessMemoryTarget(principal: MemoryV6Principal, target: MemoryV6ResolvedTarget): boolean {
+export function canAccessMemoryTarget(_principal: MemoryV6Principal, target: MemoryV6ResolvedTarget): boolean {
   const isUserGlobalTarget = target.owner.type === "user" && target.scope.type === "global";
-  if (principal.type === "local_user") {
-    return isUserGlobalTarget || (target.owner.type === "project" && target.scope.type === "project");
-  }
-
-  if (target.owner.type === "user" || target.scope.type === "session" || target.scope.type === "global") {
-    return isUserGlobalTarget;
-  }
-
-  const characterIds = new Set([
-    ...(principal.character ? [principal.character.id] : []),
-    ...(principal.accessibleCharacterIds ?? []),
-  ]);
-  const projectIds = new Set([
-    ...(principal.sessionProject ? [principal.sessionProject.id] : []),
-    ...(principal.accessibleProjectIds ?? []),
-    ...(principal.accessibleProjects ?? []).map((project) => project.id),
-  ]);
-
-  const ownerAllowed = target.owner.type === "character"
-    ? characterIds.has(target.owner.id)
-    : projectIds.has(target.owner.id);
-  const scopeAllowed = target.scope.type === "character"
-    ? characterIds.has(target.scope.id)
-    : target.scope.type === "project" && projectIds.has(target.scope.id);
-
-  return ownerAllowed && scopeAllowed;
+  const isProjectTarget = target.owner.type === "project" && target.scope.type === "project";
+  const isCharacterTarget = target.owner.type === "character" && target.scope.type === "character";
+  const isCharacterProjectTarget = target.owner.type === "character" && target.scope.type === "project";
+  return isUserGlobalTarget || isProjectTarget || isCharacterTarget || isCharacterProjectTarget;
 }

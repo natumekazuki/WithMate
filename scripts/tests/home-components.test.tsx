@@ -70,8 +70,11 @@ describe("HomeSettingsContent", () => {
     memoryV6Diagnostics: params?.memoryV6Diagnostics ?? null,
     settingsDirty: false,
     settingsFeedback: "",
+    sessionCleanupCutoffDate: "",
+    deletingOldSessions: false,
     onChangeAutoCollapseActionDockOnSend: noOp,
     onChangeLaunchAtLoginEnabled: noOp,
+    onChangeSessionCleanupCutoffDate: noOp,
     onChangeUserMicrocopySlot: noOp,
     onChangeProviderEnabled: noOp,
     onChangeProviderSkillRootPath: noOp,
@@ -88,6 +91,7 @@ describe("HomeSettingsContent", () => {
     onInstallMemoryV6CliShim: noOp,
     onUninstallMemoryV6CliShim: noOp,
     onCopyMemoryProviderInstructionSample: params?.onCopyMemoryProviderInstructionSample ?? noOp,
+    onDeleteSessionsLastActiveBefore: noOp,
     onSaveSettings: noOp,
   });
 
@@ -124,6 +128,13 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("Instruction Relative Path"));
   });
 
+  it("古い Session の削除操作を Settings に表示する", () => {
+    const html = renderSettings();
+
+    assert.match(html, /古い Session を削除/);
+    assert.match(html, /指定日より前に最後に使われた Session を削除する/);
+  });
+
   it("Memory V6 diagnostics はredacted summaryとして表示する", () => {
     const html = renderSettings({
       memoryV6Diagnostics: {
@@ -135,10 +146,9 @@ describe("HomeSettingsContent", () => {
           discoveryFilePath: "C:/runtime/memory-v6-api.json",
           hasApiSecret: true,
         },
-        binding: { activeBindingCount: 2 },
         providers: [
-          { providerId: "codex", providerSupported: true, memoryBindingTransport: "env" },
-          { providerId: "custom", providerSupported: false, memoryBindingTransport: "unsupported" },
+          { providerId: "codex", providerSupported: true },
+          { providerId: "custom", providerSupported: false },
         ],
         skillSync: [
           { providerId: "codex", skillRootConfigured: true, skillPath: "C:/skills/withmate-memory", status: "unchanged" },
@@ -162,9 +172,8 @@ describe("HomeSettingsContent", () => {
 
     assert.ok(html.includes("Memory API"));
     assert.ok(html.includes("running"));
-    assert.ok(html.includes("Active Bindings"));
-    assert.ok(html.includes("2"));
-    assert.ok(html.includes("codex: env / custom: unsupported"));
+    assert.ok(!html.includes("Active Bindings"));
+    assert.ok(!html.includes("codex: env / custom: unsupported"));
     assert.ok(html.includes("codex: unchanged / custom: skipped-collision"));
     assert.ok(html.includes("CLI Shim"));
     assert.ok(html.includes("PATH ready"));
@@ -744,6 +753,38 @@ describe("HomeMonitorContent", () => {
         state: { kind: "running", label: "実行中" },
       } as HomeMonitorEntry,
       {
+        kind: "agent",
+        session: {
+          id: "session-2",
+          taskTitle: "Auxiliary task",
+          workspaceLabel: "workspace",
+          workspacePath: "C:/workspace",
+          character: "Solo Mate",
+          characterIconPath: "mate.png",
+        },
+        activeAuxiliarySession: {
+          id: "aux-1",
+          parentSessionId: "session-2",
+          status: "active",
+          runState: "running",
+          title: "Auxiliary",
+          provider: "codex",
+          catalogRevision: 1,
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+          approvalMode: "untrusted",
+          codexSandboxMode: "danger-full-access",
+          customAgentName: "",
+          allowedAdditionalDirectories: [],
+          threadId: "",
+          displayAfterMessageIndex: null,
+          createdAt: "2026-03-28T00:00:00.000Z",
+          updatedAt: "2026-03-30T00:00:00.000Z",
+          closedAt: "",
+        },
+        state: { kind: "running", label: "実行中" },
+      } as HomeMonitorEntry,
+      {
         kind: "companion",
         session: {
           id: "companion-1",
@@ -753,6 +794,38 @@ describe("HomeMonitorContent", () => {
           characterIconPath: "mate.png",
         },
         state: { kind: "neutral", label: "待機" },
+        groupLabel: "demo",
+      } as HomeMonitorEntry,
+      {
+        kind: "companion",
+        session: {
+          id: "companion-2",
+          groupId: "group-1",
+          taskTitle: "Companion Auxiliary task",
+          character: "Solo Mate",
+          characterIconPath: "mate.png",
+        },
+        activeAuxiliarySession: {
+          id: "aux-companion",
+          parentSessionId: "companion-2",
+          status: "active",
+          runState: "running",
+          title: "Auxiliary",
+          provider: "codex",
+          catalogRevision: 1,
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+          approvalMode: "untrusted",
+          codexSandboxMode: "danger-full-access",
+          customAgentName: "",
+          allowedAdditionalDirectories: [],
+          threadId: "",
+          displayAfterMessageIndex: null,
+          createdAt: "2026-03-28T00:00:00.000Z",
+          updatedAt: "2026-03-30T00:00:00.000Z",
+          closedAt: "",
+        },
+        state: { kind: "running", label: "実行中" },
         groupLabel: "demo",
       } as HomeMonitorEntry,
     ];
@@ -766,11 +839,20 @@ describe("HomeMonitorContent", () => {
     );
 
     assert.ok(html.includes("Agent task"));
+    assert.ok(html.includes("Auxiliary task"));
     assert.ok(html.includes("workspace"));
     assert.ok(html.includes("Companion task"));
+    assert.ok(html.includes("Companion Auxiliary task"));
     assert.ok(html.includes("demo"));
-    assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 2);
-    assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 2);
+    assert.ok(html.includes(">Agent</span>"));
+    assert.equal(html.match(/>Auxiliary<\/span>/g)?.length, 2);
+    assert.ok(html.includes(">Companion</span>"));
+    assert.equal(html.match(/class="session-status home-monitor-status running"/g)?.length, 3);
+    assert.equal(html.match(/class="session-status home-monitor-status neutral"/g)?.length, 1);
+    assert.equal(html.match(/>実行中<\/span>/g)?.length, 3);
+    assert.ok(html.includes(">待機</span>"));
+    assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 4);
+    assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 4);
   });
 });
 

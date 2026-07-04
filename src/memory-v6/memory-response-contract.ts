@@ -1,10 +1,10 @@
 import {
   MEMORY_V6_SCHEMA_VERSION,
   type MemoryError,
-  type MemoryPermission,
   type MemoryTag,
   type MemoryV6SchemaVersion,
 } from "./memory-contract.js";
+import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import {
   toMemoryEntrySummary,
   validateMemoryEntryDetailInvariant,
@@ -28,6 +28,18 @@ export type MemoryGetEntryResponse = {
 export type MemoryListTagsResponse = {
   schemaVersion: MemoryV6SchemaVersion;
   tags: MemoryTag[];
+};
+
+export type MemoryCharacterSummary = {
+  id: string;
+  name: string;
+  description?: string;
+  isDefault?: boolean;
+};
+
+export type MemoryListCharactersResponse = {
+  schemaVersion: MemoryV6SchemaVersion;
+  characters: MemoryCharacterSummary[];
 };
 
 export type MemoryAppendResponse = {
@@ -55,15 +67,6 @@ export type MemoryForgetResponse = {
 export type MemoryErrorResponse = {
   schemaVersion: MemoryV6SchemaVersion;
   error: MemoryError;
-};
-
-export type MemoryResolveContextResponse = {
-  schemaVersion: MemoryV6SchemaVersion;
-  session: { id: string };
-  character: { id: string; name: string } | null;
-  sessionProject: { id: string; displayName: string } | null;
-  allowedProjectTargets: { id: string; displayName: string }[];
-  permissions: MemoryPermission[];
 };
 
 export function createMemorySearchResponse(
@@ -102,6 +105,21 @@ export function createMemoryListTagsResponse(tags: readonly MemoryTag[]): Memory
   };
 }
 
+export function createMemoryListCharactersResponse(characters: readonly CharacterCatalogEntry[]): MemoryListCharactersResponse {
+  return {
+    schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+    characters: characters.map((character) => {
+      const description = character.description.trim();
+      return {
+        id: character.id,
+        name: character.name,
+        ...(description.length > 0 ? { description } : {}),
+        ...(character.isDefault ? { isDefault: true } : {}),
+      };
+    }),
+  };
+}
+
 export function createMemoryAppendResponse(entry: MemoryEntryDetail, created: boolean): MemoryAppendResponse {
   return {
     schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -114,17 +132,6 @@ export function createMemoryForgetResponse(results: readonly MemoryForgetResult[
   return {
     schemaVersion: MEMORY_V6_SCHEMA_VERSION,
     results: [...results],
-  };
-}
-
-export function createMemoryResolveContextResponse(input: Omit<MemoryResolveContextResponse, "schemaVersion">): MemoryResolveContextResponse {
-  return {
-    schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-    session: input.session,
-    character: input.character,
-    sessionProject: input.sessionProject,
-    allowedProjectTargets: input.allowedProjectTargets.map((project) => ({ ...project })),
-    permissions: [...input.permissions],
   };
 }
 

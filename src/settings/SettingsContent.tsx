@@ -6,6 +6,8 @@ import type { HomeProviderSettingRow } from "./settings-view-model.js";
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
   SETTINGS_COPY_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL,
+  SETTINGS_DELETE_OLD_SESSIONS_HELP,
+  SETTINGS_DELETE_OLD_SESSIONS_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
   SETTINGS_LAUNCH_AT_LOGIN_LABEL,
   SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP,
@@ -32,8 +34,11 @@ export type HomeSettingsContentProps = {
   memoryV6Diagnostics: MemoryV6Diagnostics | null;
   settingsDirty: boolean;
   settingsFeedback: string;
+  sessionCleanupCutoffDate: string;
+  deletingOldSessions: boolean;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeLaunchAtLoginEnabled: (enabled: boolean) => void;
+  onChangeSessionCleanupCutoffDate: (value: string) => void;
   onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
@@ -50,6 +55,7 @@ export type HomeSettingsContentProps = {
   onInstallMemoryV6CliShim: () => void;
   onUninstallMemoryV6CliShim: () => void;
   onCopyMemoryProviderInstructionSample: () => void;
+  onDeleteSessionsLastActiveBefore: () => void;
   onSaveSettings: () => void;
 };
 
@@ -84,8 +90,11 @@ export function HomeSettingsContent({
   memoryV6Diagnostics,
   settingsDirty,
   settingsFeedback,
+  sessionCleanupCutoffDate,
+  deletingOldSessions,
   onChangeAutoCollapseActionDockOnSend,
   onChangeLaunchAtLoginEnabled,
+  onChangeSessionCleanupCutoffDate,
   onChangeUserMicrocopySlot,
   onChangeProviderEnabled,
   onChangeProviderSkillRootPath,
@@ -102,6 +111,7 @@ export function HomeSettingsContent({
   onInstallMemoryV6CliShim,
   onUninstallMemoryV6CliShim,
   onCopyMemoryProviderInstructionSample,
+  onDeleteSessionsLastActiveBefore,
   onSaveSettings,
 }: HomeSettingsContentProps) {
   return (
@@ -259,16 +269,6 @@ export function HomeSettingsContent({
                     <small>{memoryV6Diagnostics.runtime.discoveryFilePath ? "discovery published" : "discovery unavailable"}</small>
                   </div>
                   <div className="settings-diagnostics-item">
-                    <span>Active Bindings</span>
-                    <strong>{memoryV6Diagnostics.binding.activeBindingCount}</strong>
-                    <small>session-scoped runtime bindings</small>
-                  </div>
-                  <div className="settings-diagnostics-item">
-                    <span>Provider Binding</span>
-                    <strong>{formatProviderBindingSummary(memoryV6Diagnostics)}</strong>
-                    <small>{formatProviderBindingDetail(memoryV6Diagnostics)}</small>
-                  </div>
-                  <div className="settings-diagnostics-item">
                     <span>Managed Skill</span>
                     <strong>{formatSkillSyncSummary(memoryV6Diagnostics)}</strong>
                     <small>{formatSkillSyncDetail(memoryV6Diagnostics)}</small>
@@ -348,6 +348,32 @@ export function HomeSettingsContent({
             </div>
           </section>
 
+          <section className="settings-section-card">
+            <div className="settings-field">
+              <strong>Storage Maintenance</strong>
+              <label className="settings-provider-input">
+                <span>{SETTINGS_DELETE_OLD_SESSIONS_LABEL}</span>
+                <div className="settings-inline-input-row">
+                  <input
+                    type="date"
+                    value={sessionCleanupCutoffDate}
+                    onChange={(event) => onChangeSessionCleanupCutoffDate(event.target.value)}
+                    disabled={deletingOldSessions}
+                  />
+                  <button
+                    className="launch-toggle"
+                    type="button"
+                    onClick={onDeleteSessionsLastActiveBefore}
+                    disabled={deletingOldSessions || !sessionCleanupCutoffDate}
+                  >
+                    Delete
+                  </button>
+                </div>
+                <p className="settings-help">{SETTINGS_DELETE_OLD_SESSIONS_HELP}</p>
+              </label>
+            </div>
+          </section>
+
           </section>
         </div>
       </div>
@@ -359,20 +385,6 @@ export function HomeSettingsContent({
       </div>
     </>
   );
-}
-
-function formatProviderBindingSummary(diagnostics: MemoryV6Diagnostics): string {
-  const supported = diagnostics.providers.filter((provider) => provider.memoryBindingTransport !== "unsupported").length;
-  return `${supported}/${diagnostics.providers.length}`;
-}
-
-function formatProviderBindingDetail(diagnostics: MemoryV6Diagnostics): string {
-  if (diagnostics.providers.length === 0) {
-    return "configured providers are unavailable";
-  }
-  return diagnostics.providers
-    .map((provider) => `${provider.providerId}: ${provider.memoryBindingTransport}`)
-    .join(" / ");
 }
 
 function formatSkillSyncSummary(diagnostics: MemoryV6Diagnostics): string {

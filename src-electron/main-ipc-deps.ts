@@ -58,10 +58,11 @@ import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-stat
 import type { CreateSessionInput, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
 import type {
   OpenPathOptions,
+  DeleteSessionsLastActiveBeforeRequest,
+  DeleteSessionsResult,
   ResetAppDatabaseRequest,
   SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
-import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 import type {
   CreateMateInput,
   MateProfile,
@@ -77,6 +78,8 @@ type MaybeWindow = BrowserWindow | null | undefined;
 export type MainIpcWindowDepsArgs = {
   resolveEventWindow(event: IpcMainInvokeEvent): MaybeWindow;
   resolveHomeWindow(): MaybeWindow;
+  resolveSessionWindow(sessionId: string): MaybeWindow;
+  resolveCompanionReviewWindow(sessionId: string): MaybeWindow;
   openSessionWindow(sessionId: string): Promise<BrowserWindow>;
   openHomeWindow(): Promise<BrowserWindow>;
   openSessionMonitorWindow(): Promise<BrowserWindow>;
@@ -176,7 +179,6 @@ export type MainIpcSessionQueryDepsArgs = {
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
-  searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
 };
 
 export type MainIpcCompanionDepsArgs = {
@@ -192,7 +194,6 @@ export type MainIpcCompanionDepsArgs = {
   discardCompanionSession(sessionId: string): Promise<CompanionSession>;
   updateCompanionSession(session: CompanionSession): Promise<CompanionSession>;
   previewCompanionComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
-  searchCompanionWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
   cancelCompanionSessionRun(sessionId: string): void;
 };
@@ -221,6 +222,9 @@ export type MainIpcSessionRuntimeDepsArgs = {
   createSession(input: CreateSessionInput): Awaitable<Session>;
   updateSession(session: Session): Awaitable<Session>;
   deleteSession(sessionId: string): Awaitable<void>;
+  deleteSessionsLastActiveBefore(
+    request: DeleteSessionsLastActiveBeforeRequest | null | undefined,
+  ): Awaitable<DeleteSessionsResult>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   cancelSessionRun(sessionId: string): void;
 };
@@ -283,6 +287,8 @@ export function createMainIpcRegistrationDeps(
   return {
     resolveEventWindow: args.window.resolveEventWindow,
     resolveHomeWindow: args.window.resolveHomeWindow,
+    resolveSessionWindow: args.window.resolveSessionWindow,
+    resolveCompanionReviewWindow: args.window.resolveCompanionReviewWindow,
     openSessionWindow: async (sessionId) => {
       await args.window.openSessionWindow(sessionId);
     },
@@ -369,7 +375,6 @@ export function createMainIpcRegistrationDeps(
     getSessionMessageArtifact: args.sessionQuery.getSessionMessageArtifact,
     getDiffPreview: args.sessionQuery.getDiffPreview,
     previewComposerInput: args.sessionQuery.previewComposerInput,
-    searchWorkspaceFiles: args.sessionQuery.searchWorkspaceFiles,
     listAuxiliarySessions: auxiliary.listAuxiliarySessions,
     getActiveAuxiliarySession: auxiliary.getActiveAuxiliarySession,
     getAuxiliarySession: auxiliary.getAuxiliarySession,
@@ -390,7 +395,6 @@ export function createMainIpcRegistrationDeps(
     discardCompanionSession: args.companion.discardCompanionSession,
     updateCompanionSession: args.companion.updateCompanionSession,
     previewCompanionComposerInput: args.companion.previewCompanionComposerInput,
-    searchCompanionWorkspaceFiles: args.companion.searchCompanionWorkspaceFiles,
     runCompanionSessionTurn: args.companion.runCompanionSessionTurn,
     cancelCompanionSessionRun: args.companion.cancelCompanionSessionRun,
     getLiveSessionRun: args.sessionRuntime.getLiveSessionRun,
@@ -402,6 +406,7 @@ export function createMainIpcRegistrationDeps(
     createSession: args.sessionRuntime.createSession,
     updateSession: args.sessionRuntime.updateSession,
     deleteSession: args.sessionRuntime.deleteSession,
+    deleteSessionsLastActiveBefore: args.sessionRuntime.deleteSessionsLastActiveBefore,
     runSessionTurn: args.sessionRuntime.runSessionTurn,
     cancelSessionRun: args.sessionRuntime.cancelSessionRun,
     getMateState: args.mate.getMateState,

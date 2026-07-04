@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -9,21 +9,12 @@ import { Readable } from "node:stream";
 import { describe, it } from "node:test";
 
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
-import { buildNewSession } from "../../src/app-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
   discoverWithMateMemoryApi,
   runWithMateMemoryCli,
   WITHMATE_MEMORY_CLI_EXIT_CODES,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
 } from "../withmate-memory.js";
-import { startMemoryV6RuntimeApi } from "../../src-electron/memory-v6-runtime.js";
-import { MemoryBindingRegistry } from "../../src-electron/memory-binding-registry.js";
-import {
-  WITHMATE_MEMORY_BINDING_REFERENCE_ENV,
-  WITHMATE_MEMORY_BINDING_REFERENCE_HEADER,
-} from "../../src-electron/provider-memory-binding.js";
 
 const TEST_API_SECRET = "test-api-secret";
 const TEST_RUNTIME_INSTANCE_ID = "test-runtime";
@@ -68,16 +59,6 @@ function createStatusChallengeResponse(url: string): Response {
 
 function createStdin(value: string): NodeJS.ReadStream {
   return Object.assign(Readable.from([value]), { isTTY: false }) as NodeJS.ReadStream;
-}
-
-function createProvider(id = "codex"): ModelCatalogProvider {
-  return {
-    id,
-    label: id,
-    defaultModelId: "gpt-5.4",
-    defaultReasoningEffort: "high",
-    models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["medium", "high"] }],
-  };
 }
 
 function isStatusChallengeRequest(url: string): boolean {
@@ -296,6 +277,44 @@ describe("withmate-memory CLI", () => {
     });
   });
 
+  it("charactersはGETで/v1/charactersへ送る", async () => {
+    const stdout = createOutputCapture();
+    const requests: Array<{ url: string; method: string | undefined; body: BodyInit | null | undefined; headers: HeadersInit | undefined }> = [];
+    const responseBody = {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      characters: [
+        {
+          id: "mika",
+          name: "Mika",
+          description: "Guitar",
+          isDefault: true,
+        },
+      ],
+    };
+
+    const exitCode = await runWithMateMemoryCli(["characters"], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fetch: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method, body: init?.body, headers: init?.headers });
+        if (isStatusChallengeRequest(String(url))) {
+          return createStatusChallengeResponse(String(url));
+        }
+        return new Response(JSON.stringify(responseBody), { status: 200 });
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+    assert.deepEqual(stdout.json(), responseBody);
+    assert.equal(requests.length, 2);
+    assert.deepEqual(requests[1], {
+      url: "http://127.0.0.1:7777/v1/characters",
+      method: "GET",
+      body: undefined,
+      headers: { "x-withmate-memory-api-secret": TEST_API_SECRET },
+    });
+  });
+
   it("環境変数URLが不正な場合はdefault discovery fileへfallbackしない", async () => {
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-runtime-"));
     const stdout = createOutputCapture();
@@ -414,6 +433,7 @@ describe("withmate-memory CLI", () => {
       "note",
     ]);
     assert.deepEqual(stdout.json().forgetReasons, ["user_request", "incorrect", "outdated", "privacy", "other"]);
+    assert.ok(stdout.json().commands.includes("characters"));
     assert.deepEqual(stdout.json().requestBodyInputs, ["--json", "--file", "@file", "--stdin"]);
     assert.deepEqual(stdout.json().targetSelectors.at(-1), {
       owner: "user",
@@ -437,8 +457,10 @@ describe("withmate-memory CLI", () => {
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
     assert.equal(fetchCalls, 0);
     assert.match(stdout.text(), /Usage:\s+withmate-memory <command> \[options\]/);
-    assert.match(stdout.text(), /search --session-project --query/);
-    assert.match(stdout.text(), /validate --command <context\|search\|get-entry\|list-tags\|append\|forget>/);
+    assert.doesNotMatch(stdout.text(), /--session-project/);
+    assert.match(stdout.text(), /characters/);
+    assert.match(stdout.text(), /search --project/);
+    assert.match(stdout.text(), /validate --command <search\|get-entry\|list-tags\|append\|forget>/);
   });
 
   it("command --helpもruntime接続なしでusage textを返す", async () => {
@@ -653,6 +675,52 @@ describe("withmate-memory CLI", () => {
     }
   });
 
+  it("get-entry shorthandはprojectとentry idからrequest bodyを作る", async () => {
+    const stdout = createOutputCapture();
+    const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-get-entry-"));
+    let capturedBody: any = null;
+    try {
+      const exitCode = await runWithMateMemoryCli([
+        "get-entry",
+        "--project",
+        tempDirectory,
+        "--entry-id",
+        "mem-1",
+      ], {
+        env: TEST_RUNTIME_ENV,
+        stdout: stdout.stream,
+        fetch: async (url, init) => {
+          if (isStatusChallengeRequest(String(url))) {
+            return createStatusChallengeResponse(String(url));
+          }
+          capturedBody = JSON.parse(String(init?.body));
+          return new Response(JSON.stringify({ schemaVersion: MEMORY_V6_SCHEMA_VERSION, entry: null }), { status: 200 });
+        },
+      });
+
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+      assert.equal(capturedBody.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
+      assert.equal(capturedBody.entryId, "mem-1");
+      assert.equal(capturedBody.target.project.path, tempDirectory.replace(/\\/g, "/"));
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("get-entry shorthandはtargetなしをusage errorにする", async () => {
+    const stdout = createOutputCapture();
+    const exitCode = await runWithMateMemoryCli(["get-entry", "--entry-id", "mem-1"], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fetch: async () => {
+        assert.fail("get-entry shorthand without target should not call runtime");
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
+    assertUsageError(stdout.json(), /get-entry shorthand requires --project/);
+  });
+
   it("project.pathの相対pathはCLIで拒否する", async () => {
     const stdout = createOutputCapture();
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-cwd-"));
@@ -684,159 +752,16 @@ describe("withmate-memory CLI", () => {
     }
   });
 
-  it("binding付きCLIは--session-projectとattached repositoryの絶対pathで操作でき、非attached pathは拒否する", async () => {
-    const userDataPath = await mkdtemp(join(tmpdir(), "withmate-memory-cli-userdata-"));
-    const runtimeDirectoryPath = await mkdtemp(join(tmpdir(), "withmate-memory-cli-runtime-"));
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "withmate-memory-cli-workspace-"));
-    const sessionRepoPath = join(workspaceRoot, "session-repo");
-    const attachedRepoPath = join(workspaceRoot, "attached-repo");
-    const attachedSubdirectoryPath = join(attachedRepoPath, "src");
-    const outsideRepoPath = join(workspaceRoot, "outside-repo");
-    const previousCwd = process.cwd();
-    const bindingRegistry = new MemoryBindingRegistry();
-    try {
-      await mkdir(join(sessionRepoPath, ".git"), { recursive: true });
-      await mkdir(join(attachedRepoPath, ".git"), { recursive: true });
-      await mkdir(attachedSubdirectoryPath, { recursive: true });
-      await mkdir(join(outsideRepoPath, ".git"), { recursive: true });
-
-      const runtime = await startMemoryV6RuntimeApi({ userDataPath, runtimeDirectoryPath, bindingRegistry });
-      try {
-        const binding = bindingRegistry.createBinding({
-          session: buildNewSession({
-            taskTitle: "CLI Attached Memory Binding",
-            workspaceLabel: "Session Repo",
-            workspacePath: sessionRepoPath,
-            branch: "main",
-            characterId: "character-a",
-            character: "Character A",
-            characterIconPath: "",
-            characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-            approvalMode: DEFAULT_APPROVAL_MODE,
-            allowedAdditionalDirectories: [attachedRepoPath],
-          }),
-          provider: createProvider("codex"),
-          character: null,
-        });
-        assert.ok(binding);
-        const env = {
-          WITHMATE_MEMORY_DISCOVERY_FILE: runtime.discoveryFilePath,
-          [WITHMATE_MEMORY_BINDING_REFERENCE_ENV]: binding.bindingReference,
-        };
-
-        const appendStdout = createOutputCapture();
-        const appendExitCode = await runWithMateMemoryCli(["append", "--json", JSON.stringify({
-          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-          target: {
-            owner: "project",
-            scope: "project",
-            project: { type: "path", path: attachedSubdirectoryPath },
-          },
-          kind: "note",
-          title: "CLI attached repo note",
-          body: "CLI can write attached repository memory from an absolute path.",
-          preview: "CLI attached repo write.",
-          tags: [{ type: "topic", value: "attached-cli" }],
-        })], {
-          env,
-          stdout: appendStdout.stream,
-        });
-        assert.equal(appendExitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
-        const appendJson = appendStdout.json();
-        assert.equal(appendJson.created, true);
-
-        const sessionSearchStdout = createOutputCapture();
-        const sessionSearchExitCode = await runWithMateMemoryCli(["search", "--session-project", "--query", "missing"], {
-          env,
-          stdout: sessionSearchStdout.stream,
-        });
-        assert.equal(sessionSearchExitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
-        assert.deepEqual(sessionSearchStdout.json().items, []);
-
-        const searchStdout = createOutputCapture();
-        const searchExitCode = await runWithMateMemoryCli(["search", "--project", attachedRepoPath, "--query", "absolute"], {
-          env,
-          stdout: searchStdout.stream,
-        });
-        assert.equal(searchExitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
-        assert.deepEqual(searchStdout.json().items.map((item: { id: string }) => item.id), [appendJson.entry.id]);
-
-        const detailStdout = createOutputCapture();
-        const detailExitCode = await runWithMateMemoryCli(["get-entry", "--project", attachedRepoPath, "--entry-id", appendJson.entry.id], {
-          env,
-          stdout: detailStdout.stream,
-        });
-        assert.equal(detailExitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
-        assert.match(detailStdout.json().entry.body, /attached repository/);
-
-        const forgetStdout = createOutputCapture();
-        const forgetExitCode = await runWithMateMemoryCli(["forget", "--json", JSON.stringify({
-          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-          target: {
-            owner: "project",
-            scope: "project",
-            project: { type: "path", path: attachedRepoPath },
-          },
-          entryIds: [appendJson.entry.id],
-          reason: "user_request",
-        })], {
-          env,
-          stdout: forgetStdout.stream,
-        });
-        assert.equal(forgetExitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
-        assert.deepEqual(forgetStdout.json().results, [{ entryId: appendJson.entry.id, status: "forgotten" }]);
-
-        const forbiddenStdout = createOutputCapture();
-        const forbiddenExitCode = await runWithMateMemoryCli(["search", "--project", outsideRepoPath, "--query", "outside"], {
-          env,
-          stdout: forbiddenStdout.stream,
-        });
-        assert.equal(forbiddenExitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
-        assert.equal(forbiddenStdout.json().error.code, "MEMORY_FORBIDDEN");
-        assert.equal(forbiddenStdout.json().error.message, "Project target is not attached to this session.");
-        assert.deepEqual(forbiddenStdout.json().error.allowedProjectTargets, ["Session Repo", "attached-repo"]);
-      } finally {
-        process.chdir(previousCwd);
-        await runtime.stop();
-      }
-    } finally {
-      process.chdir(previousCwd);
-      await rm(userDataPath, { recursive: true, force: true });
-      await rm(runtimeDirectoryPath, { recursive: true, force: true });
-      await rm(workspaceRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("contextはschemaVersionつきJSON bodyをPOSTで送る", async () => {
+  it("--session-projectは非対応optionとしてusage errorを返す", async () => {
     const stdout = createOutputCapture();
-    let capturedBody: unknown = null;
-    let capturedBindingReference: string | null = null;
-
-    const exitCode = await runWithMateMemoryCli(["context"], {
-      env: {
-        ...TEST_RUNTIME_ENV,
-        [WITHMATE_MEMORY_BINDING_REFERENCE_ENV]: "binding-ref-a",
-      },
+    const exitCode = await runWithMateMemoryCli(["search", "--session-project", "--query", "missing"], {
+      env: TEST_RUNTIME_ENV,
       stdout: stdout.stream,
-      fetch: async (url, init) => {
-        if (isStatusChallengeRequest(String(url))) {
-          return createStatusChallengeResponse(String(url));
-        }
-        assert.equal(String(url), "http://127.0.0.1:7777/v1/context");
-        assert.equal(init?.method, "POST");
-        capturedBindingReference = new Headers(init?.headers).get(WITHMATE_MEMORY_BINDING_REFERENCE_HEADER);
-        capturedBody = JSON.parse(String(init?.body));
-        return new Response(JSON.stringify({
-          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-          session: { id: "session-a" },
-          permissions: [],
-        }), { status: 200 });
-      },
     });
 
-    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
-    assert.deepEqual(capturedBody, { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
-    assert.equal(capturedBindingReference, "binding-ref-a");
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
+    assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_CLI_USAGE");
+    assert.match(stdout.json().error.message, /Unknown option: --session-project/);
   });
 
   it("POST redirectは追従せずrequest bodyを転送しない", async () => {
@@ -925,7 +850,7 @@ describe("withmate-memory CLI", () => {
 
   it("API errorはレスポンスJSONをそのまま出し、apiErrorで終了する", async () => {
     const stdout = createOutputCapture();
-    const exitCode = await runWithMateMemoryCli(["context"], {
+    const exitCode = await runWithMateMemoryCli(["search", "--project-id", "project-a", "--query", "memory"], {
       env: TEST_RUNTIME_ENV,
       stdout: stdout.stream,
       fetch: async (url) => {
@@ -934,13 +859,13 @@ describe("withmate-memory CLI", () => {
         }
         return new Response(JSON.stringify({
           schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-          error: { code: "MEMORY_BINDING_REQUIRED", message: "binding required" },
-        }), { status: 401 });
+          error: { code: "MEMORY_FORBIDDEN", message: "forbidden" },
+        }), { status: 403 });
       },
     });
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
-    assert.equal(stdout.json().error.code, "MEMORY_BINDING_REQUIRED");
+    assert.equal(stdout.json().error.code, "MEMORY_FORBIDDEN");
   });
 
   it("APIが非JSONを返した場合もstdoutにはJSON errorだけを出す", async () => {

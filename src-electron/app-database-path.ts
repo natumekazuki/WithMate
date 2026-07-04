@@ -13,11 +13,29 @@ import {
 } from "./database-schema-v4.js";
 import {
   APP_DATABASE_V6_FILENAME,
+  ensureV6Schema,
   isValidV6Database,
+  readV6DatabaseUserVersion,
 } from "./database-schema-v6.js";
+import { openAppDatabase } from "./sqlite-connection.js";
 
 function v3BlobRootPath(userDataPath: string): string {
   return path.join(userDataPath, "blobs", "v3");
+}
+
+function tryEnsureExistingV6DatabaseSchema(dbPath: string): void {
+  if (readV6DatabaseUserVersion(dbPath) !== 6) {
+    return;
+  }
+
+  const db = openAppDatabase(dbPath);
+  try {
+    ensureV6Schema(db);
+  } catch {
+    // Repair failure must not block fallback to a valid legacy database generation.
+  } finally {
+    db.close();
+  }
 }
 
 export type AppDatabaseMigrationProgress = {
@@ -29,6 +47,9 @@ type AppDatabaseMigrationProgressListener = (progress: AppDatabaseMigrationProgr
 
 export function resolveAppDatabasePath(userDataPath: string): string {
   const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+  if (existsSync(v6Path)) {
+    tryEnsureExistingV6DatabaseSchema(v6Path);
+  }
   if (existsSync(v6Path) && isValidV6Database(v6Path)) {
     return v6Path;
   }
@@ -66,6 +87,9 @@ export async function resolveOrMigrateAppDatabasePath(
     detail: `${APP_DATABASE_V6_FILENAME} を確認しています。`,
   });
   const v6Exists = existsSync(v6Path);
+  if (v6Exists) {
+    tryEnsureExistingV6DatabaseSchema(v6Path);
+  }
   if (v6Exists && isValidV6Database(v6Path)) {
     const v4PathForExistingV6 = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
     if (existsSync(v4PathForExistingV6) && isValidV4Database(v4PathForExistingV6)) {

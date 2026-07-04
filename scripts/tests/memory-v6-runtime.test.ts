@@ -5,58 +5,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import { buildNewSession, type CharacterProfile } from "../../src/app-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import {
   resolveDefaultWithMateMemoryDiscoveryFilePath,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
 } from "../../src/memory-v6/memory-discovery.js";
-import type { ModelCatalogProvider } from "../../src/model-catalog.js";
-import {
-  listMemoryV6ProjectScopes,
-} from "../../src-electron/memory-v6-project-resolver.js";
 import {
   publishMemoryV6DiscoveryFile,
   startMemoryV6RuntimeApi,
 } from "../../src-electron/memory-v6-runtime.js";
-import { MemoryBindingRegistry } from "../../src-electron/memory-binding-registry.js";
-import { WITHMATE_MEMORY_BINDING_REFERENCE_HEADER } from "../../src-electron/provider-memory-binding.js";
-
-function createProvider(id = "codex"): ModelCatalogProvider {
-  return {
-    id,
-    label: id,
-    defaultModelId: "gpt-5.4",
-    defaultReasoningEffort: "high",
-    models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["medium", "high"] }],
-  };
-}
-
-function createCharacter(): CharacterProfile {
-  return {
-    id: "character-a",
-    name: "Character A",
-    iconPath: "",
-    description: "",
-    roleMarkdown: "",
-    notesMarkdown: "",
-    updatedAt: "2026-06-27T00:00:00.000Z",
-    themeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-    sessionCopy: {
-      pendingApproval: [],
-      pendingWorking: [],
-      pendingResponding: [],
-      pendingPreparing: [],
-      retryInterruptedTitle: [],
-      retryFailedTitle: [],
-      retryCanceledTitle: [],
-      latestCommandWaiting: [],
-      latestCommandEmpty: [],
-      changedFilesEmpty: [],
-      contextEmpty: [],
-    },
-  };
-}
 
 describe("Memory V6 runtime API", () => {
   it("runtime directoryへdiscovery fileをpublishしcleanupできる", async () => {
@@ -156,10 +112,12 @@ describe("Memory V6 runtime API", () => {
     );
   });
 
-  it("V6 DBをbootstrapし、status endpointをdiscovery file経由で公開する", async () => {
+  it("V6 DBをbootstrapし、status endpointとlocal user APIをdiscovery file経由で公開する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
     const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    const workspacePath = path.join(userDataPath, "repo");
     try {
+      await mkdir(path.join(workspacePath, ".git"), { recursive: true });
       const runtime = await startMemoryV6RuntimeApi({ userDataPath, runtimeDirectoryPath });
       try {
         const discovery = JSON.parse(await readFile(runtime.discoveryFilePath, "utf8"));
@@ -186,376 +144,74 @@ describe("Memory V6 runtime API", () => {
           },
         });
 
-        const context = await fetch(`${runtime.baseUrl}/v1/context`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
-          },
-          body: JSON.stringify({ schemaVersion: "withmate-memory-v1" }),
-        });
-        assert.equal(context.status, 401);
-        assert.equal((await context.json()).error.code, "MEMORY_BINDING_REQUIRED");
-      } finally {
-        await runtime.stop();
-      }
-
-      await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6-api.json")));
-    } finally {
-      await rm(userDataPath, { recursive: true, force: true });
-      await rm(runtimeDirectoryPath, { recursive: true, force: true });
-    }
-  });
-
-  it("runtime APIはregistry binding referenceをprincipalへ解決し、revoke後は拒否する", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
-    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
-    const workspaceRoot = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-binding-workspace-"));
-    const sessionRepoPath = path.join(workspaceRoot, "workspace-a");
-    const bindingRegistry = new MemoryBindingRegistry();
-    try {
-      await mkdir(path.join(sessionRepoPath, ".git"), { recursive: true });
-      const runtime = await startMemoryV6RuntimeApi({ userDataPath, runtimeDirectoryPath, bindingRegistry });
-      try {
-        const discovery = JSON.parse(await readFile(runtime.discoveryFilePath, "utf8"));
-        const binding = bindingRegistry.createBinding({
-          session: buildNewSession({
-            taskTitle: "Memory Binding Runtime",
-            workspaceLabel: "Workspace A",
-            workspacePath: sessionRepoPath,
-            branch: "main",
-            characterId: "character-a",
-            character: "Character A",
-            characterIconPath: "",
-            characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-            approvalMode: DEFAULT_APPROVAL_MODE,
-          }),
-          provider: createProvider("codex"),
-          character: createCharacter(),
-        });
-        assert.ok(binding);
-
-        const context = await fetch(`${runtime.baseUrl}/v1/context`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
-            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
-          },
-          body: JSON.stringify({ schemaVersion: "withmate-memory-v1" }),
-        });
-        assert.equal(context.status, 200);
-        const contextJson = await context.json();
-        assert.equal(contextJson.schemaVersion, "withmate-memory-v1");
-        assert.deepEqual(contextJson.session, { id: bindingRegistry.resolvePrincipal(binding.bindingReference)?.sessionId });
-        assert.deepEqual(contextJson.character, { id: "character-a", name: "Character A" });
-        assert.equal(contextJson.sessionProject.displayName, "Workspace A");
-        assert.match(contextJson.sessionProject.id, /^project-/);
-        assert.deepEqual(contextJson.allowedProjectTargets, [contextJson.sessionProject]);
-        assert.deepEqual(contextJson.permissions, [
-          "memory.resolve_context",
-          "memory.search",
-          "memory.get_entry",
-          "memory.list_tags",
-          "memory.append",
-          "memory.forget",
-        ]);
-
         const append = await fetch(`${runtime.baseUrl}/v1/append`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
-            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
           },
           body: JSON.stringify({
             schemaVersion: "withmate-memory-v1",
             target: {
               owner: "project",
               scope: "project",
-              project: { type: "id", id: contextJson.sessionProject.id },
+              project: { type: "path", path: workspacePath },
             },
             kind: "note",
-            title: "Runtime binding project id",
-            body: "context.sessionProject.id can be reused as a project target.",
-            preview: "sessionProject.id is reusable.",
+            title: "Runtime project path",
+            body: "Explicit project path works through the runtime API.",
+            preview: "Explicit project path works.",
             tags: [{ type: "topic", value: "runtime" }],
           }),
         });
         assert.equal(append.status, 200);
         const appendJson = await append.json();
-        assert.equal(appendJson.entry.owner.id, contextJson.sessionProject.id);
-
-        const search = await fetch(`${runtime.baseUrl}/v1/search`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
-            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
-          },
-          body: JSON.stringify({
-            schemaVersion: "withmate-memory-v1",
-            targets: [{
-              owner: "project",
-              scope: "project",
-              project: { type: "id", id: contextJson.sessionProject.id },
-            }],
-            query: "reusable",
-          }),
-        });
-        assert.equal(search.status, 200);
-        const searchJson = await search.json();
-        assert.equal(searchJson.items.length, 1);
-        assert.equal(searchJson.items[0].id, appendJson.entry.id);
-
-        const detail = await fetch(`${runtime.baseUrl}/v1/get_entry`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
-            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
-          },
-          body: JSON.stringify({
-            schemaVersion: "withmate-memory-v1",
-            entryId: appendJson.entry.id,
-          }),
-        });
-        assert.equal(detail.status, 200);
-        const detailJson = await detail.json();
-        assert.equal(detailJson.entry.source.sessionId, null);
-
-        assert.deepEqual({
-          schemaVersion: "withmate-memory-v1",
-          session: { id: bindingRegistry.resolvePrincipal(binding.bindingReference)?.sessionId },
-          character: { id: "character-a", name: "Character A" },
-          sessionProject: contextJson.sessionProject,
-          allowedProjectTargets: [contextJson.sessionProject],
-          permissions: [
-            "memory.resolve_context",
-            "memory.search",
-            "memory.get_entry",
-            "memory.list_tags",
-            "memory.append",
-            "memory.forget",
-          ],
-        }, contextJson);
-
-        bindingRegistry.revokeBinding(binding);
-        const revokedContext = await fetch(`${runtime.baseUrl}/v1/context`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
-            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
-          },
-          body: JSON.stringify({ schemaVersion: "withmate-memory-v1" }),
-        });
-        assert.equal(revokedContext.status, 401);
-        assert.equal((await revokedContext.json()).error.code, "MEMORY_BINDING_REQUIRED");
-      } finally {
-        await runtime.stop();
-      }
-    } finally {
-      await rm(userDataPath, { recursive: true, force: true });
-      await rm(runtimeDirectoryPath, { recursive: true, force: true });
-      await rm(workspaceRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("runtime bindingはattached secondary repositoryをproject targetとして許可する", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
-    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
-    const workspaceRoot = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-workspace-"));
-    const sessionRepoPath = path.join(workspaceRoot, "session-repo");
-    const attachedRepoPath = path.join(workspaceRoot, "attached-repo");
-    const attachedSubdirectoryPath = path.join(attachedRepoPath, "src", "feature");
-    const outsideRepoPath = path.join(workspaceRoot, "outside-repo");
-    const bindingRegistry = new MemoryBindingRegistry();
-    try {
-      await mkdir(path.join(sessionRepoPath, ".git"), { recursive: true });
-      await mkdir(path.join(attachedRepoPath, ".git"), { recursive: true });
-      await mkdir(attachedSubdirectoryPath, { recursive: true });
-      await mkdir(path.join(outsideRepoPath, ".git"), { recursive: true });
-
-      const runtime = await startMemoryV6RuntimeApi({ userDataPath, runtimeDirectoryPath, bindingRegistry });
-      try {
-        const discovery = JSON.parse(await readFile(runtime.discoveryFilePath, "utf8"));
-        const binding = bindingRegistry.createBinding({
-          session: buildNewSession({
-            taskTitle: "Attached Memory Binding Runtime",
-            workspaceLabel: "Session Repo",
-            workspacePath: sessionRepoPath,
-            branch: "main",
-            characterId: "character-a",
-            character: "Character A",
-            characterIconPath: "",
-            characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-            approvalMode: DEFAULT_APPROVAL_MODE,
-            allowedAdditionalDirectories: [attachedRepoPath],
-          }),
-          provider: createProvider("codex"),
-          character: createCharacter(),
-        });
-        assert.ok(binding);
 
         const context = await fetch(`${runtime.baseUrl}/v1/context`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
-            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
           },
           body: JSON.stringify({ schemaVersion: "withmate-memory-v1" }),
         });
-        assert.equal(context.status, 200);
-        const contextJson = await context.json();
-        assert.deepEqual(
-          contextJson.allowedProjectTargets.map((project: { displayName: string }) => project.displayName),
-          ["Session Repo", "attached-repo"],
-        );
+        assert.equal(context.status, 404);
+        assert.equal((await context.json()).error.code, "MEMORY_ROUTE_NOT_FOUND");
 
-        const append = await fetch(`${runtime.baseUrl}/v1/append`, {
-          method: "POST",
+        const characters = await fetch(`${runtime.baseUrl}/v1/characters`, {
           headers: {
-            "Content-Type": "application/json",
             "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
-            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
           },
-          body: JSON.stringify({
-            schemaVersion: "withmate-memory-v1",
-            target: {
-              owner: "project",
-              scope: "project",
-              project: { type: "path", path: attachedSubdirectoryPath },
-            },
-            kind: "note",
-            title: "Attached repo note",
-            body: "Attached repository memory target can be written from a subdirectory path.",
-            preview: "Attached repo write succeeded.",
-            tags: [{ type: "topic", value: "attached-repo" }],
-          }),
         });
-        assert.equal(append.status, 200);
-        const appendJson = await append.json();
-        assert.notEqual(appendJson.entry.owner.id, contextJson.sessionProject.id);
-
-        const search = await fetch(`${runtime.baseUrl}/v1/search`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
-            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
-          },
-          body: JSON.stringify({
-            schemaVersion: "withmate-memory-v1",
-            targets: [{
-              owner: "project",
-              scope: "project",
-              project: { type: "path", path: attachedRepoPath },
-            }],
-            query: "subdirectory",
-          }),
+        assert.equal(characters.status, 200);
+        assert.deepEqual(await characters.json(), {
+          schemaVersion: "withmate-memory-v1",
+          characters: [],
         });
-        assert.equal(search.status, 200);
-        const searchJson = await search.json();
-        assert.deepEqual(searchJson.items.map((item: { id: string }) => item.id), [appendJson.entry.id]);
 
         const detail = await fetch(`${runtime.baseUrl}/v1/get_entry`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
-            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
           },
           body: JSON.stringify({
             schemaVersion: "withmate-memory-v1",
             entryId: appendJson.entry.id,
-          }),
-        });
-        assert.equal(detail.status, 200);
-        assert.match((await detail.json()).entry.body, /subdirectory path/);
-
-        const forget = await fetch(`${runtime.baseUrl}/v1/forget`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
-            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
-          },
-          body: JSON.stringify({
-            schemaVersion: "withmate-memory-v1",
             target: {
               owner: "project",
               scope: "project",
-              project: { type: "path", path: attachedRepoPath },
+              project: { type: "path", path: workspacePath },
             },
-            entryIds: [appendJson.entry.id],
-            reason: "user_request",
           }),
         });
-        assert.equal(forget.status, 200);
-        assert.deepEqual((await forget.json()).results, [{ entryId: appendJson.entry.id, status: "forgotten" }]);
-
-        const projectScopesBeforeForbidden = listMemoryV6ProjectScopes(runtime.dbPath);
-        const forbidden = await fetch(`${runtime.baseUrl}/v1/search`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
-            [WITHMATE_MEMORY_BINDING_REFERENCE_HEADER]: binding.bindingReference,
-          },
-          body: JSON.stringify({
-            schemaVersion: "withmate-memory-v1",
-            targets: [{
-              owner: "project",
-              scope: "project",
-              project: { type: "path", path: outsideRepoPath },
-            }],
-            query: "outside",
-          }),
-        });
-        assert.equal(forbidden.status, 403);
-        const forbiddenJson = await forbidden.json();
-        assert.equal(forbiddenJson.error.code, "MEMORY_FORBIDDEN");
-        assert.equal(forbiddenJson.error.message, "Project target is not attached to this session.");
-        assert.deepEqual(forbiddenJson.error.allowedProjectTargets, ["Session Repo", "attached-repo"]);
-        assert.deepEqual(listMemoryV6ProjectScopes(runtime.dbPath), projectScopesBeforeForbidden);
+        assert.equal(detail.status, 200);
+        assert.equal((await detail.json()).entry.source.providerId, "local-user");
       } finally {
         await runtime.stop();
       }
-    } finally {
-      await rm(userDataPath, { recursive: true, force: true });
-      await rm(runtimeDirectoryPath, { recursive: true, force: true });
-      await rm(workspaceRoot, { recursive: true, force: true });
-    }
-  });
 
-  it("runtime stopはregistry bindingを全失効する", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
-    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
-    const bindingRegistry = new MemoryBindingRegistry();
-    try {
-      const runtime = await startMemoryV6RuntimeApi({ userDataPath, runtimeDirectoryPath, bindingRegistry });
-      const binding = bindingRegistry.createBinding({
-        session: buildNewSession({
-          taskTitle: "Memory Binding Runtime",
-          workspaceLabel: "Workspace A",
-          workspacePath: "C:/workspace/a",
-          branch: "main",
-          characterId: "character-a",
-          character: "Character A",
-          characterIconPath: "",
-          characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-          approvalMode: DEFAULT_APPROVAL_MODE,
-        }),
-        provider: createProvider("codex"),
-        character: createCharacter(),
-      });
-      assert.ok(binding);
-      assert.ok(bindingRegistry.resolvePrincipal(binding.bindingReference));
-
-      await runtime.stop();
-      assert.equal(bindingRegistry.resolvePrincipal(binding.bindingReference), null);
+      await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6-api.json")));
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
       await rm(runtimeDirectoryPath, { recursive: true, force: true });
@@ -603,61 +259,6 @@ describe("Memory V6 runtime API", () => {
       );
       await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6-api.json")));
     } finally {
-      await rm(userDataPath, { recursive: true, force: true });
-      await rm(runtimeDirectoryPath, { recursive: true, force: true });
-    }
-  });
-
-  it("stale discovery fileがある状態でinvalid V6 DBの場合はstale fileも残さない", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
-    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
-    const discoveryFilePath = path.join(runtimeDirectoryPath, "memory-v6-api.json");
-    try {
-      await writeFile(path.join(userDataPath, "withmate-v6.db"), "not sqlite", "utf8");
-      await writeFile(discoveryFilePath, JSON.stringify({
-        schemaVersion: WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
-        baseUrl: "http://127.0.0.1:9",
-        runtimeInstanceId: "stale-runtime",
-      }), "utf8");
-
-      await assert.rejects(
-        () => startMemoryV6RuntimeApi({ userDataPath, runtimeDirectoryPath }),
-        /does not match the V6 foundation schema/,
-      );
-      await assert.rejects(() => stat(discoveryFilePath));
-    } finally {
-      await rm(userDataPath, { recursive: true, force: true });
-      await rm(runtimeDirectoryPath, { recursive: true, force: true });
-    }
-  });
-
-  it("stale discovery fileの外部URLには起動時確認を送らず削除する", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
-    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
-    const discoveryFilePath = path.join(runtimeDirectoryPath, "memory-v6-api.json");
-    const originalFetch = globalThis.fetch;
-    let fetchCalls = 0;
-    try {
-      await writeFile(path.join(userDataPath, "withmate-v6.db"), "not sqlite", "utf8");
-      await writeFile(discoveryFilePath, JSON.stringify({
-        schemaVersion: WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
-        baseUrl: "http://192.168.0.10:7777",
-        apiSecret: "stale-secret",
-        runtimeInstanceId: "stale-runtime",
-      }), "utf8");
-      globalThis.fetch = (async () => {
-        fetchCalls += 1;
-        throw new Error("external URL should not be fetched");
-      }) as typeof fetch;
-
-      await assert.rejects(
-        () => startMemoryV6RuntimeApi({ userDataPath, runtimeDirectoryPath }),
-        /does not match the V6 foundation schema/,
-      );
-      assert.equal(fetchCalls, 0);
-      await assert.rejects(() => stat(discoveryFilePath));
-    } finally {
-      globalThis.fetch = originalFetch;
       await rm(userDataPath, { recursive: true, force: true });
       await rm(runtimeDirectoryPath, { recursive: true, force: true });
     }

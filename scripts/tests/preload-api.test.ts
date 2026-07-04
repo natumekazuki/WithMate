@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createWithMateWindowApi } from "../../src-electron/preload-api.js";
-import type { WithMateWindowApi } from "../../src/withmate-window-api.js";
+import type {
+  WithMateWindowApi,
+  WithMateWindowSessionApi,
+  WithMateWindowSettingsApi,
+} from "../../src/withmate-window-api.js";
 
 type Listener = (...args: unknown[]) => void;
 
@@ -49,6 +53,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
   assert.deepEqual(await api.resetAppDatabase({ targets: ["appSettings"] }), {
     channel: "withmate:reset-app-database",
     args: [{ targets: ["appSettings"] }],
+  });
+  assert.deepEqual(await api.deleteSessionsLastActiveBefore({ cutoffDate: "2026-07-01" }), {
+    channel: "withmate:delete-sessions-last-active-before",
+    args: [{ cutoffDate: "2026-07-01" }],
   });
   assert.deepEqual(await api.getMemoryV6Diagnostics(), {
     channel: "withmate:get-memory-v6-diagnostics",
@@ -233,6 +241,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "createCompanionSession",
     "createSession",
     "deleteSession",
+    "deleteSessionsLastActiveBefore",
     "discardCompanionSession",
     "dropCompanionTargetStash",
     "exportModelCatalog",
@@ -320,8 +329,6 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "runCompanionSessionTurn",
     "runSessionTurn",
     "savePastedSessionFile",
-    "searchCompanionWorkspaceFiles",
-    "searchWorkspaceFiles",
     "searchMemoryV6Entries",
     "setMateAvatar",
     "setDefaultCharacter",
@@ -376,6 +383,21 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
   for (const key of removedKeys) {
     assert.equal(key in api, false);
   }
+});
+
+test("preload type surface は destructive storage maintenance API を Settings domain に置く", () => {
+  const settingsKeys = [
+    "resetAppDatabase",
+    "deleteSessionsLastActiveBefore",
+  ] satisfies Array<keyof WithMateWindowSettingsApi>;
+  const sessionKeys = [
+    "createSession",
+    "deleteSession",
+    "listSessionSummaries",
+  ] satisfies Array<keyof WithMateWindowSessionApi>;
+
+  assert.equal(settingsKeys.includes("deleteSessionsLastActiveBefore"), true);
+  assert.equal((sessionKeys as string[]).includes("deleteSessionsLastActiveBefore"), false);
 });
 
 test("createWithMateWindowApi は subscribe 系 API で payload を unwrap する", async () => {

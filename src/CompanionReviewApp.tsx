@@ -81,6 +81,7 @@ import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { SessionHeader } from "./session-components.js";
 import { ChatHeaderHandle, ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import { resolveAuditLogOwner } from "./chat/audit-log-owner.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
 import {
   createAuxiliaryHeaderActions,
@@ -162,7 +163,6 @@ import {
 import { runAuxiliarySkillPromptInsertionOperation } from "./auxiliary-skill-prompt-operation.js";
 import {
   buildAdditionalDirectoryItems,
-  buildClosedWorkspacePathMatchState,
   buildComposerAttachmentItems,
   pickComposerReferencePath,
   type ComposerPathPickerKind,
@@ -227,11 +227,7 @@ import {
 } from "./composer-preview-config.js";
 import {
   createComposerPreviewRequest,
-  useComposerPreviewResolution,
 } from "./chat/use-composer-preview-resolution.js";
-import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
-import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
-import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
 import { createPastedSessionAttachmentHandler } from "./chat/composer-paste-handlers.js";
 import {
   runAuxiliaryDraftChangeAndSaveOperation,
@@ -274,7 +270,6 @@ import {
   createSkillPromptInsertionHandler,
   createStartTitleEditHandler,
   createTitleInputKeyHandler,
-  createWorkspacePathMatchSelectionHandler,
 } from "./chat/session-shell-handlers.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
@@ -464,13 +459,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [isAgentPickerOpen, setIsAgentPickerOpen] = useState(false);
   const [isSkillPickerOpen, setIsSkillPickerOpen] = useState(false);
   const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
-  const {
-    workspacePathMatches,
-    activeWorkspacePathMatchIndex,
-    setActiveWorkspacePathMatchIndex,
-    applyWorkspacePathMatchState,
-    workspacePathMatchItems,
-  } = useWorkspacePathMatchState();
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
   const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
@@ -563,10 +551,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
     setComposerPreview(createEmptyComposerPreview());
     setPickerBaseDirectory(snapshot?.session.worktreePath ?? "");
-    applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
     setIsComposerImeComposing(false);
     setIsRetryDraftReplacePending(false);
-  }, [applyWorkspacePathMatchState, snapshot?.session.id]);
+  }, [snapshot?.session.id]);
 
   useEffect(() => {
     syncActiveAuxiliarySessionRef({
@@ -574,6 +561,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       activeSessionRef: activeAuxiliarySessionRef,
     });
   }, [activeAuxiliarySession]);
+
+  useEffect(() => {
+    setComposerPreview(createEmptyComposerPreview());
+  }, [activeAuxiliarySession?.composerDraft, composerText]);
 
   useEffect(() => {
     let active = true;
@@ -1056,6 +1047,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     getSessionAuditLogOperationDetail: withmateApi.getCompanionAuditLogOperationDetail,
   }) : null, [withmateApi]);
   const {
+    session: auditLogSession,
+    ownerSessionId: auditLogOwnerSessionId,
+    sourceLabel: auditLogSourceLabel,
+  } = resolveAuditLogOwner({
+    parentSession: snapshot?.session ?? null,
+    displayedSession,
+    hasActiveAuxiliarySession: isAuxiliaryMode,
+    parentSourceLabel: "Companion",
+  });
+  const auditLogApi = isAuxiliaryMode ? withmateApi : companionAuditLogApi;
+  const {
     auditLogsOpen,
     setAuditLogsOpen,
     auditLogsState,
@@ -1068,8 +1070,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     handleLoadAuditLogOperationDetail,
   } = useSessionAuditLogs({
     withmateApi,
-    auditLogApi: companionAuditLogApi,
-    selectedSession: snapshot?.session ?? null,
+    auditLogApi,
+    selectedSession: auditLogSession,
     liveRun: selectedSessionLiveRun,
     enabled: !isMergeView,
   });
@@ -1104,48 +1106,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     () => companionSessionAuditLogs.find((entry) => isTerminalAuditLogPhase(entry.phase)) ?? null,
     [companionSessionAuditLogs],
   );
-  const {
-    activePathReference,
-    hasPreviewPathReferenceCandidates,
-    isEditingPathReference,
-    normalizedActivePathQuery,
-    previewPathReferenceCandidates,
-    previewPathReferenceSignature,
-    previewDraft,
-    previewUserMessage,
-  } = useComposerPathReferencePreview({
-    draft: activeComposerText,
-    caret: composerCaret,
-    isEnabled: Boolean(snapshot),
-  });
-  const previewComposerInput = useMemo(() => {
-    const sessionId = activeRunSessionId;
-    return createComposerPreviewRequest({
-      api: withmateApi,
-      mode: activeAuxiliarySession ? "session" : "companion",
-      sessionId,
-    });
-  }, [activeAuxiliarySession, activeRunSessionId, withmateApi]);
-  useComposerPreviewResolution({
-    hasPreviewPathReferenceCandidates,
-    isComposerImeComposing,
-    isEditingPathReference,
-    isPreviewBlocked: isMergeView,
-    onComposerPreviewChange: setComposerPreview,
-    previewRequest: previewComposerInput,
-    previewPathReferenceSignature,
-    previewUserMessage,
-  });
-  useWorkspacePathMatchSearchFlow({
-    searchSource: "companion",
-    sessionId: snapshot?.session.id ?? null,
-    withmateApi,
-    isSearchBlocked: isMergeView || selectedSessionRunState === "running" || snapshot?.session.status !== "active",
-    isComposerImeComposing,
-    isEditingPathReference,
-    normalizedActivePathQuery,
-    onWorkspacePathMatchStateChange: applyWorkspacePathMatchState,
-  });
   const {
     sessionWorkbenchRef,
     sessionWorkbenchStyle,
@@ -1335,7 +1295,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       isAgentPickerOpen,
       isSkillPickerOpen,
       isAdditionalDirectoryListOpen,
-      workspacePathMatches.length > 0,
       isRetryDraftReplacePending,
       !!retryBanner,
       companionComposerSendability.shouldShowFeedback,
@@ -1551,7 +1510,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
       if (activeAuxiliarySession) {
         setComposerCaret(nextCaret);
-        applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
         void handleAuxiliaryDraftChange(nextDraft, nextCaret);
         return;
       }
@@ -1562,7 +1520,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         setDraft: setComposerText,
         setComposerCaret,
       });
-      applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
     },
     restoreComposerTextareaFocusAndCaret,
   });
@@ -1588,7 +1545,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
             setComposerCaret,
           });
         }
-        applyWorkspacePathMatchState(insertionState);
       },
       restoreComposerTextareaFocusAndCaret,
     });
@@ -1758,28 +1714,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
   }
 
-  const handleSelectWorkspacePathMatch = createWorkspacePathMatchSelectionHandler({
-    getDraft: () => activeComposerText,
-    getCaret: () => composerCaret,
-    getTextarea: () => composerTextareaRef.current,
-    applySelection: (nextState) => {
-      const { draft: nextDraft, caret: nextCaret } = nextState;
-      if (activeAuxiliarySession) {
-        setComposerCaret(nextCaret);
-        void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-      } else {
-        applyComposerDraftChangeCommand({
-          value: nextDraft,
-          selectionStart: nextCaret,
-          setDraft: setComposerText,
-          setComposerCaret,
-        });
-      }
-      applyWorkspacePathMatchState(nextState);
-    },
-    restoreComposerTextareaFocusAndCaret,
-  });
-
   const handleRemoveAttachmentReference = createPathReferenceRemovalHandler({
     getDraft: () => activeComposerText,
     applyRemoval: (nextState) => {
@@ -1795,7 +1729,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           setComposerCaret,
         });
       }
-      applyWorkspacePathMatchState(nextState);
     },
   });
 
@@ -2754,7 +2687,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
       setDraft: setComposerText,
       setCaret: setComposerCaret,
-      applyWorkspacePathMatchState,
       setRetryDraftReplacePending: setIsRetryDraftReplacePending,
       focusComposer: (caret) => restoreComposerTextareaFocusAndCaret(textarea, caret),
     });
@@ -2845,12 +2777,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   });
 
   const handleCompanionDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = buildComposerDraftKeyDownHandler({
-    pathMatches: workspacePathMatches,
-    activeIndex: activeWorkspacePathMatchIndex,
-    isComposerImeComposing,
-    onActiveIndexChange: setActiveWorkspacePathMatchIndex,
-    onWorkspacePathMatchStateChange: applyWorkspacePathMatchState,
-    onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
     submit: handleCompanionSubmitKey,
   });
 
@@ -3016,7 +2942,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         skillItems,
         attachmentItems: composerAttachmentItems,
         additionalDirectoryItems,
-        workspacePathMatchItems,
         draft: activeComposerText,
         composerTextareaRef,
         isComposerDisabled: runDisabled,
@@ -3056,15 +2981,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         selectedDiffThemeStyle,
         auditLogsOpen,
         displayedSessionAuditLogs,
-        auditLogSourceLabel: "Companion",
+        auditLogSourceLabel,
         auditLogDetails,
         auditLogOperationDetails,
-        auditLogsHasMore: auditLogsState.ownerSessionId === snapshot.session.id ? auditLogsState.hasMore : false,
-        auditLogsLoading: auditLogsState.ownerSessionId === snapshot.session.id ? auditLogsState.loading : false,
-        auditLogsTotal: auditLogsState.ownerSessionId === snapshot.session.id
+        auditLogsHasMore: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.hasMore : false,
+        auditLogsLoading: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.loading : false,
+        auditLogsTotal: auditLogsState.ownerSessionId === auditLogOwnerSessionId
           ? Math.max(auditLogsState.total, displayedSessionAuditLogs.length)
           : displayedSessionAuditLogs.length,
-        auditLogsErrorMessage: auditLogsState.ownerSessionId === snapshot.session.id ? auditLogsState.errorMessage : null,
+        auditLogsErrorMessage: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.errorMessage : null,
         toastMessage: errorMessage || operationMessage,
         toastTone: errorMessage ? "error" : "success",
         headerActions: auxiliaryHeaderActions,
@@ -3176,8 +3101,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onExpandActionDock: () => handleExpandActionDock({
           focusComposer: shouldFocusComposerForActionDockExpand({ isRunning: isSelectedSessionRunning }),
         }),
-        onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
-        onActivateWorkspacePathMatch: setActiveWorkspacePathMatchIndex,
         onChangeApprovalMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<ApprovalMode>({
           shouldUseAuxiliary: !!activeAuxiliarySession,
           onAuxiliaryChange: handleChangeAuxiliaryApproval,

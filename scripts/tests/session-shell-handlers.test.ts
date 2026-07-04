@@ -27,7 +27,6 @@ import {
   applyStartTitleEditCommand,
   applyTitleInputKeyCommand,
   applyUnavailableContextPaneTabFallbackCommand,
-  applyWorkspacePathMatchSelectionCommand,
   createActionDockCollapseHandler,
   createActionDockExpandHandler,
   createAdditionalDirectoryListToggleHandler,
@@ -45,7 +44,6 @@ import {
   createSkillPromptInsertionHandler,
   createStartTitleEditHandler,
   createTitleInputKeyHandler,
-  createWorkspacePathMatchSelectionHandler,
   resolveHeaderExpandedToggle,
   runSessionFilesOpenCommand,
   toggleExpandedArtifactState,
@@ -1012,101 +1010,8 @@ describe("createQuoteMessageTextHandler", () => {
   });
 });
 
-describe("applyWorkspacePathMatchSelectionCommand", () => {
-  it("textarea や active path reference がない場合は何もせず、選択できる場合は state 反映後に focus と caret を復元する", () => {
-    const events: string[] = [];
-    const textarea = {
-      selectionStart: "open @src".length,
-      focus: () => events.push("focus"),
-      setSelectionRange: (start: number, end: number) => events.push(`selection:${start}:${end}`),
-    } as HTMLTextAreaElement;
-    const runCommand = (input: {
-      draft: string;
-      caret: number;
-      match: string;
-      textarea: HTMLTextAreaElement | null;
-    }) =>
-      applyWorkspacePathMatchSelectionCommand({
-        ...input,
-        applySelection: (state) => {
-          events.push(`apply:${state.caret}:${state.draft}`);
-          events.push(`matches:${state.workspacePathMatches.length}:${state.activeWorkspacePathMatchIndex}`);
-        },
-        restoreComposerTextareaFocusAndCaret: (textarea, caret) => {
-          textarea?.focus();
-          textarea?.setSelectionRange(caret, caret);
-        },
-      });
-
-    assert.equal(
-      runCommand({
-        draft: "open @src",
-        caret: "open @src".length,
-        match: "src/App.tsx",
-        textarea: null,
-      }),
-      false,
-    );
-    assert.equal(
-      runCommand({
-        draft: "open src",
-        caret: "open src".length,
-        match: "src/App.tsx",
-        textarea,
-      }),
-      false,
-    );
-    assert.deepEqual(events, []);
-
-    assert.equal(
-      runCommand({
-        draft: "open @src",
-        caret: "open @src".length,
-        match: "src/App.tsx",
-        textarea,
-      }),
-      true,
-    );
-    assert.deepEqual(events, [
-      "apply:17:open @src/App.tsx",
-      "matches:0:-1",
-      "focus",
-      "selection:17:17",
-    ]);
-  });
-});
-
-describe("createWorkspacePathMatchSelectionHandler", () => {
-  it("composer state getter を使って workspace path match 選択 command を実行する", () => {
-    const events: string[] = [];
-    const textarea = {
-      selectionStart: "open @src".length,
-      focus: () => events.push("focus"),
-      setSelectionRange: (start: number, end: number) => events.push(`selection:${start}:${end}`),
-    } as HTMLTextAreaElement;
-    const handler = createWorkspacePathMatchSelectionHandler({
-      getDraft: () => "open @src",
-      getCaret: () => "open @src".length,
-      getTextarea: () => textarea,
-      applySelection: ({ draft, caret }) => events.push(`apply:${caret}:${draft}`),
-      restoreComposerTextareaFocusAndCaret: (textarea, caret) => {
-        textarea?.focus();
-        textarea?.setSelectionRange(caret, caret);
-      },
-    });
-    const expectedDraft = "open @src/App.tsx";
-
-    assert.equal(handler("src/App.tsx"), true);
-    assert.deepEqual(events, [
-      `apply:${expectedDraft.length}:${expectedDraft}`,
-      "focus",
-      `selection:${expectedDraft.length}:${expectedDraft.length}`,
-    ]);
-  });
-});
-
 describe("applyPathReferenceRemovalCommand", () => {
-  it("path reference 削除後の draft と closed workspace match state を反映する", () => {
+  it("path reference 削除後の draft を反映する", () => {
     const events: string[] = [];
 
     applyPathReferenceRemovalCommand({
@@ -1114,14 +1019,10 @@ describe("applyPathReferenceRemovalCommand", () => {
       attachmentPathCandidates: ["src/App.tsx"],
       applyRemoval: (state) => {
         events.push(`apply:${state.caret}:${state.draft}`);
-        events.push(`matches:${state.workspacePathMatches.length}:${state.activeWorkspacePathMatchIndex}`);
       },
     });
 
-    assert.deepEqual(events, [
-      "apply:5:確認 して",
-      "matches:0:-1",
-    ]);
+    assert.deepEqual(events, ["apply:5:確認 して"]);
   });
 
   it("正規化済みの削除対象で Windows separator の path reference も削除する", () => {
@@ -1147,7 +1048,6 @@ describe("createPathReferenceRemovalHandler", () => {
       getDraft: () => "確認 @src/App.tsx して",
       applyRemoval: (state, candidates) => {
         events.push(`apply:${state.caret}:${state.draft}`);
-        events.push(`matches:${state.workspacePathMatches.length}:${state.activeWorkspacePathMatchIndex}`);
         events.push(`candidates:${candidates.join(",")}`);
       },
     });
@@ -1156,7 +1056,6 @@ describe("createPathReferenceRemovalHandler", () => {
 
     assert.deepEqual(events, [
       "apply:5:確認 して",
-      "matches:0:-1",
       "candidates:src/App.tsx",
     ]);
   });
@@ -1222,7 +1121,6 @@ describe("applySelectedPathReferenceInsertionCommand", () => {
         workspacePath: null,
         applyInsertion: (state) => {
           events.push(`apply:${state.caret}:${state.draft}`);
-          events.push(`matches:${state.workspacePathMatches.length}:${state.activeWorkspacePathMatchIndex}`);
         },
         restoreComposerTextareaFocusAndCaret: (textarea, caret) => {
           textarea?.focus();
@@ -1236,7 +1134,6 @@ describe("applySelectedPathReferenceInsertionCommand", () => {
     assert.equal(runCommand(["src/App.tsx"]), true);
     assert.deepEqual(events, [
       "apply:17:see @src/App.tsx here",
-      "matches:0:-1",
       "focus",
       "selection:17:17",
     ]);

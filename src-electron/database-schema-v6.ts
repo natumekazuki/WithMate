@@ -15,6 +15,7 @@ export const REQUIRED_V6_TABLES = [
   "project_scopes_v6",
   "sessions_v6",
   "session_messages_v6",
+  "auxiliary_sessions",
   "audit_events_v6",
   "memory_entries_v6",
   "memory_entry_tags_v6",
@@ -38,6 +39,10 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_project_scopes_key",
   "idx_v6_sessions_last_active",
   "idx_v6_session_messages_session_seq",
+  "idx_auxiliary_sessions_parent_updated",
+  "idx_auxiliary_sessions_parent_created",
+  "idx_v6_audit_events_session_created",
+  "idx_v6_audit_events_auxiliary_session_created",
   "idx_v6_audit_events_type_created",
   "idx_v6_memory_entries_target_state_updated",
   "idx_v6_memory_entry_tags_lookup",
@@ -76,7 +81,8 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "last_active_at",
   ],
   session_messages_v6: ["id", "session_id", "seq", "role", "body", "created_at"],
-  audit_events_v6: ["id", "session_id", "event_type", "provider_id", "summary", "metadata_json", "created_at"],
+  auxiliary_sessions: ["id", "parent_session_id", "status", "created_at", "updated_at", "payload_json"],
+  audit_events_v6: ["id", "session_id", "auxiliary_session_id", "event_type", "provider_id", "summary", "metadata_json", "created_at"],
   memory_entries_v6: [
     "id",
     "owner_type",
@@ -258,6 +264,8 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
   return hasForeignKey(db, "sessions_v6", "character_id", "characters")
     && hasForeignKey(db, "sessions_v6", "project_scope_id", "project_scopes_v6")
     && hasForeignKey(db, "session_messages_v6", "session_id", "sessions_v6")
+    && hasForeignKey(db, "audit_events_v6", "session_id", "sessions_v6")
+    && hasForeignKey(db, "audit_events_v6", "auxiliary_session_id", "auxiliary_sessions")
     && hasForeignKey(db, "memory_entries_v6", "source_app_message_id", "session_messages_v6")
     && hasForeignKey(db, "memory_entries_v6", "superseded_by_id", "memory_entries_v6")
     && hasForeignKey(db, "memory_entry_tags_v6", "entry_id", "memory_entries_v6")
@@ -273,12 +281,14 @@ function tableSql(db: DatabaseSync, tableName: string): string {
 
 function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const sessionsSql = tableSql(db, "sessions_v6");
+  const auxiliarySessionsSql = tableSql(db, "auxiliary_sessions");
   const memoryEntriesSql = tableSql(db, "memory_entries_v6");
   const mutationEventsSql = tableSql(db, "memory_mutation_events_v6");
   const idempotencySql = tableSql(db, "memory_idempotency_keys_v6");
 
   return sessionsSql.includes("json_valid(character_snapshot_json)")
     && memoryEntriesSql.includes("state IN ('active', 'superseded', 'forgotten')")
+    && auxiliarySessionsSql.includes("status IN ('active', 'closed')")
     && memoryEntriesSql.includes("ON DELETE RESTRICT")
     && mutationEventsSql.includes("result_status TEXT NOT NULL")
     && mutationEventsSql.includes("result_status IN")
@@ -437,10 +447,28 @@ export const CREATE_V6_SESSION_MESSAGES_TABLE_SQL = `
     ON session_messages_v6(session_id, seq);
 `;
 
+export const CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS auxiliary_sessions (
+    id TEXT PRIMARY KEY,
+    parent_session_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_updated
+    ON auxiliary_sessions(parent_session_id, updated_at DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_created
+    ON auxiliary_sessions(parent_session_id, created_at ASC);
+`;
+
 export const CREATE_V6_AUDIT_EVENTS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS audit_events_v6 (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT,
+    auxiliary_session_id TEXT,
     event_type TEXT NOT NULL CHECK (event_type IN (
       'session_turn',
       'memory_mutation',
@@ -451,11 +479,15 @@ export const CREATE_V6_AUDIT_EVENTS_TABLE_SQL = `
     summary TEXT NOT NULL DEFAULT '',
     metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL
+    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
+    FOREIGN KEY (auxiliary_session_id) REFERENCES auxiliary_sessions(id) ON DELETE SET NULL
   );
 
   CREATE INDEX IF NOT EXISTS idx_v6_audit_events_session_created
     ON audit_events_v6(session_id, created_at DESC, id DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_v6_audit_events_auxiliary_session_created
+    ON audit_events_v6(auxiliary_session_id, created_at DESC, id DESC);
 
   CREATE INDEX IF NOT EXISTS idx_v6_audit_events_type_created
     ON audit_events_v6(event_type, created_at DESC);
@@ -662,6 +694,7 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
   CREATE_V6_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_MESSAGES_TABLE_SQL,
+  CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
   CREATE_V6_AUDIT_EVENTS_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRIES_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRY_TAGS_TABLE_SQL,
@@ -672,3 +705,173 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_MEMORY_IDEMPOTENCY_FORGET_RESULTS_TABLE_SQL,
   `PRAGMA user_version = ${APP_DATABASE_V6_SCHEMA_VERSION};`,
 ] as const;
+
+function tableExists(db: DatabaseSync, tableName: string): boolean {
+  const row = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?").get(tableName) as
+    | { name?: unknown }
+    | undefined;
+  return row?.name === tableName;
+}
+
+function tableColumnNames(db: DatabaseSync, tableName: string): Set<string> {
+  return new Set(
+    (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: unknown }>)
+      .map((column) => column.name)
+      .filter((name): name is string => typeof name === "string"),
+  );
+}
+
+function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): void {
+  const createdAtExpression = columns.has("created_at") ? "created_at" : "updated_at";
+  const shouldRestoreAuditAuxiliaryOwners =
+    tableExists(db, "audit_events_v6") && tableColumnNames(db, "audit_events_v6").has("auxiliary_session_id");
+
+  db.exec("DROP TABLE IF EXISTS auxiliary_sessions_v6_rebuild;");
+  if (shouldRestoreAuditAuxiliaryOwners) {
+    db.exec("DROP TABLE IF EXISTS temp.audit_events_v6_auxiliary_owner_restore;");
+    db.exec(`
+      CREATE TEMP TABLE audit_events_v6_auxiliary_owner_restore AS
+      SELECT id AS audit_event_id, auxiliary_session_id
+      FROM audit_events_v6
+      WHERE auxiliary_session_id IS NOT NULL
+    `);
+  }
+  db.exec(`
+    CREATE TABLE auxiliary_sessions_v6_rebuild (
+      id TEXT PRIMARY KEY,
+      parent_session_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      payload_json TEXT NOT NULL
+    );
+  `);
+  db.exec(`
+    INSERT INTO auxiliary_sessions_v6_rebuild (
+      id,
+      parent_session_id,
+      status,
+      created_at,
+      updated_at,
+      payload_json
+    )
+    SELECT
+      id,
+      parent_session_id,
+      status,
+      ${createdAtExpression},
+      updated_at,
+      payload_json
+    FROM auxiliary_sessions
+  `);
+  db.exec("DROP TABLE auxiliary_sessions;");
+  db.exec("ALTER TABLE auxiliary_sessions_v6_rebuild RENAME TO auxiliary_sessions;");
+  if (shouldRestoreAuditAuxiliaryOwners) {
+    db.exec(`
+      UPDATE audit_events_v6
+      SET auxiliary_session_id = (
+        SELECT auxiliary_session_id
+        FROM audit_events_v6_auxiliary_owner_restore
+        WHERE audit_event_id = audit_events_v6.id
+      )
+      WHERE id IN (
+        SELECT audit_event_id
+        FROM audit_events_v6_auxiliary_owner_restore
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM auxiliary_sessions
+        WHERE id = (
+          SELECT auxiliary_session_id
+          FROM audit_events_v6_auxiliary_owner_restore
+          WHERE audit_event_id = audit_events_v6.id
+        )
+      )
+    `);
+    db.exec("DROP TABLE temp.audit_events_v6_auxiliary_owner_restore;");
+  }
+}
+
+function backfillAuxiliarySessionsCreatedAt(db: DatabaseSync): void {
+  db.exec("UPDATE auxiliary_sessions SET created_at = updated_at WHERE created_at IS NULL OR created_at = '';");
+}
+
+function runWithSavepoint(db: DatabaseSync, savepointName: string, run: () => void): void {
+  db.exec(`SAVEPOINT ${savepointName};`);
+  try {
+    run();
+    db.exec(`RELEASE SAVEPOINT ${savepointName};`);
+  } catch (error) {
+    try {
+      db.exec(`ROLLBACK TO SAVEPOINT ${savepointName};`);
+    } finally {
+      db.exec(`RELEASE SAVEPOINT ${savepointName};`);
+    }
+    throw error;
+  }
+}
+
+function ensureV6SchemaUnsafe(db: DatabaseSync): void {
+  for (const statement of CREATE_V6_SCHEMA_SQL) {
+    if (statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL || statement === CREATE_V6_AUDIT_EVENTS_TABLE_SQL) {
+      continue;
+    }
+    db.exec(statement);
+  }
+
+  if (!tableExists(db, "auxiliary_sessions")) {
+    db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);
+  } else {
+    const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
+    const shouldRebuildAuxiliarySessions = hasForeignKey(db, "auxiliary_sessions", "parent_session_id", "sessions_v6")
+      || !tableSql(db, "auxiliary_sessions").includes("status IN ('active', 'closed')");
+    if (shouldRebuildAuxiliarySessions) {
+      rebuildAuxiliarySessionsTable(db, auxiliaryColumns);
+    } else if (!auxiliaryColumns.has("created_at")) {
+      db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN created_at TEXT NOT NULL DEFAULT ''");
+    }
+    backfillAuxiliarySessionsCreatedAt(db);
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_updated
+        ON auxiliary_sessions(parent_session_id, updated_at DESC)
+    `);
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_created
+        ON auxiliary_sessions(parent_session_id, created_at ASC)
+    `);
+  }
+
+  if (!tableExists(db, "audit_events_v6")) {
+    db.exec(CREATE_V6_AUDIT_EVENTS_TABLE_SQL);
+  } else {
+    const auditColumns = tableColumnNames(db, "audit_events_v6");
+    if (!auditColumns.has("auxiliary_session_id")) {
+      db.exec(`
+        ALTER TABLE audit_events_v6
+        ADD COLUMN auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE SET NULL
+      `);
+    }
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_v6_audit_events_session_created
+        ON audit_events_v6(session_id, created_at DESC, id DESC)
+    `);
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_v6_audit_events_auxiliary_session_created
+        ON audit_events_v6(auxiliary_session_id, created_at DESC, id DESC)
+    `);
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_v6_audit_events_type_created
+        ON audit_events_v6(event_type, created_at DESC)
+    `);
+  }
+
+}
+
+export function ensureV6Schema(db: DatabaseSync): void {
+  runWithSavepoint(db, "ensure_v6_schema", () => ensureV6SchemaUnsafe(db));
+}

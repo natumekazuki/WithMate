@@ -25,8 +25,10 @@ export function HomeMonitorContent({
   const renderMonitorEntries = (entries: HomeMonitorEntry[]) => {
     return entries.map((entry) => {
       if (entry.kind === "companion") {
-        const { session, state } = entry;
+        const { session } = entry;
         const groupClassName = companionGroupMarkerClassName(session.groupId);
+        const modeLabel = entry.activeAuxiliarySession ? "Auxiliary" : "Companion";
+        const modeClassName = entry.activeAuxiliarySession ? "auxiliary" : "companion";
         return (
           <button
             key={`companion-${session.id}`}
@@ -44,15 +46,17 @@ export function HomeMonitorContent({
               <span>{entry.groupLabel}</span>
             </div>
             <div className="home-monitor-row-badges">
-              <span className="session-mode-badge companion">Companion</span>
+              <span className={`session-mode-badge ${modeClassName}`}>{modeLabel}</span>
+              <span className={`session-status home-monitor-status ${entry.state.kind}`.trim()}>{entry.state.label}</span>
               <span className={`home-monitor-group-chip ${groupClassName}`} aria-label="同じ Companion group の目印" />
-              <span className={`session-status home-monitor-status ${state.kind}`.trim()}>{state.label}</span>
             </div>
           </button>
         );
       }
 
-      const { session, state } = entry;
+      const { session } = entry;
+      const modeLabel = entry.activeAuxiliarySession ? "Auxiliary" : "Agent";
+      const modeClassName = entry.activeAuxiliarySession ? "auxiliary" : "agent";
       return (
         <button
           key={`agent-${session.id}`}
@@ -70,8 +74,8 @@ export function HomeMonitorContent({
             <span>{session.workspaceLabel || session.workspacePath || "workspace 未設定"}</span>
           </div>
           <div className="home-monitor-row-badges">
-            <span className="session-mode-badge agent">Agent</span>
-            <span className={`session-status home-monitor-status ${state.kind}`.trim()}>{state.label}</span>
+            <span className={`session-mode-badge ${modeClassName}`}>{modeLabel}</span>
+            <span className={`session-status home-monitor-status ${entry.state.kind}`.trim()}>{entry.state.label}</span>
           </div>
         </button>
       );

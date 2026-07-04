@@ -692,15 +692,6 @@ button:disabled {
   padding: 22px;
 }
 
-.home-page .home-monitor-window-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 16px;
-  min-height: 0;
-  padding: 16px;
-  background: rgba(21, 26, 35, 0.96);
-}
-
 .home-page .home-monitor-panel,
 .home-page .home-characters-panel {
   flex: 1 1 auto;
@@ -1103,8 +1094,8 @@ button:disabled {
 
 .home-page .home-session-chip-status,
 .home-page .home-session-status,
-.home-page .session-mode-badge,
-.home-page .home-monitor-status {
+.home-page .home-monitor-status,
+.home-page .session-mode-badge {
   flex: 0 0 auto;
   border-color: color-mix(in srgb, var(--card-ink, var(--ink)) 18%, transparent);
   background: color-mix(in srgb, var(--card-ink, var(--ink)) 12%, transparent);
@@ -1119,6 +1110,11 @@ button:disabled {
 .home-page .session-mode-badge.agent {
   border-color: rgba(111, 184, 199, 0.28);
   background: rgba(111, 184, 199, 0.14);
+}
+
+.home-page .session-mode-badge.auxiliary {
+  border-color: rgba(245, 158, 11, 0.34);
+  background: rgba(245, 158, 11, 0.16);
 }
 
 .home-page .session-mode-badge.character {
@@ -8252,8 +8248,11 @@ button:disabled {
 }
 
 .diff-inline-view {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
+  height: 100%;
   overflow: hidden;
   background: var(--editor);
 }

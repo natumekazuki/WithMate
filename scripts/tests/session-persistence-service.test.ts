@@ -706,6 +706,317 @@ describe("SessionPersistenceService", () => {
     assert.equal(storedSessions.length, 0);
   });
 
+  it("deleteSession は active Auxiliary が実行中の親 Session を削除しない", async () => {
+    const parentSession = createSession({ id: "parent" });
+    const storedSessions: Session[] = [parentSession];
+    const deleted: string[] = [];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return storedSessions.find((entry) => entry.id === sessionId) ?? null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      listRunningActiveAuxiliaryParentIds(sessionIds) {
+        assert.deepEqual(sessionIds, [parentSession.id]);
+        return new Set([parentSession.id]);
+      },
+      upsertStoredSession(next) {
+        storedSessions.splice(0, storedSessions.length, next);
+        return next;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      deleteStoredSession(sessionId) {
+        deleted.push(sessionId);
+        const remaining = storedSessions.filter((entry) => entry.id !== sessionId);
+        storedSessions.splice(0, storedSessions.length, ...remaining);
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      clearCharacterReflectionCheckpoint() {},
+      clearInFlightCharacterReflection() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    await assert.rejects(
+      () => service.deleteSession(parentSession.id),
+      /実行中のセッションは削除できない/,
+    );
+
+    assert.deepEqual(deleted, []);
+    assert.deepEqual(storedSessions.map((session) => session.id), [parentSession.id]);
+  });
+
+  it("deleteSessionsLastActiveBefore は対象だけ bulk 削除し running は skip する", async () => {
+    const oldSession = createSession({ id: "old", updatedAt: "2026-06-01T00:00:00.000Z" });
+    const runningSession = createSession({
+      id: "running",
+      status: "running",
+      runState: "running",
+      updatedAt: "2026-06-01T01:00:00.000Z",
+    });
+    const recentSession = createSession({ id: "recent", updatedAt: "2026-07-02T00:00:00.000Z" });
+    const storedSessions: Session[] = [oldSession, runningSession, recentSession];
+    const deletedBatches: string[][] = [];
+    const clearedTelemetry: string[] = [];
+    const clearedBackground: string[] = [];
+    const closedWindows: string[] = [];
+    const broadcastedSessionIds: string[][] = [];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return storedSessions.find((entry) => entry.id === sessionId) ?? null;
+      },
+      isSessionRunInFlight(sessionId) {
+        return sessionId === runningSession.id;
+      },
+      upsertStoredSession(next) {
+        storedSessions.splice(0, storedSessions.length, next);
+        return next;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      listStoredSessionIdsLastActiveBefore() {
+        return [oldSession.id, runningSession.id];
+      },
+      deleteStoredSessions(sessionIds) {
+        deletedBatches.push([...sessionIds]);
+        const deletedSessionIds = new Set(sessionIds);
+        const remaining = storedSessions.filter((entry) => !deletedSessionIds.has(entry.id));
+        storedSessions.splice(0, storedSessions.length, ...remaining);
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry(sessionId) {
+        clearedTelemetry.push(sessionId);
+      },
+      clearSessionBackgroundActivities(sessionId) {
+        clearedBackground.push(sessionId);
+      },
+      clearCharacterReflectionCheckpoint() {},
+      clearInFlightCharacterReflection() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow(sessionId) {
+        closedWindows.push(sessionId);
+      },
+      broadcastSessions(sessionIds) {
+        broadcastedSessionIds.push(Array.from(sessionIds ?? []));
+      },
+    });
+
+    const result = await service.deleteSessionsLastActiveBefore({
+      cutoffDate: "2026-07-01",
+      cutoffTimestampMs: Date.parse("2026-07-01T00:00:00.000Z"),
+      cutoffIso: "2026-07-01T00:00:00.000Z",
+    });
+
+    assert.deepEqual(result.deletedSessionIds, [oldSession.id]);
+    assert.deepEqual(result.skippedRunningSessionIds, [runningSession.id]);
+    assert.deepEqual(deletedBatches, [[oldSession.id]]);
+    assert.deepEqual(clearedTelemetry, [oldSession.id]);
+    assert.deepEqual(clearedBackground, [oldSession.id]);
+    assert.deepEqual(closedWindows, [oldSession.id]);
+    assert.deepEqual(broadcastedSessionIds, [[oldSession.id]]);
+    assert.deepEqual(storedSessions.map((session) => session.id), [runningSession.id, recentSession.id]);
+  });
+
+  it("deleteSessionsLastActiveBefore は active Auxiliary が実行中の親 Session を skip する", async () => {
+    const parentSession = createSession({ id: "parent", updatedAt: "2026-06-01T00:00:00.000Z" });
+    const oldSession = createSession({ id: "old", updatedAt: "2026-06-01T01:00:00.000Z" });
+    const recentSession = createSession({ id: "recent", updatedAt: "2026-07-02T00:00:00.000Z" });
+    const storedSessions: Session[] = [parentSession, oldSession, recentSession];
+    const deletedBatches: string[][] = [];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return storedSessions.find((entry) => entry.id === sessionId) ?? null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      listRunningActiveAuxiliaryParentIds(sessionIds) {
+        assert.deepEqual(sessionIds, [parentSession.id, oldSession.id]);
+        return new Set([parentSession.id]);
+      },
+      upsertStoredSession(next) {
+        storedSessions.splice(0, storedSessions.length, next);
+        return next;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      listStoredSessionIdsLastActiveBefore() {
+        return [parentSession.id, oldSession.id];
+      },
+      deleteStoredSessions(sessionIds) {
+        deletedBatches.push([...sessionIds]);
+        const deletedSessionIds = new Set(sessionIds);
+        const remaining = storedSessions.filter((entry) => !deletedSessionIds.has(entry.id));
+        storedSessions.splice(0, storedSessions.length, ...remaining);
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      clearCharacterReflectionCheckpoint() {},
+      clearInFlightCharacterReflection() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    const result = await service.deleteSessionsLastActiveBefore({
+      cutoffDate: "2026-07-01",
+      cutoffTimestampMs: Date.parse("2026-07-01T00:00:00.000Z"),
+      cutoffIso: "2026-07-01T00:00:00.000Z",
+    });
+
+    assert.deepEqual(result.deletedSessionIds, [oldSession.id]);
+    assert.deepEqual(result.skippedRunningSessionIds, [parentSession.id]);
+    assert.deepEqual(deletedBatches, [[oldSession.id]]);
+    assert.deepEqual(storedSessions.map((session) => session.id), [parentSession.id, recentSession.id]);
+  });
+
+  it("deleteSessionsLastActiveBefore は cache 未読込の stored session も削除する", async () => {
+    const uncachedOldSession = createSession({ id: "uncached-old", updatedAt: "2026-06-01T00:00:00.000Z" });
+    const runningSession = createSession({
+      id: "running",
+      status: "running",
+      runState: "running",
+      updatedAt: "2026-06-01T01:00:00.000Z",
+    });
+    const recentSession = createSession({ id: "recent", updatedAt: "2026-07-02T00:00:00.000Z" });
+    const cachedSessions: Session[] = [runningSession, recentSession];
+    const persistedSessions: Session[] = [uncachedOldSession, runningSession, recentSession];
+    const deletedBatches: string[][] = [];
+    const clearedTelemetry: string[] = [];
+    const clearedBackground: string[] = [];
+    const closedWindows: string[] = [];
+    const broadcastedSessionIds: string[][] = [];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return cachedSessions;
+      },
+      setSessions(nextSessions) {
+        cachedSessions.splice(0, cachedSessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return cachedSessions.find((entry) => entry.id === sessionId) ?? null;
+      },
+      isSessionRunInFlight(sessionId) {
+        return sessionId === runningSession.id;
+      },
+      upsertStoredSession(next) {
+        persistedSessions.splice(0, persistedSessions.length, next);
+        return next;
+      },
+      replaceStoredSessions(nextSessions) {
+        persistedSessions.splice(0, persistedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...persistedSessions];
+      },
+      listStoredSessionIdsLastActiveBefore() {
+        return [uncachedOldSession.id, runningSession.id];
+      },
+      deleteStoredSessions(sessionIds) {
+        deletedBatches.push([...sessionIds]);
+        const deletedSessionIds = new Set(sessionIds);
+        const remaining = persistedSessions.filter((entry) => !deletedSessionIds.has(entry.id));
+        persistedSessions.splice(0, persistedSessions.length, ...remaining);
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry(sessionId) {
+        clearedTelemetry.push(sessionId);
+      },
+      clearSessionBackgroundActivities(sessionId) {
+        clearedBackground.push(sessionId);
+      },
+      clearCharacterReflectionCheckpoint() {},
+      clearInFlightCharacterReflection() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow(sessionId) {
+        closedWindows.push(sessionId);
+      },
+      broadcastSessions(sessionIds) {
+        broadcastedSessionIds.push(Array.from(sessionIds ?? []));
+      },
+    });
+
+    const result = await service.deleteSessionsLastActiveBefore({
+      cutoffDate: "2026-07-01",
+      cutoffTimestampMs: Date.parse("2026-07-01T00:00:00.000Z"),
+      cutoffIso: "2026-07-01T00:00:00.000Z",
+    });
+
+    assert.deepEqual(result.deletedSessionIds, [uncachedOldSession.id]);
+    assert.deepEqual(result.skippedRunningSessionIds, [runningSession.id]);
+    assert.deepEqual(deletedBatches, [[uncachedOldSession.id]]);
+    assert.deepEqual(clearedTelemetry, [uncachedOldSession.id]);
+    assert.deepEqual(clearedBackground, [uncachedOldSession.id]);
+    assert.deepEqual(closedWindows, [uncachedOldSession.id]);
+    assert.deepEqual(broadcastedSessionIds, [[uncachedOldSession.id]]);
+    assert.deepEqual(cachedSessions.map((session) => session.id), [runningSession.id, recentSession.id]);
+    assert.deepEqual(persistedSessions.map((session) => session.id), [runningSession.id, recentSession.id]);
+  });
+
   it("replaceAllSessions は removed/provider change の副作用と invalidation を処理する", async () => {
     const sessionA = createSession({ id: "session-a", provider: "codex", model: "codex-default" });
     const sessionB = createSession({ id: "session-b", provider: "copilot", model: "copilot-default" });

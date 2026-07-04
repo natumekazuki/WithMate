@@ -54,6 +54,117 @@ function createArtifact(): MessageArtifact {
   };
 }
 
+function insertAuxiliarySessionRows(dbPath: string, rows: Array<{ id: string; parentSessionId: string }>): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    const statement = db.prepare(`
+      INSERT INTO auxiliary_sessions (
+        id,
+        parent_session_id,
+        status,
+        created_at,
+        updated_at,
+        payload_json
+      ) VALUES (?, ?, 'active', '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z', '{}')
+    `);
+    for (const row of rows) {
+      statement.run(row.id, row.parentSessionId);
+    }
+  } finally {
+    db.close();
+  }
+}
+
+function insertCompanionSessionRows(dbPath: string, rows: Array<{ id: string; status: string }>): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS companion_sessions (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL
+      )
+    `);
+    const statement = db.prepare("INSERT INTO companion_sessions (id, status) VALUES (?, ?)");
+    for (const row of rows) {
+      statement.run(row.id, row.status);
+    }
+  } finally {
+    db.close();
+  }
+}
+
+function listAuxiliarySessionParentIds(dbPath: string): string[] {
+  const db = new DatabaseSync(dbPath);
+  try {
+    const rows = db.prepare(`
+      SELECT parent_session_id AS parentSessionId
+      FROM auxiliary_sessions
+      ORDER BY parent_session_id ASC
+    `).all() as Array<{ parentSessionId: string }>;
+    return rows.map((row) => row.parentSessionId);
+  } finally {
+    db.close();
+  }
+}
+
+function insertAuditEventRows(
+  dbPath: string,
+  rows: Array<{
+    sessionId?: string | null;
+    auxiliarySessionId?: string | null;
+    eventType?: "session_turn" | "memory_mutation" | "runtime_binding" | "diagnostic";
+    summary: string;
+  }>,
+): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    const statement = db.prepare(`
+      INSERT INTO audit_events_v6 (
+        session_id,
+        auxiliary_session_id,
+        event_type,
+        provider_id,
+        summary,
+        metadata_json,
+        created_at
+      ) VALUES (?, ?, ?, 'codex', ?, ?, '2026-07-01T00:00:00.000Z')
+    `);
+    for (const row of rows) {
+      const ownerId = row.sessionId ?? row.auxiliarySessionId ?? "";
+      statement.run(
+        row.sessionId ?? null,
+        row.auxiliarySessionId ?? null,
+        row.eventType ?? "session_turn",
+        row.summary,
+        JSON.stringify({
+          sessionId: ownerId,
+          phase: "completed",
+          provider: "codex",
+          assistantText: row.summary,
+          operations: [],
+          rawItemsJson: "[]",
+        }),
+      );
+    }
+  } finally {
+    db.close();
+  }
+}
+
+function listAuditEventSummaries(dbPath: string): string[] {
+  const db = new DatabaseSync(dbPath);
+  try {
+    const rows = db.prepare(`
+      SELECT summary
+      FROM audit_events_v6
+      ORDER BY summary ASC
+    `).all() as Array<{ summary: string }>;
+    return rows.map((row) => row.summary);
+  } finally {
+    db.close();
+  }
+}
+
 describe("SessionStorageV6", () => {
   it("既存の artifact_body なし schema は constructor で補完する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
@@ -132,6 +243,207 @@ describe("SessionStorageV6", () => {
       assert.equal(fullArtifact?.operationTimeline?.[0]?.details, "large operation details");
       assert.equal(fullArtifact?.changedFiles[0]?.diffRows[0]?.rightText, "const value = true;");
       assert.deepEqual(fullArtifact?.runChecks, artifact.runChecks);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("last_active_at が cutoff より前の session id を列挙し、複数削除できる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const baseInput = {
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      };
+      const oldSession = storage.upsertSession({
+        ...buildNewSession({ ...baseInput, taskTitle: "old" }),
+        id: "old",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      });
+      const cutoffSession = storage.upsertSession({
+        ...buildNewSession({ ...baseInput, taskTitle: "cutoff" }),
+        id: "cutoff",
+        updatedAt: "2026-07-01T00:00:00.000Z",
+      });
+      const recentSession = storage.upsertSession({
+        ...buildNewSession({ ...baseInput, taskTitle: "recent" }),
+        id: "recent",
+        updatedAt: "2026-07-02T00:00:00.000Z",
+      });
+
+      assert.deepEqual(
+        storage.listSessionIdsLastActiveBefore({
+          cutoffDate: "2026-07-01",
+          cutoffTimestampMs: Date.parse("2026-07-01T00:00:00.000Z"),
+          cutoffIso: "2026-07-01T00:00:00.000Z",
+        }),
+        [oldSession.id],
+      );
+
+      storage.deleteSessions([oldSession.id, recentSession.id]);
+
+      assert.deepEqual(storage.listSessions().map((session) => session.id), [cutoffSession.id]);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("親 Session の削除経路で auxiliary_sessions を cleanup する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const baseInput = {
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      };
+      const deletedParent = storage.upsertSession({
+        ...buildNewSession({ ...baseInput, taskTitle: "deleted parent" }),
+        id: "deleted-parent",
+      });
+      const retainedParent = storage.upsertSession({
+        ...buildNewSession({ ...baseInput, taskTitle: "retained parent" }),
+        id: "retained-parent",
+      });
+      const replacedParent = storage.upsertSession({
+        ...buildNewSession({ ...baseInput, taskTitle: "replaced parent" }),
+        id: "replaced-parent",
+      });
+
+      insertAuxiliarySessionRows(dbPath, [
+        { id: "aux-deleted", parentSessionId: deletedParent.id },
+        { id: "aux-retained", parentSessionId: retainedParent.id },
+        { id: "aux-replaced", parentSessionId: replacedParent.id },
+      ]);
+
+      storage.deleteSession(deletedParent.id);
+      assert.deepEqual(listAuxiliarySessionParentIds(dbPath), [replacedParent.id, retainedParent.id]);
+
+      insertCompanionSessionRows(dbPath, [
+        { id: "companion-active-parent", status: "active" },
+        { id: "companion-recovery-parent", status: "recovery-required" },
+        { id: "companion-merged-parent", status: "merged" },
+        { id: "companion-discarded-parent", status: "discarded" },
+      ]);
+      insertAuxiliarySessionRows(dbPath, [
+        { id: "aux-companion-active", parentSessionId: "companion-active-parent" },
+        { id: "aux-companion-recovery", parentSessionId: "companion-recovery-parent" },
+        { id: "aux-companion-merged", parentSessionId: "companion-merged-parent" },
+        { id: "aux-companion-discarded", parentSessionId: "companion-discarded-parent" },
+      ]);
+
+      storage.replaceSessions([{ ...retainedParent, taskTitle: "retained after replace" }]);
+      assert.deepEqual(listAuxiliarySessionParentIds(dbPath), [
+        "companion-active-parent",
+        "companion-recovery-parent",
+        retainedParent.id,
+      ]);
+
+      storage.clearSessions();
+      assert.deepEqual(listAuxiliarySessionParentIds(dbPath), []);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("Session / Auxiliary 削除経路で audit_events_v6 payload を cleanup する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const baseInput = {
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      };
+      const deletedParent = storage.upsertSession({
+        ...buildNewSession({ ...baseInput, taskTitle: "deleted parent audit" }),
+        id: "deleted-audit-parent",
+      });
+      const retainedParent = storage.upsertSession({
+        ...buildNewSession({ ...baseInput, taskTitle: "retained parent audit" }),
+        id: "retained-audit-parent",
+      });
+      const replacedParent = storage.upsertSession({
+        ...buildNewSession({ ...baseInput, taskTitle: "replaced parent audit" }),
+        id: "replaced-audit-parent",
+      });
+      insertAuxiliarySessionRows(dbPath, [
+        { id: "aux-audit-deleted", parentSessionId: deletedParent.id },
+        { id: "aux-audit-retained", parentSessionId: retainedParent.id },
+        { id: "aux-audit-replaced", parentSessionId: replacedParent.id },
+      ]);
+      insertAuditEventRows(dbPath, [
+        { sessionId: deletedParent.id, summary: "audit-deleted-session" },
+        { sessionId: retainedParent.id, summary: "audit-retained-session" },
+        { sessionId: replacedParent.id, summary: "audit-replaced-session" },
+        { auxiliarySessionId: "aux-audit-deleted", summary: "audit-deleted-auxiliary" },
+        { auxiliarySessionId: "aux-audit-retained", summary: "audit-retained-auxiliary" },
+        { auxiliarySessionId: "aux-audit-replaced", summary: "audit-replaced-auxiliary" },
+      ]);
+
+      storage.deleteSession(deletedParent.id);
+      assert.deepEqual(listAuditEventSummaries(dbPath), [
+        "audit-replaced-auxiliary",
+        "audit-replaced-session",
+        "audit-retained-auxiliary",
+        "audit-retained-session",
+      ]);
+
+      insertCompanionSessionRows(dbPath, [
+        { id: "companion-audit-active-parent", status: "active" },
+        { id: "companion-audit-merged-parent", status: "merged" },
+      ]);
+      insertAuxiliarySessionRows(dbPath, [
+        { id: "aux-audit-companion-active", parentSessionId: "companion-audit-active-parent" },
+        { id: "aux-audit-companion-merged", parentSessionId: "companion-audit-merged-parent" },
+      ]);
+      insertAuditEventRows(dbPath, [
+        { auxiliarySessionId: "aux-audit-companion-active", summary: "audit-companion-active-auxiliary" },
+        { auxiliarySessionId: "aux-audit-companion-merged", summary: "audit-companion-merged-auxiliary" },
+      ]);
+
+      storage.replaceSessions([{ ...retainedParent, taskTitle: "retained audit after replace" }]);
+      assert.deepEqual(listAuditEventSummaries(dbPath), [
+        "audit-companion-active-auxiliary",
+        "audit-retained-auxiliary",
+        "audit-retained-session",
+      ]);
+
+      insertAuditEventRows(dbPath, [
+        { summary: "audit-ownerless-session-turn" },
+        { eventType: "memory_mutation", summary: "audit-memory-mutation" },
+      ]);
+      storage.clearSessions();
+      assert.deepEqual(listAuditEventSummaries(dbPath), ["audit-memory-mutation"]);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

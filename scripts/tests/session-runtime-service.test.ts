@@ -275,7 +275,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -365,7 +364,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -380,203 +378,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(result.runState, "idle");
   });
 
-  it("provider memory binding を turn input に渡し、完了時に revoke する", async () => {
-    const session = createSession();
-    const binding = {
-      bindingId: "binding-1",
-      bindingReference: "ref-1",
-      transport: "env" as const,
-    };
-    const calls: string[] = [];
-
-    const adapter: ProviderCodingAdapter = {
-      composePrompt(input) {
-        calls.push(`compose:${input.memoryBinding?.bindingId ?? ""}`);
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
-      runSessionTurn(input) {
-        calls.push(`run:${input.memoryBinding?.bindingReference ?? ""}`);
-        return Promise.resolve(createPartialResult({
-          threadId: "thread-1",
-          assistantText: "完了したよ。",
-        }));
-      },
-    };
-
-    const service = new SessionRuntimeService({
-      getSession(sessionId) {
-        return sessionId === session.id ? session : null;
-      },
-      upsertSession(next) {
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] } satisfies ComposerPreview;
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
-      },
-      updateAuditLog() {},
-      setLiveSessionRun() {},
-      getLiveSessionRun() {
-        return null;
-      },
-      async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
-        return "approve";
-      },
-      async waitForElicitationResponse() {
-        return { action: "cancel" } as const;
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
-      scheduleProviderQuotaTelemetryRefresh() {},
-      clearWorkspaceFileIndex() {},
-      createProviderMemoryBinding(input) {
-        calls.push(`create:${input.session.id}:${input.provider.id}:${input.character?.id ?? "none"}`);
-        return binding;
-      },
-      revokeProviderMemoryBinding(nextBinding) {
-        calls.push(`revoke:${nextBinding.bindingId}`);
-      },
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
-    });
-
-    const result = await service.runSessionTurn(session.id, { userMessage: "お願い" });
-
-    assert.equal(result.runState, "idle");
-    assert.deepEqual(calls, [
-      `create:${session.id}:codex:none`,
-      "compose:binding-1",
-      "run:ref-1",
-      "revoke:binding-1",
-    ]);
-  });
-
-  it("provider memory binding revoke が失敗しても turn cleanup は継続する", async () => {
-    const session = createSession();
-    const liveStates: Array<LiveSessionRunState | null> = [];
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
-      runSessionTurn() {
-        return Promise.resolve(createPartialResult({
-          threadId: "thread-1",
-          assistantText: "完了したよ。",
-        }));
-      },
-    };
-
-    const service = new SessionRuntimeService({
-      getSession(sessionId) {
-        return sessionId === session.id ? session : null;
-      },
-      upsertSession(next) {
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] } satisfies ComposerPreview;
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
-      },
-      updateAuditLog() {},
-      setLiveSessionRun(_sessionId, state) {
-        liveStates.push(state);
-      },
-      getLiveSessionRun() {
-        return liveStates.at(-1) ?? null;
-      },
-      async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
-        return "approve";
-      },
-      async waitForElicitationResponse() {
-        return { action: "cancel" } as const;
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
-      scheduleProviderQuotaTelemetryRefresh() {},
-      clearWorkspaceFileIndex() {},
-      createProviderMemoryBinding() {
-        return {
-          bindingId: "binding-1",
-          bindingReference: "ref-1",
-          transport: "env",
-        };
-      },
-      revokeProviderMemoryBinding() {
-        throw new Error("revoke failed");
-      },
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
-    });
-
-    const result = await service.runSessionTurn(session.id, { userMessage: "お願い" });
-
-    assert.equal(result.runState, "idle");
-    assert.equal(liveStates.at(-1), null);
-  });
-
-  it("provider memory binding 作成後の setup 失敗でも revoke して live state を掃除する", async () => {
+  it("setup 失敗でも live state を掃除する", async () => {
     const session = createSession();
     const calls: string[] = [];
     const liveStates: Array<LiveSessionRunState | null> = [];
@@ -648,20 +450,6 @@ describe("SessionRuntimeService", () => {
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
-      clearWorkspaceFileIndex() {
-        calls.push("clearWorkspaceFileIndex");
-      },
-      createProviderMemoryBinding() {
-        calls.push("create");
-        return {
-          bindingId: "binding-1",
-          bindingReference: "ref-1",
-          transport: "env",
-        };
-      },
-      revokeProviderMemoryBinding(nextBinding) {
-        calls.push(`revoke:${nextBinding.bindingId}`);
-      },
       broadcastLiveSessionRun() {
         calls.push("broadcast");
       },
@@ -680,15 +468,12 @@ describe("SessionRuntimeService", () => {
     );
 
     assert.deepEqual(calls, [
-      "create",
       "compose",
       "upsert:running",
       "createAuditLog",
-      "revoke:binding-1",
       "approval:deny",
       "elicitation:cancel",
       "upsert:error",
-      "clearWorkspaceFileIndex",
       "broadcast",
     ]);
     assert.equal(liveStates.at(-1), null);
@@ -836,7 +621,6 @@ describe("SessionRuntimeService", () => {
       runCharacterReflection(nextSession, options) {
         reflectionTriggers.push({ sessionId: nextSession.id, triggerReason: options.triggerReason });
       },
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -996,7 +780,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1094,7 +877,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1225,7 +1007,6 @@ describe("SessionRuntimeService", () => {
       },
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1345,7 +1126,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1466,7 +1246,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest(sessionId, decision) {
         approvalResolutions.push({ sessionId, decision });
@@ -1498,8 +1277,6 @@ describe("SessionRuntimeService", () => {
     const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
     const auditUpdates: UpdateAuditLogInput[] = [];
     const seenThreadIds: string[] = [];
-    const seenBindingReferences: Array<string | undefined> = [];
-    const bindingEvents: string[] = [];
     let attempt = 0;
 
     const adapter: ProviderCodingAdapter = {
@@ -1520,7 +1297,6 @@ describe("SessionRuntimeService", () => {
       async runSessionTurn(input) {
         attempt += 1;
         seenThreadIds.push(input.session.threadId);
-        seenBindingReferences.push(input.memoryBinding?.bindingReference);
         if (attempt === 1) {
           throw new ProviderTurnError("thread not found", createPartialResult({ threadId: "thread-stale" }), false);
         }
@@ -1584,20 +1360,6 @@ describe("SessionRuntimeService", () => {
       },
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
-      createProviderMemoryBinding() {
-        const bindingNumber = bindingEvents.filter((event) => event.startsWith("create:")).length + 1;
-        const binding = {
-          bindingId: `binding-${bindingNumber}`,
-          bindingReference: `ref-${bindingNumber}`,
-          transport: "env" as const,
-        };
-        bindingEvents.push(`create:${binding.bindingId}`);
-        return binding;
-      },
-      revokeProviderMemoryBinding(binding) {
-        bindingEvents.push(`revoke:${binding.bindingId}`);
-      },
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1611,8 +1373,6 @@ describe("SessionRuntimeService", () => {
     assert.equal(result.messages.filter((message) => message.role === "user").length, 1);
     assert.equal(result.messages.filter((message) => message.role === "assistant").length, 1);
     assert.deepEqual(seenThreadIds, ["thread-stale", ""]);
-    assert.deepEqual(seenBindingReferences, ["ref-1", "ref-2"]);
-    assert.deepEqual(bindingEvents, ["create:binding-1", "revoke:binding-1", "create:binding-2", "revoke:binding-2"]);
     assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
     assert.equal(storedSessions.length, 3);
     assert.equal(storedSessions[1]?.threadId, "");
@@ -1717,7 +1477,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1860,7 +1619,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -1977,7 +1735,6 @@ describe("SessionRuntimeService", () => {
       },
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2082,7 +1839,6 @@ describe("SessionRuntimeService", () => {
       },
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2203,7 +1959,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2333,7 +2088,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2434,7 +2188,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2555,7 +2308,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2664,7 +2416,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2765,7 +2516,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2859,7 +2609,6 @@ describe("SessionRuntimeService", () => {
       },
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -2954,7 +2703,6 @@ describe("SessionRuntimeService", () => {
       },
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -3099,7 +2847,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -3228,7 +2975,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -3336,7 +3082,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
@@ -3424,7 +3169,6 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread() {},
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
-      clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},

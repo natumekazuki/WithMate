@@ -8,13 +8,17 @@ import { describe, it } from "node:test";
 import {
   APP_DATABASE_V6_FILENAME,
   APP_DATABASE_V6_SCHEMA_VERSION,
+  CREATE_V6_AUDIT_EVENTS_TABLE_SQL,
+  CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
   CREATE_V6_SCHEMA_SQL,
   REQUIRED_V6_TABLES,
   V6_SCHEMA_STATUS,
+  ensureV6Schema,
   isValidV6Database,
   readV6DatabaseUserVersion,
   resolveV6FreshDatabasePath,
 } from "../../src-electron/database-schema-v6.js";
+import { AuditLogStorageV6 } from "../../src-electron/audit-log-storage-v6.js";
 
 type TableInfoRow = {
   name: string;
@@ -223,15 +227,29 @@ describe("database-schema-v6", () => {
       ]);
       assert.equal(findForeignKey(db, "session_messages_v6", "session_id")?.on_delete.toUpperCase(), "CASCADE");
 
+      assert.deepEqual(columnNames(db, "auxiliary_sessions"), [
+        "id",
+        "parent_session_id",
+        "status",
+        "created_at",
+        "updated_at",
+        "payload_json",
+      ]);
+      assert.equal(findForeignKey(db, "auxiliary_sessions", "parent_session_id"), undefined);
+      assert.equal(tableSql(db, "auxiliary_sessions").includes("status IN ('active', 'closed')"), true);
+
       assert.deepEqual(columnNames(db, "audit_events_v6"), [
         "id",
         "session_id",
+        "auxiliary_session_id",
         "event_type",
         "provider_id",
         "summary",
         "metadata_json",
         "created_at",
       ]);
+      assert.equal(findForeignKey(db, "audit_events_v6", "session_id")?.table, "sessions_v6");
+      assert.equal(findForeignKey(db, "audit_events_v6", "auxiliary_session_id")?.table, "auxiliary_sessions");
       assert.equal(tableSql(db, "audit_events_v6").includes("'memory_mutation'"), true);
       assert.equal(tableSql(db, "audit_events_v6").includes("'runtime_binding'"), true);
     } finally {
@@ -427,6 +445,306 @@ describe("database-schema-v6", () => {
 
       const count = db.prepare("SELECT COUNT(*) AS count FROM sessions_v6").get() as { count: number };
       assert.equal(count.count, 1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ensureV6Schema は旧 auxiliary_sessions の created_at を updated_at で backfill する", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(`
+        PRAGMA foreign_keys = ON;
+
+        CREATE TABLE auxiliary_sessions (
+          id TEXT PRIMARY KEY,
+          parent_session_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
+          updated_at TEXT NOT NULL,
+          payload_json TEXT NOT NULL
+        );
+
+        INSERT INTO auxiliary_sessions (
+          id,
+          parent_session_id,
+          status,
+          updated_at,
+          payload_json
+        ) VALUES (
+          'aux-1',
+          'session-1',
+          'active',
+          '2026-07-04T00:00:00.000Z',
+          '{}'
+        );
+      `);
+
+      ensureV6Schema(db);
+
+      assert.deepEqual(columnNames(db, "auxiliary_sessions"), [
+        "id",
+        "parent_session_id",
+        "status",
+        "updated_at",
+        "payload_json",
+        "created_at",
+      ]);
+      const row = db.prepare("SELECT created_at, updated_at FROM auxiliary_sessions WHERE id = ?").get("aux-1") as
+        | { created_at: string; updated_at: string }
+        | undefined;
+      assert.equal(row?.created_at, "2026-07-04T00:00:00.000Z");
+      assert.equal(row?.updated_at, "2026-07-04T00:00:00.000Z");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ensureV6Schema は auxiliary_sessions rebuild 後も audit の Auxiliary owner を保持する", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "withmate-v6-schema-"));
+    const dbPath = join(tempDir, APP_DATABASE_V6_FILENAME);
+    let db: DatabaseSync | null = null;
+    let auditStorage: AuditLogStorageV6 | null = null;
+    try {
+      db = new DatabaseSync(dbPath);
+      db.exec("PRAGMA foreign_keys = ON;");
+
+      for (const statement of CREATE_V6_SCHEMA_SQL) {
+        if (statement !== CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL && statement !== CREATE_V6_AUDIT_EVENTS_TABLE_SQL) {
+          db.exec(statement);
+        }
+      }
+
+      db.exec(`
+        CREATE TABLE auxiliary_sessions (
+          id TEXT PRIMARY KEY,
+          parent_session_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          FOREIGN KEY (parent_session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE audit_events_v6 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT,
+          auxiliary_session_id TEXT,
+          event_type TEXT NOT NULL,
+          provider_id TEXT NOT NULL DEFAULT '',
+          summary TEXT NOT NULL DEFAULT '',
+          metadata_json TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
+          FOREIGN KEY (auxiliary_session_id) REFERENCES auxiliary_sessions(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX idx_audit_events_v6_session_created
+          ON audit_events_v6(session_id, created_at DESC, id DESC);
+        CREATE INDEX idx_audit_events_v6_auxiliary_created
+          ON audit_events_v6(auxiliary_session_id, created_at DESC, id DESC);
+        CREATE INDEX idx_audit_events_v6_event_type_created
+          ON audit_events_v6(event_type, created_at DESC);
+
+        INSERT INTO sessions_v6 (
+          id,
+          title,
+          state,
+          provider_id,
+          catalog_revision,
+          model_id,
+          approval_mode,
+          created_at,
+          updated_at,
+          last_active_at
+        ) VALUES (
+          'session-1',
+          'Session 1',
+          'active',
+          'codex',
+          1,
+          'gpt-5',
+          'on-request',
+          '2026-07-04T00:00:00.000Z',
+          '2026-07-04T00:00:00.000Z',
+          '2026-07-04T00:00:00.000Z'
+        );
+
+        INSERT INTO auxiliary_sessions (
+          id,
+          parent_session_id,
+          status,
+          updated_at,
+          payload_json
+        ) VALUES (
+          'aux-1',
+          'session-1',
+          'active',
+          '2026-07-04T01:00:00.000Z',
+          '{}'
+        );
+      `);
+
+      db.prepare(`
+        INSERT INTO audit_events_v6 (
+          session_id,
+          auxiliary_session_id,
+          event_type,
+          provider_id,
+          summary,
+          metadata_json,
+          created_at
+        ) VALUES (?, ?, 'session_turn', 'codex', 'Auxiliary summary', ?, ?)
+      `).run(
+        null,
+        "aux-1",
+        JSON.stringify({
+          sessionId: "aux-1",
+          createdAt: "2026-07-04T01:02:00.000Z",
+          phase: "turn",
+          provider: "codex",
+          model: "gpt-5",
+          reasoningEffort: "medium",
+          approvalMode: "on-request",
+          threadId: "",
+          logicalPrompt: { messages: [] },
+          transportPayload: null,
+          assistantText: "assistant response",
+          operations: [],
+          rawItemsJson: "[]",
+          usage: null,
+          errorMessage: "",
+        }),
+        "2026-07-04T01:02:00.000Z",
+      );
+
+      ensureV6Schema(db);
+
+      const auditOwner = db.prepare(`
+        SELECT auxiliary_session_id
+        FROM audit_events_v6
+        WHERE id = 1
+      `).get() as { auxiliary_session_id: string | null } | undefined;
+      assert.equal(auditOwner?.auxiliary_session_id, "aux-1");
+
+      db.close();
+      db = null;
+
+      auditStorage = new AuditLogStorageV6(dbPath);
+      const summaries = auditStorage.listSessionAuditLogSummaries("aux-1");
+      assert.equal(summaries.length, 1);
+      assert.equal(summaries[0]?.sessionId, "aux-1");
+      assert.equal(summaries[0]?.assistantTextPreview, "assistant response");
+    } finally {
+      auditStorage?.close();
+      db?.close();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("ensureV6Schema は auxiliary_sessions repair 失敗時に部分適用を rollback する", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(`
+        PRAGMA foreign_keys = ON;
+      `);
+
+      for (const statement of CREATE_V6_SCHEMA_SQL) {
+        if (statement !== CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL && statement !== CREATE_V6_AUDIT_EVENTS_TABLE_SQL) {
+          db.exec(statement);
+        }
+      }
+
+      db.exec(`
+        CREATE TABLE auxiliary_sessions (
+          id TEXT PRIMARY KEY,
+          parent_session_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          updated_at TEXT,
+          payload_json TEXT NOT NULL,
+          FOREIGN KEY (parent_session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE audit_events_v6 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT,
+          event_type TEXT NOT NULL,
+          provider_id TEXT NOT NULL DEFAULT '',
+          summary TEXT NOT NULL DEFAULT '',
+          metadata_json TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL
+        );
+
+        INSERT INTO sessions_v6 (
+          id,
+          title,
+          state,
+          provider_id,
+          catalog_revision,
+          model_id,
+          approval_mode,
+          created_at,
+          updated_at,
+          last_active_at
+        ) VALUES (
+          'session-1',
+          'Session 1',
+          'active',
+          'codex',
+          1,
+          'gpt-5',
+          'on-request',
+          '2026-07-04T00:00:00.000Z',
+          '2026-07-04T00:00:00.000Z',
+          '2026-07-04T00:00:00.000Z'
+        );
+        INSERT INTO auxiliary_sessions (
+          id,
+          parent_session_id,
+          status,
+          updated_at,
+          payload_json
+        ) VALUES (
+          'aux-rollback',
+          'session-1',
+          'active',
+          NULL,
+          '{}'
+        );
+        INSERT INTO audit_events_v6 (
+          session_id,
+          event_type,
+          provider_id,
+          summary,
+          metadata_json,
+          created_at
+        ) VALUES (
+          'session-1',
+          'session_turn',
+          'codex',
+          'summary',
+          '{"prompt":"kept"}',
+          '2026-07-04T00:00:00.000Z'
+        );
+      `);
+
+      assert.throws(() => ensureV6Schema(db), /NOT NULL constraint failed/);
+
+      assert.deepEqual(columnNames(db, "auxiliary_sessions"), [
+        "id",
+        "parent_session_id",
+        "status",
+        "updated_at",
+        "payload_json",
+      ]);
+      assert.equal(tableNames(db).includes("auxiliary_sessions_v6_rebuild"), false);
+      const auxiliaryRow = db.prepare("SELECT id, updated_at FROM auxiliary_sessions WHERE id = ?").get("aux-rollback") as
+        | { id: string; updated_at: string | null }
+        | undefined;
+      assert.equal(auxiliaryRow?.id, "aux-rollback");
+      assert.equal(auxiliaryRow?.updated_at, null);
+      const auditRow = db.prepare("SELECT metadata_json FROM audit_events_v6 WHERE session_id = ?").get("session-1") as
+        | { metadata_json: string }
+        | undefined;
+      assert.equal(auditRow?.metadata_json, '{"prompt":"kept"}');
     } finally {
       db.close();
     }

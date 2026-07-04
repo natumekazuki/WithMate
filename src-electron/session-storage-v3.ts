@@ -19,6 +19,7 @@ import {
 import { V3_SUMMARY_JSON_MAX_LENGTH, V3_TEXT_PREVIEW_MAX_LENGTH } from "./database-schema-v3.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import { type BlobRef, TextBlobStore } from "./text-blob-store.js";
+import type { DeleteSessionsLastActiveBeforeCutoff } from "../src/withmate-window-types.js";
 
 type SessionHeaderRow = {
   id: string;
@@ -265,6 +266,13 @@ const LIST_SESSION_SUMMARIES_SQL = `
     ${SESSION_SUMMARY_HEADER_COLUMNS}
   FROM sessions
   ORDER BY last_active_at DESC, id DESC
+`;
+
+const LIST_SESSION_IDS_LAST_ACTIVE_BEFORE_SQL = `
+  SELECT id
+  FROM sessions
+  WHERE last_active_at < ?
+  ORDER BY last_active_at ASC, id ASC
 `;
 
 const GET_SESSION_HEADER_SQL = `
@@ -926,6 +934,13 @@ export class SessionStorageV3 {
     }
   }
 
+  async listSessionIdsLastActiveBefore(cutoff: DeleteSessionsLastActiveBeforeCutoff): Promise<string[]> {
+    return this.withDb((db) => {
+      const rows = db.prepare(LIST_SESSION_IDS_LAST_ACTIVE_BEFORE_SQL).all(cutoff.cutoffTimestampMs) as SessionIdRow[];
+      return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
+    });
+  }
+
   async upsertSession(session: Session): Promise<Session> {
     return this.upsertSessionWithLastActiveAt(session, Date.now());
   }
@@ -1049,11 +1064,21 @@ export class SessionStorageV3 {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    await this.deleteSessions([sessionId]);
+  }
+
+  async deleteSessions(sessionIds: readonly string[]): Promise<void> {
+    const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
+    if (uniqueSessionIds.length === 0) {
+      return;
+    }
+
     const blobIdsToDelete = this.withDb((db) => {
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
-        const previousBlobIds = collectSessionBlobIds(db, sessionId);
-        db.prepare(DELETE_SESSION_SQL).run(sessionId);
+        const previousBlobIds = uniqueSessionIds.flatMap((sessionId) => collectSessionBlobIds(db, sessionId));
+        const placeholders = uniqueSessionIds.map(() => "?").join(", ");
+        db.prepare(`DELETE FROM sessions WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
         const blobIdsToDelete = deleteUnreferencedBlobObjectRows(db, previousBlobIds);
         db.exec("COMMIT");
         return blobIdsToDelete;

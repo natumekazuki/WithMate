@@ -87,6 +87,11 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return sessionIds;
   }
 
+  getCompanionReviewWindow(sessionId: string): TWindow | null {
+    const window = this.companionReviewWindows.get(sessionId) ?? null;
+    return window && !window.isDestroyed() ? window : null;
+  }
+
   async openHomeWindow(): Promise<TWindow> {
     const existing = this.reuseWindow(this.homeWindow);
     if (existing) {

@@ -9,13 +9,12 @@ import {
 } from "../session-composer-selection.js";
 import { createQuotedMessageInsertionFromComposer } from "./message-text-actions.js";
 import {
-  buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
+  buildPathReferenceRemovalState,
   buildSelectedPathReferenceInsertionState,
-  buildWorkspacePathMatchSelectionState,
   resolvePickedPathBaseDirectory,
   toDirectoryPath,
   type ComposerPathPickerKind,
-  type WorkspacePathMatchSelectionState,
+  type PathReferenceInsertionState,
 } from "../session-composer-paths.js";
 import {
   cycleContextPaneTab,
@@ -520,58 +519,13 @@ export function createQuoteMessageTextHandler(input: {
   };
 }
 
-export function applyWorkspacePathMatchSelectionCommand(input: {
-  draft: string;
-  caret: number;
-  match: string;
-  textarea: HTMLTextAreaElement | null;
-  applySelection: (state: WorkspacePathMatchSelectionState) => void;
-  restoreComposerTextareaFocusAndCaret: (
-    textarea: HTMLTextAreaElement | null,
-    caret: number,
-  ) => void;
-}): boolean {
-  if (!input.textarea) {
-    return false;
-  }
-
-  const nextState = buildWorkspacePathMatchSelectionState(input.draft, input.caret, input.match);
-  if (!nextState) {
-    return false;
-  }
-
-  input.applySelection(nextState);
-  input.restoreComposerTextareaFocusAndCaret(input.textarea, nextState.caret);
-  return true;
-}
-
-export function createWorkspacePathMatchSelectionHandler(input: {
-  getDraft: () => string;
-  getCaret: () => number;
-  getTextarea: () => HTMLTextAreaElement | null;
-  applySelection: (state: WorkspacePathMatchSelectionState) => void;
-  restoreComposerTextareaFocusAndCaret: (
-    textarea: HTMLTextAreaElement | null,
-    caret: number,
-  ) => void;
-}): (match: string) => boolean {
-  return (match) => applyWorkspacePathMatchSelectionCommand({
-    draft: input.getDraft(),
-    caret: input.getCaret(),
-    match,
-    textarea: input.getTextarea(),
-    applySelection: input.applySelection,
-    restoreComposerTextareaFocusAndCaret: input.restoreComposerTextareaFocusAndCaret,
-  });
-}
-
 export function applyPathReferenceRemovalCommand(input: {
   draft: string;
   attachmentPathCandidates: string[];
-  applyRemoval: (state: WorkspacePathMatchSelectionState) => void;
+  applyRemoval: (state: PathReferenceInsertionState) => void;
 }): void {
   input.applyRemoval(
-    buildPathReferenceRemovalWithClosedWorkspaceMatchesState(
+    buildPathReferenceRemovalState(
       input.draft,
       input.attachmentPathCandidates,
     ),
@@ -581,7 +535,7 @@ export function applyPathReferenceRemovalCommand(input: {
 export function createPathReferenceRemovalHandler(input: {
   getDraft: () => string;
   normalizeAttachmentPathCandidates?: (attachmentPathCandidates: string[]) => string[];
-  applyRemoval: (state: WorkspacePathMatchSelectionState, attachmentPathCandidates: string[]) => void;
+  applyRemoval: (state: PathReferenceInsertionState, attachmentPathCandidates: string[]) => void;
 }): (attachmentPathCandidates: string[]) => void {
   return (attachmentPathCandidates) => {
     const removalCandidates = input.normalizeAttachmentPathCandidates?.(attachmentPathCandidates)
@@ -600,7 +554,7 @@ export function applySelectedPathReferenceInsertionCommand(input: {
   selectedPaths: string[];
   textarea: HTMLTextAreaElement | null;
   workspacePath: string | null;
-  applyInsertion: (state: WorkspacePathMatchSelectionState) => void;
+  applyInsertion: (state: PathReferenceInsertionState) => void;
   restoreComposerTextareaFocusAndCaret: (
     textarea: HTMLTextAreaElement | null,
     caret: number,

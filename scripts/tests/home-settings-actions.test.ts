@@ -7,6 +7,7 @@ import {
   importHomeModelCatalog,
   resetHomeDatabase,
   saveHomeSettings,
+  deleteOldSessions,
   type HomeSettingsApi,
 } from "../../src/settings/settings-actions.js";
 import { buildSettingsCommandHandlers } from "../../src/settings/settings-command-handlers.js";
@@ -23,6 +24,12 @@ function createApi(overrides?: Partial<HomeSettingsApi>): HomeSettingsApi {
       sessions: [],
       appSettings: createDefaultAppSettings(),
       modelCatalog: { revision: 1, providers: [] },
+    }),
+    deleteSessionsLastActiveBefore: async () => ({
+      cutoffDate: "2026-07-01",
+      cutoffTimestampMs: 1782831600000,
+      deletedSessionIds: ["s-1"],
+      skippedRunningSessionIds: [],
     }),
     ...overrides,
   };
@@ -84,6 +91,44 @@ describe("home-settings-actions", () => {
     const canceledResult = await resetHomeDatabase({
       api,
       resetTargets: ["sessions"],
+      confirm: () => false,
+    });
+    assert.deepEqual(canceledResult, {
+      kind: "canceled",
+    });
+  });
+
+  it("old session delete は confirm と result を扱う", async () => {
+    const api = createApi();
+    const result = await deleteOldSessions({
+      api,
+      cutoffDate: "2026-07-01",
+      confirm: () => true,
+    });
+
+    assert.equal(result.kind, "success");
+    if (result.kind === "success") {
+      assert.equal(result.feedback, "1 件の古い Session を削除したよ。");
+      assert.deepEqual(result.result.deletedSessionIds, ["s-1"]);
+    }
+  });
+
+  it("old session delete は cutoff 未指定なら noop、confirm false なら canceled を返す", async () => {
+    const api = createApi();
+
+    const noopResult = await deleteOldSessions({
+      api,
+      cutoffDate: "",
+      confirm: () => true,
+    });
+    assert.deepEqual(noopResult, {
+      kind: "noop",
+      feedback: "削除基準日を選んでね。",
+    });
+
+    const canceledResult = await deleteOldSessions({
+      api,
+      cutoffDate: "2026-07-01",
       confirm: () => false,
     });
     assert.deepEqual(canceledResult, {

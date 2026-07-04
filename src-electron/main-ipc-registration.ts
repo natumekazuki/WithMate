@@ -75,6 +75,7 @@ import {
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_UPDATE_MATE_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
+  WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
   WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
@@ -165,8 +166,6 @@ import {
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
-  WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
-  WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SET_MATE_AVATAR_CHANNEL,
   WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
   WITHMATE_SAVE_PASTED_SESSION_FILE_CHANNEL,
@@ -184,10 +183,11 @@ import {
 } from "../src/withmate-ipc-channels.js";
 import type {
   OpenPathOptions,
+  DeleteSessionsLastActiveBeforeRequest,
+  DeleteSessionsResult,
   ResetAppDatabaseRequest,
   SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
-import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
 type IpcSenderEvent = Pick<IpcMainInvokeEvent, "sender">;
@@ -204,6 +204,8 @@ type IpcHandleRegistrar = {
 export type MainIpcRegistrationDeps = {
   resolveEventWindow(event: IpcSenderEvent): MaybeWindow;
   resolveHomeWindow(): MaybeWindow;
+  resolveSessionWindow(sessionId: string): MaybeWindow;
+  resolveCompanionReviewWindow(sessionId: string): MaybeWindow;
   openSessionWindow(sessionId: string): Promise<void>;
   openHomeWindow(): Promise<void>;
   openSessionMonitorWindow(): Promise<void>;
@@ -305,13 +307,14 @@ export type MainIpcRegistrationDeps = {
   discardCompanionSession(sessionId: string): Promise<CompanionSession>;
   updateCompanionSession(session: CompanionSession): Promise<CompanionSession>;
   previewCompanionComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
-  searchCompanionWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
   cancelCompanionSessionRun(sessionId: string): void;
   updateSession(session: Session): Awaitable<Session>;
   deleteSession(sessionId: string): Awaitable<void>;
+  deleteSessionsLastActiveBefore(
+    request: DeleteSessionsLastActiveBeforeRequest | null | undefined,
+  ): Awaitable<DeleteSessionsResult>;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
-  searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   cancelSessionRun(sessionId: string): void;
   getMateState(): Awaitable<MateStorageState>;
@@ -353,6 +356,7 @@ type MainIpcWindowDeps = Pick<
   MainIpcRegistrationDeps,
   | "resolveEventWindow"
   | "resolveHomeWindow"
+  | "resolveSessionWindow"
   | "openSessionWindow"
   | "openHomeWindow"
   | "openSessionMonitorWindow"
@@ -410,6 +414,9 @@ type MainIpcSettingsDeps = Pick<
 
 type MainIpcAuxiliaryDeps = Pick<
   MainIpcRegistrationDeps,
+  | "resolveEventWindow"
+  | "resolveSessionWindow"
+  | "resolveCompanionReviewWindow"
   | "listAuxiliarySessions"
   | "getActiveAuxiliarySession"
   | "getAuxiliarySession"
@@ -460,7 +467,6 @@ type MainIpcSessionQueryDeps = Pick<
   | "getSessionMessageArtifact"
   | "getDiffPreview"
   | "previewComposerInput"
-  | "searchWorkspaceFiles"
 >;
 
 type MainIpcCompanionDeps = Pick<
@@ -477,13 +483,16 @@ type MainIpcCompanionDeps = Pick<
   | "discardCompanionSession"
   | "updateCompanionSession"
   | "previewCompanionComposerInput"
-  | "searchCompanionWorkspaceFiles"
   | "runCompanionSessionTurn"
   | "cancelCompanionSessionRun"
 >;
 
 type MainIpcSessionRuntimeDeps = Pick<
   MainIpcRegistrationDeps,
+  | "resolveEventWindow"
+  | "resolveHomeWindow"
+  | "resolveSessionWindow"
+  | "isSettingsWindow"
   | "getLiveSessionRun"
   | "getProviderQuotaTelemetry"
   | "getSessionContextTelemetry"
@@ -493,6 +502,7 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "createSession"
   | "updateSession"
   | "deleteSession"
+  | "deleteSessionsLastActiveBefore"
   | "runSessionTurn"
   | "cancelSessionRun"
 >;
@@ -549,6 +559,59 @@ function assertSettingsWindowSender(
     return;
   }
   throw new Error("Settings IPC is only available from the Settings window.");
+}
+
+function assertSessionDeleteSender(
+  event: IpcMainInvokeEvent,
+  sessionId: string,
+  deps: Pick<
+    MainIpcRegistrationDeps,
+    "resolveEventWindow" | "resolveHomeWindow" | "resolveSessionWindow" | "isSettingsWindow"
+  >,
+): void {
+  const window = deps.resolveEventWindow(event);
+  if (!window) {
+    throw new Error("Session delete IPC is only available from Home, Settings, or the target Session window.");
+  }
+  if (deps.isSettingsWindow(window)) {
+    return;
+  }
+  if (deps.resolveHomeWindow() === window) {
+    return;
+  }
+  if (deps.resolveSessionWindow(sessionId) === window) {
+    return;
+  }
+  throw new Error("Session delete IPC is only available from Home, Settings, or the target Session window.");
+}
+
+function assertAuxiliaryOwnerWindowSender(
+  event: IpcMainInvokeEvent,
+  parentSessionId: string,
+  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveSessionWindow" | "resolveCompanionReviewWindow">,
+): void {
+  const window = deps.resolveEventWindow(event);
+  if (!window) {
+    throw new Error("Auxiliary session IPC is only available from the target Session or Companion Review window.");
+  }
+  if (deps.resolveSessionWindow(parentSessionId) === window) {
+    return;
+  }
+  if (deps.resolveCompanionReviewWindow(parentSessionId) === window) {
+    return;
+  }
+  throw new Error("Auxiliary session IPC is only available from the target Session or Companion Review window.");
+}
+
+async function getAuxiliarySessionForMutation(
+  auxiliaryDeps: Pick<MainIpcAuxiliaryDepsRequired, "getAuxiliarySession">,
+  auxiliarySessionId: string,
+): Promise<AuxiliarySession> {
+  const session = await auxiliaryDeps.getAuxiliarySession(auxiliarySessionId);
+  if (!session) {
+    throw new Error("Auxiliary Session が見つからないよ。");
+  }
+  return session;
 }
 
 function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindowDeps): void {
@@ -671,37 +734,57 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     }
     return auxiliaryDeps.listAuxiliarySessions(parentSessionId);
   });
-  ipcMain.handle(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL, (_event, parentSessionId: string) => {
+  ipcMain.handle(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL, (event, parentSessionId: string) => {
     const auxiliaryDeps = getAuxiliaryDeps(deps);
     if (!parentSessionId) {
       return null;
     }
+    assertAuxiliaryOwnerWindowSender(event, parentSessionId, deps);
     return auxiliaryDeps.getActiveAuxiliarySession(parentSessionId);
   });
-  ipcMain.handle(WITHMATE_GET_AUXILIARY_SESSION_CHANNEL, (_event, auxiliarySessionId: string) => {
+  ipcMain.handle(WITHMATE_GET_AUXILIARY_SESSION_CHANNEL, async (event, auxiliarySessionId: string) => {
     const auxiliaryDeps = getAuxiliaryDeps(deps);
     if (!auxiliarySessionId) {
       return null;
     }
-    return auxiliaryDeps.getAuxiliarySession(auxiliarySessionId);
+    const session = await getAuxiliarySessionForMutation(auxiliaryDeps, auxiliarySessionId);
+    assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
+    return session;
   });
-  ipcMain.handle(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, (_event, input: CreateAuxiliarySessionInput) =>
-    getAuxiliaryDeps(deps).createAuxiliarySession(input),
-  );
-  ipcMain.handle(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL, (_event, session: AuxiliarySession) =>
-    getAuxiliaryDeps(deps).updateAuxiliarySession(session),
-  );
-  ipcMain.handle(WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL, (_event, auxiliarySessionId: string) =>
-    getAuxiliaryDeps(deps).closeAuxiliarySession(auxiliarySessionId),
-  );
+  ipcMain.handle(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, (event, input: CreateAuxiliarySessionInput) => {
+    assertAuxiliaryOwnerWindowSender(event, input.parentSessionId, deps);
+    return getAuxiliaryDeps(deps).createAuxiliarySession(input);
+  });
+  ipcMain.handle(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL, async (event, session: AuxiliarySession) => {
+    const auxiliaryDeps = getAuxiliaryDeps(deps);
+    const existingSession = await getAuxiliarySessionForMutation(auxiliaryDeps, session.id);
+    if (existingSession.parentSessionId !== session.parentSessionId) {
+      throw new Error("Auxiliary Session parent mismatch.");
+    }
+    assertAuxiliaryOwnerWindowSender(event, existingSession.parentSessionId, deps);
+    return auxiliaryDeps.updateAuxiliarySession(session);
+  });
+  ipcMain.handle(WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL, async (event, auxiliarySessionId: string) => {
+    const auxiliaryDeps = getAuxiliaryDeps(deps);
+    const session = await getAuxiliarySessionForMutation(auxiliaryDeps, auxiliarySessionId);
+    assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
+    return auxiliaryDeps.closeAuxiliarySession(auxiliarySessionId);
+  });
   ipcMain.handle(
     WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
-    (_event, auxiliarySessionId: string, request: RunSessionTurnRequest) =>
-      getAuxiliaryDeps(deps).runAuxiliarySessionTurn(auxiliarySessionId, request),
+    async (event, auxiliarySessionId: string, request: RunSessionTurnRequest) => {
+      const auxiliaryDeps = getAuxiliaryDeps(deps);
+      const session = await getAuxiliarySessionForMutation(auxiliaryDeps, auxiliarySessionId);
+      assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
+      return auxiliaryDeps.runAuxiliarySessionTurn(auxiliarySessionId, request);
+    },
   );
-  ipcMain.handle(WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL, (_event, auxiliarySessionId: string) =>
-    getAuxiliaryDeps(deps).cancelAuxiliarySessionRun(auxiliarySessionId),
-  );
+  ipcMain.handle(WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL, async (event, auxiliarySessionId: string) => {
+    const auxiliaryDeps = getAuxiliaryDeps(deps);
+    const session = await getAuxiliarySessionForMutation(auxiliaryDeps, auxiliarySessionId);
+    assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
+    return auxiliaryDeps.cancelAuxiliarySessionRun(auxiliarySessionId);
+  });
 }
 
 function registerCatalogHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCatalogDeps): void {
@@ -745,9 +828,10 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
     assertMemoryV6ReviewSender(event, deps);
     return deps.forgetMemoryV6Entry(entryId, reason);
   });
-  ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, (_event, request: ResetAppDatabaseRequest | null | undefined) =>
-    deps.resetAppDatabase(request),
-  );
+  ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, (event, request: ResetAppDatabaseRequest | null | undefined) => {
+    assertSettingsWindowSender(event, deps);
+    return deps.resetAppDatabase(request);
+  });
 }
 
 function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSessionQueryDeps): void {
@@ -832,9 +916,6 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
   ipcMain.handle(WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL, (_event, sessionId: string, userMessage: string) =>
     deps.previewComposerInput(sessionId, userMessage),
   );
-  ipcMain.handle(WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL, (_event, sessionId: string, query: string) =>
-    deps.searchWorkspaceFiles(sessionId, query),
-  );
 }
 
 function registerCompanionHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCompanionDeps): void {
@@ -879,9 +960,6 @@ function registerCompanionHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCom
   );
   ipcMain.handle(WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL, async (_event, sessionId: string, userMessage: string) =>
     deps.previewCompanionComposerInput(sessionId, userMessage),
-  );
-  ipcMain.handle(WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL, async (_event, sessionId: string, query: string) =>
-    deps.searchCompanionWorkspaceFiles(sessionId, query),
   );
   ipcMain.handle(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL, async (_event, input: CreateCompanionSessionInput) =>
     deps.createCompanionSession(input),
@@ -936,7 +1014,17 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
   );
   ipcMain.handle(WITHMATE_CREATE_SESSION_CHANNEL, (_event, input: CreateSessionInput) => deps.createSession(input));
   ipcMain.handle(WITHMATE_UPDATE_SESSION_CHANNEL, (_event, session: Session) => deps.updateSession(session));
-  ipcMain.handle(WITHMATE_DELETE_SESSION_CHANNEL, (_event, sessionId: string) => deps.deleteSession(sessionId));
+  ipcMain.handle(WITHMATE_DELETE_SESSION_CHANNEL, (event, sessionId: string) => {
+    assertSessionDeleteSender(event, sessionId, deps);
+    return deps.deleteSession(sessionId);
+  });
+  ipcMain.handle(
+    WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
+    (event, request: DeleteSessionsLastActiveBeforeRequest | null | undefined) => {
+      assertSettingsWindowSender(event, deps);
+      return deps.deleteSessionsLastActiveBefore(request);
+    },
+  );
   ipcMain.handle(WITHMATE_RUN_SESSION_TURN_CHANNEL, async (_event, sessionId: string, request: RunSessionTurnRequest) =>
     deps.runSessionTurn(sessionId, request),
   );

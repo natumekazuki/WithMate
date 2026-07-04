@@ -75,11 +75,9 @@ Run the installed command with an explicit target:
 ```bash
 withmate-memory --help
 withmate-memory status
-withmate-memory context
+withmate-memory characters
 withmate-memory schema
 withmate-memory validate --command append --stdin
-withmate-memory search --session-project --query "release workflow"
-withmate-memory search --session-project --query "withmate-memory search MEMORY_UNKNOWN_FIELD target targets"
 withmate-memory search --project <absolute-repo-path> --query "delivery cleanup" --tag delivery-cleanup
 withmate-memory search --project <absolute-repo-path> --tags topic:delivery-cleanup,topic:relaygraph
 withmate-memory search --file memory-search.json
@@ -103,7 +101,7 @@ $request = @{
   targets = @(
     @{
       owner = "project"
-      project = @{ type = "current" }
+      project = @{ type = "path"; path = "<absolute-repo-path>" }
       scope = "project"
     }
   )
@@ -119,18 +117,14 @@ $request | withmate-memory search --stdin
 
 `status` does not require a request body.
 
+`characters` does not require a request body and returns active Character catalog entries for choosing explicit Character IDs. It does not return Character definition or notes body.
+
 `schema` does not require a request body and returns supported commands, request body input modes, target selector forms, memory entry kinds, and forget reasons.
 
 `validate` validates a request body locally without writing Memory:
 
 ```bash
 withmate-memory validate --command append --stdin
-```
-
-`context` sends this default body when no JSON is supplied:
-
-```json
-{ "schemaVersion": "withmate-memory-v1" }
 ```
 
 `search`:
@@ -167,7 +161,7 @@ For provider-independent user preferences, conventions, constraints, or other cr
 {
   "schemaVersion": "withmate-memory-v1",
   "entryId": "<entry-id>",
-  "target": { "owner": "project", "project": { "type": "current" }, "scope": "project" }
+  "target": { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" }
 }
 ```
 
@@ -187,7 +181,7 @@ For provider-independent user preferences, conventions, constraints, or other cr
 ```json
 {
   "schemaVersion": "withmate-memory-v1",
-  "target": { "owner": "project", "project": { "type": "current" }, "scope": "project" },
+  "target": { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" },
   "kind": "decision",
   "title": "Short title",
   "body": "Durable details for future sessions.",
@@ -202,7 +196,7 @@ For provider-independent user preferences, conventions, constraints, or other cr
 ```json
 {
   "schemaVersion": "withmate-memory-v1",
-  "target": { "owner": "project", "project": { "type": "current" }, "scope": "project" },
+  "target": { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" },
   "entryIds": ["entry-id"],
   "reason": "user_request",
   "idempotencyKey": "optional-stable-key"
@@ -221,16 +215,15 @@ For provider-independent user preferences, conventions, constraints, or other cr
 
 ## Target Selection
 
-- Use `--session-project` or `{ "project": { "type": "current" } }` inside a WithMate-launched session binding when the session project is the intended target.
-- Use `--project <absolute-repo-path>` or `{ "project": { "type": "path", "path": "<absolute-repo-path>" } }` for explicit project targets. Relative paths and `.` are not accepted.
+- Use `--project <absolute-repo-path>`, `--project-id <id>`, `{ "project": { "type": "path", "path": "<absolute-repo-path>" } }`, or `{ "project": { "type": "id", "id": "<project-id>" } }` for project targets. Explicit absolute paths are not limited to the session's attached projects. Relative paths and `.` are not accepted.
 - Use a user-global target with `{ "owner": "user", "scope": "global" }` only for provider-independent user preferences, conventions, constraints, or other cross-project context. Do not store secrets, tokens, or project-specific private details there.
-- Use character targets only inside a WithMate-launched session where session binding context is available.
-- External Codex or shell sessions can use project Memory and user-global Memory; explicit character IDs are not supported for `local_user` principals yet.
+- Use character targets only with explicit IDs, for example `{ "owner": "character", "character": { "type": "id", "id": "<character-id>" }, "scope": "character" }`.
+- If the character ID is unknown, run `withmate-memory characters` and select an explicit ID from the returned active Character catalog.
 - Do not infer project or character targets silently when a command requires an explicit target.
 
 ## Error Handling
 
 - If WithMate is not running or Memory is unavailable, continue the task and mention that Memory could not be used.
 - If `withmate-memory` is not found on `PATH` and no local bundled helper exists, ask the user to install or update WithMate and continue without Memory unless Memory access itself is required.
-- If current character context is unavailable, use an explicit project target when the task can be answered from project memory; otherwise continue without Character Memory.
+- If the character ID is still unavailable, use an explicit project target when the task can be answered from project memory; otherwise continue without Character Memory.
 - Do not expose internal runtime identifiers, secrets, headers, or local discovery details in user-facing output.

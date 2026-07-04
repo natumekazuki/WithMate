@@ -1,6 +1,7 @@
 import { getProviderAppSettings, type AppSettings } from "../provider-settings-state.js";
 import type { HomeSettingsContentBaseProps } from "./home-settings-content-props.js";
 import {
+  deleteOldSessions,
   exportHomeModelCatalog,
   importHomeModelCatalog,
   saveHomeSettings,
@@ -16,6 +17,9 @@ type SettingsCommandHandlersContext = {
   setSettingsDraft: (settings: AppSettings) => void;
   setSettingsFeedback: (feedback: string) => void;
   setMemoryV6Diagnostics: (diagnostics: MemoryV6Diagnostics) => void;
+  getSessionCleanupCutoffDate?: () => string;
+  setDeletingOldSessions?: (deleting: boolean) => void;
+  refreshSessionSummaries?: () => Promise<void>;
   onSettingsSaved?: () => void;
 };
 
@@ -30,6 +34,7 @@ export type SettingsCommandHandlers = Pick<
   | "onBrowseProviderSkillRootPath"
   | "onBrowseProviderSkillRelativePath"
   | "onBrowseProviderInstructionRelativePath"
+  | "onDeleteSessionsLastActiveBefore"
   | "onSaveSettings"
 >;
 
@@ -40,6 +45,9 @@ export function buildSettingsCommandHandlers({
   setSettingsDraft,
   setSettingsFeedback,
   setMemoryV6Diagnostics,
+  getSessionCleanupCutoffDate = () => "",
+  setDeletingOldSessions = () => undefined,
+  refreshSessionSummaries,
   onSettingsSaved,
 }: SettingsCommandHandlersContext): SettingsCommandHandlers {
   const withApi = async (callback: (api: WithMateWindowApi) => Promise<void>) => {
@@ -227,6 +235,28 @@ export function buildSettingsCommandHandlers({
           onSettingsSaved?.();
         } catch (error) {
           setSettingsFeedback(error instanceof Error ? error.message : "設定の保存に失敗したよ。");
+        }
+      });
+    },
+    onDeleteSessionsLastActiveBefore: () => {
+      void withApi(async (api) => {
+        setDeletingOldSessions(true);
+        try {
+          const result = await deleteOldSessions({
+            api,
+            cutoffDate: getSessionCleanupCutoffDate(),
+            confirm: (message) => window.confirm(message),
+          });
+          if (result.kind === "success") {
+            await refreshSessionSummaries?.();
+            setSettingsFeedback(result.feedback);
+          } else if (result.kind === "noop") {
+            setSettingsFeedback(result.feedback);
+          }
+        } catch (error) {
+          setSettingsFeedback(error instanceof Error ? error.message : "古い Session の削除に失敗したよ。");
+        } finally {
+          setDeletingOldSessions(false);
         }
       });
     },

@@ -11,10 +11,6 @@ import type {
   ProviderCodingAdapter,
   ProviderTurnAdapter,
 } from "./provider-runtime.js";
-import {
-  getProviderMemoryBindingCapability,
-  type ProviderMemoryBindingTransport,
-} from "./provider-memory-binding.js";
 
 type ResolveProviderCatalogArgs = {
   providerId: string | null | undefined;
@@ -40,7 +36,6 @@ export type ProviderRuntimeCapabilities = {
   providerSupported: boolean;
   instructionSyncSupported: boolean;
   tokenUsageSupported: boolean;
-  memoryBindingTransport: ProviderMemoryBindingTransport;
 };
 
 const MATE_SUPPORTED_PROVIDER_IDS = new Set(["codex", "copilot"]);
@@ -80,12 +75,10 @@ export async function fetchProviderQuotaTelemetry(
 
 export function getProviderRuntimeCapabilities(args: { providerId: string }): ProviderRuntimeCapabilities {
   const providerSupported = MATE_SUPPORTED_PROVIDER_IDS.has(args.providerId);
-  const memoryBinding = getProviderMemoryBindingCapability(args.providerId);
   return {
     providerId: args.providerId,
     providerSupported,
     instructionSyncSupported: providerSupported,
     tokenUsageSupported: providerSupported,
-    memoryBindingTransport: providerSupported ? memoryBinding.transport : "unsupported",
   };
 }

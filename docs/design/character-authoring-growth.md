@@ -7,14 +7,14 @@
 
 `character.md` を agent で作成・改善できる authoring / improvement 機構を、現行 V5 の prompt 境界を壊さずに追加する。
 
-この文書は、V3 由来の Character Update Workspace と外部 authoring Skill を参考にしながら、V5 以降で採用する責務境界、agent flow、保存境界、MVP slice を固定する。
+この文書は、V3 由来の Character Update Workspace と外部 authoring Skill を参考にしながら、V5 以降で採用する責務境界、agent flow、保存境界、MVP slice を固定する。旧 Character Update Workspace の runtime variant は廃止済みとする。
 
 ## Position
 
 - `character.md` format の正本は `docs/design/character-definition-format.md`。
 - storage / snapshot の正本は `docs/design/character-storage.md`。
 - coding plane prompt 合成の正本は `docs/design/prompt-composition.md`。
-- 旧 Character Update Workspace は `docs/design/character-update-workspace.md` を参照するが、この文書を新しい implementation entry とする。
+- 旧 Character Update Workspace の runtime variant は廃止済みであり、この文書を新しい implementation entry とする。
 - Memory / Growth 非連携の境界は `docs/design/memory-architecture.md` と `docs/design/mate-growth-engine.md` を参照する。
 
 ## Core Decisions
@@ -92,7 +92,7 @@ Source notes、review notes、asset notes、revision log、do-not-reintroduce de
 Authoring / improvement は通常 Session の派生として扱う。
 
 - `sessionKind = "character-authoring"` を追加する。
-- 新規作成と既存改善はどちらも `character-authoring` を使う。旧 `character-update` variant は新規実装の入口にしない。
+- 新規作成と既存改善はどちらも `character-authoring` を使う。
 - 基本 UI は Session Window を再利用し、独自 chat layout は作らない。
 - 右 pane は `LatestCommand`、`DiffPreview`、`ValidationIssues` を持つ。
 - Composer は通常の添付を残すが、Skill picker / Agent picker は出さない。

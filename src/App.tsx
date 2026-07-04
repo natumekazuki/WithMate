@@ -78,6 +78,7 @@ import {
 } from "./session-ui-projection.js";
 import { buildMainAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import { resolveAuditLogOwner } from "./chat/audit-log-owner.js";
 import {
   buildAuxiliaryLaunchProviderItems,
   createAuxiliaryLaunchDialogCloseHandler,
@@ -116,7 +117,6 @@ import {
 import { runAuxiliarySkillPromptInsertionOperation } from "./auxiliary-skill-prompt-operation.js";
 import {
   buildAdditionalDirectoryItems,
-  buildClosedWorkspacePathMatchState,
   buildComposerAttachmentItems,
   pickComposerReferencePath,
   type ComposerPathPickerKind,
@@ -167,11 +167,7 @@ import {
 } from "./auxiliary-session-refresh-operation.js";
 import {
   createComposerPreviewRequest,
-  useComposerPreviewResolution,
 } from "./chat/use-composer-preview-resolution.js";
-import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
-import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
-import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
 import { createPastedSessionAttachmentHandler } from "./chat/composer-paste-handlers.js";
 import {
   resolveOwnedProviderQuotaTelemetry,
@@ -268,10 +264,17 @@ import {
   createSkillPromptInsertionHandler,
   createStartTitleEditHandler,
   createTitleInputKeyHandler,
-  createWorkspacePathMatchSelectionHandler,
 } from "./chat/session-shell-handlers.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
+const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
+
+function logSessionRunStuckInvestigation(
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  console.info(SESSION_RUN_STUCK_INVESTIGATION_LOG, event, details);
+}
 
 function liveRunStepBucketPriority(status: string): number {
   switch (status) {
@@ -444,13 +447,6 @@ export default function AgentSessionWindowApp() {
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [composerCaret, setComposerCaret] = useState(0);
-  const {
-    workspacePathMatches,
-    activeWorkspacePathMatchIndex,
-    setActiveWorkspacePathMatchIndex,
-    applyWorkspacePathMatchState,
-    workspacePathMatchItems,
-  } = useWorkspacePathMatchState();
   const [availableSkills, setAvailableSkills] = useState<DiscoveredSkill[]>([]);
   const [availableCustomAgents, setAvailableCustomAgents] = useState<DiscoveredCustomAgent[]>([]);
   const [isAgentPickerOpen, setIsAgentPickerOpen] = useState(false);
@@ -619,6 +615,16 @@ export default function AgentSessionWindowApp() {
     [activeRunSessionId, liveRunState.ownerSessionId, liveRunState.state],
   );
   const {
+    session: auditLogSession,
+    ownerSessionId: auditLogOwnerSessionId,
+    sourceLabel: auditLogSourceLabel,
+  } = resolveAuditLogOwner({
+    parentSession: selectedSession,
+    displayedSession,
+    hasActiveAuxiliarySession: isAuxiliaryMode,
+    parentSourceLabel: "Main Session",
+  });
+  const {
     auditLogsOpen,
     setAuditLogsOpen,
     auditLogsState,
@@ -631,7 +637,7 @@ export default function AgentSessionWindowApp() {
     handleLoadAuditLogOperationDetail,
   } = useSessionAuditLogs({
     withmateApi,
-    selectedSession,
+    selectedSession: auditLogSession,
     liveRun: selectedSessionLiveRun,
   });
   const selectedProviderQuotaTelemetry = useMemo(
@@ -642,25 +648,11 @@ export default function AgentSessionWindowApp() {
     () => resolveOwnedSessionContextTelemetry(sessionContextTelemetryState, activeRunSessionId),
     [activeRunSessionId, sessionContextTelemetryState.ownerSessionId, sessionContextTelemetryState.telemetry],
   );
-  const activeComposerDraft = activeAuxiliarySession?.composerDraft ?? draft;
-  const {
-    activePathReference,
-    hasPreviewPathReferenceCandidates,
-    isEditingPathReference,
-    normalizedActivePathQuery,
-    previewPathReferenceCandidates,
-    previewPathReferenceSignature,
-    previewDraft,
-    previewUserMessage,
-  } = useComposerPathReferencePreview({
-    draft: activeComposerDraft,
-    caret: composerCaret,
-    isEnabled: Boolean(selectedSessionId),
-  });
   const selectedSessionRunState: Session["runState"] | null = resolveSelectedSessionRunState({
     runState: selectedSession?.runState,
     hasLiveRun: !!selectedSessionLiveRun,
   });
+  const visibleSessionRunState: Session["runState"] | null = activeAuxiliarySession?.runState ?? selectedSessionRunState;
   const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
   const liveApprovalRequest = selectedSessionLiveRun?.approvalRequest ?? null;
   const liveElicitationRequest = selectedSessionLiveRun?.elicitationRequest ?? null;
@@ -803,11 +795,11 @@ export default function AgentSessionWindowApp() {
   }, [selectedSessionId]);
 
   useEffect(() => {
-    if (selectedSessionRunState === "running") {
+    if (visibleSessionRunState === "running") {
       setIsAgentPickerOpen(false);
       setIsSkillPickerOpen(false);
     }
-  }, [selectedSessionRunState]);
+  }, [visibleSessionRunState]);
 
   useEffect(() => {
     return startModelCatalogSubscription({
@@ -1073,7 +1065,6 @@ export default function AgentSessionWindowApp() {
     });
     setComposerPreview(createEmptyComposerPreview());
     setPickerBaseDirectory(selectedSession?.workspacePath ?? "");
-    applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
     setIsComposerImeComposing(false);
     setIsActivityMonitorFollowing(true);
     setHasActivityMonitorUnread(false);
@@ -1092,7 +1083,11 @@ export default function AgentSessionWindowApp() {
     setElicitationActionRequestId(null);
     setIsHeaderExpanded(false);
     setIsActionDockPinnedExpanded(false);
-  }, [applyWorkspacePathMatchState, selectedSession?.provider, selectedSessionId]);
+  }, [selectedSession?.provider, selectedSessionId]);
+
+  useEffect(() => {
+    setComposerPreview(createEmptyComposerPreview());
+  }, [activeAuxiliarySession?.composerDraft, draft]);
 
   useEffect(() => {
     setApprovalActionRequestId(null);
@@ -1109,7 +1104,7 @@ export default function AgentSessionWindowApp() {
   }, [draft]);
 
   useLayoutEffect(() => {
-    const isActivityMonitorVisible = selectedSessionRunState === "running";
+    const isActivityMonitorVisible = visibleSessionRunState === "running";
     const activityMonitorElement = activityMonitorRef.current;
     const currentSignature = activityMonitorScrollSignature;
     const wasSameSession = activityMonitorSessionIdRef.current === selectedSessionId;
@@ -1150,7 +1145,7 @@ export default function AgentSessionWindowApp() {
     }
 
     setHasActivityMonitorUnread(true);
-  }, [activityMonitorScrollSignature, isActivityMonitorFollowing, selectedSessionRunState, selectedSessionId]);
+  }, [activityMonitorScrollSignature, isActivityMonitorFollowing, visibleSessionRunState, selectedSessionId]);
 
   useEffect(() => {
     let active = true;
@@ -1212,33 +1207,6 @@ export default function AgentSessionWindowApp() {
     });
   }, [activeRunSessionId, displayedSession?.provider, withmateApi]);
 
-  const previewComposerInput = useMemo(() => {
-    return createComposerPreviewRequest({
-      api: withmateApi,
-      mode: "session",
-      sessionId: activeRunSessionId,
-    });
-  }, [activeRunSessionId, withmateApi]);
-  useComposerPreviewResolution({
-    hasPreviewPathReferenceCandidates,
-    isComposerImeComposing,
-    isEditingPathReference,
-    isPreviewBlocked: false,
-    onComposerPreviewChange: setComposerPreview,
-    previewRequest: previewComposerInput,
-    previewPathReferenceSignature,
-    previewUserMessage,
-  });
-  useWorkspacePathMatchSearchFlow({
-    searchSource: "session",
-    sessionId: selectedSessionId,
-    withmateApi,
-    isSearchBlocked: selectedSessionRunState === "running" || !!composerBlockedReason,
-    isComposerImeComposing,
-    isEditingPathReference,
-    normalizedActivePathQuery,
-    onWorkspacePathMatchStateChange: applyWorkspacePathMatchState,
-  });
   const selectedProviderCatalog = useMemo(
     () => (modelCatalog && displayedSession ? getProviderCatalog(modelCatalog.providers, displayedSession.provider) : null),
     [displayedSession, modelCatalog],
@@ -1369,11 +1337,11 @@ export default function AgentSessionWindowApp() {
   );
   const latestCommandEmptyText = useMemo(
     () => resolveSessionMicrocopy(
-      selectedSessionRunState === "running" ? "empty.latest_command.waiting" : "empty.latest_command",
+      visibleSessionRunState === "running" ? "empty.latest_command.waiting" : "empty.latest_command",
       [
         "latest-command-empty",
         selectedSession?.id,
-        selectedSessionRunState,
+        visibleSessionRunState,
         latestTerminalAuditLog?.id,
       ],
     ),
@@ -1382,7 +1350,7 @@ export default function AgentSessionWindowApp() {
       latestTerminalAuditLog?.id,
       selectedSession?.id,
       selectedSessionCharacter?.name,
-      selectedSessionRunState,
+      visibleSessionRunState,
     ],
   );
   const retryBanner = useMemo<RetryBannerState | null>(() => {
@@ -1493,7 +1461,6 @@ export default function AgentSessionWindowApp() {
     forceReasons: [
       isAgentPickerOpen,
       isSkillPickerOpen,
-      workspacePathMatches.length > 0,
       isRetryDraftReplacePending,
       !!retryBanner && !activeAuxiliarySession,
       composerSendability.feedbackTone === "blocked",
@@ -1662,6 +1629,16 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
+    const investigationStartedAt = Date.now();
+    logSessionRunStuckInvestigation("renderer.send.start", {
+      sessionId: selectedSession.id,
+      runState: selectedSession.runState,
+      status: selectedSession.status,
+      messageCount: selectedSession.messages.length,
+      hasLiveRun: !!selectedSessionLiveRun,
+      draftChars: messageText.length,
+    });
+
     if (composerBlockedReason) {
       throw new Error(composerBlockedReason);
     }
@@ -1681,6 +1658,12 @@ export default function AgentSessionWindowApp() {
 
     const nextMessage = messageText.trim();
     const preview = await previewRequest(messageText);
+    logSessionRunStuckInvestigation("renderer.composer-preview.done", {
+      sessionId: selectedSession.id,
+      elapsedMs: Date.now() - investigationStartedAt,
+      attachmentCount: preview.attachments.length,
+      errorCount: preview.errors.length,
+    });
     setComposerPreview(preview);
     const { blockedMessage } = resolveComposerSendPreflight({
       runState: selectedSessionRunState,
@@ -1708,17 +1691,38 @@ export default function AgentSessionWindowApp() {
       updateLiveRunState: (update) => setLiveRunState(update),
       applyRunningSession: (runningSession) => setSessions([runningSession]),
     });
+    logSessionRunStuckInvestigation("renderer.optimistic-running-applied", {
+      sessionId: updatedSession.id,
+      elapsedMs: Date.now() - investigationStartedAt,
+      messageCount: updatedSession.messages.length,
+      runState: updatedSession.runState,
+      status: updatedSession.status,
+    });
 
     try {
       const request: RunSessionTurnRequest = {
         userMessage: messageText,
       };
       const savedSession = await withmateApi.runSessionTurn(selectedSession.id, request);
+      logSessionRunStuckInvestigation("renderer.run-session-turn.resolved", {
+        sessionId: savedSession.id,
+        elapsedMs: Date.now() - investigationStartedAt,
+        messageCount: savedSession.messages.length,
+        runState: savedSession.runState,
+        status: savedSession.status,
+        hasLiveRun: !!selectedSessionLiveRun,
+      });
       applyResolvedSessionRunUpdate({
         savedSession,
         applySavedSession: (nextSession) => setSessions([nextSession]),
       });
     } catch (error) {
+      logSessionRunStuckInvestigation("renderer.run-session-turn.failed", {
+        sessionId: updatedSession.id,
+        elapsedMs: Date.now() - investigationStartedAt,
+        messageCount: updatedSession.messages.length,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
       console.error(error);
       rollbackOptimisticSessionRunUpdate({
         sessionId: updatedSession.id,
@@ -1849,38 +1853,7 @@ export default function AgentSessionWindowApp() {
   });
 
   const handleComposerKeyDown = buildComposerDraftKeyDownHandler({
-    pathMatches: workspacePathMatches,
-    activeIndex: activeWorkspacePathMatchIndex,
-    isComposerImeComposing,
-    onActiveIndexChange: setActiveWorkspacePathMatchIndex,
-    onWorkspacePathMatchStateChange: applyWorkspacePathMatchState,
-    onSelectWorkspacePathMatch: (match) => handleSelectWorkspacePathMatch(match),
     submit: handleComposerSubmitKey,
-  });
-
-  const handleSelectWorkspacePathMatch = createWorkspacePathMatchSelectionHandler({
-    getDraft: () => activeComposerDraft,
-    getCaret: () => composerCaret,
-    getTextarea: () => composerTextareaRef.current,
-    applySelection: (nextState) => {
-      const { draft: nextDraft, caret: nextCaret } = nextState;
-      if (activeAuxiliarySession) {
-        setComposerCaret(nextCaret);
-        void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-      } else {
-        applyComposerDraftChangeCommand({
-          value: nextDraft,
-          selectionStart: nextCaret,
-          setDraft,
-          setComposerCaret,
-          syncMainComposerCaret: (selectionStart) => {
-            mainComposerCaretRef.current = selectionStart;
-          },
-        });
-      }
-      applyWorkspacePathMatchState(nextState);
-    },
-    restoreComposerTextareaFocusAndCaret,
   });
 
   const handleSelectSkill = createSkillPromptInsertionHandler<DiscoveredSkill>({
@@ -2197,7 +2170,6 @@ export default function AgentSessionWindowApp() {
       syncCaret: (caret) => {
         mainComposerCaretRef.current = caret;
       },
-      applyWorkspacePathMatchState,
       setRetryDraftReplacePending: setIsRetryDraftReplacePending,
       focusComposer: (caret) => restoreComposerTextareaFocusAndCaret(textarea, caret),
     });
@@ -2491,7 +2463,6 @@ export default function AgentSessionWindowApp() {
           mainComposerCaretRef.current = selectionStart;
         },
       });
-      applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
     },
     restoreComposerTextareaFocusAndCaret,
   });
@@ -2522,7 +2493,6 @@ export default function AgentSessionWindowApp() {
             },
           });
         }
-        applyWorkspacePathMatchState(insertionState);
       },
       restoreComposerTextareaFocusAndCaret,
     });
@@ -2550,7 +2520,6 @@ export default function AgentSessionWindowApp() {
           },
         });
       }
-      applyWorkspacePathMatchState(nextState);
     },
   });
 
@@ -2988,7 +2957,6 @@ export default function AgentSessionWindowApp() {
         skillItems,
         composerAttachmentItems,
         additionalDirectoryItems,
-        workspacePathMatchItems,
         draft: renderedDraft,
         composerTextareaRef,
         isComposerDisabled: activeAuxiliarySession
@@ -3030,15 +2998,15 @@ export default function AgentSessionWindowApp() {
         isAuxiliaryMode,
         auditLogsOpen,
         displayedSessionAuditLogs,
-        auditLogSourceLabel: "Main Session",
+        auditLogSourceLabel,
         auditLogDetails,
         auditLogOperationDetails,
-        auditLogsHasMore: auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.hasMore : false,
-        auditLogsLoading: auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.loading : false,
-        auditLogsTotal: auditLogsState.ownerSessionId === selectedSessionId
+        auditLogsHasMore: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.hasMore : false,
+        auditLogsLoading: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.loading : false,
+        auditLogsTotal: auditLogsState.ownerSessionId === auditLogOwnerSessionId
           ? Math.max(auditLogsState.total, displayedSessionAuditLogs.length)
           : displayedSessionAuditLogs.length,
-        auditLogsErrorMessage: auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.errorMessage : null,
+        auditLogsErrorMessage: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.errorMessage : null,
         onToggleHeaderExpanded: handleToggleHeaderExpanded,
         headerActions: auxiliaryHeaderActions,
         onOpenAuditLog: () => setAuditLogsOpen(true),
@@ -3166,8 +3134,6 @@ export default function AgentSessionWindowApp() {
         onExpandActionDock: () => handleExpandActionDock({
           focusComposer: shouldFocusComposerForActionDockExpand({ isRunning: renderedIsRunning }),
         }),
-        onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
-        onActivateWorkspacePathMatch: setActiveWorkspacePathMatchIndex,
         onChangeApprovalMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<Session["approvalMode"]>({
           shouldUseAuxiliary: !!activeAuxiliarySession,
           onAuxiliaryChange: handleChangeAuxiliaryApproval,

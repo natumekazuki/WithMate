@@ -3,34 +3,30 @@ import {
   createMemoryErrorResponse,
   createMemoryForgetResponse,
   createMemoryGetEntryResponse,
+  createMemoryListCharactersResponse,
   createMemoryListTagsResponse,
-  createMemoryResolveContextResponse,
   createMemorySearchResponse,
   type MemoryAppendResponse,
   type MemoryErrorResponse,
   type MemoryForgetResponse,
   type MemoryGetEntryResponse,
+  type MemoryListCharactersResponse,
   type MemoryListTagsResponse,
-  type MemoryResolveContextResponse,
   type MemorySearchResponse,
 } from "../src/memory-v6/memory-response-contract.js";
+import type { CharacterCatalogEntry } from "../src/character/character-catalog.js";
 import type { MemoryError } from "../src/memory-v6/memory-contract.js";
 import {
   validateMemoryAppendRequest,
   validateMemoryForgetRequest,
   validateMemoryGetEntryRequest,
   validateMemoryListTagsRequest,
-  validateMemoryResolveContextRequest,
   validateMemorySearchRequest,
 } from "../src/memory-v6/memory-validation.js";
 import type { MemoryEntryDetail } from "../src/memory-v6/memory-state.js";
-import { resolveMemoryV6Target, targetMatchesPrincipal, type MemoryV6TargetResolverDeps } from "./memory-v6-context-resolver.js";
+import { resolveMemoryV6Target, type MemoryV6TargetResolverDeps } from "./memory-v6-context-resolver.js";
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
-import {
-  isSessionBindingPrincipal,
-  requireMemoryPermission,
-  type MemoryV6Principal,
-} from "./memory-v6-permission.js";
+import { requireMemoryPermission, type MemoryV6Principal } from "./memory-v6-permission.js";
 import {
   MemoryV6EntryNotFoundError,
   MemoryV6IdempotencyConflictError,
@@ -39,7 +35,7 @@ import {
 
 export type MemoryV6ServiceDeps = MemoryV6TargetResolverDeps & {
   storage: MemoryV6Storage;
-  resolveSessionById?(id: string): boolean;
+  listCharacters?(): readonly CharacterCatalogEntry[];
 };
 
 type MemoryV6ServiceResult<T> = T | MemoryErrorResponse;
@@ -62,18 +58,13 @@ function toMemoryErrorResponse(error: MemoryError): MemoryErrorResponse {
   return createMemoryErrorResponse(error);
 }
 
-function bindingIdHashForPrincipal(principal: MemoryV6Principal): string {
-  return principal.bindingIdHash;
+function requirePrincipalPermission(principal: MemoryV6Principal | null, permission: Parameters<typeof requireMemoryPermission>[1]): MemoryErrorResponse | null {
+  const permissionError = requireMemoryPermission(principal, permission);
+  return permissionError ? toMemoryErrorResponse(permissionError) : null;
 }
 
-function sessionIdForPrincipal(principal: MemoryV6Principal, deps: MemoryV6ServiceDeps): string | null {
-  if (!isSessionBindingPrincipal(principal)) {
-    return null;
-  }
-  if (deps.resolveSessionById && !deps.resolveSessionById(principal.sessionId)) {
-    return null;
-  }
-  return principal.sessionId;
+function bindingIdHashForPrincipal(principal: MemoryV6Principal): string {
+  return principal.bindingIdHash;
 }
 
 function providerIdForPrincipal(principal: MemoryV6Principal): string | null {
@@ -99,42 +90,21 @@ function storageErrorResponse(error: unknown): MemoryErrorResponse {
 export class MemoryV6Service {
   constructor(private readonly deps: MemoryV6ServiceDeps) {}
 
-  resolveContext(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryResolveContextResponse> {
-    if (principal && !isSessionBindingPrincipal(principal)) {
-      return toMemoryErrorResponse({
-        code: "MEMORY_BINDING_REQUIRED",
-        message: "WithMate runtime binding is required.",
-      });
+  listCharacters(principal: MemoryV6Principal | null): MemoryV6ServiceResult<MemoryListCharactersResponse> {
+    const permissionError = requirePrincipalPermission(principal, "memory.list_characters");
+    if (permissionError) {
+      return permissionError;
     }
-    const permissionError = requireMemoryPermission(principal, "memory.resolve_context");
-    if (permissionError || !principal) {
-      return toMemoryErrorResponse(permissionError ?? {
-        code: "MEMORY_BINDING_REQUIRED",
-        message: "WithMate runtime binding is required.",
-      });
-    }
-    const validated = validateMemoryResolveContextRequest(request);
-    if (!validated.ok) {
-      return toMemoryErrorResponse(validated.error);
-    }
-
-    return createMemoryResolveContextResponse({
-      session: { id: principal.sessionId },
-      character: principal.character,
-      sessionProject: principal.sessionProject,
-      allowedProjectTargets: (principal.accessibleProjects ?? (principal.sessionProject ? [principal.sessionProject] : []))
-        .map((project) => ({ ...project })),
-      permissions: [...principal.permissions],
-    });
+    return createMemoryListCharactersResponse(this.deps.listCharacters?.() ?? []);
   }
 
   search(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemorySearchResponse> {
-    const permissionError = requireMemoryPermission(principal, "memory.search");
-    if (permissionError || !principal) {
-      return toMemoryErrorResponse(permissionError ?? {
-        code: "MEMORY_BINDING_REQUIRED",
-        message: "WithMate runtime binding is required.",
-      });
+    const permissionError = requirePrincipalPermission(principal, "memory.search");
+    if (permissionError) {
+      return permissionError;
+    }
+    if (!principal) {
+      throw new Error("Memory principal permission check failed.");
     }
     const validated = validateMemorySearchRequest(request);
     if (!validated.ok) {
@@ -165,54 +135,42 @@ export class MemoryV6Service {
   }
 
   getEntry(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryGetEntryResponse> {
-    const permissionError = requireMemoryPermission(principal, "memory.get_entry");
-    if (permissionError || !principal) {
-      return toMemoryErrorResponse(permissionError ?? {
-        code: "MEMORY_BINDING_REQUIRED",
-        message: "WithMate runtime binding is required.",
-      });
+    const permissionError = requirePrincipalPermission(principal, "memory.get_entry");
+    if (permissionError) {
+      return permissionError;
+    }
+    if (!principal) {
+      throw new Error("Memory principal permission check failed.");
     }
     const validated = validateMemoryGetEntryRequest(request);
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
     }
 
-    let requestedTarget: MemoryV6ResolvedTarget | null = null;
-    if (validated.value.target) {
-      const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps);
-      if (!resolved.ok) {
-        return toMemoryErrorResponse(resolved.error);
-      }
-      requestedTarget = resolved.target;
-    } else if (!isSessionBindingPrincipal(principal)) {
-      return toMemoryErrorResponse({
-        code: "MEMORY_TARGET_REQUIRED",
-        message: "Explicit memory target is required for external get-entry.",
-        field: "target",
-      });
+    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps);
+    if (!resolved.ok) {
+      return toMemoryErrorResponse(resolved.error);
     }
+    const requestedTarget = resolved.target;
 
     const entry = this.deps.storage.getEntry(validated.value.entryId);
     if (!entry || entry.state !== "active") {
       return createMemoryGetEntryResponse(null);
     }
     const target = entryTarget(entry);
-    if (requestedTarget && !sameTarget(requestedTarget, target)) {
-      return createMemoryGetEntryResponse(null);
-    }
-    if (!targetMatchesPrincipal(principal, target)) {
+    if (!sameTarget(requestedTarget, target)) {
       return createMemoryGetEntryResponse(null);
     }
     return createMemoryGetEntryResponse(entry);
   }
 
   listTags(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryListTagsResponse> {
-    const permissionError = requireMemoryPermission(principal, "memory.list_tags");
-    if (permissionError || !principal) {
-      return toMemoryErrorResponse(permissionError ?? {
-        code: "MEMORY_BINDING_REQUIRED",
-        message: "WithMate runtime binding is required.",
-      });
+    const permissionError = requirePrincipalPermission(principal, "memory.list_tags");
+    if (permissionError) {
+      return permissionError;
+    }
+    if (!principal) {
+      throw new Error("Memory principal permission check failed.");
     }
     const validated = validateMemoryListTagsRequest(request);
     if (!validated.ok) {
@@ -232,12 +190,12 @@ export class MemoryV6Service {
   }
 
   append(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryAppendResponse> {
-    const permissionError = requireMemoryPermission(principal, "memory.append");
-    if (permissionError || !principal) {
-      return toMemoryErrorResponse(permissionError ?? {
-        code: "MEMORY_BINDING_REQUIRED",
-        message: "WithMate runtime binding is required.",
-      });
+    const permissionError = requirePrincipalPermission(principal, "memory.append");
+    if (permissionError) {
+      return permissionError;
+    }
+    if (!principal) {
+      throw new Error("Memory principal permission check failed.");
     }
     const validated = validateMemoryAppendRequest(request);
     if (!validated.ok) {
@@ -261,7 +219,7 @@ export class MemoryV6Service {
         bindingIdHash: bindingIdHashForPrincipal(principal),
         source: {
           type: "agent",
-          sessionId: sessionIdForPrincipal(principal, this.deps),
+          sessionId: null,
           messageId: validated.value.sourceMessageId ?? null,
           providerId: providerIdForPrincipal(principal),
           appMessageId: null,
@@ -274,12 +232,12 @@ export class MemoryV6Service {
   }
 
   forget(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryForgetResponse> {
-    const permissionError = requireMemoryPermission(principal, "memory.forget");
-    if (permissionError || !principal) {
-      return toMemoryErrorResponse(permissionError ?? {
-        code: "MEMORY_BINDING_REQUIRED",
-        message: "WithMate runtime binding is required.",
-      });
+    const permissionError = requirePrincipalPermission(principal, "memory.forget");
+    if (permissionError) {
+      return permissionError;
+    }
+    if (!principal) {
+      throw new Error("Memory principal permission check failed.");
     }
     const validated = validateMemoryForgetRequest(request);
     if (!validated.ok) {
@@ -297,7 +255,7 @@ export class MemoryV6Service {
         reason: validated.value.reason,
         idempotencyKey: validated.value.idempotencyKey,
         bindingIdHash: bindingIdHashForPrincipal(principal),
-        sessionId: sessionIdForPrincipal(principal, this.deps),
+        sessionId: null,
       });
       return createMemoryForgetResponse(results);
     } catch (error) {

@@ -10,6 +10,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
     window: {
       resolveEventWindow: () => null,
       resolveHomeWindow: () => null,
+      resolveSessionWindow: () => null,
       async openSessionWindow(sessionId) {
         calls.push(`openSession:${sessionId}`);
         return {} as never;
@@ -128,9 +129,6 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async previewComposerInput() {
         return null;
       },
-      async searchWorkspaceFiles() {
-        return [];
-      },
     },
     companion: {
       async createCompanionSession() {
@@ -165,9 +163,6 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async previewCompanionComposerInput() {
         return { attachments: [], errors: [] };
       },
-      async searchCompanionWorkspaceFiles() {
-        return [];
-      },
       async runCompanionSessionTurn() {
         return {} as never;
       },
@@ -185,6 +180,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       createSession: () => ({}) as never,
       updateSession: () => ({}) as never,
       deleteSession: () => {},
+      deleteSessionsLastActiveBefore: () => ({ deletedSessionIds: [], skippedRunningSessionIds: [] }),
       async runSessionTurn() {
         return {} as never;
       },

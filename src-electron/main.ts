@@ -53,11 +53,10 @@ import type {
   OpenPathOptions,
   SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
-import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
-import { companionSessionToAuxiliaryParentSession } from "./auxiliary-parent-session.js";
+import { resolveAuxiliaryParentSession } from "./auxiliary-parent-session.js";
 import { AuxiliarySessionService } from "./auxiliary-session-service.js";
 import { AuxiliarySessionStorage } from "./auxiliary-session-storage.js";
 import { CharacterService } from "./character-service.js";
@@ -148,7 +147,6 @@ import { discoverSessionSkills } from "./skill-discovery.js";
 import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
 import { resolveCursorAnchoredPosition } from "./window-placement.js";
-import { clearWorkspaceFileIndex, searchWorkspacePathCandidates } from "./workspace-file-search.js";
 import { AppLogService } from "./app-log-service.js";
 import type { AppBootStatus } from "../src/app-boot-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
@@ -164,7 +162,6 @@ import {
   type MemoryV6RuntimeApiHandle,
 } from "./memory-v6-runtime.js";
 import { MemoryV6ReviewService } from "./memory-v6-review-service.js";
-import { MemoryBindingRegistry } from "./memory-binding-registry.js";
 import { getProviderRuntimeCapabilities } from "./provider-support.js";
 import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
@@ -173,7 +170,7 @@ import {
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
 import { isValidV4Database } from "./database-schema-v4.js";
-import { CREATE_V6_SCHEMA_SQL } from "./database-schema-v6.js";
+import { ensureV6Schema } from "./database-schema-v6.js";
 import {
   openAppDatabase,
   SQLITE_MAINTENANCE_BUSY_TIMEOUT_MS,
@@ -247,7 +244,6 @@ let memoryV6RuntimeStatus: MemoryV6Diagnostics["runtime"]["status"] = "stopped";
 const isBackgroundLaunch = shouldLaunchInBackground(process.argv);
 let managedMemorySkillSyncResults: ManagedMemorySkillSyncResult[] = [];
 let memoryV6DiagnosticErrors: MemoryV6DiagnosticEvent[] = [];
-const memoryBindingRegistry = new MemoryBindingRegistry();
 let bootWindow: BrowserWindow | null = null;
 let appBootStatus: AppBootStatus = {
   kind: "running",
@@ -363,15 +359,11 @@ async function getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics> {
       discoveryFilePath: memoryV6RuntimeApi?.discoveryFilePath ?? null,
       hasApiSecret: Boolean(memoryV6RuntimeApi),
     },
-    binding: {
-      activeBindingCount: memoryBindingRegistry.getActiveBindingCount(),
-    },
     providers: configuredProviderIds.map((providerId) => {
       const capabilities = getProviderRuntimeCapabilities({ providerId });
       return {
         providerId,
         providerSupported: capabilities.providerSupported,
-        memoryBindingTransport: capabilities.memoryBindingTransport,
       };
     }),
     skillSync: configuredProviderIds.map((providerId) => {
@@ -429,7 +421,7 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
     memoryV6RuntimeStatus = "stopped";
     memoryV6RuntimeApi = await startMemoryV6RuntimeApi({
       userDataPath: app.getPath("userData"),
-      bindingRegistry: memoryBindingRegistry,
+      listCharacters: () => requireCharacterService().listCharacters(),
       log: writeAppLog,
     });
     memoryV6RuntimeStatus = "running";
@@ -993,6 +985,22 @@ function isSessionRunInFlight(sessionId: string): boolean {
     : false;
 }
 
+function listRunningActiveAuxiliaryParentSessionIds(parentSessionIds: readonly string[]): Set<string> {
+  const runningParentSessionIds = new Set<string>();
+  if (!auxiliarySessionStorage) {
+    return runningParentSessionIds;
+  }
+
+  for (const parentSessionId of parentSessionIds) {
+    const activeAuxiliarySession = requireAuxiliarySessionService().getActiveAuxiliarySession(parentSessionId);
+    if (activeAuxiliarySession && requireAuxiliarySessionRuntimeService().isRunInFlight(activeAuxiliarySession.id)) {
+      runningParentSessionIds.add(parentSessionId);
+    }
+  }
+
+  return runningParentSessionIds;
+}
+
 function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
   WindowBroadcastService<BrowserWindow>,
   WindowDialogService,
@@ -1110,9 +1118,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           ensureV6Schema: (nextDbPath) => {
             const db = openAppDatabase(nextDbPath);
             try {
-              for (const statement of CREATE_V6_SCHEMA_SQL) {
-                db.exec(statement);
-              }
+              ensureV6Schema(db);
             } finally {
               db.close();
             }
@@ -1180,6 +1186,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               window: {
                 resolveEventWindow: (event) => BrowserWindow.fromWebContents(event.sender) ?? null,
                 resolveHomeWindow: () => requireAuxWindowService().getHomeWindow(),
+                resolveSessionWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId),
+                resolveCompanionReviewWindow: (sessionId) =>
+                  requireMainWindowFacade().getCompanionReviewWindow(sessionId),
                 openSessionWindow,
                 openHomeWindow: createHomeWindow,
                 openSessionMonitorWindow,
@@ -1266,7 +1275,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getSessionMessageArtifact,
                 getDiffPreview: (token) => requireAuxWindowService().getDiffPreview(token),
                 previewComposerInput,
-                searchWorkspaceFiles,
               },
               auxiliary: {
                 listAuxiliarySessions: (parentSessionId) =>
@@ -1355,7 +1363,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 },
                 previewCompanionComposerInput: (sessionId, userMessage) =>
                   requireCompanionRuntimeService().previewComposerInput(sessionId, userMessage),
-                searchCompanionWorkspaceFiles,
                 discardCompanionSession: async (sessionId) => {
                   const session = await requireCompanionReviewService().discardSession(sessionId);
                   await cleanupSessionFilesDirectory(sessionId);
@@ -1375,10 +1382,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 resolveLiveElicitation,
                 createSession: (input) => requireMainSessionCommandFacade().createSession(input),
                 updateSession: (session) => requireMainSessionCommandFacade().updateSession(session),
-                deleteSession: async (sessionId) => {
-                  await requireMainSessionCommandFacade().deleteSession(sessionId);
-                  await cleanupSessionFilesDirectory(sessionId);
-                },
+                deleteSession: (sessionId) => requireMainSessionCommandFacade().deleteSession(sessionId),
+                deleteSessionsLastActiveBefore: (request) =>
+                  requireMainSessionCommandFacade().deleteSessionsLastActiveBefore(request),
                 runSessionTurn: (sessionId, request) => requireMainSessionCommandFacade().runSessionTurn(sessionId, request),
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
               },
@@ -1434,6 +1440,7 @@ function isSessionStorageWritable(storage: SessionStorageRead): storage is Sessi
     typeof candidate.upsertSession === "function" &&
     typeof candidate.replaceSessions === "function" &&
     typeof candidate.deleteSession === "function" &&
+    typeof candidate.deleteSessions === "function" &&
     typeof candidate.clearSessions === "function"
   );
 }
@@ -1459,7 +1466,6 @@ function requireMainQueryService(): MainQueryService {
       discoverSessionCustomAgents,
       resolveComposerPreview: (session, userMessage) =>
         resolveComposerPreview(appendSessionFilesDirectory(app.getPath("userData"), session), userMessage),
-      searchWorkspaceFiles: (workspacePath, query) => searchWorkspacePathCandidates(workspacePath, query),
       launchTerminalAtPath,
     });
   }
@@ -1513,12 +1519,6 @@ function requireMainProviderFacade(): MainProviderFacade {
       ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
       codexAdapter,
       copilotAdapter,
-      revokeSessionMemoryBindings: (sessionId) => {
-        memoryBindingRegistry.revokeSessionBindings(sessionId);
-      },
-      revokeAllMemoryBindings: () => {
-        memoryBindingRegistry.revokeAll();
-      },
     });
   }
 
@@ -1534,9 +1534,7 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       getProviderQuotaTelemetry: (providerId) => getProviderQuotaTelemetry(providerId),
       isProviderQuotaTelemetryStale: (telemetry) => isProviderQuotaTelemetryStale(telemetry),
       refreshProviderQuotaTelemetry: (providerId) => refreshProviderQuotaTelemetry(providerId),
-      revokeSessionMemoryBindings: (sessionId) => {
-        memoryBindingRegistry.revokeSessionBindings(sessionId);
-      },
+      cleanupSessionFilesDirectory,
     });
   }
 
@@ -1859,12 +1857,6 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       },
       invalidateProviderSessionThread,
       scheduleProviderQuotaTelemetryRefresh,
-      clearWorkspaceFileIndex,
-      createProviderMemoryBinding: ({ session, provider, character }) =>
-        memoryBindingRegistry.createBinding({ session, provider, character }),
-      revokeProviderMemoryBinding: (binding) => {
-        memoryBindingRegistry.revokeBinding(binding);
-      },
       broadcastLiveSessionRun,
       resolvePendingApprovalRequest: (sessionId, decision) => {
         const liveRun = getLiveSessionRun(sessionId);
@@ -1919,11 +1911,8 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         taskTitle: session.taskTitle,
       }),
       resolveProjectMemoryEntriesForPrompt: () => [],
-      createAuditLog: (entry) => ({
-        id: 0,
-        ...entry,
-      }),
-      updateAuditLog: () => {},
+      createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
+      updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
       setLiveSessionRun,
       getLiveSessionRun,
       waitForApprovalDecision: (sessionId, request, signal) =>
@@ -1938,7 +1927,6 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       },
       invalidateProviderSessionThread,
       scheduleProviderQuotaTelemetryRefresh,
-      clearWorkspaceFileIndex,
       broadcastLiveSessionRun,
       resolvePendingApprovalRequest: (sessionId, decision) => {
         const liveRun = getLiveSessionRun(sessionId);
@@ -2001,7 +1989,6 @@ function requireCompanionRuntimeService(): CompanionRuntimeService {
       setSessionContextTelemetry: (telemetry) => setSessionContextTelemetry(telemetry.sessionId, telemetry),
       invalidateProviderSessionThread,
       scheduleProviderQuotaTelemetryRefresh,
-      clearWorkspaceFileIndex,
       broadcastCompanionSessions,
       resolvePendingApprovalRequest: (sessionId, decision) => {
         const liveRun = getLiveSessionRun(sessionId);
@@ -2051,12 +2038,15 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       getSession,
       getStoredSession: (sessionId) => requireSessionStorage().getSession(sessionId),
       isSessionRunInFlight,
+      listRunningActiveAuxiliaryParentIds: listRunningActiveAuxiliaryParentSessionIds,
       upsertStoredSession: (session) => requireSessionStorageForWrite().upsertSession(session),
       replaceStoredSessions: async (nextSessions) => {
         await requireSessionStorageForWrite().replaceSessions(nextSessions);
       },
       listStoredSessions: () => requireSessionStorage().listSessions(),
-      deleteStoredSession: (sessionId) => requireSessionStorageForWrite().deleteSession(sessionId),
+      listStoredSessionIdsLastActiveBefore: (cutoff) =>
+        requireSessionStorage().listSessionIdsLastActiveBefore(cutoff),
+      deleteStoredSessions: (sessionIds) => requireSessionStorageForWrite().deleteSessions(sessionIds),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
       createCharacterRuntimeSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
@@ -2735,13 +2725,12 @@ function getSession(sessionId: string): Session | null {
 }
 
 async function getAuxiliaryParentSession(parentSessionId: string): Promise<Session | null> {
-  const session = getSession(parentSessionId);
-  if (session) {
-    return session;
-  }
-
-  const companionSession = await requireCompanionStorage().getSession(parentSessionId);
-  return companionSession ? companionSessionToAuxiliaryParentSession(companionSession) : null;
+  return resolveAuxiliaryParentSession({
+    parentSessionId,
+    getStoredSession: (sessionId) => requireSessionStorage().getSession(sessionId),
+    getCachedSession: getSession,
+    getCompanionSession: (sessionId) => requireCompanionStorage().getSession(sessionId),
+  });
 }
 
 async function getDisplaySession(sessionId: string): Promise<Session | null> {
@@ -2982,19 +2971,6 @@ async function previewComposerInput(
   }
 
   return requireMainQueryService().previewComposerInput(sessionId, userMessage);
-}
-
-async function searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]> {
-  return requireMainQueryService().searchWorkspaceFiles(sessionId, query);
-}
-
-async function searchCompanionWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]> {
-  const session = await requireCompanionStorage().getSession(sessionId);
-  if (!session) {
-    throw new Error("対象 CompanionSession が見つからないよ。");
-  }
-
-  return searchWorkspacePathCandidates(session.worktreePath, query);
 }
 
 async function copyFilesToSessionFiles(

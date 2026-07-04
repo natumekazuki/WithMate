@@ -2797,17 +2797,6 @@ type SessionAdditionalDirectoryItem = {
   canRemove: boolean;
 };
 
-type SessionWorkspacePathMatchItem = {
-  key: string;
-  path: string;
-  kind: "file" | "folder";
-  kindLabel: string;
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-  isActive: boolean;
-};
-
 type SessionComposerSendabilityView = {
   primaryFeedback: string;
   secondaryFeedback: string[];
@@ -2842,7 +2831,6 @@ export type SessionComposerExpandedProps = {
   skillItems: SessionSkillItem[];
   attachmentItems: SessionAttachmentItem[];
   additionalDirectoryItems: SessionAdditionalDirectoryItem[];
-  workspacePathMatchItems: SessionWorkspacePathMatchItem[];
   draft: string;
   placeholder?: string;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -2885,8 +2873,6 @@ export type SessionComposerExpandedProps = {
   onDraftCompositionStart: () => void;
   onDraftCompositionEnd: () => void;
   onSendOrCancel: () => void;
-  onSelectWorkspacePathMatch: (path: string) => void;
-  onActivateWorkspacePathMatch: (index: number) => void;
   onChangeApprovalMode: (value: ApprovalMode) => void;
   onChangeCodexSandboxMode: (value: CodexSandboxMode) => void;
   onChangeModel: (value: string) => void;
@@ -2920,7 +2906,6 @@ export function SessionComposerExpanded({
   skillItems,
   attachmentItems,
   additionalDirectoryItems,
-  workspacePathMatchItems,
   draft,
   placeholder,
   composerTextareaRef,
@@ -2963,8 +2948,6 @@ export function SessionComposerExpanded({
   onDraftCompositionStart,
   onDraftCompositionEnd,
   onSendOrCancel,
-  onSelectWorkspacePathMatch,
-  onActivateWorkspacePathMatch,
   onChangeApprovalMode,
   onChangeCodexSandboxMode,
   onChangeModel,
@@ -2993,9 +2976,6 @@ export function SessionComposerExpanded({
     nextFocusTarget?.focus();
   }, [isSkillPickerOpen, skillItems]);
 
-  const activeWorkspacePathMatchIndex = workspacePathMatchItems.findIndex((item) => item.isActive);
-  const activeWorkspacePathMatchId =
-    activeWorkspacePathMatchIndex >= 0 ? `composer-workspace-path-match-${activeWorkspacePathMatchIndex}` : undefined;
   const showComposerToolbar =
     showAttachmentControls ||
     showCustomAgentPicker ||
@@ -3300,10 +3280,6 @@ export function SessionComposerExpanded({
           onCompositionStart={onDraftCompositionStart}
           onCompositionEnd={onDraftCompositionEnd}
           disabled={isComposerDisabled}
-          aria-autocomplete="list"
-          aria-expanded={workspacePathMatchItems.length > 0}
-          aria-controls={workspacePathMatchItems.length > 0 ? "composer-workspace-path-match-list" : undefined}
-          aria-activedescendant={activeWorkspacePathMatchId}
           aria-describedby={composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined}
           aria-invalid={composerSendability.feedbackTone === "blocked" ? true : undefined}
         />
@@ -3334,39 +3310,6 @@ export function SessionComposerExpanded({
           </div>
         ) : null}
       </div>
-
-      {workspacePathMatchItems.length > 0 ? (
-        <div
-          id="composer-workspace-path-match-list"
-          className="composer-path-match-list"
-          role="listbox"
-          aria-label="@path 候補"
-          aria-orientation="vertical"
-        >
-          {workspacePathMatchItems.map((item, index) => (
-            <button
-              key={item.key}
-              id={`composer-workspace-path-match-${index}`}
-              type="button"
-              role="option"
-              aria-selected={item.isActive}
-              tabIndex={-1}
-              className={`composer-path-match ${item.kind}${item.isActive ? " active" : ""}`}
-              onMouseDown={(event) => event.preventDefault()}
-              onMouseEnter={() => onActivateWorkspacePathMatch(index)}
-              onFocus={() => onActivateWorkspacePathMatch(index)}
-              onClick={() => onSelectWorkspacePathMatch(item.path)}
-              title={item.title}
-            >
-              <span className="composer-path-match-heading">
-                <span className="composer-path-match-kind">{item.kindLabel}</span>
-                <span className="composer-path-match-primary">{item.primaryLabel}</span>
-              </span>
-              <span className="composer-path-match-secondary">{item.secondaryLabel}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
 
       <div className="composer-settings">
         {showExecutionModeControls ? (

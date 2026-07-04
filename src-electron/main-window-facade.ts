@@ -64,6 +64,10 @@ export class MainWindowFacade {
     return this.deps.getAuxWindowService().listOpenCompanionReviewWindowIds();
   }
 
+  getCompanionReviewWindow(sessionId: string): BrowserWindow | null {
+    return this.deps.getAuxWindowService().getCompanionReviewWindow(sessionId);
+  }
+
   closeResetTargetWindows(): void {
     this.deps.getSessionWindowBridge().closeAllSessionWindows();
     this.deps.getAuxWindowService().closeResetTargetWindows();
