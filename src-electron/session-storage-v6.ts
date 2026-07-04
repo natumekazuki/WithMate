@@ -58,6 +58,9 @@ type SessionIdRow = {
   id: string;
 };
 
+const AUXILIARY_SESSIONS_TABLE_NAME = "auxiliary_sessions";
+const COMPANION_SESSIONS_TABLE_NAME = "companion_sessions";
+
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
 function logSessionRunStuckInvestigation(
@@ -253,6 +256,7 @@ export class SessionStorageV6 {
       for (const session of normalizedSessions) {
         this.writeSession(session);
       }
+      this.deleteAuxiliarySessionsWithoutValidParents(normalizedSessions.map((session) => session.id));
       this.db.exec("COMMIT");
       return this.listSessions();
     } catch (error) {
@@ -275,6 +279,7 @@ export class SessionStorageV6 {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       this.db.prepare(`DELETE FROM sessions_v6 WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
+      this.deleteAuxiliarySessionsForParentsIfTableExists(uniqueSessionIds);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -283,8 +288,16 @@ export class SessionStorageV6 {
   }
 
   clearSessions(): void {
-    this.db.exec("DELETE FROM session_messages_v6;");
-    this.db.exec("DELETE FROM sessions_v6;");
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      this.db.exec("DELETE FROM session_messages_v6;");
+      this.db.exec("DELETE FROM sessions_v6;");
+      this.deleteAllAuxiliarySessionsIfTableExists();
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   close(): void {
@@ -472,5 +485,75 @@ export class SessionStorageV6 {
       throw new Error(`V6 session row を session に変換できないよ: ${row.id}`);
     }
     return session;
+  }
+
+  private auxiliarySessionsTableExists(): boolean {
+    return Boolean(this.db.prepare(`
+      SELECT 1
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name = ?
+    `).get(AUXILIARY_SESSIONS_TABLE_NAME));
+  }
+
+  private deleteAuxiliarySessionsForParentsIfTableExists(parentSessionIds: readonly string[]): void {
+    if (!this.auxiliarySessionsTableExists()) {
+      return;
+    }
+
+    const uniqueParentIds = Array.from(new Set(parentSessionIds.map((parentSessionId) => parentSessionId.trim()).filter(Boolean)));
+    if (uniqueParentIds.length === 0) {
+      return;
+    }
+
+    const placeholders = uniqueParentIds.map(() => "?").join(", ");
+    this.db.prepare(`DELETE FROM auxiliary_sessions WHERE parent_session_id IN (${placeholders})`).run(...uniqueParentIds);
+  }
+
+  private deleteAllAuxiliarySessionsIfTableExists(): void {
+    if (!this.auxiliarySessionsTableExists()) {
+      return;
+    }
+
+    this.db.prepare("DELETE FROM auxiliary_sessions").run();
+  }
+
+  private companionSessionsTableExists(): boolean {
+    return Boolean(this.db.prepare(`
+      SELECT 1
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name = ?
+    `).get(COMPANION_SESSIONS_TABLE_NAME));
+  }
+
+  private listRetainedCompanionSessionIds(): string[] {
+    if (!this.companionSessionsTableExists()) {
+      return [];
+    }
+
+    const rows = this.db
+      .prepare("SELECT id FROM companion_sessions WHERE status NOT IN ('merged', 'discarded')")
+      .all() as SessionIdRow[];
+    return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
+  }
+
+  private deleteAuxiliarySessionsWithoutValidParents(retainedParentSessionIds: Iterable<string>): void {
+    if (!this.auxiliarySessionsTableExists()) {
+      return;
+    }
+
+    const validParentSessionIds = Array.from(new Set([
+      ...retainedParentSessionIds,
+      ...this.listRetainedCompanionSessionIds(),
+    ]));
+    if (validParentSessionIds.length === 0) {
+      this.db.prepare("DELETE FROM auxiliary_sessions").run();
+      return;
+    }
+
+    const placeholders = validParentSessionIds.map(() => "?").join(", ");
+    this.db.prepare(`DELETE FROM auxiliary_sessions WHERE parent_session_id NOT IN (${placeholders})`)
+      .run(...validParentSessionIds);
   }
 }
