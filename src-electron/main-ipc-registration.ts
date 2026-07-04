@@ -585,14 +585,14 @@ function assertSessionDeleteSender(
   throw new Error("Session delete IPC is only available from Home, Settings, or the target Session window.");
 }
 
-function assertAuxiliaryMutationSender(
+function assertAuxiliaryOwnerWindowSender(
   event: IpcMainInvokeEvent,
   parentSessionId: string,
   deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveSessionWindow" | "resolveCompanionReviewWindow">,
 ): void {
   const window = deps.resolveEventWindow(event);
   if (!window) {
-    throw new Error("Auxiliary session mutation IPC is only available from the target Session or Companion Review window.");
+    throw new Error("Auxiliary session IPC is only available from the target Session or Companion Review window.");
   }
   if (deps.resolveSessionWindow(parentSessionId) === window) {
     return;
@@ -600,7 +600,7 @@ function assertAuxiliaryMutationSender(
   if (deps.resolveCompanionReviewWindow(parentSessionId) === window) {
     return;
   }
-  throw new Error("Auxiliary session mutation IPC is only available from the target Session or Companion Review window.");
+  throw new Error("Auxiliary session IPC is only available from the target Session or Companion Review window.");
 }
 
 async function getAuxiliarySessionForMutation(
@@ -734,22 +734,25 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     }
     return auxiliaryDeps.listAuxiliarySessions(parentSessionId);
   });
-  ipcMain.handle(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL, (_event, parentSessionId: string) => {
+  ipcMain.handle(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL, (event, parentSessionId: string) => {
     const auxiliaryDeps = getAuxiliaryDeps(deps);
     if (!parentSessionId) {
       return null;
     }
+    assertAuxiliaryOwnerWindowSender(event, parentSessionId, deps);
     return auxiliaryDeps.getActiveAuxiliarySession(parentSessionId);
   });
-  ipcMain.handle(WITHMATE_GET_AUXILIARY_SESSION_CHANNEL, (_event, auxiliarySessionId: string) => {
+  ipcMain.handle(WITHMATE_GET_AUXILIARY_SESSION_CHANNEL, async (event, auxiliarySessionId: string) => {
     const auxiliaryDeps = getAuxiliaryDeps(deps);
     if (!auxiliarySessionId) {
       return null;
     }
-    return auxiliaryDeps.getAuxiliarySession(auxiliarySessionId);
+    const session = await getAuxiliarySessionForMutation(auxiliaryDeps, auxiliarySessionId);
+    assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
+    return session;
   });
   ipcMain.handle(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, (event, input: CreateAuxiliarySessionInput) => {
-    assertAuxiliaryMutationSender(event, input.parentSessionId, deps);
+    assertAuxiliaryOwnerWindowSender(event, input.parentSessionId, deps);
     return getAuxiliaryDeps(deps).createAuxiliarySession(input);
   });
   ipcMain.handle(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL, async (event, session: AuxiliarySession) => {
@@ -758,13 +761,13 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     if (existingSession.parentSessionId !== session.parentSessionId) {
       throw new Error("Auxiliary Session parent mismatch.");
     }
-    assertAuxiliaryMutationSender(event, existingSession.parentSessionId, deps);
+    assertAuxiliaryOwnerWindowSender(event, existingSession.parentSessionId, deps);
     return auxiliaryDeps.updateAuxiliarySession(session);
   });
   ipcMain.handle(WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL, async (event, auxiliarySessionId: string) => {
     const auxiliaryDeps = getAuxiliaryDeps(deps);
     const session = await getAuxiliarySessionForMutation(auxiliaryDeps, auxiliarySessionId);
-    assertAuxiliaryMutationSender(event, session.parentSessionId, deps);
+    assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
     return auxiliaryDeps.closeAuxiliarySession(auxiliarySessionId);
   });
   ipcMain.handle(
@@ -772,14 +775,14 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     async (event, auxiliarySessionId: string, request: RunSessionTurnRequest) => {
       const auxiliaryDeps = getAuxiliaryDeps(deps);
       const session = await getAuxiliarySessionForMutation(auxiliaryDeps, auxiliarySessionId);
-      assertAuxiliaryMutationSender(event, session.parentSessionId, deps);
+      assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
       return auxiliaryDeps.runAuxiliarySessionTurn(auxiliarySessionId, request);
     },
   );
   ipcMain.handle(WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL, async (event, auxiliarySessionId: string) => {
     const auxiliaryDeps = getAuxiliaryDeps(deps);
     const session = await getAuxiliarySessionForMutation(auxiliaryDeps, auxiliarySessionId);
-    assertAuxiliaryMutationSender(event, session.parentSessionId, deps);
+    assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
     return auxiliaryDeps.cancelAuxiliarySessionRun(auxiliarySessionId);
   });
 }

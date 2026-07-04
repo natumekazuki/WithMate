@@ -147,6 +147,18 @@ function createRepairableLegacyV6Database(dbPath: string): void {
   }
 }
 
+function createUnrepairableV6Database(dbPath: string): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec(`
+      PRAGMA user_version = 6;
+      CREATE VIEW sessions_v6 AS SELECT 'invalid' AS id;
+    `);
+  } finally {
+    db.close();
+  }
+}
+
 function hasTable(dbPath: string, tableName: string): boolean {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
@@ -273,6 +285,25 @@ describe("resolveAppDatabasePath", () => {
       const selectedPath = resolveAppDatabasePath(userDataPath);
       assert.equal(selectedPath, v6Path);
       assert.equal(isValidV6Database(v6Path), true);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("V6 repair が失敗しても valid V4 があれば active path selection は V4 へ fallback する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+
+    try {
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+      createV4Database(v4Path);
+      createUnrepairableV6Database(v6Path);
+
+      const selectedPath = resolveAppDatabasePath(userDataPath);
+
+      assert.equal(selectedPath, v4Path);
+      assert.equal(isValidV4Database(v4Path), true);
+      assert.equal(isValidV6Database(v6Path), false);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
@@ -443,6 +474,26 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       assert.equal(selectedPath, v6Path);
       assert.equal(isValidV6Database(v6Path), true);
       assert.equal(hasTable(v6Path, "v6_only_sentinel"), true);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("V6 repair が失敗しても valid V4 があれば V4 から V6 へ移行する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+
+    try {
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      createV4Database(v4Path);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+      createUnrepairableV6Database(v6Path);
+
+      const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
+
+      assert.equal(selectedPath, v6Path);
+      assert.equal(isValidV4Database(v4Path), true);
+      assert.equal(isValidV6Database(v6Path), true);
+      assert.equal(hasTable(v6Path, "v6_only_sentinel"), false);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }

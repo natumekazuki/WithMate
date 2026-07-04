@@ -23,7 +23,7 @@ function v3BlobRootPath(userDataPath: string): string {
   return path.join(userDataPath, "blobs", "v3");
 }
 
-function ensureExistingV6DatabaseSchema(dbPath: string): void {
+function tryEnsureExistingV6DatabaseSchema(dbPath: string): void {
   if (readV6DatabaseUserVersion(dbPath) !== 6) {
     return;
   }
@@ -31,6 +31,8 @@ function ensureExistingV6DatabaseSchema(dbPath: string): void {
   const db = openAppDatabase(dbPath);
   try {
     ensureV6Schema(db);
+  } catch {
+    // Repair failure must not block fallback to a valid legacy database generation.
   } finally {
     db.close();
   }
@@ -46,7 +48,7 @@ type AppDatabaseMigrationProgressListener = (progress: AppDatabaseMigrationProgr
 export function resolveAppDatabasePath(userDataPath: string): string {
   const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
   if (existsSync(v6Path)) {
-    ensureExistingV6DatabaseSchema(v6Path);
+    tryEnsureExistingV6DatabaseSchema(v6Path);
   }
   if (existsSync(v6Path) && isValidV6Database(v6Path)) {
     return v6Path;
@@ -86,7 +88,7 @@ export async function resolveOrMigrateAppDatabasePath(
   });
   const v6Exists = existsSync(v6Path);
   if (v6Exists) {
-    ensureExistingV6DatabaseSchema(v6Path);
+    tryEnsureExistingV6DatabaseSchema(v6Path);
   }
   if (v6Exists && isValidV6Database(v6Path)) {
     const v4PathForExistingV6 = path.join(userDataPath, APP_DATABASE_V4_FILENAME);

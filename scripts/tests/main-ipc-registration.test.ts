@@ -15,8 +15,10 @@ import {
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
+  WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
+  WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL,
   WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
   WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL,
@@ -24,6 +26,7 @@ import {
   WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL,
   WITHMATE_GET_MATE_STATE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
+  WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
@@ -472,6 +475,39 @@ test("Auxiliary mutation/run IPC は対象 Session / Companion Review window か
   ]);
 });
 
+test("Auxiliary full read IPC は対象 Session / Companion Review window から呼び出せる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  const companionReviewWindow = createWindowStub("http://localhost:5173/?mode=companion&sessionId=session-1");
+  const auxiliarySession = createAuxiliarySessionStub();
+  let eventWindow: unknown = sessionWindow;
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
+    resolveCompanionReviewWindow: (sessionId: string) =>
+      sessionId === "session-1" ? companionReviewWindow : null,
+    getActiveAuxiliarySession: async (parentSessionId: string) => {
+      calls.push(`getActiveAuxiliarySession:${parentSessionId}`);
+      return auxiliarySession;
+    },
+    getAuxiliarySession: async (auxiliarySessionId: string) => {
+      calls.push(`getAuxiliarySession:${auxiliarySessionId}`);
+      return auxiliarySession;
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.equal(await handlers.get(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL)?.({}, "session-1"), auxiliarySession);
+  eventWindow = companionReviewWindow;
+  assert.equal(await handlers.get(WITHMATE_GET_AUXILIARY_SESSION_CHANNEL)?.({}, "aux-1"), auxiliarySession);
+
+  assert.deepEqual(calls, [
+    "getActiveAuxiliarySession:session-1",
+    "getAuxiliarySession:aux-1",
+  ]);
+});
+
 test("Auxiliary mutation/run IPC は対象外 window から deps mutation/run に到達しない", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
@@ -522,15 +558,15 @@ test("Auxiliary mutation/run IPC は対象外 window から deps mutation/run �
         parentSessionId: "session-1",
         provider: "codex",
       }) as Promise<unknown>,
-      /Auxiliary session mutation IPC is only available/,
+      /Auxiliary session IPC is only available/,
     );
     await assert.rejects(
       () => handlers.get(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL)?.({}, auxiliarySession) as Promise<unknown>,
-      /Auxiliary session mutation IPC is only available/,
+      /Auxiliary session IPC is only available/,
     );
     await assert.rejects(
       () => handlers.get(WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
-      /Auxiliary session mutation IPC is only available/,
+      /Auxiliary session IPC is only available/,
     );
     await assert.rejects(
       () => handlers.get(WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL)?.(
@@ -538,15 +574,52 @@ test("Auxiliary mutation/run IPC は対象外 window から deps mutation/run �
         "aux-1",
         { userMessage: "hello" },
       ) as Promise<unknown>,
-      /Auxiliary session mutation IPC is only available/,
+      /Auxiliary session IPC is only available/,
     );
     await assert.rejects(
       () => handlers.get(WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
-      /Auxiliary session mutation IPC is only available/,
+      /Auxiliary session IPC is only available/,
     );
   }
 
   assert.deepEqual(mutationCalls, []);
+});
+
+test("Auxiliary full read IPC は対象外 window から full read を返さず、summary list は許可する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  const companionReviewWindow = createWindowStub("http://localhost:5173/?mode=companion&sessionId=session-1");
+  const auxiliarySession = createAuxiliarySessionStub();
+  const fullReadCalls: string[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => homeWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
+    resolveCompanionReviewWindow: (sessionId: string) =>
+      sessionId === "session-1" ? companionReviewWindow : null,
+    listAuxiliarySessions: async () => [createAuxiliarySessionStub({ messages: undefined, composerDraft: undefined })],
+    getActiveAuxiliarySession: async () => {
+      fullReadCalls.push("getActiveAuxiliarySession");
+      return auxiliarySession;
+    },
+    getAuxiliarySession: async () => auxiliarySession,
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.equal(
+    (await handlers.get(WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL)?.({}, "session-1") as unknown[]).length,
+    1,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL)?.({}, "session-1") as Promise<unknown>,
+    /Auxiliary session IPC is only available/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_AUXILIARY_SESSION_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
+    /Auxiliary session IPC is only available/,
+  );
+  assert.deepEqual(fullReadCalls, []);
 });
 
 test("Auxiliary update IPC は payload parent と既存 parent の不一致を拒否する", async () => {

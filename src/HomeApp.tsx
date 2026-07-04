@@ -8,7 +8,6 @@ import { startAppSettingsSubscription } from "./app-settings-subscription.js";
 import { type SessionSummary } from "./session-state.js";
 import { startSessionSummariesSubscription } from "./session-summary-subscription.js";
 import {
-  projectAuxiliarySessionSummary,
   type AuxiliarySessionSummary,
 } from "./auxiliary-session-state.js";
 import { type ModelCatalogSnapshot } from "./model-catalog.js";
@@ -295,12 +294,12 @@ export default function HomeApp() {
         ...openCompanionReviewWindowIds,
       ])),
       fetchActiveAuxiliarySessions: async (monitorParentSessionIds) => {
-        const sessions = await Promise.all(
-          monitorParentSessionIds.map((sessionId) => withmateApi.getActiveAuxiliarySession(sessionId)),
+        const sessionLists = await Promise.all(
+          monitorParentSessionIds.map((sessionId) => withmateApi.listAuxiliarySessions(sessionId)),
         );
-        return sessions
-          .filter((session): session is NonNullable<typeof session> => session !== null)
-          .map(projectAuxiliarySessionSummary);
+        return sessionLists
+          .flat()
+          .filter((session) => session.status === "active");
       },
       setActiveAuxiliarySessions,
       onError: (error) => console.error(error),
