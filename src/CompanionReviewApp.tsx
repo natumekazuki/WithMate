@@ -81,6 +81,7 @@ import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { SessionHeader } from "./session-components.js";
 import { ChatHeaderHandle, ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import { resolveAuditLogOwner } from "./chat/audit-log-owner.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
 import {
   createAuxiliaryHeaderActions,
@@ -1046,6 +1047,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     getSessionAuditLogOperationDetail: withmateApi.getCompanionAuditLogOperationDetail,
   }) : null, [withmateApi]);
   const {
+    session: auditLogSession,
+    ownerSessionId: auditLogOwnerSessionId,
+    sourceLabel: auditLogSourceLabel,
+  } = resolveAuditLogOwner({
+    parentSession: snapshot?.session ?? null,
+    displayedSession,
+    hasActiveAuxiliarySession: isAuxiliaryMode,
+    parentSourceLabel: "Companion",
+  });
+  const auditLogApi = isAuxiliaryMode ? withmateApi : companionAuditLogApi;
+  const {
     auditLogsOpen,
     setAuditLogsOpen,
     auditLogsState,
@@ -1058,8 +1070,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     handleLoadAuditLogOperationDetail,
   } = useSessionAuditLogs({
     withmateApi,
-    auditLogApi: companionAuditLogApi,
-    selectedSession: snapshot?.session ?? null,
+    auditLogApi,
+    selectedSession: auditLogSession,
     liveRun: selectedSessionLiveRun,
     enabled: !isMergeView,
   });
@@ -2969,15 +2981,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         selectedDiffThemeStyle,
         auditLogsOpen,
         displayedSessionAuditLogs,
-        auditLogSourceLabel: "Companion",
+        auditLogSourceLabel,
         auditLogDetails,
         auditLogOperationDetails,
-        auditLogsHasMore: auditLogsState.ownerSessionId === snapshot.session.id ? auditLogsState.hasMore : false,
-        auditLogsLoading: auditLogsState.ownerSessionId === snapshot.session.id ? auditLogsState.loading : false,
-        auditLogsTotal: auditLogsState.ownerSessionId === snapshot.session.id
+        auditLogsHasMore: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.hasMore : false,
+        auditLogsLoading: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.loading : false,
+        auditLogsTotal: auditLogsState.ownerSessionId === auditLogOwnerSessionId
           ? Math.max(auditLogsState.total, displayedSessionAuditLogs.length)
           : displayedSessionAuditLogs.length,
-        auditLogsErrorMessage: auditLogsState.ownerSessionId === snapshot.session.id ? auditLogsState.errorMessage : null,
+        auditLogsErrorMessage: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.errorMessage : null,
         toastMessage: errorMessage || operationMessage,
         toastTone: errorMessage ? "error" : "success",
         headerActions: auxiliaryHeaderActions,

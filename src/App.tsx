@@ -78,6 +78,7 @@ import {
 } from "./session-ui-projection.js";
 import { buildMainAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import { resolveAuditLogOwner } from "./chat/audit-log-owner.js";
 import {
   buildAuxiliaryLaunchProviderItems,
   createAuxiliaryLaunchDialogCloseHandler,
@@ -614,6 +615,16 @@ export default function AgentSessionWindowApp() {
     [activeRunSessionId, liveRunState.ownerSessionId, liveRunState.state],
   );
   const {
+    session: auditLogSession,
+    ownerSessionId: auditLogOwnerSessionId,
+    sourceLabel: auditLogSourceLabel,
+  } = resolveAuditLogOwner({
+    parentSession: selectedSession,
+    displayedSession,
+    hasActiveAuxiliarySession: isAuxiliaryMode,
+    parentSourceLabel: "Main Session",
+  });
+  const {
     auditLogsOpen,
     setAuditLogsOpen,
     auditLogsState,
@@ -626,7 +637,7 @@ export default function AgentSessionWindowApp() {
     handleLoadAuditLogOperationDetail,
   } = useSessionAuditLogs({
     withmateApi,
-    selectedSession,
+    selectedSession: auditLogSession,
     liveRun: selectedSessionLiveRun,
   });
   const selectedProviderQuotaTelemetry = useMemo(
@@ -2987,15 +2998,15 @@ export default function AgentSessionWindowApp() {
         isAuxiliaryMode,
         auditLogsOpen,
         displayedSessionAuditLogs,
-        auditLogSourceLabel: "Main Session",
+        auditLogSourceLabel,
         auditLogDetails,
         auditLogOperationDetails,
-        auditLogsHasMore: auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.hasMore : false,
-        auditLogsLoading: auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.loading : false,
-        auditLogsTotal: auditLogsState.ownerSessionId === selectedSessionId
+        auditLogsHasMore: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.hasMore : false,
+        auditLogsLoading: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.loading : false,
+        auditLogsTotal: auditLogsState.ownerSessionId === auditLogOwnerSessionId
           ? Math.max(auditLogsState.total, displayedSessionAuditLogs.length)
           : displayedSessionAuditLogs.length,
-        auditLogsErrorMessage: auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.errorMessage : null,
+        auditLogsErrorMessage: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.errorMessage : null,
         onToggleHeaderExpanded: handleToggleHeaderExpanded,
         headerActions: auxiliaryHeaderActions,
         onOpenAuditLog: () => setAuditLogsOpen(true),
