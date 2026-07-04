@@ -68,6 +68,7 @@ import { buildHomeMateSetupContentProps } from "./mate/home-mate-setup-props.js"
 import { buildMateStatusRefreshers } from "./mate/mate-status-refreshers.js";
 import { buildHomeMonitorContentProps } from "./home/home-monitor-content-props.js";
 import { renderHomeMonitorWindowIcon, renderHomeSearchIcon } from "./home/home-icons.js";
+import { createHomeActiveAuxiliarySessionRefresher } from "./home/home-active-auxiliary-refresh.js";
 
 type HomeRightPaneView = "monitor" | "characters";
 
@@ -288,42 +289,30 @@ export default function HomeApp() {
       return;
     }
 
-    let active = true;
-    let refreshQueued = false;
-    const refreshActiveAuxiliarySessions = () => {
-      if (refreshQueued) {
-        return;
-      }
-      refreshQueued = true;
-      const monitorParentSessionIds = Array.from(new Set([
+    const refresher = createHomeActiveAuxiliarySessionRefresher({
+      getMonitorParentSessionIds: () => Array.from(new Set([
         ...openSessionWindowIds,
         ...openCompanionReviewWindowIds,
-      ]));
-      void Promise.all(
-        monitorParentSessionIds.map((sessionId) => withmateApi.getActiveAuxiliarySession(sessionId)),
-      ).then((sessions) => {
-        if (!active) {
-          return;
-        }
-        setActiveAuxiliarySessions(
-          sessions
-            .filter((session): session is NonNullable<typeof session> => session !== null)
-            .map(projectAuxiliarySessionSummary),
+      ])),
+      fetchActiveAuxiliarySessions: async (monitorParentSessionIds) => {
+        const sessions = await Promise.all(
+          monitorParentSessionIds.map((sessionId) => withmateApi.getActiveAuxiliarySession(sessionId)),
         );
-      }).catch((error) => {
-        console.error(error);
-      }).finally(() => {
-        refreshQueued = false;
-      });
-    };
+        return sessions
+          .filter((session): session is NonNullable<typeof session> => session !== null)
+          .map(projectAuxiliarySessionSummary);
+      },
+      setActiveAuxiliarySessions,
+      onError: (error) => console.error(error),
+    });
 
-    refreshActiveAuxiliarySessions();
+    refresher.refresh();
     const unsubscribeLiveRun = withmateApi.subscribeLiveSessionRun(() => {
-      refreshActiveAuxiliarySessions();
+      refresher.refresh();
     });
 
     return () => {
-      active = false;
+      refresher.dispose();
       unsubscribeLiveRun();
     };
   }, [openCompanionReviewWindowIds, openSessionWindowIds]);
