@@ -17,6 +17,7 @@ import {
   parseCharacterRuntimeSnapshotJson,
   stringifyCharacterRuntimeSnapshot,
 } from "../src/character/character-runtime-snapshot.js";
+import { deleteAuditEventsForSessionTargets } from "./audit-log-storage-v6.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import type { DeleteSessionsLastActiveBeforeCutoff } from "../src/withmate-window-types.js";
@@ -251,12 +252,19 @@ export class SessionStorageV6 {
 
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
+      const retainedSessionIds = normalizedSessions.map((session) => session.id);
+      const removedSessionIds = this.listStoredSessionIdsExcept(retainedSessionIds);
+      const removedAuxiliarySessionIds = this.listAuxiliarySessionIdsWithoutValidParents(retainedSessionIds);
+      deleteAuditEventsForSessionTargets(this.db, {
+        sessionIds: removedSessionIds,
+        auxiliarySessionIds: removedAuxiliarySessionIds,
+      });
       this.db.exec("DELETE FROM session_messages_v6;");
-      this.db.exec("DELETE FROM sessions_v6;");
+      this.deleteStoredSessionsByIds(removedSessionIds);
       for (const session of normalizedSessions) {
         this.writeSession(session);
       }
-      this.deleteAuxiliarySessionsWithoutValidParents(normalizedSessions.map((session) => session.id));
+      this.deleteAuxiliarySessionsByIdsIfTableExists(removedAuxiliarySessionIds);
       this.db.exec("COMMIT");
       return this.listSessions();
     } catch (error) {
@@ -278,6 +286,11 @@ export class SessionStorageV6 {
     const placeholders = uniqueSessionIds.map(() => "?").join(", ");
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
+      const auxiliarySessionIds = this.listAuxiliarySessionIdsForParentsIfTableExists(uniqueSessionIds);
+      deleteAuditEventsForSessionTargets(this.db, {
+        sessionIds: uniqueSessionIds,
+        auxiliarySessionIds,
+      });
       this.db.prepare(`DELETE FROM sessions_v6 WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
       this.deleteAuxiliarySessionsForParentsIfTableExists(uniqueSessionIds);
       this.db.exec("COMMIT");
@@ -290,6 +303,7 @@ export class SessionStorageV6 {
   clearSessions(): void {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
+      deleteAuditEventsForSessionTargets(this.db, { allSessionTargets: true });
       this.db.exec("DELETE FROM session_messages_v6;");
       this.db.exec("DELETE FROM sessions_v6;");
       this.deleteAllAuxiliarySessionsIfTableExists();
@@ -496,6 +510,41 @@ export class SessionStorageV6 {
     `).get(AUXILIARY_SESSIONS_TABLE_NAME));
   }
 
+  private listStoredSessionIdsExcept(retainedSessionIds: Iterable<string>): string[] {
+    const retained = new Set(Array.from(retainedSessionIds).map((sessionId) => sessionId.trim()).filter(Boolean));
+    const rows = this.db.prepare("SELECT id FROM sessions_v6").all() as SessionIdRow[];
+    return rows.map((row) => row.id).filter((id) => !retained.has(id));
+  }
+
+  private deleteStoredSessionsByIds(sessionIds: readonly string[]): void {
+    const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
+    if (uniqueSessionIds.length === 0) {
+      return;
+    }
+
+    const placeholders = uniqueSessionIds.map(() => "?").join(", ");
+    this.db.prepare(`DELETE FROM sessions_v6 WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
+  }
+
+  private listAuxiliarySessionIdsForParentsIfTableExists(parentSessionIds: readonly string[]): string[] {
+    if (!this.auxiliarySessionsTableExists()) {
+      return [];
+    }
+
+    const uniqueParentIds = Array.from(new Set(parentSessionIds.map((parentSessionId) => parentSessionId.trim()).filter(Boolean)));
+    if (uniqueParentIds.length === 0) {
+      return [];
+    }
+
+    const placeholders = uniqueParentIds.map(() => "?").join(", ");
+    const rows = this.db.prepare(`
+      SELECT id
+      FROM auxiliary_sessions
+      WHERE parent_session_id IN (${placeholders})
+    `).all(...uniqueParentIds) as SessionIdRow[];
+    return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
+  }
+
   private deleteAuxiliarySessionsForParentsIfTableExists(parentSessionIds: readonly string[]): void {
     if (!this.auxiliarySessionsTableExists()) {
       return;
@@ -508,6 +557,20 @@ export class SessionStorageV6 {
 
     const placeholders = uniqueParentIds.map(() => "?").join(", ");
     this.db.prepare(`DELETE FROM auxiliary_sessions WHERE parent_session_id IN (${placeholders})`).run(...uniqueParentIds);
+  }
+
+  private deleteAuxiliarySessionsByIdsIfTableExists(auxiliarySessionIds: readonly string[]): void {
+    if (!this.auxiliarySessionsTableExists()) {
+      return;
+    }
+
+    const uniqueAuxiliarySessionIds = Array.from(new Set(auxiliarySessionIds.map((auxiliarySessionId) => auxiliarySessionId.trim()).filter(Boolean)));
+    if (uniqueAuxiliarySessionIds.length === 0) {
+      return;
+    }
+
+    const placeholders = uniqueAuxiliarySessionIds.map(() => "?").join(", ");
+    this.db.prepare(`DELETE FROM auxiliary_sessions WHERE id IN (${placeholders})`).run(...uniqueAuxiliarySessionIds);
   }
 
   private deleteAllAuxiliarySessionsIfTableExists(): void {
@@ -538,9 +601,9 @@ export class SessionStorageV6 {
     return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
   }
 
-  private deleteAuxiliarySessionsWithoutValidParents(retainedParentSessionIds: Iterable<string>): void {
+  private listAuxiliarySessionIdsWithoutValidParents(retainedParentSessionIds: Iterable<string>): string[] {
     if (!this.auxiliarySessionsTableExists()) {
-      return;
+      return [];
     }
 
     const validParentSessionIds = Array.from(new Set([
@@ -548,12 +611,16 @@ export class SessionStorageV6 {
       ...this.listRetainedCompanionSessionIds(),
     ]));
     if (validParentSessionIds.length === 0) {
-      this.db.prepare("DELETE FROM auxiliary_sessions").run();
-      return;
+      const rows = this.db.prepare("SELECT id FROM auxiliary_sessions").all() as SessionIdRow[];
+      return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
     }
 
     const placeholders = validParentSessionIds.map(() => "?").join(", ");
-    this.db.prepare(`DELETE FROM auxiliary_sessions WHERE parent_session_id NOT IN (${placeholders})`)
-      .run(...validParentSessionIds);
+    const rows = this.db.prepare(`
+      SELECT id
+      FROM auxiliary_sessions
+      WHERE parent_session_id NOT IN (${placeholders})
+    `).all(...validParentSessionIds) as SessionIdRow[];
+    return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
   }
 }

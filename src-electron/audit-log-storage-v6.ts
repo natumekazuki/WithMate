@@ -1,3 +1,5 @@
+import type { DatabaseSync } from "node:sqlite";
+
 import type {
   AuditLogDetail,
   AuditLogDetailFragment,
@@ -20,6 +22,12 @@ type AuditEventV6Row = {
 
 type CountRow = {
   count: number;
+};
+
+type AuditTargetCleanupInput = {
+  sessionIds?: readonly string[];
+  auxiliarySessionIds?: readonly string[];
+  allSessionTargets?: boolean;
 };
 
 const DEFAULT_PAGE_LIMIT = 50;
@@ -73,6 +81,37 @@ function normalizePageRequest(request?: AuditLogSummaryPageRequest | null): { cu
       : null,
     limit: Math.max(1, Math.min(MAX_PAGE_LIMIT, requestedLimit)),
   };
+}
+
+function normalizeIds(ids: readonly string[] | undefined): string[] {
+  return Array.from(new Set((ids ?? []).map((id) => id.trim()).filter(Boolean)));
+}
+
+export function deleteAuditEventsForSessionTargets(db: DatabaseSync, input: AuditTargetCleanupInput): void {
+  if (input.allSessionTargets) {
+    db.prepare("DELETE FROM audit_events_v6 WHERE event_type = 'session_turn'").run();
+    return;
+  }
+
+  const conditions: string[] = [];
+  const params: string[] = [];
+  const sessionIds = normalizeIds(input.sessionIds);
+  if (sessionIds.length > 0) {
+    conditions.push(`session_id IN (${sessionIds.map(() => "?").join(", ")})`);
+    params.push(...sessionIds);
+  }
+
+  const auxiliarySessionIds = normalizeIds(input.auxiliarySessionIds);
+  if (auxiliarySessionIds.length > 0) {
+    conditions.push(`auxiliary_session_id IN (${auxiliarySessionIds.map(() => "?").join(", ")})`);
+    params.push(...auxiliarySessionIds);
+  }
+
+  if (conditions.length === 0) {
+    return;
+  }
+
+  db.prepare(`DELETE FROM audit_events_v6 WHERE ${conditions.join(" OR ")}`).run(...params);
 }
 
 export class AuditLogStorageV6 {
