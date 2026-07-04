@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createWithMateWindowApi } from "../../src-electron/preload-api.js";
-import type { WithMateWindowApi } from "../../src/withmate-window-api.js";
+import type {
+  WithMateWindowApi,
+  WithMateWindowSessionApi,
+  WithMateWindowSettingsApi,
+} from "../../src/withmate-window-api.js";
 
 type Listener = (...args: unknown[]) => void;
 
@@ -379,6 +383,21 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
   for (const key of removedKeys) {
     assert.equal(key in api, false);
   }
+});
+
+test("preload type surface は destructive storage maintenance API を Settings domain に置く", () => {
+  const settingsKeys = [
+    "resetAppDatabase",
+    "deleteSessionsLastActiveBefore",
+  ] satisfies Array<keyof WithMateWindowSettingsApi>;
+  const sessionKeys = [
+    "createSession",
+    "deleteSession",
+    "listSessionSummaries",
+  ] satisfies Array<keyof WithMateWindowSessionApi>;
+
+  assert.equal(settingsKeys.includes("deleteSessionsLastActiveBefore"), true);
+  assert.equal((sessionKeys as string[]).includes("deleteSessionsLastActiveBefore"), false);
 });
 
 test("createWithMateWindowApi は subscribe 系 API で payload を unwrap する", async () => {

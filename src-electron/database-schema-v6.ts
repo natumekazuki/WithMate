@@ -757,7 +757,26 @@ function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): 
   db.exec("ALTER TABLE auxiliary_sessions_v6_rebuild RENAME TO auxiliary_sessions;");
 }
 
-export function ensureV6Schema(db: DatabaseSync): void {
+function backfillAuxiliarySessionsCreatedAt(db: DatabaseSync): void {
+  db.exec("UPDATE auxiliary_sessions SET created_at = updated_at WHERE created_at IS NULL OR created_at = '';");
+}
+
+function runWithSavepoint(db: DatabaseSync, savepointName: string, run: () => void): void {
+  db.exec(`SAVEPOINT ${savepointName};`);
+  try {
+    run();
+    db.exec(`RELEASE SAVEPOINT ${savepointName};`);
+  } catch (error) {
+    try {
+      db.exec(`ROLLBACK TO SAVEPOINT ${savepointName};`);
+    } finally {
+      db.exec(`RELEASE SAVEPOINT ${savepointName};`);
+    }
+    throw error;
+  }
+}
+
+function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   for (const statement of CREATE_V6_SCHEMA_SQL) {
     if (statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL || statement === CREATE_V6_AUDIT_EVENTS_TABLE_SQL) {
       continue;
@@ -776,6 +795,7 @@ export function ensureV6Schema(db: DatabaseSync): void {
     } else if (!auxiliaryColumns.has("created_at")) {
       db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN created_at TEXT NOT NULL DEFAULT ''");
     }
+    backfillAuxiliarySessionsCreatedAt(db);
 
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_updated
@@ -815,4 +835,8 @@ export function ensureV6Schema(db: DatabaseSync): void {
     `);
   }
 
+}
+
+export function ensureV6Schema(db: DatabaseSync): void {
+  runWithSavepoint(db, "ensure_v6_schema", () => ensureV6SchemaUnsafe(db));
 }

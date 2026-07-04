@@ -292,9 +292,6 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     deleteSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_DELETE_SESSION_CHANNEL, sessionId);
     },
-    deleteSessionsLastActiveBefore(request) {
-      return ipcRenderer.invoke(WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL, request);
-    },
     previewComposerInput(sessionId, userMessage) {
       return ipcRenderer.invoke(WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL, sessionId, userMessage);
     },
@@ -551,6 +548,9 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
     },
     resetAppDatabase(request) {
       return ipcRenderer.invoke(WITHMATE_RESET_APP_DATABASE_CHANNEL, request);
+    },
+    deleteSessionsLastActiveBefore(request) {
+      return ipcRenderer.invoke(WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL, request);
     },
   };
 }

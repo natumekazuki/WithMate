@@ -106,7 +106,6 @@ export type WithMateWindowSessionApi = {
   createSession(input: CreateSessionInput): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
   deleteSession(sessionId: string): Promise<void>;
-  deleteSessionsLastActiveBefore(request: DeleteSessionsLastActiveBeforeRequest): Promise<DeleteSessionsResult>;
   previewComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview>;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
@@ -202,6 +201,7 @@ export type WithMateWindowSettingsApi = {
   installMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;
   uninstallMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;
   resetAppDatabase(request: ResetAppDatabaseRequest): Promise<ResetAppDatabaseResult>;
+  deleteSessionsLastActiveBefore(request: DeleteSessionsLastActiveBeforeRequest): Promise<DeleteSessionsResult>;
 };
 
 export type WithMateWindowPickerApi = {
