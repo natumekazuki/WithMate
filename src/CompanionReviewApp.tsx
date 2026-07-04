@@ -81,6 +81,7 @@ import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { SessionHeader } from "./session-components.js";
 import { ChatHeaderHandle, ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import { applySessionDocumentTitle, resolveCompanionDocumentTitle } from "./chat/window-title.js";
 import { resolveAuditLogOwner } from "./chat/audit-log-owner.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
 import {
@@ -422,6 +423,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const withmateApi = getWithMateApi();
   const viewMode = forcedViewMode ?? getCompanionWindowViewFromSearch(window.location.search);
   const isMergeView = viewMode === "merge";
+  const companionSessionId = useMemo(() => getCompanionSessionIdFromLocation(), []);
   const [snapshot, setSnapshot] = useState<CompanionReviewSnapshot | null>(null);
   const [selectedPath, setSelectedPath] = useState<string>("");
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
@@ -498,7 +500,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   useEffect(() => {
     let active = true;
-    const sessionId = getCompanionSessionIdFromLocation();
+    const sessionId = companionSessionId;
     const withmateApi = getWithMateApi();
 
     if (!withmateApi || !sessionId) {
@@ -541,7 +543,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     return () => {
       active = false;
     };
-  }, [viewMode]);
+  }, [companionSessionId, viewMode]);
 
   useEffect(() => {
     applyComposerDraftClearCommand({
@@ -622,6 +624,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     setTitleDraft(snapshot.session.taskTitle);
   }, [isEditingTitle, snapshot?.session.taskTitle]);
+
+  useEffect(() => {
+    applySessionDocumentTitle(resolveCompanionDocumentTitle({
+      mode: isMergeView ? "merge" : "chat",
+      sessionTitle: snapshot?.session.taskTitle,
+      sessionId: companionSessionId,
+    }));
+  }, [companionSessionId, isMergeView, snapshot?.session.taskTitle]);
 
   useEffect(() => {
     const withmateApi = getWithMateApi();
