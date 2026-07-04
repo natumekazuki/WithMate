@@ -1094,6 +1094,7 @@ button:disabled {
 
 .home-page .home-session-chip-status,
 .home-page .home-session-status,
+.home-page .home-monitor-status,
 .home-page .session-mode-badge {
   flex: 0 0 auto;
   border-color: color-mix(in srgb, var(--card-ink, var(--ink)) 18%, transparent);
@@ -1122,25 +1123,29 @@ button:disabled {
 }
 
 .home-page .home-session-chip-status.running,
-.home-page .home-session-status.running {
+.home-page .home-session-status.running,
+.home-page .home-monitor-status.running {
   border-color: rgba(111, 184, 199, 0.34);
   background: rgba(111, 184, 199, 0.22);
 }
 
 .home-page .home-session-chip-status.interrupted,
-.home-page .home-session-status.interrupted {
+.home-page .home-session-status.interrupted,
+.home-page .home-monitor-status.interrupted {
   border-color: rgba(255, 171, 119, 0.34);
   background: rgba(255, 171, 119, 0.22);
 }
 
 .home-page .home-session-chip-status.error,
-.home-page .home-session-status.error {
+.home-page .home-session-status.error,
+.home-page .home-monitor-status.error {
   border-color: rgba(255, 124, 124, 0.34);
   background: rgba(255, 124, 124, 0.2);
 }
 
 .home-page .home-session-chip-status.neutral,
-.home-page .home-session-status.neutral {
+.home-page .home-session-status.neutral,
+.home-page .home-monitor-status.neutral {
   border-color: color-mix(in srgb, var(--card-ink, var(--ink)) 16%, transparent);
   background: color-mix(in srgb, var(--card-ink, var(--ink)) 10%, transparent);
 }
