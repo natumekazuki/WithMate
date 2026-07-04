@@ -1187,6 +1187,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 resolveEventWindow: (event) => BrowserWindow.fromWebContents(event.sender) ?? null,
                 resolveHomeWindow: () => requireAuxWindowService().getHomeWindow(),
                 resolveSessionWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId),
+                resolveCompanionReviewWindow: (sessionId) =>
+                  requireMainWindowFacade().getCompanionReviewWindow(sessionId),
                 openSessionWindow,
                 openHomeWindow: createHomeWindow,
                 openSessionMonitorWindow,

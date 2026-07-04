@@ -79,6 +79,7 @@ export type MainIpcWindowDepsArgs = {
   resolveEventWindow(event: IpcMainInvokeEvent): MaybeWindow;
   resolveHomeWindow(): MaybeWindow;
   resolveSessionWindow(sessionId: string): MaybeWindow;
+  resolveCompanionReviewWindow(sessionId: string): MaybeWindow;
   openSessionWindow(sessionId: string): Promise<BrowserWindow>;
   openHomeWindow(): Promise<BrowserWindow>;
   openSessionMonitorWindow(): Promise<BrowserWindow>;
@@ -287,6 +288,7 @@ export function createMainIpcRegistrationDeps(
     resolveEventWindow: args.window.resolveEventWindow,
     resolveHomeWindow: args.window.resolveHomeWindow,
     resolveSessionWindow: args.window.resolveSessionWindow,
+    resolveCompanionReviewWindow: args.window.resolveCompanionReviewWindow,
     openSessionWindow: async (sessionId) => {
       await args.window.openSessionWindow(sessionId);
     },
