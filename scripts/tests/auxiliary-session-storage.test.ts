@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import { buildNewSession } from "../../src/app-state.js";
@@ -17,6 +18,14 @@ import { AuxiliarySessionStorage } from "../../src-electron/auxiliary-session-st
 import { CompanionStorage } from "../../src-electron/companion-storage.js";
 import { appendSessionFilesDirectoryForSessionId, resolveSessionFilesDirectory } from "../../src-electron/session-files.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";
+
+type SqliteColumnInfoRow = {
+  name: string;
+};
+
+type SqliteIndexListRow = {
+  name: string;
+};
 
 function buildTestModelCatalogSnapshot(revision: number): ModelCatalogSnapshot {
   return {
@@ -140,6 +149,50 @@ test("resolveAuxiliaryParentSession は cached summary より stored full sessio
 
   assert.equal(resolved, storedSession);
   assert.equal(resolved?.characterRuntimeSnapshot?.definitionMarkdown, "# Character\n\nStored snapshot prompt.");
+});
+
+test("AuxiliarySessionStorage は created_at なしの旧 auxiliary_sessions を初期化できる", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-legacy-schema-"));
+  const dbPath = path.join(tempDirectory, "withmate.db");
+  let legacyDb: DatabaseSync | null = null;
+  let auxiliaryStorage: AuxiliarySessionStorage | null = null;
+
+  try {
+    legacyDb = new DatabaseSync(dbPath);
+    legacyDb.exec(`
+      CREATE TABLE auxiliary_sessions (
+        id TEXT PRIMARY KEY,
+        parent_session_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        payload_json TEXT NOT NULL
+      );
+    `);
+    legacyDb.close();
+    legacyDb = null;
+
+    auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+    auxiliaryStorage.close();
+    auxiliaryStorage = null;
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      const columns = (db.prepare("PRAGMA table_info(auxiliary_sessions)").all() as SqliteColumnInfoRow[])
+        .map((column) => column.name);
+      assert.equal(columns.includes("created_at"), true);
+
+      const indexes = (db.prepare("PRAGMA index_list(auxiliary_sessions)").all() as SqliteIndexListRow[])
+        .map((row) => row.name);
+      assert.equal(indexes.includes("idx_auxiliary_sessions_parent_updated"), true);
+      assert.equal(indexes.includes("idx_auxiliary_sessions_parent_created"), true);
+    } finally {
+      db.close();
+    }
+  } finally {
+    legacyDb?.close();
+    auxiliaryStorage?.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
 });
 
 test("AuxiliarySessionService は親 session から実行 context を継承して active session を復元する", async () => {

@@ -6,9 +6,6 @@ import {
   type AuxiliarySession,
   type AuxiliarySessionSummary,
 } from "../src/auxiliary-session-state.js";
-import {
-  CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
-} from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 type AuxiliarySessionRow = {
@@ -20,6 +17,27 @@ type AuxiliarySessionRow = {
 type TableInfoRow = {
   name: string;
 };
+
+const CREATE_AUXILIARY_SESSIONS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS auxiliary_sessions (
+    id TEXT PRIMARY KEY,
+    parent_session_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+  )
+`;
+
+const CREATE_AUXILIARY_SESSION_PARENT_UPDATED_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_updated
+    ON auxiliary_sessions(parent_session_id, updated_at DESC)
+`;
+
+const CREATE_AUXILIARY_SESSION_PARENT_CREATED_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_created
+    ON auxiliary_sessions(parent_session_id, created_at ASC)
+`;
 
 export class AuxiliarySessionStorage {
   private db: DatabaseSync | null;
@@ -147,8 +165,10 @@ export class AuxiliarySessionStorage {
 
   private initializeSchema(): void {
     this.withDb((db) => {
-      db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);
+      db.exec(CREATE_AUXILIARY_SESSIONS_TABLE_SQL);
       ensureAuxiliarySessionCreatedAtColumn(db);
+      db.exec(CREATE_AUXILIARY_SESSION_PARENT_UPDATED_INDEX_SQL);
+      db.exec(CREATE_AUXILIARY_SESSION_PARENT_CREATED_INDEX_SQL);
     });
   }
 
