@@ -16,7 +16,9 @@ export const REQUIRED_V6_TABLES = [
   "sessions_v6",
   "session_messages_v6",
   "auxiliary_sessions",
-  "audit_events_v6",
+  "session_turns_v6",
+  "session_turn_interims_v6",
+  "session_turn_provider_outputs_v6",
   "memory_entries_v6",
   "memory_entry_tags_v6",
   "memory_entry_relations_v6",
@@ -26,12 +28,12 @@ export const REQUIRED_V6_TABLES = [
   "memory_idempotency_forget_results_v6",
 ] as const;
 
-const FORBIDDEN_V6_TABLES = [
+export const FORBIDDEN_V6_TABLES = [
   "session_memories",
-  "project_scopes",
   "project_memory_entries",
-  "character_scopes",
+  "project_scopes",
   "character_memory_entries",
+  "character_scopes",
 ] as const;
 
 const REQUIRED_V6_INDEXES = [
@@ -41,9 +43,11 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_session_messages_session_seq",
   "idx_auxiliary_sessions_parent_updated",
   "idx_auxiliary_sessions_parent_created",
-  "idx_v6_audit_events_session_created",
-  "idx_v6_audit_events_auxiliary_session_created",
-  "idx_v6_audit_events_type_created",
+  "idx_v6_session_turns_session_updated",
+  "idx_v6_session_turns_auxiliary_updated",
+  "idx_v6_session_turns_phase_updated",
+  "idx_v6_session_turn_interims_turn_seq",
+  "idx_v6_session_turn_provider_outputs_turn_kind_seq",
   "idx_v6_memory_entries_target_state_updated",
   "idx_v6_memory_entry_tags_lookup",
   "idx_v6_memory_mutation_events_result",
@@ -82,7 +86,37 @@ const REQUIRED_V6_TABLE_COLUMNS = {
   ],
   session_messages_v6: ["id", "session_id", "seq", "role", "body", "created_at"],
   auxiliary_sessions: ["id", "parent_session_id", "status", "created_at", "updated_at", "payload_json"],
-  audit_events_v6: ["id", "session_id", "auxiliary_session_id", "event_type", "provider_id", "summary", "metadata_json", "created_at"],
+  session_turns_v6: [
+    "id",
+    "session_id",
+    "auxiliary_session_id",
+    "phase",
+    "provider_id",
+    "model_id",
+    "reasoning_effort",
+    "approval_mode",
+    "sandbox_mode",
+    "user_message_seq",
+    "assistant_message_seq",
+    "thread_id",
+    "summary",
+    "error_summary",
+    "started_at",
+    "completed_at",
+    "updated_at",
+  ],
+  session_turn_interims_v6: ["id", "turn_id", "seq", "body", "source", "created_at"],
+  session_turn_provider_outputs_v6: [
+    "id",
+    "turn_id",
+    "seq",
+    "provider_id",
+    "kind",
+    "summary",
+    "payload_json",
+    "payload_blob_id",
+    "created_at",
+  ],
   memory_entries_v6: [
     "id",
     "owner_type",
@@ -264,8 +298,10 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
   return hasForeignKey(db, "sessions_v6", "character_id", "characters")
     && hasForeignKey(db, "sessions_v6", "project_scope_id", "project_scopes_v6")
     && hasForeignKey(db, "session_messages_v6", "session_id", "sessions_v6")
-    && hasForeignKey(db, "audit_events_v6", "session_id", "sessions_v6")
-    && hasForeignKey(db, "audit_events_v6", "auxiliary_session_id", "auxiliary_sessions")
+    && hasForeignKey(db, "session_turns_v6", "session_id", "sessions_v6")
+    && hasForeignKey(db, "session_turns_v6", "auxiliary_session_id", "auxiliary_sessions")
+    && hasForeignKey(db, "session_turn_interims_v6", "turn_id", "session_turns_v6")
+    && hasForeignKey(db, "session_turn_provider_outputs_v6", "turn_id", "session_turns_v6")
     && hasForeignKey(db, "memory_entries_v6", "source_app_message_id", "session_messages_v6")
     && hasForeignKey(db, "memory_entries_v6", "superseded_by_id", "memory_entries_v6")
     && hasForeignKey(db, "memory_entry_tags_v6", "entry_id", "memory_entries_v6")
@@ -282,6 +318,9 @@ function tableSql(db: DatabaseSync, tableName: string): string {
 function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const sessionsSql = tableSql(db, "sessions_v6");
   const auxiliarySessionsSql = tableSql(db, "auxiliary_sessions");
+  const sessionTurnsSql = tableSql(db, "session_turns_v6");
+  const sessionTurnInterimsSql = tableSql(db, "session_turn_interims_v6");
+  const sessionTurnProviderOutputsSql = tableSql(db, "session_turn_provider_outputs_v6");
   const memoryEntriesSql = tableSql(db, "memory_entries_v6");
   const mutationEventsSql = tableSql(db, "memory_mutation_events_v6");
   const idempotencySql = tableSql(db, "memory_idempotency_keys_v6");
@@ -289,6 +328,12 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   return sessionsSql.includes("json_valid(character_snapshot_json)")
     && memoryEntriesSql.includes("state IN ('active', 'superseded', 'forgotten')")
     && auxiliarySessionsSql.includes("status IN ('active', 'closed')")
+    && sessionTurnsSql.includes("phase IN ('running', 'completed', 'failed', 'canceled')")
+    && sessionTurnsSql.includes("session_id IS NOT NULL OR auxiliary_session_id IS NOT NULL")
+    && sessionTurnsSql.includes("NOT (session_id IS NOT NULL AND auxiliary_session_id IS NOT NULL)")
+    && sessionTurnInterimsSql.includes("source IN ('stream_delta', 'running_snapshot', 'migration')")
+    && sessionTurnProviderOutputsSql.includes("json_valid(payload_json)")
+    && sessionTurnProviderOutputsSql.includes("kind IN")
     && memoryEntriesSql.includes("ON DELETE RESTRICT")
     && mutationEventsSql.includes("result_status TEXT NOT NULL")
     && mutationEventsSql.includes("result_status IN")
@@ -462,6 +507,88 @@ export const CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL = `
 
   CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_created
     ON auxiliary_sessions(parent_session_id, created_at ASC);
+`;
+
+export const CREATE_V6_SESSION_TURNS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_turns_v6 (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    auxiliary_session_id TEXT,
+    phase TEXT NOT NULL CHECK (phase IN ('running', 'completed', 'failed', 'canceled')),
+    provider_id TEXT NOT NULL DEFAULT '',
+    model_id TEXT NOT NULL DEFAULT '',
+    reasoning_effort TEXT NOT NULL DEFAULT '',
+    approval_mode TEXT NOT NULL DEFAULT '',
+    sandbox_mode TEXT NOT NULL DEFAULT '',
+    user_message_seq INTEGER CHECK (user_message_seq IS NULL OR user_message_seq >= 0),
+    assistant_message_seq INTEGER CHECK (assistant_message_seq IS NULL OR assistant_message_seq >= 0),
+    thread_id TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    error_summary TEXT NOT NULL DEFAULT '',
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
+    FOREIGN KEY (auxiliary_session_id) REFERENCES auxiliary_sessions(id) ON DELETE CASCADE,
+    CHECK (session_id IS NOT NULL OR auxiliary_session_id IS NOT NULL),
+    CHECK (NOT (session_id IS NOT NULL AND auxiliary_session_id IS NOT NULL))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_turns_session_updated
+    ON session_turns_v6(session_id, updated_at DESC, id DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_turns_auxiliary_updated
+    ON session_turns_v6(auxiliary_session_id, updated_at DESC, id DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_turns_phase_updated
+    ON session_turns_v6(phase, updated_at DESC);
+`;
+
+export const CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_turn_interims_v6 (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    turn_id INTEGER NOT NULL,
+    seq INTEGER NOT NULL CHECK (seq >= 0),
+    body TEXT NOT NULL,
+    source TEXT NOT NULL CHECK (source IN ('stream_delta', 'running_snapshot', 'migration')),
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (turn_id) REFERENCES session_turns_v6(id) ON DELETE CASCADE,
+    UNIQUE (turn_id, seq)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_turn_interims_turn_seq
+    ON session_turn_interims_v6(turn_id, seq);
+`;
+
+export const CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_turn_provider_outputs_v6 (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    turn_id INTEGER NOT NULL,
+    seq INTEGER NOT NULL CHECK (seq >= 0),
+    provider_id TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL CHECK (kind IN (
+      'operation',
+      'raw_items',
+      'usage',
+      'logical_prompt',
+      'transport_payload',
+      'provider_error',
+      'legacy_assistant_text',
+      'quota',
+      'context_telemetry',
+      'background_task',
+      'provider_metadata'
+    )),
+    summary TEXT NOT NULL DEFAULT '',
+    payload_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(payload_json)),
+    payload_blob_id TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (turn_id) REFERENCES session_turns_v6(id) ON DELETE CASCADE,
+    UNIQUE (turn_id, seq)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_turn_provider_outputs_turn_kind_seq
+    ON session_turn_provider_outputs_v6(turn_id, kind, seq);
 `;
 
 export const CREATE_V6_AUDIT_EVENTS_TABLE_SQL = `
@@ -695,7 +822,9 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_MESSAGES_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
-  CREATE_V6_AUDIT_EVENTS_TABLE_SQL,
+  CREATE_V6_SESSION_TURNS_TABLE_SQL,
+  CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
+  CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRIES_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRY_TAGS_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRY_RELATIONS_TABLE_SQL,
@@ -811,9 +940,20 @@ function runWithSavepoint(db: DatabaseSync, savepointName: string, run: () => vo
   }
 }
 
+export function cleanupForbiddenV6Tables(db: DatabaseSync): void {
+  for (const tableName of FORBIDDEN_V6_TABLES) {
+    db.exec(`DROP TABLE IF EXISTS ${tableName};`);
+  }
+}
+
 function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   for (const statement of CREATE_V6_SCHEMA_SQL) {
-    if (statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL || statement === CREATE_V6_AUDIT_EVENTS_TABLE_SQL) {
+    if (
+      statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
+      || statement === CREATE_V6_SESSION_TURNS_TABLE_SQL
+      || statement === CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL
+      || statement === CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL
+    ) {
       continue;
     }
     db.exec(statement);
@@ -843,32 +983,9 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     `);
   }
 
-  if (!tableExists(db, "audit_events_v6")) {
-    db.exec(CREATE_V6_AUDIT_EVENTS_TABLE_SQL);
-  } else {
-    const auditColumns = tableColumnNames(db, "audit_events_v6");
-    if (!auditColumns.has("auxiliary_session_id")) {
-      db.exec(`
-        ALTER TABLE audit_events_v6
-        ADD COLUMN auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE SET NULL
-      `);
-    }
-
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_v6_audit_events_session_created
-        ON audit_events_v6(session_id, created_at DESC, id DESC)
-    `);
-
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_v6_audit_events_auxiliary_session_created
-        ON audit_events_v6(auxiliary_session_id, created_at DESC, id DESC)
-    `);
-
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_v6_audit_events_type_created
-        ON audit_events_v6(event_type, created_at DESC)
-    `);
-  }
+  db.exec(CREATE_V6_SESSION_TURNS_TABLE_SQL);
+  db.exec(CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL);
+  db.exec(CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL);
 
 }
 

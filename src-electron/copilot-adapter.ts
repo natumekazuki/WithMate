@@ -16,6 +16,7 @@ import {
 
 import type {
   AuditLogOperation,
+  AuditLogProviderMetadata,
   AuditLogUsage,
   AuditTransportPayload,
   LiveApprovalRequest,
@@ -70,6 +71,7 @@ import {
   toAuditTextPreview,
   type BoundedAuditRawItem,
 } from "./audit-payload-limits.js";
+import { toProviderMetadataLogData } from "./provider-metadata-log.js";
 
 type CachedCopilotSession = {
   session: CopilotSession;
@@ -86,6 +88,14 @@ type CopilotCommandStepState = {
 };
 
 type CopilotStableRawItem = BoundedAuditRawItem;
+
+type CopilotAdapterLogInput = {
+  level: "debug" | "info" | "warn" | "error";
+  kind: string;
+  message: string;
+  data?: unknown;
+  error?: { name?: string; message: string; stack?: string };
+};
 
 type CopilotTurnStreamState = {
   liveSteps: Map<string, LiveRunStep>;
@@ -1217,6 +1227,31 @@ function appendCopilotStableRawItem(
   }
 }
 
+const SUPPORTED_COPILOT_EVENT_TYPES = new Set<string>([
+  "user.message",
+  "assistant.message",
+  "assistant.usage",
+  "session.error",
+  "session.idle",
+  "permission.requested",
+  "permission.completed",
+  "tool.execution_start",
+  "tool.execution_complete",
+]);
+
+export function buildCopilotProviderMetadata(rawItems: CopilotStableRawItem[]): AuditLogProviderMetadata[] {
+  return rawItems
+    .filter((item) => !SUPPORTED_COPILOT_EVENT_TYPES.has(item.type))
+    .map((item) => ({
+      provider: "copilot",
+      kind: "unsupported_event",
+      source: "copilot.session_event",
+      eventType: item.type,
+      summary: `Unsupported Copilot event: ${item.type}`,
+      payload: item,
+    }));
+}
+
 function extractShellCommandFromArguments(argumentsValue: Record<string, unknown> | undefined): string | null {
   if (!argumentsValue) {
     return null;
@@ -1912,6 +1947,7 @@ export async function resolveCopilotSessionForSettings(args: {
 
 type CopilotAdapterOptions = {
   onBackgroundTasksChanged?: (sessionId: string, tasks: LiveBackgroundTask[]) => void;
+  log?: (input: CopilotAdapterLogInput) => void;
 };
 
 export class CopilotAdapter implements ProviderTurnAdapter {
@@ -1919,6 +1955,14 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   private readonly sessions = new Map<string, CachedCopilotSession>();
 
   constructor(private options: CopilotAdapterOptions = {}) {}
+
+  private writeLog(input: CopilotAdapterLogInput): void {
+    try {
+      this.options.log?.(input);
+    } catch {
+      // Logging must not affect provider execution.
+    }
+  }
 
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
     return composeProviderPrompt(input);
@@ -2239,6 +2283,15 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       ...normalizeAllowedAdditionalDirectories(workspacePath, session.allowedAdditionalDirectories),
     ]);
     const operations = toAuditOperations(steps);
+    const providerMetadata = buildCopilotProviderMetadata(rawItems);
+    for (const metadata of providerMetadata) {
+      this.writeLog({
+        level: "warn",
+        kind: "provider.unsupported-event",
+        message: metadata.summary,
+        data: toProviderMetadataLogData(metadata),
+      });
+    }
     const artifact = buildArtifactFromOperations({
       session,
       operations,
@@ -2260,6 +2313,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       transportPayload: buildCopilotTransportPayload(prompt, messageAttachments),
       operations,
       rawItemsJson: stringifyBoundedAuditRawItems(rawItems),
+      providerMetadata,
       usage,
       providerQuotaTelemetry,
     };
