@@ -77,6 +77,11 @@ import {
   type ModelReasoningEffort,
 } from "./model-catalog.js";
 import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
+import { startAppSettingsSubscription } from "./app-settings-subscription.js";
+import {
+  createDefaultAppSettings,
+  type AppSettings,
+} from "./provider-settings-state.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { SessionHeader } from "./session-components.js";
@@ -224,6 +229,7 @@ import {
 } from "./chat/composer-draft-handlers.js";
 import {
   createEmptyComposerPreview,
+  resolveComposerPreviewDisplay,
 } from "./composer-preview-config.js";
 import {
   createComposerPreviewRequest,
@@ -436,6 +442,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
+  const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [selectedModel, setSelectedModel] = useState("");
   const [selectedReasoningEffort, setSelectedReasoningEffort] = useState<ModelReasoningEffort>("high");
@@ -633,6 +640,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       onInitialLoadError: () => setModelCatalog(null),
     });
   }, [isMergeView]);
+
+  useEffect(() => {
+    return startAppSettingsSubscription({
+      api: withmateApi,
+      loadInitial: true,
+      applyAppSettings: setAppSettings,
+    });
+  }, [withmateApi]);
 
   const activeRunSessionId = activeAuxiliarySession?.id ?? snapshot?.session.id ?? null;
   const displayedSession = useMemo(
@@ -2594,13 +2609,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       }
 
       const preview = await previewRequest(messageText);
+      const displayPreview = resolveComposerPreviewDisplay(preview, appSettings.userMicrocopyCatalog);
       if (shouldClearDraft || messageText === composerText) {
-        setComposerPreview(preview);
+        setComposerPreview(displayPreview);
       }
       const { blockedMessage } = resolveComposerSendPreflight({
         runState: selectedSessionRunState,
         blockedReason: companionComposerBlockedReason,
-        inputErrors: preview.errors,
+        inputErrors: displayPreview.errors,
         draftText: messageText,
       });
       if (blockedMessage) {

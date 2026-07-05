@@ -130,6 +130,7 @@ import {
 } from "./chat/composer-draft-handlers.js";
 import {
   createEmptyComposerPreview,
+  resolveComposerPreviewDisplay,
 } from "./composer-preview-config.js";
 import {
   useSessionContextRail,
@@ -1640,11 +1641,13 @@ export default function AgentSessionWindowApp() {
     });
 
     if (composerBlockedReason) {
-      throw new Error(composerBlockedReason);
+      setForceComposerBlockedFeedback(true);
+      return;
     }
 
     if (isSelectedSessionReadOnly) {
-      throw new Error("閲覧専用セッションには送信できないよ。新しいセッションを作成してください。");
+      setForceComposerBlockedFeedback(true);
+      return;
     }
 
     const previewRequest = createComposerPreviewRequest({
@@ -1658,21 +1661,23 @@ export default function AgentSessionWindowApp() {
 
     const nextMessage = messageText.trim();
     const preview = await previewRequest(messageText);
+    const displayPreview = resolveComposerPreviewDisplay(preview, appSettings.userMicrocopyCatalog);
     logSessionRunStuckInvestigation("renderer.composer-preview.done", {
       sessionId: selectedSession.id,
       elapsedMs: Date.now() - investigationStartedAt,
       attachmentCount: preview.attachments.length,
       errorCount: preview.errors.length,
     });
-    setComposerPreview(preview);
+    setComposerPreview(displayPreview);
     const { blockedMessage } = resolveComposerSendPreflight({
       runState: selectedSessionRunState,
       blockedReason: composerBlockedReason,
-      inputErrors: preview.errors,
+      inputErrors: displayPreview.errors,
       draftText: messageText,
     });
     if (blockedMessage) {
-      throw new Error(blockedMessage);
+      setForceComposerBlockedFeedback(true);
+      return;
     }
 
     if (options?.collapseActionDock) {
