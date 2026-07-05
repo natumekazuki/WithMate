@@ -78,6 +78,7 @@ import {
 } from "./session-ui-projection.js";
 import { buildMainAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import { applySessionDocumentTitle, resolveAgentSessionDocumentTitle } from "./chat/window-title.js";
 import { resolveAuditLogOwner } from "./chat/audit-log-owner.js";
 import {
   buildAuxiliaryLaunchProviderItems,
@@ -731,6 +732,13 @@ export default function AgentSessionWindowApp() {
 
     setTitleDraft(selectedSession.taskTitle);
   }, [isEditingTitle, selectedSession]);
+
+  useEffect(() => {
+    applySessionDocumentTitle(resolveAgentSessionDocumentTitle({
+      sessionTitle: selectedSession?.taskTitle,
+      sessionId: selectedId,
+    }));
+  }, [selectedId, selectedSession?.taskTitle]);
 
   useEffect(() => {
     let active = true;

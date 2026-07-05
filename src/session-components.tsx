@@ -3267,22 +3267,39 @@ export function SessionComposerExpanded({
         </div>
       ) : null}
 
-      <div className={`composer-box${isRunning ? " running" : ""}${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
-        <textarea
-          ref={composerTextareaRef}
-          value={draft}
-          placeholder={placeholder}
-          onChange={(event) => onDraftChange(event.target.value, event.target.selectionStart ?? event.target.value.length)}
-          onFocus={onDraftFocus}
-          onKeyDown={onDraftKeyDown}
-          onPaste={onDraftPaste}
-          onSelect={(event) => onDraftSelect(event.currentTarget.selectionStart ?? 0)}
-          onCompositionStart={onDraftCompositionStart}
-          onCompositionEnd={onDraftCompositionEnd}
-          disabled={isComposerDisabled}
-          aria-describedby={composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined}
-          aria-invalid={composerSendability.feedbackTone === "blocked" ? true : undefined}
-        />
+      <div className={`composer-input-row${isRunning ? " running" : ""}`}>
+        <div className={`composer-box${isRunning ? " running" : ""}${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
+          <textarea
+            ref={composerTextareaRef}
+            value={draft}
+            placeholder={placeholder}
+            onChange={(event) => onDraftChange(event.target.value, event.target.selectionStart ?? event.target.value.length)}
+            onFocus={onDraftFocus}
+            onKeyDown={onDraftKeyDown}
+            onPaste={onDraftPaste}
+            onSelect={(event) => onDraftSelect(event.currentTarget.selectionStart ?? 0)}
+            onCompositionStart={onDraftCompositionStart}
+            onCompositionEnd={onDraftCompositionEnd}
+            disabled={isComposerDisabled}
+            aria-describedby={composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined}
+            aria-invalid={composerSendability.feedbackTone === "blocked" ? true : undefined}
+          />
+          {composerSendability.shouldShowFeedback ? (
+            <div
+              id="composer-sendability-feedback"
+              className={`composer-sendability-feedback ${composerSendability.feedbackTone ?? "helper"}`}
+            >
+              {composerSendability.primaryFeedback ? <p>{composerSendability.primaryFeedback}</p> : null}
+              {composerSendability.secondaryFeedback.length > 0 ? (
+                <ul>
+                  {composerSendability.secondaryFeedback.map((feedback) => (
+                    <li key={feedback}>{feedback}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
         {isRunning ? null : (
           <button
             className="session-send-button"
@@ -3294,21 +3311,6 @@ export function SessionComposerExpanded({
             Send
           </button>
         )}
-        {composerSendability.shouldShowFeedback ? (
-          <div
-            id="composer-sendability-feedback"
-            className={`composer-sendability-feedback ${composerSendability.feedbackTone ?? "helper"}`}
-          >
-            {composerSendability.primaryFeedback ? <p>{composerSendability.primaryFeedback}</p> : null}
-            {composerSendability.secondaryFeedback.length > 0 ? (
-              <ul>
-                {composerSendability.secondaryFeedback.map((feedback) => (
-                  <li key={feedback}>{feedback}</li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
       </div>
 
       <div className="composer-settings">
