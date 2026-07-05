@@ -329,15 +329,19 @@ describe("session turn storage v6 migration dry-run", () => {
         const summaries = auditStorage.listSessionAuditLogSummaries("session-1");
         assert.deepEqual(
           summaries.map((summary) => summary.assistantTextPreview),
-          ["new final", "final ok"],
+          ["aux final", "new final", "final ok"],
         );
-        const newestDetail = auditStorage.getSessionAuditLogDetail("session-1", summaries[0]?.id ?? -1);
-        assert.equal(newestDetail?.assistantText, "new final");
-        assert.deepEqual(newestDetail?.providerMetadata, [{
+        const newFinalSummary = summaries.find((summary) => summary.assistantTextPreview === "new final");
+        const newFinalDetail = auditStorage.getSessionAuditLogDetail("session-1", newFinalSummary?.id ?? -1);
+        assert.equal(newFinalDetail?.assistantText, "new final");
+        assert.deepEqual(newFinalDetail?.providerMetadata, [{
           summary: "Unsupported event",
           provider: "codex",
           type: "unknown.item",
         }]);
+        const newestDetail = auditStorage.getSessionAuditLogDetail("session-1", summaries[0]?.id ?? -1);
+        assert.equal(newestDetail?.sessionId, "aux-1");
+        assert.equal(newestDetail?.assistantText, "aux final");
         const auxiliarySummaries = auditStorage.listSessionAuditLogSummaries("aux-1");
         assert.deepEqual(
           auxiliarySummaries.map((summary) => summary.assistantTextPreview),

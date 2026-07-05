@@ -448,7 +448,7 @@ export class AuditLogStorageV6 {
       }
       return null;
     }
-    const base = { id: auditLogId, sessionId: detail.sessionId };
+    const base = { id: auditLogId, sessionId: row.session_id ?? row.auxiliary_session_id ?? sessionId };
     if (section === "logical") {
       return {
         ...base,
@@ -496,7 +496,7 @@ export class AuditLogStorageV6 {
     const details = this.readOperationDetail(row.id, operationIndex);
     return details !== null ? {
       id: auditLogId,
-      sessionId: detail.sessionId,
+      sessionId: row.session_id ?? row.auxiliary_session_id ?? sessionId,
       operationIndex,
       details,
     } : null;
@@ -606,10 +606,10 @@ export class AuditLogStorageV6 {
     const turnSelect = `
       SELECT id, 'turn' AS source
       FROM session_turns_v6
-      WHERE (session_id = ? OR auxiliary_session_id = ?)
+      WHERE ${SESSION_AUDIT_OWNER_WHERE}
         AND (? IS NULL OR id < ?)
     `;
-    const params: Array<string | number | null> = [sessionId, sessionId, cursor, cursor];
+    const params: Array<string | number | null> = [sessionId, sessionId, sessionId, cursor, cursor];
     const legacySelect = this.buildLegacyPageSelect(sessionId, cursor, params);
     const sql = `
       SELECT id, source
@@ -626,8 +626,8 @@ export class AuditLogStorageV6 {
     const turnCount = this.db.prepare(`
       SELECT COUNT(*) AS count
       FROM session_turns_v6
-      WHERE session_id = ? OR auxiliary_session_id = ?
-    `).get(sessionId, sessionId) as { count: number };
+      WHERE ${SESSION_AUDIT_OWNER_WHERE}
+    `).get(sessionId, sessionId, sessionId) as { count: number };
     return turnCount.count + this.countLegacyEntries(sessionId);
   }
 
@@ -636,8 +636,8 @@ export class AuditLogStorageV6 {
       return 0;
     }
     const hasAuxiliarySessionId = legacyAuditEventsHasAuxiliarySessionId(this.db);
-    const targetCondition = hasAuxiliarySessionId ? "(session_id = ? OR auxiliary_session_id = ?)" : "session_id = ?";
-    const params = hasAuxiliarySessionId ? [sessionId, sessionId] : [sessionId];
+    const targetCondition = hasAuxiliarySessionId ? SESSION_AUDIT_OWNER_WHERE : "session_id = ?";
+    const params = hasAuxiliarySessionId ? [sessionId, sessionId, sessionId] : [sessionId];
     const row = this.db.prepare(`
       SELECT COUNT(*) AS count
       FROM audit_events_v6
@@ -661,9 +661,9 @@ export class AuditLogStorageV6 {
       return null;
     }
     const hasAuxiliarySessionId = legacyAuditEventsHasAuxiliarySessionId(this.db);
-    const targetCondition = hasAuxiliarySessionId ? "(session_id = ? OR auxiliary_session_id = ?)" : "session_id = ?";
+    const targetCondition = hasAuxiliarySessionId ? SESSION_AUDIT_OWNER_WHERE : "session_id = ?";
     if (hasAuxiliarySessionId) {
-      params.push(sessionId, sessionId);
+      params.push(sessionId, sessionId, sessionId);
     } else {
       params.push(sessionId);
     }
@@ -688,9 +688,9 @@ export class AuditLogStorageV6 {
         approval_mode, sandbox_mode, user_message_seq, assistant_message_seq, thread_id,
         summary, error_summary, started_at, completed_at, updated_at
       FROM session_turns_v6
-      WHERE (session_id = ? OR auxiliary_session_id = ?)
+      WHERE ${SESSION_AUDIT_OWNER_WHERE}
       ORDER BY id DESC
-    `).all(sessionId, sessionId) as SessionTurnV6Row[];
+    `).all(sessionId, sessionId, sessionId) as SessionTurnV6Row[];
     return [
       ...rows.map((row) => this.parseEntry(row, options)),
       ...this.readLegacyEntries(sessionId, options),
@@ -718,8 +718,8 @@ export class AuditLogStorageV6 {
         approval_mode, sandbox_mode, user_message_seq, assistant_message_seq, thread_id,
         summary, error_summary, started_at, completed_at, updated_at
       FROM session_turns_v6
-      WHERE (session_id = ? OR auxiliary_session_id = ?) AND id = ?
-    `).get(sessionId, sessionId, auditLogId) as SessionTurnV6Row | undefined;
+      WHERE ${SESSION_AUDIT_OWNER_WHERE} AND id = ?
+    `).get(sessionId, sessionId, sessionId, auditLogId) as SessionTurnV6Row | undefined;
     return row ?? null;
   }
 
@@ -729,8 +729,8 @@ export class AuditLogStorageV6 {
     }
     const hasAuxiliarySessionId = legacyAuditEventsHasAuxiliarySessionId(this.db);
     const auxiliarySessionIdSelect = hasAuxiliarySessionId ? "auxiliary_session_id" : "NULL AS auxiliary_session_id";
-    const targetCondition = hasAuxiliarySessionId ? "(session_id = ? OR auxiliary_session_id = ?)" : "session_id = ?";
-    const params = hasAuxiliarySessionId ? [sessionId, sessionId] : [sessionId];
+    const targetCondition = hasAuxiliarySessionId ? SESSION_AUDIT_OWNER_WHERE : "session_id = ?";
+    const params = hasAuxiliarySessionId ? [sessionId, sessionId, sessionId] : [sessionId];
     const rows = this.db.prepare(`
       SELECT id, session_id, ${auxiliarySessionIdSelect}, provider_id, summary, metadata_json, created_at
       FROM audit_events_v6
@@ -762,8 +762,8 @@ export class AuditLogStorageV6 {
     }
     const hasAuxiliarySessionId = legacyAuditEventsHasAuxiliarySessionId(this.db);
     const auxiliarySessionIdSelect = hasAuxiliarySessionId ? "auxiliary_session_id" : "NULL AS auxiliary_session_id";
-    const targetCondition = hasAuxiliarySessionId ? "(session_id = ? OR auxiliary_session_id = ?)" : "session_id = ?";
-    const params = hasAuxiliarySessionId ? [sessionId, sessionId, auditLogId] : [sessionId, auditLogId];
+    const targetCondition = hasAuxiliarySessionId ? SESSION_AUDIT_OWNER_WHERE : "session_id = ?";
+    const params = hasAuxiliarySessionId ? [sessionId, sessionId, sessionId, auditLogId] : [sessionId, auditLogId];
     const row = this.db.prepare(`
       SELECT id, session_id, ${auxiliarySessionIdSelect}, provider_id, summary, metadata_json, created_at
       FROM audit_events_v6
