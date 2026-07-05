@@ -32,6 +32,17 @@ type AuditTargetCleanupInput = {
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
+const SESSION_AUDIT_OWNER_WHERE = `
+  (
+    session_id = ?
+    OR auxiliary_session_id = ?
+    OR auxiliary_session_id IN (
+      SELECT id
+      FROM auxiliary_sessions
+      WHERE parent_session_id = ?
+    )
+  )
+`;
 
 function parseEntry(row: AuditEventV6Row): AuditLogEntry | null {
   try {
@@ -190,7 +201,7 @@ export class AuditLogStorageV6 {
     request?: AuditLogSummaryPageRequest | null,
   ): AuditLogSummaryPageResult {
     const { cursor, limit } = normalizePageRequest(request);
-    const params: Array<string | number> = [sessionId, sessionId];
+    const params: Array<string | number> = [sessionId, sessionId, sessionId];
     let cursorSql = "";
     if (cursor !== null) {
       cursorSql = "AND id < ?";
@@ -199,7 +210,7 @@ export class AuditLogStorageV6 {
     const rows = this.db.prepare(`
       SELECT id, session_id, auxiliary_session_id, metadata_json
       FROM audit_events_v6
-      WHERE (session_id = ? OR auxiliary_session_id = ?)
+      WHERE ${SESSION_AUDIT_OWNER_WHERE}
         ${cursorSql}
       ORDER BY id DESC
       LIMIT ?
@@ -212,8 +223,8 @@ export class AuditLogStorageV6 {
     const totalRow = this.db.prepare(`
       SELECT COUNT(*) AS count
       FROM audit_events_v6
-      WHERE (session_id = ? OR auxiliary_session_id = ?)
-    `).get(sessionId, sessionId) as CountRow;
+      WHERE ${SESSION_AUDIT_OWNER_WHERE}
+    `).get(sessionId, sessionId, sessionId) as CountRow;
     return {
       entries,
       nextCursor: rows.length > limit ? visibleRows[visibleRows.length - 1]?.id ?? null : null,
@@ -246,7 +257,7 @@ export class AuditLogStorageV6 {
     if (!detail) {
       return null;
     }
-    const base = { id: auditLogId, sessionId };
+    const base = { id: auditLogId, sessionId: detail.sessionId };
     if (section === "logical") {
       return { ...base, logicalPrompt: detail.logicalPrompt };
     }
@@ -274,7 +285,7 @@ export class AuditLogStorageV6 {
     const operation = detail?.operations[operationIndex];
     return operation ? {
       id: auditLogId,
-      sessionId,
+      sessionId: detail.sessionId,
       operationIndex,
       details: operation.details ?? "",
     } : null;
@@ -292,9 +303,9 @@ export class AuditLogStorageV6 {
     const rows = this.db.prepare(`
       SELECT id, session_id, auxiliary_session_id, metadata_json
       FROM audit_events_v6
-      WHERE (session_id = ? OR auxiliary_session_id = ?)
+      WHERE ${SESSION_AUDIT_OWNER_WHERE}
       ORDER BY id DESC
-    `).all(sessionId, sessionId) as AuditEventV6Row[];
+    `).all(sessionId, sessionId, sessionId) as AuditEventV6Row[];
     return rows.map((row) => parseEntry(row)).filter((entry): entry is AuditLogEntry => entry !== null);
   }
 
@@ -302,8 +313,8 @@ export class AuditLogStorageV6 {
     const row = this.db.prepare(`
       SELECT id, session_id, auxiliary_session_id, metadata_json
       FROM audit_events_v6
-      WHERE (session_id = ? OR auxiliary_session_id = ?) AND id = ?
-    `).get(sessionId, sessionId, auditLogId) as AuditEventV6Row | undefined;
+      WHERE ${SESSION_AUDIT_OWNER_WHERE} AND id = ?
+    `).get(sessionId, sessionId, sessionId, auditLogId) as AuditEventV6Row | undefined;
     return row ? parseEntry(row) : null;
   }
 
