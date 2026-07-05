@@ -79,7 +79,7 @@ future design だけで未実装のものは、最後に別枠で注記する。
   - `src-electron/database-schema-v4.ts`
 - V6 foundation schema source:
   - `src-electron/database-schema-v6.ts`
-  - `withmate-v6.db`、`PRAGMA user_version = 6`、V6専用 `project_scopes_v6` / `sessions_v6` / `session_messages_v6` / `audit_events_v6` / `memory_*_v6` table を固定する
+  - `withmate-v6.db`、`PRAGMA user_version = 6`、V6専用 `project_scopes_v6` / `sessions_v6` / `session_messages_v6` / `session_turns_v6` / `session_turn_provider_outputs_v6` / `memory_*_v6` table を固定する
   - V6継続tableのDDLもこのファイルが所有し、legacy schema fileからimportしない
   - V6 release migrationでは必要な継続データだけをV6 DBへ自動移行し、旧 DB はV6 runtimeの正本として開かない
   - Character file storage rootは現行`<userData>/characters/<character-id>/`を継続し、V6用の別rootへ分けない

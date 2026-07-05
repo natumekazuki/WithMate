@@ -37,6 +37,7 @@ export type AuditLogOperation = {
   type: string;
   summary: string;
   details?: string;
+  detailAvailable?: boolean;
 };
 
 export type AuditLogOperationDetailFragment = {
@@ -52,6 +53,16 @@ export type AuditLogUsage = {
   outputTokens: number;
   reasoningOutputTokens?: number;
   totalTokens?: number;
+};
+
+export type AuditLogProviderMetadata = {
+  provider: string;
+  kind: "unsupported_response" | "unsupported_event" | (string & {});
+  summary: string;
+  source?: string;
+  responseType?: string;
+  eventType?: string;
+  payload?: unknown;
 };
 
 export type AuditLogicalPrompt = {
@@ -79,19 +90,23 @@ export type AuditLogEntry = {
   model: string;
   reasoningEffort: ModelReasoningEffort;
   approvalMode: ApprovalMode;
+  sandboxMode?: CodexSandboxMode | "";
+  userMessageSeq?: number | null;
+  assistantMessageSeq?: number | null;
   threadId: string;
   logicalPrompt: AuditLogicalPrompt;
   transportPayload: AuditTransportPayload | null;
   assistantText: string;
   operations: AuditLogOperation[];
   rawItemsJson: string;
+  providerMetadata?: AuditLogProviderMetadata[];
   usage: AuditLogUsage | null;
   errorMessage: string;
 };
 
 export type AuditLogSummary = Omit<
   AuditLogEntry,
-  "logicalPrompt" | "transportPayload" | "assistantText" | "rawItemsJson"
+  "logicalPrompt" | "transportPayload" | "assistantText" | "rawItemsJson" | "providerMetadata"
 > & {
   assistantTextPreview: string;
   detailAvailable: boolean;
@@ -109,15 +124,25 @@ export type AuditLogSummaryPageResult = {
   total: number;
 };
 
+export type AuditLogInterimMessage = {
+  seq: number;
+  body: string;
+  source: "stream_delta" | "running_snapshot" | "migration";
+  createdAt: string;
+};
+
 export type AuditLogDetail = Pick<
   AuditLogEntry,
   "id" | "sessionId" | "logicalPrompt" | "transportPayload" | "assistantText" | "operations" | "rawItemsJson" | "usage" | "errorMessage"
->;
+> & {
+  interimMessages: AuditLogInterimMessage[];
+  providerMetadata?: AuditLogProviderMetadata[];
+};
 
 export type AuditLogDetailSection = "logical" | "transport" | "response" | "operations" | "raw";
 
 export type AuditLogDetailFragment = Pick<AuditLogDetail, "id" | "sessionId"> & Partial<
-  Pick<AuditLogDetail, "logicalPrompt" | "transportPayload" | "assistantText" | "operations" | "rawItemsJson">
+  Pick<AuditLogDetail, "logicalPrompt" | "transportPayload" | "assistantText" | "interimMessages" | "operations" | "rawItemsJson" | "providerMetadata">
 >;
 
 export type LiveRunStepStatus = "in_progress" | "completed" | "failed" | "canceled" | "pending" | (string & {});

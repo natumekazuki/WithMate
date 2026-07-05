@@ -1032,6 +1032,7 @@ export function SessionAuditLogModal({
               const detail = detailState?.detail ?? null;
               const operations = detail?.operations ?? entry.operations;
               const assistantText = detail?.assistantText ?? entry.assistantTextPreview;
+              const interimMessages = detail?.interimMessages ?? [];
               const usage = entry.usage;
               const errorMessage = entry.errorMessage;
               const sectionLoading = (section: AuditLogDetailSection) => Boolean(detailState?.loadingSections[section]);
@@ -1218,7 +1219,20 @@ export function SessionAuditLogModal({
                     ) : sectionError("response") ? (
                       <p className="audit-log-empty">{sectionError("response")}</p>
                     ) : (
-                      <pre>{previewAuditLogText(assistantText || "-")}</pre>
+                      <>
+                        <pre>{previewAuditLogText(assistantText || "-")}</pre>
+                        {interimMessages.length > 0 ? (
+                          <div className="audit-log-transport-fields">
+                            <p><strong>Interim Messages</strong></p>
+                            {interimMessages.map((message) => (
+                              <div key={`${entry.id}-interim-${message.seq}`} className="audit-log-transport-field">
+                                <p><strong>#{message.seq + 1}</strong> <span>{message.createdAt}</span></p>
+                                <pre>{previewAuditLogText(message.body || "-")}</pre>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </>
                     )}
                   </section> : null}
                 </details>
@@ -1246,7 +1260,7 @@ export function SessionAuditLogModal({
                               <span>{operation.type}</span>
                               <strong>{operation.summary}</strong>
                             </div>
-                            {operation.details ? (
+                            {operation.detailAvailable || operation.details ? (
                               <details
                                 className="audit-log-operation-detail"
                                 open={Boolean(openAuditLogFolds[auditLogOperationDetailFoldKey(entry, index)])}
@@ -1276,7 +1290,7 @@ export function SessionAuditLogModal({
                                   ) : operationDetailState(index)?.errorMessage ? (
                                     <p className="audit-log-empty">{operationDetailState(index)?.errorMessage}</p>
                                   ) : (
-                                    <pre>{previewAuditLogText(operationDetailState(index)?.detail?.details ?? operation.details)}</pre>
+                                    <pre>{previewAuditLogText(operationDetailState(index)?.detail?.details ?? operation.details ?? "")}</pre>
                                   )
                                 ) : null}
                               </details>
@@ -1344,7 +1358,12 @@ export function SessionAuditLogModal({
                     <strong>Raw Items</strong>
                   </summary>
                   {rawOpen ? (
-                    <pre>{previewAuditLogText(detail?.rawItemsJson ?? (sectionLoading("raw") ? "loading..." : sectionError("raw") ?? "[]"))}</pre>
+                    <section className="audit-log-section compact">
+                      <pre>{previewAuditLogText(detail?.rawItemsJson ?? (sectionLoading("raw") ? "loading..." : sectionError("raw") ?? "[]"))}</pre>
+                      {(detail?.providerMetadata?.length ?? 0) > 0 ? (
+                        <pre>{previewAuditLogText(JSON.stringify(detail?.providerMetadata ?? [], null, 2))}</pre>
+                      ) : null}
+                    </section>
                   ) : null}
                 </details>
                   </>

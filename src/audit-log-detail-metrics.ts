@@ -10,6 +10,8 @@ export type AuditLogDetailMetrics = {
   transportFieldCount: number;
   transportFieldChars: number;
   assistantTextChars: number;
+  interimMessageCount: number;
+  interimMessageChars: number;
   operationCount: number;
   operationDetailsChars: number;
   operationDetailsMaxChars: number;
@@ -30,6 +32,8 @@ export function summarizeAuditLogDetailFragment(
       transportFieldCount: 0,
       transportFieldChars: 0,
       assistantTextChars: 0,
+      interimMessageCount: 0,
+      interimMessageChars: 0,
       operationCount: 0,
       operationDetailsChars: 0,
       operationDetailsMaxChars: 0,
@@ -38,6 +42,7 @@ export function summarizeAuditLogDetailFragment(
   }
 
   const transportFields = fragment.transportPayload?.fields ?? [];
+  const interimMessages = fragment.interimMessages ?? [];
   const operations = fragment.operations ?? [];
   const operationDetailLengths = operations.map((operation) => operation.details?.length ?? 0);
 
@@ -46,7 +51,7 @@ export function summarizeAuditLogDetailFragment(
     sections: [
       fragment.logicalPrompt ? "logical" : null,
       fragment.transportPayload ? "transport" : null,
-      typeof fragment.assistantText === "string" ? "response" : null,
+      typeof fragment.assistantText === "string" || fragment.interimMessages ? "response" : null,
       fragment.operations ? "operations" : null,
       typeof fragment.rawItemsJson === "string" ? "raw" : null,
     ].filter((section): section is string => section !== null),
@@ -60,6 +65,8 @@ export function summarizeAuditLogDetailFragment(
     transportFieldCount: transportFields.length,
     transportFieldChars: transportFields.reduce((total, field) => total + field.value.length, 0),
     assistantTextChars: fragment.assistantText?.length ?? 0,
+    interimMessageCount: interimMessages.length,
+    interimMessageChars: interimMessages.reduce((total, message) => total + message.body.length, 0),
     operationCount: operations.length,
     operationDetailsChars: operationDetailLengths.reduce((total, length) => total + length, 0),
     operationDetailsMaxChars: Math.max(0, ...operationDetailLengths),

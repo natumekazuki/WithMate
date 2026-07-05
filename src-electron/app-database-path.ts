@@ -13,6 +13,8 @@ import {
 } from "./database-schema-v4.js";
 import {
   APP_DATABASE_V6_FILENAME,
+  FORBIDDEN_V6_TABLES,
+  cleanupForbiddenV6Tables,
   ensureV6Schema,
   isValidV6Database,
   readV6DatabaseUserVersion,
@@ -33,6 +35,89 @@ function tryEnsureExistingV6DatabaseSchema(dbPath: string): void {
     ensureV6Schema(db);
   } catch {
     // Repair failure must not block fallback to a valid legacy database generation.
+  } finally {
+    db.close();
+  }
+}
+
+function v6TableExists(dbPath: string, tableName: string): boolean {
+  const db = openAppDatabase(dbPath);
+  try {
+    const row = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?").get(tableName) as
+      | { name?: string }
+      | undefined;
+    return row?.name === tableName;
+  } finally {
+    db.close();
+  }
+}
+
+function hasV6AppSetting(dbPath: string, settingKey: string): boolean {
+  const db = openAppDatabase(dbPath);
+  try {
+    const tableRow = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'app_settings'").get() as
+      | { name?: string }
+      | undefined;
+    if (tableRow?.name !== "app_settings") {
+      return false;
+    }
+    const row = db.prepare("SELECT setting_key FROM app_settings WHERE setting_key = ?").get(settingKey) as
+      | { setting_key?: string }
+      | undefined;
+    return row?.setting_key === settingKey;
+  } finally {
+    db.close();
+  }
+}
+
+function hasPendingSessionTurnStorageMigration(v6Path: string): boolean {
+  if (readV6DatabaseUserVersion(v6Path) !== 6) {
+    return false;
+  }
+  return v6TableExists(v6Path, "audit_events_v6")
+    && !hasV6AppSetting(v6Path, "session_turn_storage_v6_migrated_at");
+}
+
+async function migratePendingSessionTurnStorageV6(
+  v6Path: string,
+  onProgress?: AppDatabaseMigrationProgressListener,
+): Promise<void> {
+  if (!hasPendingSessionTurnStorageMigration(v6Path)) {
+    cleanupForbiddenV6TablesIfPresent(v6Path);
+    return;
+  }
+  onProgress?.({
+    title: "データベースを移行しています",
+    detail: "既存の監査ログを session turn storage へ移行しています。",
+  });
+  const { migrateSessionTurnStorageV6 } = await import("../scripts/migrate-session-turn-storage-v6.js");
+  try {
+    migrateSessionTurnStorageV6(v6Path);
+    cleanupForbiddenV6TablesIfPresent(v6Path);
+  } catch (error) {
+    console.warn("[database] session turn storage migration skipped during startup", error);
+    cleanupForbiddenV6TablesIfPresent(v6Path);
+  }
+}
+
+function cleanupForbiddenV6TablesIfPresent(v6Path: string): void {
+  if (readV6DatabaseUserVersion(v6Path) !== 6) {
+    return;
+  }
+  const hasForbiddenTable = FORBIDDEN_V6_TABLES.some((tableName) => v6TableExists(v6Path, tableName));
+  if (!hasForbiddenTable) {
+    return;
+  }
+  const db = openAppDatabase(v6Path);
+  try {
+    db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      cleanupForbiddenV6Tables(db);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
   } finally {
     db.close();
   }
@@ -89,6 +174,7 @@ export async function resolveOrMigrateAppDatabasePath(
   const v6Exists = existsSync(v6Path);
   if (v6Exists) {
     tryEnsureExistingV6DatabaseSchema(v6Path);
+    await migratePendingSessionTurnStorageV6(v6Path, onProgress);
   }
   if (v6Exists && isValidV6Database(v6Path)) {
     const v4PathForExistingV6 = path.join(userDataPath, APP_DATABASE_V4_FILENAME);

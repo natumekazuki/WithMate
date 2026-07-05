@@ -5,6 +5,7 @@ import { Codex, type Thread, type ThreadEvent, type ThreadItem, type Usage } fro
 import type {
   AppSettings,
   AuditLogOperation,
+  AuditLogProviderMetadata,
   AuditTransportPayload,
   AuditLogUsage,
   ChangedFile,
@@ -65,6 +66,7 @@ import {
   toAuditTextPreview,
   type BoundedAuditRawItem,
 } from "./audit-payload-limits.js";
+import { toProviderMetadataLogData } from "./provider-metadata-log.js";
 const MAX_DIFF_MATRIX_CELLS = 2_000_000;
 
 function summarizeChangedFile(kind: ChangedFile["kind"], filePath: string): string {
@@ -807,6 +809,46 @@ export function buildCodexStableRawItems(items: CodexTurnItem[]): BoundedAuditRa
   }
 
   return rawItems;
+}
+
+function isSupportedCodexTurnItem(item: CodexTurnItem): boolean {
+  if (isCodexCollabToolCallItem(item)) {
+    return true;
+  }
+
+  switch (item.type) {
+    case "command_execution":
+    case "file_change":
+    case "mcp_tool_call":
+    case "web_search":
+    case "todo_list":
+    case "reasoning":
+    case "error":
+    case "agent_message":
+      return true;
+    default:
+      return false;
+  }
+}
+
+export function buildCodexProviderMetadata(items: CodexTurnItem[]): AuditLogProviderMetadata[] {
+  return items
+    .filter((item) => !isSupportedCodexTurnItem(item))
+    .map((item) => {
+      const unknownItem = item as Record<string, unknown>;
+      const responseType = typeof unknownItem.type === "string" ? unknownItem.type : "unknown";
+      return {
+        provider: "codex",
+        kind: "unsupported_response",
+        source: "codex.thread_item",
+        responseType,
+        summary: `Unsupported Codex item: ${responseType}`,
+        payload: boundAuditRawItem({
+          type: responseType,
+          data: { item: unknownItem },
+        }),
+      };
+    });
 }
 
 function toLiveStepStatus(value: string | undefined): LiveRunStep["status"] {
@@ -1592,6 +1634,15 @@ export class CodexAdapter implements ProviderTurnAdapter {
     beforeSnapshotStats: SnapshotCaptureStats,
   ): Promise<RunSessionTurnResult> {
     const finalItems = Array.from(items.values());
+    const providerMetadata = buildCodexProviderMetadata(finalItems);
+    for (const metadata of providerMetadata) {
+      this.writeLog({
+        level: "warn",
+        kind: "provider.unsupported-response",
+        message: metadata.summary,
+        data: toProviderMetadataLogData(metadata),
+      });
+    }
     const itemAssistantText = collectAssistantText(finalItems);
     const finalAssistantText = itemAssistantText.trim().length > 0 ? itemAssistantText : streamedAssistantText;
     const { afterSnapshot, afterSnapshotStats, useSnapshotFallback } =
@@ -1619,6 +1670,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       transportPayload: buildCodexTransportPayload(prompt),
       operations: toAuditOperations(finalItems),
       rawItemsJson: stringifyBoundedAuditRawItems(buildCodexStableRawItems(finalItems)),
+      providerMetadata,
       usage: normalizeCodexTokenUsage(usage),
       providerQuotaTelemetry: null,
     };

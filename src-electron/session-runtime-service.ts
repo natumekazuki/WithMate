@@ -294,13 +294,14 @@ function buildRunningAuditProgressSignature(entry: CreateAuditLogInput): string 
     operations: entry.operations,
     usage: entry.usage,
     errorMessage: entry.errorMessage,
+    providerMetadata: entry.providerMetadata,
   });
 }
 
 function buildRunningAuditEntry(params: {
   sessionId: string;
   createdAt: string;
-  session: Pick<Session, "provider" | "model" | "reasoningEffort" | "approvalMode" | "threadId">;
+  session: Pick<Session, "provider" | "model" | "reasoningEffort" | "approvalMode" | "codexSandboxMode" | "threadId" | "messages">;
   logicalPrompt: CreateAuditLogInput["logicalPrompt"];
   threadId?: string;
 }): CreateAuditLogInput {
@@ -312,12 +313,15 @@ function buildRunningAuditEntry(params: {
     model: params.session.model,
     reasoningEffort: params.session.reasoningEffort,
     approvalMode: params.session.approvalMode,
+    sandboxMode: params.session.codexSandboxMode,
+    userMessageSeq: Math.max(0, params.session.messages.length - 1),
     threadId: params.threadId ?? params.session.threadId,
     logicalPrompt: params.logicalPrompt,
     transportPayload: null,
     assistantText: "",
     operations: [],
     rawItemsJson: "[]",
+    providerMetadata: [],
     usage: null,
     errorMessage: "",
   };
@@ -374,6 +378,7 @@ function mergeTerminalAuditOperations(
 function buildTerminalAuditEntry(params: {
   baseEntry: CreateAuditLogInput;
   phase: CreateAuditLogInput["phase"];
+  completedAt: string;
   session: Pick<Session, "provider" | "model" | "reasoningEffort" | "approvalMode">;
   threadId?: string | null;
   logicalPrompt?: CreateAuditLogInput["logicalPrompt"];
@@ -381,13 +386,16 @@ function buildTerminalAuditEntry(params: {
   assistantText?: string | null;
   operations?: CreateAuditLogInput["operations"] | null;
   rawItemsJson?: string | null;
+  providerMetadata?: CreateAuditLogInput["providerMetadata"] | null;
   usage?: CreateAuditLogInput["usage"];
+  assistantMessageSeq?: CreateAuditLogInput["assistantMessageSeq"];
   errorMessage: string;
 }): CreateAuditLogInput {
   const { baseEntry } = params;
   return {
     ...baseEntry,
     phase: params.phase,
+    createdAt: params.completedAt,
     provider: params.session.provider,
     model: params.session.model,
     reasoningEffort: params.session.reasoningEffort,
@@ -398,8 +406,42 @@ function buildTerminalAuditEntry(params: {
     assistantText: hasNonEmptyAssistantText(params.assistantText) ? params.assistantText : baseEntry.assistantText,
     operations: mergeTerminalAuditOperations(baseEntry.operations, params.operations),
     rawItemsJson: hasNonEmptyRawItemsJson(params.rawItemsJson) ? params.rawItemsJson : baseEntry.rawItemsJson,
+    providerMetadata: [
+      ...(baseEntry.providerMetadata ?? []),
+      ...(params.providerMetadata ?? []),
+    ],
     usage: params.usage ?? baseEntry.usage,
+    assistantMessageSeq: params.assistantMessageSeq ?? baseEntry.assistantMessageSeq ?? null,
     errorMessage: params.errorMessage,
+  };
+}
+
+function buildDegradedCompletedAuditEntry(params: {
+  completedAuditEntry: CreateAuditLogInput;
+  auditUpdateError: unknown;
+  completedAt: string;
+}): CreateAuditLogInput {
+  const message = params.auditUpdateError instanceof Error
+    ? params.auditUpdateError.message
+    : String(params.auditUpdateError);
+  return {
+    ...params.completedAuditEntry,
+    createdAt: params.completedAt,
+    phase: "completed",
+    operations: [],
+    rawItemsJson: "",
+    providerMetadata: [{
+      provider: params.completedAuditEntry.provider,
+      kind: "audit_persistence_degraded",
+      source: "session-runtime-service.completed-audit-update",
+      summary: "Completed audit persistence degraded",
+      payload: {
+        message,
+        operationCount: params.completedAuditEntry.operations.length,
+        hadRawItems: params.completedAuditEntry.rawItemsJson.trim() !== "",
+        hadProviderMetadata: (params.completedAuditEntry.providerMetadata ?? []).length > 0,
+      },
+    }],
   };
 }
 
@@ -767,46 +809,6 @@ export class SessionRuntimeService {
         elapsedMs: Date.now() - investigationStartedAt,
       });
       terminalAuditSettled = true;
-      const completedAuditEntry = buildTerminalAuditEntry({
-        baseEntry: runningAuditEntry,
-        phase: "completed",
-        session: activeRunningSession,
-        threadId: pickPreferredThreadId(result.threadId, activeRunningSession.threadId),
-        logicalPrompt: result.logicalPrompt,
-        transportPayload: appendTransportPayloadFields(
-          appendQuotaTelemetryToTransportPayload(
-            ensureAuditTransportPayload(result.transportPayload),
-            result.providerQuotaTelemetry,
-          ),
-          [
-            { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
-            { label: "promptEstimatedChars", value: String(logicalPromptEstimate.composed.charCount) },
-            { label: "promptEstimatedTokens", value: String(logicalPromptEstimate.composed.estimatedTokens) },
-            { label: "promptSystemEstimatedChars", value: String(logicalPromptEstimate.system.charCount) },
-            { label: "promptSystemEstimatedTokens", value: String(logicalPromptEstimate.system.estimatedTokens) },
-            { label: "promptInputEstimatedChars", value: String(logicalPromptEstimate.input.charCount) },
-            { label: "promptInputEstimatedTokens", value: String(logicalPromptEstimate.input.estimatedTokens) },
-            { label: "projectMemoryHits", value: String(projectMemoryEntries.length) },
-            { label: "attachmentCount", value: String(composerPreview.attachments.length) },
-          ],
-        ),
-        assistantText: result.assistantText,
-        operations: result.operations,
-        rawItemsJson: result.rawItemsJson,
-        usage: result.usage,
-        errorMessage: "",
-      });
-      const completedAuditUpdateStartedAt = Date.now();
-      await this.deps.updateAuditLog(runningAuditLog.id, completedAuditEntry);
-      logSessionRunStuckInvestigation("runtime.completed-audit-update.done", {
-        sessionId,
-        auditLogId: runningAuditLog.id,
-        durationMs: Date.now() - completedAuditUpdateStartedAt,
-        elapsedMs: Date.now() - investigationStartedAt,
-        operationCount: completedAuditEntry.operations.length,
-      });
-      runningAuditEntry = completedAuditEntry;
-
       const completedSession: Session = {
         ...activeRunningSession,
         updatedAt: currentTimestampLabel(),
@@ -834,6 +836,86 @@ export class SessionRuntimeService {
         storedStatus: storedCompletedSession.status,
       });
       activeRunningSession = storedCompletedSession;
+
+      const completedAuditEntry = buildTerminalAuditEntry({
+        baseEntry: runningAuditEntry,
+        phase: "completed",
+        completedAt,
+        session: storedCompletedSession,
+        threadId: pickPreferredThreadId(result.threadId, storedCompletedSession.threadId),
+        logicalPrompt: result.logicalPrompt,
+        transportPayload: appendTransportPayloadFields(
+          appendQuotaTelemetryToTransportPayload(
+            ensureAuditTransportPayload(result.transportPayload),
+            result.providerQuotaTelemetry,
+          ),
+          [
+            { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
+            { label: "promptEstimatedChars", value: String(logicalPromptEstimate.composed.charCount) },
+            { label: "promptEstimatedTokens", value: String(logicalPromptEstimate.composed.estimatedTokens) },
+            { label: "promptSystemEstimatedChars", value: String(logicalPromptEstimate.system.charCount) },
+            { label: "promptSystemEstimatedTokens", value: String(logicalPromptEstimate.system.estimatedTokens) },
+            { label: "promptInputEstimatedChars", value: String(logicalPromptEstimate.input.charCount) },
+            { label: "promptInputEstimatedTokens", value: String(logicalPromptEstimate.input.estimatedTokens) },
+            { label: "projectMemoryHits", value: String(projectMemoryEntries.length) },
+            { label: "attachmentCount", value: String(composerPreview.attachments.length) },
+          ],
+        ),
+        assistantText: result.assistantText,
+        operations: result.operations,
+        rawItemsJson: result.rawItemsJson,
+        providerMetadata: result.providerMetadata,
+        usage: result.usage,
+        assistantMessageSeq: storedCompletedSession.messages.length - 1,
+        errorMessage: "",
+      });
+      const completedAuditUpdateStartedAt = Date.now();
+      try {
+        await this.deps.updateAuditLog(runningAuditLog.id, completedAuditEntry);
+        logSessionRunStuckInvestigation("runtime.completed-audit-update.done", {
+          sessionId,
+          auditLogId: runningAuditLog.id,
+          durationMs: Date.now() - completedAuditUpdateStartedAt,
+          elapsedMs: Date.now() - investigationStartedAt,
+          operationCount: completedAuditEntry.operations.length,
+        });
+        runningAuditEntry = completedAuditEntry;
+      } catch (auditUpdateError: unknown) {
+        logSessionRunStuckInvestigation("runtime.completed-audit-update.failed", {
+          sessionId,
+          auditLogId: runningAuditLog.id,
+          durationMs: Date.now() - completedAuditUpdateStartedAt,
+          elapsedMs: Date.now() - investigationStartedAt,
+          message: auditUpdateError instanceof Error ? auditUpdateError.message : String(auditUpdateError),
+          operationCount: completedAuditEntry.operations.length,
+        });
+        const degradedAuditEntry = buildDegradedCompletedAuditEntry({
+          completedAuditEntry,
+          auditUpdateError,
+          completedAt,
+        });
+        const degradedAuditUpdateStartedAt = Date.now();
+        try {
+          await this.deps.updateAuditLog(runningAuditLog.id, degradedAuditEntry);
+          logSessionRunStuckInvestigation("runtime.completed-audit-update.degraded", {
+            sessionId,
+            auditLogId: runningAuditLog.id,
+            durationMs: Date.now() - degradedAuditUpdateStartedAt,
+            elapsedMs: Date.now() - investigationStartedAt,
+          });
+          runningAuditEntry = degradedAuditEntry;
+        } catch (degradedAuditUpdateError: unknown) {
+          logSessionRunStuckInvestigation("runtime.completed-audit-update.degraded-failed", {
+            sessionId,
+            auditLogId: runningAuditLog.id,
+            durationMs: Date.now() - degradedAuditUpdateStartedAt,
+            elapsedMs: Date.now() - investigationStartedAt,
+            message: degradedAuditUpdateError instanceof Error
+              ? degradedAuditUpdateError.message
+              : String(degradedAuditUpdateError),
+          });
+        }
+      }
       return storedCompletedSession;
     } catch (error: unknown) {
       const providerTurnError = error instanceof ProviderTurnError ? error : null;
@@ -880,6 +962,7 @@ export class SessionRuntimeService {
       const failedAuditEntry = buildTerminalAuditEntry({
         baseEntry: runningAuditEntry,
         phase: canceled ? "canceled" : "failed",
+        completedAt,
         session: activeRunningSession,
         threadId: failedAuditThreadId,
         logicalPrompt: partialResult?.logicalPrompt ?? promptForAudit.logicalPrompt,
@@ -903,6 +986,7 @@ export class SessionRuntimeService {
         assistantText: partialResult?.assistantText ?? "",
         operations: partialResult?.operations ?? [],
         rawItemsJson: partialResult?.rawItemsJson ?? "[]",
+        providerMetadata: partialResult?.providerMetadata,
         usage: partialResult?.usage ?? null,
         errorMessage: failureMessage,
       });

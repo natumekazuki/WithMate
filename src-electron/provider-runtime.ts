@@ -2,6 +2,7 @@ import type {
   AppSettings,
   AuditLogicalPrompt,
   AuditLogOperation,
+  AuditLogProviderMetadata,
   AuditLogUsage,
   AuditTransportPayload,
   CharacterProfile,
@@ -132,6 +133,7 @@ export type RunSessionTurnResult = {
   transportPayload: AuditTransportPayload | null;
   operations: AuditLogOperation[];
   rawItemsJson: string;
+  providerMetadata?: AuditLogProviderMetadata[];
   usage: AuditLogUsage | null;
   providerQuotaTelemetry?: ProviderQuotaTelemetry | null;
 };
