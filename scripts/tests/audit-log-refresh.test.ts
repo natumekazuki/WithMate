@@ -229,6 +229,91 @@ describe("buildDisplayedAuditLogs", () => {
     assert.deepEqual(result[0]?.usage, { inputTokens: 20, cachedInputTokens: 0, outputTokens: 8 });
   });
 
+  it("別 session の running persisted row には live state を merge しない", () => {
+    const runningSession = {
+      ...selectedSession,
+      id: "aux-live",
+      runState: "running" as const,
+    };
+    const persistedLogs = [
+      {
+        ...makeAuditLog({
+          id: 20,
+          sessionId: "session-parent",
+          phase: "running",
+          assistantText: "parent progress",
+        }),
+        detailAvailable: true,
+      },
+      makeAuditLog({
+        id: 19,
+        sessionId: "aux-old",
+        phase: "completed",
+        assistantText: "old aux",
+      }),
+    ];
+
+    const result = buildDisplayedAuditLogs({
+      selectedSession: runningSession,
+      persistedEntries: persistedLogs,
+      liveRun: makeLiveRun({
+        sessionId: "aux-live",
+        threadId: "thread-aux-live",
+        assistantText: "aux live progress",
+      }),
+    });
+
+    assert.equal(result[0]?.phase, "running");
+    assert.equal(result[0]?.sessionId, "aux-live");
+    assert.equal(result[0]?.assistantText, "aux live progress");
+    assert.equal(result[1]?.id, 20);
+    assert.equal(result[1]?.sessionId, "session-parent");
+    assert.equal(result[1]?.assistantText, "parent progress");
+    assert.equal(result[1]?.detailAvailable, false);
+  });
+
+  it("複数 session の running row が混在しても live run と同じ sessionId の row だけ merge する", () => {
+    const runningSession = {
+      ...selectedSession,
+      id: "aux-live",
+      runState: "running" as const,
+    };
+    const persistedLogs = [
+      makeAuditLog({
+        id: 30,
+        sessionId: "aux-other",
+        phase: "running",
+        assistantText: "other progress",
+      }),
+      makeAuditLog({
+        id: 29,
+        sessionId: "aux-live",
+        phase: "running",
+        assistantText: "old live progress",
+      }),
+    ];
+
+    const result = buildDisplayedAuditLogs({
+      selectedSession: runningSession,
+      persistedEntries: persistedLogs,
+      liveRun: makeLiveRun({
+        sessionId: "aux-live",
+        threadId: "thread-aux-live",
+        assistantText: "new live progress",
+        steps: [{ id: "step-1", type: "command_execution", summary: "npm test", status: "in_progress" }],
+      }),
+    });
+
+    assert.equal(result[0]?.id, 30);
+    assert.equal(result[0]?.sessionId, "aux-other");
+    assert.equal(result[0]?.assistantText, "other progress");
+    assert.equal(result[1]?.id, 29);
+    assert.equal(result[1]?.sessionId, "aux-live");
+    assert.equal(result[1]?.assistantText, "new live progress");
+    assert.equal(result[1]?.threadId, "thread-aux-live");
+    assert.equal(result[1]?.operations[0]?.summary, "npm test");
+  });
+
   it("running persisted row の operations に pending approval request を含める", () => {
     const runningSession = {
       ...selectedSession,

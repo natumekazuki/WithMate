@@ -623,23 +623,27 @@ export default function AgentSessionWindowApp() {
   } = resolveAuditLogOwner({
     parentSession: selectedSession,
     displayedSession,
-    hasActiveAuxiliarySession: isAuxiliaryMode,
     parentSourceLabel: "Main Session",
   });
   const {
     auditLogsOpen,
     setAuditLogsOpen,
-    auditLogsState,
     auditLogDetails,
     auditLogOperationDetails,
     persistedEntries: selectedSessionAuditLogs,
     displayedEntries: displayedSessionAuditLogs,
+    auditLogsHasMore,
+    auditLogsLoading,
+    auditLogsTotal,
+    auditLogsErrorMessage,
     handleLoadMoreAuditLogs,
     handleLoadAuditLogDetail,
     handleLoadAuditLogOperationDetail,
   } = useSessionAuditLogs({
     withmateApi,
     selectedSession: auditLogSession,
+    ownerSessionId: auditLogOwnerSessionId,
+    cacheScopeKey: "session",
     liveRun: selectedSessionLiveRun,
   });
   const selectedProviderQuotaTelemetry = useMemo(
@@ -3014,12 +3018,10 @@ export default function AgentSessionWindowApp() {
         auditLogSourceLabel,
         auditLogDetails,
         auditLogOperationDetails,
-        auditLogsHasMore: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.hasMore : false,
-        auditLogsLoading: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.loading : false,
-        auditLogsTotal: auditLogsState.ownerSessionId === auditLogOwnerSessionId
-          ? Math.max(auditLogsState.total, displayedSessionAuditLogs.length)
-          : displayedSessionAuditLogs.length,
-        auditLogsErrorMessage: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.errorMessage : null,
+        auditLogsHasMore,
+        auditLogsLoading,
+        auditLogsTotal,
+        auditLogsErrorMessage,
         onToggleHeaderExpanded: handleToggleHeaderExpanded,
         headerActions: auxiliaryHeaderActions,
         onOpenAuditLog: () => setAuditLogsOpen(true),

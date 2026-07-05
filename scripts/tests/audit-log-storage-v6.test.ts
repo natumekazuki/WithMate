@@ -167,7 +167,7 @@ describe("AuditLogStorageV6", () => {
     }
   });
 
-  it("Auxiliary session id の audit log も保存して sessionId で取得できる", async () => {
+  it("parent Session id の audit log 取得は紐づく Auxiliary session の audit log も含める", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-audit-log-v6-"));
     try {
       const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
@@ -185,14 +185,32 @@ describe("AuditLogStorageV6", () => {
           sessionId: "aux-session-v6",
           phase: "completed",
           assistantText: "aux done",
+          operations: [{ type: "provider", summary: "aux completed", details: "aux details" }],
         }));
 
-        assert.equal(storage.listSessionAuditLogSummaries("session-v6").length, 0);
+        const parentSummary = storage.listSessionAuditLogSummaries("session-v6")[0];
+        assert.equal(parentSummary?.id, created.id);
+        assert.equal(parentSummary?.sessionId, "aux-session-v6");
+        assert.equal(parentSummary?.phase, "completed");
+        assert.equal(parentSummary?.assistantTextPreview, "aux done");
+
         const summary = storage.listSessionAuditLogSummaries("aux-session-v6")[0];
         assert.equal(summary?.id, created.id);
         assert.equal(summary?.sessionId, "aux-session-v6");
         assert.equal(summary?.phase, "completed");
         assert.equal(summary?.assistantTextPreview, "aux done");
+
+        const parentDetail = storage.getSessionAuditLogDetail("session-v6", created.id);
+        assert.equal(parentDetail?.sessionId, "aux-session-v6");
+        assert.equal(parentDetail?.assistantText, "aux done");
+
+        const parentResponseDetail = storage.getSessionAuditLogDetailSection("session-v6", created.id, "response");
+        assert.equal(parentResponseDetail?.sessionId, "aux-session-v6");
+        assert.equal(parentResponseDetail?.assistantText, "aux done");
+
+        const parentOperationDetail = storage.getSessionAuditLogOperationDetail("session-v6", created.id, 0);
+        assert.equal(parentOperationDetail?.sessionId, "aux-session-v6");
+        assert.equal(parentOperationDetail?.details, "aux details");
       } finally {
         storage.close();
       }

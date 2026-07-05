@@ -1078,18 +1078,20 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   } = resolveAuditLogOwner({
     parentSession: snapshot?.session ?? null,
     displayedSession,
-    hasActiveAuxiliarySession: isAuxiliaryMode,
     parentSourceLabel: "Companion",
   });
   const auditLogApi = isAuxiliaryMode ? withmateApi : companionAuditLogApi;
   const {
     auditLogsOpen,
     setAuditLogsOpen,
-    auditLogsState,
     auditLogDetails,
     auditLogOperationDetails,
     persistedEntries: companionSessionAuditLogs,
     displayedEntries: displayedSessionAuditLogs,
+    auditLogsHasMore,
+    auditLogsLoading,
+    auditLogsTotal,
+    auditLogsErrorMessage,
     handleLoadMoreAuditLogs,
     handleLoadAuditLogDetail,
     handleLoadAuditLogOperationDetail,
@@ -1097,6 +1099,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     withmateApi,
     auditLogApi,
     selectedSession: auditLogSession,
+    ownerSessionId: auditLogOwnerSessionId,
+    cacheScopeKey: isAuxiliaryMode ? "session-auxiliary" : "companion",
     liveRun: selectedSessionLiveRun,
     enabled: !isMergeView,
   });
@@ -3010,12 +3014,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         auditLogSourceLabel,
         auditLogDetails,
         auditLogOperationDetails,
-        auditLogsHasMore: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.hasMore : false,
-        auditLogsLoading: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.loading : false,
-        auditLogsTotal: auditLogsState.ownerSessionId === auditLogOwnerSessionId
-          ? Math.max(auditLogsState.total, displayedSessionAuditLogs.length)
-          : displayedSessionAuditLogs.length,
-        auditLogsErrorMessage: auditLogsState.ownerSessionId === auditLogOwnerSessionId ? auditLogsState.errorMessage : null,
+        auditLogsHasMore,
+        auditLogsLoading,
+        auditLogsTotal,
+        auditLogsErrorMessage,
         toastMessage: errorMessage || operationMessage,
         toastTone: errorMessage ? "error" : "success",
         headerActions: auxiliaryHeaderActions,

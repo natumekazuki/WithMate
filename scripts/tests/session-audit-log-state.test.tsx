@@ -73,18 +73,24 @@ describe("useSessionAuditLogs", () => {
     };
 
     const calls: Array<{ sessionId: string; cursor: number; limit: number }> = [];
+    const detailCalls: Array<{ sessionId: string; auditLogId: number }> = [];
     const auditLogApi = {
       async listSessionAuditLogSummaryPage(sessionId: string, page: { cursor: number; limit: number }) {
         calls.push({ sessionId, cursor: page.cursor, limit: page.limit });
         return {
-          entries: [createAuditLogSummary(calls.length)],
+          entries: [createAuditLogSummary(1)],
           nextCursor: null,
           hasMore: false,
           total: 1,
         };
       },
-      async getSessionAuditLogDetailSection() {
-        return null;
+      async getSessionAuditLogDetailSection(sessionId: string, auditLogId: number) {
+        detailCalls.push({ sessionId, auditLogId });
+        return {
+          id: auditLogId,
+          sessionId,
+          assistantText: `detail ${detailCalls.length}`,
+        };
       },
       async getSessionAuditLogOperationDetail() {
         return null;
@@ -92,13 +98,18 @@ describe("useSessionAuditLogs", () => {
     };
     let openAuditLogs: (() => void) | null = null;
     let replaceSessionWithSameId: (() => void) | null = null;
+    let switchCacheScope: (() => void) | null = null;
+    let loadFirstDetail: (() => void) | null = null;
     let root: Root | null = null;
 
     function Harness() {
       const [currentSession, setCurrentSession] = useState(session);
+      const [cacheScope, setCacheScope] = useState("companion");
       const auditLogs = useSessionAuditLogs({
         withmateApi: null,
         selectedSession: currentSession,
+        ownerSessionId: "parent-session-1",
+        cacheScopeKey: cacheScope,
         liveRun: null,
         auditLogApi,
       });
@@ -106,6 +117,13 @@ describe("useSessionAuditLogs", () => {
       useEffect(() => {
         openAuditLogs = () => auditLogs.setAuditLogsOpen(true);
         replaceSessionWithSameId = () => setCurrentSession((current) => ({ ...current }));
+        switchCacheScope = () => setCacheScope("session-auxiliary");
+        loadFirstDetail = () => {
+          const entry = auditLogs.displayedEntries[0];
+          if (entry) {
+            auditLogs.handleLoadAuditLogDetail(entry, "response");
+          }
+        };
       }, [auditLogs]);
 
       return React.createElement("div");
@@ -118,7 +136,7 @@ describe("useSessionAuditLogs", () => {
       });
 
       assert.equal(calls.length, 1);
-      assert.equal(calls[0]?.sessionId, "session-1");
+      assert.equal(calls[0]?.sessionId, "parent-session-1");
 
       await act(async () => {
         openAuditLogs?.();
@@ -132,6 +150,26 @@ describe("useSessionAuditLogs", () => {
       });
 
       assert.equal(calls.length, 2);
+
+      await act(async () => {
+        loadFirstDetail?.();
+      });
+
+      assert.equal(detailCalls.length, 1);
+      assert.deepEqual(detailCalls[0], { sessionId: "session-1", auditLogId: 1 });
+
+      await act(async () => {
+        switchCacheScope?.();
+      });
+
+      assert.equal(calls.length, 4);
+
+      await act(async () => {
+        loadFirstDetail?.();
+      });
+
+      assert.equal(detailCalls.length, 2);
+      assert.deepEqual(detailCalls[1], { sessionId: "session-1", auditLogId: 1 });
     } finally {
       await act(async () => root?.unmount());
       Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
