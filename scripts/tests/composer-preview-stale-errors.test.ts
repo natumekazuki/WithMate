@@ -17,6 +17,10 @@ test("Agent composer は draft 変更時に stale preview errors を clear す�
     source,
     /resolveComposerSendabilityState\(\{\s*runState: selectedSessionRunState,\s*blockedReason: composerBlockedReason,\s*inputErrors: composerPreview\.errors,/,
   );
+  assert.match(
+    source,
+    /const displayPreview = resolveComposerPreviewDisplay\(preview, appSettings\.userMicrocopyCatalog\);[\s\S]*setComposerPreview\(displayPreview\);[\s\S]*inputErrors: displayPreview\.errors,/,
+  );
 });
 
 test("Companion composer は draft 変更時に stale preview errors を clear する", async () => {
@@ -29,5 +33,9 @@ test("Companion composer は draft 変更時に stale preview errors を clear �
   assert.match(
     source,
     /resolveComposerSendabilityState\(\{\s*runState: selectedSessionRunState,\s*blockedReason: companionComposerBlockedReason,\s*inputErrors: composerPreview\.errors,/,
+  );
+  assert.match(
+    source,
+    /const displayPreview = resolveComposerPreviewDisplay\(preview, appSettings\.userMicrocopyCatalog\);[\s\S]*setComposerPreview\(displayPreview\);[\s\S]*inputErrors: displayPreview\.errors,/,
   );
 });

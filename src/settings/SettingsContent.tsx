@@ -68,6 +68,7 @@ const MICROCOPY_SLOT_LABEL: Record<MicrocopySlot, string> = {
   "retry.interrupted.title": "Retry / 中断",
   "retry.failed.title": "Retry / 失敗",
   "retry.canceled.title": "Retry / キャンセル",
+  "composer.error.path_not_found": "Composer / パスなし",
   "empty.latest_command.waiting": "Empty / command 待機",
   "empty.latest_command": "Empty / command なし",
   "empty.changed_files": "Empty / 変更なし",

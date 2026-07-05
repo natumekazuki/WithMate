@@ -25,6 +25,7 @@ describe("microcopy-state", () => {
 
     assert.deepEqual(catalog["chat.pending.response_waiting"], ["応答待機中", "出力待機中"]);
     assert.deepEqual(catalog["dock.status.working"], BUILT_IN_MICROCOPY_CATALOG["dock.status.working"]);
+    assert.deepEqual(catalog["composer.error.path_not_found"], BUILT_IN_MICROCOPY_CATALOG["composer.error.path_not_found"]);
     assert.equal("unknown" in catalog, false);
   });
 
