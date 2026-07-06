@@ -2062,7 +2062,7 @@ button:disabled {
 
 .memory-review-detail {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   gap: 14px;
   color: #edf3fb;
 }
@@ -2102,6 +2102,90 @@ button:disabled {
   color: #edf3fb;
 }
 
+.memory-review-files {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(94, 234, 212, 0.18);
+  border-radius: 8px;
+  background: rgba(20, 32, 42, 0.76);
+  padding: 12px;
+}
+
+.memory-review-files-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.memory-review-files h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #f3f6fb;
+}
+
+.memory-review-files-head button {
+  flex: 0 0 auto;
+  border: 1px solid rgba(94, 234, 212, 0.28);
+  border-radius: 8px;
+  background: rgba(94, 234, 212, 0.12);
+  color: #edf3fb;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.memory-review-files-head button:disabled {
+  cursor: not-allowed;
+  opacity: 0.64;
+}
+
+.memory-review-files ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memory-review-files li {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  padding: 10px;
+}
+
+.memory-review-files li > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memory-review-files strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #edf3fb;
+}
+
+.memory-review-files span {
+  flex: 0 0 auto;
+  color: #aeb9cb;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.memory-review-files p {
+  margin: 0;
+  color: #cbd5e1;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .memory-review-body {
   min-height: 0;
   overflow: auto;
@@ -2122,6 +2206,131 @@ button:disabled {
 
 .memory-review-feedback {
   margin: 0;
+}
+
+.memory-review-usage {
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 8px;
+  background: rgba(12, 17, 25, 0.74);
+  padding: 12px;
+}
+
+.memory-review-usage-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.memory-review-usage-summary > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid rgba(203, 213, 225, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  padding: 10px;
+}
+
+.memory-review-usage-summary span,
+.memory-review-largest-entries > span {
+  color: #9ca8bb;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.memory-review-usage-summary strong {
+  color: #f3f6fb;
+  font-size: 1rem;
+}
+
+.memory-review-usage-summary small,
+.memory-review-largest-entries small {
+  min-width: 0;
+  color: #aeb9cb;
+  overflow-wrap: anywhere;
+}
+
+.memory-review-largest-entries {
+  display: grid;
+  gap: 8px;
+}
+
+.memory-review-largest-entries > div {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.memory-review-largest-entries button {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  text-align: left;
+  border: 1px solid rgba(94, 234, 212, 0.18);
+  border-radius: 8px;
+  background: rgba(20, 32, 42, 0.72);
+  color: #edf3fb;
+  padding: 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.memory-review-largest-entries button:hover {
+  border-color: color-mix(in srgb, var(--teal) 42%, rgba(203, 213, 225, 0.18));
+  background: color-mix(in srgb, var(--teal-soft) 56%, rgba(255, 255, 255, 0.06));
+}
+
+.memory-review-largest-entries strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.memory-review-gc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.memory-review-gc-actions button {
+  border: 1px solid rgba(203, 213, 225, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #edf3fb;
+  padding: 8px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.memory-review-gc-actions button:hover {
+  border-color: rgba(94, 234, 212, 0.36);
+  background: rgba(94, 234, 212, 0.12);
+}
+
+.memory-review-gc-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.64;
+}
+
+.memory-review-gc-report {
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(203, 213, 225, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  padding: 10px;
+}
+
+.memory-review-gc-report span {
+  color: #edf3fb;
+  font-weight: 700;
+}
+
+.memory-review-gc-report small {
+  color: #aeb9cb;
+  overflow-wrap: anywhere;
 }
 
 .memory-review-modal-backdrop {
@@ -2747,6 +2956,11 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
+}
+
+.settings-inline-unit {
+  color: var(--muted);
+  font-size: 0.86rem;
 }
 
 .settings-section-head-row {

@@ -66,6 +66,102 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.value.idempotencyKey, "key-1");
   });
 
+  it("file付きappend request はfile summaryを必須にして正規化する", () => {
+    const result = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "context",
+      title: "trace archive",
+      body: "debug trace archive with screenshots.",
+      preview: "debug trace archive.",
+      tags: [{ type: "topic", value: "debug" }],
+      files: [{
+        path: " C:/trace/screenshot.png ",
+        summary: " スクリーンショットでエラー状態を確認できる。 ",
+        role: "evidence",
+        displayName: " screenshot.png ",
+        contentType: " image/png ",
+      }],
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.value.files, [{
+      path: "C:/trace/screenshot.png",
+      summary: "スクリーンショットでエラー状態を確認できる。",
+      role: "evidence",
+      displayName: "screenshot.png",
+      contentType: "image/png",
+    }]);
+
+    const missingSummary = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "context",
+      title: "trace archive",
+      body: "debug trace archive.",
+      preview: "debug trace archive.",
+      tags: [],
+      files: [{ path: "C:/trace/screenshot.png" }],
+    });
+    assert.equal(missingSummary.ok, false);
+    assert.equal(missingSummary.error.field, "files[0].summary");
+
+    const invalidRole = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "context",
+      title: "trace archive",
+      body: "debug trace archive.",
+      preview: "debug trace archive.",
+      tags: [],
+      files: [{ path: "C:/trace/screenshot.png", summary: "screenshot", role: "unknown" }],
+    });
+    assert.equal(invalidRole.ok, false);
+    assert.equal(invalidRole.error.field, "files[0].role");
+
+    const tooManyFiles = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "context",
+      title: "trace archive",
+      body: "debug trace archive.",
+      preview: "debug trace archive.",
+      tags: [],
+      files: Array.from({ length: 11 }, (_, index) => ({
+        path: `C:/trace/${index}.png`,
+        summary: `screenshot ${index}`,
+      })),
+    });
+    assert.equal(tooManyFiles.ok, false);
+    assert.equal(tooManyFiles.error.field, "files");
+
+    const emptyPath = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "context",
+      title: "trace archive",
+      body: "debug trace archive.",
+      preview: "debug trace archive.",
+      tags: [],
+      files: [{ path: "   ", summary: "screenshot" }],
+    });
+    assert.equal(emptyPath.ok, false);
+    assert.equal(emptyPath.error.field, "files[0].path");
+
+    const unknownKey = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "context",
+      title: "trace archive",
+      body: "debug trace archive.",
+      preview: "debug trace archive.",
+      tags: [],
+      files: [{ path: "C:/trace/screenshot.png", summary: "screenshot", objectId: "obj-1" }],
+    });
+    assert.equal(unknownKey.ok, false);
+    assert.equal(unknownKey.error.field, "files[0].objectId");
+  });
+
   it("appendでtags省略を拒否し、空tagsは許可する", () => {
     const missingTags = validateMemoryAppendRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,

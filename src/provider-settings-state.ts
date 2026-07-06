@@ -15,6 +15,7 @@ export type AppSettings = {
   memoryGenerationEnabled: boolean;
   launchAtLoginEnabled: boolean;
   autoCollapseActionDockOnSend: boolean;
+  memoryFileQuotaBytes: number;
   userMicrocopyCatalog: MicrocopyCatalog;
   mateMemoryGenerationSettings: MateMemoryGenerationSettings;
   codingProviderSettings: Record<string, ProviderAppSettings>;
@@ -63,6 +64,9 @@ export const DEFAULT_PROVIDER_APP_SETTINGS: ProviderAppSettings = {
 
 export const DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD = 300_000;
 export const DEFAULT_BACKGROUND_TIMEOUT_SECONDS = 180;
+export const MEMORY_FILE_QUOTA_DEFAULT_BYTES = 1_073_741_824;
+export const MEMORY_FILE_QUOTA_MIN_BYTES = 67_108_864;
+export const MEMORY_FILE_QUOTA_MAX_BYTES = 53_687_091_200;
 
 export const DEFAULT_MEMORY_EXTRACTION_PROVIDER_SETTINGS: MemoryExtractionProviderSettings = {
   model: DEFAULT_MODEL_ID,
@@ -88,6 +92,7 @@ export function createDefaultAppSettings(): AppSettings {
     memoryGenerationEnabled: true,
     launchAtLoginEnabled: false,
     autoCollapseActionDockOnSend: true,
+    memoryFileQuotaBytes: MEMORY_FILE_QUOTA_DEFAULT_BYTES,
     userMicrocopyCatalog: createDefaultUserMicrocopyCatalog(),
     mateMemoryGenerationSettings: {
       ...DEFAULT_MATE_MEMORY_GENERATION_SETTINGS,
@@ -182,6 +187,23 @@ function normalizeBackgroundTimeoutSeconds(value: unknown): number {
 
   if (normalized > 1_800) {
     return 1_800;
+  }
+
+  return normalized;
+}
+
+export function normalizeMemoryFileQuotaBytes(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return MEMORY_FILE_QUOTA_DEFAULT_BYTES;
+  }
+
+  const normalized = Math.trunc(value);
+  if (normalized < MEMORY_FILE_QUOTA_MIN_BYTES) {
+    return MEMORY_FILE_QUOTA_MIN_BYTES;
+  }
+
+  if (normalized > MEMORY_FILE_QUOTA_MAX_BYTES) {
+    return MEMORY_FILE_QUOTA_MAX_BYTES;
   }
 
   return normalized;
@@ -299,6 +321,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       typeof candidate.launchAtLoginEnabled === "boolean" ? candidate.launchAtLoginEnabled : false,
     autoCollapseActionDockOnSend:
       typeof candidate.autoCollapseActionDockOnSend === "boolean" ? candidate.autoCollapseActionDockOnSend : true,
+    memoryFileQuotaBytes: normalizeMemoryFileQuotaBytes(candidate.memoryFileQuotaBytes),
     userMicrocopyCatalog: normalizeUserMicrocopyCatalog(candidate.userMicrocopyCatalog),
     mateMemoryGenerationSettings: normalizeMateMemoryGenerationSettings(candidate.mateMemoryGenerationSettings),
     codingProviderSettings,

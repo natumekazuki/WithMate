@@ -24,6 +24,7 @@ export const REQUIRED_V6_TABLES = [
   "memory_mutation_events_v6",
   "memory_idempotency_keys_v6",
   "memory_idempotency_forget_results_v6",
+  "memory_protected_objects_v6",
 ] as const;
 
 const FORBIDDEN_V6_TABLES = [
@@ -48,6 +49,8 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_memory_entry_tags_lookup",
   "idx_v6_memory_mutation_events_result",
   "idx_v6_memory_idempotency_response_entry",
+  "idx_v6_memory_protected_objects_state",
+  "idx_v6_memory_protected_objects_entry",
 ] as const;
 
 const REQUIRED_V6_TABLE_COLUMNS = {
@@ -133,6 +136,23 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "entry_id",
     "result_status",
     "created_at",
+  ],
+  memory_protected_objects_v6: [
+    "object_id",
+    "entry_id",
+    "state",
+    "role",
+    "media_kind",
+    "content_type",
+    "display_name",
+    "summary",
+    "original_bytes",
+    "stored_bytes",
+    "sha256",
+    "key_id",
+    "created_at",
+    "updated_at",
+    "deleted_at",
   ],
 } as const satisfies Record<(typeof REQUIRED_V6_TABLES)[number], readonly string[]>;
 
@@ -269,7 +289,8 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
     && hasForeignKey(db, "memory_entries_v6", "source_app_message_id", "session_messages_v6")
     && hasForeignKey(db, "memory_entries_v6", "superseded_by_id", "memory_entries_v6")
     && hasForeignKey(db, "memory_entry_tags_v6", "entry_id", "memory_entries_v6")
-    && hasForeignKey(db, "memory_idempotency_keys_v6", "response_entry_id", "memory_entries_v6");
+    && hasForeignKey(db, "memory_idempotency_keys_v6", "response_entry_id", "memory_entries_v6")
+    && hasForeignKey(db, "memory_protected_objects_v6", "entry_id", "memory_entries_v6");
 }
 
 function tableSql(db: DatabaseSync, tableName: string): string {
@@ -285,6 +306,7 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const memoryEntriesSql = tableSql(db, "memory_entries_v6");
   const mutationEventsSql = tableSql(db, "memory_mutation_events_v6");
   const idempotencySql = tableSql(db, "memory_idempotency_keys_v6");
+  const protectedObjectsSql = tableSql(db, "memory_protected_objects_v6");
 
   return sessionsSql.includes("json_valid(character_snapshot_json)")
     && memoryEntriesSql.includes("state IN ('active', 'superseded', 'forgotten')")
@@ -293,7 +315,11 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && mutationEventsSql.includes("result_status TEXT NOT NULL")
     && mutationEventsSql.includes("result_status IN")
     && idempotencySql.includes("binding_id_hash TEXT NOT NULL")
-    && idempotencySql.includes("PRIMARY KEY (binding_id_hash, key, operation, owner_type, owner_id, scope_type, scope_id)");
+    && idempotencySql.includes("PRIMARY KEY (binding_id_hash, key, operation, owner_type, owner_id, scope_type, scope_id)")
+    && protectedObjectsSql.includes("state IN ('active', 'delete_pending', 'deleted')")
+    && protectedObjectsSql.includes("role IN ('evidence', 'source', 'snapshot', 'artifact', 'reference', 'other')")
+    && protectedObjectsSql.includes("original_bytes >= 0")
+    && protectedObjectsSql.includes("stored_bytes >= 0");
 }
 
 function hasNoForeignKeyViolations(db: DatabaseSync): boolean {
@@ -687,6 +713,34 @@ export const CREATE_V6_MEMORY_IDEMPOTENCY_FORGET_RESULTS_TABLE_SQL = `
   );
 `;
 
+export const CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS memory_protected_objects_v6 (
+    object_id TEXT PRIMARY KEY,
+    entry_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('active', 'delete_pending', 'deleted')),
+    role TEXT NOT NULL DEFAULT 'other' CHECK (role IN ('evidence', 'source', 'snapshot', 'artifact', 'reference', 'other')),
+    media_kind TEXT NOT NULL DEFAULT 'other',
+    content_type TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL,
+    original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
+    stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0),
+    sha256 TEXT NOT NULL DEFAULT '',
+    key_id TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT,
+    FOREIGN KEY (entry_id) REFERENCES memory_entries_v6(id) ON DELETE CASCADE,
+    CHECK ((state = 'deleted') = (deleted_at IS NOT NULL))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_memory_protected_objects_state
+    ON memory_protected_objects_v6(state, updated_at DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_v6_memory_protected_objects_entry
+    ON memory_protected_objects_v6(entry_id, state);
+`;
+
 export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_APP_SETTINGS_TABLE_SQL,
   CREATE_V6_MODEL_CATALOG_TABLES_SQL,
@@ -703,6 +757,7 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_MEMORY_MUTATION_EVENTS_TABLE_SQL,
   CREATE_V6_MEMORY_IDEMPOTENCY_KEYS_TABLE_SQL,
   CREATE_V6_MEMORY_IDEMPOTENCY_FORGET_RESULTS_TABLE_SQL,
+  CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL,
   `PRAGMA user_version = ${APP_DATABASE_V6_SCHEMA_VERSION};`,
 ] as const;
 
@@ -868,6 +923,13 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
       CREATE INDEX IF NOT EXISTS idx_v6_audit_events_type_created
         ON audit_events_v6(event_type, created_at DESC)
     `);
+  }
+
+  if (tableExists(db, "memory_protected_objects_v6")) {
+    const protectedObjectColumns = tableColumnNames(db, "memory_protected_objects_v6");
+    if (!protectedObjectColumns.has("role")) {
+      db.exec("ALTER TABLE memory_protected_objects_v6 ADD COLUMN role TEXT NOT NULL DEFAULT 'other' CHECK (role IN ('evidence', 'source', 'snapshot', 'artifact', 'reference', 'other'))");
+    }
   }
 
 }

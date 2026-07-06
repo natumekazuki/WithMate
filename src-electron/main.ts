@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, crashReporter, dialog, ipcMain, Menu, screen, shell, Tray } from "electron";
+import { app, BrowserWindow, crashReporter, dialog, ipcMain, Menu, safeStorage, screen, shell, Tray } from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
 import { summarizeAuditLogDetailFragment } from "../src/audit-log-detail-metrics.js";
@@ -155,12 +155,16 @@ import type {
   MemoryV6Diagnostics,
 } from "../src/memory-v6/memory-diagnostics-state.js";
 import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
+import type { MemoryV6ProtectedObjectGcRequest } from "../src/memory-v6/memory-review-state.js";
 import { inspectAppDatabase } from "./app-database-diagnostics.js";
 import { resolveOrMigrateAppDatabasePath } from "./app-database-path.js";
 import {
   startMemoryV6RuntimeApi,
   type MemoryV6RuntimeApiHandle,
 } from "./memory-v6-runtime.js";
+import { exportMemoryProtectedObjectFile, exportMemoryProtectedObjectFiles } from "./memory-protected-object-exporter.js";
+import { createElectronSafeStorageKeyProtector, MemoryProtectedObjectKeyStore } from "./memory-protected-object-key-store.js";
+import { MemoryProtectedObjectStore } from "./memory-protected-object-store.js";
 import { MemoryV6ReviewService } from "./memory-v6-review-service.js";
 import { getProviderRuntimeCapabilities } from "./provider-support.js";
 import {
@@ -395,9 +399,43 @@ async function uninstallMemoryV6CliShim(): Promise<MemoryV6Diagnostics> {
 }
 
 function createMemoryV6ReviewService(): MemoryV6ReviewService {
+  const userDataPath = app.getPath("userData");
+  const protectedObjectStore = MemoryProtectedObjectStore.fromUserDataPath(userDataPath);
+  const protectedObjectKeyStore = MemoryProtectedObjectKeyStore.fromUserDataPath(
+    userDataPath,
+    createElectronSafeStorageKeyProtector(safeStorage),
+  );
   return new MemoryV6ReviewService({
     resolveDbPath: () => memoryV6RuntimeApi?.dbPath ?? null,
+    getMemoryFileQuotaBytes: () => requireAppSettingsStorage().getSettings().memoryFileQuotaBytes,
+    protectedObjectStore,
+    protectedObjectExporter: {
+      exportFile: (input) => exportMemoryProtectedObjectFile({
+        keyStore: protectedObjectKeyStore,
+        objectStore: protectedObjectStore,
+      }, input),
+      exportFiles: (input) => exportMemoryProtectedObjectFiles({
+        keyStore: protectedObjectKeyStore,
+        objectStore: protectedObjectStore,
+      }, input),
+    },
   });
+}
+
+function getMemoryV6FileUsage() {
+  return createMemoryV6ReviewService().getFileUsage();
+}
+
+async function exportMemoryV6EntryFiles(entryId: string, targetWindow?: BrowserWindow | null) {
+  const outputDirectoryPath = await requireWindowDialogService().pickDirectory(targetWindow ?? null, null);
+  if (!outputDirectoryPath) {
+    return null;
+  }
+  return createMemoryV6ReviewService().exportEntryFiles(entryId, outputDirectoryPath);
+}
+
+function runMemoryV6ProtectedObjectGc(request: MemoryV6ProtectedObjectGcRequest) {
+  return createMemoryV6ReviewService().runProtectedObjectGc(request);
 }
 
 function searchMemoryV6Entries(request: MemoryV6ReviewSearchRequest | null | undefined) {
@@ -422,6 +460,8 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
     memoryV6RuntimeApi = await startMemoryV6RuntimeApi({
       userDataPath: app.getPath("userData"),
       listCharacters: () => requireCharacterService().listCharacters(),
+      getMemoryFileQuotaBytes: () => requireAppSettingsStorage().getSettings().memoryFileQuotaBytes,
+      protectedObjectKeyProtector: createElectronSafeStorageKeyProtector(safeStorage),
       log: writeAppLog,
     });
     memoryV6RuntimeStatus = "running";
@@ -1237,6 +1277,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getMemoryV6Diagnostics,
                 installMemoryV6CliShim,
                 uninstallMemoryV6CliShim,
+                getMemoryV6FileUsage,
+                exportMemoryV6EntryFiles,
+                runMemoryV6ProtectedObjectGc,
                 searchMemoryV6Entries,
                 getMemoryV6Entry,
                 forgetMemoryV6Entry,

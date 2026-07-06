@@ -1,13 +1,18 @@
 import {
+  MEMORY_APPEND_FILE_ROLES,
   MEMORY_ENTRY_KINDS,
   MEMORY_FORGET_REASONS,
   MEMORY_V6_SCHEMA_VERSION,
   type CharacterTargetRef,
+  type MemoryExportFilesRequest,
+  type MemoryAppendFileInput,
+  type MemoryAppendFileRole,
   type MemoryAppendRequest,
   type MemoryEntryKind,
   type MemoryForgetReason,
   type MemoryForgetRequest,
   type MemoryGetEntryRequest,
+  type MemoryGetFileRequest,
   type MemoryListTagsRequest,
   type MemorySearchRequest,
   type MemoryTargetSelector,
@@ -17,10 +22,13 @@ import {
 } from "./memory-contract.js";
 
 const MEMORY_ENTRY_KIND_SET = new Set<MemoryEntryKind>(MEMORY_ENTRY_KINDS);
+const MEMORY_APPEND_FILE_ROLE_SET = new Set<MemoryAppendFileRole>(MEMORY_APPEND_FILE_ROLES);
 const MEMORY_FORGET_REASON_SET = new Set<MemoryForgetReason>(MEMORY_FORGET_REASONS);
 
 const SEARCH_REQUEST_KEYS = new Set(["schemaVersion", "targets", "query", "kinds", "tags", "limit", "cursor"]);
 const GET_ENTRY_REQUEST_KEYS = new Set(["schemaVersion", "entryId", "target"]);
+const GET_FILE_REQUEST_KEYS = new Set(["schemaVersion", "target", "objectId", "outputPath"]);
+const EXPORT_FILES_REQUEST_KEYS = new Set(["schemaVersion", "target", "entryId", "outputDirectoryPath"]);
 const LIST_TAGS_REQUEST_KEYS = new Set(["schemaVersion", "targets"]);
 const APPEND_REQUEST_KEYS = new Set([
   "schemaVersion",
@@ -31,6 +39,7 @@ const APPEND_REQUEST_KEYS = new Set([
   "preview",
   "tags",
   "supersedes",
+  "files",
   "sourceMessageId",
   "idempotencyKey",
 ]);
@@ -39,6 +48,7 @@ const PROJECT_TARGET_ID_KEYS = new Set(["type", "id"]);
 const PROJECT_TARGET_PATH_KEYS = new Set(["type", "path"]);
 const CHARACTER_TARGET_ID_KEYS = new Set(["type", "id"]);
 const MEMORY_TAG_KEYS = new Set(["type", "value"]);
+const APPEND_FILE_KEYS = new Set(["path", "summary", "role", "displayName", "contentType"]);
 const PROJECT_PROJECT_TARGET_KEYS = new Set(["owner", "scope", "project"]);
 const CHARACTER_CHARACTER_TARGET_KEYS = new Set(["owner", "scope", "character"]);
 const CHARACTER_PROJECT_TARGET_KEYS = new Set(["owner", "scope", "character", "project"]);
@@ -55,6 +65,12 @@ const MAX_CURSOR_LENGTH = 500;
 const MAX_LIMIT = 50;
 const MAX_TAGS = 20;
 const MAX_SUPERSEDES = 20;
+const MAX_APPEND_FILES = 10;
+const MAX_FILE_PATH_LENGTH = 1_000;
+const MAX_OBJECT_ID_LENGTH = 64;
+const MAX_FILE_SUMMARY_LENGTH = 500;
+const MAX_FILE_DISPLAY_NAME_LENGTH = 255;
+const MAX_FILE_CONTENT_TYPE_LENGTH = 120;
 const MAX_FORGET_ENTRY_IDS = 50;
 const MAX_TARGETS = 5;
 
@@ -186,6 +202,75 @@ function validateMemoryKind(value: unknown, field: string): MemoryValidationResu
   }
 
   return { ok: true, value: value as MemoryEntryKind };
+}
+
+function validateAppendFileRole(value: unknown, field: string): MemoryValidationResult<MemoryAppendFileRole | undefined> {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (typeof value !== "string" || !MEMORY_APPEND_FILE_ROLE_SET.has(value as MemoryAppendFileRole)) {
+    return error("MEMORY_INVALID_FIELD", `${field} must be a valid file role.`, field);
+  }
+
+  return { ok: true, value: value as MemoryAppendFileRole };
+}
+
+function normalizeAppendFiles(value: unknown): MemoryValidationResult<MemoryAppendFileInput[] | undefined> {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (!Array.isArray(value)) {
+    return error("MEMORY_INVALID_FIELD", "files must be an array.", "files");
+  }
+  if (value.length === 0) {
+    return { ok: true, value: undefined };
+  }
+  if (value.length > MAX_APPEND_FILES) {
+    return error("MEMORY_FIELD_TOO_LARGE", `files supports at most ${MAX_APPEND_FILES} items.`, "files");
+  }
+
+  const normalized: MemoryAppendFileInput[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const file = value[index];
+    const field = `files[${index}]`;
+    if (!isRecord(file)) {
+      return error("MEMORY_INVALID_FIELD", `${field} must be an object.`, field);
+    }
+    const unknownKeys = rejectUnknownKeys(file, APPEND_FILE_KEYS, field);
+    if (!unknownKeys.ok) {
+      return unknownKeys;
+    }
+    const filePath = normalizeText(file.path, `${field}.path`, { maxLength: MAX_FILE_PATH_LENGTH });
+    if (!filePath.ok) {
+      return filePath;
+    }
+    const summary = normalizeText(file.summary, `${field}.summary`, { maxLength: MAX_FILE_SUMMARY_LENGTH });
+    if (!summary.ok) {
+      return summary;
+    }
+    const role = validateAppendFileRole(file.role, `${field}.role`);
+    if (!role.ok) {
+      return role;
+    }
+    const displayName = normalizeOptionalText(file.displayName, `${field}.displayName`, MAX_FILE_DISPLAY_NAME_LENGTH);
+    if (!displayName.ok) {
+      return displayName;
+    }
+    const contentType = normalizeOptionalText(file.contentType, `${field}.contentType`, MAX_FILE_CONTENT_TYPE_LENGTH);
+    if (!contentType.ok) {
+      return contentType;
+    }
+
+    normalized.push({
+      path: filePath.value,
+      summary: summary.value,
+      ...(role.value !== undefined ? { role: role.value } : {}),
+      ...(displayName.value !== undefined ? { displayName: displayName.value } : {}),
+      ...(contentType.value !== undefined ? { contentType: contentType.value } : {}),
+    });
+  }
+
+  return { ok: true, value: normalized };
 }
 
 function normalizeProjectTarget(value: unknown, field: string): MemoryValidationResult<ProjectTargetRef> {
@@ -464,6 +549,78 @@ export function validateMemoryGetEntryRequest(value: unknown): MemoryValidationR
   };
 }
 
+export function validateMemoryGetFileRequest(value: unknown): MemoryValidationResult<MemoryGetFileRequest> {
+  if (!isRecord(value)) {
+    return error("MEMORY_INVALID_REQUEST", "Get file request must be an object.");
+  }
+  const unknownKeys = rejectUnknownKeys(value, GET_FILE_REQUEST_KEYS, "request");
+  if (!unknownKeys.ok) {
+    return unknownKeys;
+  }
+  const schema = validateSchemaVersion(value);
+  if (!schema.ok) {
+    return schema;
+  }
+  const target = normalizeMemoryTarget(value.target, "target");
+  if (!target.ok) {
+    return target;
+  }
+  const objectId = normalizeText(value.objectId, "objectId", { maxLength: MAX_OBJECT_ID_LENGTH });
+  if (!objectId.ok) {
+    return objectId;
+  }
+  const outputPath = normalizeText(value.outputPath, "outputPath", { maxLength: MAX_FILE_PATH_LENGTH });
+  if (!outputPath.ok) {
+    return outputPath;
+  }
+
+  return {
+    ok: true,
+    value: {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: target.value,
+      objectId: objectId.value,
+      outputPath: outputPath.value,
+    },
+  };
+}
+
+export function validateMemoryExportFilesRequest(value: unknown): MemoryValidationResult<MemoryExportFilesRequest> {
+  if (!isRecord(value)) {
+    return error("MEMORY_INVALID_REQUEST", "Export files request must be an object.");
+  }
+  const unknownKeys = rejectUnknownKeys(value, EXPORT_FILES_REQUEST_KEYS, "request");
+  if (!unknownKeys.ok) {
+    return unknownKeys;
+  }
+  const schema = validateSchemaVersion(value);
+  if (!schema.ok) {
+    return schema;
+  }
+  const target = normalizeMemoryTarget(value.target, "target");
+  if (!target.ok) {
+    return target;
+  }
+  const entryId = normalizeText(value.entryId, "entryId", { maxLength: MAX_ID_LENGTH });
+  if (!entryId.ok) {
+    return entryId;
+  }
+  const outputDirectoryPath = normalizeText(value.outputDirectoryPath, "outputDirectoryPath", { maxLength: MAX_FILE_PATH_LENGTH });
+  if (!outputDirectoryPath.ok) {
+    return outputDirectoryPath;
+  }
+
+  return {
+    ok: true,
+    value: {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: target.value,
+      entryId: entryId.value,
+      outputDirectoryPath: outputDirectoryPath.value,
+    },
+  };
+}
+
 export function validateMemoryListTagsRequest(value: unknown): MemoryValidationResult<MemoryListTagsRequest> {
   if (!isRecord(value)) {
     return error("MEMORY_INVALID_REQUEST", "List tags request must be an object.");
@@ -530,6 +687,10 @@ export function validateMemoryAppendRequest(value: unknown): MemoryValidationRes
   if (!supersedes.ok) {
     return supersedes;
   }
+  const files = normalizeAppendFiles(value.files);
+  if (!files.ok) {
+    return files;
+  }
   const sourceMessageId = normalizeOptionalText(value.sourceMessageId, "sourceMessageId");
   if (!sourceMessageId.ok) {
     return sourceMessageId;
@@ -550,6 +711,7 @@ export function validateMemoryAppendRequest(value: unknown): MemoryValidationRes
       preview: preview.value,
       tags: tags.value,
       ...(supersedes.value && supersedes.value.length > 0 ? { supersedes: supersedes.value } : {}),
+      ...(files.value && files.value.length > 0 ? { files: files.value } : {}),
       ...(sourceMessageId.value !== undefined ? { sourceMessageId: sourceMessageId.value } : {}),
       ...(idempotencyKey.value !== undefined ? { idempotencyKey: idempotencyKey.value } : {}),
     },

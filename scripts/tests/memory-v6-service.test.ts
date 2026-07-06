@@ -5,12 +5,13 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import { MEMORY_V6_SCHEMA_VERSION, type NormalizedMemoryTag } from "../../src/memory-v6/memory-contract.js";
+import { MEMORY_FILE_QUOTA_MIN_BYTES } from "../../src/provider-settings-state.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { createMemoryV6ProjectResolver } from "../../src-electron/memory-v6-project-resolver.js";
 import { createLocalUserMemoryPrincipal } from "../../src-electron/memory-v6-permission.js";
 import type { MemoryV6ResolvedTarget } from "../../src-electron/memory-v6-schema.js";
-import { MemoryV6Service } from "../../src-electron/memory-v6-service.js";
-import { MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
+import { MemoryV6Service, type MemoryV6ServiceDeps } from "../../src-electron/memory-v6-service.js";
+import { MemoryV6Storage, type MemoryV6AppendProtectedObjectInput } from "../../src-electron/memory-v6-storage.js";
 
 const projectTarget = {
   owner: { type: "project", id: "project-a" },
@@ -28,12 +29,16 @@ function tag(type: string, value: string): NormalizedMemoryTag {
 
 async function withService<T>(
   runner: (input: { service: MemoryV6Service; storage: MemoryV6Storage }) => T | Promise<T>,
+  overrides: Partial<Pick<MemoryV6ServiceDeps, "getMemoryFileQuotaBytes" | "protectedObjectImporter" | "protectedObjectExporter">> = {},
 ): Promise<T> {
   const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-v6-service-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(tempDirectory);
   const storage = new MemoryV6Storage(dbPath);
   const service = new MemoryV6Service({
     storage,
+    getMemoryFileQuotaBytes: overrides.getMemoryFileQuotaBytes ?? (() => MEMORY_FILE_QUOTA_MIN_BYTES),
+    ...(overrides.protectedObjectImporter ? { protectedObjectImporter: overrides.protectedObjectImporter } : {}),
+    ...(overrides.protectedObjectExporter ? { protectedObjectExporter: overrides.protectedObjectExporter } : {}),
     listCharacters: () => [{
       id: "character-a",
       name: "Character A",
@@ -79,9 +84,9 @@ function appendRequest(overrides: Record<string, unknown> = {}): Record<string, 
 
 describe("MemoryV6Service", () => {
   it("local_user は明示project targetでappend / search / get-entry / list-tags / forgetを扱う", async () => {
-    await withService(({ service }) => {
+    await withService(async ({ service }) => {
       const principal = createLocalUserMemoryPrincipal();
-      const append = service.append(principal, appendRequest({
+      const append = await service.append(principal, appendRequest({
         idempotencyKey: "local-user-project-append",
         sourceMessageId: "external-message-1",
       }));
@@ -172,10 +177,416 @@ describe("MemoryV6Service", () => {
     });
   });
 
-  it("explicit character ID targetを扱い、character.currentはvalidationで拒否する", async () => {
+  it("file usage は quota と protected object 集計を返す", async () => {
     await withService(({ service }) => {
       const principal = createLocalUserMemoryPrincipal();
-      const append = service.append(principal, appendRequest({
+      const usage = service.fileUsage(principal);
+
+      assert.equal("error" in usage, false);
+      assert.deepEqual(usage, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        quotaBytes: MEMORY_FILE_QUOTA_MIN_BYTES,
+        usedBytes: 0,
+        physicalBytes: 0,
+        pendingDeleteBytes: 0,
+        availableBytes: MEMORY_FILE_QUOTA_MIN_BYTES,
+        objectCount: 0,
+        pendingDeleteCount: 0,
+        quotaExceeded: false,
+      });
+    });
+  });
+
+  it("file usage は要求時だけlargest entriesを返す", async () => {
+    await withService(({ service, storage }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      storage.appendEntry({
+        target: projectTarget,
+        kind: "decision",
+        title: "容量の大きいMemory",
+        body: "添付ファイルの容量が大きい。",
+        preview: "添付ファイルの容量が大きい。",
+        tags: [tag("topic", "memory")],
+        source: { type: "agent", sessionId: null, messageId: "message-large", providerId: "codex" },
+        id: "mem-large-files",
+        now: "2026-07-04T00:00:00.000Z",
+        protectedObjects: [{
+          objectId: "a".repeat(32),
+          role: "evidence",
+          mediaKind: "image",
+          contentType: "image/png",
+          displayName: "large.png",
+          summary: "大きな添付。",
+          originalBytes: 4096,
+          storedBytes: 4200,
+          sha256: "b".repeat(64),
+          keyId: "c".repeat(32),
+        }],
+        fileQuotaBytes: 8192,
+      });
+
+      const defaultUsage = service.fileUsage(principal);
+      assert.equal("error" in defaultUsage, false);
+      assert.equal("largestEntries" in defaultUsage, false);
+
+      const usage = service.fileUsage(principal, { includeLargestEntries: true, largestLimit: 1 });
+      assert.equal("error" in usage, false);
+      assert.deepEqual(usage.largestEntries, [{
+        entryId: "mem-large-files",
+        title: "容量の大きいMemory",
+        preview: "添付ファイルの容量が大きい。",
+        totalFileBytes: 4096,
+        fileCount: 1,
+        updatedAt: "2026-07-04T00:00:00.000Z",
+      }]);
+    });
+  });
+
+  it("file付きappendはcontract validation後に未実装エラーを返す", async () => {
+    await withService(async ({ service, storage }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      const append = await service.append(principal, appendRequest({
+        idempotencyKey: "file-append-key",
+        files: [{
+          path: "C:/trace/screenshot.png",
+          summary: "スクリーンショットでエラー状態を確認できる。",
+          role: "evidence",
+        }],
+      }));
+
+      assert.equal("error" in append, true);
+      assert.equal(append.error.code, "MEMORY_FILE_APPEND_UNIMPLEMENTED");
+      assert.equal(append.error.field, "files");
+      assert.deepEqual(storage.searchEntries({ targets: [projectTarget], query: "Memory service" }).items, []);
+
+      const replay = await service.append(principal, appendRequest({
+        idempotencyKey: "file-append-key",
+        files: [{
+          path: "C:/trace/screenshot.png",
+          summary: "スクリーンショットでエラー状態を確認できる。",
+          role: "evidence",
+        }],
+      }));
+      assert.equal("error" in replay, true);
+      assert.equal(replay.error.code, "MEMORY_FILE_APPEND_UNIMPLEMENTED");
+    });
+  });
+
+  it("file付きappendはquota preflight後にimporter metadataをstorageへ登録する", async () => {
+    const protectedObject = {
+      objectId: "a".repeat(32),
+      role: "evidence",
+      mediaKind: "image",
+      contentType: "image/png",
+      displayName: "dialog.png",
+      summary: "スクリーンショットでエラー状態を確認できる。",
+      originalBytes: 128,
+      storedBytes: 160,
+      sha256: "b".repeat(64),
+      keyId: "c".repeat(32),
+    } satisfies MemoryV6AppendProtectedObjectInput;
+    let inspectCount = 0;
+    let prepareEntryId: string | null = null;
+
+    await withService(async ({ service, storage }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      const append = await service.append(principal, appendRequest({
+        idempotencyKey: "file-append-importer-key",
+        files: [{
+          path: "C:/trace/dialog.png",
+          summary: "スクリーンショットでエラー状態を確認できる。",
+          role: "evidence",
+          displayName: "dialog.png",
+          contentType: "image/png",
+        }],
+      }));
+
+      assert.equal("error" in append, false);
+      assert.equal(inspectCount, 1);
+      assert.equal(prepareEntryId, append.entry.id);
+      assert.deepEqual(storage.getFileUsage(), {
+        usedBytes: 128,
+        physicalBytes: 160,
+        pendingDeleteBytes: 0,
+        objectCount: 1,
+        pendingDeleteCount: 0,
+      });
+
+      const replay = await service.append(principal, appendRequest({
+        idempotencyKey: "file-append-importer-key",
+        files: [{
+          path: "C:/trace/dialog.png",
+          summary: "スクリーンショットでエラー状態を確認できる。",
+          role: "evidence",
+          displayName: "dialog.png",
+          contentType: "image/png",
+        }],
+      }));
+
+      assert.equal("error" in replay, false);
+      assert.equal(replay.entry.id, append.entry.id);
+      assert.equal(inspectCount, 1);
+      assert.equal(prepareEntryId, append.entry.id);
+      assert.deepEqual(storage.getFileUsage(), {
+        usedBytes: 128,
+        physicalBytes: 160,
+        pendingDeleteBytes: 0,
+        objectCount: 1,
+        pendingDeleteCount: 0,
+      });
+    }, {
+      protectedObjectImporter: {
+        inspect: async () => {
+          inspectCount += 1;
+          return {
+            originalBytes: protectedObject.originalBytes,
+            role: protectedObject.role,
+            mediaKind: protectedObject.mediaKind,
+            contentType: protectedObject.contentType,
+            displayName: protectedObject.displayName,
+            summary: protectedObject.summary,
+          };
+        },
+        prepare: async ({ entryId }) => {
+          prepareEntryId = entryId;
+          return protectedObject;
+        },
+      },
+    });
+  });
+
+  it("get-file は明示target内のobjectだけをexporterへ渡す", async () => {
+    const protectedObject = {
+      objectId: "a".repeat(32),
+      role: "evidence",
+      mediaKind: "image",
+      contentType: "image/png",
+      displayName: "dialog.png",
+      summary: "スクリーンショットでエラー状態を確認できる。",
+      originalBytes: 128,
+      storedBytes: 160,
+      sha256: "b".repeat(64),
+      keyId: "c".repeat(32),
+    } satisfies MemoryV6AppendProtectedObjectInput;
+    let exportInput: Parameters<NonNullable<MemoryV6ServiceDeps["protectedObjectExporter"]>["exportFile"]>[0] | null = null;
+
+    await withService(async ({ service }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      const append = await service.append(principal, appendRequest({
+        idempotencyKey: "file-get-append-key",
+        files: [{
+          path: "C:/trace/dialog.png",
+          summary: "スクリーンショットでエラー状態を確認できる。",
+          role: "evidence",
+          displayName: "dialog.png",
+          contentType: "image/png",
+        }],
+      }));
+      assert.equal("error" in append, false);
+
+      const getFile = await service.getFile(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        objectId: protectedObject.objectId,
+        outputPath: "C:/exports/dialog.png",
+      });
+      assert.equal("error" in getFile, false);
+      assert.equal(getFile.objectId, protectedObject.objectId);
+      assert.equal(getFile.entryId, append.entry.id);
+      assert.equal(getFile.bytesWritten, 128);
+      assert.equal(exportInput?.metadata.entryId, append.entry.id);
+      assert.equal(exportInput?.metadata.keyId, protectedObject.keyId);
+      assert.equal(exportInput?.outputPath, "C:/exports/dialog.png");
+
+      const mismatch = await service.getFile(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-b" } },
+        objectId: protectedObject.objectId,
+        outputPath: "C:/exports/dialog.png",
+      });
+      assert.equal("error" in mismatch, true);
+      assert.equal(mismatch.error.code, "MEMORY_FILE_NOT_FOUND");
+    }, {
+      protectedObjectImporter: {
+        inspect: async () => ({
+          originalBytes: protectedObject.originalBytes,
+          role: protectedObject.role,
+          mediaKind: protectedObject.mediaKind,
+          contentType: protectedObject.contentType,
+          displayName: protectedObject.displayName,
+          summary: protectedObject.summary,
+        }),
+        prepare: async () => protectedObject,
+      },
+      protectedObjectExporter: {
+        exportFile: async (input) => {
+          exportInput = input;
+          return { bytesWritten: input.metadata.originalBytes };
+        },
+      },
+    });
+  });
+
+  it("export-files はentry内のactive objectsをまとめてexporterへ渡す", async () => {
+    const protectedObjects = [
+      {
+        objectId: "a".repeat(32),
+        role: "evidence",
+        mediaKind: "image",
+        contentType: "image/png",
+        displayName: "dialog.png",
+        summary: "スクリーンショットでエラー状態を確認できる。",
+        originalBytes: 128,
+        storedBytes: 160,
+        sha256: "b".repeat(64),
+        keyId: "c".repeat(32),
+      },
+      {
+        objectId: "d".repeat(32),
+        role: "source",
+        mediaKind: "text",
+        contentType: "text/plain",
+        displayName: "trace.txt",
+        summary: "テキストログ。",
+        originalBytes: 64,
+        storedBytes: 96,
+        sha256: "e".repeat(64),
+        keyId: "f".repeat(32),
+      },
+    ] satisfies MemoryV6AppendProtectedObjectInput[];
+    let exportInput: Parameters<NonNullable<MemoryV6ServiceDeps["protectedObjectExporter"]>["exportFiles"]>[0] | null = null;
+
+    await withService(async ({ service }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      const append = await service.append(principal, appendRequest({
+        idempotencyKey: "file-export-append-key",
+        files: protectedObjects.map((object) => ({
+          path: `C:/trace/${object.displayName}`,
+          summary: object.summary,
+          role: object.role,
+          displayName: object.displayName,
+          contentType: object.contentType,
+        })),
+      }));
+      assert.equal("error" in append, false);
+
+      const exported = await service.exportFiles(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        entryId: append.entry.id,
+        outputDirectoryPath: "C:/exports",
+      });
+
+      assert.equal("error" in exported, false);
+      assert.equal(exported.entryId, append.entry.id);
+      assert.equal(exported.outputDirectoryPath, "C:/exports");
+      assert.equal(exported.exportedCount, 2);
+      assert.deepEqual(exported.files.map((file) => file.objectId), protectedObjects.map((object) => object.objectId));
+      assert.equal(exportInput?.metadata.length, 2);
+      assert.equal(exportInput?.metadata[0]?.entryId, append.entry.id);
+      assert.equal(exportInput?.outputDirectoryPath, "C:/exports");
+
+      const mismatch = await service.exportFiles(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-b" } },
+        entryId: append.entry.id,
+        outputDirectoryPath: "C:/exports",
+      });
+      assert.equal("error" in mismatch, true);
+      assert.equal(mismatch.error.code, "MEMORY_ENTRY_NOT_FOUND");
+    }, {
+      protectedObjectImporter: {
+        inspect: async (file) => {
+          const object = protectedObjects.find((item) => item.displayName === file.displayName);
+          assert.ok(object);
+          return {
+            originalBytes: object.originalBytes,
+            role: object.role,
+            mediaKind: object.mediaKind,
+            contentType: object.contentType,
+            displayName: object.displayName,
+            summary: object.summary,
+          };
+        },
+        prepare: async ({ file }) => {
+          const object = protectedObjects.find((item) => item.displayName === file.displayName);
+          assert.ok(object);
+          return object;
+        },
+      },
+      protectedObjectExporter: {
+        exportFile: async () => {
+          throw new Error("export-files should use batch exporter");
+        },
+        exportFiles: async (input) => {
+          exportInput = input;
+          return {
+            files: input.metadata.map((metadata) => ({
+              objectId: metadata.objectId,
+              outputPath: `C:/exports/${metadata.objectId}`,
+              bytesWritten: metadata.originalBytes,
+              contentType: metadata.contentType,
+              displayName: metadata.displayName,
+            })),
+          };
+        },
+      },
+    });
+  });
+
+  it("file付きappendはquota超過時にimporter prepareを呼ばずentryを作らない", async () => {
+    let prepareCalled = false;
+    await withService(async ({ service, storage }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      const append = await service.append(principal, appendRequest({
+        idempotencyKey: "file-append-quota-key",
+        files: [{
+          path: "C:/trace/huge.zip",
+          summary: "Large trace archive.",
+          role: "artifact",
+        }],
+      }));
+
+      assert.equal("error" in append, true);
+      assert.equal(append.error.code, "MEMORY_FILE_QUOTA_EXCEEDED");
+      assert.equal(append.error.quotaBytes, MEMORY_FILE_QUOTA_MIN_BYTES);
+      assert.equal(append.error.usedBytes, 0);
+      assert.equal(append.error.incomingBytes, MEMORY_FILE_QUOTA_MIN_BYTES + 1);
+      assert.equal(prepareCalled, false);
+      assert.deepEqual(storage.searchEntries({ targets: [projectTarget], query: "Memory service" }).items, []);
+    }, {
+      protectedObjectImporter: {
+        inspect: async () => ({
+          originalBytes: MEMORY_FILE_QUOTA_MIN_BYTES + 1,
+          role: "artifact",
+          mediaKind: "archive",
+          contentType: "application/zip",
+          displayName: "",
+          summary: "Large trace archive.",
+        }),
+        prepare: async () => {
+          prepareCalled = true;
+          return {
+            objectId: "d".repeat(32),
+            role: "artifact",
+            mediaKind: "archive",
+            contentType: "application/zip",
+            displayName: "",
+            summary: "Large trace archive.",
+            originalBytes: MEMORY_FILE_QUOTA_MIN_BYTES + 1,
+            storedBytes: MEMORY_FILE_QUOTA_MIN_BYTES + 32,
+            sha256: "e".repeat(64),
+            keyId: "f".repeat(32),
+          };
+        },
+      },
+    });
+  });
+
+  it("explicit character ID targetを扱い、character.currentはvalidationで拒否する", async () => {
+    await withService(async ({ service }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      const append = await service.append(principal, appendRequest({
         target: {
           owner: "character",
           scope: "character",
@@ -210,7 +621,7 @@ describe("MemoryV6Service", () => {
     });
     try {
       const principal = createLocalUserMemoryPrincipal();
-      const append = service.append(principal, appendRequest({
+      const append = await service.append(principal, appendRequest({
         target: {
           owner: "project",
           scope: "project",

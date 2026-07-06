@@ -4,9 +4,13 @@ import type { RendererLogInput } from "../src/app-log-types.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
 import type { MemoryV6Diagnostics } from "../src/memory-v6/memory-diagnostics-state.js";
 import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
+import type { MemoryFileUsageResponse } from "../src/memory-v6/memory-response-contract.js";
 import type {
   MemoryV6ReviewEntryDetail,
+  MemoryV6ReviewExportFilesResult,
   MemoryV6ReviewForgetResult,
+  MemoryV6ProtectedObjectGcRequest,
+  MemoryV6ProtectedObjectGcResponse,
   MemoryV6ReviewSearchResult,
 } from "../src/memory-v6/memory-review-state.js";
 import type {
@@ -83,6 +87,9 @@ import {
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL,
   WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
+  WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL,
+  WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL,
+  WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL,
   WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL,
   WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL,
   WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL,
@@ -273,6 +280,9 @@ export type MainIpcRegistrationDeps = {
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
   uninstallMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
+  getMemoryV6FileUsage(): Awaitable<MemoryFileUsageResponse>;
+  exportMemoryV6EntryFiles(entryId: string, targetWindow?: MaybeWindow): Awaitable<MemoryV6ReviewExportFilesResult | null>;
+  runMemoryV6ProtectedObjectGc(request: MemoryV6ProtectedObjectGcRequest): Awaitable<MemoryV6ProtectedObjectGcResponse>;
   searchMemoryV6Entries(request: MemoryV6ReviewSearchRequest | null | undefined): Awaitable<MemoryV6ReviewSearchResult>;
   getMemoryV6Entry(entryId: string): Awaitable<MemoryV6ReviewEntryDetail | null>;
   forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null): Awaitable<MemoryV6ReviewForgetResult>;
@@ -398,6 +408,7 @@ type MainIpcCatalogDeps = Pick<
 type MainIpcSettingsDeps = Pick<
   MainIpcRegistrationDeps,
   | "resolveEventWindow"
+  | "resolveHomeWindow"
   | "isSettingsWindow"
   | "isMemoryV6ReviewWindow"
   | "getAppSettings"
@@ -406,6 +417,9 @@ type MainIpcSettingsDeps = Pick<
   | "getMemoryV6Diagnostics"
   | "installMemoryV6CliShim"
   | "uninstallMemoryV6CliShim"
+  | "getMemoryV6FileUsage"
+  | "exportMemoryV6EntryFiles"
+  | "runMemoryV6ProtectedObjectGc"
   | "searchMemoryV6Entries"
   | "getMemoryV6Entry"
   | "forgetMemoryV6Entry"
@@ -815,6 +829,18 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
   ipcMain.handle(WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL, (event) => {
     assertSettingsWindowSender(event, deps);
     return deps.uninstallMemoryV6CliShim();
+  });
+  ipcMain.handle(WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL, (event) => {
+    assertMemoryV6ReviewSender(event, deps);
+    return deps.getMemoryV6FileUsage();
+  });
+  ipcMain.handle(WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL, (event, entryId: string) => {
+    assertMemoryV6ReviewSender(event, deps);
+    return deps.exportMemoryV6EntryFiles(entryId, resolveTargetWindow(event, deps));
+  });
+  ipcMain.handle(WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL, (event, request: MemoryV6ProtectedObjectGcRequest) => {
+    assertMemoryV6ReviewSender(event, deps);
+    return deps.runMemoryV6ProtectedObjectGc(request);
   });
   ipcMain.handle(WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL, (event, request: MemoryV6ReviewSearchRequest | null | undefined) => {
     assertMemoryV6ReviewSender(event, deps);

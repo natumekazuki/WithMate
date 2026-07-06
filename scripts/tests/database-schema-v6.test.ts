@@ -10,6 +10,7 @@ import {
   APP_DATABASE_V6_SCHEMA_VERSION,
   CREATE_V6_AUDIT_EVENTS_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
+  CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL,
   CREATE_V6_SCHEMA_SQL,
   REQUIRED_V6_TABLES,
   V6_SCHEMA_STATUS,
@@ -387,6 +388,29 @@ describe("database-schema-v6", () => {
       assert.equal(tableSql(db, "memory_mutation_events_v6").includes("binding_id_hash"), true);
       assert.equal(tableSql(db, "memory_mutation_events_v6").includes("result_status TEXT NOT NULL"), true);
       assert.equal(tableSql(db, "memory_mutation_events_v6").includes("'already_forgotten'"), true);
+
+      assert.deepEqual(columnNames(db, "memory_protected_objects_v6"), [
+        "object_id",
+        "entry_id",
+        "state",
+        "role",
+        "media_kind",
+        "content_type",
+        "display_name",
+        "summary",
+        "original_bytes",
+        "stored_bytes",
+        "sha256",
+        "key_id",
+        "created_at",
+        "updated_at",
+        "deleted_at",
+      ]);
+      assert.equal(findForeignKey(db, "memory_protected_objects_v6", "entry_id")?.table, "memory_entries_v6");
+      assert.equal(tableSql(db, "memory_protected_objects_v6").includes("'active', 'delete_pending', 'deleted'"), true);
+      assert.equal(tableSql(db, "memory_protected_objects_v6").includes("'evidence', 'source', 'snapshot', 'artifact', 'reference', 'other'"), true);
+      assert.equal(tableSql(db, "memory_protected_objects_v6").includes("original_bytes >= 0"), true);
+      assert.equal(tableSql(db, "memory_protected_objects_v6").includes("stored_bytes >= 0"), true);
     } finally {
       db.close();
     }
@@ -494,6 +518,49 @@ describe("database-schema-v6", () => {
         | undefined;
       assert.equal(row?.created_at, "2026-07-04T00:00:00.000Z");
       assert.equal(row?.updated_at, "2026-07-04T00:00:00.000Z");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ensureV6Schema は既存 protected object metadata に role を backfill する", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(`
+        PRAGMA foreign_keys = ON;
+      `);
+
+      for (const statement of CREATE_V6_SCHEMA_SQL) {
+        if (statement !== CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL) {
+          db.exec(statement);
+        }
+      }
+
+      db.exec(`
+        CREATE TABLE memory_protected_objects_v6 (
+          object_id TEXT PRIMARY KEY,
+          entry_id TEXT NOT NULL,
+          state TEXT NOT NULL CHECK (state IN ('active', 'delete_pending', 'deleted')),
+          media_kind TEXT NOT NULL DEFAULT 'other',
+          content_type TEXT NOT NULL DEFAULT '',
+          display_name TEXT NOT NULL DEFAULT '',
+          summary TEXT NOT NULL,
+          original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
+          stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0),
+          sha256 TEXT NOT NULL DEFAULT '',
+          key_id TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          deleted_at TEXT,
+          FOREIGN KEY (entry_id) REFERENCES memory_entries_v6(id) ON DELETE CASCADE,
+          CHECK ((state = 'deleted') = (deleted_at IS NOT NULL))
+        );
+      `);
+
+      ensureV6Schema(db);
+
+      assert.equal(columnNames(db, "memory_protected_objects_v6").includes("role"), true);
+      assert.equal(tableSql(db, "memory_protected_objects_v6").includes("'evidence', 'source', 'snapshot', 'artifact', 'reference', 'other'"), true);
     } finally {
       db.close();
     }

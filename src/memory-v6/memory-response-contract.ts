@@ -25,6 +25,32 @@ export type MemoryGetEntryResponse = {
   entry: MemoryEntryDetail;
 };
 
+export type MemoryGetFileResponse = {
+  schemaVersion: MemoryV6SchemaVersion;
+  objectId: string;
+  entryId: string;
+  outputPath: string;
+  bytesWritten: number;
+  contentType: string;
+  displayName: string;
+};
+
+export type MemoryExportedFile = {
+  objectId: string;
+  outputPath: string;
+  bytesWritten: number;
+  contentType: string;
+  displayName: string;
+};
+
+export type MemoryExportFilesResponse = {
+  schemaVersion: MemoryV6SchemaVersion;
+  entryId: string;
+  outputDirectoryPath: string;
+  exportedCount: number;
+  files: MemoryExportedFile[];
+};
+
 export type MemoryListTagsResponse = {
   schemaVersion: MemoryV6SchemaVersion;
   tags: MemoryTag[];
@@ -40,6 +66,28 @@ export type MemoryCharacterSummary = {
 export type MemoryListCharactersResponse = {
   schemaVersion: MemoryV6SchemaVersion;
   characters: MemoryCharacterSummary[];
+};
+
+export type MemoryFileUsageResponse = {
+  schemaVersion: MemoryV6SchemaVersion;
+  quotaBytes: number;
+  usedBytes: number;
+  physicalBytes: number;
+  pendingDeleteBytes: number;
+  availableBytes: number;
+  objectCount: number;
+  pendingDeleteCount: number;
+  quotaExceeded: boolean;
+  largestEntries?: MemoryLargestFileEntry[];
+};
+
+export type MemoryLargestFileEntry = {
+  entryId: string;
+  title: string;
+  preview: string;
+  totalFileBytes: number;
+  fileCount: number;
+  updatedAt: string;
 };
 
 export type MemoryAppendResponse = {
@@ -98,6 +146,45 @@ export function createMemoryGetEntryResponse(entry: MemoryEntryDetail | null): M
   };
 }
 
+export function createMemoryGetFileResponse(input: {
+  objectId: string;
+  entryId: string;
+  outputPath: string;
+  bytesWritten: number;
+  contentType: string;
+  displayName: string;
+}): MemoryGetFileResponse {
+  return {
+    schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+    objectId: input.objectId,
+    entryId: input.entryId,
+    outputPath: input.outputPath,
+    bytesWritten: input.bytesWritten,
+    contentType: input.contentType,
+    displayName: input.displayName,
+  };
+}
+
+export function createMemoryExportFilesResponse(input: {
+  entryId: string;
+  outputDirectoryPath: string;
+  files: readonly MemoryExportedFile[];
+}): MemoryExportFilesResponse {
+  return {
+    schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+    entryId: input.entryId,
+    outputDirectoryPath: input.outputDirectoryPath,
+    exportedCount: input.files.length,
+    files: input.files.map((file) => ({
+      objectId: file.objectId,
+      outputPath: file.outputPath,
+      bytesWritten: file.bytesWritten,
+      contentType: file.contentType,
+      displayName: file.displayName,
+    })),
+  };
+}
+
 export function createMemoryListTagsResponse(tags: readonly MemoryTag[]): MemoryListTagsResponse {
   return {
     schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -117,6 +204,40 @@ export function createMemoryListCharactersResponse(characters: readonly Characte
         ...(character.isDefault ? { isDefault: true } : {}),
       };
     }),
+  };
+}
+
+export function createMemoryFileUsageResponse(input: {
+  quotaBytes: number;
+  usedBytes: number;
+  physicalBytes: number;
+  pendingDeleteBytes: number;
+  objectCount: number;
+  pendingDeleteCount: number;
+  largestEntries?: readonly MemoryLargestFileEntry[];
+}): MemoryFileUsageResponse {
+  return {
+    schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+    quotaBytes: input.quotaBytes,
+    usedBytes: input.usedBytes,
+    physicalBytes: input.physicalBytes,
+    pendingDeleteBytes: input.pendingDeleteBytes,
+    availableBytes: Math.max(0, input.quotaBytes - input.usedBytes),
+    objectCount: input.objectCount,
+    pendingDeleteCount: input.pendingDeleteCount,
+    quotaExceeded: input.usedBytes > input.quotaBytes,
+    ...(input.largestEntries === undefined
+      ? {}
+      : {
+        largestEntries: input.largestEntries.map((entry) => ({
+          entryId: entry.entryId,
+          title: entry.title,
+          preview: entry.preview,
+          totalFileBytes: entry.totalFileBytes,
+          fileCount: entry.fileCount,
+          updatedAt: entry.updatedAt,
+        })),
+      }),
   };
 }
 

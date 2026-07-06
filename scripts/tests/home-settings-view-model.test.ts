@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
+import {
+  MEMORY_FILE_QUOTA_MAX_BYTES,
+  MEMORY_FILE_QUOTA_MIN_BYTES,
+  createDefaultAppSettings,
+} from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import {
   buildPersistedAppSettingsFromRows,
   buildHomeProviderSettingRows,
   buildNormalizedMemoryExtractionProviderSettings,
+  getMemoryFileQuotaMegabytes,
+  getMemoryFileQuotaMegabytesInputBounds,
 } from "../../src/settings/settings-view-model.js";
 
 function createSnapshot(): ModelCatalogSnapshot {
@@ -76,6 +82,17 @@ describe("home-settings-view-model", () => {
       reasoningEffort: "high",
       outputTokensThreshold: 333,
       timeoutSeconds: 240,
+    });
+  });
+
+  it("memory file quota は Settings 表示用に MB と入力範囲へ変換する", () => {
+    const settings = createDefaultAppSettings();
+    settings.memoryFileQuotaBytes = 2 * 1024 * 1024 * 1024;
+
+    assert.equal(getMemoryFileQuotaMegabytes(settings), 2048);
+    assert.deepEqual(getMemoryFileQuotaMegabytesInputBounds(), {
+      min: MEMORY_FILE_QUOTA_MIN_BYTES / 1024 / 1024,
+      max: MEMORY_FILE_QUOTA_MAX_BYTES / 1024 / 1024,
     });
   });
 });

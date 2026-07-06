@@ -19,6 +19,7 @@ import {
   updateMemoryExtractionReasoningEffortDraft,
   updateMemoryExtractionThresholdDraft,
   updateMemoryExtractionTimeoutSecondsDraft,
+  updateMemoryFileQuotaMegabytesDraft,
   updateMemoryGenerationEnabled,
   updateUserMicrocopySlotDraft,
 } from "./settings-draft.js";
@@ -83,6 +84,12 @@ export function handleChangeLaunchAtLoginEnabled(input: SettingsDraftActionInput
   enabled: boolean;
 }): void {
   input.setSettingsDraft((current) => updateLaunchAtLoginEnabled(current, input.enabled));
+}
+
+export function handleChangeMemoryFileQuotaMegabytes(input: SettingsDraftActionInput & {
+  value: string;
+}): void {
+  input.setSettingsDraft((current) => updateMemoryFileQuotaMegabytesDraft(current, input.value));
 }
 
 export function handleChangeUserMicrocopySlot(input: SettingsDraftActionInput & {

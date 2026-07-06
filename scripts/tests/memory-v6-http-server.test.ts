@@ -164,6 +164,22 @@ describe("MemoryV6HttpServer", () => {
       assert.equal("iconFilePath" in charactersJson.characters[0], false);
       assert.equal("theme" in charactersJson.characters[0], false);
 
+      const fileUsage = await fetch(`${baseUrl}/v1/file-usage`, {
+        headers: { "X-WithMate-Memory-Api-Secret": TEST_API_SECRET },
+      });
+      assert.equal(fileUsage.status, 200);
+      const fileUsageJson = await fileUsage.json();
+      assert.equal(fileUsageJson.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
+      assert.equal(fileUsageJson.usedBytes, 0);
+      assert.equal(fileUsageJson.objectCount, 0);
+
+      const largestFileUsage = await fetch(`${baseUrl}/v1/file-usage?largest=1&limit=5`, {
+        headers: { "X-WithMate-Memory-Api-Secret": TEST_API_SECRET },
+      });
+      assert.equal(largestFileUsage.status, 200);
+      const largestFileUsageJson = await largestFileUsage.json();
+      assert.deepEqual(largestFileUsageJson.largestEntries, []);
+
       const append = await postJson(baseUrl, "/v1/append", appendRequest({ idempotencyKey: "append-key-http" }));
       assert.equal(append.status, 200);
       assert.equal(append.json.created, true);
@@ -184,6 +200,24 @@ describe("MemoryV6HttpServer", () => {
       });
       assert.equal(detail.status, 200);
       assert.equal(detail.json.entry.source.providerId, "local-user");
+
+      const getFile = await postJson(baseUrl, "/v1/get_file", {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        objectId: "a".repeat(32),
+        outputPath: "C:/exports/file.bin",
+      });
+      assert.equal(getFile.status, 422);
+      assert.equal(getFile.json.error.code, "MEMORY_FILE_EXPORT_UNIMPLEMENTED");
+
+      const exportFiles = await postJson(baseUrl, "/v1/export_files", {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        entryId: append.json.entry.id,
+        outputDirectoryPath: "C:/exports",
+      });
+      assert.equal(exportFiles.status, 422);
+      assert.equal(exportFiles.json.error.code, "MEMORY_FILE_EXPORT_UNIMPLEMENTED");
 
       const tags = await postJson(baseUrl, "/v1/list_tags", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,

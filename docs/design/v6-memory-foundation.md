@@ -25,6 +25,7 @@ V6 foundationは次を成立させる。
 - V5 Character catalog / definition / snapshotは既存V5 source of truthを優先する。
 - `docs/design/memory-architecture.md`のV1〜V4 Memory / Growth記述はhistorical / legacy contextとして扱う。
 - legacy project identity detailは`docs/design/project-memory-storage.md`をhistorical contextとして参照できるが、V6 project scopeの正本にはしない。
+- V6 Memory に紐づく暗号化 file object / quota / export / GC の拡張設計は`docs/design/v6-memory-protected-objects.md`を参照する。
 - provider runtime boundaryは`docs/design/provider-adapter.md`へ反映する。
 - current保存構造の棚卸しは`docs/design/database-schema.md`を参照する。
 
@@ -548,8 +549,8 @@ withmate-memory append --json '<MemoryAppendRequest>'
 withmate-memory forget --json '<MemoryForgetRequest>'
 withmate-memory search --file payload.json
 withmate-memory search @payload.json
-withmate-memory search --project C:\path\to\repo-a --query "delivery cleanup" --tag delivery-cleanup
-withmate-memory search --project C:\path\to\repo-a --tags topic:delivery-cleanup,topic:relaygraph
+withmate-memory search --project <absolute-project-path> --query "delivery cleanup" --tag delivery-cleanup
+withmate-memory search --project <absolute-project-path> --tags topic:delivery-cleanup,topic:relaygraph
 ```
 
 `--json`、`--file`、`@file`、`--stdin`はrequest bodyの入力方法であり、output format指定ではない。CLI outputは常にJSONをstdoutへ出す。
@@ -571,13 +572,13 @@ stable exit codeは次とする。
 current convenience flags:
 
 ```text
-withmate-memory search --project C:\path\to\repo-a --query "approval modeの方針"
+withmate-memory search --project <absolute-project-path> --query "approval modeの方針"
 withmate-memory characters
 withmate-memory search --project-id <project-id> --query "approval modeの方針"
-withmate-memory search --project C:\path\to\repo-a --query "delivery cleanup" --tag delivery-cleanup
-withmate-memory search --project C:\path\to\repo-a --tags topic:delivery-cleanup,topic:relaygraph
-withmate-memory get-entry --project C:\path\to\repo-a --entry-id <entry-id>
-withmate-memory list-tags --project C:\path\to\repo-a
+withmate-memory search --project <absolute-project-path> --query "delivery cleanup" --tag delivery-cleanup
+withmate-memory search --project <absolute-project-path> --tags topic:delivery-cleanup,topic:relaygraph
+withmate-memory get-entry --project <absolute-project-path> --entry-id <entry-id>
+withmate-memory list-tags --project <absolute-project-path>
 ```
 
 create / update / supersede系の複雑なrequestをすべてCLI flagsへ展開することは目指さない。write系の構造化requestは`--stdin`または`--file`を正本とする。
@@ -969,3 +970,4 @@ npm run build
 
 - `context_file` transportを実際に使うproviderが出た場合のfile lifecycle。
 - full entry閲覧、manual correction、forget、restore、exportをどのUI phaseで扱うか。
+- Protected Object supportを実装する場合のkey storage、file export UI / CLI境界。

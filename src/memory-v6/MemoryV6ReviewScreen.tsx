@@ -5,8 +5,10 @@ import type { MemoryEntryKind, MemoryForgetReason } from "./memory-contract.js";
 import type {
   MemoryV6ReviewApi,
   MemoryV6ReviewEntryDetail,
+  MemoryV6ProtectedObjectGcResponse,
   MemoryV6ReviewSearchHit,
 } from "./memory-review-state.js";
+import type { MemoryFileUsageResponse } from "./memory-response-contract.js";
 
 type MemoryV6ReviewScreenProps = {
   homePageClassName: string;
@@ -44,10 +46,34 @@ function formatTags(entry: Pick<MemoryV6ReviewSearchHit, "tags">): string {
   return entry.tags.map((tag) => `${tag.type}:${tag.value}`).join(" / ");
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  for (const unit of units) {
+    if (value < 1024 || unit === units[units.length - 1]) {
+      return `${value.toFixed(value < 10 ? 1 : 0)} ${unit}`;
+    }
+    value /= 1024;
+  }
+  return `${bytes} B`;
+}
+
+function formatPercent(usedBytes: number, quotaBytes: number): string {
+  if (quotaBytes <= 0) {
+    return "0%";
+  }
+  return `${Math.min(999, Math.round((usedBytes / quotaBytes) * 100))}%`;
+}
+
 export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6ReviewScreenProps) {
   const [query, setQuery] = useState("");
   const [selectedKind, setSelectedKind] = useState<MemoryEntryKind | "">("");
   const [items, setItems] = useState<MemoryV6ReviewSearchHit[]>([]);
+  const [fileUsage, setFileUsage] = useState<MemoryFileUsageResponse | null>(null);
+  const [gcReport, setGcReport] = useState<MemoryV6ProtectedObjectGcResponse | null>(null);
   const [nextCursor, setNextCursor] = useState("");
   const [selectedEntry, setSelectedEntry] = useState<MemoryV6ReviewEntryDetail | null>(null);
   const [selectedEntryId, setSelectedEntryId] = useState("");
@@ -56,6 +82,8 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [forgetting, setForgetting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [runningGc, setRunningGc] = useState(false);
   const [confirmForgetOpen, setConfirmForgetOpen] = useState(false);
   const cancelForgetButtonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -116,8 +144,24 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
     }
   };
 
+  const loadFileUsage = async () => {
+    const api = getApi();
+    if (!api) {
+      return;
+    }
+    try {
+      setFileUsage(await api.getMemoryV6FileUsage());
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Memory file usage の読み込みに失敗しました。");
+    }
+  };
+
+  const refreshReview = async () => {
+    await Promise.all([runSearch(), loadFileUsage()]);
+  };
+
   useEffect(() => {
-    void runSearch();
+    void refreshReview();
   }, [searchRequest]);
 
   useEffect(() => {
@@ -156,11 +200,61 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
       setSelectedEntry(null);
       setSelectedEntryId("");
       setConfirmForgetOpen(false);
-      await runSearch();
+      await refreshReview();
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Memory entry の forget に失敗しました。");
     } finally {
       setForgetting(false);
+    }
+  };
+
+  const exportSelectedEntryFiles = async () => {
+    if (!selectedEntryId || !selectedEntry || exporting) {
+      return;
+    }
+    const api = getApi();
+    if (!api) {
+      setFeedback("Memory Review には desktop runtime が必要です。");
+      return;
+    }
+    setExporting(true);
+    setFeedback("");
+    try {
+      const result = await api.exportMemoryV6EntryFiles(selectedEntryId);
+      setFeedback(result ? `${result.exportedCount} files exported.` : "Memory file export をキャンセルしました。");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Memory file export に失敗しました。");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const runProtectedObjectGc = async (dryRun: boolean) => {
+    if (runningGc) {
+      return;
+    }
+    if (!dryRun && !window.confirm("Delete pending Memory files and orphan protected object files?")) {
+      return;
+    }
+    const api = getApi();
+    if (!api) {
+      setFeedback("Memory Review には desktop runtime が必要です。");
+      return;
+    }
+    setRunningGc(true);
+    setFeedback("");
+    try {
+      const report = await api.runMemoryV6ProtectedObjectGc({ dryRun, limit: 100 });
+      setGcReport(report);
+      await refreshReview();
+      if (selectedEntryId) {
+        await selectEntry(selectedEntryId);
+      }
+      setFeedback(dryRun ? "Memory file GC dry-run completed." : "Memory file GC cleanup completed.");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Memory file GC に失敗しました。");
+    } finally {
+      setRunningGc(false);
     }
   };
 
@@ -173,7 +267,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
               <h1>Memory Review</h1>
               <p>V6 Memory の active entry を確認し、不要な entry を検索対象から外す。</p>
             </div>
-            <button className="launch-toggle" type="button" onClick={() => void runSearch()} disabled={loading}>
+            <button className="launch-toggle" type="button" onClick={() => void refreshReview()} disabled={loading}>
               {loading ? "Refreshing" : "Refresh"}
             </button>
           </header>
@@ -198,6 +292,64 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
           </div>
 
           {feedback ? <p className="settings-feedback memory-review-feedback">{feedback}</p> : null}
+
+          {fileUsage ? (
+            <section className="memory-review-usage" aria-label="Memory file usage">
+              <div className="memory-review-usage-summary">
+                <div>
+                  <span>Used</span>
+                  <strong>{formatBytes(fileUsage.usedBytes)}</strong>
+                  <small>{formatPercent(fileUsage.usedBytes, fileUsage.quotaBytes)} of {formatBytes(fileUsage.quotaBytes)}</small>
+                </div>
+                <div>
+                  <span>Available</span>
+                  <strong>{formatBytes(fileUsage.availableBytes)}</strong>
+                  <small>{fileUsage.objectCount} active objects</small>
+                </div>
+                <div>
+                  <span>Pending delete</span>
+                  <strong>{formatBytes(fileUsage.pendingDeleteBytes)}</strong>
+                  <small>{fileUsage.pendingDeleteCount} objects</small>
+                </div>
+              </div>
+              {fileUsage.largestEntries && fileUsage.largestEntries.length > 0 ? (
+                <div className="memory-review-largest-entries">
+                  <span>Largest entries</span>
+                  <div>
+                    {fileUsage.largestEntries.map((entry) => (
+                      <button key={entry.entryId} type="button" onClick={() => void selectEntry(entry.entryId)}>
+                        <strong>{entry.title || "(untitled)"}</strong>
+                        <small>{formatBytes(entry.totalFileBytes)} / {entry.fileCount} files</small>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              <div className="memory-review-gc-actions">
+                <button type="button" onClick={() => void runProtectedObjectGc(true)} disabled={runningGc}>
+                  {runningGc ? "Running" : "GC dry-run"}
+                </button>
+                <button type="button" onClick={() => void runProtectedObjectGc(false)} disabled={runningGc}>
+                  Cleanup GC
+                </button>
+              </div>
+              {gcReport ? (
+                <div className="memory-review-gc-report" aria-label="Memory file GC report">
+                  <span>{gcReport.dryRun ? "Dry-run" : "Cleanup"}</span>
+                  <small>
+                    pending {gcReport.deletePending.candidates} / deleted {gcReport.deletePending.deleted} / missing {gcReport.deletePending.missing ?? 0} / failed {gcReport.deletePending.failed}
+                  </small>
+                  <small>
+                    orphan {gcReport.orphanFiles.candidates} / deleted {gcReport.orphanFiles.deleted} / failed {gcReport.orphanFiles.failed}
+                  </small>
+                  <small>
+                    staging {gcReport.stagingFiles.candidates} / deleted {gcReport.stagingFiles.deleted} / failed {gcReport.stagingFiles.failed}
+                  </small>
+                  <small>missing active {gcReport.missingActiveObjects}</small>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
 
           <div className="memory-review-grid">
             <section className="memory-review-list" aria-label="Memory entries">
@@ -247,6 +399,27 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                       <dd>{formatTags(selectedEntry)}</dd>
                     </div>
                   </dl>
+                  {selectedEntry.files && selectedEntry.files.length > 0 ? (
+                    <section className="memory-review-files" aria-label="Protected files">
+                      <div className="memory-review-files-head">
+                        <h3>Protected files</h3>
+                        <button type="button" onClick={() => void exportSelectedEntryFiles()} disabled={exporting}>
+                          {exporting ? "Exporting" : "Export files"}
+                        </button>
+                      </div>
+                      <ul>
+                        {selectedEntry.files.map((file, index) => (
+                          <li key={`${file.role}-${file.mediaKind}-${file.displayName}-${index}`}>
+                            <div>
+                              <strong>{file.displayName || file.mediaKind}</strong>
+                              <span>{file.role} / {file.mediaKind} / {formatBytes(file.originalBytes)}</span>
+                            </div>
+                            <p>{file.summary}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
                   <div className="memory-review-body">
                     <pre>{selectedEntry.body}</pre>
                   </div>

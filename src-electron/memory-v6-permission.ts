@@ -13,8 +13,11 @@ export type MemoryV6Principal = MemoryV6LocalUserPrincipal;
 export const LOCAL_USER_MEMORY_PERMISSIONS: readonly MemoryPermission[] = [
   "memory.search",
   "memory.get_entry",
+  "memory.get_file",
+  "memory.export_files",
   "memory.list_tags",
   "memory.list_characters",
+  "memory.file_usage",
   "memory.append",
   "memory.forget",
 ];

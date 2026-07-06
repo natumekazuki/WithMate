@@ -1,6 +1,7 @@
 import type {
   MemoryEntryKind,
   MemoryEntryState,
+  MemoryAppendFileRole,
   MemoryTag,
 } from "./memory-contract.js";
 
@@ -33,6 +34,17 @@ export type MemoryEntrySummary = {
   tags: MemoryTag[];
   createdAt: string;
   updatedAt: string;
+  files?: MemoryFileSummary[];
+};
+
+export type MemoryFileSummary = {
+  objectId: string;
+  role: MemoryAppendFileRole;
+  mediaKind: "image" | "text" | "source" | "archive" | "document" | "other";
+  contentType: string;
+  displayName: string;
+  summary: string;
+  originalBytes: number;
 };
 
 type MemoryEntryDetailBase = Omit<MemoryEntrySummary, "state"> & {
@@ -87,6 +99,7 @@ export function toMemoryEntrySummary(entry: MemoryEntryDetail): MemoryEntrySumma
     tags: entry.tags,
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
+    ...(entry.files && entry.files.length > 0 ? { files: entry.files } : {}),
   };
 }
 
@@ -101,6 +114,7 @@ export function toMemorySearchHit(entry: ActiveMemoryEntryDetail, match?: Memory
     tags: entry.tags,
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
+    ...(entry.files && entry.files.length > 0 ? { files: entry.files } : {}),
     ...(match ? { match } : {}),
   };
 }

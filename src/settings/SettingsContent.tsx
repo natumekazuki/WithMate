@@ -2,7 +2,11 @@ import type { AppSettings } from "../app-state.js";
 import type { MemoryV6Diagnostics } from "../memory-v6/memory-diagnostics-state.js";
 import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "../memory-v6/provider-instruction-sample.js";
 import { MICROCOPY_SLOTS, type MicrocopySlot } from "../microcopy-state.js";
-import type { HomeProviderSettingRow } from "./settings-view-model.js";
+import {
+  getMemoryFileQuotaMegabytes,
+  getMemoryFileQuotaMegabytesInputBounds,
+  type HomeProviderSettingRow,
+} from "./settings-view-model.js";
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
   SETTINGS_COPY_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL,
@@ -12,6 +16,8 @@ import {
   SETTINGS_LAUNCH_AT_LOGIN_LABEL,
   SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP,
   SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL,
+  SETTINGS_MEMORY_FILE_QUOTA_HELP,
+  SETTINGS_MEMORY_FILE_QUOTA_LABEL,
   SETTINGS_OPEN_LOG_FOLDER_LABEL,
   SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
   SETTINGS_PROVIDER_FILE_SETTINGS_HELP,
@@ -38,6 +44,7 @@ export type HomeSettingsContentProps = {
   deletingOldSessions: boolean;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeLaunchAtLoginEnabled: (enabled: boolean) => void;
+  onChangeMemoryFileQuotaMegabytes: (value: string) => void;
   onChangeSessionCleanupCutoffDate: (value: string) => void;
   onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
@@ -94,6 +101,7 @@ export function HomeSettingsContent({
   deletingOldSessions,
   onChangeAutoCollapseActionDockOnSend,
   onChangeLaunchAtLoginEnabled,
+  onChangeMemoryFileQuotaMegabytes,
   onChangeSessionCleanupCutoffDate,
   onChangeUserMicrocopySlot,
   onChangeProviderEnabled,
@@ -114,6 +122,9 @@ export function HomeSettingsContent({
   onDeleteSessionsLastActiveBefore,
   onSaveSettings,
 }: HomeSettingsContentProps) {
+  const memoryFileQuotaMegabytes = getMemoryFileQuotaMegabytes(settingsDraft);
+  const memoryFileQuotaBounds = getMemoryFileQuotaMegabytesInputBounds();
+
   return (
     <>
       <div className="settings-panel settings-panel-window">
@@ -351,6 +362,21 @@ export function HomeSettingsContent({
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>Storage Maintenance</strong>
+              <label className="settings-provider-input">
+                <span>{SETTINGS_MEMORY_FILE_QUOTA_LABEL}</span>
+                <div className="settings-inline-input-row">
+                  <input
+                    type="number"
+                    min={memoryFileQuotaBounds.min}
+                    max={memoryFileQuotaBounds.max}
+                    step={64}
+                    value={memoryFileQuotaMegabytes}
+                    onChange={(event) => onChangeMemoryFileQuotaMegabytes(event.target.value)}
+                  />
+                  <span className="settings-inline-unit">MB</span>
+                </div>
+                <p className="settings-help">{SETTINGS_MEMORY_FILE_QUOTA_HELP}</p>
+              </label>
               <label className="settings-provider-input">
                 <span>{SETTINGS_DELETE_OLD_SESSIONS_LABEL}</span>
                 <div className="settings-inline-input-row">

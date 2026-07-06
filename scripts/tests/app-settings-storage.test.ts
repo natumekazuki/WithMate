@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
+import {
+  MEMORY_FILE_QUOTA_DEFAULT_BYTES,
+  createDefaultAppSettings,
+} from "../../src/provider-settings-state.js";
 import { AppSettingsStorage } from "../../src-electron/app-settings-storage.js";
 
 describe("AppSettingsStorage", () => {
@@ -19,6 +22,7 @@ describe("AppSettingsStorage", () => {
         memoryGenerationEnabled: false,
         launchAtLoginEnabled: true,
         autoCollapseActionDockOnSend: false,
+        memoryFileQuotaBytes: 2 * MEMORY_FILE_QUOTA_DEFAULT_BYTES,
         userMicrocopyCatalog: {
           ...createDefaultAppSettings().userMicrocopyCatalog,
           "chat.pending.response_waiting": ["応答待機中", "出力待機中"],

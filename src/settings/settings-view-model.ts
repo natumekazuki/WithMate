@@ -1,4 +1,6 @@
 import {
+  MEMORY_FILE_QUOTA_MAX_BYTES,
+  MEMORY_FILE_QUOTA_MIN_BYTES,
   getResolvedProviderSettingsBundle,
   type AppSettings,
   type MemoryExtractionProviderSettings,
@@ -104,5 +106,16 @@ export function buildPersistedAppSettingsFromRows(
   return {
     ...draft,
     memoryExtractionProviderSettings: buildNormalizedMemoryExtractionProviderSettings(rows),
+  };
+}
+
+export function getMemoryFileQuotaMegabytes(settings: Pick<AppSettings, "memoryFileQuotaBytes">): number {
+  return Math.round(settings.memoryFileQuotaBytes / 1024 / 1024);
+}
+
+export function getMemoryFileQuotaMegabytesInputBounds(): { min: number; max: number } {
+  return {
+    min: Math.ceil(MEMORY_FILE_QUOTA_MIN_BYTES / 1024 / 1024),
+    max: Math.floor(MEMORY_FILE_QUOTA_MAX_BYTES / 1024 / 1024),
   };
 }
