@@ -1141,7 +1141,8 @@ test("PersistentStoreLifecycleService は V6 DB に legacy session/audit/memory/
     const tables = readTableNames(dbPath);
     service.close(bundle, dbPath);
     assert.equal(tables.includes("sessions_v6"), true);
-    assert.equal(tables.includes("audit_events_v6"), true);
+    assert.equal(tables.includes("audit_events_v6"), false);
+    assert.equal(tables.includes("session_turns_v6"), true);
     assert.equal(tables.includes("auxiliary_sessions"), true);
     assert.equal(tables.includes("sessions"), false);
     assert.equal(tables.includes("audit_logs"), false);

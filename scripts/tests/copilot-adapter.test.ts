@@ -17,6 +17,7 @@ import {
   buildCopilotSessionSettings,
   buildCopilotMessageAttachments,
   buildCopilotProviderQuotaTelemetry,
+  buildCopilotProviderMetadata,
   collectCopilotAuditOperationsFromEventsForTesting,
   collectCopilotLiveStepsFromEventsForTesting,
   collectCopilotReasoningTextFromEventsForTesting,
@@ -35,6 +36,7 @@ import {
   sortLiveBackgroundTasks,
   toProviderQuotaSnapshots,
 } from "../../src-electron/copilot-adapter.js";
+import { toProviderMetadataLogData } from "../../src-electron/provider-metadata-log.js";
 import {
   ProviderTurnError,
   type RunBackgroundStructuredPromptInput,
@@ -754,6 +756,31 @@ describe("CopilotAdapter env", () => {
     assert.equal(content.originalLength, longContent.length);
     assert.equal(content.text.includes("...[truncated "), true);
     assert.equal(content.text.length < longContent.length, true);
+  });
+
+  it("未対応 Copilot event の app log metadata は payload を含めない", () => {
+    const metadata = buildCopilotProviderMetadata([
+      {
+        type: "new.event",
+        timestamp: "2026-03-23T00:00:00.000Z",
+        data: {
+          token: "secret",
+        },
+      },
+    ]);
+
+    assert.equal(metadata.length, 1);
+    assert.deepEqual(toProviderMetadataLogData(metadata[0]!), {
+      provider: "copilot",
+      kind: "unsupported_event",
+      source: "copilot.session_event",
+      eventType: "new.event",
+      summary: "Unsupported Copilot event: new.event",
+      payloadPresent: true,
+      payloadRedacted: true,
+      payloadType: "object",
+    });
+    assert.equal("payload" in toProviderMetadataLogData(metadata[0]!), false);
   });
 
   it("top-level assistant message は arrival 順に空行区切りで連結する", () => {

@@ -35,6 +35,7 @@ export type {
   AuditLogOperation,
   AuditLogOperationDetailFragment,
   AuditLogPhase,
+  AuditLogProviderMetadata,
   AuditLogSummary,
   AuditLogSummaryPageRequest,
   AuditLogSummaryPageResult,

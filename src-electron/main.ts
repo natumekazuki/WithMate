@@ -219,7 +219,12 @@ const codexAdapter = new CodexAdapter((input) => writeAppLog({
   ...input,
   process: "main",
 }));
-const copilotAdapter = new CopilotAdapter();
+const copilotAdapter = new CopilotAdapter({
+  log: (input) => writeAppLog({
+    ...input,
+    process: "main",
+  }),
+});
 const WAL_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 
 let sessions: Session[] = [];
@@ -2113,7 +2118,7 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
       createWindow: (sessionId) =>
         createCursorPlacedWindow({
           ...SESSION_WINDOW_DEFAULT_BOUNDS,
-          title: `WithMate Session - ${sessionId}`,
+          title: getSession(sessionId)?.taskTitle.trim() || `WithMate Session - ${sessionId}`,
         }),
       loadChatEntry: (window, mode) => requireWindowEntryLoader().loadChatEntry(window, mode),
       getSession,

@@ -11,6 +11,7 @@ import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
   CodexAdapter,
+  buildCodexProviderMetadata,
   buildCodexThreadSettings,
   buildCodexStableRawItems,
   collectCodexAssistantTextSnapshotsFromEventsForTesting,
@@ -32,6 +33,7 @@ import {
   type RunBackgroundStructuredPromptInput,
   type RunSessionTurnInput,
 } from "../../src-electron/provider-runtime.js";
+import { toProviderMetadataLogData } from "../../src-electron/provider-metadata-log.js";
 
 const CODEX_PROVIDER_CATALOG: ModelCatalogProvider = {
   id: "codex",
@@ -734,6 +736,38 @@ describe("CodexAdapter thread settings", () => {
         },
       },
     ]);
+  });
+
+  it("未知の Codex item は provider metadata に分類する", () => {
+    const metadata = buildCodexProviderMetadata([
+      {
+        id: "item-new",
+        type: "new_provider_item",
+        payload: { value: 1 },
+      } as never,
+      {
+        id: "message-1",
+        type: "agent_message",
+        text: "done",
+      } as never,
+    ]);
+
+    assert.equal(metadata.length, 1);
+    assert.equal(metadata[0]?.provider, "codex");
+    assert.equal(metadata[0]?.kind, "unsupported_response");
+    assert.equal(metadata[0]?.responseType, "new_provider_item");
+    assert.equal(metadata[0]?.summary, "Unsupported Codex item: new_provider_item");
+    assert.deepEqual(toProviderMetadataLogData(metadata[0]!), {
+      provider: "codex",
+      kind: "unsupported_response",
+      source: "codex.thread_item",
+      responseType: "new_provider_item",
+      summary: "Unsupported Codex item: new_provider_item",
+      payloadPresent: true,
+      payloadRedacted: true,
+      payloadType: "object",
+    });
+    assert.equal("payload" in toProviderMetadataLogData(metadata[0]!), false);
   });
 
   it("stream 診断ログは通常運用の app log に流さず summary だけ残す", async () => {

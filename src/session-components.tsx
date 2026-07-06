@@ -1032,6 +1032,7 @@ export function SessionAuditLogModal({
               const detail = detailState?.detail ?? null;
               const operations = detail?.operations ?? entry.operations;
               const assistantText = detail?.assistantText ?? entry.assistantTextPreview;
+              const interimMessages = detail?.interimMessages ?? [];
               const usage = entry.usage;
               const errorMessage = entry.errorMessage;
               const sectionLoading = (section: AuditLogDetailSection) => Boolean(detailState?.loadingSections[section]);
@@ -1218,7 +1219,20 @@ export function SessionAuditLogModal({
                     ) : sectionError("response") ? (
                       <p className="audit-log-empty">{sectionError("response")}</p>
                     ) : (
-                      <pre>{previewAuditLogText(assistantText || "-")}</pre>
+                      <>
+                        <pre>{previewAuditLogText(assistantText || "-")}</pre>
+                        {interimMessages.length > 0 ? (
+                          <div className="audit-log-transport-fields">
+                            <p><strong>Interim Messages</strong></p>
+                            {interimMessages.map((message) => (
+                              <div key={`${entry.id}-interim-${message.seq}`} className="audit-log-transport-field">
+                                <p><strong>#{message.seq + 1}</strong> <span>{message.createdAt}</span></p>
+                                <pre>{previewAuditLogText(message.body || "-")}</pre>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </>
                     )}
                   </section> : null}
                 </details>
@@ -1246,7 +1260,7 @@ export function SessionAuditLogModal({
                               <span>{operation.type}</span>
                               <strong>{operation.summary}</strong>
                             </div>
-                            {operation.details ? (
+                            {operation.detailAvailable || operation.details ? (
                               <details
                                 className="audit-log-operation-detail"
                                 open={Boolean(openAuditLogFolds[auditLogOperationDetailFoldKey(entry, index)])}
@@ -1276,7 +1290,7 @@ export function SessionAuditLogModal({
                                   ) : operationDetailState(index)?.errorMessage ? (
                                     <p className="audit-log-empty">{operationDetailState(index)?.errorMessage}</p>
                                   ) : (
-                                    <pre>{previewAuditLogText(operationDetailState(index)?.detail?.details ?? operation.details)}</pre>
+                                    <pre>{previewAuditLogText(operationDetailState(index)?.detail?.details ?? operation.details ?? "")}</pre>
                                   )
                                 ) : null}
                               </details>
@@ -1344,7 +1358,12 @@ export function SessionAuditLogModal({
                     <strong>Raw Items</strong>
                   </summary>
                   {rawOpen ? (
-                    <pre>{previewAuditLogText(detail?.rawItemsJson ?? (sectionLoading("raw") ? "loading..." : sectionError("raw") ?? "[]"))}</pre>
+                    <section className="audit-log-section compact">
+                      <pre>{previewAuditLogText(detail?.rawItemsJson ?? (sectionLoading("raw") ? "loading..." : sectionError("raw") ?? "[]"))}</pre>
+                      {(detail?.providerMetadata?.length ?? 0) > 0 ? (
+                        <pre>{previewAuditLogText(JSON.stringify(detail?.providerMetadata ?? [], null, 2))}</pre>
+                      ) : null}
+                    </section>
                   ) : null}
                 </details>
                   </>
@@ -3267,22 +3286,39 @@ export function SessionComposerExpanded({
         </div>
       ) : null}
 
-      <div className={`composer-box${isRunning ? " running" : ""}${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
-        <textarea
-          ref={composerTextareaRef}
-          value={draft}
-          placeholder={placeholder}
-          onChange={(event) => onDraftChange(event.target.value, event.target.selectionStart ?? event.target.value.length)}
-          onFocus={onDraftFocus}
-          onKeyDown={onDraftKeyDown}
-          onPaste={onDraftPaste}
-          onSelect={(event) => onDraftSelect(event.currentTarget.selectionStart ?? 0)}
-          onCompositionStart={onDraftCompositionStart}
-          onCompositionEnd={onDraftCompositionEnd}
-          disabled={isComposerDisabled}
-          aria-describedby={composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined}
-          aria-invalid={composerSendability.feedbackTone === "blocked" ? true : undefined}
-        />
+      <div className={`composer-input-row${isRunning ? " running" : ""}`}>
+        <div className={`composer-box${isRunning ? " running" : ""}${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
+          <textarea
+            ref={composerTextareaRef}
+            value={draft}
+            placeholder={placeholder}
+            onChange={(event) => onDraftChange(event.target.value, event.target.selectionStart ?? event.target.value.length)}
+            onFocus={onDraftFocus}
+            onKeyDown={onDraftKeyDown}
+            onPaste={onDraftPaste}
+            onSelect={(event) => onDraftSelect(event.currentTarget.selectionStart ?? 0)}
+            onCompositionStart={onDraftCompositionStart}
+            onCompositionEnd={onDraftCompositionEnd}
+            disabled={isComposerDisabled}
+            aria-describedby={composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined}
+            aria-invalid={composerSendability.feedbackTone === "blocked" ? true : undefined}
+          />
+          {composerSendability.shouldShowFeedback ? (
+            <div
+              id="composer-sendability-feedback"
+              className={`composer-sendability-feedback ${composerSendability.feedbackTone ?? "helper"}`}
+            >
+              {composerSendability.primaryFeedback ? <p>{composerSendability.primaryFeedback}</p> : null}
+              {composerSendability.secondaryFeedback.length > 0 ? (
+                <ul>
+                  {composerSendability.secondaryFeedback.map((feedback) => (
+                    <li key={feedback}>{feedback}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
         {isRunning ? null : (
           <button
             className="session-send-button"
@@ -3294,21 +3330,6 @@ export function SessionComposerExpanded({
             Send
           </button>
         )}
-        {composerSendability.shouldShowFeedback ? (
-          <div
-            id="composer-sendability-feedback"
-            className={`composer-sendability-feedback ${composerSendability.feedbackTone ?? "helper"}`}
-          >
-            {composerSendability.primaryFeedback ? <p>{composerSendability.primaryFeedback}</p> : null}
-            {composerSendability.secondaryFeedback.length > 0 ? (
-              <ul>
-                {composerSendability.secondaryFeedback.map((feedback) => (
-                  <li key={feedback}>{feedback}</li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
       </div>
 
       <div className="composer-settings">

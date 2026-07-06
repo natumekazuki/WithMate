@@ -942,6 +942,7 @@ export class CompanionAuditLogStorageV3 {
           logicalPrompt: entry.logicalPrompt,
           transportPayload: entry.transportPayload,
           assistantText: entry.assistantText,
+          interimMessages: [],
           operations: entry.operations,
           rawItemsJson: entry.rawItemsJson,
           usage: entry.usage,

@@ -13,6 +13,9 @@ import {
   CREATE_V6_AUDIT_EVENTS_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
   CREATE_V6_SCHEMA_SQL,
+  CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
+  CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
+  CREATE_V6_SESSION_TURNS_TABLE_SQL,
   isValidV6Database,
   readV6DatabaseUserVersion,
 } from "../../src-electron/database-schema-v6.js";
@@ -57,6 +60,13 @@ describe("createOrVerifyV6FreshDatabase", () => {
       try {
         db.exec("PRAGMA foreign_keys = ON;");
         for (const statement of CREATE_V6_SCHEMA_SQL) {
+          if (
+            statement === CREATE_V6_SESSION_TURNS_TABLE_SQL
+            || statement === CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL
+            || statement === CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL
+          ) {
+            continue;
+          }
           if (statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL) {
             db.exec(`
               CREATE TABLE IF NOT EXISTS auxiliary_sessions (

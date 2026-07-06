@@ -267,6 +267,7 @@ function entryToAuditLogDetail(entry: AuditLogEntry): AuditLogDetail {
     logicalPrompt: entry.logicalPrompt,
     transportPayload: entry.transportPayload,
     assistantText: entry.assistantText,
+    interimMessages: [],
     operations: entry.operations,
     rawItemsJson: entry.rawItemsJson,
     usage: entry.usage,

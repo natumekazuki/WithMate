@@ -15,6 +15,7 @@ import type { WithMateWindowApi } from "./withmate-window-api.js";
 
 type SessionOwnedAuditLogs = {
   ownerSessionId: string | null;
+  cacheKey: string | null;
   entries: AuditLogSummary[];
   nextCursor: number | null;
   hasMore: boolean;
@@ -56,6 +57,8 @@ type AuditLogSessionLike = Pick<
 type UseSessionAuditLogsInput = {
   withmateApi: WithMateWindowApi | null;
   selectedSession: AuditLogSessionLike | null;
+  ownerSessionId?: string | null;
+  cacheScopeKey?: string | null;
   liveRun: LiveSessionRunState | null;
   enabled?: boolean;
   auditLogApi?: Pick<
@@ -137,9 +140,10 @@ function scheduleAuditLogDetailRenderProbe(
   });
 }
 
-function createEmptyAuditLogsState(ownerSessionId: string | null): SessionOwnedAuditLogs {
+function createEmptyAuditLogsState(ownerSessionId: string | null, cacheKey: string | null = null): SessionOwnedAuditLogs {
   return {
     ownerSessionId,
+    cacheKey,
     entries: [],
     nextCursor: null,
     hasMore: false,
@@ -152,6 +156,8 @@ function createEmptyAuditLogsState(ownerSessionId: string | null): SessionOwnedA
 export function useSessionAuditLogs({
   withmateApi,
   selectedSession,
+  ownerSessionId,
+  cacheScopeKey,
   liveRun,
   enabled = true,
   auditLogApi = withmateApi,
@@ -162,14 +168,22 @@ export function useSessionAuditLogs({
   const [auditLogOperationDetails, setAuditLogOperationDetails] = useState<Record<string, AuditLogOperationDetailLoadState>>({});
   const auditLogDetailOwnerRef = useRef<string | null>(null);
   const selectedSessionId = selectedSession?.id ?? null;
+  const auditLogOwnerSessionId = ownerSessionId ?? selectedSessionId;
+  const normalizedCacheScopeKey = cacheScopeKey?.trim() || "default";
+  const auditLogCacheKey = auditLogOwnerSessionId === null
+    ? null
+    : `${normalizedCacheScopeKey}:${auditLogOwnerSessionId}`;
 
   const persistedEntries = useMemo(
     () => (
-      enabled && selectedSessionId !== null && auditLogsState.ownerSessionId === selectedSessionId
+      enabled
+        && auditLogOwnerSessionId !== null
+        && auditLogsState.ownerSessionId === auditLogOwnerSessionId
+        && auditLogsState.cacheKey === auditLogCacheKey
         ? auditLogsState.entries
         : []
     ),
-    [auditLogsState.entries, auditLogsState.ownerSessionId, enabled, selectedSessionId],
+    [auditLogCacheKey, auditLogOwnerSessionId, auditLogsState.cacheKey, auditLogsState.entries, auditLogsState.ownerSessionId, enabled],
   );
 
   const displayedEntries = useMemo(
@@ -181,6 +195,16 @@ export function useSessionAuditLogs({
       }),
     [liveRun, persistedEntries, selectedSession],
   );
+  const isAuditLogsStateCurrent = enabled
+    && auditLogOwnerSessionId !== null
+    && auditLogsState.ownerSessionId === auditLogOwnerSessionId
+    && auditLogsState.cacheKey === auditLogCacheKey;
+  const auditLogsHasMore = isAuditLogsStateCurrent ? auditLogsState.hasMore : false;
+  const auditLogsLoading = isAuditLogsStateCurrent ? auditLogsState.loading : false;
+  const auditLogsTotal = isAuditLogsStateCurrent
+    ? Math.max(auditLogsState.total, displayedEntries.length)
+    : displayedEntries.length;
+  const auditLogsErrorMessage = isAuditLogsStateCurrent ? auditLogsState.errorMessage : null;
 
   const refreshSignature = useMemo(
     () =>
@@ -196,7 +220,7 @@ export function useSessionAuditLogs({
   const refreshAuditLogSummary = useCallback((reason: "signature" | "modal-open") => {
     let active = true;
 
-    if (!enabled || !auditLogApi || !selectedSessionId) {
+    if (!enabled || !auditLogApi || !auditLogOwnerSessionId || !auditLogCacheKey) {
       setAuditLogsState(createEmptyAuditLogsState(null));
       setAuditLogDetails({});
       setAuditLogOperationDetails({});
@@ -206,16 +230,17 @@ export function useSessionAuditLogs({
       };
     }
 
-    const ownerSessionId = selectedSessionId;
+    const ownerSessionId = auditLogOwnerSessionId;
+    const ownerCacheKey = auditLogCacheKey;
     setAuditLogsState((current) =>
-      current.ownerSessionId === ownerSessionId
+      current.ownerSessionId === ownerSessionId && current.cacheKey === ownerCacheKey
         ? { ...current, loading: true, errorMessage: null }
-        : { ...createEmptyAuditLogsState(ownerSessionId), loading: true },
+        : { ...createEmptyAuditLogsState(ownerSessionId, ownerCacheKey), loading: true },
     );
-    if (auditLogDetailOwnerRef.current !== ownerSessionId) {
+    if (auditLogDetailOwnerRef.current !== ownerCacheKey) {
       setAuditLogDetails({});
       setAuditLogOperationDetails({});
-      auditLogDetailOwnerRef.current = ownerSessionId;
+      auditLogDetailOwnerRef.current = ownerCacheKey;
     }
 
     reportAuditLogDetailLog(withmateApi, {
@@ -223,7 +248,9 @@ export function useSessionAuditLogs({
       message: "Audit log summary load started",
       data: {
         reason,
-        selectedSessionId: ownerSessionId,
+        ownerSessionId,
+        cacheKey: ownerCacheKey,
+        selectedSessionId,
       },
     });
 
@@ -235,6 +262,7 @@ export function useSessionAuditLogs({
         if (active) {
           setAuditLogsState({
             ownerSessionId,
+            cacheKey: ownerCacheKey,
             entries: page.entries,
             nextCursor: page.nextCursor,
             hasMore: page.hasMore,
@@ -247,7 +275,9 @@ export function useSessionAuditLogs({
             message: "Audit log summary IPC completed",
             data: {
               reason,
-              selectedSessionId: ownerSessionId,
+              ownerSessionId,
+              cacheKey: ownerCacheKey,
+              selectedSessionId,
               returnedEntryIds: page.entries.map((entry) => entry.id),
               total: page.total,
               hasMore: page.hasMore,
@@ -269,7 +299,9 @@ export function useSessionAuditLogs({
             message: "Audit log summary IPC failed",
             data: {
               reason,
-              selectedSessionId: ownerSessionId,
+              ownerSessionId,
+              cacheKey: ownerCacheKey,
+              selectedSessionId,
             },
             error: error instanceof Error
               ? { name: error.name, message: error.message, stack: error.stack }
@@ -282,11 +314,11 @@ export function useSessionAuditLogs({
     return () => {
       active = false;
     };
-  }, [auditLogApi, enabled, selectedSessionId, withmateApi]);
+  }, [auditLogApi, auditLogCacheKey, auditLogOwnerSessionId, enabled, selectedSessionId, withmateApi]);
 
   useEffect(() => {
     return refreshAuditLogSummary("signature");
-  }, [refreshAuditLogSummary, refreshSignature, selectedSessionId]);
+  }, [auditLogCacheKey, auditLogOwnerSessionId, refreshAuditLogSummary, refreshSignature]);
 
   useEffect(() => {
     if (!auditLogsOpen) {
@@ -376,19 +408,22 @@ export function useSessionAuditLogs({
   }, [auditLogsOpen, displayedEntries]);
 
   const handleLoadMoreAuditLogs = () => {
-    if (!enabled || !auditLogsOpen || !auditLogApi || !selectedSessionId) {
+    if (!enabled || !auditLogsOpen || !auditLogApi || !auditLogOwnerSessionId || !auditLogCacheKey) {
       return;
     }
 
-    const currentState = auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState : null;
+    const currentState = auditLogsState.ownerSessionId === auditLogOwnerSessionId && auditLogsState.cacheKey === auditLogCacheKey
+      ? auditLogsState
+      : null;
     if (!currentState?.hasMore || currentState.loading || currentState.nextCursor === null) {
       return;
     }
 
-    const ownerSessionId = selectedSessionId;
+    const ownerSessionId = auditLogOwnerSessionId;
+    const ownerCacheKey = auditLogCacheKey;
     const cursor = currentState.nextCursor;
     setAuditLogsState((current) =>
-      current.ownerSessionId === ownerSessionId
+      current.ownerSessionId === ownerSessionId && current.cacheKey === ownerCacheKey
         ? { ...current, loading: true, errorMessage: null }
         : current,
     );
@@ -402,6 +437,9 @@ export function useSessionAuditLogs({
           if (current.ownerSessionId !== ownerSessionId) {
             return current;
           }
+          if (current.cacheKey !== ownerCacheKey) {
+            return current;
+          }
 
           const existingIds = new Set(current.entries.map((entry) => entry.id));
           const nextEntries = [
@@ -411,6 +449,7 @@ export function useSessionAuditLogs({
 
           return {
             ownerSessionId,
+            cacheKey: ownerCacheKey,
             entries: nextEntries,
             nextCursor: page.nextCursor,
             hasMore: page.hasMore,
@@ -423,6 +462,7 @@ export function useSessionAuditLogs({
       (error: unknown) => {
         setAuditLogsState((current) =>
           current.ownerSessionId === ownerSessionId
+            && current.cacheKey === ownerCacheKey
             ? {
                 ...current,
                 loading: false,
@@ -800,6 +840,10 @@ export function useSessionAuditLogs({
     auditLogOperationDetails,
     persistedEntries,
     displayedEntries,
+    auditLogsHasMore,
+    auditLogsLoading,
+    auditLogsTotal,
+    auditLogsErrorMessage,
     handleLoadMoreAuditLogs,
     handleLoadAuditLogDetail,
     handleLoadAuditLogOperationDetail,

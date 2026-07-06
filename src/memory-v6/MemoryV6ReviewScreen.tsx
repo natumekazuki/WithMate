@@ -261,7 +261,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
   return (
     <div className={`${homePageClassName} home-page-memory-review`.trim()}>
       <main className="home-layout home-layout-settings-window memory-review-layout">
-        <section className="panel memory-review-shell">
+        <section className="memory-review-shell">
           <header className="memory-review-header">
             <div>
               <h1>Memory Review</h1>

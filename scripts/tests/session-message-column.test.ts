@@ -661,6 +661,9 @@ test("SessionComposerExpanded は jump button を Hide の左に描画する", (
   );
 
   assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Hide"));
+  const composerBoxHtml = html.match(/<div class="composer-box">(?<content>[\s\S]*?)<\/div><button class="session-send-button"/);
+  assert.ok(composerBoxHtml, "Send button は composer-box の外に描画する");
+  assert.doesNotMatch(composerBoxHtml.groups?.content ?? "", />Send<\/button>/);
 });
 
 test("SessionComposerExpanded は実行中の progress と Cancel を上部 toolbar に描画し、下段の送信ボタンを隠す", () => {

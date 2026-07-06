@@ -14,6 +14,7 @@ V5以前のsession / legacy Memory / Growth互換を引き継がず、Character-
 - 本書をV6 database foundationのsource of truthとする。
 - current DB構造の棚卸しは`docs/design/database-schema.md`を参照する。
 - V6 Memoryのdomain contractは`docs/design/v6-memory-foundation.md`を参照する。
+- V6 Session turn の final / interim / provider output / run context 分離は`docs/design/session-turn-storage-v6.md`を参照する。
 - V5 Character catalog / definition / snapshotの意味はV5 source of truthを優先する。
 
 ## Migration Boundary
@@ -169,9 +170,14 @@ message bodyはSession表示に必要な軽量projectionを保持し、assistant
 `getSession()`はartifact summaryだけを返し、operation detailsやdiff rowsなどの重いdetailはmessage artifact detail APIで遅延取得する。
 Memory provenanceはapp messageを指す`source_app_message_id`とprovider外部IDを指す`source_provider_message_id`を分ける。
 
-auditは`audit_events_v6`で通常turn、Memory mutation、diagnosticsを分離して設計する。
-通常Sessionのturn auditは`sessions_v6.id`を`session_id`で参照し、Auxiliary Sessionのturn auditはV6 schemaの`auxiliary_sessions.id`を`auxiliary_session_id`で参照する。
+auditは従来の`audit_events_v6`集中保存から、Session turn単位の構造化tableへ移行する。
+通常Sessionのturn contextは`sessions_v6.id`を`session_id`で参照し、Auxiliary Sessionのturn contextはV6 schemaの`auxiliary_sessions.id`を`auxiliary_session_id`で参照する。
 legacy MemoryGeneration / Character Reflection / Monologue auditは移行しない。
+Session turn の detail payload は、final message / interim message / provider output / turn context へ再分類し、通常表示で不要な raw/detail を `audit_events_v6.metadata_json` へ集約し続けない。
+詳細は`docs/design/session-turn-storage-v6.md`を正本にする。
+`audit_events_v6` は移行ソースとして扱い、新read / write pathが新tableへ切り替わった後は削除対象とする。
+V6 DB内に残ったlegacy Memory tableは、V6正本には持ち込まずcleanup対象にする。
+`companion_*` tableは現行Companion runtimeが参照するため、このmigrationでは削除対象にしない。
 
 ## Implementation Order
 
