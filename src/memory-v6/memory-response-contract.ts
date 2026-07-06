@@ -72,6 +72,10 @@ export type MemoryFileUsageResponse = {
   schemaVersion: MemoryV6SchemaVersion;
   quotaBytes: number;
   usedBytes: number;
+  /**
+   * DB metadata で active / delete_pending として把握している encrypted object size.
+   * DB reference を持たない orphan object files は GC dry-run の orphanFiles で確認する。
+   */
   physicalBytes: number;
   pendingDeleteBytes: number;
   availableBytes: number;

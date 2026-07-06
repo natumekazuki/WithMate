@@ -80,6 +80,7 @@ export type WithMateMemoryCliDeps = {
   fetch?: typeof fetch;
   readFile?: typeof readFile;
   requestTimeoutMs?: number;
+  fileOperationRequestTimeoutMs?: number;
 };
 
 const routeByCommand: Record<WithMateMemoryApiCommand, { method: "GET" | "POST"; path: string }> = {
@@ -113,8 +114,15 @@ function buildRoutePath(request: WithMateMemoryCliRequest): string {
   return queryString ? `${route.path}?${queryString}` : route.path;
 }
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+export const DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS = 300_000;
 const WITHMATE_MEMORY_API_SECRET_HEADER = "x-withmate-memory-api-secret";
+
+const FILE_OPERATION_COMMANDS = new Set<WithMateMemoryApiCommand>([
+  "append",
+  "get_file",
+  "export_files",
+]);
 
 const commandAliases = new Map<string, WithMateMemoryCliCommand>([
   ["help", "help"],
@@ -220,11 +228,36 @@ function notRunningError(): MemoryErrorResponse {
   });
 }
 
+function requestTimeoutError(command: WithMateMemoryApiCommand, timeoutMs: number): MemoryErrorResponse {
+  return createMemoryErrorResponse({
+    code: "WITHMATE_MEMORY_REQUEST_TIMEOUT",
+    message: `WithMate Memory API request timed out after ${timeoutMs}ms.`,
+    field: command,
+  });
+}
+
 function transportError(message: string): MemoryErrorResponse {
   return createMemoryErrorResponse({
     code: "WITHMATE_MEMORY_TRANSPORT_ERROR",
     message,
   });
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+export function resolveRuntimeRequestTimeoutMs(
+  command: WithMateMemoryApiCommand,
+  deps: Pick<WithMateMemoryCliDeps, "requestTimeoutMs" | "fileOperationRequestTimeoutMs"> = {},
+): number {
+  if (deps.requestTimeoutMs !== undefined) {
+    return deps.requestTimeoutMs;
+  }
+  if (FILE_OPERATION_COMMANDS.has(command)) {
+    return deps.fileOperationRequestTimeoutMs ?? DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS;
+  }
+  return DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
 function readEnvSecret(env: NodeJS.ProcessEnv): string | undefined {
@@ -891,17 +924,32 @@ export async function runWithMateMemoryCli(
       return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
     }
 
+    try {
+      const verifyAbortController = new AbortController();
+      const verifyTimeout = setTimeout(() => verifyAbortController.abort(), deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
+      try {
+        if (!await verifyRuntimeIdentity(connection, fetchImpl, verifyAbortController.signal)) {
+          stdout.write(`${JSON.stringify(notRunningError())}\n`);
+          return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
+        }
+      } finally {
+        clearTimeout(verifyTimeout);
+      }
+    } catch (error) {
+      if (isMemoryErrorResponse(error)) {
+        throw error;
+      }
+      stdout.write(`${JSON.stringify(notRunningError())}\n`);
+      return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
+    }
+
     const route = routeByCommand[request.command];
     let response: Response;
     let responseJson: unknown;
+    const operationTimeoutMs = resolveRuntimeRequestTimeoutMs(request.command, deps);
     const abortController = new AbortController();
-    const requestTimeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
+    const requestTimeout = setTimeout(() => abortController.abort(), operationTimeoutMs);
     try {
-      if (!await verifyRuntimeIdentity(connection, fetchImpl, abortController.signal)) {
-        stdout.write(`${JSON.stringify(notRunningError())}\n`);
-        return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
-      }
-
       const headers: Record<string, string> = {};
       if (route.method === "POST") {
         headers["Content-Type"] = "application/json";
@@ -920,6 +968,10 @@ export async function runWithMateMemoryCli(
     } catch (error) {
       if (isMemoryErrorResponse(error)) {
         throw error;
+      }
+      if (isAbortError(error)) {
+        stdout.write(`${JSON.stringify(requestTimeoutError(request.command, operationTimeoutMs))}\n`);
+        return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
       }
       stdout.write(`${JSON.stringify(notRunningError())}\n`);
       return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;

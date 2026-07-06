@@ -15,6 +15,7 @@ export type MemoryV6HttpServerOptions = {
   port?: number;
   maxBodyBytes?: number;
   requestTimeoutMs?: number;
+  fileOperationRequestTimeoutMs?: number;
   maxConcurrentRequests?: number;
 };
 
@@ -24,7 +25,7 @@ export type MemoryV6HttpServer = {
   address(): AddressInfo | null;
 };
 
-type MemoryV6Route =
+export type MemoryV6Route =
   | "characters"
   | "file_usage"
   | "search"
@@ -38,10 +39,17 @@ type MemoryV6Route =
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 0;
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
-const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+export const DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS = 300_000;
 const DEFAULT_MAX_CONCURRENT_REQUESTS = 8;
 export const WITHMATE_MEMORY_API_SECRET_HEADER = "x-withmate-memory-api-secret";
 const STATUS_CHALLENGE_NONCE_QUERY = "nonce";
+
+const fileOperationRoutes = new Set<MemoryV6Route>([
+  "append",
+  "get_file",
+  "export_files",
+]);
 
 const routeByPath = new Map<string, MemoryV6Route>([
   ["/v1/characters", "characters"],
@@ -255,6 +263,7 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
   const runtimeInstanceId = requireNonEmptySecret(options.runtimeInstanceId, "runtimeInstanceId");
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const fileOperationRequestTimeoutMs = options.fileOperationRequestTimeoutMs ?? DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS;
   const maxConcurrentRequests = options.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS;
   let activeRequests = 0;
 
@@ -299,6 +308,12 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         writeJson(response, 404, memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Memory API route was not found."));
         return;
       }
+      const routeTimeoutMs = resolveMemoryV6RouteTimeoutMs(route, {
+        requestTimeoutMs,
+        fileOperationRequestTimeoutMs,
+      });
+      request.setTimeout(routeTimeoutMs);
+      response.setTimeout(routeTimeoutMs);
       if ((route === "characters" || route === "file_usage") && request.method !== "GET") {
         writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory API route does not support this method."));
         return;
@@ -371,4 +386,14 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
       return typeof address === "string" ? null : address;
     },
   };
+}
+
+export function resolveMemoryV6RouteTimeoutMs(
+  route: MemoryV6Route,
+  options: { requestTimeoutMs?: number; fileOperationRequestTimeoutMs?: number } = {},
+): number {
+  if (fileOperationRoutes.has(route)) {
+    return options.fileOperationRequestTimeoutMs ?? DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS;
+  }
+  return options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 }

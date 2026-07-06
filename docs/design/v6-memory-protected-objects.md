@@ -208,7 +208,7 @@ parallel append で quota を突破しないよう、quota check と object meta
 usage は少なくとも次を区別できるようにする。
 
 - `usedBytes`: quota 判定上の使用量
-- `physicalBytes`: file system 上に残っている encrypted object size
+- `physicalBytes`: DB metadata 上で active / delete_pending として把握している encrypted object size。DB reference を持たない orphan object file は `file-usage` には含めず、GC dry-run の `orphanFiles.bytes` を disk cleanup source とする。
 - `pendingDeleteBytes`: `delete_pending` object の容量
 - `objectCount`
 - `pendingDeleteCount`

@@ -10,7 +10,10 @@ import { describe, it } from "node:test";
 
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
 import {
+  DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
   discoverWithMateMemoryApi,
+  resolveRuntimeRequestTimeoutMs,
   runWithMateMemoryCli,
   WITHMATE_MEMORY_CLI_EXIT_CODES,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
@@ -243,6 +246,39 @@ describe("withmate-memory CLI", () => {
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning);
     assert.equal(stdout.json().error.code, "WITHMATE_NOT_RUNNING");
+  });
+
+  it("file operationは通常requestと別のtimeoutを使い、本体timeoutを明示する", async () => {
+    assert.equal(resolveRuntimeRequestTimeoutMs("search"), DEFAULT_REQUEST_TIMEOUT_MS);
+    assert.equal(resolveRuntimeRequestTimeoutMs("get_file"), DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS);
+    assert.equal(resolveRuntimeRequestTimeoutMs("export_files", { fileOperationRequestTimeoutMs: 20_000 }), 20_000);
+    assert.equal(resolveRuntimeRequestTimeoutMs("append", { requestTimeoutMs: 5 }), 5);
+
+    const stdout = createOutputCapture();
+    const requestBody = {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      objectId: "a".repeat(32),
+      outputPath: "C:/exports/file.bin",
+    };
+
+    const exitCode = await runWithMateMemoryCli(["get-file", "--json", JSON.stringify(requestBody)], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fileOperationRequestTimeoutMs: 5,
+      fetch: async (url, init) => {
+        if (isStatusChallengeRequest(String(url))) {
+          return createStatusChallengeResponse(String(url));
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+        });
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
+    assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_REQUEST_TIMEOUT");
+    assert.equal(stdout.json().error.field, "get_file");
   });
 
   it("statusはGETで/v1/statusへ送る", async () => {

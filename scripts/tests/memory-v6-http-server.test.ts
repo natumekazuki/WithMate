@@ -7,7 +7,15 @@ import { describe, it } from "node:test";
 
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
-import { createMemoryV6HttpServer, isLoopbackListenHost, isLoopbackRemoteAddress, type MemoryV6HttpServer } from "../../src-electron/memory-v6-http-server.js";
+import {
+  DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  createMemoryV6HttpServer,
+  isLoopbackListenHost,
+  isLoopbackRemoteAddress,
+  resolveMemoryV6RouteTimeoutMs,
+  type MemoryV6HttpServer,
+} from "../../src-electron/memory-v6-http-server.js";
 import { MemoryV6Service } from "../../src-electron/memory-v6-service.js";
 import { MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
 
@@ -100,6 +108,14 @@ describe("MemoryV6HttpServer", () => {
     assert.equal(isLoopbackRemoteAddress(undefined), false);
     assert.equal(isLoopbackListenHost("localhost"), true);
     assert.equal(isLoopbackListenHost("0.0.0.0"), false);
+  });
+
+  it("file operation routeは通常requestと別のtimeoutを使う", () => {
+    assert.equal(resolveMemoryV6RouteTimeoutMs("search"), DEFAULT_REQUEST_TIMEOUT_MS);
+    assert.equal(resolveMemoryV6RouteTimeoutMs("get_file"), DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS);
+    assert.equal(resolveMemoryV6RouteTimeoutMs("export_files", { fileOperationRequestTimeoutMs: 20_000 }), 20_000);
+    assert.equal(resolveMemoryV6RouteTimeoutMs("append", { requestTimeoutMs: 123 }), DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS);
+    assert.equal(resolveMemoryV6RouteTimeoutMs("file_usage", { requestTimeoutMs: 123 }), 123);
   });
 
   it("status とchallengeをJSONで返し、context routeは公開しない", async () => {

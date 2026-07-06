@@ -255,7 +255,7 @@ function normalizeAppendFiles(value: unknown): MemoryValidationResult<MemoryAppe
     if (!unknownKeys.ok) {
       return unknownKeys;
     }
-    const filePath = normalizeText(file.path, `${field}.path`, { maxLength: MAX_FILE_PATH_LENGTH });
+    const filePath = normalizeAbsolutePath(file.path, `${field}.path`);
     if (!filePath.ok) {
       return filePath;
     }

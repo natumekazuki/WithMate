@@ -121,6 +121,20 @@ describe("memory-v6 contract validation", () => {
     assert.equal(invalidRole.ok, false);
     assert.equal(invalidRole.error.field, "files[0].role");
 
+    const relativePath = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "context",
+      title: "trace archive",
+      body: "debug trace archive.",
+      preview: "debug trace archive.",
+      tags: [],
+      files: [{ path: "trace/screenshot.png", summary: "screenshot" }],
+    });
+    assert.equal(relativePath.ok, false);
+    assert.equal(relativePath.error.code, "MEMORY_INVALID_FIELD");
+    assert.equal(relativePath.error.field, "files[0].path");
+
     const tooManyFiles = validateMemoryAppendRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       target: projectTarget,
