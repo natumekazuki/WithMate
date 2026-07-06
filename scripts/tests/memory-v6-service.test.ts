@@ -427,6 +427,64 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  it("file付きappendのprepareは順次実行して同時read/encryptを避ける", async () => {
+    const protectedObjects = [0, 1, 2].map((index) => ({
+      objectId: `${index}`.repeat(32),
+      role: "evidence",
+      mediaKind: "image",
+      contentType: "image/png",
+      displayName: `dialog-${index}.png`,
+      summary: `スクリーンショット ${index}。`,
+      originalBytes: 128,
+      storedBytes: 160,
+      sha256: `${index + 1}`.repeat(64),
+      keyId: `${index + 4}`.repeat(32),
+    })) satisfies MemoryV6AppendProtectedObjectInput[];
+    let activePrepareCount = 0;
+    let maxPrepareConcurrency = 0;
+
+    await withService(async ({ service }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      const append = await service.append(principal, appendRequest({
+        idempotencyKey: "sequential-prepare-append-key",
+        files: protectedObjects.map((object) => ({
+          path: `C:/trace/${object.displayName}`,
+          summary: object.summary,
+          role: object.role,
+          displayName: object.displayName,
+          contentType: object.contentType,
+        })),
+      }));
+      assert.equal("error" in append, false);
+      assert.equal(append.entry.files.length, 3);
+      assert.equal(maxPrepareConcurrency, 1);
+    }, {
+      protectedObjectImporter: {
+        inspect: async (file) => {
+          const object = protectedObjects.find((item) => item.displayName === file.displayName);
+          assert.ok(object);
+          return {
+            originalBytes: object.originalBytes,
+            role: object.role,
+            mediaKind: object.mediaKind,
+            contentType: object.contentType,
+            displayName: object.displayName,
+            summary: object.summary,
+          };
+        },
+        prepare: async ({ file }) => {
+          activePrepareCount += 1;
+          maxPrepareConcurrency = Math.max(maxPrepareConcurrency, activePrepareCount);
+          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+          activePrepareCount -= 1;
+          const object = protectedObjects.find((item) => item.displayName === file.displayName);
+          assert.ok(object);
+          return object;
+        },
+      },
+    });
+  });
+
   it("export-files はentry内のactive objectsをまとめてexporterへ渡す", async () => {
     const protectedObjects = [
       {

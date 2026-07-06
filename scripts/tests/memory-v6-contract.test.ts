@@ -4,8 +4,10 @@ import { describe, it } from "node:test";
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
 import {
   validateMemoryAppendRequest,
+  validateMemoryExportFilesRequest,
   validateMemoryForgetRequest,
   validateMemoryGetEntryRequest,
+  validateMemoryGetFileRequest,
   validateMemoryListTagsRequest,
   validateMemorySearchRequest,
 } from "../../src/memory-v6/memory-validation.js";
@@ -567,6 +569,44 @@ describe("memory-v6 contract validation", () => {
 
     assert.equal(result.ok, false);
     assert.equal(result.error.field, "reason");
+  });
+
+  it("get-file / export-files はabsolute output pathを必須にする", () => {
+    const getFile = validateMemoryGetFileRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      objectId: "a".repeat(32),
+      outputPath: " C:/exports/file.bin ",
+    });
+    assert.equal(getFile.ok, true);
+    assert.equal(getFile.value.outputPath, "C:/exports/file.bin");
+
+    const relativeGetFile = validateMemoryGetFileRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      objectId: "a".repeat(32),
+      outputPath: "exports/file.bin",
+    });
+    assert.equal(relativeGetFile.ok, false);
+    assert.equal(relativeGetFile.error.field, "outputPath");
+
+    const exportFiles = validateMemoryExportFilesRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      entryId: "mem-a",
+      outputDirectoryPath: "/tmp/exports",
+    });
+    assert.equal(exportFiles.ok, true);
+    assert.equal(exportFiles.value.outputDirectoryPath, "/tmp/exports");
+
+    const relativeExportFiles = validateMemoryExportFilesRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      entryId: "mem-a",
+      outputDirectoryPath: "exports",
+    });
+    assert.equal(relativeExportFiles.ok, false);
+    assert.equal(relativeExportFiles.error.field, "outputDirectoryPath");
   });
 
   it("provider-specific unknown field を拒否する", () => {

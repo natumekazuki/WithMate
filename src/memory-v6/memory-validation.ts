@@ -145,6 +145,21 @@ function normalizeText(value: unknown, field: string, options: { maxLength: numb
   return { ok: true, value: normalized };
 }
 
+function normalizeAbsolutePath(value: unknown, field: string): MemoryValidationResult<string> {
+  const normalized = normalizeText(value, field, { maxLength: MAX_FILE_PATH_LENGTH });
+  if (!normalized.ok) {
+    return normalized;
+  }
+  if (!isAbsolutePathLike(normalized.value)) {
+    return error("MEMORY_INVALID_FIELD", `${field} must be an absolute path.`, field);
+  }
+  return normalized;
+}
+
+function isAbsolutePathLike(value: string): boolean {
+  return value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value) || /^\\\\/.test(value);
+}
+
 function normalizeOptionalText(value: unknown, field: string, maxLength = MAX_ID_LENGTH): MemoryValidationResult<string | undefined> {
   if (value === undefined) {
     return { ok: true, value: undefined };
@@ -569,7 +584,7 @@ export function validateMemoryGetFileRequest(value: unknown): MemoryValidationRe
   if (!objectId.ok) {
     return objectId;
   }
-  const outputPath = normalizeText(value.outputPath, "outputPath", { maxLength: MAX_FILE_PATH_LENGTH });
+  const outputPath = normalizeAbsolutePath(value.outputPath, "outputPath");
   if (!outputPath.ok) {
     return outputPath;
   }
@@ -605,7 +620,7 @@ export function validateMemoryExportFilesRequest(value: unknown): MemoryValidati
   if (!entryId.ok) {
     return entryId;
   }
-  const outputDirectoryPath = normalizeText(value.outputDirectoryPath, "outputDirectoryPath", { maxLength: MAX_FILE_PATH_LENGTH });
+  const outputDirectoryPath = normalizeAbsolutePath(value.outputDirectoryPath, "outputDirectoryPath");
   if (!outputDirectoryPath.ok) {
     return outputDirectoryPath;
   }

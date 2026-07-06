@@ -503,14 +503,14 @@ export class MemoryV6Service {
       throw new MemoryV6FileQuotaExceededError(input.fileQuotaBytes, usage.usedBytes, incomingBytes);
     }
 
-    return Promise.all(
-      input.files.map((file) =>
-        this.deps.protectedObjectImporter!.prepare({
-          entryId: input.entryId,
-          file,
-        }),
-      ),
-    );
+    const protectedObjects: MemoryV6AppendProtectedObjectInput[] = [];
+    for (const file of input.files) {
+      protectedObjects.push(await this.deps.protectedObjectImporter.prepare({
+        entryId: input.entryId,
+        file,
+      }));
+    }
+    return protectedObjects;
   }
 
   forget(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryForgetResponse> {
