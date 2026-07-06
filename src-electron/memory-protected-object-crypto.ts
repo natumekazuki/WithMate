@@ -7,6 +7,9 @@ const KEY_LENGTH_BYTES = 32;
 const NONCE_LENGTH_BYTES = 12;
 const AUTH_TAG_LENGTH_BYTES = 16;
 
+export const MEMORY_PROTECTED_OBJECT_ENVELOPE_OVERHEAD_BYTES =
+  ENVELOPE_MAGIC.byteLength + NONCE_LENGTH_BYTES + AUTH_TAG_LENGTH_BYTES;
+
 export type MemoryProtectedObjectKey = {
   keyId: string;
   key: Uint8Array;
@@ -60,8 +63,7 @@ export function decryptMemoryProtectedObjectPayload(input: {
 }): Buffer {
   const keyMaterial = normalizeKey(input.key);
   const envelope = Buffer.from(input.encryptedPayload);
-  const headerBytes = ENVELOPE_MAGIC.byteLength + NONCE_LENGTH_BYTES + AUTH_TAG_LENGTH_BYTES;
-  if (envelope.byteLength < headerBytes) {
+  if (envelope.byteLength < MEMORY_PROTECTED_OBJECT_ENVELOPE_OVERHEAD_BYTES) {
     throw new Error("Memory protected object envelope is too short.");
   }
 

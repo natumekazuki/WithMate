@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -9,6 +9,7 @@ import {
   createMemoryProtectedObjectAad,
   inferMemoryProtectedObjectMediaKind,
   inspectMemoryProtectedObjectInputFile,
+  MEMORY_PROTECTED_OBJECT_MAX_ORIGINAL_BYTES,
   prepareMemoryProtectedObjectFile,
 } from "../../src-electron/memory-protected-object-importer.js";
 import { MemoryProtectedObjectStore } from "../../src-electron/memory-protected-object-store.js";
@@ -133,6 +134,23 @@ describe("Memory protected object importer", () => {
             summary: "   ",
           }),
         /summary is required/,
+      );
+    });
+  });
+
+  it("per-file上限を超えるinputは読み込み前inspectionで拒否する", async () => {
+    await withTempDir(async (directory) => {
+      const inputPath = join(directory, "too-large.bin");
+      await writeFile(inputPath, "");
+      await truncate(inputPath, MEMORY_PROTECTED_OBJECT_MAX_ORIGINAL_BYTES + 1);
+
+      await assert.rejects(
+        () =>
+          inspectMemoryProtectedObjectInputFile({
+            path: inputPath,
+            summary: "Too large protected object.",
+          }),
+        /per-file size limit/,
       );
     });
   });

@@ -49,6 +49,10 @@ describe("MemoryProtectedObjectStore", () => {
         /already exists/,
       );
       assert.deepEqual(await store.readObject(objectId), Buffer.from("first"));
+      await assert.rejects(
+        () => store.readObject(objectId, { maxBytes: 3 }),
+        /read size limit/,
+      );
       assert.deepEqual(await store.listStagingFileNames(), []);
 
       assert.throws(() => store.resolveObjectPath("../escape"), /invalid/);

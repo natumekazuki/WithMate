@@ -2,6 +2,7 @@ import { stat, readFile } from "node:fs/promises";
 import { extname } from "node:path";
 
 import {
+  MEMORY_PROTECTED_OBJECT_ENVELOPE_OVERHEAD_BYTES,
   encryptMemoryProtectedObjectPayload,
   type MemoryProtectedObjectKey,
 } from "./memory-protected-object-crypto.js";
@@ -20,6 +21,10 @@ export type MemoryProtectedObjectKeyProvider = {
 };
 
 export type MemoryProtectedObjectPayloadStore = Pick<MemoryProtectedObjectStore, "writeObject">;
+
+export const MEMORY_PROTECTED_OBJECT_MAX_ORIGINAL_BYTES = 64 * 1024 * 1024;
+export const MEMORY_PROTECTED_OBJECT_MAX_STORED_BYTES =
+  MEMORY_PROTECTED_OBJECT_MAX_ORIGINAL_BYTES + MEMORY_PROTECTED_OBJECT_ENVELOPE_OVERHEAD_BYTES;
 
 export type PrepareMemoryProtectedObjectFileInput = {
   entryId: string;
@@ -94,6 +99,9 @@ export async function inspectMemoryProtectedObjectInputFile(
   }
   if (!Number.isSafeInteger(stats.size) || stats.size < 0) {
     throw new Error("Memory protected object input file size is invalid.");
+  }
+  if (stats.size > MEMORY_PROTECTED_OBJECT_MAX_ORIGINAL_BYTES) {
+    throw new Error("Memory protected object input file exceeds per-file size limit.");
   }
 
   const contentType = file.contentType?.trim() ?? "";

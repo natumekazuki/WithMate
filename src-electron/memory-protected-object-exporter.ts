@@ -6,7 +6,11 @@ import {
   sha256Hex,
   type MemoryProtectedObjectKey,
 } from "./memory-protected-object-crypto.js";
-import { createMemoryProtectedObjectAad } from "./memory-protected-object-importer.js";
+import {
+  createMemoryProtectedObjectAad,
+  MEMORY_PROTECTED_OBJECT_MAX_ORIGINAL_BYTES,
+  MEMORY_PROTECTED_OBJECT_MAX_STORED_BYTES,
+} from "./memory-protected-object-importer.js";
 import type { MemoryProtectedObjectStore } from "./memory-protected-object-store.js";
 import type { MemoryV6ProtectedObjectExportMetadata } from "./memory-v6-storage.js";
 
@@ -49,12 +53,15 @@ export async function exportMemoryProtectedObjectFile(
   dependencies: ExportMemoryProtectedObjectFileDependencies,
   input: ExportMemoryProtectedObjectFileInput,
 ): Promise<ExportMemoryProtectedObjectFileResult> {
+  assertExportMetadataWithinReadLimit(input.metadata);
   const key = await dependencies.keyStore.readKey(input.metadata.keyId);
   if (!key) {
     throw new Error("Memory protected object key is not available.");
   }
 
-  const encryptedPayload = await dependencies.objectStore.readObject(input.metadata.objectId);
+  const encryptedPayload = await dependencies.objectStore.readObject(input.metadata.objectId, {
+    maxBytes: MEMORY_PROTECTED_OBJECT_MAX_STORED_BYTES,
+  });
   if (encryptedPayload.byteLength !== input.metadata.storedBytes) {
     throw new Error("Memory protected object payload size does not match metadata.");
   }
@@ -76,6 +83,23 @@ export async function exportMemoryProtectedObjectFile(
 
   await writeFile(input.outputPath, plaintext, { flag: "wx" });
   return { bytesWritten: plaintext.byteLength };
+}
+
+function assertExportMetadataWithinReadLimit(metadata: MemoryV6ProtectedObjectExportMetadata): void {
+  if (
+    !Number.isSafeInteger(metadata.originalBytes) ||
+    metadata.originalBytes < 0 ||
+    metadata.originalBytes > MEMORY_PROTECTED_OBJECT_MAX_ORIGINAL_BYTES
+  ) {
+    throw new Error("Memory protected object plaintext size exceeds per-file size limit.");
+  }
+  if (
+    !Number.isSafeInteger(metadata.storedBytes) ||
+    metadata.storedBytes < 0 ||
+    metadata.storedBytes > MEMORY_PROTECTED_OBJECT_MAX_STORED_BYTES
+  ) {
+    throw new Error("Memory protected object payload size exceeds per-file size limit.");
+  }
 }
 
 export async function exportMemoryProtectedObjectFiles(

@@ -165,7 +165,7 @@ Protected Object の保護は file name ではなく暗号化で行う。
 
 ## Quota
 
-quota は WithMate 全体の Memory Protected Object 合計に対して設定する。初期方針では個別 file size limit は設けない。
+quota は WithMate 全体の Memory Protected Object 合計に対して設定する。初期実装では一括 read / encrypt / write の安全境界として、個別 file size limit を `64 MiB` に固定する。
 
 quota は Settings で変更できる app setting とし、未設定時は app default を使う。初期 default は実装時に固定するが、設計上は次の制約を持つ bounded setting とする。
 
@@ -226,10 +226,11 @@ type MemoryAppendFileInput = {
   role: "evidence" | "source" | "snapshot" | "artifact" | "reference" | "other";
   summary: string;
   displayName?: string;
-  mediaKind?: "image" | "text" | "source" | "archive" | "document" | "other";
   contentType?: string;
 };
 ```
+
+`mediaKind` は request では受け取らず、`role` / `contentType` / `path` から service が推論して response metadata として返す。
 
 validation:
 
@@ -432,7 +433,7 @@ CLI 配布物や shell environment へ key material が広がり、WithMate runt
 
 ### 個別 file size limit を設ける
 
-初期方針では設けない。運用上は WithMate 全体 quota で制御する。必要になった場合だけ、設定で optional per-file limit を追加する。
+初期実装では `64 MiB` を固定上限にする。これは streaming 暗号化を入れる前の main process / runtime API 保護であり、WithMate 全体 quota とは別に append / export の読み込み前 validation で拒否する。将来 streaming read / encrypt / write へ移行した場合だけ、設定で optional per-file limit へ広げる。
 
 ## Risks
 

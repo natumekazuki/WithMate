@@ -74,8 +74,19 @@ export class MemoryProtectedObjectStore {
     }
   }
 
-  async readObject(objectId: string): Promise<Buffer> {
-    return readFile(this.resolveObjectPath(objectId));
+  async readObject(objectId: string, options: { maxBytes?: number } = {}): Promise<Buffer> {
+    const objectPath = this.resolveObjectPath(objectId);
+    if (options.maxBytes !== undefined) {
+      const fileStats = await stat(objectPath);
+      if (!fileStats.isFile() || fileStats.size > options.maxBytes) {
+        throw new Error("Memory protected object exceeds read size limit.");
+      }
+    }
+    const payload = await readFile(objectPath);
+    if (options.maxBytes !== undefined && payload.byteLength > options.maxBytes) {
+      throw new Error("Memory protected object exceeds read size limit.");
+    }
+    return payload;
   }
 
   async objectExists(objectId: string): Promise<boolean> {

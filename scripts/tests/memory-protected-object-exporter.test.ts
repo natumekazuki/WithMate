@@ -7,7 +7,11 @@ import { describe, it } from "node:test";
 
 import { encryptMemoryProtectedObjectPayload, type MemoryProtectedObjectKey } from "../../src-electron/memory-protected-object-crypto.js";
 import { exportMemoryProtectedObjectFile, exportMemoryProtectedObjectFiles } from "../../src-electron/memory-protected-object-exporter.js";
-import { createMemoryProtectedObjectAad } from "../../src-electron/memory-protected-object-importer.js";
+import {
+  createMemoryProtectedObjectAad,
+  MEMORY_PROTECTED_OBJECT_MAX_ORIGINAL_BYTES,
+  MEMORY_PROTECTED_OBJECT_MAX_STORED_BYTES,
+} from "../../src-electron/memory-protected-object-importer.js";
 import { MemoryProtectedObjectStore } from "../../src-electron/memory-protected-object-store.js";
 import type { MemoryV6ProtectedObjectExportMetadata } from "../../src-electron/memory-v6-storage.js";
 
@@ -148,5 +152,37 @@ describe("memory protected object exporter", () => {
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
+  });
+
+  it("metadataがper-file上限を超えるexportはobjectを読まずに拒否する", async () => {
+    const metadata: MemoryV6ProtectedObjectExportMetadata = {
+      objectId: "f".repeat(32),
+      entryId: "mem-exporter-large",
+      contentType: "application/octet-stream",
+      displayName: "too-large.bin",
+      originalBytes: MEMORY_PROTECTED_OBJECT_MAX_ORIGINAL_BYTES + 1,
+      storedBytes: MEMORY_PROTECTED_OBJECT_MAX_STORED_BYTES + 1,
+      sha256: "0".repeat(64),
+      keyId: "e".repeat(32),
+    };
+    let readObjectCalled = false;
+
+    await assert.rejects(
+      () =>
+        exportMemoryProtectedObjectFile({
+          keyStore: { readKey: async () => ({ keyId: metadata.keyId, key: randomBytes(32) }) },
+          objectStore: {
+            async readObject() {
+              readObjectCalled = true;
+              return Buffer.alloc(0);
+            },
+          },
+        }, {
+          metadata,
+          outputPath: "unused.bin",
+        }),
+      /per-file size limit/,
+    );
+    assert.equal(readObjectCalled, false);
   });
 });
