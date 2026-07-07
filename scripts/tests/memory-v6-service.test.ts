@@ -494,6 +494,116 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  it("file付きappendはprepare途中の失敗で準備済みobjectを破棄する", async () => {
+    const preparedObject = {
+      objectId: "a".repeat(32),
+      role: "evidence",
+      mediaKind: "image",
+      contentType: "image/png",
+      displayName: "dialog-0.png",
+      summary: "Screenshot 0.",
+      originalBytes: 128,
+      storedBytes: 160,
+      sha256: "1".repeat(64),
+      keyId: "4".repeat(32),
+    } satisfies MemoryV6AppendProtectedObjectInput;
+    const discardedObjectIds: string[] = [];
+
+    await withService(async ({ service, storage }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      const append = await service.append(principal, appendRequest({
+        idempotencyKey: "file-append-partial-prepare-error-key",
+        files: [
+          {
+            path: "C:/trace/dialog-0.png",
+            summary: "Screenshot 0.",
+            role: "evidence",
+          },
+          {
+            path: "C:/trace/dialog-1.png",
+            summary: "Screenshot 1.",
+            role: "evidence",
+          },
+        ],
+      }));
+
+      assert.equal("error" in append, true);
+      assert.equal(append.error.code, "MEMORY_FILE_IMPORT_FAILED");
+      assert.equal(append.error.field, "files[1]");
+      assert.deepEqual(discardedObjectIds, [preparedObject.objectId]);
+      assert.deepEqual(storage.searchEntries({ targets: [projectTarget], query: "Memory service" }).items, []);
+    }, {
+      protectedObjectImporter: {
+        inspect: async (file) => ({
+          originalBytes: 128,
+          role: "evidence",
+          mediaKind: "image",
+          contentType: "image/png",
+          displayName: file.path.endsWith("dialog-0.png") ? "dialog-0.png" : "dialog-1.png",
+          summary: file.summary,
+        }),
+        prepare: async ({ file }) => {
+          if (file.path.endsWith("dialog-1.png")) {
+            throw new Error("safe storage unavailable");
+          }
+          return preparedObject;
+        },
+        discardPrepared: async ({ objectId }) => {
+          discardedObjectIds.push(objectId);
+        },
+      },
+    });
+  });
+
+  it("file付きappendはDB append失敗時に準備済みobjectを破棄する", async () => {
+    const protectedObject = {
+      objectId: "b".repeat(32),
+      role: "evidence",
+      mediaKind: "image",
+      contentType: "image/png",
+      displayName: "dialog.png",
+      summary: "Screenshot.",
+      originalBytes: 128,
+      storedBytes: 160,
+      sha256: "2".repeat(64),
+      keyId: "5".repeat(32),
+    } satisfies MemoryV6AppendProtectedObjectInput;
+    const discardedObjectIds: string[] = [];
+
+    await withService(async ({ service, storage }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      const append = await service.append(principal, appendRequest({
+        idempotencyKey: "file-append-db-error-key",
+        supersedes: ["missing-entry"],
+        files: [{
+          path: "C:/trace/dialog.png",
+          summary: "Screenshot.",
+          role: "evidence",
+        }],
+      }));
+
+      assert.equal("error" in append, true);
+      assert.equal(append.error.code, "MEMORY_ENTRY_NOT_FOUND");
+      assert.deepEqual(discardedObjectIds, [protectedObject.objectId]);
+      assert.deepEqual(storage.searchEntries({ targets: [projectTarget], query: "Memory service" }).items, []);
+    }, {
+      protectedObjectImporter: {
+        inspect: async () => ({
+          originalBytes: protectedObject.originalBytes,
+          role: protectedObject.role,
+          mediaKind: protectedObject.mediaKind,
+          contentType: protectedObject.contentType,
+          displayName: protectedObject.displayName,
+          summary: protectedObject.summary,
+        }),
+        prepare: async () => protectedObject,
+        discardPrepared: async ({ objectId }) => {
+          discardedObjectIds.push(objectId);
+        },
+      },
+    });
+  });
+
   it("file付きappendのprepareは順次実行して同時read/encryptを避ける", async () => {
     const protectedObjects = [0, 1, 2].map((index) => ({
       objectId: `${index}`.repeat(32),

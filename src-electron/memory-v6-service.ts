@@ -62,6 +62,7 @@ export type MemoryV6ServiceDeps = MemoryV6TargetResolverDeps & {
 export type MemoryV6ProtectedObjectImporter = {
   inspect(file: MemoryAppendFileInput): Promise<MemoryProtectedObjectInputFileInspection>;
   prepare(input: { entryId: string; file: MemoryAppendFileInput }): Promise<MemoryV6AppendProtectedObjectInput>;
+  discardPrepared?(input: { objectId: string }): Promise<void>;
 };
 
 export type MemoryV6ProtectedObjectExporter = {
@@ -491,30 +492,36 @@ export class MemoryV6Service {
           fileQuotaBytes,
         })
         : [];
-      const result = this.deps.storage.appendEntry({
-        ...(entryId ? { id: entryId } : {}),
-        target: resolved.target,
-        kind: validated.value.kind,
-        title: validated.value.title,
-        body: validated.value.body,
-        preview: validated.value.preview,
-        tags: validated.value.tags,
-        supersedes: validated.value.supersedes,
-        idempotencyKey: validated.value.idempotencyKey,
-        bindingIdHash: bindingIdHashForPrincipal(principal),
-        ...(hasFiles ? {
-          protectedObjects,
-          fileQuotaBytes,
-          requestFingerprint,
-        } : {}),
-        source: {
-          type: "agent",
-          sessionId: null,
-          messageId: validated.value.sourceMessageId ?? null,
-          providerId: providerIdForPrincipal(principal),
-          appMessageId: null,
-        },
-      });
+      let result;
+      try {
+        result = this.deps.storage.appendEntry({
+          ...(entryId ? { id: entryId } : {}),
+          target: resolved.target,
+          kind: validated.value.kind,
+          title: validated.value.title,
+          body: validated.value.body,
+          preview: validated.value.preview,
+          tags: validated.value.tags,
+          supersedes: validated.value.supersedes,
+          idempotencyKey: validated.value.idempotencyKey,
+          bindingIdHash: bindingIdHashForPrincipal(principal),
+          ...(hasFiles ? {
+            protectedObjects,
+            fileQuotaBytes,
+            requestFingerprint,
+          } : {}),
+          source: {
+            type: "agent",
+            sessionId: null,
+            messageId: validated.value.sourceMessageId ?? null,
+            providerId: providerIdForPrincipal(principal),
+            appMessageId: null,
+          },
+        });
+      } catch (error) {
+        await this.discardPreparedObjects(protectedObjects);
+        throw error;
+      }
       return createMemoryAppendResponse(result.entry, result.created);
     } catch (error) {
       return storageErrorResponse(error);
@@ -546,18 +553,32 @@ export class MemoryV6Service {
     }
 
     const protectedObjects: MemoryV6AppendProtectedObjectInput[] = [];
-    for (let index = 0; index < input.files.length; index += 1) {
-      const file = input.files[index];
-      try {
+    try {
+      for (let index = 0; index < input.files.length; index += 1) {
+        const file = input.files[index];
         protectedObjects.push(await importer.prepare({
           entryId: input.entryId,
           file,
         }));
-      } catch (error) {
-        throw toFileImportError(error, index);
       }
+    } catch (error) {
+      await this.discardPreparedObjects(protectedObjects);
+      throw toFileImportError(error, protectedObjects.length);
     }
     return protectedObjects;
+  }
+
+  private async discardPreparedObjects(protectedObjects: readonly MemoryV6AppendProtectedObjectInput[]): Promise<void> {
+    if (protectedObjects.length === 0 || !this.deps.protectedObjectImporter?.discardPrepared) {
+      return;
+    }
+    await Promise.all(protectedObjects.map(async (object) => {
+      try {
+        await this.deps.protectedObjectImporter?.discardPrepared?.({ objectId: object.objectId });
+      } catch {
+        // Best-effort cleanup: keep the original append/import error visible to the caller.
+      }
+    }));
   }
 
   forget(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryForgetResponse> {

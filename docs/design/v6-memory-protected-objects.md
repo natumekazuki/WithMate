@@ -139,7 +139,7 @@ file write は次の順序を基本にする。
 6. hash / size を検証する。
 7. final object path へ atomic rename する。
 8. DB transaction で object metadata と entry ref を保存する。
-9. DB transaction 失敗時は orphan object として GC 対象にする。
+9. DB transaction 失敗時は今回 prepare した object file を best-effort delete し、削除できず残った場合だけ orphan object として GC 対象にする。
 
 巨大 file を quota 判定前に全読み込みしない。
 初期 importer は `stat` による inspection と暗号化済み object write を分けられる形にし、application service 側で `usedBytes + incomingOriginalBytes` の quota preflight を済ませてから file read / encrypt / object write へ進む。
@@ -410,7 +410,7 @@ UI は runtime API secret、key material、object file path、復号済み temp 
 
 - quota 超過は append 前に machine-readable error を返す。
 - input file missing / unreadable は append 全体を失敗させ、partial entry を作らない。
-- object write 成功後に DB transaction が失敗した場合、object は orphan として GC 対象にする。
+- object write 成功後に import / DB transaction が失敗した場合、service は今回 prepare した object file を best-effort delete する。削除できず残った object は orphan として GC 対象にする。
 - file 付き append の完了済み idempotent replay は import 前 replay preflight で再 import を避ける。
 - 同一 idempotency key の並列同時送信で preflight 後に別 request が先に commit した場合、追加 object は orphan として GC 対象にする。将来は append idempotency reservation で import 前に concurrent duplicate を抑止できるようにする。
 - DB commit 後の file delete 失敗は `delete_pending` として retry する。
@@ -461,7 +461,7 @@ CLI 配布物や shell environment へ key material が広がり、WithMate runt
    - Done: active data key を platform key protector で wrap する key store abstraction を追加する。
    - Done: `appendEntry` transaction 内で protected object metadata と quota preflight を扱う storage 境界を追加する。
    - Done: input file inspection、AAD生成、暗号化、object store write、storage登録用metadata生成を行う importer を追加する。
-   - Done: application service で file 付き append の quota preflight、importer 実行、storage transaction 登録を接続する。
+   - Done: application service で file 付き append の quota preflight、importer 実行、storage transaction 登録、失敗時の prepare 済み object cleanup を接続する。
    - Done: file 付き append の完了済み idempotent replay を import 前に判定する replay preflight を追加する。
    - Done: protected object metadata に `role` を保存し、既存 metadata には `other` を backfill する。
    - Pending: entry ref table を追加する。

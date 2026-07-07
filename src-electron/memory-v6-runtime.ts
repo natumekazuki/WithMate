@@ -271,6 +271,9 @@ export async function startMemoryV6RuntimeApi(
             keyStore: protectedObjectKeyStore,
             objectStore: protectedObjectStore,
           }, input),
+          discardPrepared: async ({ objectId }) => {
+            await protectedObjectStore.deleteObject(objectId);
+          },
         },
         protectedObjectExporter: {
           exportFile: (input) => exportMemoryProtectedObjectFile({
