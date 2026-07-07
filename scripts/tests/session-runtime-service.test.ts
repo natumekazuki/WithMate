@@ -536,6 +536,7 @@ describe("SessionRuntimeService", () => {
           ],
           usage: { inputTokens: 4, cachedInputTokens: 0, outputTokens: 1 },
         }));
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
         return {
           threadId: "thread-1",
           assistantText: "完了したよ。",
@@ -600,6 +601,9 @@ describe("SessionRuntimeService", () => {
           queuedProgressEmitted = true;
           emitQueuedProgressDuringWrite();
         }
+        if (entry.phase === "completed") {
+          assert.equal(storedSessions.at(-1)?.messages.at(entry.assistantMessageSeq ?? -1)?.text, entry.assistantText);
+        }
         auditUpdates.push(entry);
       },
       setLiveSessionRun(_sessionId, state) {
@@ -645,6 +649,12 @@ describe("SessionRuntimeService", () => {
     assert.equal(auditUpdates[1]?.operations[0]?.summary, "late step");
     assert.equal(auditUpdates.at(-1)?.phase, "completed");
     assert.equal(auditUpdates.at(-1)?.assistantText, "完了したよ。");
+    assert.equal(auditUpdates.at(-1)?.assistantMessageSeq, 1);
+    assert.notEqual(auditUpdates.at(-1)?.createdAt, auditUpdates[0]?.createdAt);
+    assert.equal(
+      Date.parse(auditUpdates.at(-1)?.createdAt ?? "") > Date.parse(auditUpdates[0]?.createdAt ?? ""),
+      true,
+    );
     assert.equal(
       auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "remainingPercentage")?.value,
       "76%",
@@ -683,6 +693,112 @@ describe("SessionRuntimeService", () => {
     );
     assert.deepEqual(reflectionTriggers, []);
     assert.equal(liveStates.at(-1), null);
+    assert.equal(service.isRunInFlight(session.id), false);
+  });
+
+  it("completed session 保存後の audit 更新失敗は provider 失敗扱いにしない", async () => {
+    const session = createSession({ provider: "codex" });
+    const storedSessions: Session[] = [];
+    const auditUpdates: UpdateAuditLogInput[] = [];
+    let completedAuditFailureInjected = false;
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        return createPartialResult({
+          threadId: "thread-1",
+          assistantText: "完了したよ。",
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        storedSessions.push(next);
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog(_id, entry) {
+        auditUpdates.push(entry);
+        if (entry.phase === "completed" && !completedAuditFailureInjected) {
+          completedAuditFailureInjected = true;
+          throw new Error("completed audit write failed");
+        }
+      },
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry(_telemetry: ProviderQuotaTelemetry) {},
+      setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runCharacterReflection() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    assert.equal(result.runState, "idle");
+    assert.equal(result.status, "idle");
+    assert.equal(result.messages.at(-1)?.text, "完了したよ。");
+    assert.equal(storedSessions.length, 2);
+    assert.equal(storedSessions[0]?.runState, "running");
+    assert.equal(storedSessions[1]?.runState, "idle");
+    assert.equal(storedSessions[1]?.messages.at(-1)?.text, "完了したよ。");
+    assert.equal(auditUpdates.at(-1)?.phase, "completed");
+    assert.equal(auditUpdates.at(-1)?.providerMetadata?.[0]?.kind, "audit_persistence_degraded");
+    assert.equal(auditUpdates.at(-1)?.operations.length, 0);
+    assert.equal(auditUpdates.at(-1)?.assistantText, "完了したよ。");
+    assert.equal(auditUpdates.some((entry) => entry.phase === "failed"), false);
     assert.equal(service.isRunInFlight(session.id), false);
   });
 

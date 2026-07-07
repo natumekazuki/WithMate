@@ -37,6 +37,9 @@ import {
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL,
   WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
+  WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL,
+  WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL,
+  WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL,
   WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
@@ -557,9 +560,18 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
 
 function createMemoryV6ReviewApi(ipcRenderer: IpcRendererLike): Pick<
   WithMateWindowApi,
-  "searchMemoryV6Entries" | "getMemoryV6Entry" | "forgetMemoryV6Entry"
+  "getMemoryV6FileUsage" | "exportMemoryV6EntryFiles" | "runMemoryV6ProtectedObjectGc" | "searchMemoryV6Entries" | "getMemoryV6Entry" | "forgetMemoryV6Entry"
 > {
   return {
+    getMemoryV6FileUsage() {
+      return ipcRenderer.invoke(WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL);
+    },
+    exportMemoryV6EntryFiles(entryId) {
+      return ipcRenderer.invoke(WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL, entryId);
+    },
+    runMemoryV6ProtectedObjectGc(request) {
+      return ipcRenderer.invoke(WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL, request);
+    },
     searchMemoryV6Entries(request) {
       return ipcRenderer.invoke(WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL, request);
     },

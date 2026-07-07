@@ -8,6 +8,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
 const MEMORY_GENERATION_ENABLED_KEY = "memory_generation_enabled";
 const LAUNCH_AT_LOGIN_ENABLED_KEY = "launch_at_login_enabled";
 const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
+const MEMORY_FILE_QUOTA_BYTES_KEY = "memory_file_quota_bytes";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
 const MATE_MEMORY_GENERATION_SETTINGS_KEY = "mate_memory_generation_settings_json";
@@ -54,6 +55,13 @@ export class AppSettingsStorage {
         String(DEFAULT_APP_SETTINGS.autoCollapseActionDockOnSend),
         updatedAt,
       );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(MEMORY_FILE_QUOTA_BYTES_KEY, String(DEFAULT_APP_SETTINGS.memoryFileQuotaBytes), updatedAt);
     this.db
       .prepare(`
         INSERT INTO app_settings (setting_key, setting_value, updated_at)
@@ -116,6 +124,10 @@ export class AppSettingsStorage {
       }
       if (row.setting_key === AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY) {
         settings.autoCollapseActionDockOnSend = row.setting_value === "true";
+        continue;
+      }
+      if (row.setting_key === MEMORY_FILE_QUOTA_BYTES_KEY) {
+        settings.memoryFileQuotaBytes = Number(row.setting_value);
         continue;
       }
     }
@@ -212,6 +224,15 @@ export class AppSettingsStorage {
           String(normalized.autoCollapseActionDockOnSend),
           updatedAt,
         );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(MEMORY_FILE_QUOTA_BYTES_KEY, String(normalized.memoryFileQuotaBytes), updatedAt);
       this.db
         .prepare(`
           INSERT INTO app_settings (setting_key, setting_value, updated_at)

@@ -22,9 +22,13 @@ import type {
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
 import type { MemoryV6Diagnostics } from "../src/memory-v6/memory-diagnostics-state.js";
 import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
+import type { MemoryFileUsageResponse } from "../src/memory-v6/memory-response-contract.js";
 import type {
   MemoryV6ReviewEntryDetail,
+  MemoryV6ReviewExportFilesResult,
   MemoryV6ReviewForgetResult,
+  MemoryV6ProtectedObjectGcRequest,
+  MemoryV6ProtectedObjectGcResponse,
   MemoryV6ReviewSearchResult,
 } from "../src/memory-v6/memory-review-state.js";
 import type {
@@ -126,6 +130,9 @@ export type MainIpcSettingsDepsArgs = {
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
   uninstallMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
+  getMemoryV6FileUsage(): Awaitable<MemoryFileUsageResponse>;
+  exportMemoryV6EntryFiles(entryId: string, targetWindow?: MaybeWindow): Awaitable<MemoryV6ReviewExportFilesResult | null>;
+  runMemoryV6ProtectedObjectGc(request: MemoryV6ProtectedObjectGcRequest): Awaitable<MemoryV6ProtectedObjectGcResponse>;
   searchMemoryV6Entries(request: MemoryV6ReviewSearchRequest | null | undefined): Awaitable<MemoryV6ReviewSearchResult>;
   getMemoryV6Entry(entryId: string): Awaitable<MemoryV6ReviewEntryDetail | null>;
   forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null): Awaitable<MemoryV6ReviewForgetResult>;
@@ -347,6 +354,9 @@ export function createMainIpcRegistrationDeps(
     getMemoryV6Diagnostics: args.settings.getMemoryV6Diagnostics,
     installMemoryV6CliShim: args.settings.installMemoryV6CliShim,
     uninstallMemoryV6CliShim: args.settings.uninstallMemoryV6CliShim,
+    getMemoryV6FileUsage: args.settings.getMemoryV6FileUsage,
+    exportMemoryV6EntryFiles: args.settings.exportMemoryV6EntryFiles,
+    runMemoryV6ProtectedObjectGc: args.settings.runMemoryV6ProtectedObjectGc,
     searchMemoryV6Entries: args.settings.searchMemoryV6Entries,
     getMemoryV6Entry: args.settings.getMemoryV6Entry,
     forgetMemoryV6Entry: args.settings.forgetMemoryV6Entry,

@@ -17,6 +17,13 @@ import {
   type MemoryV6HttpServer,
 } from "./memory-v6-http-server.js";
 import { createMemoryV6ProjectResolver } from "./memory-v6-project-resolver.js";
+import {
+  inspectMemoryProtectedObjectInputFile,
+  prepareMemoryProtectedObjectFile,
+} from "./memory-protected-object-importer.js";
+import { exportMemoryProtectedObjectFile, exportMemoryProtectedObjectFiles } from "./memory-protected-object-exporter.js";
+import { MemoryProtectedObjectKeyStore, type MemoryProtectedObjectKeyProtector } from "./memory-protected-object-key-store.js";
+import { MemoryProtectedObjectStore } from "./memory-protected-object-store.js";
 import { MemoryV6Service } from "./memory-v6-service.js";
 import { MemoryV6Storage } from "./memory-v6-storage.js";
 import type { CharacterCatalogEntry } from "../src/character/character-catalog.js";
@@ -32,6 +39,8 @@ export type StartMemoryV6RuntimeApiOptions = {
   userDataPath: string;
   runtimeDirectoryPath?: string;
   listCharacters?: () => readonly CharacterCatalogEntry[];
+  getMemoryFileQuotaBytes?: () => number;
+  protectedObjectKeyProtector?: MemoryProtectedObjectKeyProtector;
   log?: (input: AppLogInput) => void;
 };
 
@@ -246,10 +255,37 @@ export async function startMemoryV6RuntimeApi(
     const bootstrap = await createOrVerifyV6FreshDatabase(options.userDataPath);
     storage = new MemoryV6Storage(bootstrap.dbPath);
     const projectResolver = createMemoryV6ProjectResolver(bootstrap.dbPath);
+    const protectedObjectStore = MemoryProtectedObjectStore.fromUserDataPath(options.userDataPath);
+    const protectedObjectKeyStore = options.protectedObjectKeyProtector
+      ? MemoryProtectedObjectKeyStore.fromUserDataPath(options.userDataPath, options.protectedObjectKeyProtector)
+      : null;
     const service = new MemoryV6Service({
       storage,
       ...projectResolver,
       ...(options.listCharacters ? { listCharacters: options.listCharacters } : {}),
+      ...(options.getMemoryFileQuotaBytes ? { getMemoryFileQuotaBytes: options.getMemoryFileQuotaBytes } : {}),
+      ...(protectedObjectKeyStore ? {
+        protectedObjectImporter: {
+          inspect: inspectMemoryProtectedObjectInputFile,
+          prepare: (input) => prepareMemoryProtectedObjectFile({
+            keyStore: protectedObjectKeyStore,
+            objectStore: protectedObjectStore,
+          }, input),
+          discardPrepared: async ({ objectId }) => {
+            await protectedObjectStore.deleteObject(objectId);
+          },
+        },
+        protectedObjectExporter: {
+          exportFile: (input) => exportMemoryProtectedObjectFile({
+            keyStore: protectedObjectKeyStore,
+            objectStore: protectedObjectStore,
+          }, input),
+          exportFiles: (input) => exportMemoryProtectedObjectFiles({
+            keyStore: protectedObjectKeyStore,
+            objectStore: protectedObjectStore,
+          }, input),
+        },
+      } : {}),
     });
     const apiSecret = createRuntimeApiSecret();
     const runtimeInstanceId = randomUUID();

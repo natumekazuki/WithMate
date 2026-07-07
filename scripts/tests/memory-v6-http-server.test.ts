@@ -7,8 +7,17 @@ import { describe, it } from "node:test";
 
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
-import { createMemoryV6HttpServer, isLoopbackListenHost, isLoopbackRemoteAddress, type MemoryV6HttpServer } from "../../src-electron/memory-v6-http-server.js";
-import { MemoryV6Service } from "../../src-electron/memory-v6-service.js";
+import { MemoryProtectedObjectImportError } from "../../src-electron/memory-protected-object-importer.js";
+import {
+  DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  createMemoryV6HttpServer,
+  isLoopbackListenHost,
+  isLoopbackRemoteAddress,
+  resolveMemoryV6RouteTimeoutMs,
+  type MemoryV6HttpServer,
+} from "../../src-electron/memory-v6-http-server.js";
+import { MemoryV6Service, type MemoryV6ServiceDeps } from "../../src-electron/memory-v6-service.js";
 import { MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
 
 const TEST_API_SECRET = "test-secret";
@@ -16,6 +25,7 @@ const TEST_RUNTIME_INSTANCE_ID = "test-runtime";
 
 async function withMemoryApi<T>(
   runner: (input: { baseUrl: string; storage: MemoryV6Storage; server: MemoryV6HttpServer }) => T | Promise<T>,
+  overrides: Partial<Pick<MemoryV6ServiceDeps, "protectedObjectImporter">> = {},
 ): Promise<T> {
   const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-v6-http-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(tempDirectory);
@@ -38,6 +48,7 @@ async function withMemoryApi<T>(
     resolveProjectByPath: (projectPath) => projectPath === "C:/workspace/project-a"
       ? { id: "project-a", displayName: "Project A" }
       : null,
+    ...(overrides.protectedObjectImporter ? { protectedObjectImporter: overrides.protectedObjectImporter } : {}),
   });
   const server = createMemoryV6HttpServer({
     service,
@@ -102,6 +113,14 @@ describe("MemoryV6HttpServer", () => {
     assert.equal(isLoopbackListenHost("0.0.0.0"), false);
   });
 
+  it("file operation routeは通常requestと別のtimeoutを使う", () => {
+    assert.equal(resolveMemoryV6RouteTimeoutMs("search"), DEFAULT_REQUEST_TIMEOUT_MS);
+    assert.equal(resolveMemoryV6RouteTimeoutMs("get_file"), DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS);
+    assert.equal(resolveMemoryV6RouteTimeoutMs("export_files", { fileOperationRequestTimeoutMs: 20_000 }), 20_000);
+    assert.equal(resolveMemoryV6RouteTimeoutMs("append", { requestTimeoutMs: 123 }), DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS);
+    assert.equal(resolveMemoryV6RouteTimeoutMs("file_usage", { requestTimeoutMs: 123 }), 123);
+  });
+
   it("status とchallengeをJSONで返し、context routeは公開しない", async () => {
     await withMemoryApi(async ({ baseUrl }) => {
       const status = await fetch(`${baseUrl}/v1/status`);
@@ -164,6 +183,22 @@ describe("MemoryV6HttpServer", () => {
       assert.equal("iconFilePath" in charactersJson.characters[0], false);
       assert.equal("theme" in charactersJson.characters[0], false);
 
+      const fileUsage = await fetch(`${baseUrl}/v1/file-usage`, {
+        headers: { "X-WithMate-Memory-Api-Secret": TEST_API_SECRET },
+      });
+      assert.equal(fileUsage.status, 200);
+      const fileUsageJson = await fileUsage.json();
+      assert.equal(fileUsageJson.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
+      assert.equal(fileUsageJson.usedBytes, 0);
+      assert.equal(fileUsageJson.objectCount, 0);
+
+      const largestFileUsage = await fetch(`${baseUrl}/v1/file-usage?largest=1&limit=5`, {
+        headers: { "X-WithMate-Memory-Api-Secret": TEST_API_SECRET },
+      });
+      assert.equal(largestFileUsage.status, 200);
+      const largestFileUsageJson = await largestFileUsage.json();
+      assert.deepEqual(largestFileUsageJson.largestEntries, []);
+
       const append = await postJson(baseUrl, "/v1/append", appendRequest({ idempotencyKey: "append-key-http" }));
       assert.equal(append.status, 200);
       assert.equal(append.json.created, true);
@@ -185,6 +220,24 @@ describe("MemoryV6HttpServer", () => {
       assert.equal(detail.status, 200);
       assert.equal(detail.json.entry.source.providerId, "local-user");
 
+      const getFile = await postJson(baseUrl, "/v1/get_file", {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        objectId: "a".repeat(32),
+        outputPath: "C:/exports/file.bin",
+      });
+      assert.equal(getFile.status, 422);
+      assert.equal(getFile.json.error.code, "MEMORY_FILE_EXPORT_UNIMPLEMENTED");
+
+      const exportFiles = await postJson(baseUrl, "/v1/export_files", {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        entryId: append.json.entry.id,
+        outputDirectoryPath: "C:/exports",
+      });
+      assert.equal(exportFiles.status, 422);
+      assert.equal(exportFiles.json.error.code, "MEMORY_FILE_EXPORT_UNIMPLEMENTED");
+
       const tags = await postJson(baseUrl, "/v1/list_tags", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
@@ -201,6 +254,65 @@ describe("MemoryV6HttpServer", () => {
       assert.equal(forget.status, 200);
       assert.deepEqual(forget.json.results, [{ entryId: append.json.entry.id, status: "forgotten" }]);
       assert.equal(storage.getEntry(append.json.entry.id)?.state, "forgotten");
+    });
+  });
+
+  it("appendのimporter由来errorを500にせずdomain errorで返す", async () => {
+    await withMemoryApi(async ({ baseUrl }) => {
+      const append = await postJson(baseUrl, "/v1/append", appendRequest({
+        files: [{
+          path: "C:/trace/missing.png",
+          summary: "Missing screenshot.",
+          role: "evidence",
+        }],
+      }));
+
+      assert.equal(append.status, 422);
+      assert.equal(append.json.error.code, "MEMORY_INVALID_FIELD");
+      assert.equal(append.json.error.field, "files[0].path");
+    }, {
+      protectedObjectImporter: {
+        inspect: async () => {
+          throw new MemoryProtectedObjectImportError(
+            "MEMORY_INVALID_FIELD",
+            "path",
+            "Memory protected object input file is not readable.",
+          );
+        },
+        prepare: async () => {
+          throw new Error("prepare should not be called");
+        },
+      },
+    });
+  });
+
+  it("appendのprepare失敗も500にせずfile import domain errorで返す", async () => {
+    await withMemoryApi(async ({ baseUrl }) => {
+      const append = await postJson(baseUrl, "/v1/append", appendRequest({
+        files: [{
+          path: "C:/trace/dialog.png",
+          summary: "Dialog screenshot.",
+          role: "evidence",
+        }],
+      }));
+
+      assert.equal(append.status, 422);
+      assert.equal(append.json.error.code, "MEMORY_FILE_IMPORT_FAILED");
+      assert.equal(append.json.error.field, "files[0]");
+    }, {
+      protectedObjectImporter: {
+        inspect: async () => ({
+          originalBytes: 128,
+          role: "evidence",
+          mediaKind: "image",
+          contentType: "image/png",
+          displayName: "dialog.png",
+          summary: "Dialog screenshot.",
+        }),
+        prepare: async () => {
+          throw new Error("safe storage unavailable");
+        },
+      },
     });
   });
 

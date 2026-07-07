@@ -74,6 +74,18 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:open-memory-v6-review-window",
     args: [],
   });
+  assert.deepEqual(await api.getMemoryV6FileUsage(), {
+    channel: "withmate:get-memory-v6-file-usage",
+    args: [],
+  });
+  assert.deepEqual(await api.exportMemoryV6EntryFiles("mem-1"), {
+    channel: "withmate:export-memory-v6-entry-files",
+    args: ["mem-1"],
+  });
+  assert.deepEqual(await api.runMemoryV6ProtectedObjectGc({ dryRun: true }), {
+    channel: "withmate:run-memory-v6-protected-object-gc",
+    args: [{ dryRun: true }],
+  });
   assert.deepEqual(await api.searchMemoryV6Entries({ query: "release" }), {
     channel: "withmate:search-memory-v6-entries",
     args: [{ query: "release" }],
@@ -270,6 +282,9 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getMateState",
     "getMemoryV6Diagnostics",
     "getMemoryV6Entry",
+    "exportMemoryV6EntryFiles",
+    "getMemoryV6FileUsage",
+    "runMemoryV6ProtectedObjectGc",
     "getSessionBackgroundActivity",
     "getSessionContextTelemetry",
     "getSessionMessageArtifact",

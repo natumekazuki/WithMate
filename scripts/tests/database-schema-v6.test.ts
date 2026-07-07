@@ -10,9 +10,14 @@ import {
   APP_DATABASE_V6_SCHEMA_VERSION,
   CREATE_V6_AUDIT_EVENTS_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
+  CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL,
   CREATE_V6_SCHEMA_SQL,
+  CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
+  CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
+  CREATE_V6_SESSION_TURNS_TABLE_SQL,
   REQUIRED_V6_TABLES,
   V6_SCHEMA_STATUS,
+  cleanupForbiddenV6Tables,
   ensureV6Schema,
   isValidV6Database,
   readV6DatabaseUserVersion,
@@ -172,6 +177,46 @@ describe("database-schema-v6", () => {
     }
   });
 
+  it("ensureV6Schema は V6 DB に紛れた legacy Memory table を削除しない", () => {
+    const db = createV6Schema();
+    try {
+      db.exec("CREATE TABLE companion_groups (id TEXT PRIMARY KEY);");
+      db.exec("CREATE TABLE companion_sessions (id TEXT PRIMARY KEY);");
+      db.exec("CREATE TABLE companion_messages (id TEXT PRIMARY KEY);");
+      db.exec("CREATE TABLE project_memory_entries (id TEXT PRIMARY KEY);");
+
+      ensureV6Schema(db);
+
+      const names = tableNames(db);
+      assert.equal(names.includes("companion_groups"), true);
+      assert.equal(names.includes("companion_sessions"), true);
+      assert.equal(names.includes("companion_messages"), true);
+      assert.equal(names.includes("project_memory_entries"), true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("cleanupForbiddenV6Tables は legacy Memory table を削除し、Companion table は保持する", () => {
+    const db = createV6Schema();
+    try {
+      db.exec("CREATE TABLE companion_groups (id TEXT PRIMARY KEY);");
+      db.exec("CREATE TABLE companion_sessions (id TEXT PRIMARY KEY);");
+      db.exec("CREATE TABLE companion_messages (id TEXT PRIMARY KEY);");
+      db.exec("CREATE TABLE project_memory_entries (id TEXT PRIMARY KEY);");
+
+      cleanupForbiddenV6Tables(db);
+
+      const names = tableNames(db);
+      assert.equal(names.includes("companion_groups"), true);
+      assert.equal(names.includes("companion_sessions"), true);
+      assert.equal(names.includes("companion_messages"), true);
+      assert.equal(names.includes("project_memory_entries"), false);
+    } finally {
+      db.close();
+    }
+  });
+
   it("V6 project scope と session/message/audit の最小 schema を固定する", () => {
     const db = createV6Schema();
     try {
@@ -238,20 +283,62 @@ describe("database-schema-v6", () => {
       assert.equal(findForeignKey(db, "auxiliary_sessions", "parent_session_id"), undefined);
       assert.equal(tableSql(db, "auxiliary_sessions").includes("status IN ('active', 'closed')"), true);
 
-      assert.deepEqual(columnNames(db, "audit_events_v6"), [
+      assert.deepEqual(columnNames(db, "session_turns_v6"), [
         "id",
         "session_id",
         "auxiliary_session_id",
-        "event_type",
+        "phase",
         "provider_id",
+        "model_id",
+        "reasoning_effort",
+        "approval_mode",
+        "sandbox_mode",
+        "user_message_seq",
+        "assistant_message_seq",
+        "thread_id",
         "summary",
-        "metadata_json",
+        "error_summary",
+        "started_at",
+        "completed_at",
+        "updated_at",
+      ]);
+      assert.equal(findForeignKey(db, "session_turns_v6", "session_id")?.table, "sessions_v6");
+      assert.equal(findForeignKey(db, "session_turns_v6", "session_id")?.on_delete.toUpperCase(), "CASCADE");
+      assert.equal(findForeignKey(db, "session_turns_v6", "auxiliary_session_id")?.table, "auxiliary_sessions");
+      assert.equal(findForeignKey(db, "session_turns_v6", "auxiliary_session_id")?.on_delete.toUpperCase(), "CASCADE");
+      assert.equal(tableSql(db, "session_turns_v6").includes("phase IN ('running', 'completed', 'failed', 'canceled')"), true);
+      assert.equal(tableSql(db, "session_turns_v6").includes("session_id IS NOT NULL OR auxiliary_session_id IS NOT NULL"), true);
+      assert.equal(tableSql(db, "session_turns_v6").includes("NOT (session_id IS NOT NULL AND auxiliary_session_id IS NOT NULL)"), true);
+
+      assert.deepEqual(columnNames(db, "session_turn_interims_v6"), [
+        "id",
+        "turn_id",
+        "seq",
+        "body",
+        "source",
         "created_at",
       ]);
-      assert.equal(findForeignKey(db, "audit_events_v6", "session_id")?.table, "sessions_v6");
-      assert.equal(findForeignKey(db, "audit_events_v6", "auxiliary_session_id")?.table, "auxiliary_sessions");
-      assert.equal(tableSql(db, "audit_events_v6").includes("'memory_mutation'"), true);
-      assert.equal(tableSql(db, "audit_events_v6").includes("'runtime_binding'"), true);
+      assert.equal(findForeignKey(db, "session_turn_interims_v6", "turn_id")?.table, "session_turns_v6");
+      assert.equal(findForeignKey(db, "session_turn_interims_v6", "turn_id")?.on_delete.toUpperCase(), "CASCADE");
+      assert.equal(tableSql(db, "session_turn_interims_v6").includes("source IN ('stream_delta', 'running_snapshot', 'migration')"), true);
+
+      assert.deepEqual(columnNames(db, "session_turn_provider_outputs_v6"), [
+        "id",
+        "turn_id",
+        "seq",
+        "provider_id",
+        "kind",
+        "summary",
+        "payload_json",
+        "payload_blob_id",
+        "created_at",
+      ]);
+      assert.equal(findForeignKey(db, "session_turn_provider_outputs_v6", "turn_id")?.table, "session_turns_v6");
+      assert.equal(findForeignKey(db, "session_turn_provider_outputs_v6", "turn_id")?.on_delete.toUpperCase(), "CASCADE");
+      assert.equal(tableSql(db, "session_turn_provider_outputs_v6").includes("'logical_prompt'"), true);
+      assert.equal(tableSql(db, "session_turn_provider_outputs_v6").includes("'context_telemetry'"), true);
+      assert.equal(tableSql(db, "session_turn_provider_outputs_v6").includes("json_valid(payload_json)"), true);
+
     } finally {
       db.close();
     }
@@ -387,6 +474,29 @@ describe("database-schema-v6", () => {
       assert.equal(tableSql(db, "memory_mutation_events_v6").includes("binding_id_hash"), true);
       assert.equal(tableSql(db, "memory_mutation_events_v6").includes("result_status TEXT NOT NULL"), true);
       assert.equal(tableSql(db, "memory_mutation_events_v6").includes("'already_forgotten'"), true);
+
+      assert.deepEqual(columnNames(db, "memory_protected_objects_v6"), [
+        "object_id",
+        "entry_id",
+        "state",
+        "role",
+        "media_kind",
+        "content_type",
+        "display_name",
+        "summary",
+        "original_bytes",
+        "stored_bytes",
+        "sha256",
+        "key_id",
+        "created_at",
+        "updated_at",
+        "deleted_at",
+      ]);
+      assert.equal(findForeignKey(db, "memory_protected_objects_v6", "entry_id")?.table, "memory_entries_v6");
+      assert.equal(tableSql(db, "memory_protected_objects_v6").includes("'active', 'delete_pending', 'deleted'"), true);
+      assert.equal(tableSql(db, "memory_protected_objects_v6").includes("'evidence', 'source', 'snapshot', 'artifact', 'reference', 'other'"), true);
+      assert.equal(tableSql(db, "memory_protected_objects_v6").includes("original_bytes >= 0"), true);
+      assert.equal(tableSql(db, "memory_protected_objects_v6").includes("stored_bytes >= 0"), true);
     } finally {
       db.close();
     }
@@ -494,6 +604,49 @@ describe("database-schema-v6", () => {
         | undefined;
       assert.equal(row?.created_at, "2026-07-04T00:00:00.000Z");
       assert.equal(row?.updated_at, "2026-07-04T00:00:00.000Z");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ensureV6Schema は既存 protected object metadata に role を backfill する", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(`
+        PRAGMA foreign_keys = ON;
+      `);
+
+      for (const statement of CREATE_V6_SCHEMA_SQL) {
+        if (statement !== CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL) {
+          db.exec(statement);
+        }
+      }
+
+      db.exec(`
+        CREATE TABLE memory_protected_objects_v6 (
+          object_id TEXT PRIMARY KEY,
+          entry_id TEXT NOT NULL,
+          state TEXT NOT NULL CHECK (state IN ('active', 'delete_pending', 'deleted')),
+          media_kind TEXT NOT NULL DEFAULT 'other',
+          content_type TEXT NOT NULL DEFAULT '',
+          display_name TEXT NOT NULL DEFAULT '',
+          summary TEXT NOT NULL,
+          original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
+          stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0),
+          sha256 TEXT NOT NULL DEFAULT '',
+          key_id TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          deleted_at TEXT,
+          FOREIGN KEY (entry_id) REFERENCES memory_entries_v6(id) ON DELETE CASCADE,
+          CHECK ((state = 'deleted') = (deleted_at IS NOT NULL))
+        );
+      `);
+
+      ensureV6Schema(db);
+
+      assert.equal(columnNames(db, "memory_protected_objects_v6").includes("role"), true);
+      assert.equal(tableSql(db, "memory_protected_objects_v6").includes("'evidence', 'source', 'snapshot', 'artifact', 'reference', 'other'"), true);
     } finally {
       db.close();
     }
@@ -648,7 +801,13 @@ describe("database-schema-v6", () => {
       `);
 
       for (const statement of CREATE_V6_SCHEMA_SQL) {
-        if (statement !== CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL && statement !== CREATE_V6_AUDIT_EVENTS_TABLE_SQL) {
+        if (
+          statement !== CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
+          && statement !== CREATE_V6_SESSION_TURNS_TABLE_SQL
+          && statement !== CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL
+          && statement !== CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL
+          && statement !== CREATE_V6_AUDIT_EVENTS_TABLE_SQL
+        ) {
           db.exec(statement);
         }
       }

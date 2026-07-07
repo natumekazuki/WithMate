@@ -3,6 +3,7 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
 import type {
   MemoryEntryKind,
+  MemoryAppendFileRole,
   MemoryForgetReason,
   NormalizedMemoryTag,
 } from "../src/memory-v6/memory-contract.js";
@@ -15,6 +16,7 @@ import {
   toMemorySearchHit,
   type ActiveMemoryEntryDetail,
   type MemoryEntryDetail,
+  type MemoryFileSummary,
   type MemorySearchHit,
   type MemorySearchMatch,
   type MemorySearchMatchField,
@@ -45,6 +47,8 @@ type AppendMemoryEntryInput = {
   idempotencyKey?: string;
   bindingIdHash?: string;
   requestFingerprint?: string;
+  protectedObjects?: readonly MemoryV6AppendProtectedObjectInput[];
+  fileQuotaBytes?: number;
   now?: string;
 };
 
@@ -99,6 +103,61 @@ export type MemoryV6ReviewForgetInput = {
   now?: string;
 };
 
+export type MemoryV6FileUsage = {
+  usedBytes: number;
+  physicalBytes: number;
+  pendingDeleteBytes: number;
+  objectCount: number;
+  pendingDeleteCount: number;
+};
+
+export type MemoryV6LargestFileEntry = {
+  entryId: string;
+  title: string;
+  preview: string;
+  totalFileBytes: number;
+  fileCount: number;
+  updatedAt: string;
+};
+
+export type MemoryV6ProtectedObjectMediaKind =
+  | "image"
+  | "text"
+  | "source"
+  | "archive"
+  | "document"
+  | "other";
+
+export type MemoryV6AppendProtectedObjectInput = {
+  objectId: string;
+  role: MemoryAppendFileRole;
+  mediaKind: MemoryV6ProtectedObjectMediaKind;
+  contentType?: string;
+  displayName?: string;
+  summary: string;
+  originalBytes: number;
+  storedBytes: number;
+  sha256: string;
+  keyId: string;
+};
+
+export type MemoryV6ProtectedObjectExportMetadata = {
+  objectId: string;
+  entryId: string;
+  contentType: string;
+  displayName: string;
+  originalBytes: number;
+  storedBytes: number;
+  sha256: string;
+  keyId: string;
+};
+
+export type MemoryV6ProtectedObjectGcCandidate = {
+  objectId: string;
+  storedBytes: number;
+  updatedAt: string;
+};
+
 export class MemoryV6IdempotencyConflictError extends Error {
   constructor() {
     super("Memory V6 idempotency key was reused with a different request.");
@@ -111,6 +170,20 @@ export class MemoryV6EntryNotFoundError extends Error {
   }
 }
 
+export class MemoryV6FileQuotaExceededError extends Error {
+  constructor(
+    readonly quotaBytes: number,
+    readonly usedBytes: number,
+    readonly incomingBytes: number,
+  ) {
+    super("Memory V6 file quota would be exceeded.");
+  }
+
+  get availableBytes(): number {
+    return Math.max(0, this.quotaBytes - this.usedBytes);
+  }
+}
+
 type IdempotencyRow = {
   response_entry_id: string | null;
   operation_created: number;
@@ -119,6 +192,24 @@ type IdempotencyRow = {
 
 const DEFAULT_SEARCH_LIMIT = 20;
 const MAX_SEARCH_LIMIT = 50;
+const PROTECTED_OBJECT_ID_PATTERN = /^[a-f0-9]{32}$/;
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
+const PROTECTED_OBJECT_MEDIA_KINDS = new Set<MemoryV6ProtectedObjectMediaKind>([
+  "image",
+  "text",
+  "source",
+  "archive",
+  "document",
+  "other",
+]);
+const PROTECTED_OBJECT_ROLES = new Set<MemoryAppendFileRole>([
+  "evidence",
+  "source",
+  "snapshot",
+  "artifact",
+  "reference",
+  "other",
+]);
 
 function sha256Hex(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
@@ -166,6 +257,27 @@ type ScoredSearchEntry = {
   row: MemoryV6EntryRow;
   entry: ActiveMemoryEntryDetail;
   match: MemorySearchMatch;
+};
+
+type MemoryV6ProtectedObjectSummaryRow = {
+  object_id: string;
+  role: MemoryAppendFileRole;
+  media_kind: MemoryFileSummary["mediaKind"];
+  content_type: string;
+  display_name: string;
+  summary: string;
+  original_bytes: number;
+};
+
+type MemoryV6ProtectedObjectExportRow = {
+  object_id: string;
+  entry_id: string;
+  content_type: string;
+  display_name: string;
+  original_bytes: number;
+  stored_bytes: number;
+  sha256: string;
+  key_id: string;
 };
 
 function encodeCursor(cursor: SearchCursor): string {
@@ -325,6 +437,18 @@ function buildAppendFingerprint(input: AppendMemoryEntryInput): string {
     })),
     source: input.source,
     supersedes: [...(input.supersedes ?? [])].sort(),
+    protectedObjects: (input.protectedObjects ?? []).map((object) => ({
+      objectId: object.objectId,
+      role: object.role,
+      mediaKind: object.mediaKind,
+      contentType: object.contentType ?? "",
+      displayName: object.displayName ?? "",
+      summary: object.summary,
+      originalBytes: object.originalBytes,
+      storedBytes: object.storedBytes,
+      sha256: object.sha256,
+      keyId: object.keyId,
+    })),
   });
 }
 
@@ -351,6 +475,43 @@ function uniqueIds(ids: readonly string[]): string[] {
   return normalized;
 }
 
+function normalizeProtectedObjects(
+  protectedObjects: readonly MemoryV6AppendProtectedObjectInput[],
+): MemoryV6AppendProtectedObjectInput[] {
+  return protectedObjects.map((object) => {
+    if (!PROTECTED_OBJECT_ID_PATTERN.test(object.objectId)) {
+      throw new Error("Memory protected object ID is invalid.");
+    }
+    if (!SHA256_HEX_PATTERN.test(object.sha256)) {
+      throw new Error("Memory protected object sha256 is invalid.");
+    }
+    if (!PROTECTED_OBJECT_MEDIA_KINDS.has(object.mediaKind)) {
+      throw new Error("Memory protected object media kind is invalid.");
+    }
+    if (!PROTECTED_OBJECT_ROLES.has(object.role)) {
+      throw new Error("Memory protected object role is invalid.");
+    }
+    if (object.keyId.trim().length === 0) {
+      throw new Error("Memory protected object key id is required.");
+    }
+    if (object.summary.trim().length === 0) {
+      throw new Error("Memory protected object summary is required.");
+    }
+    if (!Number.isSafeInteger(object.originalBytes) || object.originalBytes < 0) {
+      throw new Error("Memory protected object original bytes are invalid.");
+    }
+    if (!Number.isSafeInteger(object.storedBytes) || object.storedBytes < 0) {
+      throw new Error("Memory protected object stored bytes are invalid.");
+    }
+    return {
+      ...object,
+      contentType: object.contentType?.trim() ?? "",
+      displayName: object.displayName?.trim() ?? "",
+      summary: object.summary.trim(),
+    };
+  });
+}
+
 export class MemoryV6Storage {
   private readonly db: DatabaseSync;
 
@@ -361,11 +522,26 @@ export class MemoryV6Storage {
     this.db = openAppDatabase(dbPath);
   }
 
+  resolveAppendIdempotencyReplay(input: {
+    target: MemoryV6ResolvedTarget;
+    idempotencyKey: string;
+    bindingIdHash?: string;
+    requestFingerprint: string;
+  }): MemoryV6AppendResult | null {
+    return this.resolveAppendIdempotency(
+      input.target,
+      input.idempotencyKey,
+      input.bindingIdHash ?? "",
+      input.requestFingerprint,
+    );
+  }
+
   appendEntry(input: AppendMemoryEntryInput): MemoryV6AppendResult {
     const createdAt = input.now ?? nowIso();
     const entryId = input.id ?? `mem-${randomUUID()}`;
     const bindingIdHash = input.bindingIdHash ?? "";
     const requestFingerprint = input.requestFingerprint ?? buildAppendFingerprint(input);
+    const protectedObjects = normalizeProtectedObjects(input.protectedObjects ?? []);
 
     return this.transaction(() => {
       if (input.idempotencyKey) {
@@ -383,6 +559,7 @@ export class MemoryV6Storage {
         }
         return row;
       });
+      this.assertProtectedObjectQuota(protectedObjects, input.fileQuotaBytes);
 
       this.db.prepare(`
         INSERT INTO memory_entries_v6 (
@@ -429,6 +606,7 @@ export class MemoryV6Storage {
 
       this.replaceTags(entryId, input.tags, createdAt);
       this.incrementTagCatalog(input.tags, createdAt);
+      this.insertProtectedObjects(entryId, protectedObjects, createdAt);
 
       for (const supersededRow of supersededRows) {
         this.db.prepare(`
@@ -643,6 +821,206 @@ export class MemoryV6Storage {
     };
   }
 
+  getFileUsage(): MemoryV6FileUsage {
+    const row = this.db.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN state = 'active' THEN original_bytes ELSE 0 END), 0) AS used_bytes,
+        COALESCE(SUM(CASE WHEN state IN ('active', 'delete_pending') THEN stored_bytes ELSE 0 END), 0) AS physical_bytes,
+        COALESCE(SUM(CASE WHEN state = 'delete_pending' THEN stored_bytes ELSE 0 END), 0) AS pending_delete_bytes,
+        COALESCE(SUM(CASE WHEN state = 'active' THEN 1 ELSE 0 END), 0) AS object_count,
+        COALESCE(SUM(CASE WHEN state = 'delete_pending' THEN 1 ELSE 0 END), 0) AS pending_delete_count
+      FROM memory_protected_objects_v6
+    `).get() as {
+      used_bytes?: number;
+      physical_bytes?: number;
+      pending_delete_bytes?: number;
+      object_count?: number;
+      pending_delete_count?: number;
+    } | undefined;
+
+    return {
+      usedBytes: Number(row?.used_bytes ?? 0),
+      physicalBytes: Number(row?.physical_bytes ?? 0),
+      pendingDeleteBytes: Number(row?.pending_delete_bytes ?? 0),
+      objectCount: Number(row?.object_count ?? 0),
+      pendingDeleteCount: Number(row?.pending_delete_count ?? 0),
+    };
+  }
+
+  listLargestFileEntries(input: { limit: number }): MemoryV6LargestFileEntry[] {
+    const requestedLimit = Math.floor(input.limit);
+    const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(50, requestedLimit)) : 20;
+    const rows = this.db.prepare(`
+      SELECT
+        e.id AS entry_id,
+        e.title AS title,
+        e.preview AS preview,
+        e.updated_at AS updated_at,
+        COALESCE(SUM(o.original_bytes), 0) AS total_file_bytes,
+        COUNT(o.object_id) AS file_count
+      FROM memory_protected_objects_v6 AS o
+      INNER JOIN memory_entries_v6 AS e ON e.id = o.entry_id
+      WHERE o.state = 'active'
+        AND e.state = 'active'
+      GROUP BY e.id, e.title, e.preview, e.updated_at
+      HAVING file_count > 0
+      ORDER BY total_file_bytes DESC, e.updated_at DESC, e.id ASC
+      LIMIT ?
+    `).all(limit) as Array<{
+      entry_id: string;
+      title: string;
+      preview: string;
+      updated_at: string;
+      total_file_bytes: number;
+      file_count: number;
+    }>;
+
+    return rows.map((row) => ({
+      entryId: row.entry_id,
+      title: row.title,
+      preview: row.preview,
+      totalFileBytes: Number(row.total_file_bytes),
+      fileCount: Number(row.file_count),
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  getProtectedObjectForExport(input: {
+    target: MemoryV6ResolvedTarget;
+    objectId: string;
+  }): MemoryV6ProtectedObjectExportMetadata | null {
+    if (!PROTECTED_OBJECT_ID_PATTERN.test(input.objectId)) {
+      return null;
+    }
+    const row = this.db.prepare(`
+      SELECT
+        o.object_id,
+        o.entry_id,
+        o.content_type,
+        o.display_name,
+        o.original_bytes,
+        o.stored_bytes,
+        o.sha256,
+        o.key_id
+      FROM memory_protected_objects_v6 AS o
+      INNER JOIN memory_entries_v6 AS e ON e.id = o.entry_id
+      WHERE o.object_id = ?
+        AND o.state = 'active'
+        AND e.state = 'active'
+        AND e.owner_type = ?
+        AND e.owner_id = ?
+        AND e.scope_type = ?
+        AND e.scope_id = ?
+    `).get(
+      input.objectId,
+      input.target.owner.type,
+      input.target.owner.id,
+      input.target.scope.type,
+      input.target.scope.id,
+    ) as MemoryV6ProtectedObjectExportRow | undefined;
+
+    if (!row) {
+      return null;
+    }
+    return {
+      objectId: row.object_id,
+      entryId: row.entry_id,
+      contentType: row.content_type,
+      displayName: row.display_name,
+      originalBytes: Number(row.original_bytes),
+      storedBytes: Number(row.stored_bytes),
+      sha256: row.sha256,
+      keyId: row.key_id,
+    };
+  }
+
+  listProtectedObjectsForEntryExport(input: {
+    target: MemoryV6ResolvedTarget;
+    entryId: string;
+  }): MemoryV6ProtectedObjectExportMetadata[] | null {
+    const entryRow = this.getEntryRow(input.entryId);
+    if (!entryRow || entryRow.state !== "active" || !this.rowMatchesTarget(entryRow, input.target)) {
+      return null;
+    }
+
+    const rows = this.db.prepare(`
+      SELECT
+        object_id,
+        entry_id,
+        content_type,
+        display_name,
+        original_bytes,
+        stored_bytes,
+        sha256,
+        key_id
+      FROM memory_protected_objects_v6
+      WHERE entry_id = ?
+        AND state = 'active'
+      ORDER BY created_at ASC, object_id ASC
+    `).all(input.entryId) as MemoryV6ProtectedObjectExportRow[];
+
+    return rows.map((row) => ({
+      objectId: row.object_id,
+      entryId: row.entry_id,
+      contentType: row.content_type,
+      displayName: row.display_name,
+      originalBytes: Number(row.original_bytes),
+      storedBytes: Number(row.stored_bytes),
+      sha256: row.sha256,
+      keyId: row.key_id,
+    }));
+  }
+
+  listDeletePendingProtectedObjectsForGc(input: { limit: number }): MemoryV6ProtectedObjectGcCandidate[] {
+    const requestedLimit = Math.floor(input.limit);
+    const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(500, requestedLimit)) : 100;
+    const rows = this.db.prepare(`
+      SELECT object_id, stored_bytes, updated_at
+      FROM memory_protected_objects_v6
+      WHERE state = 'delete_pending'
+      ORDER BY updated_at ASC, object_id ASC
+      LIMIT ?
+    `).all(limit) as Array<{
+      object_id: string;
+      stored_bytes: number;
+      updated_at: string;
+    }>;
+
+    return rows.map((row) => ({
+      objectId: row.object_id,
+      storedBytes: Number(row.stored_bytes),
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  listProtectedObjectIdsForGc(input: { states: readonly ("active" | "delete_pending")[] }): string[] {
+    const states = input.states.filter((state) => state === "active" || state === "delete_pending");
+    if (states.length === 0) {
+      return [];
+    }
+    const placeholders = states.map(() => "?").join(", ");
+    const rows = this.db.prepare(`
+      SELECT object_id
+      FROM memory_protected_objects_v6
+      WHERE state IN (${placeholders})
+      ORDER BY object_id ASC
+    `).all(...states) as Array<{ object_id: string }>;
+    return rows.map((row) => row.object_id);
+  }
+
+  markProtectedObjectDeletedForGc(input: { objectId: string; deletedAt?: string }): boolean {
+    const deletedAt = input.deletedAt ?? nowIso();
+    const result = this.db.prepare(`
+      UPDATE memory_protected_objects_v6
+      SET state = 'deleted',
+          updated_at = ?,
+          deleted_at = ?
+      WHERE object_id = ?
+        AND state = 'delete_pending'
+    `).run(deletedAt, deletedAt, input.objectId);
+    return result.changes > 0;
+  }
+
   private scoreSearchEntry(
     entry: ActiveMemoryEntryDetail,
     queryPlan: SearchQueryPlan,
@@ -753,6 +1131,7 @@ export class MemoryV6Storage {
           if (reason === "privacy") {
             this.redactForgottenEntryForPrivacy(entryId, updatedAt);
           }
+          this.markProtectedObjectsDeletePendingForEntry(entryId, updatedAt, { redactMetadata: reason === "privacy" });
           this.insertMutationEvent("forget", entryId, bindingIdHash, input.sessionId ?? row.source_session_id, "already_forgotten", reason, updatedAt);
           return { entryId, status: "already_forgotten" };
         }
@@ -779,6 +1158,7 @@ export class MemoryV6Storage {
         if (reason === "privacy") {
           this.db.prepare("DELETE FROM memory_entry_tags_v6 WHERE entry_id = ?").run(entryId);
         }
+        this.markProtectedObjectsDeletePendingForEntry(entryId, updatedAt, { redactMetadata: reason === "privacy" });
         this.insertMutationEvent("forget", entryId, bindingIdHash, input.sessionId ?? row.source_session_id, "success", reason, updatedAt);
         return { entryId, status: "forgotten" };
       });
@@ -824,6 +1204,79 @@ export class MemoryV6Storage {
 
       return results;
     });
+  }
+
+  private markProtectedObjectsDeletePendingForEntry(
+    entryId: string,
+    updatedAt: string,
+    options: { redactMetadata?: boolean } = {},
+  ): void {
+    this.db.prepare(`
+      UPDATE memory_protected_objects_v6
+      SET state = 'delete_pending',
+          summary = CASE WHEN ? THEN '' ELSE summary END,
+          display_name = CASE WHEN ? THEN '' ELSE display_name END,
+          updated_at = ?,
+          deleted_at = NULL
+      WHERE entry_id = ?
+        AND state = 'active'
+    `).run(options.redactMetadata ? 1 : 0, options.redactMetadata ? 1 : 0, updatedAt, entryId);
+  }
+
+  private assertProtectedObjectQuota(
+    protectedObjects: readonly MemoryV6AppendProtectedObjectInput[],
+    fileQuotaBytes: number | undefined,
+  ): void {
+    if (protectedObjects.length === 0 || fileQuotaBytes === undefined) {
+      return;
+    }
+    const usage = this.getFileUsage();
+    const incomingBytes = protectedObjects.reduce((total, object) => total + object.originalBytes, 0);
+    if (usage.usedBytes + incomingBytes > fileQuotaBytes) {
+      throw new MemoryV6FileQuotaExceededError(fileQuotaBytes, usage.usedBytes, incomingBytes);
+    }
+  }
+
+  private insertProtectedObjects(
+    entryId: string,
+    protectedObjects: readonly MemoryV6AppendProtectedObjectInput[],
+    createdAt: string,
+  ): void {
+    for (const object of protectedObjects) {
+      this.db.prepare(`
+        INSERT INTO memory_protected_objects_v6 (
+          object_id,
+          entry_id,
+          state,
+          role,
+          media_kind,
+          content_type,
+          display_name,
+          summary,
+          original_bytes,
+          stored_bytes,
+          sha256,
+          key_id,
+          created_at,
+          updated_at,
+          deleted_at
+        ) VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+      `).run(
+        object.objectId,
+        entryId,
+        object.role,
+        object.mediaKind,
+        object.contentType ?? "",
+        object.displayName ?? "",
+        object.summary,
+        object.originalBytes,
+        object.storedBytes,
+        object.sha256,
+        object.keyId,
+        createdAt,
+        createdAt,
+      );
+    }
   }
 
   forgetEntryForReview(input: MemoryV6ReviewForgetInput): MemoryV6ReviewForgetResult {
@@ -892,6 +1345,7 @@ export class MemoryV6Storage {
   }
 
   private rowToEntry(row: MemoryV6EntryRow, tags = this.getEntryTags(row.id)): MemoryEntryDetail {
+    const files = row.state === "active" ? this.getEntryFileSummaries(row.id) : [];
     const base = {
       id: row.id,
       owner: ownerRef(row),
@@ -910,6 +1364,7 @@ export class MemoryV6Storage {
       supersedes: this.getSupersedes(row.id),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      ...(files.length > 0 ? { files } : {}),
     };
 
     if (row.state === "active") {
@@ -939,6 +1394,33 @@ export class MemoryV6Storage {
       supersededBy: row.superseded_by_id,
       forgottenAt: row.forgotten_at ?? row.updated_at,
     };
+  }
+
+  private getEntryFileSummaries(entryId: string): MemoryFileSummary[] {
+    const rows = this.db.prepare(`
+      SELECT
+        object_id,
+        role,
+        media_kind,
+        content_type,
+        display_name,
+        summary,
+        original_bytes
+      FROM memory_protected_objects_v6
+      WHERE entry_id = ?
+        AND state = 'active'
+      ORDER BY created_at ASC, object_id ASC
+    `).all(entryId) as MemoryV6ProtectedObjectSummaryRow[];
+
+    return rows.map((row) => ({
+      objectId: row.object_id,
+      role: row.role,
+      mediaKind: row.media_kind,
+      contentType: row.content_type,
+      displayName: row.display_name,
+      summary: row.summary,
+      originalBytes: Number(row.original_bytes),
+    }));
   }
 
   private getEntryTags(entryId: string): NormalizedMemoryTag[] {

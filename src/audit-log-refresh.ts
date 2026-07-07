@@ -126,8 +126,8 @@ export function buildAuditLogRefreshSignature(input: BuildAuditLogRefreshSignatu
 
 // persisted audit logs と live run state を統合して、UI に表示する audit log 配列を生成する。
 // - live run が無い、または session 自体が running でない場合は persisted をそのまま返す (stale live state 抑止)
-// - persisted に running row がある場合は、そこへ live state をマージ
-// - persisted に running row が無く、session が running 中なら synthetic running row を先頭に挿入
+// - persisted に live run と同じ sessionId の running row がある場合は、そこへ live state をマージ
+// - 該当 running row が無く、session が running 中なら synthetic running row を先頭に挿入
 //   (前回の run が completed で persisted に残っていても、新しい live run があれば synthetic row を表示する)
 export function buildDisplayedAuditLogs(input: BuildDisplayedAuditLogsInput): AuditLogSummary[] {
   // live run が無い、または session 自体が running でない場合は persisted をそのまま返す
@@ -140,16 +140,20 @@ export function buildDisplayedAuditLogs(input: BuildDisplayedAuditLogsInput): Au
     return input.persistedEntries.map(suppressIncompleteRunningDetail);
   }
 
-  // persisted に running row がある場合は live state でマージ
-  const runningEntryIndex = input.persistedEntries.findIndex((entry) => entry.phase === "running");
+  // parent owner の AuditLog では複数 sessionId の row が混在するため、
+  // live run と同じ sessionId の running row だけを merge 対象にする。
+  const runningEntryIndex = input.persistedEntries.findIndex((entry) =>
+    entry.phase === "running" && entry.sessionId === liveRun.sessionId
+  );
   if (runningEntryIndex >= 0) {
     return input.persistedEntries.map((entry, index) =>
-      index === runningEntryIndex ? mergeRunningAuditLogEntry(entry, liveRun) : entry,
+      index === runningEntryIndex ? mergeRunningAuditLogEntry(entry, liveRun) : suppressIncompleteRunningDetail(entry),
     );
   }
 
   // persisted に running row が無い場合は synthetic running row を先頭に挿入
   // (先頭が terminal でも、session.runState === "running" なら新しい run が開始されているので挿入する)
   const syntheticEntry = buildSyntheticRunningAuditLog(input.selectedSession, input.persistedEntries, liveRun);
-  return syntheticEntry ? [syntheticEntry, ...input.persistedEntries] : input.persistedEntries;
+  const suppressedEntries = input.persistedEntries.map(suppressIncompleteRunningDetail);
+  return syntheticEntry ? [syntheticEntry, ...suppressedEntries] : suppressedEntries;
 }

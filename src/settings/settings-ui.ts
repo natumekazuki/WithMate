@@ -31,6 +31,9 @@ export const SETTINGS_RELEASE_COMPATIBILITY_NOTE =
   "初回リリース前のため、設定 schema の後方互換性は考慮しない。";
 export const SETTINGS_LAUNCH_AT_LOGIN_LABEL = "PC 起動時に WithMate をバックグラウンドで起動する";
 export const SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL = "送信後に Action Dock を自動で閉じる";
+export const SETTINGS_MEMORY_FILE_QUOTA_LABEL = "Memory file quota";
+export const SETTINGS_MEMORY_FILE_QUOTA_HELP =
+  "Protected Object の全体容量上限。現在使用量が上限を超えている場合、新しい file append は失敗する。";
 export const SETTINGS_RESET_DATABASE_LABEL = "DB を初期化";
 export const SETTINGS_RESET_DATABASE_HELP =
   "Danger Zone: app settings などの DB 内容を初期化する。";

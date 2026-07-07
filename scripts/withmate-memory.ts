@@ -19,8 +19,10 @@ import {
 import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
 import {
   validateMemoryAppendRequest,
+  validateMemoryExportFilesRequest,
   validateMemoryForgetRequest,
   validateMemoryGetEntryRequest,
+  validateMemoryGetFileRequest,
   validateMemoryListTagsRequest,
   validateMemorySearchRequest,
 } from "../src/memory-v6/memory-validation.js";
@@ -42,8 +44,11 @@ export type WithMateMemoryCliCommand =
   | "help"
   | "status"
   | "characters"
+  | "file_usage"
   | "search"
   | "get_entry"
+  | "get_file"
+  | "export_files"
   | "list_tags"
   | "append"
   | "forget"
@@ -51,7 +56,7 @@ export type WithMateMemoryCliCommand =
   | "validate";
 
 export type WithMateMemoryApiCommand = Exclude<WithMateMemoryCliCommand, "help" | "schema" | "validate">;
-export type WithMateMemoryValidatedCommand = Exclude<WithMateMemoryApiCommand, "status" | "characters">;
+export type WithMateMemoryValidatedCommand = Exclude<WithMateMemoryApiCommand, "status" | "characters" | "file_usage">;
 
 export type WithMateMemoryCliRequest = {
   command: WithMateMemoryCliCommand;
@@ -75,20 +80,49 @@ export type WithMateMemoryCliDeps = {
   fetch?: typeof fetch;
   readFile?: typeof readFile;
   requestTimeoutMs?: number;
+  fileOperationRequestTimeoutMs?: number;
 };
 
 const routeByCommand: Record<WithMateMemoryApiCommand, { method: "GET" | "POST"; path: string }> = {
   status: { method: "GET", path: "/v1/status" },
   characters: { method: "GET", path: "/v1/characters" },
+  file_usage: { method: "GET", path: "/v1/file_usage" },
   search: { method: "POST", path: "/v1/search" },
   get_entry: { method: "POST", path: "/v1/get_entry" },
+  get_file: { method: "POST", path: "/v1/get_file" },
+  export_files: { method: "POST", path: "/v1/export_files" },
   list_tags: { method: "POST", path: "/v1/list_tags" },
   append: { method: "POST", path: "/v1/append" },
   forget: { method: "POST", path: "/v1/forget" },
 };
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+function buildRoutePath(request: WithMateMemoryCliRequest): string {
+  const route = routeByCommand[request.command as WithMateMemoryApiCommand];
+  if (request.command !== "file_usage" || !request.body || typeof request.body !== "object") {
+    return route.path;
+  }
+
+  const body = request.body as { largest?: unknown; limit?: unknown };
+  const query = new URLSearchParams();
+  if (body.largest === true) {
+    query.set("largest", "1");
+  }
+  if (typeof body.limit === "number") {
+    query.set("limit", String(body.limit));
+  }
+  const queryString = query.toString();
+  return queryString ? `${route.path}?${queryString}` : route.path;
+}
+
+export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+export const DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS = 300_000;
 const WITHMATE_MEMORY_API_SECRET_HEADER = "x-withmate-memory-api-secret";
+
+const FILE_OPERATION_COMMANDS = new Set<WithMateMemoryApiCommand>([
+  "append",
+  "get_file",
+  "export_files",
+]);
 
 const commandAliases = new Map<string, WithMateMemoryCliCommand>([
   ["help", "help"],
@@ -96,9 +130,15 @@ const commandAliases = new Map<string, WithMateMemoryCliCommand>([
   ["characters", "characters"],
   ["list-characters", "characters"],
   ["list_characters", "characters"],
+  ["file-usage", "file_usage"],
+  ["file_usage", "file_usage"],
   ["search", "search"],
   ["get-entry", "get_entry"],
   ["get_entry", "get_entry"],
+  ["get-file", "get_file"],
+  ["get_file", "get_file"],
+  ["export-files", "export_files"],
+  ["export_files", "export_files"],
   ["list-tags", "list_tags"],
   ["list_tags", "list_tags"],
   ["append", "append"],
@@ -115,8 +155,11 @@ Commands:
   help
   status
   characters
+  file-usage
   search
   get-entry
+  get-file
+  export-files
   list-tags
   append
   forget
@@ -136,6 +179,10 @@ Shorthand options:
   --tag <tag>
   --tags <tags>
   --entry-id <id>
+  --object-id <id>
+  --output <path>
+  --output-dir <path>
+  --largest
   --limit <n>
 
 Connection options:
@@ -143,12 +190,16 @@ Connection options:
   --discovery-file <path>
 
 Validation:
-  validate --command <search|get-entry|list-tags|append|forget>
+  validate --command <search|get-entry|get-file|export-files|list-tags|append|forget>
 
 Examples:
   withmate-memory status
   withmate-memory characters
+  withmate-memory file-usage
+  withmate-memory file-usage --largest --limit 10
   withmate-memory search --project C:\\path\\to\\repo --query "release workflow"
+  withmate-memory get-file --project C:\\path\\to\\repo --object-id <id> --output C:\\path\\to\\file.bin
+  withmate-memory export-files --project C:\\path\\to\\repo --entry-id <id> --output-dir C:\\path\\to\\exports
   withmate-memory validate --command append --stdin
   withmate-memory schema
 `;
@@ -156,6 +207,8 @@ Examples:
 const validatableCommands = new Set<WithMateMemoryValidatedCommand>([
   "search",
   "get_entry",
+  "get_file",
+  "export_files",
   "list_tags",
   "append",
   "forget",
@@ -175,11 +228,36 @@ function notRunningError(): MemoryErrorResponse {
   });
 }
 
+function requestTimeoutError(command: WithMateMemoryApiCommand, timeoutMs: number): MemoryErrorResponse {
+  return createMemoryErrorResponse({
+    code: "WITHMATE_MEMORY_REQUEST_TIMEOUT",
+    message: `WithMate Memory API request timed out after ${timeoutMs}ms.`,
+    field: command,
+  });
+}
+
 function transportError(message: string): MemoryErrorResponse {
   return createMemoryErrorResponse({
     code: "WITHMATE_MEMORY_TRANSPORT_ERROR",
     message,
   });
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+export function resolveRuntimeRequestTimeoutMs(
+  command: WithMateMemoryApiCommand,
+  deps: Pick<WithMateMemoryCliDeps, "requestTimeoutMs" | "fileOperationRequestTimeoutMs"> = {},
+): number {
+  if (deps.requestTimeoutMs !== undefined) {
+    return deps.requestTimeoutMs;
+  }
+  if (FILE_OPERATION_COMMANDS.has(command)) {
+    return deps.fileOperationRequestTimeoutMs ?? DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS;
+  }
+  return DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
 function readEnvSecret(env: NodeJS.ProcessEnv): string | undefined {
@@ -297,7 +375,7 @@ export async function parseWithMateMemoryCliArgs(
   }
   const command = rawCommand ? commandAliases.get(rawCommand) : undefined;
   if (!command) {
-    throw usageError("Usage: withmate-memory <help|status|characters|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <absolute-path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
+    throw usageError("Usage: withmate-memory <help|status|characters|file-usage|search|get-entry|get-file|export-files|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <absolute-path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--object-id <id>] [--output <path>] [--output-dir <path>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
   }
   if (command === "help" || rest.includes("--help") || rest.includes("-h")) {
     return { command: "help", body: {} };
@@ -314,6 +392,10 @@ export async function parseWithMateMemoryCliArgs(
   let query: string | undefined;
   const tagOptions: string[] = [];
   let entryId: string | undefined;
+  let objectId: string | undefined;
+  let outputPath: string | undefined;
+  let outputDirectoryPath: string | undefined;
+  let largest = false;
   let limit: number | undefined;
 
   for (let index = 0; index < rest.length; index += 1) {
@@ -348,6 +430,14 @@ export async function parseWithMateMemoryCliArgs(
       tagOptions.push(...parseTagsOption(requireOptionValue(rest, ++index, arg)));
     } else if (arg === "--entry-id") {
       entryId = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--object-id") {
+      objectId = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--output") {
+      outputPath = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--output-dir") {
+      outputDirectoryPath = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--largest") {
+      largest = true;
     } else if (arg === "--limit") {
       limit = parseLimitOption(requireOptionValue(rest, ++index, arg));
     } else {
@@ -365,11 +455,18 @@ export async function parseWithMateMemoryCliArgs(
   }
 
   if (command === "validate" && !validateCommand) {
-    throw usageError("validate requires --command <search|get-entry|list-tags|append|forget>.");
+    throw usageError("validate requires --command <search|get-entry|get-file|export-files|list-tags|append|forget>.");
   }
 
   let body: unknown = {};
-  if (command !== "status" && command !== "characters" && command !== "schema") {
+  if (command === "file_usage") {
+    if (jsonInput !== null || filePath !== null || stdinRequested) {
+      throw usageError("file-usage does not accept JSON body input. Use --largest and --limit.");
+    }
+    if (hasShorthandOptions({ projectPath, projectId, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, limit })) {
+      body = buildShorthandBody(command, { projectPath, projectId, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, limit });
+    }
+  } else if (command !== "status" && command !== "characters" && command !== "schema") {
     if (jsonInput !== null) {
       body = await parseJsonInput(jsonInput);
     } else if (filePath !== null) {
@@ -379,8 +476,8 @@ export async function parseWithMateMemoryCliArgs(
         throw usageError("--stdin requires stdin.");
       }
       body = await parseJsonInput(await readStdin(deps.stdin));
-    } else if (hasShorthandOptions({ projectPath, projectId, query, tags: tagOptions, entryId, limit })) {
-      body = buildShorthandBody(command, { projectPath, projectId, query, tags: tagOptions, entryId, limit });
+    } else if (hasShorthandOptions({ projectPath, projectId, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, limit })) {
+      body = buildShorthandBody(command, { projectPath, projectId, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, limit });
     } else if (deps.stdin && !deps.stdin.isTTY) {
       body = await parseJsonInput(await readStdin(deps.stdin));
     }
@@ -440,9 +537,24 @@ function hasShorthandOptions(options: {
   query?: string;
   tags?: readonly string[];
   entryId?: string;
+  objectId?: string;
+  outputPath?: string;
+  outputDirectoryPath?: string;
+  largest?: boolean;
   limit?: number;
 }): boolean {
-  return Boolean(options.projectPath || options.projectId || options.query || (options.tags && options.tags.length > 0) || options.entryId || options.limit !== undefined);
+  return Boolean(
+    options.projectPath
+    || options.projectId
+    || options.query
+    || (options.tags && options.tags.length > 0)
+    || options.entryId
+    || options.objectId
+    || options.outputPath
+    || options.outputDirectoryPath
+    || options.largest
+    || options.limit !== undefined,
+  );
 }
 
 function isAbsoluteCliPath(value: string): boolean {
@@ -458,6 +570,24 @@ function normalizeCliProjectPath(value: string): string {
     : path.resolve(value);
 }
 
+function normalizeCliOutputPath(value: string): string {
+  if (!isAbsoluteCliPath(value)) {
+    throw usageError("--output requires an absolute path.");
+  }
+  return path.win32.isAbsolute(value)
+    ? path.win32.normalize(value)
+    : path.resolve(value);
+}
+
+function normalizeCliOutputDirectoryPath(value: string): string {
+  if (!isAbsoluteCliPath(value)) {
+    throw usageError("--output-dir requires an absolute path.");
+  }
+  return path.win32.isAbsolute(value)
+    ? path.win32.normalize(value)
+    : path.resolve(value);
+}
+
 function buildProjectTarget(options: { projectPath?: string; projectId?: string }): unknown | null {
   if (options.projectId) {
     return { owner: "project", scope: "project", project: { type: "id", id: options.projectId } };
@@ -470,13 +600,37 @@ function buildProjectTarget(options: { projectPath?: string; projectId?: string 
 
 function buildShorthandBody(
   command: WithMateMemoryCliCommand,
-  options: { projectPath?: string; projectId?: string; query?: string; tags?: readonly string[]; entryId?: string; limit?: number },
+  options: {
+    projectPath?: string;
+    projectId?: string;
+    query?: string;
+    tags?: readonly string[];
+    entryId?: string;
+    objectId?: string;
+    outputPath?: string;
+    outputDirectoryPath?: string;
+    largest?: boolean;
+    limit?: number;
+  },
 ): unknown {
   if (command === "validate") {
     throw usageError("validate shorthand options are not supported. Use --json, --file, @file, or --stdin.");
   }
 
   const target = buildProjectTarget(options);
+  if (command === "file_usage") {
+    if (target || options.query || (options.tags && options.tags.length > 0) || options.entryId || options.objectId || options.outputPath || options.outputDirectoryPath) {
+      throw usageError("file-usage shorthand only supports --largest and --limit.");
+    }
+    if (options.limit !== undefined && !options.largest) {
+      throw usageError("file-usage --limit requires --largest.");
+    }
+    return {
+      ...(options.largest ? { largest: true } : {}),
+      ...(options.limit !== undefined ? { limit: options.limit } : {}),
+    };
+  }
+
   if (command === "search") {
     if (!target) {
       throw usageError("search shorthand requires --project <absolute-path> or --project-id <id>.");
@@ -516,6 +670,42 @@ function buildShorthandBody(
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       entryId: options.entryId,
       target,
+    };
+  }
+
+  if (command === "get_file") {
+    if (!options.objectId) {
+      throw usageError("get-file shorthand requires --object-id <id>.");
+    }
+    if (!options.outputPath) {
+      throw usageError("get-file shorthand requires --output <absolute-path>.");
+    }
+    if (!target) {
+      throw usageError("get-file shorthand requires --project <absolute-path> or --project-id <id>.");
+    }
+    return {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target,
+      objectId: options.objectId,
+      outputPath: normalizeCliOutputPath(options.outputPath),
+    };
+  }
+
+  if (command === "export_files") {
+    if (!options.entryId) {
+      throw usageError("export-files shorthand requires --entry-id <id>.");
+    }
+    if (!options.outputDirectoryPath) {
+      throw usageError("export-files shorthand requires --output-dir <absolute-path>.");
+    }
+    if (!target) {
+      throw usageError("export-files shorthand requires --project <absolute-path> or --project-id <id>.");
+    }
+    return {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target,
+      entryId: options.entryId,
+      outputDirectoryPath: normalizeCliOutputDirectoryPath(options.outputDirectoryPath),
     };
   }
 
@@ -559,8 +749,11 @@ function buildSchemaResponse(): unknown {
       "help",
       "status",
       "characters",
+      "file-usage",
       "search",
       "get-entry",
+      "get-file",
+      "export-files",
       "list-tags",
       "append",
       "forget",
@@ -606,6 +799,12 @@ function validateMemoryCliRequestBody(
   }
   if (command === "get_entry") {
     return validateMemoryGetEntryRequest(body);
+  }
+  if (command === "get_file") {
+    return validateMemoryGetFileRequest(body);
+  }
+  if (command === "export_files") {
+    return validateMemoryExportFilesRequest(body);
   }
   if (command === "list_tags") {
     return validateMemoryListTagsRequest(body);
@@ -725,17 +924,32 @@ export async function runWithMateMemoryCli(
       return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
     }
 
+    try {
+      const verifyAbortController = new AbortController();
+      const verifyTimeout = setTimeout(() => verifyAbortController.abort(), deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
+      try {
+        if (!await verifyRuntimeIdentity(connection, fetchImpl, verifyAbortController.signal)) {
+          stdout.write(`${JSON.stringify(notRunningError())}\n`);
+          return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
+        }
+      } finally {
+        clearTimeout(verifyTimeout);
+      }
+    } catch (error) {
+      if (isMemoryErrorResponse(error)) {
+        throw error;
+      }
+      stdout.write(`${JSON.stringify(notRunningError())}\n`);
+      return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
+    }
+
     const route = routeByCommand[request.command];
     let response: Response;
     let responseJson: unknown;
+    const operationTimeoutMs = resolveRuntimeRequestTimeoutMs(request.command, deps);
     const abortController = new AbortController();
-    const requestTimeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
+    const requestTimeout = setTimeout(() => abortController.abort(), operationTimeoutMs);
     try {
-      if (!await verifyRuntimeIdentity(connection, fetchImpl, abortController.signal)) {
-        stdout.write(`${JSON.stringify(notRunningError())}\n`);
-        return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
-      }
-
       const headers: Record<string, string> = {};
       if (route.method === "POST") {
         headers["Content-Type"] = "application/json";
@@ -743,7 +957,7 @@ export async function runWithMateMemoryCli(
       if (connection.apiSecret) {
         headers[WITHMATE_MEMORY_API_SECRET_HEADER] = connection.apiSecret;
       }
-      response = await fetchImpl(`${connection.baseUrl}${route.path}`, {
+      response = await fetchImpl(`${connection.baseUrl}${buildRoutePath(request)}`, {
         method: route.method,
         headers: Object.keys(headers).length > 0 ? headers : undefined,
         body: route.method === "POST" ? JSON.stringify(request.body) : undefined,
@@ -754,6 +968,10 @@ export async function runWithMateMemoryCli(
     } catch (error) {
       if (isMemoryErrorResponse(error)) {
         throw error;
+      }
+      if (isAbortError(error)) {
+        stdout.write(`${JSON.stringify(requestTimeoutError(request.command, operationTimeoutMs))}\n`);
+        return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
       }
       stdout.write(`${JSON.stringify(notRunningError())}\n`);
       return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;

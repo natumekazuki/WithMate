@@ -15,6 +15,7 @@ export type MemoryV6HttpServerOptions = {
   port?: number;
   maxBodyBytes?: number;
   requestTimeoutMs?: number;
+  fileOperationRequestTimeoutMs?: number;
   maxConcurrentRequests?: number;
 };
 
@@ -24,20 +25,42 @@ export type MemoryV6HttpServer = {
   address(): AddressInfo | null;
 };
 
-type MemoryV6Route = "characters" | "search" | "get_entry" | "list_tags" | "append" | "forget";
+export type MemoryV6Route =
+  | "characters"
+  | "file_usage"
+  | "search"
+  | "get_entry"
+  | "get_file"
+  | "export_files"
+  | "list_tags"
+  | "append"
+  | "forget";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 0;
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
-const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+export const DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS = 300_000;
 const DEFAULT_MAX_CONCURRENT_REQUESTS = 8;
 export const WITHMATE_MEMORY_API_SECRET_HEADER = "x-withmate-memory-api-secret";
 const STATUS_CHALLENGE_NONCE_QUERY = "nonce";
 
+const fileOperationRoutes = new Set<MemoryV6Route>([
+  "append",
+  "get_file",
+  "export_files",
+]);
+
 const routeByPath = new Map<string, MemoryV6Route>([
   ["/v1/characters", "characters"],
+  ["/v1/file_usage", "file_usage"],
+  ["/v1/file-usage", "file_usage"],
   ["/v1/search", "search"],
   ["/v1/get_entry", "get_entry"],
+  ["/v1/get_file", "get_file"],
+  ["/v1/get-file", "get_file"],
+  ["/v1/export_files", "export_files"],
+  ["/v1/export-files", "export_files"],
   ["/v1/list_tags", "list_tags"],
   ["/v1/append", "append"],
   ["/v1/forget", "forget"],
@@ -141,15 +164,36 @@ async function readJsonBody(request: IncomingMessage, maxBodyBytes: number): Pro
   }
 }
 
-function routeServiceRequest(service: MemoryV6Service, principal: MemoryV6Principal | null, route: MemoryV6Route, body: unknown): unknown {
+function buildFileUsageRequestOptions(requestUrl: string | undefined): { includeLargestEntries?: boolean; largestLimit?: number } {
+  const url = new URL(requestUrl ?? "/", "http://127.0.0.1");
+  const largest = url.searchParams.get("largest")?.trim().toLowerCase();
+  const includeLargestEntries = largest === "1" || largest === "true" || largest === "yes";
+  const limitText = url.searchParams.get("limit")?.trim();
+  const largestLimit = limitText ? Number(limitText) : undefined;
+  return {
+    ...(includeLargestEntries ? { includeLargestEntries: true } : {}),
+    ...(largestLimit === undefined ? {} : { largestLimit }),
+  };
+}
+
+async function routeServiceRequest(service: MemoryV6Service, principal: MemoryV6Principal | null, route: MemoryV6Route, body: unknown): Promise<unknown> {
   if (route === "characters") {
     return service.listCharacters(principal);
+  }
+  if (route === "file_usage") {
+    return service.fileUsage(principal, typeof body === "object" && body !== null ? body as { includeLargestEntries?: boolean; largestLimit?: number } : {});
   }
   if (route === "search") {
     return service.search(principal, body);
   }
   if (route === "get_entry") {
     return service.getEntry(principal, body);
+  }
+  if (route === "get_file") {
+    return service.getFile(principal, body);
+  }
+  if (route === "export_files") {
+    return service.exportFiles(principal, body);
   }
   if (route === "list_tags") {
     return service.listTags(principal, body);
@@ -172,6 +216,7 @@ function statusForMemoryResponse(value: unknown): number {
     case "MEMORY_FORBIDDEN":
       return 403;
     case "MEMORY_ENTRY_NOT_FOUND":
+    case "MEMORY_FILE_NOT_FOUND":
     case "MEMORY_TARGET_NOT_FOUND":
       return 404;
     case "MEMORY_REQUEST_TOO_LARGE":
@@ -218,6 +263,7 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
   const runtimeInstanceId = requireNonEmptySecret(options.runtimeInstanceId, "runtimeInstanceId");
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const fileOperationRequestTimeoutMs = options.fileOperationRequestTimeoutMs ?? DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS;
   const maxConcurrentRequests = options.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS;
   let activeRequests = 0;
 
@@ -233,7 +279,8 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         writeJson(response, 403, browserRequestError);
         return;
       }
-      const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+      const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+      const pathname = requestUrl.pathname;
       if (pathname === "/v1/status") {
         if (request.method !== "GET") {
           writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory API route does not support this method."));
@@ -261,22 +308,32 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         writeJson(response, 404, memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Memory API route was not found."));
         return;
       }
-      if (route === "characters" && request.method !== "GET") {
+      const routeTimeoutMs = resolveMemoryV6RouteTimeoutMs(route, {
+        requestTimeoutMs,
+        fileOperationRequestTimeoutMs,
+      });
+      request.setTimeout(routeTimeoutMs);
+      response.setTimeout(routeTimeoutMs);
+      if ((route === "characters" || route === "file_usage") && request.method !== "GET") {
         writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory API route does not support this method."));
         return;
       }
-      if (route !== "characters" && request.method !== "POST") {
+      if (route !== "characters" && route !== "file_usage" && request.method !== "POST") {
         writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory API route does not support this method."));
         return;
       }
-      if (route !== "characters" && !acceptsJsonRequest(request)) {
+      if (route !== "characters" && route !== "file_usage" && !acceptsJsonRequest(request)) {
         writeJson(response, 415, memoryTransportError("MEMORY_UNSUPPORTED_MEDIA_TYPE", "Memory API POST requests must use application/json."));
         return;
       }
 
       const principal = createLocalUserMemoryPrincipal();
-      const body = route === "characters" ? {} : await readJsonBody(request, maxBodyBytes);
-      const result = routeServiceRequest(options.service, principal, route, body);
+      const body = route === "characters"
+        ? {}
+        : route === "file_usage"
+          ? buildFileUsageRequestOptions(request.url)
+          : await readJsonBody(request, maxBodyBytes);
+      const result = await routeServiceRequest(options.service, principal, route, body);
       writeJson(response, statusForMemoryResponse(result), result);
     } catch (error) {
       if (isMemoryErrorResponse(error)) {
@@ -329,4 +386,14 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
       return typeof address === "string" ? null : address;
     },
   };
+}
+
+export function resolveMemoryV6RouteTimeoutMs(
+  route: MemoryV6Route,
+  options: { requestTimeoutMs?: number; fileOperationRequestTimeoutMs?: number } = {},
+): number {
+  if (fileOperationRoutes.has(route)) {
+    return options.fileOperationRequestTimeoutMs ?? DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS;
+  }
+  return options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 }

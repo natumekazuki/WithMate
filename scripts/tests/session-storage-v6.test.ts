@@ -107,43 +107,32 @@ function listAuxiliarySessionParentIds(dbPath: string): string[] {
   }
 }
 
-function insertAuditEventRows(
+function insertSessionTurnRows(
   dbPath: string,
   rows: Array<{
     sessionId?: string | null;
     auxiliarySessionId?: string | null;
-    eventType?: "session_turn" | "memory_mutation" | "runtime_binding" | "diagnostic";
     summary: string;
   }>,
 ): void {
   const db = new DatabaseSync(dbPath);
   try {
     const statement = db.prepare(`
-      INSERT INTO audit_events_v6 (
+      INSERT INTO session_turns_v6 (
         session_id,
         auxiliary_session_id,
-        event_type,
         provider_id,
+        phase,
         summary,
-        metadata_json,
-        created_at
-      ) VALUES (?, ?, ?, 'codex', ?, ?, '2026-07-01T00:00:00.000Z')
+        started_at,
+        updated_at
+      ) VALUES (?, ?, 'codex', 'completed', ?, '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z')
     `);
     for (const row of rows) {
-      const ownerId = row.sessionId ?? row.auxiliarySessionId ?? "";
       statement.run(
         row.sessionId ?? null,
         row.auxiliarySessionId ?? null,
-        row.eventType ?? "session_turn",
         row.summary,
-        JSON.stringify({
-          sessionId: ownerId,
-          phase: "completed",
-          provider: "codex",
-          assistantText: row.summary,
-          operations: [],
-          rawItemsJson: "[]",
-        }),
       );
     }
   } finally {
@@ -151,12 +140,12 @@ function insertAuditEventRows(
   }
 }
 
-function listAuditEventSummaries(dbPath: string): string[] {
+function listSessionTurnSummaries(dbPath: string): string[] {
   const db = new DatabaseSync(dbPath);
   try {
     const rows = db.prepare(`
       SELECT summary
-      FROM audit_events_v6
+      FROM session_turns_v6
       ORDER BY summary ASC
     `).all() as Array<{ summary: string }>;
     return rows.map((row) => row.summary);
@@ -367,7 +356,7 @@ describe("SessionStorageV6", () => {
     }
   });
 
-  it("Session / Auxiliary 削除経路で audit_events_v6 payload を cleanup する", async () => {
+  it("Session / Auxiliary 削除経路で session_turns_v6 payload を cleanup する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
     let storage: SessionStorageV6 | null = null;
@@ -401,7 +390,7 @@ describe("SessionStorageV6", () => {
         { id: "aux-audit-retained", parentSessionId: retainedParent.id },
         { id: "aux-audit-replaced", parentSessionId: replacedParent.id },
       ]);
-      insertAuditEventRows(dbPath, [
+      insertSessionTurnRows(dbPath, [
         { sessionId: deletedParent.id, summary: "audit-deleted-session" },
         { sessionId: retainedParent.id, summary: "audit-retained-session" },
         { sessionId: replacedParent.id, summary: "audit-replaced-session" },
@@ -411,7 +400,7 @@ describe("SessionStorageV6", () => {
       ]);
 
       storage.deleteSession(deletedParent.id);
-      assert.deepEqual(listAuditEventSummaries(dbPath), [
+      assert.deepEqual(listSessionTurnSummaries(dbPath), [
         "audit-replaced-auxiliary",
         "audit-replaced-session",
         "audit-retained-auxiliary",
@@ -426,24 +415,20 @@ describe("SessionStorageV6", () => {
         { id: "aux-audit-companion-active", parentSessionId: "companion-audit-active-parent" },
         { id: "aux-audit-companion-merged", parentSessionId: "companion-audit-merged-parent" },
       ]);
-      insertAuditEventRows(dbPath, [
+      insertSessionTurnRows(dbPath, [
         { auxiliarySessionId: "aux-audit-companion-active", summary: "audit-companion-active-auxiliary" },
         { auxiliarySessionId: "aux-audit-companion-merged", summary: "audit-companion-merged-auxiliary" },
       ]);
 
       storage.replaceSessions([{ ...retainedParent, taskTitle: "retained audit after replace" }]);
-      assert.deepEqual(listAuditEventSummaries(dbPath), [
+      assert.deepEqual(listSessionTurnSummaries(dbPath), [
         "audit-companion-active-auxiliary",
         "audit-retained-auxiliary",
         "audit-retained-session",
       ]);
 
-      insertAuditEventRows(dbPath, [
-        { summary: "audit-ownerless-session-turn" },
-        { eventType: "memory_mutation", summary: "audit-memory-mutation" },
-      ]);
       storage.clearSessions();
-      assert.deepEqual(listAuditEventSummaries(dbPath), ["audit-memory-mutation"]);
+      assert.deepEqual(listSessionTurnSummaries(dbPath), []);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

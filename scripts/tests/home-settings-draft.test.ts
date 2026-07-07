@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   createDefaultAppSettings,
+  MEMORY_FILE_QUOTA_DEFAULT_BYTES,
   resolveProviderSkillRootPath,
   type AppSettings,
 } from "../../src/provider-settings-state.js";
@@ -27,6 +28,7 @@ import {
   updateMemoryExtractionThresholdDraft,
   updateMemoryExtractionTimeoutSeconds,
   updateMemoryExtractionTimeoutSecondsDraft,
+  updateMemoryFileQuotaMegabytesDraft,
   updateMemoryGenerationEnabled,
   updateMateMemoryGenerationTriggerIntervalMinutesDraft,
   updateMateMemoryGenerationPriorityProviderDraft,
@@ -44,6 +46,7 @@ import {
   handleChangeMateMemoryGenerationPriorityReasoningEffort as handleChangeMateMemoryGenerationPriorityReasoningEffortAction,
   handleChangeMateMemoryGenerationPriorityTimeoutSeconds as handleChangeMateMemoryGenerationPriorityTimeoutSecondsAction,
   handleChangeMateMemoryGenerationTriggerIntervalMinutes as handleChangeMateMemoryGenerationTriggerIntervalMinutesAction,
+  handleChangeMemoryFileQuotaMegabytes as handleChangeMemoryFileQuotaMegabytesAction,
   handleChangeMemoryGenerationEnabled as handleChangeMemoryGenerationEnabledAction,
   handleChangeMemoryExtractionModel as handleChangeMemoryExtractionModelAction,
   handleChangeMemoryExtractionReasoningEffort as handleChangeMemoryExtractionReasoningEffortAction,
@@ -270,6 +273,14 @@ describe("home-settings-draft", () => {
     assert.equal(next.autoCollapseActionDockOnSend, false);
   });
 
+  it("memory file quota は MB 入力から bytes の draft に変換する", () => {
+    const draft = createDefaultAppSettings();
+
+    const next = updateMemoryFileQuotaMegabytesDraft(draft, "2048");
+
+    assert.equal(next.memoryFileQuotaBytes, 2048 * 1024 * 1024);
+  });
+
   it("microcopy slot draft は編集中の末尾改行を保持する", () => {
     const draft = createDefaultAppSettings();
 
@@ -371,6 +382,10 @@ describe("home-settings-draft", () => {
       enabled: false,
       setSettingsDraft: state.setSettingsDraft,
     });
+    handleChangeMemoryFileQuotaMegabytesAction({
+      value: "2048",
+      setSettingsDraft: state.setSettingsDraft,
+    });
     handleChangeUserMicrocopySlotAction({
       slot: "dock.status.responding",
       value: "応答生成中\n",
@@ -379,6 +394,7 @@ describe("home-settings-draft", () => {
 
     assert.equal(state.draft.memoryGenerationEnabled, false);
     assert.equal(state.draft.autoCollapseActionDockOnSend, false);
+    assert.equal(state.draft.memoryFileQuotaBytes, 2 * MEMORY_FILE_QUOTA_DEFAULT_BYTES);
     assert.equal(state.draft.userMicrocopyCatalog["dock.status.responding"], "応答生成中\n");
   });
 
