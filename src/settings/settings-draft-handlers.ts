@@ -4,6 +4,7 @@ import type { HomeSettingsContentBaseProps } from "./home-settings-content-props
 import {
   handleChangeAutoCollapseActionDockOnSend,
   handleChangeLaunchAtLoginEnabled,
+  handleChangeMemoryFileQuotaMegabytes,
   handleChangeProviderInstructionRelativePath,
   handleChangeProviderEnabled,
   handleChangeProviderSkillRelativePath,
@@ -19,6 +20,7 @@ export type SettingsDraftHandlers = Pick<
   HomeSettingsContentBaseProps,
   | "onChangeAutoCollapseActionDockOnSend"
   | "onChangeLaunchAtLoginEnabled"
+  | "onChangeMemoryFileQuotaMegabytes"
   | "onChangeUserMicrocopySlot"
   | "onChangeProviderEnabled"
   | "onChangeProviderInstructionRelativePath"
@@ -35,6 +37,9 @@ export function buildSettingsDraftHandlers({
     },
     onChangeLaunchAtLoginEnabled: (enabled) => {
       handleChangeLaunchAtLoginEnabled({ enabled, setSettingsDraft });
+    },
+    onChangeMemoryFileQuotaMegabytes: (value) => {
+      handleChangeMemoryFileQuotaMegabytes({ value, setSettingsDraft });
     },
     onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => {
       handleChangeUserMicrocopySlot({ slot, value, setSettingsDraft });

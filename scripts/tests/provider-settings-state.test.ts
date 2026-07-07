@@ -6,6 +6,9 @@ import {
   DEFAULT_BACKGROUND_TIMEOUT_SECONDS,
   DEFAULT_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_MINUTES,
   DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD,
+  MEMORY_FILE_QUOTA_DEFAULT_BYTES,
+  MEMORY_FILE_QUOTA_MAX_BYTES,
+  MEMORY_FILE_QUOTA_MIN_BYTES,
   getMateMemoryGenerationSettings,
   normalizeAppSettings,
 } from "../../src/provider-settings-state.js";
@@ -19,6 +22,7 @@ describe("provider-settings-state", () => {
     assert.equal(DEFAULT_BACKGROUND_TIMEOUT_SECONDS, 180);
     assert.equal(settings.memoryExtractionProviderSettings.codex.timeoutSeconds, 180);
     assert.equal(settings.autoCollapseActionDockOnSend, true);
+    assert.equal(settings.memoryFileQuotaBytes, MEMORY_FILE_QUOTA_DEFAULT_BYTES);
   });
 
   it("memory extraction threshold は normalize で 1000000 に clamp する", () => {
@@ -97,6 +101,18 @@ describe("provider-settings-state", () => {
     assert.equal(createDefaultAppSettings().launchAtLoginEnabled, false);
     assert.equal(normalizeAppSettings({ launchAtLoginEnabled: true }).launchAtLoginEnabled, true);
     assert.equal(normalizeAppSettings({ launchAtLoginEnabled: "true" }).launchAtLoginEnabled, false);
+  });
+
+  it("memory file quota は normalize で min/max に clamp する", () => {
+    assert.equal(normalizeAppSettings({ memoryFileQuotaBytes: 1 }).memoryFileQuotaBytes, MEMORY_FILE_QUOTA_MIN_BYTES);
+    assert.equal(
+      normalizeAppSettings({ memoryFileQuotaBytes: MEMORY_FILE_QUOTA_MAX_BYTES * 2 }).memoryFileQuotaBytes,
+      MEMORY_FILE_QUOTA_MAX_BYTES,
+    );
+    assert.equal(
+      normalizeAppSettings({ memoryFileQuotaBytes: "1024" }).memoryFileQuotaBytes,
+      MEMORY_FILE_QUOTA_DEFAULT_BYTES,
+    );
   });
 
   it("user microcopy catalog は複数 copy を保持し、空 slot は default に戻す", () => {

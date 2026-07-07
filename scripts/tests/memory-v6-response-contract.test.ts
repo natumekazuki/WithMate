@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
 import {
   createMemoryAppendResponse,
+  createMemoryFileUsageResponse,
   createMemoryForgetResponse,
   createMemoryGetEntryResponse,
   createMemoryListCharactersResponse,
@@ -42,6 +43,16 @@ const baseEntry = {
   forgottenAt: null,
 } satisfies ActiveMemoryEntryDetail;
 
+const fileSummary = {
+  objectId: "a".repeat(32),
+  role: "evidence",
+  mediaKind: "image",
+  contentType: "image/png",
+  displayName: "trace.png",
+  summary: "Trace screenshot",
+  originalBytes: 100,
+} satisfies ActiveMemoryEntryDetail["files"] extends (infer FileSummary)[] | undefined ? FileSummary : never;
+
 function activeEntryWith(overrides: Partial<ActiveMemoryEntryDetail>): ActiveMemoryEntryDetail {
   return {
     ...baseEntry,
@@ -65,6 +76,23 @@ describe("memory-v6 response contract", () => {
 
     const typed = response satisfies MemorySearchResponse;
     assert.equal(typed.items[0].preview, baseEntry.preview);
+  });
+
+  it("search / get_entry / append responseはfile summaryだけを返し、file pathやkey materialを含めない", () => {
+    const entry = activeEntryWith({ files: [fileSummary] });
+    const search = createMemorySearchResponse([toMemorySearchHit(entry)]);
+    const detail = createMemoryGetEntryResponse(entry);
+    const append = createMemoryAppendResponse(entry, true);
+
+    assert.deepEqual(search.items[0].files, [fileSummary]);
+    assert.deepEqual((detail as MemoryGetEntryResponse).entry.files, [fileSummary]);
+    assert.deepEqual(append.entry.files, [fileSummary]);
+    const serialized = JSON.stringify({ search, detail, append });
+    assert.equal(serialized.includes("trace.png"), true);
+    assert.equal(serialized.includes("keyId"), false);
+    assert.equal(serialized.includes("sha256"), false);
+    assert.equal(serialized.includes("C:/"), false);
+    assert.equal(serialized.includes("memory-objects"), false);
   });
 
   it("get_entry responseはactive entryのfull bodyを返す", () => {
@@ -156,6 +184,60 @@ describe("memory-v6 response contract", () => {
     assert.equal("createdAt" in response.characters[0], false);
     assert.equal("updatedAt" in response.characters[0], false);
     assert.equal("archivedAt" in response.characters[0], false);
+  });
+
+  it("file usage responseはavailable bytesとquota exceededを計算する", () => {
+    const response = createMemoryFileUsageResponse({
+      quotaBytes: 100,
+      usedBytes: 120,
+      physicalBytes: 150,
+      pendingDeleteBytes: 30,
+      objectCount: 2,
+      pendingDeleteCount: 1,
+    });
+
+    assert.deepEqual(response, {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      quotaBytes: 100,
+      usedBytes: 120,
+      physicalBytes: 150,
+      pendingDeleteBytes: 30,
+      availableBytes: 0,
+      objectCount: 2,
+      pendingDeleteCount: 1,
+      quotaExceeded: true,
+    });
+  });
+
+  it("file usage responseは要求されたlargest entriesを公開情報だけで返す", () => {
+    const response = createMemoryFileUsageResponse({
+      quotaBytes: 1000,
+      usedBytes: 400,
+      physicalBytes: 420,
+      pendingDeleteBytes: 0,
+      objectCount: 1,
+      pendingDeleteCount: 0,
+      largestEntries: [{
+        entryId: "mem-large-files",
+        title: "Large files",
+        preview: "Large preview",
+        totalFileBytes: 400,
+        fileCount: 1,
+        updatedAt: "2026-07-04T00:00:00.000Z",
+      }],
+    });
+
+    assert.deepEqual(response.largestEntries, [{
+      entryId: "mem-large-files",
+      title: "Large files",
+      preview: "Large preview",
+      totalFileBytes: 400,
+      fileCount: 1,
+      updatedAt: "2026-07-04T00:00:00.000Z",
+    }]);
+    assert.equal(JSON.stringify(response).includes("objectStorePath"), false);
+    assert.equal(JSON.stringify(response).includes("keyId"), false);
+    assert.equal(JSON.stringify(response).includes("sha256"), false);
   });
 
   it("forget responseは複数entryの結果をentryIdごとに返す", () => {

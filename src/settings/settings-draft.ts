@@ -1,7 +1,9 @@
 import {
+  MEMORY_FILE_QUOTA_MIN_BYTES,
   getMemoryExtractionProviderSettings,
   getMateMemoryGenerationSettings,
   getProviderAppSettings,
+  normalizeMemoryFileQuotaBytes,
   type AppSettings,
   type MemoryExtractionProviderSettings,
   type MateMemoryGenerationProviderSettings,
@@ -37,6 +39,21 @@ export function updateLaunchAtLoginEnabled(
   return {
     ...draft,
     launchAtLoginEnabled: enabled,
+  };
+}
+
+export function updateMemoryFileQuotaMegabytesDraft(
+  draft: AppSettings,
+  rawValue: string,
+): AppSettings {
+  const normalizedMegabytes = Number.parseInt(rawValue, 10);
+  const quotaBytes = Number.isFinite(normalizedMegabytes)
+    ? normalizedMegabytes * 1024 * 1024
+    : MEMORY_FILE_QUOTA_MIN_BYTES;
+
+  return {
+    ...draft,
+    memoryFileQuotaBytes: normalizeMemoryFileQuotaBytes(quotaBytes),
   };
 }
 

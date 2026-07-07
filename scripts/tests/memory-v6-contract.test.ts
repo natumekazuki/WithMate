@@ -4,8 +4,10 @@ import { describe, it } from "node:test";
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
 import {
   validateMemoryAppendRequest,
+  validateMemoryExportFilesRequest,
   validateMemoryForgetRequest,
   validateMemoryGetEntryRequest,
+  validateMemoryGetFileRequest,
   validateMemoryListTagsRequest,
   validateMemorySearchRequest,
 } from "../../src/memory-v6/memory-validation.js";
@@ -64,6 +66,116 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.value.title, "呼び方");
     assert.deepEqual(result.value.supersedes, ["entry-a"]);
     assert.equal(result.value.idempotencyKey, "key-1");
+  });
+
+  it("file付きappend request はfile summaryを必須にして正規化する", () => {
+    const result = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "context",
+      title: "trace archive",
+      body: "debug trace archive with screenshots.",
+      preview: "debug trace archive.",
+      tags: [{ type: "topic", value: "debug" }],
+      files: [{
+        path: " C:/trace/screenshot.png ",
+        summary: " スクリーンショットでエラー状態を確認できる。 ",
+        role: "evidence",
+        displayName: " screenshot.png ",
+        contentType: " image/png ",
+      }],
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.value.files, [{
+      path: "C:/trace/screenshot.png",
+      summary: "スクリーンショットでエラー状態を確認できる。",
+      role: "evidence",
+      displayName: "screenshot.png",
+      contentType: "image/png",
+    }]);
+
+    const missingSummary = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "context",
+      title: "trace archive",
+      body: "debug trace archive.",
+      preview: "debug trace archive.",
+      tags: [],
+      files: [{ path: "C:/trace/screenshot.png" }],
+    });
+    assert.equal(missingSummary.ok, false);
+    assert.equal(missingSummary.error.field, "files[0].summary");
+
+    const invalidRole = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "context",
+      title: "trace archive",
+      body: "debug trace archive.",
+      preview: "debug trace archive.",
+      tags: [],
+      files: [{ path: "C:/trace/screenshot.png", summary: "screenshot", role: "unknown" }],
+    });
+    assert.equal(invalidRole.ok, false);
+    assert.equal(invalidRole.error.field, "files[0].role");
+
+    const relativePath = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "context",
+      title: "trace archive",
+      body: "debug trace archive.",
+      preview: "debug trace archive.",
+      tags: [],
+      files: [{ path: "trace/screenshot.png", summary: "screenshot" }],
+    });
+    assert.equal(relativePath.ok, false);
+    assert.equal(relativePath.error.code, "MEMORY_INVALID_FIELD");
+    assert.equal(relativePath.error.field, "files[0].path");
+
+    const tooManyFiles = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "context",
+      title: "trace archive",
+      body: "debug trace archive.",
+      preview: "debug trace archive.",
+      tags: [],
+      files: Array.from({ length: 11 }, (_, index) => ({
+        path: `C:/trace/${index}.png`,
+        summary: `screenshot ${index}`,
+      })),
+    });
+    assert.equal(tooManyFiles.ok, false);
+    assert.equal(tooManyFiles.error.field, "files");
+
+    const emptyPath = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "context",
+      title: "trace archive",
+      body: "debug trace archive.",
+      preview: "debug trace archive.",
+      tags: [],
+      files: [{ path: "   ", summary: "screenshot" }],
+    });
+    assert.equal(emptyPath.ok, false);
+    assert.equal(emptyPath.error.field, "files[0].path");
+
+    const unknownKey = validateMemoryAppendRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      kind: "context",
+      title: "trace archive",
+      body: "debug trace archive.",
+      preview: "debug trace archive.",
+      tags: [],
+      files: [{ path: "C:/trace/screenshot.png", summary: "screenshot", objectId: "obj-1" }],
+    });
+    assert.equal(unknownKey.ok, false);
+    assert.equal(unknownKey.error.field, "files[0].objectId");
   });
 
   it("appendでtags省略を拒否し、空tagsは許可する", () => {
@@ -471,6 +583,44 @@ describe("memory-v6 contract validation", () => {
 
     assert.equal(result.ok, false);
     assert.equal(result.error.field, "reason");
+  });
+
+  it("get-file / export-files はabsolute output pathを必須にする", () => {
+    const getFile = validateMemoryGetFileRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      objectId: "a".repeat(32),
+      outputPath: " C:/exports/file.bin ",
+    });
+    assert.equal(getFile.ok, true);
+    assert.equal(getFile.value.outputPath, "C:/exports/file.bin");
+
+    const relativeGetFile = validateMemoryGetFileRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      objectId: "a".repeat(32),
+      outputPath: "exports/file.bin",
+    });
+    assert.equal(relativeGetFile.ok, false);
+    assert.equal(relativeGetFile.error.field, "outputPath");
+
+    const exportFiles = validateMemoryExportFilesRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      entryId: "mem-a",
+      outputDirectoryPath: "/tmp/exports",
+    });
+    assert.equal(exportFiles.ok, true);
+    assert.equal(exportFiles.value.outputDirectoryPath, "/tmp/exports");
+
+    const relativeExportFiles = validateMemoryExportFilesRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      entryId: "mem-a",
+      outputDirectoryPath: "exports",
+    });
+    assert.equal(relativeExportFiles.ok, false);
+    assert.equal(relativeExportFiles.error.field, "outputDirectoryPath");
   });
 
   it("provider-specific unknown field を拒否する", () => {

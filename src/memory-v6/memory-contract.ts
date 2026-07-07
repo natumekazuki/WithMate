@@ -23,8 +23,11 @@ export type MemoryPermission =
   | "memory.append"
   | "memory.forget"
   | "memory.get_entry"
+  | "memory.get_file"
+  | "memory.export_files"
   | "memory.list_tags"
-  | "memory.list_characters";
+  | "memory.list_characters"
+  | "memory.file_usage";
 
 export type ProjectTargetRef =
   | { type: "id"; id: string }
@@ -64,9 +67,42 @@ export type MemoryGetEntryRequest = {
   target: MemoryTargetSelector;
 };
 
+export type MemoryGetFileRequest = {
+  schemaVersion: MemoryV6SchemaVersion;
+  target: MemoryTargetSelector;
+  objectId: string;
+  outputPath: string;
+};
+
+export type MemoryExportFilesRequest = {
+  schemaVersion: MemoryV6SchemaVersion;
+  target: MemoryTargetSelector;
+  entryId: string;
+  outputDirectoryPath: string;
+};
+
 export type MemoryListTagsRequest = {
   schemaVersion: MemoryV6SchemaVersion;
   targets: MemoryTargetSelector[];
+};
+
+export const MEMORY_APPEND_FILE_ROLES = [
+  "evidence",
+  "source",
+  "snapshot",
+  "artifact",
+  "reference",
+  "other",
+] as const;
+
+export type MemoryAppendFileRole = typeof MEMORY_APPEND_FILE_ROLES[number];
+
+export type MemoryAppendFileInput = {
+  path: string;
+  summary: string;
+  role?: MemoryAppendFileRole;
+  displayName?: string;
+  contentType?: string;
 };
 
 export type MemoryAppendRequest = {
@@ -78,6 +114,7 @@ export type MemoryAppendRequest = {
   preview: string;
   tags: NormalizedMemoryTag[];
   supersedes?: string[];
+  files?: MemoryAppendFileInput[];
   sourceMessageId?: string;
   idempotencyKey?: string;
 };
@@ -112,6 +149,10 @@ export type MemoryError = {
   code: string;
   message: string;
   field?: string;
+  quotaBytes?: number;
+  usedBytes?: number;
+  incomingBytes?: number;
+  availableBytes?: number;
   allowedProjectTargets?: string[];
   suggestion?: string;
 };

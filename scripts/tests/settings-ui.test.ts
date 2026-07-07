@@ -6,6 +6,8 @@ import {
   SETTINGS_API_KEY_PLACEHOLDER,
   SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE,
   SETTINGS_CODING_CREDENTIALS_HELP,
+  SETTINGS_MEMORY_FILE_QUOTA_HELP,
+  SETTINGS_MEMORY_FILE_QUOTA_LABEL,
   SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP,
   SETTINGS_RELEASE_COMPATIBILITY_NOTE,
   SETTINGS_RESET_DATABASE_HELP,
@@ -33,6 +35,12 @@ describe("Settings UI constants", () => {
     assert.match(buildResetDatabaseConfirmMessage(ALL_RESET_APP_DATABASE_TARGETS), /本当に続ける/);
     assert.match(buildResetDatabaseConfirmMessage(ALL_RESET_APP_DATABASE_TARGETS), /実行中の session がある間は初期化できない/);
     assert.match(buildResetDatabaseSuccessMessage(ALL_RESET_APP_DATABASE_TARGETS), /初期状態へ戻した/);
+  });
+
+  it("Memory file quota は Protected Object の append 制約として説明する", () => {
+    assert.equal(SETTINGS_MEMORY_FILE_QUOTA_LABEL, "Memory file quota");
+    assert.match(SETTINGS_MEMORY_FILE_QUOTA_HELP, /Protected Object/);
+    assert.match(SETTINGS_MEMORY_FILE_QUOTA_HELP, /file append/);
   });
 
   it("Home Window は Settings overlay の余裕を確保する既定サイズを使う", () => {

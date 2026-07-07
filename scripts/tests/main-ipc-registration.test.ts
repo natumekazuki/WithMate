@@ -21,6 +21,9 @@ import {
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL,
   WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
+  WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL,
+  WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL,
+  WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL,
   WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL,
   WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL,
   WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL,
@@ -128,6 +131,9 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
   assert.ok(handlers.has(WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL));
   assert.ok(handlers.has(WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL));
@@ -189,6 +195,9 @@ test("Memory V6 Review IPC は memory-review window からだけ呼び出せる"
   const { deps, calls } = createDeps({
     resolveEventWindow: () => reviewWindow,
     isMemoryV6ReviewWindow: (window: unknown) => window === reviewWindow,
+    getMemoryV6FileUsage: async () => ({ usedBytes: 0 }) as never,
+    exportMemoryV6EntryFiles: async (entryId: string) => ({ entryId, exportedCount: 1 }) as never,
+    runMemoryV6ProtectedObjectGc: async (request: { dryRun: boolean }) => ({ dryRun: request.dryRun }) as never,
     searchMemoryV6Entries: async () => ({ items: [] }),
     getMemoryV6Entry: async () => null,
     forgetMemoryV6Entry: async () => ({ entryId: "mem-1", status: "not_found", reason: "user_request" }),
@@ -196,6 +205,14 @@ test("Memory V6 Review IPC は memory-review window からだけ呼び出せる"
 
   registerMainIpcHandlers(ipcMain, deps);
 
+  assert.deepEqual(await handlers.get(WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL)?.({}), { usedBytes: 0 });
+  assert.deepEqual(await handlers.get(WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL)?.({}, "mem-1"), {
+    entryId: "mem-1",
+    exportedCount: 1,
+  });
+  assert.deepEqual(await handlers.get(WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL)?.({}, { dryRun: true }), {
+    dryRun: true,
+  });
   assert.deepEqual(await handlers.get(WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL)?.({}, { query: "x" }), { items: [] });
   assert.equal(await handlers.get(WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL)?.({}, "mem-1"), null);
   assert.deepEqual(await handlers.get(WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL)?.({}, "mem-1", "user_request"), {
@@ -261,6 +278,45 @@ test("Memory V6 CLI shim IPC は Settings window 以外からの呼び出しを�
   );
   assert.equal(calls.includes("install"), false);
   assert.equal(calls.includes("uninstall"), false);
+});
+
+test("Memory V6 Review protected object IPC は通常 window からの呼び出しを拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => homeWindow,
+    isMemoryV6ReviewWindow: () => false,
+    getMemoryV6FileUsage: async () => {
+      calls.push("usage");
+      return {};
+    },
+    exportMemoryV6EntryFiles: async () => {
+      calls.push("export");
+      return null;
+    },
+    runMemoryV6ProtectedObjectGc: async () => {
+      calls.push("gc");
+      return {};
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL)?.({}) as Promise<unknown>,
+    /Memory V6 Review IPC is only available/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL)?.({}, "mem-1") as Promise<unknown>,
+    /Memory V6 Review IPC is only available/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL)?.({}, { dryRun: true }) as Promise<unknown>,
+    /Memory V6 Review IPC is only available/,
+  );
+  assert.equal(calls.includes("usage"), false);
+  assert.equal(calls.includes("export"), false);
+  assert.equal(calls.includes("gc"), false);
 });
 
 test("Storage Maintenance の bulk session delete IPC は Settings window からだけ呼び出せる", async () => {

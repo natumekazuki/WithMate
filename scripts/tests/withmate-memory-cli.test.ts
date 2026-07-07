@@ -10,7 +10,10 @@ import { describe, it } from "node:test";
 
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
 import {
+  DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
   discoverWithMateMemoryApi,
+  resolveRuntimeRequestTimeoutMs,
   runWithMateMemoryCli,
   WITHMATE_MEMORY_CLI_EXIT_CODES,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
@@ -245,6 +248,39 @@ describe("withmate-memory CLI", () => {
     assert.equal(stdout.json().error.code, "WITHMATE_NOT_RUNNING");
   });
 
+  it("file operationは通常requestと別のtimeoutを使い、本体timeoutを明示する", async () => {
+    assert.equal(resolveRuntimeRequestTimeoutMs("search"), DEFAULT_REQUEST_TIMEOUT_MS);
+    assert.equal(resolveRuntimeRequestTimeoutMs("get_file"), DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS);
+    assert.equal(resolveRuntimeRequestTimeoutMs("export_files", { fileOperationRequestTimeoutMs: 20_000 }), 20_000);
+    assert.equal(resolveRuntimeRequestTimeoutMs("append", { requestTimeoutMs: 5 }), 5);
+
+    const stdout = createOutputCapture();
+    const requestBody = {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      objectId: "a".repeat(32),
+      outputPath: "C:/exports/file.bin",
+    };
+
+    const exitCode = await runWithMateMemoryCli(["get-file", "--json", JSON.stringify(requestBody)], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fileOperationRequestTimeoutMs: 5,
+      fetch: async (url, init) => {
+        if (isStatusChallengeRequest(String(url))) {
+          return createStatusChallengeResponse(String(url));
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+        });
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
+    assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_REQUEST_TIMEOUT");
+    assert.equal(stdout.json().error.field, "get_file");
+  });
+
   it("statusはGETで/v1/statusへ送る", async () => {
     const stdout = createOutputCapture();
     const requests: Array<{ url: string; method: string | undefined; body: BodyInit | null | undefined; headers: HeadersInit | undefined }> = [];
@@ -313,6 +349,161 @@ describe("withmate-memory CLI", () => {
       body: undefined,
       headers: { "x-withmate-memory-api-secret": TEST_API_SECRET },
     });
+  });
+
+  it("file-usageはGETで/v1/file_usageへ送る", async () => {
+    const stdout = createOutputCapture();
+    const requests: Array<{ url: string; method: string | undefined; body: BodyInit | null | undefined; headers: HeadersInit | undefined }> = [];
+    const responseBody = {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      quotaBytes: 1073741824,
+      usedBytes: 0,
+      physicalBytes: 0,
+      pendingDeleteBytes: 0,
+      availableBytes: 1073741824,
+      objectCount: 0,
+      pendingDeleteCount: 0,
+      quotaExceeded: false,
+    };
+
+    const exitCode = await runWithMateMemoryCli(["file-usage"], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fetch: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method, body: init?.body, headers: init?.headers });
+        if (isStatusChallengeRequest(String(url))) {
+          return createStatusChallengeResponse(String(url));
+        }
+        return new Response(JSON.stringify(responseBody), { status: 200 });
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+    assert.deepEqual(stdout.json(), responseBody);
+    assert.equal(requests.length, 2);
+    assert.deepEqual(requests[1], {
+      url: "http://127.0.0.1:7777/v1/file_usage",
+      method: "GET",
+      body: undefined,
+      headers: { "x-withmate-memory-api-secret": TEST_API_SECRET },
+    });
+  });
+
+  it("file-usage --largestはGET queryで候補数を指定する", async () => {
+    const stdout = createOutputCapture();
+    const requests: Array<{ url: string; method: string | undefined; body: BodyInit | null | undefined; headers: HeadersInit | undefined }> = [];
+    const responseBody = {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      quotaBytes: 1073741824,
+      usedBytes: 4096,
+      physicalBytes: 4200,
+      pendingDeleteBytes: 0,
+      availableBytes: 1073737728,
+      objectCount: 1,
+      pendingDeleteCount: 0,
+      quotaExceeded: false,
+      largestEntries: [{
+        entryId: "mem-large-files",
+        title: "Large files",
+        preview: "Large preview",
+        totalFileBytes: 4096,
+        fileCount: 1,
+        updatedAt: "2026-07-04T00:00:00.000Z",
+      }],
+    };
+
+    const exitCode = await runWithMateMemoryCli(["file-usage", "--largest", "--limit", "5"], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fetch: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method, body: init?.body, headers: init?.headers });
+        if (isStatusChallengeRequest(String(url))) {
+          return createStatusChallengeResponse(String(url));
+        }
+        return new Response(JSON.stringify(responseBody), { status: 200 });
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+    assert.deepEqual(stdout.json(), responseBody);
+    assert.deepEqual(requests[1], {
+      url: "http://127.0.0.1:7777/v1/file_usage?largest=1&limit=5",
+      method: "GET",
+      body: undefined,
+      headers: { "x-withmate-memory-api-secret": TEST_API_SECRET },
+    });
+  });
+
+  it("get-fileはJSON bodyをPOSTで送る", async () => {
+    const stdout = createOutputCapture();
+    const requestBody = {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      objectId: "a".repeat(32),
+      outputPath: "C:/exports/file.bin",
+    };
+    let capturedBody: unknown = null;
+
+    const exitCode = await runWithMateMemoryCli(["get-file", "--json", JSON.stringify(requestBody)], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fetch: async (url, init) => {
+        if (isStatusChallengeRequest(String(url))) {
+          return createStatusChallengeResponse(String(url));
+        }
+        assert.equal(String(url), "http://127.0.0.1:7777/v1/get_file");
+        assert.equal(init?.method, "POST");
+        capturedBody = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          objectId: requestBody.objectId,
+          entryId: "mem-a",
+          outputPath: requestBody.outputPath,
+          bytesWritten: 12,
+          contentType: "application/octet-stream",
+          displayName: "file.bin",
+        }), { status: 200 });
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+    assert.deepEqual(capturedBody, requestBody);
+    assert.equal(stdout.json().bytesWritten, 12);
+  });
+
+  it("export-filesはJSON bodyをPOSTで送る", async () => {
+    const stdout = createOutputCapture();
+    const requestBody = {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      entryId: "mem-a",
+      outputDirectoryPath: "C:/exports",
+    };
+    let capturedBody: unknown = null;
+
+    const exitCode = await runWithMateMemoryCli(["export-files", "--json", JSON.stringify(requestBody)], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fetch: async (url, init) => {
+        if (isStatusChallengeRequest(String(url))) {
+          return createStatusChallengeResponse(String(url));
+        }
+        assert.equal(String(url), "http://127.0.0.1:7777/v1/export_files");
+        assert.equal(init?.method, "POST");
+        capturedBody = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          entryId: requestBody.entryId,
+          outputDirectoryPath: requestBody.outputDirectoryPath,
+          exportedCount: 0,
+          files: [],
+        }), { status: 200 });
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+    assert.deepEqual(capturedBody, requestBody);
+    assert.equal(stdout.json().exportedCount, 0);
   });
 
   it("環境変数URLが不正な場合はdefault discovery fileへfallbackしない", async () => {
@@ -434,6 +625,9 @@ describe("withmate-memory CLI", () => {
     ]);
     assert.deepEqual(stdout.json().forgetReasons, ["user_request", "incorrect", "outdated", "privacy", "other"]);
     assert.ok(stdout.json().commands.includes("characters"));
+    assert.ok(stdout.json().commands.includes("file-usage"));
+    assert.ok(stdout.json().commands.includes("get-file"));
+    assert.ok(stdout.json().commands.includes("export-files"));
     assert.deepEqual(stdout.json().requestBodyInputs, ["--json", "--file", "@file", "--stdin"]);
     assert.deepEqual(stdout.json().targetSelectors.at(-1), {
       owner: "user",
@@ -459,8 +653,11 @@ describe("withmate-memory CLI", () => {
     assert.match(stdout.text(), /Usage:\s+withmate-memory <command> \[options\]/);
     assert.doesNotMatch(stdout.text(), /--session-project/);
     assert.match(stdout.text(), /characters/);
+    assert.match(stdout.text(), /file-usage/);
+    assert.match(stdout.text(), /get-file/);
+    assert.match(stdout.text(), /export-files/);
     assert.match(stdout.text(), /search --project/);
-    assert.match(stdout.text(), /validate --command <search\|get-entry\|list-tags\|append\|forget>/);
+    assert.match(stdout.text(), /validate --command <search\|get-entry\|get-file\|export-files\|list-tags\|append\|forget>/);
   });
 
   it("command --helpもruntime接続なしでusage textを返す", async () => {
@@ -721,6 +918,120 @@ describe("withmate-memory CLI", () => {
     assertUsageError(stdout.json(), /get-entry shorthand requires --project/);
   });
 
+  it("get-file shorthandはprojectとobject idとoutputからrequest bodyを作る", async () => {
+    const stdout = createOutputCapture();
+    const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-get-file-"));
+    const outputPath = join(tempDirectory, "export.bin");
+    let capturedBody: any = null;
+    try {
+      const exitCode = await runWithMateMemoryCli([
+        "get-file",
+        "--project",
+        tempDirectory,
+        "--object-id",
+        "a".repeat(32),
+        "--output",
+        outputPath,
+      ], {
+        env: TEST_RUNTIME_ENV,
+        stdout: stdout.stream,
+        fetch: async (url, init) => {
+          if (isStatusChallengeRequest(String(url))) {
+            return createStatusChallengeResponse(String(url));
+          }
+          capturedBody = JSON.parse(String(init?.body));
+          return new Response(JSON.stringify({
+            schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+            objectId: "a".repeat(32),
+            entryId: "mem-a",
+            outputPath,
+            bytesWritten: 1,
+            contentType: "",
+            displayName: "",
+          }), { status: 200 });
+        },
+      });
+
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+      assert.equal(capturedBody.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
+      assert.equal(capturedBody.objectId, "a".repeat(32));
+      assert.equal(capturedBody.target.project.path, tempDirectory.replace(/\\/g, "/"));
+      assert.equal(capturedBody.outputPath, outputPath);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("get-file shorthandはoutputなしをusage errorにする", async () => {
+    const stdout = createOutputCapture();
+    const exitCode = await runWithMateMemoryCli(["get-file", "--project-id", "project-a", "--object-id", "a".repeat(32)], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fetch: async () => {
+        assert.fail("get-file shorthand without output should not call runtime");
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
+    assertUsageError(stdout.json(), /get-file shorthand requires --output/);
+  });
+
+  it("export-files shorthandはprojectとentry idとoutput dirからrequest bodyを作る", async () => {
+    const stdout = createOutputCapture();
+    const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-export-files-"));
+    const outputDirectoryPath = join(tempDirectory, "exports");
+    let capturedBody: any = null;
+    try {
+      const exitCode = await runWithMateMemoryCli([
+        "export-files",
+        "--project",
+        tempDirectory,
+        "--entry-id",
+        "mem-a",
+        "--output-dir",
+        outputDirectoryPath,
+      ], {
+        env: TEST_RUNTIME_ENV,
+        stdout: stdout.stream,
+        fetch: async (url, init) => {
+          if (isStatusChallengeRequest(String(url))) {
+            return createStatusChallengeResponse(String(url));
+          }
+          capturedBody = JSON.parse(String(init?.body));
+          return new Response(JSON.stringify({
+            schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+            entryId: "mem-a",
+            outputDirectoryPath,
+            exportedCount: 0,
+            files: [],
+          }), { status: 200 });
+        },
+      });
+
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+      assert.equal(capturedBody.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
+      assert.equal(capturedBody.entryId, "mem-a");
+      assert.equal(capturedBody.target.project.path, tempDirectory.replace(/\\/g, "/"));
+      assert.equal(capturedBody.outputDirectoryPath, outputDirectoryPath);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("export-files shorthandはoutput dirなしをusage errorにする", async () => {
+    const stdout = createOutputCapture();
+    const exitCode = await runWithMateMemoryCli(["export-files", "--project-id", "project-a", "--entry-id", "mem-a"], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fetch: async () => {
+        assert.fail("export-files shorthand without output dir should not call runtime");
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
+    assertUsageError(stdout.json(), /export-files shorthand requires --output-dir/);
+  });
+
   it("project.pathの相対pathはCLIで拒否する", async () => {
     const stdout = createOutputCapture();
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-cwd-"));
@@ -866,6 +1177,45 @@ describe("withmate-memory CLI", () => {
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
     assert.equal(stdout.json().error.code, "MEMORY_FORBIDDEN");
+  });
+
+  it("appendはimporter由来API errorをそのまま出し、apiErrorで終了する", async () => {
+    const stdout = createOutputCapture();
+    const requestBody = {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      kind: "decision",
+      title: "file append",
+      body: "file append body",
+      preview: "file append",
+      tags: [],
+      files: [{
+        path: "C:/trace/missing.png",
+        summary: "Missing screenshot.",
+      }],
+    };
+
+    const exitCode = await runWithMateMemoryCli(["append", "--json", JSON.stringify(requestBody)], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fetch: async (url) => {
+        if (isStatusChallengeRequest(String(url))) {
+          return createStatusChallengeResponse(String(url));
+        }
+        return new Response(JSON.stringify({
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          error: {
+            code: "MEMORY_INVALID_FIELD",
+            message: "Memory protected object input file is not readable.",
+            field: "files[0].path",
+          },
+        }), { status: 422 });
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
+    assert.equal(stdout.json().error.code, "MEMORY_INVALID_FIELD");
+    assert.equal(stdout.json().error.field, "files[0].path");
   });
 
   it("APIが非JSONを返した場合もstdoutにはJSON errorだけを出す", async () => {

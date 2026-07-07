@@ -10,6 +10,7 @@ import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v
 import type { MemoryV6ResolvedTarget } from "../../src-electron/memory-v6-schema.js";
 import {
   MemoryV6EntryNotFoundError,
+  MemoryV6FileQuotaExceededError,
   MemoryV6IdempotencyConflictError,
   MemoryV6Storage,
 } from "../../src-electron/memory-v6-storage.js";
@@ -28,6 +29,8 @@ const userGlobalTarget = {
   owner: { type: "user", id: "local-user" },
   scope: { type: "global", id: "global" },
 } satisfies MemoryV6ResolvedTarget;
+
+type AppendProtectedObjectInput = NonNullable<Parameters<MemoryV6Storage["appendEntry"]>[0]["protectedObjects"]>[number];
 
 function tag(type: string, value: string): NormalizedMemoryTag {
   return {
@@ -96,6 +99,67 @@ function tableNames(dbPath: string): string[] {
   } finally {
     db.close();
   }
+}
+
+function insertProtectedObject(dbPath: string, input: {
+  objectId: string;
+  entryId: string;
+  state: "active" | "delete_pending" | "deleted";
+  role?: "evidence" | "source" | "snapshot" | "artifact" | "reference" | "other";
+  summary: string;
+  originalBytes: number;
+  storedBytes: number;
+  createdAt?: string;
+  updatedAt?: string;
+  deletedAt?: string | null;
+}): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.prepare(`
+      INSERT INTO memory_protected_objects_v6 (
+        object_id,
+        entry_id,
+        state,
+        role,
+        media_kind,
+        summary,
+        original_bytes,
+        stored_bytes,
+        created_at,
+        updated_at,
+        deleted_at
+      ) VALUES (?, ?, ?, ?, 'source', ?, ?, ?, ?, ?, ?)
+    `).run(
+      input.objectId,
+      input.entryId,
+      input.state,
+      input.role ?? "source",
+      input.summary,
+      input.originalBytes,
+      input.storedBytes,
+      input.createdAt ?? "2026-07-04T00:00:00.000Z",
+      input.updatedAt ?? "2026-07-04T00:00:00.000Z",
+      input.deletedAt ?? null,
+    );
+  } finally {
+    db.close();
+  }
+}
+
+function protectedObjectInput(overrides: Partial<AppendProtectedObjectInput> = {}): AppendProtectedObjectInput {
+  return {
+    objectId: "a".repeat(32),
+    role: "evidence",
+    mediaKind: "image",
+    contentType: "image/png",
+    displayName: "trace.png",
+    summary: "Trace screenshot",
+    originalBytes: 100,
+    storedBytes: 140,
+    sha256: "b".repeat(64),
+    keyId: "key-a",
+    ...overrides,
+  };
 }
 
 describe("MemoryV6Storage", () => {
@@ -198,6 +262,420 @@ describe("MemoryV6Storage", () => {
         { entryId: "mem-user-global", status: "forgotten" },
         { entryId: "missing-entry", status: "not_found" },
       ]);
+    });
+  });
+
+  it("protected object usage は active と delete_pending を区別して集計する", async () => {
+    await withStorage(({ storage, dbPath }) => {
+      storage.appendEntry(baseAppend({ id: "mem-file-owner" }));
+      insertProtectedObject(dbPath, { objectId: "obj-active", entryId: "mem-file-owner", state: "active", summary: "active file", originalBytes: 100, storedBytes: 120 });
+      insertProtectedObject(dbPath, { objectId: "obj-pending", entryId: "mem-file-owner", state: "delete_pending", summary: "pending file", originalBytes: 200, storedBytes: 240, updatedAt: "2026-07-04T00:01:00.000Z" });
+      insertProtectedObject(dbPath, { objectId: "obj-deleted", entryId: "mem-file-owner", state: "deleted", summary: "deleted file", originalBytes: 300, storedBytes: 360, updatedAt: "2026-07-04T00:02:00.000Z", deletedAt: "2026-07-04T00:03:00.000Z" });
+
+      assert.deepEqual(storage.getFileUsage(), {
+        usedBytes: 100,
+        physicalBytes: 360,
+        pendingDeleteBytes: 240,
+        objectCount: 1,
+        pendingDeleteCount: 1,
+      });
+    });
+  });
+
+  it("largest file entries はactive entryのactive objectだけを容量順に返す", async () => {
+    await withStorage(({ storage, dbPath }) => {
+      storage.appendEntry(baseAppend({
+        id: "mem-small",
+        title: "Small entry",
+        preview: "small preview",
+        now: "2026-07-04T00:00:00.000Z",
+      }));
+      storage.appendEntry(baseAppend({
+        id: "mem-large",
+        title: "Large entry",
+        preview: "large preview",
+        now: "2026-07-04T00:10:00.000Z",
+      }));
+      storage.appendEntry(baseAppend({
+        id: "mem-forgotten",
+        title: "Forgotten entry",
+        preview: "forgotten preview",
+        now: "2026-07-04T00:20:00.000Z",
+      }));
+      storage.forgetEntries({ target: projectTarget, entryIds: ["mem-forgotten"], reason: "user_request" });
+
+      insertProtectedObject(dbPath, { objectId: "obj-small-a", entryId: "mem-small", state: "active", summary: "small", originalBytes: 100, storedBytes: 120 });
+      insertProtectedObject(dbPath, { objectId: "obj-large-a", entryId: "mem-large", state: "active", summary: "large a", originalBytes: 300, storedBytes: 330 });
+      insertProtectedObject(dbPath, { objectId: "obj-large-b", entryId: "mem-large", state: "active", summary: "large b", originalBytes: 250, storedBytes: 280 });
+      insertProtectedObject(dbPath, { objectId: "obj-large-pending", entryId: "mem-large", state: "delete_pending", summary: "pending", originalBytes: 900, storedBytes: 990 });
+      insertProtectedObject(dbPath, { objectId: "obj-forgotten-a", entryId: "mem-forgotten", state: "active", summary: "forgotten", originalBytes: 1000, storedBytes: 1100 });
+
+      assert.deepEqual(storage.listLargestFileEntries({ limit: 2 }), [
+        {
+          entryId: "mem-large",
+          title: "Large entry",
+          preview: "large preview",
+          totalFileBytes: 550,
+          fileCount: 2,
+          updatedAt: "2026-07-04T00:10:00.000Z",
+        },
+        {
+          entryId: "mem-small",
+          title: "Small entry",
+          preview: "small preview",
+          totalFileBytes: 100,
+          fileCount: 1,
+          updatedAt: "2026-07-04T00:00:00.000Z",
+        },
+      ]);
+    });
+  });
+
+  it("GC用primitiveはdelete_pending列挙とdeleted反映をstate限定で扱う", async () => {
+    await withStorage(({ storage, dbPath }) => {
+      const activeObjectId = "a".repeat(32);
+      const pendingObjectId = "b".repeat(32);
+      const deletedObjectId = "c".repeat(32);
+      storage.appendEntry(baseAppend({
+        id: "mem-gc-active",
+        protectedObjects: [protectedObjectInput({ objectId: activeObjectId })],
+        fileQuotaBytes: 1024,
+      }));
+      storage.appendEntry(baseAppend({
+        id: "mem-gc-pending",
+        now: "2026-07-04T00:01:00.000Z",
+        protectedObjects: [protectedObjectInput({
+          objectId: pendingObjectId,
+          sha256: "c".repeat(64),
+          originalBytes: 200,
+          storedBytes: 240,
+        })],
+        fileQuotaBytes: 1024,
+      }));
+      storage.appendEntry(baseAppend({ id: "mem-gc-deleted", now: "2026-07-04T00:02:00.000Z" }));
+      insertProtectedObject(dbPath, {
+        objectId: deletedObjectId,
+        entryId: "mem-gc-deleted",
+        state: "deleted",
+        summary: "deleted",
+        originalBytes: 300,
+        storedBytes: 360,
+        deletedAt: "2026-07-04T00:03:00.000Z",
+      });
+      storage.forgetEntries({
+        target: projectTarget,
+        entryIds: ["mem-gc-pending"],
+        reason: "user_request",
+        now: "2026-07-04T00:04:00.000Z",
+      });
+
+      assert.deepEqual(storage.listProtectedObjectIdsForGc({ states: ["active"] }), [activeObjectId]);
+      assert.deepEqual(storage.listProtectedObjectIdsForGc({ states: ["delete_pending"] }), [pendingObjectId]);
+      assert.deepEqual(storage.listProtectedObjectIdsForGc({ states: ["active", "delete_pending"] }), [activeObjectId, pendingObjectId]);
+      assert.deepEqual(storage.listDeletePendingProtectedObjectsForGc({ limit: 10 }), [{
+        objectId: pendingObjectId,
+        storedBytes: 240,
+        updatedAt: "2026-07-04T00:04:00.000Z",
+      }]);
+
+      assert.equal(storage.markProtectedObjectDeletedForGc({
+        objectId: pendingObjectId,
+        deletedAt: "2026-07-04T00:05:00.000Z",
+      }), true);
+      assert.equal(storage.markProtectedObjectDeletedForGc({
+        objectId: activeObjectId,
+        deletedAt: "2026-07-04T00:06:00.000Z",
+      }), false);
+      assert.deepEqual(storage.listDeletePendingProtectedObjectsForGc({ limit: 10 }), []);
+      assert.equal(readRow<{ state: string }>(dbPath, "SELECT state FROM memory_protected_objects_v6 WHERE object_id = ?", pendingObjectId).state, "deleted");
+      assert.equal(readRow<{ state: string }>(dbPath, "SELECT state FROM memory_protected_objects_v6 WHERE object_id = ?", activeObjectId).state, "active");
+    });
+  });
+
+  it("append は protected object metadata を同じtransactionで登録する", async () => {
+    await withStorage(({ storage, dbPath }) => {
+      const appended = storage.appendEntry(baseAppend({
+        id: "mem-file-append",
+        protectedObjects: [protectedObjectInput()],
+        fileQuotaBytes: 1024,
+      }));
+
+      assert.equal(appended.entry.id, "mem-file-append");
+      assert.deepEqual(storage.getFileUsage(), {
+        usedBytes: 100,
+        physicalBytes: 140,
+        pendingDeleteBytes: 0,
+        objectCount: 1,
+        pendingDeleteCount: 0,
+      });
+      assert.deepEqual(appended.entry.files, [{
+        objectId: "a".repeat(32),
+        role: "evidence",
+        mediaKind: "image",
+        contentType: "image/png",
+        displayName: "trace.png",
+        summary: "Trace screenshot",
+        originalBytes: 100,
+      }]);
+      assert.deepEqual(
+        storage.searchEntries({ targets: [projectTarget], query: "" }).items.find((item) => item.id === "mem-file-append")?.files,
+        appended.entry.files,
+      );
+      const object = readRow<{
+        entry_id: string;
+        state: string;
+        role: string;
+        media_kind: string;
+        content_type: string;
+        display_name: string;
+        summary: string;
+        original_bytes: number;
+        stored_bytes: number;
+        sha256: string;
+        key_id: string;
+      }>(dbPath, "SELECT * FROM memory_protected_objects_v6 WHERE object_id = ?", "a".repeat(32));
+      assert.equal(object.entry_id, "mem-file-append");
+      assert.equal(object.state, "active");
+      assert.equal(object.role, "evidence");
+      assert.equal(object.media_kind, "image");
+      assert.equal(object.content_type, "image/png");
+      assert.equal(object.display_name, "trace.png");
+      assert.equal(object.summary, "Trace screenshot");
+      assert.equal(object.original_bytes, 100);
+      assert.equal(object.stored_bytes, 140);
+      assert.equal(object.sha256, "b".repeat(64));
+      assert.equal(object.key_id, "key-a");
+    });
+  });
+
+  it("export用metadataはtarget内のactive objectだけ返す", async () => {
+    await withStorage(({ storage }) => {
+      const objectId = "f".repeat(32);
+      const append = storage.appendEntry(baseAppend({
+        id: "mem-file-export",
+        protectedObjects: [protectedObjectInput({
+          objectId,
+          keyId: "key-export",
+          originalBytes: 128,
+          storedBytes: 160,
+        })],
+        fileQuotaBytes: 1024,
+      }));
+
+      assert.deepEqual(storage.getProtectedObjectForExport({
+        target: projectTarget,
+        objectId,
+      }), {
+        objectId,
+        entryId: append.entry.id,
+        contentType: "image/png",
+        displayName: "trace.png",
+        originalBytes: 128,
+        storedBytes: 160,
+        sha256: "b".repeat(64),
+        keyId: "key-export",
+      });
+      assert.equal(storage.getProtectedObjectForExport({
+        target: characterTarget,
+        objectId,
+      }), null);
+      assert.equal(storage.getProtectedObjectForExport({
+        target: projectTarget,
+        objectId: "not-an-object-id",
+      }), null);
+
+      storage.forgetEntries({
+        target: projectTarget,
+        entryIds: [append.entry.id],
+        reason: "user_request",
+      });
+      assert.equal(storage.getProtectedObjectForExport({
+        target: projectTarget,
+        objectId,
+      }), null);
+    });
+  });
+
+  it("entry export用metadataはtarget内のactive entryだけ列挙する", async () => {
+    await withStorage(({ storage }) => {
+      storage.appendEntry(baseAppend({
+        id: "mem-file-export-list",
+        protectedObjects: [
+          protectedObjectInput({
+            objectId: "1".repeat(32),
+            displayName: "first.png",
+            originalBytes: 100,
+            storedBytes: 140,
+          }),
+          protectedObjectInput({
+            objectId: "2".repeat(32),
+            displayName: "second.txt",
+            originalBytes: 20,
+            storedBytes: 60,
+            sha256: "c".repeat(64),
+          }),
+        ],
+        fileQuotaBytes: 1024,
+      }));
+      storage.appendEntry(baseAppend({
+        id: "mem-file-export-empty",
+        protectedObjects: [],
+      }));
+
+      assert.deepEqual(storage.listProtectedObjectsForEntryExport({
+        target: projectTarget,
+        entryId: "mem-file-export-list",
+      })?.map((item) => ({
+        objectId: item.objectId,
+        displayName: item.displayName,
+        originalBytes: item.originalBytes,
+      })), [
+        { objectId: "1".repeat(32), displayName: "first.png", originalBytes: 100 },
+        { objectId: "2".repeat(32), displayName: "second.txt", originalBytes: 20 },
+      ]);
+      assert.deepEqual(storage.listProtectedObjectsForEntryExport({
+        target: projectTarget,
+        entryId: "mem-file-export-empty",
+      }), []);
+      assert.equal(storage.listProtectedObjectsForEntryExport({
+        target: characterTarget,
+        entryId: "mem-file-export-list",
+      }), null);
+
+      storage.forgetEntries({
+        target: projectTarget,
+        entryIds: ["mem-file-export-list"],
+      });
+      assert.equal(storage.listProtectedObjectsForEntryExport({
+        target: projectTarget,
+        entryId: "mem-file-export-list",
+      }), null);
+    });
+  });
+
+  it("protected object quota 超過時はentry / object / idempotencyを作らない", async () => {
+    await withStorage(({ storage, dbPath }) => {
+      storage.appendEntry(baseAppend({ id: "mem-existing" }));
+      insertProtectedObject(dbPath, {
+        objectId: "obj-existing",
+        entryId: "mem-existing",
+        state: "active",
+        summary: "existing",
+        originalBytes: 90,
+        storedBytes: 110,
+      });
+
+      assert.throws(
+        () => storage.appendEntry(baseAppend({
+          id: "mem-quota-fail",
+          idempotencyKey: "file-append-quota",
+          bindingIdHash: "binding-quota",
+          protectedObjects: [protectedObjectInput({ objectId: "c".repeat(32), originalBytes: 20 })],
+          fileQuotaBytes: 100,
+        })),
+        MemoryV6FileQuotaExceededError,
+      );
+
+      assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_entries_v6 WHERE id = 'mem-quota-fail'"), 0);
+      assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_protected_objects_v6 WHERE object_id = ?", "c".repeat(32)), 0);
+      assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_idempotency_keys_v6 WHERE key = 'file-append-quota'"), 0);
+      assert.deepEqual(storage.getFileUsage(), {
+        usedBytes: 90,
+        physicalBytes: 110,
+        pendingDeleteBytes: 0,
+        objectCount: 1,
+        pendingDeleteCount: 0,
+      });
+    });
+  });
+
+  it("protected object 登録失敗時はentryもrollbackし、idempotent replayはobjectを重複登録しない", async () => {
+    await withStorage(({ storage, dbPath }) => {
+      const first = storage.appendEntry(baseAppend({
+        id: "mem-file-idempotent",
+        idempotencyKey: "file-append-idempotent",
+        bindingIdHash: "binding-file",
+        requestFingerprint: "fingerprint-file-request",
+        protectedObjects: [protectedObjectInput({ objectId: "d".repeat(32) })],
+        fileQuotaBytes: 1024,
+      }));
+      const replay = storage.appendEntry(baseAppend({
+        id: "mem-file-idempotent-other",
+        idempotencyKey: "file-append-idempotent",
+        bindingIdHash: "binding-file",
+        requestFingerprint: "fingerprint-file-request",
+        protectedObjects: [protectedObjectInput({ objectId: "e".repeat(32), sha256: "c".repeat(64) })],
+        fileQuotaBytes: 1024,
+      }));
+
+      assert.equal(replay.entry.id, first.entry.id);
+      assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_protected_objects_v6"), 1);
+      assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_protected_objects_v6 WHERE object_id = ?", "e".repeat(32)), 0);
+
+      assert.throws(
+        () => storage.appendEntry(baseAppend({
+          id: "mem-file-duplicate-object",
+          protectedObjects: [protectedObjectInput({ objectId: "d".repeat(32), sha256: "d".repeat(64) })],
+          fileQuotaBytes: 1024,
+        })),
+        /UNIQUE constraint failed/,
+      );
+      assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_entries_v6 WHERE id = 'mem-file-duplicate-object'"), 0);
+      assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_protected_objects_v6"), 1);
+    });
+  });
+
+  it("protected object metadata が不正な場合はentryを作らない", async () => {
+    await withStorage(({ storage, dbPath }) => {
+      assert.throws(
+        () => storage.appendEntry(baseAppend({
+          id: "mem-invalid-protected-object",
+          protectedObjects: [protectedObjectInput({ mediaKind: "video" as never })],
+          fileQuotaBytes: 1024,
+        })),
+        /media kind is invalid/,
+      );
+
+      assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_entries_v6 WHERE id = 'mem-invalid-protected-object'"), 0);
+      assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_protected_objects_v6"), 0);
+    });
+  });
+
+  it("forget は紐づくactive protected objectをdelete_pendingにしてusageから外す", async () => {
+    await withStorage(({ storage, dbPath }) => {
+      storage.appendEntry(baseAppend({ id: "mem-file-forget" }));
+      insertProtectedObject(dbPath, { objectId: "obj-forget-active", entryId: "mem-file-forget", state: "active", summary: "file to forget", originalBytes: 100, storedBytes: 120 });
+      insertProtectedObject(dbPath, { objectId: "obj-forget-pending", entryId: "mem-file-forget", state: "delete_pending", summary: "already pending", originalBytes: 50, storedBytes: 60 });
+
+      assert.deepEqual(storage.getFileUsage(), {
+        usedBytes: 100,
+        physicalBytes: 180,
+        pendingDeleteBytes: 60,
+        objectCount: 1,
+        pendingDeleteCount: 1,
+      });
+
+      assert.deepEqual(storage.forgetEntries({
+        target: projectTarget,
+        entryIds: ["mem-file-forget"],
+        reason: "outdated",
+        now: "2026-07-04T00:10:00.000Z",
+      }), [{ entryId: "mem-file-forget", status: "forgotten" }]);
+
+      assert.deepEqual(storage.getFileUsage(), {
+        usedBytes: 0,
+        physicalBytes: 180,
+        pendingDeleteBytes: 180,
+        objectCount: 0,
+        pendingDeleteCount: 2,
+      });
+      const activeObject = readRow<{ state: string; updated_at: string; deleted_at: string | null }>(
+        dbPath,
+        "SELECT state, updated_at, deleted_at FROM memory_protected_objects_v6 WHERE object_id = 'obj-forget-active'",
+      );
+      assert.equal(activeObject.state, "delete_pending");
+      assert.equal(activeObject.updated_at, "2026-07-04T00:10:00.000Z");
+      assert.equal(activeObject.deleted_at, null);
     });
   });
 
@@ -561,6 +1039,14 @@ describe("MemoryV6Storage", () => {
       assert.equal(outdated?.state, "forgotten");
       assert.equal(outdated?.body, "残してはいけないbody");
       assert.deepEqual(outdated?.tags.map((item) => item.value).sort(), ["chat", "private"]);
+      insertProtectedObject(dbPath, {
+        objectId: "obj-outdated-private",
+        entryId: "mem-outdated-private",
+        state: "active",
+        summary: "late protected object",
+        originalBytes: 10,
+        storedBytes: 12,
+      });
 
       assert.deepEqual(storage.forgetEntries({
         target: projectTarget,
@@ -577,6 +1063,7 @@ describe("MemoryV6Storage", () => {
       assert.deepEqual(redacted?.tags, []);
       assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_entry_tags_v6 WHERE entry_id = 'mem-outdated-private'"), 0);
       assert.equal(readRow<{ updated_at: string }>(dbPath, "SELECT updated_at FROM memory_entries_v6 WHERE id = 'mem-outdated-private'").updated_at, "2026-06-24T00:03:00.000Z");
+      assert.equal(readRow<{ state: string }>(dbPath, "SELECT state FROM memory_protected_objects_v6 WHERE object_id = 'obj-outdated-private'").state, "delete_pending");
     });
   });
 
