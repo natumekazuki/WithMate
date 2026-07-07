@@ -9,6 +9,7 @@ import {
   createMemoryProtectedObjectAad,
   inferMemoryProtectedObjectMediaKind,
   inspectMemoryProtectedObjectInputFile,
+  MemoryProtectedObjectImportError,
   MEMORY_PROTECTED_OBJECT_MAX_ORIGINAL_BYTES,
   prepareMemoryProtectedObjectFile,
 } from "../../src-electron/memory-protected-object-importer.js";
@@ -116,7 +117,10 @@ describe("Memory protected object importer", () => {
             path: join(directory, "missing.png"),
             summary: "Missing file.",
           }),
-        /not readable/,
+        (error) => error instanceof MemoryProtectedObjectImportError
+          && error.code === "MEMORY_INVALID_FIELD"
+          && error.field === "path"
+          && /not readable/.test(error.message),
       );
       await assert.rejects(
         () =>
@@ -124,7 +128,10 @@ describe("Memory protected object importer", () => {
             path: join(directory, "folder"),
             summary: "Directory.",
           }),
-        /must be a file/,
+        (error) => error instanceof MemoryProtectedObjectImportError
+          && error.code === "MEMORY_INVALID_FIELD"
+          && error.field === "path"
+          && /must be a file/.test(error.message),
       );
       await writeFile(join(directory, "empty-summary.txt"), "content");
       await assert.rejects(
@@ -133,7 +140,10 @@ describe("Memory protected object importer", () => {
             path: join(directory, "empty-summary.txt"),
             summary: "   ",
           }),
-        /summary is required/,
+        (error) => error instanceof MemoryProtectedObjectImportError
+          && error.code === "MEMORY_INVALID_FIELD"
+          && error.field === "summary"
+          && /summary is required/.test(error.message),
       );
     });
   });
@@ -150,7 +160,44 @@ describe("Memory protected object importer", () => {
             path: inputPath,
             summary: "Too large protected object.",
           }),
-        /per-file size limit/,
+        (error) => error instanceof MemoryProtectedObjectImportError
+          && error.code === "MEMORY_FIELD_TOO_LARGE"
+          && error.field === "path"
+          && /per-file size limit/.test(error.message),
+      );
+    });
+  });
+
+  it("inspection後にinput file sizeが変わった場合はdomain errorで拒否する", async () => {
+    await withTempDir(async (directory) => {
+      const inputPath = join(directory, "changing.bin");
+      await writeFile(inputPath, "before");
+
+      const objectStore = MemoryProtectedObjectStore.fromUserDataPath(directory);
+      await assert.rejects(
+        () =>
+          prepareMemoryProtectedObjectFile(
+            {
+              keyStore: {
+                getOrCreateActiveKey: async () => {
+                  await writeFile(inputPath, "after-change");
+                  return testKey();
+                },
+              },
+              objectStore,
+            },
+            {
+              entryId: "mem-changing",
+              file: {
+                path: inputPath,
+                summary: "Changing file.",
+              },
+            },
+          ),
+        (error) => error instanceof MemoryProtectedObjectImportError
+          && error.code === "MEMORY_INVALID_FIELD"
+          && error.field === "path"
+          && /changed during import/.test(error.message),
       );
     });
   });

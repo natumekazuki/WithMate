@@ -1179,6 +1179,45 @@ describe("withmate-memory CLI", () => {
     assert.equal(stdout.json().error.code, "MEMORY_FORBIDDEN");
   });
 
+  it("appendはimporter由来API errorをそのまま出し、apiErrorで終了する", async () => {
+    const stdout = createOutputCapture();
+    const requestBody = {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      kind: "decision",
+      title: "file append",
+      body: "file append body",
+      preview: "file append",
+      tags: [],
+      files: [{
+        path: "C:/trace/missing.png",
+        summary: "Missing screenshot.",
+      }],
+    };
+
+    const exitCode = await runWithMateMemoryCli(["append", "--json", JSON.stringify(requestBody)], {
+      env: TEST_RUNTIME_ENV,
+      stdout: stdout.stream,
+      fetch: async (url) => {
+        if (isStatusChallengeRequest(String(url))) {
+          return createStatusChallengeResponse(String(url));
+        }
+        return new Response(JSON.stringify({
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          error: {
+            code: "MEMORY_INVALID_FIELD",
+            message: "Memory protected object input file is not readable.",
+            field: "files[0].path",
+          },
+        }), { status: 422 });
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
+    assert.equal(stdout.json().error.code, "MEMORY_INVALID_FIELD");
+    assert.equal(stdout.json().error.field, "files[0].path");
+  });
+
   it("APIが非JSONを返した場合もstdoutにはJSON errorだけを出す", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["status"], {

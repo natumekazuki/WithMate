@@ -46,7 +46,10 @@ import {
   type MemoryV6ProtectedObjectExportMetadata,
   type MemoryV6Storage,
 } from "./memory-v6-storage.js";
-import type { MemoryProtectedObjectInputFileInspection } from "./memory-protected-object-importer.js";
+import {
+  MemoryProtectedObjectImportError,
+  type MemoryProtectedObjectInputFileInspection,
+} from "./memory-protected-object-importer.js";
 
 export type MemoryV6ServiceDeps = MemoryV6TargetResolverDeps & {
   storage: MemoryV6Storage;
@@ -144,6 +147,9 @@ function fingerprint(value: unknown): string {
 }
 
 function storageErrorResponse(error: unknown): MemoryErrorResponse {
+  if (error instanceof MemoryV6FileImportError) {
+    return toMemoryErrorResponse(error.error);
+  }
   if (error instanceof MemoryV6IdempotencyConflictError) {
     return toMemoryErrorResponse({
       code: "MEMORY_IDEMPOTENCY_CONFLICT",
@@ -168,6 +174,35 @@ function storageErrorResponse(error: unknown): MemoryErrorResponse {
     });
   }
   throw error;
+}
+
+class MemoryV6FileImportError extends Error {
+  constructor(readonly error: MemoryError) {
+    super(error.message);
+    this.name = "MemoryV6FileImportError";
+  }
+}
+
+function fileImportErrorField(index: number, field: MemoryProtectedObjectImportError["field"]): string {
+  if (field === "path" || field === "summary") {
+    return `files[${index}].${field}`;
+  }
+  return `files[${index}]`;
+}
+
+function toFileImportError(error: unknown, index: number): MemoryV6FileImportError {
+  if (error instanceof MemoryProtectedObjectImportError) {
+    return new MemoryV6FileImportError({
+      code: error.code,
+      message: error.message,
+      field: fileImportErrorField(index, error.field),
+    });
+  }
+  return new MemoryV6FileImportError({
+    code: "MEMORY_FILE_IMPORT_FAILED",
+    message: "Memory file import failed.",
+    field: `files[${index}]`,
+  });
 }
 
 export class MemoryV6Service {
@@ -494,8 +529,15 @@ export class MemoryV6Service {
     if (!this.deps.protectedObjectImporter) {
       throw new Error("Memory protected object importer is not configured.");
     }
+    const importer = this.deps.protectedObjectImporter;
     const inspections = await Promise.all(
-      input.files.map((file) => this.deps.protectedObjectImporter!.inspect(file)),
+      input.files.map(async (file, index) => {
+        try {
+          return await importer.inspect(file);
+        } catch (error) {
+          throw toFileImportError(error, index);
+        }
+      }),
     );
     const incomingBytes = inspections.reduce((sum, item) => sum + item.originalBytes, 0);
     const usage = this.deps.storage.getFileUsage();
@@ -504,11 +546,16 @@ export class MemoryV6Service {
     }
 
     const protectedObjects: MemoryV6AppendProtectedObjectInput[] = [];
-    for (const file of input.files) {
-      protectedObjects.push(await this.deps.protectedObjectImporter.prepare({
-        entryId: input.entryId,
-        file,
-      }));
+    for (let index = 0; index < input.files.length; index += 1) {
+      const file = input.files[index];
+      try {
+        protectedObjects.push(await importer.prepare({
+          entryId: input.entryId,
+          file,
+        }));
+      } catch (error) {
+        throw toFileImportError(error, index);
+      }
     }
     return protectedObjects;
   }

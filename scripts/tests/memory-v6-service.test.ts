@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import { MEMORY_V6_SCHEMA_VERSION, type NormalizedMemoryTag } from "../../src/memory-v6/memory-contract.js";
 import { MEMORY_FILE_QUOTA_MIN_BYTES } from "../../src/provider-settings-state.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
+import { MemoryProtectedObjectImportError } from "../../src-electron/memory-protected-object-importer.js";
 import { createMemoryV6ProjectResolver } from "../../src-electron/memory-v6-project-resolver.js";
 import { createLocalUserMemoryPrincipal } from "../../src-electron/memory-v6-permission.js";
 import type { MemoryV6ResolvedTarget } from "../../src-electron/memory-v6-schema.js";
@@ -422,6 +423,72 @@ describe("MemoryV6Service", () => {
         exportFile: async (input) => {
           exportInput = input;
           return { bytesWritten: input.metadata.originalBytes };
+        },
+      },
+    });
+  });
+
+  it("file付きappendはimporterの入力エラーをdomain errorとして返す", async () => {
+    await withService(async ({ service, storage }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      const append = await service.append(principal, appendRequest({
+        idempotencyKey: "file-append-import-error-key",
+        files: [{
+          path: "C:/trace/missing.png",
+          summary: "Missing screenshot.",
+          role: "evidence",
+        }],
+      }));
+
+      assert.equal("error" in append, true);
+      assert.equal(append.error.code, "MEMORY_INVALID_FIELD");
+      assert.equal(append.error.field, "files[0].path");
+      assert.match(append.error.message, /not readable/);
+      assert.deepEqual(storage.searchEntries({ targets: [projectTarget], query: "Memory service" }).items, []);
+    }, {
+      protectedObjectImporter: {
+        inspect: async () => {
+          throw new MemoryProtectedObjectImportError(
+            "MEMORY_INVALID_FIELD",
+            "path",
+            "Memory protected object input file is not readable.",
+          );
+        },
+        prepare: async () => {
+          throw new Error("prepare should not be called");
+        },
+      },
+    });
+  });
+
+  it("file付きappendはimporter prepare失敗をdomain errorとして返しentryを作らない", async () => {
+    await withService(async ({ service, storage }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      const append = await service.append(principal, appendRequest({
+        idempotencyKey: "file-append-prepare-error-key",
+        files: [{
+          path: "C:/trace/dialog.png",
+          summary: "Screenshot.",
+          role: "evidence",
+        }],
+      }));
+
+      assert.equal("error" in append, true);
+      assert.equal(append.error.code, "MEMORY_FILE_IMPORT_FAILED");
+      assert.equal(append.error.field, "files[0]");
+      assert.deepEqual(storage.searchEntries({ targets: [projectTarget], query: "Memory service" }).items, []);
+    }, {
+      protectedObjectImporter: {
+        inspect: async () => ({
+          originalBytes: 128,
+          role: "evidence",
+          mediaKind: "image",
+          contentType: "image/png",
+          displayName: "dialog.png",
+          summary: "Screenshot.",
+        }),
+        prepare: async () => {
+          throw new Error("safe storage unavailable");
         },
       },
     });

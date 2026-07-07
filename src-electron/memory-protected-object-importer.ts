@@ -26,6 +26,22 @@ export const MEMORY_PROTECTED_OBJECT_MAX_ORIGINAL_BYTES = 64 * 1024 * 1024;
 export const MEMORY_PROTECTED_OBJECT_MAX_STORED_BYTES =
   MEMORY_PROTECTED_OBJECT_MAX_ORIGINAL_BYTES + MEMORY_PROTECTED_OBJECT_ENVELOPE_OVERHEAD_BYTES;
 
+export type MemoryProtectedObjectImportErrorCode =
+  | "MEMORY_INVALID_FIELD"
+  | "MEMORY_FIELD_TOO_LARGE"
+  | "MEMORY_FILE_IMPORT_FAILED";
+
+export class MemoryProtectedObjectImportError extends Error {
+  constructor(
+    readonly code: MemoryProtectedObjectImportErrorCode,
+    readonly field: "path" | "summary" | "files",
+    message: string,
+  ) {
+    super(message);
+    this.name = "MemoryProtectedObjectImportError";
+  }
+}
+
 export type PrepareMemoryProtectedObjectFileInput = {
   entryId: string;
   file: MemoryAppendFileInput;
@@ -51,24 +67,48 @@ export async function prepareMemoryProtectedObjectFile(
 ): Promise<MemoryV6AppendProtectedObjectInput> {
   const inspected = await inspectMemoryProtectedObjectInputFile(input.file);
   const objectId = createMemoryProtectedObjectId();
-  const key = await dependencies.keyStore.getOrCreateActiveKey();
-  const plaintext = await readFile(input.file.path);
+  let key: MemoryProtectedObjectKey;
+  let plaintext: Buffer;
+  try {
+    key = await dependencies.keyStore.getOrCreateActiveKey();
+    plaintext = await readFile(input.file.path);
+  } catch {
+    throw new MemoryProtectedObjectImportError(
+      "MEMORY_FILE_IMPORT_FAILED",
+      "files",
+      "Memory protected object import failed.",
+    );
+  }
   if (plaintext.byteLength !== inspected.originalBytes) {
-    throw new Error("Memory protected object input file changed during import.");
+    throw new MemoryProtectedObjectImportError(
+      "MEMORY_INVALID_FIELD",
+      "path",
+      "Memory protected object input file changed during import.",
+    );
   }
 
-  const encrypted = encryptMemoryProtectedObjectPayload({
-    plaintext,
-    key,
-    aad: createMemoryProtectedObjectAad({
-      entryId: input.entryId,
+  let encrypted: ReturnType<typeof encryptMemoryProtectedObjectPayload>;
+  let writeResult: Awaited<ReturnType<MemoryProtectedObjectPayloadStore["writeObject"]>>;
+  try {
+    encrypted = encryptMemoryProtectedObjectPayload({
+      plaintext,
+      key,
+      aad: createMemoryProtectedObjectAad({
+        entryId: input.entryId,
+        objectId,
+      }),
+    });
+    writeResult = await dependencies.objectStore.writeObject({
       objectId,
-    }),
-  });
-  const writeResult = await dependencies.objectStore.writeObject({
-    objectId,
-    payload: encrypted.encryptedPayload,
-  });
+      payload: encrypted.encryptedPayload,
+    });
+  } catch {
+    throw new MemoryProtectedObjectImportError(
+      "MEMORY_FILE_IMPORT_FAILED",
+      "files",
+      "Memory protected object import failed.",
+    );
+  }
 
   return {
     objectId,
@@ -91,17 +131,33 @@ export async function inspectMemoryProtectedObjectInputFile(
   try {
     stats = await stat(file.path);
   } catch {
-    throw new Error("Memory protected object input file is not readable.");
+    throw new MemoryProtectedObjectImportError(
+      "MEMORY_INVALID_FIELD",
+      "path",
+      "Memory protected object input file is not readable.",
+    );
   }
 
   if (!stats.isFile()) {
-    throw new Error("Memory protected object input path must be a file.");
+    throw new MemoryProtectedObjectImportError(
+      "MEMORY_INVALID_FIELD",
+      "path",
+      "Memory protected object input path must be a file.",
+    );
   }
   if (!Number.isSafeInteger(stats.size) || stats.size < 0) {
-    throw new Error("Memory protected object input file size is invalid.");
+    throw new MemoryProtectedObjectImportError(
+      "MEMORY_INVALID_FIELD",
+      "path",
+      "Memory protected object input file size is invalid.",
+    );
   }
   if (stats.size > MEMORY_PROTECTED_OBJECT_MAX_ORIGINAL_BYTES) {
-    throw new Error("Memory protected object input file exceeds per-file size limit.");
+    throw new MemoryProtectedObjectImportError(
+      "MEMORY_FIELD_TOO_LARGE",
+      "path",
+      "Memory protected object input file exceeds per-file size limit.",
+    );
   }
 
   const contentType = file.contentType?.trim() ?? "";
@@ -109,7 +165,11 @@ export async function inspectMemoryProtectedObjectInputFile(
   const role = file.role ?? "other";
   const summary = file.summary.trim();
   if (summary.length === 0) {
-    throw new Error("Memory protected object file summary is required.");
+    throw new MemoryProtectedObjectImportError(
+      "MEMORY_INVALID_FIELD",
+      "summary",
+      "Memory protected object file summary is required.",
+    );
   }
 
   return {
