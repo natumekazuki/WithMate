@@ -1131,7 +1131,7 @@ export class MemoryV6Storage {
           if (reason === "privacy") {
             this.redactForgottenEntryForPrivacy(entryId, updatedAt);
           }
-          this.markProtectedObjectsDeletePendingForEntry(entryId, updatedAt);
+          this.markProtectedObjectsDeletePendingForEntry(entryId, updatedAt, { redactMetadata: reason === "privacy" });
           this.insertMutationEvent("forget", entryId, bindingIdHash, input.sessionId ?? row.source_session_id, "already_forgotten", reason, updatedAt);
           return { entryId, status: "already_forgotten" };
         }
@@ -1158,7 +1158,7 @@ export class MemoryV6Storage {
         if (reason === "privacy") {
           this.db.prepare("DELETE FROM memory_entry_tags_v6 WHERE entry_id = ?").run(entryId);
         }
-        this.markProtectedObjectsDeletePendingForEntry(entryId, updatedAt);
+        this.markProtectedObjectsDeletePendingForEntry(entryId, updatedAt, { redactMetadata: reason === "privacy" });
         this.insertMutationEvent("forget", entryId, bindingIdHash, input.sessionId ?? row.source_session_id, "success", reason, updatedAt);
         return { entryId, status: "forgotten" };
       });
@@ -1206,15 +1206,21 @@ export class MemoryV6Storage {
     });
   }
 
-  private markProtectedObjectsDeletePendingForEntry(entryId: string, updatedAt: string): void {
+  private markProtectedObjectsDeletePendingForEntry(
+    entryId: string,
+    updatedAt: string,
+    options: { redactMetadata?: boolean } = {},
+  ): void {
     this.db.prepare(`
       UPDATE memory_protected_objects_v6
       SET state = 'delete_pending',
+          summary = CASE WHEN ? THEN '' ELSE summary END,
+          display_name = CASE WHEN ? THEN '' ELSE display_name END,
           updated_at = ?,
           deleted_at = NULL
       WHERE entry_id = ?
         AND state = 'active'
-    `).run(updatedAt, entryId);
+    `).run(options.redactMetadata ? 1 : 0, options.redactMetadata ? 1 : 0, updatedAt, entryId);
   }
 
   private assertProtectedObjectQuota(

@@ -973,7 +973,15 @@ describe("MemoryV6Storage", () => {
 
   it("forget はactive entryを除外し、privacy reasonではbodyを縮退し、idempotent resultを再利用する", async () => {
     await withStorage(({ storage, dbPath }) => {
-      storage.appendEntry(baseAppend({ id: "mem-private" }));
+      storage.appendEntry(baseAppend({
+        id: "mem-private",
+        protectedObjects: [protectedObjectInput({
+          objectId: "6".repeat(32),
+          displayName: "private-trace.png",
+          summary: "private trace screenshot",
+        })],
+        fileQuotaBytes: 1024,
+      }));
 
       const results = storage.forgetEntries({
         target: projectTarget,
@@ -1015,6 +1023,14 @@ describe("MemoryV6Storage", () => {
       assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_mutation_events_v6 WHERE operation = 'forget' AND result_status = 'success'"), 1);
       assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_idempotency_forget_results_v6"), 2);
       assert.equal(readRow<{ body_sha256: string }>(dbPath, "SELECT body_sha256 FROM memory_entries_v6 WHERE id = 'mem-private'").body_sha256.length, 64);
+      const privateObject = readRow<{ state: string; summary: string; display_name: string }>(
+        dbPath,
+        "SELECT state, summary, display_name FROM memory_protected_objects_v6 WHERE object_id = ?",
+        "6".repeat(32),
+      );
+      assert.equal(privateObject.state, "delete_pending");
+      assert.equal(privateObject.summary, "");
+      assert.equal(privateObject.display_name, "");
     });
   });
 
@@ -1044,6 +1060,7 @@ describe("MemoryV6Storage", () => {
         entryId: "mem-outdated-private",
         state: "active",
         summary: "late protected object",
+        displayName: "late-private.png",
         originalBytes: 10,
         storedBytes: 12,
       });
@@ -1063,7 +1080,13 @@ describe("MemoryV6Storage", () => {
       assert.deepEqual(redacted?.tags, []);
       assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_entry_tags_v6 WHERE entry_id = 'mem-outdated-private'"), 0);
       assert.equal(readRow<{ updated_at: string }>(dbPath, "SELECT updated_at FROM memory_entries_v6 WHERE id = 'mem-outdated-private'").updated_at, "2026-06-24T00:03:00.000Z");
-      assert.equal(readRow<{ state: string }>(dbPath, "SELECT state FROM memory_protected_objects_v6 WHERE object_id = 'obj-outdated-private'").state, "delete_pending");
+      const privateProtectedObject = readRow<{ state: string; summary: string; display_name: string }>(
+        dbPath,
+        "SELECT state, summary, display_name FROM memory_protected_objects_v6 WHERE object_id = 'obj-outdated-private'",
+      );
+      assert.equal(privateProtectedObject.state, "delete_pending");
+      assert.equal(privateProtectedObject.summary, "");
+      assert.equal(privateProtectedObject.display_name, "");
     });
   });
 
