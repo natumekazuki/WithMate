@@ -104,4 +104,3 @@ Persistence 設計の ID と transaction 境界を入力に、次を具体化す
 - evaluation sample が蓄積された後の重み付け、時間減衰、自動 model 選定
 - Provider 追加時の capability 拡張
 - Session 全体の privacy / retention / delete policy
-
