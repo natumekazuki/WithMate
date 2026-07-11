@@ -2,7 +2,7 @@
 
 - 作成日: 2026-07-09
 - 目的: 現行 WithMate の機能を洗い出し、新バージョンに残すかどうかを取捨選択する
-- 根拠: 退避前の `README.md`、`docs/design/`、`docs/task-backlog.md`、主要 `src/` / `src-electron/` entry、`scripts/tests/`
+- 根拠: 退避済みの `old/README.md`、`old/docs/design/`、`old/docs/task-backlog.md`、主要 `old/src/` / `old/src-electron/` entry、`old/scripts/tests/`
 - 現行資源の退避先: `old/`
 
 ## Decision Legend
@@ -21,10 +21,10 @@
 | --- | --- | --- | --- | --- |
 | Product core | CLI 系 coding agent 体験に character layer を重ねる方針 | `old/README.md`, `old/docs/design/product-direction.md`, `old/docs/design/coding-agent-capability-matrix.md` | Keep | WithMate の中心価値。新バージョンの出発点にする。 |
 | Window architecture | Home / Session / Character Editor / Diff / Companion Review の多 window 構成 | `old/README.md`, `old/docs/design/window-architecture.md`, `old/src/*-main.tsx` | Keep | 必要なところは多 window のまま維持する。0 ベースでは window 数を目的化せず、責務ごとに独立 window が必要かを判断する。 |
-| Home | セッション一覧、起動、キャラクター導線、設定導線 | `old/src/HomeApp.tsx`, `old/src/home/`, `old/scripts/tests/home-*.test.ts` | Keep | セッション起動や主要導線の入口であり、ないとアプリとして使えないため残す。UI は作り直す。 |
-| Session chat | message list、composer、right pane、turn 実行表示 | `old/src/session-main.tsx`, `old/src/chat/`, `old/docs/design/session-run-lifecycle.md`, `old/scripts/tests/session-*.test.ts` | Keep | message list と composer はコアとして残す。composer は送信用の入力欄と送信操作、添付、model/approval/sandbox などの実行設定を含む領域。right pane は使用頻度が低いため見直す。turn 実行表示は必要だが見直し対象とし、実行中の assistant 出力、pending message、approval/elicitation、reasoning/running details、audit log などの表示範囲と見せ方を再設計する。message bubble など細部の UI 実装も作り直し対象にする。 |
-| Session runtime | run / cancel / retry / close / live state / persistence coordination | `old/src-electron/session-runtime-service.ts`, `old/src-electron/session-persistence-service.ts`, `old/scripts/tests/session-runtime-service.test.ts` | Keep | ないと session 実行が成立しないため残す。run / cancel / retry / close / live state / persistence coordination は必要だが、0 ベースでは責務境界と永続化連携を再設計する。 |
-| Provider adapters | Codex / GitHub Copilot provider 接続、model / reasoning / approval / sandbox 設定 | `old/src-electron/codex-adapter.ts`, `old/src-electron/copilot-adapter.ts`, `old/docs/design/provider-adapter.md`, `old/scripts/tests/provider-*.test.ts` | Keep | Codex と Copilot を残す。Provider 接続は必須だが、SDK 直結ではなく CodexAppServer などの app server / JSON-RPC 通信へ切り替える。model / reasoning / approval / sandbox 設定も JSON-RPC 境界に合わせて adapter contract を再設計する。 |
+| Home | セッション一覧、起動、キャラクター導線、設定導線 | `old/src/HomeApp.tsx`, `old/src/home/`, `old/scripts/tests/home-*.test.ts` | Keep | GUI の入口として残すが、本格実装は CLI と Application Service の主要 use case が成立した後に行う。UI は作り直す。 |
+| Session chat | message list、composer、right pane、turn 実行表示 | `old/src/session-main.tsx`, `old/src/chat/`, `old/docs/design/session-run-lifecycle.md`, `old/scripts/tests/session-*.test.ts` | Keep | message list と composer はコアとして残す。composer は送信用の入力欄と送信操作、添付、model/approval/sandbox などの実行設定を含む領域。right pane は使用頻度が低いため見直す。turn 実行表示は必要だが見直し対象とし、実行中の assistant 出力、pending message、approval/elicitation、reasoning/running details、audit log などの表示範囲と見せ方を再設計する。message bubble など細部の UI 実装も作り直し対象にする。共通 timeline と途中出力の境界は `docs/design/session-run-message-contract.md` を正本とする。 |
+| Session runtime | run / cancel / retry / close / live state / persistence coordination | `old/src-electron/session-runtime-service.ts`, `old/src-electron/session-persistence-service.ts`, `old/scripts/tests/session-runtime-service.test.ts` | Keep | ないと session 実行が成立しないため残す。Session に実行状態を兼用させず、Run と RunEvent を独立させる。共通 lifecycle と永続化前の不変条件は `docs/design/session-run-message-contract.md` を正本とする。 |
+| Provider adapters | Codex / GitHub Copilot provider 接続、model / reasoning / approval / sandbox 設定 | `old/src-electron/codex-adapter.ts`, `old/src-electron/copilot-adapter.ts`, `old/docs/design/provider-adapter.md`, `old/scripts/tests/provider-*.test.ts` | Keep | 初期 Provider は Codex と GitHub Copilot に限定する。Codex は Codex App Server、GitHub Copilot は Copilot CLI ACP server へ接続し、SDK を直接組み込まない。Provider 固有 protocol は Adapter 内で WithMate 共通 contract へ変換する。詳細は `docs/design/provider-integration.md` を正本とする。 |
 | Approval / elicitation | approval request、provider elicitation、pending UI | `old/src-electron/session-approval-service.ts`, `old/src-electron/session-elicitation-service.ts`, `old/scripts/tests/approval-mode.test.ts` | Keep | agent 操作の安全境界として残す。CodexAppServer 経由なら Codex でも approval request を扱える可能性があるため、JSON-RPC provider 境界と合わせて approval / elicitation / pending UI を再設計する。 |
 | Character management | character 定義、notes、snapshot、editor、archive | `old/src/CharacterEditorApp.tsx`, `old/src-electron/character-service.ts`, `old/docs/design/character-storage.md` | Keep | WithMate 固有価値として残す。format と authoring 支援は再検討する。要検討事項として、ユーザー向け名称を Character から Mate に変更するか判断する。 |
 | Character runtime prompt | session / companion 開始時 snapshot と prompt composition | `old/src/character/`, `old/src-electron/provider-prompt.ts`, `old/docs/design/prompt-composition.md` | Keep | WithMate の character layer の中核であり、残さないとプロダクトの意味が薄れるため残す。session / companion 開始時 snapshot と prompt composition は必要だが、Memory 注入との境界を明確化して再設計する。 |
@@ -38,7 +38,7 @@
 | Auxiliary session | auxiliary session 起動、parent session 連携、runtime option | `old/src-electron/auxiliary-*`, `old/src/auxiliary-*`, `old/scripts/tests/auxiliary-*.test.ts` | Keep | レビュー用途などでよく使うため残す。main session との連携、並行性、runtime option、audit/log owner は 0 ベースで再設計する。 |
 | Session monitor | 実行中 session monitor window | `old/docs/design/session-live-activity-monitor.md`, `old/scripts/tests/home-monitor-style.test.ts` | Keep | 実行中 session の状態を追う用途として残す。独立 window として維持するか、Home / Session からの導線に統合するかは UI 再設計時に判断する。 |
 | Settings | provider settings、model catalog、diagnostics、reset | `old/src/settings/`, `old/src-electron/app-settings-storage.ts`, `old/scripts/tests/settings-*.test.ts` | Reconsider | 残したいが、最悪なくても運用可能。provider settings / model catalog は UI を残す案と、JSON export / edit / validate / import を WithMateCLI で行う案を比較する。diagnostics / reset は UI から外す。 |
-| Model catalog | model catalog import / revision / selection | `old/src-electron/model-catalog-storage.ts`, `old/public/model-catalog.json`, `old/docs/design/model-catalog.md` | Keep | provider / model selection に必要なため残す。各 provider 追加時にも必要になるため、WithMateCLI で catalog refresh / export / validate / import を管理できるようにする。Copilot は SDK に利用可能モデル取得メソッドがあったため、JSON-RPC 接続でも同等情報を取れる可能性があるが、詳細は実装時に調査する。取得できない場合は bundled JSON fallback を使う。 |
+| Model catalog | model catalog import / revision / selection | `old/src-electron/model-catalog-storage.ts`, `old/public/model-catalog.json`, `old/docs/design/model-catalog.md` | Keep | provider / model selection に必要なため残す。WithMateCLI で catalog refresh / export / validate / import を管理できるようにする。Codex App Server / Copilot ACP から取得できる model と capability は設計検証で確認し、取得できない場合は bundled JSON fallback を使う。 |
 | Additional directories | workspace 外 directory allowlist / attachment | `old/src-electron/additional-directories.ts`, `old/src/additional-directory-state.ts` | Keep | 実際に使っているため残す。workspace 外 directory allowlist / attachment は必要だが、security / privacy 境界として UI、許可単位、provider への渡し方を再設計する。 |
 | Packaging | Electron builder、icon generation、provider binary staging | `old/package.json`, `old/scripts/generate-app-icon.ts`, `old/scripts/stage-provider-binaries.ts`, `old/build/` | Keep | 配布・起動・provider 連携に必須のため残す。新 stack 決定後に packaging、icon generation、provider binary / app server staging を 0 ベースで再構築する。 |
 | Browser preview / browser use | Browser Preview、visual comments、browser artifact | GitHub Issue #107 | Defer | 作り方がまだ決まっていないため将来判断に回す。現行実装ではなく将来構想として扱い、V7 / multi-agent / provider capability が固まった段階で再検討する。 |
@@ -50,15 +50,17 @@
 
 初期版に残す候補は次の順に扱う。
 
-1. Home / Session の最小作業導線
-2. Codex / Copilot provider adapter の薄い contract
-3. Character 定義と runtime prompt snapshot
-4. Memory / Audit log / App log の CLI 前提運用
+1. 画面に依存しない Application Service と CLI の基本 contract
+2. Codex App Server / GitHub Copilot ACP の Provider Adapter contract
+3. Session / Run / Message の共通 lifecycle と会話履歴
+4. Character 定義と runtime prompt snapshot
 5. 新 persistence foundation と clean install 前提の bootstrap
-6. Settings / model catalog の UI または WithMateCLI 管理
-7. Additional directories
-8. Multi-agent / control plane
-9. Packaging / distribution
+6. Memory / Audit log / App log の CLI 前提運用
+7. Settings / model catalog の WithMateCLI 管理
+8. Additional directories
+9. Multi-agent / control plane
+10. Home / Session GUI
+11. Packaging / distribution
 
 ## Initial Reconsider Scope
 
