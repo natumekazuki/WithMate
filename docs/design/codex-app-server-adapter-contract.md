@@ -59,8 +59,11 @@ Codex ID を WithMate の primary key にしない。Thread / Turn / item が取
 
 ### 新規作成
 
-- `thread/start` の成功 response と `thread/started` notification は Thread ID で相関する。
-- ProviderBinding は Thread ID、ephemeral / persistent mode、状態、作成時刻を保持する。
+- `thread/start`を送る前に、対象Session / RunAttemptと相関する`creating` ProviderBinding intentをdurable commitする。
+- `thread/start`の成功responseと`thread/started` notificationはThread IDで相関し、同じtransactionでBindingへThread IDを設定して`active`へ進め、作成元RunAttemptの`provider_binding_id`も設定する。BindingとAttemptのSession所属一致をcommit前に検証する。
+- response loss、timeout、process crashで作成受理が不明な場合、同じ`thread/start`を自動再送しない。Thread list / readまたはProvider native idempotencyで同一Threadを一意に証明できた場合だけ元Bindingをactive化する。
+- 一意照合できなければBindingを`invalidated(conversation_start_ambiguous)`、Runを`interrupted`へ収束させる。相関不能なorphan Threadは診断対象として許容し、推測相関や自動削除を行わない。
+- ProviderBinding は Thread ID、ephemeral / persistent mode、作成intentと状態、作成時刻を保持する。
 - 同じ WithMate Session に異なる Thread ID を関連付け直す場合は旧 binding を履歴として残し、上書きしない。
 
 ### 読取・再開
@@ -82,8 +85,8 @@ Codex ID を WithMate の primary key にしない。Thread / Turn / item が取
 
 ### Run 開始
 
-1. WithMate の Run admission と dispatch intent を durable commit する。
-2. ProviderBinding を準備する。
+1. WithMateのRun admission、dispatch intent、必要な`creating` Binding intentをdurable commitする。
+2. active Bindingがなければ前項の規則で`thread/start`を送り、Bindingのactive化をcommitする。受理不明のまま`turn/start`へ進まない。
 3. dispatch record を `dispatching` へ durable update する。
 4. `turn/start` を送る。
 5. response / `turn/started` の Turn ID を RunAttempt と相関する。
