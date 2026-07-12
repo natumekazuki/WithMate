@@ -20,6 +20,7 @@ WithMate は完全に 0 ベースで作り直す。
 | `docs/design/multi-agent-orchestration.md` | Multi-Agent の親子 Session、待機、並行実行、結果配送、Auxiliary との境界 |
 | `docs/design/multi-agent-persistence.md` | Session / Message / Run、Run output、親子 relation / Delegation / result delivery、ProviderBinding / RunAttempt / RunDispatch、IdempotencyRecord、RunEvent、RunInputDelivery の table、制約、transaction、修復規則 |
 | `docs/design/sqlite-schema-lifecycle.md` | 新DBの初期DDL適用、database識別、schema version管理、現行schema間migrationの境界 |
+| `docs/design/persistence-worker-lifecycle.md` | Persistence Workerのownership、FIFO、protocol、timeout / cancel、shutdown、crash、payload chunk契約 |
 | `schema/sqlite/v1.sql` | WithMate新実装のSQLite schema version 1 table / index / trigger完全DDL |
 | `schema/sqlite/manifest-v1.json` | schema version、application ID、table / index / trigger集合の機械可読manifest |
 | `docs/investigations/codex-app-server/capability-matrix.md` | Codex App Server の capability と WithMate への対応方針 |

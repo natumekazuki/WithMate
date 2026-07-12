@@ -44,3 +44,17 @@
 - 別視点reviewでlegacy path alias、commit後manifest検証、snapshot競合検出、DDL artifactによるtransaction脱出の不足を検出し、file identity照合、transaction内manifest検証、snapshot前後のfile identity / content hash比較、禁止statement検査とSQLite authorizerへ修正した。
 - docs-syncは`repo-sync-required`と判定し、bootstrap責務と非破壊inspection契約を`docs/design/sqlite-schema-lifecycle.md`へ同期した。
 - 現在地をS4 Persistence Worker Lifecycle着手前へ更新した。
+
+## 2026-07-12: S4 Persistence Worker Lifecycle完了
+
+- generation付きversioned protocol、strict runtime decoder、safe error / effect contractを追加した。
+- Main側にWorker client state machine、request timeout / cancel、late response破棄、startup / crash収束、graceful / forced shutdownを実装した。
+- Worker側にsingle FIFO executor、queue上限、同期write transaction wrapper、runtime operation registryを実装した。
+- request sequence high-water markで世代内replayをconstant memoryで拒否するようにした。
+- `payload.read_chunk`を最大256 KiBのstateless range readとし、専有`ArrayBuffer`のtransfer経路を追加した。
+- shutdownをadmission停止、queued failure、running完了、primary close、maintenance checkpoint、closed通知の順に固定した。
+- 高リスクreviewでrequest replay、同期例外cleanup、shutdown race / 相関、chunk上限、message flush、async transaction misuse、replay Setのmemory growth、maintenance PRAGMA不足を検出し、回帰testとともに修正した。
+- docs-syncは`repo-sync-required`と判定し、長期contractを`docs/design/persistence-worker-lifecycle.md`へ同期した。
+- Node.js 24.18.0で全32 test、開発shellのNode.js 22.22.0ではtarget Worker test 6件を明示skipした残り26件とschema validatorが成功した。
+- Electron 42.5.2同梱Node.jsでWorker lifecycle test 8件が成功した。
+- 現在地をS5 Repository Read Model着手前へ更新した。

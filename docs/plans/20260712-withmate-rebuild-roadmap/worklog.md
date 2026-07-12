@@ -32,3 +32,9 @@
 - SQLite bootstrap、schema manifest検証、非対応DBの非破壊拒否を実装した。
 - WAL / rollback journalを含む既存DBをsnapshot側で分類し、旧DB path aliasをopen前に拒否する契約を追加した。
 - CP1の現在地をS4 Persistence Worker Lifecycle着手前へ進めた。
+
+## 2026-07-12: CP1 S4完了
+
+- Persistence Workerの世代付きprotocol、single FIFO、timeout / cancel、crash / shutdown lifecycleを実装した。
+- 最大256 KiBのpayload chunk transfer経路とconstant-memoryのrequest replay拒否を追加した。
+- CP1の現在地をS5 Repository Read Model着手前へ進めた。

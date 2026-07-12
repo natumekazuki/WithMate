@@ -9,3 +9,4 @@ export {
   type OpenDatabaseResult,
 } from "./sqlite-bootstrap.js";
 export { SQLITE_MIGRATIONS, resolveMigrationPath, type SqliteMigration } from "./sqlite-migrations.js";
+export { BoundedSerialExecutor, executeWriteTransaction, PersistenceExecutorError } from "./request-executor.js";
