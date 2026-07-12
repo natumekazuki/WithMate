@@ -13,6 +13,7 @@ WithMate は完全に 0 ベースで作り直す。
 | `docs/issue-triage.md` | GitHub / Notion Issue を新バージョンへ引き継ぐか捨てるかの判断記録 |
 | `docs/plans/20260712-withmate-rebuild-roadmap/plan.md` | ゼロベース再構築の全体checkpoint、依存関係、完了Gate |
 | `docs/plans/20260712-cp1-runtime-persistence/plan.md` | CP1 Runtime / Persistence Foundationのslice、依存関係、完了Gate |
+| `docs/development/source-comment-guidelines.md` | 新実装のソースコメント、JSDoc、TODO / FIXME / HACKの記載規約 |
 | `docs/design/provider-integration.md` | CLI 優先、Provider 接続、会話履歴、実行状態の設計基準 |
 | `docs/design/codex-app-server-adapter-contract.md` | Codex App Server の Thread / Turn / item、assistant 分類、interaction、復旧の Adapter 契約 |
 | `docs/design/session-run-message-contract.md` | Session / Run / Message / RunEvent の責務、状態遷移、不変条件 |
