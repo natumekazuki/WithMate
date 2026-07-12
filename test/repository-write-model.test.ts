@@ -469,6 +469,98 @@ repositoryTest("normal Run admission rejects inactive or busy Sessions without p
   });
 });
 
+repositoryTest("Run admission idempotency directly rejects conflicts, expiry, and missing Run references", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000139", "session-1")) as CommandResult).ok,
+      true,
+    );
+    const command = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000140", "run-1", "create");
+    assert.equal((admit(command) as CommandResult).ok, true);
+    const conflict = admit({
+      ...command,
+      dispatch: { ...command.dispatch, providerRequest: { prompt: "different" } },
+    }) as CommandResult;
+    assert.equal(!conflict.ok && conflict.error.code, "idempotency_conflict");
+  });
+
+  withDatabase((database) => {
+    let now = 100;
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => now);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => now, 1);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000141", "session-1")) as CommandResult).ok,
+      true,
+    );
+    const command = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000142", "run-1", "create");
+    assert.equal((admit(command) as CommandResult).ok, true);
+    now = 101;
+    const expired = admit(command) as CommandResult;
+    assert.equal(!expired.ok && expired.error.code, "idempotency_expired");
+    const record = database
+      .prepare(
+        `
+        SELECT record_state, response_ref_type, response_ref_id, response_envelope_json
+        FROM idempotency_records WHERE idempotency_key = ?
+      `,
+      )
+      .get(command.idempotencyKey) as Record<string, unknown>;
+    assert.deepEqual(
+      { ...record },
+      {
+        record_state: "expired",
+        response_ref_type: null,
+        response_ref_id: null,
+        response_envelope_json: null,
+      },
+    );
+  });
+
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000143", "session-1")) as CommandResult).ok,
+      true,
+    );
+    const command = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000144", "run-1", "create");
+    assert.equal((admit(command) as CommandResult).ok, true);
+    database.exec("PRAGMA foreign_keys = OFF;");
+    database.exec(
+      "DELETE FROM run_dispatches; DELETE FROM provider_bindings; DELETE FROM run_attempts; DELETE FROM runs;",
+    );
+    const missing = admit(command) as CommandResult;
+    assert.equal(!missing.ok && missing.error.code, "reference_invalid");
+  });
+});
+
+repositoryTest("Run admission rolls back every inserted row when a late constraint aborts", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000145", "session-1")) as CommandResult).ok,
+      true,
+    );
+    database.exec(`
+      CREATE TRIGGER test_abort_dispatch BEFORE INSERT ON run_dispatches
+      BEGIN
+        SELECT RAISE(ABORT, 'injected dispatch failure');
+      END;
+    `);
+    const command = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000146", "run-1", "create");
+    assert.throws(() => admit(command), /injected dispatch failure/u);
+    assert.equal(count(database, "messages"), 0);
+    assert.equal(count(database, "runs"), 0);
+    assert.equal(count(database, "run_attempts"), 0);
+    assert.equal(count(database, "provider_bindings"), 0);
+    assert.equal(count(database, "run_dispatches"), 0);
+    assert.equal(count(database, "idempotency_records"), 1);
+  });
+});
+
 repositoryTest("Worker registry accepts Session commands only as write requests", async () => {
   const database = new DatabaseSync(":memory:");
   database.exec(fs.readFileSync(new URL("../schema/sqlite/v1.sql", import.meta.url), "utf8"));

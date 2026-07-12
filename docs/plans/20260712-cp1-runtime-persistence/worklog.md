@@ -111,3 +111,9 @@
 - execution snapshotの必須構造とSession Provider一致、persistent Bindingだけの再利用、app全体 / Provider別capacityをadmission境界へ追加した。
 - exact replay、Binding作成 / 再利用、inactive / busy時の部分row不在をcontract testで固定した。
 - S6-Bの残りはBinding確定、Dispatch gate / resolution、retry admission、supplemental inputとする。
+
+## 2026-07-12: S6-B1 contract test follow-up
+
+- Run参照のidempotency replayについて、fingerprint conflict、expiry scrub、Run参照欠落を直接検証した。
+- Dispatch insert直前のfault injectionでtransactionを中断し、Message / Run / Attempt / Binding / Dispatchがすべてrollbackされることを固定した。
+- 同じDBを所有する2 Workerからcapacity上限1のRun admissionを同時実行し、`BEGIN IMMEDIATE`により成功1件と`capacity_exceeded` 1件へ直列化されることを確認した。

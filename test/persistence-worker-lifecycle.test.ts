@@ -82,6 +82,55 @@ workerTest("production Worker applies configured Run capacity", async () => {
   });
 });
 
+workerTest("BEGIN IMMEDIATE serializes capacity admission across database connections", async () => {
+  await withTempDirectory(async (directory) => {
+    const databasePath = path.join(directory, "capacity-race.sqlite3");
+    const options = {
+      workerUrl,
+      databasePath,
+      legacyDatabasePaths: [],
+      maxConcurrentRuns: 1,
+      maxConcurrentRunsPerProvider: 1,
+      workerOptions,
+    } as const;
+    const firstClient = new PersistenceWorkerClient(options);
+    const secondClient = new PersistenceWorkerClient(options);
+    await firstClient.start();
+    await secondClient.start();
+    const firstRepository = new RepositoryWriteClient(firstClient);
+    const secondRepository = new RepositoryWriteClient(secondClient);
+    for (const [sessionId, idempotencyKey] of [
+      ["session-race-1", "018f1f4e-7f0a-7000-8000-000000000305"],
+      ["session-race-2", "018f1f4e-7f0a-7000-8000-000000000306"],
+    ] as const) {
+      const result = await firstRepository.createSession({
+        idempotencyKey,
+        session: {
+          id: sessionId,
+          providerId: "provider",
+          workspaceKey: "workspace",
+          allowedAdditionalDirectories: [],
+          defaultCharacterId: "character",
+          maxConcurrentChildRuns: 2,
+        },
+      });
+      assert.equal(result.ok, true);
+    }
+
+    const results = await Promise.all([
+      firstRepository.admitNormalRun(
+        productionRunAdmission("session-race-1", "run-race-1", "018f1f4e-7f0a-7000-8000-000000000307"),
+      ),
+      secondRepository.admitNormalRun(
+        productionRunAdmission("session-race-2", "run-race-2", "018f1f4e-7f0a-7000-8000-000000000308"),
+      ),
+    ]);
+    assert.equal(results.filter((result) => result.ok).length, 1);
+    assert.equal(results.filter((result) => !result.ok && result.error.code === "capacity_exceeded").length, 1);
+    await Promise.all([firstClient.shutdown(), secondClient.shutdown()]);
+  });
+});
+
 workerTest("startup failure is safe and does not enter a restart loop", async () => {
   const client = new PersistenceWorkerClient({
     workerUrl,
