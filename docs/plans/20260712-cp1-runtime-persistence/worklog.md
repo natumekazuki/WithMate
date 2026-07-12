@@ -85,3 +85,12 @@
 - Session pageにも192 KiB byte budgetを適用し、単一oversize ordinal rowを明示omissionとして進行可能にした。
 - Session IDをschemaで最大1024文字に制限し、Session cursorのsort keyがresponse / decode上限を超えないようにした。
 - category付きRunOutput queryを専用SQLへ分離し、category ordinal indexの利用をquery plan testへ追加した。
+
+## 2026-07-12: S6-A typed command / Session操作完了
+
+- typed `RepositoryWriteClient`、command result / domain error、operation別strict decoderを追加した。
+- fingerprintをWorker側で生成するidempotency coreを実装し、exact replay、conflict、expiry tombstone、response reference再検証を追加した。
+- active Session作成とself-scope completed IdempotencyRecordを同じtransactionで確定するcommandを追加した。
+- expected lifecycleを必須にしたarchive / unarchive / closeを実装し、active Run中のarchive / closeを全rollbackで拒否した。
+- idempotency completed responseの保持期間をWorker所有の30日へ固定した。
+- docs-syncは`repo-sync-required`と判定し、write責務を`docs/design/persistence-worker-repository-write.md`へ同期した。

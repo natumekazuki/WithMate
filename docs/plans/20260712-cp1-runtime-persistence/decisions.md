@@ -138,3 +138,12 @@ payload readはstatelessな最大256 KiB chunk requestとし、専有`ArrayBuffe
 CP2はtyped `RepositoryReadClient`を使用し、Persistence Workerはworkspace / Session / Run / child relationの所属をSQL JOINで再検証する。cursorはquery種別、scope / filter、sort tupleを含むversion付きopaque valueとし、別scopeへの流用を拒否する。
 
 Session pageはactivity keysetで対象を先に制限し、active / latest Runとexecution stateを1 statementで導出する。timeline、event、output、deliveryはordinal keysetを使う。summary / count queryはpayload BLOBをJOINせず、4 MiBまで許容されるMessage本文とstored output payloadはscoped chunk operationへ分離する。詳細は`docs/design/persistence-worker-repository.md`を正本とする。
+
+## D1-016: Repository writeをtyped commandとdomain resultへ固定する
+
+- date: 2026-07-12
+- status: accepted
+
+CP2は`RepositoryWriteClient`を使用し、commandごとのstrict decoder、同期transaction、typed domain resultを通してwriteする。domain拒否はtransport failureへ変換せず、SQLite障害やcrashなどcommit有無が不明な場合だけ`effect='unknown'`とする。
+
+idempotency fingerprintはWorkerがsemantic commandから生成する。completed responseの保持期間はWorker所有の30日とし、caller入力にはしない。期限後はresponse参照とenvelopeを消去したtombstoneをSession削除まで保持する。詳細は`docs/design/persistence-worker-repository-write.md`を正本とする。

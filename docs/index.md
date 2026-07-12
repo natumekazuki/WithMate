@@ -22,6 +22,7 @@ WithMate は完全に 0 ベースで作り直す。
 | `docs/design/sqlite-schema-lifecycle.md` | 新DBの初期DDL適用、database識別、schema version管理、現行schema間migrationの境界 |
 | `docs/design/persistence-worker-lifecycle.md` | Persistence Workerのownership、FIFO、protocol、timeout / cancel、shutdown、crash、payload chunk契約 |
 | `docs/design/persistence-worker-repository.md` | Persistence Workerのtyped read surface、scope再検証、cursor、bounded query、BLOB分離契約 |
+| `docs/design/persistence-worker-repository-write.md` | Persistence Workerのtyped write command、transaction、domain error、idempotency契約 |
 | `schema/sqlite/v1.sql` | WithMate新実装のSQLite schema version 1 table / index / trigger完全DDL |
 | `schema/sqlite/manifest-v1.json` | schema version、application ID、table / index / trigger集合の機械可読manifest |
 | `docs/investigations/codex-app-server/capability-matrix.md` | Codex App Server の capability と WithMate への対応方針 |

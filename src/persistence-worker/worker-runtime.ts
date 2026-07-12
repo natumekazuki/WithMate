@@ -11,6 +11,7 @@ import {
 import { decodeMainToWorkerMessage, isPlainObject } from "../shared/persistence-runtime-protocol.js";
 import { BoundedSerialExecutor, PersistenceExecutorError } from "./request-executor.js";
 import { createRepositoryReadOperations, RepositoryReadError } from "./repository-read-model.js";
+import { createRepositoryWriteOperations } from "./repository-write-model.js";
 
 export const MAX_PERSISTENCE_RESPONSE_BYTES = 256 * 1024;
 export const MAX_PAYLOAD_CHUNK_BYTES = 256 * 1024;
@@ -246,6 +247,9 @@ function createOperationRegistry(
     ],
   ]);
   for (const [name, definition] of createRepositoryReadOperations(database)) {
+    operations.set(name, definition);
+  }
+  for (const [name, definition] of createRepositoryWriteOperations(database)) {
     operations.set(name, definition);
   }
   return operations;

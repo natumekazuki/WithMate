@@ -7,6 +7,7 @@ export {
   type PersistenceWorkerClientState,
 } from "./persistence-worker-client.js";
 export { RepositoryReadClient } from "./repository-read-client.js";
+export { RepositoryWriteClient } from "./repository-write-client.js";
 export type {
   ChildResultListItem,
   MessageListItem,
@@ -20,3 +21,13 @@ export type {
   SessionExecutionState,
   SessionListItem,
 } from "../shared/repository-read-model.js";
+export {
+  REPOSITORY_WRITE_OPERATIONS,
+  type RepositoryCommandErrorCode,
+  type RepositoryCommandResult,
+  type SessionCreateCommand,
+  type SessionCreateResult,
+  type SessionLifecycleStatus,
+  type SessionTransitionCommand,
+  type SessionTransitionResult,
+} from "../shared/repository-write-model.js";

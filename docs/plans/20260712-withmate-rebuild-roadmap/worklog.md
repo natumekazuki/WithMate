@@ -39,3 +39,4 @@
 - 最大256 KiBのpayload chunk transfer経路とconstant-memoryのrequest replay拒否を追加した。
 - CP1の現在地をS5 Repository Read Model着手前へ進めた。
 - CP1 S5でscope付きbounded Repository read、opaque cursor、Message / payload chunk分離を実装し、現在地をS6着手前へ進めた。
+- CP1 S6-Aでtyped write command、idempotency基盤、Session create / lifecycle transitionを実装し、現在地をS6-B着手前へ進めた。
