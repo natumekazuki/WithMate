@@ -125,3 +125,12 @@
 - 会話作成結果がambiguousな場合にBinding / Attempt / Run / Dispatchを`invalidated / interrupted / interrupted / aborted`へ一括収束させた。
 - exact replayと異なる確定値のconflictを自然キーとstateで判定し、IdempotencyRecordを重複追加しない境界を固定した。
 - ephemeral Bindingのlive ownership tokenをcommit後のWorker memoryだけへ登録し、再起動後にDB状態だけからresumeしない土台を追加した。
+
+## 2026-07-12: S6-B2b Run Dispatch transition完了
+
+- `repository.dispatch.begin` / `repository.dispatch.resolve`とtyped Main process client methodを追加した。
+- Run / Attempt / Binding / Dispatchの共通GateとProvider request fingerprintをtransaction内で再検証した。
+- `pending -> dispatching`の初回commitだけ`sendAllowed=true`とし、response loss後のexact replayでは再送を許可しない契約を固定した。
+- accepted時にAttempt / Dispatch / Runを同時にactive化し、rejected / ambiguousではDispatchだけをterminal化して後続policyへ委譲した。
+- ephemeral live ownershipを初回sendと未確定resolutionへ要求し、Worker再起動後にtokenを再登録しないことをcontract test化した。
+- accepted resolution終盤のfault injectionでAttempt / Dispatch / Runが一括rollbackされることを確認した。

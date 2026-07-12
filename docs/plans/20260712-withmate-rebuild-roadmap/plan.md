@@ -3,7 +3,7 @@
 - 作成日: 2026-07-12
 - plan tier: repo plan
 - 状態: active
-- 現在地: CP1進行中、S6-B2a Provider Binding resolution完了
+- 現在地: CP1進行中、S6-B2 Binding / Dispatch transition完了
 - questions status: 質問なし
 
 ## Task Brief

@@ -3,6 +3,8 @@ export const REPOSITORY_WRITE_OPERATIONS = {
   sessionTransition: "repository.session.transition",
   runAdmit: "repository.run.admit",
   bindingResolve: "repository.binding.resolve",
+  dispatchBegin: "repository.dispatch.begin",
+  dispatchResolve: "repository.dispatch.resolve",
 } as const;
 
 export type SessionLifecycleStatus = "active" | "archived" | "closed";
@@ -85,6 +87,29 @@ export type ProviderBindingResolutionCommand = Readonly<{
       }>;
 }>;
 
+export type RunDispatchBeginCommand = Readonly<{
+  sessionId: string;
+  workspaceKey: string;
+  runId: string;
+  attemptId: string;
+  bindingId: string;
+  providerRequest: Readonly<{ [key: string]: RepositoryJsonValue }>;
+  ephemeralOwnerToken: string | null;
+}>;
+
+export type RunDispatchResolutionCommand = Readonly<{
+  sessionId: string;
+  workspaceKey: string;
+  runId: string;
+  attemptId: string;
+  bindingId: string;
+  ephemeralOwnerToken: string | null;
+  outcome:
+    | Readonly<{ kind: "accepted"; externalExecutionId: string }>
+    | Readonly<{ kind: "rejected" }>
+    | Readonly<{ kind: "ambiguous" }>;
+}>;
+
 export type RepositoryCommandErrorCode =
   | "request_invalid"
   | "not_found"
@@ -138,4 +163,25 @@ export type ProviderBindingResolutionResult = Readonly<{
   runPhase: "queued" | "starting" | "active" | "canceling" | "finalizing" | "interrupted";
   dispatchState: "pending" | "aborted";
   ephemeralOwnership: "not_applicable" | "registered" | "unavailable";
+}>;
+
+export type RunDispatchBeginResult = Readonly<{
+  sessionId: string;
+  runId: string;
+  attemptId: string;
+  bindingId: string;
+  runPhase: "starting" | "canceling";
+  dispatchState: "dispatching";
+  dispatchingAt: number;
+  sendAllowed: boolean;
+}>;
+
+export type RunDispatchResolutionResult = Readonly<{
+  sessionId: string;
+  runId: string;
+  attemptId: string;
+  bindingId: string;
+  dispatchState: "accepted" | "rejected" | "ambiguous";
+  externalExecutionId: string | null;
+  resolvedAt: number;
 }>;

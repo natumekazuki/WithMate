@@ -42,3 +42,4 @@
 - CP1 S6-Aでtyped write command、idempotency基盤、Session create / lifecycle transitionを実装し、現在地をS6-B着手前へ進めた。
 - CP1 S6-B1で通常Run admissionを実装し、Message / Run / Attempt / Dispatch / Binding intent / IdempotencyRecordの一括commitを成立させた。
 - CP1 S6-B2aでProvider Bindingのactive / ambiguous resolutionを実装し、ephemeral live ownershipをWorker memoryへ限定した。
+- CP1 S6-B2bでDispatch共通Gate、送信intent、accepted / rejected / ambiguous resolutionを実装した。

@@ -11,6 +11,10 @@ import {
   type ProviderBindingResolutionResult,
   type RepositoryCommandErrorCode,
   type RepositoryCommandResult,
+  type RunDispatchBeginCommand,
+  type RunDispatchBeginResult,
+  type RunDispatchResolutionCommand,
+  type RunDispatchResolutionResult,
   type SessionCreateCommand,
   type SessionCreateResult,
   type SessionLifecycleStatus,
@@ -106,6 +110,29 @@ export function createRepositoryWriteOperations(
           }
           if (execution.removeEphemeralOwner) ephemeralBindingOwners.delete(command.bindingId);
           return execution.result;
+        }),
+      ),
+    ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.dispatchBegin,
+      write((payload) =>
+        runDecoded(decodeRunDispatchBegin(payload), (command) => {
+          const prepared = prepareRunDispatchBegin(command);
+          const now = readClock(clock);
+          return executeWriteTransaction(database, () =>
+            beginRunDispatch(database, prepared, now, ephemeralBindingOwners),
+          );
+        }),
+      ),
+    ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.dispatchResolve,
+      write((payload) =>
+        runDecoded(decodeRunDispatchResolution(payload), (command) => {
+          const now = readClock(clock);
+          return executeWriteTransaction(database, () =>
+            resolveRunDispatch(database, command, now, ephemeralBindingOwners),
+          );
         }),
       ),
     ],
@@ -536,6 +563,150 @@ function resolveProviderBinding(
   };
 }
 
+function beginRunDispatch(
+  database: DatabaseSync,
+  prepared: PreparedRunDispatchBegin,
+  now: number,
+  ephemeralBindingOwners: ReadonlyMap<string, string>,
+): RepositoryCommandResult<RunDispatchBeginResult> {
+  const command = prepared.command;
+  const row = readDispatchTransitionRow(database, command);
+  if (row === undefined) return failure("not_found", "Run dispatch target was not found.");
+  if (row.request_fingerprint !== prepared.requestFingerprint) {
+    return failure("idempotency_conflict", "Provider request fingerprint does not match the admitted Dispatch.");
+  }
+  if (
+    row.dispatch_state === "dispatching" &&
+    row.attempt_state === "preparing" &&
+    row.binding_state === "active" &&
+    row.provider_binding_id === command.bindingId &&
+    (row.run_phase === "starting" || row.run_phase === "canceling") &&
+    row.dispatching_at !== null
+  ) {
+    return success(dispatchBeginValue(command, row.run_phase, row.dispatching_at, false), true);
+  }
+  const ownershipFailure = validateDispatchOwnership<RunDispatchBeginResult>(
+    command.bindingId,
+    command.ephemeralOwnerToken,
+    row,
+    ephemeralBindingOwners,
+  );
+  if (ownershipFailure !== undefined) return ownershipFailure;
+  if (
+    row.dispatch_state !== "pending" ||
+    row.attempt_state !== "preparing" ||
+    row.binding_state !== "active" ||
+    row.provider_binding_id !== command.bindingId ||
+    (row.run_phase !== "queued" && row.run_phase !== "starting" && row.run_phase !== "canceling")
+  ) {
+    return failure("lifecycle_conflict", "Run dispatch Gate is not satisfied.");
+  }
+  const dispatchUpdate = database
+    .prepare(
+      `
+      UPDATE run_dispatches SET dispatch_state = 'dispatching', dispatching_at = ?
+      WHERE run_attempt_id = ? AND dispatch_state = 'pending'
+    `,
+    )
+    .run(now, command.attemptId);
+  const runUpdate = database
+    .prepare(
+      `
+      UPDATE runs SET phase = CASE WHEN phase = 'queued' THEN 'starting' ELSE phase END,
+        updated_at = MAX(updated_at, ?), version = version + 1
+      WHERE id = ? AND session_id = ? AND phase IN ('queued','starting','canceling')
+    `,
+    )
+    .run(now, command.runId, command.sessionId);
+  if (dispatchUpdate.changes !== 1 || runUpdate.changes !== 1) {
+    return failure("lifecycle_conflict", "Run dispatch begin conflicted.");
+  }
+  const runPhase = row.run_phase === "queued" ? "starting" : row.run_phase;
+  return success(dispatchBeginValue(command, runPhase, now, true), false);
+}
+
+function resolveRunDispatch(
+  database: DatabaseSync,
+  command: RunDispatchResolutionCommand,
+  now: number,
+  ephemeralBindingOwners: ReadonlyMap<string, string>,
+): RepositoryCommandResult<RunDispatchResolutionResult> {
+  const row = readDispatchTransitionRow(database, command);
+  if (row === undefined) return failure("not_found", "Run dispatch target was not found.");
+  const replay = replayRunDispatchResolution(command, row);
+  if (replay !== undefined) return replay;
+  const ownershipFailure = validateDispatchOwnership<RunDispatchResolutionResult>(
+    command.bindingId,
+    command.ephemeralOwnerToken,
+    row,
+    ephemeralBindingOwners,
+  );
+  if (ownershipFailure !== undefined) return ownershipFailure;
+  if (
+    row.dispatch_state !== "dispatching" ||
+    row.attempt_state !== "preparing" ||
+    row.binding_state !== "active" ||
+    row.provider_binding_id !== command.bindingId ||
+    (row.run_phase !== "starting" && row.run_phase !== "canceling")
+  ) {
+    return failure("lifecycle_conflict", "Run dispatch resolution state changed.");
+  }
+
+  if (command.outcome.kind === "accepted") {
+    const duplicate = database
+      .prepare(
+        `
+        SELECT 1 FROM run_attempts
+        WHERE provider_binding_id = ? AND external_execution_id = ? AND id <> ?
+      `,
+      )
+      .get(command.bindingId, command.outcome.externalExecutionId, command.attemptId);
+    if (duplicate !== undefined) {
+      return failure("reference_invalid", "External execution is already bound to another Attempt.");
+    }
+    const attemptUpdate = database
+      .prepare(
+        `
+        UPDATE run_attempts SET attempt_state = 'active', external_execution_id = ?, started_at = ?
+        WHERE id = ? AND run_id = ? AND attempt_state = 'preparing' AND provider_binding_id = ?
+      `,
+      )
+      .run(command.outcome.externalExecutionId, now, command.attemptId, command.runId, command.bindingId);
+    const dispatchUpdate = database
+      .prepare(
+        `
+        UPDATE run_dispatches SET dispatch_state = 'accepted', resolved_at = ?
+        WHERE run_attempt_id = ? AND dispatch_state = 'dispatching'
+      `,
+      )
+      .run(now, command.attemptId);
+    const runUpdate = database
+      .prepare(
+        `
+        UPDATE runs SET phase = CASE WHEN phase = 'starting' THEN 'active' ELSE phase END,
+          started_at = COALESCE(started_at, ?), updated_at = MAX(updated_at, ?), version = version + 1
+        WHERE id = ? AND session_id = ? AND phase IN ('starting','canceling')
+      `,
+      )
+      .run(now, now, command.runId, command.sessionId);
+    if (attemptUpdate.changes !== 1 || dispatchUpdate.changes !== 1 || runUpdate.changes !== 1) {
+      return failure("lifecycle_conflict", "Accepted Run dispatch resolution conflicted.");
+    }
+    return success(dispatchResolutionValue(command, "accepted", command.outcome.externalExecutionId, now), false);
+  }
+
+  const dispatchUpdate = database
+    .prepare(
+      `
+      UPDATE run_dispatches SET dispatch_state = ?, resolved_at = ?
+      WHERE run_attempt_id = ? AND dispatch_state = 'dispatching'
+    `,
+    )
+    .run(command.outcome.kind, now, command.attemptId);
+  if (dispatchUpdate.changes !== 1) return failure("lifecycle_conflict", "Run dispatch resolution conflicted.");
+  return success(dispatchResolutionValue(command, command.outcome.kind, null, now), false);
+}
+
 function checkIdempotency<T>(
   database: DatabaseSync,
   key: string,
@@ -694,6 +865,12 @@ function prepareNormalRunAdmission(command: NormalRunAdmissionCommand): Prepared
   };
 }
 
+function prepareRunDispatchBegin(command: RunDispatchBeginCommand): PreparedRunDispatchBegin {
+  const providerRequestJson = canonicalJsonString(command.providerRequest);
+  if (Buffer.byteLength(providerRequestJson) > 256 * 1024) throw invalidCommand();
+  return { command, requestFingerprint: fingerprintJson(providerRequestJson) };
+}
+
 function decodeSessionCreate(payload: Readonly<Record<string, unknown>>): DecodeResult<SessionCreateCommand> {
   if (!hasExactKeys(payload, ["idempotencyKey", "session"]) || !isCanonicalUuid(payload.idempotencyKey)) {
     return decodeFailure();
@@ -818,6 +995,60 @@ function decodeProviderBindingResolution(
     return decodeFailure();
   }
   return { ok: true, value: payload as unknown as ProviderBindingResolutionCommand };
+}
+
+function decodeRunDispatchBegin(payload: Readonly<Record<string, unknown>>): DecodeResult<RunDispatchBeginCommand> {
+  if (
+    !hasExactKeys(payload, [
+      "sessionId",
+      "workspaceKey",
+      "runId",
+      "attemptId",
+      "bindingId",
+      "providerRequest",
+      "ephemeralOwnerToken",
+    ]) ||
+    !hasDispatchScope(payload) ||
+    !isPlainObject(payload.providerRequest) ||
+    !isJsonValue(payload.providerRequest) ||
+    (payload.ephemeralOwnerToken !== null && !isCanonicalUuid(payload.ephemeralOwnerToken))
+  ) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as RunDispatchBeginCommand };
+}
+
+function decodeRunDispatchResolution(
+  payload: Readonly<Record<string, unknown>>,
+): DecodeResult<RunDispatchResolutionCommand> {
+  if (
+    !hasExactKeys(payload, [
+      "sessionId",
+      "workspaceKey",
+      "runId",
+      "attemptId",
+      "bindingId",
+      "ephemeralOwnerToken",
+      "outcome",
+    ]) ||
+    !hasDispatchScope(payload) ||
+    (payload.ephemeralOwnerToken !== null && !isCanonicalUuid(payload.ephemeralOwnerToken)) ||
+    !isPlainObject(payload.outcome)
+  ) {
+    return decodeFailure();
+  }
+  const outcome = payload.outcome;
+  if (outcome.kind === "accepted") {
+    if (
+      !hasExactKeys(outcome, ["kind", "externalExecutionId"]) ||
+      !isBoundedString(outcome.externalExecutionId, 4_096)
+    ) {
+      return decodeFailure();
+    }
+  } else if ((outcome.kind !== "rejected" && outcome.kind !== "ambiguous") || !hasExactKeys(outcome, ["kind"])) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as RunDispatchResolutionCommand };
 }
 
 function lifecycleOperation(expected: "active" | "archived", target: SessionLifecycleStatus): string {
@@ -985,6 +1216,115 @@ function bindingResolutionFailure(
   result: RepositoryCommandResult<ProviderBindingResolutionResult>,
 ): ProviderBindingResolutionExecution {
   return { result, removeEphemeralOwner: false };
+}
+
+function readDispatchTransitionRow(database: DatabaseSync, command: DispatchScope): DispatchTransitionRow | undefined {
+  return database
+    .prepare(
+      `
+      SELECT
+        b.persistence_mode,
+        b.binding_state,
+        b.external_conversation_id,
+        a.provider_binding_id,
+        a.attempt_state,
+        a.external_execution_id,
+        r.phase AS run_phase,
+        d.dispatch_state,
+        d.request_fingerprint,
+        d.dispatching_at,
+        d.resolved_at
+      FROM run_attempts a
+      JOIN runs r ON r.id = a.run_id
+      JOIN sessions s ON s.id = r.session_id
+      JOIN provider_bindings b ON b.id = ? AND b.session_id = s.id AND b.provider_id = s.provider_id
+      JOIN run_dispatches d ON d.run_attempt_id = a.id
+      WHERE s.id = ? AND s.workspace_key = ? AND r.id = ? AND a.id = ?
+    `,
+    )
+    .get(command.bindingId, command.sessionId, command.workspaceKey, command.runId, command.attemptId) as
+    DispatchTransitionRow | undefined;
+}
+
+function validateDispatchOwnership<T>(
+  bindingId: string,
+  ephemeralOwnerToken: string | null,
+  row: DispatchTransitionRow,
+  ephemeralBindingOwners: ReadonlyMap<string, string>,
+): RepositoryCommandResult<T> | undefined {
+  if (row.binding_state !== "active" || row.external_conversation_id === null) {
+    return failure("reference_invalid", "Run dispatch requires an active Provider binding.");
+  }
+  if (row.persistence_mode === "persistent") {
+    return ephemeralOwnerToken === null
+      ? undefined
+      : failure("request_invalid", "Persistent Binding does not accept ephemeral ownership.");
+  }
+  return ephemeralOwnerToken !== null && ephemeralBindingOwners.get(bindingId) === ephemeralOwnerToken
+    ? undefined
+    : failure("reference_invalid", "Ephemeral Binding live ownership is unavailable.");
+}
+
+function dispatchBeginValue(
+  command: RunDispatchBeginCommand,
+  runPhase: "starting" | "canceling",
+  dispatchingAt: number,
+  sendAllowed: boolean,
+): RunDispatchBeginResult {
+  return {
+    sessionId: command.sessionId,
+    runId: command.runId,
+    attemptId: command.attemptId,
+    bindingId: command.bindingId,
+    runPhase,
+    dispatchState: "dispatching",
+    dispatchingAt,
+    sendAllowed,
+  };
+}
+
+function replayRunDispatchResolution(
+  command: RunDispatchResolutionCommand,
+  row: DispatchTransitionRow,
+): RepositoryCommandResult<RunDispatchResolutionResult> | undefined {
+  if (
+    command.outcome.kind === "accepted" &&
+    row.dispatch_state === "accepted" &&
+    row.resolved_at !== null &&
+    row.external_execution_id === command.outcome.externalExecutionId &&
+    row.provider_binding_id === command.bindingId
+  ) {
+    return success(
+      dispatchResolutionValue(command, "accepted", command.outcome.externalExecutionId, row.resolved_at),
+      true,
+    );
+  }
+  if (
+    (command.outcome.kind === "rejected" || command.outcome.kind === "ambiguous") &&
+    row.dispatch_state === command.outcome.kind &&
+    row.resolved_at !== null &&
+    row.provider_binding_id === command.bindingId
+  ) {
+    return success(dispatchResolutionValue(command, command.outcome.kind, null, row.resolved_at), true);
+  }
+  return undefined;
+}
+
+function dispatchResolutionValue(
+  command: RunDispatchResolutionCommand,
+  dispatchState: "accepted" | "rejected" | "ambiguous",
+  externalExecutionId: string | null,
+  resolvedAt: number,
+): RunDispatchResolutionResult {
+  return {
+    sessionId: command.sessionId,
+    runId: command.runId,
+    attemptId: command.attemptId,
+    bindingId: command.bindingId,
+    dispatchState,
+    externalExecutionId,
+    resolvedAt,
+  };
 }
 
 function resolveAdmissionBinding(
@@ -1167,6 +1507,16 @@ function isBoundedString(value: unknown, maxLength: number): value is string {
   return typeof value === "string" && value.length >= 1 && value.length <= maxLength;
 }
 
+function hasDispatchScope(value: Readonly<Record<string, unknown>>): boolean {
+  return (
+    isBoundedString(value.sessionId, 1_024) &&
+    isBoundedString(value.workspaceKey, 1_024) &&
+    isBoundedString(value.runId, 1_024) &&
+    isBoundedString(value.attemptId, 1_024) &&
+    isBoundedString(value.bindingId, 1_024)
+  );
+}
+
 function isDenseBoundedStringArray(value: unknown, maxItems: number, maxLength: number): value is string[] {
   if (!Array.isArray(value) || value.length > maxItems) return false;
   for (let index = 0; index < value.length; index += 1) {
@@ -1260,6 +1610,10 @@ type PreparedNormalRunAdmission = Readonly<{
   dispatchFingerprint: string;
   fingerprint: string;
 }>;
+type PreparedRunDispatchBegin = Readonly<{
+  command: RunDispatchBeginCommand;
+  requestFingerprint: string;
+}>;
 type BindingResolution =
   | Readonly<{ ok: true; providerBindingId: string | null }>
   | Readonly<{ ok: false; result: RepositoryCommandResult<NormalRunAdmissionResult> }>;
@@ -1284,6 +1638,26 @@ type ProviderBindingResolutionExecution = Readonly<{
   result: RepositoryCommandResult<ProviderBindingResolutionResult>;
   registerEphemeralOwner?: Readonly<{ bindingId: string; token: string }>;
   removeEphemeralOwner: boolean;
+}>;
+type DispatchScope = Readonly<{
+  sessionId: string;
+  workspaceKey: string;
+  runId: string;
+  attemptId: string;
+  bindingId: string;
+}>;
+type DispatchTransitionRow = Readonly<{
+  persistence_mode: "persistent" | "ephemeral";
+  binding_state: "creating" | "active" | "invalidated" | "superseded";
+  external_conversation_id: string | null;
+  provider_binding_id: string | null;
+  attempt_state: "preparing" | "active" | "succeeded" | "failed" | "interrupted";
+  external_execution_id: string | null;
+  run_phase: NonTerminalRunPhase | "completed" | "failed" | "canceled" | "interrupted";
+  dispatch_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
+  request_fingerprint: string;
+  dispatching_at: number | null;
+  resolved_at: number | null;
 }>;
 type IdempotencyRow = Readonly<{
   scope_session_id: string;

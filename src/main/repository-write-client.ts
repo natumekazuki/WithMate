@@ -6,6 +6,10 @@ import {
   type ProviderBindingResolutionCommand,
   type ProviderBindingResolutionResult,
   type RepositoryCommandResult,
+  type RunDispatchBeginCommand,
+  type RunDispatchBeginResult,
+  type RunDispatchResolutionCommand,
+  type RunDispatchResolutionResult,
   type SessionCreateCommand,
   type SessionCreateResult,
   type SessionTransitionCommand,
@@ -48,5 +52,19 @@ export class RepositoryWriteClient {
     options?: RequestOptions,
   ): Promise<RepositoryCommandResult<ProviderBindingResolutionResult>> {
     return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.bindingResolve, "write", command, options);
+  }
+
+  beginRunDispatch(
+    command: RunDispatchBeginCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<RunDispatchBeginResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.dispatchBegin, "write", command, options);
+  }
+
+  resolveRunDispatch(
+    command: RunDispatchResolutionCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<RunDispatchResolutionResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.dispatchResolve, "write", command, options);
   }
 }
