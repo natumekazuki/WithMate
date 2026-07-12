@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src/persistence-worker",
+    "outDir": "dist/persistence-worker",
+    "tsBuildInfoFile": "dist/.tsbuildinfo/persistence-worker.tsbuildinfo"
+  },
+  "references": [{ "path": "./tsconfig.shared.json" }],
+  "include": ["src/persistence-worker/**/*.ts"]
+}

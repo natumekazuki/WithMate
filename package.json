@@ -1,0 +1,29 @@
+{
+  "name": "withmate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WithMate desktop coding agent",
+  "type": "module",
+  "main": "dist/main/index.js",
+  "engines": {
+    "node": ">=24.16 <25",
+    "npm": ">=10.9 <12"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "format": "prettier --write \"*.json\" \"src/**/*.ts\" \"test/**/*.ts\" \"scripts/*.mjs\"",
+    "format:check": "prettier --check \"*.json\" \"src/**/*.ts\" \"test/**/*.ts\" \"scripts/*.mjs\"",
+    "lint": "node scripts/validate-module-boundaries.mjs && node --check scripts/probe-runtime-persistence.mjs && node --check scripts/run-sqlite-schema-validator.mjs && node --check scripts/validate-module-boundaries.mjs",
+    "probe:runtime-persistence": "node scripts/probe-runtime-persistence.mjs",
+    "test": "tsx --test test/*.test.ts && node scripts/run-sqlite-schema-validator.mjs",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "electron": "42.5.2",
+    "prettier": "3.9.5",
+    "tsx": "4.23.0",
+    "typescript": "6.0.3"
+  }
+}
