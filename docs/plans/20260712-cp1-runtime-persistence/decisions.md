@@ -105,3 +105,14 @@ schema artifactはsource実行時とcompiled実行時で同じrepo root相対位
 - status: accepted
 
 Prettierはroot JSON、`src/**/*.ts`、`test/**/*.ts`、root `scripts/*.mjs`だけを対象とする。既存design docs、investigation artifact、schema manifest、`old/`を一括整形しない。文書とschema artifactはそれぞれの既存文体と専用validatorを優先する。
+
+## D1-013: schema artifactとbootstrap runtimeの責務を分離する
+
+- date: 2026-07-12
+- status: accepted
+
+`schema/sqlite/v1.sql`はtable、index、triggerだけを定義する。header PRAGMA、write transaction、`application_id`、`user_version`、manifest / integrity検証、WAL移行、connection PRAGMAはPersistence Workerのbootstrap runtimeが所有する。
+
+既存DBは元fileを変更せず分類する。sidecarがない場合はimmutable read-only URIを使い、WALまたはrollback journalがある場合はmain DBとsidecarを一時directoryへsnapshotして検査する。snapshot前後でfile identity、size、更新時刻、content hashが変化した場合は`database_busy`として再試行可能な失敗へ収束させる。
+
+新DB pathは呼出側から明示的に受け取り、directory scanや旧DB fallbackは行わない。既知の旧DB path、hardlink、symlinkによる同一file参照はopen前に拒否する。

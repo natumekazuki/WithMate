@@ -1,11 +1,3 @@
-PRAGMA auto_vacuum = INCREMENTAL;
-PRAGMA encoding = 'UTF-8';
-PRAGMA application_id = 1464686132;
-PRAGMA secure_delete = FAST;
-PRAGMA foreign_keys = ON;
-
-BEGIN IMMEDIATE;
-
 CREATE TABLE sessions (
   id TEXT PRIMARY KEY CHECK (length(id) > 0),
   provider_id TEXT NOT NULL CHECK (length(provider_id) > 0),
@@ -458,11 +450,3 @@ CREATE INDEX child_result_deliveries_availability_idx
   ON child_result_deliveries(availability_state, first_collected_at, available_at);
 CREATE INDEX child_result_deliveries_delegation_idx
   ON child_result_deliveries(delegation_id, ordinal);
-
-PRAGMA user_version = 1;
-COMMIT;
-
-PRAGMA journal_mode = WAL;
-PRAGMA wal_autocheckpoint = 256;
-PRAGMA journal_size_limit = 67108864;
-PRAGMA busy_timeout = 5000;

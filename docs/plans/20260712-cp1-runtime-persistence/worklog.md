@@ -32,3 +32,15 @@
 - 別視点reviewで、test用`.tsbuildinfo`のroot漏出、schema validatorの`npm test`未統合、MJSを検査対象に見せる無効なTypeScript includeを検出した。
 - `.tsbuildinfo`を`dist/.tsbuildinfo`へ移し、Python 3 resolver経由でschema validatorを`npm test`へ統合し、MJSは`node --check`で検証するよう修正した。
 - 現在地をS3 SQLite Bootstrap / Schema Verification着手前へ更新した。
+
+## 2026-07-12: S3 SQLite Bootstrap / Schema Verification完了
+
+- 新DB専用pathを明示的に受け取り、旧DB path、hardlink、symlink経由の別名をopen前に拒否するbootstrapを追加した。
+- file不存在、空DB、中断初期化、現行、identity不一致、unknown / future DBを分類し、拒否時に元fileを変更しない検査経路を実装した。
+- sidecarがない既存DBはimmutable read-only URIで検査し、WALまたはrollback journalが残るDBは一時snapshot側で検査・recoveryするようにした。
+- schema DDLを純粋なtable / index / trigger artifactへ分離し、transaction、identity / version、manifest、integrity、WAL、connection PRAGMAの適用と検証をruntimeへ集約した。
+- manifest不一致をcommit前に拒否し、DDL失敗後にuser objectを残さず再試行できることをcontract testで確認した。
+- schema drift、non-SQLite、lock contention、pending WAL、hot journal、migration pathのfailure modeを追加した。
+- 別視点reviewでlegacy path alias、commit後manifest検証、snapshot競合検出、DDL artifactによるtransaction脱出の不足を検出し、file identity照合、transaction内manifest検証、snapshot前後のfile identity / content hash比較、禁止statement検査とSQLite authorizerへ修正した。
+- docs-syncは`repo-sync-required`と判定し、bootstrap責務と非破壊inspection契約を`docs/design/sqlite-schema-lifecycle.md`へ同期した。
+- 現在地をS4 Persistence Worker Lifecycle着手前へ更新した。

@@ -94,7 +94,23 @@ def run_validation(database_path: Path) -> dict[str, object]:
 def validate_connection(
     connection: sqlite3.Connection, manifest: dict[str, object], ddl: str
 ) -> dict[str, object]:
-    connection.executescript(ddl)
+    connection.executescript(
+        f"""
+        PRAGMA auto_vacuum = INCREMENTAL;
+        PRAGMA encoding = 'UTF-8';
+        PRAGMA application_id = {manifest['applicationId']};
+        PRAGMA secure_delete = FAST;
+        PRAGMA foreign_keys = ON;
+        BEGIN IMMEDIATE;
+        {ddl}
+        PRAGMA user_version = {manifest['schemaVersion']};
+        COMMIT;
+        PRAGMA journal_mode = WAL;
+        PRAGMA wal_autocheckpoint = 256;
+        PRAGMA journal_size_limit = 67108864;
+        PRAGMA busy_timeout = 5000;
+        """
+    )
 
     application_id = connection.execute("PRAGMA application_id").fetchone()[0]
     user_version = connection.execute("PRAGMA user_version").fetchone()[0]
