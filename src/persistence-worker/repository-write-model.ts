@@ -5,6 +5,8 @@ import { DatabaseSync } from "node:sqlite";
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
 import {
   REPOSITORY_WRITE_OPERATIONS,
+  type NormalRunAdmissionCommand,
+  type NormalRunAdmissionResult,
   type RepositoryCommandErrorCode,
   type RepositoryCommandResult,
   type SessionCreateCommand,
@@ -22,10 +24,16 @@ export type RepositoryWriteOperation = Readonly<{
   execute: (payload: Readonly<Record<string, unknown>>) => Readonly<{ result: unknown }>;
 }>;
 
+export type RepositoryWriteCapacityOptions = Readonly<{
+  maxConcurrentRuns: number;
+  maxConcurrentRunsPerProvider: number;
+}>;
+
 type WriteOptions = Readonly<{
   clock?: () => number;
   idempotencyRetentionMs?: number;
-}>;
+}> &
+  Partial<RepositoryWriteCapacityOptions>;
 
 export function createRepositoryWriteOperations(
   database: DatabaseSync,
@@ -33,8 +41,18 @@ export function createRepositoryWriteOperations(
 ): ReadonlyMap<string, RepositoryWriteOperation> {
   const clock = options.clock ?? Date.now;
   const retentionMs = options.idempotencyRetentionMs ?? DEFAULT_IDEMPOTENCY_RETENTION_MS;
+  const maxConcurrentRuns = options.maxConcurrentRuns ?? 4;
+  const maxConcurrentRunsPerProvider = options.maxConcurrentRunsPerProvider ?? 4;
   if (!Number.isSafeInteger(retentionMs) || retentionMs < 1) {
     throw new RangeError("idempotencyRetentionMs must be a positive safe integer.");
+  }
+  if (
+    !Number.isSafeInteger(maxConcurrentRuns) ||
+    maxConcurrentRuns < 1 ||
+    !Number.isSafeInteger(maxConcurrentRunsPerProvider) ||
+    maxConcurrentRunsPerProvider < 1
+  ) {
+    throw new RangeError("Run capacity limits must be positive safe integers.");
   }
   return new Map([
     [
@@ -57,6 +75,18 @@ export function createRepositoryWriteOperations(
         }),
       ),
     ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.runAdmit,
+      write((payload) =>
+        runDecoded(decodeNormalRunAdmission(payload), (command) => {
+          const prepared = prepareNormalRunAdmission(command);
+          const now = readClock(clock);
+          return executeWriteTransaction(database, () =>
+            admitNormalRun(database, prepared, now, retentionMs, maxConcurrentRuns, maxConcurrentRunsPerProvider),
+          );
+        }),
+      ),
+    ],
   ]);
 }
 
@@ -75,6 +105,8 @@ function createSession(
     prepared.command.idempotencyKey,
     "session.create",
     prepared.fingerprint,
+    prepared.command.session.id,
+    "session",
     prepared.command.session.id,
     now,
   );
@@ -139,6 +171,8 @@ function transitionSession(
     prepared.operation,
     prepared.fingerprint,
     command.sessionId,
+    "session",
+    command.sessionId,
     now,
   );
   if (idempotency.kind !== "new") return idempotency.result;
@@ -196,12 +230,160 @@ function transitionSession(
   return success(value, false);
 }
 
+function admitNormalRun(
+  database: DatabaseSync,
+  prepared: PreparedNormalRunAdmission,
+  now: number,
+  retentionMs: number,
+  maxConcurrentRuns: number,
+  maxConcurrentRunsPerProvider: number,
+): RepositoryCommandResult<NormalRunAdmissionResult> {
+  const command = prepared.command;
+  const idempotency = checkIdempotency<NormalRunAdmissionResult>(
+    database,
+    command.idempotencyKey,
+    "run.admit",
+    prepared.fingerprint,
+    command.sessionId,
+    "run",
+    command.run.id,
+    now,
+  );
+  if (idempotency.kind !== "new") return idempotency.result;
+
+  const session = database
+    .prepare(
+      `
+      SELECT provider_id, lifecycle_status, updated_at, last_activity_at
+      FROM sessions WHERE id = ? AND workspace_key = ?
+    `,
+    )
+    .get(command.sessionId, command.workspaceKey) as
+    | Readonly<{
+        provider_id: string;
+        lifecycle_status: SessionLifecycleStatus;
+        updated_at: number;
+        last_activity_at: number;
+      }>
+    | undefined;
+  if (session === undefined) return failure("not_found", "Session was not found.");
+  if (session.lifecycle_status !== "active") {
+    return failure("lifecycle_conflict", "Run admission requires an active Session.");
+  }
+  if (command.run.executionSnapshot.providerId !== session.provider_id) {
+    return failure("reference_invalid", "Run execution snapshot Provider does not match the Session.");
+  }
+  if (hasNonTerminalRun(database, command.sessionId)) {
+    return failure("session_busy", "Session already has a non-terminal Run.");
+  }
+  if (!hasRunCapacity(database, session.provider_id, maxConcurrentRuns, maxConcurrentRunsPerProvider)) {
+    return failure("capacity_exceeded", "Run capacity is exhausted.", true);
+  }
+  if (hasAdmissionIdentityConflict(database, command)) {
+    return failure("lifecycle_conflict", "Run admission identity already exists.");
+  }
+
+  const binding = resolveAdmissionBinding(database, command, session.provider_id);
+  if (!binding.ok) return binding.result;
+  const messageOrdinal = nextOrdinal(database, "messages", "session_id", command.sessionId);
+  const runOrdinal = nextOrdinal(database, "runs", "session_id", command.sessionId);
+
+  database
+    .prepare(
+      `
+      INSERT INTO messages (id, session_id, ordinal, role, content_blocks_json, created_at)
+      VALUES (?, ?, ?, 'user', ?, ?)
+    `,
+    )
+    .run(command.message.id, command.sessionId, messageOrdinal, prepared.contentBlocksJson, now);
+  database
+    .prepare(
+      `
+      INSERT INTO runs (
+        id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+        external_side_effect_state, created_at, updated_at, version
+      ) VALUES (?, ?, ?, ?, 'queued', ?, 'none', ?, ?, 0)
+    `,
+    )
+    .run(command.run.id, command.sessionId, runOrdinal, command.message.id, prepared.executionSnapshotJson, now, now);
+  database
+    .prepare(
+      `
+      INSERT INTO run_attempts (
+        id, run_id, ordinal, provider_binding_id, attempt_reason, attempt_state, created_at
+      ) VALUES (?, ?, 1, ?, 'initial', 'preparing', ?)
+    `,
+    )
+    .run(command.attemptId, command.run.id, binding.providerBindingId, now);
+  if (command.bindingIntent.kind === "create") {
+    const bindingOrdinal = nextOrdinal(database, "provider_bindings", "session_id", command.sessionId);
+    database
+      .prepare(
+        `
+        INSERT INTO provider_bindings (
+          id, session_id, ordinal, provider_id, persistence_mode, binding_state,
+          created_by_run_attempt_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, 'creating', ?, ?)
+      `,
+      )
+      .run(
+        command.bindingIntent.bindingId,
+        command.sessionId,
+        bindingOrdinal,
+        session.provider_id,
+        command.bindingIntent.persistenceMode,
+        command.attemptId,
+        now,
+      );
+  }
+  database
+    .prepare(
+      `
+      INSERT INTO run_dispatches (
+        run_attempt_id, dispatch_state, request_fingerprint, provider_idempotency_key, created_at
+      ) VALUES (?, 'pending', ?, ?, ?)
+    `,
+    )
+    .run(command.attemptId, prepared.dispatchFingerprint, command.dispatch.providerIdempotencyKey, now);
+
+  const updatedAt = Math.max(now, session.updated_at);
+  const lastActivityAt = Math.max(now, session.last_activity_at);
+  database
+    .prepare("UPDATE sessions SET updated_at = ?, last_activity_at = ? WHERE id = ?")
+    .run(updatedAt, lastActivityAt, command.sessionId);
+  const value: NormalRunAdmissionResult = {
+    sessionId: command.sessionId,
+    messageId: command.message.id,
+    runId: command.run.id,
+    attemptId: command.attemptId,
+    bindingId: command.bindingIntent.bindingId,
+    bindingState: command.bindingIntent.kind === "create" ? "creating" : "active",
+    dispatchState: "pending",
+    admittedAt: now,
+  };
+  completeIdempotency(
+    database,
+    command.idempotencyKey,
+    command.sessionId,
+    "run.admit",
+    prepared.fingerprint,
+    "run",
+    command.run.id,
+    value,
+    now,
+    retentionMs,
+  );
+  return success(value, false);
+}
+
 function checkIdempotency<T>(
   database: DatabaseSync,
   key: string,
   operation: string,
   fingerprint: string,
   expectedScopeSessionId: string,
+  expectedRefType: "session" | "run",
+  expectedRefId: string,
   now: number,
 ): Readonly<{ kind: "new" }> | Readonly<{ kind: "replay" | "failure"; result: RepositoryCommandResult<T> }> {
   const row = database.prepare("SELECT * FROM idempotency_records WHERE idempotency_key = ?").get(key) as
@@ -234,10 +416,10 @@ function checkIdempotency<T>(
   }
   if (
     row.response_kind !== "success" ||
-    row.response_ref_type !== "session" ||
-    row.response_ref_id !== expectedScopeSessionId ||
+    row.response_ref_type !== expectedRefType ||
+    row.response_ref_id !== expectedRefId ||
     row.response_envelope_json === null ||
-    database.prepare("SELECT 1 FROM sessions WHERE id = ?").get(expectedScopeSessionId) === undefined
+    !hasResponseReference(database, expectedRefType, expectedRefId, expectedScopeSessionId)
   ) {
     return { kind: "failure", result: failure("reference_invalid", "Idempotent response reference is invalid.") };
   }
@@ -253,7 +435,7 @@ function completeIdempotency<T extends object>(
   scopeSessionId: string,
   operation: string,
   fingerprint: string,
-  refType: "session",
+  refType: "session" | "run",
   refId: string,
   value: T,
   now: number,
@@ -312,6 +494,46 @@ function prepareSessionTransition(command: SessionTransitionCommand): PreparedSe
   };
 }
 
+function prepareNormalRunAdmission(command: NormalRunAdmissionCommand): PreparedNormalRunAdmission {
+  const contentBlocksJson = canonicalJsonString(command.message.contentBlocks);
+  const executionSnapshotJson = canonicalJsonString(command.run.executionSnapshot);
+  const providerRequestJson = canonicalJsonString(command.dispatch.providerRequest);
+  if (
+    Buffer.byteLength(contentBlocksJson) > 4 * 1024 * 1024 ||
+    Buffer.byteLength(executionSnapshotJson) > 256 * 1024 ||
+    Buffer.byteLength(providerRequestJson) > 256 * 1024
+  ) {
+    throw invalidCommand();
+  }
+  const dispatchFingerprint = fingerprintJson(providerRequestJson);
+  return {
+    command,
+    contentBlocksJson,
+    executionSnapshotJson,
+    dispatchFingerprint,
+    fingerprint: fingerprint({
+      operation: "run.admit",
+      sessionId: command.sessionId,
+      workspaceKey: command.workspaceKey,
+      message: { id: command.message.id, contentBlocks: JSON.parse(contentBlocksJson) },
+      run: { id: command.run.id, executionSnapshot: JSON.parse(executionSnapshotJson) },
+      attemptId: command.attemptId,
+      bindingIntent:
+        command.bindingIntent.kind === "create"
+          ? {
+              kind: "create",
+              bindingId: command.bindingIntent.bindingId,
+              persistenceMode: command.bindingIntent.persistenceMode,
+            }
+          : { kind: "reuse", bindingId: command.bindingIntent.bindingId },
+      dispatch: {
+        requestFingerprint: dispatchFingerprint,
+        providerIdempotencyKey: command.dispatch.providerIdempotencyKey,
+      },
+    }),
+  };
+}
+
 function decodeSessionCreate(payload: Readonly<Record<string, unknown>>): DecodeResult<SessionCreateCommand> {
   if (!hasExactKeys(payload, ["idempotencyKey", "session"]) || !isCanonicalUuid(payload.idempotencyKey)) {
     return decodeFailure();
@@ -365,6 +587,43 @@ function decodeSessionTransition(payload: Readonly<Record<string, unknown>>): De
   return { ok: true, value: payload as unknown as SessionTransitionCommand };
 }
 
+function decodeNormalRunAdmission(payload: Readonly<Record<string, unknown>>): DecodeResult<NormalRunAdmissionCommand> {
+  if (
+    !hasExactKeys(payload, [
+      "sessionId",
+      "workspaceKey",
+      "idempotencyKey",
+      "message",
+      "run",
+      "attemptId",
+      "bindingIntent",
+      "dispatch",
+    ]) ||
+    !isBoundedString(payload.sessionId, 1_024) ||
+    !isBoundedString(payload.workspaceKey, 1_024) ||
+    !isCanonicalUuid(payload.idempotencyKey) ||
+    !isBoundedString(payload.attemptId, 1_024) ||
+    !isPlainObject(payload.message) ||
+    !hasExactKeys(payload.message, ["id", "contentBlocks"]) ||
+    !isBoundedString(payload.message.id, 1_024) ||
+    !isDenseJsonArray(payload.message.contentBlocks, 10_000) ||
+    !isPlainObject(payload.run) ||
+    !hasExactKeys(payload.run, ["id", "executionSnapshot"]) ||
+    !isBoundedString(payload.run.id, 1_024) ||
+    !isRunExecutionSnapshot(payload.run.executionSnapshot) ||
+    !isBindingIntent(payload.bindingIntent) ||
+    !isPlainObject(payload.dispatch) ||
+    !hasExactKeys(payload.dispatch, ["providerRequest", "providerIdempotencyKey"]) ||
+    !isPlainObject(payload.dispatch.providerRequest) ||
+    !isJsonValue(payload.dispatch.providerRequest) ||
+    (payload.dispatch.providerIdempotencyKey !== null &&
+      !isBoundedString(payload.dispatch.providerIdempotencyKey, 4_096))
+  ) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as NormalRunAdmissionCommand };
+}
+
 function lifecycleOperation(expected: "active" | "archived", target: SessionLifecycleStatus): string {
   if (expected === "active" && target === "archived") return "session.archive";
   if (expected === "archived" && target === "active") return "session.unarchive";
@@ -382,6 +641,103 @@ function hasNonTerminalRun(database: DatabaseSync, sessionId: string): boolean {
       `,
       )
       .get(sessionId) !== undefined
+  );
+}
+
+function hasRunCapacity(
+  database: DatabaseSync,
+  providerId: string,
+  maxConcurrentRuns: number,
+  maxConcurrentRunsPerProvider: number,
+): boolean {
+  const nonTerminal = "('queued','starting','active','canceling','finalizing')";
+  const total = database.prepare(`SELECT count(*) AS count FROM runs WHERE phase IN ${nonTerminal}`).get() as {
+    count: number;
+  };
+  if (total.count >= maxConcurrentRuns) return false;
+  const provider = database
+    .prepare(
+      `
+      SELECT count(*) AS count FROM runs r
+      JOIN sessions s ON s.id = r.session_id
+      WHERE r.phase IN ${nonTerminal} AND s.provider_id = ?
+    `,
+    )
+    .get(providerId) as { count: number };
+  return provider.count < maxConcurrentRunsPerProvider;
+}
+
+function hasAdmissionIdentityConflict(database: DatabaseSync, command: NormalRunAdmissionCommand): boolean {
+  return (
+    database.prepare("SELECT 1 FROM messages WHERE id = ?").get(command.message.id) !== undefined ||
+    database.prepare("SELECT 1 FROM runs WHERE id = ?").get(command.run.id) !== undefined ||
+    database.prepare("SELECT 1 FROM run_attempts WHERE id = ?").get(command.attemptId) !== undefined ||
+    (command.bindingIntent.kind === "create" &&
+      database.prepare("SELECT 1 FROM provider_bindings WHERE id = ?").get(command.bindingIntent.bindingId) !==
+        undefined)
+  );
+}
+
+function resolveAdmissionBinding(
+  database: DatabaseSync,
+  command: NormalRunAdmissionCommand,
+  providerId: string,
+): BindingResolution {
+  const openBindings = database
+    .prepare(
+      `
+      SELECT id, provider_id, persistence_mode, binding_state FROM provider_bindings
+      WHERE session_id = ? AND binding_state IN ('creating', 'active')
+    `,
+    )
+    .all(command.sessionId) as unknown as readonly Readonly<{
+    id: string;
+    provider_id: string;
+    persistence_mode: "persistent" | "ephemeral";
+    binding_state: "creating" | "active";
+  }>[];
+  if (command.bindingIntent.kind === "create") {
+    if (openBindings.length !== 0) {
+      return { ok: false, result: failure("reference_invalid", "Session already has an open Provider binding.") };
+    }
+    return { ok: true, providerBindingId: null };
+  }
+  const binding = openBindings.length === 1 ? openBindings[0] : undefined;
+  if (
+    binding === undefined ||
+    binding.id !== command.bindingIntent.bindingId ||
+    binding.provider_id !== providerId ||
+    binding.persistence_mode !== "persistent" ||
+    binding.binding_state !== "active"
+  ) {
+    return { ok: false, result: failure("reference_invalid", "Active Provider binding does not match.") };
+  }
+  return { ok: true, providerBindingId: binding.id };
+}
+
+function nextOrdinal(
+  database: DatabaseSync,
+  table: "messages" | "runs" | "provider_bindings",
+  column: string,
+  id: string,
+) {
+  const row = database
+    .prepare(`SELECT COALESCE(MAX(ordinal), 0) + 1 AS ordinal FROM ${table} WHERE ${column} = ?`)
+    .get(id) as { ordinal: number };
+  return row.ordinal;
+}
+
+function hasResponseReference(
+  database: DatabaseSync,
+  refType: "session" | "run",
+  refId: string,
+  scopeSessionId: string,
+): boolean {
+  if (refType === "session") {
+    return refId === scopeSessionId && database.prepare("SELECT 1 FROM sessions WHERE id = ?").get(refId) !== undefined;
+  }
+  return (
+    database.prepare("SELECT 1 FROM runs WHERE id = ? AND session_id = ?").get(refId, scopeSessionId) !== undefined
   );
 }
 
@@ -456,6 +812,29 @@ function fingerprint(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
 }
 
+function fingerprintJson(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function canonicalJsonString(value: unknown): string {
+  return JSON.stringify(toCanonicalJson(value));
+}
+
+function toCanonicalJson(value: unknown): unknown {
+  if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(toCanonicalJson);
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, toCanonicalJson(value[key])]),
+    );
+  }
+  throw invalidCommand();
+}
+
 function success<T>(value: T, replayed: boolean): RepositoryCommandResult<T> {
   return { ok: true, value, replayed };
 }
@@ -487,6 +866,52 @@ function isDenseBoundedStringArray(value: unknown, maxItems: number, maxLength: 
   return true;
 }
 
+function isDenseJsonArray(value: unknown, maxItems: number): value is unknown[] {
+  if (!Array.isArray(value) || value.length > maxItems) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index) || !isJsonValue(value[index])) return false;
+  }
+  return true;
+}
+
+function isJsonValue(value: unknown, depth = 0): boolean {
+  if (depth > 64) return false;
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.hasOwn(value, index) || !isJsonValue(value[index], depth + 1)) return false;
+    }
+    return true;
+  }
+  return isPlainObject(value) && Object.values(value).every((item) => isJsonValue(item, depth + 1));
+}
+
+function isBindingIntent(value: unknown): value is NormalRunAdmissionCommand["bindingIntent"] {
+  if (!isPlainObject(value) || !isBoundedString(value.bindingId, 1_024)) return false;
+  if (value.kind === "reuse") return hasExactKeys(value, ["kind", "bindingId"]);
+  return (
+    value.kind === "create" &&
+    hasExactKeys(value, ["kind", "bindingId", "persistenceMode"]) &&
+    (value.persistenceMode === "persistent" || value.persistenceMode === "ephemeral")
+  );
+}
+
+function isRunExecutionSnapshot(value: unknown): value is NormalRunAdmissionCommand["run"]["executionSnapshot"] {
+  return (
+    isPlainObject(value) &&
+    hasExactKeys(value, ["providerId", "model", "reasoning", "approval", "sandbox", "workspace", "character"]) &&
+    isBoundedString(value.providerId, 1_024) &&
+    isBoundedString(value.model, 1_024) &&
+    isJsonValue(value.reasoning) &&
+    isJsonValue(value.approval) &&
+    isJsonValue(value.sandbox) &&
+    isPlainObject(value.workspace) &&
+    isJsonValue(value.workspace) &&
+    (value.character === null || (isPlainObject(value.character) && isJsonValue(value.character)))
+  );
+}
+
 function isLifecycleStatus(value: unknown): value is SessionLifecycleStatus {
   return value === "active" || value === "archived" || value === "closed";
 }
@@ -513,6 +938,16 @@ type PreparedSessionTransition = Readonly<{
   operation: string;
   fingerprint: string;
 }>;
+type PreparedNormalRunAdmission = Readonly<{
+  command: NormalRunAdmissionCommand;
+  contentBlocksJson: string;
+  executionSnapshotJson: string;
+  dispatchFingerprint: string;
+  fingerprint: string;
+}>;
+type BindingResolution =
+  | Readonly<{ ok: true; providerBindingId: string | null }>
+  | Readonly<{ ok: false; result: RepositoryCommandResult<NormalRunAdmissionResult> }>;
 type IdempotencyRow = Readonly<{
   scope_session_id: string;
   operation: string;

@@ -1,6 +1,8 @@
 import type { PersistenceWorkerClient } from "./persistence-worker-client.js";
 import {
   REPOSITORY_WRITE_OPERATIONS,
+  type NormalRunAdmissionCommand,
+  type NormalRunAdmissionResult,
   type RepositoryCommandResult,
   type SessionCreateCommand,
   type SessionCreateResult,
@@ -30,5 +32,12 @@ export class RepositoryWriteClient {
     options?: RequestOptions,
   ): Promise<RepositoryCommandResult<SessionTransitionResult>> {
     return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.sessionTransition, "write", command, options);
+  }
+
+  admitNormalRun(
+    command: NormalRunAdmissionCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<NormalRunAdmissionResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runAdmit, "write", command, options);
   }
 }

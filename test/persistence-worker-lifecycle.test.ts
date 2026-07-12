@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import { PersistenceClientError, PersistenceWorkerClient } from "../src/main/persistence-worker-client.js";
+import { RepositoryWriteClient } from "../src/main/repository-write-client.js";
 import { PERSISTENCE_PROTOCOL_VERSION, type WorkerToMainMessage } from "../src/shared/persistence-protocol.js";
 import { PersistenceWorkerRuntime } from "../src/persistence-worker/worker-runtime.js";
 
@@ -37,6 +38,47 @@ workerTest("worker starts once, serves requests, checkpoints, and closes gracefu
     assert.deepEqual(await shutdown, { checkpoint: "completed" });
     assert.equal(client.state, "closed");
     assert.deepEqual(await client.shutdown(), { checkpoint: "completed" });
+  });
+});
+
+workerTest("production Worker applies configured Run capacity", async () => {
+  await withTempDirectory(async (directory) => {
+    const client = new PersistenceWorkerClient({
+      workerUrl,
+      databasePath: path.join(directory, "capacity.sqlite3"),
+      legacyDatabasePaths: [],
+      maxConcurrentRuns: 1,
+      maxConcurrentRunsPerProvider: 1,
+      workerOptions,
+    });
+    await client.start();
+    const repository = new RepositoryWriteClient(client);
+    for (const [sessionId, idempotencyKey] of [
+      ["session-capacity-1", "018f1f4e-7f0a-7000-8000-000000000301"],
+      ["session-capacity-2", "018f1f4e-7f0a-7000-8000-000000000302"],
+    ] as const) {
+      const result = await repository.createSession({
+        idempotencyKey,
+        session: {
+          id: sessionId,
+          providerId: "provider",
+          workspaceKey: "workspace",
+          allowedAdditionalDirectories: [],
+          defaultCharacterId: "character",
+          maxConcurrentChildRuns: 2,
+        },
+      });
+      assert.equal(result.ok, true);
+    }
+    const first = await repository.admitNormalRun(
+      productionRunAdmission("session-capacity-1", "run-capacity-1", "018f1f4e-7f0a-7000-8000-000000000303"),
+    );
+    const second = await repository.admitNormalRun(
+      productionRunAdmission("session-capacity-2", "run-capacity-2", "018f1f4e-7f0a-7000-8000-000000000304"),
+    );
+    assert.equal(first.ok, true);
+    assert.equal(!second.ok && second.error.code, "capacity_exceeded");
+    await client.shutdown();
   });
 });
 
@@ -338,6 +380,30 @@ function payloadChunkRequest(outputItemId: string, offset: number, maxBytes: num
     workspaceKey: "workspace-1",
     offset,
     maxBytes,
+  };
+}
+
+function productionRunAdmission(sessionId: string, runId: string, idempotencyKey: string) {
+  return {
+    sessionId,
+    workspaceKey: "workspace",
+    idempotencyKey,
+    message: { id: `message-${runId}`, contentBlocks: [{ type: "text", text: "hello" }] },
+    run: {
+      id: runId,
+      executionSnapshot: {
+        providerId: "provider",
+        model: "test-model",
+        reasoning: { effort: "medium" },
+        approval: { mode: "on-request" },
+        sandbox: { mode: "workspace-write" },
+        workspace: { key: "workspace" },
+        character: null,
+      },
+    },
+    attemptId: `attempt-${runId}`,
+    bindingIntent: { kind: "create" as const, bindingId: `binding-${runId}`, persistenceMode: "persistent" as const },
+    dispatch: { providerRequest: { prompt: "hello" }, providerIdempotencyKey: null },
   };
 }
 

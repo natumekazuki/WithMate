@@ -94,3 +94,20 @@
 - expected lifecycleを必須にしたarchive / unarchive / closeを実装し、active Run中のarchive / closeを全rollbackで拒否した。
 - idempotency completed responseの保持期間をWorker所有の30日へ固定した。
 - docs-syncは`repo-sync-required`と判定し、write責務を`docs/design/persistence-worker-repository-write.md`へ同期した。
+
+## 2026-07-12: S6-A follow-up review対応
+
+- unarchiveの再開可能Bindingを同じProviderの`active && persistent`に限定し、ephemeral Bindingを拒否した。
+- 追加許可directoryのsparse配列と相対pathを拒否し、絶対pathの重複・包含関係をWorker境界で字句正規化した。
+- 期限切れIdempotencyRecordをfingerprint conflict判定より先にscrubし、応答codeを変えずにenvelopeを消去した。
+- docs-syncは`repo-sync-required`と判定し、境界条件を`docs/design/persistence-worker-repository-write.md`へ同期した。
+
+## 2026-07-12: S6-B1 通常Run admission完了
+
+- typed `repository.run.admit` commandとMain process client methodを追加した。
+- 新規user Message、queued Run、preparing Attempt、pending Dispatch、必要なcreating Binding intent、Run参照のcompleted IdempotencyRecordを1 transactionで確定した。
+- Provider request本文を保存せず、canonical JSONからWorkerがDispatch fingerprintを生成する境界を追加した。
+- active Session、non-terminal Run不在、Binding intent、ID衝突、response referenceをtransaction内で再検証した。
+- execution snapshotの必須構造とSession Provider一致、persistent Bindingだけの再利用、app全体 / Provider別capacityをadmission境界へ追加した。
+- exact replay、Binding作成 / 再利用、inactive / busy時の部分row不在をcontract testで固定した。
+- S6-Bの残りはBinding確定、Dispatch gate / resolution、retry admission、supplemental inputとする。

@@ -10,6 +10,8 @@ type PersistenceWorkerData = Readonly<{
   databasePath: string;
   legacyDatabasePaths: readonly string[];
   maxQueueDepth: number;
+  maxConcurrentRuns: number;
+  maxConcurrentRunsPerProvider: number;
 }>;
 
 if (parentPort === null) {
@@ -35,6 +37,10 @@ try {
       }
     },
     options.maxQueueDepth,
+    {
+      maxConcurrentRuns: options.maxConcurrentRuns,
+      maxConcurrentRunsPerProvider: options.maxConcurrentRunsPerProvider,
+    },
   );
   port.on("message", (message: unknown) => runtime.handleMessage(message));
   port.postMessage({
@@ -69,7 +75,11 @@ function decodeWorkerData(value: unknown): PersistenceWorkerData {
     !Array.isArray(value.legacyDatabasePaths) ||
     !value.legacyDatabasePaths.every((item: unknown) => typeof item === "string") ||
     !Number.isSafeInteger(value.maxQueueDepth) ||
-    (value.maxQueueDepth as number) < 0
+    (value.maxQueueDepth as number) < 0 ||
+    !Number.isSafeInteger(value.maxConcurrentRuns) ||
+    (value.maxConcurrentRuns as number) < 1 ||
+    !Number.isSafeInteger(value.maxConcurrentRunsPerProvider) ||
+    (value.maxConcurrentRunsPerProvider as number) < 1
   ) {
     throw new TypeError("Persistence worker data is invalid.");
   }

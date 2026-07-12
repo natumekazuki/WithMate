@@ -56,3 +56,18 @@ completed recordの保持期間はWorker所有の30日とする。期限はcalle
 - `archived -> closed`
 
 archive / closeはnon-terminal Runがない場合だけ許可する。unarchiveはworkspaceとSession Providerを再検証し、存在するopen ProviderBindingが同じProviderの`active && persistent` Bindingである場合、またはBinding未作成で次Run時に作成可能な場合だけ許可する。未収束の`creating` Bindingと再起動後にresumeできない`ephemeral` Bindingは再開根拠として使わない。`closed`からの再開、same-state update、expected state不一致を拒否する。`updated_at`は更新するが、metadata transitionだけで`last_activity_at`を進めない。
+
+## Normal Run admission
+
+`repository.run.admit`はS6-Bの最初の縦切りとして、通常Runの新規user Message、`queued` Run、最初の`preparing` Attempt、`pending` Dispatch、必要な`creating` Binding intent、Run参照のcompleted IdempotencyRecordを1 transactionで作成する。Sessionはworkspaceが一致する`active`状態で、non-terminal Runを持たないことを同じtransaction内で再検証する。
+
+Binding intentは次のどちらかをcallerが明示し、WorkerがDB状態と照合する。
+
+- `reuse`: 指定Bindingが同じSession / Providerの`active && persistent` Bindingであることを要求し、Attemptへ設定する。ephemeral Bindingの同一process内再利用は、Workerがlive ownershipを証明できるcommandを導入するまで許可しない。
+- `create`: Sessionにopen Bindingがないことを要求し、Attemptは`provider_binding_id=null`、Bindingは同Attemptを作成元とする`creating`で追加する。
+
+Message本文、execution snapshot、Provider requestはdenseなJSON値として検証し、object key順を正規化してからencodeする。execution snapshotは`providerId`、`model`、`reasoning`、`approval`、`sandbox`、`workspace`、`character`を必須とし、ProviderはSession設定と一致させる。Provider request本文は保存せず、Workerが生成したSHA-256だけをDispatchへ保存する。commandのsemantic fingerprintもcaller提供hashを信用せず、正規化済みMessage / snapshot、Worker生成Dispatch fingerprint、ID、Binding intentから生成する。
+
+Worker repositoryは通常Run、Auxiliary、child Runで共有するapp全体とProvider別のnon-terminal Run上限を構築時optionとして所有する。defaultはそれぞれ4で、low-resource profileは2を渡す。admission transaction内で現在数を集計し、上限到達時はretryableな`capacity_exceeded`としてRun追加前に拒否する。root child上限はchild admission commandで追加する。
+
+この縦切りは新規通常Runだけを扱う。既存Messageを参照するretry、Provider Binding確定、Dispatchの`dispatching` / resolution、supplemental inputは後続のS6-B commandとして追加する。

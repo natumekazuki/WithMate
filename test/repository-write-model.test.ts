@@ -278,6 +278,197 @@ repositoryTest("unarchive rejects an open ProviderBinding for a different Provid
   });
 });
 
+repositoryTest("normal Run admission atomically creates Message, Run, Attempt, Dispatch, and Binding intent", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000120", "session-1")) as CommandResult).ok,
+      true,
+    );
+    const command = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000121", "run-1", "create");
+    const first = admit(command) as CommandResult;
+    const replay = admit({
+      ...command,
+      dispatch: {
+        ...command.dispatch,
+        providerRequest: { prompt: "hello", options: { z: 1, a: true } },
+      },
+    }) as CommandResult;
+
+    assert.equal(first.ok && !first.replayed, true);
+    assert.equal(replay.ok && replay.replayed, true);
+    assert.equal(count(database, "messages"), 1);
+    assert.equal(count(database, "runs"), 1);
+    assert.equal(count(database, "run_attempts"), 1);
+    assert.equal(count(database, "run_dispatches"), 1);
+    assert.equal(count(database, "provider_bindings"), 1);
+    assert.equal(count(database, "idempotency_records"), 2);
+    const attempt = database.prepare("SELECT provider_binding_id, attempt_state FROM run_attempts").get() as Record<
+      string,
+      unknown
+    >;
+    assert.deepEqual({ ...attempt }, { provider_binding_id: null, attempt_state: "preparing" });
+    const dispatch = database.prepare("SELECT dispatch_state, request_fingerprint FROM run_dispatches").get() as {
+      dispatch_state: string;
+      request_fingerprint: string;
+    };
+    assert.equal(dispatch.dispatch_state, "pending");
+    assert.match(dispatch.request_fingerprint, /^[0-9a-f]{64}$/u);
+  });
+});
+
+repositoryTest("normal Run admission reuses only the selected active Binding", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000122", "session-1")) as CommandResult).ok,
+      true,
+    );
+    const first = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000123", "run-1", "create");
+    assert.equal((admit(first) as CommandResult).ok, true);
+    database
+      .prepare(
+        `
+        UPDATE provider_bindings SET binding_state = 'active', external_conversation_id = 'external-1'
+        WHERE id = 'binding-run-1'
+      `,
+      )
+      .run();
+    database
+      .prepare(
+        `
+        UPDATE run_attempts SET provider_binding_id = 'binding-run-1', attempt_state = 'failed',
+          failure_origin = 'provider', terminal_at = 201 WHERE id = 'attempt-run-1'
+      `,
+      )
+      .run();
+    database
+      .prepare(
+        `
+        UPDATE runs SET phase = 'failed', failure_origin = 'provider', terminal_at = 201,
+          updated_at = 201, version = 1 WHERE id = 'run-1'
+      `,
+      )
+      .run();
+
+    const second = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000124", "run-2", "reuse");
+    database.prepare("UPDATE provider_bindings SET persistence_mode = 'ephemeral' WHERE id = 'binding-run-1'").run();
+    const ephemeral = admit(second) as CommandResult;
+    assert.equal(!ephemeral.ok && ephemeral.error.code, "reference_invalid");
+    assert.equal(count(database, "runs"), 1);
+    database.prepare("UPDATE provider_bindings SET persistence_mode = 'persistent' WHERE id = 'binding-run-1'").run();
+    const result = admit(second) as CommandResult;
+    assert.equal(result.ok, true);
+    assert.equal(count(database, "provider_bindings"), 1);
+    const attempt = database
+      .prepare("SELECT provider_binding_id FROM run_attempts WHERE id = 'attempt-run-2'")
+      .get() as {
+      provider_binding_id: string;
+    };
+    assert.equal(attempt.provider_binding_id, "binding-run-1");
+  });
+});
+
+repositoryTest("normal Run admission enforces app capacity and the execution snapshot Provider", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200, undefined, {
+      maxConcurrentRuns: 1,
+      maxConcurrentRunsPerProvider: 1,
+    });
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000130", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000131", "session-2")) as CommandResult).ok,
+      true,
+    );
+    const mismatched = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000132", "run-mismatch", "create");
+    mismatched.run.executionSnapshot.providerId = "other-provider";
+    const mismatchResult = admit(mismatched) as CommandResult;
+    assert.equal(!mismatchResult.ok && mismatchResult.error.code, "reference_invalid");
+    assert.equal(count(database, "runs"), 0);
+
+    const first = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000133", "run-1", "create");
+    assert.equal((admit(first) as CommandResult).ok, true);
+    const second = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000134", "run-2", "create");
+    second.sessionId = "session-2";
+    const capacity = admit(second) as CommandResult;
+    assert.equal(!capacity.ok && capacity.error.code, "capacity_exceeded");
+    assert.equal(count(database, "runs"), 1);
+    assert.equal(count(database, "messages"), 1);
+  });
+});
+
+repositoryTest("normal Run admission enforces Provider capacity across Sessions", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200, undefined, {
+      maxConcurrentRuns: 4,
+      maxConcurrentRunsPerProvider: 1,
+    });
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000135", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000136", "session-2")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000137", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    const second = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000138", "run-2", "create");
+    second.sessionId = "session-2";
+    const result = admit(second) as CommandResult;
+    assert.equal(!result.ok && result.error.code, "capacity_exceeded");
+    assert.equal(count(database, "runs"), 1);
+  });
+});
+
+repositoryTest("normal Run admission rejects inactive or busy Sessions without partial rows", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const transition = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionTransition, () => 150);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000125", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (
+        transition({
+          sessionId: "session-1",
+          workspaceKey: "workspace",
+          idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000126",
+          expectedLifecycleStatus: "active",
+          targetLifecycleStatus: "archived",
+        }) as CommandResult
+      ).ok,
+      true,
+    );
+    const archived = admit(
+      normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000127", "run-1", "create"),
+    ) as CommandResult;
+    assert.equal(!archived.ok && archived.error.code, "lifecycle_conflict");
+    assert.equal(count(database, "runs"), 0);
+
+    database.prepare("UPDATE sessions SET lifecycle_status = 'active' WHERE id = 'session-1'").run();
+    const first = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000128", "run-1", "create");
+    assert.equal((admit(first) as CommandResult).ok, true);
+    const busy = admit(
+      normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000129", "run-2", "create"),
+    ) as CommandResult;
+    assert.equal(!busy.ok && busy.error.code, "session_busy");
+    assert.equal(count(database, "runs"), 1);
+    assert.equal(count(database, "messages"), 1);
+  });
+});
+
 repositoryTest("Worker registry accepts Session commands only as write requests", async () => {
   const database = new DatabaseSync(":memory:");
   database.exec(fs.readFileSync(new URL("../schema/sqlite/v1.sql", import.meta.url), "utf8"));
@@ -321,8 +512,12 @@ function operationFor(
   name: string,
   clock: () => number,
   idempotencyRetentionMs = 30 * 24 * 60 * 60 * 1_000,
+  capacity: Readonly<{ maxConcurrentRuns: number; maxConcurrentRunsPerProvider: number }> = {
+    maxConcurrentRuns: 4,
+    maxConcurrentRunsPerProvider: 4,
+  },
 ) {
-  const operation = createRepositoryWriteOperations(database, { clock, idempotencyRetentionMs }).get(name);
+  const operation = createRepositoryWriteOperations(database, { clock, idempotencyRetentionMs, ...capacity }).get(name);
   assert.ok(operation);
   return (payload: Readonly<Record<string, unknown>>) => operation.execute(payload).result;
 }
@@ -337,6 +532,36 @@ function sessionCreateCommand(idempotencyKey: string, sessionId: string) {
       allowedAdditionalDirectories: ["C:/workspace/shared"],
       defaultCharacterId: "character",
       maxConcurrentChildRuns: 4,
+    },
+  };
+}
+
+function normalRunAdmissionCommand(idempotencyKey: string, runId: string, binding: "create" | "reuse") {
+  return {
+    sessionId: "session-1",
+    workspaceKey: "workspace",
+    idempotencyKey,
+    message: { id: `message-${runId}`, contentBlocks: [{ type: "text", text: "hello" }] },
+    run: {
+      id: runId,
+      executionSnapshot: {
+        providerId: "provider",
+        model: "test-model",
+        reasoning: { effort: "medium" },
+        approval: { mode: "on-request" },
+        sandbox: { mode: "workspace-write" },
+        workspace: { key: "workspace" },
+        character: null,
+      },
+    },
+    attemptId: `attempt-${runId}`,
+    bindingIntent:
+      binding === "create"
+        ? ({ kind: "create", bindingId: `binding-${runId}`, persistenceMode: "persistent" } as const)
+        : ({ kind: "reuse", bindingId: "binding-run-1" } as const),
+    dispatch: {
+      providerRequest: { options: { a: true, z: 1 }, prompt: "hello" },
+      providerIdempotencyKey: null,
     },
   };
 }

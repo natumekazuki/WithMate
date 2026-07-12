@@ -15,6 +15,8 @@ export type PersistenceWorkerClientOptions = Readonly<{
   databasePath: string;
   legacyDatabasePaths: readonly string[];
   maxQueueDepth?: number;
+  maxConcurrentRuns?: number;
+  maxConcurrentRunsPerProvider?: number;
   startupTimeoutMs?: number;
   workerOptions?: Pick<WorkerOptions, "execArgv" | "env">;
 }>;
@@ -88,6 +90,8 @@ export class PersistenceWorkerClient {
           databasePath: this.options.databasePath,
           legacyDatabasePaths: this.options.legacyDatabasePaths,
           maxQueueDepth: this.options.maxQueueDepth ?? 128,
+          maxConcurrentRuns: this.options.maxConcurrentRuns ?? 4,
+          maxConcurrentRunsPerProvider: this.options.maxConcurrentRunsPerProvider ?? 4,
         },
       });
     } catch {

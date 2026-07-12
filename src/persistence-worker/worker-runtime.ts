@@ -11,7 +11,7 @@ import {
 import { decodeMainToWorkerMessage, isPlainObject } from "../shared/persistence-runtime-protocol.js";
 import { BoundedSerialExecutor, PersistenceExecutorError } from "./request-executor.js";
 import { createRepositoryReadOperations, RepositoryReadError } from "./repository-read-model.js";
-import { createRepositoryWriteOperations } from "./repository-write-model.js";
+import { createRepositoryWriteOperations, type RepositoryWriteCapacityOptions } from "./repository-write-model.js";
 
 export const MAX_PERSISTENCE_RESPONSE_BYTES = 256 * 1024;
 export const MAX_PAYLOAD_CHUNK_BYTES = 256 * 1024;
@@ -43,9 +43,13 @@ export class PersistenceWorkerRuntime {
     readonly databasePath: string,
     readonly postMessage: PersistenceWorkerPostMessage,
     maxQueueDepth = 128,
+    writeCapacity: RepositoryWriteCapacityOptions = {
+      maxConcurrentRuns: 4,
+      maxConcurrentRunsPerProvider: 4,
+    },
   ) {
     this.#executor = new BoundedSerialExecutor(maxQueueDepth);
-    this.#operations = createOperationRegistry(database, databasePath);
+    this.#operations = createOperationRegistry(database, databasePath, writeCapacity);
   }
 
   handleMessage(rawMessage: unknown): void {
@@ -198,6 +202,7 @@ export class PersistenceWorkerRuntime {
 function createOperationRegistry(
   database: DatabaseSync,
   databasePath: string,
+  writeCapacity: RepositoryWriteCapacityOptions,
 ): ReadonlyMap<string, OperationDefinition> {
   const operations = new Map<string, OperationDefinition>([
     [
@@ -249,7 +254,7 @@ function createOperationRegistry(
   for (const [name, definition] of createRepositoryReadOperations(database)) {
     operations.set(name, definition);
   }
-  for (const [name, definition] of createRepositoryWriteOperations(database)) {
+  for (const [name, definition] of createRepositoryWriteOperations(database, writeCapacity)) {
     operations.set(name, definition);
   }
   return operations;
