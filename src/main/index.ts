@@ -6,3 +6,16 @@ export {
   type PersistenceWorkerClientOptions,
   type PersistenceWorkerClientState,
 } from "./persistence-worker-client.js";
+export { RepositoryReadClient } from "./repository-read-client.js";
+export type {
+  ChildResultListItem,
+  MessageListItem,
+  Page,
+  RunDetail,
+  RunEventListItem,
+  RunOutputListItem,
+  RunOutputPayloadMetadata,
+  SessionDetail,
+  SessionExecutionState,
+  SessionListItem,
+} from "../shared/repository-read-model.js";

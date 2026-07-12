@@ -194,11 +194,19 @@ test("maintenance execution failures report unknown effect", async () => {
 test("payload chunks are bounded and transferred as owned ArrayBuffers", async () => {
   const database = new DatabaseSync(":memory:");
   database.exec(`
+    CREATE TABLE sessions (id TEXT PRIMARY KEY, workspace_key TEXT NOT NULL) STRICT;
+    CREATE TABLE runs (id TEXT PRIMARY KEY, session_id TEXT NOT NULL) STRICT;
+    CREATE TABLE run_output_items (id TEXT PRIMARY KEY, run_id TEXT NOT NULL) STRICT;
     CREATE TABLE run_output_payloads (
       output_item_id TEXT PRIMARY KEY,
       content BLOB NOT NULL,
       byte_length INTEGER NOT NULL
     ) STRICT;
+  `);
+  database.exec(`
+    INSERT INTO sessions VALUES ('session-1', 'workspace-1');
+    INSERT INTO runs VALUES ('run-1', 'session-1');
+    INSERT INTO run_output_items VALUES ('payload-1', 'run-1'), ('payload-2', 'run-1'), ('payload-3', 'run-1');
   `);
   database
     .prepare("INSERT INTO run_output_payloads VALUES (?, ?, ?)")
@@ -227,7 +235,7 @@ test("payload chunks are bounded and transferred as owned ArrayBuffers", async (
     requestSequence: 1,
     operation: "payload.read_chunk",
     requestClass: "read",
-    payload: { payloadId: "payload-1", offset: 1, maxBytes: 3 },
+    payload: payloadChunkRequest("payload-1", 1, 3),
   });
   await waitFor(() => messages.length === 1);
 
@@ -253,7 +261,7 @@ test("payload chunks are bounded and transferred as owned ArrayBuffers", async (
     requestSequence: 2,
     operation: "payload.read_chunk",
     requestClass: "read",
-    payload: { payloadId: "payload-1", offset: 0, maxBytes: 256 * 1024 + 1 },
+    payload: payloadChunkRequest("payload-1", 0, 256 * 1024 + 1),
   });
   await waitFor(() => messages.length === 2);
   const failure = messages[1];
@@ -267,7 +275,7 @@ test("payload chunks are bounded and transferred as owned ArrayBuffers", async (
     requestSequence: 3,
     operation: "payload.read_chunk",
     requestClass: "read",
-    payload: { payloadId: "payload-2", offset: 0, maxBytes: 256 * 1024 },
+    payload: payloadChunkRequest("payload-2", 0, 256 * 1024),
   });
   await waitFor(() => messages.length === 3);
   const combinedLimitFailure = messages[2];
@@ -284,7 +292,7 @@ test("payload chunks are bounded and transferred as owned ArrayBuffers", async (
     requestSequence: 4,
     operation: "payload.read_chunk",
     requestClass: "read",
-    payload: { payloadId: "payload-3", offset: 0, maxBytes: 255 * 1024 },
+    payload: payloadChunkRequest("payload-3", 0, 255 * 1024),
   });
   await waitFor(() => messages.length === 4);
   const nearBoundary = messages[3];
@@ -293,6 +301,23 @@ test("payload chunks are bounded and transferred as owned ArrayBuffers", async (
     assert.fail("expected near-boundary payload response");
   }
   assert.equal((nearBoundary.result as { bytes: ArrayBuffer }).bytes.byteLength, 255 * 1024);
+
+  runtime.handleMessage({
+    protocolVersion: PERSISTENCE_PROTOCOL_VERSION,
+    generationId,
+    kind: "request",
+    requestId: "018f1f4e-7f0a-7000-8000-000000000006",
+    requestSequence: 5,
+    operation: "payload.read_chunk",
+    requestClass: "read",
+    payload: { ...payloadChunkRequest("payload-1", 0, 1), workspaceKey: "other" },
+  });
+  await waitFor(() => messages.length === 5);
+  const scopeFailure = messages[4];
+  assert.equal(
+    scopeFailure?.kind === "response" && !scopeFailure.ok && scopeFailure.error.code,
+    "payload_chunk_invalid",
+  );
   database.close();
 });
 
@@ -303,6 +328,17 @@ function createFixtureClient(databaseName = "unused-test-database.sqlite3"): Per
     legacyDatabasePaths: [],
     workerOptions,
   });
+}
+
+function payloadChunkRequest(outputItemId: string, offset: number, maxBytes: number) {
+  return {
+    sessionId: "session-1",
+    runId: "run-1",
+    outputItemId,
+    workspaceKey: "workspace-1",
+    offset,
+    maxBytes,
+  };
 }
 
 function isClientError(error: unknown, code: string, effect: string): boolean {

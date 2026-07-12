@@ -66,3 +66,14 @@
 - shutdown deadlineを`closed`受信後のWorker exitまで適用した。
 - maintenance timeout / crash / forced shutdownを保守的に`effect=unknown`へ分類した。
 - response上限をtransfer bufferとJSON metadataの合計256 KiBとして検証した。
+
+## 2026-07-12: S5 Repository Read Model完了
+
+- typed `RepositoryReadClient`とoperation別strict decoder、version付きopaque cursorを追加した。
+- Session pageでactive / latest Runとexecution stateをbounded queryから導出した。
+- Message、RunEvent、RunOutput、child resultをscope付きordinal pageとして実装した。
+- RunOutput countと内部recovery projectionを追加し、scope不一致を`not_found`へ収束させた。
+- timelineでは64 KiBを超えるMessage本文をinlineせず、本文とstored payloadをscope付きchunk readへ分離した。
+- representative query planでMessage / Event / Output ordinal indexを確認し、large output fixtureでpage上限とpayload非hydrateを検証した。
+- docs-syncは`repo-sync-required`と判定し、長期contractを`docs/design/persistence-worker-repository.md`へ同期した。
+- 現在地をS6 Repository Write Transactions着手前へ更新した。

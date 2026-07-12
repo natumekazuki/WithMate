@@ -38,3 +38,4 @@
 - Persistence Workerの世代付きprotocol、single FIFO、timeout / cancel、crash / shutdown lifecycleを実装した。
 - 最大256 KiBのpayload chunk transfer経路とconstant-memoryのrequest replay拒否を追加した。
 - CP1の現在地をS5 Repository Read Model着手前へ進めた。
+- CP1 S5でscope付きbounded Repository read、opaque cursor、Message / payload chunk分離を実装し、現在地をS6着手前へ進めた。
