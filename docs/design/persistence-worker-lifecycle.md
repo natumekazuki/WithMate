@@ -9,6 +9,7 @@ SQLite connection、request実行順序、transaction、checkpointをPersistence
 - SQLiteのprimary connectionはPersistence Workerが1本だけ保持する。
 - Main process、Renderer、CLIは`node:sqlite`をimportせず、Worker clientを経由する。
 - read、write、maintenanceは同じ有界FIFOへ入り、同時実行数を1とする。
+- write transaction callbackは同期関数に限定する。型でPromise returnを拒否し、native async functionはtransaction開始前にも拒否する。型を迂回した通常関数がPromiseLikeを返した場合はrollback後にconnectionをcloseし、非同期継続から同じconnectionへ書き込めないようにする。
 - checkpointだけはWorker内のmaintenance処理として短命connectionを使用できる。shutdown時はprimary connectionを閉じてからmaintenance connectionを開き、2本を同時に保持しない。
 - runtime中の明示checkpointはprimary connectionと同じWorkerが所有する短命connectionで実行する。repository query / commandをそのconnectionから実行しない。
 - maintenance connectionにも`foreign_keys=ON`、`secure_delete=FAST`、`busy_timeout=5000`、`wal_autocheckpoint=256`、`journal_size_limit=67108864`を設定する。
@@ -42,7 +43,7 @@ failureは`effect`を必須とする。
 
 - queued requestのcancelは`effect=none`とする。
 - read timeout後のlate responseはMainで破棄する。
-- write timeout、Worker crash、forced shutdown中のin-flight writeは`effect=unknown`とする。
+- writeまたはmaintenanceのtimeout、Worker crash、forced shutdownは、実行開始済みの可能性がある場合`effect=unknown`とする。
 - `effect=unknown`のwriteをtransportが自動再送しない。Repository commandのidempotency recordまたはread-backで呼出側が収束させる。
 - crash後にold generationのresponseを受理せず、in-flight requestを新Workerへ移送しない。再起動はold Workerのexit後に新しいclient / generationを明示的に作成する。
 
@@ -57,11 +58,11 @@ graceful shutdownは次の順序で行う。
 5. maintenance connectionで`wal_checkpoint(TRUNCATE)`を試行して閉じる。
 6. checkpoint結果付き`closed`を返し、Workerを終了する。
 
-checkpoint失敗はDB破損と同一視せず、`closed.checkpoint=failed`として通知する。shutdown timeoutではWorkerをterminateし、正常shutdownとして扱わない。closing中のcrashはtimeoutを待たず`worker_crashed`へ収束させる。
+checkpoint失敗はDB破損と同一視せず、`closed.checkpoint=failed`として通知する。shutdown timeoutは`closed`受信だけで解除せず、Worker exitまでを同じdeadlineで監視する。deadline超過ではWorkerをterminateし、正常shutdownとして扱わない。closing中のcrashはtimeoutを待たず`worker_crashed`へ収束させる。
 
 ## Payload chunk
 
-`payload.read_chunk`はSQLite BLOB全体をhydrateせず、`offset`と`maxBytes`で範囲取得する。1 responseは最大256 KiBとし、専有`ArrayBuffer`をtransfer listでMainへ渡す。
+`payload.read_chunk`はSQLite BLOB全体をhydrateせず、`offset`と`maxBytes`で範囲取得する。1 responseはtransfer bufferとJSON metadataの合計で最大256 KiBとし、専有`ArrayBuffer`をtransfer listでMainへ渡す。
 
 1 chunkを1 request / responseとするため、consumerがresponse受領後に次requestを発行することがackとbackpressureになる。長寿命cursorをWorker内に保持せず、timeout、cancel、shutdown後にstream resourceを残さない。binaryのfull payloadは通常queryで返さず、明示export operationで同じchunk境界を使う。
 

@@ -65,6 +65,12 @@ workerTest("synchronous Worker and postMessage failures settle without leaking s
 
   const client = createFixtureClient();
   await client.start();
+  await assert.rejects(client.request("Runtime.Ping", "read", {}), (error: unknown) =>
+    isClientError(error, "protocol_invalid", "none"),
+  );
+  await assert.rejects(client.request("runtime..ping", "read", {}), (error: unknown) =>
+    isClientError(error, "protocol_invalid", "none"),
+  );
   await assert.rejects(client.request("test.echo", "read", { notCloneable: () => undefined }), (error: unknown) =>
     isClientError(error, "protocol_invalid", "none"),
   );
@@ -81,6 +87,10 @@ workerTest("timeout drops late responses without poisoning the worker", async ()
   await assert.rejects(client.request("test.delay", "read", { delayMs: 80 }, { timeoutMs: 10 }), (error: unknown) =>
     isClientError(error, "request_timeout", "none"),
   );
+  await assert.rejects(
+    client.request("test.delay", "maintenance", { delayMs: 80 }, { timeoutMs: 10 }),
+    (error: unknown) => isClientError(error, "request_timeout", "unknown"),
+  );
   await new Promise((resolve) => setTimeout(resolve, 100));
   assert.deepEqual(await client.request("test.echo", "read", {}), { operation: "test.echo" });
 
@@ -95,7 +105,7 @@ workerTest("worker crash rejects every in-flight write with unknown effect", asy
 
   const delayedWrite = client.request("test.delay", "write", { delayMs: 1_000 });
   const crash = client.request("test.crash", "maintenance", {});
-  await assert.rejects(crash, (error: unknown) => isClientError(error, "worker_crashed", "none"));
+  await assert.rejects(crash, (error: unknown) => isClientError(error, "worker_crashed", "unknown"));
   await assert.rejects(delayedWrite, (error: unknown) => isClientError(error, "worker_crashed", "unknown"));
   assert.equal(client.state, "failed");
 });
@@ -104,6 +114,12 @@ workerTest("shutdown correlates closed acknowledgements and surfaces crashes imm
   const wrongClosed = createFixtureClient("wrong-closed");
   await wrongClosed.start();
   await assert.rejects(wrongClosed.shutdown(20), (error: unknown) =>
+    isClientError(error, "worker_shutdown_forced", "unknown"),
+  );
+
+  const leakedAfterClosed = createFixtureClient("closed-with-leak");
+  await leakedAfterClosed.start();
+  await assert.rejects(leakedAfterClosed.shutdown(20), (error: unknown) =>
     isClientError(error, "worker_shutdown_forced", "unknown"),
   );
 
@@ -150,6 +166,31 @@ test("request sequence rejects replay with constant memory", () => {
   database.close();
 });
 
+test("maintenance execution failures report unknown effect", async () => {
+  await withTempDirectory(async (directory) => {
+    const database = new DatabaseSync(":memory:");
+    const messages: WorkerToMainMessage[] = [];
+    const generationId = "018f1f4e-7f0a-7000-8000-000000000001";
+    const runtime = new PersistenceWorkerRuntime(generationId, database, directory, (message) =>
+      messages.push(message),
+    );
+    runtime.handleMessage({
+      protocolVersion: PERSISTENCE_PROTOCOL_VERSION,
+      generationId,
+      kind: "request",
+      requestId: "018f1f4e-7f0a-7000-8000-000000000002",
+      requestSequence: 1,
+      operation: "database.checkpoint",
+      requestClass: "maintenance",
+      payload: {},
+    });
+    await waitFor(() => messages.length === 1);
+    const failure = messages[0];
+    assert.equal(failure?.kind === "response" && !failure.ok && failure.error.effect, "unknown");
+    database.close();
+  });
+});
+
 test("payload chunks are bounded and transferred as owned ArrayBuffers", async () => {
   const database = new DatabaseSync(":memory:");
   database.exec(`
@@ -162,6 +203,14 @@ test("payload chunks are bounded and transferred as owned ArrayBuffers", async (
   database
     .prepare("INSERT INTO run_output_payloads VALUES (?, ?, ?)")
     .run("payload-1", Uint8Array.from([1, 2, 3, 4, 5]), 5);
+  const maximumChunk = new Uint8Array(256 * 1024);
+  database
+    .prepare("INSERT INTO run_output_payloads VALUES (?, ?, ?)")
+    .run("payload-2", maximumChunk, maximumChunk.byteLength);
+  const nearMaximumChunk = new Uint8Array(255 * 1024);
+  database
+    .prepare("INSERT INTO run_output_payloads VALUES (?, ?, ?)")
+    .run("payload-3", nearMaximumChunk, nearMaximumChunk.byteLength);
 
   const messages: WorkerToMainMessage[] = [];
   const transfers: Array<readonly ArrayBuffer[]> = [];
@@ -209,6 +258,41 @@ test("payload chunks are bounded and transferred as owned ArrayBuffers", async (
   await waitFor(() => messages.length === 2);
   const failure = messages[1];
   assert.equal(failure?.kind === "response" && !failure.ok && failure.error.code, "payload_chunk_too_large");
+
+  runtime.handleMessage({
+    protocolVersion: PERSISTENCE_PROTOCOL_VERSION,
+    generationId,
+    kind: "request",
+    requestId: "018f1f4e-7f0a-7000-8000-000000000004",
+    requestSequence: 3,
+    operation: "payload.read_chunk",
+    requestClass: "read",
+    payload: { payloadId: "payload-2", offset: 0, maxBytes: 256 * 1024 },
+  });
+  await waitFor(() => messages.length === 3);
+  const combinedLimitFailure = messages[2];
+  assert.equal(
+    combinedLimitFailure?.kind === "response" && !combinedLimitFailure.ok && combinedLimitFailure.error.code,
+    "response_too_large",
+  );
+
+  runtime.handleMessage({
+    protocolVersion: PERSISTENCE_PROTOCOL_VERSION,
+    generationId,
+    kind: "request",
+    requestId: "018f1f4e-7f0a-7000-8000-000000000005",
+    requestSequence: 4,
+    operation: "payload.read_chunk",
+    requestClass: "read",
+    payload: { payloadId: "payload-3", offset: 0, maxBytes: 255 * 1024 },
+  });
+  await waitFor(() => messages.length === 4);
+  const nearBoundary = messages[3];
+  assert.equal(nearBoundary?.kind === "response" && nearBoundary.ok, true);
+  if (nearBoundary?.kind !== "response" || !nearBoundary.ok) {
+    assert.fail("expected near-boundary payload response");
+  }
+  assert.equal((nearBoundary.result as { bytes: ArrayBuffer }).bytes.byteLength, 255 * 1024);
   database.close();
 });
 

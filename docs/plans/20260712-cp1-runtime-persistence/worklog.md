@@ -58,3 +58,11 @@
 - Node.js 24.18.0で全32 test、開発shellのNode.js 22.22.0ではtarget Worker test 6件を明示skipした残り26件とschema validatorが成功した。
 - Electron 42.5.2同梱Node.jsでWorker lifecycle test 8件が成功した。
 - 現在地をS5 Repository Read Model着手前へ更新した。
+
+## 2026-07-12: S4 follow-up review対応
+
+- async transaction callbackを型とtransaction開始前のruntime検査で拒否し、`await`後のwriteがtransaction外へ逃げない回帰testを追加した。
+- Main clientでoperationを送信前decodeし、不正operationをpendingへ登録せず`protocol_invalid`へ収束させた。
+- shutdown deadlineを`closed`受信後のWorker exitまで適用した。
+- maintenance timeout / crash / forced shutdownを保守的に`effect=unknown`へ分類した。
+- response上限をtransfer bufferとJSON metadataの合計256 KiBとして検証した。

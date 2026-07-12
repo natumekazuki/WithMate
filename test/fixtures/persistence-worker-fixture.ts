@@ -29,6 +29,15 @@ port.on("message", (rawMessage: unknown) => {
         checkpoint: "completed",
       });
     }
+    if (typeof workerData.databasePath === "string" && workerData.databasePath.includes("closed-with-leak")) {
+      port.postMessage({
+        protocolVersion: PERSISTENCE_PROTOCOL_VERSION,
+        generationId,
+        kind: "closed",
+        requestId: message.requestId,
+        checkpoint: "completed",
+      });
+    }
     return;
   }
   if (message.kind !== "request") {

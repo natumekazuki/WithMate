@@ -127,22 +127,32 @@ export class BoundedSerialExecutor {
 }
 
 /** callbackは同期処理に限定し、PromiseLikeを返した場合はcommitせずrollbackする。 */
-export function executeWriteTransaction<T>(database: DatabaseSync, operation: () => T): T {
+export function executeWriteTransaction<T>(database: DatabaseSync, operation: () => SynchronousResult<T>): T {
+  if (operation.constructor.name === "AsyncFunction") {
+    throw new TypeError("Persistence transactions require a synchronous callback.");
+  }
   database.exec("BEGIN IMMEDIATE;");
   try {
     const result = operation();
     if (isPromiseLike(result)) {
+      if (database.isTransaction) {
+        database.exec("ROLLBACK;");
+      }
+      database.close();
+      void Promise.resolve(result).catch(() => undefined);
       throw new TypeError("Persistence transactions require a synchronous callback.");
     }
     database.exec("COMMIT;");
     return result;
   } catch (error) {
-    if (database.isTransaction) {
+    if (database.isOpen && database.isTransaction) {
       database.exec("ROLLBACK;");
     }
     throw error;
   }
 }
+
+type SynchronousResult<T> = T extends PromiseLike<unknown> ? never : T;
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   return (typeof value === "object" || typeof value === "function") && value !== null && "then" in value;

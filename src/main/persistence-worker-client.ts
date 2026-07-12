@@ -6,7 +6,7 @@ import {
   type PersistenceError,
   type PersistenceRequestClass,
 } from "../shared/persistence-protocol.js";
-import { decodeWorkerToMainMessage } from "../shared/persistence-runtime-protocol.js";
+import { decodeMainToWorkerMessage, decodeWorkerToMainMessage } from "../shared/persistence-runtime-protocol.js";
 
 export type PersistenceWorkerClientState = "idle" | "starting" | "ready" | "closing" | "closed" | "failed";
 
@@ -132,6 +132,19 @@ export class PersistenceWorkerClient {
     }
 
     const requestId = randomUUID();
+    const requestMessage = {
+      protocolVersion: PERSISTENCE_PROTOCOL_VERSION,
+      generationId: this.generationId,
+      kind: "request",
+      requestId,
+      requestSequence: this.#nextRequestSequence,
+      operation,
+      requestClass,
+      payload,
+    } as const;
+    if (!decodeMainToWorkerMessage(requestMessage).ok) {
+      return Promise.reject(clientError("protocol_invalid", "Persistence request is invalid.", false, "none"));
+    }
     const promise = new Promise<TResult>((resolve, reject) => {
       const pending: PendingRequest = {
         requestClass,
@@ -151,16 +164,7 @@ export class PersistenceWorkerClient {
       this.#pending.set(requestId, pending);
     });
     try {
-      this.#worker.postMessage({
-        protocolVersion: PERSISTENCE_PROTOCOL_VERSION,
-        generationId: this.generationId,
-        kind: "request",
-        requestId,
-        requestSequence: this.#nextRequestSequence,
-        operation,
-        requestClass,
-        payload,
-      });
+      this.#worker.postMessage(requestMessage);
       this.#nextRequestSequence += 1;
     } catch {
       const pending = this.#pending.get(requestId);
@@ -227,9 +231,14 @@ export class PersistenceWorkerClient {
       );
     });
     try {
-      const checkpoint = await Promise.race([closed, forced]);
-      this.#expectedExit = true;
-      await this.#exitPromise;
+      const checkpoint = await Promise.race([
+        closed.then(async (value) => {
+          this.#expectedExit = true;
+          await this.#exitPromise;
+          return value;
+        }),
+        forced,
+      ]);
       this.#state = "closed";
       return { checkpoint };
     } catch (error) {
@@ -300,7 +309,7 @@ export class PersistenceWorkerClient {
         code,
         code === "request_timeout" ? "Persistence request timed out." : "Persistence request was canceled.",
         false,
-        pending.requestClass === "write" ? "unknown" : "none",
+        uncertainEffect(pending.requestClass),
       ),
     );
   }
@@ -335,9 +344,13 @@ export class PersistenceWorkerClient {
     for (const [requestId, pending] of this.#pending) {
       this.#pending.delete(requestId);
       cleanupPending(pending);
-      pending.reject(clientError(code, message, false, pending.requestClass === "write" ? "unknown" : "none"));
+      pending.reject(clientError(code, message, false, uncertainEffect(pending.requestClass)));
     }
   }
+}
+
+function uncertainEffect(requestClass: PersistenceRequestClass): PersistenceError["effect"] {
+  return requestClass === "read" ? "none" : "unknown";
 }
 
 function cleanupPending(pending: PendingRequest): void {

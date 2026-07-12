@@ -103,7 +103,6 @@ export class PersistenceWorkerRuntime {
     void this.#executor
       .submit(message.requestId, message.requestClass, () => operation.execute(payload))
       .then(({ result, transferList }) => {
-        assertResponseWithinLimit(result, transferList);
         const response: PersistenceResponseMessage = {
           protocolVersion: PERSISTENCE_PROTOCOL_VERSION,
           generationId: this.generationId,
@@ -112,6 +111,7 @@ export class PersistenceWorkerRuntime {
           ok: true,
           result,
         };
+        assertResponseWithinLimit(response, transferList);
         this.postMessage(response, transferList);
       })
       .catch((error: unknown) => this.#postOperationFailure(message, error));
@@ -144,7 +144,8 @@ export class PersistenceWorkerRuntime {
   }
 
   #postOperationFailure(message: PersistenceRequestMessage, error: unknown): void {
-    const writeMayHaveStarted = message.requestClass === "write" && !(error instanceof PersistenceExecutorError);
+    const mutatingOperationMayHaveStarted =
+      message.requestClass !== "read" && !(error instanceof PersistenceExecutorError);
     if (error instanceof PersistenceExecutorError) {
       this.#postFailure(message.requestId, {
         code: error.code,
@@ -167,7 +168,7 @@ export class PersistenceWorkerRuntime {
       code: error instanceof ResponseLimitError ? "response_too_large" : "operation_failed",
       message: error instanceof ResponseLimitError ? error.message : "Persistence operation failed.",
       retryable: false,
-      effect: writeMayHaveStarted ? "unknown" : "none",
+      effect: mutatingOperationMayHaveStarted ? "unknown" : "none",
     });
   }
 
@@ -277,7 +278,7 @@ function assertResponseWithinLimit(result: unknown, transferList: readonly Array
   const jsonBytes = Buffer.byteLength(
     JSON.stringify(result, (_key, value: unknown) => (value instanceof ArrayBuffer ? null : value)),
   );
-  if (transferredBytes > MAX_PERSISTENCE_RESPONSE_BYTES || jsonBytes > MAX_PERSISTENCE_RESPONSE_BYTES) {
+  if (transferredBytes + jsonBytes > MAX_PERSISTENCE_RESPONSE_BYTES) {
     throw new ResponseLimitError("Persistence response exceeds the maximum size.");
   }
 }

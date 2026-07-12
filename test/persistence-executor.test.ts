@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
@@ -69,7 +72,7 @@ test("queued cancellation, duplicate IDs, queue limits, and closing fail before 
   await executor.whenIdle();
 });
 
-test("write transaction commits atomically and rolls back failures", () => {
+test("write transaction commits atomically and rejects async callbacks before invocation", async () => {
   const database = new DatabaseSync(":memory:");
   database.exec("CREATE TABLE events (ordinal INTEGER PRIMARY KEY, value TEXT NOT NULL);");
 
@@ -82,12 +85,20 @@ test("write transaction commits atomically and rolls back failures", () => {
       throw new Error("stop");
     }),
   );
-  assert.throws(() =>
-    executeWriteTransaction(database, () => {
-      database.prepare("INSERT INTO events VALUES (?, ?)").run(3, "async-misuse");
-      return Promise.resolve();
-    }),
-  );
+  if (false) {
+    // @ts-expect-error transaction callbackはPromiseを返せない。
+    executeWriteTransaction(database, async () => undefined);
+  }
+  let continuedAfterAwait = false;
+  const asyncOperation = async () => {
+    database.prepare("INSERT INTO events VALUES (?, ?)").run(3, "before-await");
+    await Promise.resolve();
+    continuedAfterAwait = true;
+    database.prepare("INSERT INTO events VALUES (?, ?)").run(4, "after-await");
+  };
+  assert.throws(() => executeWriteTransaction(database, asyncOperation as unknown as () => void));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(continuedAfterAwait, false);
 
   const rows = database.prepare("SELECT ordinal, value FROM events ORDER BY ordinal").all() as unknown as Array<{
     ordinal: number;
@@ -98,4 +109,32 @@ test("write transaction commits atomically and rolls back failures", () => {
     [{ ordinal: 1, value: "committed" }],
   );
   database.close();
+});
+
+test("Promise wrapper poisons the connection before async continuation can write", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "withmate-transaction-"));
+  const databasePath = path.join(directory, "transaction.sqlite3");
+  try {
+    const database = new DatabaseSync(databasePath);
+    database.exec("CREATE TABLE events (ordinal INTEGER PRIMARY KEY);");
+    let continuedAfterAwait = false;
+    const asyncOperation = async () => {
+      database.prepare("INSERT INTO events VALUES (?)").run(1);
+      await Promise.resolve();
+      continuedAfterAwait = true;
+      database.prepare("INSERT INTO events VALUES (?)").run(2);
+    };
+
+    assert.throws(() => executeWriteTransaction(database, (() => asyncOperation()) as unknown as () => void));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(continuedAfterAwait, true);
+    assert.equal(database.isOpen, false);
+
+    const verification = new DatabaseSync(databasePath, { readOnly: true });
+    const row = verification.prepare("SELECT count(*) AS count FROM events").get() as unknown as { count: number };
+    assert.equal(row.count, 0);
+    verification.close();
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
