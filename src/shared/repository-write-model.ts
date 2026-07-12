@@ -2,6 +2,7 @@ export const REPOSITORY_WRITE_OPERATIONS = {
   sessionCreate: "repository.session.create",
   sessionTransition: "repository.session.transition",
   runAdmit: "repository.run.admit",
+  bindingResolve: "repository.binding.resolve",
 } as const;
 
 export type SessionLifecycleStatus = "active" | "archived" | "closed";
@@ -65,6 +66,25 @@ export type NormalRunAdmissionCommand = Readonly<{
   }>;
 }>;
 
+export type ProviderBindingResolutionCommand = Readonly<{
+  sessionId: string;
+  workspaceKey: string;
+  runId: string;
+  attemptId: string;
+  bindingId: string;
+  resolution:
+    | Readonly<{
+        kind: "active";
+        externalConversationId: string;
+        ephemeralOwnerToken: string | null;
+      }>
+    | Readonly<{
+        kind: "ambiguous";
+        failureOrigin: "transport" | "process" | "unknown";
+        errorSummary: string | null;
+      }>;
+}>;
+
 export type RepositoryCommandErrorCode =
   | "request_invalid"
   | "not_found"
@@ -106,4 +126,16 @@ export type NormalRunAdmissionResult = Readonly<{
   bindingState: "creating" | "active";
   dispatchState: "pending";
   admittedAt: number;
+}>;
+
+export type ProviderBindingResolutionResult = Readonly<{
+  sessionId: string;
+  runId: string;
+  attemptId: string;
+  bindingId: string;
+  bindingState: "active" | "invalidated";
+  attemptState: "preparing" | "interrupted";
+  runPhase: "queued" | "starting" | "active" | "canceling" | "finalizing" | "interrupted";
+  dispatchState: "pending" | "aborted";
+  ephemeralOwnership: "not_applicable" | "registered" | "unavailable";
 }>;

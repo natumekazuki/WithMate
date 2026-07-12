@@ -117,3 +117,11 @@
 - Run参照のidempotency replayについて、fingerprint conflict、expiry scrub、Run参照欠落を直接検証した。
 - Dispatch insert直前のfault injectionでtransactionを中断し、Message / Run / Attempt / Binding / Dispatchがすべてrollbackされることを固定した。
 - 同じDBを所有する2 Workerからcapacity上限1のRun admissionを同時実行し、`BEGIN IMMEDIATE`により成功1件と`capacity_exceeded` 1件へ直列化されることを確認した。
+
+## 2026-07-12: S6-B2a Provider Binding resolution完了
+
+- `repository.binding.resolve`とtyped Main process client methodを追加した。
+- 外部会話ID確定時にcreating Bindingのactive化と作成元AttemptへのBinding参照設定を同じtransactionで確定した。
+- 会話作成結果がambiguousな場合にBinding / Attempt / Run / Dispatchを`invalidated / interrupted / interrupted / aborted`へ一括収束させた。
+- exact replayと異なる確定値のconflictを自然キーとstateで判定し、IdempotencyRecordを重複追加しない境界を固定した。
+- ephemeral Bindingのlive ownership tokenをcommit後のWorker memoryだけへ登録し、再起動後にDB状態だけからresumeしない土台を追加した。

@@ -7,6 +7,8 @@ import {
   REPOSITORY_WRITE_OPERATIONS,
   type NormalRunAdmissionCommand,
   type NormalRunAdmissionResult,
+  type ProviderBindingResolutionCommand,
+  type ProviderBindingResolutionResult,
   type RepositoryCommandErrorCode,
   type RepositoryCommandResult,
   type SessionCreateCommand,
@@ -43,6 +45,7 @@ export function createRepositoryWriteOperations(
   const retentionMs = options.idempotencyRetentionMs ?? DEFAULT_IDEMPOTENCY_RETENTION_MS;
   const maxConcurrentRuns = options.maxConcurrentRuns ?? 4;
   const maxConcurrentRunsPerProvider = options.maxConcurrentRunsPerProvider ?? 4;
+  const ephemeralBindingOwners = new Map<string, string>();
   if (!Number.isSafeInteger(retentionMs) || retentionMs < 1) {
     throw new RangeError("idempotencyRetentionMs must be a positive safe integer.");
   }
@@ -84,6 +87,25 @@ export function createRepositoryWriteOperations(
           return executeWriteTransaction(database, () =>
             admitNormalRun(database, prepared, now, retentionMs, maxConcurrentRuns, maxConcurrentRunsPerProvider),
           );
+        }),
+      ),
+    ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.bindingResolve,
+      write((payload) =>
+        runDecoded(decodeProviderBindingResolution(payload), (command) => {
+          const now = readClock(clock);
+          const execution = executeWriteTransaction(database, () =>
+            resolveProviderBinding(database, command, now, ephemeralBindingOwners),
+          );
+          if (execution.registerEphemeralOwner !== undefined) {
+            ephemeralBindingOwners.set(
+              execution.registerEphemeralOwner.bindingId,
+              execution.registerEphemeralOwner.token,
+            );
+          }
+          if (execution.removeEphemeralOwner) ephemeralBindingOwners.delete(command.bindingId);
+          return execution.result;
         }),
       ),
     ],
@@ -376,6 +398,144 @@ function admitNormalRun(
   return success(value, false);
 }
 
+function resolveProviderBinding(
+  database: DatabaseSync,
+  command: ProviderBindingResolutionCommand,
+  now: number,
+  ephemeralBindingOwners: ReadonlyMap<string, string>,
+): ProviderBindingResolutionExecution {
+  const row = readBindingResolutionRow(database, command);
+  if (row === undefined) {
+    return bindingResolutionFailure(failure("not_found", "Provider binding resolution target was not found."));
+  }
+  if (row.session_provider_id !== row.binding_provider_id) {
+    return bindingResolutionFailure(
+      failure("reference_invalid", "Provider binding does not match the Session Provider."),
+    );
+  }
+  if (
+    command.resolution.kind === "active" &&
+    ((row.persistence_mode === "persistent" && command.resolution.ephemeralOwnerToken !== null) ||
+      (row.persistence_mode === "ephemeral" && command.resolution.ephemeralOwnerToken === null))
+  ) {
+    return bindingResolutionFailure(failure("request_invalid", "Ephemeral ownership does not match persistence mode."));
+  }
+  const replay = replayBindingResolution(command, row, ephemeralBindingOwners);
+  if (replay !== undefined) return replay;
+  if (
+    row.binding_state !== "creating" ||
+    row.attempt_state !== "preparing" ||
+    row.provider_binding_id !== null ||
+    !isNonTerminalRunPhase(row.run_phase) ||
+    row.dispatch_state !== "pending"
+  ) {
+    return bindingResolutionFailure(failure("lifecycle_conflict", "Provider binding resolution state changed."));
+  }
+
+  if (command.resolution.kind === "active") {
+    const duplicate = database
+      .prepare(
+        `
+        SELECT 1 FROM provider_bindings
+        WHERE provider_id = ? AND external_conversation_id = ? AND id <> ?
+      `,
+      )
+      .get(row.binding_provider_id, command.resolution.externalConversationId, command.bindingId);
+    if (duplicate !== undefined) {
+      return bindingResolutionFailure(failure("reference_invalid", "External conversation is already bound."));
+    }
+    const bindingUpdate = database
+      .prepare(
+        `
+        UPDATE provider_bindings SET binding_state = 'active', external_conversation_id = ?
+        WHERE id = ? AND binding_state = 'creating'
+      `,
+      )
+      .run(command.resolution.externalConversationId, command.bindingId);
+    const attemptUpdate = database
+      .prepare(
+        `
+        UPDATE run_attempts SET provider_binding_id = ?
+        WHERE id = ? AND run_id = ? AND attempt_state = 'preparing' AND provider_binding_id IS NULL
+      `,
+      )
+      .run(command.bindingId, command.attemptId, command.runId);
+    if (bindingUpdate.changes !== 1 || attemptUpdate.changes !== 1) {
+      return bindingResolutionFailure(failure("lifecycle_conflict", "Provider binding activation conflicted."));
+    }
+    const execution: ProviderBindingResolutionExecution = {
+      result: success(
+        bindingResolutionValue(
+          command,
+          row.run_phase,
+          "active",
+          "preparing",
+          "pending",
+          row.persistence_mode === "ephemeral" ? "registered" : "not_applicable",
+        ),
+        false,
+      ),
+      removeEphemeralOwner: false,
+    };
+    return row.persistence_mode === "ephemeral" && command.resolution.ephemeralOwnerToken !== null
+      ? {
+          ...execution,
+          registerEphemeralOwner: { bindingId: command.bindingId, token: command.resolution.ephemeralOwnerToken },
+        }
+      : execution;
+  }
+
+  const bindingUpdate = database
+    .prepare(
+      `
+      UPDATE provider_bindings SET binding_state = 'invalidated', invalidated_at = ?,
+        invalidation_reason = 'conversation_start_ambiguous'
+      WHERE id = ? AND binding_state = 'creating'
+    `,
+    )
+    .run(now, command.bindingId);
+  const attemptUpdate = database
+    .prepare(
+      `
+      UPDATE run_attempts SET attempt_state = 'interrupted', failure_origin = ?, error_summary = ?, terminal_at = ?
+      WHERE id = ? AND run_id = ? AND attempt_state = 'preparing' AND provider_binding_id IS NULL
+    `,
+    )
+    .run(command.resolution.failureOrigin, command.resolution.errorSummary, now, command.attemptId, command.runId);
+  const runUpdate = database
+    .prepare(
+      `
+      UPDATE runs SET phase = 'interrupted', failure_origin = ?, error_summary = ?, terminal_at = ?,
+        updated_at = MAX(updated_at, ?), version = version + 1
+      WHERE id = ? AND session_id = ? AND phase IN ('queued','starting','active','canceling','finalizing')
+    `,
+    )
+    .run(command.resolution.failureOrigin, command.resolution.errorSummary, now, now, command.runId, command.sessionId);
+  const dispatchUpdate = database
+    .prepare(
+      `
+      UPDATE run_dispatches SET dispatch_state = 'aborted', resolved_at = ?
+      WHERE run_attempt_id = ? AND dispatch_state = 'pending'
+    `,
+    )
+    .run(now, command.attemptId);
+  if (
+    bindingUpdate.changes !== 1 ||
+    attemptUpdate.changes !== 1 ||
+    runUpdate.changes !== 1 ||
+    dispatchUpdate.changes !== 1
+  ) {
+    return bindingResolutionFailure(failure("lifecycle_conflict", "Ambiguous binding resolution conflicted."));
+  }
+  return {
+    result: success(
+      bindingResolutionValue(command, "interrupted", "invalidated", "interrupted", "aborted", "not_applicable"),
+      false,
+    ),
+    removeEphemeralOwner: true,
+  };
+}
+
 function checkIdempotency<T>(
   database: DatabaseSync,
   key: string,
@@ -624,6 +784,42 @@ function decodeNormalRunAdmission(payload: Readonly<Record<string, unknown>>): D
   return { ok: true, value: payload as unknown as NormalRunAdmissionCommand };
 }
 
+function decodeProviderBindingResolution(
+  payload: Readonly<Record<string, unknown>>,
+): DecodeResult<ProviderBindingResolutionCommand> {
+  if (
+    !hasExactKeys(payload, ["sessionId", "workspaceKey", "runId", "attemptId", "bindingId", "resolution"]) ||
+    !isBoundedString(payload.sessionId, 1_024) ||
+    !isBoundedString(payload.workspaceKey, 1_024) ||
+    !isBoundedString(payload.runId, 1_024) ||
+    !isBoundedString(payload.attemptId, 1_024) ||
+    !isBoundedString(payload.bindingId, 1_024) ||
+    !isPlainObject(payload.resolution)
+  ) {
+    return decodeFailure();
+  }
+  const resolution = payload.resolution;
+  if (resolution.kind === "active") {
+    if (
+      !hasExactKeys(resolution, ["kind", "externalConversationId", "ephemeralOwnerToken"]) ||
+      !isBoundedString(resolution.externalConversationId, 4_096) ||
+      (resolution.ephemeralOwnerToken !== null && !isCanonicalUuid(resolution.ephemeralOwnerToken))
+    ) {
+      return decodeFailure();
+    }
+  } else if (
+    resolution.kind !== "ambiguous" ||
+    !hasExactKeys(resolution, ["kind", "failureOrigin", "errorSummary"]) ||
+    (resolution.failureOrigin !== "transport" &&
+      resolution.failureOrigin !== "process" &&
+      resolution.failureOrigin !== "unknown") ||
+    (resolution.errorSummary !== null && !isBoundedString(resolution.errorSummary, 1_024))
+  ) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as ProviderBindingResolutionCommand };
+}
+
 function lifecycleOperation(expected: "active" | "archived", target: SessionLifecycleStatus): string {
   if (expected === "active" && target === "archived") return "session.archive";
   if (expected === "archived" && target === "active") return "session.unarchive";
@@ -676,6 +872,119 @@ function hasAdmissionIdentityConflict(database: DatabaseSync, command: NormalRun
       database.prepare("SELECT 1 FROM provider_bindings WHERE id = ?").get(command.bindingIntent.bindingId) !==
         undefined)
   );
+}
+
+function readBindingResolutionRow(
+  database: DatabaseSync,
+  command: ProviderBindingResolutionCommand,
+): BindingResolutionRow | undefined {
+  return database
+    .prepare(
+      `
+      SELECT
+        b.provider_id AS binding_provider_id,
+        b.persistence_mode,
+        b.binding_state,
+        b.external_conversation_id,
+        b.invalidation_reason,
+        a.provider_binding_id,
+        a.attempt_state,
+        a.failure_origin AS attempt_failure_origin,
+        a.error_summary AS attempt_error_summary,
+        r.phase AS run_phase,
+        r.failure_origin AS run_failure_origin,
+        r.error_summary AS run_error_summary,
+        s.provider_id AS session_provider_id,
+        d.dispatch_state
+      FROM provider_bindings b
+      JOIN run_attempts a ON a.id = b.created_by_run_attempt_id
+      JOIN runs r ON r.id = a.run_id
+      JOIN sessions s ON s.id = b.session_id AND s.id = r.session_id
+      JOIN run_dispatches d ON d.run_attempt_id = a.id
+      WHERE b.id = ? AND b.session_id = ? AND s.workspace_key = ?
+        AND r.id = ? AND a.id = ?
+    `,
+    )
+    .get(command.bindingId, command.sessionId, command.workspaceKey, command.runId, command.attemptId) as
+    BindingResolutionRow | undefined;
+}
+
+function replayBindingResolution(
+  command: ProviderBindingResolutionCommand,
+  row: BindingResolutionRow,
+  ephemeralBindingOwners: ReadonlyMap<string, string>,
+): ProviderBindingResolutionExecution | undefined {
+  if (
+    command.resolution.kind === "active" &&
+    row.binding_state === "active" &&
+    row.external_conversation_id === command.resolution.externalConversationId &&
+    row.provider_binding_id === command.bindingId &&
+    row.attempt_state === "preparing" &&
+    isNonTerminalRunPhase(row.run_phase) &&
+    row.dispatch_state === "pending"
+  ) {
+    const ephemeralOwnership =
+      row.persistence_mode === "persistent"
+        ? "not_applicable"
+        : ephemeralBindingOwners.get(command.bindingId) === command.resolution.ephemeralOwnerToken
+          ? "registered"
+          : "unavailable";
+    return {
+      result: success(
+        bindingResolutionValue(command, row.run_phase, "active", "preparing", "pending", ephemeralOwnership),
+        true,
+      ),
+      removeEphemeralOwner: false,
+    };
+  }
+  if (
+    command.resolution.kind === "ambiguous" &&
+    row.binding_state === "invalidated" &&
+    row.invalidation_reason === "conversation_start_ambiguous" &&
+    row.attempt_state === "interrupted" &&
+    row.attempt_failure_origin === command.resolution.failureOrigin &&
+    row.attempt_error_summary === command.resolution.errorSummary &&
+    row.run_phase === "interrupted" &&
+    row.run_failure_origin === command.resolution.failureOrigin &&
+    row.run_error_summary === command.resolution.errorSummary &&
+    row.dispatch_state === "aborted"
+  ) {
+    return {
+      result: success(
+        bindingResolutionValue(command, "interrupted", "invalidated", "interrupted", "aborted", "not_applicable"),
+        true,
+      ),
+      removeEphemeralOwner: true,
+    };
+  }
+  return undefined;
+}
+
+function bindingResolutionValue(
+  command: ProviderBindingResolutionCommand,
+  runPhase: NonTerminalRunPhase | "interrupted",
+  bindingState: "active" | "invalidated",
+  attemptState: "preparing" | "interrupted",
+  dispatchState: "pending" | "aborted",
+  ephemeralOwnership: ProviderBindingResolutionResult["ephemeralOwnership"],
+): ProviderBindingResolutionResult {
+  return {
+    sessionId: command.sessionId,
+    runId: command.runId,
+    attemptId: command.attemptId,
+    bindingId: command.bindingId,
+    bindingState,
+    attemptState,
+    runPhase,
+    dispatchState,
+    ephemeralOwnership,
+  };
+}
+
+function bindingResolutionFailure(
+  result: RepositoryCommandResult<ProviderBindingResolutionResult>,
+): ProviderBindingResolutionExecution {
+  return { result, removeEphemeralOwner: false };
 }
 
 function resolveAdmissionBinding(
@@ -916,6 +1225,12 @@ function isLifecycleStatus(value: unknown): value is SessionLifecycleStatus {
   return value === "active" || value === "archived" || value === "closed";
 }
 
+function isNonTerminalRunPhase(value: string): value is NonTerminalRunPhase {
+  return (
+    value === "queued" || value === "starting" || value === "active" || value === "canceling" || value === "finalizing"
+  );
+}
+
 function invalidCommand(): RepositoryCommandDecodeError {
   return new RepositoryCommandDecodeError();
 }
@@ -948,6 +1263,28 @@ type PreparedNormalRunAdmission = Readonly<{
 type BindingResolution =
   | Readonly<{ ok: true; providerBindingId: string | null }>
   | Readonly<{ ok: false; result: RepositoryCommandResult<NormalRunAdmissionResult> }>;
+type NonTerminalRunPhase = "queued" | "starting" | "active" | "canceling" | "finalizing";
+type BindingResolutionRow = Readonly<{
+  binding_provider_id: string;
+  persistence_mode: "persistent" | "ephemeral";
+  binding_state: "creating" | "active" | "invalidated" | "superseded";
+  external_conversation_id: string | null;
+  invalidation_reason: string | null;
+  provider_binding_id: string | null;
+  attempt_state: "preparing" | "active" | "succeeded" | "failed" | "interrupted";
+  attempt_failure_origin: string | null;
+  attempt_error_summary: string | null;
+  run_phase: NonTerminalRunPhase | "completed" | "failed" | "canceled" | "interrupted";
+  run_failure_origin: string | null;
+  run_error_summary: string | null;
+  session_provider_id: string;
+  dispatch_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
+}>;
+type ProviderBindingResolutionExecution = Readonly<{
+  result: RepositoryCommandResult<ProviderBindingResolutionResult>;
+  registerEphemeralOwner?: Readonly<{ bindingId: string; token: string }>;
+  removeEphemeralOwner: boolean;
+}>;
 type IdempotencyRow = Readonly<{
   scope_session_id: string;
   operation: string;

@@ -71,3 +71,14 @@ Message本文、execution snapshot、Provider requestはdenseなJSON値として
 Worker repositoryは通常Run、Auxiliary、child Runで共有するapp全体とProvider別のnon-terminal Run上限を構築時optionとして所有する。defaultはそれぞれ4で、low-resource profileは2を渡す。admission transaction内で現在数を集計し、上限到達時はretryableな`capacity_exceeded`としてRun追加前に拒否する。root child上限はchild admission commandで追加する。
 
 この縦切りは新規通常Runだけを扱う。既存Messageを参照するretry、Provider Binding確定、Dispatchの`dispatching` / resolution、supplemental inputは後続のS6-B commandとして追加する。
+
+## Provider Binding resolution
+
+`repository.binding.resolve`は、Run admissionでdurable commit済みの`creating` Bindingに対する外部会話作成結果を確定する。commandはSession / workspace / Run / Attempt / Bindingを明示し、Workerは作成元Attempt、同一Session、Session Provider、`preparing` Attempt、non-terminal Run、`pending` Dispatchを同じtransaction内で照合する。
+
+- `active`: Bindingへ一意な外部会話IDを設定して`active`へ進め、作成元Attemptの`provider_binding_id`を同じtransactionで設定する。このcommit成功後だけDispatch開始へ進める。
+- `ambiguous`: Bindingを`conversation_start_ambiguous`で`invalidated`、AttemptとRunを`interrupted`、未送信Dispatchを`aborted`へ同じtransactionで収束させる。同じ会話作成requestを自動再送せず、Provider側orphanを推測相関・自動削除しない。
+
+この内部CAS transitionにはIdempotencyRecordを追加せず、自然キーと確定状態でexact replayを判定する。同じ外部IDまたは同じambiguous outcomeの再通知は`replayed=true`、異なる確定値や状態後退は`lifecycle_conflict`とする。
+
+ephemeral Bindingのactive化ではcanonical UUIDのlive ownership tokenを要求し、DB commit後にだけWorker memoryへ登録する。tokenはDBやresponse envelopeへ保存せず、Worker再起動で失われる。active化responseを再送しただけではtokenを再登録せず、所有情報が失われたephemeral Bindingをresume可能へ戻さない。

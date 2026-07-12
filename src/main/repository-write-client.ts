@@ -3,6 +3,8 @@ import {
   REPOSITORY_WRITE_OPERATIONS,
   type NormalRunAdmissionCommand,
   type NormalRunAdmissionResult,
+  type ProviderBindingResolutionCommand,
+  type ProviderBindingResolutionResult,
   type RepositoryCommandResult,
   type SessionCreateCommand,
   type SessionCreateResult,
@@ -39,5 +41,12 @@ export class RepositoryWriteClient {
     options?: RequestOptions,
   ): Promise<RepositoryCommandResult<NormalRunAdmissionResult>> {
     return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runAdmit, "write", command, options);
+  }
+
+  resolveProviderBinding(
+    command: ProviderBindingResolutionCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<ProviderBindingResolutionResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.bindingResolve, "write", command, options);
   }
 }

@@ -561,6 +561,84 @@ repositoryTest("Run admission rolls back every inserted row when a late constrai
   });
 });
 
+repositoryTest("Provider Binding activation atomically links its creating Attempt and replays exactly", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const resolve = operationFor(database, REPOSITORY_WRITE_OPERATIONS.bindingResolve, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000147", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000148", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    const command = bindingResolutionCommand("active");
+    const first = resolve(command) as CommandResult;
+    const replay = resolve(command) as CommandResult;
+    const conflict = resolve({
+      ...command,
+      resolution: { ...command.resolution, externalConversationId: "external-other" },
+    }) as CommandResult;
+
+    assert.equal(first.ok && !first.replayed, true);
+    assert.equal(replay.ok && replay.replayed, true);
+    assert.equal(!conflict.ok && conflict.error.code, "lifecycle_conflict");
+    const binding = database
+      .prepare("SELECT binding_state, external_conversation_id FROM provider_bindings WHERE id = 'binding-run-1'")
+      .get() as Record<string, unknown>;
+    assert.deepEqual({ ...binding }, { binding_state: "active", external_conversation_id: "external-1" });
+    const attempt = database.prepare("SELECT provider_binding_id, attempt_state FROM run_attempts").get() as Record<
+      string,
+      unknown
+    >;
+    assert.deepEqual({ ...attempt }, { provider_binding_id: "binding-run-1", attempt_state: "preparing" });
+  });
+});
+
+repositoryTest("ambiguous Binding creation atomically interrupts the Run and aborts its pending Dispatch", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const resolve = operationFor(database, REPOSITORY_WRITE_OPERATIONS.bindingResolve, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000149", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000150", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    const command = bindingResolutionCommand("ambiguous");
+    const first = resolve(command) as CommandResult;
+    const replay = resolve(command) as CommandResult;
+    assert.equal(first.ok && !first.replayed, true);
+    assert.equal(replay.ok && replay.replayed, true);
+    const state = database
+      .prepare(
+        `
+        SELECT b.binding_state, b.invalidation_reason, a.attempt_state, r.phase, d.dispatch_state
+        FROM provider_bindings b
+        JOIN run_attempts a ON a.id = b.created_by_run_attempt_id
+        JOIN runs r ON r.id = a.run_id
+        JOIN run_dispatches d ON d.run_attempt_id = a.id
+      `,
+      )
+      .get() as Record<string, unknown>;
+    assert.deepEqual(
+      { ...state },
+      {
+        binding_state: "invalidated",
+        invalidation_reason: "conversation_start_ambiguous",
+        attempt_state: "interrupted",
+        phase: "interrupted",
+        dispatch_state: "aborted",
+      },
+    );
+  });
+});
+
 repositoryTest("Worker registry accepts Session commands only as write requests", async () => {
   const database = new DatabaseSync(":memory:");
   database.exec(fs.readFileSync(new URL("../schema/sqlite/v1.sql", import.meta.url), "utf8"));
@@ -655,6 +733,24 @@ function normalRunAdmissionCommand(idempotencyKey: string, runId: string, bindin
       providerRequest: { options: { a: true, z: 1 }, prompt: "hello" },
       providerIdempotencyKey: null,
     },
+  };
+}
+
+function bindingResolutionCommand(kind: "active" | "ambiguous") {
+  return {
+    sessionId: "session-1",
+    workspaceKey: "workspace",
+    runId: "run-1",
+    attemptId: "attempt-run-1",
+    bindingId: "binding-run-1",
+    resolution:
+      kind === "active"
+        ? ({ kind: "active", externalConversationId: "external-1", ephemeralOwnerToken: null } as const)
+        : ({
+            kind: "ambiguous",
+            failureOrigin: "transport",
+            errorSummary: "Conversation creation outcome is unknown.",
+          } as const),
   };
 }
 
