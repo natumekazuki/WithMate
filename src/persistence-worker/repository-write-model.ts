@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
@@ -206,6 +207,18 @@ function checkIdempotency<T>(
   const row = database.prepare("SELECT * FROM idempotency_records WHERE idempotency_key = ?").get(key) as
     IdempotencyRow | undefined;
   if (row === undefined) return { kind: "new" };
+  const expired = row.record_state === "expired" || (row.expires_at !== null && row.expires_at <= now);
+  if (expired && row.record_state === "completed") {
+    database
+      .prepare(
+        `
+        UPDATE idempotency_records SET record_state = 'expired', response_kind = NULL,
+          response_ref_type = NULL, response_ref_id = NULL, response_envelope_json = NULL
+        WHERE idempotency_key = ? AND record_state = 'completed'
+      `,
+      )
+      .run(key);
+  }
   if (
     row.scope_session_id !== expectedScopeSessionId ||
     row.operation !== operation ||
@@ -216,18 +229,7 @@ function checkIdempotency<T>(
   if (row.record_state === "in_progress") {
     return { kind: "failure", result: failure("idempotency_in_progress", "Idempotent command is in progress.", true) };
   }
-  if (row.record_state === "expired" || (row.expires_at !== null && row.expires_at <= now)) {
-    if (row.record_state === "completed") {
-      database
-        .prepare(
-          `
-        UPDATE idempotency_records SET record_state = 'expired', response_kind = NULL,
-          response_ref_type = NULL, response_ref_id = NULL, response_envelope_json = NULL
-        WHERE idempotency_key = ? AND record_state = 'completed'
-      `,
-        )
-        .run(key);
-    }
+  if (expired) {
     return { kind: "failure", result: failure("idempotency_expired", "Idempotency key has expired.") };
   }
   if (
@@ -273,7 +275,10 @@ function completeIdempotency<T extends object>(
 }
 
 function prepareSessionCreate(command: SessionCreateCommand): PreparedSessionCreate {
-  const directoriesJson = JSON.stringify(command.session.allowedAdditionalDirectories);
+  const allowedAdditionalDirectories = normalizeAllowedAdditionalDirectories(
+    command.session.allowedAdditionalDirectories,
+  );
+  const directoriesJson = JSON.stringify(allowedAdditionalDirectories);
   if (Buffer.byteLength(directoriesJson) > 4 * 1024 * 1024) throw invalidCommand();
   return {
     command,
@@ -284,7 +289,7 @@ function prepareSessionCreate(command: SessionCreateCommand): PreparedSessionCre
         id: command.session.id,
         providerId: command.session.providerId,
         workspaceKey: command.session.workspaceKey,
-        allowedAdditionalDirectories: command.session.allowedAdditionalDirectories,
+        allowedAdditionalDirectories,
         defaultCharacterId: command.session.defaultCharacterId,
         maxConcurrentChildRuns: command.session.maxConcurrentChildRuns,
       },
@@ -326,9 +331,7 @@ function decodeSessionCreate(payload: Readonly<Record<string, unknown>>): Decode
     !isBoundedString(session.providerId, 1_024) ||
     !isBoundedString(session.workspaceKey, 1_024) ||
     !isBoundedString(session.defaultCharacterId, 1_024) ||
-    !Array.isArray(session.allowedAdditionalDirectories) ||
-    session.allowedAdditionalDirectories.length > 1_024 ||
-    !session.allowedAdditionalDirectories.every((value) => isBoundedString(value, 32_768)) ||
+    !isDenseBoundedStringArray(session.allowedAdditionalDirectories, 1_024, 32_768) ||
     !Number.isSafeInteger(session.maxConcurrentChildRuns) ||
     (session.maxConcurrentChildRuns as number) < 0
   ) {
@@ -386,18 +389,52 @@ function canResumeProviderBinding(database: DatabaseSync, sessionId: string, pro
   const rows = database
     .prepare(
       `
-      SELECT provider_id, binding_state FROM provider_bindings
+      SELECT provider_id, persistence_mode, binding_state FROM provider_bindings
       WHERE session_id = ? AND binding_state IN ('creating', 'active')
     `,
     )
     .all(sessionId) as unknown as readonly Readonly<{
     provider_id: string;
+    persistence_mode: "persistent" | "ephemeral";
     binding_state: "creating" | "active";
   }>[];
   return (
     rows.length === 0 ||
-    (rows.length === 1 && rows[0]?.binding_state === "active" && rows[0].provider_id === providerId)
+    (rows.length === 1 &&
+      rows[0]?.binding_state === "active" &&
+      rows[0].persistence_mode === "persistent" &&
+      rows[0].provider_id === providerId)
   );
+}
+
+function normalizeAllowedAdditionalDirectories(directories: readonly string[]): readonly string[] {
+  const normalized = directories.map((value) => {
+    const pathApi = path.win32.isAbsolute(value) ? path.win32 : path.posix.isAbsolute(value) ? path.posix : undefined;
+    if (pathApi === undefined) throw invalidCommand();
+    const normalizedValue = pathApi.normalize(value);
+    const comparisonKey = pathApi === path.win32 ? normalizedValue.toLocaleLowerCase("en-US") : normalizedValue;
+    return { pathApi, value: normalizedValue, comparisonKey };
+  });
+  normalized.sort((left, right) =>
+    left.pathApi === right.pathApi
+      ? left.comparisonKey.length - right.comparisonKey.length || left.comparisonKey.localeCompare(right.comparisonKey)
+      : left.pathApi === path.win32
+        ? -1
+        : 1,
+  );
+  const retained: typeof normalized = [];
+  for (const candidate of normalized) {
+    const redundant = retained.some((parent) => {
+      if (parent.pathApi !== candidate.pathApi) return false;
+      const relative = parent.pathApi.relative(parent.comparisonKey, candidate.comparisonKey);
+      return (
+        relative === "" ||
+        (!parent.pathApi.isAbsolute(relative) && !relative.startsWith(`..${parent.pathApi.sep}`) && relative !== "..")
+      );
+    });
+    if (!redundant) retained.push(candidate);
+  }
+  return retained.map(({ value }) => value);
 }
 
 function runDecoded<T, R>(
@@ -440,6 +477,14 @@ function hasExactKeys(value: Readonly<Record<string, unknown>>, expected: readon
 
 function isBoundedString(value: unknown, maxLength: number): value is string {
   return typeof value === "string" && value.length >= 1 && value.length <= maxLength;
+}
+
+function isDenseBoundedStringArray(value: unknown, maxItems: number, maxLength: number): value is string[] {
+  if (!Array.isArray(value) || value.length > maxItems) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index) || !isBoundedString(value[index], maxLength)) return false;
+  }
+  return true;
 }
 
 function isLifecycleStatus(value: unknown): value is SessionLifecycleStatus {

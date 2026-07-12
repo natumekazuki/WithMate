@@ -60,6 +60,38 @@ repositoryTest("malformed create and reused keys with a different fingerprint ma
   });
 });
 
+repositoryTest("session create rejects sparse and relative directory arrays and normalizes redundant paths", () => {
+  withDatabase((database) => {
+    const execute = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const sparse = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000114", "session-sparse");
+    sparse.session.allowedAdditionalDirectories = new Array<string>(1);
+    const sparseResult = execute(sparse) as CommandResult;
+    assert.equal(!sparseResult.ok && sparseResult.error.code, "request_invalid");
+
+    const relative = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000115", "session-relative");
+    relative.session.allowedAdditionalDirectories = ["workspace/shared"];
+    const relativeResult = execute(relative) as CommandResult;
+    assert.equal(!relativeResult.ok && relativeResult.error.code, "request_invalid");
+
+    const normalized = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000116", "session-normalized");
+    normalized.session.allowedAdditionalDirectories = [
+      "C:/workspace/shared/child",
+      "C:\\workspace\\shared",
+      "c:/WORKSPACE/shared/",
+      "D:/workspace/shared",
+    ];
+    assert.equal((execute(normalized) as CommandResult).ok, true);
+    const stored = database
+      .prepare("SELECT allowed_additional_directories_json FROM sessions WHERE id = ?")
+      .get("session-normalized") as { allowed_additional_directories_json: string };
+    assert.deepEqual(JSON.parse(stored.allowed_additional_directories_json), [
+      "C:\\workspace\\shared",
+      "D:\\workspace\\shared",
+    ]);
+    assert.equal(count(database, "sessions"), 1);
+  });
+});
+
 repositoryTest("session transitions enforce expected state and reject archive while a Run is active", () => {
   withDatabase((database) => {
     const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
@@ -123,6 +155,35 @@ repositoryTest("expired idempotency keys become tombstones and missing replay re
     database.prepare("DELETE FROM sessions WHERE id = 'session-2'").run();
     const invalidReference = longLived(second) as CommandResult;
     assert.equal(!invalidReference.ok && invalidReference.error.code, "reference_invalid");
+  });
+});
+
+repositoryTest("expired idempotency responses are scrubbed before reporting a fingerprint conflict", () => {
+  withDatabase((database) => {
+    let now = 100;
+    const execute = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => now, 1);
+    const command = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000117", "session-1");
+    assert.equal((execute(command) as CommandResult).ok, true);
+    now = 101;
+    const conflict = execute({ ...command, session: { ...command.session, workspaceKey: "other" } }) as CommandResult;
+    assert.equal(!conflict.ok && conflict.error.code, "idempotency_conflict");
+    const record = database
+      .prepare(
+        `
+        SELECT record_state, response_ref_type, response_ref_id, response_envelope_json
+        FROM idempotency_records WHERE idempotency_key = ?
+      `,
+      )
+      .get(command.idempotencyKey) as Record<string, unknown>;
+    assert.deepEqual(
+      { ...record },
+      {
+        record_state: "expired",
+        response_ref_type: null,
+        response_ref_id: null,
+        response_envelope_json: null,
+      },
+    );
   });
 });
 
@@ -191,6 +252,29 @@ repositoryTest("unarchive rejects an open ProviderBinding for a different Provid
       targetLifecycleStatus: "active",
     }) as CommandResult;
     assert.equal(!creating.ok && creating.error.code, "reference_invalid");
+
+    database.exec("PRAGMA foreign_keys = OFF;");
+    database.exec("DELETE FROM provider_bindings;");
+    database
+      .prepare(
+        `
+      INSERT INTO provider_bindings (
+        id, session_id, ordinal, provider_id, external_conversation_id, persistence_mode,
+        binding_state, created_by_run_attempt_id, created_at
+      ) VALUES ('binding-3', 'session-1', 1, 'provider', 'external', 'ephemeral',
+        'active', 'missing-attempt', 1)
+    `,
+      )
+      .run();
+    database.exec("PRAGMA foreign_keys = ON;");
+    const ephemeral = transition({
+      sessionId: "session-1",
+      workspaceKey: "workspace",
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000118",
+      expectedLifecycleStatus: "archived",
+      targetLifecycleStatus: "active",
+    }) as CommandResult;
+    assert.equal(!ephemeral.ok && ephemeral.error.code, "reference_invalid");
   });
 });
 
