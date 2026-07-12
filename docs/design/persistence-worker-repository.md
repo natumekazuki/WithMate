@@ -23,9 +23,11 @@ ProviderBinding、RunAttempt、RunDispatchのrecovery projectionはMain内部専
 
 Session pageは`(last_activity_at DESC, id DESC)`、Message、RunEvent、RunOutput、child deliveryは`ordinal ASC`のkeyset paginationを使う。limitはquery種別ごとに既定値と最大値を固定し、`limit + 1`件で次pageの有無を判定する。
 
-cursorは`v1.` prefixを持つopaque valueで、query種別、scope / filter、sort keyを含む。別workspace、別Session、別Run、別filterへの流用、未知field、非canonical encodingは`cursor_invalid`として拒否する。cursorは認可tokenではなく、SQL predicateにはrequestで再指定されたscopeをbindする。
+cursorは`v1.` prefixを持つopaque valueで、query種別、構造化したscope / filterのSHA-256 digest、sort keyを含む。scope値の長さや区切り文字に依存してcursorが衝突または肥大化しないよう、scope本文は格納しない。別workspace、別Session、別Run、別filterへの流用、未知field、非canonical encodingは`cursor_invalid`として拒否する。cursorは認可tokenではなく、SQL predicateにはrequestで再指定されたscopeをbindする。
 
-件数limitに加えてpageのJSON本体を192 KiBで打ち切り、最後に収容できたrowから次cursorを返す。可変長summaryやinline本文が複数並んでも、protocol metadataを含む256 KiB response上限を超過させない。
+Session keysetのsort keyに含まれるSession IDはschemaで最大1024文字に制限する。これにより、正規のSession rowから生成したcursorは2048文字のdecode上限とprotocol response上限へ収まる。
+
+Session pageとordinal pageは、件数limitに加えてJSON本体を192 KiBで打ち切り、最後に収容できたrowから次cursorを返す。可変長summaryやinline本文が複数並んでも、protocol metadataを含む256 KiB response上限を超過させない。単一rowの公開projectionだけでbudgetを超える場合は、rowを無言で消さず、ordinalを含む`response_size_limit` omissionを返して後続rowへ進める。
 
 各operationは単一SQL statementのsnapshotを返す。page間でsnapshotは維持せず、長寿命read transactionも保持しない。Session pageはrecent feedとして更新により並びが変わり得るため、最新状態が必要なcallerは先頭からrefreshする。ordinalがappend-onlyのtimeline、event、outputでは取得済みordinalより後を追跡する。
 
@@ -33,7 +35,7 @@ cursorは`v1.` prefixを持つopaque valueで、query種別、scope / filter、s
 
 Session pageは対象Sessionをactivity indexとlimitで先に確定し、そのpage内だけactive / latest Runを既存indexでprobeする。execution stateはnon-terminal Runがあれば`running`、なければlatest terminal phase、Runがなければ`not_started`として導出する。Session rowへexecution stateを保存しない。
 
-Message、RunEvent、RunOutput summary、child result、count queryは`run_output_payloads.content`をJOINまたはSELECTしない。RunOutput countはmetadata tableから導出し、summary pageはpayload metadataとBLOBを暗黙hydrateしない。
+Message、RunEvent、RunOutput summary、child result、count queryは`run_output_payloads.content`をJOINまたはSELECTしない。RunEventの`dedupe_key`、workspace照合用column、RunOutputのProvider内部IDは公開projectionへ含めない。RunOutput countはmetadata tableから導出し、summary pageはpayload metadataとBLOBを暗黙hydrateしない。category filterの有無でSQLを分け、指定時は`run_output_items_run_category_ordinal_idx`を使う。
 
 Message本文は最大4 MiBであり、Worker response上限を超え得る。64 KiB以下だけtimelineへinlineし、それより大きい本文はbyte lengthと`chunked` stateを返す。Sessionの追加directory JSONとRun execution snapshotも同じinline上限を使う。各JSON本文とstored payloadのchunk operationはscopeを再検証し、最大256 KiBのrange readを専有`ArrayBuffer`でtransferする。最終response上限はJSON metadataとの合計で判定する。
 

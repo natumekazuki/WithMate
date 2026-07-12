@@ -6,7 +6,13 @@ export const REPOSITORY_READ_LIMITS = {
   childResults: { default: 100, max: 200 },
 } as const;
 
-export type Page<T> = Readonly<{ items: readonly T[]; nextCursor?: string }>;
+export type PageOmission = Readonly<{
+  omitted: true;
+  reason: "response_size_limit";
+  ordinal?: number;
+}>;
+
+export type Page<T> = Readonly<{ items: readonly (T | PageOmission)[]; nextCursor?: string }>;
 
 export type SessionExecutionState = "not_started" | "running" | "completed" | "failed" | "canceled" | "interrupted";
 
@@ -120,7 +126,6 @@ export type RunOutputListItem = Readonly<{
   ordinal: number;
   category: string;
   kind: string;
-  providerItemId?: string;
   summary: string;
   completionState: "complete" | "partial";
   payloadState: string;

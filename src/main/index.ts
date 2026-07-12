@@ -11,6 +11,7 @@ export type {
   ChildResultListItem,
   MessageListItem,
   Page,
+  PageOmission,
   RunDetail,
   RunEventListItem,
   RunOutputListItem,

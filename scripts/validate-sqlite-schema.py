@@ -189,6 +189,18 @@ def validate_connection(
     expect_integrity_error(
         connection,
         """
+        INSERT INTO sessions (
+          id, provider_id, workspace_key, allowed_additional_directories_json,
+          default_character_id, max_concurrent_child_runs, lifecycle_status,
+          created_at, updated_at, last_activity_at
+        ) VALUES (?, 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 1, 1)
+        """,
+        ("s" * 1025,),
+    )
+
+    expect_integrity_error(
+        connection,
+        """
         INSERT INTO runs (
           id, session_id, ordinal, initiating_message_id, phase,
           execution_snapshot_json, external_side_effect_state,

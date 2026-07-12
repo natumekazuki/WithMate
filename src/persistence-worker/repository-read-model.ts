@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 import { REPOSITORY_READ_LIMITS } from "../shared/repository-read-model.js";
@@ -17,16 +18,28 @@ export const REPOSITORY_PAGE_SQL = {
     ORDER BY m.ordinal ASC LIMIT ?
   `,
   runEvents: `
-    SELECT e.*, s.workspace_key FROM run_events e
+    SELECT e.id, e.run_id, e.ordinal, e.event_code, e.subject_type, e.subject_id, e.summary, e.created_at
+    FROM run_events e
     JOIN runs r ON r.id = e.run_id JOIN sessions s ON s.id = r.session_id
     WHERE e.run_id = ? AND r.session_id = ? AND s.workspace_key = ? AND e.ordinal > ?
     ORDER BY e.ordinal ASC LIMIT ?
   `,
   runOutputs: `
-    SELECT o.*, s.workspace_key FROM run_output_items o
+    SELECT o.id, o.run_id, o.ordinal, o.category, o.kind, o.summary, o.completion_state,
+           o.payload_state, o.payload_original_byte_length, o.stored_payload_id, o.redaction_state, o.created_at
+    FROM run_output_items o
     JOIN runs r ON r.id = o.run_id JOIN sessions s ON s.id = r.session_id
     WHERE o.run_id = ? AND r.session_id = ? AND s.workspace_key = ?
-      AND (? IS NULL OR o.category = ?) AND o.ordinal > ?
+      AND o.ordinal > ?
+    ORDER BY o.ordinal ASC LIMIT ?
+  `,
+  runOutputsByCategory: `
+    SELECT o.id, o.run_id, o.ordinal, o.category, o.kind, o.summary, o.completion_state,
+           o.payload_state, o.payload_original_byte_length, o.stored_payload_id, o.redaction_state, o.created_at
+    FROM run_output_items o
+    JOIN runs r ON r.id = o.run_id JOIN sessions s ON s.id = r.session_id
+    WHERE o.run_id = ? AND r.session_id = ? AND s.workspace_key = ?
+      AND o.category = ? AND o.ordinal > ?
     ORDER BY o.ordinal ASC LIMIT ?
   `,
 } as const;
@@ -72,7 +85,7 @@ function sessionsPage(database: DatabaseSync, payload: Readonly<Record<string, u
   const workspaceKey = requiredString(payload.workspaceKey, "workspaceKey");
   const lifecycleStatus = optionalEnum(payload.lifecycleStatus, ["active", "archived", "closed"]);
   const limit = readLimit(payload.limit, REPOSITORY_READ_LIMITS.sessions);
-  const scope = `${workspaceKey}\u0000${lifecycleStatus ?? "*"}`;
+  const scope = scopeDigest({ workspaceKey, lifecycleStatus: lifecycleStatus ?? null });
   const cursor = decodeCursor(payload.cursor, "sessions", scope, 2);
   if (cursor !== undefined && (!Number.isSafeInteger(cursor[0]) || typeof cursor[1] !== "string")) {
     throw invalidCursor();
@@ -115,22 +128,25 @@ function sessionsPage(database: DatabaseSync, payload: Readonly<Record<string, u
       limit + 1,
     ) as unknown as readonly SessionPageRow[];
   const page = splitPage(rows, limit);
+  const mappedPage = budgetPage(page, (row) => ({
+    id: row.id,
+    workspaceKey: row.workspace_key,
+    defaultCharacterId: row.default_character_id,
+    lifecycleStatus: row.lifecycle_status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastActivityAt: row.last_activity_at,
+    executionState: row.active_run_id !== null ? "running" : (row.latest_run_phase ?? "not_started"),
+    ...(row.active_run_id === null ? {} : { activeRunId: row.active_run_id }),
+    ...(row.latest_run_id === null ? {} : { latestRunId: row.latest_run_id }),
+    stateChangedAt: row.latest_state_changed_at ?? row.created_at,
+  }));
   return {
-    items: page.items.map((row) => ({
-      id: row.id,
-      workspaceKey: row.workspace_key,
-      defaultCharacterId: row.default_character_id,
-      lifecycleStatus: row.lifecycle_status,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      lastActivityAt: row.last_activity_at,
-      executionState: row.active_run_id !== null ? "running" : (row.latest_run_phase ?? "not_started"),
-      ...(row.active_run_id === null ? {} : { activeRunId: row.active_run_id }),
-      ...(row.latest_run_id === null ? {} : { latestRunId: row.latest_run_id }),
-      stateChangedAt: row.latest_state_changed_at ?? row.created_at,
-    })),
-    ...(page.hasMore
-      ? { nextCursor: encodeCursor("sessions", scope, [page.items.at(-1)!.last_activity_at, page.items.at(-1)!.id]) }
+    items: mappedPage.items,
+    ...(mappedPage.hasMore
+      ? {
+          nextCursor: encodeCursor("sessions", scope, [mappedPage.lastRow!.last_activity_at, mappedPage.lastRow!.id]),
+        }
       : {}),
   };
 }
@@ -183,7 +199,7 @@ function sessionGet(database: DatabaseSync, payload: Readonly<Record<string, unk
 function messagesPage(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
   const scope = readSessionScope(payload, ["sessionId", "workspaceKey", "cursor", "limit"]);
   const limit = readLimit(payload.limit, REPOSITORY_READ_LIMITS.messages);
-  const cursorScope = `${scope.workspaceKey}\u0000${scope.sessionId}`;
+  const cursorScope = scopeDigest(scope);
   const afterOrdinal = decodeOrdinalCursor(payload.cursor, "messages", cursorScope);
   const rows = database
     .prepare(REPOSITORY_PAGE_SQL.messages)
@@ -226,7 +242,7 @@ function runGet(database: DatabaseSync, payload: Readonly<Record<string, unknown
     )
     .get(INLINE_MESSAGE_BYTES, scope.runId, scope.sessionId, scope.workspaceKey) as Record<string, unknown> | undefined;
   if (row === undefined) throw notFound();
-  const { inline_execution_snapshot: inlineSnapshot, ...metadata } = row;
+  const { inline_execution_snapshot: inlineSnapshot, workspace_key: _workspaceKey, ...metadata } = row;
   return {
     sessionId: scope.sessionId,
     workspaceKey: scope.workspaceKey,
@@ -248,7 +264,16 @@ function runEventsPage(database: DatabaseSync, payload: Readonly<Record<string, 
     .all(scope.runId, scope.sessionId, scope.workspaceKey, afterOrdinal, limit + 1) as unknown as readonly OrdinalRow[];
   assertRunScopeExists(database, scope);
   const page = splitPage(rows, limit);
-  return ordinalPage(scope, page, "run_events", cursorScope, (row) => snakeToCamel(row));
+  return ordinalPage(scope, page, "run_events", cursorScope, (row) => ({
+    id: row.id,
+    runId: row.run_id,
+    ordinal: row.ordinal,
+    eventCode: row.event_code,
+    ...(row.subject_type === null ? {} : { subjectType: row.subject_type }),
+    ...(row.subject_id === null ? {} : { subjectId: row.subject_id }),
+    ...(row.summary === null ? {} : { summary: row.summary }),
+    createdAt: row.created_at,
+  }));
 }
 
 function runOutputCounts(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
@@ -279,22 +304,40 @@ function runOutputsPage(database: DatabaseSync, payload: Readonly<Record<string,
   const scope = readRunScope(payload, ["sessionId", "runId", "workspaceKey", "category", "cursor", "limit"]);
   const category = optionalString(payload.category, "category");
   const limit = readLimit(payload.limit, REPOSITORY_READ_LIMITS.outputs);
-  const cursorScope = `${runCursorScope(scope)}\u0000${category ?? "*"}`;
+  const cursorScope = scopeDigest({ ...scope, category: category ?? null });
   const afterOrdinal = decodeOrdinalCursor(payload.cursor, "run_outputs", cursorScope);
-  const rows = database
-    .prepare(REPOSITORY_PAGE_SQL.runOutputs)
-    .all(
-      scope.runId,
-      scope.sessionId,
-      scope.workspaceKey,
-      category ?? null,
-      category ?? null,
-      afterOrdinal,
-      limit + 1,
-    ) as unknown as readonly OrdinalRow[];
+  const rows = (category === undefined
+    ? database
+        .prepare(REPOSITORY_PAGE_SQL.runOutputs)
+        .all(scope.runId, scope.sessionId, scope.workspaceKey, afterOrdinal, limit + 1)
+    : database
+        .prepare(REPOSITORY_PAGE_SQL.runOutputsByCategory)
+        .all(
+          scope.runId,
+          scope.sessionId,
+          scope.workspaceKey,
+          category,
+          afterOrdinal,
+          limit + 1,
+        )) as unknown as readonly OrdinalRow[];
   assertRunScopeExists(database, scope);
   const page = splitPage(rows, limit);
-  return ordinalPage(scope, page, "run_outputs", cursorScope, (row) => snakeToCamel(row));
+  return ordinalPage(scope, page, "run_outputs", cursorScope, (row) => ({
+    id: row.id,
+    runId: row.run_id,
+    ordinal: row.ordinal,
+    category: row.category,
+    kind: row.kind,
+    summary: row.summary,
+    completionState: row.completion_state,
+    payloadState: row.payload_state,
+    ...(row.payload_original_byte_length === null
+      ? {}
+      : { payloadOriginalByteLength: row.payload_original_byte_length }),
+    ...(row.stored_payload_id === null ? {} : { storedPayloadId: row.stored_payload_id }),
+    redactionState: row.redaction_state,
+    createdAt: row.created_at,
+  }));
 }
 
 function runOutputPayloadMetadata(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
@@ -323,7 +366,7 @@ function childResultsPage(database: DatabaseSync, payload: Readonly<Record<strin
   const workspaceKey = requiredString(payload.workspaceKey, "workspaceKey");
   const delegationId = requiredString(payload.delegationId, "delegationId");
   const limit = readLimit(payload.limit, REPOSITORY_READ_LIMITS.childResults);
-  const cursorScope = `${workspaceKey}\u0000${parentSessionId}\u0000${delegationId}`;
+  const cursorScope = scopeDigest({ workspaceKey, parentSessionId, delegationId });
   const afterOrdinal = decodeOrdinalCursor(payload.cursor, "child_results", cursorScope);
   const rows = database
     .prepare(
@@ -360,9 +403,24 @@ function childResultsPage(database: DatabaseSync, payload: Readonly<Record<strin
     if (exists === undefined) throw notFound();
   }
   const page = splitPage(rows, limit);
-  return ordinalPage({ parentSessionId, workspaceKey, delegationId }, page, "child_results", cursorScope, (row) =>
-    snakeToCamel(row),
-  );
+  return ordinalPage({ parentSessionId, workspaceKey, delegationId }, page, "child_results", cursorScope, (row) => ({
+    id: row.id,
+    delegationId: row.delegation_id,
+    ordinal: row.ordinal,
+    childRunId: row.child_run_id,
+    availabilityState: row.availability_state,
+    ...(row.terminal_phase_snapshot === null ? {} : { terminalPhaseSnapshot: row.terminal_phase_snapshot }),
+    ...(row.result_summary === null ? {} : { resultSummary: row.result_summary }),
+    ...(row.available_at === null ? {} : { availableAt: row.available_at }),
+    ...(row.first_collected_by_parent_run_id === null
+      ? {}
+      : { firstCollectedByParentRunId: row.first_collected_by_parent_run_id }),
+    ...(row.first_collected_at === null ? {} : { firstCollectedAt: row.first_collected_at }),
+    parentSessionId: row.parent_session_id,
+    childSessionId: row.child_session_id,
+    orchestrationRootSessionId: row.orchestration_root_session_id,
+    workspaceKey: row.workspace_key,
+  }));
 }
 
 function recoveryGet(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
@@ -434,21 +492,45 @@ function ordinalPage<T extends OrdinalRow, R>(
   cursorScope: string,
   map: (row: T) => R,
 ): unknown {
-  const items: R[] = [];
+  const budgeted = budgetPage(page, map);
+  return {
+    ...scope,
+    items: budgeted.items,
+    ...(budgeted.hasMore && budgeted.lastRow !== undefined
+      ? { nextCursor: encodeCursor(kind, cursorScope, [budgeted.lastRow.ordinal]) }
+      : {}),
+  };
+}
+
+function budgetPage<T extends Readonly<Record<string, unknown>>, R>(
+  page: Readonly<{ items: readonly T[]; hasMore: boolean }>,
+  map: (row: T) => R,
+): Readonly<{
+  items: readonly (R | Readonly<{ omitted: true; reason: "response_size_limit"; ordinal?: number }>)[];
+  hasMore: boolean;
+  lastRow?: T;
+}> {
+  const items: (R | Readonly<{ omitted: true; reason: "response_size_limit"; ordinal?: number }>)[] = [];
   let bytes = 0;
+  let consumed = 0;
   for (const row of page.items) {
     const item = map(row);
     const itemBytes = Buffer.byteLength(JSON.stringify(item));
-    if (items.length > 0 && bytes + itemBytes > MAX_PAGE_JSON_BYTES) break;
+    if (itemBytes > MAX_PAGE_JSON_BYTES) {
+      const ordinal = typeof row.ordinal === "number" ? row.ordinal : undefined;
+      items.push({ omitted: true, reason: "response_size_limit", ...(ordinal === undefined ? {} : { ordinal }) });
+      consumed += 1;
+      continue;
+    }
+    if (bytes + itemBytes > MAX_PAGE_JSON_BYTES) break;
     items.push(item);
     bytes += itemBytes;
+    consumed += 1;
   }
-  const hasMore = page.hasMore || items.length < page.items.length;
-  const lastRow = page.items[items.length - 1];
   return {
-    ...scope,
     items,
-    ...(hasMore && lastRow !== undefined ? { nextCursor: encodeCursor(kind, cursorScope, [lastRow.ordinal]) } : {}),
+    hasMore: page.hasMore || consumed < page.items.length,
+    ...(consumed === 0 ? {} : { lastRow: page.items[consumed - 1] }),
   };
 }
 
@@ -462,7 +544,7 @@ function encodeCursor(kind: string, scope: string, key: readonly (string | numbe
 
 function decodeCursor(value: unknown, kind: string, scope: string, keyLength: number): readonly unknown[] | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string" || value.length > 512 || !value.startsWith("v1.")) throw invalidCursor();
+  if (typeof value !== "string" || value.length > 2_048 || !value.startsWith("v1.")) throw invalidCursor();
   try {
     const decoded = JSON.parse(Buffer.from(value.slice(3), "base64url").toString("utf8")) as unknown;
     if (!isPlainObject(decoded) || Object.keys(decoded).sort().join(",") !== "k,q,s,v") throw invalidCursor();
@@ -527,7 +609,14 @@ function snakeToCamel(row: Readonly<Record<string, unknown>>): Readonly<Record<s
 }
 
 function runCursorScope(scope: Readonly<{ workspaceKey: string; sessionId: string; runId: string }>): string {
-  return `${scope.workspaceKey}\u0000${scope.sessionId}\u0000${scope.runId}`;
+  return scopeDigest(scope);
+}
+
+function scopeDigest(scope: Readonly<Record<string, unknown>>): string {
+  const canonical = JSON.stringify(
+    Object.fromEntries(Object.entries(scope).sort(([left], [right]) => left.localeCompare(right))),
+  );
+  return createHash("sha256").update(canonical).digest("hex");
 }
 
 function invalidRequest(field: string): RepositoryReadError {

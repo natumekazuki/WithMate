@@ -167,17 +167,104 @@ repositoryTest("run-scoped reads hide resources outside the requested workspace"
   });
 });
 
+repositoryTest("cursor scope digest accepts long values and rejects NUL-delimited collisions", () => {
+  withDatabase((database) => {
+    const longWorkspace = "w".repeat(400);
+    insertSessionWithWorkspace(database, "long-session", longWorkspace, 1);
+    insertMessage(database, "long-message-1", "long-session", 1, "[]");
+    insertMessage(database, "long-message-2", "long-session", 2, "[]");
+    const messages = operationFor(database, "repository.messages.page");
+    const first = messages({ sessionId: "long-session", workspaceKey: longWorkspace, limit: 1 }) as PageResult;
+    assert.ok(first.nextCursor);
+    const second = messages({
+      sessionId: "long-session",
+      workspaceKey: longWorkspace,
+      limit: 1,
+      cursor: first.nextCursor,
+    }) as PageResult;
+    assert.equal(second.items[0]?.ordinal, 2);
+
+    insertSessionWithWorkspace(database, "b\0c", "a", 1);
+    insertSessionWithWorkspace(database, "c", "a\0b", 1);
+    insertMessage(database, "collision-a-1", "b\0c", 1, "[]");
+    insertMessage(database, "collision-a-2", "b\0c", 2, "[]");
+    insertMessage(database, "collision-b-1", "c", 1, "[]");
+    const collisionCursor = (messages({ sessionId: "b\0c", workspaceKey: "a", limit: 1 }) as PageResult).nextCursor;
+    assert.throws(
+      () => messages({ sessionId: "c", workspaceKey: "a\0b", cursor: collisionCursor }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "cursor_invalid",
+    );
+  });
+});
+
+repositoryTest("session pages apply the byte budget and continue from the last included row", () => {
+  withDatabase((database) => {
+    const maximumSessionId = "z".repeat(1_024);
+    insertSession(database, maximumSessionId, 200);
+    for (let index = 0; index < 100; index += 1) {
+      database
+        .prepare("INSERT INTO sessions VALUES (?, 'provider', 'workspace', '[]', ?, 4, 'active', 1, 1, ?)")
+        .run(`session-${String(index).padStart(3, "0")}`, "c".repeat(3_000), index + 1);
+    }
+    const sessions = operationFor(database, "repository.sessions.page");
+    const maximumIdPage = sessions({ workspaceKey: "workspace", limit: 1 }) as PageResult;
+    assert.equal(maximumIdPage.items[0]?.id, maximumSessionId);
+    assert.ok(maximumIdPage.nextCursor && maximumIdPage.nextCursor.length <= 2_048);
+    assert.doesNotThrow(() => sessions({ workspaceKey: "workspace", limit: 1, cursor: maximumIdPage.nextCursor }));
+    const first = sessions({ workspaceKey: "workspace", limit: 100 }) as PageResult;
+    assert.ok(first.items.length < 100);
+    assert.ok(Buffer.byteLength(JSON.stringify(first)) < 256 * 1024);
+    assert.equal(typeof first.nextCursor, "string");
+    const second = sessions({ workspaceKey: "workspace", limit: 100, cursor: first.nextCursor }) as PageResult;
+    assert.ok(second.items.length > 0);
+    assert.throws(
+      () => insertSession(database, "x".repeat(1_025), 300),
+      (error: unknown) => error instanceof Error && error.message.includes("CHECK constraint failed"),
+    );
+  });
+});
+
+repositoryTest("public RunEvent omits internal fields and advances past an oversize first row explicitly", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    insertRun(database, "run-1", "session-1", "message-1", "completed", 1);
+    database
+      .prepare("INSERT INTO run_events VALUES (?, 'run-1', ?, 'event', 'item', ?, ?, 'summary', ?)")
+      .run("event-1", 1, "s".repeat(200 * 1024), "d".repeat(300 * 1024), 1);
+    database
+      .prepare("INSERT INTO run_events VALUES ('event-2', 'run-1', 2, 'event', NULL, NULL, 'dedupe', 'ok', 2)")
+      .run();
+    const result = operationFor(
+      database,
+      "repository.run.events.page",
+    )({
+      sessionId: "session-1",
+      runId: "run-1",
+      workspaceKey: "workspace",
+    }) as PageResult;
+    assert.deepEqual(result.items[0], { omitted: true, reason: "response_size_limit", ordinal: 1 });
+    assert.equal(result.items[1]?.id, "event-2");
+    assert.equal(Object.hasOwn(result.items[1] ?? {}, "dedupeKey"), false);
+    assert.equal(Object.hasOwn(result.items[1] ?? {}, "workspaceKey"), false);
+  });
+});
+
 repositoryTest("representative ordinal queries use covering indexes and never scan payloads", () => {
   withDatabase((database) => {
     const plans = [
       database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.messages}`).all(1024, "s", "w", 0, 10),
       database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.runEvents}`).all("r", "s", "w", 0, 10),
-      database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.runOutputs}`).all("r", "s", "w", null, null, 0, 10),
+      database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.runOutputs}`).all("r", "s", "w", 0, 10),
+      database
+        .prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.runOutputsByCategory}`)
+        .all("r", "s", "w", "operation", 0, 10),
     ].flat() as unknown as readonly Readonly<{ detail: string }>[];
     const details = plans.map((row) => row.detail).join("\n");
     assert.match(details, /messages_session_ordinal_uq/u);
     assert.match(details, /run_events_run_ordinal_uq/u);
     assert.match(details, /run_output_items_run_ordinal_uq/u);
+    assert.match(details, /run_output_items_run_category_ordinal_idx/u);
     assert.doesNotMatch(details, /run_output_payloads/u);
     assert.doesNotMatch(details, /USE TEMP B-TREE FOR ORDER BY/u);
   });
@@ -200,13 +287,13 @@ function withDatabase(run: (database: DatabaseSync) => void): void {
 }
 
 function insertSession(database: DatabaseSync, id: string, activity: number): void {
+  insertSessionWithWorkspace(database, id, "workspace", activity);
+}
+
+function insertSessionWithWorkspace(database: DatabaseSync, id: string, workspaceKey: string, activity: number): void {
   database
-    .prepare(
-      `
-    INSERT INTO sessions VALUES (?, 'provider', 'workspace', '[]', 'character', 4, 'active', 1, ?, ?)
-  `,
-    )
-    .run(id, activity, activity);
+    .prepare("INSERT INTO sessions VALUES (?, 'provider', ?, '[]', 'character', 4, 'active', 1, ?, ?)")
+    .run(id, workspaceKey, activity, activity);
 }
 
 function insertMessage(database: DatabaseSync, id: string, sessionId: string, ordinal: number, content: string): void {

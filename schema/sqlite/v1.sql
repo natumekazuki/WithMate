@@ -1,5 +1,5 @@
 CREATE TABLE sessions (
-  id TEXT PRIMARY KEY CHECK (length(id) > 0),
+  id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 1024),
   provider_id TEXT NOT NULL CHECK (length(provider_id) > 0),
   workspace_key TEXT NOT NULL CHECK (length(workspace_key) > 0),
   allowed_additional_directories_json TEXT NOT NULL

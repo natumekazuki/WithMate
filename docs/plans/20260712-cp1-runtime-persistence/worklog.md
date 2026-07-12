@@ -77,3 +77,11 @@
 - representative query planでMessage / Event / Output ordinal indexを確認し、large output fixtureでpage上限とpayload非hydrateを検証した。
 - docs-syncは`repo-sync-required`と判定し、長期contractを`docs/design/persistence-worker-repository.md`へ同期した。
 - 現在地をS6 Repository Write Transactions着手前へ更新した。
+
+## 2026-07-12: S5 follow-up review対応
+
+- RunEventとRunOutputの公開SELECT列を明示し、内部dedupe key、workspace照合列、Provider内部IDを除外した。
+- cursor scopeを構造化scopeのSHA-256 digestへ変更し、長いscopeと区切り文字衝突を解消した。
+- Session pageにも192 KiB byte budgetを適用し、単一oversize ordinal rowを明示omissionとして進行可能にした。
+- Session IDをschemaで最大1024文字に制限し、Session cursorのsort keyがresponse / decode上限を超えないようにした。
+- category付きRunOutput queryを専用SQLへ分離し、category ordinal indexの利用をquery plan testへ追加した。
