@@ -586,9 +586,22 @@ repositoryTest("Provider Binding activation atomically links its creating Attemp
     assert.equal(replay.ok && replay.replayed, true);
     assert.equal(!conflict.ok && conflict.error.code, "lifecycle_conflict");
     const binding = database
-      .prepare("SELECT binding_state, external_conversation_id FROM provider_bindings WHERE id = 'binding-run-1'")
+      .prepare(
+        `
+        SELECT b.binding_state, b.external_conversation_id, r.external_side_effect_state
+        FROM provider_bindings b JOIN run_attempts a ON a.id = b.created_by_run_attempt_id
+        JOIN runs r ON r.id = a.run_id WHERE b.id = 'binding-run-1'
+      `,
+      )
       .get() as Record<string, unknown>;
-    assert.deepEqual({ ...binding }, { binding_state: "active", external_conversation_id: "external-1" });
+    assert.deepEqual(
+      { ...binding },
+      {
+        binding_state: "active",
+        external_conversation_id: "external-1",
+        external_side_effect_state: "present",
+      },
+    );
     const attempt = database.prepare("SELECT provider_binding_id, attempt_state FROM run_attempts").get() as Record<
       string,
       unknown
@@ -618,11 +631,13 @@ repositoryTest("ambiguous Binding creation atomically interrupts the Run and abo
     const state = database
       .prepare(
         `
-        SELECT b.binding_state, b.invalidation_reason, a.attempt_state, r.phase, d.dispatch_state
+        SELECT b.binding_state, b.invalidation_reason, a.attempt_state, r.phase,
+          r.external_side_effect_state, d.dispatch_state, s.last_activity_at
         FROM provider_bindings b
         JOIN run_attempts a ON a.id = b.created_by_run_attempt_id
         JOIN runs r ON r.id = a.run_id
         JOIN run_dispatches d ON d.run_attempt_id = a.id
+        JOIN sessions s ON s.id = r.session_id
       `,
       )
       .get() as Record<string, unknown>;
@@ -633,9 +648,43 @@ repositoryTest("ambiguous Binding creation atomically interrupts the Run and abo
         invalidation_reason: "conversation_start_ambiguous",
         attempt_state: "interrupted",
         phase: "interrupted",
+        external_side_effect_state: "unknown",
         dispatch_state: "aborted",
+        last_activity_at: 300,
       },
     );
+  });
+});
+
+repositoryTest("pending Dispatch cannot start after its Run begins canceling", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const resolveBinding = operationFor(database, REPOSITORY_WRITE_OPERATIONS.bindingResolve, () => 300);
+    const begin = operationFor(database, REPOSITORY_WRITE_OPERATIONS.dispatchBegin, () => 400);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000162", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000163", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    assert.equal((resolveBinding(bindingResolutionCommand("active")) as CommandResult).ok, true);
+    database.prepare("UPDATE runs SET phase = 'canceling', cancel_requested_at = 350 WHERE id = 'run-1'").run();
+
+    const result = begin(dispatchBeginCommand()) as CommandResult;
+    assert.equal(!result.ok && result.error.code, "lifecycle_conflict");
+    const state = database
+      .prepare(
+        `
+        SELECT r.phase, d.dispatch_state, d.dispatching_at
+        FROM runs r JOIN run_attempts a ON a.run_id = r.id
+        JOIN run_dispatches d ON d.run_attempt_id = a.id
+      `,
+      )
+      .get() as Record<string, unknown>;
+    assert.deepEqual({ ...state }, { phase: "canceling", dispatch_state: "pending", dispatching_at: null });
   });
 });
 
@@ -657,9 +706,12 @@ repositoryTest("Dispatch begin applies the common Gate and never re-allows send 
 
     const first = begin(dispatchBeginCommand()) as CommandResult;
     const replay = begin(dispatchBeginCommand()) as CommandResult;
+    database.prepare("UPDATE runs SET phase = 'canceling', cancel_requested_at = 450 WHERE id = 'run-1'").run();
+    const cancelingReplay = begin(dispatchBeginCommand()) as CommandResult;
     const mismatch = begin({ ...dispatchBeginCommand(), providerRequest: { prompt: "different" } }) as CommandResult;
     assert.equal(first.ok && first.value.sendAllowed, true);
     assert.equal(replay.ok && replay.replayed && !replay.value.sendAllowed, true);
+    assert.equal(cancelingReplay.ok && cancelingReplay.replayed && !cancelingReplay.value.sendAllowed, true);
     assert.equal(!mismatch.ok && mismatch.error.code, "idempotency_conflict");
     const state = database
       .prepare(
@@ -670,7 +722,7 @@ repositoryTest("Dispatch begin applies the common Gate and never re-allows send 
       `,
       )
       .get() as Record<string, unknown>;
-    assert.deepEqual({ ...state }, { phase: "starting", dispatch_state: "dispatching", dispatching_at: 400 });
+    assert.deepEqual({ ...state }, { phase: "canceling", dispatch_state: "dispatching", dispatching_at: 400 });
   });
 });
 
@@ -704,7 +756,7 @@ repositoryTest("accepted Dispatch resolution atomically activates Attempt and Ru
     const state = database
       .prepare(
         `
-        SELECT r.phase, r.started_at, a.attempt_state, a.external_execution_id,
+        SELECT r.phase, r.started_at, r.external_side_effect_state, a.attempt_state, a.external_execution_id,
           d.dispatch_state, d.resolved_at
         FROM runs r JOIN run_attempts a ON a.run_id = r.id
         JOIN run_dispatches d ON d.run_attempt_id = a.id
@@ -716,6 +768,7 @@ repositoryTest("accepted Dispatch resolution atomically activates Attempt and Ru
       {
         phase: "active",
         started_at: 500,
+        external_side_effect_state: "present",
         attempt_state: "active",
         external_execution_id: "execution-1",
         dispatch_state: "accepted",
@@ -730,6 +783,105 @@ repositoryTest("accepted Dispatch resolution atomically activates Attempt and Ru
       .run();
     const replayAfterCompletion = resolveDispatch(command) as CommandResult;
     assert.equal(replayAfterCompletion.ok && replayAfterCompletion.replayed, true);
+    const bindingReplayAfterCompletion = resolveBinding(bindingResolutionCommand("active")) as CommandResult;
+    assert.equal(bindingReplayAfterCompletion.ok && bindingReplayAfterCompletion.replayed, true);
+    assert.equal(
+      bindingReplayAfterCompletion.ok && bindingReplayAfterCompletion.value.externalConversationId,
+      "external-1",
+    );
+  });
+});
+
+repositoryTest("an ambiguous Dispatch can converge to an accepted external execution without resending", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const resolveBinding = operationFor(database, REPOSITORY_WRITE_OPERATIONS.bindingResolve, () => 300);
+    const begin = operationFor(database, REPOSITORY_WRITE_OPERATIONS.dispatchBegin, () => 400);
+    let now = 500;
+    const resolveDispatch = operationFor(database, REPOSITORY_WRITE_OPERATIONS.dispatchResolve, () => now);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000164", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000165", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    assert.equal((resolveBinding(bindingResolutionCommand("active")) as CommandResult).ok, true);
+    assert.equal((begin(dispatchBeginCommand()) as CommandResult).ok, true);
+    assert.equal((resolveDispatch(dispatchResolutionCommand("ambiguous")) as CommandResult).ok, true);
+
+    database.prepare("UPDATE runs SET phase = 'canceling', cancel_requested_at = 550 WHERE id = 'run-1'").run();
+    now = 600;
+    const corrected = resolveDispatch(dispatchResolutionCommand("accepted")) as CommandResult;
+    const replay = resolveDispatch(dispatchResolutionCommand("accepted")) as CommandResult;
+    assert.equal(corrected.ok && !corrected.replayed && corrected.value.resolvedAt, 600);
+    assert.equal(replay.ok && replay.replayed, true);
+    const state = database
+      .prepare(
+        `
+        SELECT r.phase, r.external_side_effect_state, a.attempt_state, a.external_execution_id,
+          d.dispatch_state, d.resolved_at
+        FROM runs r JOIN run_attempts a ON a.run_id = r.id
+        JOIN run_dispatches d ON d.run_attempt_id = a.id
+      `,
+      )
+      .get() as Record<string, unknown>;
+    assert.deepEqual(
+      { ...state },
+      {
+        phase: "canceling",
+        external_side_effect_state: "present",
+        attempt_state: "active",
+        external_execution_id: "execution-1",
+        dispatch_state: "accepted",
+        resolved_at: 600,
+      },
+    );
+  });
+});
+
+repositoryTest("an ambiguous Dispatch on a reused Binding records an unknown Run side effect", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const resolveBinding = operationFor(database, REPOSITORY_WRITE_OPERATIONS.bindingResolve, () => 300);
+    const begin = operationFor(database, REPOSITORY_WRITE_OPERATIONS.dispatchBegin, () => 400);
+    const resolveDispatch = operationFor(database, REPOSITORY_WRITE_OPERATIONS.dispatchResolve, () => 500);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000166", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000167", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    assert.equal((resolveBinding(bindingResolutionCommand("active")) as CommandResult).ok, true);
+    database.exec(`
+      UPDATE run_attempts SET attempt_state = 'interrupted', failure_origin = 'application', terminal_at = 350
+        WHERE id = 'attempt-run-1';
+      UPDATE run_dispatches SET dispatch_state = 'aborted', resolved_at = 350 WHERE run_attempt_id = 'attempt-run-1';
+      UPDATE runs SET phase = 'interrupted', failure_origin = 'application', terminal_at = 350,
+        updated_at = 350 WHERE id = 'run-1';
+    `);
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000168", "run-2", "reuse")) as CommandResult).ok,
+      true,
+    );
+    const run2Begin = { ...dispatchBeginCommand(), runId: "run-2", attemptId: "attempt-run-2" };
+    const run2Resolution = {
+      ...dispatchResolutionCommand("ambiguous"),
+      runId: "run-2",
+      attemptId: "attempt-run-2",
+    };
+    assert.equal((begin(run2Begin) as CommandResult).ok, true);
+    assert.equal((resolveDispatch(run2Resolution) as CommandResult).ok, true);
+    const run = database.prepare("SELECT external_side_effect_state FROM runs WHERE id = 'run-2'").get() as Record<
+      string,
+      unknown
+    >;
+    assert.deepEqual({ ...run }, { external_side_effect_state: "unknown" });
   });
 });
 

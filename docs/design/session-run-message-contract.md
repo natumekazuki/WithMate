@@ -291,7 +291,7 @@ Provider dispatchの状態はlive persistence stateと分離し、Run attemptご
 | `rejected` | Provider が未受理を明示 | 同じ attempt では禁止 |
 | `ambiguous` | 送信した可能性があるが受理を証明不能 | 自動再送は禁止 |
 
-`pending -> dispatching` を durable commit してから送信する。transport 切断や process crash 後に受理を証明できなければ `ambiguous` とし、Provider の native idempotency または状態照会で同じ外部実行へ一意に収束できる場合だけ再接続する。同じ idempotency key と同じ request fingerprint の再送は既存 Run と dispatch outcome を返し、異なる fingerprint は conflict とする。実行をやり直す場合は別 Run と `retryOfRunId` を明示し、元の start request を再 dispatch しない。
+`pending -> dispatching` を durable commit してから送信する。`canceling`に入ったRunの`pending` Dispatchは初回送信せず、すでに`dispatching`の場合だけreplayまたはresolutionへ進める。transport 切断や process crash 後に受理を証明できなければ `ambiguous` とし、自動再送しない。Provider の native idempotency または状態照会で同じ外部実行へ一意に収束でき、Attemptがまだ`preparing`、Runが`starting` / `canceling`である間だけ、同じAttemptの`ambiguous`を`accepted`へ知識補正して再接続する。同じ idempotency key と同じ request fingerprint の再送は既存 Run と dispatch outcome を返し、異なる fingerprint は conflict とする。実行をやり直す場合は別 Run と `retryOfRunId` を明示し、元の start request を再 dispatch しない。
 
 ### phase 遷移
 

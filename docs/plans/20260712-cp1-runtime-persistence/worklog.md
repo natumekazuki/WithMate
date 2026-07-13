@@ -134,3 +134,11 @@
 - accepted時にAttempt / Dispatch / Runを同時にactive化し、rejected / ambiguousではDispatchだけをterminal化して後続policyへ委譲した。
 - ephemeral live ownershipを初回sendと未確定resolutionへ要求し、Worker再起動後にtokenを再登録しないことをcontract test化した。
 - accepted resolution終盤のfault injectionでAttempt / Dispatch / Runが一括rollbackされることを確認した。
+
+## 2026-07-13: S6-B2 follow-up review対応
+
+- `canceling` Runをpending Dispatchの初回送信Gateから除外し、dispatching済みのreplay / resolutionだけを許可した。
+- Provider照会が外部実行IDを一意に証明した場合に限り、`ambiguous -> accepted`へ再送なしで相関補正する経路を追加した。
+- Binding作成とDispatch結果からRunの`external_side_effect_state`を`none -> unknown -> present`の方向へ更新し、確定済み`present`を後退させない契約を固定した。
+- Binding作成ambiguousによるRun terminal確定時にSessionの`last_activity_at`を同じtransactionで進めた。
+- active Bindingのexact replayを後続Run / Attempt / Dispatch stateから独立させ、resultをBindingの確定値へ限定した。

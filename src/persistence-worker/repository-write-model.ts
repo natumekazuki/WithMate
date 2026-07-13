@@ -487,17 +487,24 @@ function resolveProviderBinding(
       `,
       )
       .run(command.bindingId, command.attemptId, command.runId);
-    if (bindingUpdate.changes !== 1 || attemptUpdate.changes !== 1) {
+    const runUpdate = database
+      .prepare(
+        `
+        UPDATE runs SET external_side_effect_state = 'present', updated_at = MAX(updated_at, ?),
+          version = version + 1
+        WHERE id = ? AND session_id = ? AND phase IN ('queued','starting','active','canceling','finalizing')
+      `,
+      )
+      .run(now, command.runId, command.sessionId);
+    if (bindingUpdate.changes !== 1 || attemptUpdate.changes !== 1 || runUpdate.changes !== 1) {
       return bindingResolutionFailure(failure("lifecycle_conflict", "Provider binding activation conflicted."));
     }
     const execution: ProviderBindingResolutionExecution = {
       result: success(
         bindingResolutionValue(
           command,
-          row.run_phase,
           "active",
-          "preparing",
-          "pending",
+          command.resolution.externalConversationId,
           row.persistence_mode === "ephemeral" ? "registered" : "not_applicable",
         ),
         false,
@@ -533,6 +540,8 @@ function resolveProviderBinding(
     .prepare(
       `
       UPDATE runs SET phase = 'interrupted', failure_origin = ?, error_summary = ?, terminal_at = ?,
+        external_side_effect_state = CASE
+          WHEN external_side_effect_state = 'present' THEN 'present' ELSE 'unknown' END,
         updated_at = MAX(updated_at, ?), version = version + 1
       WHERE id = ? AND session_id = ? AND phase IN ('queued','starting','active','canceling','finalizing')
     `,
@@ -546,19 +555,25 @@ function resolveProviderBinding(
     `,
     )
     .run(now, command.attemptId);
+  const sessionUpdate = database
+    .prepare(
+      `
+      UPDATE sessions SET updated_at = MAX(updated_at, ?), last_activity_at = MAX(last_activity_at, ?)
+      WHERE id = ? AND workspace_key = ?
+    `,
+    )
+    .run(now, now, command.sessionId, command.workspaceKey);
   if (
     bindingUpdate.changes !== 1 ||
     attemptUpdate.changes !== 1 ||
     runUpdate.changes !== 1 ||
-    dispatchUpdate.changes !== 1
+    dispatchUpdate.changes !== 1 ||
+    sessionUpdate.changes !== 1
   ) {
     return bindingResolutionFailure(failure("lifecycle_conflict", "Ambiguous binding resolution conflicted."));
   }
   return {
-    result: success(
-      bindingResolutionValue(command, "interrupted", "invalidated", "interrupted", "aborted", "not_applicable"),
-      false,
-    ),
+    result: success(bindingResolutionValue(command, "invalidated", null, "not_applicable"), false),
     removeEphemeralOwner: true,
   };
 }
@@ -597,7 +612,7 @@ function beginRunDispatch(
     row.attempt_state !== "preparing" ||
     row.binding_state !== "active" ||
     row.provider_binding_id !== command.bindingId ||
-    (row.run_phase !== "queued" && row.run_phase !== "starting" && row.run_phase !== "canceling")
+    (row.run_phase !== "queued" && row.run_phase !== "starting")
   ) {
     return failure("lifecycle_conflict", "Run dispatch Gate is not satisfied.");
   }
@@ -614,7 +629,7 @@ function beginRunDispatch(
       `
       UPDATE runs SET phase = CASE WHEN phase = 'queued' THEN 'starting' ELSE phase END,
         updated_at = MAX(updated_at, ?), version = version + 1
-      WHERE id = ? AND session_id = ? AND phase IN ('queued','starting','canceling')
+      WHERE id = ? AND session_id = ? AND phase IN ('queued','starting')
     `,
     )
     .run(now, command.runId, command.sessionId);
@@ -642,17 +657,17 @@ function resolveRunDispatch(
     ephemeralBindingOwners,
   );
   if (ownershipFailure !== undefined) return ownershipFailure;
-  if (
-    row.dispatch_state !== "dispatching" ||
-    row.attempt_state !== "preparing" ||
-    row.binding_state !== "active" ||
-    row.provider_binding_id !== command.bindingId ||
-    (row.run_phase !== "starting" && row.run_phase !== "canceling")
-  ) {
-    return failure("lifecycle_conflict", "Run dispatch resolution state changed.");
-  }
 
   if (command.outcome.kind === "accepted") {
+    if (
+      (row.dispatch_state !== "dispatching" && row.dispatch_state !== "ambiguous") ||
+      row.attempt_state !== "preparing" ||
+      row.binding_state !== "active" ||
+      row.provider_binding_id !== command.bindingId ||
+      (row.run_phase !== "starting" && row.run_phase !== "canceling")
+    ) {
+      return failure("lifecycle_conflict", "Accepted Run dispatch resolution state changed.");
+    }
     const duplicate = database
       .prepare(
         `
@@ -676,15 +691,16 @@ function resolveRunDispatch(
       .prepare(
         `
         UPDATE run_dispatches SET dispatch_state = 'accepted', resolved_at = ?
-        WHERE run_attempt_id = ? AND dispatch_state = 'dispatching'
+        WHERE run_attempt_id = ? AND dispatch_state = ?
       `,
       )
-      .run(now, command.attemptId);
+      .run(now, command.attemptId, row.dispatch_state);
     const runUpdate = database
       .prepare(
         `
         UPDATE runs SET phase = CASE WHEN phase = 'starting' THEN 'active' ELSE phase END,
-          started_at = COALESCE(started_at, ?), updated_at = MAX(updated_at, ?), version = version + 1
+          started_at = COALESCE(started_at, ?), external_side_effect_state = 'present',
+          updated_at = MAX(updated_at, ?), version = version + 1
         WHERE id = ? AND session_id = ? AND phase IN ('starting','canceling')
       `,
       )
@@ -695,6 +711,15 @@ function resolveRunDispatch(
     return success(dispatchResolutionValue(command, "accepted", command.outcome.externalExecutionId, now), false);
   }
 
+  if (
+    row.dispatch_state !== "dispatching" ||
+    row.attempt_state !== "preparing" ||
+    row.binding_state !== "active" ||
+    row.provider_binding_id !== command.bindingId ||
+    (row.run_phase !== "starting" && row.run_phase !== "canceling")
+  ) {
+    return failure("lifecycle_conflict", "Run dispatch resolution state changed.");
+  }
   const dispatchUpdate = database
     .prepare(
       `
@@ -704,6 +729,19 @@ function resolveRunDispatch(
     )
     .run(command.outcome.kind, now, command.attemptId);
   if (dispatchUpdate.changes !== 1) return failure("lifecycle_conflict", "Run dispatch resolution conflicted.");
+  if (command.outcome.kind === "ambiguous") {
+    const runUpdate = database
+      .prepare(
+        `
+        UPDATE runs SET external_side_effect_state = CASE
+            WHEN external_side_effect_state = 'present' THEN 'present' ELSE 'unknown' END,
+          updated_at = MAX(updated_at, ?), version = version + 1
+        WHERE id = ? AND session_id = ? AND phase IN ('starting','canceling')
+      `,
+      )
+      .run(now, command.runId, command.sessionId);
+    if (runUpdate.changes !== 1) return failure("lifecycle_conflict", "Ambiguous Run dispatch resolution conflicted.");
+  }
   return success(dispatchResolutionValue(command, command.outcome.kind, null, now), false);
 }
 
@@ -1149,10 +1187,7 @@ function replayBindingResolution(
     command.resolution.kind === "active" &&
     row.binding_state === "active" &&
     row.external_conversation_id === command.resolution.externalConversationId &&
-    row.provider_binding_id === command.bindingId &&
-    row.attempt_state === "preparing" &&
-    isNonTerminalRunPhase(row.run_phase) &&
-    row.dispatch_state === "pending"
+    row.provider_binding_id === command.bindingId
   ) {
     const ephemeralOwnership =
       row.persistence_mode === "persistent"
@@ -1162,7 +1197,7 @@ function replayBindingResolution(
           : "unavailable";
     return {
       result: success(
-        bindingResolutionValue(command, row.run_phase, "active", "preparing", "pending", ephemeralOwnership),
+        bindingResolutionValue(command, "active", command.resolution.externalConversationId, ephemeralOwnership),
         true,
       ),
       removeEphemeralOwner: false,
@@ -1181,10 +1216,7 @@ function replayBindingResolution(
     row.dispatch_state === "aborted"
   ) {
     return {
-      result: success(
-        bindingResolutionValue(command, "interrupted", "invalidated", "interrupted", "aborted", "not_applicable"),
-        true,
-      ),
+      result: success(bindingResolutionValue(command, "invalidated", null, "not_applicable"), true),
       removeEphemeralOwner: true,
     };
   }
@@ -1193,10 +1225,8 @@ function replayBindingResolution(
 
 function bindingResolutionValue(
   command: ProviderBindingResolutionCommand,
-  runPhase: NonTerminalRunPhase | "interrupted",
   bindingState: "active" | "invalidated",
-  attemptState: "preparing" | "interrupted",
-  dispatchState: "pending" | "aborted",
+  externalConversationId: string | null,
   ephemeralOwnership: ProviderBindingResolutionResult["ephemeralOwnership"],
 ): ProviderBindingResolutionResult {
   return {
@@ -1205,9 +1235,7 @@ function bindingResolutionValue(
     attemptId: command.attemptId,
     bindingId: command.bindingId,
     bindingState,
-    attemptState,
-    runPhase,
-    dispatchState,
+    externalConversationId,
     ephemeralOwnership,
   };
 }

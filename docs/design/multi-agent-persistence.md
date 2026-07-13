@@ -221,7 +221,7 @@ timeline 取得は `session_id` と ordinal cursor を使い、offset pagination
 | `cancel_requested_at` | `INTEGER` | yes | cancel 受理時刻 |
 | `cancel_acknowledged_at` | `INTEGER` | yes | Provider 側停止確認時刻 |
 | `terminal_event_received_at` | `INTEGER` | yes | terminal event 受信時刻 |
-| `external_side_effect_state` | `TEXT` | no | `none` / `present` / `unknown` |
+| `external_side_effect_state` | `TEXT` | no | `none` / `unknown` / `present`。当該Runが起こした外部副作用の知識を単調に保持する |
 | `created_at` | `INTEGER` | no | admission 受理時刻 |
 | `started_at` | `INTEGER` | yes | Provider 実行開始を確定した時刻 |
 | `terminal_at` | `INTEGER` | yes | terminal phase 確定時刻 |
@@ -312,10 +312,11 @@ timeline 取得は `session_id` と ordinal cursor を使い、offset pagination
 - `request_fingerprint` は lowercase 64 hex 文字とする。request JSON やprompt本文は保存せず、同じ Attempt の不一致検出だけに使う。
 - `pending`では`dispatching_at` / `resolved_at`を持たない。未送信を証明する必要条件だが、自動送信にはRun non-terminal、Attempt `preparing`、Binding `active`も必要とする。
 - `dispatching` では `dispatching_at` を必須とし、`resolved_at` は持たない。送信 intent の commit 後に Provider request を送る。
-- `accepted` / `rejected` / `ambiguous` では `dispatching_at` / `resolved_at` を必須とする。`aborted`ではProvider実行requestを送っていないため`dispatching_at`をnull、`resolved_at`を必須とする。これらは terminal state であり、別 state へ戻さない。
+- `accepted` / `rejected` / `ambiguous` では `dispatching_at` / `resolved_at` を必須とする。`aborted`ではProvider実行requestを送っていないため`dispatching_at`をnull、`resolved_at`を必須とする。これらは自動再送についてterminalであり、`ambiguous -> accepted`の一意な知識補正を除いて別stateへ変更しない。
 - `accepted` は対応 Attempt の `external_execution_id` を相関できた場合だけ確定する。外部実行 ID 自体は RunAttempt に保存する。
 - `rejected` は Provider が未受理を明示した場合だけ使う。timeout、transport 切断、process crash で受理有無を証明できない場合は `ambiguous` とする。
 - `ambiguous` は自動再送しない。Provider native idempotency または状態照会で既存外部実行へ一意に収束できる場合だけ、同じ Attempt の外部相関を補正する。
+- `external_side_effect_state`は当該Run中のBinding作成またはDispatch受理が確定すれば`present`、受理有無が曖昧なら既存`present`を維持してそれ以外を`unknown`とする。`present -> unknown / none`と`unknown -> none`へ後退させない。既存Bindingの再利用だけでは現在Runの副作用とみなさない。
 - `provider_idempotency_key` は Provider が対応する場合だけ設定する。secret、account情報、認証情報を含めない。
 - Provider process 内だけで有効な JSON-RPC request ID は保存しない。再起動後の二重実行防止に使えない一時相関は live Adapter が保持する。
 - `INDEX run_dispatches_state_created_idx (dispatch_state, created_at)`
@@ -670,11 +671,12 @@ exportRunOutputPayload(outputItemId, destinationGrant)
 
 ### Provider実行requestの送信
 
-1. Run、Attempt、Binding、Dispatchが同じSession / Providerに属し、Runがnon-terminal、Attemptが`preparing`、Bindingが`active`、Dispatchが`pending`であることを検証する。この4条件を自動送信とmanual送信の共通Gateとし、terminal Runやinvalidated BindingのDispatchは送らない。
+1. Run、Attempt、Binding、Dispatchが同じSession / Providerに属し、Runが`queued` / `starting`、Attemptが`preparing`、Bindingが`active`、Dispatchが`pending`であることを検証する。この4条件を自動送信とmanual送信の共通Gateとし、`canceling` / terminal Runやinvalidated BindingのDispatchは初回送信しない。
 2. 条件付き update で Dispatch を `dispatching` へ進め、`dispatching_at` を設定して durable commit する。
 3. commit 成功後だけ Provider request を送る。送信前に process が停止した場合も、`dispatching` を `pending` へ戻さず受理有無の照会対象にする。
-4. Provider が外部実行 ID を返した場合は、同じ transaction で Attempt の `external_execution_id` / `started_at` / `attempt_state='active'` と Dispatch の `accepted` / `resolved_at` を確定する。
-5. Provider が未受理を明示した場合は `rejected`、受理有無を証明できない場合は `ambiguous` へ進める。Attempt / Run の失敗への変換は retry / recovery policy が別に判断する。
+4. Provider が外部実行 ID を返した場合は、同じ transaction で Attempt の `external_execution_id` / `started_at` / `attempt_state='active'`、Dispatch の `accepted` / `resolved_at`、Runの`external_side_effect_state='present'`を確定する。
+5. Provider が未受理を明示した場合は `rejected`、受理有無を証明できない場合は `ambiguous` へ進める。ambiguousではRunの既存`present`を維持し、それ以外のexternal side effectを`unknown`へ進める。Attempt / Run の失敗への変換は retry / recovery policy が別に判断する。
+6. `ambiguous`確定後にProvider照会が同じ外部実行IDを一意に証明した場合は、Attemptが`preparing`、Runが`starting` / `canceling`である間だけ、Provider requestを再送せず`accepted`へ知識補正する。recovery policyは照会完了前にAttempt / Runをterminal化しない。
 
 ### 正常完了
 
@@ -713,7 +715,7 @@ exportRunOutputPayload(outputItemId, destinationGrant)
 
 1. `runs` の partial unique index と phase から、Session の non-terminal Run を最大 1 件に確定する。
 2. Run と Attempt を照合し、non-terminal Run に non-terminal Attempt が 0 件または複数ある場合は Provider を起動せず診断対象にする。外部実行 ID を推測で作成しない。
-3. AttemptとDispatchを照合する。Run non-terminal、Attempt `preparing`、Binding `active`、Dispatch `pending`の4条件をすべて満たす場合だけ自動送信候補にできる。Binding作成失敗やterminal Runに残る`pending`は`aborted`へ収束させる。`dispatching`は照会後も受理を証明できなければ`ambiguous`へ進め、`accepted`の外部実行IDを推測せず、terminal stateを`pending`へ戻さない。
+3. AttemptとDispatchを照合する。Runが`queued` / `starting`、Attempt `preparing`、Binding `active`、Dispatch `pending`の4条件をすべて満たす場合だけ自動送信候補にできる。Binding作成失敗、`canceling`、terminal Runに残る`pending`は`aborted`へ収束させる。`dispatching`は照会後も受理を証明できなければ`ambiguous`へ進める。Provider照会で同じ外部実行IDを一意に証明できた`ambiguous`だけは、Attempt / Runをterminal化する前に`accepted`へ知識補正する。外部実行IDを推測せず、いずれのstateも`pending`へ戻さない。
 4. IdempotencyRecordとdomain recordを照合する。completed refの欠落は応答を捏造せず診断対象にし、`in_progress`を参照先の確認なしにcompletedへ進めない。期限到達済みcompleted recordはresponse参照を消去して`expired`へ進め、tombstoneをSession削除まで保持する。
 5. creating / active BindingはSessionごとに合計最大1件へ収束させる。`creating`はProvider照合で外部会話IDを一意に証明できた場合だけactiveへ進め、証明不能ならinvalidatedへ収束させる。外部状態を確認せずrequestを再送したりinvalidated Bindingをactiveへ戻したりしない。
 6. child Run と Delivery を照合し、non-terminal Run は `pending`、terminal Run は `available` へ修復する。回収記録は推測で作成しない。
@@ -824,7 +826,7 @@ root capacity使用数は、`session_relations.orchestration_root_session_id`配
 - RunEvent 一覧の取得で output payload や参照先の詳細を join せず、streaming delta ごとの row も作らない。
 - supplemental Message と pending RunInputDelivery の片方だけが受理 transaction 失敗後に残らない。
 - RunInputDelivery は active Run / Attempt だけを対象にし、Attempt 切り替え後も配送先を書き換えない。
-- Run non-terminal、Attempt `preparing`、Binding `active`、Dispatch `pending`の組だけを安全に自動送信でき、crash後の`dispatching`は受理を証明できなければ`ambiguous`へ収束する。
+- Run `queued` / `starting`、Attempt `preparing`、Binding `active`、Dispatch `pending`の組だけを安全に自動送信でき、`canceling`では初回送信しない。crash後の`dispatching`は受理を証明できなければ`ambiguous`へ収束し、一意な外部実行IDを証明できた場合だけ`accepted`へ知識補正する。
 - 同じ idempotency key の再送が Message / Delivery を増やさず、明示的な再送は新しい Message / Delivery を作る。
 - category summary一覧がpayload tableを読み込まない。
 - text / JSON / binaryのBLOB保存、JSON validation、hash / byte length検証が成立する。
@@ -858,7 +860,7 @@ root capacity使用数は、`session_relations.orchestration_root_session_id`配
 - 内部再試行後に Run が成功しても、先行 failed Attempt の診断が残る。
 - admission 失敗後に RunAttempt または `pending` RunDispatch だけが残らない。
 - `pending -> dispatching` の durable commit 前に Provider request を送らない。
-- crash復旧でRun non-terminal、Attempt preparing、Binding active、Dispatch pendingの組だけを安全に自動送信し、terminal Runのpendingをabortedへ収束させ、dispatching / ambiguousを重複送信しない。
+- crash復旧でRun queued / starting、Attempt preparing、Binding active、Dispatch pendingの組だけを安全に自動送信し、canceling / terminal Runのpendingをabortedへ収束させ、dispatching / ambiguousを重複送信しない。ambiguousは一意な外部実行IDを証明できた場合だけacceptedへ知識補正する。
 - `accepted` Dispatch と Attempt の外部実行 ID が同じ transaction で確定する。
 - 同じ Attempt に異なる request fingerprint を使えず、request本文や一時的なJSON-RPC request IDを保存しない。
 - 同じidempotency key / operation / fingerprintの再送がdomain mutationを重複作成せず、同じ意味の応答を返す。

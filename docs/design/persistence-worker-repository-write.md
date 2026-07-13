@@ -76,24 +76,25 @@ Worker repositoryは通常Run、Auxiliary、child Runで共有するapp全体と
 
 `repository.binding.resolve`は、Run admissionでdurable commit済みの`creating` Bindingに対する外部会話作成結果を確定する。commandはSession / workspace / Run / Attempt / Bindingを明示し、Workerは作成元Attempt、同一Session、Session Provider、`preparing` Attempt、non-terminal Run、`pending` Dispatchを同じtransaction内で照合する。
 
-- `active`: Bindingへ一意な外部会話IDを設定して`active`へ進め、作成元Attemptの`provider_binding_id`を同じtransactionで設定する。このcommit成功後だけDispatch開始へ進める。
-- `ambiguous`: Bindingを`conversation_start_ambiguous`で`invalidated`、AttemptとRunを`interrupted`、未送信Dispatchを`aborted`へ同じtransactionで収束させる。同じ会話作成requestを自動再送せず、Provider側orphanを推測相関・自動削除しない。
+- `active`: Bindingへ一意な外部会話IDを設定して`active`へ進め、作成元Attemptの`provider_binding_id`とRunの`external_side_effect_state='present'`を同じtransactionで設定する。このcommit成功後だけDispatch開始へ進める。
+- `ambiguous`: Bindingを`conversation_start_ambiguous`で`invalidated`、AttemptとRunを`interrupted`、未送信Dispatchを`aborted`へ同じtransactionで収束させる。Runのexternal side effectは既存の`present`を維持し、それ以外を`unknown`へ進める。Run terminal確定と同じtransactionでSessionの`last_activity_at`も進める。同じ会話作成requestを自動再送せず、Provider側orphanを推測相関・自動削除しない。
 
-この内部CAS transitionにはIdempotencyRecordを追加せず、自然キーと確定状態でexact replayを判定する。同じ外部IDまたは同じambiguous outcomeの再通知は`replayed=true`、異なる確定値や状態後退は`lifecycle_conflict`とする。
+この内部CAS transitionにはIdempotencyRecordを追加せず、自然キーと確定状態でexact replayを判定する。同じ外部IDまたは同じambiguous outcomeの再通知は`replayed=true`、異なる確定値や状態後退は`lifecycle_conflict`とする。active BindingのreplayはBinding自身のstate、外部会話ID、作成元Attemptへ確定したBinding参照だけで判定し、後続で変化するRun / Attempt / Dispatch stateへ依存しない。resultもBindingの確定値とephemeral ownership availabilityだけを返す。
 
 ephemeral Bindingのactive化ではcanonical UUIDのlive ownership tokenを要求し、DB commit後にだけWorker memoryへ登録する。tokenはDBやresponse envelopeへ保存せず、Worker再起動で失われる。active化responseを再送しただけではtokenを再登録せず、所有情報が失われたephemeral Bindingをresume可能へ戻さない。
 
 ## Run Dispatch transitions
 
-`repository.dispatch.begin`はProvider request本文をcanonical JSONへ変換し、admission時に保存したfingerprintと一致することを確認する。Runが`queued` / `starting` / `canceling`、Attemptが`preparing`、Bindingが同じSession / Providerの`active`、Dispatchが`pending`であることを共通Gateとしてtransaction内で再検証し、Dispatchを`dispatching`へ進める。`queued` Runは同じtransactionで`starting`へ進める。
+`repository.dispatch.begin`はProvider request本文をcanonical JSONへ変換し、admission時に保存したfingerprintと一致することを確認する。初回送信ではRunが`queued` / `starting`、Attemptが`preparing`、Bindingが同じSession / Providerの`active`、Dispatchが`pending`であることを共通Gateとしてtransaction内で再検証し、Dispatchを`dispatching`へ進める。`queued` Runは同じtransactionで`starting`へ進める。`canceling`は初回送信Gateから除外し、すでに`dispatching`であるbegin replayとresolutionだけで許可する。
 
 初回commit成功時だけresultの`sendAllowed=true`を返し、Application Serviceはそのresponseを受けた後だけProvider I/Oへ進む。response loss後に同じbeginを再実行して`dispatching`を観測した場合は`replayed=true`かつ`sendAllowed=false`を返し、`pending`へ戻したりProvider requestを再送したりしない。Provider request fingerprint不一致は`idempotency_conflict`とする。
 
 `repository.dispatch.resolve`は`dispatching`から次のterminal outcomeだけを許可する。
 
-- `accepted`: Attemptへ外部実行IDと開始時刻を設定して`active`、Dispatchを`accepted`、Runを`active`へ同じtransactionで進める。すでにRunが`canceling`ならphaseを戻さず、外部実行相関だけを確定する。
-- `rejected` / `ambiguous`: Dispatchだけを対応するterminal stateへ進める。AttemptとRunの失敗・retry判断は後続policy commandの責務とし、このtransitionでは推測しない。
+- `accepted`: Attemptへ外部実行IDと開始時刻を設定して`active`、Dispatchを`accepted`、Runを`active`かつ`external_side_effect_state='present'`へ同じtransactionで進める。すでにRunが`canceling`ならphaseを戻さず、外部実行相関とside effectだけを確定する。
+- `rejected`: Dispatchだけを`rejected`へ進め、Runのexternal side effectを変更しない。
+- `ambiguous`: Dispatchを`ambiguous`へ進め、Runの既存`present`を維持し、それ以外のexternal side effectを`unknown`へ進める。AttemptとRunの失敗・retry判断は後続policy commandの責務とし、このtransitionでは推測しない。
 
-terminal Dispatchを`pending` / `dispatching`へ戻さず、異なるterminal outcomeへの変更も拒否する。同じoutcomeと外部実行IDの再通知だけをexact replayとして返す。resolution resultはDispatch terminal state、外部実行ID、確定時刻に限定し、後続で変化するRun phaseやAttempt stateを複製しない。このためRun / Attemptがterminalへ進んだ後も、元Dispatchのexact replayを同じ意味で返せる。`ambiguous`確定後に`accepted`へ変更せず、一意な照会結果でacceptedへ収束できる場合は`dispatching`中に確定する。
+terminal Dispatchを`pending` / `dispatching`へ戻さず、異なるterminal outcomeへの変更も原則拒否する。例外として、`ambiguous`は自動再送不可のterminal stateである一方、Provider native idempotencyまたは状態照会が同じ外部実行IDを一意に証明し、Attemptがまだ`preparing`、Runが`starting` / `canceling`である間だけ`accepted`へ知識補正できる。補正は新しいProvider requestを送らず、Attempt / Dispatch / Run相関を1 transactionで確定する。recovery policyはこの照会を終える前にAttempt / Runをterminal化しない。同じoutcomeと外部実行IDの再通知だけをexact replayとして返す。resolution resultはDispatch terminal state、外部実行ID、確定時刻に限定し、後続で変化するRun phaseやAttempt stateを複製しない。このためRun / Attemptがterminalへ進んだ後も、元Dispatchのexact replayを同じ意味で返せる。
 
 ephemeral Bindingで初回beginまたは未確定Dispatchをresolveする場合は、同じWorker generationに登録済みのlive ownership tokenを必須とする。Worker再起動後も、すでにcommit済みの`dispatching` / terminal状態はread-onlyなexact replayとして観測できるが、新しいProvider送信許可や未確定相関の更新には使用できない。

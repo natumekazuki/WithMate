@@ -159,9 +159,7 @@ export type ProviderBindingResolutionResult = Readonly<{
   attemptId: string;
   bindingId: string;
   bindingState: "active" | "invalidated";
-  attemptState: "preparing" | "interrupted";
-  runPhase: "queued" | "starting" | "active" | "canceling" | "finalizing" | "interrupted";
-  dispatchState: "pending" | "aborted";
+  externalConversationId: string | null;
   ephemeralOwnership: "not_applicable" | "registered" | "unavailable";
 }>;
 
