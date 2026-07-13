@@ -70,7 +70,11 @@ Message本文、execution snapshot、Provider requestはdenseなJSON値として
 
 Worker repositoryは通常Run、Auxiliary、child Runで共有するapp全体とProvider別のnon-terminal Run上限を構築時optionとして所有する。defaultはそれぞれ4で、low-resource profileは2を渡す。admission transaction内で現在数を集計し、上限到達時はretryableな`capacity_exceeded`としてRun追加前に拒否する。root child上限はchild admission commandで追加する。
 
-この縦切りは新規通常Runだけを扱う。既存Messageを参照するretry、Provider Binding確定、Dispatchの`dispatching` / resolution、supplemental inputは後続のS6-B commandとして追加する。
+## Retry Run admission
+
+`repository.run.retry`は、同じSessionに属するterminal Runを直接の`retry_of_run_id`として受け取り、元Runのuser Messageを複製せず新しいRunから参照する。retryのretryでもrootへ畳み込まず、callerが指定した直前のRunとのchainを保持する。
+
+retryは通常Run admissionと同じactive Session、app全体 / Provider別capacity、Binding intent、completed IdempotencyRecordの条件を使う。新しい`queued` Run、`preparing` Attempt、`pending` Dispatch、必要な`creating` Binding intent、Session activity更新を1 transactionで確定し、失敗時は元Messageと元Runを変更しない。詳細なinput / resultは`src/shared/repository-write-model.ts`、実行可能な契約は`test/repository-write-model.test.ts`を正本とする。
 
 ## Provider Binding resolution
 

@@ -6,6 +6,8 @@ import {
   type ProviderBindingResolutionCommand,
   type ProviderBindingResolutionResult,
   type RepositoryCommandResult,
+  type RetryRunAdmissionCommand,
+  type RetryRunAdmissionResult,
   type RunDispatchBeginCommand,
   type RunDispatchBeginResult,
   type RunDispatchResolutionCommand,
@@ -45,6 +47,13 @@ export class RepositoryWriteClient {
     options?: RequestOptions,
   ): Promise<RepositoryCommandResult<NormalRunAdmissionResult>> {
     return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runAdmit, "write", command, options);
+  }
+
+  admitRetryRun(
+    command: RetryRunAdmissionCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<RetryRunAdmissionResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runRetry, "write", command, options);
   }
 
   resolveProviderBinding(

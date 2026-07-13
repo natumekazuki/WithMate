@@ -2,6 +2,7 @@ export const REPOSITORY_WRITE_OPERATIONS = {
   sessionCreate: "repository.session.create",
   sessionTransition: "repository.session.transition",
   runAdmit: "repository.run.admit",
+  runRetry: "repository.run.retry",
   bindingResolve: "repository.binding.resolve",
   dispatchBegin: "repository.dispatch.begin",
   dispatchResolve: "repository.dispatch.resolve",
@@ -42,6 +43,24 @@ export type SessionTransitionCommand = Readonly<{
   targetLifecycleStatus: SessionLifecycleStatus;
 }>;
 
+export type RunAdmissionBindingIntent =
+  | Readonly<{ kind: "reuse"; bindingId: string }>
+  | Readonly<{
+      kind: "create";
+      bindingId: string;
+      persistenceMode: "persistent" | "ephemeral";
+    }>;
+
+export type RunAdmissionDispatch = Readonly<{
+  providerRequest: Readonly<{ [key: string]: RepositoryJsonValue }>;
+  providerIdempotencyKey: string | null;
+}>;
+
+export type RunAdmissionDraft = Readonly<{
+  id: string;
+  executionSnapshot: RunExecutionSnapshot;
+}>;
+
 export type NormalRunAdmissionCommand = Readonly<{
   sessionId: string;
   workspaceKey: string;
@@ -50,22 +69,21 @@ export type NormalRunAdmissionCommand = Readonly<{
     id: string;
     contentBlocks: readonly RepositoryJsonValue[];
   }>;
-  run: Readonly<{
-    id: string;
-    executionSnapshot: RunExecutionSnapshot;
-  }>;
+  run: RunAdmissionDraft;
   attemptId: string;
-  bindingIntent:
-    | Readonly<{ kind: "reuse"; bindingId: string }>
-    | Readonly<{
-        kind: "create";
-        bindingId: string;
-        persistenceMode: "persistent" | "ephemeral";
-      }>;
-  dispatch: Readonly<{
-    providerRequest: Readonly<{ [key: string]: RepositoryJsonValue }>;
-    providerIdempotencyKey: string | null;
-  }>;
+  bindingIntent: RunAdmissionBindingIntent;
+  dispatch: RunAdmissionDispatch;
+}>;
+
+export type RetryRunAdmissionCommand = Readonly<{
+  sessionId: string;
+  workspaceKey: string;
+  idempotencyKey: string;
+  retryOfRunId: string;
+  run: RunAdmissionDraft;
+  attemptId: string;
+  bindingIntent: RunAdmissionBindingIntent;
+  dispatch: RunAdmissionDispatch;
 }>;
 
 export type ProviderBindingResolutionCommand = Readonly<{
@@ -152,6 +170,11 @@ export type NormalRunAdmissionResult = Readonly<{
   dispatchState: "pending";
   admittedAt: number;
 }>;
+
+export type RetryRunAdmissionResult = NormalRunAdmissionResult &
+  Readonly<{
+    retryOfRunId: string;
+  }>;
 
 export type ProviderBindingResolutionResult = Readonly<{
   sessionId: string;

@@ -561,6 +561,320 @@ repositoryTest("Run admission rolls back every inserted row when a late constrai
   });
 });
 
+repositoryTest("retry Run admission reuses the source Message and preserves the direct retry chain", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    let now = 300;
+    const retry = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runRetry, () => now);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000211", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000212", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    makeRunRetryable(database, "run-1", "attempt-run-1", "binding-run-1", 250);
+
+    const firstCommand = retryRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000213", "run-2", "run-1", "reuse");
+    const first = retry(firstCommand) as CommandResult;
+    const replay = retry({
+      ...firstCommand,
+      dispatch: {
+        ...firstCommand.dispatch,
+        providerRequest: { prompt: "hello", options: { z: 1, a: true } },
+      },
+    }) as CommandResult;
+    assert.equal(first.ok && !first.replayed, true);
+    assert.equal(replay.ok && replay.replayed, true);
+    assert.equal(count(database, "messages"), 1);
+    assert.equal(count(database, "runs"), 2);
+    assert.equal(count(database, "run_attempts"), 2);
+    assert.equal(count(database, "run_dispatches"), 2);
+    const admitted = database
+      .prepare(
+        `
+        SELECT initiating_message_id, retry_of_run_id, ordinal, phase
+        FROM runs WHERE id = 'run-2'
+      `,
+      )
+      .get() as Record<string, unknown>;
+    assert.deepEqual(
+      { ...admitted },
+      { initiating_message_id: "message-run-1", retry_of_run_id: "run-1", ordinal: 2, phase: "queued" },
+    );
+    assert.equal(first.ok && first.value.messageId, "message-run-1");
+    assert.equal(first.ok && first.value.retryOfRunId, "run-1");
+    const activity = database
+      .prepare("SELECT updated_at, last_activity_at FROM sessions WHERE id = 'session-1'")
+      .get() as Record<string, unknown>;
+    assert.deepEqual({ ...activity }, { updated_at: 300, last_activity_at: 300 });
+
+    now = 400;
+    database
+      .prepare(
+        `
+        UPDATE run_attempts SET attempt_state = 'failed', failure_origin = 'provider', terminal_at = ?
+        WHERE id = 'attempt-run-2'
+      `,
+      )
+      .run(now);
+    database
+      .prepare(
+        `
+        UPDATE runs SET phase = 'failed', failure_origin = 'provider', terminal_at = ?, updated_at = ?, version = 1
+        WHERE id = 'run-2'
+      `,
+      )
+      .run(now, now);
+    const chained = retry(
+      retryRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000214", "run-3", "run-2", "reuse"),
+    ) as CommandResult;
+    assert.equal(chained.ok, true);
+    const chain = database
+      .prepare("SELECT initiating_message_id, retry_of_run_id FROM runs WHERE id = 'run-3'")
+      .get() as Record<string, unknown>;
+    assert.deepEqual({ ...chain }, { initiating_message_id: "message-run-1", retry_of_run_id: "run-2" });
+    assert.equal(count(database, "messages"), 1);
+  });
+});
+
+repositoryTest("retry Run admission enforces shared app capacity", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const constrainedRetry = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runRetry, () => 400, undefined, {
+      maxConcurrentRuns: 1,
+      maxConcurrentRunsPerProvider: 1,
+    });
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000231", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000232", "session-2")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000233", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    makeRunRetryable(database, "run-1", "attempt-run-1", "binding-run-1", 250);
+
+    const source2 = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000234", "run-source-2", "create");
+    source2.sessionId = "session-2";
+    assert.equal((admit(source2) as CommandResult).ok, true);
+    makeRunRetryable(database, "run-source-2", "attempt-run-source-2", "binding-run-source-2", 260);
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000235", "run-active", "reuse")) as CommandResult)
+        .ok,
+      true,
+    );
+
+    const command = retryRunAdmissionCommand(
+      "018f1f4e-7f0a-7000-8000-000000000236",
+      "run-retry",
+      "run-source-2",
+      "reuse",
+    );
+    command.sessionId = "session-2";
+    const result = constrainedRetry(command) as CommandResult;
+    assert.equal(!result.ok && result.error.code, "capacity_exceeded");
+    assert.equal(count(database, "runs"), 3);
+  });
+});
+
+repositoryTest("retry Run admission enforces shared Provider capacity independently", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const constrainedRetry = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runRetry, () => 400, undefined, {
+      maxConcurrentRuns: 4,
+      maxConcurrentRunsPerProvider: 1,
+    });
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000237", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000238", "session-2")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (
+        admit(
+          normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000239", "run-source", "create"),
+        ) as CommandResult
+      ).ok,
+      true,
+    );
+    makeRunRetryable(database, "run-source", "attempt-run-source", "binding-run-source", 250);
+
+    const active = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000240", "run-active-provider", "create");
+    active.sessionId = "session-2";
+    assert.equal((admit(active) as CommandResult).ok, true);
+
+    const command = retryRunAdmissionCommand(
+      "018f1f4e-7f0a-7000-8000-000000000241",
+      "run-retry-provider",
+      "run-source",
+      "reuse",
+    );
+    const result = constrainedRetry(command) as CommandResult;
+    assert.equal(!result.ok && result.error.code, "capacity_exceeded");
+    assert.equal(count(database, "runs"), 2);
+  });
+});
+
+repositoryTest("retry Run admission rejects invalid sources and mismatched execution scope without mutation", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const retry = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runRetry, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000215", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000216", "session-2")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000217", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+
+    const nonTerminal = retry(
+      retryRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000218", "run-2", "run-1", "create"),
+    ) as CommandResult;
+    assert.equal(!nonTerminal.ok && nonTerminal.error.code, "lifecycle_conflict");
+    makeRunRetryable(database, "run-1", "attempt-run-1", "binding-run-1", 250);
+
+    const otherSession = retryRunAdmissionCommand(
+      "018f1f4e-7f0a-7000-8000-000000000219",
+      "run-other",
+      "run-1",
+      "create",
+    );
+    otherSession.sessionId = "session-2";
+    const crossScope = retry(otherSession) as CommandResult;
+    assert.equal(!crossScope.ok && crossScope.error.code, "reference_invalid");
+
+    const providerMismatch = retryRunAdmissionCommand(
+      "018f1f4e-7f0a-7000-8000-000000000220",
+      "run-provider",
+      "run-1",
+      "reuse",
+    );
+    providerMismatch.run.executionSnapshot.providerId = "other-provider";
+    const wrongProvider = retry(providerMismatch) as CommandResult;
+    assert.equal(!wrongProvider.ok && wrongProvider.error.code, "reference_invalid");
+
+    database.prepare("UPDATE messages SET role = 'assistant' WHERE id = 'message-run-1'").run();
+    const wrongRole = retry(
+      retryRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000221", "run-role", "run-1", "reuse"),
+    ) as CommandResult;
+    assert.equal(!wrongRole.ok && wrongRole.error.code, "reference_invalid");
+    assert.equal(count(database, "messages"), 1);
+    assert.equal(count(database, "runs"), 1);
+    assert.equal(count(database, "run_attempts"), 1);
+  });
+});
+
+repositoryTest("retry Run admission directly enforces idempotency expiry and response references", () => {
+  withDatabase((database) => {
+    let now = 100;
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => now);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const retry = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runRetry, () => now, 1);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000222", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000223", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    makeRunRetryable(database, "run-1", "attempt-run-1", "binding-run-1", 250);
+    now = 300;
+    const command = retryRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000224", "run-2", "run-1", "reuse");
+    assert.equal((retry(command) as CommandResult).ok, true);
+    const conflict = retry({ ...command, retryOfRunId: "different-run" }) as CommandResult;
+    assert.equal(!conflict.ok && conflict.error.code, "idempotency_conflict");
+    now = 301;
+    const expired = retry(command) as CommandResult;
+    assert.equal(!expired.ok && expired.error.code, "idempotency_expired");
+    const record = database
+      .prepare("SELECT record_state, response_envelope_json FROM idempotency_records WHERE idempotency_key = ?")
+      .get(command.idempotencyKey) as Record<string, unknown>;
+    assert.deepEqual({ ...record }, { record_state: "expired", response_envelope_json: null });
+  });
+
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const retry = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runRetry, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000225", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000226", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    makeRunRetryable(database, "run-1", "attempt-run-1", "binding-run-1", 250);
+    const command = retryRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000227", "run-2", "run-1", "reuse");
+    assert.equal((retry(command) as CommandResult).ok, true);
+    database.exec("PRAGMA foreign_keys = OFF;");
+    database.prepare("DELETE FROM run_dispatches WHERE run_attempt_id = 'attempt-run-2'").run();
+    database.prepare("DELETE FROM run_attempts WHERE id = 'attempt-run-2'").run();
+    database.prepare("DELETE FROM runs WHERE id = 'run-2'").run();
+    const missing = retry(command) as CommandResult;
+    assert.equal(!missing.ok && missing.error.code, "reference_invalid");
+  });
+});
+
+repositoryTest("retry Run admission rolls back new rows while preserving its source history", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const retry = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runRetry, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000228", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000229", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    makeRunRetryable(database, "run-1", "attempt-run-1", "binding-run-1", 250);
+    database
+      .prepare(
+        `
+        UPDATE provider_bindings SET binding_state = 'invalidated', external_conversation_id = NULL,
+          invalidated_at = 260, invalidation_reason = 'test replacement'
+        WHERE id = 'binding-run-1'
+      `,
+      )
+      .run();
+    database.exec(`
+      CREATE TRIGGER test_abort_retry_dispatch BEFORE INSERT ON run_dispatches
+      BEGIN
+        SELECT RAISE(ABORT, 'injected retry dispatch failure');
+      END;
+    `);
+    const command = retryRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000230", "run-2", "run-1", "create");
+    assert.throws(() => retry(command), /injected retry dispatch failure/u);
+    assert.equal(count(database, "messages"), 1);
+    assert.equal(count(database, "runs"), 1);
+    assert.equal(count(database, "run_attempts"), 1);
+    assert.equal(count(database, "run_dispatches"), 1);
+    assert.equal(count(database, "provider_bindings"), 1);
+    assert.equal(count(database, "idempotency_records"), 2);
+  });
+});
+
 repositoryTest("Provider Binding activation atomically links its creating Attempt and replays exactly", () => {
   withDatabase((database) => {
     const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
@@ -1152,6 +1466,74 @@ function normalRunAdmissionCommand(idempotencyKey: string, runId: string, bindin
       providerIdempotencyKey: null,
     },
   };
+}
+
+function retryRunAdmissionCommand(
+  idempotencyKey: string,
+  runId: string,
+  retryOfRunId: string,
+  binding: "create" | "reuse",
+) {
+  return {
+    sessionId: "session-1",
+    workspaceKey: "workspace",
+    idempotencyKey,
+    retryOfRunId,
+    run: {
+      id: runId,
+      executionSnapshot: {
+        providerId: "provider",
+        model: "test-model",
+        reasoning: { effort: "medium" },
+        approval: { mode: "on-request" },
+        sandbox: { mode: "workspace-write" },
+        workspace: { key: "workspace" },
+        character: null,
+      },
+    },
+    attemptId: `attempt-${runId}`,
+    bindingIntent:
+      binding === "create"
+        ? ({ kind: "create", bindingId: `binding-${runId}`, persistenceMode: "persistent" } as const)
+        : ({ kind: "reuse", bindingId: "binding-run-1" } as const),
+    dispatch: {
+      providerRequest: { options: { a: true, z: 1 }, prompt: "hello" },
+      providerIdempotencyKey: null,
+    },
+  };
+}
+
+function makeRunRetryable(
+  database: DatabaseSync,
+  runId: string,
+  attemptId: string,
+  bindingId: string,
+  terminalAt: number,
+): void {
+  database
+    .prepare(
+      `
+      UPDATE provider_bindings SET binding_state = 'active', external_conversation_id = ?
+      WHERE id = ?
+    `,
+    )
+    .run(`external-${runId}`, bindingId);
+  database
+    .prepare(
+      `
+      UPDATE run_attempts SET provider_binding_id = ?, attempt_state = 'failed',
+        failure_origin = 'provider', terminal_at = ? WHERE id = ?
+    `,
+    )
+    .run(bindingId, terminalAt, attemptId);
+  database
+    .prepare(
+      `
+      UPDATE runs SET phase = 'failed', failure_origin = 'provider', terminal_at = ?,
+        updated_at = ?, version = version + 1 WHERE id = ?
+    `,
+    )
+    .run(terminalAt, terminalAt, runId);
 }
 
 function bindingResolutionCommand(kind: "active" | "ambiguous") {

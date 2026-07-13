@@ -11,6 +11,11 @@ import {
   type ProviderBindingResolutionResult,
   type RepositoryCommandErrorCode,
   type RepositoryCommandResult,
+  type RetryRunAdmissionCommand,
+  type RetryRunAdmissionResult,
+  type RunAdmissionBindingIntent,
+  type RunAdmissionDispatch,
+  type RunAdmissionDraft,
   type RunDispatchBeginCommand,
   type RunDispatchBeginResult,
   type RunDispatchResolutionCommand,
@@ -90,6 +95,18 @@ export function createRepositoryWriteOperations(
           const now = readClock(clock);
           return executeWriteTransaction(database, () =>
             admitNormalRun(database, prepared, now, retentionMs, maxConcurrentRuns, maxConcurrentRunsPerProvider),
+          );
+        }),
+      ),
+    ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.runRetry,
+      write((payload) =>
+        runDecoded(decodeRetryRunAdmission(payload), (command) => {
+          const prepared = prepareRetryRunAdmission(command);
+          const now = readClock(clock);
+          return executeWriteTransaction(database, () =>
+            admitRetryRun(database, prepared, now, retentionMs, maxConcurrentRuns, maxConcurrentRunsPerProvider),
           );
         }),
       ),
@@ -332,7 +349,7 @@ function admitNormalRun(
     return failure("lifecycle_conflict", "Run admission identity already exists.");
   }
 
-  const binding = resolveAdmissionBinding(database, command, session.provider_id);
+  const binding = resolveAdmissionBinding<NormalRunAdmissionResult>(database, command, session.provider_id);
   if (!binding.ok) return binding.result;
   const messageOrdinal = nextOrdinal(database, "messages", "session_id", command.sessionId);
   const runOrdinal = nextOrdinal(database, "runs", "session_id", command.sessionId);
@@ -345,61 +362,19 @@ function admitNormalRun(
     `,
     )
     .run(command.message.id, command.sessionId, messageOrdinal, prepared.contentBlocksJson, now);
-  database
-    .prepare(
-      `
-      INSERT INTO runs (
-        id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
-        external_side_effect_state, created_at, updated_at, version
-      ) VALUES (?, ?, ?, ?, 'queued', ?, 'none', ?, ?, 0)
-    `,
-    )
-    .run(command.run.id, command.sessionId, runOrdinal, command.message.id, prepared.executionSnapshotJson, now, now);
-  database
-    .prepare(
-      `
-      INSERT INTO run_attempts (
-        id, run_id, ordinal, provider_binding_id, attempt_reason, attempt_state, created_at
-      ) VALUES (?, ?, 1, ?, 'initial', 'preparing', ?)
-    `,
-    )
-    .run(command.attemptId, command.run.id, binding.providerBindingId, now);
-  if (command.bindingIntent.kind === "create") {
-    const bindingOrdinal = nextOrdinal(database, "provider_bindings", "session_id", command.sessionId);
-    database
-      .prepare(
-        `
-        INSERT INTO provider_bindings (
-          id, session_id, ordinal, provider_id, persistence_mode, binding_state,
-          created_by_run_attempt_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, 'creating', ?, ?)
-      `,
-      )
-      .run(
-        command.bindingIntent.bindingId,
-        command.sessionId,
-        bindingOrdinal,
-        session.provider_id,
-        command.bindingIntent.persistenceMode,
-        command.attemptId,
-        now,
-      );
-  }
-  database
-    .prepare(
-      `
-      INSERT INTO run_dispatches (
-        run_attempt_id, dispatch_state, request_fingerprint, provider_idempotency_key, created_at
-      ) VALUES (?, 'pending', ?, ?, ?)
-    `,
-    )
-    .run(command.attemptId, prepared.dispatchFingerprint, command.dispatch.providerIdempotencyKey, now);
-
-  const updatedAt = Math.max(now, session.updated_at);
-  const lastActivityAt = Math.max(now, session.last_activity_at);
-  database
-    .prepare("UPDATE sessions SET updated_at = ?, last_activity_at = ? WHERE id = ?")
-    .run(updatedAt, lastActivityAt, command.sessionId);
+  insertRunAdmissionRows(
+    database,
+    command,
+    command.message.id,
+    null,
+    runOrdinal,
+    prepared.executionSnapshotJson,
+    prepared.dispatchFingerprint,
+    binding.providerBindingId,
+    session.provider_id,
+    now,
+  );
+  advanceSessionActivity(database, command.sessionId, session.updated_at, session.last_activity_at, now);
   const value: NormalRunAdmissionResult = {
     sessionId: command.sessionId,
     messageId: command.message.id,
@@ -423,6 +398,196 @@ function admitNormalRun(
     retentionMs,
   );
   return success(value, false);
+}
+
+function admitRetryRun(
+  database: DatabaseSync,
+  prepared: PreparedRetryRunAdmission,
+  now: number,
+  retentionMs: number,
+  maxConcurrentRuns: number,
+  maxConcurrentRunsPerProvider: number,
+): RepositoryCommandResult<RetryRunAdmissionResult> {
+  const command = prepared.command;
+  const idempotency = checkIdempotency<RetryRunAdmissionResult>(
+    database,
+    command.idempotencyKey,
+    "run.retry",
+    prepared.fingerprint,
+    command.sessionId,
+    "run",
+    command.run.id,
+    now,
+  );
+  if (idempotency.kind !== "new") return idempotency.result;
+
+  const session = database
+    .prepare(
+      `
+      SELECT provider_id, lifecycle_status, updated_at, last_activity_at
+      FROM sessions WHERE id = ? AND workspace_key = ?
+    `,
+    )
+    .get(command.sessionId, command.workspaceKey) as AdmissionSessionRow | undefined;
+  if (session === undefined) return failure("not_found", "Session was not found.");
+  if (session.lifecycle_status !== "active") {
+    return failure("lifecycle_conflict", "Run admission requires an active Session.");
+  }
+  if (command.run.executionSnapshot.providerId !== session.provider_id) {
+    return failure("reference_invalid", "Run execution snapshot Provider does not match the Session.");
+  }
+
+  const source = database
+    .prepare(
+      `
+      SELECT r.initiating_message_id, r.phase, m.role
+      FROM runs r
+      JOIN messages m ON m.id = r.initiating_message_id AND m.session_id = r.session_id
+      WHERE r.id = ? AND r.session_id = ?
+    `,
+    )
+    .get(command.retryOfRunId, command.sessionId) as RetrySourceRow | undefined;
+  if (source === undefined || source.role !== "user") {
+    return failure("reference_invalid", "Retry source Run or user Message is invalid.");
+  }
+  if (!isTerminalRunPhase(source.phase)) {
+    return failure("lifecycle_conflict", "Retry source Run must be terminal.");
+  }
+  if (hasNonTerminalRun(database, command.sessionId)) {
+    return failure("session_busy", "Session already has a non-terminal Run.");
+  }
+  if (!hasRunCapacity(database, session.provider_id, maxConcurrentRuns, maxConcurrentRunsPerProvider)) {
+    return failure("capacity_exceeded", "Run capacity is exhausted.", true);
+  }
+  if (hasRunAdmissionIdentityConflict(database, command.run.id, command.attemptId, command.bindingIntent)) {
+    return failure("lifecycle_conflict", "Run admission identity already exists.");
+  }
+
+  const binding = resolveAdmissionBinding<RetryRunAdmissionResult>(database, command, session.provider_id);
+  if (!binding.ok) return binding.result;
+  const runOrdinal = nextOrdinal(database, "runs", "session_id", command.sessionId);
+  insertRunAdmissionRows(
+    database,
+    command,
+    source.initiating_message_id,
+    command.retryOfRunId,
+    runOrdinal,
+    prepared.executionSnapshotJson,
+    prepared.dispatchFingerprint,
+    binding.providerBindingId,
+    session.provider_id,
+    now,
+  );
+  advanceSessionActivity(database, command.sessionId, session.updated_at, session.last_activity_at, now);
+
+  const value: RetryRunAdmissionResult = {
+    sessionId: command.sessionId,
+    messageId: source.initiating_message_id,
+    runId: command.run.id,
+    retryOfRunId: command.retryOfRunId,
+    attemptId: command.attemptId,
+    bindingId: command.bindingIntent.bindingId,
+    bindingState: command.bindingIntent.kind === "create" ? "creating" : "active",
+    dispatchState: "pending",
+    admittedAt: now,
+  };
+  completeIdempotency(
+    database,
+    command.idempotencyKey,
+    command.sessionId,
+    "run.retry",
+    prepared.fingerprint,
+    "run",
+    command.run.id,
+    value,
+    now,
+    retentionMs,
+  );
+  return success(value, false);
+}
+
+function insertRunAdmissionRows(
+  database: DatabaseSync,
+  command: RunAdmissionCommand,
+  initiatingMessageId: string,
+  retryOfRunId: string | null,
+  runOrdinal: number,
+  executionSnapshotJson: string,
+  dispatchFingerprint: string,
+  providerBindingId: string | null,
+  providerId: string,
+  now: number,
+): void {
+  database
+    .prepare(
+      `
+      INSERT INTO runs (
+        id, session_id, ordinal, initiating_message_id, retry_of_run_id, phase,
+        execution_snapshot_json, external_side_effect_state, created_at, updated_at, version
+      ) VALUES (?, ?, ?, ?, ?, 'queued', ?, 'none', ?, ?, 0)
+    `,
+    )
+    .run(
+      command.run.id,
+      command.sessionId,
+      runOrdinal,
+      initiatingMessageId,
+      retryOfRunId,
+      executionSnapshotJson,
+      now,
+      now,
+    );
+  database
+    .prepare(
+      `
+      INSERT INTO run_attempts (
+        id, run_id, ordinal, provider_binding_id, attempt_reason, attempt_state, created_at
+      ) VALUES (?, ?, 1, ?, 'initial', 'preparing', ?)
+    `,
+    )
+    .run(command.attemptId, command.run.id, providerBindingId, now);
+  if (command.bindingIntent.kind === "create") {
+    const bindingOrdinal = nextOrdinal(database, "provider_bindings", "session_id", command.sessionId);
+    database
+      .prepare(
+        `
+        INSERT INTO provider_bindings (
+          id, session_id, ordinal, provider_id, persistence_mode, binding_state,
+          created_by_run_attempt_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, 'creating', ?, ?)
+      `,
+      )
+      .run(
+        command.bindingIntent.bindingId,
+        command.sessionId,
+        bindingOrdinal,
+        providerId,
+        command.bindingIntent.persistenceMode,
+        command.attemptId,
+        now,
+      );
+  }
+  database
+    .prepare(
+      `
+      INSERT INTO run_dispatches (
+        run_attempt_id, dispatch_state, request_fingerprint, provider_idempotency_key, created_at
+      ) VALUES (?, 'pending', ?, ?, ?)
+    `,
+    )
+    .run(command.attemptId, dispatchFingerprint, command.dispatch.providerIdempotencyKey, now);
+}
+
+function advanceSessionActivity(
+  database: DatabaseSync,
+  sessionId: string,
+  currentUpdatedAt: number,
+  currentLastActivityAt: number,
+  now: number,
+): void {
+  database
+    .prepare("UPDATE sessions SET updated_at = ?, last_activity_at = ? WHERE id = ?")
+    .run(Math.max(now, currentUpdatedAt), Math.max(now, currentLastActivityAt), sessionId);
 }
 
 function resolveProviderBinding(
@@ -903,6 +1068,40 @@ function prepareNormalRunAdmission(command: NormalRunAdmissionCommand): Prepared
   };
 }
 
+function prepareRetryRunAdmission(command: RetryRunAdmissionCommand): PreparedRetryRunAdmission {
+  const executionSnapshotJson = canonicalJsonString(command.run.executionSnapshot);
+  const providerRequestJson = canonicalJsonString(command.dispatch.providerRequest);
+  if (Buffer.byteLength(executionSnapshotJson) > 256 * 1024 || Buffer.byteLength(providerRequestJson) > 256 * 1024) {
+    throw invalidCommand();
+  }
+  const dispatchFingerprint = fingerprintJson(providerRequestJson);
+  return {
+    command,
+    executionSnapshotJson,
+    dispatchFingerprint,
+    fingerprint: fingerprint({
+      operation: "run.retry",
+      sessionId: command.sessionId,
+      workspaceKey: command.workspaceKey,
+      retryOfRunId: command.retryOfRunId,
+      run: { id: command.run.id, executionSnapshot: JSON.parse(executionSnapshotJson) },
+      attemptId: command.attemptId,
+      bindingIntent:
+        command.bindingIntent.kind === "create"
+          ? {
+              kind: "create",
+              bindingId: command.bindingIntent.bindingId,
+              persistenceMode: command.bindingIntent.persistenceMode,
+            }
+          : { kind: "reuse", bindingId: command.bindingIntent.bindingId },
+      dispatch: {
+        requestFingerprint: dispatchFingerprint,
+        providerIdempotencyKey: command.dispatch.providerIdempotencyKey,
+      },
+    }),
+  };
+}
+
 function prepareRunDispatchBegin(command: RunDispatchBeginCommand): PreparedRunDispatchBegin {
   const providerRequestJson = canonicalJsonString(command.providerRequest);
   if (Buffer.byteLength(providerRequestJson) > 256 * 1024) throw invalidCommand();
@@ -997,6 +1196,40 @@ function decodeNormalRunAdmission(payload: Readonly<Record<string, unknown>>): D
     return decodeFailure();
   }
   return { ok: true, value: payload as unknown as NormalRunAdmissionCommand };
+}
+
+function decodeRetryRunAdmission(payload: Readonly<Record<string, unknown>>): DecodeResult<RetryRunAdmissionCommand> {
+  if (
+    !hasExactKeys(payload, [
+      "sessionId",
+      "workspaceKey",
+      "idempotencyKey",
+      "retryOfRunId",
+      "run",
+      "attemptId",
+      "bindingIntent",
+      "dispatch",
+    ]) ||
+    !isBoundedString(payload.sessionId, 1_024) ||
+    !isBoundedString(payload.workspaceKey, 1_024) ||
+    !isCanonicalUuid(payload.idempotencyKey) ||
+    !isBoundedString(payload.retryOfRunId, 1_024) ||
+    !isBoundedString(payload.attemptId, 1_024) ||
+    !isPlainObject(payload.run) ||
+    !hasExactKeys(payload.run, ["id", "executionSnapshot"]) ||
+    !isBoundedString(payload.run.id, 1_024) ||
+    !isRunExecutionSnapshot(payload.run.executionSnapshot) ||
+    !isBindingIntent(payload.bindingIntent) ||
+    !isPlainObject(payload.dispatch) ||
+    !hasExactKeys(payload.dispatch, ["providerRequest", "providerIdempotencyKey"]) ||
+    !isPlainObject(payload.dispatch.providerRequest) ||
+    !isJsonValue(payload.dispatch.providerRequest) ||
+    (payload.dispatch.providerIdempotencyKey !== null &&
+      !isBoundedString(payload.dispatch.providerIdempotencyKey, 4_096))
+  ) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as RetryRunAdmissionCommand };
 }
 
 function decodeProviderBindingResolution(
@@ -1135,11 +1368,21 @@ function hasRunCapacity(
 function hasAdmissionIdentityConflict(database: DatabaseSync, command: NormalRunAdmissionCommand): boolean {
   return (
     database.prepare("SELECT 1 FROM messages WHERE id = ?").get(command.message.id) !== undefined ||
-    database.prepare("SELECT 1 FROM runs WHERE id = ?").get(command.run.id) !== undefined ||
-    database.prepare("SELECT 1 FROM run_attempts WHERE id = ?").get(command.attemptId) !== undefined ||
-    (command.bindingIntent.kind === "create" &&
-      database.prepare("SELECT 1 FROM provider_bindings WHERE id = ?").get(command.bindingIntent.bindingId) !==
-        undefined)
+    hasRunAdmissionIdentityConflict(database, command.run.id, command.attemptId, command.bindingIntent)
+  );
+}
+
+function hasRunAdmissionIdentityConflict(
+  database: DatabaseSync,
+  runId: string,
+  attemptId: string,
+  bindingIntent: RunAdmissionBindingIntent,
+): boolean {
+  return (
+    database.prepare("SELECT 1 FROM runs WHERE id = ?").get(runId) !== undefined ||
+    database.prepare("SELECT 1 FROM run_attempts WHERE id = ?").get(attemptId) !== undefined ||
+    (bindingIntent.kind === "create" &&
+      database.prepare("SELECT 1 FROM provider_bindings WHERE id = ?").get(bindingIntent.bindingId) !== undefined)
   );
 }
 
@@ -1355,11 +1598,11 @@ function dispatchResolutionValue(
   };
 }
 
-function resolveAdmissionBinding(
+function resolveAdmissionBinding<T>(
   database: DatabaseSync,
-  command: NormalRunAdmissionCommand,
+  command: RunAdmissionCommand,
   providerId: string,
-): BindingResolution {
+): BindingResolution<T> {
   const openBindings = database
     .prepare(
       `
@@ -1609,6 +1852,10 @@ function isNonTerminalRunPhase(value: string): value is NonTerminalRunPhase {
   );
 }
 
+function isTerminalRunPhase(value: string): value is TerminalRunPhase {
+  return value === "completed" || value === "failed" || value === "canceled" || value === "interrupted";
+}
+
 function invalidCommand(): RepositoryCommandDecodeError {
   return new RepositoryCommandDecodeError();
 }
@@ -1638,14 +1885,39 @@ type PreparedNormalRunAdmission = Readonly<{
   dispatchFingerprint: string;
   fingerprint: string;
 }>;
+type PreparedRetryRunAdmission = Readonly<{
+  command: RetryRunAdmissionCommand;
+  executionSnapshotJson: string;
+  dispatchFingerprint: string;
+  fingerprint: string;
+}>;
+type RunAdmissionCommand = Readonly<{
+  sessionId: string;
+  run: RunAdmissionDraft;
+  attemptId: string;
+  bindingIntent: RunAdmissionBindingIntent;
+  dispatch: RunAdmissionDispatch;
+}>;
 type PreparedRunDispatchBegin = Readonly<{
   command: RunDispatchBeginCommand;
   requestFingerprint: string;
 }>;
-type BindingResolution =
+type BindingResolution<T> =
   | Readonly<{ ok: true; providerBindingId: string | null }>
-  | Readonly<{ ok: false; result: RepositoryCommandResult<NormalRunAdmissionResult> }>;
+  | Readonly<{ ok: false; result: RepositoryCommandResult<T> }>;
 type NonTerminalRunPhase = "queued" | "starting" | "active" | "canceling" | "finalizing";
+type TerminalRunPhase = "completed" | "failed" | "canceled" | "interrupted";
+type AdmissionSessionRow = Readonly<{
+  provider_id: string;
+  lifecycle_status: SessionLifecycleStatus;
+  updated_at: number;
+  last_activity_at: number;
+}>;
+type RetrySourceRow = Readonly<{
+  initiating_message_id: string;
+  phase: NonTerminalRunPhase | TerminalRunPhase;
+  role: "user" | "assistant";
+}>;
 type BindingResolutionRow = Readonly<{
   binding_provider_id: string;
   persistence_mode: "persistent" | "ephemeral";
