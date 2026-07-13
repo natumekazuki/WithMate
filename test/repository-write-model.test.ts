@@ -879,6 +879,181 @@ repositoryTest("retry Run admission rolls back new rows while preserving its sou
   });
 });
 
+repositoryTest("initial child admission atomically creates its tree, Run, Delivery, and replay handle", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const startChild = operationFor(database, "repository.child.start", () => 600);
+    const command = childStartCommand("018f1f4e-7f0a-7000-8000-000000000324", "one");
+    const first = startChild(command) as CommandResult;
+    const replay = startChild(reverseObjectKeyOrder(command) as Readonly<Record<string, unknown>>) as CommandResult;
+
+    assert.equal(first.ok && !first.replayed, true);
+    assert.equal(replay.ok && replay.replayed, true);
+    assert.deepEqual(replay.ok && replay.value, first.ok && first.value);
+    assert.equal(count(database, "sessions"), 2);
+    assert.equal(count(database, "messages"), 2);
+    assert.equal(count(database, "runs"), 2);
+    assert.equal(count(database, "run_attempts"), 2);
+    assert.equal(count(database, "run_dispatches"), 2);
+    assert.equal(count(database, "provider_bindings"), 2);
+    assert.equal(count(database, "session_relations"), 1);
+    assert.equal(count(database, "delegations"), 1);
+    assert.equal(count(database, "child_result_deliveries"), 1);
+    const relation = database
+      .prepare(
+        `
+        SELECT parent_session_id, child_session_id, orchestration_root_session_id,
+          created_by_parent_run_id, correlation_id
+        FROM session_relations
+      `,
+      )
+      .get() as Record<string, unknown>;
+    assert.deepEqual(
+      { ...relation },
+      {
+        parent_session_id: "session-1",
+        child_session_id: "child-session-one",
+        orchestration_root_session_id: "session-1",
+        created_by_parent_run_id: "run-1",
+        correlation_id: "correlation-one",
+      },
+    );
+    const record = database
+      .prepare(
+        `
+        SELECT scope_session_id, operation, response_ref_type, response_ref_id
+        FROM idempotency_records WHERE idempotency_key = ?
+      `,
+      )
+      .get(command.idempotencyKey) as Record<string, unknown>;
+    assert.deepEqual(
+      { ...record },
+      {
+        scope_session_id: "session-1",
+        operation: "repository.child.start",
+        response_ref_type: "delivery",
+        response_ref_id: "delivery-one",
+      },
+    );
+  });
+});
+
+repositoryTest("child admission inherits nested root capacity and leaves no rejected rows", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    database.prepare("UPDATE sessions SET max_concurrent_child_runs = 1 WHERE id = 'session-1'").run();
+    const startChild = operationFor(database, "repository.child.start", () => 600);
+    const first = childStartCommand("018f1f4e-7f0a-7000-8000-000000000325", "one");
+    assert.equal((startChild(first) as CommandResult).ok, true);
+
+    database
+      .prepare(
+        `
+        UPDATE provider_bindings SET binding_state = 'active', external_conversation_id = 'child-conversation'
+        WHERE id = 'child-binding-one'
+      `,
+      )
+      .run();
+    database
+      .prepare(
+        `
+      UPDATE run_attempts
+      SET provider_binding_id = 'child-binding-one',
+          attempt_state = 'active',
+          external_execution_id = 'child-execution',
+          started_at = 601
+      WHERE id = 'child-attempt-one'
+      `,
+      )
+      .run();
+    database
+      .prepare(
+        "UPDATE run_dispatches SET dispatch_state = 'accepted', dispatching_at = 601, resolved_at = 601 WHERE run_attempt_id = 'child-attempt-one'",
+      )
+      .run();
+    database
+      .prepare("UPDATE runs SET phase = 'active', started_at = 601, updated_at = 601 WHERE id = 'child-run-one'")
+      .run();
+
+    const nested = childStartCommand(
+      "018f1f4e-7f0a-7000-8000-000000000326",
+      "nested",
+      "child-session-one",
+      "child-run-one",
+    );
+    const rejected = startChild(nested) as CommandResult;
+    assert.equal(!rejected.ok && rejected.error.code, "capacity_exceeded");
+    assert.deepEqual(!rejected.ok && rejected.error.details, {
+      scope: "root",
+      rootSessionId: "session-1",
+      current: 1,
+      limit: 1,
+    });
+    assert.equal(count(database, "sessions"), 2);
+    assert.equal(count(database, "session_relations"), 1);
+    assert.equal(count(database, "delegations"), 1);
+    assert.equal(count(database, "child_result_deliveries"), 1);
+  });
+});
+
+repositoryTest("child admission reports application and Provider capacity details", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const startChild = operationFor(database, "repository.child.start", () => 600, undefined, {
+      maxConcurrentRuns: 1,
+      maxConcurrentRunsPerProvider: 4,
+    });
+    const result = startChild(
+      childStartCommand("018f1f4e-7f0a-7000-8000-000000000328", "app-capacity"),
+    ) as CommandResult;
+    assert.equal(!result.ok && result.error.code, "capacity_exceeded");
+    assert.deepEqual(!result.ok && result.error.details, { scope: "application", current: 1, limit: 1 });
+    assert.equal(count(database, "sessions"), 1);
+  });
+
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const startChild = operationFor(database, "repository.child.start", () => 600, undefined, {
+      maxConcurrentRuns: 4,
+      maxConcurrentRunsPerProvider: 1,
+    });
+    const result = startChild(
+      childStartCommand("018f1f4e-7f0a-7000-8000-000000000329", "provider-capacity"),
+    ) as CommandResult;
+    assert.equal(!result.ok && result.error.code, "capacity_exceeded");
+    assert.deepEqual(!result.ok && result.error.details, {
+      scope: "provider",
+      providerId: "provider",
+      current: 1,
+      limit: 1,
+    });
+    assert.equal(count(database, "sessions"), 1);
+  });
+});
+
+repositoryTest("child admission rolls back every new row when Delivery publication fails", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    database.exec(`
+      CREATE TRIGGER fail_child_delivery BEFORE INSERT ON child_result_deliveries
+      BEGIN SELECT RAISE(ABORT, 'child admission fault injection'); END;
+    `);
+    const startChild = operationFor(database, "repository.child.start", () => 600);
+    const command = childStartCommand("018f1f4e-7f0a-7000-8000-000000000327", "fault");
+    assert.throws(() => startChild(command), /child admission fault injection/u);
+    assert.equal(count(database, "sessions"), 1);
+    assert.equal(count(database, "messages"), 1);
+    assert.equal(count(database, "runs"), 1);
+    assert.equal(count(database, "session_relations"), 0);
+    assert.equal(count(database, "delegations"), 0);
+    assert.equal(count(database, "child_result_deliveries"), 0);
+    const idempotencyCount = database
+      .prepare("SELECT count(*) AS count FROM idempotency_records WHERE idempotency_key = ?")
+      .get(command.idempotencyKey) as { count: number };
+    assert.equal(idempotencyCount.count, 0);
+  });
+});
+
 repositoryTest("Provider Binding activation atomically links its creating Attempt and replays exactly", () => {
   withDatabase((database) => {
     const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
@@ -2263,6 +2438,63 @@ function retryRunAdmissionCommand(
   };
 }
 
+function childStartCommand(
+  idempotencyKey: string,
+  suffix: string,
+  parentSessionId = "session-1",
+  parentRunId = "run-1",
+) {
+  return {
+    parentSessionId,
+    parentRunId,
+    workspaceKey: "workspace",
+    idempotencyKey,
+    childSession: {
+      id: `child-session-${suffix}`,
+      providerId: "provider",
+      allowedAdditionalDirectories: ["C:/workspace/shared"],
+      defaultCharacterId: "child-character",
+      maxConcurrentChildRuns: 4,
+    },
+    relation: {
+      id: `relation-${suffix}`,
+      correlationId: `correlation-${suffix}`,
+      label: "research",
+      purposeSummary: "Investigate the requested topic.",
+    },
+    delegation: {
+      id: `delegation-${suffix}`,
+      mentionText: "@Child",
+    },
+    message: {
+      id: `child-message-${suffix}`,
+      contentBlocks: [{ type: "text", text: "Investigate the requested topic." }],
+    },
+    run: {
+      id: `child-run-${suffix}`,
+      executionSnapshot: {
+        providerId: "provider",
+        model: "test-model",
+        reasoning: { effort: "medium" },
+        approval: { mode: "on-request" },
+        sandbox: { mode: "workspace-write" },
+        workspace: { key: "workspace" },
+        character: { id: "child-character" },
+      },
+    },
+    attemptId: `child-attempt-${suffix}`,
+    binding: {
+      id: `child-binding-${suffix}`,
+      persistenceMode: "persistent" as const,
+    },
+    dispatch: {
+      providerRequest: { prompt: "Investigate the requested topic." },
+      providerIdempotencyKey: null,
+    },
+    deliveryId: `delivery-${suffix}`,
+  };
+}
+
 function makeRunRetryable(
   database: DatabaseSync,
   runId: string,
@@ -2601,6 +2833,18 @@ function count(database: DatabaseSync, table: string): number {
   return (database.prepare(`SELECT count(*) AS count FROM ${table}`).get() as { count: number }).count;
 }
 
+function reverseObjectKeyOrder(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reverseObjectKeyOrder);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Readonly<Record<string, unknown>>)
+        .reverse()
+        .map(([key, nested]) => [key, reverseObjectKeyOrder(nested)]),
+    );
+  }
+  return value;
+}
+
 function readLifecycle(database: DatabaseSync, sessionId: string): string {
   return (
     database.prepare("SELECT lifecycle_status FROM sessions WHERE id = ?").get(sessionId) as {
@@ -2629,4 +2873,4 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 
 type CommandResult =
   | Readonly<{ ok: true; value: Readonly<Record<string, unknown>>; replayed: boolean }>
-  | Readonly<{ ok: false; error: Readonly<{ code: string }>; replayed: false }>;
+  | Readonly<{ ok: false; error: Readonly<{ code: string; details?: unknown }>; replayed: false }>;

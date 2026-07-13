@@ -169,3 +169,14 @@
 - Run、Session、appの累積payload quotaを、それぞれの集計分岐へ到達する独立fixtureで検証した。
 - output append、terminal、pending resolution、child collectionをproduction Workerとtyped client経由で統合検証した。
 - 恒久設計文書の局所的な型・処理仕様を削り、terminal優先、child transaction所有、正本へのpointerへ縮めた。
+
+## 2026-07-13: S6-B4 initial child admission完了
+
+- `repository.child.start`を追加し、初回child Session、relation、instruction Message、Delegation、Run / Attempt / Binding intent / Dispatch、pending Delivery、parent scopeのIdempotencyRecordを一括commitする入口を実装した。
+- 入れ子のchild admissionでもorchestration rootのnon-terminal child Run数を集計し、app全体 / Provider別capacityと同じtransactionで拒否する契約を固定した。
+- exact replayは後続のBinding / Dispatch状態に依存せず、fault injection時はchild treeとidempotency recordを全rollbackする回帰を追加した。
+- production Workerとtyped client経由でchildを開始・dispatchし、再起動後のterminal / collectまで到達する統合fixtureへ置き換えた。
+- child startのsemantic fingerprintをcommand全体のcanonical JSONから生成し、object key順が異なるexact replayを同一視する契約を追加した。
+- root / application / Provider capacity超過を、scope、現在値、上限、必要なscope IDを持つ型付きdetailsとして返すようにした。
+- Auxiliary固有の親Session排他とcontext引継ぎは永続化commandへ推測実装せず、既存計画どおりCP5のApplication Service policyに残した。
+- 次はS6-DのSession subtree deleteとstartup repairへ進む。

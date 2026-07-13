@@ -77,7 +77,11 @@ workerTest("production Worker applies configured Run capacity", async () => {
       productionRunAdmission("session-capacity-2", "run-capacity-2", "018f1f4e-7f0a-7000-8000-000000000304"),
     );
     assert.equal(first.ok, true);
-    assert.equal(!second.ok && second.error.code, "capacity_exceeded");
+    assert.equal(second.ok, false);
+    if (second.ok) assert.fail("second admission unexpectedly succeeded");
+    assert.equal(second.error.code, "capacity_exceeded");
+    if (second.error.code !== "capacity_exceeded") assert.fail("capacity error details are unavailable");
+    assert.deepEqual(second.error.details, { scope: "application", current: 1, limit: 1 });
     await client.shutdown();
   });
 });
@@ -162,6 +166,55 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       ).ok,
       true,
     );
+    const childCommand = productionChildStart(
+      "session-worker-integration",
+      "run-worker-integration",
+      "018f1f4e-7f0a-7000-8000-000000000323",
+    );
+    const child = await repository.startChild(childCommand);
+    assert.equal(child.ok && child.value.childSessionId, "session-worker-child");
+    const childScope = {
+      sessionId: "session-worker-child",
+      workspaceKey: "workspace",
+      runId: "run-worker-child",
+      attemptId: "attempt-worker-child",
+      bindingId: "binding-worker-child",
+    } as const;
+    assert.equal(
+      (
+        await repository.resolveProviderBinding({
+          ...childScope,
+          resolution: {
+            kind: "active",
+            externalConversationId: "conversation-worker-child",
+            ephemeralOwnerToken: null,
+          },
+        })
+      ).ok,
+      true,
+    );
+    assert.equal(
+      (
+        await repository.beginRunDispatch({
+          ...childScope,
+          providerRequest: { prompt: "child task" },
+          ephemeralOwnerToken: null,
+        })
+      ).ok,
+      true,
+    );
+    assert.equal(
+      (
+        await repository.resolveRunDispatch({
+          ...childScope,
+          ephemeralOwnerToken: null,
+          outcome: { kind: "accepted", externalExecutionId: "execution-worker-child" },
+        })
+      ).ok,
+      true,
+    );
+    const replayedChild = await repository.startChild(childCommand);
+    assert.equal(replayedChild.ok && replayedChild.replayed, true);
 
     const storedBytes = Uint8Array.from([1, 2, 3, 4]);
     const appended = await repository.appendRunOutput({
@@ -230,7 +283,6 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
         .prepare("SELECT content FROM run_output_payloads WHERE output_item_id = 'output-worker-stored'")
         .get() as { content: Uint8Array };
       assert.deepEqual([...payload.content], [...storedBytes]);
-      insertProductionChildScenario(seeded);
     } finally {
       seeded.close();
     }
@@ -259,7 +311,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       parentSessionId: "session-worker-integration",
       childSessionId: "session-worker-child",
       workspaceKey: "workspace",
-      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000323",
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000324",
       deliveryId: "delivery-worker-child",
       collectingParentRunId: "run-worker-integration",
       eventId: "event-worker-child-collected",
@@ -644,69 +696,56 @@ function productionRunAdmission(sessionId: string, runId: string, idempotencyKey
   };
 }
 
-function insertProductionChildScenario(database: DatabaseSync): void {
-  database.exec(`
-    PRAGMA foreign_keys = ON;
-    BEGIN IMMEDIATE;
-    INSERT INTO sessions (
-      id, provider_id, workspace_key, allowed_additional_directories_json,
-      default_character_id, max_concurrent_child_runs, lifecycle_status,
-      created_at, updated_at, last_activity_at
-    ) VALUES ('session-worker-child', 'provider', 'workspace', '[]', 'character', 2, 'active', 1, 1, 1);
-    INSERT INTO messages (id, session_id, ordinal, role, content_blocks_json, created_at)
-      VALUES ('message-worker-child-input', 'session-worker-child', 1, 'user', '[]', 1);
-    INSERT INTO runs (
-      id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
-      external_side_effect_state, created_at, started_at, updated_at, version
-    ) VALUES (
-      'run-worker-child', 'session-worker-child', 1, 'message-worker-child-input', 'active', '{}',
-      'present', 1, 2, 2, 0
-    );
-    INSERT INTO provider_bindings (
-      id, session_id, ordinal, provider_id, external_conversation_id, persistence_mode,
-      binding_state, created_by_run_attempt_id, created_at
-    ) VALUES (
-      'binding-worker-child', 'session-worker-child', 1, 'provider', 'conversation-worker-child',
-      'persistent', 'active', 'attempt-worker-child', 1
-    );
-    INSERT INTO run_attempts (
-      id, run_id, ordinal, provider_binding_id, attempt_reason, attempt_state,
-      external_execution_id, created_at, started_at
-    ) VALUES (
-      'attempt-worker-child', 'run-worker-child', 1, 'binding-worker-child', 'initial', 'active',
-      'execution-worker-child', 1, 2
-    );
-    INSERT INTO run_dispatches (
-      run_attempt_id, dispatch_state, request_fingerprint, provider_idempotency_key,
-      created_at, dispatching_at, resolved_at
-    ) VALUES (
-      'attempt-worker-child', 'accepted',
-      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', NULL, 1, 2, 2
-    );
-    INSERT INTO session_relations (
-      id, parent_session_id, child_session_id, orchestration_root_session_id,
-      created_by_parent_run_id, correlation_id, label, purpose_summary, created_at
-    ) VALUES (
-      'relation-worker-child', 'session-worker-integration', 'session-worker-child',
-      'session-worker-integration', 'run-worker-integration', 'correlation-worker-child', NULL, NULL, 1
-    );
-    INSERT INTO delegations (
-      id, session_relation_id, initial_instruction_message_id, latest_instruction_message_id,
-      latest_child_run_id, mention_text, workflow_state, closure_reason, created_at, updated_at, version
-    ) VALUES (
-      'delegation-worker-child', 'relation-worker-child', 'message-worker-child-input',
-      'message-worker-child-input', 'run-worker-child', NULL, 'active', NULL, 1, 1, 0
-    );
-    INSERT INTO child_result_deliveries (
-      id, delegation_id, ordinal, child_run_id, availability_state, terminal_phase_snapshot,
-      result_summary, available_at, first_collected_by_parent_run_id, first_collected_at,
-      created_at, updated_at, version
-    ) VALUES (
-      'delivery-worker-child', 'delegation-worker-child', 1, 'run-worker-child', 'pending',
-      NULL, NULL, NULL, NULL, NULL, 1, 1, 0
-    );
-    COMMIT;
-  `);
+function productionChildStart(parentSessionId: string, parentRunId: string, idempotencyKey: string) {
+  return {
+    parentSessionId,
+    parentRunId,
+    workspaceKey: "workspace",
+    idempotencyKey,
+    childSession: {
+      id: "session-worker-child",
+      providerId: "provider",
+      allowedAdditionalDirectories: [],
+      defaultCharacterId: "character",
+      maxConcurrentChildRuns: 2,
+    },
+    relation: {
+      id: "relation-worker-child",
+      correlationId: "correlation-worker-child",
+      label: null,
+      purposeSummary: null,
+    },
+    delegation: {
+      id: "delegation-worker-child",
+      mentionText: null,
+    },
+    message: {
+      id: "message-worker-child-input",
+      contentBlocks: [{ type: "text", text: "child task" }],
+    },
+    run: {
+      id: "run-worker-child",
+      executionSnapshot: {
+        providerId: "provider",
+        model: "test-model",
+        reasoning: { effort: "medium" },
+        approval: { mode: "on-request" },
+        sandbox: { mode: "workspace-write" },
+        workspace: { key: "workspace" },
+        character: { id: "character" },
+      },
+    },
+    attemptId: "attempt-worker-child",
+    binding: {
+      id: "binding-worker-child",
+      persistenceMode: "persistent" as const,
+    },
+    dispatch: {
+      providerRequest: { prompt: "child task" },
+      providerIdempotencyKey: null,
+    },
+    deliveryId: "delivery-worker-child",
+  };
 }
 
 function isClientError(error: unknown, code: string, effect: string): boolean {

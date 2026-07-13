@@ -8,10 +8,13 @@ import {
   REPOSITORY_WRITE_OPERATIONS,
   type ChildResultCollectCommand,
   type ChildResultCollectResult,
+  type ChildStartCommand,
+  type ChildStartResult,
   type NormalRunAdmissionCommand,
   type NormalRunAdmissionResult,
   type ProviderBindingResolutionCommand,
   type ProviderBindingResolutionResult,
+  type RepositoryCapacityExceededDetails,
   type RepositoryCommandErrorCode,
   type RepositoryCommandResult,
   type RetryRunAdmissionCommand,
@@ -139,6 +142,18 @@ export function createRepositoryWriteOperations(
           const now = readClock(clock);
           return executeWriteTransaction(database, () =>
             admitRetryRun(database, prepared, now, retentionMs, maxConcurrentRuns, maxConcurrentRunsPerProvider),
+          );
+        }),
+      ),
+    ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.childStart,
+      write((payload) =>
+        runDecoded(decodeChildStart(payload), (command) => {
+          const prepared = prepareChildStart(command);
+          const now = readClock(clock);
+          return executeWriteTransaction(database, () =>
+            startChild(database, prepared, now, retentionMs, maxConcurrentRuns, maxConcurrentRunsPerProvider),
           );
         }),
       ),
@@ -463,9 +478,13 @@ function admitNormalRun(
   if (hasNonTerminalRun(database, command.sessionId)) {
     return failure("session_busy", "Session already has a non-terminal Run.");
   }
-  if (!hasRunCapacity(database, session.provider_id, maxConcurrentRuns, maxConcurrentRunsPerProvider)) {
-    return failure("capacity_exceeded", "Run capacity is exhausted.", true);
-  }
+  const capacityExceeded = findRunCapacityExceeded(
+    database,
+    session.provider_id,
+    maxConcurrentRuns,
+    maxConcurrentRunsPerProvider,
+  );
+  if (capacityExceeded !== undefined) return capacityFailure(capacityExceeded);
   if (hasAdmissionIdentityConflict(database, command)) {
     return failure("lifecycle_conflict", "Run admission identity already exists.");
   }
@@ -577,9 +596,13 @@ function admitRetryRun(
   if (hasNonTerminalRun(database, command.sessionId)) {
     return failure("session_busy", "Session already has a non-terminal Run.");
   }
-  if (!hasRunCapacity(database, session.provider_id, maxConcurrentRuns, maxConcurrentRunsPerProvider)) {
-    return failure("capacity_exceeded", "Run capacity is exhausted.", true);
-  }
+  const capacityExceeded = findRunCapacityExceeded(
+    database,
+    session.provider_id,
+    maxConcurrentRuns,
+    maxConcurrentRunsPerProvider,
+  );
+  if (capacityExceeded !== undefined) return capacityFailure(capacityExceeded);
   if (hasRunAdmissionIdentityConflict(database, command.run.id, command.attemptId, command.bindingIntent)) {
     return failure("lifecycle_conflict", "Run admission identity already exists.");
   }
@@ -620,6 +643,211 @@ function admitRetryRun(
     prepared.fingerprint,
     "run",
     command.run.id,
+    value,
+    now,
+    retentionMs,
+  );
+  return success(value, false);
+}
+
+function startChild(
+  database: DatabaseSync,
+  prepared: PreparedChildStart,
+  now: number,
+  retentionMs: number,
+  maxConcurrentRuns: number,
+  maxConcurrentRunsPerProvider: number,
+): RepositoryCommandResult<ChildStartResult> {
+  const { command } = prepared;
+  const idempotency = checkIdempotency<ChildStartResult>(
+    database,
+    command.idempotencyKey,
+    REPOSITORY_WRITE_OPERATIONS.childStart,
+    prepared.fingerprint,
+    command.parentSessionId,
+    "delivery",
+    command.deliveryId,
+    now,
+    (value) => decodeChildStartReplay(database, command, value),
+  );
+  if (idempotency.kind !== "new") return idempotency.result;
+
+  const parentSession = database
+    .prepare("SELECT lifecycle_status FROM sessions WHERE id = ? AND workspace_key = ?")
+    .get(command.parentSessionId, command.workspaceKey) as { lifecycle_status: SessionLifecycleStatus } | undefined;
+  if (parentSession === undefined) return failure("not_found", "Parent Session was not found.");
+  if (parentSession.lifecycle_status !== "active") {
+    return failure("lifecycle_conflict", "Child admission requires an active parent Session.");
+  }
+  const parentRun = database
+    .prepare(
+      `
+      SELECT r.phase, COALESCE(sr.orchestration_root_session_id, r.session_id) AS root_session_id
+      FROM runs r
+      LEFT JOIN session_relations sr ON sr.child_session_id = r.session_id
+      WHERE r.id = ? AND r.session_id = ?
+    `,
+    )
+    .get(command.parentRunId, command.parentSessionId) as
+    { phase: NonTerminalRunPhase | TerminalRunPhase; root_session_id: string } | undefined;
+  if (parentRun === undefined) return failure("reference_invalid", "Parent Run does not belong to the parent Session.");
+  if (parentRun.phase !== "active") {
+    return failure("lifecycle_conflict", "Child admission requires an active parent Run.");
+  }
+  if (command.run.executionSnapshot.providerId !== command.childSession.providerId) {
+    return failure("reference_invalid", "Child Run execution snapshot Provider does not match the child Session.");
+  }
+  const root = database
+    .prepare("SELECT max_concurrent_child_runs FROM sessions WHERE id = ?")
+    .get(parentRun.root_session_id) as { max_concurrent_child_runs: number } | undefined;
+  if (root === undefined) return failure("reference_invalid", "Orchestration root Session was not found.");
+  const rootCurrent = countNonTerminalChildren(database, parentRun.root_session_id);
+  if (rootCurrent >= root.max_concurrent_child_runs) {
+    return capacityFailure({
+      scope: "root",
+      rootSessionId: parentRun.root_session_id,
+      current: rootCurrent,
+      limit: root.max_concurrent_child_runs,
+    });
+  }
+  const capacityExceeded = findRunCapacityExceeded(
+    database,
+    command.childSession.providerId,
+    maxConcurrentRuns,
+    maxConcurrentRunsPerProvider,
+  );
+  if (capacityExceeded !== undefined) return capacityFailure(capacityExceeded);
+  if (hasChildStartIdentityConflict(database, command)) {
+    return failure("lifecycle_conflict", "Child admission identity already exists.");
+  }
+
+  database
+    .prepare(
+      `
+      INSERT INTO sessions (
+        id, provider_id, workspace_key, allowed_additional_directories_json,
+        default_character_id, max_concurrent_child_runs, lifecycle_status,
+        created_at, updated_at, last_activity_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+    `,
+    )
+    .run(
+      command.childSession.id,
+      command.childSession.providerId,
+      command.workspaceKey,
+      prepared.directoriesJson,
+      command.childSession.defaultCharacterId,
+      command.childSession.maxConcurrentChildRuns,
+      now,
+      now,
+      now,
+    );
+  database
+    .prepare(
+      `
+      INSERT INTO messages (id, session_id, ordinal, role, content_blocks_json, created_at)
+      VALUES (?, ?, 1, 'user', ?, ?)
+    `,
+    )
+    .run(command.message.id, command.childSession.id, prepared.contentBlocksJson, now);
+  const admissionCommand: RunAdmissionCommand = {
+    sessionId: command.childSession.id,
+    run: command.run,
+    attemptId: command.attemptId,
+    bindingIntent: {
+      kind: "create",
+      bindingId: command.binding.id,
+      persistenceMode: command.binding.persistenceMode,
+    },
+    dispatch: command.dispatch,
+  };
+  insertRunAdmissionRows(
+    database,
+    admissionCommand,
+    command.message.id,
+    null,
+    1,
+    prepared.executionSnapshotJson,
+    prepared.dispatchFingerprint,
+    null,
+    command.childSession.providerId,
+    now,
+  );
+  database
+    .prepare(
+      `
+      INSERT INTO session_relations (
+        id, parent_session_id, child_session_id, orchestration_root_session_id,
+        created_by_parent_run_id, correlation_id, label, purpose_summary, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    )
+    .run(
+      command.relation.id,
+      command.parentSessionId,
+      command.childSession.id,
+      parentRun.root_session_id,
+      command.parentRunId,
+      command.relation.correlationId,
+      command.relation.label,
+      command.relation.purposeSummary,
+      now,
+    );
+  database
+    .prepare(
+      `
+      INSERT INTO delegations (
+        id, session_relation_id, initial_instruction_message_id, latest_instruction_message_id,
+        latest_child_run_id, mention_text, workflow_state, created_at, updated_at, version
+      ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, 0)
+    `,
+    )
+    .run(
+      command.delegation.id,
+      command.relation.id,
+      command.message.id,
+      command.message.id,
+      command.run.id,
+      command.delegation.mentionText,
+      now,
+      now,
+    );
+  database
+    .prepare(
+      `
+      INSERT INTO child_result_deliveries (
+        id, delegation_id, ordinal, child_run_id, availability_state,
+        created_at, updated_at, version
+      ) VALUES (?, ?, 1, ?, 'pending', ?, ?, 0)
+    `,
+    )
+    .run(command.deliveryId, command.delegation.id, command.run.id, now, now);
+
+  const value: ChildStartResult = {
+    parentSessionId: command.parentSessionId,
+    parentRunId: command.parentRunId,
+    childSessionId: command.childSession.id,
+    orchestrationRootSessionId: parentRun.root_session_id,
+    relationId: command.relation.id,
+    correlationId: command.relation.correlationId,
+    delegationId: command.delegation.id,
+    deliveryId: command.deliveryId,
+    messageId: command.message.id,
+    runId: command.run.id,
+    attemptId: command.attemptId,
+    bindingId: command.binding.id,
+    bindingState: "creating",
+    dispatchState: "pending",
+    admittedAt: now,
+  };
+  completeIdempotency(
+    database,
+    command.idempotencyKey,
+    command.parentSessionId,
+    REPOSITORY_WRITE_OPERATIONS.childStart,
+    prepared.fingerprint,
+    "delivery",
+    command.deliveryId,
     value,
     now,
     retentionMs,
@@ -1722,6 +1950,85 @@ function decodeChildResultCollectReplay(
   return value as ChildResultCollectResult;
 }
 
+function decodeChildStartReplay(
+  database: DatabaseSync,
+  command: ChildStartCommand,
+  value: unknown,
+): ChildStartResult | undefined {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "parentSessionId",
+      "parentRunId",
+      "childSessionId",
+      "orchestrationRootSessionId",
+      "relationId",
+      "correlationId",
+      "delegationId",
+      "deliveryId",
+      "messageId",
+      "runId",
+      "attemptId",
+      "bindingId",
+      "bindingState",
+      "dispatchState",
+      "admittedAt",
+    ])
+  ) {
+    return undefined;
+  }
+  const row = database
+    .prepare(
+      `
+      SELECT sr.parent_session_id, sr.created_by_parent_run_id, sr.child_session_id,
+        sr.orchestration_root_session_id, sr.id AS relation_id, sr.correlation_id, sr.created_at,
+        g.id AS delegation_id, d.id AS delivery_id, g.initial_instruction_message_id AS message_id,
+        r.id AS run_id, a.id AS attempt_id, b.id AS binding_id
+      FROM child_result_deliveries d
+      JOIN delegations g ON g.id = d.delegation_id
+      JOIN session_relations sr ON sr.id = g.session_relation_id
+      JOIN runs r ON r.id = d.child_run_id AND r.session_id = sr.child_session_id
+      JOIN run_attempts a ON a.run_id = r.id AND a.ordinal = 1
+      JOIN provider_bindings b ON b.created_by_run_attempt_id = a.id
+      JOIN run_dispatches rd ON rd.run_attempt_id = a.id
+      WHERE d.id = ?
+    `,
+    )
+    .get(command.deliveryId) as ChildStartReplayRow | undefined;
+  if (
+    row === undefined ||
+    row.parent_session_id !== command.parentSessionId ||
+    row.created_by_parent_run_id !== command.parentRunId ||
+    row.child_session_id !== command.childSession.id ||
+    row.relation_id !== command.relation.id ||
+    row.correlation_id !== command.relation.correlationId ||
+    row.delegation_id !== command.delegation.id ||
+    row.delivery_id !== command.deliveryId ||
+    row.message_id !== command.message.id ||
+    row.run_id !== command.run.id ||
+    row.attempt_id !== command.attemptId ||
+    row.binding_id !== command.binding.id ||
+    value.parentSessionId !== row.parent_session_id ||
+    value.parentRunId !== row.created_by_parent_run_id ||
+    value.childSessionId !== row.child_session_id ||
+    value.orchestrationRootSessionId !== row.orchestration_root_session_id ||
+    value.relationId !== row.relation_id ||
+    value.correlationId !== row.correlation_id ||
+    value.delegationId !== row.delegation_id ||
+    value.deliveryId !== row.delivery_id ||
+    value.messageId !== row.message_id ||
+    value.runId !== row.run_id ||
+    value.attemptId !== row.attempt_id ||
+    value.bindingId !== row.binding_id ||
+    value.bindingState !== "creating" ||
+    value.dispatchState !== "pending" ||
+    value.admittedAt !== row.created_at
+  ) {
+    return undefined;
+  }
+  return value as ChildStartResult;
+}
+
 function completeIdempotency<T extends object>(
   database: DatabaseSync,
   key: string,
@@ -1858,6 +2165,55 @@ function prepareRetryRunAdmission(command: RetryRunAdmissionCommand): PreparedRe
         providerIdempotencyKey: command.dispatch.providerIdempotencyKey,
       },
     }),
+  };
+}
+
+function prepareChildStart(command: ChildStartCommand): PreparedChildStart {
+  const allowedAdditionalDirectories = normalizeAllowedAdditionalDirectories(
+    command.childSession.allowedAdditionalDirectories,
+  );
+  const directoriesJson = JSON.stringify(allowedAdditionalDirectories);
+  const contentBlocksJson = canonicalJsonString(command.message.contentBlocks);
+  const executionSnapshotJson = canonicalJsonString(command.run.executionSnapshot);
+  const providerRequestJson = canonicalJsonString(command.dispatch.providerRequest);
+  if (
+    Buffer.byteLength(directoriesJson) > 4 * 1024 * 1024 ||
+    Buffer.byteLength(contentBlocksJson) > 4 * 1024 * 1024 ||
+    Buffer.byteLength(executionSnapshotJson) > 256 * 1024 ||
+    Buffer.byteLength(providerRequestJson) > 256 * 1024
+  ) {
+    throw invalidCommand();
+  }
+  const dispatchFingerprint = fingerprintJson(providerRequestJson);
+  return {
+    command,
+    directoriesJson,
+    contentBlocksJson,
+    executionSnapshotJson,
+    dispatchFingerprint,
+    fingerprint: fingerprintJson(
+      canonicalJsonString({
+        operation: REPOSITORY_WRITE_OPERATIONS.childStart,
+        parentSessionId: command.parentSessionId,
+        parentRunId: command.parentRunId,
+        workspaceKey: command.workspaceKey,
+        childSession: {
+          ...command.childSession,
+          allowedAdditionalDirectories,
+        },
+        relation: command.relation,
+        delegation: command.delegation,
+        message: { id: command.message.id, contentBlocks: JSON.parse(contentBlocksJson) },
+        run: { id: command.run.id, executionSnapshot: JSON.parse(executionSnapshotJson) },
+        attemptId: command.attemptId,
+        binding: command.binding,
+        dispatch: {
+          requestFingerprint: dispatchFingerprint,
+          providerIdempotencyKey: command.dispatch.providerIdempotencyKey,
+        },
+        deliveryId: command.deliveryId,
+      }),
+    ),
   };
 }
 
@@ -2080,6 +2436,77 @@ function decodeRetryRunAdmission(payload: Readonly<Record<string, unknown>>): De
     return decodeFailure();
   }
   return { ok: true, value: payload as unknown as RetryRunAdmissionCommand };
+}
+
+function decodeChildStart(payload: Readonly<Record<string, unknown>>): DecodeResult<ChildStartCommand> {
+  if (
+    !hasExactKeys(payload, [
+      "parentSessionId",
+      "parentRunId",
+      "workspaceKey",
+      "idempotencyKey",
+      "childSession",
+      "relation",
+      "delegation",
+      "message",
+      "run",
+      "attemptId",
+      "binding",
+      "dispatch",
+      "deliveryId",
+    ]) ||
+    !isBoundedString(payload.parentSessionId, 1_024) ||
+    !isBoundedString(payload.parentRunId, 1_024) ||
+    !isBoundedString(payload.workspaceKey, 1_024) ||
+    !isCanonicalUuid(payload.idempotencyKey) ||
+    !isBoundedString(payload.attemptId, 1_024) ||
+    !isBoundedString(payload.deliveryId, 1_024) ||
+    !isPlainObject(payload.childSession) ||
+    !hasExactKeys(payload.childSession, [
+      "id",
+      "providerId",
+      "allowedAdditionalDirectories",
+      "defaultCharacterId",
+      "maxConcurrentChildRuns",
+    ]) ||
+    !isBoundedString(payload.childSession.id, 1_024) ||
+    !isBoundedString(payload.childSession.providerId, 1_024) ||
+    !isDenseBoundedStringArray(payload.childSession.allowedAdditionalDirectories, 1_024, 32_768) ||
+    !isBoundedString(payload.childSession.defaultCharacterId, 1_024) ||
+    !Number.isSafeInteger(payload.childSession.maxConcurrentChildRuns) ||
+    (payload.childSession.maxConcurrentChildRuns as number) < 0 ||
+    !isPlainObject(payload.relation) ||
+    !hasExactKeys(payload.relation, ["id", "correlationId", "label", "purposeSummary"]) ||
+    !isBoundedString(payload.relation.id, 1_024) ||
+    !isBoundedString(payload.relation.correlationId, 1_024) ||
+    !isNullableBoundedText(payload.relation.label, 128) ||
+    !isNullableBoundedText(payload.relation.purposeSummary, 512) ||
+    !isPlainObject(payload.delegation) ||
+    !hasExactKeys(payload.delegation, ["id", "mentionText"]) ||
+    !isBoundedString(payload.delegation.id, 1_024) ||
+    !isNullableBoundedText(payload.delegation.mentionText, 128) ||
+    !isPlainObject(payload.message) ||
+    !hasExactKeys(payload.message, ["id", "contentBlocks"]) ||
+    !isBoundedString(payload.message.id, 1_024) ||
+    !isDenseJsonArray(payload.message.contentBlocks, 10_000) ||
+    !isPlainObject(payload.run) ||
+    !hasExactKeys(payload.run, ["id", "executionSnapshot"]) ||
+    !isBoundedString(payload.run.id, 1_024) ||
+    !isRunExecutionSnapshot(payload.run.executionSnapshot) ||
+    !isPlainObject(payload.binding) ||
+    !hasExactKeys(payload.binding, ["id", "persistenceMode"]) ||
+    !isBoundedString(payload.binding.id, 1_024) ||
+    (payload.binding.persistenceMode !== "persistent" && payload.binding.persistenceMode !== "ephemeral") ||
+    !isPlainObject(payload.dispatch) ||
+    !hasExactKeys(payload.dispatch, ["providerRequest", "providerIdempotencyKey"]) ||
+    !isPlainObject(payload.dispatch.providerRequest) ||
+    !isJsonValue(payload.dispatch.providerRequest) ||
+    (payload.dispatch.providerIdempotencyKey !== null &&
+      !isBoundedString(payload.dispatch.providerIdempotencyKey, 4_096))
+  ) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as ChildStartCommand };
 }
 
 function decodeProviderBindingResolution(
@@ -2369,17 +2796,19 @@ function hasNonTerminalRun(database: DatabaseSync, sessionId: string): boolean {
   );
 }
 
-function hasRunCapacity(
+function findRunCapacityExceeded(
   database: DatabaseSync,
   providerId: string,
   maxConcurrentRuns: number,
   maxConcurrentRunsPerProvider: number,
-): boolean {
+): RepositoryCapacityExceededDetails | undefined {
   const nonTerminal = "('queued','starting','active','canceling','finalizing')";
   const total = database.prepare(`SELECT count(*) AS count FROM runs WHERE phase IN ${nonTerminal}`).get() as {
     count: number;
   };
-  if (total.count >= maxConcurrentRuns) return false;
+  if (total.count >= maxConcurrentRuns) {
+    return { scope: "application", current: total.count, limit: maxConcurrentRuns };
+  }
   const provider = database
     .prepare(
       `
@@ -2389,7 +2818,45 @@ function hasRunCapacity(
     `,
     )
     .get(providerId) as { count: number };
-  return provider.count < maxConcurrentRunsPerProvider;
+  if (provider.count >= maxConcurrentRunsPerProvider) {
+    return {
+      scope: "provider",
+      providerId,
+      current: provider.count,
+      limit: maxConcurrentRunsPerProvider,
+    };
+  }
+  return undefined;
+}
+
+function countNonTerminalChildren(database: DatabaseSync, rootSessionId: string): number {
+  const row = database
+    .prepare(
+      `
+      SELECT count(*) AS count
+      FROM runs r
+      JOIN session_relations sr ON sr.child_session_id = r.session_id
+      WHERE sr.orchestration_root_session_id = ?
+        AND r.phase IN ('queued','starting','active','canceling','finalizing')
+    `,
+    )
+    .get(rootSessionId) as { count: number };
+  return row.count;
+}
+
+function hasChildStartIdentityConflict(database: DatabaseSync, command: ChildStartCommand): boolean {
+  return (
+    database.prepare("SELECT 1 FROM sessions WHERE id = ?").get(command.childSession.id) !== undefined ||
+    database.prepare("SELECT 1 FROM messages WHERE id = ?").get(command.message.id) !== undefined ||
+    database.prepare("SELECT 1 FROM runs WHERE id = ?").get(command.run.id) !== undefined ||
+    database.prepare("SELECT 1 FROM run_attempts WHERE id = ?").get(command.attemptId) !== undefined ||
+    database.prepare("SELECT 1 FROM provider_bindings WHERE id = ?").get(command.binding.id) !== undefined ||
+    database
+      .prepare("SELECT 1 FROM session_relations WHERE id = ? OR correlation_id = ?")
+      .get(command.relation.id, command.relation.correlationId) !== undefined ||
+    database.prepare("SELECT 1 FROM delegations WHERE id = ?").get(command.delegation.id) !== undefined ||
+    database.prepare("SELECT 1 FROM child_result_deliveries WHERE id = ?").get(command.deliveryId) !== undefined
+  );
 }
 
 function hasAdmissionIdentityConflict(database: DatabaseSync, command: NormalRunAdmissionCommand): boolean {
@@ -2796,6 +3263,20 @@ function hasResponseReference(
     return refId === scopeSessionId && database.prepare("SELECT 1 FROM sessions WHERE id = ?").get(refId) !== undefined;
   }
   if (refType === "delivery") {
+    if (operation === REPOSITORY_WRITE_OPERATIONS.childStart) {
+      return (
+        database
+          .prepare(
+            `
+            SELECT 1 FROM child_result_deliveries d
+            JOIN delegations g ON g.id = d.delegation_id
+            JOIN session_relations sr ON sr.id = g.session_relation_id
+            WHERE d.id = ? AND sr.parent_session_id = ?
+          `,
+          )
+          .get(refId, scopeSessionId) !== undefined
+      );
+    }
     if (operation === REPOSITORY_WRITE_OPERATIONS.childResultCollect) {
       return (
         database
@@ -3369,7 +3850,21 @@ function success<T>(value: T, replayed: boolean): RepositoryCommandResult<T> {
   return { ok: true, value, replayed };
 }
 
-function failure<T>(code: RepositoryCommandErrorCode, message: string, retryable = false): RepositoryCommandResult<T> {
+function capacityFailure<T>(details: RepositoryCapacityExceededDetails): RepositoryCommandResult<T> {
+  const message =
+    details.scope === "root"
+      ? "Child Run capacity is exhausted."
+      : details.scope === "application"
+        ? "Application Run capacity is exhausted."
+        : "Provider Run capacity is exhausted.";
+  return { ok: false, error: { code: "capacity_exceeded", message, retryable: true, details }, replayed: false };
+}
+
+function failure<T>(
+  code: Exclude<RepositoryCommandErrorCode, "capacity_exceeded">,
+  message: string,
+  retryable = false,
+): RepositoryCommandResult<T> {
   return { ok: false, error: { code, message, retryable }, replayed: false };
 }
 
@@ -3386,6 +3881,10 @@ function hasExactKeys(value: Readonly<Record<string, unknown>>, expected: readon
 
 function isBoundedString(value: unknown, maxLength: number): value is string {
   return typeof value === "string" && value.length >= 1 && value.length <= maxLength;
+}
+
+function isNullableBoundedText(value: unknown, maxLength: number): value is string | null {
+  return value === null || (typeof value === "string" && value.length <= maxLength);
 }
 
 function isRunOutputDraft(value: unknown, allowPending: boolean): value is RunOutputDraft | RunTerminalOutputDraft {
@@ -3628,6 +4127,14 @@ type PreparedRetryRunAdmission = Readonly<{
   dispatchFingerprint: string;
   fingerprint: string;
 }>;
+type PreparedChildStart = Readonly<{
+  command: ChildStartCommand;
+  directoriesJson: string;
+  contentBlocksJson: string;
+  executionSnapshotJson: string;
+  dispatchFingerprint: string;
+  fingerprint: string;
+}>;
 type RunAdmissionCommand = Readonly<{
   sessionId: string;
   run: RunAdmissionDraft;
@@ -3721,6 +4228,21 @@ type CollectRow = Readonly<{
   child_session_id: string;
   parent_session_id: string;
   workspace_key: string;
+}>;
+type ChildStartReplayRow = Readonly<{
+  parent_session_id: string;
+  created_by_parent_run_id: string;
+  child_session_id: string;
+  orchestration_root_session_id: string;
+  relation_id: string;
+  correlation_id: string;
+  created_at: number;
+  delegation_id: string;
+  delivery_id: string;
+  message_id: string;
+  run_id: string;
+  attempt_id: string;
+  binding_id: string;
 }>;
 type BindingResolution<T> =
   | Readonly<{ ok: true; providerBindingId: string | null }>

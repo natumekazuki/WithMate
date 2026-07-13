@@ -3,6 +3,8 @@ import {
   REPOSITORY_WRITE_OPERATIONS,
   type ChildResultCollectCommand,
   type ChildResultCollectResult,
+  type ChildStartCommand,
+  type ChildStartResult,
   type NormalRunAdmissionCommand,
   type NormalRunAdmissionResult,
   type ProviderBindingResolutionCommand,
@@ -68,6 +70,10 @@ export class RepositoryWriteClient {
     options?: RequestOptions,
   ): Promise<RepositoryCommandResult<RetryRunAdmissionResult>> {
     return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runRetry, "write", command, options);
+  }
+
+  startChild(command: ChildStartCommand, options?: RequestOptions): Promise<RepositoryCommandResult<ChildStartResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.childStart, "write", command, options);
   }
 
   resolveProviderBinding(

@@ -3,6 +3,7 @@ export const REPOSITORY_WRITE_OPERATIONS = {
   sessionTransition: "repository.session.transition",
   runAdmit: "repository.run.admit",
   runRetry: "repository.run.retry",
+  childStart: "repository.child.start",
   bindingResolve: "repository.binding.resolve",
   dispatchBegin: "repository.dispatch.begin",
   dispatchResolve: "repository.dispatch.resolve",
@@ -91,6 +92,42 @@ export type RetryRunAdmissionCommand = Readonly<{
   attemptId: string;
   bindingIntent: RunAdmissionBindingIntent;
   dispatch: RunAdmissionDispatch;
+}>;
+
+export type ChildStartCommand = Readonly<{
+  parentSessionId: string;
+  parentRunId: string;
+  workspaceKey: string;
+  idempotencyKey: string;
+  childSession: Readonly<{
+    id: string;
+    providerId: string;
+    allowedAdditionalDirectories: readonly string[];
+    defaultCharacterId: string;
+    maxConcurrentChildRuns: number;
+  }>;
+  relation: Readonly<{
+    id: string;
+    correlationId: string;
+    label: string | null;
+    purposeSummary: string | null;
+  }>;
+  delegation: Readonly<{
+    id: string;
+    mentionText: string | null;
+  }>;
+  message: Readonly<{
+    id: string;
+    contentBlocks: readonly RepositoryJsonValue[];
+  }>;
+  run: RunAdmissionDraft;
+  attemptId: string;
+  binding: Readonly<{
+    id: string;
+    persistenceMode: "persistent" | "ephemeral";
+  }>;
+  dispatch: RunAdmissionDispatch;
+  deliveryId: string;
 }>;
 
 export type ProviderBindingResolutionCommand = Readonly<{
@@ -293,11 +330,29 @@ export type RepositoryCommandErrorCode =
   | "idempotency_in_progress"
   | "idempotency_expired";
 
+export type RepositoryCapacityExceededDetails =
+  | Readonly<{ scope: "root"; rootSessionId: string; current: number; limit: number }>
+  | Readonly<{ scope: "application"; current: number; limit: number }>
+  | Readonly<{ scope: "provider"; providerId: string; current: number; limit: number }>;
+
+export type RepositoryCommandError =
+  | Readonly<{
+      code: "capacity_exceeded";
+      message: string;
+      retryable: true;
+      details: RepositoryCapacityExceededDetails;
+    }>
+  | Readonly<{
+      code: Exclude<RepositoryCommandErrorCode, "capacity_exceeded">;
+      message: string;
+      retryable: boolean;
+    }>;
+
 export type RepositoryCommandResult<T> =
   | Readonly<{ ok: true; value: T; replayed: boolean }>
   | Readonly<{
       ok: false;
-      error: Readonly<{ code: RepositoryCommandErrorCode; message: string; retryable: boolean }>;
+      error: RepositoryCommandError;
       replayed: false;
     }>;
 
@@ -329,6 +384,24 @@ export type RetryRunAdmissionResult = NormalRunAdmissionResult &
   Readonly<{
     retryOfRunId: string;
   }>;
+
+export type ChildStartResult = Readonly<{
+  parentSessionId: string;
+  parentRunId: string;
+  childSessionId: string;
+  orchestrationRootSessionId: string;
+  relationId: string;
+  correlationId: string;
+  delegationId: string;
+  deliveryId: string;
+  messageId: string;
+  runId: string;
+  attemptId: string;
+  bindingId: string;
+  bindingState: "creating";
+  dispatchState: "pending";
+  admittedAt: number;
+}>;
 
 export type ProviderBindingResolutionResult = Readonly<{
   sessionId: string;
