@@ -1,6 +1,13 @@
 import path from "node:path";
 
-import { Codex, type Thread, type ThreadEvent, type ThreadItem, type Usage } from "@openai/codex-sdk";
+import {
+  Codex,
+  type Thread,
+  type ThreadEvent,
+  type ThreadItem,
+  type ThreadOptions as CodexSdkThreadOptions,
+  type Usage,
+} from "@openai/codex-sdk";
 
 import type {
   AppSettings,
@@ -146,6 +153,37 @@ const CODEX_USAGE_LIMIT_MESSAGE_PATTERN = /you['’]ve hit your usage limit\./i;
 const CODEX_USAGE_LIMIT_PURCHASE_PATTERN = /purchase more credits/i;
 const CODEX_USAGE_LIMIT_RETRY_PATTERN = /try again at/i;
 const CODEX_STREAM_DEBUG_ENV = "WITHMATE_CODEX_STREAM_DEBUG";
+const DEFAULT_CODEX_STREAM_CLOSE_GRACE_MS = 2_000;
+const DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS = 5_000;
+
+export type CodexAdapterOptions = {
+  streamCloseGraceMs?: number;
+  snapshotDeadlineMs?: number;
+};
+
+const CODEX_STREAM_CLOSE_TIMEOUT = Symbol("codex-stream-close-timeout");
+const CODEX_SNAPSHOT_TIMEOUT = Symbol("codex-snapshot-timeout");
+
+async function raceWithDeadline<T, TTimeout>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutValue: TTimeout,
+): Promise<T | TTimeout> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<TTimeout>((resolve) => {
+        timeout = setTimeout(() => resolve(timeoutValue), timeoutMs);
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
 
 export function isCodexWindowsTaskkillSuccessParseNoiseMessage(message: string): boolean {
   return CODEX_WINDOWS_TASKKILL_SUCCESS_PARSE_NOISE_PATTERN.test(message.trim());
@@ -213,6 +251,14 @@ export type CodexThreadSettings = {
   selection: ResolvedModelSelection;
   settingsKey: string;
 };
+
+function toCodexSdkThreadOptions(options: CodexThreadOptions): CodexSdkThreadOptions {
+  // Codex CLI 0.144.3 accepts max/ultra, while the TypeScript SDK union still ends at xhigh.
+  return {
+    ...options,
+    modelReasoningEffort: options.modelReasoningEffort as CodexSdkThreadOptions["modelReasoningEffort"],
+  };
+}
 
 type CodexThreadConnector = Pick<Codex, "resumeThread" | "startThread">;
 
@@ -1377,7 +1423,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
   private readonly threads = new Map<string, CachedCodexThread>();
   private readonly workspaceSnapshotIndexes = new Map<string, WorkspaceSnapshotIndex>();
 
-  constructor(private readonly logger?: CodexAdapterLogger) {}
+  constructor(
+    private readonly logger?: CodexAdapterLogger,
+    private readonly options: CodexAdapterOptions = {},
+  ) {}
 
   private writeLog(input: CodexAdapterLogInput): void {
     try {
@@ -1484,7 +1533,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
   }> {
     const signal = input.signal ?? AbortSignal.timeout(input.timeoutMs);
     const { client } = this.getClient(input.providerId, input.appSettings);
-    const thread = client.startThread(this.buildBackgroundThreadOptions(input));
+    const thread = client.startThread(toCodexSdkThreadOptions(this.buildBackgroundThreadOptions(input)));
 
     const backgroundInput = `${input.prompt.systemText}\n\n${input.prompt.userText}`.trim();
     const result = await thread.run(backgroundInput, {
@@ -1645,8 +1694,40 @@ export class CodexAdapter implements ProviderTurnAdapter {
     }
     const itemAssistantText = collectAssistantText(finalItems);
     const finalAssistantText = itemAssistantText.trim().length > 0 ? itemAssistantText : streamedAssistantText;
-    const { afterSnapshot, afterSnapshotStats, useSnapshotFallback } =
-      await this.captureAfterWorkspaceSnapshot(input, finalItems);
+    const snapshotResult = await raceWithDeadline(
+      this.captureAfterWorkspaceSnapshot(input, finalItems),
+      this.options.snapshotDeadlineMs ?? DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS,
+      CODEX_SNAPSHOT_TIMEOUT,
+    );
+    const snapshotTimedOut = snapshotResult === CODEX_SNAPSHOT_TIMEOUT;
+    if (snapshotTimedOut) {
+      const summary = "Workspace snapshot timed out after the provider turn; diff may be incomplete";
+      providerMetadata.push({
+        provider: "codex",
+        kind: "postprocess_degraded",
+        source: "codex-adapter.workspace-snapshot",
+        summary,
+        payload: {
+          timeoutMs: this.options.snapshotDeadlineMs ?? DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS,
+        },
+      });
+      this.writeLog({
+        level: "warn",
+        kind: "codex.run.snapshot-timeout",
+        message: summary,
+        data: {
+          sessionId: input.session.id,
+          timeoutMs: this.options.snapshotDeadlineMs ?? DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS,
+        },
+      });
+    }
+    const { afterSnapshot, afterSnapshotStats, useSnapshotFallback } = snapshotTimedOut
+      ? {
+          afterSnapshot: beforeSnapshot,
+          afterSnapshotStats: beforeSnapshotStats,
+          useSnapshotFallback: false,
+        }
+      : snapshotResult;
     const artifact = await buildArtifact(
       input.session,
       resolveRunWorkspacePath(input),
@@ -1714,9 +1795,15 @@ export class CodexAdapter implements ProviderTurnAdapter {
     );
 
     try {
-      const { events } = await thread.runStreamed(turnInput, {
-        signal: input.signal,
-      });
+      const streamAbortController = new AbortController();
+      const forwardCallerAbort = () => streamAbortController.abort(input.signal?.reason);
+      if (input.signal?.aborted) {
+        forwardCallerAbort();
+      } else {
+        input.signal?.addEventListener("abort", forwardCallerAbort, { once: true });
+      }
+      const { events } = await thread.runStreamed(turnInput, { signal: streamAbortController.signal });
+      const iterator = events[Symbol.asyncIterator]();
       const streamDebugLogEnabled = isCodexStreamDebugLogEnabled();
       if (streamDebugLogEnabled) {
         this.writeLog({
@@ -1730,31 +1817,75 @@ export class CodexAdapter implements ProviderTurnAdapter {
         });
       }
 
-      for await (const event of events) {
-        applyCodexTurnEvent(streamState, event);
-        const eventLogData = streamDebugLogEnabled ? buildCodexTurnEventLogData(event) : null;
-        if (streamDebugLogEnabled && eventLogData) {
+      let terminalEventReceived = false;
+      try {
+        while (!terminalEventReceived) {
+          const next = await iterator.next();
+          if (next.done) {
+            break;
+          }
+          const event = next.value;
+          applyCodexTurnEvent(streamState, event);
+          const eventLogData = streamDebugLogEnabled ? buildCodexTurnEventLogData(event) : null;
+          if (streamDebugLogEnabled && eventLogData) {
+            this.writeLog({
+              level: event.type === "turn.failed" || event.type === "error" ? "warn" : "debug",
+              kind: "codex.run.stream.event",
+              message: "Codex session turn stream event",
+              data: {
+                sessionId: input.session.id,
+                threadId: streamState.threadId,
+                ...eventLogData,
+              },
+            });
+          }
+          await emitLiveState(
+            onProgress,
+            input.session.id,
+            streamState.threadId,
+            streamState.liveSteps,
+            getLiveAssistantText(streamState),
+            streamState.reasoningText,
+            streamState.liveUsage,
+            getLiveStreamErrorMessage(streamState),
+          );
+          // SDK terminal events are authoritative. EOF is only transport cleanup and may never arrive.
+          terminalEventReceived = event.type === "turn.completed" || event.type === "turn.failed" || event.type === "error";
+        }
+      } finally {
+        input.signal?.removeEventListener("abort", forwardCallerAbort);
+        if (terminalEventReceived) {
+          streamAbortController.abort();
+        }
+        const closeResult = await raceWithDeadline(
+          Promise.resolve(iterator.return?.(undefined)).catch((error) => {
+            if (!terminalEventReceived) {
+              throw error;
+            }
+            this.writeLog({
+              level: "warn",
+              kind: "codex.run.stream-close-failed",
+              message: "Codex stream cleanup failed after a terminal event",
+              data: { sessionId: input.session.id },
+              error: errorToCodexAdapterLogError(error),
+            });
+          }),
+          this.options.streamCloseGraceMs ?? DEFAULT_CODEX_STREAM_CLOSE_GRACE_MS,
+          CODEX_STREAM_CLOSE_TIMEOUT,
+        );
+        if (closeResult === CODEX_STREAM_CLOSE_TIMEOUT) {
+          streamAbortController.abort();
           this.writeLog({
-            level: event.type === "turn.failed" || event.type === "error" ? "warn" : "debug",
-            kind: "codex.run.stream.event",
-            message: "Codex session turn stream event",
+            level: "warn",
+            kind: "codex.run.stream-close-timeout",
+            message: "Codex stream cleanup exceeded its grace period",
             data: {
               sessionId: input.session.id,
-              threadId: streamState.threadId,
-              ...eventLogData,
+              terminalEventReceived,
+              timeoutMs: this.options.streamCloseGraceMs ?? DEFAULT_CODEX_STREAM_CLOSE_GRACE_MS,
             },
           });
         }
-        await emitLiveState(
-          onProgress,
-          input.session.id,
-          streamState.threadId,
-          streamState.liveSteps,
-          getLiveAssistantText(streamState),
-          streamState.reasoningText,
-          streamState.liveUsage,
-          getLiveStreamErrorMessage(streamState),
-        );
       }
       if (streamDebugLogEnabled) {
         this.writeLog({
@@ -1815,6 +1946,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
           canceled,
           reason,
         );
+      }
+
+      if (!streamState.turnCompleted) {
+        throw new Error("Codex stream ended before a terminal turn event was received");
       }
 
       const result = await this.buildTurnResult(
@@ -1978,8 +2113,8 @@ export function resolveCodexThreadForSettings(args: {
 
   return {
     thread: threadId?.trim()
-      ? client.resumeThread(threadId, options)
-      : client.startThread(options),
+      ? client.resumeThread(threadId, toCodexSdkThreadOptions(options))
+      : client.startThread(toCodexSdkThreadOptions(options)),
     reusedCached: false,
   };
 }

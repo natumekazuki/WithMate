@@ -5,6 +5,7 @@ import {
 } from "./additional-directory-state.js";
 import { normalizeCodexSandboxMode, type CodexSandboxMode } from "./codex-sandbox-mode.js";
 import {
+  isModelReasoningEffort,
   resolveModelChangeSelection,
   resolveModelSelection,
   type ModelCatalogProvider,
@@ -431,14 +432,9 @@ export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | nu
     provider: typeof candidate.provider === "string" ? candidate.provider : "codex",
     catalogRevision: typeof candidate.catalogRevision === "number" ? candidate.catalogRevision : 1,
     model: typeof candidate.model === "string" ? candidate.model : "",
-    reasoningEffort:
-      candidate.reasoningEffort === "minimal" ||
-      candidate.reasoningEffort === "low" ||
-      candidate.reasoningEffort === "medium" ||
-      candidate.reasoningEffort === "high" ||
-      candidate.reasoningEffort === "xhigh"
-        ? candidate.reasoningEffort
-        : "medium",
+    reasoningEffort: isModelReasoningEffort(candidate.reasoningEffort)
+      ? candidate.reasoningEffort
+      : "medium",
     approvalMode:
       candidate.approvalMode === "never" ||
       candidate.approvalMode === "on-request" ||

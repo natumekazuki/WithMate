@@ -18,6 +18,7 @@ import {
   type UpdateMateGrowthModelPreferenceInput,
   type UpdateMateGrowthSettingsInput,
 } from "../src/mate/mate-state.js";
+import { MODEL_REASONING_EFFORTS } from "../src/model-catalog.js";
 
 const MATE_ID = "current";
 const MATE_DIRECTORY_NAME = "mate";
@@ -27,7 +28,7 @@ const MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_PROVIDER_ID = "codex";
 const MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_MODEL = "gpt-5.4";
 const MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_DEPTH = "low";
 const MATE_GROWTH_SUPPORTED_MODEL_PREFERENCE_PURPOSE = "memory_candidate";
-const MATE_GROWTH_SUPPORTED_MODEL_PREFERENCE_DEPTHS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
+const MATE_GROWTH_SUPPORTED_MODEL_PREFERENCE_DEPTHS = new Set<string>(MODEL_REASONING_EFFORTS);
 const MATE_SECTION_FILES = [
   { key: "core", relativePath: "mate/core.md" },
   { key: "bond", relativePath: "mate/bond.md" },
@@ -243,7 +244,7 @@ function normalizeGrowthModelPreferences(modelPreferences: Array<UpdateMateGrowt
       throw new Error("depth は空にできないよ。");
     }
     if (!MATE_GROWTH_SUPPORTED_MODEL_PREFERENCE_DEPTHS.has(depth)) {
-      throw new Error("depth は minimal / low / medium / high / xhigh のいずれかで指定してね。");
+      throw new Error("depth は minimal / low / medium / high / xhigh / max / ultra のいずれかで指定してね。");
     }
 
     let priority = preference.priority;

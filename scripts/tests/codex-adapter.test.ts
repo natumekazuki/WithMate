@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 import { buildNewSession } from "../../src/app-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
-import type { ModelCatalogProvider } from "../../src/model-catalog.js";
+import type { ModelCatalogProvider, ModelReasoningEffort } from "../../src/model-catalog.js";
 import {
   CodexAdapter,
   buildCodexProviderMetadata,
@@ -51,13 +51,18 @@ const CODEX_PROVIDER_CATALOG: ModelCatalogProvider = {
       label: "GPT-5.4 mini",
       reasoningEfforts: ["low", "medium", "high"],
     },
+    {
+      id: "gpt-5.6-sol",
+      label: "GPT-5.6 Sol",
+      reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    },
   ],
 };
 
 function createSession(options?: {
   threadId?: string;
   model?: string;
-  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+  reasoningEffort?: ModelReasoningEffort;
   approvalMode?: "never" | "on-request" | "untrusted";
   codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
   allowedAdditionalDirectories?: string[];
@@ -158,6 +163,27 @@ async function* createCodexStreamFromEvents(
   }
 }
 
+function createCodexStreamThatNeverClosesAfter(events: unknown[]): AsyncGenerator<never> {
+  let index = 0;
+  return {
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+    async next() {
+      if (index < events.length) {
+        return { done: false as const, value: events[index++] as never };
+      }
+      return await new Promise<IteratorResult<never>>(() => {});
+    },
+    async return() {
+      return await new Promise<IteratorResult<never>>(() => {});
+    },
+    async throw(error?: unknown) {
+      throw error;
+    },
+  };
+}
+
 describe("CodexAdapter thread settings", () => {
   const windowsTaskkillParseNoiseMessage =
     "Failed to parse item: SUCCESS: The process with PID 13760 (child process of PID 32340) has been terminated.";
@@ -235,6 +261,165 @@ describe("CodexAdapter thread settings", () => {
       assert.equal(result.threadId, "thread-1");
       assert.equal(result.assistantText, "done");
     } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("turn.completed 後に stream が閉じなくても terminal event で成功へ収束する", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-terminal-event-"));
+    const logs: Array<{ kind: string }> = [];
+    const adapter = new CodexAdapter((entry) => logs.push(entry), {
+      streamCloseGraceMs: 5,
+    }) as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+
+    try {
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-terminal",
+            runStreamed: async () => ({
+              events: createCodexStreamThatNeverClosesAfter([
+                {
+                  type: "item.completed",
+                  item: { id: "message-1", type: "agent_message", text: "done" },
+                },
+                { type: "turn.completed", usage: null },
+              ]),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+
+      const result = await Promise.race([
+        adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath)),
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("terminal timeout")), 100)),
+      ]);
+
+      assert.equal(result.threadId, "thread-terminal");
+      assert.equal(result.assistantText, "done");
+      assert.equal(logs.some((entry) => entry.kind === "codex.run.stream-close-timeout"), true);
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("terminal event のない EOF は成功扱いにしない", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-no-terminal-"));
+    const adapter = new CodexAdapter() as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+
+    try {
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-no-terminal",
+            runStreamed: async () => ({
+              events: createCodexStreamFromEvents([
+                {
+                  type: "item.completed",
+                  item: { id: "message-1", type: "agent_message", text: "partial" },
+                },
+              ]),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+
+      await assert.rejects(
+        () => adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath)),
+        (error) => {
+          assert.equal(error instanceof ProviderTurnError, true);
+          assert.equal((error as ProviderTurnError).partialResult.assistantText, "partial");
+          assert.match((error as Error).message, /terminal turn event/);
+          return true;
+        },
+      );
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("turn.completed 後の workspace snapshot が停止しても degraded result へ収束する", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-snapshot-timeout-"));
+    const adapter = new CodexAdapter(undefined, { snapshotDeadlineMs: 5 }) as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+
+    try {
+      await writeFile(path.join(workspacePath, "tracked.txt"), "before\n", "utf8");
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-snapshot-timeout",
+            runStreamed: async () => {
+              _setWalkDirectoryStatOverrideForTesting(async () => {
+                return await new Promise<Stats>(() => {});
+              });
+              return {
+                events: createCodexStreamFromEvents([
+                  {
+                    type: "item.completed",
+                    item: { id: "message-1", type: "agent_message", text: "done" },
+                  },
+                  { type: "turn.completed", usage: null },
+                ]),
+              };
+            },
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+
+      const result = await Promise.race([
+        adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath)),
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("snapshot timeout")), 100)),
+      ]);
+
+      assert.equal(result.assistantText, "done");
+      assert.equal(
+        result.providerMetadata?.some((entry) => entry.source === "codex-adapter.workspace-snapshot"),
+        true,
+      );
+    } finally {
+      _setWalkDirectoryStatOverrideForTesting(null);
       await rm(workspacePath, { recursive: true, force: true });
     }
   });
@@ -524,7 +709,7 @@ describe("CodexAdapter thread settings", () => {
         },
       );
 
-      const failedLog = logs.find((entry) => entry.kind === "codex.run.failed");
+      const failedLog = logs.find((entry) => entry.kind === "codex.run.stream-error");
       assert.equal(failedLog?.data?.providerErrorReason, "usage_limit");
       assert.equal(failedLog?.data?.streamErrorMessage, usageLimitMessage);
     } finally {
@@ -1024,6 +1209,20 @@ describe("CodexAdapter thread settings", () => {
     assert.notEqual(previousSettings.settingsKey, nextSettings.settingsKey);
     assert.equal(nextSettings.options.model, "gpt-5.4-mini");
     assert.equal(nextSettings.options.modelReasoningEffort, "low");
+  });
+
+  it("max / ultra を Codex thread options へそのまま渡す", () => {
+    for (const reasoningEffort of ["max", "ultra"] as const) {
+      const session = createSession({
+        model: "gpt-5.6-sol",
+        reasoningEffort,
+      });
+
+      const settings = buildCodexThreadSettings(session, CODEX_PROVIDER_CATALOG, "client-key");
+
+      assert.equal(settings.options.model, "gpt-5.6-sol");
+      assert.equal(settings.options.modelReasoningEffort, reasoningEffort);
+    }
   });
 
   it("approval / sandbox / additional directories 変更後の thread settings は新 options と settingsKey を反映する", () => {

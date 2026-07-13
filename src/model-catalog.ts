@@ -1,4 +1,4 @@
-export type ModelReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ModelReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 
 export type ModelCatalogItem = {
   id: string;
@@ -30,7 +30,16 @@ export type ResolvedModelSelection = {
   resolvedReasoningEffort: ModelReasoningEffort;
 };
 
-const REASONING_EFFORT_ORDER: readonly ModelReasoningEffort[] = ["minimal", "low", "medium", "high", "xhigh"];
+export const MODEL_REASONING_EFFORTS: readonly ModelReasoningEffort[] = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+];
+const REASONING_EFFORT_ORDER = MODEL_REASONING_EFFORTS;
 const REASONING_EFFORT_SET = new Set<ModelReasoningEffort>(REASONING_EFFORT_ORDER);
 
 export const DEFAULT_PROVIDER_ID = "codex";
@@ -44,7 +53,13 @@ export const reasoningEffortOptions = [
   { id: "medium", label: "medium" },
   { id: "high", label: "high" },
   { id: "xhigh", label: "xhigh" },
+  { id: "max", label: "max" },
+  { id: "ultra", label: "ultra" },
 ] as const satisfies ReadonlyArray<{ id: ModelReasoningEffort; label: string }>;
+
+export function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
+  return typeof value === "string" && REASONING_EFFORT_SET.has(value as ModelReasoningEffort);
+}
 
 function normalizeNonEmptyString(value: unknown, fieldName: string): string {
   if (typeof value !== "string" || !value.trim()) {
@@ -55,11 +70,11 @@ function normalizeNonEmptyString(value: unknown, fieldName: string): string {
 }
 
 function normalizeReasoningEffort(value: unknown, fieldName: string): ModelReasoningEffort {
-  if (typeof value !== "string" || !REASONING_EFFORT_SET.has(value as ModelReasoningEffort)) {
+  if (!isModelReasoningEffort(value)) {
     throw new Error(`${fieldName} が不正だよ。`);
   }
 
-  return value as ModelReasoningEffort;
+  return value;
 }
 
 function normalizeReasoningEfforts(value: unknown, fieldName: string): ModelReasoningEffort[] {

@@ -2,6 +2,7 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER_ID,
   DEFAULT_REASONING_EFFORT,
+  isModelReasoningEffort,
   normalizeProviderId,
   type ModelReasoningEffort,
 } from "./model-catalog.js";
@@ -114,17 +115,7 @@ export function createDefaultAppSettings(): AppSettings {
 }
 
 function normalizeReasoningEffort(value: unknown, fallback: ModelReasoningEffort): ModelReasoningEffort {
-  if (
-    value === "minimal" ||
-    value === "low" ||
-    value === "medium" ||
-    value === "high" ||
-    value === "xhigh"
-  ) {
-    return value;
-  }
-
-  return fallback;
+  return isModelReasoningEffort(value) ? value : fallback;
 }
 
 function normalizeProviderAppSettings(value: unknown, defaultEnabled: boolean): ProviderAppSettings {

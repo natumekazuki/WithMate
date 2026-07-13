@@ -10,6 +10,7 @@ import {
   buildSessionSummarySignature,
   CURRENT_SESSION_SCHEMA_VERSION,
   isReadOnlySession,
+  normalizeSession,
   selectHydrationTarget,
   type SessionSummary,
 } from "../../src/session-state.js";
@@ -129,6 +130,17 @@ describe("session-state session kind", () => {
 });
 
 describe("session-state model selection", () => {
+  it("max / ultra を session 復元時に保持する", () => {
+    for (const reasoningEffort of ["max", "ultra"] as const) {
+      const session = normalizeSession({
+        ...createSession("codex"),
+        reasoningEffort,
+      });
+
+      assert.equal(session?.reasoningEffort, reasoningEffort);
+    }
+  });
+
   it("Copilot session の model 更新時は threadId を維持して正規化後の設定を保存する", () => {
     const session = {
       ...createSession("copilot"),

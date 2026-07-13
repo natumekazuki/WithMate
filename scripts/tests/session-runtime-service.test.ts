@@ -601,7 +601,7 @@ describe("SessionRuntimeService", () => {
           queuedProgressEmitted = true;
           emitQueuedProgressDuringWrite();
         }
-        if (entry.phase === "completed") {
+        if (entry.phase === "completed" && entry.assistantText) {
           assert.equal(storedSessions.at(-1)?.messages.at(entry.assistantMessageSeq ?? -1)?.text, entry.assistantText);
         }
         auditUpdates.push(entry);
@@ -638,7 +638,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(storedSessions[0]?.runState, "running");
     assert.equal(storedSessions[1]?.runState, "idle");
     assert.equal(storedSessions[1]?.messages.at(-1)?.text, "完了したよ。");
-    assert.equal(auditUpdates.length, 3);
+    assert.equal(auditUpdates.length, 4);
     assert.equal(auditUpdates[0]?.phase, "running");
     assert.equal(auditUpdates[0]?.assistantText, "途中経過だよ。");
     assert.equal(auditUpdates[0]?.threadId, "thread-progress");
@@ -696,11 +696,11 @@ describe("SessionRuntimeService", () => {
     assert.equal(service.isRunInFlight(session.id), false);
   });
 
-  it("completed session 保存後の audit 更新失敗は provider 失敗扱いにしない", async () => {
+  it("completed audit の詳細更新が停止しても最小 terminal 状態を先に保存して run を解放する", async () => {
     const session = createSession({ provider: "codex" });
     const storedSessions: Session[] = [];
     const auditUpdates: UpdateAuditLogInput[] = [];
-    let completedAuditFailureInjected = false;
+    let persistedAudit: UpdateAuditLogInput | null = null;
 
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
@@ -759,11 +759,12 @@ describe("SessionRuntimeService", () => {
       },
       updateAuditLog(_id, entry) {
         auditUpdates.push(entry);
-        if (entry.phase === "completed" && !completedAuditFailureInjected) {
-          completedAuditFailureInjected = true;
-          throw new Error("completed audit write failed");
+        if (entry.phase === "completed" && entry.assistantText === "完了したよ。") {
+          return new Promise<void>(() => {});
         }
+        persistedAudit = entry;
       },
+      auditEnrichmentGraceMs: 5,
       setLiveSessionRun() {},
       getLiveSessionRun() {
         return null;
@@ -794,8 +795,9 @@ describe("SessionRuntimeService", () => {
     assert.equal(storedSessions[0]?.runState, "running");
     assert.equal(storedSessions[1]?.runState, "idle");
     assert.equal(storedSessions[1]?.messages.at(-1)?.text, "完了したよ。");
+    assert.equal(persistedAudit?.phase, "completed");
+    assert.equal(persistedAudit?.assistantText, "");
     assert.equal(auditUpdates.at(-1)?.phase, "completed");
-    assert.equal(auditUpdates.at(-1)?.providerMetadata?.[0]?.kind, "audit_persistence_degraded");
     assert.equal(auditUpdates.at(-1)?.operations.length, 0);
     assert.equal(auditUpdates.at(-1)?.assistantText, "完了したよ。");
     assert.equal(auditUpdates.some((entry) => entry.phase === "failed"), false);
@@ -1134,7 +1136,7 @@ describe("SessionRuntimeService", () => {
 
     assert.equal(result.runState, "idle");
     assert.match(result.messages.at(-1)?.text ?? "", /キャンセル/);
-    assert.equal(auditUpdates.length, 2);
+    assert.equal(auditUpdates.length, 3);
     assert.equal(auditUpdates[0]?.phase, "running");
     assert.equal(auditUpdates[0]?.assistantText, "途中まで進んだよ。");
     assert.equal(auditUpdates.at(-1)?.phase, "canceled");
@@ -1268,21 +1270,120 @@ describe("SessionRuntimeService", () => {
     assert.equal(service.isRunInFlight(session.id), false);
   });
 
-  it("reset は in-flight run を abort して pending approval も deny する", async () => {
+  it("setup dependency が停止しても cancel deadline で呼び出しを収束させ、dependency の実終了まで再送を拒否する", async () => {
+    const session = createSession();
+    let resolveComposer: ((preview: ComposerPreview) => void) | null = null;
+    let providerCalled = false;
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        providerCalled = true;
+        return createPartialResult();
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession() {
+        return session;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      resolveComposerPreview() {
+        return new Promise<ComposerPreview>((resolve) => {
+          resolveComposer = resolve;
+        });
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runCharacterReflection() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+      providerCancelGraceMs: 5,
+    });
+
+    const runPromise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (!resolveComposer) {
+      throw new Error("composer setup が開始されていないよ。");
+    }
+    service.cancelRun(session.id);
+    const outcome = await Promise.race([
+      runPromise.then(() => "resolved", () => "rejected"),
+      new Promise<"deadline">((resolve) => setTimeout(() => resolve("deadline"), 25)),
+    ]);
+
+    assert.equal(service.hasInFlightRuns(), true);
+    await assert.rejects(
+      service.runSessionTurn(session.id, { userMessage: "再送" }),
+      /まだ実行中/,
+    );
+    if (!resolveComposer) {
+      throw new Error("composer resolve が取得できていないよ。");
+    }
+    resolveComposer({ attachments: [], errors: [] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(outcome, "rejected");
+    assert.equal(providerCalled, false);
+    assert.equal(service.hasInFlightRuns(), false);
+  });
+
+  it("provider が cancel 後も生存する間は terminal session への再送を拒否する", async () => {
     const session = createSession();
     const approvalResolutions: Array<{ sessionId: string; decision: LiveApprovalDecision }> = [];
     let observedAbortSignal: AbortSignal | undefined;
     let observedAbort = false;
-    const abortedPartialResult: RunSessionTurnResult = {
-      threadId: null,
-      assistantText: "",
-      logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-      transportPayload: null,
-      operations: [],
-      rawItemsJson: "[]",
-      usage: null,
-    };
-
+    let resolveProvider: ((result: RunSessionTurnResult) => void) | null = null;
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
@@ -1304,13 +1405,12 @@ describe("SessionRuntimeService", () => {
           throw new Error("AbortSignal が渡されていないよ。");
         }
         const signal = input.signal;
+        observedAbort = signal.aborted;
         signal.addEventListener("abort", () => {
           observedAbort = true;
         }, { once: true });
-        return new Promise<RunSessionTurnResult>((_resolve, reject) => {
-          signal.addEventListener("abort", () => {
-            reject(new ProviderTurnError("aborted", abortedPartialResult, true));
-          }, { once: true });
+        return new Promise<RunSessionTurnResult>((resolve) => {
+          resolveProvider = resolve;
         });
       },
     };
@@ -1368,11 +1468,15 @@ describe("SessionRuntimeService", () => {
       },
       resolvePendingElicitationRequest() {},
       currentTimestampLabel,
+      providerCancelGraceMs: 5,
     });
 
     const promise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    service.reset();
+    if (!observedAbortSignal) {
+      throw new Error("provider setup が開始されていないよ。");
+    }
+    service.cancelRun(session.id);
     const result = await promise;
 
     if (!observedAbortSignal) {
@@ -1380,6 +1484,16 @@ describe("SessionRuntimeService", () => {
     }
     assert.equal(observedAbort, true);
     assert.equal(result.runState, "idle");
+    assert.equal(service.hasInFlightRuns(), true);
+    await assert.rejects(
+      service.runSessionTurn(session.id, { userMessage: "再送" }),
+      /まだ実行中/,
+    );
+    if (!resolveProvider) {
+      throw new Error("provider resolve が取得できていないよ。");
+    }
+    resolveProvider(createPartialResult());
+    await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(service.hasInFlightRuns(), false);
     assert.deepEqual(approvalResolutions, [
       { sessionId: session.id, decision: "deny" },
@@ -1492,7 +1606,7 @@ describe("SessionRuntimeService", () => {
     assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
     assert.equal(storedSessions.length, 3);
     assert.equal(storedSessions[1]?.threadId, "");
-    assert.equal(auditUpdates.length, 2);
+    assert.equal(auditUpdates.length, 3);
     assert.equal(auditUpdates[0]?.phase, "running");
     assert.equal(auditUpdates.at(-1)?.phase, "completed");
   });
@@ -1866,7 +1980,7 @@ describe("SessionRuntimeService", () => {
     assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
     assert.equal(storedSessions.length, 2);
     assert.equal(storedSessions[1]?.threadId, "thread-fresh");
-    assert.equal(auditUpdates.length, 2);
+    assert.equal(auditUpdates.length, 3);
     assert.equal(auditUpdates[0]?.phase, "running");
     assert.equal(auditUpdates.at(-1)?.phase, "completed");
   });
@@ -1973,7 +2087,7 @@ describe("SessionRuntimeService", () => {
     ]);
     assert.equal(storedSessions.length, 2);
     assert.equal(storedSessions[1]?.threadId, "");
-    assert.equal(auditUpdates.length, 2);
+    assert.equal(auditUpdates.length, 3);
     assert.equal(auditUpdates[0]?.phase, "running");
     assert.equal(auditUpdates.at(-1)?.phase, "failed");
     assert.equal(auditUpdates.at(-1)?.threadId, "thread-broken");
@@ -2092,7 +2206,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(approvalOperation.type, "approval_request");
     assert.equal(approvalOperation.summary, "コマンド実行の承認");
     assert.match(approvalOperation.details ?? "", /status:pending/);
-    const completedUpdate = auditUpdates.find((entry) => entry.phase === "completed");
+    const completedUpdate = auditUpdates.filter((entry) => entry.phase === "completed").at(-1);
     assert.ok(completedUpdate);
     assert.deepEqual(completedUpdate?.operations, [
       { type: "command_execution", summary: "npm test", details: "OK" },
@@ -2312,7 +2426,7 @@ describe("SessionRuntimeService", () => {
 
     await service.runSessionTurn(session.id, { userMessage: "お願いします" });
 
-    const completedUpdate = auditUpdates.find((entry) => entry.phase === "completed");
+    const completedUpdate = auditUpdates.filter((entry) => entry.phase === "completed").at(-1);
     assert.ok(completedUpdate);
     assert.deepEqual(completedUpdate?.operations, [
       { type: "command_execution", summary: "npm test", details: "exit:0 (1回目)" },
@@ -2438,7 +2552,7 @@ describe("SessionRuntimeService", () => {
     assert.ok(runningUpdate);
     const elicitationOperation = runningUpdate?.operations[0];
     assert.ok(elicitationOperation);
-    const completedUpdate = auditUpdates.find((entry) => entry.phase === "completed");
+    const completedUpdate = auditUpdates.filter((entry) => entry.phase === "completed").at(-1);
     assert.ok(completedUpdate);
     assert.deepEqual(completedUpdate?.operations, [elicitationOperation]);
   });
@@ -2993,7 +3107,7 @@ describe("SessionRuntimeService", () => {
     assert.deepEqual(secondRunningUpdate.usage, { inputTokens: 50, cachedInputTokens: 0, outputTokens: 80 });
 
     // 最終的に completed phase で update されていることを確認
-    const completedUpdate = auditUpdates.find((entry) => entry.phase === "completed");
+    const completedUpdate = auditUpdates.filter((entry) => entry.phase === "completed").at(-1);
     assert.ok(completedUpdate, "completed phase の update があるべきだよ");
     assert.equal(completedUpdate.assistantText, "完了したよ。");
     assert.equal(completedUpdate.operations.length, 1);
@@ -3206,7 +3320,7 @@ describe("SessionRuntimeService", () => {
 
     await service.runSessionTurn(session.id, { userMessage: "お願いします" });
 
-    const completedUpdate = auditUpdates.find((entry) => entry.phase === "completed");
+    const completedUpdate = auditUpdates.filter((entry) => entry.phase === "completed").at(-1);
     assert.ok(completedUpdate);
     assert.deepEqual(completedUpdate?.operations, [
       { type: "background-shell", summary: "バックグラウンド処理", details: "running\n継続中" },

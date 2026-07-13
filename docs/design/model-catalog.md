@@ -1,7 +1,7 @@
 # Model Catalog
 
 - 作成日: 2026-03-14
-- 更新日: 2026-06-17
+- 更新日: 2026-07-14
 - 対象: WithMate の provider-aware model / reasoning depth catalog
 
 ## Goal
@@ -34,7 +34,7 @@ WithMate の model catalog を SQLite で管理し、Session Window と provider
         {
           "id": "gpt-5.4",
           "label": "GPT-5.4",
-          "reasoningEfforts": ["minimal", "low", "medium", "high"]
+          "reasoningEfforts": ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
         }
       ]
     }
@@ -55,6 +55,7 @@ WithMate の model catalog を SQLite で管理し、Session Window と provider
   が必須
 - `defaultModelId` はその provider の `models` に存在しなければならない
 - `defaultReasoningEffort` は `defaultModelId` の `reasoningEfforts` に含まれていなければならない
+- reasoning effort は model が対応する値だけを列挙する。Codex の `max` / `ultra` も model が advertise する場合だけ指定する
 
 ## Internal Storage
 

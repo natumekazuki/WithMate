@@ -73,7 +73,9 @@ npm run electron:start
 | MT-015E | Copilot premium requests strip | provider を `GitHub Copilot` にした session を開く | 右 pane の `Latest Command` 下に `Premium Requests` strip が出て、残量が表示される。未取得時は `unavailable` 表示でもよい |
 | MT-015F | Copilot context usage details | Copilot session で 1 turn 実行し、右 pane の `Context` を開く | `current / limit / messages / system / conversation / reset` が開いた時だけ表示される。閉じた状態では右 pane の面積をほぼ消費しない |
 | MT-015H | Copilot background tasks snapshot | Copilot session で background agent または detached shell を起動する turn を実行する | turn 完了後も right pane に `Tasks` tab が現れ、`agent / shell` の running / completed / failed が見える。Codex session ではこの tab は出ない |
+| MT-015I | Codex terminal convergence | Codex session で長めの turn を完了させ、assistant response が表示された直後の Session と Audit Log を確認する | provider の完了後に transport cleanup が遅れても Session は `idle` へ戻り、assistant response と terminal Audit Log が残る |
 | MT-016 | Session 実行キャンセル | 実行中に `Cancel` を押す | 実行が止まり、session は `idle` に戻り、Audit Log に `CANCELED` が残る |
+| MT-016A | Session cancel forced convergence | 送信直後または provider の応答停止中に `Cancel` を押す | setup / provider が cancel 応答を返さない場合も grace 後に呼び出しと Session 表示は収束する。元処理が生存中の再送は拒否され、実終了後に再送可能になる |
 | MT-017 | Approval / Model / Depth | idle 状態の Session Window で approval / model / depth を変更する | approval は `自動実行 / 安全寄り / プロバイダー判断` で表示され、選択値が保存され、再度開いても保持される |
 | MT-017A | Copilot approval prompt | provider を `GitHub Copilot`、approval を `プロバイダー判断` にした session で shell または write 承認が必要な turn を実行する | pending bubble 内に approval card が出て、`今回だけ許可 / 拒否` を押すと run が再開される。read-only request では card は出ない |
 | MT-017B | Model / Depth change thread continuity | thread を持っている session で 1 turn 実行後、idle 状態で model または depth を変更してから次の turn を送る | 次 turn は既存 thread を新しい model / depth 設定で resume し、直前までの会話履歴を参照できる。provider が stale / incompatible thread を返した場合だけ renderer からの再送なしで同一 turn 内に回復し、user / assistant message と audit log record は 1 件ずつに留まる |

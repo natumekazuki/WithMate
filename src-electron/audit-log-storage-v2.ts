@@ -16,7 +16,12 @@ import {
   type AuditTransportPayload,
 } from "../src/app-state.js";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
-import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
+import {
+  DEFAULT_MODEL_ID,
+  DEFAULT_PROVIDER_ID,
+  DEFAULT_REASONING_EFFORT,
+  isModelReasoningEffort,
+} from "../src/model-catalog.js";
 import { previewAuditLogicalPrompt } from "./audit-log-detail-preview.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
@@ -552,14 +557,9 @@ function rowToAuditLogSummary(row: AuditLogSummaryRow, operations: AuditLogOpera
     phase: toAuditLogPhase(row.phase),
     provider: row.provider || DEFAULT_PROVIDER_ID,
     model: row.model || DEFAULT_MODEL_ID,
-    reasoningEffort:
-      row.reasoning_effort === "minimal"
-      || row.reasoning_effort === "low"
-      || row.reasoning_effort === "medium"
-      || row.reasoning_effort === "high"
-      || row.reasoning_effort === "xhigh"
-        ? row.reasoning_effort
-        : DEFAULT_REASONING_EFFORT,
+    reasoningEffort: isModelReasoningEffort(row.reasoning_effort)
+      ? row.reasoning_effort
+      : DEFAULT_REASONING_EFFORT,
     approvalMode: normalizeApprovalMode(row.approval_mode, DEFAULT_APPROVAL_MODE),
     threadId: row.thread_id || "",
     assistantTextPreview: row.assistant_text_preview || "",
@@ -587,14 +587,9 @@ function rowToAuditLogEntry(row: AuditLogSummaryRow, operations: AuditLogOperati
     phase: toAuditLogPhase(row.phase),
     provider: row.provider || DEFAULT_PROVIDER_ID,
     model: row.model || DEFAULT_MODEL_ID,
-    reasoningEffort:
-      row.reasoning_effort === "minimal"
-      || row.reasoning_effort === "low"
-      || row.reasoning_effort === "medium"
-      || row.reasoning_effort === "high"
-      || row.reasoning_effort === "xhigh"
-        ? row.reasoning_effort
-        : DEFAULT_REASONING_EFFORT,
+    reasoningEffort: isModelReasoningEffort(row.reasoning_effort)
+      ? row.reasoning_effort
+      : DEFAULT_REASONING_EFFORT,
     approvalMode: normalizeApprovalMode(row.approval_mode, DEFAULT_APPROVAL_MODE),
     threadId: row.thread_id || "",
     logicalPrompt: hasDetails ? parseLogicalPrompt(row.logical_prompt_json) : DEFAULT_LOGICAL_PROMPT,

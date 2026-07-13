@@ -22,7 +22,12 @@ import {
 } from "../src/character/character-runtime-snapshot.js";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
-import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
+import {
+  DEFAULT_CATALOG_REVISION,
+  DEFAULT_MODEL_ID,
+  DEFAULT_REASONING_EFFORT,
+  isModelReasoningEffort,
+} from "../src/model-catalog.js";
 import {
   V3_SUMMARY_JSON_MAX_LENGTH,
   V3_TEXT_PREVIEW_MAX_LENGTH,
@@ -481,14 +486,9 @@ async function rowToSession(row: CompanionSessionRow, blobStore: TextBlobStore):
     provider: row.provider,
     catalogRevision: row.catalog_revision,
     model: row.model || DEFAULT_MODEL_ID,
-    reasoningEffort:
-      row.reasoning_effort === "minimal" ||
-      row.reasoning_effort === "low" ||
-      row.reasoning_effort === "medium" ||
-      row.reasoning_effort === "high" ||
-      row.reasoning_effort === "xhigh"
-        ? row.reasoning_effort
-        : DEFAULT_REASONING_EFFORT,
+    reasoningEffort: isModelReasoningEffort(row.reasoning_effort)
+      ? row.reasoning_effort
+      : DEFAULT_REASONING_EFFORT,
     customAgentName: row.custom_agent_name,
     approvalMode: normalizeApprovalMode(row.approval_mode, DEFAULT_APPROVAL_MODE),
     codexSandboxMode:
@@ -618,11 +618,7 @@ function rowToSessionSummary(
     threadId: row.thread_id,
     provider: row.provider,
     model: row.model || DEFAULT_MODEL_ID,
-    reasoningEffort: row.reasoning_effort === "minimal" ||
-      row.reasoning_effort === "low" ||
-      row.reasoning_effort === "medium" ||
-      row.reasoning_effort === "high" ||
-      row.reasoning_effort === "xhigh"
+    reasoningEffort: isModelReasoningEffort(row.reasoning_effort)
       ? row.reasoning_effort
       : DEFAULT_REASONING_EFFORT,
     approvalMode: normalizeApprovalMode(row.approval_mode, DEFAULT_APPROVAL_MODE),

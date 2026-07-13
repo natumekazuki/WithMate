@@ -44,6 +44,13 @@ describe("ModelCatalogStorage", () => {
         exported?.providers.map((provider) => provider.id),
         ["codex", "copilot"],
       );
+      assert.deepEqual(
+        exported?.providers
+          .find((provider) => provider.id === "codex")
+          ?.models.find((model) => model.id === "gpt-5.6-sol")
+          ?.reasoningEfforts,
+        ["low", "medium", "high", "xhigh", "max", "ultra"],
+      );
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }

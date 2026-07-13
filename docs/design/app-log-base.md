@@ -105,6 +105,9 @@ Codex の通常ログに残す summary:
 - `codex.run.provider-error`
 - `codex.run.stream-error`
 - `codex.run.parse-noise.ignored`
+- `codex.run.stream-close-failed`
+- `codex.run.stream-close-timeout`
+- `codex.run.snapshot-timeout`
 
 `codex.run.completed` / `codex.run.failed` / `codex.run.provider-error` / `codex.run.stream-error` には、原因分析に必要な `providerErrorReason`、`turnCompleted`、`hasUsage`、`itemCount`、`liveStepCount`、`streamErrorMessage` などの構造化 summary を残す。
 
