@@ -12,6 +12,12 @@ import {
   type RunDispatchBeginResult,
   type RunDispatchResolutionCommand,
   type RunDispatchResolutionResult,
+  type RunInputAdmissionCommand,
+  type RunInputAdmissionResult,
+  type RunInputBeginCommand,
+  type RunInputBeginResult,
+  type RunInputResolutionCommand,
+  type RunInputResolutionResult,
   type SessionCreateCommand,
   type SessionCreateResult,
   type SessionTransitionCommand,
@@ -75,5 +81,26 @@ export class RepositoryWriteClient {
     options?: RequestOptions,
   ): Promise<RepositoryCommandResult<RunDispatchResolutionResult>> {
     return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.dispatchResolve, "write", command, options);
+  }
+
+  admitRunInput(
+    command: RunInputAdmissionCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<RunInputAdmissionResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runInputAdmit, "write", command, options);
+  }
+
+  beginRunInput(
+    command: RunInputBeginCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<RunInputBeginResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runInputBegin, "write", command, options);
+  }
+
+  resolveRunInput(
+    command: RunInputResolutionCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<RunInputResolutionResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runInputResolve, "write", command, options);
   }
 }

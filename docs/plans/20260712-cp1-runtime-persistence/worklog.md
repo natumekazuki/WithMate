@@ -142,3 +142,13 @@
 - Binding作成とDispatch結果からRunの`external_side_effect_state`を`none -> unknown -> present`の方向へ更新し、確定済み`present`を後退させない契約を固定した。
 - Binding作成ambiguousによるRun terminal確定時にSessionの`last_activity_at`を同じtransactionで進めた。
 - active Bindingのexact replayを後続Run / Attempt / Dispatch stateから独立させ、resultをBindingの確定値へ限定した。
+
+## 2026-07-13: S6-B3 retry / supplemental input完了
+
+- terminal Runから元user Messageを再利用する`repository.run.retry`を追加し、直接retry chain、capacity、Binding、idempotencyの共通Gateを固定した。
+- `repository.run.input.admit`でactive Run / Attempt / Bindingとaccepted Dispatchを再検証し、supplemental user Message、pending Delivery、Delivery参照のIdempotencyRecordを1 transactionで確定した。
+- `repository.run.input.begin`の初回commitだけProvider送信を許可し、dispatching後のreplayでは再送を禁止した。
+- `repository.run.input.resolve`でaccepted / rejected / ambiguousをterminal化し、Run終了後も送信済み入力のProvider結果を記録できるようにした。
+- ephemeral Bindingのlive ownershipを初回sendと未確定resolutionへ要求し、Worker再起動後の自動送信を拒否した。
+- atomic rollback、Gate違反、idempotency conflict / expiry / 参照欠落、3種のresolutionとexact replayをcontract testで固定した。
+- Provider capabilityはApplication Service、durable state GateはPersistence Workerの責務とし、CP2ではcapability確認後だけtyped commandを構築する統合を追加する。

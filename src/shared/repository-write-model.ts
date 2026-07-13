@@ -6,6 +6,9 @@ export const REPOSITORY_WRITE_OPERATIONS = {
   bindingResolve: "repository.binding.resolve",
   dispatchBegin: "repository.dispatch.begin",
   dispatchResolve: "repository.dispatch.resolve",
+  runInputAdmit: "repository.run.input.admit",
+  runInputBegin: "repository.run.input.begin",
+  runInputResolve: "repository.run.input.resolve",
 } as const;
 
 export type SessionLifecycleStatus = "active" | "archived" | "closed";
@@ -128,6 +131,45 @@ export type RunDispatchResolutionCommand = Readonly<{
     | Readonly<{ kind: "ambiguous" }>;
 }>;
 
+export type RunInputAdmissionCommand = Readonly<{
+  sessionId: string;
+  workspaceKey: string;
+  idempotencyKey: string;
+  runId: string;
+  attemptId: string;
+  ephemeralOwnerToken: string | null;
+  message: Readonly<{
+    id: string;
+    contentBlocks: readonly RepositoryJsonValue[];
+  }>;
+}>;
+
+export type RunInputBeginCommand = Readonly<{
+  sessionId: string;
+  workspaceKey: string;
+  runId: string;
+  attemptId: string;
+  messageId: string;
+  bindingId: string;
+  ephemeralOwnerToken: string | null;
+}>;
+
+export type RunInputResolutionCode = "provider_rejected" | "transport_unknown" | "process_unknown";
+
+export type RunInputResolutionCommand = Readonly<{
+  sessionId: string;
+  workspaceKey: string;
+  runId: string;
+  attemptId: string;
+  messageId: string;
+  bindingId: string;
+  ephemeralOwnerToken: string | null;
+  outcome:
+    | Readonly<{ kind: "accepted" }>
+    | Readonly<{ kind: "rejected"; resolutionCode: "provider_rejected" }>
+    | Readonly<{ kind: "ambiguous"; resolutionCode: "transport_unknown" | "process_unknown" }>;
+}>;
+
 export type RepositoryCommandErrorCode =
   | "request_invalid"
   | "not_found"
@@ -204,5 +246,40 @@ export type RunDispatchResolutionResult = Readonly<{
   bindingId: string;
   dispatchState: "accepted" | "rejected" | "ambiguous";
   externalExecutionId: string | null;
+  resolvedAt: number;
+}>;
+
+export type RunInputAdmissionResult = Readonly<{
+  sessionId: string;
+  runId: string;
+  attemptId: string;
+  messageId: string;
+  bindingId: string;
+  deliveryState: "pending" | "accepted" | "rejected" | "ambiguous";
+  resolutionCode: RunInputResolutionCode | null;
+  admittedAt: number;
+  dispatchingAt: number | null;
+  resolvedAt: number | null;
+}>;
+
+export type RunInputBeginResult = Readonly<{
+  sessionId: string;
+  runId: string;
+  attemptId: string;
+  messageId: string;
+  bindingId: string;
+  deliveryState: "dispatching";
+  dispatchingAt: number;
+  sendAllowed: boolean;
+}>;
+
+export type RunInputResolutionResult = Readonly<{
+  sessionId: string;
+  runId: string;
+  attemptId: string;
+  messageId: string;
+  bindingId: string;
+  deliveryState: "accepted" | "rejected" | "ambiguous";
+  resolutionCode: RunInputResolutionCode | null;
   resolvedAt: number;
 }>;

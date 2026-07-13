@@ -20,6 +20,13 @@ import {
   type RunDispatchBeginResult,
   type RunDispatchResolutionCommand,
   type RunDispatchResolutionResult,
+  type RunInputAdmissionCommand,
+  type RunInputAdmissionResult,
+  type RunInputBeginCommand,
+  type RunInputBeginResult,
+  type RunInputResolutionCode,
+  type RunInputResolutionCommand,
+  type RunInputResolutionResult,
   type SessionCreateCommand,
   type SessionCreateResult,
   type SessionLifecycleStatus,
@@ -149,6 +156,38 @@ export function createRepositoryWriteOperations(
           const now = readClock(clock);
           return executeWriteTransaction(database, () =>
             resolveRunDispatch(database, command, now, ephemeralBindingOwners),
+          );
+        }),
+      ),
+    ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.runInputAdmit,
+      write((payload) =>
+        runDecoded(decodeRunInputAdmission(payload), (command) => {
+          const prepared = prepareRunInputAdmission(command);
+          const now = readClock(clock);
+          return executeWriteTransaction(database, () =>
+            admitRunInput(database, prepared, now, retentionMs, ephemeralBindingOwners),
+          );
+        }),
+      ),
+    ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.runInputBegin,
+      write((payload) =>
+        runDecoded(decodeRunInputBegin(payload), (command) => {
+          const now = readClock(clock);
+          return executeWriteTransaction(database, () => beginRunInput(database, command, now, ephemeralBindingOwners));
+        }),
+      ),
+    ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.runInputResolve,
+      write((payload) =>
+        runDecoded(decodeRunInputResolution(payload), (command) => {
+          const now = readClock(clock);
+          return executeWriteTransaction(database, () =>
+            resolveRunInput(database, command, now, ephemeralBindingOwners),
           );
         }),
       ),
@@ -910,13 +949,207 @@ function resolveRunDispatch(
   return success(dispatchResolutionValue(command, command.outcome.kind, null, now), false);
 }
 
+function admitRunInput(
+  database: DatabaseSync,
+  prepared: PreparedRunInputAdmission,
+  now: number,
+  retentionMs: number,
+  ephemeralBindingOwners: ReadonlyMap<string, string>,
+): RepositoryCommandResult<RunInputAdmissionResult> {
+  const command = prepared.command;
+  const idempotency = checkIdempotency<RunInputAdmissionResult>(
+    database,
+    command.idempotencyKey,
+    "run.input.admit",
+    prepared.fingerprint,
+    command.sessionId,
+    "delivery",
+    command.message.id,
+    now,
+  );
+  if (idempotency.kind !== "new") {
+    if (idempotency.kind === "replay" && idempotency.result.ok) {
+      const current = readRunInputAdmissionResult(database, command.message.id, command.sessionId);
+      return current === undefined
+        ? failure("reference_invalid", "Idempotent Run input Delivery is invalid.")
+        : success(current, true);
+    }
+    return idempotency.result;
+  }
+
+  const gate = database
+    .prepare(
+      `
+      SELECT s.lifecycle_status, s.updated_at, s.last_activity_at,
+        r.phase AS run_phase, a.attempt_state, a.provider_binding_id,
+        b.persistence_mode, b.binding_state, b.external_conversation_id, d.dispatch_state
+      FROM sessions s
+      JOIN runs r ON r.session_id = s.id AND r.id = ?
+      JOIN run_attempts a ON a.run_id = r.id AND a.id = ?
+      JOIN provider_bindings b ON b.id = a.provider_binding_id
+        AND b.session_id = s.id AND b.provider_id = s.provider_id
+      JOIN run_dispatches d ON d.run_attempt_id = a.id
+      WHERE s.id = ? AND s.workspace_key = ?
+    `,
+    )
+    .get(command.runId, command.attemptId, command.sessionId, command.workspaceKey) as
+    RunInputAdmissionGateRow | undefined;
+  if (gate === undefined) return failure("not_found", "Run input target was not found.");
+  const ownershipFailure = validateDispatchOwnership<RunInputAdmissionResult>(
+    gate.provider_binding_id,
+    command.ephemeralOwnerToken,
+    gate,
+    ephemeralBindingOwners,
+  );
+  if (ownershipFailure !== undefined) return ownershipFailure;
+  if (
+    gate.lifecycle_status !== "active" ||
+    gate.run_phase !== "active" ||
+    gate.attempt_state !== "active" ||
+    gate.binding_state !== "active" ||
+    gate.dispatch_state !== "accepted"
+  ) {
+    return failure("lifecycle_conflict", "Run input admission Gate is not satisfied.");
+  }
+  if (
+    database.prepare("SELECT 1 FROM messages WHERE id = ?").get(command.message.id) !== undefined ||
+    database.prepare("SELECT 1 FROM run_input_deliveries WHERE message_id = ?").get(command.message.id) !== undefined
+  ) {
+    return failure("lifecycle_conflict", "Run input identity already exists.");
+  }
+
+  const ordinal = nextOrdinal(database, "messages", "session_id", command.sessionId);
+  database
+    .prepare(
+      `
+      INSERT INTO messages (id, session_id, ordinal, role, content_blocks_json, created_at)
+      VALUES (?, ?, ?, 'user', ?, ?)
+    `,
+    )
+    .run(command.message.id, command.sessionId, ordinal, prepared.contentBlocksJson, now);
+  database
+    .prepare(
+      `
+      INSERT INTO run_input_deliveries (
+        message_id, run_id, run_attempt_id, delivery_state, created_at
+      ) VALUES (?, ?, ?, 'pending', ?)
+    `,
+    )
+    .run(command.message.id, command.runId, command.attemptId, now);
+  advanceSessionActivity(database, command.sessionId, gate.updated_at, gate.last_activity_at, now);
+
+  const value: RunInputAdmissionResult = {
+    sessionId: command.sessionId,
+    runId: command.runId,
+    attemptId: command.attemptId,
+    messageId: command.message.id,
+    bindingId: gate.provider_binding_id,
+    deliveryState: "pending",
+    resolutionCode: null,
+    admittedAt: now,
+    dispatchingAt: null,
+    resolvedAt: null,
+  };
+  completeIdempotency(
+    database,
+    command.idempotencyKey,
+    command.sessionId,
+    "run.input.admit",
+    prepared.fingerprint,
+    "delivery",
+    command.message.id,
+    value,
+    now,
+    retentionMs,
+  );
+  return success(value, false);
+}
+
+function beginRunInput(
+  database: DatabaseSync,
+  command: RunInputBeginCommand,
+  now: number,
+  ephemeralBindingOwners: ReadonlyMap<string, string>,
+): RepositoryCommandResult<RunInputBeginResult> {
+  const row = readRunInputTransitionRow(database, command);
+  if (row === undefined) return failure("not_found", "Run input delivery was not found.");
+  if (
+    row.delivery_state === "dispatching" &&
+    row.dispatching_at !== null &&
+    row.provider_binding_id === command.bindingId
+  ) {
+    return success(runInputBeginValue(command, row.dispatching_at, false), true);
+  }
+  const ownershipFailure = validateDispatchOwnership<RunInputBeginResult>(
+    command.bindingId,
+    command.ephemeralOwnerToken,
+    row,
+    ephemeralBindingOwners,
+  );
+  if (ownershipFailure !== undefined) return ownershipFailure;
+  if (
+    row.lifecycle_status !== "active" ||
+    row.run_phase !== "active" ||
+    row.attempt_state !== "active" ||
+    row.provider_binding_id !== command.bindingId ||
+    row.dispatch_state !== "accepted" ||
+    row.delivery_state !== "pending"
+  ) {
+    return failure("lifecycle_conflict", "Run input begin Gate is not satisfied.");
+  }
+  const update = database
+    .prepare(
+      `
+      UPDATE run_input_deliveries SET delivery_state = 'dispatching', dispatching_at = ?
+      WHERE message_id = ? AND run_id = ? AND run_attempt_id = ? AND delivery_state = 'pending'
+    `,
+    )
+    .run(now, command.messageId, command.runId, command.attemptId);
+  if (update.changes !== 1) return failure("lifecycle_conflict", "Run input begin conflicted.");
+  return success(runInputBeginValue(command, now, true), false);
+}
+
+function resolveRunInput(
+  database: DatabaseSync,
+  command: RunInputResolutionCommand,
+  now: number,
+  ephemeralBindingOwners: ReadonlyMap<string, string>,
+): RepositoryCommandResult<RunInputResolutionResult> {
+  const row = readRunInputTransitionRow(database, command);
+  if (row === undefined) return failure("not_found", "Run input delivery was not found.");
+  const replay = replayRunInputResolution(command, row);
+  if (replay !== undefined) return replay;
+  const ownershipFailure = validateDispatchOwnership<RunInputResolutionResult>(
+    command.bindingId,
+    command.ephemeralOwnerToken,
+    row,
+    ephemeralBindingOwners,
+  );
+  if (ownershipFailure !== undefined) return ownershipFailure;
+  if (row.provider_binding_id !== command.bindingId || row.delivery_state !== "dispatching") {
+    return failure("lifecycle_conflict", "Run input resolution state changed.");
+  }
+  const resolutionCode = command.outcome.kind === "accepted" ? null : command.outcome.resolutionCode;
+  const update = database
+    .prepare(
+      `
+      UPDATE run_input_deliveries
+      SET delivery_state = ?, resolution_code = ?, resolved_at = ?
+      WHERE message_id = ? AND run_id = ? AND run_attempt_id = ? AND delivery_state = 'dispatching'
+    `,
+    )
+    .run(command.outcome.kind, resolutionCode, now, command.messageId, command.runId, command.attemptId);
+  if (update.changes !== 1) return failure("lifecycle_conflict", "Run input resolution conflicted.");
+  return success(runInputResolutionValue(command, resolutionCode, now), false);
+}
+
 function checkIdempotency<T>(
   database: DatabaseSync,
   key: string,
   operation: string,
   fingerprint: string,
   expectedScopeSessionId: string,
-  expectedRefType: "session" | "run",
+  expectedRefType: "session" | "run" | "delivery",
   expectedRefId: string,
   now: number,
 ): Readonly<{ kind: "new" }> | Readonly<{ kind: "replay" | "failure"; result: RepositoryCommandResult<T> }> {
@@ -969,7 +1202,7 @@ function completeIdempotency<T extends object>(
   scopeSessionId: string,
   operation: string,
   fingerprint: string,
-  refType: "session" | "run",
+  refType: "session" | "run" | "delivery",
   refId: string,
   value: T,
   now: number,
@@ -1106,6 +1339,23 @@ function prepareRunDispatchBegin(command: RunDispatchBeginCommand): PreparedRunD
   const providerRequestJson = canonicalJsonString(command.providerRequest);
   if (Buffer.byteLength(providerRequestJson) > 256 * 1024) throw invalidCommand();
   return { command, requestFingerprint: fingerprintJson(providerRequestJson) };
+}
+
+function prepareRunInputAdmission(command: RunInputAdmissionCommand): PreparedRunInputAdmission {
+  const contentBlocksJson = canonicalJsonString(command.message.contentBlocks);
+  if (Buffer.byteLength(contentBlocksJson) > 4 * 1024 * 1024) throw invalidCommand();
+  return {
+    command,
+    contentBlocksJson,
+    fingerprint: fingerprint({
+      operation: "run.input.admit",
+      sessionId: command.sessionId,
+      workspaceKey: command.workspaceKey,
+      runId: command.runId,
+      attemptId: command.attemptId,
+      message: { id: command.message.id, contentBlocks: JSON.parse(contentBlocksJson) },
+    }),
+  };
 }
 
 function decodeSessionCreate(payload: Readonly<Record<string, unknown>>): DecodeResult<SessionCreateCommand> {
@@ -1322,6 +1572,85 @@ function decodeRunDispatchResolution(
   return { ok: true, value: payload as unknown as RunDispatchResolutionCommand };
 }
 
+function decodeRunInputAdmission(payload: Readonly<Record<string, unknown>>): DecodeResult<RunInputAdmissionCommand> {
+  if (
+    !hasExactKeys(payload, [
+      "sessionId",
+      "workspaceKey",
+      "idempotencyKey",
+      "runId",
+      "attemptId",
+      "ephemeralOwnerToken",
+      "message",
+    ]) ||
+    !isBoundedString(payload.sessionId, 1_024) ||
+    !isBoundedString(payload.workspaceKey, 1_024) ||
+    !isCanonicalUuid(payload.idempotencyKey) ||
+    !isBoundedString(payload.runId, 1_024) ||
+    !isBoundedString(payload.attemptId, 1_024) ||
+    (payload.ephemeralOwnerToken !== null && !isCanonicalUuid(payload.ephemeralOwnerToken)) ||
+    !isPlainObject(payload.message) ||
+    !hasExactKeys(payload.message, ["id", "contentBlocks"]) ||
+    !isBoundedString(payload.message.id, 1_024) ||
+    !isDenseJsonArray(payload.message.contentBlocks, 10_000)
+  ) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as RunInputAdmissionCommand };
+}
+
+function decodeRunInputBegin(payload: Readonly<Record<string, unknown>>): DecodeResult<RunInputBeginCommand> {
+  if (
+    !hasExactKeys(payload, [
+      "sessionId",
+      "workspaceKey",
+      "runId",
+      "attemptId",
+      "messageId",
+      "bindingId",
+      "ephemeralOwnerToken",
+    ]) ||
+    !hasRunInputScope(payload) ||
+    (payload.ephemeralOwnerToken !== null && !isCanonicalUuid(payload.ephemeralOwnerToken))
+  ) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as RunInputBeginCommand };
+}
+
+function decodeRunInputResolution(payload: Readonly<Record<string, unknown>>): DecodeResult<RunInputResolutionCommand> {
+  if (
+    !hasExactKeys(payload, [
+      "sessionId",
+      "workspaceKey",
+      "runId",
+      "attemptId",
+      "messageId",
+      "bindingId",
+      "ephemeralOwnerToken",
+      "outcome",
+    ]) ||
+    !hasRunInputScope(payload) ||
+    (payload.ephemeralOwnerToken !== null && !isCanonicalUuid(payload.ephemeralOwnerToken)) ||
+    !isPlainObject(payload.outcome)
+  ) {
+    return decodeFailure();
+  }
+  const outcome = payload.outcome;
+  if (outcome.kind === "accepted") {
+    if (!hasExactKeys(outcome, ["kind"])) return decodeFailure();
+  } else if (
+    (outcome.kind !== "rejected" && outcome.kind !== "ambiguous") ||
+    !hasExactKeys(outcome, ["kind", "resolutionCode"]) ||
+    !isRunInputResolutionCode(outcome.resolutionCode) ||
+    (outcome.kind === "rejected" && outcome.resolutionCode !== "provider_rejected") ||
+    (outcome.kind === "ambiguous" && outcome.resolutionCode === "provider_rejected")
+  ) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as RunInputResolutionCommand };
+}
+
 function lifecycleOperation(expected: "active" | "archived", target: SessionLifecycleStatus): string {
   if (expected === "active" && target === "archived") return "session.archive";
   if (expected === "archived" && target === "active") return "session.unarchive";
@@ -1517,10 +1846,72 @@ function readDispatchTransitionRow(database: DatabaseSync, command: DispatchScop
     DispatchTransitionRow | undefined;
 }
 
+function readRunInputTransitionRow(database: DatabaseSync, command: RunInputScope): RunInputTransitionRow | undefined {
+  return database
+    .prepare(
+      `
+      SELECT s.lifecycle_status, r.phase AS run_phase,
+        a.provider_binding_id, a.attempt_state,
+        b.persistence_mode, b.binding_state, b.external_conversation_id,
+        d.dispatch_state,
+        i.delivery_state, i.resolution_code, i.dispatching_at, i.resolved_at
+      FROM run_input_deliveries i
+      JOIN messages m ON m.id = i.message_id
+      JOIN runs r ON r.id = i.run_id AND r.session_id = m.session_id
+      JOIN run_attempts a ON a.id = i.run_attempt_id AND a.run_id = r.id
+      JOIN sessions s ON s.id = r.session_id
+      JOIN provider_bindings b ON b.id = ? AND b.session_id = s.id AND b.provider_id = s.provider_id
+      JOIN run_dispatches d ON d.run_attempt_id = a.id
+      WHERE i.message_id = ? AND s.id = ? AND s.workspace_key = ? AND r.id = ? AND a.id = ?
+    `,
+    )
+    .get(
+      command.bindingId,
+      command.messageId,
+      command.sessionId,
+      command.workspaceKey,
+      command.runId,
+      command.attemptId,
+    ) as RunInputTransitionRow | undefined;
+}
+
+function readRunInputAdmissionResult(
+  database: DatabaseSync,
+  messageId: string,
+  sessionId: string,
+): RunInputAdmissionResult | undefined {
+  const row = database
+    .prepare(
+      `
+      SELECT i.message_id, i.run_id, i.run_attempt_id, i.delivery_state,
+        i.resolution_code, i.created_at, i.dispatching_at, i.resolved_at,
+        a.provider_binding_id
+      FROM run_input_deliveries i
+      JOIN messages m ON m.id = i.message_id AND m.session_id = ?
+      JOIN run_attempts a ON a.id = i.run_attempt_id AND a.run_id = i.run_id
+      WHERE i.message_id = ?
+    `,
+    )
+    .get(sessionId, messageId) as RunInputOutcomeRow | undefined;
+  if (row === undefined || row.provider_binding_id === null) return undefined;
+  return {
+    sessionId,
+    runId: row.run_id,
+    attemptId: row.run_attempt_id,
+    messageId: row.message_id,
+    bindingId: row.provider_binding_id,
+    deliveryState: row.delivery_state === "dispatching" ? "pending" : row.delivery_state,
+    resolutionCode: row.resolution_code,
+    admittedAt: row.created_at,
+    dispatchingAt: row.dispatching_at,
+    resolvedAt: row.resolved_at,
+  };
+}
+
 function validateDispatchOwnership<T>(
   bindingId: string,
   ephemeralOwnerToken: string | null,
-  row: DispatchTransitionRow,
+  row: BindingOwnershipRow,
   ephemeralBindingOwners: ReadonlyMap<string, string>,
 ): RepositoryCommandResult<T> | undefined {
   if (row.binding_state !== "active" || row.external_conversation_id === null) {
@@ -1534,6 +1925,55 @@ function validateDispatchOwnership<T>(
   return ephemeralOwnerToken !== null && ephemeralBindingOwners.get(bindingId) === ephemeralOwnerToken
     ? undefined
     : failure("reference_invalid", "Ephemeral Binding live ownership is unavailable.");
+}
+
+function runInputBeginValue(
+  command: RunInputBeginCommand,
+  dispatchingAt: number,
+  sendAllowed: boolean,
+): RunInputBeginResult {
+  return {
+    sessionId: command.sessionId,
+    runId: command.runId,
+    attemptId: command.attemptId,
+    messageId: command.messageId,
+    bindingId: command.bindingId,
+    deliveryState: "dispatching",
+    dispatchingAt,
+    sendAllowed,
+  };
+}
+
+function replayRunInputResolution(
+  command: RunInputResolutionCommand,
+  row: RunInputTransitionRow,
+): RepositoryCommandResult<RunInputResolutionResult> | undefined {
+  if (
+    row.delivery_state === command.outcome.kind &&
+    row.resolved_at !== null &&
+    row.provider_binding_id === command.bindingId &&
+    row.resolution_code === (command.outcome.kind === "accepted" ? null : command.outcome.resolutionCode)
+  ) {
+    return success(runInputResolutionValue(command, row.resolution_code, row.resolved_at), true);
+  }
+  return undefined;
+}
+
+function runInputResolutionValue(
+  command: RunInputResolutionCommand,
+  resolutionCode: RunInputResolutionCode | null,
+  resolvedAt: number,
+): RunInputResolutionResult {
+  return {
+    sessionId: command.sessionId,
+    runId: command.runId,
+    attemptId: command.attemptId,
+    messageId: command.messageId,
+    bindingId: command.bindingId,
+    deliveryState: command.outcome.kind,
+    resolutionCode,
+    resolvedAt,
+  };
 }
 
 function dispatchBeginValue(
@@ -1649,12 +2089,25 @@ function nextOrdinal(
 
 function hasResponseReference(
   database: DatabaseSync,
-  refType: "session" | "run",
+  refType: "session" | "run" | "delivery",
   refId: string,
   scopeSessionId: string,
 ): boolean {
   if (refType === "session") {
     return refId === scopeSessionId && database.prepare("SELECT 1 FROM sessions WHERE id = ?").get(refId) !== undefined;
+  }
+  if (refType === "delivery") {
+    return (
+      database
+        .prepare(
+          `
+          SELECT 1 FROM run_input_deliveries i
+          JOIN messages m ON m.id = i.message_id
+          WHERE i.message_id = ? AND m.session_id = ?
+        `,
+        )
+        .get(refId, scopeSessionId) !== undefined
+    );
   }
   return (
     database.prepare("SELECT 1 FROM runs WHERE id = ? AND session_id = ?").get(refId, scopeSessionId) !== undefined
@@ -1788,6 +2241,14 @@ function hasDispatchScope(value: Readonly<Record<string, unknown>>): boolean {
   );
 }
 
+function hasRunInputScope(value: Readonly<Record<string, unknown>>): boolean {
+  return hasDispatchScope(value) && isBoundedString(value.messageId, 1_024);
+}
+
+function isRunInputResolutionCode(value: unknown): value is RunInputResolutionCode {
+  return value === "provider_rejected" || value === "transport_unknown" || value === "process_unknown";
+}
+
 function isDenseBoundedStringArray(value: unknown, maxItems: number, maxLength: number): value is string[] {
   if (!Array.isArray(value) || value.length > maxItems) return false;
   for (let index = 0; index < value.length; index += 1) {
@@ -1902,6 +2363,11 @@ type PreparedRunDispatchBegin = Readonly<{
   command: RunDispatchBeginCommand;
   requestFingerprint: string;
 }>;
+type PreparedRunInputAdmission = Readonly<{
+  command: RunInputAdmissionCommand;
+  contentBlocksJson: string;
+  fingerprint: string;
+}>;
 type BindingResolution<T> =
   | Readonly<{ ok: true; providerBindingId: string | null }>
   | Readonly<{ ok: false; result: RepositoryCommandResult<T> }>;
@@ -1946,6 +2412,12 @@ type DispatchScope = Readonly<{
   attemptId: string;
   bindingId: string;
 }>;
+type RunInputScope = DispatchScope & Readonly<{ messageId: string }>;
+type BindingOwnershipRow = Readonly<{
+  persistence_mode: "persistent" | "ephemeral";
+  binding_state: "creating" | "active" | "invalidated" | "superseded";
+  external_conversation_id: string | null;
+}>;
 type DispatchTransitionRow = Readonly<{
   persistence_mode: "persistent" | "ephemeral";
   binding_state: "creating" | "active" | "invalidated" | "superseded";
@@ -1956,6 +2428,39 @@ type DispatchTransitionRow = Readonly<{
   run_phase: NonTerminalRunPhase | "completed" | "failed" | "canceled" | "interrupted";
   dispatch_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
   request_fingerprint: string;
+  dispatching_at: number | null;
+  resolved_at: number | null;
+}>;
+type RunInputAdmissionGateRow = BindingOwnershipRow &
+  Readonly<{
+    lifecycle_status: SessionLifecycleStatus;
+    updated_at: number;
+    last_activity_at: number;
+    run_phase: NonTerminalRunPhase | TerminalRunPhase;
+    provider_binding_id: string;
+    attempt_state: "preparing" | "active" | "succeeded" | "failed" | "interrupted";
+    dispatch_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
+  }>;
+type RunInputTransitionRow = BindingOwnershipRow &
+  Readonly<{
+    lifecycle_status: SessionLifecycleStatus;
+    run_phase: NonTerminalRunPhase | TerminalRunPhase;
+    provider_binding_id: string | null;
+    attempt_state: "preparing" | "active" | "succeeded" | "failed" | "interrupted";
+    dispatch_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
+    delivery_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous";
+    resolution_code: RunInputResolutionCode | null;
+    dispatching_at: number | null;
+    resolved_at: number | null;
+  }>;
+type RunInputOutcomeRow = Readonly<{
+  message_id: string;
+  run_id: string;
+  run_attempt_id: string;
+  provider_binding_id: string | null;
+  delivery_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous";
+  resolution_code: RunInputResolutionCode | null;
+  created_at: number;
   dispatching_at: number | null;
   resolved_at: number | null;
 }>;
