@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
 import {
   REPOSITORY_WRITE_OPERATIONS,
+  type ChildResultCollectCommand,
+  type ChildResultCollectResult,
   type NormalRunAdmissionCommand,
   type NormalRunAdmissionResult,
   type ProviderBindingResolutionCommand,
@@ -27,6 +30,15 @@ import {
   type RunInputResolutionCode,
   type RunInputResolutionCommand,
   type RunInputResolutionResult,
+  type RunOutputAppendCommand,
+  type RunOutputAppendResult,
+  type RunOutputDraft,
+  type RunOutputPayloadCommand,
+  type RunOutputResolvePendingCommand,
+  type RunOutputResolvePendingResult,
+  type RunTerminalCommand,
+  type RunTerminalOutputDraft,
+  type RunTerminalResult,
   type SessionCreateCommand,
   type SessionCreateResult,
   type SessionLifecycleStatus,
@@ -36,6 +48,14 @@ import {
 import { executeWriteTransaction } from "./request-executor.js";
 
 export const DEFAULT_IDEMPOTENCY_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+export const RUN_OUTPUT_PAYLOAD_LIMITS = {
+  itemBytes: 16 * 1024 * 1024,
+  runBytes: 64 * 1024 * 1024,
+  sessionBytes: 256 * 1024 * 1024,
+  appBytes: 1024 * 1024 * 1024,
+  minimumReserveBytes: 1024 * 1024 * 1024,
+} as const;
+export const RUN_OUTPUT_SQLITE_WRITE_MARGIN_BYTES = 64 * 1024;
 
 export type RepositoryWriteOperation = Readonly<{
   requestClass: "write";
@@ -50,6 +70,9 @@ export type RepositoryWriteCapacityOptions = Readonly<{
 type WriteOptions = Readonly<{
   clock?: () => number;
   idempotencyRetentionMs?: number;
+  databasePath?: string;
+  diskCapacity?: () => Readonly<{ availableBytes: number; totalBytes: number }>;
+  payloadLimits?: Partial<typeof RUN_OUTPUT_PAYLOAD_LIMITS>;
 }> &
   Partial<RepositoryWriteCapacityOptions>;
 
@@ -62,6 +85,8 @@ export function createRepositoryWriteOperations(
   const maxConcurrentRuns = options.maxConcurrentRuns ?? 4;
   const maxConcurrentRunsPerProvider = options.maxConcurrentRunsPerProvider ?? 4;
   const ephemeralBindingOwners = new Map<string, string>();
+  const payloadLimits = resolvePayloadLimits(options.payloadLimits);
+  const diskCapacity = options.diskCapacity ?? createDiskCapacityProbe(options.databasePath);
   if (!Number.isSafeInteger(retentionMs) || retentionMs < 1) {
     throw new RangeError("idempotencyRetentionMs must be a positive safe integer.");
   }
@@ -192,7 +217,64 @@ export function createRepositoryWriteOperations(
         }),
       ),
     ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.runOutputAppend,
+      write((payload) =>
+        runDecoded(decodeRunOutputAppend(payload), (command) => {
+          const prepared = prepareRunOutputAppend(command);
+          const now = readClock(clock);
+          return executeWriteTransaction(database, () =>
+            appendRunOutput(database, prepared, now, payloadLimits, diskCapacity),
+          );
+        }),
+      ),
+    ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.runOutputResolvePending,
+      write((payload) =>
+        runDecoded(decodeRunOutputResolvePending(payload), (command) => {
+          const prepared = prepareRunOutputResolvePending(command);
+          const now = readClock(clock);
+          return executeRepositoryTransaction(database, () =>
+            resolvePendingRunOutput(database, prepared, now, payloadLimits, diskCapacity),
+          );
+        }),
+      ),
+    ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.runTerminal,
+      write((payload) =>
+        runDecoded(decodeRunTerminal(payload), (command) => {
+          const prepared = prepareRunTerminal(command);
+          const now = readClock(clock);
+          return executeRepositoryTransaction(database, () => terminalRun(database, prepared, now));
+        }),
+      ),
+    ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.childResultCollect,
+      write((payload) =>
+        runDecoded(decodeChildResultCollect(payload), (command) => {
+          const prepared = prepareChildResultCollect(command);
+          const now = readClock(clock);
+          return executeRepositoryTransaction(database, () => collectChildResult(database, prepared, now, retentionMs));
+        }),
+      ),
+    ],
   ]);
+}
+
+function executeRepositoryTransaction<T>(database: DatabaseSync, operation: () => RepositorySynchronousResult<T>): T {
+  try {
+    return executeWriteTransaction(database, operation);
+  } catch (error) {
+    if (error instanceof RepositoryTransactionRollback) return error.result as T;
+    throw error;
+  }
+}
+
+function rollbackWith<T>(result: RepositoryCommandResult<T>): never {
+  throw new RepositoryTransactionRollback(result);
 }
 
 function write(execute: (payload: Readonly<Record<string, unknown>>) => unknown): RepositoryWriteOperation {
@@ -1143,6 +1225,398 @@ function resolveRunInput(
   return success(runInputResolutionValue(command, resolutionCode, now), false);
 }
 
+function appendRunOutput(
+  database: DatabaseSync,
+  prepared: PreparedRunOutputAppend,
+  now: number,
+  limits: ResolvedPayloadLimits,
+  diskCapacity: DiskCapacityProbe,
+): RepositoryCommandResult<RunOutputAppendResult> {
+  const { command } = prepared;
+  const scope = database
+    .prepare(
+      `
+      SELECT r.phase, s.workspace_key FROM runs r
+      JOIN sessions s ON s.id = r.session_id
+      WHERE r.id = ? AND r.session_id = ?
+    `,
+    )
+    .get(command.runId, command.sessionId) as { phase: string; workspace_key: string } | undefined;
+  if (scope === undefined) return failure("not_found", "Run was not found in the Session.");
+  if (scope.workspace_key !== command.workspaceKey)
+    return failure("reference_invalid", "Workspace scope does not match.");
+
+  const existing = readOutputReplayRow(database, command.runId, command.item.id, command.item.providerItemId);
+  if (existing !== undefined) {
+    return outputReplayMatches(database, prepared, existing)
+      ? success(outputAppendValue(command.sessionId, command.runId, existing), true)
+      : failure("lifecycle_conflict", "Run output identity was already used differently.");
+  }
+  if (database.prepare("SELECT 1 FROM run_output_items WHERE id = ?").get(command.item.id) !== undefined) {
+    return failure("reference_invalid", "Run output ID belongs to another Run.");
+  }
+  if (!isWritableOutputPhase(scope.phase)) {
+    return failure("lifecycle_conflict", "New Run output requires an active Run.");
+  }
+
+  const ordinal = nextOrdinal(database, "run_output_items", "run_id", command.runId);
+  const stored =
+    prepared.payload?.state === "stored" &&
+    canStorePayload(database, command.runId, command.sessionId, prepared.payload, limits, diskCapacity);
+  const payloadState =
+    prepared.payload?.state === "stored" && !stored ? "omitted_size_limit" : command.item.payload.state;
+  insertOutputItem(database, command.runId, ordinal, command.item, payloadState, now);
+  if (stored && prepared.payload?.state === "stored")
+    insertOutputPayload(database, command.item.id, prepared.payload, now);
+  const value: RunOutputAppendResult = {
+    sessionId: command.sessionId,
+    runId: command.runId,
+    outputItemId: command.item.id,
+    ordinal,
+    payloadState,
+    storedByteLength: stored && prepared.payload?.state === "stored" ? prepared.payload.content.byteLength : null,
+    createdAt: now,
+  };
+  return success(value, false);
+}
+
+function resolvePendingRunOutput(
+  database: DatabaseSync,
+  prepared: PreparedRunOutputResolvePending,
+  now: number,
+  limits: ResolvedPayloadLimits,
+  diskCapacity: DiskCapacityProbe,
+): RepositoryCommandResult<RunOutputResolvePendingResult> {
+  const { command } = prepared;
+  const row = database
+    .prepare(
+      `
+      SELECT o.payload_state, o.payload_original_byte_length, o.redaction_state,
+             r.phase, s.workspace_key
+      FROM run_output_items o
+      JOIN runs r ON r.id = o.run_id
+      JOIN sessions s ON s.id = r.session_id
+      WHERE o.id = ? AND o.run_id = ? AND r.session_id = ?
+    `,
+    )
+    .get(command.outputItemId, command.runId, command.sessionId) as
+    | {
+        payload_state: string;
+        payload_original_byte_length: number;
+        redaction_state: "not_required" | "redacted";
+        phase: string;
+        workspace_key: string;
+      }
+    | undefined;
+  if (row === undefined) return failure("not_found", "Pending Run output was not found.");
+  if (row.workspace_key !== command.workspaceKey)
+    return failure("reference_invalid", "Workspace scope does not match.");
+  if (!isTerminalRunPhase(row.phase))
+    return failure("lifecycle_conflict", "Pending output resolves after Run terminal commit.");
+  if (row.payload_state !== "pending") {
+    const replayState = resolvedPendingReplayState(prepared, row.payload_state);
+    if (replayState === null)
+      return failure("lifecycle_conflict", "Run output payload is already resolved differently.");
+    const payload = database
+      .prepare(
+        "SELECT byte_length, content_sha256, payload_format, media_type FROM run_output_payloads WHERE output_item_id = ?",
+      )
+      .get(command.outputItemId) as
+      { byte_length: number; content_sha256: string; payload_format: string; media_type: string | null } | undefined;
+    if (
+      row.payload_state === "stored" &&
+      (prepared.payload === undefined ||
+        payload === undefined ||
+        !pendingStoredReplayMatches(prepared.payload, payload))
+    ) {
+      return failure("lifecycle_conflict", "Stored Run output payload differs from the replay.");
+    }
+    return success(pendingResolutionValue(command, replayState, payload?.byte_length ?? null), true);
+  }
+
+  let state = command.resolution.state;
+  let storedByteLength: number | null = null;
+  if (prepared.payload?.state === "stored") {
+    const payloadWithOriginal = { ...prepared.payload, originalByteLength: row.payload_original_byte_length };
+    if (canStorePayload(database, command.runId, command.sessionId, payloadWithOriginal, limits, diskCapacity)) {
+      insertOutputPayload(database, command.outputItemId, prepared.payload, now);
+      state = "stored";
+      storedByteLength = prepared.payload.content.byteLength;
+    } else {
+      state = "omitted_size_limit";
+    }
+  }
+  const storedPayloadId = state === "stored" ? command.outputItemId : null;
+  const update = database
+    .prepare(
+      "UPDATE run_output_items SET payload_state = ?, stored_payload_id = ? WHERE id = ? AND payload_state = 'pending'",
+    )
+    .run(state, storedPayloadId, command.outputItemId);
+  if (update.changes !== 1)
+    return rollbackWith(failure("lifecycle_conflict", "Run output payload resolution conflicted."));
+  return success(pendingResolutionValue(command, state, storedByteLength), false);
+}
+
+function terminalRun(
+  database: DatabaseSync,
+  prepared: PreparedRunTerminal,
+  now: number,
+): RepositoryCommandResult<RunTerminalResult> {
+  const { command } = prepared;
+  const row = database
+    .prepare(
+      `
+      SELECT r.phase, r.final_assistant_message_id, r.failure_origin, r.provider_error_code,
+             r.error_summary, r.terminal_at, a.attempt_state, s.workspace_key,
+             s.updated_at AS session_updated_at, s.last_activity_at AS session_last_activity_at
+      FROM runs r
+      JOIN run_attempts a ON a.id = ? AND a.run_id = r.id
+      JOIN sessions s ON s.id = r.session_id
+      WHERE r.id = ? AND r.session_id = ?
+    `,
+    )
+    .get(command.attemptId, command.runId, command.sessionId) as TerminalGateRow | undefined;
+  if (row === undefined) return failure("not_found", "Run and Attempt were not found in the Session.");
+  if (row.workspace_key !== command.workspaceKey)
+    return failure("reference_invalid", "Workspace scope does not match.");
+  if (isTerminalRunPhase(row.phase)) return replayTerminalRun(database, prepared, row);
+  if (!isNonTerminalRunPhase(row.phase)) return failure("lifecycle_conflict", "Run cannot transition to terminal.");
+  if ((command.outcome.kind === "completed" || command.outcome.kind === "failed") && row.attempt_state !== "active") {
+    return failure("lifecycle_conflict", "Completed and failed outcomes require an active Attempt.");
+  }
+  if (
+    (command.outcome.kind === "canceled" || command.outcome.kind === "interrupted") &&
+    row.attempt_state !== "preparing" &&
+    row.attempt_state !== "active"
+  ) {
+    return failure("lifecycle_conflict", "Canceled and interrupted outcomes require a live Attempt.");
+  }
+
+  const child = readChildTerminalRow(database, command.runId);
+  if ((child === undefined) !== (command.childResult === null)) {
+    return failure("reference_invalid", "Child result metadata does not match Run ownership.");
+  }
+  if (command.childResult?.workflowState === "clarification_required" && command.outcome.kind !== "completed") {
+    return failure("request_invalid", "Only a completed child Run may require clarification.");
+  }
+  if (child !== undefined && child.availability_state !== "pending") {
+    return failure("lifecycle_conflict", "Child Delivery is already available.");
+  }
+
+  if (hasTerminalIdentityConflict(database, command, prepared.terminalDedupeKey)) {
+    return failure("reference_invalid", "Terminal event, Message, or output identity is already in use.");
+  }
+  let nextOutputOrdinal = nextOrdinal(database, "run_output_items", "run_id", command.runId);
+  for (const output of command.outputs) {
+    if (readOutputReplayRow(database, command.runId, output.id, output.providerItemId) !== undefined) {
+      return rollbackWith(failure("lifecycle_conflict", "Terminal output identity already exists."));
+    }
+    insertOutputItem(database, command.runId, nextOutputOrdinal, output, output.payload.state, now);
+    nextOutputOrdinal += 1;
+  }
+
+  const finalMessageId =
+    command.outcome.kind === "completed" ? (command.outcome.finalAssistantMessage?.id ?? null) : null;
+  if (prepared.finalMessageJson !== null && finalMessageId !== null) {
+    const messageOrdinal = nextOrdinal(database, "messages", "session_id", command.sessionId);
+    database
+      .prepare(
+        "INSERT INTO messages (id, session_id, ordinal, role, content_blocks_json, created_at) VALUES (?, ?, ?, 'assistant', ?, ?)",
+      )
+      .run(finalMessageId, command.sessionId, messageOrdinal, prepared.finalMessageJson, now);
+  }
+
+  const runFailureFields = terminalRunFailureFields(command);
+  const attemptFailureFields = terminalAttemptFailureFields(command);
+  const attemptState =
+    command.outcome.kind === "completed" ? "succeeded" : command.outcome.kind === "failed" ? "failed" : "interrupted";
+  const attemptUpdate = database
+    .prepare(
+      `
+      UPDATE run_attempts SET attempt_state = ?, failure_origin = ?, provider_error_code = ?,
+        error_summary = ?, terminal_at = ?
+      WHERE id = ? AND run_id = ? AND attempt_state IN ('preparing','active')
+    `,
+    )
+    .run(
+      attemptState,
+      attemptFailureFields.failureOrigin,
+      attemptFailureFields.providerErrorCode,
+      attemptFailureFields.errorSummary,
+      now,
+      command.attemptId,
+      command.runId,
+    );
+  if (attemptUpdate.changes !== 1)
+    return rollbackWith(failure("lifecycle_conflict", "Attempt terminal transition conflicted."));
+
+  const runUpdate = database
+    .prepare(
+      `
+      UPDATE runs SET phase = ?, final_assistant_message_id = ?, failure_origin = ?,
+        provider_error_code = ?, error_summary = ?, terminal_event_received_at = ?,
+        terminal_at = ?, updated_at = ?, version = version + 1
+      WHERE id = ? AND session_id = ? AND phase IN ('queued','starting','active','canceling','finalizing')
+    `,
+    )
+    .run(
+      command.outcome.kind,
+      finalMessageId,
+      runFailureFields.failureOrigin,
+      runFailureFields.providerErrorCode,
+      runFailureFields.errorSummary,
+      now,
+      now,
+      now,
+      command.runId,
+      command.sessionId,
+    );
+  if (runUpdate.changes !== 1)
+    return rollbackWith(failure("lifecycle_conflict", "Run terminal transition conflicted."));
+
+  const eventOrdinal = nextOrdinal(database, "run_events", "run_id", command.runId);
+  database
+    .prepare(
+      `
+      INSERT INTO run_events (id, run_id, ordinal, event_code, subject_type, subject_id, dedupe_key, summary, created_at)
+      VALUES (?, ?, ?, 'run.terminal', 'run', ?, ?, ?, ?)
+    `,
+    )
+    .run(command.terminalEvent.id, command.runId, eventOrdinal, command.runId, prepared.terminalDedupeKey, null, now);
+
+  let childDeliveryId: string | null = null;
+  let delegationState: "clarification_required" | "closed" | null = null;
+  if (child !== undefined && command.childResult !== null) {
+    childDeliveryId = child.delivery_id;
+    delegationState = command.childResult.workflowState;
+    const deliveryUpdate = database
+      .prepare(
+        `
+        UPDATE child_result_deliveries SET availability_state = 'available', terminal_phase_snapshot = ?,
+          result_summary = ?, available_at = ?, updated_at = ?, version = version + 1
+        WHERE id = ? AND child_run_id = ? AND availability_state = 'pending'
+      `,
+      )
+      .run(command.outcome.kind, command.childResult.resultSummary, now, now, child.delivery_id, command.runId);
+    if (deliveryUpdate.changes !== 1)
+      return rollbackWith(failure("lifecycle_conflict", "Child Delivery transition conflicted."));
+    const closureReason = delegationState === "closed" ? command.outcome.kind : null;
+    const delegationUpdate = database
+      .prepare(
+        `
+        UPDATE delegations SET workflow_state = ?, closure_reason = ?, updated_at = ?, version = version + 1
+        WHERE id = ? AND latest_child_run_id = ?
+      `,
+      )
+      .run(delegationState, closureReason, now, child.delegation_id, command.runId);
+    if (delegationUpdate.changes !== 1)
+      return rollbackWith(failure("lifecycle_conflict", "Delegation transition conflicted."));
+  }
+  advanceSessionActivity(database, command.sessionId, row.session_updated_at, row.session_last_activity_at, now);
+  return success(
+    terminalResult(command, finalMessageId, command.terminalEvent.id, childDeliveryId, delegationState, now),
+    false,
+  );
+}
+
+function collectChildResult(
+  database: DatabaseSync,
+  prepared: PreparedChildResultCollect,
+  now: number,
+  retentionMs: number,
+): RepositoryCommandResult<ChildResultCollectResult> {
+  const { command } = prepared;
+  const row = readCollectRow(database, command.deliveryId);
+  if (row === undefined) return failure("not_found", "Child result Delivery was not found.");
+  if (
+    row.parent_session_id !== command.parentSessionId ||
+    row.child_session_id !== command.childSessionId ||
+    row.workspace_key !== command.workspaceKey
+  ) {
+    return failure("reference_invalid", "Child result scope does not match.");
+  }
+  if (row.availability_state !== "available" || row.terminal_phase_snapshot === null || row.available_at === null) {
+    return failure("lifecycle_conflict", "Child result is not available.");
+  }
+  const parentRun = database
+    .prepare("SELECT 1 FROM runs WHERE id = ? AND session_id = ?")
+    .get(command.collectingParentRunId, command.parentSessionId);
+  if (parentRun === undefined)
+    return failure("reference_invalid", "Collecting Run does not belong to the parent Session.");
+
+  const idempotency = checkIdempotency<ChildResultCollectResult>(
+    database,
+    command.idempotencyKey,
+    REPOSITORY_WRITE_OPERATIONS.childResultCollect,
+    prepared.fingerprint,
+    command.childSessionId,
+    "delivery",
+    command.deliveryId,
+    now,
+    (value) => decodeChildResultCollectReplay(database, command.deliveryId, command.childSessionId, value),
+  );
+  if (idempotency.kind !== "new") return idempotency.result;
+  if (database.prepare("SELECT 1 FROM run_events WHERE id = ?").get(command.eventId) !== undefined) {
+    return failure("reference_invalid", "Collection event ID is already in use.");
+  }
+
+  const firstCollectedBy = row.first_collected_by_parent_run_id ?? command.collectingParentRunId;
+  const firstCollectedAt = row.first_collected_at ?? now;
+  if (row.first_collected_at === null) {
+    const update = database
+      .prepare(
+        `
+        UPDATE child_result_deliveries SET first_collected_by_parent_run_id = ?, first_collected_at = ?,
+          updated_at = ?, version = version + 1
+        WHERE id = ? AND first_collected_at IS NULL
+      `,
+      )
+      .run(command.collectingParentRunId, now, now, command.deliveryId);
+    if (update.changes !== 1) return rollbackWith(failure("lifecycle_conflict", "Child result collection conflicted."));
+  }
+  const eventOrdinal = nextOrdinal(database, "run_events", "run_id", command.collectingParentRunId);
+  database
+    .prepare(
+      `
+      INSERT INTO run_events (id, run_id, ordinal, event_code, subject_type, subject_id, dedupe_key, summary, created_at)
+      VALUES (?, ?, ?, 'child.result.collected', 'child_result_delivery', ?, ?, ?, ?)
+    `,
+    )
+    .run(
+      command.eventId,
+      command.collectingParentRunId,
+      eventOrdinal,
+      command.deliveryId,
+      command.idempotencyKey,
+      null,
+      now,
+    );
+  const value: ChildResultCollectResult = {
+    deliveryId: command.deliveryId,
+    delegationId: row.delegation_id,
+    childSessionId: row.child_session_id,
+    childRunId: row.child_run_id,
+    terminalPhase: row.terminal_phase_snapshot,
+    finalAssistantMessageId: row.final_assistant_message_id,
+    resultSummary: row.result_summary,
+    firstCollectedByParentRunId: firstCollectedBy,
+    firstCollectedAt,
+  };
+  completeIdempotency(
+    database,
+    command.idempotencyKey,
+    command.childSessionId,
+    REPOSITORY_WRITE_OPERATIONS.childResultCollect,
+    prepared.fingerprint,
+    "delivery",
+    command.deliveryId,
+    value,
+    now,
+    retentionMs,
+  );
+  return success(value, false);
+}
+
 function checkIdempotency<T>(
   database: DatabaseSync,
   key: string,
@@ -1152,6 +1626,7 @@ function checkIdempotency<T>(
   expectedRefType: "session" | "run" | "delivery",
   expectedRefId: string,
   now: number,
+  decodeReplay?: (value: unknown) => T | undefined,
 ): Readonly<{ kind: "new" }> | Readonly<{ kind: "replay" | "failure"; result: RepositoryCommandResult<T> }> {
   const row = database.prepare("SELECT * FROM idempotency_records WHERE idempotency_key = ?").get(key) as
     IdempotencyRow | undefined;
@@ -1186,14 +1661,65 @@ function checkIdempotency<T>(
     row.response_ref_type !== expectedRefType ||
     row.response_ref_id !== expectedRefId ||
     row.response_envelope_json === null ||
-    !hasResponseReference(database, expectedRefType, expectedRefId, expectedScopeSessionId)
+    !hasResponseReference(database, operation, expectedRefType, expectedRefId, expectedScopeSessionId)
   ) {
     return { kind: "failure", result: failure("reference_invalid", "Idempotent response reference is invalid.") };
   }
-  return {
-    kind: "replay",
-    result: success(JSON.parse(row.response_envelope_json) as T, true),
-  };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.response_envelope_json);
+  } catch {
+    return { kind: "failure", result: failure("reference_invalid", "Idempotent response envelope is invalid.") };
+  }
+  const replay = decodeReplay === undefined ? (parsed as T) : decodeReplay(parsed);
+  if (replay === undefined) {
+    return { kind: "failure", result: failure("reference_invalid", "Idempotent response envelope is invalid.") };
+  }
+  return { kind: "replay", result: success(replay, true) };
+}
+
+function decodeChildResultCollectReplay(
+  database: DatabaseSync,
+  deliveryId: string,
+  childSessionId: string,
+  value: unknown,
+): ChildResultCollectResult | undefined {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "deliveryId",
+      "delegationId",
+      "childSessionId",
+      "childRunId",
+      "terminalPhase",
+      "finalAssistantMessageId",
+      "resultSummary",
+      "firstCollectedByParentRunId",
+      "firstCollectedAt",
+    ])
+  ) {
+    return undefined;
+  }
+  const row = readCollectRow(database, deliveryId);
+  if (
+    row === undefined ||
+    row.child_session_id !== childSessionId ||
+    row.terminal_phase_snapshot === null ||
+    row.first_collected_by_parent_run_id === null ||
+    row.first_collected_at === null ||
+    value.deliveryId !== deliveryId ||
+    value.delegationId !== row.delegation_id ||
+    value.childSessionId !== row.child_session_id ||
+    value.childRunId !== row.child_run_id ||
+    value.terminalPhase !== row.terminal_phase_snapshot ||
+    value.finalAssistantMessageId !== row.final_assistant_message_id ||
+    value.resultSummary !== row.result_summary ||
+    value.firstCollectedByParentRunId !== row.first_collected_by_parent_run_id ||
+    value.firstCollectedAt !== row.first_collected_at
+  ) {
+    return undefined;
+  }
+  return value as ChildResultCollectResult;
 }
 
 function completeIdempotency<T extends object>(
@@ -1355,6 +1881,80 @@ function prepareRunInputAdmission(command: RunInputAdmissionCommand): PreparedRu
       attemptId: command.attemptId,
       message: { id: command.message.id, contentBlocks: JSON.parse(contentBlocksJson) },
     }),
+  };
+}
+
+function prepareRunOutputAppend(command: RunOutputAppendCommand): PreparedRunOutputAppend {
+  return { command, payload: prepareStoredPayload(command.item.payload) };
+}
+
+function prepareRunOutputResolvePending(command: RunOutputResolvePendingCommand): PreparedRunOutputResolvePending {
+  return {
+    command,
+    payload:
+      command.resolution.state === "stored"
+        ? preparePayloadBytes({
+            state: "stored",
+            originalByteLength: 0,
+            redactionState: "not_required",
+            payloadFormat: command.resolution.payloadFormat,
+            mediaType: command.resolution.mediaType,
+            content: command.resolution.content,
+          })
+        : undefined,
+  };
+}
+
+function prepareRunTerminal(command: RunTerminalCommand): PreparedRunTerminal {
+  const finalMessageJson =
+    command.outcome.kind === "completed" && command.outcome.finalAssistantMessage !== null
+      ? canonicalJsonString(command.outcome.finalAssistantMessage.contentBlocks)
+      : null;
+  if (finalMessageJson !== null && Buffer.byteLength(finalMessageJson) > 4 * 1024 * 1024) throw invalidCommand();
+  return {
+    command,
+    finalMessageJson,
+    // Keep exact-replay identity stable after a pending output resolves without exposing it through RunEvent.summary.
+    terminalDedupeKey: fingerprint({ operation: "run.terminal", command }),
+  };
+}
+
+function prepareChildResultCollect(command: ChildResultCollectCommand): PreparedChildResultCollect {
+  return {
+    command,
+    fingerprint: fingerprint({
+      operation: "child-result.collect",
+      parentSessionId: command.parentSessionId,
+      childSessionId: command.childSessionId,
+      workspaceKey: command.workspaceKey,
+      deliveryId: command.deliveryId,
+      collectingParentRunId: command.collectingParentRunId,
+      eventId: command.eventId,
+    }),
+  };
+}
+
+function prepareStoredPayload(payload: RunOutputPayloadCommand): PreparedStoredPayload | undefined {
+  return payload.state === "stored" ? preparePayloadBytes(payload) : undefined;
+}
+
+function preparePayloadBytes(
+  payload: Extract<RunOutputPayloadCommand, Readonly<{ state: "stored" }>>,
+): PreparedStoredPayload {
+  const content = Buffer.from(payload.content);
+  if (payload.payloadFormat === "text" || payload.payloadFormat === "json") {
+    let decoded: string;
+    try {
+      decoded = new TextDecoder("utf-8", { fatal: true }).decode(content);
+      if (payload.payloadFormat === "json") JSON.parse(decoded);
+    } catch {
+      throw invalidCommand();
+    }
+  }
+  return {
+    ...payload,
+    content,
+    contentSha256: createHash("sha256").update(content).digest("hex"),
   };
 }
 
@@ -1649,6 +2249,104 @@ function decodeRunInputResolution(payload: Readonly<Record<string, unknown>>): D
     return decodeFailure();
   }
   return { ok: true, value: payload as unknown as RunInputResolutionCommand };
+}
+
+function decodeRunOutputAppend(payload: Readonly<Record<string, unknown>>): DecodeResult<RunOutputAppendCommand> {
+  if (
+    !hasExactKeys(payload, ["sessionId", "workspaceKey", "runId", "item"]) ||
+    !isBoundedString(payload.sessionId, 1024) ||
+    !isBoundedString(payload.workspaceKey, 1024) ||
+    !isBoundedString(payload.runId, 1024) ||
+    !isRunOutputDraft(payload.item, false)
+  ) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as RunOutputAppendCommand };
+}
+
+function decodeRunOutputResolvePending(
+  payload: Readonly<Record<string, unknown>>,
+): DecodeResult<RunOutputResolvePendingCommand> {
+  if (
+    !hasExactKeys(payload, ["sessionId", "workspaceKey", "runId", "outputItemId", "resolution"]) ||
+    !isBoundedString(payload.sessionId, 1024) ||
+    !isBoundedString(payload.workspaceKey, 1024) ||
+    !isBoundedString(payload.runId, 1024) ||
+    !isBoundedString(payload.outputItemId, 1024) ||
+    !isPlainObject(payload.resolution)
+  ) {
+    return decodeFailure();
+  }
+  const resolution = payload.resolution;
+  if (resolution.state === "stored") {
+    if (
+      !hasExactKeys(resolution, ["state", "payloadFormat", "mediaType", "content"]) ||
+      !isPayloadFormat(resolution.payloadFormat) ||
+      !(resolution.mediaType === null || isBoundedString(resolution.mediaType, 256)) ||
+      !(resolution.content instanceof Uint8Array)
+    ) {
+      return decodeFailure();
+    }
+  } else if (
+    (resolution.state !== "omitted_size_limit" && resolution.state !== "omitted_persistence") ||
+    !hasExactKeys(resolution, ["state"])
+  ) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as RunOutputResolvePendingCommand };
+}
+
+function decodeRunTerminal(payload: Readonly<Record<string, unknown>>): DecodeResult<RunTerminalCommand> {
+  if (
+    !hasExactKeys(payload, [
+      "sessionId",
+      "workspaceKey",
+      "runId",
+      "attemptId",
+      "terminalEvent",
+      "outcome",
+      "outputs",
+      "childResult",
+    ]) ||
+    !isBoundedString(payload.sessionId, 1024) ||
+    !isBoundedString(payload.workspaceKey, 1024) ||
+    !isBoundedString(payload.runId, 1024) ||
+    !isBoundedString(payload.attemptId, 1024) ||
+    !isPlainObject(payload.terminalEvent) ||
+    !hasExactKeys(payload.terminalEvent, ["id", "dedupeKey"]) ||
+    !isBoundedString(payload.terminalEvent.id, 1024) ||
+    !isBoundedString(payload.terminalEvent.dedupeKey, 1024) ||
+    !isRunTerminalOutcome(payload.outcome) ||
+    !isDenseTerminalOutputs(payload.outputs) ||
+    !isChildTerminalResult(payload.childResult)
+  ) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as RunTerminalCommand };
+}
+
+function decodeChildResultCollect(payload: Readonly<Record<string, unknown>>): DecodeResult<ChildResultCollectCommand> {
+  if (
+    !hasExactKeys(payload, [
+      "parentSessionId",
+      "childSessionId",
+      "workspaceKey",
+      "idempotencyKey",
+      "deliveryId",
+      "collectingParentRunId",
+      "eventId",
+    ]) ||
+    !isBoundedString(payload.parentSessionId, 1024) ||
+    !isBoundedString(payload.childSessionId, 1024) ||
+    !isBoundedString(payload.workspaceKey, 1024) ||
+    !isCanonicalUuid(payload.idempotencyKey) ||
+    !isBoundedString(payload.deliveryId, 1024) ||
+    !isBoundedString(payload.collectingParentRunId, 1024) ||
+    !isBoundedString(payload.eventId, 1024)
+  ) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as ChildResultCollectCommand };
 }
 
 function lifecycleOperation(expected: "active" | "archived", target: SessionLifecycleStatus): string {
@@ -2077,7 +2775,7 @@ function resolveAdmissionBinding<T>(
 
 function nextOrdinal(
   database: DatabaseSync,
-  table: "messages" | "runs" | "provider_bindings",
+  table: "messages" | "runs" | "provider_bindings" | "run_output_items" | "run_events",
   column: string,
   id: string,
 ) {
@@ -2089,6 +2787,7 @@ function nextOrdinal(
 
 function hasResponseReference(
   database: DatabaseSync,
+  operation: string,
   refType: "session" | "run" | "delivery",
   refId: string,
   scopeSessionId: string,
@@ -2097,6 +2796,19 @@ function hasResponseReference(
     return refId === scopeSessionId && database.prepare("SELECT 1 FROM sessions WHERE id = ?").get(refId) !== undefined;
   }
   if (refType === "delivery") {
+    if (operation === REPOSITORY_WRITE_OPERATIONS.childResultCollect) {
+      return (
+        database
+          .prepare(
+            `
+            SELECT 1 FROM child_result_deliveries d
+            JOIN runs r ON r.id = d.child_run_id
+            WHERE d.id = ? AND r.session_id = ?
+          `,
+          )
+          .get(refId, scopeSessionId) !== undefined
+      );
+    }
     return (
       database
         .prepare(
@@ -2134,6 +2846,451 @@ function canResumeProviderBinding(database: DatabaseSync, sessionId: string, pro
       rows[0].persistence_mode === "persistent" &&
       rows[0].provider_id === providerId)
   );
+}
+
+function resolvePayloadLimits(overrides: Partial<typeof RUN_OUTPUT_PAYLOAD_LIMITS> | undefined): ResolvedPayloadLimits {
+  const limits = { ...RUN_OUTPUT_PAYLOAD_LIMITS, ...overrides };
+  for (const [name, value] of Object.entries(limits)) {
+    if (!Number.isSafeInteger(value) || value < 0 || value > RUN_OUTPUT_PAYLOAD_LIMITS[name as keyof typeof limits]) {
+      throw new RangeError(`Payload limit ${name} must not exceed its safety ceiling.`);
+    }
+  }
+  return limits;
+}
+
+function createDiskCapacityProbe(databasePath: string | undefined): DiskCapacityProbe {
+  if (databasePath === undefined || databasePath === ":memory:") {
+    return () => ({ availableBytes: Number.MAX_SAFE_INTEGER, totalBytes: Number.MAX_SAFE_INTEGER });
+  }
+  return () => {
+    const stats = fs.statfsSync(path.dirname(databasePath));
+    return {
+      availableBytes: boundedFsBytes(stats.bavail, stats.bsize),
+      totalBytes: boundedFsBytes(stats.blocks, stats.bsize),
+    };
+  };
+}
+
+function boundedFsBytes(blocks: number | bigint, blockSize: number | bigint): number {
+  const value = BigInt(blocks) * BigInt(blockSize);
+  return Number(value > BigInt(Number.MAX_SAFE_INTEGER) ? BigInt(Number.MAX_SAFE_INTEGER) : value);
+}
+
+function canStorePayload(
+  database: DatabaseSync,
+  runId: string,
+  sessionId: string,
+  payload: PreparedStoredPayload,
+  limits: ResolvedPayloadLimits,
+  diskCapacity: DiskCapacityProbe,
+): boolean {
+  const storedBytes = payload.content.byteLength;
+  if (payload.originalByteLength > limits.itemBytes || storedBytes > limits.itemBytes) return false;
+  const sums = database
+    .prepare(
+      `
+      SELECT
+        COALESCE(SUM(CASE WHEN o.run_id = ? THEN p.byte_length ELSE 0 END), 0) AS run_bytes,
+        COALESCE(SUM(CASE WHEN r.session_id = ? THEN p.byte_length ELSE 0 END), 0) AS session_bytes,
+        COALESCE(SUM(p.byte_length), 0) AS app_bytes
+      FROM run_output_payloads p
+      JOIN run_output_items o ON o.id = p.output_item_id
+      JOIN runs r ON r.id = o.run_id
+    `,
+    )
+    .get(runId, sessionId) as { run_bytes: number; session_bytes: number; app_bytes: number };
+  if (
+    sums.run_bytes + storedBytes > limits.runBytes ||
+    sums.session_bytes + storedBytes > limits.sessionBytes ||
+    sums.app_bytes + storedBytes > limits.appBytes
+  ) {
+    return false;
+  }
+  try {
+    const capacity = diskCapacity();
+    const reserve = Math.max(limits.minimumReserveBytes, Math.ceil(capacity.totalBytes * 0.1));
+    // The payload BLOB is not the whole commit cost: SQLite may also extend database, index, and WAL pages.
+    return capacity.availableBytes - storedBytes - RUN_OUTPUT_SQLITE_WRITE_MARGIN_BYTES >= reserve;
+  } catch {
+    return false;
+  }
+}
+
+function insertOutputItem(
+  database: DatabaseSync,
+  runId: string,
+  ordinal: number,
+  item: RunOutputDraft | RunTerminalOutputDraft,
+  payloadState: RunOutputPayloadCommand["state"] | "pending",
+  now: number,
+): void {
+  const payload = item.payload;
+  const originalByteLength = payload.state === "none" ? null : payload.originalByteLength;
+  const storedPayloadId = payloadState === "stored" ? item.id : null;
+  const redactionState =
+    payload.state === "none"
+      ? "not_required"
+      : payload.state === "omitted_redaction"
+        ? "unknown"
+        : payload.redactionState;
+  database
+    .prepare(
+      `
+      INSERT INTO run_output_items (
+        id, run_id, ordinal, category, kind, provider_item_id, summary, completion_state,
+        payload_state, payload_original_byte_length, stored_payload_id, redaction_state, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    )
+    .run(
+      item.id,
+      runId,
+      ordinal,
+      item.category,
+      item.kind,
+      item.providerItemId,
+      item.summary,
+      item.completionState,
+      payloadState,
+      originalByteLength,
+      storedPayloadId,
+      redactionState,
+      now,
+    );
+}
+
+function insertOutputPayload(
+  database: DatabaseSync,
+  outputItemId: string,
+  payload: PreparedStoredPayload,
+  now: number,
+): void {
+  database
+    .prepare(
+      `
+      INSERT INTO run_output_payloads (
+        output_item_id, payload_format, media_type, content, byte_length, content_sha256, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+    )
+    .run(
+      outputItemId,
+      payload.payloadFormat,
+      payload.mediaType,
+      payload.content,
+      payload.content.byteLength,
+      payload.contentSha256,
+      now,
+    );
+}
+
+function readOutputReplayRow(
+  database: DatabaseSync,
+  runId: string,
+  itemId: string,
+  providerItemId: string | null,
+): OutputReplayRow | undefined {
+  return database
+    .prepare(
+      `
+      SELECT o.*, p.payload_format, p.media_type, p.byte_length, p.content_sha256
+      FROM run_output_items o
+      LEFT JOIN run_output_payloads p ON p.output_item_id = o.id
+      WHERE o.run_id = ? AND (o.id = ? OR (? IS NOT NULL AND o.provider_item_id = ?))
+    `,
+    )
+    .get(runId, itemId, providerItemId, providerItemId) as OutputReplayRow | undefined;
+}
+
+function outputReplayMatches(database: DatabaseSync, prepared: PreparedRunOutputAppend, row: OutputReplayRow): boolean {
+  const item = prepared.command.item;
+  if (
+    row.id !== item.id ||
+    row.category !== item.category ||
+    row.kind !== item.kind ||
+    row.provider_item_id !== item.providerItemId ||
+    row.summary !== item.summary ||
+    row.completion_state !== item.completionState ||
+    row.payload_original_byte_length !== (item.payload.state === "none" ? null : item.payload.originalByteLength) ||
+    row.redaction_state !==
+      (item.payload.state === "none"
+        ? "not_required"
+        : item.payload.state === "omitted_redaction"
+          ? "unknown"
+          : item.payload.redactionState)
+  ) {
+    return false;
+  }
+  if (item.payload.state === "stored") {
+    if (row.payload_state === "omitted_size_limit") return row.stored_payload_id === null;
+    return (
+      row.payload_state === "stored" &&
+      prepared.payload !== undefined &&
+      row.payload_format === prepared.payload.payloadFormat &&
+      row.media_type === prepared.payload.mediaType &&
+      row.byte_length === prepared.payload.content.byteLength &&
+      row.content_sha256 === prepared.payload.contentSha256
+    );
+  }
+  return (
+    row.payload_state === item.payload.state &&
+    database.prepare("SELECT 1 FROM run_output_payloads WHERE output_item_id = ?").get(row.id) === undefined
+  );
+}
+
+function outputAppendValue(sessionId: string, runId: string, row: OutputReplayRow): RunOutputAppendResult {
+  return {
+    sessionId,
+    runId,
+    outputItemId: row.id,
+    ordinal: row.ordinal,
+    payloadState: row.payload_state as RunOutputAppendResult["payloadState"],
+    storedByteLength: row.byte_length,
+    createdAt: row.created_at,
+  };
+}
+
+function isWritableOutputPhase(phase: string): boolean {
+  return phase === "active" || phase === "canceling" || phase === "finalizing";
+}
+
+function resolvedPendingReplayState(
+  prepared: PreparedRunOutputResolvePending,
+  storedState: string,
+): RunOutputResolvePendingResult["payloadState"] | null {
+  if (prepared.command.resolution.state === storedState)
+    return storedState as RunOutputResolvePendingResult["payloadState"];
+  if (prepared.command.resolution.state === "stored" && storedState === "omitted_size_limit")
+    return "omitted_size_limit";
+  return null;
+}
+
+function pendingStoredReplayMatches(
+  payload: PreparedStoredPayload,
+  row: { byte_length: number; content_sha256: string; payload_format: string; media_type: string | null },
+): boolean {
+  return (
+    row.byte_length === payload.content.byteLength &&
+    row.content_sha256 === payload.contentSha256 &&
+    row.payload_format === payload.payloadFormat &&
+    row.media_type === payload.mediaType
+  );
+}
+
+function pendingResolutionValue(
+  command: RunOutputResolvePendingCommand,
+  state: RunOutputResolvePendingResult["payloadState"],
+  storedByteLength: number | null,
+): RunOutputResolvePendingResult {
+  return {
+    sessionId: command.sessionId,
+    runId: command.runId,
+    outputItemId: command.outputItemId,
+    payloadState: state,
+    storedByteLength,
+  };
+}
+
+function terminalRunFailureFields(command: RunTerminalCommand): Readonly<{
+  failureOrigin: string | null;
+  providerErrorCode: string | null;
+  errorSummary: string | null;
+}> {
+  if (command.outcome.kind === "failed" || command.outcome.kind === "interrupted") {
+    return {
+      failureOrigin: command.outcome.failureOrigin,
+      providerErrorCode: command.outcome.providerErrorCode,
+      errorSummary: command.outcome.errorSummary,
+    };
+  }
+  return { failureOrigin: null, providerErrorCode: null, errorSummary: null };
+}
+
+function terminalAttemptFailureFields(command: RunTerminalCommand): ReturnType<typeof terminalRunFailureFields> {
+  if (command.outcome.kind === "canceled") {
+    return { failureOrigin: "application", providerErrorCode: null, errorSummary: null };
+  }
+  return terminalRunFailureFields(command);
+}
+
+function hasTerminalIdentityConflict(
+  database: DatabaseSync,
+  command: RunTerminalCommand,
+  terminalDedupeKey: string,
+): boolean {
+  if (
+    database
+      .prepare("SELECT 1 FROM run_events WHERE id = ? OR (run_id = ? AND dedupe_key = ?)")
+      .get(command.terminalEvent.id, command.runId, terminalDedupeKey) !== undefined
+  ) {
+    return true;
+  }
+  const finalMessageId = command.outcome.kind === "completed" ? command.outcome.finalAssistantMessage?.id : undefined;
+  if (
+    finalMessageId !== undefined &&
+    database.prepare("SELECT 1 FROM messages WHERE id = ?").get(finalMessageId) !== undefined
+  ) {
+    return true;
+  }
+  return command.outputs.some(
+    (output) =>
+      database.prepare("SELECT 1 FROM run_output_items WHERE id = ?").get(output.id) !== undefined ||
+      (output.providerItemId !== null &&
+        database
+          .prepare("SELECT 1 FROM run_output_items WHERE run_id = ? AND provider_item_id = ?")
+          .get(command.runId, output.providerItemId) !== undefined),
+  );
+}
+
+function readChildTerminalRow(database: DatabaseSync, runId: string): ChildTerminalRow | undefined {
+  return database
+    .prepare(
+      `
+      SELECT d.id AS delivery_id, d.delegation_id, d.availability_state
+      FROM child_result_deliveries d
+      JOIN delegations g ON g.id = d.delegation_id
+      WHERE d.child_run_id = ? AND g.latest_child_run_id = ?
+    `,
+    )
+    .get(runId, runId) as ChildTerminalRow | undefined;
+}
+
+function replayTerminalRun(
+  database: DatabaseSync,
+  prepared: PreparedRunTerminal,
+  row: TerminalGateRow,
+): RepositoryCommandResult<RunTerminalResult> {
+  const { command } = prepared;
+  const failureFields = terminalRunFailureFields(command);
+  const event = database
+    .prepare("SELECT id, dedupe_key, summary FROM run_events WHERE run_id = ? AND event_code = 'run.terminal'")
+    .get(command.runId) as { id: string; dedupe_key: string | null; summary: string | null } | undefined;
+  const message =
+    row.final_assistant_message_id === null
+      ? undefined
+      : (database
+          .prepare("SELECT content_blocks_json FROM messages WHERE id = ? AND session_id = ? AND role = 'assistant'")
+          .get(row.final_assistant_message_id, command.sessionId) as { content_blocks_json: string } | undefined);
+  const expectedFinalId =
+    command.outcome.kind === "completed" ? (command.outcome.finalAssistantMessage?.id ?? null) : null;
+  if (
+    row.phase !== command.outcome.kind ||
+    row.final_assistant_message_id !== expectedFinalId ||
+    row.failure_origin !== failureFields.failureOrigin ||
+    row.provider_error_code !== failureFields.providerErrorCode ||
+    row.error_summary !== failureFields.errorSummary ||
+    event?.id !== command.terminalEvent.id ||
+    event.dedupe_key !== prepared.terminalDedupeKey ||
+    event.summary !== null ||
+    (prepared.finalMessageJson === null
+      ? message !== undefined
+      : message?.content_blocks_json !== prepared.finalMessageJson) ||
+    !terminalOutputsReplay(database, command.runId, command.outputs)
+  ) {
+    return failure("lifecycle_conflict", "Run terminal outcome differs from the replay.");
+  }
+  const child = database
+    .prepare("SELECT id, terminal_phase_snapshot, result_summary FROM child_result_deliveries WHERE child_run_id = ?")
+    .get(command.runId) as { id: string; terminal_phase_snapshot: string; result_summary: string | null } | undefined;
+  if (
+    (child === undefined) !== (command.childResult === null) ||
+    (child !== undefined &&
+      (child.terminal_phase_snapshot !== command.outcome.kind ||
+        child.result_summary !== command.childResult?.resultSummary))
+  ) {
+    return failure("lifecycle_conflict", "Child terminal result differs from the replay.");
+  }
+  return success(
+    terminalResult(
+      command,
+      expectedFinalId,
+      command.terminalEvent.id,
+      child?.id ?? null,
+      command.childResult?.workflowState ?? null,
+      row.terminal_at as number,
+    ),
+    true,
+  );
+}
+
+function terminalOutputsReplay(
+  database: DatabaseSync,
+  runId: string,
+  outputs: readonly RunTerminalOutputDraft[],
+): boolean {
+  return outputs.every((output) => {
+    const row = readOutputReplayRow(database, runId, output.id, output.providerItemId);
+    if (row === undefined) return false;
+    const immutableFieldsMatch =
+      row.id === output.id &&
+      row.category === output.category &&
+      row.kind === output.kind &&
+      row.provider_item_id === output.providerItemId &&
+      row.summary === output.summary &&
+      row.completion_state === output.completionState &&
+      row.payload_original_byte_length ===
+        (output.payload.state === "none" ? null : output.payload.originalByteLength) &&
+      row.redaction_state ===
+        (output.payload.state === "none"
+          ? "not_required"
+          : output.payload.state === "omitted_redaction"
+            ? "unknown"
+            : output.payload.redactionState);
+    if (!immutableFieldsMatch) return false;
+    if (output.payload.state === "pending") {
+      if (row.payload_state === "stored") {
+        return row.stored_payload_id === row.id && row.byte_length !== null && row.content_sha256 !== null;
+      }
+      return (
+        (row.payload_state === "pending" ||
+          row.payload_state === "omitted_size_limit" ||
+          row.payload_state === "omitted_persistence") &&
+        row.stored_payload_id === null &&
+        row.byte_length === null
+      );
+    }
+    return row.payload_state === output.payload.state && row.stored_payload_id === null && row.byte_length === null;
+  });
+}
+
+function terminalResult(
+  command: RunTerminalCommand,
+  finalAssistantMessageId: string | null,
+  terminalEventId: string,
+  childDeliveryId: string | null,
+  delegationState: RunTerminalResult["delegationState"],
+  terminalAt: number,
+): RunTerminalResult {
+  return {
+    sessionId: command.sessionId,
+    runId: command.runId,
+    attemptId: command.attemptId,
+    phase: command.outcome.kind,
+    finalAssistantMessageId,
+    terminalEventId,
+    childDeliveryId,
+    delegationState,
+    terminalAt,
+  };
+}
+
+function readCollectRow(database: DatabaseSync, deliveryId: string): CollectRow | undefined {
+  return database
+    .prepare(
+      `
+      SELECT d.delegation_id, d.child_run_id, d.availability_state, d.terminal_phase_snapshot,
+             d.result_summary, d.available_at, d.first_collected_by_parent_run_id, d.first_collected_at,
+             r.final_assistant_message_id, r.session_id AS child_session_id,
+             sr.parent_session_id, s.workspace_key
+      FROM child_result_deliveries d
+      JOIN runs r ON r.id = d.child_run_id
+      JOIN delegations g ON g.id = d.delegation_id
+      JOIN session_relations sr ON sr.id = g.session_relation_id AND sr.child_session_id = r.session_id
+      JOIN sessions s ON s.id = r.session_id
+      WHERE d.id = ?
+    `,
+    )
+    .get(deliveryId) as CollectRow | undefined;
 }
 
 function normalizeAllowedAdditionalDirectories(directories: readonly string[]): readonly string[] {
@@ -2231,6 +3388,120 @@ function isBoundedString(value: unknown, maxLength: number): value is string {
   return typeof value === "string" && value.length >= 1 && value.length <= maxLength;
 }
 
+function isRunOutputDraft(value: unknown, allowPending: boolean): value is RunOutputDraft | RunTerminalOutputDraft {
+  return (
+    isPlainObject(value) &&
+    hasExactKeys(value, ["id", "category", "kind", "providerItemId", "summary", "completionState", "payload"]) &&
+    isBoundedString(value.id, 1_024) &&
+    isRunOutputCategory(value.category) &&
+    isBoundedString(value.kind, 64) &&
+    (value.providerItemId === null || isBoundedString(value.providerItemId, 1_024)) &&
+    typeof value.summary === "string" &&
+    Buffer.byteLength(value.summary) <= 4_096 &&
+    (value.completionState === "complete" || value.completionState === "partial") &&
+    isRunOutputPayload(value.payload, allowPending)
+  );
+}
+
+function isDenseTerminalOutputs(value: unknown): value is RunTerminalOutputDraft[] {
+  if (!Array.isArray(value) || value.length > 256) return false;
+  const ids = new Set<string>();
+  const providerItemIds = new Set<string>();
+  for (let index = 0; index < value.length; index += 1) {
+    if (!(index in value) || !isRunOutputDraft(value[index], true)) return false;
+    const output = value[index] as RunTerminalOutputDraft;
+    if (ids.has(output.id)) return false;
+    ids.add(output.id);
+    if (output.providerItemId !== null) {
+      if (providerItemIds.has(output.providerItemId)) return false;
+      providerItemIds.add(output.providerItemId);
+    }
+  }
+  return true;
+}
+
+function isRunOutputPayload(value: unknown, allowPending: boolean): boolean {
+  if (!isPlainObject(value) || typeof value.state !== "string") return false;
+  if (value.state === "none") return hasExactKeys(value, ["state"]);
+  if (value.state === "stored") {
+    return (
+      !allowPending &&
+      hasExactKeys(value, ["state", "originalByteLength", "redactionState", "payloadFormat", "mediaType", "content"]) &&
+      isNonNegativeSafeInteger(value.originalByteLength) &&
+      isRunOutputRedactionState(value.redactionState) &&
+      isPayloadFormat(value.payloadFormat) &&
+      (value.mediaType === null || isBoundedString(value.mediaType, 256)) &&
+      value.content instanceof Uint8Array
+    );
+  }
+  if (value.state === "omitted_redaction") {
+    return hasExactKeys(value, ["state", "originalByteLength"]) && isNonNegativeSafeInteger(value.originalByteLength);
+  }
+  if (value.state === "pending" || value.state === "omitted_size_limit" || value.state === "omitted_persistence") {
+    return (
+      (value.state !== "pending" || allowPending) &&
+      hasExactKeys(value, ["state", "originalByteLength", "redactionState"]) &&
+      isNonNegativeSafeInteger(value.originalByteLength) &&
+      isRunOutputRedactionState(value.redactionState)
+    );
+  }
+  return false;
+}
+
+function isRunTerminalOutcome(value: unknown): value is RunTerminalCommand["outcome"] {
+  if (!isPlainObject(value) || typeof value.kind !== "string") return false;
+  if (value.kind === "completed") {
+    if (!hasExactKeys(value, ["kind", "finalAssistantMessage"])) return false;
+    if (value.finalAssistantMessage === null) return true;
+    return (
+      isPlainObject(value.finalAssistantMessage) &&
+      hasExactKeys(value.finalAssistantMessage, ["id", "contentBlocks"]) &&
+      isBoundedString(value.finalAssistantMessage.id, 1_024) &&
+      isDenseJsonArray(value.finalAssistantMessage.contentBlocks, 1_024)
+    );
+  }
+  if (value.kind === "canceled") return hasExactKeys(value, ["kind"]);
+  return (
+    (value.kind === "failed" || value.kind === "interrupted") &&
+    hasExactKeys(value, ["kind", "failureOrigin", "providerErrorCode", "errorSummary"]) &&
+    isFailureOrigin(value.failureOrigin) &&
+    (value.providerErrorCode === null || isBoundedString(value.providerErrorCode, 1_024)) &&
+    (value.errorSummary === null || isBoundedString(value.errorSummary, 4_096))
+  );
+}
+
+function isChildTerminalResult(value: unknown): value is RunTerminalCommand["childResult"] {
+  return (
+    value === null ||
+    (isPlainObject(value) &&
+      hasExactKeys(value, ["workflowState", "resultSummary"]) &&
+      (value.workflowState === "clarification_required" || value.workflowState === "closed") &&
+      (value.resultSummary === null || isBoundedString(value.resultSummary, 1_024)))
+  );
+}
+
+function isRunOutputCategory(value: unknown): boolean {
+  return ["assistant_detail", "operation", "interaction", "telemetry", "diagnostic", "provider_metadata"].includes(
+    value as string,
+  );
+}
+
+function isRunOutputRedactionState(value: unknown): value is "not_required" | "redacted" {
+  return value === "not_required" || value === "redacted";
+}
+
+function isPayloadFormat(value: unknown): value is "text" | "json" | "binary" {
+  return value === "text" || value === "json" || value === "binary";
+}
+
+function isFailureOrigin(value: unknown): boolean {
+  return ["provider", "transport", "process", "application", "unknown"].includes(value as string);
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
 function hasDispatchScope(value: Readonly<Record<string, unknown>>): boolean {
   return (
     isBoundedString(value.sessionId, 1_024) &&
@@ -2326,6 +3597,11 @@ function decodeFailure(): DecodeFailure {
 }
 
 class RepositoryCommandDecodeError extends Error {}
+class RepositoryTransactionRollback extends Error {
+  constructor(readonly result: unknown) {
+    super("Repository transaction rolled back for a domain conflict.");
+  }
+}
 
 type DecodeFailure = Readonly<{ ok: false }>;
 type DecodeResult<T> = Readonly<{ ok: true; value: T }> | DecodeFailure;
@@ -2367,6 +3643,84 @@ type PreparedRunInputAdmission = Readonly<{
   command: RunInputAdmissionCommand;
   contentBlocksJson: string;
   fingerprint: string;
+}>;
+type PreparedStoredPayload = Readonly<{
+  state: "stored";
+  originalByteLength: number;
+  redactionState: "not_required" | "redacted";
+  payloadFormat: "text" | "json" | "binary";
+  mediaType: string | null;
+  content: Buffer;
+  contentSha256: string;
+}>;
+type PreparedRunOutputAppend = Readonly<{
+  command: RunOutputAppendCommand;
+  payload: PreparedStoredPayload | undefined;
+}>;
+type PreparedRunOutputResolvePending = Readonly<{
+  command: RunOutputResolvePendingCommand;
+  payload: PreparedStoredPayload | undefined;
+}>;
+type PreparedRunTerminal = Readonly<{
+  command: RunTerminalCommand;
+  finalMessageJson: string | null;
+  terminalDedupeKey: string;
+}>;
+type PreparedChildResultCollect = Readonly<{
+  command: ChildResultCollectCommand;
+  fingerprint: string;
+}>;
+type ResolvedPayloadLimits = typeof RUN_OUTPUT_PAYLOAD_LIMITS;
+type RepositorySynchronousResult<T> = T extends PromiseLike<unknown> ? never : T;
+type DiskCapacityProbe = () => Readonly<{ availableBytes: number; totalBytes: number }>;
+type OutputReplayRow = Readonly<{
+  id: string;
+  ordinal: number;
+  category: string;
+  kind: string;
+  provider_item_id: string | null;
+  summary: string;
+  completion_state: string;
+  payload_state: string;
+  payload_original_byte_length: number | null;
+  stored_payload_id: string | null;
+  redaction_state: string;
+  created_at: number;
+  payload_format: string | null;
+  media_type: string | null;
+  byte_length: number | null;
+  content_sha256: string | null;
+}>;
+type TerminalGateRow = Readonly<{
+  phase: string;
+  final_assistant_message_id: string | null;
+  failure_origin: string | null;
+  provider_error_code: string | null;
+  error_summary: string | null;
+  terminal_at: number | null;
+  attempt_state: string;
+  workspace_key: string;
+  session_updated_at: number;
+  session_last_activity_at: number;
+}>;
+type ChildTerminalRow = Readonly<{
+  delivery_id: string;
+  delegation_id: string;
+  availability_state: "pending" | "available";
+}>;
+type CollectRow = Readonly<{
+  delegation_id: string;
+  child_run_id: string;
+  availability_state: "pending" | "available";
+  terminal_phase_snapshot: TerminalRunPhase | null;
+  result_summary: string | null;
+  available_at: number | null;
+  first_collected_by_parent_run_id: string | null;
+  first_collected_at: number | null;
+  final_assistant_message_id: string | null;
+  child_session_id: string;
+  parent_session_id: string;
+  workspace_key: string;
 }>;
 type BindingResolution<T> =
   | Readonly<{ ok: true; providerBindingId: string | null }>

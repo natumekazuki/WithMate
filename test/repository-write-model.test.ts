@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
-import { createRepositoryWriteOperations } from "../src/persistence-worker/repository-write-model.js";
+import {
+  createRepositoryWriteOperations,
+  RUN_OUTPUT_SQLITE_WRITE_MARGIN_BYTES,
+} from "../src/persistence-worker/repository-write-model.js";
 import { PersistenceWorkerRuntime } from "../src/persistence-worker/worker-runtime.js";
 import { PERSISTENCE_PROTOCOL_VERSION, type WorkerToMainMessage } from "../src/shared/persistence-protocol.js";
 import { REPOSITORY_WRITE_OPERATIONS } from "../src/shared/repository-write-model.js";
@@ -1622,6 +1626,511 @@ repositoryTest("supplemental input resolution rejects undefined reason codes", (
   });
 });
 
+repositoryTest("Run output stores item and prepared payload atomically and replays Provider identity", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const append = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runOutputAppend, () => 600);
+    const command = runOutputAppendCommand("output-1", "provider-output-1", "hello");
+    const first = append(command) as CommandResult;
+    const replay = append(command) as CommandResult;
+
+    assert.equal(first.ok && first.value.payloadState, "stored");
+    assert.equal(replay.ok && replay.replayed, true);
+    assert.equal(count(database, "run_output_items"), 1);
+    assert.equal(count(database, "run_output_payloads"), 1);
+    const row = database
+      .prepare(
+        `
+        SELECT o.ordinal, o.payload_state, o.stored_payload_id, p.byte_length, p.content_sha256
+        FROM run_output_items o JOIN run_output_payloads p ON p.output_item_id = o.id
+        WHERE o.id = 'output-1'
+      `,
+      )
+      .get() as Record<string, unknown>;
+    assert.deepEqual(
+      { ...row },
+      {
+        ordinal: 1,
+        payload_state: "stored",
+        stored_payload_id: "output-1",
+        byte_length: 5,
+        content_sha256: createHash("sha256").update("hello").digest("hex"),
+      },
+    );
+
+    const conflict = append({ ...command, item: { ...command.item, summary: "changed" } }) as CommandResult;
+    assert.equal(!conflict.ok && conflict.error.code, "lifecycle_conflict");
+  });
+});
+
+repositoryTest("Run output quota omission and payload insert failure never leave a stored item alone", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const limited = createRepositoryWriteOperations(database, {
+      clock: () => 600,
+      payloadLimits: { itemBytes: 4, runBytes: 4, sessionBytes: 4, appBytes: 4, minimumReserveBytes: 0 },
+      diskCapacity: () => ({ availableBytes: 100, totalBytes: 100 }),
+    }).get(REPOSITORY_WRITE_OPERATIONS.runOutputAppend);
+    assert.ok(limited);
+    const omitted = limited.execute(runOutputAppendCommand("output-big", null, "hello")).result as CommandResult;
+    assert.equal(omitted.ok && omitted.value.payloadState, "omitted_size_limit");
+    assert.equal(count(database, "run_output_payloads"), 0);
+
+    database.exec(`
+      CREATE TRIGGER fail_output_payload BEFORE INSERT ON run_output_payloads
+      BEGIN SELECT RAISE(ABORT, 'fault injection'); END;
+    `);
+    const append = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runOutputAppend, () => 700);
+    assert.throws(() => append(runOutputAppendCommand("output-fault", null, "ok")), /fault injection/);
+    assert.equal(database.prepare("SELECT 1 FROM run_output_items WHERE id = 'output-fault'").get(), undefined);
+  });
+});
+
+repositoryTest("Run output disk reserve includes conservative SQLite write overhead", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const content = "ok";
+    const requiredBytes = new TextEncoder().encode(content).byteLength;
+    const options = {
+      clock: () => 600,
+      payloadLimits: { minimumReserveBytes: 10 },
+    };
+    const omitted = createRepositoryWriteOperations(database, {
+      ...options,
+      diskCapacity: () => ({
+        availableBytes: requiredBytes + RUN_OUTPUT_SQLITE_WRITE_MARGIN_BYTES + 9,
+        totalBytes: 100,
+      }),
+    }).get(REPOSITORY_WRITE_OPERATIONS.runOutputAppend);
+    assert.ok(omitted);
+    const omittedResult = omitted.execute(runOutputAppendCommand("output-margin-omitted", null, content))
+      .result as CommandResult;
+    assert.equal(omittedResult.ok && omittedResult.value.payloadState, "omitted_size_limit");
+
+    const stored = createRepositoryWriteOperations(database, {
+      ...options,
+      diskCapacity: () => ({
+        availableBytes: requiredBytes + RUN_OUTPUT_SQLITE_WRITE_MARGIN_BYTES + 10,
+        totalBytes: 100,
+      }),
+    }).get(REPOSITORY_WRITE_OPERATIONS.runOutputAppend);
+    assert.ok(stored);
+    const storedResult = stored.execute(runOutputAppendCommand("output-margin-stored", null, content))
+      .result as CommandResult;
+    assert.equal(storedResult.ok && storedResult.value.payloadState, "stored");
+  });
+});
+
+repositoryTest("Run output independently enforces Run, Session, and app cumulative quotas", () => {
+  for (const quota of ["run", "session", "app"] as const) {
+    withDatabase((database) => {
+      activatePersistentRun(database);
+      if (quota === "run") {
+        insertStoredQuotaFixture(database, "run-1", "output-run-quota-seed", "abc");
+      } else if (quota === "session") {
+        insertQuotaHistoryRun(database, "session-1", "run-session-quota-history", "message-session-quota-history");
+        insertStoredQuotaFixture(database, "run-session-quota-history", "output-session-quota-seed", "abc");
+      } else {
+        database
+          .prepare(
+            `
+            INSERT INTO sessions (
+              id, provider_id, workspace_key, allowed_additional_directories_json,
+              default_character_id, max_concurrent_child_runs, lifecycle_status,
+              created_at, updated_at, last_activity_at
+            ) VALUES ('session-app-quota-history', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 1, 1)
+          `,
+          )
+          .run();
+        insertQuotaHistoryRun(
+          database,
+          "session-app-quota-history",
+          "run-app-quota-history",
+          "message-app-quota-history",
+        );
+        insertStoredQuotaFixture(database, "run-app-quota-history", "output-app-quota-seed", "abc");
+      }
+
+      const append = createRepositoryWriteOperations(database, {
+        clock: () => 600,
+        payloadLimits: {
+          itemBytes: 10,
+          runBytes: quota === "run" ? 4 : 100,
+          sessionBytes: quota === "session" ? 4 : 100,
+          appBytes: quota === "app" ? 4 : 100,
+          minimumReserveBytes: 0,
+        },
+      }).get(REPOSITORY_WRITE_OPERATIONS.runOutputAppend);
+      assert.ok(append);
+      const result = append.execute(runOutputAppendCommand(`output-${quota}-quota`, null, "ok"))
+        .result as CommandResult;
+      assert.equal(result.ok && result.value.payloadState, "omitted_size_limit", `${quota} quota must omit payload`);
+    });
+  }
+});
+
+repositoryTest("Run output rejects malformed prepared JSON before opening its transaction", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const append = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runOutputAppend, () => 600);
+    const command = runOutputAppendCommand("output-json", null, "{not-json");
+    command.item.payload.payloadFormat = "json";
+    const result = append(command) as CommandResult;
+    assert.equal(!result.ok && result.error.code, "request_invalid");
+    assert.equal(count(database, "run_output_items"), 0);
+  });
+});
+
+repositoryTest(
+  "Run terminal commits Attempt, final Message, event, pending output, and Session activity together",
+  () => {
+    withDatabase((database) => {
+      activatePersistentRun(database);
+      const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+      const command = runTerminalCommand();
+      const first = terminal(command) as CommandResult;
+      const replay = terminal(command) as CommandResult;
+      assert.equal(first.ok && first.value.phase, "completed");
+      assert.equal(replay.ok && replay.replayed, true);
+      const changedReplay = terminal({ ...command, outputs: [] }) as CommandResult;
+      assert.equal(!changedReplay.ok && changedReplay.error.code, "lifecycle_conflict");
+
+      const run = database
+        .prepare("SELECT phase, final_assistant_message_id, terminal_at FROM runs WHERE id = 'run-1'")
+        .get() as Record<string, unknown>;
+      assert.deepEqual(
+        { ...run },
+        { phase: "completed", final_assistant_message_id: "message-final-1", terminal_at: 700 },
+      );
+      assert.equal(
+        (
+          database.prepare("SELECT attempt_state FROM run_attempts WHERE id = 'attempt-run-1'").get() as {
+            attempt_state: string;
+          }
+        ).attempt_state,
+        "succeeded",
+      );
+      assert.equal(count(database, "messages"), 2);
+      assert.equal(count(database, "run_events"), 1);
+      assert.equal(
+        (
+          database.prepare("SELECT summary FROM run_events WHERE id = 'terminal-event-1'").get() as {
+            summary: string | null;
+          }
+        ).summary,
+        null,
+      );
+      assert.equal(
+        (
+          database.prepare("SELECT payload_state FROM run_output_items WHERE id = 'output-pending-1'").get() as {
+            payload_state: string;
+          }
+        ).payload_state,
+        "pending",
+      );
+      assert.equal(
+        (
+          database.prepare("SELECT last_activity_at FROM sessions WHERE id = 'session-1'").get() as {
+            last_activity_at: number;
+          }
+        ).last_activity_at,
+        700,
+      );
+    });
+  },
+);
+
+repositoryTest("Run terminal rejects persistence as a Provider Attempt failure origin", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    const command = runTerminalCommand();
+    const result = terminal({
+      ...command,
+      outcome: {
+        kind: "failed",
+        failureOrigin: "persistence",
+        providerErrorCode: null,
+        errorSummary: "write failed",
+      },
+      outputs: [],
+    }) as CommandResult;
+    assert.equal(!result.ok && result.error.code, "request_invalid");
+    assert.equal(
+      (database.prepare("SELECT phase FROM runs WHERE id = 'run-1'").get() as { phase: string }).phase,
+      "active",
+    );
+    assert.equal(
+      (
+        database.prepare("SELECT attempt_state FROM run_attempts WHERE id = 'attempt-run-1'").get() as {
+          attempt_state: string;
+        }
+      ).attempt_state,
+      "active",
+    );
+    assert.equal(count(database, "run_events"), 0);
+  });
+});
+
+repositoryTest("terminal pending output resolves one-way after terminal commit", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    assert.equal((terminal(runTerminalCommand()) as CommandResult).ok, true);
+    const resolve = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runOutputResolvePending, () => 800);
+    const command = {
+      sessionId: "session-1",
+      workspaceKey: "workspace",
+      runId: "run-1",
+      outputItemId: "output-pending-1",
+      resolution: {
+        state: "stored",
+        payloadFormat: "text",
+        mediaType: "text/plain",
+        content: new TextEncoder().encode("later"),
+      },
+    };
+    const first = resolve(command) as CommandResult;
+    const replay = resolve(command) as CommandResult;
+    assert.equal(first.ok && first.value.payloadState, "stored");
+    assert.equal(replay.ok && replay.replayed, true);
+    assert.deepEqual(replay.ok && replay.value, first.ok && first.value);
+    const terminalReplay = terminal(runTerminalCommand()) as CommandResult;
+    assert.equal(terminalReplay.ok && terminalReplay.replayed, true);
+    const reverse = resolve({ ...command, resolution: { state: "omitted_persistence" } }) as CommandResult;
+    assert.equal(!reverse.ok && reverse.error.code, "lifecycle_conflict");
+    assert.equal(count(database, "run_output_payloads"), 1);
+  });
+});
+
+repositoryTest("pending payload resolution rolls back an inserted payload on a semantic update conflict", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    assert.equal((terminal(runTerminalCommand()) as CommandResult).ok, true);
+    database.exec(`
+      CREATE TRIGGER ignore_pending_resolution BEFORE UPDATE ON run_output_items
+      WHEN OLD.payload_state = 'pending'
+      BEGIN SELECT RAISE(IGNORE); END;
+    `);
+    const resolve = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runOutputResolvePending, () => 800);
+    const result = resolve({
+      sessionId: "session-1",
+      workspaceKey: "workspace",
+      runId: "run-1",
+      outputItemId: "output-pending-1",
+      resolution: {
+        state: "stored",
+        payloadFormat: "text",
+        mediaType: "text/plain",
+        content: new TextEncoder().encode("later"),
+      },
+    }) as CommandResult;
+    assert.equal(!result.ok && result.error.code, "lifecycle_conflict");
+    assert.equal(count(database, "run_output_payloads"), 0);
+    assert.equal(
+      (
+        database.prepare("SELECT payload_state FROM run_output_items WHERE id = 'output-pending-1'").get() as {
+          payload_state: string;
+        }
+      ).payload_state,
+      "pending",
+    );
+  });
+});
+
+repositoryTest("child terminal atomically closes Delegation and makes its Delivery available", () => {
+  withDatabase((database) => {
+    insertChildScenario(database);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    const result = terminal(childTerminalCommand()) as CommandResult;
+    assert.equal(result.ok && result.value.childDeliveryId, "delivery-child-1");
+    const delivery = database
+      .prepare("SELECT availability_state, terminal_phase_snapshot, result_summary FROM child_result_deliveries")
+      .get() as Record<string, unknown>;
+    assert.deepEqual(
+      { ...delivery },
+      {
+        availability_state: "available",
+        terminal_phase_snapshot: "completed",
+        result_summary: "child done",
+      },
+    );
+    const delegation = database.prepare("SELECT workflow_state, closure_reason FROM delegations").get() as Record<
+      string,
+      unknown
+    >;
+    assert.deepEqual({ ...delegation }, { workflow_state: "closed", closure_reason: "completed" });
+  });
+});
+
+repositoryTest("child terminal rolls back every terminal row when Delivery publication fails", () => {
+  withDatabase((database) => {
+    insertChildScenario(database);
+    database.exec(`
+      CREATE TRIGGER fail_child_availability BEFORE UPDATE ON child_result_deliveries
+      BEGIN SELECT RAISE(ABORT, 'terminal fault injection'); END;
+    `);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    assert.throws(() => terminal(childTerminalCommand()), /terminal fault injection/);
+    assert.equal(
+      (database.prepare("SELECT phase FROM runs WHERE id = 'child-run'").get() as { phase: string }).phase,
+      "active",
+    );
+    assert.equal(database.prepare("SELECT 1 FROM messages WHERE id = 'child-final-message'").get(), undefined);
+    assert.equal(count(database, "run_events"), 0);
+  });
+});
+
+repositoryTest("child terminal rolls back every terminal row on a semantic Delivery conflict", () => {
+  withDatabase((database) => {
+    insertChildScenario(database);
+    database.exec(`
+      CREATE TRIGGER ignore_child_availability BEFORE UPDATE ON child_result_deliveries
+      BEGIN SELECT RAISE(IGNORE); END;
+    `);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    const result = terminal(childTerminalCommand()) as CommandResult;
+    assert.equal(!result.ok && result.error.code, "lifecycle_conflict");
+    assert.equal(
+      (database.prepare("SELECT phase FROM runs WHERE id = 'child-run'").get() as { phase: string }).phase,
+      "active",
+    );
+    assert.equal(database.prepare("SELECT 1 FROM messages WHERE id = 'child-final-message'").get(), undefined);
+    assert.equal(count(database, "run_events"), 0);
+    assert.equal(count(database, "run_output_items"), 0);
+  });
+});
+
+repositoryTest("child result collect preserves first collection and replays a Delivery-scoped envelope", () => {
+  withDatabase((database) => {
+    insertChildScenario(database);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    assert.equal((terminal(childTerminalCommand()) as CommandResult).ok, true);
+    const collect = operationFor(database, REPOSITORY_WRITE_OPERATIONS.childResultCollect, () => 800);
+    const command = childCollectCommand("018f1f4e-7f0a-7000-8000-000000000191", "collect-event-1");
+    const first = collect(command) as CommandResult;
+    const replay = collect(command) as CommandResult;
+    assert.equal(first.ok && first.value.firstCollectedByParentRunId, "parent-run");
+    assert.equal(replay.ok && replay.replayed, true);
+    assert.equal(count(database, "idempotency_records"), 1);
+    assert.equal(count(database, "run_events"), 2);
+    assert.equal(
+      (
+        database.prepare("SELECT summary FROM run_events WHERE id = 'collect-event-1'").get() as {
+          summary: string | null;
+        }
+      ).summary,
+      null,
+    );
+
+    const recollect = collect(
+      childCollectCommand("018f1f4e-7f0a-7000-8000-000000000192", "collect-event-2"),
+    ) as CommandResult;
+    assert.equal(recollect.ok && recollect.value.firstCollectedAt, 800);
+    assert.equal(count(database, "run_events"), 3);
+    const delivery = database
+      .prepare(
+        "SELECT availability_state, first_collected_by_parent_run_id, first_collected_at FROM child_result_deliveries",
+      )
+      .get() as Record<string, unknown>;
+    assert.deepEqual(
+      { ...delivery },
+      {
+        availability_state: "available",
+        first_collected_by_parent_run_id: "parent-run",
+        first_collected_at: 800,
+      },
+    );
+  });
+});
+
+repositoryTest("child result collect rejects pending scope and rolls back collection when Event insert fails", () => {
+  withDatabase((database) => {
+    insertChildScenario(database);
+    const collectPending = operationFor(database, REPOSITORY_WRITE_OPERATIONS.childResultCollect, () => 600);
+    const pending = collectPending(
+      childCollectCommand("018f1f4e-7f0a-7000-8000-000000000193", "collect-event-pending"),
+    ) as CommandResult;
+    assert.equal(!pending.ok && pending.error.code, "lifecycle_conflict");
+
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    assert.equal((terminal(childTerminalCommand()) as CommandResult).ok, true);
+    database.exec(`
+      CREATE TRIGGER ignore_first_collection BEFORE UPDATE ON child_result_deliveries
+      WHEN OLD.first_collected_at IS NULL
+      BEGIN SELECT RAISE(IGNORE); END;
+    `);
+    const semanticConflict = operationFor(database, REPOSITORY_WRITE_OPERATIONS.childResultCollect, () => 750);
+    const semanticResult = semanticConflict(
+      childCollectCommand("018f1f4e-7f0a-7000-8000-000000000194", "collect-event-ignore"),
+    ) as CommandResult;
+    assert.equal(!semanticResult.ok && semanticResult.error.code, "lifecycle_conflict");
+    assert.equal(count(database, "idempotency_records"), 0);
+    assert.equal(count(database, "run_events"), 1);
+    database.exec("DROP TRIGGER ignore_first_collection;");
+    database.exec(`
+      CREATE TRIGGER fail_collect_event BEFORE INSERT ON run_events
+      WHEN NEW.event_code = 'child.result.collected'
+      BEGIN SELECT RAISE(ABORT, 'collect fault injection'); END;
+    `);
+    const collect = operationFor(database, REPOSITORY_WRITE_OPERATIONS.childResultCollect, () => 800);
+    assert.throws(
+      () => collect(childCollectCommand("018f1f4e-7f0a-7000-8000-000000000196", "collect-event-fault")),
+      /collect fault injection/,
+    );
+    const delivery = database
+      .prepare("SELECT first_collected_at FROM child_result_deliveries WHERE id = 'delivery-child-1'")
+      .get() as { first_collected_at: number | null };
+    assert.equal(delivery.first_collected_at, null);
+    assert.equal(count(database, "idempotency_records"), 0);
+  });
+});
+
+repositoryTest("child result collect directly rejects fingerprint reuse, missing references, and expiry", () => {
+  withDatabase((database) => {
+    insertChildScenario(database);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    assert.equal((terminal(childTerminalCommand()) as CommandResult).ok, true);
+    const collect = operationFor(database, REPOSITORY_WRITE_OPERATIONS.childResultCollect, () => 800, 1);
+    const command = childCollectCommand("018f1f4e-7f0a-7000-8000-000000000195", "collect-event-contract");
+    assert.equal((collect(command) as CommandResult).ok, true);
+    const envelope = (
+      database
+        .prepare("SELECT response_envelope_json FROM idempotency_records WHERE idempotency_key = ?")
+        .get(command.idempotencyKey) as { response_envelope_json: string }
+    ).response_envelope_json;
+    database
+      .prepare("UPDATE idempotency_records SET response_envelope_json = ? WHERE idempotency_key = ?")
+      .run('{"deliveryId":"delivery-child-1"}', command.idempotencyKey);
+    const corruptEnvelope = collect(command) as CommandResult;
+    assert.equal(!corruptEnvelope.ok && corruptEnvelope.error.code, "reference_invalid");
+    database
+      .prepare("UPDATE idempotency_records SET response_envelope_json = ? WHERE idempotency_key = ?")
+      .run(envelope, command.idempotencyKey);
+    const conflict = collect({ ...command, eventId: "collect-event-changed" }) as CommandResult;
+    assert.equal(!conflict.ok && conflict.error.code, "idempotency_conflict");
+
+    database
+      .prepare("UPDATE idempotency_records SET response_ref_id = 'missing-delivery' WHERE idempotency_key = ?")
+      .run(command.idempotencyKey);
+    const missing = collect(command) as CommandResult;
+    assert.equal(!missing.ok && missing.error.code, "reference_invalid");
+    database
+      .prepare("UPDATE idempotency_records SET response_ref_id = 'delivery-child-1' WHERE idempotency_key = ?")
+      .run(command.idempotencyKey);
+    const expiredCollect = operationFor(database, REPOSITORY_WRITE_OPERATIONS.childResultCollect, () => 802, 1);
+    const expired = expiredCollect(command) as CommandResult;
+    assert.equal(!expired.ok && expired.error.code, "idempotency_expired");
+    const record = database
+      .prepare(
+        "SELECT record_state, response_ref_id, response_envelope_json FROM idempotency_records WHERE idempotency_key = ?",
+      )
+      .get(command.idempotencyKey) as Record<string, unknown>;
+    assert.deepEqual({ ...record }, { record_state: "expired", response_ref_id: null, response_envelope_json: null });
+  });
+});
+
 repositoryTest("Worker registry accepts Session commands only as write requests", async () => {
   const database = new DatabaseSync(":memory:");
   database.exec(fs.readFileSync(new URL("../schema/sqlite/v1.sql", import.meta.url), "utf8"));
@@ -1871,6 +2380,188 @@ function runInputResolutionCommand(
             resolutionCode: kind === "rejected" ? "provider_rejected" : "transport_unknown",
           } as const),
   };
+}
+
+function runOutputAppendCommand(outputId: string, providerItemId: string | null, content: string) {
+  const bytes = new TextEncoder().encode(content);
+  return {
+    sessionId: "session-1",
+    workspaceKey: "workspace",
+    runId: "run-1",
+    item: {
+      id: outputId,
+      category: "operation",
+      kind: "command",
+      providerItemId,
+      summary: "command output",
+      completionState: "complete",
+      payload: {
+        state: "stored",
+        originalByteLength: bytes.byteLength,
+        redactionState: "not_required",
+        payloadFormat: "text",
+        mediaType: "text/plain",
+        content: bytes,
+      },
+    },
+  };
+}
+
+function runTerminalCommand() {
+  return {
+    sessionId: "session-1",
+    workspaceKey: "workspace",
+    runId: "run-1",
+    attemptId: "attempt-run-1",
+    terminalEvent: { id: "terminal-event-1", dedupeKey: "provider-terminal-1" },
+    outcome: {
+      kind: "completed",
+      finalAssistantMessage: {
+        id: "message-final-1",
+        contentBlocks: [{ type: "text", text: "done" }],
+      },
+    },
+    outputs: [
+      {
+        id: "output-pending-1",
+        category: "diagnostic",
+        kind: "trace",
+        providerItemId: "provider-pending-1",
+        summary: "detail pending",
+        completionState: "complete",
+        payload: {
+          state: "pending",
+          originalByteLength: 5,
+          redactionState: "not_required",
+        },
+      },
+    ],
+    childResult: null,
+  };
+}
+
+function childTerminalCommand() {
+  return {
+    sessionId: "child-session",
+    workspaceKey: "workspace",
+    runId: "child-run",
+    attemptId: "child-attempt",
+    terminalEvent: { id: "child-terminal-event", dedupeKey: "child-provider-terminal" },
+    outcome: {
+      kind: "completed",
+      finalAssistantMessage: {
+        id: "child-final-message",
+        contentBlocks: [{ type: "text", text: "child done" }],
+      },
+    },
+    outputs: [],
+    childResult: { workflowState: "closed", resultSummary: "child done" },
+  };
+}
+
+function childCollectCommand(idempotencyKey: string, eventId: string) {
+  return {
+    parentSessionId: "parent-session",
+    childSessionId: "child-session",
+    workspaceKey: "workspace",
+    idempotencyKey,
+    deliveryId: "delivery-child-1",
+    collectingParentRunId: "parent-run",
+    eventId,
+  };
+}
+
+function insertChildScenario(database: DatabaseSync): void {
+  database.exec(`
+    BEGIN IMMEDIATE;
+    INSERT INTO sessions VALUES
+      ('parent-session', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 1, 1),
+      ('child-session', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 1, 1);
+    INSERT INTO messages VALUES
+      ('parent-message', 'parent-session', 1, 'user', '[]', 1),
+      ('child-message', 'child-session', 1, 'user', '[]', 1);
+    INSERT INTO runs (
+      id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+      external_side_effect_state, created_at, started_at, updated_at, version
+    ) VALUES
+      ('parent-run', 'parent-session', 1, 'parent-message', 'active', '{}', 'present', 1, 2, 2, 0),
+      ('child-run', 'child-session', 1, 'child-message', 'active', '{}', 'present', 1, 2, 2, 0);
+    INSERT INTO provider_bindings (
+      id, session_id, ordinal, provider_id, external_conversation_id, persistence_mode,
+      binding_state, created_by_run_attempt_id, created_at
+    ) VALUES ('child-binding', 'child-session', 1, 'provider', 'child-conversation', 'persistent',
+      'active', 'child-attempt', 1);
+    INSERT INTO run_attempts (
+      id, run_id, ordinal, provider_binding_id, attempt_reason, attempt_state,
+      external_execution_id, created_at, started_at
+    ) VALUES ('child-attempt', 'child-run', 1, 'child-binding', 'initial', 'active', 'child-execution', 1, 2);
+    INSERT INTO run_dispatches VALUES ('child-attempt', 'accepted',
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', NULL, 1, 2, 2);
+    INSERT INTO session_relations VALUES (
+      'relation-child-1', 'parent-session', 'child-session', 'parent-session', 'parent-run',
+      'correlation-child-1', NULL, NULL, 1
+    );
+    INSERT INTO delegations VALUES (
+      'delegation-child-1', 'relation-child-1', 'child-message', 'child-message', 'child-run',
+      NULL, 'active', NULL, 1, 1, 0
+    );
+    INSERT INTO child_result_deliveries VALUES (
+      'delivery-child-1', 'delegation-child-1', 1, 'child-run', 'pending',
+      NULL, NULL, NULL, NULL, NULL, 1, 1, 0
+    );
+    COMMIT;
+  `);
+}
+
+function insertQuotaHistoryRun(database: DatabaseSync, sessionId: string, runId: string, messageId: string): void {
+  const ordinal = (
+    database
+      .prepare("SELECT COALESCE(MAX(ordinal), 0) + 1 AS value FROM messages WHERE session_id = ?")
+      .get(sessionId) as {
+      value: number;
+    }
+  ).value;
+  database
+    .prepare(
+      "INSERT INTO messages (id, session_id, ordinal, role, content_blocks_json, created_at) VALUES (?, ?, ?, 'user', '[]', 1)",
+    )
+    .run(messageId, sessionId, ordinal);
+  database
+    .prepare(
+      `
+      INSERT INTO runs (
+        id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+        external_side_effect_state, created_at, terminal_at, updated_at, version
+      ) VALUES (?, ?, ?, ?, 'completed', '{}', 'none', 1, 2, 2, 0)
+    `,
+    )
+    .run(runId, sessionId, ordinal, messageId);
+}
+
+function insertStoredQuotaFixture(database: DatabaseSync, runId: string, outputId: string, content: string): void {
+  const bytes = Buffer.from(content, "utf8");
+  database
+    .prepare(
+      `
+      INSERT INTO run_output_items (
+        id, run_id, ordinal, category, kind, provider_item_id, summary, completion_state,
+        payload_state, payload_original_byte_length, stored_payload_id, redaction_state, created_at
+      ) VALUES (?, ?, 1, 'operation', 'fixture', NULL, 'fixture', 'complete', 'pending', ?, NULL, 'not_required', 1)
+    `,
+    )
+    .run(outputId, runId, bytes.byteLength);
+  database
+    .prepare(
+      `
+      INSERT INTO run_output_payloads (
+        output_item_id, payload_format, media_type, content, byte_length, content_sha256, created_at
+      ) VALUES (?, 'text', 'text/plain', ?, ?, ?, 1)
+    `,
+    )
+    .run(outputId, bytes, bytes.byteLength, createHash("sha256").update(bytes).digest("hex"));
+  database
+    .prepare("UPDATE run_output_items SET payload_state = 'stored', stored_payload_id = ? WHERE id = ?")
+    .run(outputId, outputId);
 }
 
 function activatePersistentRun(database: DatabaseSync): void {

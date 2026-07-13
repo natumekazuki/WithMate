@@ -152,3 +152,20 @@
 - ephemeral Bindingのlive ownershipを初回sendと未確定resolutionへ要求し、Worker再起動後の自動送信を拒否した。
 - atomic rollback、Gate違反、idempotency conflict / expiry / 参照欠落、3種のresolutionとexact replayをcontract testで固定した。
 - Provider capabilityはApplication Service、durable state GateはPersistence Workerの責務とし、CP2ではcapability確認後だけtyped commandを構築する統合を追加する。
+
+## 2026-07-13: S6-C RunOutput / terminal / child result collect完了
+
+- `repository.run.output.append`とpending payload resolutionを追加し、item / Run / Session / app quota、DB volume reserve、自然replay、payloadとのatomicityを固定した。
+- `repository.run.terminal`でAttempt、Run、final Message、terminal Event、軽量output、Session activityを一括確定し、child RunではDelivery availabilityとDelegation workflowも同じtransactionへ含めた。
+- terminal commandの非公開dedupe fingerprintを`RunEvent.dedupe_key`へ保存し、pending payload解決後もexact replayを判定しつつ、公開Eventは専用recordへの参照だけを保持する。
+- `repository.child-result.collect`で初回collection、parent RunEvent、child Session scoped IdempotencyRecordを一括確定し、replay envelopeをDeliveryの確定値と照合した。
+- SQL例外だけでなく`RAISE(IGNORE)`によるsemantic conflictでも部分commitしないrollback経路を追加した。
+- 次はS6-B4のchild / Auxiliary admission入口を実装し、fixture依存だったchild terminal / collectをproduction command経由で到達可能にする。
+
+## 2026-07-13: S6-C follow-up review対応
+
+- Provider Attemptのterminal failure originからschema非対応の`persistence`を除外し、decoder境界とrollback回帰を固定した。
+- terminal / child collectionのRunEventから専用recordにある状態・summaryの複製を除き、参照専用契約へ揃えた。
+- Run、Session、appの累積payload quotaを、それぞれの集計分岐へ到達する独立fixtureで検証した。
+- output append、terminal、pending resolution、child collectionをproduction Workerとtyped client経由で統合検証した。
+- 恒久設計文書の局所的な型・処理仕様を削り、terminal優先、child transaction所有、正本へのpointerへ縮めた。

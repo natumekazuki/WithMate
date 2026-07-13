@@ -9,6 +9,10 @@ export const REPOSITORY_WRITE_OPERATIONS = {
   runInputAdmit: "repository.run.input.admit",
   runInputBegin: "repository.run.input.begin",
   runInputResolve: "repository.run.input.resolve",
+  runOutputAppend: "repository.run.output.append",
+  runOutputResolvePending: "repository.run.output.resolve-pending",
+  runTerminal: "repository.run.terminal",
+  childResultCollect: "repository.child-result.collect",
 } as const;
 
 export type SessionLifecycleStatus = "active" | "archived" | "closed";
@@ -170,6 +174,114 @@ export type RunInputResolutionCommand = Readonly<{
     | Readonly<{ kind: "ambiguous"; resolutionCode: "transport_unknown" | "process_unknown" }>;
 }>;
 
+export type RunOutputCategory =
+  "assistant_detail" | "operation" | "interaction" | "telemetry" | "diagnostic" | "provider_metadata";
+
+export type RunOutputRedactionState = "not_required" | "redacted";
+
+export type RunOutputPayloadCommand =
+  | Readonly<{ state: "none" }>
+  | Readonly<{
+      state: "stored";
+      originalByteLength: number;
+      redactionState: RunOutputRedactionState;
+      payloadFormat: "text" | "json" | "binary";
+      mediaType: string | null;
+      content: Uint8Array;
+    }>
+  | Readonly<{
+      state: "omitted_size_limit" | "omitted_persistence";
+      originalByteLength: number;
+      redactionState: RunOutputRedactionState;
+    }>
+  | Readonly<{ state: "omitted_redaction"; originalByteLength: number }>;
+
+export type RunOutputDraft = Readonly<{
+  id: string;
+  category: RunOutputCategory;
+  kind: string;
+  providerItemId: string | null;
+  summary: string;
+  completionState: "complete" | "partial";
+  payload: RunOutputPayloadCommand;
+}>;
+
+export type RunOutputAppendCommand = Readonly<{
+  sessionId: string;
+  workspaceKey: string;
+  runId: string;
+  item: RunOutputDraft;
+}>;
+
+export type RunTerminalOutputDraft = Omit<RunOutputDraft, "payload"> &
+  Readonly<{
+    payload:
+      | Exclude<RunOutputPayloadCommand, Readonly<{ state: "stored" }>>
+      | Readonly<{
+          state: "pending";
+          originalByteLength: number;
+          redactionState: RunOutputRedactionState;
+        }>;
+  }>;
+
+export type RunTerminalOutcome =
+  | Readonly<{
+      kind: "completed";
+      finalAssistantMessage: Readonly<{
+        id: string;
+        contentBlocks: readonly RepositoryJsonValue[];
+      }> | null;
+    }>
+  | Readonly<{
+      kind: "failed" | "interrupted";
+      failureOrigin: "provider" | "transport" | "process" | "application" | "unknown";
+      providerErrorCode: string | null;
+      errorSummary: string | null;
+    }>
+  | Readonly<{ kind: "canceled" }>;
+
+export type RunTerminalCommand = Readonly<{
+  sessionId: string;
+  workspaceKey: string;
+  runId: string;
+  attemptId: string;
+  terminalEvent: Readonly<{
+    id: string;
+    dedupeKey: string;
+  }>;
+  outcome: RunTerminalOutcome;
+  outputs: readonly RunTerminalOutputDraft[];
+  childResult: Readonly<{
+    workflowState: "clarification_required" | "closed";
+    resultSummary: string | null;
+  }> | null;
+}>;
+
+export type ChildResultCollectCommand = Readonly<{
+  parentSessionId: string;
+  childSessionId: string;
+  workspaceKey: string;
+  idempotencyKey: string;
+  deliveryId: string;
+  collectingParentRunId: string;
+  eventId: string;
+}>;
+
+export type RunOutputResolvePendingCommand = Readonly<{
+  sessionId: string;
+  workspaceKey: string;
+  runId: string;
+  outputItemId: string;
+  resolution:
+    | Readonly<{
+        state: "stored";
+        payloadFormat: "text" | "json" | "binary";
+        mediaType: string | null;
+        content: Uint8Array;
+      }>
+    | Readonly<{ state: "omitted_size_limit" | "omitted_persistence" }>;
+}>;
+
 export type RepositoryCommandErrorCode =
   | "request_invalid"
   | "not_found"
@@ -282,4 +394,46 @@ export type RunInputResolutionResult = Readonly<{
   deliveryState: "accepted" | "rejected" | "ambiguous";
   resolutionCode: RunInputResolutionCode | null;
   resolvedAt: number;
+}>;
+
+export type RunOutputAppendResult = Readonly<{
+  sessionId: string;
+  runId: string;
+  outputItemId: string;
+  ordinal: number;
+  payloadState: RunOutputPayloadCommand["state"];
+  storedByteLength: number | null;
+  createdAt: number;
+}>;
+
+export type RunTerminalResult = Readonly<{
+  sessionId: string;
+  runId: string;
+  attemptId: string;
+  phase: "completed" | "failed" | "canceled" | "interrupted";
+  finalAssistantMessageId: string | null;
+  terminalEventId: string;
+  childDeliveryId: string | null;
+  delegationState: "clarification_required" | "closed" | null;
+  terminalAt: number;
+}>;
+
+export type RunOutputResolvePendingResult = Readonly<{
+  sessionId: string;
+  runId: string;
+  outputItemId: string;
+  payloadState: "stored" | "omitted_size_limit" | "omitted_persistence";
+  storedByteLength: number | null;
+}>;
+
+export type ChildResultCollectResult = Readonly<{
+  deliveryId: string;
+  delegationId: string;
+  childSessionId: string;
+  childRunId: string;
+  terminalPhase: "completed" | "failed" | "canceled" | "interrupted";
+  finalAssistantMessageId: string | null;
+  resultSummary: string | null;
+  firstCollectedByParentRunId: string;
+  firstCollectedAt: number;
 }>;

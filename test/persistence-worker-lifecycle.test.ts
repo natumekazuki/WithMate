@@ -82,6 +82,194 @@ workerTest("production Worker applies configured Run capacity", async () => {
   });
 });
 
+workerTest("production Worker transports Run output, terminal, pending resolution, and child collection", async () => {
+  await withTempDirectory(async (directory) => {
+    const databasePath = path.join(directory, "repository-write-integration.sqlite3");
+    const options = {
+      workerUrl,
+      databasePath,
+      legacyDatabasePaths: [],
+      workerOptions,
+    } as const;
+    const client = new PersistenceWorkerClient(options);
+    await client.start();
+    const repository = new RepositoryWriteClient(client);
+    assert.equal(
+      (
+        await repository.createSession({
+          idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000321",
+          session: {
+            id: "session-worker-integration",
+            providerId: "provider",
+            workspaceKey: "workspace",
+            allowedAdditionalDirectories: [],
+            defaultCharacterId: "character",
+            maxConcurrentChildRuns: 2,
+          },
+        })
+      ).ok,
+      true,
+    );
+    assert.equal(
+      (
+        await repository.admitNormalRun(
+          productionRunAdmission(
+            "session-worker-integration",
+            "run-worker-integration",
+            "018f1f4e-7f0a-7000-8000-000000000322",
+          ),
+        )
+      ).ok,
+      true,
+    );
+    const scope = {
+      sessionId: "session-worker-integration",
+      workspaceKey: "workspace",
+      runId: "run-worker-integration",
+      attemptId: "attempt-run-worker-integration",
+      bindingId: "binding-run-worker-integration",
+    } as const;
+    assert.equal(
+      (
+        await repository.resolveProviderBinding({
+          ...scope,
+          resolution: {
+            kind: "active",
+            externalConversationId: "conversation-worker-integration",
+            ephemeralOwnerToken: null,
+          },
+        })
+      ).ok,
+      true,
+    );
+    assert.equal(
+      (
+        await repository.beginRunDispatch({
+          ...scope,
+          providerRequest: { prompt: "hello" },
+          ephemeralOwnerToken: null,
+        })
+      ).ok,
+      true,
+    );
+    assert.equal(
+      (
+        await repository.resolveRunDispatch({
+          ...scope,
+          ephemeralOwnerToken: null,
+          outcome: { kind: "accepted", externalExecutionId: "execution-worker-integration" },
+        })
+      ).ok,
+      true,
+    );
+
+    const storedBytes = Uint8Array.from([1, 2, 3, 4]);
+    const appended = await repository.appendRunOutput({
+      sessionId: scope.sessionId,
+      workspaceKey: scope.workspaceKey,
+      runId: scope.runId,
+      item: {
+        id: "output-worker-stored",
+        category: "operation",
+        kind: "command",
+        providerItemId: "provider-output-worker-stored",
+        summary: "stored output",
+        completionState: "complete",
+        payload: {
+          state: "stored",
+          originalByteLength: storedBytes.byteLength,
+          redactionState: "not_required",
+          payloadFormat: "binary",
+          mediaType: "application/octet-stream",
+          content: storedBytes,
+        },
+      },
+    });
+    assert.equal(appended.ok && appended.value.payloadState, "stored");
+
+    const terminal = await repository.completeRun({
+      sessionId: scope.sessionId,
+      workspaceKey: scope.workspaceKey,
+      runId: scope.runId,
+      attemptId: scope.attemptId,
+      terminalEvent: { id: "event-worker-terminal", dedupeKey: "provider-event-worker-terminal" },
+      outcome: {
+        kind: "completed",
+        finalAssistantMessage: {
+          id: "message-worker-final",
+          contentBlocks: [{ type: "text", text: "done" }],
+        },
+      },
+      outputs: [
+        {
+          id: "output-worker-pending",
+          category: "diagnostic",
+          kind: "trace",
+          providerItemId: "provider-output-worker-pending",
+          summary: "pending output",
+          completionState: "complete",
+          payload: { state: "pending", originalByteLength: 8, redactionState: "redacted" },
+        },
+      ],
+      childResult: null,
+    });
+    assert.equal(terminal.ok && terminal.value.phase, "completed");
+    const resolved = await repository.resolvePendingRunOutput({
+      sessionId: scope.sessionId,
+      workspaceKey: scope.workspaceKey,
+      runId: scope.runId,
+      outputItemId: "output-worker-pending",
+      resolution: { state: "omitted_persistence" },
+    });
+    assert.equal(resolved.ok && resolved.value.payloadState, "omitted_persistence");
+    await client.shutdown();
+
+    const seeded = new DatabaseSync(databasePath);
+    try {
+      const payload = seeded
+        .prepare("SELECT content FROM run_output_payloads WHERE output_item_id = 'output-worker-stored'")
+        .get() as { content: Uint8Array };
+      assert.deepEqual([...payload.content], [...storedBytes]);
+      insertProductionChildScenario(seeded);
+    } finally {
+      seeded.close();
+    }
+
+    const resumedClient = new PersistenceWorkerClient(options);
+    await resumedClient.start();
+    const resumedRepository = new RepositoryWriteClient(resumedClient);
+    const childTerminal = await resumedRepository.completeRun({
+      sessionId: "session-worker-child",
+      workspaceKey: "workspace",
+      runId: "run-worker-child",
+      attemptId: "attempt-worker-child",
+      terminalEvent: { id: "event-worker-child-terminal", dedupeKey: "provider-event-worker-child-terminal" },
+      outcome: {
+        kind: "completed",
+        finalAssistantMessage: {
+          id: "message-worker-child-final",
+          contentBlocks: [{ type: "text", text: "child done" }],
+        },
+      },
+      outputs: [],
+      childResult: { workflowState: "closed", resultSummary: "child done" },
+    });
+    assert.equal(childTerminal.ok && childTerminal.value.childDeliveryId, "delivery-worker-child");
+    const collected = await resumedRepository.collectChildResult({
+      parentSessionId: "session-worker-integration",
+      childSessionId: "session-worker-child",
+      workspaceKey: "workspace",
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000323",
+      deliveryId: "delivery-worker-child",
+      collectingParentRunId: "run-worker-integration",
+      eventId: "event-worker-child-collected",
+    });
+    assert.equal(collected.ok && collected.value.finalAssistantMessageId, "message-worker-child-final");
+    assert.equal(collected.ok && collected.value.resultSummary, "child done");
+    await resumedClient.shutdown();
+  });
+});
+
 workerTest("BEGIN IMMEDIATE serializes capacity admission across database connections", async () => {
   await withTempDirectory(async (directory) => {
     const databasePath = path.join(directory, "capacity-race.sqlite3");
@@ -454,6 +642,71 @@ function productionRunAdmission(sessionId: string, runId: string, idempotencyKey
     bindingIntent: { kind: "create" as const, bindingId: `binding-${runId}`, persistenceMode: "persistent" as const },
     dispatch: { providerRequest: { prompt: "hello" }, providerIdempotencyKey: null },
   };
+}
+
+function insertProductionChildScenario(database: DatabaseSync): void {
+  database.exec(`
+    PRAGMA foreign_keys = ON;
+    BEGIN IMMEDIATE;
+    INSERT INTO sessions (
+      id, provider_id, workspace_key, allowed_additional_directories_json,
+      default_character_id, max_concurrent_child_runs, lifecycle_status,
+      created_at, updated_at, last_activity_at
+    ) VALUES ('session-worker-child', 'provider', 'workspace', '[]', 'character', 2, 'active', 1, 1, 1);
+    INSERT INTO messages (id, session_id, ordinal, role, content_blocks_json, created_at)
+      VALUES ('message-worker-child-input', 'session-worker-child', 1, 'user', '[]', 1);
+    INSERT INTO runs (
+      id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+      external_side_effect_state, created_at, started_at, updated_at, version
+    ) VALUES (
+      'run-worker-child', 'session-worker-child', 1, 'message-worker-child-input', 'active', '{}',
+      'present', 1, 2, 2, 0
+    );
+    INSERT INTO provider_bindings (
+      id, session_id, ordinal, provider_id, external_conversation_id, persistence_mode,
+      binding_state, created_by_run_attempt_id, created_at
+    ) VALUES (
+      'binding-worker-child', 'session-worker-child', 1, 'provider', 'conversation-worker-child',
+      'persistent', 'active', 'attempt-worker-child', 1
+    );
+    INSERT INTO run_attempts (
+      id, run_id, ordinal, provider_binding_id, attempt_reason, attempt_state,
+      external_execution_id, created_at, started_at
+    ) VALUES (
+      'attempt-worker-child', 'run-worker-child', 1, 'binding-worker-child', 'initial', 'active',
+      'execution-worker-child', 1, 2
+    );
+    INSERT INTO run_dispatches (
+      run_attempt_id, dispatch_state, request_fingerprint, provider_idempotency_key,
+      created_at, dispatching_at, resolved_at
+    ) VALUES (
+      'attempt-worker-child', 'accepted',
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', NULL, 1, 2, 2
+    );
+    INSERT INTO session_relations (
+      id, parent_session_id, child_session_id, orchestration_root_session_id,
+      created_by_parent_run_id, correlation_id, label, purpose_summary, created_at
+    ) VALUES (
+      'relation-worker-child', 'session-worker-integration', 'session-worker-child',
+      'session-worker-integration', 'run-worker-integration', 'correlation-worker-child', NULL, NULL, 1
+    );
+    INSERT INTO delegations (
+      id, session_relation_id, initial_instruction_message_id, latest_instruction_message_id,
+      latest_child_run_id, mention_text, workflow_state, closure_reason, created_at, updated_at, version
+    ) VALUES (
+      'delegation-worker-child', 'relation-worker-child', 'message-worker-child-input',
+      'message-worker-child-input', 'run-worker-child', NULL, 'active', NULL, 1, 1, 0
+    );
+    INSERT INTO child_result_deliveries (
+      id, delegation_id, ordinal, child_run_id, availability_state, terminal_phase_snapshot,
+      result_summary, available_at, first_collected_by_parent_run_id, first_collected_at,
+      created_at, updated_at, version
+    ) VALUES (
+      'delivery-worker-child', 'delegation-worker-child', 1, 'run-worker-child', 'pending',
+      NULL, NULL, NULL, NULL, NULL, 1, 1, 0
+    );
+    COMMIT;
+  `);
 }
 
 function isClientError(error: unknown, code: string, effect: string): boolean {

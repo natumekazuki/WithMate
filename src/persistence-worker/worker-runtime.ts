@@ -254,7 +254,7 @@ function createOperationRegistry(
   for (const [name, definition] of createRepositoryReadOperations(database)) {
     operations.set(name, definition);
   }
-  for (const [name, definition] of createRepositoryWriteOperations(database, writeCapacity)) {
+  for (const [name, definition] of createRepositoryWriteOperations(database, { ...writeCapacity, databasePath })) {
     operations.set(name, definition);
   }
   return operations;

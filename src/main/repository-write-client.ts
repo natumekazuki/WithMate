@@ -1,6 +1,8 @@
 import type { PersistenceWorkerClient } from "./persistence-worker-client.js";
 import {
   REPOSITORY_WRITE_OPERATIONS,
+  type ChildResultCollectCommand,
+  type ChildResultCollectResult,
   type NormalRunAdmissionCommand,
   type NormalRunAdmissionResult,
   type ProviderBindingResolutionCommand,
@@ -18,6 +20,12 @@ import {
   type RunInputBeginResult,
   type RunInputResolutionCommand,
   type RunInputResolutionResult,
+  type RunOutputAppendCommand,
+  type RunOutputAppendResult,
+  type RunOutputResolvePendingCommand,
+  type RunOutputResolvePendingResult,
+  type RunTerminalCommand,
+  type RunTerminalResult,
   type SessionCreateCommand,
   type SessionCreateResult,
   type SessionTransitionCommand,
@@ -102,5 +110,33 @@ export class RepositoryWriteClient {
     options?: RequestOptions,
   ): Promise<RepositoryCommandResult<RunInputResolutionResult>> {
     return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runInputResolve, "write", command, options);
+  }
+
+  appendRunOutput(
+    command: RunOutputAppendCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<RunOutputAppendResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runOutputAppend, "write", command, options);
+  }
+
+  resolvePendingRunOutput(
+    command: RunOutputResolvePendingCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<RunOutputResolvePendingResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runOutputResolvePending, "write", command, options);
+  }
+
+  completeRun(
+    command: RunTerminalCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<RunTerminalResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runTerminal, "write", command, options);
+  }
+
+  collectChildResult(
+    command: ChildResultCollectCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<ChildResultCollectResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.childResultCollect, "write", command, options);
   }
 }
