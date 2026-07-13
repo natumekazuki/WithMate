@@ -100,6 +100,26 @@ function createMergeRun(groupId: string, overrides: Partial<CompanionMergeRun> =
 }
 
 describe("CompanionStorage", () => {
+  it("max / ultra を session の保存と読込で保持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: CompanionStorage | null = null;
+
+    try {
+      storage = new CompanionStorage(dbPath);
+      const group = storage.ensureGroup(createGroup());
+
+      for (const reasoningEffort of ["max", "ultra"] as const) {
+        const sessionId = `session-${reasoningEffort}`;
+        storage.createSession(createSession(group.id, { id: sessionId, reasoningEffort }));
+        assert.equal(storage.getSession(sessionId)?.reasoningEffort, reasoningEffort);
+      }
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("group と active session を保存して summary と detail を読み戻せる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");

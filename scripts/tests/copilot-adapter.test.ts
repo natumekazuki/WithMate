@@ -35,6 +35,7 @@ import {
   shouldRetryCopilotTurn,
   sortLiveBackgroundTasks,
   toProviderQuotaSnapshots,
+  toCopilotReasoningEffort,
 } from "../../src-electron/copilot-adapter.js";
 import { toProviderMetadataLogData } from "../../src-electron/provider-metadata-log.js";
 import {
@@ -1187,6 +1188,12 @@ describe("CopilotAdapter env", () => {
 });
 
 describe("CopilotAdapter session settings", () => {
+  it("max / ultra は Copilot SDK 境界で拒否する", () => {
+    assert.throws(() => toCopilotReasoningEffort("max"), /max/);
+    assert.throws(() => toCopilotReasoningEffort("ultra"), /ultra/);
+    assert.equal(toCopilotReasoningEffort("minimal"), "low");
+  });
+
   it("custom agent 変更後の session settings は新 agent 情報を反映する", () => {
     const previousInput = createRunSessionInput({ customAgentName: "reviewer", threadId: "thread-1" });
     const nextInput = createRunSessionInput({ customAgentName: "planner", threadId: "thread-1" });

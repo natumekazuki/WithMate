@@ -45,10 +45,12 @@ test("buildModelSelectOptions は catalog にない選択中 model を先頭に�
 });
 
 test("buildReasoningEffortSelectOptions は reasoning effort を select option に変換する", () => {
-  assert.deepEqual(buildReasoningEffortSelectOptions(["low", "medium", "xhigh"]), [
+  assert.deepEqual(buildReasoningEffortSelectOptions(["low", "medium", "xhigh", "max", "ultra"]), [
     { value: "low", label: "low" },
     { value: "medium", label: "medium" },
     { value: "xhigh", label: "xhigh" },
+    { value: "max", label: "max" },
+    { value: "ultra", label: "ultra" },
   ]);
 });
 

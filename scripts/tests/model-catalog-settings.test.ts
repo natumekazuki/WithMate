@@ -8,7 +8,13 @@ import {
   getResolvedProviderSettingsBundle,
   normalizeAppSettings,
 } from "../../src/provider-settings-state.js";
-import { coerceModelSelection, resolveModelChangeSelection, type ModelCatalogProvider } from "../../src/model-catalog.js";
+import {
+  coerceModelSelection,
+  parseModelCatalogDocument,
+  reasoningEffortOptions,
+  resolveModelChangeSelection,
+  type ModelCatalogProvider,
+} from "../../src/model-catalog.js";
 
 const providerCatalog: ModelCatalogProvider = {
   id: "codex",
@@ -56,6 +62,38 @@ describe("resolveModelChangeSelection", () => {
 
   it("model 自体が catalog に無い場合はエラーにする", () => {
     assert.throws(() => resolveModelChangeSelection(providerCatalog, "missing-model", "high"));
+  });
+});
+
+describe("reasoning effort catalog contract", () => {
+  it("max / ultra を catalog の有効値として保持する", () => {
+    const document = parseModelCatalogDocument({
+      providers: [
+        {
+          id: "codex",
+          label: "Codex",
+          defaultModelId: "gpt-5.6-sol",
+          defaultReasoningEffort: "max",
+          models: [
+            {
+              id: "gpt-5.6-sol",
+              label: "GPT-5.6 Sol",
+              reasoningEfforts: ["xhigh", "max", "ultra"],
+            },
+          ],
+        },
+      ],
+    });
+
+    assert.deepEqual(document.providers[0]?.models[0]?.reasoningEfforts, ["xhigh", "max", "ultra"]);
+    assert.deepEqual(
+      reasoningEffortOptions.slice(-3),
+      [
+        { id: "xhigh", label: "xhigh" },
+        { id: "max", label: "max" },
+        { id: "ultra", label: "ultra" },
+      ],
+    );
   });
 });
 

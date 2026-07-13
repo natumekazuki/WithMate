@@ -35,6 +35,9 @@ import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
+const DEFAULT_PROVIDER_CANCEL_GRACE_MS = 10_000;
+const DEFAULT_AUDIT_ENRICHMENT_GRACE_MS = 5_000;
+const AUDIT_ENRICHMENT_TIMEOUT = Symbol("audit-enrichment-timeout");
 
 function logSessionRunStuckInvestigation(
   event: string,
@@ -85,7 +88,142 @@ export type SessionRuntimeServiceDeps = {
   resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
   getMateState?: () => MateStorageState;
   currentTimestampLabel?: () => string;
+  providerCancelGraceMs?: number;
+  auditEnrichmentGraceMs?: number;
 };
+
+async function waitForAuditEnrichment<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<T | typeof AUDIT_ENRICHMENT_TIMEOUT> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<typeof AUDIT_ENRICHMENT_TIMEOUT>((resolve) => {
+        timeout = setTimeout(() => resolve(AUDIT_ENRICHMENT_TIMEOUT), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+function buildCanceledPartialResult(
+  liveState: LiveSessionRunState | null,
+  prompt: ProviderPromptComposition,
+): RunSessionTurnResult {
+  return {
+    threadId: liveState?.threadId || null,
+    assistantText: liveState?.assistantText ?? "",
+    logicalPrompt: prompt.logicalPrompt,
+    transportPayload: null,
+    operations: liveState ? buildLiveRunAuditOperations(liveState) : [],
+    rawItemsJson: "[]",
+    usage: liveState?.usage ?? null,
+    providerQuotaTelemetry: null,
+  };
+}
+
+function waitForProviderTurnWithCancelDeadline(
+  providerPromise: Promise<RunSessionTurnResult>,
+  signal: AbortSignal,
+  graceMs: number,
+  buildPartialResult: () => RunSessionTurnResult,
+  onCancelDeadline: (providerPromise: Promise<RunSessionTurnResult>) => void,
+): Promise<RunSessionTurnResult> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const settle = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      signal.removeEventListener("abort", onAbort);
+      callback();
+    };
+    const onAbort = () => {
+      timeout = setTimeout(() => {
+        onCancelDeadline(providerPromise);
+        settle(() => reject(new ProviderTurnError(
+          "Provider did not stop within the cancellation grace period",
+          buildPartialResult(),
+          true,
+          "canceled",
+        )));
+      }, graceMs);
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+    }
+    providerPromise.then(
+      (result) => settle(() => resolve(result)),
+      (error) => settle(() => reject(error)),
+    );
+  });
+}
+
+function createCanceledRunError(message: string): Error {
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfRunCanceled(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw createCanceledRunError("Session setup was canceled");
+  }
+}
+
+function waitForSetupWithCancelDeadline<T>(
+  setupPromise: Promise<T>,
+  signal: AbortSignal,
+  graceMs: number,
+  isSetupPending: () => boolean,
+  onCancelDeadline: (setupPromise: Promise<T>) => void,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const settle = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      signal.removeEventListener("abort", onAbort);
+      callback();
+    };
+    const onAbort = () => {
+      timeout = setTimeout(() => {
+        if (!isSetupPending()) {
+          return;
+        }
+        onCancelDeadline(setupPromise);
+        settle(() => reject(createCanceledRunError("Session setup did not stop within the cancellation grace period")));
+      }, graceMs);
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+    }
+    setupPromise.then(
+      (result) => settle(() => resolve(result)),
+      (error) => settle(() => reject(error)),
+    );
+  });
+}
 
 export function isCanceledRunError(error: unknown): boolean {
   if (error && typeof error === "object") {
@@ -416,6 +554,34 @@ function buildTerminalAuditEntry(params: {
   };
 }
 
+function buildMinimalTerminalAuditEntry(params: {
+  baseEntry: CreateAuditLogInput;
+  phase: CreateAuditLogInput["phase"];
+  completedAt: string;
+  session: Pick<Session, "provider" | "model" | "reasoningEffort" | "approvalMode">;
+  threadId?: string | null;
+  errorMessage?: string;
+}): CreateAuditLogInput {
+  return {
+    ...params.baseEntry,
+    phase: params.phase,
+    createdAt: params.completedAt,
+    provider: params.session.provider,
+    model: params.session.model,
+    reasoningEffort: params.session.reasoningEffort,
+    approvalMode: params.session.approvalMode,
+    threadId: pickPreferredThreadId(params.threadId, params.baseEntry.threadId),
+    logicalPrompt: { systemText: "", inputText: "", composedText: "" },
+    transportPayload: null,
+    assistantText: "",
+    operations: [],
+    rawItemsJson: "[]",
+    providerMetadata: [],
+    usage: null,
+    errorMessage: params.errorMessage ?? "",
+  };
+}
+
 function buildDegradedCompletedAuditEntry(params: {
   completedAuditEntry: CreateAuditLogInput;
   auditUpdateError: unknown;
@@ -447,24 +613,53 @@ function buildDegradedCompletedAuditEntry(params: {
 
 export class SessionRuntimeService {
   private readonly inFlightSessionRuns = new Set<string>();
+  private readonly startingSessionRuns = new Set<string>();
+  private readonly terminatingSessionRuns = new Map<string, Set<Promise<unknown>>>();
+  private readonly pendingSessionRunCancels = new Set<string>();
   private readonly sessionRunControllers = new Map<string, AbortController>();
 
   constructor(private readonly deps: SessionRuntimeServiceDeps) {}
 
   hasInFlightRuns(): boolean {
-    return this.inFlightSessionRuns.size > 0;
+    return this.inFlightSessionRuns.size > 0
+      || this.startingSessionRuns.size > 0
+      || this.terminatingSessionRuns.size > 0;
   }
 
   isRunInFlight(sessionId: string): boolean {
-    return this.inFlightSessionRuns.has(sessionId);
+    return this.inFlightSessionRuns.has(sessionId)
+      || this.startingSessionRuns.has(sessionId)
+      || this.terminatingSessionRuns.has(sessionId);
+  }
+
+  private trackTerminatingSessionRun(sessionId: string, promise: Promise<unknown>): void {
+    const trackedPromises = this.terminatingSessionRuns.get(sessionId) ?? new Set<Promise<unknown>>();
+    if (trackedPromises.has(promise)) {
+      return;
+    }
+    trackedPromises.add(promise);
+    this.terminatingSessionRuns.set(sessionId, trackedPromises);
+    const release = () => {
+      trackedPromises.delete(promise);
+      if (trackedPromises.size === 0) {
+        this.terminatingSessionRuns.delete(sessionId);
+      }
+      if (!this.startingSessionRuns.has(sessionId) && !this.inFlightSessionRuns.has(sessionId)) {
+        this.sessionRunControllers.delete(sessionId);
+        this.pendingSessionRunCancels.delete(sessionId);
+      }
+    };
+    promise.then(release, release);
   }
 
   reset(): void {
-    for (const sessionId of this.inFlightSessionRuns) {
+    for (const sessionId of new Set([...this.startingSessionRuns, ...this.inFlightSessionRuns])) {
       this.deps.resolvePendingApprovalRequest(sessionId, "deny");
       this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
       this.sessionRunControllers.get(sessionId)?.abort();
+      this.pendingSessionRunCancels.add(sessionId);
     }
+    this.startingSessionRuns.clear();
     this.inFlightSessionRuns.clear();
     this.sessionRunControllers.clear();
   }
@@ -474,6 +669,9 @@ export class SessionRuntimeService {
     this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
     const controller = this.sessionRunControllers.get(sessionId);
     if (!controller) {
+      if (this.startingSessionRuns.has(sessionId)) {
+        this.pendingSessionRunCancels.add(sessionId);
+      }
       return;
     }
 
@@ -481,12 +679,46 @@ export class SessionRuntimeService {
   }
 
   async runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {
+    if (this.isRunInFlight(sessionId)) {
+      throw new Error("このセッションはまだ実行中だよ。");
+    }
+    this.startingSessionRuns.add(sessionId);
+    const runAbortController = new AbortController();
+    this.sessionRunControllers.set(sessionId, runAbortController);
+    if (this.pendingSessionRunCancels.delete(sessionId)) {
+      runAbortController.abort();
+    }
+    const setupPromise = this.runSessionTurnInternal(sessionId, request, runAbortController);
+    try {
+      return await waitForSetupWithCancelDeadline(
+        setupPromise,
+        runAbortController.signal,
+        this.deps.providerCancelGraceMs ?? DEFAULT_PROVIDER_CANCEL_GRACE_MS,
+        () => this.startingSessionRuns.has(sessionId),
+        (promise) => this.trackTerminatingSessionRun(sessionId, promise),
+      );
+    } finally {
+      this.startingSessionRuns.delete(sessionId);
+      if (!this.inFlightSessionRuns.has(sessionId) && !this.terminatingSessionRuns.has(sessionId)) {
+        this.sessionRunControllers.delete(sessionId);
+        this.pendingSessionRunCancels.delete(sessionId);
+      }
+    }
+  }
+
+  private async runSessionTurnInternal(
+    sessionId: string,
+    request: RunSessionTurnRequest,
+    runAbortController: AbortController,
+  ): Promise<Session> {
     const investigationStartedAt = Date.now();
     const storedSession = await this.deps.getSession(sessionId);
+    throwIfRunCanceled(runAbortController.signal);
     if (!storedSession) {
       throw new Error("対象セッションが見つからないよ。");
     }
     const session = await Promise.resolve(this.deps.resolveRuntimeSessionForTurn?.(storedSession) ?? storedSession);
+    throwIfRunCanceled(runAbortController.signal);
     logSessionRunStuckInvestigation("runtime.start", {
       sessionId,
       provider: session.provider,
@@ -511,6 +743,7 @@ export class SessionRuntimeService {
 
     const providerSession = this.deps.resolveProviderSession?.(session) ?? session;
     const composerPreview = await this.deps.resolveComposerPreview(providerSession, request.userMessage);
+    throwIfRunCanceled(runAbortController.signal);
     if (composerPreview.errors.length > 0) {
       throw new Error(composerPreview.errors[0] ?? "添付の解決に失敗したよ。");
     }
@@ -525,11 +758,11 @@ export class SessionRuntimeService {
     const sessionMemory = this.deps.getSessionMemory(session);
     const projectMemoryEntries = this.deps.resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
     const sessionCharacter = await this.deps.resolveSessionCharacter?.(session) ?? null;
+    throwIfRunCanceled(runAbortController.signal);
     const currentTimestampLabel = this.deps.currentTimestampLabel ?? defaultCurrentTimestampLabel;
 
     let promptForAudit: ProviderPromptComposition;
     let runningSession: Session;
-    let runAbortController: AbortController;
     let initialLiveState: LiveSessionRunState;
     let runningAuditEntry: CreateAuditLogInput;
     let runningAuditLog: AuditLogEntry;
@@ -564,9 +797,8 @@ export class SessionRuntimeService {
         messageCount: runningSession.messages.length,
       });
       setupRunningSessionSaved = true;
+      throwIfRunCanceled(runAbortController.signal);
       this.inFlightSessionRuns.add(sessionId);
-      runAbortController = new AbortController();
-      this.sessionRunControllers.set(sessionId, runAbortController);
       initialLiveState = {
         ...buildEmptyLiveSessionRunState(sessionId, runningSession.threadId),
         backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
@@ -589,6 +821,7 @@ export class SessionRuntimeService {
         durationMs: Date.now() - runningAuditCreateStartedAt,
         elapsedMs: Date.now() - investigationStartedAt,
       });
+      this.startingSessionRuns.delete(sessionId);
     } catch (error) {
       this.deps.resolvePendingApprovalRequest(sessionId, "deny");
       this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
@@ -615,6 +848,7 @@ export class SessionRuntimeService {
     let liveProgressGeneration = 0;
     let auditWriteQueue: Promise<void> = Promise.resolve();
     let auditWriteError: unknown = null;
+    let auditWritesDetached = false;
 
     let activeRunningSession = runningSession;
     const enqueueAuditWrite = (
@@ -632,15 +866,33 @@ export class SessionRuntimeService {
         });
       return auditWriteQueue;
     };
-    const flushAuditWrites = async () => {
+    const flushAuditWrites = async (allowDetached = false): Promise<boolean> => {
+      if (auditWritesDetached) {
+        return false;
+      }
       let observedQueue: Promise<void>;
       do {
         observedQueue = auditWriteQueue;
-        await observedQueue;
+        const flushResult = await waitForAuditEnrichment(
+          observedQueue,
+          this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
+        );
+        if (flushResult === AUDIT_ENRICHMENT_TIMEOUT) {
+          auditWritesDetached = true;
+          logSessionRunStuckInvestigation("runtime.audit-flush.timeout", {
+            sessionId,
+            timeoutMs: this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
+          });
+          if (!allowDetached) {
+            throw new Error("Audit progress persistence exceeded its grace period");
+          }
+          return false;
+        }
       } while (observedQueue !== auditWriteQueue);
       if (auditWriteError) {
         throw auditWriteError;
       }
+      return true;
     };
     const syncRunningAuditFromLiveState = async (nextLiveState: LiveSessionRunState) => {
       if (terminalAuditSettled) {
@@ -682,7 +934,7 @@ export class SessionRuntimeService {
     const runProviderTurn = (turnSession: Session) => {
       const progressGeneration = ++liveProgressGeneration;
       const effectiveTurnSession = this.deps.resolveProviderSession?.(turnSession) ?? turnSession;
-      return providerAdapter.runSessionTurn({
+      const providerPromise = providerAdapter.runSessionTurn({
         session: effectiveTurnSession,
         sessionMemory,
         projectMemoryEntries,
@@ -737,6 +989,13 @@ export class SessionRuntimeService {
           console.warn("Audit progress update failed", error);
         });
       });
+      return waitForProviderTurnWithCancelDeadline(
+        providerPromise,
+        runAbortController.signal,
+        this.deps.providerCancelGraceMs ?? DEFAULT_PROVIDER_CANCEL_GRACE_MS,
+        () => buildCanceledPartialResult(this.deps.getLiveSessionRun(sessionId), promptForAudit),
+        (promise) => this.trackTerminatingSessionRun(sessionId, promise),
+      );
     };
 
     try {
@@ -802,7 +1061,7 @@ export class SessionRuntimeService {
       const logicalPromptEstimate = estimateLogicalPromptTokens(result.logicalPrompt);
 
       const flushAuditStartedAt = Date.now();
-      await flushAuditWrites();
+      const auditWritesDrained = await flushAuditWrites(true);
       logSessionRunStuckInvestigation("runtime.audit-flush.done", {
         sessionId,
         durationMs: Date.now() - flushAuditStartedAt,
@@ -869,9 +1128,47 @@ export class SessionRuntimeService {
         assistantMessageSeq: storedCompletedSession.messages.length - 1,
         errorMessage: "",
       });
+      const minimalCompletedAuditEntry = buildMinimalTerminalAuditEntry({
+        baseEntry: runningAuditEntry,
+        phase: "completed",
+        completedAt,
+        session: storedCompletedSession,
+        threadId: pickPreferredThreadId(result.threadId, storedCompletedSession.threadId),
+      });
       const completedAuditUpdateStartedAt = Date.now();
       try {
-        await this.deps.updateAuditLog(runningAuditLog.id, completedAuditEntry);
+        if (!auditWritesDrained) {
+          void auditWriteQueue
+            .then(() => this.deps.updateAuditLog(runningAuditLog.id, minimalCompletedAuditEntry))
+            .then(() => this.deps.updateAuditLog(runningAuditLog.id, completedAuditEntry))
+            .catch((error) => console.warn("Detached completed audit update failed", error));
+          return storedCompletedSession;
+        }
+        const minimalCompletedAuditUpdateResult = await waitForAuditEnrichment(
+          Promise.resolve(this.deps.updateAuditLog(runningAuditLog.id, minimalCompletedAuditEntry)),
+          this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
+        );
+        if (minimalCompletedAuditUpdateResult === AUDIT_ENRICHMENT_TIMEOUT) {
+          logSessionRunStuckInvestigation("runtime.completed-audit-terminal-update.timeout", {
+            sessionId,
+            auditLogId: runningAuditLog.id,
+            timeoutMs: this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
+          });
+        } else {
+          runningAuditEntry = minimalCompletedAuditEntry;
+        }
+        const completedAuditUpdateResult = await waitForAuditEnrichment(
+          Promise.resolve(this.deps.updateAuditLog(runningAuditLog.id, completedAuditEntry)),
+          this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
+        );
+        if (completedAuditUpdateResult === AUDIT_ENRICHMENT_TIMEOUT) {
+          logSessionRunStuckInvestigation("runtime.completed-audit-update.timeout", {
+            sessionId,
+            auditLogId: runningAuditLog.id,
+            timeoutMs: this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
+          });
+          return storedCompletedSession;
+        }
         logSessionRunStuckInvestigation("runtime.completed-audit-update.done", {
           sessionId,
           auditLogId: runningAuditLog.id,
@@ -896,7 +1193,18 @@ export class SessionRuntimeService {
         });
         const degradedAuditUpdateStartedAt = Date.now();
         try {
-          await this.deps.updateAuditLog(runningAuditLog.id, degradedAuditEntry);
+          const degradedAuditUpdateResult = await waitForAuditEnrichment(
+            Promise.resolve(this.deps.updateAuditLog(runningAuditLog.id, degradedAuditEntry)),
+            this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
+          );
+          if (degradedAuditUpdateResult === AUDIT_ENRICHMENT_TIMEOUT) {
+            logSessionRunStuckInvestigation("runtime.completed-audit-update.degraded-timeout", {
+              sessionId,
+              auditLogId: runningAuditLog.id,
+              timeoutMs: this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
+            });
+            return storedCompletedSession;
+          }
           logSessionRunStuckInvestigation("runtime.completed-audit-update.degraded", {
             sessionId,
             auditLogId: runningAuditLog.id,
@@ -951,7 +1259,7 @@ export class SessionRuntimeService {
       }
 
       const failedFlushAuditStartedAt = Date.now();
-      await flushAuditWrites();
+      const auditWritesDrained = await flushAuditWrites(true);
       logSessionRunStuckInvestigation("runtime.audit-flush.done", {
         sessionId,
         durationMs: Date.now() - failedFlushAuditStartedAt,
@@ -990,17 +1298,57 @@ export class SessionRuntimeService {
         usage: partialResult?.usage ?? null,
         errorMessage: failureMessage,
       });
-      const failedAuditUpdateStartedAt = Date.now();
-      await this.deps.updateAuditLog(runningAuditLog.id, failedAuditEntry);
-      logSessionRunStuckInvestigation("runtime.terminal-audit-update.done", {
-        sessionId,
-        auditLogId: runningAuditLog.id,
-        durationMs: Date.now() - failedAuditUpdateStartedAt,
-        elapsedMs: Date.now() - investigationStartedAt,
-        phase: failedAuditEntry.phase,
-        operationCount: failedAuditEntry.operations.length,
+      const minimalFailedAuditEntry = buildMinimalTerminalAuditEntry({
+        baseEntry: runningAuditEntry,
+        phase: canceled ? "canceled" : "failed",
+        completedAt,
+        session: activeRunningSession,
+        threadId: failedAuditThreadId,
+        errorMessage: failureMessage,
       });
-      runningAuditEntry = failedAuditEntry;
+      const failedAuditUpdateStartedAt = Date.now();
+      if (auditWritesDrained) {
+        const minimalFailedAuditUpdateResult = await waitForAuditEnrichment(
+          Promise.resolve(this.deps.updateAuditLog(runningAuditLog.id, minimalFailedAuditEntry)),
+          this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
+        );
+        if (minimalFailedAuditUpdateResult !== AUDIT_ENRICHMENT_TIMEOUT) {
+          runningAuditEntry = minimalFailedAuditEntry;
+        } else {
+          logSessionRunStuckInvestigation("runtime.terminal-audit-minimal-update.timeout", {
+            sessionId,
+            auditLogId: runningAuditLog.id,
+            timeoutMs: this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
+            phase: minimalFailedAuditEntry.phase,
+          });
+        }
+        const failedAuditUpdateResult = await waitForAuditEnrichment(
+          Promise.resolve(this.deps.updateAuditLog(runningAuditLog.id, failedAuditEntry)),
+          this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
+        );
+        if (failedAuditUpdateResult !== AUDIT_ENRICHMENT_TIMEOUT) {
+          logSessionRunStuckInvestigation("runtime.terminal-audit-update.done", {
+            sessionId,
+            auditLogId: runningAuditLog.id,
+            durationMs: Date.now() - failedAuditUpdateStartedAt,
+            elapsedMs: Date.now() - investigationStartedAt,
+            phase: failedAuditEntry.phase,
+            operationCount: failedAuditEntry.operations.length,
+          });
+          runningAuditEntry = failedAuditEntry;
+        } else {
+          logSessionRunStuckInvestigation("runtime.terminal-audit-update.timeout", {
+            sessionId,
+            auditLogId: runningAuditLog.id,
+            timeoutMs: this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
+          });
+        }
+      } else {
+        void auditWriteQueue
+          .then(() => this.deps.updateAuditLog(runningAuditLog.id, minimalFailedAuditEntry))
+          .then(() => this.deps.updateAuditLog(runningAuditLog.id, failedAuditEntry))
+          .catch((auditError) => console.warn("Detached terminal audit update failed", auditError));
+      }
 
       const fallbackNotice = formatProviderFailureNotice({
         providerId: activeRunningSession.provider,
@@ -1047,7 +1395,6 @@ export class SessionRuntimeService {
       this.deps.resolvePendingApprovalRequest(sessionId, "deny");
       this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
       this.inFlightSessionRuns.delete(sessionId);
-      this.sessionRunControllers.delete(sessionId);
       const currentLiveState = this.deps.getLiveSessionRun(sessionId);
       const preservedBackgroundTasks = currentLiveState?.backgroundTasks ?? [];
       const preservedReasoningText = currentLiveState?.reasoningText ?? "";

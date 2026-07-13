@@ -34,7 +34,11 @@ import type {
 } from "../src/app-state.js";
 import { getProviderAppSettings } from "../src/provider-settings-state.js";
 import { normalizeApprovalMode } from "../src/approval-mode.js";
-import { resolveModelSelection, type ResolvedModelSelection } from "../src/model-catalog.js";
+import {
+  resolveModelSelection,
+  type ModelReasoningEffort,
+  type ResolvedModelSelection,
+} from "../src/model-catalog.js";
 import { buildArtifactFromOperations } from "./provider-artifact.js";
 import { composeProviderPrompt, isCanceledProviderMessage } from "./provider-prompt.js";
 import {
@@ -72,6 +76,19 @@ import {
   type BoundedAuditRawItem,
 } from "./audit-payload-limits.js";
 import { toProviderMetadataLogData } from "./provider-metadata-log.js";
+
+type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
+
+export function toCopilotReasoningEffort(reasoningEffort: ModelReasoningEffort): CopilotReasoningEffort {
+  if (reasoningEffort === "minimal") {
+    return "low";
+  }
+  if (reasoningEffort === "max" || reasoningEffort === "ultra") {
+    throw new Error(`GitHub Copilot provider は reasoning effort ${reasoningEffort} に対応してないよ。`);
+  }
+
+  return reasoningEffort;
+}
 
 type CachedCopilotSession = {
   session: CopilotSession;
@@ -1536,7 +1553,7 @@ export function buildCopilotSessionSettings(
   const systemMessage = buildCopilotSystemMessage(prompt);
   const config: SessionConfig = {
     model: selection.resolvedModel,
-    reasoningEffort: selection.resolvedReasoningEffort === "minimal" ? "low" : selection.resolvedReasoningEffort,
+    reasoningEffort: toCopilotReasoningEffort(selection.resolvedReasoningEffort),
     workingDirectory: workspacePath,
     streaming: true,
     onPermissionRequest: buildPermissionHandler(input),
@@ -2087,7 +2104,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   ): SessionConfig {
     return {
       model: input.model,
-      reasoningEffort: input.reasoningEffort === "minimal" ? "low" : input.reasoningEffort,
+      reasoningEffort: toCopilotReasoningEffort(input.reasoningEffort),
       workingDirectory: input.workspacePath,
       streaming: false,
       tools,

@@ -15,6 +15,7 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER_ID,
   DEFAULT_REASONING_EFFORT,
+  isModelReasoningEffort,
   normalizeProviderId,
   type ModelReasoningEffort,
   type ResolvedModelSelection,
@@ -331,14 +332,9 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
       DEFAULT_CODEX_SANDBOX_MODE,
     ),
     model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
-    reasoningEffort:
-      candidate.reasoningEffort === "minimal" ||
-      candidate.reasoningEffort === "low" ||
-      candidate.reasoningEffort === "medium" ||
-      candidate.reasoningEffort === "high" ||
-      candidate.reasoningEffort === "xhigh"
-        ? candidate.reasoningEffort
-        : DEFAULT_REASONING_EFFORT,
+    reasoningEffort: isModelReasoningEffort(candidate.reasoningEffort)
+      ? candidate.reasoningEffort
+      : DEFAULT_REASONING_EFFORT,
     customAgentName: typeof candidate.customAgentName === "string" ? candidate.customAgentName.trim() : "",
     allowedAdditionalDirectories: Array.isArray((candidate as { allowedAdditionalDirectories?: unknown[] }).allowedAdditionalDirectories)
       ? (candidate as { allowedAdditionalDirectories?: unknown[] }).allowedAdditionalDirectories
