@@ -480,14 +480,24 @@ function recoveryGet(database: DatabaseSync, payload: Readonly<Record<string, un
     FROM runs r JOIN sessions s ON s.id = r.session_id
     LEFT JOIN run_attempts a ON a.id = (
       SELECT id FROM run_attempts WHERE run_id = r.id ORDER BY ordinal DESC LIMIT 1)
-    LEFT JOIN provider_bindings b ON b.id = a.provider_binding_id
+    LEFT JOIN provider_bindings b ON b.id = COALESCE(
+      a.provider_binding_id,
+      (
+        SELECT pb.id FROM provider_bindings pb
+        WHERE pb.created_by_run_attempt_id = a.id
+        ORDER BY CASE pb.binding_state
+          WHEN 'creating' THEN 0 WHEN 'active' THEN 1 ELSE 2 END,
+          pb.ordinal DESC
+        LIMIT 1
+      )
+    )
     LEFT JOIN run_dispatches d ON d.run_attempt_id = a.id
     WHERE r.id = ? AND r.session_id = ? AND s.workspace_key = ?
   `,
     )
     .get(scope.runId, scope.sessionId, scope.workspaceKey) as Record<string, unknown> | undefined;
   if (row === undefined) throw notFound();
-  return snakeToCamel(row);
+  return snakeToCamelWithNulls(row);
 }
 
 function readSessionScope(payload: Readonly<Record<string, unknown>>, keys: readonly string[]) {
@@ -649,6 +659,15 @@ function snakeToCamel(row: Readonly<Record<string, unknown>>): Readonly<Record<s
     Object.entries(row)
       .filter(([, value]) => value !== null)
       .map(([key, value]) => [key.replace(/_([a-z])/gu, (_, letter: string) => letter.toUpperCase()), value]),
+  );
+}
+
+function snakeToCamelWithNulls(row: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  return Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [
+      key.replace(/_([a-z])/gu, (_, letter: string) => letter.toUpperCase()),
+      value,
+    ]),
   );
 }
 

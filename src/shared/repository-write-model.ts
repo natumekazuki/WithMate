@@ -3,6 +3,7 @@ export const REPOSITORY_WRITE_OPERATIONS = {
   sessionTransition: "repository.session.transition",
   sessionDeleteSubtree: "repository.session.delete-subtree",
   sessionDeletionCleanupComplete: "repository.session-deletion.cleanup.complete",
+  startupRepair: "repository.startup.repair",
   runAdmit: "repository.run.admit",
   runRetry: "repository.run.retry",
   childStart: "repository.child.start",
@@ -63,6 +64,8 @@ export type SessionDeletionCleanupCompleteCommand = Readonly<{
   cleanupToken: string;
   workspaceKey: string;
 }>;
+
+export type StartupRepairCommand = Readonly<Record<string, never>>;
 
 export type RunAdmissionBindingIntent =
   | Readonly<{ kind: "reuse"; bindingId: string }>
@@ -391,6 +394,28 @@ export type SessionDeleteSubtreeResult = Readonly<{
 export type SessionDeletionCleanupCompleteResult = Readonly<{
   cleanupToken: string;
   cleanupCompleted: true;
+}>;
+
+export type StartupRepairResult = Readonly<{
+  repairedAt: number;
+  repaired: Readonly<{
+    expiredIdempotencyRecords: number;
+    invalidatedBindings: number;
+    abortedDispatches: number;
+    availableChildResults: number;
+    repairedDelegations: number;
+    storedOutputPayloads: number;
+    omittedOutputPayloads: number;
+  }>;
+  inspection: Readonly<{
+    safeDispatchCandidates: number;
+    providerBindingCandidates: number;
+    providerDispatchCandidates: number;
+    ephemeralResumeBlockedRuns: number;
+    diagnosticRuns: number;
+    diagnosticIdempotencyRecords: number;
+    diagnosticChildResults: number;
+  }>;
 }>;
 
 export type NormalRunAdmissionResult = Readonly<{

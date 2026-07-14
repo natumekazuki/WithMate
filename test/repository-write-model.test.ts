@@ -2306,6 +2306,220 @@ repositoryTest("child result collect directly rejects fingerprint reuse, missing
   });
 });
 
+repositoryTest("startup repair converges local state and reports provider reconciliation without guessing it", () => {
+  withDatabase((database) => {
+    insertStartupRepairFixture(database);
+    const repair = operationFor(database, REPOSITORY_WRITE_OPERATIONS.startupRepair, () => 100);
+
+    const first = repair({}) as CommandResult;
+    assert.deepEqual(first.ok && first.value, {
+      repairedAt: 100,
+      repaired: {
+        expiredIdempotencyRecords: 1,
+        invalidatedBindings: 1,
+        abortedDispatches: 1,
+        availableChildResults: 1,
+        repairedDelegations: 1,
+        storedOutputPayloads: 1,
+        omittedOutputPayloads: 1,
+      },
+      inspection: {
+        safeDispatchCandidates: 1,
+        providerBindingCandidates: 1,
+        providerDispatchCandidates: 1,
+        ephemeralResumeBlockedRuns: 1,
+        diagnosticRuns: 1,
+        diagnosticIdempotencyRecords: 2,
+        diagnosticChildResults: 1,
+      },
+    });
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            "SELECT dispatch_state, resolved_at FROM run_dispatches WHERE run_attempt_id = 'repair-terminal-attempt'",
+          )
+          .get(),
+      },
+      { dispatch_state: "aborted", resolved_at: 100 },
+    );
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            "SELECT binding_state, invalidated_at, invalidation_reason FROM provider_bindings WHERE id = 'repair-terminal-binding'",
+          )
+          .get(),
+      },
+      {
+        binding_state: "invalidated",
+        invalidated_at: 100,
+        invalidation_reason: "conversation_start_ambiguous",
+      },
+    );
+    assert.equal(
+      (
+        database.prepare("SELECT external_side_effect_state FROM runs WHERE id = 'repair-child-run'").get() as {
+          external_side_effect_state: string;
+        }
+      ).external_side_effect_state,
+      "present",
+    );
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            "SELECT availability_state, terminal_phase_snapshot, available_at FROM child_result_deliveries WHERE id = 'repair-delivery'",
+          )
+          .get(),
+      },
+      { availability_state: "available", terminal_phase_snapshot: "completed", available_at: 20 },
+    );
+    assert.deepEqual(
+      database
+        .prepare("SELECT id, payload_state, stored_payload_id FROM run_output_items ORDER BY id")
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        { id: "repair-output-missing", payload_state: "omitted_persistence", stored_payload_id: null },
+        { id: "repair-output-stored", payload_state: "stored", stored_payload_id: "repair-output-stored" },
+      ],
+    );
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            "SELECT record_state, response_ref_id, response_envelope_json FROM idempotency_records WHERE idempotency_key = '018f1f4e-7f0a-7000-8000-000000000501'",
+          )
+          .get(),
+      },
+      { record_state: "expired", response_ref_id: null, response_envelope_json: null },
+    );
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            "SELECT latest_instruction_message_id, latest_child_run_id, workflow_state FROM delegations WHERE id = 'repair-delegation'",
+          )
+          .get(),
+      },
+      {
+        latest_instruction_message_id: "repair-child-message-2",
+        latest_child_run_id: "repair-child-run-2",
+        workflow_state: "closed",
+      },
+    );
+
+    const replay = repair({}) as CommandResult;
+    assert.deepEqual(replay.ok && replay.value, {
+      repairedAt: 100,
+      repaired: {
+        expiredIdempotencyRecords: 0,
+        invalidatedBindings: 0,
+        abortedDispatches: 0,
+        availableChildResults: 0,
+        repairedDelegations: 0,
+        storedOutputPayloads: 0,
+        omittedOutputPayloads: 0,
+      },
+      inspection: first.ok && first.value.inspection,
+    });
+    const invalid = repair({ unexpected: true }) as CommandResult;
+    assert.equal(!invalid.ok && invalid.error.code, "request_invalid");
+  });
+});
+
+repositoryTest("startup repair rolls back every local convergence when a later update fails", () => {
+  withDatabase((database) => {
+    insertStartupRepairFixture(database);
+    database.exec(`
+      CREATE TRIGGER fail_startup_repair_delivery BEFORE UPDATE ON child_result_deliveries
+      BEGIN SELECT RAISE(ABORT, 'startup repair fault injection'); END;
+    `);
+    const repair = operationFor(database, REPOSITORY_WRITE_OPERATIONS.startupRepair, () => 100);
+    assert.throws(() => repair({}), /startup repair fault injection/u);
+    assert.equal(
+      (
+        database
+          .prepare(
+            "SELECT record_state FROM idempotency_records WHERE idempotency_key = '018f1f4e-7f0a-7000-8000-000000000501'",
+          )
+          .get() as { record_state: string }
+      ).record_state,
+      "completed",
+    );
+    assert.equal(
+      (
+        database
+          .prepare("SELECT dispatch_state FROM run_dispatches WHERE run_attempt_id = 'repair-terminal-attempt'")
+          .get() as { dispatch_state: string }
+      ).dispatch_state,
+      "pending",
+    );
+  });
+});
+
+repositoryTest("startup repair releases a canceled Run's unresolved Binding for the next admission", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 300);
+    const repair = operationFor(database, REPOSITORY_WRITE_OPERATIONS.startupRepair, () => 400);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000511", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000512", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (
+        terminal({
+          sessionId: "session-1",
+          workspaceKey: "workspace",
+          runId: "run-1",
+          attemptId: "attempt-run-1",
+          terminalEvent: { id: "terminal-event-canceled", dedupeKey: "terminal-canceled" },
+          outcome: { kind: "canceled" },
+          outputs: [],
+          childResult: null,
+        }) as CommandResult
+      ).ok,
+      true,
+    );
+
+    const repaired = repair({}) as CommandResult;
+    assert.equal(repaired.ok && (repaired.value.repaired as Readonly<Record<string, unknown>>).invalidatedBindings, 1);
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            "SELECT binding_state, invalidated_at, invalidation_reason FROM provider_bindings WHERE id = 'binding-run-1'",
+          )
+          .get(),
+      },
+      {
+        binding_state: "invalidated",
+        invalidated_at: 400,
+        invalidation_reason: "conversation_start_ambiguous",
+      },
+    );
+    assert.equal(
+      (
+        database.prepare("SELECT external_side_effect_state FROM runs WHERE id = 'run-1'").get() as {
+          external_side_effect_state: string;
+        }
+      ).external_side_effect_state,
+      "unknown",
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000513", "run-2", "create")) as CommandResult).ok,
+      true,
+    );
+  });
+});
+
 repositoryTest("Session subtree delete removes local child data and preserves parent tombstones", () => {
   withDatabase((database) => {
     const childStart = prepareDeletableChild(database);
@@ -3118,6 +3332,116 @@ function insertStoredQuotaFixture(database: DatabaseSync, runId: string, outputI
   database
     .prepare("UPDATE run_output_items SET payload_state = 'stored', stored_payload_id = ? WHERE id = ?")
     .run(outputId, outputId);
+}
+
+function insertStartupRepairFixture(database: DatabaseSync): void {
+  const fingerprint = "a".repeat(64);
+  database.exec(`
+    BEGIN;
+    INSERT INTO sessions VALUES
+      ('repair-parent', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 20, 20),
+      ('repair-child', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 20, 20),
+      ('repair-safe', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 2, 2),
+      ('repair-creating', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 2, 2),
+      ('repair-dispatching', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 2, 2),
+      ('repair-ephemeral', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 2, 2),
+      ('repair-diagnostic', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 2, 2);
+    INSERT INTO messages VALUES
+      ('repair-parent-message', 'repair-parent', 1, 'user', '[]', 1),
+      ('repair-collision-delivery', 'repair-parent', 2, 'user', '[]', 2),
+      ('repair-child-message', 'repair-child', 1, 'user', '[]', 1),
+      ('repair-child-message-2', 'repair-child', 2, 'user', '[]', 2),
+      ('repair-safe-message', 'repair-safe', 1, 'user', '[]', 1),
+      ('repair-creating-message', 'repair-creating', 1, 'user', '[]', 1),
+      ('repair-dispatching-message', 'repair-dispatching', 1, 'user', '[]', 1),
+      ('repair-ephemeral-message', 'repair-ephemeral', 1, 'user', '[]', 1),
+      ('repair-diagnostic-message', 'repair-diagnostic', 1, 'user', '[]', 1);
+    INSERT INTO runs (
+      id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+      external_side_effect_state, created_at, terminal_at, updated_at, version
+    ) VALUES
+      ('repair-parent-run', 'repair-parent', 1, 'repair-parent-message', 'completed', '{}', 'none', 1, 20, 20, 0),
+      ('repair-child-run', 'repair-child', 1, 'repair-child-message', 'completed', '{}', 'present', 1, 20, 20, 0),
+      ('repair-child-run-2', 'repair-child', 2, 'repair-child-message-2', 'completed', '{}', 'present', 2, 21, 21, 0),
+      ('repair-safe-run', 'repair-safe', 1, 'repair-safe-message', 'queued', '{}', 'none', 1, NULL, 2, 0),
+      ('repair-creating-run', 'repair-creating', 1, 'repair-creating-message', 'queued', '{}', 'unknown', 1, NULL, 2, 0),
+      ('repair-dispatching-run', 'repair-dispatching', 1, 'repair-dispatching-message', 'starting', '{}', 'unknown', 1, NULL, 2, 0),
+      ('repair-ephemeral-run', 'repair-ephemeral', 1, 'repair-ephemeral-message', 'queued', '{}', 'none', 1, NULL, 2, 0),
+      ('repair-diagnostic-run', 'repair-diagnostic', 1, 'repair-diagnostic-message', 'queued', '{}', 'none', 1, NULL, 2, 0);
+    INSERT INTO provider_bindings (
+      id, session_id, ordinal, provider_id, external_conversation_id, persistence_mode,
+      binding_state, created_by_run_attempt_id, invalidated_at, invalidation_reason, created_at
+    ) VALUES
+      ('repair-terminal-binding', 'repair-child', 1, 'provider', NULL, 'persistent',
+        'creating', 'repair-terminal-attempt', NULL, NULL, 1),
+      ('repair-safe-binding', 'repair-safe', 1, 'provider', 'repair-safe-conversation', 'persistent',
+        'active', 'repair-safe-attempt', NULL, NULL, 1),
+      ('repair-creating-binding', 'repair-creating', 1, 'provider', NULL, 'persistent',
+        'creating', 'repair-creating-attempt', NULL, NULL, 1),
+      ('repair-dispatching-binding', 'repair-dispatching', 1, 'provider', 'repair-dispatching-conversation', 'persistent',
+        'active', 'repair-dispatching-attempt', NULL, NULL, 1),
+      ('repair-ephemeral-binding', 'repair-ephemeral', 1, 'provider', 'repair-ephemeral-conversation', 'ephemeral',
+        'active', 'repair-ephemeral-attempt', NULL, NULL, 1);
+    INSERT INTO run_attempts (
+      id, run_id, ordinal, provider_binding_id, attempt_reason, attempt_state,
+      external_execution_id, failure_origin, created_at, terminal_at
+    ) VALUES
+      ('repair-terminal-attempt', 'repair-child-run', 1, NULL, 'initial',
+        'failed', NULL, 'unknown', 1, 20),
+      ('repair-parent-attempt', 'repair-parent-run', 1, NULL, 'initial',
+        'failed', NULL, 'unknown', 1, 20),
+      ('repair-safe-attempt', 'repair-safe-run', 1, 'repair-safe-binding', 'initial',
+        'preparing', NULL, NULL, 1, NULL),
+      ('repair-creating-attempt', 'repair-creating-run', 1, 'repair-creating-binding', 'initial',
+        'preparing', NULL, NULL, 1, NULL),
+      ('repair-dispatching-attempt', 'repair-dispatching-run', 1, 'repair-dispatching-binding', 'initial',
+        'preparing', NULL, NULL, 1, NULL),
+      ('repair-ephemeral-attempt', 'repair-ephemeral-run', 1, 'repair-ephemeral-binding', 'initial',
+        'preparing', NULL, NULL, 1, NULL);
+    INSERT INTO run_dispatches VALUES
+      ('repair-terminal-attempt', 'pending', '${fingerprint}', NULL, 1, NULL, NULL),
+      ('repair-safe-attempt', 'pending', '${fingerprint}', NULL, 1, NULL, NULL),
+      ('repair-creating-attempt', 'pending', '${fingerprint}', NULL, 1, NULL, NULL),
+      ('repair-dispatching-attempt', 'dispatching', '${fingerprint}', NULL, 1, 2, NULL),
+      ('repair-ephemeral-attempt', 'pending', '${fingerprint}', NULL, 1, NULL, NULL);
+    INSERT INTO run_output_items (
+      id, run_id, ordinal, category, kind, provider_item_id, summary, completion_state,
+      payload_state, payload_original_byte_length, stored_payload_id, redaction_state, created_at
+    ) VALUES
+      ('repair-output-stored', 'repair-child-run', 1, 'operation', 'fixture', NULL, 'stored', 'complete',
+        'pending', 3, NULL, 'not_required', 1),
+      ('repair-output-missing', 'repair-child-run', 2, 'operation', 'fixture', NULL, 'missing', 'complete',
+        'pending', 3, NULL, 'not_required', 1);
+    INSERT INTO run_output_payloads VALUES
+      ('repair-output-stored', 'text', 'text/plain', X'616263', 3,
+        'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', 1);
+    INSERT INTO session_relations VALUES
+      ('repair-relation', 'repair-parent', 'repair-child', 'repair-parent', 'repair-parent-run',
+        'repair-correlation', NULL, NULL, 1),
+      ('repair-inconsistent-relation', 'repair-parent', 'repair-safe', 'repair-parent', 'repair-parent-run',
+        'repair-inconsistent-correlation', NULL, NULL, 1);
+    INSERT INTO delegations VALUES
+      ('repair-delegation', 'repair-relation', 'repair-child-message', 'repair-child-message',
+        'repair-child-run', NULL, 'closed', 'completed', 1, 20, 0),
+      ('repair-inconsistent-delegation', 'repair-inconsistent-relation', 'repair-safe-message', 'repair-safe-message',
+        'repair-safe-run', NULL, 'active', NULL, 1, 2, 0);
+    INSERT INTO child_result_deliveries VALUES
+      ('repair-delivery', 'repair-delegation', 1, 'repair-child-run', 'pending',
+        NULL, NULL, NULL, NULL, NULL, 1, 1, 0),
+      ('repair-inconsistent-delivery', 'repair-inconsistent-delegation', 1, 'repair-child-run-2', 'available',
+        'failed', NULL, 2, NULL, NULL, 1, 1, 0);
+    INSERT INTO run_input_deliveries VALUES
+      ('repair-collision-delivery', 'repair-parent-run', 'repair-parent-attempt', 'pending', NULL, 2, NULL, NULL);
+    INSERT INTO idempotency_records VALUES
+      ('018f1f4e-7f0a-7000-8000-000000000501', 'repair-child', 'run.admit', '${fingerprint}',
+        'completed', 'success', 'run', 'repair-child-run', '{"runId":"repair-child-run"}', 1, 2, 50),
+      ('018f1f4e-7f0a-7000-8000-000000000502', 'repair-safe', 'run.admit', '${fingerprint}',
+        'completed', 'success', 'run', 'missing-run', '{"runId":"missing-run"}', 1, 2, 200),
+      ('018f1f4e-7f0a-7000-8000-000000000503', 'repair-parent', 'repository.child.start', '${fingerprint}',
+        'completed', 'success', 'delivery', 'repair-collision-delivery',
+        '{"deliveryId":"repair-collision-delivery"}', 1, 2, 200);
+    COMMIT;
+  `);
 }
 
 function activatePersistentRun(database: DatabaseSync): void {

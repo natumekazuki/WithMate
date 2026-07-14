@@ -3,6 +3,7 @@ import type {
   ChildResultListItem,
   MessageListItem,
   Page,
+  RecoveryProjection,
   RunDetail,
   RunEventListItem,
   RunOutputListItem,
@@ -169,5 +170,12 @@ export class RepositoryReadClient {
     options?: RequestOptions,
   ): Promise<SessionDeletionCleanupPage> {
     return this.worker.request("repository.session-deletion.cleanup.page", "read", input, options);
+  }
+
+  recoveryGet(
+    input: Readonly<{ sessionId: string; runId: string; workspaceKey: string }>,
+    options?: RequestOptions,
+  ): Promise<RecoveryProjection> {
+    return this.worker.request("repository.recovery.get", "read", input, options);
   }
 }

@@ -36,6 +36,8 @@ import {
   type SessionDeletionCleanupCompleteResult,
   type SessionTransitionCommand,
   type SessionTransitionResult,
+  type StartupRepairCommand,
+  type StartupRepairResult,
 } from "../shared/repository-write-model.js";
 
 type RequestOptions = Readonly<{ timeoutMs?: number; signal?: AbortSignal }>;
@@ -74,6 +76,13 @@ export class RepositoryWriteClient {
     options?: RequestOptions,
   ): Promise<RepositoryCommandResult<SessionDeletionCleanupCompleteResult>> {
     return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.sessionDeletionCleanupComplete, "write", command, options);
+  }
+
+  repairStartupState(
+    command: StartupRepairCommand = {},
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<StartupRepairResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.startupRepair, "write", command, options);
   }
 
   admitNormalRun(

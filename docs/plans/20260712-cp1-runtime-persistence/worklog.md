@@ -198,3 +198,28 @@
 - Application ServiceがSession Filesを冪等削除した後にmanifestを完了できるtyped commandを追加した。
 - 物理削除、unknown effect recovery、filesystem cleanup、local-only境界の選択を`docs/adr/001-session-subtree-delete-cleanup-manifest.md`へ記録した。
 - S6-Dの残りはstartup repair commandとmaintenance境界の統合検証。
+
+## 2026-07-14: S6-D startup repair実装
+
+- `repository.startup.repair`を追加し、期限切れidempotency response、未送信Dispatch、terminal child Delivery、pending output payload、Delegation latest参照を一つのtransactionで単調収束させた。
+- Provider照合が必要なcreating Bindingとdispatching / ambiguous Dispatch、自動送信候補、ephemeral resume不可、Run / idempotency / Delivery診断をboundedな件数で返すようにした。
+- Application Serviceが対象Runを再取得できるよう、既存`repository.recovery.get`をtyped read clientへ公開した。
+- Provider I/Oや外部ID推測はWorkerへ持ち込まず、既存Binding / Dispatch resolutionとの境界を維持した。
+- local convergence、再実行時の無変更、late fault全rollback、production Worker / typed client経路をcontract testで固定した。
+- lint、typecheck、build、format、schema validator、Node 24全112 testを通し、S6を完了した。次はS7のcontract / concurrency / fault testを進める。
+
+## 2026-07-14: S7 Contract / Concurrency / Fault Tests完了
+
+- schema / PRAGMA / drift、cross-row制約、各write transactionのfault rollback、idempotency、capacity競合、payload制限、Worker lifecycle、startup repairの既存contract coverageをGateへ対応づけた。
+- 実DBの`BEGIN IMMEDIATE`競合でDispatch beginをtimeoutさせ、unknown effect後の再実行が`sendAllowed=false`となりProvider二重送信を許可しないproduction Worker回帰を追加した。
+- lint、typecheck、format、schema validatorとNode 24全113 testを通し、S7を完了した。次はS8のpublic API / integration reviewを進める。
+
+## 2026-07-14: S6-D startup repair review対応
+
+- terminal / canceling Runが所有するcreating Bindingをstartup repairでinvalidatedへ進め、外部会話作成の未送信を証明できないRunはexternal side effectを`unknown`へ単調更新した。
+- `repository.recovery.get`がAttempt側の確定Bindingだけでなく、create intent中のBindingを作成元Attemptから決定的に取得できるようにした。
+- recovery projectionのnullable必須fieldをnullのown propertyとして返す専用mappingを追加した。
+- delivery参照のidempotency診断をoperationごとのtableとscopeへ分離し、Child DeliveryとRun Input DeliveryのID衝突で欠落を隠さないようにした。
+- Child Result診断へRun terminal phaseとsnapshotの一致、relation child Sessionのownershipを追加した。
+- Main / Worker / Provider間のstartup recovery責務と二重送信防止の選択を`docs/adr/002-startup-repair-reconciliation-boundary.md`へ記録した。
+- lint、typecheck、build、format、schema validator、Node 24全115 testを通し、review後のS6-D / S7 contractを再固定した。

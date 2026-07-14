@@ -312,6 +312,85 @@ repositoryTest("Session deletion cleanup manifest is recoverable through bounded
   });
 });
 
+repositoryTest("recovery projection finds a creating Binding and preserves nullable fields", () => {
+  withDatabase((database) => {
+    insertSession(database, "recovery-session", 1);
+    insertMessage(database, "recovery-message", "recovery-session", 1, "[]");
+    database.exec(`
+      BEGIN;
+      INSERT INTO runs (
+        id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+        external_side_effect_state, created_at, updated_at, version
+      ) VALUES ('recovery-run', 'recovery-session', 1, 'recovery-message', 'queued', '{}', 'unknown', 1, 1, 0);
+      INSERT INTO provider_bindings (
+        id, session_id, ordinal, provider_id, persistence_mode, binding_state,
+        created_by_run_attempt_id, created_at
+      ) VALUES ('recovery-binding', 'recovery-session', 1, 'provider', 'persistent', 'creating',
+        'recovery-attempt', 1);
+      INSERT INTO run_attempts (
+        id, run_id, ordinal, provider_binding_id, attempt_reason, attempt_state, created_at
+      ) VALUES ('recovery-attempt', 'recovery-run', 1, NULL, 'initial', 'preparing', 1);
+      INSERT INTO run_dispatches (
+        run_attempt_id, dispatch_state, request_fingerprint, created_at
+      ) VALUES ('recovery-attempt', 'pending', '${"a".repeat(64)}', 1);
+      COMMIT;
+    `);
+
+    const recovery = operationFor(
+      database,
+      "repository.recovery.get",
+    )({
+      sessionId: "recovery-session",
+      runId: "recovery-run",
+      workspaceKey: "workspace",
+    }) as Readonly<Record<string, unknown>>;
+
+    assert.equal(recovery.bindingId, "recovery-binding");
+    assert.equal(recovery.bindingState, "creating");
+    for (const key of ["externalExecutionId", "externalConversationId", "providerIdempotencyKey"] as const) {
+      assert.equal(Object.hasOwn(recovery, key), true);
+      assert.equal(recovery[key], null);
+    }
+
+    insertMessage(database, "recovery-terminal-message", "recovery-session", 2, "[]");
+    database
+      .prepare(
+        `
+        INSERT INTO runs (
+          id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+          external_side_effect_state, created_at, terminal_at, updated_at, version
+        ) VALUES ('recovery-terminal-run', 'recovery-session', 2, 'recovery-terminal-message',
+          'canceled', '{}', 'none', 2, 2, 2, 0)
+      `,
+      )
+      .run();
+    const withoutAttempt = operationFor(
+      database,
+      "repository.recovery.get",
+    )({
+      sessionId: "recovery-session",
+      runId: "recovery-terminal-run",
+      workspaceKey: "workspace",
+    }) as Readonly<Record<string, unknown>>;
+    for (const key of [
+      "attemptId",
+      "attemptOrdinal",
+      "attemptState",
+      "externalExecutionId",
+      "bindingId",
+      "providerId",
+      "persistenceMode",
+      "bindingState",
+      "externalConversationId",
+      "dispatchState",
+      "providerIdempotencyKey",
+    ] as const) {
+      assert.equal(Object.hasOwn(withoutAttempt, key), true);
+      assert.equal(withoutAttempt[key], null);
+    }
+  });
+});
+
 function operationFor(database: DatabaseSync, name: string) {
   const operation = createRepositoryReadOperations(database).get(name);
   assert.ok(operation);

@@ -111,6 +111,25 @@ export type SessionDeletionCleanupPage = Page<SessionDeletionItem> &
     localOnly: true;
   }>;
 
+export type RecoveryProjection = Readonly<{
+  runId: string;
+  sessionId: string;
+  workspaceKey: string;
+  runPhase: string;
+  runUpdatedAt: number;
+  attemptId: string | null;
+  attemptOrdinal: number | null;
+  attemptState: string | null;
+  externalExecutionId: string | null;
+  bindingId: string | null;
+  providerId: string | null;
+  persistenceMode: "persistent" | "ephemeral" | null;
+  bindingState: "creating" | "active" | "invalidated" | "superseded" | null;
+  externalConversationId: string | null;
+  dispatchState: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted" | null;
+  providerIdempotencyKey: string | null;
+}>;
+
 export type MessageListItem = Readonly<{
   id: string;
   sessionId: string;

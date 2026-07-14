@@ -134,6 +134,15 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       attemptId: "attempt-run-worker-integration",
       bindingId: "binding-run-worker-integration",
     } as const;
+    const recoveryRepository = new RepositoryReadClient(client);
+    const creatingProjection = await recoveryRepository.recoveryGet({
+      sessionId: scope.sessionId,
+      runId: scope.runId,
+      workspaceKey: scope.workspaceKey,
+    });
+    assert.equal(creatingProjection.bindingId, scope.bindingId);
+    assert.equal(creatingProjection.bindingState, "creating");
+    assert.equal(creatingProjection.externalConversationId, null);
     assert.equal(
       (
         await repository.resolveProviderBinding({
@@ -291,6 +300,16 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
     const resumedClient = new PersistenceWorkerClient(options);
     await resumedClient.start();
     const resumedRepository = new RepositoryWriteClient(resumedClient);
+    const startupRepair = await resumedRepository.repairStartupState();
+    assert.deepEqual(startupRepair.ok && startupRepair.value.repaired, {
+      expiredIdempotencyRecords: 0,
+      invalidatedBindings: 0,
+      abortedDispatches: 0,
+      availableChildResults: 0,
+      repairedDelegations: 0,
+      storedOutputPayloads: 0,
+      omittedOutputPayloads: 0,
+    });
     const childTerminal = await resumedRepository.completeRun({
       sessionId: "session-worker-child",
       workspaceKey: "workspace",
@@ -392,6 +411,85 @@ workerTest("BEGIN IMMEDIATE serializes capacity admission across database connec
     assert.equal(results.filter((result) => result.ok).length, 1);
     assert.equal(results.filter((result) => !result.ok && result.error.code === "capacity_exceeded").length, 1);
     await Promise.all([firstClient.shutdown(), secondClient.shutdown()]);
+  });
+});
+
+workerTest("timed-out Dispatch begin converges without granting a second Provider send", async () => {
+  await withTempDirectory(async (directory) => {
+    const databasePath = path.join(directory, "dispatch-timeout.sqlite3");
+    const client = new PersistenceWorkerClient({ workerUrl, databasePath, legacyDatabasePaths: [], workerOptions });
+    await client.start();
+    const repository = new RepositoryWriteClient(client);
+    assert.equal(
+      (
+        await repository.createSession({
+          idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000351",
+          session: {
+            id: "session-dispatch-timeout",
+            providerId: "provider",
+            workspaceKey: "workspace",
+            allowedAdditionalDirectories: [],
+            defaultCharacterId: "character",
+            maxConcurrentChildRuns: 2,
+          },
+        })
+      ).ok,
+      true,
+    );
+    assert.equal(
+      (
+        await repository.admitNormalRun(
+          productionRunAdmission(
+            "session-dispatch-timeout",
+            "run-dispatch-timeout",
+            "018f1f4e-7f0a-7000-8000-000000000352",
+          ),
+        )
+      ).ok,
+      true,
+    );
+    const scope = {
+      sessionId: "session-dispatch-timeout",
+      workspaceKey: "workspace",
+      runId: "run-dispatch-timeout",
+      attemptId: "attempt-run-dispatch-timeout",
+      bindingId: "binding-run-dispatch-timeout",
+    } as const;
+    assert.equal(
+      (
+        await repository.resolveProviderBinding({
+          ...scope,
+          resolution: {
+            kind: "active",
+            externalConversationId: "conversation-dispatch-timeout",
+            ephemeralOwnerToken: null,
+          },
+        })
+      ).ok,
+      true,
+    );
+
+    const blocker = new DatabaseSync(databasePath);
+    blocker.exec("PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE;");
+    const command = {
+      ...scope,
+      providerRequest: { prompt: "hello" },
+      ephemeralOwnerToken: null,
+    } as const;
+    try {
+      await assert.rejects(repository.beginRunDispatch(command, { timeoutMs: 10 }), (error: unknown) =>
+        isClientError(error, "request_timeout", "unknown"),
+      );
+    } finally {
+      blocker.exec("COMMIT;");
+      blocker.close();
+    }
+
+    const recovered = await repository.beginRunDispatch(command);
+    assert.equal(recovered.ok && recovered.replayed, true);
+    assert.equal(recovered.ok && recovered.value.dispatchState, "dispatching");
+    assert.equal(recovered.ok && recovered.value.sendAllowed, false);
+    await client.shutdown();
   });
 });
 

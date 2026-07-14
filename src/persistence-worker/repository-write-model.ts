@@ -48,6 +48,7 @@ import {
   type SessionDeleteSubtreeResult,
   type SessionDeletionCleanupCompleteCommand,
   type SessionDeletionCleanupCompleteResult,
+  type StartupRepairResult,
   type SessionLifecycleStatus,
   type SessionTransitionCommand,
   type SessionTransitionResult,
@@ -141,6 +142,15 @@ export function createRepositoryWriteOperations(
         runDecoded(decodeSessionDeletionCleanupComplete(payload), (command) =>
           executeWriteTransaction(database, () => completeSessionDeletionCleanup(database, command)),
         ),
+      ),
+    ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.startupRepair,
+      write((payload) =>
+        runDecoded(decodeStartupRepair(payload), () => {
+          const now = readClock(clock);
+          return executeWriteTransaction(database, () => repairStartupState(database, now));
+        }),
       ),
     ],
     [
@@ -307,6 +317,292 @@ function executeRepositoryTransaction<T>(database: DatabaseSync, operation: () =
     if (error instanceof RepositoryTransactionRollback) return error.result as T;
     throw error;
   }
+}
+
+function repairStartupState(database: DatabaseSync, now: number): RepositoryCommandResult<StartupRepairResult> {
+  const expiredIdempotencyRecords = Number(
+    database
+      .prepare(
+        `
+      UPDATE idempotency_records
+      SET record_state = 'expired', response_kind = NULL, response_ref_type = NULL,
+          response_ref_id = NULL, response_envelope_json = NULL
+      WHERE record_state = 'completed' AND expires_at <= ?
+    `,
+      )
+      .run(now).changes,
+  );
+  database
+    .prepare(
+      `
+      UPDATE runs
+      SET external_side_effect_state = 'unknown', updated_at = MAX(updated_at, ?), version = version + 1
+      WHERE external_side_effect_state = 'none'
+        AND id IN (
+          SELECT a.run_id
+          FROM run_attempts a
+          JOIN provider_bindings b ON b.created_by_run_attempt_id = a.id
+          WHERE b.binding_state = 'creating'
+            AND (runs.phase IN ('canceling', 'completed', 'failed', 'canceled', 'interrupted')
+              OR a.attempt_state IN ('succeeded', 'failed', 'interrupted'))
+        )
+    `,
+    )
+    .run(now);
+  const invalidatedBindings = Number(
+    database
+      .prepare(
+        `
+      UPDATE provider_bindings
+      SET binding_state = 'invalidated', invalidated_at = ?,
+          invalidation_reason = 'conversation_start_ambiguous'
+      WHERE binding_state = 'creating' AND created_by_run_attempt_id IN (
+        SELECT a.id
+        FROM run_attempts a
+        JOIN runs r ON r.id = a.run_id
+        WHERE r.phase IN ('canceling', 'completed', 'failed', 'canceled', 'interrupted')
+          OR a.attempt_state IN ('succeeded', 'failed', 'interrupted')
+      )
+    `,
+      )
+      .run(now).changes,
+  );
+  const abortedDispatches = Number(
+    database
+      .prepare(
+        `
+      UPDATE run_dispatches
+      SET dispatch_state = 'aborted', resolved_at = ?
+      WHERE dispatch_state = 'pending' AND run_attempt_id IN (
+        SELECT a.id
+        FROM run_attempts a
+        JOIN runs r ON r.id = a.run_id
+        LEFT JOIN provider_bindings b
+          ON b.id = a.provider_binding_id OR b.created_by_run_attempt_id = a.id
+        WHERE r.phase IN ('canceling', 'completed', 'failed', 'canceled', 'interrupted')
+          OR a.attempt_state IN ('succeeded', 'failed', 'interrupted')
+          OR b.binding_state IN ('invalidated', 'superseded')
+      )
+    `,
+      )
+      .run(now).changes,
+  );
+  const repairedDelegations = Number(
+    database
+      .prepare(
+        `
+        UPDATE delegations
+        SET latest_child_run_id = (
+              SELECT r.id
+              FROM session_relations sr JOIN runs r ON r.session_id = sr.child_session_id
+              WHERE sr.id = delegations.session_relation_id
+              ORDER BY r.ordinal DESC LIMIT 1
+            ),
+            latest_instruction_message_id = (
+              SELECT r.initiating_message_id
+              FROM session_relations sr JOIN runs r ON r.session_id = sr.child_session_id
+              WHERE sr.id = delegations.session_relation_id
+              ORDER BY r.ordinal DESC LIMIT 1
+            ),
+            updated_at = ?, version = version + 1
+        WHERE EXISTS (
+          SELECT 1
+          FROM session_relations sr JOIN runs r ON r.session_id = sr.child_session_id
+          WHERE sr.id = delegations.session_relation_id
+          ORDER BY r.ordinal DESC LIMIT 1
+        ) AND (
+          latest_child_run_id <> (
+            SELECT r.id
+            FROM session_relations sr JOIN runs r ON r.session_id = sr.child_session_id
+            WHERE sr.id = delegations.session_relation_id
+            ORDER BY r.ordinal DESC LIMIT 1
+          )
+          OR latest_instruction_message_id <> (
+            SELECT r.initiating_message_id
+            FROM session_relations sr JOIN runs r ON r.session_id = sr.child_session_id
+            WHERE sr.id = delegations.session_relation_id
+            ORDER BY r.ordinal DESC LIMIT 1
+          )
+        )
+      `,
+      )
+      .run(now).changes,
+  );
+  const availableChildResults = Number(
+    database
+      .prepare(
+        `
+      UPDATE child_result_deliveries
+      SET availability_state = 'available',
+          terminal_phase_snapshot = (SELECT phase FROM runs WHERE id = child_run_id),
+          available_at = (SELECT terminal_at FROM runs WHERE id = child_run_id),
+          updated_at = ?, version = version + 1
+      WHERE availability_state = 'pending'
+        AND child_run_id IN (
+          SELECT id FROM runs WHERE phase IN ('completed', 'failed', 'canceled', 'interrupted')
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM runs r
+          JOIN delegations g ON g.id = child_result_deliveries.delegation_id
+          JOIN session_relations sr ON sr.id = g.session_relation_id
+          WHERE r.id = child_result_deliveries.child_run_id
+            AND sr.child_session_id = r.session_id
+        )
+    `,
+      )
+      .run(now).changes,
+  );
+  const storedOutputPayloads = Number(
+    database
+      .prepare(
+        `
+      UPDATE run_output_items
+      SET payload_state = 'stored', stored_payload_id = id
+      WHERE payload_state = 'pending'
+        AND run_id IN (SELECT id FROM runs WHERE phase IN ('completed', 'failed', 'canceled', 'interrupted'))
+        AND EXISTS (SELECT 1 FROM run_output_payloads p WHERE p.output_item_id = run_output_items.id)
+    `,
+      )
+      .run().changes,
+  );
+  const omittedOutputPayloads = Number(
+    database
+      .prepare(
+        `
+      UPDATE run_output_items
+      SET payload_state = 'omitted_persistence'
+      WHERE payload_state = 'pending'
+        AND run_id IN (SELECT id FROM runs WHERE phase IN ('completed', 'failed', 'canceled', 'interrupted'))
+        AND NOT EXISTS (SELECT 1 FROM run_output_payloads p WHERE p.output_item_id = run_output_items.id)
+    `,
+      )
+      .run().changes,
+  );
+
+  return success(
+    {
+      repairedAt: now,
+      repaired: {
+        expiredIdempotencyRecords,
+        invalidatedBindings,
+        abortedDispatches,
+        availableChildResults,
+        repairedDelegations,
+        storedOutputPayloads,
+        omittedOutputPayloads,
+      },
+      inspection: inspectStartupState(database),
+    },
+    false,
+  );
+}
+
+function inspectStartupState(database: DatabaseSync): StartupRepairResult["inspection"] {
+  return {
+    safeDispatchCandidates: scalarCount(
+      database,
+      `
+        SELECT COUNT(*) AS count
+        FROM run_dispatches d
+        JOIN run_attempts a ON a.id = d.run_attempt_id
+        JOIN runs r ON r.id = a.run_id
+        JOIN provider_bindings b ON b.id = a.provider_binding_id
+        WHERE d.dispatch_state = 'pending' AND r.phase IN ('queued', 'starting')
+          AND a.attempt_state = 'preparing' AND b.binding_state = 'active'
+          AND b.persistence_mode = 'persistent'
+      `,
+    ),
+    providerBindingCandidates: scalarCount(
+      database,
+      "SELECT COUNT(*) AS count FROM provider_bindings WHERE binding_state = 'creating'",
+    ),
+    providerDispatchCandidates: scalarCount(
+      database,
+      "SELECT COUNT(*) AS count FROM run_dispatches WHERE dispatch_state IN ('dispatching', 'ambiguous')",
+    ),
+    ephemeralResumeBlockedRuns: scalarCount(
+      database,
+      `
+        SELECT COUNT(DISTINCT r.id) AS count
+        FROM runs r
+        JOIN run_attempts a ON a.run_id = r.id AND a.attempt_state IN ('preparing', 'active')
+        JOIN provider_bindings b ON b.id = a.provider_binding_id
+        WHERE r.phase IN ('queued', 'starting', 'active', 'canceling', 'finalizing')
+          AND b.binding_state = 'active' AND b.persistence_mode = 'ephemeral'
+      `,
+    ),
+    diagnosticRuns: scalarCount(
+      database,
+      `
+        SELECT COUNT(*) AS count FROM runs r
+        WHERE r.phase IN ('queued', 'starting', 'active', 'canceling', 'finalizing')
+          AND (SELECT COUNT(*) FROM run_attempts a
+               WHERE a.run_id = r.id AND a.attempt_state IN ('preparing', 'active')) <> 1
+      `,
+    ),
+    diagnosticIdempotencyRecords: scalarCount(
+      database,
+      `
+        SELECT COUNT(*) AS count
+        FROM idempotency_records i
+        WHERE i.record_state = 'in_progress' OR (i.record_state = 'completed' AND (
+          (i.response_ref_type = 'session' AND NOT EXISTS (
+            SELECT 1 FROM sessions s WHERE s.id = i.response_ref_id AND s.id = i.scope_session_id
+          ))
+          OR (i.response_ref_type = 'run' AND NOT EXISTS (
+            SELECT 1 FROM runs r WHERE r.id = i.response_ref_id AND r.session_id = i.scope_session_id
+          ))
+          OR (i.response_ref_type = 'delivery' AND (
+            (i.operation = 'repository.child.start' AND NOT EXISTS (
+              SELECT 1 FROM child_result_deliveries d
+              JOIN delegations g ON g.id = d.delegation_id
+              JOIN session_relations sr ON sr.id = g.session_relation_id
+              WHERE d.id = i.response_ref_id AND sr.parent_session_id = i.scope_session_id
+            ))
+            OR (i.operation = 'repository.child-result.collect' AND NOT EXISTS (
+              SELECT 1 FROM child_result_deliveries d
+              JOIN runs cr ON cr.id = d.child_run_id
+              WHERE d.id = i.response_ref_id AND cr.session_id = i.scope_session_id
+            ))
+            OR (i.operation = 'run.input.admit' AND NOT EXISTS (
+              SELECT 1 FROM run_input_deliveries rd
+              JOIN messages m ON m.id = rd.message_id
+              WHERE rd.message_id = i.response_ref_id AND m.session_id = i.scope_session_id
+            ))
+            OR i.operation NOT IN (
+              'repository.child.start', 'repository.child-result.collect', 'run.input.admit'
+            )
+          ))
+          OR (i.response_ref_type = 'interaction' AND NOT EXISTS (
+            SELECT 1 FROM run_input_deliveries rd
+            JOIN messages m ON m.id = rd.message_id
+            WHERE rd.message_id = i.response_ref_id AND m.session_id = i.scope_session_id
+          ))
+        ))
+      `,
+    ),
+    diagnosticChildResults: scalarCount(
+      database,
+      `
+        SELECT COUNT(*) AS count
+        FROM child_result_deliveries d
+        JOIN runs r ON r.id = d.child_run_id
+        JOIN delegations g ON g.id = d.delegation_id
+        JOIN session_relations sr ON sr.id = g.session_relation_id
+        WHERE sr.child_session_id <> r.session_id
+          OR (d.availability_state = 'available' AND (
+            r.phase NOT IN ('completed', 'failed', 'canceled', 'interrupted')
+            OR d.terminal_phase_snapshot IS NULL
+            OR d.terminal_phase_snapshot <> r.phase
+          ))
+      `,
+    ),
+  };
+}
+
+function scalarCount(database: DatabaseSync, sql: string): number {
+  return (database.prepare(sql).get() as { count: number }).count;
 }
 
 function rollbackWith<T>(result: RepositoryCommandResult<T>): never {
@@ -2629,6 +2925,12 @@ function decodeSessionDeletionCleanupComplete(
     return decodeFailure();
   }
   return { ok: true, value: payload as unknown as SessionDeletionCleanupCompleteCommand };
+}
+
+function decodeStartupRepair(
+  payload: Readonly<Record<string, unknown>>,
+): DecodeResult<Readonly<Record<string, never>>> {
+  return hasExactKeys(payload, []) ? { ok: true, value: {} } : decodeFailure();
 }
 
 function decodeNormalRunAdmission(payload: Readonly<Record<string, unknown>>): DecodeResult<NormalRunAdmissionCommand> {
