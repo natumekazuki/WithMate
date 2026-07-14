@@ -249,6 +249,18 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       },
     });
     assert.equal(appended.ok && appended.value.payloadState, "stored");
+    const storedChunk = await recoveryRepository.payloadChunk({
+      sessionId: scope.sessionId,
+      workspaceKey: scope.workspaceKey,
+      runId: scope.runId,
+      outputItemId: "output-worker-stored",
+      offset: 0,
+      maxBytes: 2,
+    });
+    assert.equal(storedChunk.bytes instanceof ArrayBuffer, true);
+    assert.deepEqual([...new Uint8Array(storedChunk.bytes)], [1, 2]);
+    assert.equal(storedChunk.eof, false);
+    assert.deepEqual([...storedBytes], [1, 2, 3, 4]);
 
     const terminal = await repository.completeRun({
       sessionId: scope.sessionId,

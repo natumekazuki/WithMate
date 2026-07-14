@@ -1,4 +1,9 @@
 export { PERSISTENCE_PROTOCOL_VERSION } from "../shared/persistence-protocol.js";
+export type {
+  PersistenceError,
+  PersistenceErrorCode,
+  PersistenceFailureEffect,
+} from "../shared/persistence-protocol.js";
 export {
   PersistenceClientError,
   PersistenceWorkerClient,
@@ -13,6 +18,7 @@ export type {
   MessageListItem,
   Page,
   PageOmission,
+  RecoveryProjection,
   RunDetail,
   RunEventListItem,
   RunOutputListItem,
@@ -24,7 +30,6 @@ export type {
   SessionListItem,
 } from "../shared/repository-read-model.js";
 export {
-  REPOSITORY_WRITE_OPERATIONS,
   type ChildResultCollectCommand,
   type ChildResultCollectResult,
   type ChildStartCommand,
@@ -76,4 +81,6 @@ export {
   type SessionLifecycleStatus,
   type SessionTransitionCommand,
   type SessionTransitionResult,
+  type StartupRepairCommand,
+  type StartupRepairResult,
 } from "../shared/repository-write-model.js";

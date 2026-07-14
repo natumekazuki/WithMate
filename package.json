@@ -11,11 +11,14 @@
   },
   "scripts": {
     "build": "tsc -b",
+    "check:runtime": "node scripts/assert-runtime-version.mjs",
     "clean": "tsc -b --clean",
     "format": "prettier --write \"*.json\" \"src/**/*.ts\" \"test/**/*.ts\" \"scripts/*.mjs\"",
     "format:check": "prettier --check \"*.json\" \"src/**/*.ts\" \"test/**/*.ts\" \"scripts/*.mjs\"",
-    "lint": "node scripts/validate-module-boundaries.mjs && node --check scripts/probe-runtime-persistence.mjs && node --check scripts/run-sqlite-schema-validator.mjs && node --check scripts/validate-module-boundaries.mjs",
+    "lint": "node scripts/validate-module-boundaries.mjs && node --check scripts/assert-runtime-version.mjs && node --check scripts/probe-runtime-persistence.mjs && node --check scripts/run-sqlite-schema-validator.mjs && node --check scripts/smoke-compiled-persistence.mjs && node --check scripts/validate-module-boundaries.mjs",
+    "pretest": "npm run check:runtime",
     "probe:runtime-persistence": "node scripts/probe-runtime-persistence.mjs",
+    "smoke:compiled-persistence": "node scripts/smoke-compiled-persistence.mjs",
     "test": "tsx --test test/*.test.ts && node scripts/run-sqlite-schema-validator.mjs",
     "typecheck": "tsc -b --pretty false"
   },

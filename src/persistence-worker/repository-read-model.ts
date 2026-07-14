@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { REPOSITORY_READ_LIMITS } from "../shared/repository-read-model.js";
+import { REPOSITORY_READ_LIMITS, REPOSITORY_READ_OPERATIONS } from "../shared/repository-read-model.js";
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
 
 const INLINE_MESSAGE_BYTES = 64 * 1024;
@@ -64,23 +64,23 @@ export function createRepositoryReadOperations(database: DatabaseSync): Readonly
     execute,
   });
   return new Map([
-    ["repository.sessions.page", read((payload) => ({ result: sessionsPage(database, payload) }))],
-    ["repository.session.get", read((payload) => ({ result: sessionGet(database, payload) }))],
-    ["repository.messages.page", read((payload) => ({ result: messagesPage(database, payload) }))],
-    ["repository.run.get", read((payload) => ({ result: runGet(database, payload) }))],
-    ["repository.run.events.page", read((payload) => ({ result: runEventsPage(database, payload) }))],
-    ["repository.run.outputs.counts", read((payload) => ({ result: runOutputCounts(database, payload) }))],
-    ["repository.run.outputs.page", read((payload) => ({ result: runOutputsPage(database, payload) }))],
+    [REPOSITORY_READ_OPERATIONS.sessionsPage, read((payload) => ({ result: sessionsPage(database, payload) }))],
+    [REPOSITORY_READ_OPERATIONS.sessionGet, read((payload) => ({ result: sessionGet(database, payload) }))],
+    [REPOSITORY_READ_OPERATIONS.messagesPage, read((payload) => ({ result: messagesPage(database, payload) }))],
+    [REPOSITORY_READ_OPERATIONS.runGet, read((payload) => ({ result: runGet(database, payload) }))],
+    [REPOSITORY_READ_OPERATIONS.runEventsPage, read((payload) => ({ result: runEventsPage(database, payload) }))],
+    [REPOSITORY_READ_OPERATIONS.runOutputCounts, read((payload) => ({ result: runOutputCounts(database, payload) }))],
+    [REPOSITORY_READ_OPERATIONS.runOutputsPage, read((payload) => ({ result: runOutputsPage(database, payload) }))],
     [
-      "repository.run.output.payload-metadata",
+      REPOSITORY_READ_OPERATIONS.runOutputPayloadMetadata,
       read((payload) => ({ result: runOutputPayloadMetadata(database, payload) })),
     ],
-    ["repository.child-results.page", read((payload) => ({ result: childResultsPage(database, payload) }))],
+    [REPOSITORY_READ_OPERATIONS.childResultsPage, read((payload) => ({ result: childResultsPage(database, payload) }))],
     [
-      "repository.session-deletion.cleanup.page",
+      REPOSITORY_READ_OPERATIONS.sessionDeletionCleanupPage,
       read((payload) => ({ result: sessionDeletionCleanupPage(database, payload) })),
     ],
-    ["repository.recovery.get", read((payload) => ({ result: recoveryGet(database, payload) }))],
+    [REPOSITORY_READ_OPERATIONS.recoveryGet, read((payload) => ({ result: recoveryGet(database, payload) }))],
   ]);
 }
 

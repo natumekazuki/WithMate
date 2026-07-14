@@ -223,3 +223,15 @@
 - Child Result診断へRun terminal phaseとsnapshotの一致、relation child Sessionのownershipを追加した。
 - Main / Worker / Provider間のstartup recovery責務と二重送信防止の選択を`docs/adr/002-startup-repair-reconciliation-boundary.md`へ記録した。
 - lint、typecheck、build、format、schema validator、Node 24全115 testを通し、review後のS6-D / S7 contractを再固定した。
+
+## 2026-07-14: S8 CP1 Integration Gate完了
+
+- Mainのpublic barrelからraw write operation catalogを外し、CP2が利用するtyped read / write client、domain error、transport error、recovery / startup repair型を公開contract testで固定した。
+- read operation名をshared定数へ集約し、typed clientとWorker registryのmapping driftを防止した。read filterとexecution stateも既存union型へ狭めた。
+- MainからSQLite / Worker実装への直接依存、sharedからruntime依存、Persistence WorkerからMainへの逆依存をstatic checkで拒否した。
+- Node.js 24.16.0でclean `npm ci`を実行し、Node.js 22の既定shellではtestをfail-fastするruntime guardを追加した。
+- production Workerのstructured clone / transferable readをtyped client経路で検証した。compiled `dist` Workerのstart、ping、checkpoint、shutdownと終了後のWAL / SHM / journal不在をWindows smokeへ固定した。
+- compiled smoke 7回の観測値はstartup中央値49.12 ms、p95相当54.76 ms、全体中央値56.29 ms、p95相当63.77 msだった。性能budgetは設けず、CP8で比較するbaselineとする。
+- Node.js 24でlint、typecheck、build、format、schema validator、runtime probe、全116 testを通した。test runner本体は1.60〜1.82秒、外部runnerを含む観測wall timeは2.86秒だった。
+- repository内と今回生成したprobe / smoke一時directoryにDB / WAL / SHM / journal / backup artifactが残らないことを確認した。既存OS tempに過去実行由来の残留があるが、今回のrunで増加はなくCP2の責務は変えない。
+- ADR gateは既存責務の検証強化で新規判断がないため非該当、architecture document gateは既存のRepository read / write文書がsourceとexecutable contractを指しており追加同期不要と判定した。

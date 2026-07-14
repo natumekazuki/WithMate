@@ -6,10 +6,10 @@ coverage/
 # Runtime and test data
 *.sqlite
 *.sqlite3
-*.sqlite-shm
-*.sqlite-wal
+*-shm
+*-wal
+*-journal
 .tmp/
 
 # Packaged artifacts
 release/
-

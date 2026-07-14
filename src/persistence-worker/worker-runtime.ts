@@ -9,6 +9,7 @@ import {
   type WorkerToMainMessage,
 } from "../shared/persistence-protocol.js";
 import { decodeMainToWorkerMessage, isPlainObject } from "../shared/persistence-runtime-protocol.js";
+import { REPOSITORY_READ_OPERATIONS } from "../shared/repository-read-model.js";
 import { BoundedSerialExecutor, PersistenceExecutorError } from "./request-executor.js";
 import { createRepositoryReadOperations, RepositoryReadError } from "./repository-read-model.js";
 import { createRepositoryWriteOperations, type RepositoryWriteCapacityOptions } from "./repository-write-model.js";
@@ -223,28 +224,28 @@ function createOperationRegistry(
       },
     ],
     [
-      "payload.read_chunk",
+      REPOSITORY_READ_OPERATIONS.payloadChunk,
       {
         requestClass: "read",
         execute: (payload) => readPayloadChunk(database, payload),
       },
     ],
     [
-      "repository.message.content-chunk",
+      REPOSITORY_READ_OPERATIONS.messageContentChunk,
       {
         requestClass: "read",
         execute: (payload) => readMessageContentChunk(database, payload),
       },
     ],
     [
-      "repository.session.directories-chunk",
+      REPOSITORY_READ_OPERATIONS.sessionDirectoriesChunk,
       {
         requestClass: "read",
         execute: (payload) => readSessionDirectoriesChunk(database, payload),
       },
     ],
     [
-      "repository.run.snapshot-chunk",
+      REPOSITORY_READ_OPERATIONS.runSnapshotChunk,
       {
         requestClass: "read",
         execute: (payload) => readRunSnapshotChunk(database, payload),

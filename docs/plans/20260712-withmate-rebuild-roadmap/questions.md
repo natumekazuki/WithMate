@@ -1,9 +1,9 @@
 # Questions
 
 - status: 質問なし
-- updated: 2026-07-12
+- updated: 2026-07-14
 
-現在、CP1着手を止める回答待ちはない。
+現在、CP2着手を止める回答待ちはない。
 
 ## Checkpoint到達時に判断する項目
 

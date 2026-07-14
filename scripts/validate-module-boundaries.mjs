@@ -13,6 +13,10 @@ const rules = [
     directory: "shared",
     forbidden: ["node:sqlite", "node:worker_threads", "electron", "../main", "../persistence-worker"],
   },
+  {
+    directory: "persistence-worker",
+    forbidden: ["../main", "/main/", "electron"],
+  },
 ];
 
 function listSourceFiles(directory) {

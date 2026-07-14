@@ -1,3 +1,21 @@
+export const REPOSITORY_READ_OPERATIONS = {
+  sessionsPage: "repository.sessions.page",
+  sessionGet: "repository.session.get",
+  sessionDirectoriesChunk: "repository.session.directories-chunk",
+  messagesPage: "repository.messages.page",
+  messageContentChunk: "repository.message.content-chunk",
+  runEventsPage: "repository.run.events.page",
+  runGet: "repository.run.get",
+  runSnapshotChunk: "repository.run.snapshot-chunk",
+  runOutputsPage: "repository.run.outputs.page",
+  runOutputCounts: "repository.run.outputs.counts",
+  runOutputPayloadMetadata: "repository.run.output.payload-metadata",
+  payloadChunk: "payload.read_chunk",
+  childResultsPage: "repository.child-results.page",
+  sessionDeletionCleanupPage: "repository.session-deletion.cleanup.page",
+  recoveryGet: "repository.recovery.get",
+} as const;
+
 export const REPOSITORY_READ_LIMITS = {
   sessions: { default: 25, max: 100 },
   messages: { default: 50, max: 100 },
