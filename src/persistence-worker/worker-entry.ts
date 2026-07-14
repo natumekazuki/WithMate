@@ -1,8 +1,12 @@
 import { parentPort, workerData } from "node:worker_threads";
 
-import { PERSISTENCE_PROTOCOL_VERSION, type PersistenceStartupFailedMessage } from "../shared/persistence-protocol.js";
+import {
+  PERSISTENCE_PROTOCOL_VERSION,
+  type PersistenceError,
+  type PersistenceStartupFailedMessage,
+} from "../shared/persistence-protocol.js";
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
-import { openOrBootstrapDatabase } from "./sqlite-bootstrap.js";
+import { DatabaseBootstrapError, openOrBootstrapDatabase } from "./sqlite-bootstrap.js";
 import { PersistenceWorkerRuntime } from "./worker-runtime.js";
 
 type PersistenceWorkerData = Readonly<{
@@ -48,23 +52,35 @@ try {
     generationId: options.generationId,
     kind: "ready",
   });
-} catch {
+} catch (error) {
   const generationId = readGenerationId(workerData);
   if (generationId !== undefined) {
     const failure: PersistenceStartupFailedMessage = {
       protocolVersion: PERSISTENCE_PROTOCOL_VERSION,
       generationId,
       kind: "startupFailed",
-      error: {
-        code: "worker_start_failed",
-        message: "Persistence worker failed to start.",
-        retryable: false,
-        effect: "none",
-      },
+      error: mapStartupError(error),
     };
     port.postMessage(failure);
   }
   port.close();
+}
+
+function mapStartupError(error: unknown): PersistenceError {
+  if (error instanceof DatabaseBootstrapError) {
+    return {
+      code: error.code,
+      message: "Persistence database failed to start.",
+      retryable: error.retryable,
+      effect: "none",
+    };
+  }
+  return {
+    code: "worker_start_failed",
+    message: "Persistence worker failed to start.",
+    retryable: false,
+    effect: "none",
+  };
 }
 
 function decodeWorkerData(value: unknown): PersistenceWorkerData {

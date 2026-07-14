@@ -139,9 +139,10 @@ export function createRepositoryWriteOperations(
     [
       REPOSITORY_WRITE_OPERATIONS.sessionDeletionCleanupComplete,
       write((payload) =>
-        runDecoded(decodeSessionDeletionCleanupComplete(payload), (command) =>
-          executeWriteTransaction(database, () => completeSessionDeletionCleanup(database, command)),
-        ),
+        runDecoded(decodeSessionDeletionCleanupComplete(payload), (command) => {
+          const now = readClock(clock);
+          return executeWriteTransaction(database, () => completeSessionDeletionCleanup(database, command, now));
+        }),
       ),
     ],
     [
@@ -789,6 +790,33 @@ function deleteSessionSubtree(
       true,
     );
   }
+  const completed = database
+    .prepare(
+      `
+      SELECT workspace_key, request_fingerprint, deleted_session_count
+      FROM session_deletion_completion_tombstones WHERE deletion_id = ?
+    `,
+    )
+    .get(command.deletionId) as
+    | {
+        workspace_key: string;
+        request_fingerprint: string;
+        deleted_session_count: number;
+      }
+    | undefined;
+  if (completed !== undefined) {
+    if (completed.workspace_key !== command.workspaceKey || completed.request_fingerprint !== requestFingerprint) {
+      return failure("idempotency_conflict", "Session deletion ID was reused for a different request.");
+    }
+    return success(
+      {
+        cleanupToken: command.deletionId,
+        deletedSessionCount: completed.deleted_session_count,
+        localOnly: true,
+      },
+      true,
+    );
+  }
   const subtree = database
     .prepare(
       `
@@ -957,11 +985,34 @@ function deleteSessionSubtree(
 function completeSessionDeletionCleanup(
   database: DatabaseSync,
   command: SessionDeletionCleanupCompleteCommand,
+  now: number,
 ): RepositoryCommandResult<SessionDeletionCleanupCompleteResult> {
+  const completed = database
+    .prepare("SELECT workspace_key FROM session_deletion_completion_tombstones WHERE deletion_id = ?")
+    .get(command.cleanupToken) as { workspace_key: string } | undefined;
+  if (completed !== undefined) {
+    if (completed.workspace_key !== command.workspaceKey) {
+      return failure("not_found", "Session deletion cleanup manifest was not found.");
+    }
+    return success({ cleanupToken: command.cleanupToken, cleanupCompleted: true }, true);
+  }
+  const inserted = database
+    .prepare(
+      `
+      INSERT INTO session_deletion_completion_tombstones (
+        deletion_id, workspace_key, request_fingerprint, deleted_session_count, completed_at
+      )
+      SELECT deletion_id, workspace_key, request_fingerprint, deleted_session_count, ?
+      FROM session_deletion_manifests
+      WHERE deletion_id = ? AND workspace_key = ?
+    `,
+    )
+    .run(now, command.cleanupToken, command.workspaceKey);
+  if (inserted.changes !== 1) return failure("not_found", "Session deletion cleanup manifest was not found.");
   const deleted = database
     .prepare("DELETE FROM session_deletion_manifests WHERE deletion_id = ? AND workspace_key = ?")
     .run(command.cleanupToken, command.workspaceKey);
-  if (deleted.changes !== 1) return failure("not_found", "Session deletion cleanup manifest was not found.");
+  if (deleted.changes !== 1) throw new Error("Session deletion cleanup manifest disappeared during completion.");
   return success({ cleanupToken: command.cleanupToken, cleanupCompleted: true }, false);
 }
 

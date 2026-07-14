@@ -138,18 +138,11 @@ export function classifyDatabaseFile(databasePath: string, manifest: SqliteSchem
     return { kind: "empty" };
   }
 
-  return inspectDatabaseWithoutMutation(databasePath, (database) => {
-    try {
-      return classifyOpenDatabase(database, manifest);
-    } catch (error) {
-      if (error instanceof DatabaseBootstrapError) {
-        throw error;
-      }
-      throw new DatabaseBootstrapError("database_schema_unknown", "Database could not be classified.", {
-        cause: error,
-      });
-    }
-  });
+  try {
+    return inspectDatabaseWithoutMutation(databasePath, (database) => classifyOpenDatabase(database, manifest));
+  } catch (error) {
+    throw normalizeDatabaseError(error, "database_schema_unknown", "Database could not be classified.");
+  }
 }
 
 function classifyOpenDatabase(database: DatabaseSync, manifest: SqliteSchemaManifest): DatabaseClassification {
@@ -635,6 +628,7 @@ function isSqliteBusyError(error: unknown): boolean {
   return (
     candidate.code === "SQLITE_BUSY" ||
     candidate.code === "SQLITE_LOCKED" ||
+    candidate.code === "EBUSY" ||
     candidate.errcode === 5 ||
     candidate.errcode === 6 ||
     (typeof candidate.message === "string" && /\b(?:busy|locked)\b/iu.test(candidate.message))

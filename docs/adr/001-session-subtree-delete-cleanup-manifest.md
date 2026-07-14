@@ -15,7 +15,9 @@ Session subtreeのdomain rowはSQLite transaction内で物理削除し、Session
 
 呼び出し側は削除前にUUIDのdeletion IDを確定する。削除commandはこのIDをexact replay key兼cleanup tokenとして扱い、成功応答にはtoken、削除件数、local-only表示だけを返す。削除対象Session IDはboundedなpage readで取得する。
 
-Application Serviceはpageを最後まで取得し、各Session Filesを冪等削除した後にcleanup完了commandを送る。cleanup完了前のcrashでは同じtokenから再開し、完了commandはmanifestとitemを削除する。Provider側データの削除はこのmanifestの対象に含めない。
+Application Serviceはpageを最後まで取得し、各Session Filesを冪等削除した後にcleanup完了commandを送る。cleanup完了前のcrashでは同じtokenから再開する。完了commandはmanifestとitemを削除し、同じtransactionで`session_deletion_completion_tombstones`へ固定長のtoken、boundedなworkspace key、request fingerprint、削除件数、完了時刻だけを保存する。plaintextのSession IDは完了tombstoneへ残さない。
+
+完了tombstoneは、cleanup完了commandのcommit後に応答を失った再送を`success / replayed=true`へ収束させる。削除commandの再送もrequest fingerprintとworkspaceを照合し、同じ削除結果を返す。異なるrequestでtokenを再利用した場合は成功扱いしない。Provider側データの削除はmanifestと完了tombstoneの対象に含めない。
 
 workspace境界を越えるrelationを含むtreeは、manifest作成およびdomain mutationの前に拒否する。
 
@@ -25,6 +27,8 @@ workspace境界を越えるrelationを含むtreeは、manifest作成およびdom
 - Session ID群を成功応答だけで返す: response上限とcommit後の応答消失を安全に扱えないため採用しない。
 - Session FilesをSQLite transaction中に削除する: filesystem失敗とDB rollbackを原子的にできず、write lock時間も外部I/Oへ依存するため採用しない。
 - cleanup対象をprocess memoryだけに保持する: crash recoveryできないため採用しない。
+- 完了後に全recordを削除する: cleanup完了commit後の応答消失を`not_found`と区別できないため採用しない。
+- 汎用IdempotencyRecordを使用する: 削除対象Sessionへのscope外部キーを保持できず、scope契約の変更が他commandへ波及するため採用しない。
 
 ## Consequences
 
@@ -32,4 +36,6 @@ workspace境界を越えるrelationを含むtreeは、manifest作成およびdom
 - Worker responseはtree件数に依存せずboundedになる。
 - filesystem cleanupはeventualかつ冪等であり、SQLite commit時点ではSession Filesが残る可能性がある。
 - cleanup完了まで、削除済みSession IDとworkspace keyを含むmanifestがsubtree外に残る。Application Serviceはfiles削除より先にcleanup完了を記録してはならない。
+- cleanup完了後はSession IDとitemを消去するが、exact replayのためrequest fingerprintを含むboundedな完了tombstoneを保持する。自動retention期間は初期版の契約に追加せず、将来導入する場合はreplay保証期間とtoken再利用規則を同時に決定する。
+- 完了tombstoneは削除操作ごとに1 row増える。これはcommit後の応答消失から期限なしで収束するための容量trade-offとして受容する。
 - local-only境界は維持され、Provider側会話の削除や再試行は保証しない。

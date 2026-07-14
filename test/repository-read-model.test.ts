@@ -167,6 +167,83 @@ repositoryTest("run-scoped reads hide resources outside the requested workspace"
   });
 });
 
+repositoryTest("pending Run Input delivery recovery is run-scoped, paged, and preserves dispatch state", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    insertMessage(database, "input-pending", "session-1", 2, "[]");
+    insertMessage(database, "input-dispatching", "session-1", 3, "[]");
+    insertMessage(database, "input-accepted", "session-1", 4, "[]");
+    insertRun(database, "run-1", "session-1", "message-1", "active", 1);
+    database.exec(`
+      BEGIN;
+      INSERT INTO provider_bindings (
+        id, session_id, ordinal, provider_id, external_conversation_id, persistence_mode,
+        binding_state, created_by_run_attempt_id, created_at
+      ) VALUES ('binding-1', 'session-1', 1, 'provider', 'conversation-1', 'persistent',
+        'active', 'attempt-1', 1);
+      INSERT INTO run_attempts (
+        id, run_id, ordinal, provider_binding_id, attempt_reason, attempt_state,
+        external_execution_id, created_at, started_at
+      ) VALUES ('attempt-1', 'run-1', 1, 'binding-1', 'initial', 'active', 'execution-1', 1, 1);
+      INSERT INTO run_input_deliveries VALUES
+        ('input-pending', 'run-1', 'attempt-1', 'pending', NULL, 2, NULL, NULL),
+        ('input-dispatching', 'run-1', 'attempt-1', 'dispatching', NULL, 3, 4, NULL),
+        ('input-accepted', 'run-1', 'attempt-1', 'accepted', NULL, 5, 6, 7);
+      COMMIT;
+    `);
+
+    const recoverInputs = operationFor(database, "repository.run.input-deliveries.page");
+    const first = recoverInputs({
+      sessionId: "session-1",
+      runId: "run-1",
+      workspaceKey: "workspace",
+      limit: 1,
+    }) as PageResult;
+    assert.deepEqual(first.items, [
+      {
+        messageId: "input-pending",
+        runId: "run-1",
+        attemptId: "attempt-1",
+        bindingId: "binding-1",
+        deliveryState: "pending",
+        createdAt: 2,
+        dispatchingAt: null,
+      },
+    ]);
+    assert.equal(typeof first.nextCursor, "string");
+
+    const second = recoverInputs({
+      sessionId: "session-1",
+      runId: "run-1",
+      workspaceKey: "workspace",
+      cursor: first.nextCursor,
+      limit: 1,
+    }) as PageResult;
+    assert.deepEqual(second.items, [
+      {
+        messageId: "input-dispatching",
+        runId: "run-1",
+        attemptId: "attempt-1",
+        bindingId: "binding-1",
+        deliveryState: "dispatching",
+        createdAt: 3,
+        dispatchingAt: 4,
+      },
+    ]);
+    assert.equal(second.nextCursor, undefined);
+    assert.throws(
+      () =>
+        recoverInputs({
+          sessionId: "session-1",
+          runId: "run-1",
+          workspaceKey: "other",
+        }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "not_found",
+    );
+  });
+});
+
 repositoryTest("cursor scope digest accepts long values and rejects NUL-delimited collisions", () => {
   withDatabase((database) => {
     const longWorkspace = "w".repeat(400);

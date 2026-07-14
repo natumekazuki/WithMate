@@ -72,6 +72,10 @@ export function createRepositoryReadOperations(database: DatabaseSync): Readonly
     [REPOSITORY_READ_OPERATIONS.runOutputCounts, read((payload) => ({ result: runOutputCounts(database, payload) }))],
     [REPOSITORY_READ_OPERATIONS.runOutputsPage, read((payload) => ({ result: runOutputsPage(database, payload) }))],
     [
+      REPOSITORY_READ_OPERATIONS.runInputDeliveriesPage,
+      read((payload) => ({ result: runInputDeliveriesPage(database, payload) })),
+    ],
+    [
       REPOSITORY_READ_OPERATIONS.runOutputPayloadMetadata,
       read((payload) => ({ result: runOutputPayloadMetadata(database, payload) })),
     ],
@@ -301,6 +305,71 @@ function runOutputCounts(database: DatabaseSync, payload: Readonly<Record<string
     totalCount: rows.reduce((sum, row) => sum + row.item_count, 0),
     partialCount: rows.reduce((sum, row) => sum + row.partial_count, 0),
     byCategory: Object.fromEntries(rows.map((row) => [row.category, row.item_count])),
+  };
+}
+
+function runInputDeliveriesPage(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
+  const scope = readRunScope(payload, ["sessionId", "runId", "workspaceKey", "cursor", "limit"]);
+  const limit = readLimit(payload.limit, REPOSITORY_READ_LIMITS.runInputDeliveries);
+  const cursorScope = runCursorScope(scope);
+  const cursor = decodeCursor(payload.cursor, "run_input_deliveries", cursorScope, 2);
+  if (
+    cursor !== undefined &&
+    (!Number.isSafeInteger(cursor[0]) || (cursor[0] as number) < 0 || typeof cursor[1] !== "string")
+  ) {
+    throw invalidCursor();
+  }
+  const afterCreatedAt = cursor?.[0] as number | undefined;
+  const afterMessageId = cursor?.[1] as string | undefined;
+  const rows = database
+    .prepare(
+      `
+      SELECT i.message_id, i.run_id, i.run_attempt_id AS attempt_id,
+             a.provider_binding_id AS binding_id, i.delivery_state,
+             i.created_at, i.dispatching_at
+      FROM run_input_deliveries i
+      JOIN run_attempts a ON a.id = i.run_attempt_id AND a.run_id = i.run_id
+      JOIN runs r ON r.id = i.run_id
+      JOIN sessions s ON s.id = r.session_id
+      WHERE i.run_id = ? AND r.session_id = ? AND s.workspace_key = ?
+        AND i.delivery_state IN ('pending', 'dispatching')
+        AND (? IS NULL OR i.created_at > ? OR (i.created_at = ? AND i.message_id > ?))
+      ORDER BY i.created_at ASC, i.message_id ASC
+      LIMIT ?
+    `,
+    )
+    .all(
+      scope.runId,
+      scope.sessionId,
+      scope.workspaceKey,
+      afterCreatedAt ?? null,
+      afterCreatedAt ?? null,
+      afterCreatedAt ?? null,
+      afterMessageId ?? null,
+      limit + 1,
+    ) as unknown as readonly RunInputDeliveryRow[];
+  assertRunScopeExists(database, scope);
+  const page = splitPage(rows, limit);
+  const budgeted = budgetPage(page, (row) => ({
+    messageId: row.message_id,
+    runId: row.run_id,
+    attemptId: row.attempt_id,
+    bindingId: row.binding_id,
+    deliveryState: row.delivery_state,
+    createdAt: row.created_at,
+    dispatchingAt: row.dispatching_at,
+  }));
+  return {
+    ...scope,
+    items: budgeted.items,
+    ...(budgeted.hasMore && budgeted.lastRow !== undefined
+      ? {
+          nextCursor: encodeCursor("run_input_deliveries", cursorScope, [
+            budgeted.lastRow.created_at,
+            budgeted.lastRow.message_id,
+          ]),
+        }
+      : {}),
   };
 }
 
@@ -695,6 +764,16 @@ function notFound(): RepositoryReadError {
 }
 
 type OrdinalRow = Readonly<Record<string, unknown> & { ordinal: number }>;
+type RunInputDeliveryRow = Readonly<Record<string, unknown>> &
+  Readonly<{
+    message_id: string;
+    run_id: string;
+    attempt_id: string;
+    binding_id: string | null;
+    delivery_state: "pending" | "dispatching";
+    created_at: number;
+    dispatching_at: number | null;
+  }>;
 type MessageRow = Readonly<{
   id: string;
   session_id: string;

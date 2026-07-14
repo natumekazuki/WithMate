@@ -176,6 +176,33 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       ).ok,
       true,
     );
+    assert.equal(
+      (
+        await repository.admitRunInput({
+          sessionId: scope.sessionId,
+          workspaceKey: scope.workspaceKey,
+          idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000326",
+          runId: scope.runId,
+          attemptId: scope.attemptId,
+          ephemeralOwnerToken: null,
+          message: {
+            id: "message-worker-input-dispatching",
+            contentBlocks: [{ type: "text", text: "continue" }],
+          },
+        })
+      ).ok,
+      true,
+    );
+    assert.equal(
+      (
+        await repository.beginRunInput({
+          ...scope,
+          messageId: "message-worker-input-dispatching",
+          ephemeralOwnerToken: null,
+        })
+      ).ok,
+      true,
+    );
     const childCommand = productionChildStart(
       "session-worker-integration",
       "run-worker-integration",
@@ -312,6 +339,21 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
     const resumedClient = new PersistenceWorkerClient(options);
     await resumedClient.start();
     const resumedRepository = new RepositoryWriteClient(resumedClient);
+    const resumedInputDeliveries = await new RepositoryReadClient(resumedClient).runInputDeliveriesPage({
+      sessionId: scope.sessionId,
+      runId: scope.runId,
+      workspaceKey: scope.workspaceKey,
+    });
+    assert.equal(resumedInputDeliveries.items.length, 1);
+    const resumedInputDelivery = resumedInputDeliveries.items[0];
+    assert.ok(resumedInputDelivery && !("omitted" in resumedInputDelivery));
+    assert.equal(resumedInputDelivery.messageId, "message-worker-input-dispatching");
+    assert.equal(resumedInputDelivery.runId, scope.runId);
+    assert.equal(resumedInputDelivery.attemptId, scope.attemptId);
+    assert.equal(resumedInputDelivery.bindingId, scope.bindingId);
+    assert.equal(resumedInputDelivery.deliveryState, "dispatching");
+    assert.equal(typeof resumedInputDelivery.createdAt, "number");
+    assert.equal(typeof resumedInputDelivery.dispatchingAt, "number");
     const startupRepair = await resumedRepository.repairStartupState();
     assert.deepEqual(startupRepair.ok && startupRepair.value.repaired, {
       expiredIdempotencyRecords: 0,
@@ -374,6 +416,19 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       cleanupCompleted: true,
     });
     await resumedClient.shutdown();
+
+    const cleanupReplayClient = new PersistenceWorkerClient(options);
+    await cleanupReplayClient.start();
+    const cleanupReplay = await new RepositoryWriteClient(cleanupReplayClient).completeSessionDeletionCleanup({
+      cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
+      workspaceKey: "workspace",
+    });
+    assert.equal(cleanupReplay.ok && cleanupReplay.replayed, true);
+    assert.deepEqual(cleanupReplay.ok && cleanupReplay.value, {
+      cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
+      cleanupCompleted: true,
+    });
+    await cleanupReplayClient.shutdown();
   });
 });
 
@@ -513,9 +568,82 @@ workerTest("startup failure is safe and does not enter a restart loop", async ()
     workerOptions,
   });
 
-  await assert.rejects(client.start(), (error: unknown) => isClientError(error, "worker_start_failed", "none"));
+  await assert.rejects(client.start(), (error: unknown) => isClientError(error, "database_path_invalid", "none"));
   assert.equal(client.state, "failed");
   assert.equal(client.start(), client.start());
+});
+
+workerTest("production Worker preserves safe bootstrap failure classification", async () => {
+  await withTempDirectory(async (directory) => {
+    const databasePath = path.join(directory, "bootstrap-classification.sqlite3");
+    const options = { workerUrl, databasePath, legacyDatabasePaths: [], workerOptions } as const;
+    const bootstrapClient = new PersistenceWorkerClient(options);
+    await bootstrapClient.start();
+    await bootstrapClient.shutdown();
+
+    const futureSchema = new DatabaseSync(databasePath);
+    futureSchema.exec("PRAGMA user_version = 2;");
+    futureSchema.close();
+    const incompatibleClient = new PersistenceWorkerClient(options);
+    await assert.rejects(incompatibleClient.start(), (error: unknown) =>
+      isClientErrorWithRetryable(error, "database_schema_too_new", "none", false),
+    );
+  });
+
+  await withTempDirectory(async (directory) => {
+    const databasePath = path.join(directory, "bootstrap-busy.sqlite3");
+    const options = { workerUrl, databasePath, legacyDatabasePaths: [], workerOptions } as const;
+    const bootstrapClient = new PersistenceWorkerClient(options);
+    await bootstrapClient.start();
+    await bootstrapClient.shutdown();
+
+    const blocker = new DatabaseSync(databasePath);
+    blocker.exec("BEGIN EXCLUSIVE;");
+    try {
+      const busyClient = new PersistenceWorkerClient({ ...options, startupTimeoutMs: 10_000 });
+      await assert.rejects(busyClient.start(), (error: unknown) =>
+        isClientErrorWithRetryable(error, "database_busy", "none", true),
+      );
+    } finally {
+      blocker.exec("ROLLBACK;");
+      blocker.close();
+    }
+  });
+});
+
+workerTest("pre-aborted production write never reaches the database", async () => {
+  await withTempDirectory(async (directory) => {
+    const client = new PersistenceWorkerClient({
+      workerUrl,
+      databasePath: path.join(directory, "pre-aborted.sqlite3"),
+      legacyDatabasePaths: [],
+      workerOptions,
+    });
+    await client.start();
+    const repository = new RepositoryWriteClient(client);
+    const controller = new AbortController();
+    controller.abort();
+    const command = {
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000371",
+      session: {
+        id: "session-pre-aborted",
+        providerId: "provider",
+        workspaceKey: "workspace",
+        allowedAdditionalDirectories: [],
+        defaultCharacterId: "character",
+        maxConcurrentChildRuns: 2,
+      },
+    } as const;
+    await assert.rejects(repository.createSession(command, { signal: controller.signal }), (error: unknown) =>
+      isClientError(error, "request_canceled", "none"),
+    );
+    assert.deepEqual(await new RepositoryReadClient(client).sessionsPage({ workspaceKey: "workspace" }), {
+      items: [],
+    });
+    const created = await repository.createSession(command);
+    assert.equal(created.ok && created.replayed, false);
+    await client.shutdown();
+  });
 });
 
 workerTest("synchronous Worker and postMessage failures settle without leaking state", async () => {
@@ -888,6 +1016,12 @@ function isClientError(error: unknown, code: string, effect: string): boolean {
     error.persistenceError.code === code &&
     error.persistenceError.effect === effect
   );
+}
+
+function isClientErrorWithRetryable(error: unknown, code: string, effect: string, retryable: boolean): boolean {
+  return isClientError(error, code, effect) && error instanceof PersistenceClientError
+    ? error.persistenceError.retryable === retryable
+    : false;
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {

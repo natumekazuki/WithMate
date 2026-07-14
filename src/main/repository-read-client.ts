@@ -7,6 +7,7 @@ import {
   type RecoveryProjection,
   type RunDetail,
   type RunEventListItem,
+  type RunInputDeliveryRecoveryItem,
   type RunOutputListItem,
   type RunOutputPayloadMetadata,
   type SessionDeletionCleanupPage,
@@ -144,6 +145,15 @@ export class RepositoryReadClient {
     options?: RequestOptions,
   ): Promise<RunOutputPayloadMetadata> {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.runOutputPayloadMetadata, "read", input, options);
+  }
+
+  runInputDeliveriesPage(
+    input: Readonly<{ sessionId: string; runId: string; workspaceKey: string; cursor?: string; limit?: number }>,
+    options?: RequestOptions,
+  ): Promise<
+    Page<RunInputDeliveryRecoveryItem> & Readonly<{ sessionId: string; runId: string; workspaceKey: string }>
+  > {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.runInputDeliveriesPage, "read", input, options);
   }
 
   payloadChunk(

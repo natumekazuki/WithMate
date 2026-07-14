@@ -2,14 +2,14 @@
 
 - 作成日: 2026-07-11
 - 対象: WithMate 新実装の Session / Message / Run 永続化基盤
-- 状態: 設計の基準（基礎 3 table + Run output 2 table + Multi-Agent 3 table + Provider 相関 3 table + 冪等性 1 table + event 1 table + supplemental input 1 table 確定）
+- 状態: 設計の基準
 - 関連設計: `docs/design/session-run-message-contract.md`, `docs/design/multi-agent-orchestration.md`, `docs/design/provider-integration.md`, `docs/design/sqlite-schema-lifecycle.md`
 
 ## 目的
 
 Session / Message / Run の責務と不変条件を SQLite の table 契約へ落とし込み、通常 Run と Multi-Agent child Run が同じ永続化基盤を使えるようにする。
 
-本書の現在の範囲は `sessions`、`messages`、`runs`、`run_output_items`、`run_output_payloads`、`session_relations`、`delegations`、`child_result_deliveries`、`provider_bindings`、`run_attempts`、`run_dispatches`、`idempotency_records`、`run_events`、`run_input_deliveries` の 14 table と、その直接制約とする。
+本書の現在の範囲は`schema/sqlite/manifest-v1.json`が列挙する永続化tableと、そのcross-table責務および直接制約とする。現在の完全DDLとobject集合はschema artifactとmanifestを正本とする。
 
 ## 旧 DB との境界
 
@@ -725,7 +725,7 @@ exportRunOutputPayload(outputItemId, destinationGrant)
 
 ## 永続化要否の見直し
 
-確定済み 16 table を、再起動後の復旧、二重実行防止、長期履歴・参照整合性の観点で再確認した。table 単位でメモリ管理だけへ移せるものはない。
+確定済みの永続化tableを、再起動後の復旧、二重実行防止、長期履歴・参照整合性の観点で再確認した。table 単位でメモリ管理だけへ移せるものはない。
 
 | Table | 永続化する理由 |
 | --- | --- |
@@ -745,6 +745,7 @@ exportRunOutputPayload(outputItemId, destinationGrant)
 | `run_input_deliveries` | steer の二重配送防止と受理不明状態の保持 |
 | `session_deletion_manifests` | DB commit後のSession Files cleanup再開とboundedな削除応答 |
 | `session_deletion_items` | cleanup対象Session IDのpaged取得 |
+| `session_deletion_completion_tombstones` | cleanup完了commit後の応答消失と削除command再送の収束 |
 
 root capacity使用数は、`session_relations.orchestration_root_session_id`配下のSessionに属するnon-terminal child Runを`runs`から数えて導出する。app全体とProvider runtime別capacityは、通常Run / Auxiliary / child Runのnon-terminal Runと、そのAttempt / Bindingから同じtransactionで導出する。各上限確認と`queued` Run追加を同じSQLite write transaction内で直列化するため、専用の枠管理tableは持たない。受理済みRunはProvider起動前から各枠を使用し、terminal化した時点で集計から外れる。
 

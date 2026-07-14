@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { PERSISTENCE_PROTOCOL_VERSION } from "../src/shared/persistence-protocol.js";
+import { PERSISTENCE_PROTOCOL_VERSION, type PersistenceErrorCode } from "../src/shared/persistence-protocol.js";
 import {
   decodeMainToWorkerMessage,
   decodeWorkerToMainMessage,
@@ -118,6 +118,38 @@ test("unsafe error codeと過剰なmessageを拒否する", () => {
     }).ok,
     false,
   );
+});
+
+test("bootstrapの安全な診断codeをstartup failureとして受理する", () => {
+  const bootstrapErrorCodes = [
+    "database_path_invalid",
+    "database_busy",
+    "database_identity_mismatch",
+    "database_schema_unknown",
+    "database_schema_too_new",
+    "database_schema_too_old",
+    "database_schema_verification_failed",
+    "database_integrity_check_failed",
+    "database_pragma_mismatch",
+    "database_wal_unavailable",
+    "database_bootstrap_failed",
+    "schema_artifact_invalid",
+  ] as const satisfies readonly PersistenceErrorCode[];
+
+  for (const code of bootstrapErrorCodes) {
+    const message = {
+      protocolVersion: PERSISTENCE_PROTOCOL_VERSION,
+      generationId,
+      kind: "startupFailed",
+      error: {
+        code,
+        message: "Persistence database failed to start.",
+        retryable: code === "database_busy",
+        effect: "none",
+      },
+    } as const;
+    assert.deepEqual(decodeWorkerToMainMessage(message), { ok: true, value: message });
+  }
 });
 
 test("canonical UUIDとplain object guardを公開する", () => {

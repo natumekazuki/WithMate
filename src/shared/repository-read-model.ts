@@ -10,6 +10,7 @@ export const REPOSITORY_READ_OPERATIONS = {
   runOutputsPage: "repository.run.outputs.page",
   runOutputCounts: "repository.run.outputs.counts",
   runOutputPayloadMetadata: "repository.run.output.payload-metadata",
+  runInputDeliveriesPage: "repository.run.input-deliveries.page",
   payloadChunk: "payload.read_chunk",
   childResultsPage: "repository.child-results.page",
   sessionDeletionCleanupPage: "repository.session-deletion.cleanup.page",
@@ -21,6 +22,7 @@ export const REPOSITORY_READ_LIMITS = {
   messages: { default: 50, max: 100 },
   events: { default: 100, max: 200 },
   outputs: { default: 100, max: 200 },
+  runInputDeliveries: { default: 100, max: 200 },
   childResults: { default: 100, max: 200 },
   sessionDeletionItems: { default: 100, max: 200 },
 } as const;
@@ -98,6 +100,16 @@ export type RunOutputPayloadMetadata = Readonly<{
   byteLength: number;
   contentSha256: string;
   createdAt: number;
+}>;
+
+export type RunInputDeliveryRecoveryItem = Readonly<{
+  messageId: string;
+  runId: string;
+  attemptId: string;
+  bindingId: string | null;
+  deliveryState: "pending" | "dispatching";
+  createdAt: number;
+  dispatchingAt: number | null;
 }>;
 
 export type ChildResultListItem = Readonly<{

@@ -149,7 +149,13 @@ export class PersistenceWorkerClient {
     if (!decodeMainToWorkerMessage(requestMessage).ok) {
       return Promise.reject(clientError("protocol_invalid", "Persistence request is invalid.", false, "none"));
     }
-    const promise = new Promise<TResult>((resolve, reject) => {
+    const signal = options.signal;
+    if (signal?.aborted) {
+      return Promise.reject(clientError("request_canceled", "Persistence request was canceled.", false, "none"));
+    }
+
+    const worker = this.#worker;
+    return new Promise<TResult>((resolve, reject) => {
       const pending: PendingRequest = {
         requestClass,
         resolve: resolve as (value: unknown) => void,
@@ -160,28 +166,26 @@ export class PersistenceWorkerClient {
       if (options.timeoutMs !== undefined) {
         pending.timer = setTimeout(() => this.#cancelPending(requestId, "request_timeout"), options.timeoutMs);
       }
-      if (options.signal !== undefined) {
+      if (signal !== undefined) {
         const onAbort = () => this.#cancelPending(requestId, "request_canceled");
-        options.signal.addEventListener("abort", onAbort, { once: true });
-        pending.removeAbortListener = () => options.signal?.removeEventListener("abort", onAbort);
+        signal.addEventListener("abort", onAbort, { once: true });
+        pending.removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+        if (signal.aborted) {
+          cleanupPending(pending);
+          reject(clientError("request_canceled", "Persistence request was canceled.", false, "none"));
+          return;
+        }
       }
       this.#pending.set(requestId, pending);
-    });
-    try {
-      this.#worker.postMessage(requestMessage);
-      this.#nextRequestSequence += 1;
-    } catch {
-      const pending = this.#pending.get(requestId);
-      if (pending !== undefined) {
+      try {
+        worker.postMessage(requestMessage);
+        this.#nextRequestSequence += 1;
+      } catch {
         this.#pending.delete(requestId);
         cleanupPending(pending);
-        pending.reject(clientError("protocol_invalid", "Persistence request could not be transferred.", false, "none"));
+        reject(clientError("protocol_invalid", "Persistence request could not be transferred.", false, "none"));
       }
-    }
-    if (options.signal?.aborted) {
-      this.#cancelPending(requestId, "request_canceled");
-    }
-    return promise;
+    });
   }
 
   /**

@@ -3,7 +3,7 @@
   "applicationId": 1464686132,
   "applicationIdHex": "0x574D5634",
   "applicationIdText": "WMV4",
-  "schemaDefinitionSha256": "f880fcf58da0f996d05ae251465f664e2f783a717462fc7a3f1fe5bd82e9b7ae",
+  "schemaDefinitionSha256": "0218a796da70d9c44ca928062968663962a8dbc63138d23a443bd3dda47cb022",
   "tables": [
     "child_result_deliveries",
     "delegations",
@@ -17,6 +17,7 @@
     "run_output_items",
     "run_output_payloads",
     "runs",
+    "session_deletion_completion_tombstones",
     "session_deletion_items",
     "session_deletion_manifests",
     "session_relations",

@@ -2580,12 +2580,79 @@ repositoryTest("Session subtree delete removes local child data and preserves pa
       REPOSITORY_WRITE_OPERATIONS.sessionDeletionCleanupComplete,
       () => 902,
     )({ cleanupToken: command.deletionId, workspaceKey: "workspace" }) as CommandResult;
+    assert.equal(cleanup.ok && cleanup.replayed, false);
     assert.deepEqual(cleanup.ok && cleanup.value, {
       cleanupToken: command.deletionId,
       cleanupCompleted: true,
     });
     assert.equal(count(database, "session_deletion_manifests"), 0);
     assert.equal(count(database, "session_deletion_items"), 0);
+    assert.deepEqual(
+      {
+        ...(database
+          .prepare(
+            `
+            SELECT workspace_key, deleted_session_count, completed_at
+            FROM session_deletion_completion_tombstones WHERE deletion_id = ?
+          `,
+          )
+          .get(command.deletionId) as Record<string, unknown>),
+      },
+      { workspace_key: "workspace", deleted_session_count: 1, completed_at: 902 },
+    );
+    assert.equal(
+      database
+        .prepare("PRAGMA table_info(session_deletion_completion_tombstones)")
+        .all()
+        .some((column) => (column as { name: string }).name.includes("session_id")),
+      false,
+    );
+
+    const cleanupReplay = operationFor(
+      database,
+      REPOSITORY_WRITE_OPERATIONS.sessionDeletionCleanupComplete,
+      () => 903,
+    )({ cleanupToken: command.deletionId, workspaceKey: "workspace" }) as CommandResult;
+    assert.equal(cleanupReplay.ok && cleanupReplay.replayed, true);
+    assert.deepEqual(cleanupReplay.ok && cleanupReplay.value, cleanup.ok && cleanup.value);
+
+    const deleteReplayAfterCleanup = remove(command) as CommandResult;
+    assert.equal(deleteReplayAfterCleanup.ok && deleteReplayAfterCleanup.replayed, true);
+    assert.deepEqual(deleteReplayAfterCleanup.ok && deleteReplayAfterCleanup.value, result.ok && result.value);
+    const deleteConflict = remove({ ...command, sessionId: "session-1" }) as CommandResult;
+    assert.equal(!deleteConflict.ok && deleteConflict.error.code, "idempotency_conflict");
+    const wrongWorkspace = operationFor(
+      database,
+      REPOSITORY_WRITE_OPERATIONS.sessionDeletionCleanupComplete,
+      () => 904,
+    )({ cleanupToken: command.deletionId, workspaceKey: "other-workspace" }) as CommandResult;
+    assert.equal(!wrongWorkspace.ok && wrongWorkspace.error.code, "not_found");
+  });
+});
+
+repositoryTest("Session deletion cleanup completion rolls back its tombstone when manifest deletion fails", () => {
+  withDatabase((database) => {
+    prepareDeletableChild(database);
+    const command = {
+      deletionId: "018f1f4e-7f0a-7000-8000-000000000407",
+      sessionId: "child-session-delete",
+      workspaceKey: "workspace",
+    };
+    const remove = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionDeleteSubtree, () => 900);
+    assert.equal((remove(command) as CommandResult).ok, true);
+    database.exec(`
+      CREATE TRIGGER fail_cleanup_manifest_delete BEFORE DELETE ON session_deletion_manifests
+      BEGIN SELECT RAISE(ABORT, 'cleanup completion fault injection'); END;
+    `);
+
+    const complete = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionDeletionCleanupComplete, () => 901);
+    assert.throws(
+      () => complete({ cleanupToken: command.deletionId, workspaceKey: command.workspaceKey }),
+      /cleanup completion fault injection/u,
+    );
+    assert.equal(count(database, "session_deletion_manifests"), 1);
+    assert.equal(count(database, "session_deletion_items"), 1);
+    assert.equal(count(database, "session_deletion_completion_tombstones"), 0);
   });
 });
 

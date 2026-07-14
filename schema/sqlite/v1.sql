@@ -280,6 +280,24 @@ CREATE TABLE session_deletion_manifests (
 CREATE INDEX session_deletion_manifests_workspace_created_idx
   ON session_deletion_manifests(workspace_key, created_at, deletion_id);
 
+CREATE TABLE session_deletion_completion_tombstones (
+  deletion_id TEXT PRIMARY KEY
+    CHECK (length(deletion_id) = 36
+      AND deletion_id = lower(deletion_id)
+      AND substr(deletion_id, 9, 1) = '-'
+      AND substr(deletion_id, 14, 1) = '-'
+      AND substr(deletion_id, 19, 1) = '-'
+      AND substr(deletion_id, 24, 1) = '-'
+      AND length(replace(deletion_id, '-', '')) = 32
+      AND replace(deletion_id, '-', '') NOT GLOB '*[^0-9a-f]*'),
+  workspace_key TEXT NOT NULL CHECK (length(workspace_key) BETWEEN 1 AND 1024),
+  request_fingerprint TEXT NOT NULL
+    CHECK (length(request_fingerprint) = 64
+      AND request_fingerprint NOT GLOB '*[^0-9a-f]*'),
+  deleted_session_count INTEGER NOT NULL CHECK (deleted_session_count >= 1),
+  completed_at INTEGER NOT NULL
+) STRICT;
+
 CREATE TABLE session_deletion_items (
   deletion_id TEXT NOT NULL,
   ordinal INTEGER NOT NULL CHECK (ordinal >= 1),
