@@ -18,6 +18,7 @@ repositoryTest("session page derives execution state with a bounded keyset curso
     insertSession(database, "session-3", 10);
     insertMessage(database, "message-1", "session-1", 1, "[]");
     insertRun(database, "run-1", "session-1", "message-1", "active", 30);
+    database.prepare("UPDATE runs SET updated_at = 99 WHERE id = 'run-1'").run();
     const operation = operationFor(database, "repository.sessions.page");
 
     const first = operation({ workspaceKey: "workspace", lifecycleStatus: "active", limit: 2 }) as PageResult;
@@ -28,6 +29,10 @@ repositoryTest("session page derives execution state with a bounded keyset curso
     assert.deepEqual(
       first.items.map((item) => item.executionState),
       ["running", "not_started"],
+    );
+    assert.deepEqual(
+      first.items.map((item) => item.stateChangedAt),
+      [30, 1],
     );
     assert.equal(typeof first.nextCursor, "string");
 
@@ -45,6 +50,37 @@ repositoryTest("session page derives execution state with a bounded keyset curso
       () => operation({ workspaceKey: "other", lifecycleStatus: "active", cursor: first.nextCursor }),
       (error: unknown) => error instanceof RepositoryReadError && error.code === "cursor_invalid",
     );
+  });
+});
+
+repositoryTest("Session detail preserves its Provider before the first Run", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-without-run", 1);
+    const detail = operationFor(
+      database,
+      "repository.session.get",
+    )({
+      sessionId: "session-without-run",
+      workspaceKey: "workspace",
+    }) as Readonly<Record<string, unknown>>;
+
+    assert.deepEqual(detail, {
+      session: {
+        id: "session-without-run",
+        providerId: "provider",
+        workspaceKey: "workspace",
+        allowedAdditionalDirectoriesByteLength: 2,
+        allowedAdditionalDirectoriesState: "inline",
+        allowedAdditionalDirectories: [],
+        defaultCharacterId: "character",
+        maxConcurrentChildRuns: 4,
+        lifecycleStatus: "active",
+        createdAt: 1,
+        updatedAt: 1,
+        lastActivityAt: 1,
+      },
+      execution: { state: "not_started" },
+    });
   });
 });
 

@@ -53,6 +53,7 @@ export type SessionListItem = Readonly<{
 
 export type SessionDetail = Readonly<{
   id: string;
+  providerId: string;
   workspaceKey: string;
   allowedAdditionalDirectoriesByteLength: number;
   allowedAdditionalDirectoriesState: "inline" | "chunked";

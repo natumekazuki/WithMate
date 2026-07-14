@@ -42,6 +42,42 @@ workerTest("worker starts once, serves requests, checkpoints, and closes gracefu
   });
 });
 
+workerTest("production Worker restores a Session Provider before its first Run", async () => {
+  await withTempDirectory(async (directory) => {
+    const options = {
+      workerUrl,
+      databasePath: path.join(directory, "session-provider-recovery.sqlite3"),
+      legacyDatabasePaths: [],
+      workerOptions,
+    } as const;
+    const client = new PersistenceWorkerClient(options);
+    await client.start();
+    const created = await new RepositoryWriteClient(client).createSession({
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000381",
+      session: {
+        id: "session-provider-recovery",
+        providerId: "provider-recovery",
+        workspaceKey: "workspace",
+        allowedAdditionalDirectories: [],
+        defaultCharacterId: "character",
+        maxConcurrentChildRuns: 2,
+      },
+    });
+    assert.equal(created.ok, true);
+    await client.shutdown();
+
+    const resumedClient = new PersistenceWorkerClient(options);
+    await resumedClient.start();
+    const restored = await new RepositoryReadClient(resumedClient).sessionGet({
+      sessionId: "session-provider-recovery",
+      workspaceKey: "workspace",
+    });
+    assert.equal(restored.session.providerId, "provider-recovery");
+    assert.equal(restored.execution.state, "not_started");
+    await resumedClient.shutdown();
+  });
+});
+
 workerTest("production Worker applies configured Run capacity", async () => {
   await withTempDirectory(async (directory) => {
     const client = new PersistenceWorkerClient({

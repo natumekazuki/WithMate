@@ -117,10 +117,12 @@ function sessionsPage(database: DatabaseSync, payload: Readonly<Record<string, u
       SELECT s.*,
         (SELECT id FROM runs WHERE session_id = s.id
           AND phase IN ('queued','starting','active','canceling','finalizing') LIMIT 1) AS active_run_id,
+        (SELECT created_at FROM runs WHERE session_id = s.id
+          AND phase IN ('queued','starting','active','canceling','finalizing') LIMIT 1) AS active_run_created_at,
         (SELECT id FROM runs WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_id,
         (SELECT phase FROM runs WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_phase,
-        (SELECT COALESCE(terminal_at, updated_at) FROM runs
-          WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_state_changed_at
+        (SELECT terminal_at FROM runs
+          WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_terminal_at
       FROM page_sessions s
       ORDER BY s.last_activity_at DESC, s.id DESC
     `,
@@ -147,7 +149,10 @@ function sessionsPage(database: DatabaseSync, payload: Readonly<Record<string, u
     executionState: row.active_run_id !== null ? "running" : (row.latest_run_phase ?? "not_started"),
     ...(row.active_run_id === null ? {} : { activeRunId: row.active_run_id }),
     ...(row.latest_run_id === null ? {} : { latestRunId: row.latest_run_id }),
-    stateChangedAt: row.latest_state_changed_at ?? row.created_at,
+    stateChangedAt:
+      row.active_run_id === null
+        ? (row.latest_run_terminal_at ?? row.created_at)
+        : (row.active_run_created_at ?? row.created_at),
   }));
   return {
     items: mappedPage.items,
@@ -166,7 +171,7 @@ function sessionGet(database: DatabaseSync, payload: Readonly<Record<string, unk
   const row = database
     .prepare(
       `
-      SELECT s.id, s.workspace_key, s.default_character_id, s.max_concurrent_child_runs,
+      SELECT s.id, s.provider_id, s.workspace_key, s.default_character_id, s.max_concurrent_child_runs,
         s.lifecycle_status, s.created_at, s.updated_at, s.last_activity_at,
         length(CAST(s.allowed_additional_directories_json AS BLOB)) AS directories_byte_length,
         CASE WHEN length(CAST(s.allowed_additional_directories_json AS BLOB)) <= ?
@@ -183,6 +188,7 @@ function sessionGet(database: DatabaseSync, payload: Readonly<Record<string, unk
   return {
     session: {
       id: row.id,
+      providerId: row.provider_id,
       workspaceKey: row.workspace_key,
       allowedAdditionalDirectoriesByteLength: row.directories_byte_length,
       allowedAdditionalDirectoriesState: row.inline_directories === null ? "chunked" : "inline",
@@ -793,12 +799,14 @@ type SessionPageRow = Readonly<{
   updated_at: number;
   last_activity_at: number;
   active_run_id: string | null;
+  active_run_created_at: number | null;
   latest_run_id: string | null;
   latest_run_phase: string | null;
-  latest_state_changed_at: number | null;
+  latest_run_terminal_at: number | null;
 }>;
-type SessionDetailRow = SessionPageRow &
+type SessionDetailRow = Omit<SessionPageRow, "active_run_created_at" | "latest_run_terminal_at"> &
   Readonly<{
+    provider_id: string;
     directories_byte_length: number;
     inline_directories: string | null;
     max_concurrent_child_runs: number;
