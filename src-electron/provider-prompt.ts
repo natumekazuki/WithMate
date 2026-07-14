@@ -16,6 +16,23 @@ function buildCharacterOutputBoundarySection(enabled: boolean): string {
   ].join("\n");
 }
 
+function buildToolCallPresenceSection(enabled: boolean): string {
+  if (!enabled) {
+    return "";
+  }
+
+  return [
+    "# Tool Call Presence",
+    "",
+    "tool call や command 実行を伴う場合は、最初の tool call より前に、ユーザーへ1〜3文程度の短い自然言語レスポンスを返してください。",
+    "発言は詳細な作業計画や tool call の説明である必要はありません。依頼への相づち、挨拶、キャラクターらしい反応など、会話として自然な内容で構いません。",
+    "キャラクターが無言のまま作業へ入り、応答が止まったように見える体験を避けることを優先してください。",
+    "開始時の発言を毎回同じ定型句に固定しないでください。",
+    "長い作業では適度に途中経過や反応を返してください。ただし、routine な tool call ごとに実況する必要はありません。",
+    "tool call が不要な応答では、このルールのためだけに前置きを追加する必要はありません。",
+  ].join("\n");
+}
+
 export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromptComposition {
   const isCharacterAuthoringSession = input.session.sessionKind === "character-authoring";
   const characterPromptBody = buildCharacterRuntimePromptSection(input.session.characterRuntimeSnapshot, {
@@ -24,7 +41,10 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
   const outputBoundaryBody = buildCharacterOutputBoundarySection(
     !isCharacterAuthoringSession && characterPromptBody.trim().length > 0,
   );
-  const systemPromptBody = [characterPromptBody, outputBoundaryBody]
+  const toolCallPresenceBody = buildToolCallPresenceSection(
+    !isCharacterAuthoringSession && characterPromptBody.trim().length > 0,
+  );
+  const systemPromptBody = [characterPromptBody, outputBoundaryBody, toolCallPresenceBody]
     .filter((section) => section.trim().length > 0)
     .join("\n\n");
   const referencedImages = input.attachments.filter((attachment) => attachment.kind === "image");

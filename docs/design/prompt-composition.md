@@ -1,7 +1,7 @@
 # Prompt Composition
 
 - 作成日: 2026-03-13
-- 更新日: 2026-06-15
+- 更新日: 2026-07-14
 - 対象: WithMate における coding plane の prompt 合成
 
 ## Goal
@@ -48,14 +48,16 @@ coding plane に渡す turn prompt は、次のレイヤーを基本にする。
 
 1. `CharacterRuntimeSnapshot.definitionMarkdown`
 2. `Output Boundary`
-3. 必要最小限の WithMate run marker
-4. ユーザー入力
-5. 添付 reference
+3. `Tool Call Presence`
+4. 必要最小限の WithMate run marker
+5. ユーザー入力
+6. 添付 reference
 
 通常 session / companion の Character snapshot は session / companion 開始時点の保存済み値を使い、catalog の現在値へ追従しない。`character-authoring` session は turn 開始時に最新の `character.md` から runtime snapshot を作り直す。app 共通 system prompt は挿入しない。
 provider に渡す `Character Definition Snapshot` では、snapshot の取得時点説明を prompt 本体には入れない。保存済み snapshot の frontmatter は除外し、Character 名と説明を metadata として示したうえで、`character.md` 本文だけを markdown block として囲む。Character section の固定説明は、話し方への反映と coding agent 境界の guard に絞る。
 通常 session / companion では Character section の直後に `Output Boundary` を置き、Character 定義の適用先をユーザー向け自然言語レスポンスへ限定する。コード、設定、テスト、ドキュメント、コミットメッセージ案、PR本文案、生成ファイル、diff、artifact summary は、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜず、repository instruction、既存文体、対象ファイルの目的を優先する。
-`character-authoring` session は `character.md` / `character-notes.md` 自体が成果物なので、`Output Boundary` と coding agent 境界の固定 guard を注入しない。
+通常 session / companion では `Output Boundary` の直後に `Tool Call Presence` を置き、tool call や command 実行前に短い自然言語レスポンスを返すことで、Character が無言のまま作業へ入ったように見える体験を避ける。
+`character-authoring` session は `character.md` / `character-notes.md` 自体が成果物なので、`Output Boundary`、`Tool Call Presence`、coding agent 境界の固定 guard を注入しない。
 
 ### 4.0.0 SingleMate target
 
@@ -73,6 +75,7 @@ Mate Core / Bond Profile / Work Style は provider instruction file へ同期し
 
 論理 prompt では `Character Definition Snapshot` section を system 側に置く。
 通常 session / companion では `Output Boundary` section も system 側に置く。`character-authoring` session では置かない。
+通常 session / companion では `Tool Call Presence` section も system 側に置く。`character-authoring` session では置かない。
 
 `# Session Memory`、`# Project Memory`、`# Project Context`、`# Character Memory` も coding plane prompt では作らない。
 
@@ -105,6 +108,17 @@ Mate Core / Bond Profile / Work Style は provider instruction file へ同期し
   - Character Definition Snapshot の直後に置く
   - Character 定義はユーザーへ返す自然言語の話し方・温度・反応にだけ使うことを明示する
   - コード、設定、テスト、ドキュメント、コミットメッセージ案、PR本文案、生成ファイル、diff、artifact summary へ Character の口調・設定・台詞・メタ説明を混ぜないことを明示する
+  - `character-authoring` session では注入しない
+
+### `# Tool Call Presence`
+
+- source:
+  - WithMate 固定の会話開始境界
+- 形式:
+  - Output Boundary の直後に置く
+  - tool call や command 実行を伴う場合は、最初の tool call より前に1〜3文程度の自然なレスポンスを返すよう明示する
+  - routine な tool call ごとの実況は要求しない
+  - tool call が不要な応答には前置きを要求しない
   - `character-authoring` session では注入しない
 
 ## Memory Injection Policy

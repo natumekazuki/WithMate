@@ -253,6 +253,11 @@ describe("composeProviderPrompt", () => {
     assert.match(prompt.systemBodyText, /# Output Boundary/);
     assert.match(prompt.systemBodyText, /生成ファイル、diff、artifact summary には、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜないでください。/);
     assert.match(prompt.systemBodyText, /成果物は repository instruction、既存文体、対象ファイルの目的を優先してください。/);
+    assert.match(prompt.systemBodyText, /# Tool Call Presence/);
+    assert.match(prompt.systemBodyText, /最初の tool call より前に、ユーザーへ1〜3文程度の短い自然言語レスポンスを返してください/);
+    assert.match(prompt.systemBodyText, /キャラクターが無言のまま作業へ入り、応答が止まったように見える体験を避ける/);
+    assert.match(prompt.systemBodyText, /routine な tool call ごとに実況する必要はありません/);
+    assert.match(prompt.systemBodyText, /tool call が不要な応答では、このルールのためだけに前置きを追加する必要はありません/);
     assert.doesNotMatch(prompt.systemBodyText, /厳密な無人格回答へ戻りすぎず/);
     assert.doesNotMatch(prompt.systemBodyText, /character-notes\.md/);
     assert.doesNotMatch(prompt.systemBodyText, /^---$/m);
@@ -267,6 +272,7 @@ describe("composeProviderPrompt", () => {
     assertSectionOrder(prompt.logicalPrompt.composedText, [
       "# Character Definition Snapshot",
       "# Output Boundary",
+      "# Tool Call Presence",
       "# User Input",
       "続けて",
     ]);
@@ -306,6 +312,7 @@ describe("composeProviderPrompt", () => {
     assert.match(prompt.systemBodyText, /authoring 対象の character\.md。/);
     assert.doesNotMatch(prompt.systemBodyText, /開始時点の Character 定義/);
     assert.doesNotMatch(prompt.systemBodyText, /# Output Boundary/);
+    assert.doesNotMatch(prompt.systemBodyText, /# Tool Call Presence/);
     assert.doesNotMatch(prompt.systemBodyText, /ユーザー向け自然言語レスポンスの話し方・温度・反応パターンに反映してください。/);
     assert.doesNotMatch(prompt.systemBodyText, /通常のcoding agentとして正確に扱い、Character定義で置き換えないでください。/);
     assert.doesNotMatch(prompt.systemBodyText, /生成ファイル、diff、artifact summary/);
@@ -352,6 +359,11 @@ describe("composeProviderPrompt", () => {
 
     assert.match(prompt.systemBodyText, /`````markdown\n# Examples/);
     assert.match(prompt.systemBodyText, /````\n`````\n\n# Output Boundary/);
-    assertSectionOrder(prompt.systemBodyText, ["`````markdown", "quad fence", "`````\n\n# Output Boundary"]);
+    assertSectionOrder(prompt.systemBodyText, [
+      "`````markdown",
+      "quad fence",
+      "`````\n\n# Output Boundary",
+      "# Tool Call Presence",
+    ]);
   });
 });
