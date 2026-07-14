@@ -4,6 +4,7 @@ export const REPOSITORY_READ_LIMITS = {
   events: { default: 100, max: 200 },
   outputs: { default: 100, max: 200 },
   childResults: { default: 100, max: 200 },
+  sessionDeletionItems: { default: 100, max: 200 },
 } as const;
 
 export type PageOmission = Readonly<{
@@ -97,6 +98,18 @@ export type ChildResultListItem = Readonly<{
   orchestrationRootSessionId: string;
   workspaceKey: string;
 }>;
+
+export type SessionDeletionItem = Readonly<{
+  ordinal: number;
+  sessionId: string;
+}>;
+
+export type SessionDeletionCleanupPage = Page<SessionDeletionItem> &
+  Readonly<{
+    cleanupToken: string;
+    deletedSessionCount: number;
+    localOnly: true;
+  }>;
 
 export type MessageListItem = Readonly<{
   id: string;

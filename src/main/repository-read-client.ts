@@ -7,6 +7,7 @@ import type {
   RunEventListItem,
   RunOutputListItem,
   RunOutputPayloadMetadata,
+  SessionDeletionCleanupPage,
   SessionDetail,
   SessionListItem,
 } from "../shared/repository-read-model.js";
@@ -161,5 +162,12 @@ export class RepositoryReadClient {
     options?: RequestOptions,
   ): Promise<Page<ChildResultListItem>> {
     return this.worker.request("repository.child-results.page", "read", input, options);
+  }
+
+  sessionDeletionCleanupPage(
+    input: Readonly<{ cleanupToken: string; workspaceKey: string; cursor?: string; limit?: number }>,
+    options?: RequestOptions,
+  ): Promise<SessionDeletionCleanupPage> {
+    return this.worker.request("repository.session-deletion.cleanup.page", "read", input, options);
   }
 }

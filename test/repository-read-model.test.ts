@@ -270,6 +270,48 @@ repositoryTest("representative ordinal queries use covering indexes and never sc
   });
 });
 
+repositoryTest("Session deletion cleanup manifest is recoverable through bounded pages", () => {
+  withDatabase((database) => {
+    const cleanupToken = "018f1f4e-7f0a-7000-8000-000000000451";
+    database
+      .prepare(
+        `
+        INSERT INTO session_deletion_manifests (
+          deletion_id, workspace_key, root_session_id, request_fingerprint, deleted_session_count, created_at
+        ) VALUES (?, 'workspace', 'deleted-root', ?, 3, 1)
+      `,
+      )
+      .run(cleanupToken, "a".repeat(64));
+    const insert = database.prepare(
+      "INSERT INTO session_deletion_items (deletion_id, ordinal, session_id) VALUES (?, ?, ?)",
+    );
+    for (const [ordinal, sessionId] of ["deleted-root", "deleted-child-a", "deleted-child-b"].entries()) {
+      insert.run(cleanupToken, ordinal + 1, sessionId);
+    }
+    const cleanup = operationFor(database, "repository.session-deletion.cleanup.page");
+    const first = cleanup({ cleanupToken, workspaceKey: "workspace", limit: 2 }) as PageResult &
+      Record<string, unknown>;
+    assert.deepEqual(first.items, [
+      { ordinal: 1, sessionId: "deleted-root" },
+      { ordinal: 2, sessionId: "deleted-child-a" },
+    ]);
+    assert.equal(first.deletedSessionCount, 3);
+    assert.equal(first.localOnly, true);
+    assert.equal(typeof first.nextCursor, "string");
+    const second = cleanup({
+      cleanupToken,
+      workspaceKey: "workspace",
+      cursor: first.nextCursor,
+      limit: 2,
+    }) as PageResult;
+    assert.deepEqual(second.items, [{ ordinal: 3, sessionId: "deleted-child-b" }]);
+    assert.throws(
+      () => cleanup({ cleanupToken, workspaceKey: "other-workspace" }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "not_found",
+    );
+  });
+});
+
 function operationFor(database: DatabaseSync, name: string) {
   const operation = createRepositoryReadOperations(database).get(name);
   assert.ok(operation);

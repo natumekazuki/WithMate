@@ -708,6 +708,7 @@ exportRunOutputPayload(outputItemId, destinationGrant)
 3. subtreeのSession、Message、Run、Attempt、Dispatch、output/payload/event/input delivery、ProviderBinding、relation、Delegation、ChildResultDelivery、`scope_session_id`がsubtreeに属するIdempotencyRecordを物理削除する。Session tombstone、Delivery tombstone、復元用rowは残さない。
 4. 親Sessionがsubtree外に残る場合、subtreeのSession / Run / relation / Delegation / Deliveryをsubjectとする親側RunEventを削除する。`child.start`のように親へscopeしたIdempotencyRecordは削除せず、response refを消して`expired` tombstoneへ進める。RunEvent ordinalの欠番は許容する。child result本文は親MessageやRunOutputItemへ複製保存しないため、親の会話本文や無関係なoutputは削除しない。
 5. 外部キーは`RESTRICT`を維持し、関連rowをbottom-upで明示削除する。ProviderBindingとRunAttemptの循環参照、およびBindingのself referenceはdelete transaction中だけdeferred foreign keyとして検証し、commit時に参照が残っていないことを保証する。
+6. SQLite commit後のSession Files削除はApplication Serviceが担う。削除対象外にcleanup manifestを原子的に作成し、成功応答はboundedなtokenと件数だけを返す。Application ServiceはIDをpage取得してfilesを冪等削除した後にmanifestを完了させる。応答消失時の再開、物理削除、local-only境界の判断は`docs/adr/001-session-subtree-delete-cleanup-manifest.md`を正本とする。
 
 明示deleteと自動retentionは別操作とする。初期版で確定するのはuserによるlocal明示deleteだけであり、自動retention期間は後続設計とする。初期版はProvider側Thread / Sessionの削除を要求・保証せず、local Binding削除後にremote cleanupを再試行できない。UI / APIの確認文と結果は`local_only=true`を明示し、「Provider側データも削除した」と表示しない。remote delete保証が要件化した時点で、subtree外cleanup outboxを導入してから契約を変更する。
 
@@ -724,7 +725,7 @@ exportRunOutputPayload(outputItemId, destinationGrant)
 
 ## 永続化要否の見直し
 
-確定済み 14 table を、再起動後の復旧、二重実行防止、長期履歴・参照整合性の観点で再確認した。table 単位でメモリ管理だけへ移せるものはない。
+確定済み 16 table を、再起動後の復旧、二重実行防止、長期履歴・参照整合性の観点で再確認した。table 単位でメモリ管理だけへ移せるものはない。
 
 | Table | 永続化する理由 |
 | --- | --- |
@@ -742,6 +743,8 @@ exportRunOutputPayload(outputItemId, destinationGrant)
 | `idempotency_records` | process 再起動や応答切断をまたぐ重複操作防止 |
 | `run_events` | 再起動後の cursor follow と出来事の履歴 |
 | `run_input_deliveries` | steer の二重配送防止と受理不明状態の保持 |
+| `session_deletion_manifests` | DB commit後のSession Files cleanup再開とboundedな削除応答 |
+| `session_deletion_items` | cleanup対象Session IDのpaged取得 |
 
 root capacity使用数は、`session_relations.orchestration_root_session_id`配下のSessionに属するnon-terminal child Runを`runs`から数えて導出する。app全体とProvider runtime別capacityは、通常Run / Auxiliary / child Runのnon-terminal Runと、そのAttempt / Bindingから同じtransactionで導出する。各上限確認と`queued` Run追加を同じSQLite write transaction内で直列化するため、専用の枠管理tableは持たない。受理済みRunはProvider起動前から各枠を使用し、terminal化した時点で集計から外れる。
 

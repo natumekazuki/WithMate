@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import { PersistenceClientError, PersistenceWorkerClient } from "../src/main/persistence-worker-client.js";
+import { RepositoryReadClient } from "../src/main/repository-read-client.js";
 import { RepositoryWriteClient } from "../src/main/repository-write-client.js";
 import { PERSISTENCE_PROTOCOL_VERSION, type WorkerToMainMessage } from "../src/shared/persistence-protocol.js";
 import { PersistenceWorkerRuntime } from "../src/persistence-worker/worker-runtime.js";
@@ -318,6 +319,29 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
     });
     assert.equal(collected.ok && collected.value.finalAssistantMessageId, "message-worker-child-final");
     assert.equal(collected.ok && collected.value.resultSummary, "child done");
+    const deleted = await resumedRepository.deleteSessionSubtree({
+      deletionId: "018f1f4e-7f0a-7000-8000-000000000325",
+      sessionId: "session-worker-child",
+      workspaceKey: "workspace",
+    });
+    assert.deepEqual(deleted.ok && deleted.value, {
+      cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
+      deletedSessionCount: 1,
+      localOnly: true,
+    });
+    const cleanup = await new RepositoryReadClient(resumedClient).sessionDeletionCleanupPage({
+      cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
+      workspaceKey: "workspace",
+    });
+    assert.deepEqual(cleanup.items, [{ ordinal: 1, sessionId: "session-worker-child" }]);
+    const cleanupCompleted = await resumedRepository.completeSessionDeletionCleanup({
+      cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
+      workspaceKey: "workspace",
+    });
+    assert.deepEqual(cleanupCompleted.ok && cleanupCompleted.value, {
+      cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
+      cleanupCompleted: true,
+    });
     await resumedClient.shutdown();
   });
 });

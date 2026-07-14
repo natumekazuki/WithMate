@@ -2306,6 +2306,220 @@ repositoryTest("child result collect directly rejects fingerprint reuse, missing
   });
 });
 
+repositoryTest("Session subtree delete removes local child data and preserves parent tombstones", () => {
+  withDatabase((database) => {
+    const childStart = prepareDeletableChild(database);
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 850);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000331", "unrelated-session")) as CommandResult).ok,
+      true,
+    );
+    const remove = operationFor(database, "repository.session.delete-subtree", () => 900);
+    const command = {
+      deletionId: "018f1f4e-7f0a-7000-8000-000000000401",
+      sessionId: "child-session-delete",
+      workspaceKey: "workspace",
+    };
+    const result = remove(command) as CommandResult;
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.ok && result.value, {
+      cleanupToken: command.deletionId,
+      deletedSessionCount: 1,
+      localOnly: true,
+    });
+    const replay = remove(command) as CommandResult;
+    assert.equal(replay.ok && replay.replayed, true);
+    assert.deepEqual(replay.ok && replay.value, result.ok && result.value);
+    assert.equal(database.prepare("SELECT 1 FROM sessions WHERE id = 'session-1'").get() !== undefined, true);
+    assert.equal(database.prepare("SELECT 1 FROM sessions WHERE id = 'unrelated-session'").get() !== undefined, true);
+    assert.equal(database.prepare("SELECT 1 FROM sessions WHERE id = 'child-session-delete'").get(), undefined);
+    assert.equal(count(database, "session_relations"), 0);
+    assert.equal(count(database, "delegations"), 0);
+    assert.equal(count(database, "child_result_deliveries"), 0);
+    assert.equal(
+      database.prepare("SELECT 1 FROM run_events WHERE id = 'event-delete-child-collected'").get(),
+      undefined,
+    );
+    const tombstone = database
+      .prepare(
+        `
+        SELECT record_state, response_kind, response_ref_type, response_ref_id, response_envelope_json
+        FROM idempotency_records WHERE idempotency_key = ?
+      `,
+      )
+      .get(childStart.idempotencyKey) as Record<string, unknown>;
+    assert.deepEqual(
+      { ...tombstone },
+      {
+        record_state: "expired",
+        response_kind: null,
+        response_ref_type: null,
+        response_ref_id: null,
+        response_envelope_json: null,
+      },
+    );
+    const childReplay = operationFor(database, "repository.child.start", () => 901)(childStart) as CommandResult;
+    assert.equal(!childReplay.ok && childReplay.error.code, "idempotency_expired");
+    const cleanup = operationFor(
+      database,
+      REPOSITORY_WRITE_OPERATIONS.sessionDeletionCleanupComplete,
+      () => 902,
+    )({ cleanupToken: command.deletionId, workspaceKey: "workspace" }) as CommandResult;
+    assert.deepEqual(cleanup.ok && cleanup.value, {
+      cleanupToken: command.deletionId,
+      cleanupCompleted: true,
+    });
+    assert.equal(count(database, "session_deletion_manifests"), 0);
+    assert.equal(count(database, "session_deletion_items"), 0);
+  });
+});
+
+repositoryTest("Session subtree delete rejects busy trees and rolls back late failures", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const remove = operationFor(database, "repository.session.delete-subtree", () => 600);
+    const result = remove({
+      deletionId: "018f1f4e-7f0a-7000-8000-000000000402",
+      sessionId: "session-1",
+      workspaceKey: "workspace",
+    }) as CommandResult;
+    assert.equal(!result.ok && result.error.code, "session_busy");
+    assert.equal(count(database, "sessions"), 1);
+    assert.equal(count(database, "runs"), 1);
+  });
+
+  withDatabase((database) => {
+    const childStart = prepareDeletableChild(database);
+    database.exec(`
+      CREATE TRIGGER fail_subtree_session_delete BEFORE DELETE ON sessions
+      BEGIN SELECT RAISE(ABORT, 'subtree delete fault injection'); END;
+    `);
+    const remove = operationFor(database, "repository.session.delete-subtree", () => 900);
+    assert.throws(
+      () =>
+        remove({
+          deletionId: "018f1f4e-7f0a-7000-8000-000000000403",
+          sessionId: "child-session-delete",
+          workspaceKey: "workspace",
+        }),
+      /subtree delete fault injection/u,
+    );
+    assert.equal(
+      database.prepare("SELECT 1 FROM sessions WHERE id = 'child-session-delete'").get() !== undefined,
+      true,
+    );
+    assert.equal(
+      database.prepare("SELECT 1 FROM run_events WHERE id = 'event-delete-child-collected'").get() !== undefined,
+      true,
+    );
+    const idempotency = database
+      .prepare("SELECT record_state FROM idempotency_records WHERE idempotency_key = ?")
+      .get(childStart.idempotencyKey) as { record_state: string };
+    assert.equal(idempotency.record_state, "completed");
+  });
+});
+
+repositoryTest("Session subtree delete recursively removes an intermediate branch only", () => {
+  withDatabase((database) => {
+    insertTerminalSessionTree(database);
+    const remove = operationFor(database, "repository.session.delete-subtree", () => 900);
+    const result = remove({
+      deletionId: "018f1f4e-7f0a-7000-8000-000000000404",
+      sessionId: "tree-middle",
+      workspaceKey: "workspace",
+    }) as CommandResult;
+    assert.deepEqual(result.ok && result.value, {
+      cleanupToken: "018f1f4e-7f0a-7000-8000-000000000404",
+      deletedSessionCount: 2,
+      localOnly: true,
+    });
+    assert.deepEqual(
+      database
+        .prepare("SELECT id FROM sessions ORDER BY id")
+        .all()
+        .map((row) => (row as { id: string }).id),
+      ["tree-root", "unrelated-tree-session"],
+    );
+    assert.equal(count(database, "session_relations"), 0);
+    assert.equal(database.prepare("PRAGMA foreign_key_check").all().length, 0);
+  });
+});
+
+repositoryTest("Session subtree delete rejects relations that cross a workspace boundary", () => {
+  withDatabase((database) => {
+    database.exec(`
+      INSERT INTO sessions VALUES
+        ('workspace-a-root', 'provider', 'workspace-a', '[]', 'character', 4, 'closed', 1, 3, 3),
+        ('workspace-b-child', 'provider', 'workspace-b', '[]', 'character', 4, 'closed', 1, 3, 3);
+      INSERT INTO messages VALUES ('workspace-a-message', 'workspace-a-root', 1, 'user', '[]', 1);
+      INSERT INTO runs (
+        id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+        external_side_effect_state, created_at, terminal_at, updated_at, version
+      ) VALUES ('workspace-a-run', 'workspace-a-root', 1, 'workspace-a-message', 'completed', '{}',
+        'none', 1, 2, 2, 0);
+      INSERT INTO session_relations VALUES (
+        'cross-workspace-relation', 'workspace-a-root', 'workspace-b-child', 'workspace-a-root',
+        'workspace-a-run', 'cross-workspace-correlation', NULL, NULL, 2
+      );
+    `);
+    const remove = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionDeleteSubtree, () => 900);
+    const result = remove({
+      deletionId: "018f1f4e-7f0a-7000-8000-000000000405",
+      sessionId: "workspace-a-root",
+      workspaceKey: "workspace-a",
+    }) as CommandResult;
+    assert.equal(!result.ok && result.error.code, "reference_invalid");
+    assert.equal(count(database, "sessions"), 2);
+    assert.equal(count(database, "session_relations"), 1);
+    assert.equal(count(database, "session_deletion_manifests"), 0);
+  });
+});
+
+repositoryTest("Session subtree delete returns a bounded cleanup token for large ID manifests", () => {
+  withDatabase((database) => {
+    database.exec(`
+      INSERT INTO sessions VALUES
+        ('large-delete-root', 'provider', 'workspace', '[]', 'character', 300, 'closed', 1, 3, 3);
+      INSERT INTO messages VALUES ('large-delete-message', 'large-delete-root', 1, 'user', '[]', 1);
+      INSERT INTO runs (
+        id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+        external_side_effect_state, created_at, terminal_at, updated_at, version
+      ) VALUES ('large-delete-run', 'large-delete-root', 1, 'large-delete-message', 'completed', '{}',
+        'none', 1, 2, 2, 0);
+    `);
+    const insertSession = database.prepare(
+      "INSERT INTO sessions VALUES (?, 'provider', 'workspace', '[]', 'character', 0, 'closed', 1, 3, 3)",
+    );
+    const insertRelation = database.prepare(
+      `
+      INSERT INTO session_relations VALUES (?, 'large-delete-root', ?, 'large-delete-root',
+        'large-delete-run', ?, NULL, NULL, 2)
+    `,
+    );
+    for (let index = 0; index < 256; index += 1) {
+      const suffix = index.toString().padStart(3, "0");
+      const sessionId = `large-delete-${suffix}-${"x".repeat(1_007)}`;
+      insertSession.run(sessionId);
+      insertRelation.run(`large-delete-relation-${suffix}`, sessionId, `large-delete-correlation-${suffix}`);
+    }
+    const remove = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionDeleteSubtree, () => 900);
+    const result = remove({
+      deletionId: "018f1f4e-7f0a-7000-8000-000000000406",
+      sessionId: "large-delete-root",
+      workspaceKey: "workspace",
+    }) as CommandResult;
+    assert.deepEqual(result.ok && result.value, {
+      cleanupToken: "018f1f4e-7f0a-7000-8000-000000000406",
+      deletedSessionCount: 257,
+      localOnly: true,
+    });
+    assert.ok(Buffer.byteLength(JSON.stringify(result)) < 1_024);
+    assert.equal(count(database, "session_deletion_items"), 257);
+    assert.equal(count(database, "sessions"), 0);
+  });
+});
+
 repositoryTest("Worker registry accepts Session commands only as write requests", async () => {
   const database = new DatabaseSync(":memory:");
   database.exec(fs.readFileSync(new URL("../schema/sqlite/v1.sql", import.meta.url), "utf8"));
@@ -2493,6 +2707,116 @@ function childStartCommand(
     },
     deliveryId: `delivery-${suffix}`,
   };
+}
+
+function prepareDeletableChild(database: DatabaseSync) {
+  activatePersistentRun(database);
+  const startChild = operationFor(database, "repository.child.start", () => 600);
+  const childStart = childStartCommand("018f1f4e-7f0a-7000-8000-000000000330", "delete");
+  assert.equal((startChild(childStart) as CommandResult).ok, true);
+  database
+    .prepare(
+      `
+      UPDATE provider_bindings
+      SET binding_state = 'active', external_conversation_id = 'child-conversation-delete'
+      WHERE id = 'child-binding-delete'
+    `,
+    )
+    .run();
+  database
+    .prepare(
+      `
+      UPDATE run_attempts
+      SET provider_binding_id = 'child-binding-delete', attempt_state = 'active',
+        external_execution_id = 'child-execution-delete', started_at = 601
+      WHERE id = 'child-attempt-delete'
+    `,
+    )
+    .run();
+  database
+    .prepare(
+      `
+      UPDATE run_dispatches
+      SET dispatch_state = 'accepted', dispatching_at = 601, resolved_at = 601
+      WHERE run_attempt_id = 'child-attempt-delete'
+    `,
+    )
+    .run();
+  database
+    .prepare(
+      `
+      UPDATE runs
+      SET phase = 'active', started_at = 601, external_side_effect_state = 'present', updated_at = 601
+      WHERE id = 'child-run-delete'
+    `,
+    )
+    .run();
+  const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+  assert.equal(
+    (
+      terminal({
+        sessionId: "child-session-delete",
+        workspaceKey: "workspace",
+        runId: "child-run-delete",
+        attemptId: "child-attempt-delete",
+        terminalEvent: { id: "event-delete-child-terminal", dedupeKey: "dedupe-delete-child-terminal" },
+        outcome: {
+          kind: "completed",
+          finalAssistantMessage: {
+            id: "message-delete-child-final",
+            contentBlocks: [{ type: "text", text: "child done" }],
+          },
+        },
+        outputs: [],
+        childResult: { workflowState: "closed", resultSummary: "child done" },
+      }) as CommandResult
+    ).ok,
+    true,
+  );
+  const collect = operationFor(database, REPOSITORY_WRITE_OPERATIONS.childResultCollect, () => 800);
+  assert.equal(
+    (
+      collect({
+        parentSessionId: "session-1",
+        childSessionId: "child-session-delete",
+        workspaceKey: "workspace",
+        idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000332",
+        deliveryId: "delivery-delete",
+        collectingParentRunId: "run-1",
+        eventId: "event-delete-child-collected",
+      }) as CommandResult
+    ).ok,
+    true,
+  );
+  return childStart;
+}
+
+function insertTerminalSessionTree(database: DatabaseSync): void {
+  database.exec(`
+    BEGIN IMMEDIATE;
+    INSERT INTO sessions VALUES
+      ('tree-root', 'provider', 'workspace', '[]', 'character', 4, 'closed', 1, 4, 4),
+      ('tree-middle', 'provider', 'workspace', '[]', 'character', 4, 'closed', 1, 4, 4),
+      ('tree-leaf', 'provider', 'workspace', '[]', 'character', 4, 'closed', 1, 4, 4),
+      ('unrelated-tree-session', 'provider', 'workspace', '[]', 'character', 4, 'closed', 1, 4, 4);
+    INSERT INTO messages VALUES
+      ('tree-root-message', 'tree-root', 1, 'user', '[]', 1),
+      ('tree-middle-message', 'tree-middle', 1, 'user', '[]', 1),
+      ('tree-leaf-message', 'tree-leaf', 1, 'user', '[]', 1);
+    INSERT INTO runs (
+      id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+      external_side_effect_state, created_at, terminal_at, updated_at, version
+    ) VALUES
+      ('tree-root-run', 'tree-root', 1, 'tree-root-message', 'completed', '{}', 'none', 1, 3, 3, 0),
+      ('tree-middle-run', 'tree-middle', 1, 'tree-middle-message', 'completed', '{}', 'none', 1, 3, 3, 0),
+      ('tree-leaf-run', 'tree-leaf', 1, 'tree-leaf-message', 'completed', '{}', 'none', 1, 3, 3, 0);
+    INSERT INTO session_relations VALUES
+      ('tree-root-middle-relation', 'tree-root', 'tree-middle', 'tree-root', 'tree-root-run',
+        'tree-root-middle-correlation', NULL, NULL, 2),
+      ('tree-middle-leaf-relation', 'tree-middle', 'tree-leaf', 'tree-root', 'tree-middle-run',
+        'tree-middle-leaf-correlation', NULL, NULL, 2);
+    COMMIT;
+  `);
 }
 
 function makeRunRetryable(

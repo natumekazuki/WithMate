@@ -236,7 +236,7 @@ test("hot bootstrap journal is recovered only after snapshot classification", ()
   withTempDirectory((directory) => {
     const child = spawnHotJournalRecoveryProcess(directory);
     assert.equal(child.status, 0, child.stderr);
-    assert.deepEqual(JSON.parse(child.stdout), { initialized: true, userObjectCount: 14 });
+    assert.deepEqual(JSON.parse(child.stdout), { initialized: true, userObjectCount: 16 });
   });
 });
 

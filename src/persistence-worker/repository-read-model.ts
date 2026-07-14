@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 import { REPOSITORY_READ_LIMITS } from "../shared/repository-read-model.js";
-import { isPlainObject } from "../shared/persistence-runtime-protocol.js";
+import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
 
 const INLINE_MESSAGE_BYTES = 64 * 1024;
 const MAX_PAGE_JSON_BYTES = 192 * 1024;
@@ -76,6 +76,10 @@ export function createRepositoryReadOperations(database: DatabaseSync): Readonly
       read((payload) => ({ result: runOutputPayloadMetadata(database, payload) })),
     ],
     ["repository.child-results.page", read((payload) => ({ result: childResultsPage(database, payload) }))],
+    [
+      "repository.session-deletion.cleanup.page",
+      read((payload) => ({ result: sessionDeletionCleanupPage(database, payload) })),
+    ],
     ["repository.recovery.get", read((payload) => ({ result: recoveryGet(database, payload) }))],
   ]);
 }
@@ -421,6 +425,46 @@ function childResultsPage(database: DatabaseSync, payload: Readonly<Record<strin
     orchestrationRootSessionId: row.orchestration_root_session_id,
     workspaceKey: row.workspace_key,
   }));
+}
+
+function sessionDeletionCleanupPage(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
+  assertExactKeys(payload, ["cleanupToken", "workspaceKey", "cursor", "limit"]);
+  const cleanupToken = requiredString(payload.cleanupToken, "cleanupToken");
+  if (!isCanonicalUuid(cleanupToken)) throw invalidRequest("cleanupToken");
+  const workspaceKey = requiredString(payload.workspaceKey, "workspaceKey");
+  const limit = readLimit(payload.limit, REPOSITORY_READ_LIMITS.sessionDeletionItems);
+  const cursorScope = scopeDigest({ cleanupToken, workspaceKey });
+  const afterOrdinal = decodeOrdinalCursor(payload.cursor, "session_deletion_items", cursorScope);
+  const manifest = database
+    .prepare(
+      `
+      SELECT deleted_session_count FROM session_deletion_manifests
+      WHERE deletion_id = ? AND workspace_key = ?
+    `,
+    )
+    .get(cleanupToken, workspaceKey) as { deleted_session_count: number } | undefined;
+  if (manifest === undefined) throw notFound();
+  const rows = database
+    .prepare(
+      `
+      SELECT ordinal, session_id FROM session_deletion_items
+      WHERE deletion_id = ? AND ordinal > ?
+      ORDER BY ordinal ASC LIMIT ?
+    `,
+    )
+    .all(cleanupToken, afterOrdinal, limit + 1) as unknown as ReadonlyArray<OrdinalRow & { session_id: string }>;
+  const page = splitPage(rows, limit);
+  return ordinalPage(
+    {
+      cleanupToken,
+      deletedSessionCount: manifest.deleted_session_count,
+      localOnly: true,
+    },
+    page,
+    "session_deletion_items",
+    cursorScope,
+    (row) => ({ ordinal: row.ordinal, sessionId: row.session_id }),
+  );
 }
 
 function recoveryGet(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {

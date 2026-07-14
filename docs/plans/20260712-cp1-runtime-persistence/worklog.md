@@ -180,3 +180,21 @@
 - root / application / Provider capacity超過を、scope、現在値、上限、必要なscope IDを持つ型付きdetailsとして返すようにした。
 - Auxiliary固有の親Session排他とcontext引継ぎは永続化commandへ推測実装せず、既存計画どおりCP5のApplication Service policyに残した。
 - 次はS6-DのSession subtree deleteとstartup repairへ進む。
+
+## 2026-07-13: S6-D Session subtree delete実装
+
+- `repository.session.delete-subtree`を追加し、transaction内で再帰的にtreeを確定してnon-terminal Runがあれば`session_busy`で無変更にした。
+- subtree内のdomain rowとscope内IdempotencyRecordを物理削除し、subtree外parentのEvent参照を除去、削除対象を参照するparent scopeのcompleted idempotencyをexpired tombstoneへ進めた。
+- Binding / Attemptとoutput item / payloadの循環参照はdelete transaction中だけdeferし、commit時のforeign key検証を維持した。
+- 単一child、3階層の中間branch、無関係Session保持、late fault rollback、production Worker / typed client経路をcontract testで固定した。
+- resultのSession ID群はDB commit後のSession Files冪等削除へ渡し、`localOnly=true`でProvider側削除を保証しない。
+- S6-Dの残りはstartup repair commandとmaintenance境界の統合検証。
+
+## 2026-07-14: S6-D Session subtree delete review対応
+
+- 再帰treeに別workspaceのSessionが混入した場合、manifest作成と削除前に`reference_invalid`で拒否する回帰を追加した。
+- subtree外へcleanup manifestを原子的に作成し、deletion IDによるexact replayとSession IDのbounded page取得を追加した。
+- delete responseをcleanup token、削除件数、local-only表示へ縮め、最大長ID 256件を含むtreeでもresponse sizeがtreeに依存しない契約を固定した。
+- Application ServiceがSession Filesを冪等削除した後にmanifestを完了できるtyped commandを追加した。
+- 物理削除、unknown effect recovery、filesystem cleanup、local-only境界の選択を`docs/adr/001-session-subtree-delete-cleanup-manifest.md`へ記録した。
+- S6-Dの残りはstartup repair commandとmaintenance境界の統合検証。

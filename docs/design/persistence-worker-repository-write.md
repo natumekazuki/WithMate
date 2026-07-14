@@ -122,3 +122,9 @@ Run / Attempt、final Message、terminal RunEvent、Session activityを一つの
 ## Child result collection
 
 collection transactionはChild Deliveryの初回取得情報、parent RunEvent、child Sessionへscopeしたidempotency recordを所有する。RunEventはChild Deliveryを参照し、result summaryを複製しない。parent / child Sessionをまたぐ所有境界とresponse refの検証条件はsourceとtestを正本とする。
+
+## Session subtree delete
+
+`repository.session.delete-subtree`は対象tree、workspace境界、busy状態を同じwrite transactionで確定し、関連local rowを物理削除する。subtree外のparentへscopeしたidempotency responseが削除対象を参照する場合は、keyを再利用可能にせずexpired tombstoneへ進める。削除順、対象table、typed resultはsourceとrepository testを正本とする。
+
+resultはcleanup token、件数、`localOnly=true`だけを返す。Application Serviceはmanifestをpaged readし、DB commit後にSession Filesを冪等削除してからcleanup完了を記録する。unknown effectからの再開、物理削除、remote data非保証の判断は`docs/adr/001-session-subtree-delete-cleanup-manifest.md`、checkpoint / page回収のbest-effort maintenanceは`docs/design/multi-agent-persistence.md`を正本とする。

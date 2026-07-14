@@ -1,6 +1,8 @@
 export const REPOSITORY_WRITE_OPERATIONS = {
   sessionCreate: "repository.session.create",
   sessionTransition: "repository.session.transition",
+  sessionDeleteSubtree: "repository.session.delete-subtree",
+  sessionDeletionCleanupComplete: "repository.session-deletion.cleanup.complete",
   runAdmit: "repository.run.admit",
   runRetry: "repository.run.retry",
   childStart: "repository.child.start",
@@ -49,6 +51,17 @@ export type SessionTransitionCommand = Readonly<{
   idempotencyKey: string;
   expectedLifecycleStatus: "active" | "archived";
   targetLifecycleStatus: SessionLifecycleStatus;
+}>;
+
+export type SessionDeleteSubtreeCommand = Readonly<{
+  deletionId: string;
+  sessionId: string;
+  workspaceKey: string;
+}>;
+
+export type SessionDeletionCleanupCompleteCommand = Readonly<{
+  cleanupToken: string;
+  workspaceKey: string;
 }>;
 
 export type RunAdmissionBindingIntent =
@@ -367,6 +380,17 @@ export type SessionTransitionResult = Readonly<{
   sessionId: string;
   lifecycleStatus: SessionLifecycleStatus;
   updatedAt: number;
+}>;
+
+export type SessionDeleteSubtreeResult = Readonly<{
+  cleanupToken: string;
+  deletedSessionCount: number;
+  localOnly: true;
+}>;
+
+export type SessionDeletionCleanupCompleteResult = Readonly<{
+  cleanupToken: string;
+  cleanupCompleted: true;
 }>;
 
 export type NormalRunAdmissionResult = Readonly<{

@@ -30,6 +30,10 @@ import {
   type RunTerminalResult,
   type SessionCreateCommand,
   type SessionCreateResult,
+  type SessionDeleteSubtreeCommand,
+  type SessionDeleteSubtreeResult,
+  type SessionDeletionCleanupCompleteCommand,
+  type SessionDeletionCleanupCompleteResult,
   type SessionTransitionCommand,
   type SessionTransitionResult,
 } from "../shared/repository-write-model.js";
@@ -56,6 +60,20 @@ export class RepositoryWriteClient {
     options?: RequestOptions,
   ): Promise<RepositoryCommandResult<SessionTransitionResult>> {
     return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.sessionTransition, "write", command, options);
+  }
+
+  deleteSessionSubtree(
+    command: SessionDeleteSubtreeCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<SessionDeleteSubtreeResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.sessionDeleteSubtree, "write", command, options);
+  }
+
+  completeSessionDeletionCleanup(
+    command: SessionDeletionCleanupCompleteCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<SessionDeletionCleanupCompleteResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.sessionDeletionCleanupComplete, "write", command, options);
   }
 
   admitNormalRun(
