@@ -291,7 +291,7 @@ Provider dispatchの状態はlive persistence stateと分離し、Run attemptご
 | `rejected` | Provider が未受理を明示 | 同じ attempt では禁止 |
 | `ambiguous` | 送信した可能性があるが受理を証明不能 | 自動再送は禁止 |
 
-`pending -> dispatching` を durable commit してから送信する。transport 切断や process crash 後に受理を証明できなければ `ambiguous` とし、Provider の native idempotency または状態照会で同じ外部実行へ一意に収束できる場合だけ再接続する。同じ idempotency key と同じ request fingerprint の再送は既存 Run と dispatch outcome を返し、異なる fingerprint は conflict とする。実行をやり直す場合は別 Run と `retryOfRunId` を明示し、元の start request を再 dispatch しない。
+`pending -> dispatching` を durable commit してから送信する。`canceling`に入ったRunの`pending` Dispatchは初回送信せず、すでに`dispatching`の場合だけreplayまたはresolutionへ進める。transport 切断や process crash 後に受理を証明できなければ `ambiguous` とし、自動再送しない。Provider の native idempotency または状態照会で同じ外部実行へ一意に収束でき、Attemptがまだ`preparing`、Runが`starting` / `canceling`である間だけ、同じAttemptの`ambiguous`を`accepted`へ知識補正して再接続する。同じ idempotency key と同じ request fingerprint の再送は既存 Run と dispatch outcome を返し、異なる fingerprint は conflict とする。実行をやり直す場合は別 Run と `retryOfRunId` を明示し、元の start request を再 dispatch しない。
 
 ### phase 遷移
 
@@ -367,7 +367,7 @@ Run が `failed`、`canceled`、`interrupted` へ遷移した場合も、Session
 
 - user が確定して送った追加指示は supplemental user Message として timeline に残す。
 - 同じ active Run に関連付け、Message とは別の `RunInputDelivery` で Provider の steer / prompt request への配送を追跡する。user-visible な outcome は `pending` / `accepted` / `rejected` / `ambiguous` を区別し、送信 intent の内部状態として `dispatching` を持つ。配送対象の RunAttempt と bounded な解決理由だけを保持し、本文、idempotency key、Provider correlation ID、response payload は重複保存しない。
-- Session が `active`、対象 Run が active かつ non-terminal、Provider capability が対応済みであることを再検証し、Message、RunInput、`pending` delivery attempt を 1 つの transaction で durable commit してから Provider へ送る。事前検証で拒否した入力は Message を作らない。
+- Application Service は admission 直前に Provider capability を再検証する。Persistence Worker は Session が `active`、対象 Run と RunAttempt が active かつ同じ Binding に属することを transaction 内で再検証し、Message、RunInput、`pending` delivery attempt を 1 つの transaction で durable commit してから Provider へ送る。いずれかの事前検証で拒否した入力は Message を作らない。
 - `pending -> dispatching` を durable commit してから Provider へ送る。復旧時に安全に自動送信できるのは `pending` だけとし、`dispatching` のまま受理を証明できない attempt は `ambiguous` へ収束させる。
 - supplemental user Message は送信後に書き換えない。`rejected` 後の修正と明示的な再送は新しい Message / Delivery として記録し、同じ idempotency key の API / CLI 再送だけが既存 Delivery の outcome を返す。
 - timeout や transport 切断で Provider が受理したか証明できない場合は `ambiguous` とし、自動再送しない。user または Agent が明示的に再送する場合も、元 Message と delivery attempt を参照して重複の可能性を表示する。

@@ -1,0 +1,17 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import test from "node:test";
+
+import { PERSISTENCE_PROTOCOL_VERSION } from "../src/shared/persistence-protocol.js";
+import { resolveSchemaV1Artifacts } from "../src/persistence-worker/schema-artifacts.js";
+
+test("persistence protocol starts at version 1", () => {
+  assert.equal(PERSISTENCE_PROTOCOL_VERSION, 1);
+});
+
+test("schema v1 artifacts resolve from the source worker location", () => {
+  const artifacts = resolveSchemaV1Artifacts();
+
+  assert.equal(fs.existsSync(artifacts.ddlUrl), true);
+  assert.equal(fs.existsSync(artifacts.manifestUrl), true);
+});
