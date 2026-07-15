@@ -366,7 +366,7 @@ describe("CodexAdapter thread settings", () => {
     }
   });
 
-  it("turn.completed 後の workspace snapshot が停止しても degraded result へ収束する", async () => {
+  it("workspace diff 無効時は停止した snapshot を待たず結果へ収束する", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-snapshot-timeout-"));
     const adapter = new CodexAdapter(undefined, { snapshotDeadlineMs: 5 }) as unknown as {
       getClient: () => {
@@ -416,7 +416,7 @@ describe("CodexAdapter thread settings", () => {
       assert.equal(result.assistantText, "done");
       assert.equal(
         result.providerMetadata?.some((entry) => entry.source === "codex-adapter.workspace-snapshot"),
-        true,
+        false,
       );
     } finally {
       _setWalkDirectoryStatOverrideForTesting(null);
@@ -1415,7 +1415,7 @@ describe("workspace snapshot targeted capture", () => {
     }
   });
 
-  it("collab_tool_call がある場合は file_change 候補だけを信用せず snapshot fallback で差分を拾う", async () => {
+  it("workspace diff 無効時は snapshot fallback を使わず明示された変更ファイルだけを残す", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-collab-diff-"));
     const adapter = new CodexAdapter() as unknown as {
       getClient: () => {
@@ -1497,12 +1497,11 @@ describe("workspace snapshot targeted capture", () => {
       });
 
       const result = await adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath));
-      const changedPaths = result.artifact?.changedFiles.map((file) => file.path).sort();
+      const changedFiles = result.artifact?.changedFiles ?? [];
+      const changedPaths = changedFiles.map((file) => file.path).sort();
 
-      assert.deepEqual(changedPaths, [
-        "src/collab-side-effect.ts",
-        "src/explicit.ts",
-      ]);
+      assert.deepEqual(changedPaths, ["src/explicit.ts"]);
+      assert.deepEqual(changedFiles[0]?.diffRows, []);
     } finally {
       await rm(workspacePath, { recursive: true, force: true });
     }
