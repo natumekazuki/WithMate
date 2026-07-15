@@ -4,9 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { type ApplicationAccessValidator, type ApplicationSessionOperationContext } from "../src/main/index.js";
+import {
+  type ApplicationAccessValidationInput,
+  type ApplicationAccessValidator,
+  type ApplicationSessionOperationContext,
+} from "../src/main/index.js";
 import {
   APPLICATION_MAX_CONCURRENT_CHILD_RUNS,
+  APPLICATION_MAX_READ_CHUNK_BYTES,
   ApplicationSessionService,
 } from "../src/main/application-session-service.js";
 import { PersistenceClientError, PersistenceWorkerClient } from "../src/main/persistence-worker-client.js";
@@ -19,7 +24,7 @@ import type {
 } from "../src/shared/repository-write-model.js";
 
 type Authorization = Readonly<{ principalId: string }>;
-type ReadPort = Pick<RepositoryReadClient, "sessionsPage" | "sessionGet">;
+type ReadPort = Pick<RepositoryReadClient, "sessionsPage" | "sessionGet" | "sessionDirectoriesChunk">;
 type WritePort = Pick<RepositoryWriteClient, "createSession" | "transitionSession">;
 
 const context: ApplicationSessionOperationContext<Authorization> = {
@@ -189,6 +194,61 @@ workerTest("Application list accepts a Repository cursor containing a maximum-le
   });
 });
 
+workerTest("Application reads chunked Session directory configuration through the scoped Repository port", async () => {
+  await withTempDirectory(async (directory) => {
+    const client = new PersistenceWorkerClient({
+      workerUrl,
+      databasePath: path.join(directory, "application-session-directories.sqlite3"),
+      legacyDatabasePaths: [],
+      workerOptions,
+    });
+    await client.start();
+    try {
+      const service = new ApplicationSessionService({
+        reads: new RepositoryReadClient(client),
+        writes: new RepositoryWriteClient(client),
+        access: allowingAccess(),
+        snapshotAuthorization: structuredClone,
+      });
+      const allowedAdditionalDirectories = [
+        `C:\\${"a".repeat(24_000)}`,
+        `D:\\${"b".repeat(24_000)}`,
+        `E:\\${"c".repeat(24_000)}`,
+      ];
+      const created = await service.create({ ...createRequest(), allowedAdditionalDirectories });
+      assert.equal(created.overallStatus, "success");
+      if (created.overallStatus !== "success") assert.fail("chunked Session creation failed");
+
+      const detail = await service.read({ context, sessionId: created.value.sessionId });
+      assert.equal(detail.overallStatus, "success");
+      if (detail.overallStatus !== "success") assert.fail("chunked Session detail failed");
+      assert.equal(detail.value.session.allowedAdditionalDirectoriesState, "chunked");
+      assert.equal(detail.value.session.allowedAdditionalDirectories, undefined);
+
+      const chunks: Uint8Array[] = [];
+      let offset = 0;
+      while (true) {
+        const chunk = await service.readDirectoriesChunk({
+          context,
+          sessionId: created.value.sessionId,
+          offset,
+          maxBytes: 32 * 1024,
+        });
+        assert.equal(chunk.overallStatus, "success");
+        if (chunk.overallStatus !== "success") assert.fail("Session directory chunk failed");
+        const bytes = new Uint8Array(chunk.value.bytes);
+        chunks.push(bytes);
+        offset += bytes.byteLength;
+        if (chunk.value.eof) break;
+      }
+      const decoded = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+      assert.deepEqual(decoded, allowedAdditionalDirectories);
+    } finally {
+      await client.shutdown();
+    }
+  });
+});
+
 test("create validates workspace and authorization before issuing a stable Session ID", async () => {
   const events: string[] = [];
   const commands: SessionCreateCommand[] = [];
@@ -245,6 +305,54 @@ test("create validates workspace and authorization before issuing a stable Sessi
     replay.overallStatus === "success" && replay.value,
     first.overallStatus === "success" && first.value,
   );
+});
+
+test("authorization receives isolated operation-specific Session targets and create configuration", async () => {
+  const authorized: ApplicationAccessValidationInput<Authorization>[] = [];
+  const service = createService({
+    access: {
+      async validateWorkspace() {
+        return { allowed: true };
+      },
+      async authorize(input) {
+        authorized.push(input);
+        if (input.operation === "create") {
+          (input.target.allowedAdditionalDirectories as string[])[0] = "C:\\mutated";
+        }
+        return { allowed: true };
+      },
+    },
+  });
+
+  await service.create(createRequest());
+  await service.list({ context, lifecycleStatus: "active" });
+  await service.read({ context, sessionId: "session-1" });
+  await service.archive({ context, sessionId: "session-2", idempotencyKey: uuid(62) });
+  await service.readDirectoriesChunk({ context, sessionId: "session-3", offset: 5, maxBytes: 1024 });
+
+  assert.deepEqual(
+    authorized.map(({ operation, target }) => ({ operation, target })),
+    [
+      {
+        operation: "create",
+        target: {
+          kind: "session_create",
+          providerId: "codex",
+          allowedAdditionalDirectories: ["C:\\mutated"],
+          defaultCharacterId: "character-1",
+          maxConcurrentChildRuns: 2,
+        },
+      },
+      { operation: "list", target: { kind: "session_collection", lifecycleStatus: "active" } },
+      { operation: "read", target: { kind: "session", sessionId: "session-1" } },
+      { operation: "archive", target: { kind: "session", sessionId: "session-2" } },
+      {
+        operation: "read_directories_chunk",
+        target: { kind: "session_directories", sessionId: "session-3", offset: 5, maxBytes: 1024 },
+      },
+    ],
+  );
+  assert.deepEqual(createRequest().allowedAdditionalDirectories, ["C:\\workspace-shared"]);
 });
 
 test("request and access rejection happen before Repository access", async () => {
@@ -342,6 +450,10 @@ test("every operation returns a request envelope for malformed transport input b
         readCalls += 1;
         throw new Error("unreachable");
       },
+      async sessionDirectoriesChunk() {
+        readCalls += 1;
+        throw new Error("unreachable");
+      },
     },
     writes: {
       async createSession() {
@@ -359,6 +471,14 @@ test("every operation returns a request envelope for malformed transport input b
     () => service.list([] as never),
     () => service.list({ context, lifecycleStatus: "deleted" } as never),
     () => service.read({} as never),
+    () => service.readDirectoriesChunk({ context, sessionId: "session-1", offset: -1, maxBytes: 1024 }),
+    () =>
+      service.readDirectoriesChunk({
+        context,
+        sessionId: "session-1",
+        offset: 0,
+        maxBytes: APPLICATION_MAX_READ_CHUNK_BYTES + 1,
+      }),
     () => service.archive({ context: null } as never),
     () => service.unarchive(null as never),
     () => service.close(null as never),
@@ -649,6 +769,11 @@ test("operation options are validated and snapshotted before access validation",
     () => invalidService.create(createRequest(), { timeoutMs: -1 }),
     () => invalidService.list({ context }, { timeoutMs: -1 }),
     () => invalidService.read({ context, sessionId: "session-1" }, { timeoutMs: -1 }),
+    () =>
+      invalidService.readDirectoriesChunk(
+        { context, sessionId: "session-1", offset: 0, maxBytes: 1024 },
+        { timeoutMs: -1 },
+      ),
     () => invalidService.archive({ context, sessionId: "session-1", idempotencyKey: uuid(76) }, { timeoutMs: -1 }),
     () => invalidService.unarchive({ context, sessionId: "session-1", idempotencyKey: uuid(77) }, { timeoutMs: -1 }),
     () =>
@@ -708,7 +833,14 @@ test("operation options are validated and snapshotted before access validation",
   accessGate.resolve();
 
   assert.equal((await creating).overallStatus, "success");
-  assert.deepEqual(receivedOptions, { timeoutMs: 1_000, signal: controller.signal });
+  assert.ok(
+    typeof receivedOptions === "object" &&
+      receivedOptions !== null &&
+      "signal" in receivedOptions &&
+      receivedOptions.signal instanceof AbortSignal,
+  );
+  assert.notEqual(receivedOptions.signal, controller.signal);
+  assert.equal(receivedOptions.signal.aborted, false);
 });
 
 test("operation timeout and cancellation settle while access validation is pending", async () => {
@@ -813,6 +945,118 @@ test("operation deadline preserves persistence effect after Repository access st
   assert.deepEqual(writeTimeout.persistence, { status: "failed", effect: "unknown" });
 });
 
+test("Application owns the deadline and does not pass a competing timeout to Repository ports", async () => {
+  let receivedOptions: Readonly<{ timeoutMs?: number; signal?: AbortSignal }> | undefined;
+  const service = createService({
+    writes: {
+      async createSession(_command, options) {
+        receivedOptions = options;
+        if (options?.timeoutMs !== undefined) {
+          throw persistenceError("request_timeout", "Repository timeout won the race.", false, "unknown");
+        }
+        return new Promise(() => undefined);
+      },
+    },
+  });
+
+  const response = await service.create(createRequest(), { timeoutMs: 5 });
+
+  assert.equal(receivedOptions?.timeoutMs, undefined);
+  assert.ok(receivedOptions?.signal instanceof AbortSignal);
+  assert.equal(receivedOptions.signal.aborted, true);
+  assert.deepEqual(response.overallStatus === "failure" && response.error, {
+    kind: "persistence",
+    code: "persistence_timeout",
+    message: "Application operation timed out.",
+    retryable: true,
+    effect: "unknown",
+  });
+  assert.deepEqual(response.persistence, { status: "failed", effect: "unknown" });
+});
+
+test("operation deadline starts before request authorization snapshot", async () => {
+  let snapshots = 0;
+  const service = new ApplicationSessionService<Authorization>({
+    reads: createServiceReads(),
+    writes: createServiceWrites(),
+    access: allowingAccess(),
+    snapshotAuthorization(value: unknown) {
+      snapshots += 1;
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < 30) {
+        // The injected decoder is synchronous; the operation must check its deadline immediately afterwards.
+      }
+      return structuredClone(value) as Authorization;
+    },
+  });
+
+  const timedOut = await service.list({ context }, { timeoutMs: 5 });
+  assert.deepEqual(timedOut.overallStatus === "failure" && timedOut.error, {
+    kind: "operation",
+    code: "operation_timeout",
+    message: "Application operation timed out.",
+    retryable: true,
+  });
+  assert.deepEqual(timedOut.persistence, { status: "not_attempted", effect: "none" });
+
+  const controller = new AbortController();
+  controller.abort();
+  const canceled = await service.list({ context }, { signal: controller.signal });
+  assert.deepEqual(canceled.overallStatus === "failure" && canceled.error, {
+    kind: "operation",
+    code: "operation_canceled",
+    message: "Application operation was canceled.",
+    retryable: false,
+  });
+  assert.equal(snapshots, 1);
+});
+
+test("Session directory chunks use workspace-scoped authorization and project known response fields", async () => {
+  const bytes = new TextEncoder().encode('["C:\\\\shared"]');
+  let repositoryInput:
+    Readonly<{ sessionId: string; workspaceKey: string; offset: number; maxBytes: number }> | undefined;
+  const service = createService({
+    reads: {
+      async sessionDirectoriesChunk(input) {
+        repositoryInput = input;
+        return {
+          sessionId: input.sessionId,
+          offset: input.offset,
+          totalBytes: bytes.byteLength,
+          eof: true,
+          bytes: bytes.buffer,
+          internalSecret: "repository-only",
+        };
+      },
+    },
+  });
+
+  const response = await service.readDirectoriesChunk({
+    context,
+    sessionId: "session-1",
+    offset: 0,
+    maxBytes: 64 * 1024,
+  });
+
+  assert.deepEqual(repositoryInput, {
+    sessionId: "session-1",
+    workspaceKey: "workspace-1",
+    offset: 0,
+    maxBytes: 64 * 1024,
+  });
+  assert.deepEqual(response, {
+    overallStatus: "success",
+    value: {
+      sessionId: "session-1",
+      offset: 0,
+      totalBytes: bytes.byteLength,
+      eof: true,
+      bytes: bytes.buffer,
+    },
+    persistence: { status: "read", effect: "none" },
+  });
+});
+
 test("authorization snapshot policy supports non-structured-clone authorization values", async () => {
   type FunctionAuthorization = Readonly<{ principalId: string; canAccess: () => boolean }>;
   const authorization: FunctionAuthorization = { principalId: "user-1", canAccess: () => true };
@@ -823,6 +1067,9 @@ test("authorization snapshot policy supports non-structured-clone authorization 
         return { items: [] };
       },
       async sessionGet() {
+        throw new Error("unreachable");
+      },
+      async sessionDirectoriesChunk() {
         throw new Error("unreachable");
       },
     },
@@ -903,11 +1150,13 @@ test("access validators receive isolated views of the decoded request snapshot",
           operation: string;
           access: string;
           context: { workspaceKey: string; authorization: { principalId: string } };
+          target: { allowedAdditionalDirectories: string[] };
         };
         mutable.operation = "list";
         mutable.access = "read";
         mutable.context.workspaceKey = "workspace-from-workspace-validator";
         mutable.context.authorization.principalId = "workspace-validator";
+        mutable.target.allowedAdditionalDirectories[0] = "C:\\workspace-validator";
         return { allowed: true };
       },
       async authorize(input) {
@@ -916,11 +1165,13 @@ test("access validators receive isolated views of the decoded request snapshot",
           operation: string;
           access: string;
           context: { workspaceKey: string; authorization: { principalId: string } };
+          target: { allowedAdditionalDirectories: string[] };
         };
         mutable.operation = "read";
         mutable.access = "read";
         mutable.context.workspaceKey = "workspace-from-authorization-validator";
         mutable.context.authorization.principalId = "authorization-validator";
+        mutable.target.allowedAdditionalDirectories[0] = "C:\\authorization-validator";
         return { allowed: true };
       },
     },
@@ -948,8 +1199,16 @@ test("access validators receive isolated views of the decoded request snapshot",
     operation: "create",
     access: "write",
     context: { workspaceKey: "workspace-1", authorization: { principalId: "user-1" } },
+    target: {
+      kind: "session_create",
+      providerId: "codex",
+      allowedAdditionalDirectories: ["C:\\workspace-shared"],
+      defaultCharacterId: "character-1",
+      maxConcurrentChildRuns: 2,
+    },
   });
   assert.equal(createCommand?.session.workspaceKey, "workspace-1");
+  assert.deepEqual(createCommand?.session.allowedAdditionalDirectories, ["C:\\workspace-shared"]);
 });
 
 test("create rejects malformed additional directories before access validation and Repository writes", async () => {
@@ -1381,6 +1640,23 @@ function createService(
   } = {},
 ): ApplicationSessionService<Authorization> {
   const reads: ReadPort = {
+    ...createServiceReads(),
+    ...overrides.reads,
+  };
+  const writes: WritePort = {
+    ...createServiceWrites(),
+    ...overrides.writes,
+  };
+  return new ApplicationSessionService({
+    reads,
+    writes,
+    access: overrides.access ?? allowingAccess(),
+    snapshotAuthorization: (value: unknown) => structuredClone(value) as Authorization,
+  });
+}
+
+function createServiceReads(): ReadPort {
+  return {
     async sessionsPage() {
       return { items: [] };
     },
@@ -1403,9 +1679,14 @@ function createService(
         execution: { state: "not_started" },
       };
     },
-    ...overrides.reads,
+    async sessionDirectoriesChunk(input) {
+      return { sessionId: input.sessionId, offset: input.offset, totalBytes: 2, eof: true, bytes: new ArrayBuffer(2) };
+    },
   };
-  const writes: WritePort = {
+}
+
+function createServiceWrites(): WritePort {
+  return {
     async createSession(command) {
       return {
         ok: true,
@@ -1425,14 +1706,7 @@ function createService(
         replayed: false,
       };
     },
-    ...overrides.writes,
   };
-  return new ApplicationSessionService({
-    reads,
-    writes,
-    access: overrides.access ?? allowingAccess(),
-    snapshotAuthorization: (value: unknown) => structuredClone(value) as Authorization,
-  });
 }
 
 function allowingAccess(events: string[] = []): ApplicationAccessValidator<Authorization> {

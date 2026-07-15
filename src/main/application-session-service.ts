@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 
 import type {
+  ApplicationAccessValidationInput,
   ApplicationAccessValidator,
   ApplicationDomainError,
   ApplicationOperationOptions,
@@ -10,8 +11,9 @@ import type {
   ApplicationSessionCloseRequest,
   ApplicationSessionCreateRequest,
   ApplicationSessionCreateResult,
+  ApplicationSessionDirectoriesChunkRequest,
+  ApplicationSessionDirectoriesChunkResult,
   ApplicationSessionListRequest,
-  ApplicationSessionOperation,
   ApplicationSessionOperations,
   ApplicationSessionPage,
   ApplicationSessionReadRequest,
@@ -33,12 +35,16 @@ import { PersistenceClientError } from "./persistence-worker-client.js";
 import type { RepositoryReadClient } from "./repository-read-client.js";
 import type { RepositoryWriteClient } from "./repository-write-client.js";
 
-type SessionReadPort = Pick<RepositoryReadClient, "sessionsPage" | "sessionGet">;
+type SessionReadPort = Pick<RepositoryReadClient, "sessionsPage" | "sessionGet" | "sessionDirectoriesChunk">;
 type SessionWritePort = Pick<RepositoryWriteClient, "createSession" | "transitionSession">;
 type ApplicationFailureResponse = Extract<ApplicationOperationResponse<never>, Readonly<{ overallStatus: "failure" }>>;
 
 type RequestDecodeResult<TValue> =
   Readonly<{ ok: true; value: TValue }> | Readonly<{ ok: false; response: ApplicationFailureResponse }>;
+
+type OperationPreparation<TValue> =
+  | Readonly<{ ok: true; input: TValue; control: OperationControl }>
+  | Readonly<{ ok: false; response: ApplicationFailureResponse }>;
 
 type OperationControl = Readonly<{
   deadlineAt?: number;
@@ -54,6 +60,7 @@ type ControlledSettlement<TValue> =
 
 // admissionはより低いapp / Provider capも適用するが、永続設定値自体をboundedに保つ。
 export const APPLICATION_MAX_CONCURRENT_CHILD_RUNS = 1_024;
+export const APPLICATION_MAX_READ_CHUNK_BYTES = 256 * 1024;
 
 export type ApplicationSessionServiceOptions<TAuthorizationContext> = Readonly<{
   reads: SessionReadPort;
@@ -81,13 +88,26 @@ export class ApplicationSessionService<
     request: ApplicationSessionCreateRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionCreateResult, "write">> {
-    const decoded = decodeCreateRequest<TAuthorizationContext>(request, this.#snapshotAuthorization);
-    if (!decoded.ok) return decoded.response;
-    const decodedOptions = decodeOperationOptions(options);
-    if (!decodedOptions.ok) return decodedOptions.response;
-    const control = createOperationControl(decodedOptions.value);
-    const input = decoded.value;
-    const denied = await this.#validateAccess("create", "write", input.context, control);
+    const prepared = prepareOperation(options, () =>
+      decodeCreateRequest<TAuthorizationContext>(request, this.#snapshotAuthorization),
+    );
+    if (!prepared.ok) return prepared.response;
+    const { input, control } = prepared;
+    const denied = await this.#validateAccess(
+      {
+        operation: "create",
+        access: "write",
+        context: input.context,
+        target: {
+          kind: "session_create",
+          providerId: input.providerId,
+          allowedAdditionalDirectories: [...input.allowedAdditionalDirectories],
+          defaultCharacterId: input.defaultCharacterId,
+          maxConcurrentChildRuns: input.maxConcurrentChildRuns,
+        },
+      },
+      control,
+    );
     if (denied !== undefined) return denied;
 
     return executeRepositoryOperation(
@@ -122,13 +142,23 @@ export class ApplicationSessionService<
     request: ApplicationSessionListRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionPage, "read">> {
-    const decoded = decodeListRequest<TAuthorizationContext>(request, this.#snapshotAuthorization);
-    if (!decoded.ok) return decoded.response;
-    const decodedOptions = decodeOperationOptions(options);
-    if (!decodedOptions.ok) return decodedOptions.response;
-    const control = createOperationControl(decodedOptions.value);
-    const input = decoded.value;
-    const denied = await this.#validateAccess("list", "read", input.context, control);
+    const prepared = prepareOperation(options, () =>
+      decodeListRequest<TAuthorizationContext>(request, this.#snapshotAuthorization),
+    );
+    if (!prepared.ok) return prepared.response;
+    const { input, control } = prepared;
+    const denied = await this.#validateAccess(
+      {
+        operation: "list",
+        access: "read",
+        context: input.context,
+        target: {
+          kind: "session_collection",
+          ...(input.lifecycleStatus === undefined ? {} : { lifecycleStatus: input.lifecycleStatus }),
+        },
+      },
+      control,
+    );
     if (denied !== undefined) return denied;
 
     return executeRepositoryOperation(
@@ -174,13 +204,20 @@ export class ApplicationSessionService<
     request: ApplicationSessionReadRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionReadResult, "read">> {
-    const decoded = decodeReadRequest<TAuthorizationContext>(request, this.#snapshotAuthorization);
-    if (!decoded.ok) return decoded.response;
-    const decodedOptions = decodeOperationOptions(options);
-    if (!decodedOptions.ok) return decodedOptions.response;
-    const control = createOperationControl(decodedOptions.value);
-    const input = decoded.value;
-    const denied = await this.#validateAccess("read", "read", input.context, control);
+    const prepared = prepareOperation(options, () =>
+      decodeReadRequest<TAuthorizationContext>(request, this.#snapshotAuthorization),
+    );
+    if (!prepared.ok) return prepared.response;
+    const { input, control } = prepared;
+    const denied = await this.#validateAccess(
+      {
+        operation: "read",
+        access: "read",
+        context: input.context,
+        target: { kind: "session", sessionId: input.sessionId },
+      },
+      control,
+    );
     if (denied !== undefined) return denied;
 
     return executeRepositoryOperation(
@@ -199,54 +236,94 @@ export class ApplicationSessionService<
     );
   }
 
+  async readDirectoriesChunk(
+    request: ApplicationSessionDirectoriesChunkRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationSessionDirectoriesChunkResult, "read">> {
+    const prepared = prepareOperation(options, () =>
+      decodeDirectoriesChunkRequest<TAuthorizationContext>(request, this.#snapshotAuthorization),
+    );
+    if (!prepared.ok) return prepared.response;
+    const { input, control } = prepared;
+    const denied = await this.#validateAccess(
+      {
+        operation: "read_directories_chunk",
+        access: "read",
+        context: input.context,
+        target: {
+          kind: "session_directories",
+          sessionId: input.sessionId,
+          offset: input.offset,
+          maxBytes: input.maxBytes,
+        },
+      },
+      control,
+    );
+    if (denied !== undefined) return denied;
+
+    return executeRepositoryOperation(
+      "read",
+      control,
+      (repositoryOptions) =>
+        this.#reads.sessionDirectoriesChunk(
+          {
+            sessionId: input.sessionId,
+            workspaceKey: input.context.workspaceKey,
+            offset: input.offset,
+            maxBytes: input.maxBytes,
+          },
+          repositoryOptions,
+        ),
+      (value) => ({
+        overallStatus: "success",
+        value: {
+          sessionId: value.sessionId,
+          offset: value.offset,
+          totalBytes: value.totalBytes,
+          eof: value.eof,
+          bytes: value.bytes,
+        },
+        persistence: { status: "read", effect: "none" },
+      }),
+    );
+  }
+
   archive(
     request: ApplicationSessionWriteRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult, "write">> {
-    const decoded = decodeWriteRequest<TAuthorizationContext>(request, this.#snapshotAuthorization);
-    if (!decoded.ok) return Promise.resolve(decoded.response);
-    const decodedOptions = decodeOperationOptions(options);
-    if (!decodedOptions.ok) return Promise.resolve(decodedOptions.response);
-    return this.#transition(
-      "archive",
-      decoded.value,
-      "active",
-      "archived",
-      createOperationControl(decodedOptions.value),
+    const prepared = prepareOperation(options, () =>
+      decodeWriteRequest<TAuthorizationContext>(request, this.#snapshotAuthorization),
     );
+    if (!prepared.ok) return Promise.resolve(prepared.response);
+    return this.#transition("archive", prepared.input, "active", "archived", prepared.control);
   }
 
   unarchive(
     request: ApplicationSessionWriteRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult, "write">> {
-    const decoded = decodeWriteRequest<TAuthorizationContext>(request, this.#snapshotAuthorization);
-    if (!decoded.ok) return Promise.resolve(decoded.response);
-    const decodedOptions = decodeOperationOptions(options);
-    if (!decodedOptions.ok) return Promise.resolve(decodedOptions.response);
-    return this.#transition(
-      "unarchive",
-      decoded.value,
-      "archived",
-      "active",
-      createOperationControl(decodedOptions.value),
+    const prepared = prepareOperation(options, () =>
+      decodeWriteRequest<TAuthorizationContext>(request, this.#snapshotAuthorization),
     );
+    if (!prepared.ok) return Promise.resolve(prepared.response);
+    return this.#transition("unarchive", prepared.input, "archived", "active", prepared.control);
   }
 
   close(
     request: ApplicationSessionCloseRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult, "write">> {
-    const decoded = decodeCloseRequest<TAuthorizationContext>(request, this.#snapshotAuthorization);
-    if (!decoded.ok) return Promise.resolve(decoded.response);
-    const decodedOptions = decodeOperationOptions(options);
-    if (!decodedOptions.ok) return Promise.resolve(decodedOptions.response);
+    const prepared = prepareOperation(options, () =>
+      decodeCloseRequest<TAuthorizationContext>(request, this.#snapshotAuthorization),
+    );
+    if (!prepared.ok) return Promise.resolve(prepared.response);
     return this.#transition(
       "close",
-      decoded.value,
-      decoded.value.expectedLifecycleStatus,
+      prepared.input,
+      prepared.input.expectedLifecycleStatus,
       "closed",
-      createOperationControl(decodedOptions.value),
+      prepared.control,
     );
   }
 
@@ -257,7 +334,15 @@ export class ApplicationSessionService<
     targetLifecycleStatus: SessionLifecycleStatus,
     control: OperationControl,
   ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult, "write">> {
-    const denied = await this.#validateAccess(operation, "write", request.context, control);
+    const denied = await this.#validateAccess(
+      {
+        operation,
+        access: "write",
+        context: request.context,
+        target: { kind: "session", sessionId: request.sessionId },
+      },
+      control,
+    );
     if (denied !== undefined) return denied;
 
     return executeRepositoryOperation(
@@ -284,22 +369,18 @@ export class ApplicationSessionService<
   }
 
   async #validateAccess(
-    operation: ApplicationSessionOperation,
-    access: "read" | "write",
-    context: ApplicationSessionCreateRequest<TAuthorizationContext>["context"],
+    input: ApplicationAccessValidationInput<TAuthorizationContext>,
     control: OperationControl,
   ): Promise<ApplicationFailureResponse | undefined> {
     const workspace = await runControlled(control, () =>
-      this.#access.validateWorkspace(
-        createAccessValidationView(operation, access, context, this.#snapshotAuthorization),
-      ),
+      this.#access.validateWorkspace(createAccessValidationView(input, this.#snapshotAuthorization)),
     );
     if (workspace.status === "interrupted") return operationInterruptionFailure(workspace.interruption);
     if (workspace.status === "rejected") return applicationFailure({ status: "not_attempted", effect: "none" });
     if (!workspace.value.allowed) return accessFailure(workspace.value.error);
 
     const authorization = await runControlled(control, () =>
-      this.#access.authorize(createAccessValidationView(operation, access, context, this.#snapshotAuthorization)),
+      this.#access.authorize(createAccessValidationView(input, this.#snapshotAuthorization)),
     );
     if (authorization.status === "interrupted") return operationInterruptionFailure(authorization.interruption);
     if (authorization.status === "rejected") {
@@ -311,19 +392,32 @@ export class ApplicationSessionService<
 }
 
 function createAccessValidationView<TAuthorizationContext>(
-  operation: ApplicationSessionOperation,
-  access: "read" | "write",
-  context: ApplicationSessionCreateRequest<TAuthorizationContext>["context"],
+  input: ApplicationAccessValidationInput<TAuthorizationContext>,
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
-): Parameters<ApplicationAccessValidator<TAuthorizationContext>["validateWorkspace"]>[0] {
-  return {
-    operation,
-    access,
-    context: {
-      workspaceKey: context.workspaceKey,
-      authorization: snapshotAuthorization(context.authorization),
-    },
+): ApplicationAccessValidationInput<TAuthorizationContext> {
+  const context = {
+    workspaceKey: input.context.workspaceKey,
+    authorization: snapshotAuthorization(input.context.authorization),
   };
+  switch (input.operation) {
+    case "create":
+      return {
+        operation: input.operation,
+        access: input.access,
+        context,
+        target: { ...input.target, allowedAdditionalDirectories: [...input.target.allowedAdditionalDirectories] },
+      };
+    case "list":
+      return { operation: input.operation, access: input.access, context, target: { ...input.target } };
+    case "read":
+      return { operation: input.operation, access: input.access, context, target: { ...input.target } };
+    case "read_directories_chunk":
+      return { operation: input.operation, access: input.access, context, target: { ...input.target } };
+    case "archive":
+    case "unarchive":
+    case "close":
+      return { operation: input.operation, access: input.access, context, target: { ...input.target } };
+  }
 }
 
 function decodeCreateRequest<TAuthorizationContext>(
@@ -423,6 +517,34 @@ function decodeReadRequest<TAuthorizationContext>(
   return { ok: true, value: { context, sessionId: request.sessionId } };
 }
 
+function decodeDirectoriesChunkRequest<TAuthorizationContext>(
+  request: unknown,
+  snapshotAuthorization: (value: unknown) => TAuthorizationContext,
+): RequestDecodeResult<ApplicationSessionDirectoriesChunkRequest<TAuthorizationContext>> {
+  if (
+    !isPlainObject(request) ||
+    !hasOnlyKeys(request, ["context", "sessionId", "offset", "maxBytes"]) ||
+    !isBoundedString(request.sessionId) ||
+    !isNonNegativeSafeInteger(request.offset) ||
+    !Number.isSafeInteger(request.maxBytes) ||
+    (request.maxBytes as number) < 1 ||
+    (request.maxBytes as number) > APPLICATION_MAX_READ_CHUNK_BYTES
+  ) {
+    return decodeRequestFailure();
+  }
+  const context = decodeOperationContext(request.context, snapshotAuthorization);
+  if (context === undefined) return decodeRequestFailure();
+  return {
+    ok: true,
+    value: {
+      context,
+      sessionId: request.sessionId,
+      offset: request.offset,
+      maxBytes: request.maxBytes as number,
+    },
+  };
+}
+
 function decodeCloseRequest<TAuthorizationContext>(
   request: unknown,
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
@@ -475,9 +597,30 @@ function decodeRequestFailure<TValue>(): RequestDecodeResult<TValue> {
   return { ok: false, response: requestFailure() };
 }
 
-function createOperationControl(options: ApplicationOperationOptions | undefined): OperationControl {
+function prepareOperation<TValue>(
+  options: unknown,
+  decodeRequest: () => RequestDecodeResult<TValue>,
+): OperationPreparation<TValue> {
+  const operationStartedAt = Date.now();
+  const decodedOptions = decodeOperationOptions(options);
+  if (!decodedOptions.ok) return decodedOptions;
+  const control = createOperationControl(decodedOptions.value, operationStartedAt);
+  const beforeDecode = getOperationInterruption(control);
+  if (beforeDecode !== undefined) return { ok: false, response: operationInterruptionFailure(beforeDecode) };
+  const decodedRequest = decodeRequest();
+  const afterDecode = getOperationInterruption(control);
+  if (afterDecode !== undefined) return { ok: false, response: operationInterruptionFailure(afterDecode) };
+  return decodedRequest.ok
+    ? { ok: true, input: decodedRequest.value, control }
+    : { ok: false, response: decodedRequest.response };
+}
+
+function createOperationControl(
+  options: ApplicationOperationOptions | undefined,
+  operationStartedAt: number,
+): OperationControl {
   return {
-    ...(options?.timeoutMs === undefined ? {} : { deadlineAt: Date.now() + options.timeoutMs }),
+    ...(options?.timeoutMs === undefined ? {} : { deadlineAt: operationStartedAt + options.timeoutMs }),
     ...(options?.signal === undefined ? {} : { signal: options.signal }),
   };
 }
@@ -485,6 +628,7 @@ function createOperationControl(options: ApplicationOperationOptions | undefined
 async function runControlled<TValue>(
   control: OperationControl,
   start: () => Promise<TValue>,
+  interruptStartedWork?: () => void,
 ): Promise<ControlledSettlement<TValue>> {
   const beforeStart = getOperationInterruption(control);
   if (beforeStart !== undefined) {
@@ -508,10 +652,14 @@ async function runControlled<TValue>(
       control.signal?.removeEventListener("abort", onAbort);
       resolve(value);
     };
-    const onAbort = () => finish({ status: "interrupted", interruption: "canceled", started: true });
+    const interrupt = (interruption: OperationInterruption) => {
+      interruptStartedWork?.();
+      finish({ status: "interrupted", interruption, started: true });
+    };
+    const onAbort = () => interrupt("canceled");
     const remaining = getRemainingTimeout(control);
     if (remaining !== undefined) {
-      timer = setTimeout(() => finish({ status: "interrupted", interruption: "timeout", started: true }), remaining);
+      timer = setTimeout(() => interrupt("timeout"), remaining);
     }
     control.signal?.addEventListener("abort", onAbort, { once: true });
     if (control.signal?.aborted) {
@@ -533,7 +681,12 @@ async function executeRepositoryOperation<TRepositoryValue, TApplicationValue, T
 ): Promise<ApplicationOperationResponse<TApplicationValue, TMode>> {
   const interruption = getOperationInterruption(control);
   if (interruption !== undefined) return operationInterruptionFailure(interruption);
-  const settlement = await runControlled(control, () => execute(createRepositoryOptions(control)));
+  const repositoryAbort = new AbortController();
+  const settlement = await runControlled(
+    control,
+    () => execute(createRepositoryOptions(control, repositoryAbort.signal)),
+    () => repositoryAbort.abort(),
+  );
   if (settlement.status === "interrupted") {
     return settlement.started
       ? persistenceInterruptionFailure(settlement.interruption, requestClass)
@@ -543,13 +696,12 @@ async function executeRepositoryOperation<TRepositoryValue, TApplicationValue, T
   return mapValue(settlement.value);
 }
 
-function createRepositoryOptions(control: OperationControl): ApplicationOperationOptions | undefined {
-  const timeoutMs = getRemainingTimeout(control);
-  if (timeoutMs === undefined && control.signal === undefined) return undefined;
-  return {
-    ...(timeoutMs === undefined ? {} : { timeoutMs: Math.max(1, timeoutMs) }),
-    ...(control.signal === undefined ? {} : { signal: control.signal }),
-  };
+function createRepositoryOptions(
+  control: OperationControl,
+  repositorySignal: AbortSignal,
+): ApplicationOperationOptions | undefined {
+  // deadlineの所有者をApplicationへ一本化し、Repository timeoutとのraceでretry契約を揺らさない。
+  return control.deadlineAt === undefined && control.signal === undefined ? undefined : { signal: repositorySignal };
 }
 
 function getOperationInterruption(control: OperationControl): OperationInterruption | undefined {

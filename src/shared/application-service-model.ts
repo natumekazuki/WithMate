@@ -1,6 +1,7 @@
 import type { SessionDetail, SessionExecutionState, SessionListItem } from "./repository-read-model.js";
 
-export type ApplicationSessionOperation = "create" | "list" | "read" | "archive" | "unarchive" | "close";
+export type ApplicationSessionOperation =
+  "create" | "list" | "read" | "read_directories_chunk" | "archive" | "unarchive" | "close";
 
 export type ApplicationSessionOperationContext<TAuthorizationContext> = Readonly<{
   workspaceKey: string;
@@ -18,11 +19,54 @@ export type ApplicationAccessDecision =
       }>;
     }>;
 
-export type ApplicationAccessValidationInput<TAuthorizationContext> = Readonly<{
-  operation: ApplicationSessionOperation;
-  access: "read" | "write";
+export type ApplicationSessionCreateAccessTarget = Readonly<{
+  kind: "session_create";
+  providerId: string;
+  allowedAdditionalDirectories: readonly string[];
+  defaultCharacterId: string;
+  maxConcurrentChildRuns: number;
+}>;
+
+export type ApplicationSessionCollectionAccessTarget = Readonly<{
+  kind: "session_collection";
+  lifecycleStatus?: ApplicationSessionLifecycleStatus;
+}>;
+
+export type ApplicationSessionAccessTarget = Readonly<{
+  kind: "session";
+  sessionId: string;
+}>;
+
+export type ApplicationSessionDirectoriesAccessTarget = Readonly<{
+  kind: "session_directories";
+  sessionId: string;
+  offset: number;
+  maxBytes: number;
+}>;
+
+type ApplicationAccessValidationBase<TAuthorizationContext> = Readonly<{
   context: ApplicationSessionOperationContext<TAuthorizationContext>;
 }>;
+
+export type ApplicationAccessValidationInput<TAuthorizationContext> =
+  | (ApplicationAccessValidationBase<TAuthorizationContext> &
+      Readonly<{ operation: "create"; access: "write"; target: ApplicationSessionCreateAccessTarget }>)
+  | (ApplicationAccessValidationBase<TAuthorizationContext> &
+      Readonly<{ operation: "list"; access: "read"; target: ApplicationSessionCollectionAccessTarget }>)
+  | (ApplicationAccessValidationBase<TAuthorizationContext> &
+      Readonly<{ operation: "read"; access: "read"; target: ApplicationSessionAccessTarget }>)
+  | (ApplicationAccessValidationBase<TAuthorizationContext> &
+      Readonly<{
+        operation: "read_directories_chunk";
+        access: "read";
+        target: ApplicationSessionDirectoriesAccessTarget;
+      }>)
+  | (ApplicationAccessValidationBase<TAuthorizationContext> &
+      Readonly<{
+        operation: "archive" | "unarchive" | "close";
+        access: "write";
+        target: ApplicationSessionAccessTarget;
+      }>);
 
 export interface ApplicationAccessValidator<TAuthorizationContext> {
   validateWorkspace(input: ApplicationAccessValidationInput<TAuthorizationContext>): Promise<ApplicationAccessDecision>;
@@ -274,6 +318,21 @@ export type ApplicationSessionReadResult = Readonly<{
   }>;
 }>;
 
+export type ApplicationSessionDirectoriesChunkRequest<TAuthorizationContext> = Readonly<{
+  context: ApplicationSessionOperationContext<TAuthorizationContext>;
+  sessionId: string;
+  offset: number;
+  maxBytes: number;
+}>;
+
+export type ApplicationSessionDirectoriesChunkResult = Readonly<{
+  sessionId: string;
+  offset: number;
+  totalBytes: number;
+  eof: boolean;
+  bytes: ArrayBuffer;
+}>;
+
 export type ApplicationSessionWriteRequest<TAuthorizationContext> = Readonly<{
   context: ApplicationSessionOperationContext<TAuthorizationContext>;
   sessionId: string;
@@ -304,6 +363,10 @@ export interface ApplicationSessionOperations<TAuthorizationContext> {
     request: ApplicationSessionReadRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionReadResult, "read">>;
+  readDirectoriesChunk(
+    request: ApplicationSessionDirectoriesChunkRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationSessionDirectoriesChunkResult, "read">>;
   archive(
     request: ApplicationSessionWriteRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,

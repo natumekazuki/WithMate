@@ -3,6 +3,7 @@ import test from "node:test";
 
 import * as publicApi from "../src/main/index.js";
 import {
+  type ApplicationAccessValidationInput,
   type ApplicationAccessValidator,
   type ApplicationCapacityExceededDetails,
   type ApplicationDomainError,
@@ -30,6 +31,25 @@ type CapacityError = Extract<DomainError, Readonly<{ code: "capacity_exceeded" }
 type Operations = ApplicationSessionOperations<Authorization>;
 type CreateResponse = Awaited<ReturnType<Operations["create"]>>;
 type ListResponse = Awaited<ReturnType<Operations["list"]>>;
+type DirectoriesChunkResponse = Awaited<ReturnType<Operations["readDirectoriesChunk"]>>;
+
+function assertAuthorizationTarget(input: ApplicationAccessValidationInput<Authorization>): void {
+  if (input.operation === "create") {
+    const directories: readonly string[] = input.target.allowedAdditionalDirectories;
+    void directories;
+    // @ts-expect-error create authorization does not target an existing Session
+    void input.target.sessionId;
+    return;
+  }
+  if (input.operation === "list") {
+    const lifecycle = input.target.lifecycleStatus;
+    void lifecycle;
+    return;
+  }
+  const sessionId: string = input.target.sessionId;
+  void sessionId;
+}
+void assertAuthorizationTarget;
 
 const capacityDetails: ApplicationCapacityExceededDetails = { scope: "application", current: 1, limit: 1 };
 
@@ -123,6 +143,17 @@ const validWritePartialPersistenceEffect: ApplicationOperationResponse<string, "
   ],
   persistence: { status: "failed", effect: "unknown" },
 };
+const validDirectoriesChunk: Extract<DirectoriesChunkResponse, Readonly<{ overallStatus: "success" }>> = {
+  overallStatus: "success",
+  value: {
+    sessionId: "session-1",
+    offset: 0,
+    totalBytes: 2,
+    eof: true,
+    bytes: new ArrayBuffer(2),
+  },
+  persistence: { status: "read", effect: "none" },
+};
 void invalidSuccessPersistence;
 void invalidRequestFailurePersistence;
 void invalidDomainFailurePersistence;
@@ -132,6 +163,7 @@ void invalidListCommittedSuccess;
 void invalidPartialPersistenceEffect;
 void invalidWritePartialPersistenceEffect;
 void validWritePartialPersistenceEffect;
+void validDirectoriesChunk;
 
 test("public Application Service barrel exposes the transport-neutral Session contract", () => {
   const request = null as ApplicationSessionCreateRequest<Authorization> | null;
