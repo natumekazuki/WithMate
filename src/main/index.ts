@@ -4,13 +4,7 @@ export type {
   PersistenceErrorCode,
   PersistenceFailureEffect,
 } from "../shared/persistence-protocol.js";
-export {
-  PersistenceClientError,
-  PersistenceWorkerClient,
-  type PersistenceRequestOptions,
-  type PersistenceWorkerClientOptions,
-  type PersistenceWorkerClientState,
-} from "./persistence-worker-client.js";
+export { PersistenceClientError, type PersistenceRequestOptions } from "./persistence-worker-client.js";
 export { RepositoryReadClient } from "./repository-read-client.js";
 export type {
   ApplicationAccessDecision,

@@ -25,7 +25,7 @@ authorization contextはgenericなoperation contextとして受け、workspace v
 
 write operationのidempotency keyはcallerがcanonical lowercase UUIDとして供給する。Session IDはApplication Serviceがidempotency keyからnamespace付きSHA-256で安定発行する。これによりtransport callerへRepository commandやID生成を委ねず、process再起動後のexact retryでも同じsemantic commandを再構築する。
 
-Repository write clientとwrite command型はApplication Serviceの内部統合面とし、public Main barrelから公開しない。public Main barrelはApplication operation interfaceだけを公開し、Application Service実装classとDI optionsも内部統合面に留める。static module-boundary checkはPersistence WorkerとRepository client自身を除く全sourceを走査し、Application Service以外からのwrite client import、command型import / re-export、write method呼び出しと、public Main barrelからの実装再公開を拒否する。Repository resultはApplication response fieldへ明示的に写像し、将来追加された内部fieldを素通ししない。
+Repository write client、write command型、raw writeを送信できるPersistence Worker clientはApplication Serviceの内部統合面とし、public Main barrelから公開しない。public Main barrelはApplication operation interfaceだけを公開し、Application Service実装classとDI optionsも内部統合面に留める。static module-boundary checkはPersistence WorkerとRepository client自身を除く全sourceを走査し、Application Service以外からのwrite client import、command型import / re-export、write method呼び出し、raw write requestと、public Main barrelからの内部統合面の再公開を拒否する。Repository resultは成功と失敗の両方をApplication response fieldへ明示的に写像し、将来追加された内部fieldを素通ししない。
 
 現在のfield、operation一覧、validation rule、Repository mappingはshared type、source、contract test、module-boundary checkを正本とする。
 

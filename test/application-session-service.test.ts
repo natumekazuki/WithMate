@@ -6,14 +6,18 @@ import test from "node:test";
 
 import {
   PersistenceClientError,
-  PersistenceWorkerClient,
   RepositoryReadClient,
   type ApplicationAccessValidator,
   type ApplicationSessionOperationContext,
 } from "../src/main/index.js";
 import { ApplicationSessionService } from "../src/main/application-session-service.js";
+import { PersistenceWorkerClient } from "../src/main/persistence-worker-client.js";
 import { RepositoryWriteClient } from "../src/main/repository-write-client.js";
-import type { SessionCreateCommand, SessionTransitionCommand } from "../src/shared/repository-write-model.js";
+import type {
+  RepositoryCommandError,
+  SessionCreateCommand,
+  SessionTransitionCommand,
+} from "../src/shared/repository-write-model.js";
 
 type Authorization = Readonly<{ principalId: string }>;
 type ReadPort = Pick<RepositoryReadClient, "sessionsPage" | "sessionGet">;
@@ -228,6 +232,70 @@ test("request and access rejection happen before Repository access", async () =>
   assert.equal(workspaceChecks, 1);
   assert.equal(authorizationChecks, 1);
   assert.equal(writes, 0);
+});
+
+test("every operation returns a request envelope for malformed transport input before calling ports", async () => {
+  let accessCalls = 0;
+  let readCalls = 0;
+  let writeCalls = 0;
+  const service = createService({
+    access: {
+      async validateWorkspace() {
+        accessCalls += 1;
+        return { allowed: true };
+      },
+      async authorize() {
+        accessCalls += 1;
+        return { allowed: true };
+      },
+    },
+    reads: {
+      async sessionsPage() {
+        readCalls += 1;
+        throw new Error("unreachable");
+      },
+      async sessionGet() {
+        readCalls += 1;
+        throw new Error("unreachable");
+      },
+    },
+    writes: {
+      async createSession() {
+        writeCalls += 1;
+        throw new Error("unreachable");
+      },
+      async transitionSession() {
+        writeCalls += 1;
+        throw new Error("unreachable");
+      },
+    },
+  });
+  const malformedOperations: readonly (() => Promise<unknown>)[] = [
+    () => service.create(null as never),
+    () => service.list([] as never),
+    () => service.list({ context, lifecycleStatus: "deleted" } as never),
+    () => service.read({} as never),
+    () => service.archive({ context: null } as never),
+    () => service.unarchive(null as never),
+    () => service.close(null as never),
+    () =>
+      service.close({
+        context,
+        sessionId: "session-1",
+        idempotencyKey: uuid(50),
+        expectedLifecycleStatus: "closed",
+      } as never),
+  ];
+
+  for (const operation of malformedOperations) {
+    const response = (await operation()) as Awaited<ReturnType<typeof service.create>>;
+    assert.equal(response.overallStatus, "failure");
+    assert.equal(response.overallStatus === "failure" && response.error.kind, "request");
+    assert.deepEqual(response.persistence, { status: "not_attempted", effect: "none" });
+  }
+  assert.equal(accessCalls, 0);
+  assert.equal(readCalls, 0);
+  assert.equal(writeCalls, 0);
 });
 
 test("create rejects malformed additional directories before access validation and Repository writes", async () => {
@@ -525,6 +593,68 @@ test("Repository domain rejection stays separate from persistence failure", asyn
     retryable: true,
   });
   assert.deepEqual(response.persistence, { status: "rejected", effect: "none" });
+});
+
+test("Repository domain rejection projects only known public fields", async () => {
+  const repositoryError = {
+    code: "session_busy",
+    message: "Session has an active Run.",
+    retryable: true,
+    kind: "persistence",
+    internalSecret: "repository-only",
+  } as unknown as RepositoryCommandError;
+  const service = createService({
+    writes: {
+      async transitionSession() {
+        return { ok: false, error: repositoryError, replayed: false };
+      },
+    },
+  });
+
+  const response = await service.archive({ context, sessionId: "session-1", idempotencyKey: uuid(51) });
+
+  assert.deepEqual(response.overallStatus === "failure" && response.error, {
+    kind: "domain",
+    code: "session_busy",
+    message: "Session has an active Run.",
+    retryable: true,
+  });
+  assert.deepEqual(response.persistence, { status: "rejected", effect: "none" });
+
+  const capacityError = {
+    code: "capacity_exceeded",
+    message: "Provider capacity was reached.",
+    retryable: true,
+    details: {
+      scope: "provider",
+      providerId: "codex",
+      current: 4,
+      limit: 4,
+      internalSecret: "repository-only",
+    },
+    internalSecret: "repository-only",
+  } as unknown as RepositoryCommandError;
+  const capacityService = createService({
+    writes: {
+      async transitionSession() {
+        return { ok: false, error: capacityError, replayed: false };
+      },
+    },
+  });
+
+  const capacityResponse = await capacityService.archive({
+    context,
+    sessionId: "session-1",
+    idempotencyKey: uuid(52),
+  });
+
+  assert.deepEqual(capacityResponse.overallStatus === "failure" && capacityResponse.error, {
+    kind: "domain",
+    code: "capacity_exceeded",
+    message: "Provider capacity was reached.",
+    retryable: true,
+    details: { scope: "provider", providerId: "codex", current: 4, limit: 4 },
+  });
 });
 
 test("write transport failure preserves unknown effect and is never reported as success", async () => {

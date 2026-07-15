@@ -94,7 +94,7 @@ export class ApplicationSessionService<
     request: ApplicationSessionListRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionPage>> {
-    const invalid = validateContext(request.context.workspaceKey);
+    const invalid = validateListRequest(request);
     if (invalid !== undefined) return invalid;
     const denied = await this.#validateAccess("list", "read", request.context);
     if (denied !== undefined) return denied;
@@ -148,7 +148,7 @@ export class ApplicationSessionService<
     request: ApplicationSessionReadRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionReadResult>> {
-    const invalid = validateScopedSessionRequest(request.context.workspaceKey, request.sessionId);
+    const invalid = validateReadRequest(request);
     if (invalid !== undefined) return invalid;
     const denied = await this.#validateAccess("read", "read", request.context);
     if (denied !== undefined) return denied;
@@ -183,6 +183,8 @@ export class ApplicationSessionService<
     request: ApplicationSessionCloseRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult>> {
+    const invalid = validateCloseRequest(request);
+    if (invalid !== undefined) return Promise.resolve(invalid);
     return this.#transition("close", request, request.expectedLifecycleStatus, "closed", options);
   }
 
@@ -238,16 +240,24 @@ export class ApplicationSessionService<
 }
 
 function validateCreateRequest<TAuthorizationContext>(
-  request: ApplicationSessionCreateRequest<TAuthorizationContext>,
+  request: unknown,
 ): ApplicationOperationResponse<never> | undefined {
   if (
-    validateContext(request.context.workspaceKey) !== undefined ||
-    !isCanonicalUuid(request.idempotencyKey) ||
+    !isPlainObject(request) ||
+    !hasOnlyKeys(request, [
+      "context",
+      "idempotencyKey",
+      "providerId",
+      "allowedAdditionalDirectories",
+      "defaultCharacterId",
+      "maxConcurrentChildRuns",
+    ]) ||
+    !isOperationContext<TAuthorizationContext>(request.context) ||
+    !isCanonicalIdempotencyKey(request.idempotencyKey) ||
     !isBoundedString(request.providerId) ||
     !isBoundedString(request.defaultCharacterId) ||
     !isAllowedAdditionalDirectories(request.allowedAdditionalDirectories) ||
-    !Number.isSafeInteger(request.maxConcurrentChildRuns) ||
-    request.maxConcurrentChildRuns < 0
+    !isNonNegativeSafeInteger(request.maxConcurrentChildRuns)
   ) {
     return requestFailure();
   }
@@ -255,31 +265,89 @@ function validateCreateRequest<TAuthorizationContext>(
 }
 
 function validateWriteRequest<TAuthorizationContext>(
-  request: ApplicationSessionWriteRequest<TAuthorizationContext>,
+  request: unknown,
   operation: "archive" | "unarchive" | "close",
   expectedLifecycleStatus: "active" | "archived",
   targetLifecycleStatus: SessionLifecycleStatus,
 ): ApplicationOperationResponse<never> | undefined {
+  if (operation === "close") return validateCloseRequest(request);
   if (
-    validateScopedSessionRequest(request.context.workspaceKey, request.sessionId) !== undefined ||
-    !isCanonicalUuid(request.idempotencyKey) ||
+    !isSessionWriteRequest<TAuthorizationContext>(request) ||
+    !isCanonicalIdempotencyKey(request.idempotencyKey) ||
     (operation === "archive" && (expectedLifecycleStatus !== "active" || targetLifecycleStatus !== "archived")) ||
-    (operation === "unarchive" && (expectedLifecycleStatus !== "archived" || targetLifecycleStatus !== "active")) ||
-    (operation === "close" && targetLifecycleStatus !== "closed")
+    (operation === "unarchive" && (expectedLifecycleStatus !== "archived" || targetLifecycleStatus !== "active"))
   ) {
     return requestFailure();
   }
   return undefined;
 }
 
-function validateScopedSessionRequest(
-  workspaceKey: string,
-  sessionId: string,
-): ApplicationOperationResponse<never> | undefined {
-  return validateContext(workspaceKey) ?? (!isBoundedString(sessionId) ? requestFailure() : undefined);
+function validateListRequest<TAuthorizationContext>(request: unknown): ApplicationOperationResponse<never> | undefined {
+  if (
+    !isPlainObject(request) ||
+    !hasOnlyKeys(request, ["context", "lifecycleStatus", "cursor", "limit"]) ||
+    !isOperationContext<TAuthorizationContext>(request.context) ||
+    (request.lifecycleStatus !== undefined && !isSessionLifecycleStatus(request.lifecycleStatus)) ||
+    (request.cursor !== undefined && !isBoundedString(request.cursor)) ||
+    (request.limit !== undefined &&
+      (!Number.isSafeInteger(request.limit) || (request.limit as number) < 1 || (request.limit as number) > 100))
+  ) {
+    return requestFailure();
+  }
+  return undefined;
 }
 
-function validateContext(workspaceKey: string): ApplicationOperationResponse<never> | undefined {
+function validateReadRequest<TAuthorizationContext>(request: unknown): ApplicationOperationResponse<never> | undefined {
+  if (
+    !isPlainObject(request) ||
+    !hasOnlyKeys(request, ["context", "sessionId"]) ||
+    !isOperationContext<TAuthorizationContext>(request.context) ||
+    !isBoundedString(request.sessionId)
+  ) {
+    return requestFailure();
+  }
+  return undefined;
+}
+
+function validateCloseRequest<TAuthorizationContext>(
+  request: unknown,
+): ApplicationOperationResponse<never> | undefined {
+  if (
+    !isPlainObject(request) ||
+    !hasOnlyKeys(request, ["context", "sessionId", "idempotencyKey", "expectedLifecycleStatus"]) ||
+    !isOperationContext<TAuthorizationContext>(request.context) ||
+    !isBoundedString(request.sessionId) ||
+    !isCanonicalIdempotencyKey(request.idempotencyKey) ||
+    (request.expectedLifecycleStatus !== "active" && request.expectedLifecycleStatus !== "archived")
+  ) {
+    return requestFailure();
+  }
+  return undefined;
+}
+
+function isSessionWriteRequest<TAuthorizationContext>(
+  request: unknown,
+): request is ApplicationSessionWriteRequest<TAuthorizationContext> {
+  return (
+    isPlainObject(request) &&
+    hasOnlyKeys(request, ["context", "sessionId", "idempotencyKey"]) &&
+    isOperationContext<TAuthorizationContext>(request.context) &&
+    isBoundedString(request.sessionId)
+  );
+}
+
+function isOperationContext<TAuthorizationContext>(
+  context: unknown,
+): context is ApplicationSessionCreateRequest<TAuthorizationContext>["context"] {
+  return (
+    isPlainObject(context) &&
+    hasOnlyKeys(context, ["workspaceKey", "authorization"]) &&
+    Object.hasOwn(context, "authorization") &&
+    validateContext(context.workspaceKey) === undefined
+  );
+}
+
+function validateContext(workspaceKey: unknown): ApplicationOperationResponse<never> | undefined {
   return isBoundedString(workspaceKey) ? undefined : requestFailure();
 }
 
@@ -336,9 +404,24 @@ function mapWriteResult<TRepositoryValue, TApplicationValue extends TRepositoryV
 }
 
 function domainFailure(error: RepositoryCommandError | ApplicationDomainError): ApplicationOperationResponse<never> {
+  const projectedError: ApplicationDomainError =
+    error.code === "capacity_exceeded" && error.details !== undefined
+      ? {
+          kind: "domain",
+          code: error.code,
+          message: error.message,
+          retryable: error.retryable,
+          details: projectCapacityExceededDetails(error.details),
+        }
+      : {
+          kind: "domain",
+          code: error.code,
+          message: error.message,
+          retryable: error.retryable,
+        };
   return {
     overallStatus: "failure",
-    error: { kind: "domain", ...error },
+    error: projectedError,
     persistence: { status: "rejected", effect: "none" },
   };
 }
@@ -435,8 +518,54 @@ function issueSessionId(idempotencyKey: string): string {
   return `session_${createHash("sha256").update(`withmate.application.session.v1\0${idempotencyKey}`, "utf8").digest("hex")}`;
 }
 
-function isBoundedString(value: string): boolean {
+function isBoundedString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 1_024;
+}
+
+function isCanonicalIdempotencyKey(value: unknown): value is string {
+  return typeof value === "string" && isCanonicalUuid(value);
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  return prototype === Object.prototype || prototype === null;
+}
+
+function hasOnlyKeys(value: Readonly<Record<string, unknown>>, allowedKeys: readonly string[]): boolean {
+  const allowed = new Set(allowedKeys);
+  return Object.keys(value).every((key) => allowed.has(key));
+}
+
+function isSessionLifecycleStatus(value: unknown): value is SessionLifecycleStatus {
+  return value === "active" || value === "archived" || value === "closed";
+}
+
+function projectCapacityExceededDetails(
+  details: NonNullable<ApplicationDomainError["details"]>,
+): NonNullable<ApplicationDomainError["details"]> {
+  switch (details.scope) {
+    case "root":
+      return {
+        scope: details.scope,
+        rootSessionId: details.rootSessionId,
+        current: details.current,
+        limit: details.limit,
+      };
+    case "application":
+      return { scope: details.scope, current: details.current, limit: details.limit };
+    case "provider":
+      return {
+        scope: details.scope,
+        providerId: details.providerId,
+        current: details.current,
+        limit: details.limit,
+      };
+  }
 }
 
 function isAllowedAdditionalDirectories(value: unknown): value is readonly string[] {

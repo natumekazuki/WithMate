@@ -34,6 +34,7 @@ test("public barrel exposes read infrastructure without Repository write constru
 
   assert.equal(PERSISTENCE_PROTOCOL_VERSION, 1);
   assert.equal(typeof RepositoryReadClient, "function");
+  assert.equal("PersistenceWorkerClient" in publicApi, false);
   assert.equal("RepositoryWriteClient" in publicApi, false);
   assert.equal(transportError.effect, "unknown");
   assert.equal(recovery, null);
