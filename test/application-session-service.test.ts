@@ -1,0 +1,720 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import {
+  PersistenceClientError,
+  PersistenceWorkerClient,
+  RepositoryReadClient,
+  type ApplicationAccessValidator,
+  type ApplicationSessionOperationContext,
+} from "../src/main/index.js";
+import { ApplicationSessionService } from "../src/main/application-session-service.js";
+import { RepositoryWriteClient } from "../src/main/repository-write-client.js";
+import type { SessionCreateCommand, SessionTransitionCommand } from "../src/shared/repository-write-model.js";
+
+type Authorization = Readonly<{ principalId: string }>;
+type ReadPort = Pick<RepositoryReadClient, "sessionsPage" | "sessionGet">;
+type WritePort = Pick<RepositoryWriteClient, "createSession" | "transitionSession">;
+
+const context: ApplicationSessionOperationContext<Authorization> = {
+  workspaceKey: "workspace-1",
+  authorization: { principalId: "user-1" },
+};
+const workerUrl = new URL("../src/persistence-worker/worker-entry.ts", import.meta.url);
+const workerOptions = { execArgv: ["--import", "tsx"] };
+const workerTest = Number.parseInt(process.versions.node, 10) >= 24 ? test : test.skip;
+
+workerTest("Session operations run end-to-end through the Application Service and production Repository", async () => {
+  await withTempDirectory(async (directory) => {
+    const client = new PersistenceWorkerClient({
+      workerUrl,
+      databasePath: path.join(directory, "application-session.sqlite3"),
+      legacyDatabasePaths: [],
+      workerOptions,
+    });
+    await client.start();
+    try {
+      const service = new ApplicationSessionService({
+        reads: new RepositoryReadClient(client),
+        writes: new RepositoryWriteClient(client),
+        access: allowingAccess(),
+      });
+      const created = await service.create(createRequest());
+      assert.equal(created.overallStatus, "success");
+      if (created.overallStatus !== "success") assert.fail("Session creation failed");
+      const sessionId = created.value.sessionId;
+
+      const replay = await service.create(createRequest());
+      assert.equal(replay.overallStatus, "success");
+      assert.deepEqual(replay.persistence, { status: "committed", effect: "none", replayed: true });
+      const conflict = await service.create({ ...createRequest(), providerId: "other-provider" });
+      assert.equal(conflict.overallStatus, "failure");
+      assert.equal(
+        conflict.overallStatus === "failure" && conflict.error.kind === "domain" && conflict.error.code,
+        "idempotency_conflict",
+      );
+
+      const otherContext: ApplicationSessionOperationContext<Authorization> = {
+        workspaceKey: "workspace-2",
+        authorization: { principalId: "user-2" },
+      };
+      const otherService = new ApplicationSessionService({
+        reads: new RepositoryReadClient(client),
+        writes: new RepositoryWriteClient(client),
+        access: allowingAccess(),
+      });
+      const otherCreated = await otherService.create({
+        ...createRequest(),
+        context: otherContext,
+        idempotencyKey: uuid(30),
+      });
+      assert.equal(otherCreated.overallStatus, "success");
+      if (otherCreated.overallStatus !== "success") assert.fail("other workspace Session creation failed");
+      const otherSessionId = otherCreated.value.sessionId;
+
+      const listed = await service.list({ context });
+      assert.equal(listed.overallStatus, "success");
+      assert.deepEqual(listed.overallStatus === "success" && listed.value.items.map((item) => item.id), [sessionId]);
+      const foreignRead = await service.read({ context, sessionId: otherSessionId });
+      assert.equal(
+        foreignRead.overallStatus === "failure" && foreignRead.error.kind === "domain" && foreignRead.error.code,
+        "not_found",
+      );
+      const foreignArchive = await service.archive({
+        context,
+        sessionId: otherSessionId,
+        idempotencyKey: uuid(31),
+      });
+      assert.equal(
+        foreignArchive.overallStatus === "failure" &&
+          foreignArchive.error.kind === "domain" &&
+          foreignArchive.error.code,
+        "not_found",
+      );
+      const foreignClose = await service.close({
+        context,
+        sessionId: otherSessionId,
+        idempotencyKey: uuid(32),
+        expectedLifecycleStatus: "active",
+      });
+      assert.equal(
+        foreignClose.overallStatus === "failure" && foreignClose.error.kind === "domain" && foreignClose.error.code,
+        "not_found",
+      );
+      const detail = await service.read({ context, sessionId });
+      assert.equal(detail.overallStatus, "success");
+      assert.equal(detail.overallStatus === "success" && detail.value.execution.state, "not_started");
+
+      const archived = await service.archive({ context, sessionId, idempotencyKey: uuid(20) });
+      assert.equal(archived.overallStatus === "success" && archived.value.lifecycleStatus, "archived");
+      const restored = await service.unarchive({ context, sessionId, idempotencyKey: uuid(21) });
+      assert.equal(restored.overallStatus === "success" && restored.value.lifecycleStatus, "active");
+      const closed = await service.close({
+        context,
+        sessionId,
+        idempotencyKey: uuid(22),
+        expectedLifecycleStatus: "active",
+      });
+      assert.equal(closed.overallStatus === "success" && closed.value.lifecycleStatus, "closed");
+      const reopen = await service.unarchive({ context, sessionId, idempotencyKey: uuid(23) });
+      assert.equal(reopen.overallStatus, "failure");
+      assert.equal(
+        reopen.overallStatus === "failure" && reopen.error.kind === "domain" && reopen.error.code,
+        "lifecycle_conflict",
+      );
+    } finally {
+      await client.shutdown();
+    }
+  });
+});
+
+test("create validates workspace and authorization before issuing a stable Session ID", async () => {
+  const events: string[] = [];
+  const commands: SessionCreateCommand[] = [];
+  const service = createService({
+    access: allowingAccess(events),
+    writes: {
+      async createSession(command) {
+        events.push("write");
+        commands.push(command);
+        return {
+          ok: true,
+          value: {
+            sessionId: command.session.id,
+            workspaceKey: command.session.workspaceKey,
+            lifecycleStatus: "active",
+            createdAt: 100,
+          },
+          replayed: commands.length > 1,
+        };
+      },
+    },
+  });
+  const request = createRequest();
+
+  const first = await service.create(request);
+  const replay = await service.create(request);
+
+  assert.deepEqual(events, [
+    "workspace:create",
+    "authorize:create",
+    "write",
+    "workspace:create",
+    "authorize:create",
+    "write",
+  ]);
+  assert.equal(first.overallStatus, "success");
+  assert.equal(replay.overallStatus, "success");
+  assert.equal(commands[0]?.session.id, commands[1]?.session.id);
+  assert.match(commands[0]?.session.id ?? "", /^session_[0-9a-f]{64}$/);
+  assert.deepEqual(commands[0], {
+    idempotencyKey: request.idempotencyKey,
+    session: {
+      id: commands[0]?.session.id,
+      providerId: "codex",
+      workspaceKey: "workspace-1",
+      allowedAdditionalDirectories: ["C:\\workspace-shared"],
+      defaultCharacterId: "character-1",
+      maxConcurrentChildRuns: 2,
+    },
+  });
+  assert.deepEqual(first.persistence, { status: "committed", effect: "none", replayed: false });
+  assert.deepEqual(replay.persistence, { status: "committed", effect: "none", replayed: true });
+  assert.deepEqual(
+    replay.overallStatus === "success" && replay.value,
+    first.overallStatus === "success" && first.value,
+  );
+});
+
+test("request and access rejection happen before Repository access", async () => {
+  let workspaceChecks = 0;
+  let authorizationChecks = 0;
+  let writes = 0;
+  const access: ApplicationAccessValidator<Authorization> = {
+    async validateWorkspace() {
+      workspaceChecks += 1;
+      return { allowed: true };
+    },
+    async authorize() {
+      authorizationChecks += 1;
+      return {
+        allowed: false,
+        error: { code: "forbidden", message: "Operation is not permitted.", retryable: false },
+      };
+    },
+  };
+  const service = createService({
+    access,
+    writes: {
+      async createSession() {
+        writes += 1;
+        throw new Error("unreachable");
+      },
+    },
+  });
+
+  const malformed = await service.create({ ...createRequest(), idempotencyKey: "not-a-uuid" });
+  const forbidden = await service.create(createRequest());
+
+  assert.equal(malformed.overallStatus, "failure");
+  assert.equal(malformed.overallStatus === "failure" && malformed.error.kind, "request");
+  assert.deepEqual(malformed.persistence, { status: "not_attempted", effect: "none" });
+  assert.equal(forbidden.overallStatus, "failure");
+  assert.equal(forbidden.overallStatus === "failure" && forbidden.error.kind, "access");
+  assert.deepEqual(forbidden.persistence, { status: "not_attempted", effect: "none" });
+  assert.equal(workspaceChecks, 1);
+  assert.equal(authorizationChecks, 1);
+  assert.equal(writes, 0);
+});
+
+test("create rejects malformed additional directories before access validation and Repository writes", async () => {
+  let workspaceChecks = 0;
+  let authorizationChecks = 0;
+  let writes = 0;
+  const service = createService({
+    access: {
+      async validateWorkspace() {
+        workspaceChecks += 1;
+        return { allowed: true };
+      },
+      async authorize() {
+        authorizationChecks += 1;
+        return { allowed: true };
+      },
+    },
+    writes: {
+      async createSession() {
+        writes += 1;
+        throw new Error("unreachable");
+      },
+    },
+  });
+  const sparse = new Array<string>(1);
+  const oversizedItem = [`C:\\${"a".repeat(32_768)}`];
+  const tooManyItems = Array.from({ length: 1_025 }, (_, index) => `C:\\directory-${index}`);
+  const oversizedTotal = Array.from({ length: 129 }, (_, index) => `C:\\directory-${index}\\${"a".repeat(32_740)}`);
+  const invalidDirectories = [
+    [123] as unknown as readonly string[],
+    sparse,
+    ["workspace/shared"],
+    oversizedItem,
+    tooManyItems,
+    oversizedTotal,
+  ];
+
+  for (const allowedAdditionalDirectories of invalidDirectories) {
+    const response = await service.create({ ...createRequest(), allowedAdditionalDirectories });
+    assert.equal(response.overallStatus, "failure");
+    assert.equal(response.overallStatus === "failure" && response.error.kind, "request");
+    assert.deepEqual(response.persistence, { status: "not_attempted", effect: "none" });
+  }
+  assert.equal(workspaceChecks, 0);
+  assert.equal(authorizationChecks, 0);
+  assert.equal(writes, 0);
+});
+
+test("workspace rejection skips authorization and Repository access", async () => {
+  let authorizationChecks = 0;
+  let reads = 0;
+  const service = createService({
+    access: {
+      async validateWorkspace() {
+        return {
+          allowed: false,
+          error: { code: "workspace_unavailable", message: "Workspace is unavailable.", retryable: true },
+        };
+      },
+      async authorize() {
+        authorizationChecks += 1;
+        return { allowed: true };
+      },
+    },
+    reads: {
+      async sessionsPage() {
+        reads += 1;
+        return { items: [] };
+      },
+    },
+  });
+
+  const response = await service.list({ context });
+
+  assert.equal(response.overallStatus, "failure");
+  assert.deepEqual(response.overallStatus === "failure" && response.error, {
+    kind: "access",
+    code: "workspace_unavailable",
+    message: "Workspace is unavailable.",
+    retryable: true,
+  });
+  assert.equal(authorizationChecks, 0);
+  assert.equal(reads, 0);
+});
+
+test("list keeps workspace scope and represents bounded omissions as partial success", async () => {
+  let receivedWorkspace: string | undefined;
+  const service = createService({
+    reads: {
+      async sessionsPage(input) {
+        receivedWorkspace = input.workspaceKey;
+        return {
+          items: [
+            { ...sessionSummary("session-1"), internalSecret: "repository-only" },
+            { omitted: true, reason: "response_size_limit" },
+            { ...sessionSummary("session-2"), internalSecret: "repository-only" },
+          ],
+          nextCursor: "cursor-2",
+        };
+      },
+    },
+  });
+
+  const response = await service.list({ context, lifecycleStatus: "active", limit: 10 });
+
+  assert.equal(receivedWorkspace, "workspace-1");
+  assert.equal(response.overallStatus, "partial_success");
+  assert.deepEqual(response.persistence, { status: "read", effect: "none" });
+  assert.deepEqual(response.overallStatus === "partial_success" && response.value, {
+    items: [sessionSummary("session-1"), sessionSummary("session-2")],
+    nextCursor: "cursor-2",
+  });
+  assert.deepEqual(response.overallStatus === "partial_success" && response.issues, [
+    {
+      kind: "omission",
+      code: "response_size_limit",
+      message: "A Session list item was omitted because the response size limit was reached.",
+    },
+  ]);
+});
+
+test("read projects only known Application response fields", async () => {
+  const service = createService({
+    reads: {
+      async sessionGet() {
+        return {
+          session: {
+            id: "session-1",
+            providerId: "codex",
+            workspaceKey: "workspace-1",
+            allowedAdditionalDirectoriesByteLength: 24,
+            allowedAdditionalDirectoriesState: "inline",
+            allowedAdditionalDirectories: ["C:\\workspace-shared"],
+            defaultCharacterId: "character-1",
+            maxConcurrentChildRuns: 2,
+            lifecycleStatus: "active",
+            createdAt: 1,
+            updatedAt: 2,
+            lastActivityAt: 3,
+            internalSecret: "repository-only",
+          },
+          execution: {
+            state: "running",
+            activeRunId: "run-active",
+            latestRunId: "run-latest",
+            internalSecret: "repository-only",
+          },
+          internalSecret: "repository-only",
+        };
+      },
+    },
+  });
+
+  const response = await service.read({ context, sessionId: "session-1" });
+
+  assert.deepEqual(response.overallStatus === "success" && response.value, {
+    session: {
+      id: "session-1",
+      providerId: "codex",
+      workspaceKey: "workspace-1",
+      allowedAdditionalDirectoriesByteLength: 24,
+      allowedAdditionalDirectoriesState: "inline",
+      allowedAdditionalDirectories: ["C:\\workspace-shared"],
+      defaultCharacterId: "character-1",
+      maxConcurrentChildRuns: 2,
+      lifecycleStatus: "active",
+      createdAt: 1,
+      updatedAt: 2,
+      lastActivityAt: 3,
+    },
+    execution: {
+      state: "running",
+      activeRunId: "run-active",
+      latestRunId: "run-latest",
+    },
+  });
+});
+
+test("read maps scoped not_found to a domain rejection without exposing persistence transport semantics", async () => {
+  const service = createService({
+    reads: {
+      async sessionGet() {
+        throw persistenceError("not_found", "Session was not found.", false, "none");
+      },
+    },
+  });
+
+  const response = await service.read({ context, sessionId: "session-other-workspace" });
+
+  assert.equal(response.overallStatus, "failure");
+  assert.deepEqual(response.overallStatus === "failure" && response.error, {
+    kind: "domain",
+    code: "not_found",
+    message: "Session was not found.",
+    retryable: false,
+  });
+  assert.deepEqual(response.persistence, { status: "rejected", effect: "none" });
+});
+
+test("archive, unarchive, and close assemble only the allowed lifecycle commands", async () => {
+  const commands: SessionTransitionCommand[] = [];
+  const service = createService({
+    writes: {
+      async transitionSession(command) {
+        commands.push(command);
+        return {
+          ok: true,
+          value: { sessionId: command.sessionId, lifecycleStatus: command.targetLifecycleStatus, updatedAt: 200 },
+          replayed: false,
+        };
+      },
+    },
+  });
+
+  const archive = await service.archive({ context, sessionId: "session-1", idempotencyKey: uuid(2) });
+  const unarchive = await service.unarchive({ context, sessionId: "session-1", idempotencyKey: uuid(3) });
+  const closeActive = await service.close({
+    context,
+    sessionId: "session-1",
+    idempotencyKey: uuid(4),
+    expectedLifecycleStatus: "active",
+  });
+  const closeArchived = await service.close({
+    context,
+    sessionId: "session-2",
+    idempotencyKey: uuid(5),
+    expectedLifecycleStatus: "archived",
+  });
+
+  assert.deepEqual(commands, [
+    transition(uuid(2), "session-1", "active", "archived"),
+    transition(uuid(3), "session-1", "archived", "active"),
+    transition(uuid(4), "session-1", "active", "closed"),
+    transition(uuid(5), "session-2", "archived", "closed"),
+  ]);
+  for (const response of [archive, unarchive, closeActive, closeArchived]) {
+    assert.equal(response.overallStatus, "success");
+    assert.deepEqual(response.persistence, { status: "committed", effect: "none", replayed: false });
+  }
+});
+
+test("unarchive revalidates workspace and authorization on every exact retry", async () => {
+  const events: string[] = [];
+  let calls = 0;
+  const service = createService({
+    access: allowingAccess(events),
+    writes: {
+      async transitionSession(command) {
+        events.push("write");
+        calls += 1;
+        return {
+          ok: true,
+          value: { sessionId: command.sessionId, lifecycleStatus: "active", updatedAt: 200 },
+          replayed: calls > 1,
+        };
+      },
+    },
+  });
+  const request = { context, sessionId: "session-1", idempotencyKey: uuid(6) } as const;
+
+  await service.unarchive(request);
+  const replay = await service.unarchive(request);
+
+  assert.deepEqual(events, [
+    "workspace:unarchive",
+    "authorize:unarchive",
+    "write",
+    "workspace:unarchive",
+    "authorize:unarchive",
+    "write",
+  ]);
+  assert.deepEqual(replay.persistence, { status: "committed", effect: "none", replayed: true });
+});
+
+test("Repository domain rejection stays separate from persistence failure", async () => {
+  const service = createService({
+    writes: {
+      async transitionSession() {
+        return {
+          ok: false,
+          error: { code: "session_busy", message: "Session has an active Run.", retryable: true },
+          replayed: false,
+        };
+      },
+    },
+  });
+
+  const response = await service.archive({ context, sessionId: "session-1", idempotencyKey: uuid(7) });
+
+  assert.equal(response.overallStatus, "failure");
+  assert.deepEqual(response.overallStatus === "failure" && response.error, {
+    kind: "domain",
+    code: "session_busy",
+    message: "Session has an active Run.",
+    retryable: true,
+  });
+  assert.deepEqual(response.persistence, { status: "rejected", effect: "none" });
+});
+
+test("write transport failure preserves unknown effect and is never reported as success", async () => {
+  const service = createService({
+    writes: {
+      async createSession() {
+        throw persistenceError("request_timeout", "Persistence request timed out.", false, "unknown");
+      },
+    },
+  });
+
+  const response = await service.create(createRequest());
+
+  assert.equal(response.overallStatus, "failure");
+  assert.deepEqual(response.overallStatus === "failure" && response.error, {
+    kind: "persistence",
+    code: "persistence_timeout",
+    message: "Persistence request timed out.",
+    retryable: false,
+    effect: "unknown",
+  });
+  assert.deepEqual(response.persistence, { status: "failed", effect: "unknown" });
+});
+
+test("unexpected validator failures stay application failures and do not claim persistence effects", async () => {
+  const service = createService({
+    access: {
+      async validateWorkspace() {
+        throw new Error("validator unavailable");
+      },
+      async authorize() {
+        return { allowed: true };
+      },
+    },
+  });
+
+  const response = await service.list({ context });
+
+  assert.equal(response.overallStatus, "failure");
+  assert.deepEqual(response.overallStatus === "failure" && response.error, {
+    kind: "application",
+    code: "internal_error",
+    message: "Application Service could not complete the operation.",
+    retryable: false,
+  });
+  assert.deepEqual(response.persistence, { status: "not_attempted", effect: "none" });
+});
+
+test("unexpected write failures preserve unknown commit effect", async () => {
+  const service = createService({
+    writes: {
+      async transitionSession() {
+        throw new Error("unexpected adapter failure");
+      },
+    },
+  });
+
+  const response = await service.archive({ context, sessionId: "session-1", idempotencyKey: uuid(8) });
+
+  assert.equal(response.overallStatus, "failure");
+  assert.equal(response.overallStatus === "failure" && response.error.kind, "application");
+  assert.deepEqual(response.persistence, { status: "failed", effect: "unknown" });
+});
+
+function createService(
+  overrides: {
+    access?: ApplicationAccessValidator<Authorization>;
+    reads?: Partial<ReadPort>;
+    writes?: Partial<WritePort>;
+  } = {},
+): ApplicationSessionService<Authorization> {
+  const reads: ReadPort = {
+    async sessionsPage() {
+      return { items: [] };
+    },
+    async sessionGet() {
+      return {
+        session: {
+          id: "session-1",
+          providerId: "codex",
+          workspaceKey: "workspace-1",
+          allowedAdditionalDirectoriesByteLength: 2,
+          allowedAdditionalDirectoriesState: "inline",
+          allowedAdditionalDirectories: [],
+          defaultCharacterId: "character-1",
+          maxConcurrentChildRuns: 2,
+          lifecycleStatus: "active",
+          createdAt: 1,
+          updatedAt: 1,
+          lastActivityAt: 1,
+        },
+        execution: { state: "not_started" },
+      };
+    },
+    ...overrides.reads,
+  };
+  const writes: WritePort = {
+    async createSession(command) {
+      return {
+        ok: true,
+        value: {
+          sessionId: command.session.id,
+          workspaceKey: command.session.workspaceKey,
+          lifecycleStatus: "active",
+          createdAt: 1,
+        },
+        replayed: false,
+      };
+    },
+    async transitionSession(command) {
+      return {
+        ok: true,
+        value: { sessionId: command.sessionId, lifecycleStatus: command.targetLifecycleStatus, updatedAt: 1 },
+        replayed: false,
+      };
+    },
+    ...overrides.writes,
+  };
+  return new ApplicationSessionService({
+    reads,
+    writes,
+    access: overrides.access ?? allowingAccess(),
+  });
+}
+
+function allowingAccess(events: string[] = []): ApplicationAccessValidator<Authorization> {
+  return {
+    async validateWorkspace(input) {
+      events.push(`workspace:${input.operation}`);
+      return { allowed: true };
+    },
+    async authorize(input) {
+      events.push(`authorize:${input.operation}`);
+      return { allowed: true };
+    },
+  };
+}
+
+function createRequest() {
+  return {
+    context,
+    idempotencyKey: uuid(1),
+    providerId: "codex",
+    allowedAdditionalDirectories: ["C:\\workspace-shared"],
+    defaultCharacterId: "character-1",
+    maxConcurrentChildRuns: 2,
+  } as const;
+}
+
+function sessionSummary(id: string) {
+  return {
+    id,
+    workspaceKey: "workspace-1",
+    defaultCharacterId: "character-1",
+    lifecycleStatus: "active" as const,
+    createdAt: 1,
+    updatedAt: 1,
+    lastActivityAt: 1,
+    executionState: "not_started" as const,
+    stateChangedAt: 1,
+  };
+}
+
+function transition(
+  idempotencyKey: string,
+  sessionId: string,
+  expectedLifecycleStatus: "active" | "archived",
+  targetLifecycleStatus: "active" | "archived" | "closed",
+): SessionTransitionCommand {
+  return { sessionId, workspaceKey: "workspace-1", idempotencyKey, expectedLifecycleStatus, targetLifecycleStatus };
+}
+
+function persistenceError(
+  code: ConstructorParameters<typeof PersistenceClientError>[0]["code"],
+  message: string,
+  retryable: boolean,
+  effect: ConstructorParameters<typeof PersistenceClientError>[0]["effect"],
+): PersistenceClientError {
+  return new PersistenceClientError({ code, message, retryable, effect });
+}
+
+function uuid(value: number): string {
+  return `018f1f4e-7f0a-7000-8000-${value.toString().padStart(12, "0")}`;
+}
+
+async function withTempDirectory(run: (directory: string) => Promise<void>): Promise<void> {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "withmate-application-session-"));
+  try {
+    await run(directory);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
