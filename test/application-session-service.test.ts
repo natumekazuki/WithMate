@@ -286,6 +286,36 @@ test("request and access rejection happen before Repository access", async () =>
   assert.equal(writes, 0);
 });
 
+test("access rejection projects only known public fields", async () => {
+  const accessError = {
+    code: "forbidden",
+    message: "Operation is not permitted.",
+    retryable: false,
+    kind: "persistence",
+    internalSecret: "authorization-only",
+  } as const;
+  const service = createService({
+    access: {
+      async validateWorkspace() {
+        return { allowed: true };
+      },
+      async authorize() {
+        return { allowed: false, error: accessError };
+      },
+    },
+  });
+
+  const response = await service.list({ context });
+
+  assert.deepEqual(response.overallStatus === "failure" && response.error, {
+    kind: "access",
+    code: "forbidden",
+    message: "Operation is not permitted.",
+    retryable: false,
+  });
+  assert.deepEqual(response.persistence, { status: "not_attempted", effect: "none" });
+});
+
 test("every operation returns a request envelope for malformed transport input before calling ports", async () => {
   let accessCalls = 0;
   let readCalls = 0;

@@ -56,42 +56,25 @@ const repositoryReadClient = path.join(sourceRoot, "main", "repository-read-clie
 const persistenceWorkerClient = path.join(sourceRoot, "main", "persistence-worker-client.ts");
 const publicMainBarrel = path.join(sourceRoot, "main", "index.ts");
 const rawWriteFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-persistence-write.ts");
+const repositoryWriteFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-repository-write.ts");
 const rawReadFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-repository-read.ts");
 const testConfig = ts.getParsedCommandLineOfConfigFile(path.join(root, "tsconfig.test.json"), {}, ts.sys);
 if (testConfig === undefined) {
   throw new Error("tsconfig.test.json could not be parsed for module-boundary validation.");
 }
 const typeProgram = ts.createProgram({
-  rootNames: [...listSourceFiles(sourceRoot), rawWriteFixture, rawReadFixture],
+  rootNames: [...listSourceFiles(sourceRoot), rawWriteFixture, repositoryWriteFixture, rawReadFixture],
   options: testConfig.options,
 });
 const typeChecker = typeProgram.getTypeChecker();
-const repositoryWriteMethods = new Set([
-  "createSession",
-  "transitionSession",
-  "deleteSessionSubtree",
-  "completeSessionDeletionCleanup",
-  "repairStartupState",
-  "admitNormalRun",
-  "admitRetryRun",
-  "startChild",
-  "resolveProviderBinding",
-  "beginRunDispatch",
-  "resolveRunDispatch",
-  "admitRunInput",
-  "beginRunInput",
-  "resolveRunInput",
-  "appendRunOutput",
-  "resolvePendingRunOutput",
-  "completeRun",
-  "collectChildResult",
-]);
 
 for (const file of listSourceFiles(sourceRoot)) {
   const sourceRelativePath = path.relative(sourceRoot, file);
   if (
     file === applicationWriteOwner ||
     file === repositoryWriteClient ||
+    file === repositoryReadClient ||
+    file === persistenceWorkerClient ||
     sourceRelativePath === "persistence-worker" ||
     sourceRelativePath.startsWith(`persistence-worker${path.sep}`)
   ) {
@@ -154,17 +137,21 @@ for (const file of listSourceFiles(sourceRoot)) {
         }
       }
     }
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      repositoryWriteMethods.has(node.expression.name.text)
-    ) {
+    if (isRepositoryClientDynamicImport(node, "repository-write-client.js")) {
       violations.push(
-        `${path.relative(root, file)} calls Repository write method ${JSON.stringify(node.expression.name.text)}`,
+        `${path.relative(root, file)} dynamically imports RepositoryWriteClient outside the Application Service`,
       );
     }
-    if (isRawPersistenceWriteRequest(node)) {
-      violations.push(`${path.relative(root, file)} sends a raw PersistenceWorkerClient write request`);
+    if (isRepositoryClientDynamicImport(node, "repository-read-client.js")) {
+      violations.push(
+        `${path.relative(root, file)} dynamically imports RepositoryReadClient outside the Application Service`,
+      );
+    }
+    if (isRepositoryWriteRequest(node)) {
+      violations.push(`${path.relative(root, file)} calls RepositoryWriteClient outside the Application Service`);
+    }
+    if (isRawPersistenceRequest(node)) {
+      violations.push(`${path.relative(root, file)} sends a raw PersistenceWorkerClient request`);
     }
     if (isRepositoryReadRequest(node)) {
       violations.push(`${path.relative(root, file)} calls RepositoryReadClient outside the Application Service`);
@@ -172,6 +159,19 @@ for (const file of listSourceFiles(sourceRoot)) {
     ts.forEachChild(node, inspect);
   };
   inspect(sourceFile);
+}
+
+{
+  const fixtureSource = typeProgram.getSourceFile(repositoryWriteFixture);
+  if (
+    fixtureSource === undefined ||
+    !containsRepositoryWriteRequest(fixtureSource) ||
+    !containsRepositoryClientDynamicImport(fixtureSource, "repository-write-client.js")
+  ) {
+    violations.push(
+      `${path.relative(root, repositoryWriteFixture)} no longer exercises the Repository write boundary rule`,
+    );
+  }
 }
 
 {
@@ -183,7 +183,7 @@ for (const file of listSourceFiles(sourceRoot)) {
 
 {
   const fixtureSource = typeProgram.getSourceFile(rawWriteFixture);
-  if (fixtureSource === undefined || !containsRawPersistenceWriteRequest(fixtureSource)) {
+  if (fixtureSource === undefined || !containsRawPersistenceRequest(fixtureSource)) {
     violations.push(`${path.relative(root, rawWriteFixture)} no longer exercises the raw write boundary rule`);
   }
 }
@@ -226,24 +226,8 @@ for (const file of [applicationWriteOwner]) {
   }
 }
 
-function isRawPersistenceWriteRequest(node) {
-  const requestMethod =
-    ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
-      ? node.expression.name.text === "request"
-      : ts.isCallExpression(node) &&
-          ts.isElementAccessExpression(node.expression) &&
-          node.expression.argumentExpression !== undefined &&
-          ts.isStringLiteral(node.expression.argumentExpression)
-        ? node.expression.argumentExpression.text === "request"
-        : false;
-  if (
-    !ts.isCallExpression(node) ||
-    !requestMethod ||
-    node.arguments[1] === undefined ||
-    !isWriteLiteral(node.arguments[1])
-  ) {
-    return false;
-  }
+function isRawPersistenceRequest(node) {
+  if (!ts.isCallExpression(node) || !isMethodCall(node, "request")) return false;
   const signatureDeclaration = typeChecker.getResolvedSignature(node)?.declaration;
   return (
     signatureDeclaration !== undefined &&
@@ -251,16 +235,65 @@ function isRawPersistenceWriteRequest(node) {
   );
 }
 
-function isWriteLiteral(node) {
-  if (ts.isStringLiteral(node)) return node.text === "write";
-  const type = typeChecker.getTypeAtLocation(node);
-  return type.isStringLiteral() && type.value === "write";
+function isMethodCall(node, methodName) {
+  if (ts.isPropertyAccessExpression(node.expression)) return node.expression.name.text === methodName;
+  return (
+    ts.isElementAccessExpression(node.expression) &&
+    node.expression.argumentExpression !== undefined &&
+    ts.isStringLiteral(node.expression.argumentExpression) &&
+    node.expression.argumentExpression.text === methodName
+  );
 }
 
-function containsRawPersistenceWriteRequest(sourceFile) {
+function isRepositoryClientDynamicImport(node, clientFileName) {
+  if (!ts.isCallExpression(node) || node.expression.kind !== ts.SyntaxKind.ImportKeyword) return false;
+  const moduleSpecifier = node.arguments[0];
+  return (
+    moduleSpecifier !== undefined &&
+    ts.isStringLiteral(moduleSpecifier) &&
+    moduleSpecifier.text.endsWith(`/${clientFileName}`)
+  );
+}
+
+function containsRepositoryClientDynamicImport(sourceFile, clientFileName) {
   let found = false;
   const inspect = (node) => {
-    if (isRawPersistenceWriteRequest(node)) {
+    if (isRepositoryClientDynamicImport(node, clientFileName)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, inspect);
+  };
+  inspect(sourceFile);
+  return found;
+}
+
+function isRepositoryWriteRequest(node) {
+  if (!ts.isCallExpression(node)) return false;
+  const signatureDeclaration = typeChecker.getResolvedSignature(node)?.declaration;
+  return (
+    signatureDeclaration !== undefined &&
+    path.resolve(signatureDeclaration.getSourceFile().fileName) === path.resolve(repositoryWriteClient)
+  );
+}
+
+function containsRepositoryWriteRequest(sourceFile) {
+  let found = false;
+  const inspect = (node) => {
+    if (isRepositoryWriteRequest(node)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, inspect);
+  };
+  inspect(sourceFile);
+  return found;
+}
+
+function containsRawPersistenceRequest(sourceFile) {
+  let found = false;
+  const inspect = (node) => {
+    if (isRawPersistenceRequest(node)) {
       found = true;
       return;
     }

@@ -412,7 +412,12 @@ function accessFailure(
 ): ApplicationOperationResponse<never> {
   return {
     overallStatus: "failure",
-    error: { kind: "access", ...error },
+    error: {
+      kind: "access",
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+    },
     persistence: { status: "not_attempted", effect: "none" },
   };
 }
