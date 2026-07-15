@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { JSDOM } from "jsdom";
-import React, { createRef } from "react";
+import React, { createRef, useState, type ComponentType } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -13,6 +13,9 @@ import {
   SessionMessageColumn,
   type SessionMessageColumnProps,
 } from "../../src/session-components.js";
+import { StableSessionMessageColumn } from "../../src/chat/chat-window.js";
+import { useCompanionCharacterProfile } from "../../src/companion-character-profile.js";
+import type { CompanionSession } from "../../src/companion-state.js";
 import { buildContextPaneProjection } from "../../src/session-ui-projection.js";
 import type { CharacterProfile, LiveApprovalRequest, LiveElicitationRequest, Message } from "../../src/app-state.js";
 
@@ -45,6 +48,59 @@ function createCharacterProfile(): CharacterProfile {
       contextEmpty: ["context usage はまだありません"],
     },
   };
+}
+
+const companionSession: CompanionSession = {
+  id: "companion-session-1",
+  groupId: "group-1",
+  taskTitle: "Companion session",
+  status: "active",
+  repoRoot: "C:/workspace/WithMate",
+  focusPath: "",
+  targetBranch: "master",
+  baseSnapshotRef: "master",
+  baseSnapshotCommit: "abc123",
+  companionBranch: "companion/test",
+  worktreePath: "C:/workspace/WithMate-companion",
+  selectedPaths: [],
+  changedFiles: [],
+  siblingWarnings: [],
+  allowedAdditionalDirectories: [],
+  runState: "idle",
+  threadId: "thread-1",
+  provider: "codex",
+  catalogRevision: 1,
+  model: "gpt-test",
+  reasoningEffort: "low",
+  customAgentName: "",
+  approvalMode: "never",
+  codexSandboxMode: "workspace-write",
+  characterId: "companion",
+  character: "Companion",
+  characterRoleMarkdown: "",
+  characterIconPath: "",
+  characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+  characterRuntimeSnapshot: null,
+  createdAt: "2026-05-25T00:00:00.000Z",
+  updatedAt: "2026-05-25T00:00:00.000Z",
+  messages: [],
+};
+
+function CompanionDraftMessageColumn(props: SessionMessageColumnProps) {
+  const [draft, setDraft] = useState("");
+  const character = useCompanionCharacterProfile(companionSession);
+  assert.ok(character);
+
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(StableSessionMessageColumn, { ...props, character }),
+    React.createElement(
+      "button",
+      { type: "button", onClick: () => setDraft((current) => `${current}a`) },
+      `draft:${draft}`,
+    ),
+  );
 }
 
 function createMessages(count: number): Message[] {
@@ -185,6 +241,14 @@ type MountedSessionMessageColumn = {
   dom: JSDOM;
   messageListRef: React.RefObject<HTMLDivElement | null>;
   root: Root;
+  rerender: (callbacks: {
+    getChangedFilesEmptyText?: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
+    isMessageListFollowing?: boolean;
+    messages?: Message[];
+    onCopyMessageText?: (text: string) => void;
+    onQuoteMessageText?: (text: string) => void;
+  }) => Promise<void>;
+  resizeMessageRow: (index: number, height: number) => Promise<void>;
   cleanup: () => Promise<void>;
 };
 
@@ -192,6 +256,9 @@ async function mountSessionMessageColumn(options: {
   messages: Message[];
   onCopyMessageText?: (text: string) => void;
   onQuoteMessageText?: (text: string) => void;
+  expandedArtifacts?: Record<string, boolean>;
+  getChangedFilesEmptyText?: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
+  component?: ComponentType<SessionMessageColumnProps>;
 }): Promise<MountedSessionMessageColumn> {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
@@ -204,6 +271,103 @@ async function mountSessionMessageColumn(options: {
   const container = dom.window.document.getElementById("root") as HTMLElement;
   const messageListRef = createRef<HTMLDivElement>();
   const root = createRoot(container);
+  const originalGetBoundingClientRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
+  const originalOffsetHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "offsetHeight");
+  const originalClientHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "clientHeight");
+  const originalScrollHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "scrollHeight");
+  const originalScrollTo = dom.window.HTMLElement.prototype.scrollTo;
+  const originalResizeObserver = dom.window.ResizeObserver;
+  const messageRowHeights = new Map<number, number>();
+  const resizeObservers: Array<{
+    callback: ResizeObserverCallback;
+    elements: Set<Element>;
+  }> = [];
+
+  class TestResizeObserver implements ResizeObserver {
+    private readonly registration: (typeof resizeObservers)[number];
+
+    constructor(callback: ResizeObserverCallback) {
+      this.registration = { callback, elements: new Set() };
+      resizeObservers.push(this.registration);
+    }
+
+    observe(target: Element): void {
+      this.registration.elements.add(target);
+    }
+
+    unobserve(target: Element): void {
+      this.registration.elements.delete(target);
+    }
+
+    disconnect(): void {
+      this.registration.elements.clear();
+    }
+
+    takeRecords(): ResizeObserverEntry[] {
+      return [];
+    }
+  }
+
+  Object.defineProperty(dom.window, "ResizeObserver", {
+    configurable: true,
+    value: TestResizeObserver,
+  });
+  dom.window.HTMLElement.prototype.scrollTo = function scrollTo(
+    optionsOrX?: ScrollToOptions | number,
+    y?: number,
+  ): void {
+    if (typeof optionsOrX === "number") {
+      this.scrollLeft = optionsOrX;
+      this.scrollTop = y ?? this.scrollTop;
+      return;
+    }
+    if (typeof optionsOrX?.left === "number") {
+      this.scrollLeft = optionsOrX.left;
+    }
+    if (typeof optionsOrX?.top === "number") {
+      this.scrollTop = optionsOrX.top;
+    }
+  };
+
+  dom.window.HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    if (this.classList.contains("session-message-list")) {
+      return createRect({ left: 0, top: 0, width: 960, height: 720 });
+    }
+    if (this.classList.contains("session-message-virtual-row")) {
+      const index = Number(this.getAttribute("data-index"));
+      return createRect({ left: 0, top: 0, width: 960, height: messageRowHeights.get(index) ?? 168 });
+    }
+    return originalGetBoundingClientRect.call(this);
+  };
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get() {
+      if (this.classList.contains("session-message-list")) {
+        return 720;
+      }
+      if (this.classList.contains("session-message-virtual-row")) {
+        const index = Number(this.getAttribute("data-index"));
+        return messageRowHeights.get(index) ?? 168;
+      }
+      return 0;
+    },
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", {
+    configurable: true,
+    get() {
+      return this.classList.contains("session-message-list") ? 720 : 0;
+    },
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollHeight", {
+    configurable: true,
+    get() {
+      if (!this.classList.contains("session-message-list")) {
+        return 0;
+      }
+      const items = this.querySelector(".session-message-list-window-items") as HTMLElement | null;
+      return Number.parseFloat(items?.style.height ?? "0") || 0;
+    },
+  });
 
   Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
   Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
@@ -213,47 +377,98 @@ async function mountSessionMessageColumn(options: {
   Object.defineProperty(globalThis, "MouseEvent", { configurable: true, value: dom.window.MouseEvent });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
 
-  await act(async () => {
-    root.render(
-      React.createElement(SessionMessageColumn, {
-        sessionId: "session-1",
-        character: createCharacterProfile(),
-        messages: options.messages,
-        expandedArtifacts: {},
-        messageListRef,
-        isRunning: false,
-        liveApprovalRequest: null,
-        approvalActionRequestId: null,
-        liveElicitationRequest: null,
-        elicitationActionRequestId: null,
-        liveRunAssistantText: "",
-        hasLiveRunAssistantText: false,
-        liveRunErrorMessage: "",
-        isMessageListFollowing: false,
-        onMessageListScroll() {},
-        onToggleArtifact() {},
-        onOpenDiff() {},
-        onResolveLiveApproval() {},
-        onResolveLiveElicitation() {},
-        onOpenPath: undefined,
-        getChangedFilesEmptyText() {
-          return "変更ファイルはありません";
-        },
-        onCopyMessageText: options.onCopyMessageText,
-        onQuoteMessageText: options.onQuoteMessageText,
-      }),
-    );
-  });
+  const MessageColumn = options.component ?? SessionMessageColumn;
+  const character = createCharacterProfile();
+  const expandedArtifacts = options.expandedArtifacts ?? {};
+  const defaultGetChangedFilesEmptyText = () => "変更ファイルはありません";
+  const renderMessageColumn = async (callbacks: {
+    getChangedFilesEmptyText?: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
+    isMessageListFollowing?: boolean;
+    messages?: Message[];
+    onCopyMessageText?: (text: string) => void;
+    onQuoteMessageText?: (text: string) => void;
+  }) => {
+    await act(async () => {
+      root.render(
+        React.createElement(MessageColumn, {
+          sessionId: "session-1",
+          character,
+          messages: callbacks.messages ?? options.messages,
+          expandedArtifacts,
+          messageListRef,
+          isRunning: false,
+          liveApprovalRequest: null,
+          approvalActionRequestId: null,
+          liveElicitationRequest: null,
+          elicitationActionRequestId: null,
+          liveRunAssistantText: "",
+          hasLiveRunAssistantText: false,
+          liveRunErrorMessage: "",
+          isMessageListFollowing: callbacks.isMessageListFollowing ?? false,
+          onMessageListScroll() {},
+          onToggleArtifact() {},
+          onOpenDiff() {},
+          onResolveLiveApproval() {},
+          onResolveLiveElicitation() {},
+          onOpenPath: undefined,
+          getChangedFilesEmptyText: callbacks.getChangedFilesEmptyText ?? defaultGetChangedFilesEmptyText,
+          onCopyMessageText: callbacks.onCopyMessageText,
+          onQuoteMessageText: callbacks.onQuoteMessageText,
+        }),
+      );
+    });
+  };
+
+  await renderMessageColumn(options);
 
   return {
     container,
     dom,
     messageListRef,
     root,
+    rerender: renderMessageColumn,
+    async resizeMessageRow(index, height) {
+      messageRowHeights.set(index, height);
+      const row = container.querySelector(`.session-message-virtual-row[data-index="${index}"]`);
+      assert.ok(row, `message row ${index} が描画されていない`);
+      const entry = {
+        target: row,
+        borderBoxSize: [{ inlineSize: 960, blockSize: height }],
+        contentRect: createRect({ left: 0, top: 0, width: 960, height }),
+      } as unknown as ResizeObserverEntry;
+      await act(async () => {
+        for (const observer of resizeObservers) {
+          if (observer.elements.has(row)) {
+            observer.callback([entry], observer as unknown as ResizeObserver);
+          }
+        }
+      });
+    },
     async cleanup() {
       await act(async () => {
         root.unmount();
       });
+      dom.window.HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+      if (originalOffsetHeight) {
+        Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", originalOffsetHeight);
+      } else {
+        delete (dom.window.HTMLElement.prototype as unknown as { offsetHeight?: number }).offsetHeight;
+      }
+      if (originalClientHeight) {
+        Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", originalClientHeight);
+      } else {
+        delete (dom.window.HTMLElement.prototype as unknown as { clientHeight?: number }).clientHeight;
+      }
+      if (originalScrollHeight) {
+        Object.defineProperty(dom.window.HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      } else {
+        delete (dom.window.HTMLElement.prototype as unknown as { scrollHeight?: number }).scrollHeight;
+      }
+      Object.defineProperty(dom.window, "ResizeObserver", {
+        configurable: true,
+        value: originalResizeObserver,
+      });
+      dom.window.HTMLElement.prototype.scrollTo = originalScrollTo;
       dom.window.close();
       Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
       Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
@@ -266,7 +481,7 @@ async function mountSessionMessageColumn(options: {
   };
 }
 
-test("SessionMessageColumn は大量メッセージを最新 chunk に絞って描画する", () => {
+test("SessionMessageColumn は全履歴を仮想化し、最新メッセージ周辺だけを描画する", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(100),
     isMessageListFollowing: false,
@@ -277,7 +492,181 @@ test("SessionMessageColumn は大量メッセージを最新 chunk に絞って�
   assert.ok(messageRowCount < 100, "100件全て message-row が描画されている");
   assert.doesNotMatch(html, /message 1<\/p>/);
   assert.match(html, /message 100<\/p>/);
-  assert.match(html, /以前のメッセージを読み込む/);
+  assert.match(html, /session-message-virtual-row/);
+  assert.doesNotMatch(html, /以前のメッセージを読み込む/);
+});
+
+test("SessionMessageColumn は上方向へスクロールして先頭メッセージへ到達できる", async () => {
+  const mounted = await mountSessionMessageColumn({ messages: createMessages(100) });
+
+  try {
+    const messageList = mounted.messageListRef.current;
+    assert.ok(messageList);
+    assert.doesNotMatch(mounted.container.textContent ?? "", /message 1(?:\D|$)/);
+
+    await act(async () => {
+      messageList.scrollTop = 0;
+      messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
+    });
+
+    assert.match(mounted.container.textContent ?? "", /message 1(?:\D|$)/);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+test("SessionMessageColumn は上側rowの可変高再計測後も表示位置を維持する", async () => {
+  const mounted = await mountSessionMessageColumn({ messages: createMessages(100) });
+
+  try {
+    const messageList = mounted.messageListRef.current;
+    assert.ok(messageList);
+    await act(async () => {
+      messageList.scrollTop = 0;
+      messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
+      messageList.scrollTop = 4_000;
+      messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
+      await new Promise((resolve) => mounted.dom.window.setTimeout(resolve, 180));
+    });
+    const renderedRows = Array.from(
+      mounted.container.querySelectorAll<HTMLElement>(".session-message-virtual-row"),
+    );
+    const rowAboveViewport = renderedRows.find((row) => {
+      const start = Number.parseFloat(row.style.transform.match(/translateY\(([^p]+)px\)/)?.[1] ?? "0");
+      return start < messageList.scrollTop;
+    });
+    assert.ok(rowAboveViewport);
+    const rowIndex = Number(rowAboveViewport.dataset.index);
+    const scrollTopBeforeResize = messageList.scrollTop;
+
+    await mounted.resizeMessageRow(rowIndex, 268);
+
+    assert.equal(messageList.scrollTop, scrollTopBeforeResize + 100);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+test("SessionMessageColumn は末尾追従中だけappend後も末尾へ追従する", async () => {
+  const initialMessages = createMessages(20);
+  const mounted = await mountSessionMessageColumn({
+    messages: initialMessages,
+  });
+
+  try {
+    const messageList = mounted.messageListRef.current;
+    assert.ok(messageList);
+    await act(async () => {
+      messageList.scrollTop = messageList.scrollHeight - messageList.clientHeight;
+      messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
+    });
+    const followingScrollTop = messageList.scrollTop;
+    const appendedMessages = [...initialMessages, { role: "assistant" as const, text: "appended at end" }];
+
+    await mounted.rerender({
+      isMessageListFollowing: true,
+      messages: appendedMessages,
+    });
+
+    assert.ok(messageList.scrollTop > followingScrollTop);
+    assert.match(mounted.container.textContent ?? "", /appended at end/);
+
+    await act(async () => {
+      messageList.scrollTop = 300;
+      messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
+    });
+    const nonFollowingScrollTop = messageList.scrollTop;
+
+    await mounted.rerender({
+      messages: [...appendedMessages, { role: "user", text: "append while reading history" }],
+    });
+
+    assert.equal(messageList.scrollTop, nonFollowingScrollTop);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+test("StableSessionMessageColumn は callback の再生成だけでは既存 message を再描画しない", async () => {
+  let messageTextReadCount = 0;
+  const message = {
+    role: "assistant" as const,
+    get text() {
+      messageTextReadCount += 1;
+      return "stable assistant message";
+    },
+  };
+  const mounted = await mountSessionMessageColumn({
+    messages: [message],
+    component: StableSessionMessageColumn,
+    onCopyMessageText() {},
+  });
+
+  try {
+    const initialReadCount = messageTextReadCount;
+    assert.ok(initialReadCount > 0);
+
+    await mounted.rerender({ onCopyMessageText() {} });
+
+    assert.equal(messageTextReadCount, initialReadCount);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+test("Companion draft 更新では既存 message column を再描画しない", async () => {
+  let messageTextReadCount = 0;
+  const message = {
+    role: "assistant" as const,
+    get text() {
+      messageTextReadCount += 1;
+      return "stable companion message";
+    },
+  };
+  const mounted = await mountSessionMessageColumn({
+    messages: [message],
+    component: CompanionDraftMessageColumn,
+  });
+
+  try {
+    const initialReadCount = messageTextReadCount;
+    assert.ok(initialReadCount > 0);
+    const draftButton = Array.from(mounted.container.querySelectorAll("button"))
+      .find((button) => button.textContent?.startsWith("draft:"));
+    assert.ok(draftButton);
+
+    await act(async () => {
+      draftButton.dispatchEvent(new mounted.dom.window.MouseEvent("click", { bubbles: true }));
+    });
+
+    assert.equal(messageTextReadCount, initialReadCount);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+test("StableSessionMessageColumn は描画用 callback の更新を空表示文言へ反映する", async () => {
+  const message = createArtifactMessage();
+  message.artifact!.changedFiles = [];
+  const mounted = await mountSessionMessageColumn({
+    messages: [message],
+    expandedArtifacts: { "session-1-0": true },
+    component: StableSessionMessageColumn,
+    getChangedFilesEmptyText: () => "変更前の空表示",
+  });
+
+  try {
+    assert.match(mounted.container.textContent ?? "", /変更前の空表示/);
+
+    await mounted.rerender({
+      getChangedFilesEmptyText: () => "変更後の空表示",
+    });
+
+    assert.doesNotMatch(mounted.container.textContent ?? "", /変更前の空表示/);
+    assert.match(mounted.container.textContent ?? "", /変更後の空表示/);
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
 test("SessionMessageColumn は未追従時に message list 内の jump UI を描画しない", () => {
@@ -458,6 +847,7 @@ test("SessionMessageColumn は Auxiliary transcript group を message list 内�
 
   assert.match(html, /auxiliary-message-group-label/);
   assert.match(html, /auxiliary-message-group-item/);
+  assert.match(html, /session-message-virtual-row auxiliary-message-group-continues/);
   assert.match(html, />Auxiliary</);
   assert.doesNotMatch(html, />Closed</);
   assert.ok(

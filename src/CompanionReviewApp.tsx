@@ -54,11 +54,11 @@ import type { CompanionMergeRunSummary, CompanionSession, CompanionSessionSummar
 import { createCompanionSessionSummary } from "./companion-state.js";
 import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
 import {
-  buildCompanionCharacterProfile,
   buildCompanionChatSnapshot,
   type CompanionSessionWindowView,
   getCompanionWindowViewFromSearch,
 } from "./companion-session-mode-adapter.js";
+import { useCompanionCharacterProfile } from "./companion-character-profile.js";
 import type { ChangedFile, DiscoveredCustomAgent, DiscoveredSkill } from "./runtime-state.js";
 import type {
   CompanionMergeReadinessIssue,
@@ -218,6 +218,10 @@ import {
   type ContextPaneTabKey,
 } from "./session-ui-projection.js";
 import { buildCompanionAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
+import {
+  useCompanionAuxiliaryRuntimeSession,
+  useMessageListAuxiliarySessions,
+} from "./auxiliary-render-projections.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import { fileKindLabel } from "./ui-utils.js";
 import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
@@ -572,7 +576,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }, [activeAuxiliarySession]);
 
   useEffect(() => {
-    setComposerPreview(createEmptyComposerPreview());
+    setComposerPreview((current) => (
+      current.attachments.length === 0 && current.errors.length === 0
+        ? current
+        : createEmptyComposerPreview()
+    ));
   }, [activeAuxiliarySession?.composerDraft, composerText]);
 
   useEffect(() => {
@@ -660,24 +668,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }, [withmateApi]);
 
   const activeRunSessionId = activeAuxiliarySession?.id ?? snapshot?.session.id ?? null;
-  const displayedSession = useMemo(
-    () => snapshot
-      ? (activeAuxiliarySession
-        ? buildCompanionAuxiliaryRuntimeSession(snapshot.session, activeAuxiliarySession)
-        : snapshot.session)
-      : null,
-    [activeAuxiliarySession, snapshot],
+  const displayedSession = useCompanionAuxiliaryRuntimeSession(
+    snapshot?.session ?? null,
+    activeAuxiliarySession,
   );
   const isAuxiliaryMode = activeAuxiliarySession?.status === "active";
   const activeComposerText = activeAuxiliarySession?.composerDraft ?? composerText;
   const selectedSessionLiveRun =
     activeRunSessionId !== null && liveRunState.ownerSessionId === activeRunSessionId ? liveRunState.state : null;
-  const projectedAuxiliarySessions = useMemo(
-    () => [
-      ...closedAuxiliarySessions,
-      ...(activeAuxiliarySession ? [activeAuxiliarySession] : []),
-    ],
-    [activeAuxiliarySession, closedAuxiliarySessions],
+  const projectedAuxiliarySessions = useMessageListAuxiliarySessions(
+    closedAuxiliarySessions,
+    activeAuxiliarySession,
   );
   const liveAssistantMessageIndex = useMemo(
     () =>
@@ -1366,7 +1367,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       }),
     [activeComposerText, isSelectedSessionRunning],
   );
-  const companionCharacterProfile = displayedSession ? buildCompanionCharacterProfile(displayedSession) : null;
+  const companionCharacterProfile = useCompanionCharacterProfile(displayedSession ?? snapshot?.session ?? null);
   const selectedCustomAgent = useMemo(() => {
     if (!displayedSession?.customAgentName.trim()) {
       return null;
@@ -2930,7 +2931,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       <>
       <ChatWindow {...buildCompanionChatWindowProps({
         session: displayedSession ?? snapshot.session,
-        character: companionCharacterProfile ?? buildCompanionCharacterProfile(displayedSession ?? snapshot.session),
+        character: companionCharacterProfile!,
         displayedMessages: messageListMessages,
         displayedMessageKeys: messageListKeys,
         displayedMessageGroups: messageListGroups,

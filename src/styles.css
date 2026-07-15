@@ -4286,24 +4286,29 @@ button:disabled {
 
 .session-message-list-window {
   display: grid;
-  min-height: 0;
-}
-
-.session-message-list-window-items {
-  display: grid;
   gap: 12px;
   min-height: 0;
 }
 
-.message-history-load-more {
-  justify-self: center;
-  width: fit-content;
-  padding: 8px 12px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--character-main) 26%, rgba(203, 213, 225, 0.24));
-  background: color-mix(in srgb, var(--character-main-soft) 42%, rgba(15, 19, 26, 0.94));
-  color: var(--ink);
-  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
+.session-message-list-window-items {
+  min-height: 0;
+  width: 100%;
+}
+
+.session-message-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  display: grid;
+  gap: 12px;
+  box-sizing: border-box;
+  padding-bottom: 12px;
+}
+
+.session-message-virtual-row.auxiliary-message-group-continues,
+.session-message-virtual-row.session-message-virtual-row-end {
+  padding-bottom: 0;
 }
 
 .message-list-bottom-anchor {

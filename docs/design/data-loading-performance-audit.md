@@ -9,7 +9,7 @@
 1. **`sessions` の全量取得で `messages_json` / `stream_json` を同時読込している箇所を、summary 参照に置換する。**
 2. **監査ログ（`audit_logs`）の「全件 + 重い列」読込を、ページング + 詳細遅延取得に分割する。**
 3. **Memory Management はスナップショット全件返却をやめ、ドメイン別・ページ別 API に分割する。**
-4. **メッセージ/監査ログ UI に virtualization（表示範囲のみ描画）を導入する。**
+4. **メッセージ UI の virtualization は導入済み。監査ログ UI と renderer への履歴全量転送は引き続き監視する。**
 5. **巨大 JSON カラムを持つテーブルは「一覧用軽量列」と「詳細列」を分離する。**
 
 ---
@@ -103,20 +103,13 @@
 
 ---
 
-### 1-4. メッセージ描画が全件レンダリング（virtualization 未導入）
+### 1-4. メッセージ描画の virtualization（導入済み）
 
-- `SessionMessageColumn` は `messages.map(...)` で全文描画する。
-- 1 メッセージ内にも `changedFiles.map`, `diffRows`, `runChecks`, `operationTimeline` などが含まれるため、DOM ノード数が増えやすい。
+Session message list は可変高 virtualization を使用し、viewport 周辺だけを DOM に描画する。composer の draft-only 更新では Auxiliary transcript と runtime projection の参照を維持し、既存 message list と Markdown を再描画しない。
 
-**該当実装**
+現在の判断理由は `docs/adr/003-session-message-virtualization.md`、実装は `src/session-components.tsx` と `src/auxiliary-render-projections.ts`、実行可能な契約は `scripts/tests/session-message-column.test.ts` と `scripts/tests/auxiliary-runtime-projection.test.ts` を正本とする。
 
-- メッセージ列で `messages.map(...)` を直接実行。  
-- アーティファクト展開時に変更ファイル・操作履歴をすべて描画。
-
-**回収ポイント**
-
-- `react-virtual` 等による仮想スクロールを導入し、可視領域前後だけ描画する。
-- 折りたたみ未展開時は重いサブツリー（diff 断片、operation 詳細）を mount しない。
+DB / IPC から取得した全履歴は引き続き renderer memory に保持する。巨大 Session で初期転送量または memory 使用量が問題になった場合は、message cursor pagination と artifact detail の遅延取得を別変更として検討する。
 
 ---
 
@@ -187,7 +180,7 @@ V2 DB では legacy memory table を作らないため、memory 系 storage は 
 
 ### Phase 2（中期）
 
-1. Message List / Audit Log List の virtualization 導入。  
+1. Audit Log List の virtualization を、summary page の実測負荷に応じて検討する。
 2. Memory Management 検索の FTS / 追加 index を必要に応じて検討する。
 3. 大きい JSON を展開時取得に変更（詳細 API 化）。
 
@@ -232,8 +225,8 @@ V2 DB では legacy memory table を作らないため、memory 系 storage は 
    監査ログ一覧をページング化し、詳細遅延取得へ。
 3. **`perf/memory-management-sliced-loading`**  
    memory snapshot 全量返却を廃止し、ドメイン分割APIへ。
-4. **`perf/message-list-virtualization`**  
-   Message UI の仮想スクロール導入。
+4. **`perf/message-list-virtualization`（完了）**
+   Message UI の可変高 virtualization と composer draft 再描画境界を導入済み。残る全履歴転送は cursor pagination の別課題として扱う。
 5. **`perf/storage-schema-split`**  
    `sessions`/`audit_logs` の詳細分離スキーマ移行。
 

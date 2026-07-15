@@ -34,6 +34,13 @@ type ProjectedMessageArtifact = NonNullable<Message["artifact"]>;
 
 type PendingAuxiliaryMessageGroupSession = Pick<AuxiliarySession, "id" | "runState">;
 
+export type MessageListAuxiliarySession = Pick<
+  AuxiliarySession,
+  "id" | "messages" | "displayAfterMessageIndex" | "createdAt"
+>;
+
+type AuxiliaryMessageLookupSession = Pick<AuxiliarySession, "id" | "messages">;
+
 export type LiveAssistantProjection = {
   sessionId: string;
   threadId: string | null;
@@ -87,7 +94,7 @@ export function resolvePendingAuxiliaryMessageGroupId(
 
 export function buildMessageListProjection(
   sessionMessages: Message[],
-  auxiliarySessions: AuxiliarySession[],
+  auxiliarySessions: MessageListAuxiliarySession[],
   sessionId = "session",
   options: MessageListProjectionOptions = {},
 ): MessageListProjection {
@@ -95,8 +102,8 @@ export function buildMessageListProjection(
   const sources: MessageListSource[] = [];
   const keys: string[] = [];
   const groups: Array<MessageListGroup | null> = [];
-  const auxiliaryBuckets = new Map<number, AuxiliarySession[]>();
-  const fallbackAuxiliarySessions: AuxiliarySession[] = [];
+  const auxiliaryBuckets = new Map<number, MessageListAuxiliarySession[]>();
+  const fallbackAuxiliarySessions: MessageListAuxiliarySession[] = [];
   const liveAssistant = normalizeLiveAssistantProjection(options.liveAssistant);
   const liveAssistantKey = liveAssistant
     ? buildLiveAssistantProjectionKey(liveAssistant.sessionId, liveAssistant.threadId, liveAssistant.messageIndex)
@@ -117,7 +124,7 @@ export function buildMessageListProjection(
     groups.push(null);
   };
 
-  const addAuxiliarySession = (auxiliarySession: AuxiliarySession) => {
+  const addAuxiliarySession = (auxiliarySession: MessageListAuxiliarySession) => {
     const group = {
       id: auxiliarySession.id,
       label: "Auxiliary",
@@ -226,7 +233,7 @@ export function buildLiveAssistantProjectionKey(
 
 export function hasPersistedLiveAssistantMessage(
   sessionMessages: Message[],
-  auxiliarySessions: AuxiliarySession[],
+  auxiliarySessions: AuxiliaryMessageLookupSession[],
   liveAssistant: LiveAssistantProjection | null | undefined,
   sessionId = "session",
 ): boolean {
@@ -250,7 +257,7 @@ export function hasPersistedLiveAssistantMessage(
 
 export function resolveLiveAssistantMessageIndex(
   sessionMessages: Message[],
-  auxiliarySessions: AuxiliarySession[],
+  auxiliarySessions: AuxiliaryMessageLookupSession[],
   targetSessionId: string,
   sessionId = "session",
 ): number {
@@ -310,7 +317,7 @@ function hasAssistantMessageAtIndex(messages: Message[], messageIndex: number): 
   return messages[messageIndex]?.role === "assistant";
 }
 
-function compareAuxiliarySessions(left: AuxiliarySession, right: AuxiliarySession): number {
+function compareAuxiliarySessions(left: MessageListAuxiliarySession, right: MessageListAuxiliarySession): number {
   const leftCreatedAt = Date.parse(left.createdAt);
   const rightCreatedAt = Date.parse(right.createdAt);
   const createdAtComparison = safeTimestamp(leftCreatedAt) - safeTimestamp(rightCreatedAt);

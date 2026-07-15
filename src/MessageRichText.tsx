@@ -1,4 +1,4 @@
-import { Children, isValidElement, useEffect, useId, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { Children, isValidElement, memo, useEffect, useId, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
@@ -370,7 +370,7 @@ function createMarkdownComponents(
   };
 }
 
-export function MessageRichText({ text, className = "message-body", onOpenPath }: MessageRichTextProps) {
+function MessageRichTextComponent({ text, className = "message-body", onOpenPath }: MessageRichTextProps) {
   const reactId = useId();
   const footnotePrefix = useMemo(() => `message-footnote-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}-`, [reactId]);
   const footnoteLabelId = `${footnotePrefix}footnote-label`;
@@ -424,3 +424,5 @@ export function MessageRichText({ text, className = "message-body", onOpenPath }
     </div>
   );
 }
+
+export const MessageRichText = memo(MessageRichTextComponent);

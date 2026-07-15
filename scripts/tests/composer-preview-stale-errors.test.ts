@@ -11,7 +11,7 @@ test("Agent composer は draft 変更時に stale preview errors を clear す�
 
   assert.match(
     source,
-    /useEffect\(\(\) => \{\s*setComposerPreview\(createEmptyComposerPreview\(\)\);\s*\}, \[activeAuxiliarySession\?\.composerDraft, draft\]\);/,
+    /useEffect\(\(\) => \{\s*setComposerPreview\(\(current\) => \(\s*current\.attachments\.length === 0 && current\.errors\.length === 0\s*\? current\s*: createEmptyComposerPreview\(\)\s*\)\);\s*\}, \[activeAuxiliarySession\?\.composerDraft, draft\]\);/,
   );
   assert.match(
     source,
@@ -28,7 +28,7 @@ test("Companion composer は draft 変更時に stale preview errors を clear �
 
   assert.match(
     source,
-    /useEffect\(\(\) => \{\s*setComposerPreview\(createEmptyComposerPreview\(\)\);\s*\}, \[activeAuxiliarySession\?\.composerDraft, composerText\]\);/,
+    /useEffect\(\(\) => \{\s*setComposerPreview\(\(current\) => \(\s*current\.attachments\.length === 0 && current\.errors\.length === 0\s*\? current\s*: createEmptyComposerPreview\(\)\s*\)\);\s*\}, \[activeAuxiliarySession\?\.composerDraft, composerText\]\);/,
   );
   assert.match(
     source,

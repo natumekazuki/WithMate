@@ -1,4 +1,5 @@
 import { Component, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEventHandler, type CSSProperties, type Dispatch, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type SetStateAction, type UIEventHandler } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 import type {
   AuditLogDetailFragment,
@@ -471,9 +472,10 @@ function isBackgroundAuditPhase(phase: AuditLogSummary["phase"]): boolean {
   return phase.startsWith("background-");
 }
 
-const SESSION_MESSAGE_INITIAL_RENDER_COUNT = 80;
-const SESSION_MESSAGE_PREPEND_BATCH_SIZE = 80;
-const SESSION_MESSAGE_TOP_LOAD_THRESHOLD = 64;
+const SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT = 168;
+const SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT = 720;
+const SESSION_MESSAGE_OVERSCAN = 6;
+const SESSION_MESSAGE_SCROLL_END_THRESHOLD = 80;
 
 type MessageArtifactFoldSection = "files" | "operation";
 
@@ -2155,19 +2157,27 @@ export function SessionMessageColumn({
   const [loadingArtifactDetails, setLoadingArtifactDetails] = useState<Record<string, boolean>>({});
   const [selectionToolbar, setSelectionToolbar] = useState<{ style: CSSProperties; text: string } | null>(null);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
-  const [messageWindowStartIndex, setMessageWindowStartIndex] = useState(() =>
-    Math.max(0, messages.length - SESSION_MESSAGE_INITIAL_RENDER_COUNT),
+  const getMessageKey = useCallback(
+    (index: number) => messageKeys?.[index] ?? `${sessionId}-${index}`,
+    [messageKeys, sessionId],
   );
-  const prependAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
-  const latestMessageWindowStartIndex = Math.min(
-    Math.max(0, messageWindowStartIndex),
-    Math.max(0, messages.length - SESSION_MESSAGE_INITIAL_RENDER_COUNT),
-  );
-  const renderedMessages = useMemo(
-    () => messages.slice(latestMessageWindowStartIndex),
-    [latestMessageWindowStartIndex, messages],
-  );
-  const hasOlderMessages = latestMessageWindowStartIndex > 0;
+  const messageVirtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => messageListRef.current,
+    estimateSize: () => SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT,
+    getItemKey: getMessageKey,
+    overscan: SESSION_MESSAGE_OVERSCAN,
+    anchorTo: "end",
+    followOnAppend: true,
+    scrollEndThreshold: SESSION_MESSAGE_SCROLL_END_THRESHOLD,
+    initialRect: { width: 0, height: SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT },
+    initialOffset: Math.max(
+      0,
+      messages.length * SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT - SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT,
+    ),
+    useFlushSync: false,
+  });
+  const virtualMessages = messageVirtualizer.getVirtualItems();
   const hasPendingMessageText =
     !hasLiveRunAssistantText &&
     liveApprovalRequest === null &&
@@ -2179,41 +2189,24 @@ export function SessionMessageColumn({
     liveElicitationRequest !== null ||
     liveRunErrorMessage.trim().length > 0 ||
     hasPendingMessageText;
-  const canRenderGroupedPendingInlineContent = useMemo(
-    () =>
-      hasPendingInlineContent &&
-      pendingMessageGroupId !== null &&
-      renderedMessages.some((_, index) => {
-        const absoluteIndex = latestMessageWindowStartIndex + index;
-        const messageGroup = messageGroups?.[absoluteIndex] ?? null;
-        const nextMessageGroup = messageGroups?.[absoluteIndex + 1] ?? null;
-        return messageGroup?.id === pendingMessageGroupId && nextMessageGroup?.id !== messageGroup.id;
-      }),
-    [
-      hasPendingInlineContent,
-      latestMessageWindowStartIndex,
-      messageGroups,
-      pendingMessageGroupId,
-      renderedMessages,
-    ],
+  const pendingMessageGroupEndIndex = useMemo(
+    () => {
+      if (!hasPendingInlineContent || pendingMessageGroupId === null) {
+        return -1;
+      }
+
+      return messageGroups?.findIndex((messageGroup, index) => (
+        messageGroup?.id === pendingMessageGroupId &&
+        messageGroups[index + 1]?.id !== messageGroup.id
+      )) ?? -1;
+    },
+    [hasPendingInlineContent, messageGroups, pendingMessageGroupId],
   );
-
-  const loadOlderMessages = useCallback((listElement: HTMLDivElement | null = messageListRef.current) => {
-    if (!listElement || latestMessageWindowStartIndex <= 0) {
-      return;
-    }
-
-    prependAnchorRef.current = {
-      scrollHeight: listElement.scrollHeight,
-      scrollTop: listElement.scrollTop,
-    };
-    setMessageWindowStartIndex((current) => Math.max(0, current - SESSION_MESSAGE_PREPEND_BATCH_SIZE));
-  }, [latestMessageWindowStartIndex, messageListRef]);
+  const canRenderGroupedPendingInlineContent =
+    pendingMessageGroupEndIndex >= 0 &&
+    virtualMessages.some((virtualMessage) => virtualMessage.index === pendingMessageGroupEndIndex);
 
   const handleMessageListScroll: UIEventHandler<HTMLDivElement> = (event) => {
-    if (event.currentTarget.scrollTop <= SESSION_MESSAGE_TOP_LOAD_THRESHOLD) {
-      loadOlderMessages(event.currentTarget);
-    }
     onMessageListScroll(event);
   };
 
@@ -2261,26 +2254,10 @@ export function SessionMessageColumn({
   }, [messageListRef, updateSelectionToolbar]);
 
   useLayoutEffect(() => {
-    setMessageWindowStartIndex((current) => {
-      const latestStartIndex = Math.max(0, messages.length - SESSION_MESSAGE_INITIAL_RENDER_COUNT);
-      if (isMessageListFollowing) {
-        return latestStartIndex;
-      }
-
-      return Math.min(current, latestStartIndex);
-    });
-  }, [isMessageListFollowing, messages.length]);
-
-  useLayoutEffect(() => {
-    const anchor = prependAnchorRef.current;
-    const messageListElement = messageListRef.current;
-    if (!anchor || !messageListElement) {
-      return;
+    if (isMessageListFollowing) {
+      messageVirtualizer.scrollToEnd();
     }
-
-    prependAnchorRef.current = null;
-    messageListElement.scrollTop = messageListElement.scrollHeight - anchor.scrollHeight + anchor.scrollTop;
-  });
+  }, [isMessageListFollowing, messageVirtualizer]);
 
   const isArtifactFoldOpen = (artifactKey: string, section: MessageArtifactFoldSection, index?: number) =>
     Boolean(openArtifactFolds[messageArtifactFoldKey(artifactKey, section, index)]);
@@ -2395,26 +2372,25 @@ export function SessionMessageColumn({
   return (
     <div className="session-message-column">
       <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
-        {hasOlderMessages ? (
-          <button
-            type="button"
-            className="message-history-load-more"
-            onClick={() => loadOlderMessages()}
-          >
-            以前のメッセージを読み込む
-          </button>
-        ) : null}
         {messages.length > 0 || isRunning ? (
           <div className="session-message-list-window">
-            <div className="session-message-list-window-items">
-          {renderedMessages.map((message, index) => {
-            const absoluteIndex = latestMessageWindowStartIndex + index;
-            const messageKey = messageKeys?.[absoluteIndex] ?? `${sessionId}-${absoluteIndex}`;
+            <div
+              className="session-message-list-window-items"
+              style={{ height: messageVirtualizer.getTotalSize(), position: "relative" }}
+            >
+          {virtualMessages.map((virtualMessage) => {
+            const absoluteIndex = virtualMessage.index;
+            const message = messages[absoluteIndex];
+            if (!message) {
+              return null;
+            }
+            const messageKey = getMessageKey(absoluteIndex);
             const messageGroup = messageGroups?.[absoluteIndex] ?? null;
             const previousMessageGroup = absoluteIndex > 0 ? messageGroups?.[absoluteIndex - 1] ?? null : null;
             const nextMessageGroup = messageGroups?.[absoluteIndex + 1] ?? null;
             const isMessageGroupStart = !!messageGroup && previousMessageGroup?.id !== messageGroup.id;
             const isMessageGroupEnd = !!messageGroup && nextMessageGroup?.id !== messageGroup.id;
+            const doesMessageGroupContinue = !!messageGroup && nextMessageGroup?.id === messageGroup.id;
             const shouldRenderGroupedPending =
               isRunning &&
               canRenderGroupedPendingInlineContent &&
@@ -2439,7 +2415,15 @@ export function SessionMessageColumn({
             const canUseMessageTextActions = isAssistant && (onCopyMessageText || onQuoteMessageText);
 
             return (
-              <Fragment key={`${message.role}-${messageKey}`}>
+              <div
+                key={`${message.role}-${messageKey}`}
+                ref={messageVirtualizer.measureElement}
+                className={`session-message-virtual-row${
+                  doesMessageGroupContinue ? " auxiliary-message-group-continues" : ""
+                }${absoluteIndex === messages.length - 1 ? " session-message-virtual-row-end" : ""}`}
+                data-index={absoluteIndex}
+                style={{ transform: `translateY(${virtualMessage.start}px)` }}
+              >
                 {isMessageGroupStart && messageGroup ? (
                   <div
                     className="auxiliary-message-group-label"
@@ -2635,13 +2619,12 @@ export function SessionMessageColumn({
                 </div>
                 </article>
                 {shouldRenderGroupedPending ? renderPendingRow("auxiliary-message-group-item auxiliary-message-group-end") : null}
-              </Fragment>
+              </div>
             );
           })}
-
-              {isRunning && hasPendingInlineContent && !canRenderGroupedPendingInlineContent ? renderPendingRow() : null}
-              <div className="message-list-bottom-anchor" aria-hidden="true" />
             </div>
+            {isRunning && hasPendingInlineContent && !canRenderGroupedPendingInlineContent ? renderPendingRow() : null}
+            <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : null}
         {selectionToolbar ? (
