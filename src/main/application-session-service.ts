@@ -36,6 +36,9 @@ import type { RepositoryWriteClient } from "./repository-write-client.js";
 type SessionReadPort = Pick<RepositoryReadClient, "sessionsPage" | "sessionGet">;
 type SessionWritePort = Pick<RepositoryWriteClient, "createSession" | "transitionSession">;
 
+type RequestDecodeResult<TValue> =
+  Readonly<{ ok: true; value: TValue }> | Readonly<{ ok: false; response: ApplicationOperationResponse<never> }>;
+
 export type ApplicationSessionServiceOptions<TAuthorizationContext> = Readonly<{
   reads: SessionReadPort;
   writes: SessionWritePort;
@@ -59,22 +62,23 @@ export class ApplicationSessionService<
     request: ApplicationSessionCreateRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionCreateResult>> {
-    const invalid = validateCreateRequest(request);
-    if (invalid !== undefined) return invalid;
-    const denied = await this.#validateAccess("create", "write", request.context);
+    const decoded = decodeCreateRequest<TAuthorizationContext>(request);
+    if (!decoded.ok) return decoded.response;
+    const input = decoded.value;
+    const denied = await this.#validateAccess("create", "write", input.context);
     if (denied !== undefined) return denied;
 
     try {
       const result = await this.#writes.createSession(
         {
-          idempotencyKey: request.idempotencyKey,
+          idempotencyKey: input.idempotencyKey,
           session: {
-            id: issueSessionId(request.idempotencyKey),
-            providerId: request.providerId,
-            workspaceKey: request.context.workspaceKey,
-            allowedAdditionalDirectories: request.allowedAdditionalDirectories,
-            defaultCharacterId: request.defaultCharacterId,
-            maxConcurrentChildRuns: request.maxConcurrentChildRuns,
+            id: issueSessionId(input.idempotencyKey),
+            providerId: input.providerId,
+            workspaceKey: input.context.workspaceKey,
+            allowedAdditionalDirectories: input.allowedAdditionalDirectories,
+            defaultCharacterId: input.defaultCharacterId,
+            maxConcurrentChildRuns: input.maxConcurrentChildRuns,
           },
         },
         options,
@@ -94,18 +98,19 @@ export class ApplicationSessionService<
     request: ApplicationSessionListRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionPage>> {
-    const invalid = validateListRequest(request);
-    if (invalid !== undefined) return invalid;
-    const denied = await this.#validateAccess("list", "read", request.context);
+    const decoded = decodeListRequest<TAuthorizationContext>(request);
+    if (!decoded.ok) return decoded.response;
+    const input = decoded.value;
+    const denied = await this.#validateAccess("list", "read", input.context);
     if (denied !== undefined) return denied;
 
     try {
       const page = await this.#reads.sessionsPage(
         {
-          workspaceKey: request.context.workspaceKey,
-          ...(request.lifecycleStatus === undefined ? {} : { lifecycleStatus: request.lifecycleStatus }),
-          ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
-          ...(request.limit === undefined ? {} : { limit: request.limit }),
+          workspaceKey: input.context.workspaceKey,
+          ...(input.lifecycleStatus === undefined ? {} : { lifecycleStatus: input.lifecycleStatus }),
+          ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+          ...(input.limit === undefined ? {} : { limit: input.limit }),
         },
         options,
       );
@@ -148,14 +153,15 @@ export class ApplicationSessionService<
     request: ApplicationSessionReadRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionReadResult>> {
-    const invalid = validateReadRequest(request);
-    if (invalid !== undefined) return invalid;
-    const denied = await this.#validateAccess("read", "read", request.context);
+    const decoded = decodeReadRequest<TAuthorizationContext>(request);
+    if (!decoded.ok) return decoded.response;
+    const input = decoded.value;
+    const denied = await this.#validateAccess("read", "read", input.context);
     if (denied !== undefined) return denied;
 
     try {
       const repositoryValue = await this.#reads.sessionGet(
-        { workspaceKey: request.context.workspaceKey, sessionId: request.sessionId },
+        { workspaceKey: input.context.workspaceKey, sessionId: input.sessionId },
         options,
       );
       const value = projectSessionReadResult(repositoryValue);
@@ -169,23 +175,27 @@ export class ApplicationSessionService<
     request: ApplicationSessionWriteRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult>> {
-    return this.#transition("archive", request, "active", "archived", options);
+    const decoded = decodeWriteRequest<TAuthorizationContext>(request);
+    if (!decoded.ok) return Promise.resolve(decoded.response);
+    return this.#transition("archive", decoded.value, "active", "archived", options);
   }
 
   unarchive(
     request: ApplicationSessionWriteRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult>> {
-    return this.#transition("unarchive", request, "archived", "active", options);
+    const decoded = decodeWriteRequest<TAuthorizationContext>(request);
+    if (!decoded.ok) return Promise.resolve(decoded.response);
+    return this.#transition("unarchive", decoded.value, "archived", "active", options);
   }
 
   close(
     request: ApplicationSessionCloseRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult>> {
-    const invalid = validateCloseRequest(request);
-    if (invalid !== undefined) return Promise.resolve(invalid);
-    return this.#transition("close", request, request.expectedLifecycleStatus, "closed", options);
+    const decoded = decodeCloseRequest<TAuthorizationContext>(request);
+    if (!decoded.ok) return Promise.resolve(decoded.response);
+    return this.#transition("close", decoded.value, decoded.value.expectedLifecycleStatus, "closed", options);
   }
 
   async #transition(
@@ -195,8 +205,6 @@ export class ApplicationSessionService<
     targetLifecycleStatus: SessionLifecycleStatus,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult>> {
-    const invalid = validateWriteRequest(request, operation, expectedLifecycleStatus, targetLifecycleStatus);
-    if (invalid !== undefined) return invalid;
     const denied = await this.#validateAccess(operation, "write", request.context);
     if (denied !== undefined) return denied;
 
@@ -239,9 +247,9 @@ export class ApplicationSessionService<
   }
 }
 
-function validateCreateRequest<TAuthorizationContext>(
+function decodeCreateRequest<TAuthorizationContext>(
   request: unknown,
-): ApplicationOperationResponse<never> | undefined {
+): RequestDecodeResult<ApplicationSessionCreateRequest<TAuthorizationContext>> {
   if (
     !isPlainObject(request) ||
     !hasOnlyKeys(request, [
@@ -252,103 +260,134 @@ function validateCreateRequest<TAuthorizationContext>(
       "defaultCharacterId",
       "maxConcurrentChildRuns",
     ]) ||
-    !isOperationContext<TAuthorizationContext>(request.context) ||
     !isCanonicalIdempotencyKey(request.idempotencyKey) ||
     !isBoundedString(request.providerId) ||
     !isBoundedString(request.defaultCharacterId) ||
     !isAllowedAdditionalDirectories(request.allowedAdditionalDirectories) ||
     !isNonNegativeSafeInteger(request.maxConcurrentChildRuns)
   ) {
-    return requestFailure();
+    return decodeRequestFailure();
   }
-  return undefined;
+  const context = decodeOperationContext<TAuthorizationContext>(request.context);
+  if (context === undefined) return decodeRequestFailure();
+  return {
+    ok: true,
+    value: {
+      context,
+      idempotencyKey: request.idempotencyKey,
+      providerId: request.providerId,
+      allowedAdditionalDirectories: [...request.allowedAdditionalDirectories],
+      defaultCharacterId: request.defaultCharacterId,
+      maxConcurrentChildRuns: request.maxConcurrentChildRuns,
+    },
+  };
 }
 
-function validateWriteRequest<TAuthorizationContext>(
+function decodeWriteRequest<TAuthorizationContext>(
   request: unknown,
-  operation: "archive" | "unarchive" | "close",
-  expectedLifecycleStatus: "active" | "archived",
-  targetLifecycleStatus: SessionLifecycleStatus,
-): ApplicationOperationResponse<never> | undefined {
-  if (operation === "close") return validateCloseRequest(request);
+): RequestDecodeResult<ApplicationSessionWriteRequest<TAuthorizationContext>> {
   if (
-    !isSessionWriteRequest<TAuthorizationContext>(request) ||
-    !isCanonicalIdempotencyKey(request.idempotencyKey) ||
-    (operation === "archive" && (expectedLifecycleStatus !== "active" || targetLifecycleStatus !== "archived")) ||
-    (operation === "unarchive" && (expectedLifecycleStatus !== "archived" || targetLifecycleStatus !== "active"))
+    !isPlainObject(request) ||
+    !hasOnlyKeys(request, ["context", "sessionId", "idempotencyKey"]) ||
+    !isBoundedString(request.sessionId) ||
+    !isCanonicalIdempotencyKey(request.idempotencyKey)
   ) {
-    return requestFailure();
+    return decodeRequestFailure();
   }
-  return undefined;
+  const context = decodeOperationContext<TAuthorizationContext>(request.context);
+  if (context === undefined) return decodeRequestFailure();
+  return { ok: true, value: { context, sessionId: request.sessionId, idempotencyKey: request.idempotencyKey } };
 }
 
-function validateListRequest<TAuthorizationContext>(request: unknown): ApplicationOperationResponse<never> | undefined {
+function decodeListRequest<TAuthorizationContext>(
+  request: unknown,
+): RequestDecodeResult<ApplicationSessionListRequest<TAuthorizationContext>> {
   if (
     !isPlainObject(request) ||
     !hasOnlyKeys(request, ["context", "lifecycleStatus", "cursor", "limit"]) ||
-    !isOperationContext<TAuthorizationContext>(request.context) ||
     (request.lifecycleStatus !== undefined && !isSessionLifecycleStatus(request.lifecycleStatus)) ||
-    (request.cursor !== undefined && !isBoundedString(request.cursor)) ||
+    (request.cursor !== undefined && !isBoundedStringWithLimit(request.cursor, 2_048)) ||
     (request.limit !== undefined &&
       (!Number.isSafeInteger(request.limit) || (request.limit as number) < 1 || (request.limit as number) > 100))
   ) {
-    return requestFailure();
+    return decodeRequestFailure();
   }
-  return undefined;
+  const context = decodeOperationContext<TAuthorizationContext>(request.context);
+  if (context === undefined) return decodeRequestFailure();
+  return {
+    ok: true,
+    value: {
+      context,
+      ...(request.lifecycleStatus === undefined ? {} : { lifecycleStatus: request.lifecycleStatus }),
+      ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
+      ...(request.limit === undefined ? {} : { limit: request.limit as number }),
+    },
+  };
 }
 
-function validateReadRequest<TAuthorizationContext>(request: unknown): ApplicationOperationResponse<never> | undefined {
+function decodeReadRequest<TAuthorizationContext>(
+  request: unknown,
+): RequestDecodeResult<ApplicationSessionReadRequest<TAuthorizationContext>> {
   if (
     !isPlainObject(request) ||
     !hasOnlyKeys(request, ["context", "sessionId"]) ||
-    !isOperationContext<TAuthorizationContext>(request.context) ||
     !isBoundedString(request.sessionId)
   ) {
-    return requestFailure();
+    return decodeRequestFailure();
   }
-  return undefined;
+  const context = decodeOperationContext<TAuthorizationContext>(request.context);
+  if (context === undefined) return decodeRequestFailure();
+  return { ok: true, value: { context, sessionId: request.sessionId } };
 }
 
-function validateCloseRequest<TAuthorizationContext>(
+function decodeCloseRequest<TAuthorizationContext>(
   request: unknown,
-): ApplicationOperationResponse<never> | undefined {
+): RequestDecodeResult<ApplicationSessionCloseRequest<TAuthorizationContext>> {
   if (
     !isPlainObject(request) ||
     !hasOnlyKeys(request, ["context", "sessionId", "idempotencyKey", "expectedLifecycleStatus"]) ||
-    !isOperationContext<TAuthorizationContext>(request.context) ||
     !isBoundedString(request.sessionId) ||
     !isCanonicalIdempotencyKey(request.idempotencyKey) ||
     (request.expectedLifecycleStatus !== "active" && request.expectedLifecycleStatus !== "archived")
   ) {
-    return requestFailure();
+    return decodeRequestFailure();
   }
-  return undefined;
+  const context = decodeOperationContext<TAuthorizationContext>(request.context);
+  if (context === undefined) return decodeRequestFailure();
+  return {
+    ok: true,
+    value: {
+      context,
+      sessionId: request.sessionId,
+      idempotencyKey: request.idempotencyKey,
+      expectedLifecycleStatus: request.expectedLifecycleStatus,
+    },
+  };
 }
 
-function isSessionWriteRequest<TAuthorizationContext>(
-  request: unknown,
-): request is ApplicationSessionWriteRequest<TAuthorizationContext> {
-  return (
-    isPlainObject(request) &&
-    hasOnlyKeys(request, ["context", "sessionId", "idempotencyKey"]) &&
-    isOperationContext<TAuthorizationContext>(request.context) &&
-    isBoundedString(request.sessionId)
-  );
-}
-
-function isOperationContext<TAuthorizationContext>(
+function decodeOperationContext<TAuthorizationContext>(
   context: unknown,
-): context is ApplicationSessionCreateRequest<TAuthorizationContext>["context"] {
-  return (
-    isPlainObject(context) &&
-    hasOnlyKeys(context, ["workspaceKey", "authorization"]) &&
-    Object.hasOwn(context, "authorization") &&
-    validateContext(context.workspaceKey) === undefined
-  );
+): ApplicationSessionCreateRequest<TAuthorizationContext>["context"] | undefined {
+  if (
+    !isPlainObject(context) ||
+    !hasOnlyKeys(context, ["workspaceKey", "authorization"]) ||
+    !Object.hasOwn(context, "authorization") ||
+    !isBoundedString(context.workspaceKey)
+  ) {
+    return undefined;
+  }
+  try {
+    return {
+      workspaceKey: context.workspaceKey,
+      authorization: structuredClone(context.authorization) as TAuthorizationContext,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
-function validateContext(workspaceKey: unknown): ApplicationOperationResponse<never> | undefined {
-  return isBoundedString(workspaceKey) ? undefined : requestFailure();
+function decodeRequestFailure<TValue>(): RequestDecodeResult<TValue> {
+  return { ok: false, response: requestFailure() };
 }
 
 function requestFailure(): ApplicationOperationResponse<never> {

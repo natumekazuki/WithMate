@@ -6,12 +6,12 @@ import test from "node:test";
 
 import {
   PersistenceClientError,
-  RepositoryReadClient,
   type ApplicationAccessValidator,
   type ApplicationSessionOperationContext,
 } from "../src/main/index.js";
 import { ApplicationSessionService } from "../src/main/application-session-service.js";
 import { PersistenceWorkerClient } from "../src/main/persistence-worker-client.js";
+import { RepositoryReadClient } from "../src/main/repository-read-client.js";
 import { RepositoryWriteClient } from "../src/main/repository-write-client.js";
 import type {
   RepositoryCommandError,
@@ -129,6 +129,58 @@ workerTest("Session operations run end-to-end through the Application Service an
         reopen.overallStatus === "failure" && reopen.error.kind === "domain" && reopen.error.code,
         "lifecycle_conflict",
       );
+    } finally {
+      await client.shutdown();
+    }
+  });
+});
+
+workerTest("Application list accepts a Repository cursor containing a maximum-length Session ID", async () => {
+  await withTempDirectory(async (directory) => {
+    const client = new PersistenceWorkerClient({
+      workerUrl,
+      databasePath: path.join(directory, "application-session-cursor.sqlite3"),
+      legacyDatabasePaths: [],
+      workerOptions,
+    });
+    await client.start();
+    try {
+      const writes = new RepositoryWriteClient(client);
+      for (const [id, idempotencyKey] of [
+        ["z".repeat(1_024), uuid(60)],
+        ["a".repeat(1_024), uuid(61)],
+      ] as const) {
+        const result = await writes.createSession({
+          idempotencyKey,
+          session: {
+            id,
+            providerId: "codex",
+            workspaceKey: context.workspaceKey,
+            allowedAdditionalDirectories: [],
+            defaultCharacterId: "character-1",
+            maxConcurrentChildRuns: 2,
+          },
+        });
+        assert.equal(result.ok, true);
+      }
+      const service = new ApplicationSessionService({
+        reads: new RepositoryReadClient(client),
+        writes,
+        access: allowingAccess(),
+      });
+
+      const first = await service.list({ context, limit: 1 });
+      assert.equal(first.overallStatus, "success");
+      if (first.overallStatus !== "success") assert.fail("first Session page failed");
+      assert.ok(first.value.nextCursor !== undefined);
+      assert.ok(first.value.nextCursor.length > 1_024);
+      assert.ok(first.value.nextCursor.length <= 2_048);
+
+      const second = await service.list({ context, limit: 1, cursor: first.value.nextCursor });
+      assert.equal(second.overallStatus, "success");
+      if (second.overallStatus !== "success") assert.fail("second Session page failed");
+      assert.equal(second.value.items.length, 1);
+      assert.notEqual(second.value.items[0]?.id, first.value.items[0]?.id);
     } finally {
       await client.shutdown();
     }
@@ -296,6 +348,216 @@ test("every operation returns a request envelope for malformed transport input b
   assert.equal(accessCalls, 0);
   assert.equal(readCalls, 0);
   assert.equal(writeCalls, 0);
+});
+
+test("validated request snapshots cannot be changed while access validation is pending", async () => {
+  const createGate = deferred<void>();
+  let createCommand: SessionCreateCommand | undefined;
+  const authorizedPrincipals: string[] = [];
+  const createServiceUnderTest = createService({
+    access: {
+      async validateWorkspace() {
+        await createGate.promise;
+        return { allowed: true };
+      },
+      async authorize(input) {
+        authorizedPrincipals.push(input.context.authorization.principalId);
+        return { allowed: true };
+      },
+    },
+    writes: {
+      async createSession(command) {
+        createCommand = command;
+        return {
+          ok: true,
+          value: {
+            sessionId: command.session.id,
+            workspaceKey: command.session.workspaceKey,
+            lifecycleStatus: "active",
+            createdAt: 1,
+          },
+          replayed: false,
+        };
+      },
+    },
+  });
+  const mutableCreate = {
+    context: { workspaceKey: "workspace-1", authorization: { principalId: "user-1" } },
+    idempotencyKey: uuid(70),
+    providerId: "codex",
+    allowedAdditionalDirectories: ["C:\\workspace-shared"],
+    defaultCharacterId: "character-1",
+    maxConcurrentChildRuns: 2,
+  };
+  const creating = createServiceUnderTest.create(mutableCreate);
+  mutableCreate.context.workspaceKey = "workspace-mutated";
+  mutableCreate.context.authorization.principalId = "user-mutated";
+  mutableCreate.idempotencyKey = uuid(71);
+  mutableCreate.providerId = "mutated-provider";
+  mutableCreate.allowedAdditionalDirectories[0] = "C:\\mutated";
+  createGate.resolve();
+  await creating;
+  assert.equal(createCommand?.session.workspaceKey, "workspace-1");
+  assert.equal(createCommand?.idempotencyKey, uuid(70));
+  assert.equal(createCommand?.session.providerId, "codex");
+  assert.deepEqual(createCommand?.session.allowedAdditionalDirectories, ["C:\\workspace-shared"]);
+  assert.deepEqual(authorizedPrincipals, ["user-1"]);
+
+  const readGate = deferred<void>();
+  const readInputs: unknown[] = [];
+  const transitionCommands: SessionTransitionCommand[] = [];
+  const readService = createService({
+    access: {
+      async validateWorkspace() {
+        await readGate.promise;
+        return { allowed: true };
+      },
+      async authorize() {
+        return { allowed: true };
+      },
+    },
+    reads: {
+      async sessionsPage(input) {
+        readInputs.push(input);
+        return { items: [] };
+      },
+    },
+  });
+  const mutableList = {
+    context: { workspaceKey: "workspace-1", authorization: { principalId: "user-1" } },
+    lifecycleStatus: "active" as "active" | "archived" | "closed",
+    cursor: "cursor-original",
+    limit: 10,
+  };
+  const listing = readService.list(mutableList);
+  mutableList.context.workspaceKey = "workspace-mutated";
+  mutableList.lifecycleStatus = "archived";
+  mutableList.cursor = "cursor-mutated";
+  mutableList.limit = 20;
+  readGate.resolve();
+  await listing;
+  assert.deepEqual(readInputs, [
+    { workspaceKey: "workspace-1", lifecycleStatus: "active", cursor: "cursor-original", limit: 10 },
+  ]);
+
+  const detailGate = deferred<void>();
+  const detailInputs: unknown[] = [];
+  const detailService = createService({
+    access: {
+      async validateWorkspace() {
+        await detailGate.promise;
+        return { allowed: true };
+      },
+      async authorize() {
+        return { allowed: true };
+      },
+    },
+    reads: {
+      async sessionGet(input) {
+        detailInputs.push(input);
+        return {
+          session: {
+            id: input.sessionId,
+            providerId: "codex",
+            workspaceKey: input.workspaceKey,
+            allowedAdditionalDirectoriesByteLength: 2,
+            allowedAdditionalDirectoriesState: "inline",
+            allowedAdditionalDirectories: [],
+            defaultCharacterId: "character-1",
+            maxConcurrentChildRuns: 2,
+            lifecycleStatus: "active",
+            createdAt: 1,
+            updatedAt: 1,
+            lastActivityAt: 1,
+          },
+          execution: { state: "not_started" },
+        };
+      },
+    },
+  });
+  const mutableRead = {
+    context: { workspaceKey: "workspace-1", authorization: { principalId: "user-1" } },
+    sessionId: "session-1",
+  };
+  const reading = detailService.read(mutableRead);
+  mutableRead.context.workspaceKey = "workspace-mutated";
+  mutableRead.sessionId = "session-mutated";
+  detailGate.resolve();
+  await reading;
+  assert.deepEqual(detailInputs, [{ workspaceKey: "workspace-1", sessionId: "session-1" }]);
+
+  const transitionGate = deferred<void>();
+  const transitionService = createService({
+    access: {
+      async validateWorkspace() {
+        await transitionGate.promise;
+        return { allowed: true };
+      },
+      async authorize() {
+        return { allowed: true };
+      },
+    },
+    writes: {
+      async transitionSession(command) {
+        transitionCommands.push(command);
+        return {
+          ok: true,
+          value: { sessionId: command.sessionId, lifecycleStatus: command.targetLifecycleStatus, updatedAt: 1 },
+          replayed: false,
+        };
+      },
+    },
+  });
+  const mutableTransition = {
+    context: { workspaceKey: "workspace-1", authorization: { principalId: "user-1" } },
+    sessionId: "session-1",
+    idempotencyKey: uuid(72),
+  };
+  const archiving = transitionService.archive(mutableTransition);
+  mutableTransition.context.workspaceKey = "workspace-mutated";
+  mutableTransition.sessionId = "session-mutated";
+  mutableTransition.idempotencyKey = uuid(73);
+  transitionGate.resolve();
+  await archiving;
+  assert.deepEqual(transitionCommands, [transition(uuid(72), "session-1", "active", "archived")]);
+
+  const closeGate = deferred<void>();
+  const closeCommands: SessionTransitionCommand[] = [];
+  const closeService = createService({
+    access: {
+      async validateWorkspace() {
+        await closeGate.promise;
+        return { allowed: true };
+      },
+      async authorize() {
+        return { allowed: true };
+      },
+    },
+    writes: {
+      async transitionSession(command) {
+        closeCommands.push(command);
+        return {
+          ok: true,
+          value: { sessionId: command.sessionId, lifecycleStatus: command.targetLifecycleStatus, updatedAt: 1 },
+          replayed: false,
+        };
+      },
+    },
+  });
+  const mutableClose = {
+    context: { workspaceKey: "workspace-1", authorization: { principalId: "user-1" } },
+    sessionId: "session-1",
+    idempotencyKey: uuid(74),
+    expectedLifecycleStatus: "active" as "active" | "archived",
+  };
+  const closing = closeService.close(mutableClose);
+  mutableClose.context.workspaceKey = "workspace-mutated";
+  mutableClose.sessionId = "session-mutated";
+  mutableClose.idempotencyKey = uuid(75);
+  mutableClose.expectedLifecycleStatus = "archived";
+  closeGate.resolve();
+  await closing;
+  assert.deepEqual(closeCommands, [transition(uuid(74), "session-1", "active", "closed")]);
 });
 
 test("create rejects malformed additional directories before access validation and Repository writes", async () => {
@@ -847,4 +1109,12 @@ async function withTempDirectory(run: (directory: string) => Promise<void>): Pro
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
 }

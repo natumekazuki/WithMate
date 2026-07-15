@@ -5,7 +5,6 @@ export type {
   PersistenceFailureEffect,
 } from "../shared/persistence-protocol.js";
 export { PersistenceClientError, type PersistenceRequestOptions } from "./persistence-worker-client.js";
-export { RepositoryReadClient } from "./repository-read-client.js";
 export type {
   ApplicationAccessDecision,
   ApplicationAccessError,

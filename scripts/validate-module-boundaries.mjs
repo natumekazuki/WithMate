@@ -52,15 +52,17 @@ for (const rule of rules) {
 
 const applicationWriteOwner = path.join(sourceRoot, "main", "application-session-service.ts");
 const repositoryWriteClient = path.join(sourceRoot, "main", "repository-write-client.ts");
+const repositoryReadClient = path.join(sourceRoot, "main", "repository-read-client.ts");
 const persistenceWorkerClient = path.join(sourceRoot, "main", "persistence-worker-client.ts");
 const publicMainBarrel = path.join(sourceRoot, "main", "index.ts");
 const rawWriteFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-persistence-write.ts");
+const rawReadFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-repository-read.ts");
 const testConfig = ts.getParsedCommandLineOfConfigFile(path.join(root, "tsconfig.test.json"), {}, ts.sys);
 if (testConfig === undefined) {
   throw new Error("tsconfig.test.json could not be parsed for module-boundary validation.");
 }
 const typeProgram = ts.createProgram({
-  rootNames: [...listSourceFiles(sourceRoot), rawWriteFixture],
+  rootNames: [...listSourceFiles(sourceRoot), rawWriteFixture, rawReadFixture],
   options: testConfig.options,
 });
 const typeChecker = typeProgram.getTypeChecker();
@@ -103,6 +105,9 @@ for (const file of listSourceFiles(sourceRoot)) {
       if (moduleName.endsWith("/repository-write-client.js")) {
         violations.push(`${path.relative(root, file)} imports RepositoryWriteClient outside the Application Service`);
       }
+      if (moduleName.endsWith("/repository-read-client.js")) {
+        violations.push(`${path.relative(root, file)} imports RepositoryReadClient outside the Application Service`);
+      }
       if (moduleName.endsWith("/repository-write-model.js")) {
         const imports = node.importClause?.namedBindings;
         if (imports !== undefined && ts.isNamespaceImport(imports)) {
@@ -131,6 +136,9 @@ for (const file of listSourceFiles(sourceRoot)) {
           `${path.relative(root, file)} re-exports RepositoryWriteClient outside the Application Service`,
         );
       }
+      if (moduleName.endsWith("/repository-read-client.js")) {
+        violations.push(`${path.relative(root, file)} re-exports RepositoryReadClient outside the Application Service`);
+      }
       if (moduleName.endsWith("/repository-write-model.js")) {
         if (node.exportClause === undefined || ts.isNamespaceExport(node.exportClause)) {
           violations.push(`${path.relative(root, file)} re-exports Repository write command construction types`);
@@ -158,9 +166,19 @@ for (const file of listSourceFiles(sourceRoot)) {
     if (isRawPersistenceWriteRequest(node)) {
       violations.push(`${path.relative(root, file)} sends a raw PersistenceWorkerClient write request`);
     }
+    if (isRepositoryReadRequest(node)) {
+      violations.push(`${path.relative(root, file)} calls RepositoryReadClient outside the Application Service`);
+    }
     ts.forEachChild(node, inspect);
   };
   inspect(sourceFile);
+}
+
+{
+  const fixtureSource = typeProgram.getSourceFile(rawReadFixture);
+  if (fixtureSource === undefined || !containsRepositoryReadRequest(fixtureSource)) {
+    violations.push(`${path.relative(root, rawReadFixture)} no longer exercises the Repository read boundary rule`);
+  }
 }
 
 {
@@ -243,6 +261,28 @@ function containsRawPersistenceWriteRequest(sourceFile) {
   let found = false;
   const inspect = (node) => {
     if (isRawPersistenceWriteRequest(node)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, inspect);
+  };
+  inspect(sourceFile);
+  return found;
+}
+
+function isRepositoryReadRequest(node) {
+  if (!ts.isCallExpression(node)) return false;
+  const signatureDeclaration = typeChecker.getResolvedSignature(node)?.declaration;
+  return (
+    signatureDeclaration !== undefined &&
+    path.resolve(signatureDeclaration.getSourceFile().fileName) === path.resolve(repositoryReadClient)
+  );
+}
+
+function containsRepositoryReadRequest(sourceFile) {
+  let found = false;
+  const inspect = (node) => {
+    if (isRepositoryReadRequest(node)) {
       found = true;
       return;
     }
