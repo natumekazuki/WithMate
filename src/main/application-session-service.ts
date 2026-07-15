@@ -35,14 +35,31 @@ import type { RepositoryWriteClient } from "./repository-write-client.js";
 
 type SessionReadPort = Pick<RepositoryReadClient, "sessionsPage" | "sessionGet">;
 type SessionWritePort = Pick<RepositoryWriteClient, "createSession" | "transitionSession">;
+type ApplicationFailureResponse = Extract<ApplicationOperationResponse<never>, Readonly<{ overallStatus: "failure" }>>;
 
 type RequestDecodeResult<TValue> =
-  Readonly<{ ok: true; value: TValue }> | Readonly<{ ok: false; response: ApplicationOperationResponse<never> }>;
+  Readonly<{ ok: true; value: TValue }> | Readonly<{ ok: false; response: ApplicationFailureResponse }>;
+
+type OperationControl = Readonly<{
+  deadlineAt?: number;
+  signal?: AbortSignal;
+}>;
+
+type OperationInterruption = "timeout" | "canceled";
+
+type ControlledSettlement<TValue> =
+  | Readonly<{ status: "fulfilled"; value: TValue }>
+  | Readonly<{ status: "rejected"; error: unknown }>
+  | Readonly<{ status: "interrupted"; interruption: OperationInterruption; started: boolean }>;
+
+// admissionはより低いapp / Provider capも適用するが、永続設定値自体をboundedに保つ。
+export const APPLICATION_MAX_CONCURRENT_CHILD_RUNS = 1_024;
 
 export type ApplicationSessionServiceOptions<TAuthorizationContext> = Readonly<{
   reads: SessionReadPort;
   writes: SessionWritePort;
   access: ApplicationAccessValidator<TAuthorizationContext>;
+  snapshotAuthorization(value: unknown): TAuthorizationContext;
 }>;
 
 export class ApplicationSessionService<
@@ -51,159 +68,176 @@ export class ApplicationSessionService<
   readonly #reads: SessionReadPort;
   readonly #writes: SessionWritePort;
   readonly #access: ApplicationAccessValidator<TAuthorizationContext>;
+  readonly #snapshotAuthorization: (value: unknown) => TAuthorizationContext;
 
   constructor(options: ApplicationSessionServiceOptions<TAuthorizationContext>) {
     this.#reads = options.reads;
     this.#writes = options.writes;
     this.#access = options.access;
+    this.#snapshotAuthorization = options.snapshotAuthorization;
   }
 
   async create(
     request: ApplicationSessionCreateRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
-  ): Promise<ApplicationOperationResponse<ApplicationSessionCreateResult>> {
-    const decoded = decodeCreateRequest<TAuthorizationContext>(request);
+  ): Promise<ApplicationOperationResponse<ApplicationSessionCreateResult, "write">> {
+    const decoded = decodeCreateRequest<TAuthorizationContext>(request, this.#snapshotAuthorization);
     if (!decoded.ok) return decoded.response;
     const decodedOptions = decodeOperationOptions(options);
     if (!decodedOptions.ok) return decodedOptions.response;
+    const control = createOperationControl(decodedOptions.value);
     const input = decoded.value;
-    const denied = await this.#validateAccess("create", "write", input.context);
+    const denied = await this.#validateAccess("create", "write", input.context, control);
     if (denied !== undefined) return denied;
 
-    try {
-      const result = await this.#writes.createSession(
-        {
-          idempotencyKey: input.idempotencyKey,
-          session: {
-            id: issueSessionId(input.idempotencyKey),
-            providerId: input.providerId,
-            workspaceKey: input.context.workspaceKey,
-            allowedAdditionalDirectories: input.allowedAdditionalDirectories,
-            defaultCharacterId: input.defaultCharacterId,
-            maxConcurrentChildRuns: input.maxConcurrentChildRuns,
+    return executeRepositoryOperation(
+      "write",
+      control,
+      (repositoryOptions) =>
+        this.#writes.createSession(
+          {
+            idempotencyKey: input.idempotencyKey,
+            session: {
+              id: issueSessionId(input.idempotencyKey),
+              providerId: input.providerId,
+              workspaceKey: input.context.workspaceKey,
+              allowedAdditionalDirectories: input.allowedAdditionalDirectories,
+              defaultCharacterId: input.defaultCharacterId,
+              maxConcurrentChildRuns: input.maxConcurrentChildRuns,
+            },
           },
-        },
-        decodedOptions.value,
-      );
-      return mapWriteResult<SessionCreateResult, ApplicationSessionCreateResult>(result, (value) => ({
-        sessionId: value.sessionId,
-        workspaceKey: value.workspaceKey,
-        lifecycleStatus: value.lifecycleStatus,
-        createdAt: value.createdAt,
-      }));
-    } catch (error) {
-      return mapThrownFailure(error, "write");
-    }
+          repositoryOptions,
+        ),
+      (result) =>
+        mapWriteResult<SessionCreateResult, ApplicationSessionCreateResult>(result, (value) => ({
+          sessionId: value.sessionId,
+          workspaceKey: value.workspaceKey,
+          lifecycleStatus: value.lifecycleStatus,
+          createdAt: value.createdAt,
+        })),
+    );
   }
 
   async list(
     request: ApplicationSessionListRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
-  ): Promise<ApplicationOperationResponse<ApplicationSessionPage>> {
-    const decoded = decodeListRequest<TAuthorizationContext>(request);
+  ): Promise<ApplicationOperationResponse<ApplicationSessionPage, "read">> {
+    const decoded = decodeListRequest<TAuthorizationContext>(request, this.#snapshotAuthorization);
     if (!decoded.ok) return decoded.response;
     const decodedOptions = decodeOperationOptions(options);
     if (!decodedOptions.ok) return decodedOptions.response;
+    const control = createOperationControl(decodedOptions.value);
     const input = decoded.value;
-    const denied = await this.#validateAccess("list", "read", input.context);
+    const denied = await this.#validateAccess("list", "read", input.context, control);
     if (denied !== undefined) return denied;
 
-    try {
-      const page = await this.#reads.sessionsPage(
-        {
-          workspaceKey: input.context.workspaceKey,
-          ...(input.lifecycleStatus === undefined ? {} : { lifecycleStatus: input.lifecycleStatus }),
-          ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
-          ...(input.limit === undefined ? {} : { limit: input.limit }),
-        },
-        decodedOptions.value,
-      );
-      const items: SessionListItem[] = [];
-      const omissions: PageOmission[] = [];
-      for (const item of page.items) {
-        if (isPageOmission(item)) omissions.push(item);
-        else items.push(projectSessionListItem(item));
-      }
-      const value: ApplicationSessionPage =
-        page.nextCursor === undefined ? { items } : { items, nextCursor: page.nextCursor };
-      if (omissions.length === 0) {
-        return { overallStatus: "success", value, persistence: { status: "read", effect: "none" } };
-      }
-      return {
-        overallStatus: "partial_success",
-        value,
-        issues: omissions.map((omission) =>
-          omission.ordinal === undefined
-            ? {
-                kind: "omission",
-                code: "response_size_limit",
-                message: "A Session list item was omitted because the response size limit was reached.",
-              }
-            : {
-                kind: "omission",
-                code: "response_size_limit",
-                message: "A Session list item was omitted because the response size limit was reached.",
-                ordinal: omission.ordinal,
-              },
+    return executeRepositoryOperation(
+      "read",
+      control,
+      (repositoryOptions) =>
+        this.#reads.sessionsPage(
+          {
+            workspaceKey: input.context.workspaceKey,
+            ...(input.lifecycleStatus === undefined ? {} : { lifecycleStatus: input.lifecycleStatus }),
+            ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+            ...(input.limit === undefined ? {} : { limit: input.limit }),
+          },
+          repositoryOptions,
         ),
-        persistence: { status: "read", effect: "none" },
-      };
-    } catch (error) {
-      return mapThrownFailure(error, "read");
-    }
+      (page) => {
+        const items: SessionListItem[] = [];
+        const omissions: PageOmission[] = [];
+        for (const item of page.items) {
+          if (isPageOmission(item)) omissions.push(item);
+          else items.push(projectSessionListItem(item));
+        }
+        const value: ApplicationSessionPage =
+          page.nextCursor === undefined ? { items } : { items, nextCursor: page.nextCursor };
+        if (omissions.length === 0) {
+          return { overallStatus: "success", value, persistence: { status: "read", effect: "none" } };
+        }
+        const [firstOmission, ...remainingOmissions] = omissions;
+        if (firstOmission === undefined) {
+          return { overallStatus: "success", value, persistence: { status: "read", effect: "none" } };
+        }
+        return {
+          overallStatus: "partial_success",
+          value,
+          issues: [projectPageOmission(firstOmission), ...remainingOmissions.map(projectPageOmission)],
+          persistence: { status: "read", effect: "none" },
+        };
+      },
+    );
   }
 
   async read(
     request: ApplicationSessionReadRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
-  ): Promise<ApplicationOperationResponse<ApplicationSessionReadResult>> {
-    const decoded = decodeReadRequest<TAuthorizationContext>(request);
+  ): Promise<ApplicationOperationResponse<ApplicationSessionReadResult, "read">> {
+    const decoded = decodeReadRequest<TAuthorizationContext>(request, this.#snapshotAuthorization);
     if (!decoded.ok) return decoded.response;
     const decodedOptions = decodeOperationOptions(options);
     if (!decodedOptions.ok) return decodedOptions.response;
+    const control = createOperationControl(decodedOptions.value);
     const input = decoded.value;
-    const denied = await this.#validateAccess("read", "read", input.context);
+    const denied = await this.#validateAccess("read", "read", input.context, control);
     if (denied !== undefined) return denied;
 
-    try {
-      const repositoryValue = await this.#reads.sessionGet(
-        { workspaceKey: input.context.workspaceKey, sessionId: input.sessionId },
-        decodedOptions.value,
-      );
-      const value = projectSessionReadResult(repositoryValue);
-      return { overallStatus: "success", value, persistence: { status: "read", effect: "none" } };
-    } catch (error) {
-      return mapThrownFailure(error, "read");
-    }
+    return executeRepositoryOperation(
+      "read",
+      control,
+      (repositoryOptions) =>
+        this.#reads.sessionGet(
+          { workspaceKey: input.context.workspaceKey, sessionId: input.sessionId },
+          repositoryOptions,
+        ),
+      (repositoryValue) => ({
+        overallStatus: "success",
+        value: projectSessionReadResult(repositoryValue),
+        persistence: { status: "read", effect: "none" },
+      }),
+    );
   }
 
   archive(
     request: ApplicationSessionWriteRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
-  ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult>> {
-    const decoded = decodeWriteRequest<TAuthorizationContext>(request);
+  ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult, "write">> {
+    const decoded = decodeWriteRequest<TAuthorizationContext>(request, this.#snapshotAuthorization);
     if (!decoded.ok) return Promise.resolve(decoded.response);
     const decodedOptions = decodeOperationOptions(options);
     if (!decodedOptions.ok) return Promise.resolve(decodedOptions.response);
-    return this.#transition("archive", decoded.value, "active", "archived", decodedOptions.value);
+    return this.#transition(
+      "archive",
+      decoded.value,
+      "active",
+      "archived",
+      createOperationControl(decodedOptions.value),
+    );
   }
 
   unarchive(
     request: ApplicationSessionWriteRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
-  ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult>> {
-    const decoded = decodeWriteRequest<TAuthorizationContext>(request);
+  ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult, "write">> {
+    const decoded = decodeWriteRequest<TAuthorizationContext>(request, this.#snapshotAuthorization);
     if (!decoded.ok) return Promise.resolve(decoded.response);
     const decodedOptions = decodeOperationOptions(options);
     if (!decodedOptions.ok) return Promise.resolve(decodedOptions.response);
-    return this.#transition("unarchive", decoded.value, "archived", "active", decodedOptions.value);
+    return this.#transition(
+      "unarchive",
+      decoded.value,
+      "archived",
+      "active",
+      createOperationControl(decodedOptions.value),
+    );
   }
 
   close(
     request: ApplicationSessionCloseRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
-  ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult>> {
-    const decoded = decodeCloseRequest<TAuthorizationContext>(request);
+  ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult, "write">> {
+    const decoded = decodeCloseRequest<TAuthorizationContext>(request, this.#snapshotAuthorization);
     if (!decoded.ok) return Promise.resolve(decoded.response);
     const decodedOptions = decodeOperationOptions(options);
     if (!decodedOptions.ok) return Promise.resolve(decodedOptions.response);
@@ -212,7 +246,7 @@ export class ApplicationSessionService<
       decoded.value,
       decoded.value.expectedLifecycleStatus,
       "closed",
-      decodedOptions.value,
+      createOperationControl(decodedOptions.value),
     );
   }
 
@@ -221,46 +255,58 @@ export class ApplicationSessionService<
     request: ApplicationSessionWriteRequest<TAuthorizationContext>,
     expectedLifecycleStatus: "active" | "archived",
     targetLifecycleStatus: SessionLifecycleStatus,
-    options?: ApplicationOperationOptions,
-  ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult>> {
-    const denied = await this.#validateAccess(operation, "write", request.context);
+    control: OperationControl,
+  ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult, "write">> {
+    const denied = await this.#validateAccess(operation, "write", request.context, control);
     if (denied !== undefined) return denied;
 
-    try {
-      const result = await this.#writes.transitionSession(
-        {
-          sessionId: request.sessionId,
-          workspaceKey: request.context.workspaceKey,
-          idempotencyKey: request.idempotencyKey,
-          expectedLifecycleStatus,
-          targetLifecycleStatus,
-        },
-        options,
-      );
-      return mapWriteResult<SessionTransitionResult, ApplicationSessionTransitionResult>(result, (value) => ({
-        sessionId: value.sessionId,
-        lifecycleStatus: value.lifecycleStatus,
-        updatedAt: value.updatedAt,
-      }));
-    } catch (error) {
-      return mapThrownFailure(error, "write");
-    }
+    return executeRepositoryOperation(
+      "write",
+      control,
+      (repositoryOptions) =>
+        this.#writes.transitionSession(
+          {
+            sessionId: request.sessionId,
+            workspaceKey: request.context.workspaceKey,
+            idempotencyKey: request.idempotencyKey,
+            expectedLifecycleStatus,
+            targetLifecycleStatus,
+          },
+          repositoryOptions,
+        ),
+      (result) =>
+        mapWriteResult<SessionTransitionResult, ApplicationSessionTransitionResult>(result, (value) => ({
+          sessionId: value.sessionId,
+          lifecycleStatus: value.lifecycleStatus,
+          updatedAt: value.updatedAt,
+        })),
+    );
   }
 
   async #validateAccess(
     operation: ApplicationSessionOperation,
     access: "read" | "write",
     context: ApplicationSessionCreateRequest<TAuthorizationContext>["context"],
-  ): Promise<ApplicationOperationResponse<never> | undefined> {
-    try {
-      const workspace = await this.#access.validateWorkspace(createAccessValidationView(operation, access, context));
-      if (!workspace.allowed) return accessFailure(workspace.error);
-      const authorization = await this.#access.authorize(createAccessValidationView(operation, access, context));
-      if (!authorization.allowed) return accessFailure(authorization.error);
-      return undefined;
-    } catch {
+    control: OperationControl,
+  ): Promise<ApplicationFailureResponse | undefined> {
+    const workspace = await runControlled(control, () =>
+      this.#access.validateWorkspace(
+        createAccessValidationView(operation, access, context, this.#snapshotAuthorization),
+      ),
+    );
+    if (workspace.status === "interrupted") return operationInterruptionFailure(workspace.interruption);
+    if (workspace.status === "rejected") return applicationFailure({ status: "not_attempted", effect: "none" });
+    if (!workspace.value.allowed) return accessFailure(workspace.value.error);
+
+    const authorization = await runControlled(control, () =>
+      this.#access.authorize(createAccessValidationView(operation, access, context, this.#snapshotAuthorization)),
+    );
+    if (authorization.status === "interrupted") return operationInterruptionFailure(authorization.interruption);
+    if (authorization.status === "rejected") {
       return applicationFailure({ status: "not_attempted", effect: "none" });
     }
+    if (!authorization.value.allowed) return accessFailure(authorization.value.error);
+    return undefined;
   }
 }
 
@@ -268,19 +314,21 @@ function createAccessValidationView<TAuthorizationContext>(
   operation: ApplicationSessionOperation,
   access: "read" | "write",
   context: ApplicationSessionCreateRequest<TAuthorizationContext>["context"],
+  snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): Parameters<ApplicationAccessValidator<TAuthorizationContext>["validateWorkspace"]>[0] {
   return {
     operation,
     access,
     context: {
       workspaceKey: context.workspaceKey,
-      authorization: structuredClone(context.authorization) as TAuthorizationContext,
+      authorization: snapshotAuthorization(context.authorization),
     },
   };
 }
 
 function decodeCreateRequest<TAuthorizationContext>(
   request: unknown,
+  snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): RequestDecodeResult<ApplicationSessionCreateRequest<TAuthorizationContext>> {
   if (
     !isPlainObject(request) ||
@@ -296,11 +344,11 @@ function decodeCreateRequest<TAuthorizationContext>(
     !isBoundedString(request.providerId) ||
     !isBoundedString(request.defaultCharacterId) ||
     !isAllowedAdditionalDirectories(request.allowedAdditionalDirectories) ||
-    !isNonNegativeSafeInteger(request.maxConcurrentChildRuns)
+    !isSafeChildRunLimit(request.maxConcurrentChildRuns)
   ) {
     return decodeRequestFailure();
   }
-  const context = decodeOperationContext<TAuthorizationContext>(request.context);
+  const context = decodeOperationContext(request.context, snapshotAuthorization);
   if (context === undefined) return decodeRequestFailure();
   return {
     ok: true,
@@ -317,6 +365,7 @@ function decodeCreateRequest<TAuthorizationContext>(
 
 function decodeWriteRequest<TAuthorizationContext>(
   request: unknown,
+  snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): RequestDecodeResult<ApplicationSessionWriteRequest<TAuthorizationContext>> {
   if (
     !isPlainObject(request) ||
@@ -326,13 +375,14 @@ function decodeWriteRequest<TAuthorizationContext>(
   ) {
     return decodeRequestFailure();
   }
-  const context = decodeOperationContext<TAuthorizationContext>(request.context);
+  const context = decodeOperationContext(request.context, snapshotAuthorization);
   if (context === undefined) return decodeRequestFailure();
   return { ok: true, value: { context, sessionId: request.sessionId, idempotencyKey: request.idempotencyKey } };
 }
 
 function decodeListRequest<TAuthorizationContext>(
   request: unknown,
+  snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): RequestDecodeResult<ApplicationSessionListRequest<TAuthorizationContext>> {
   if (
     !isPlainObject(request) ||
@@ -344,7 +394,7 @@ function decodeListRequest<TAuthorizationContext>(
   ) {
     return decodeRequestFailure();
   }
-  const context = decodeOperationContext<TAuthorizationContext>(request.context);
+  const context = decodeOperationContext(request.context, snapshotAuthorization);
   if (context === undefined) return decodeRequestFailure();
   return {
     ok: true,
@@ -359,6 +409,7 @@ function decodeListRequest<TAuthorizationContext>(
 
 function decodeReadRequest<TAuthorizationContext>(
   request: unknown,
+  snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): RequestDecodeResult<ApplicationSessionReadRequest<TAuthorizationContext>> {
   if (
     !isPlainObject(request) ||
@@ -367,13 +418,14 @@ function decodeReadRequest<TAuthorizationContext>(
   ) {
     return decodeRequestFailure();
   }
-  const context = decodeOperationContext<TAuthorizationContext>(request.context);
+  const context = decodeOperationContext(request.context, snapshotAuthorization);
   if (context === undefined) return decodeRequestFailure();
   return { ok: true, value: { context, sessionId: request.sessionId } };
 }
 
 function decodeCloseRequest<TAuthorizationContext>(
   request: unknown,
+  snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): RequestDecodeResult<ApplicationSessionCloseRequest<TAuthorizationContext>> {
   if (
     !isPlainObject(request) ||
@@ -384,7 +436,7 @@ function decodeCloseRequest<TAuthorizationContext>(
   ) {
     return decodeRequestFailure();
   }
-  const context = decodeOperationContext<TAuthorizationContext>(request.context);
+  const context = decodeOperationContext(request.context, snapshotAuthorization);
   if (context === undefined) return decodeRequestFailure();
   return {
     ok: true,
@@ -399,6 +451,7 @@ function decodeCloseRequest<TAuthorizationContext>(
 
 function decodeOperationContext<TAuthorizationContext>(
   context: unknown,
+  snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): ApplicationSessionCreateRequest<TAuthorizationContext>["context"] | undefined {
   if (
     !isPlainObject(context) ||
@@ -411,7 +464,7 @@ function decodeOperationContext<TAuthorizationContext>(
   try {
     return {
       workspaceKey: context.workspaceKey,
-      authorization: structuredClone(context.authorization) as TAuthorizationContext,
+      authorization: snapshotAuthorization(context.authorization),
     };
   } catch {
     return undefined;
@@ -420,6 +473,93 @@ function decodeOperationContext<TAuthorizationContext>(
 
 function decodeRequestFailure<TValue>(): RequestDecodeResult<TValue> {
   return { ok: false, response: requestFailure() };
+}
+
+function createOperationControl(options: ApplicationOperationOptions | undefined): OperationControl {
+  return {
+    ...(options?.timeoutMs === undefined ? {} : { deadlineAt: Date.now() + options.timeoutMs }),
+    ...(options?.signal === undefined ? {} : { signal: options.signal }),
+  };
+}
+
+async function runControlled<TValue>(
+  control: OperationControl,
+  start: () => Promise<TValue>,
+): Promise<ControlledSettlement<TValue>> {
+  const beforeStart = getOperationInterruption(control);
+  if (beforeStart !== undefined) {
+    return { status: "interrupted", interruption: beforeStart, started: false };
+  }
+
+  let work: Promise<TValue>;
+  try {
+    work = Promise.resolve(start());
+  } catch (error) {
+    return { status: "rejected", error };
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (value: ControlledSettlement<TValue>) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      control.signal?.removeEventListener("abort", onAbort);
+      resolve(value);
+    };
+    const onAbort = () => finish({ status: "interrupted", interruption: "canceled", started: true });
+    const remaining = getRemainingTimeout(control);
+    if (remaining !== undefined) {
+      timer = setTimeout(() => finish({ status: "interrupted", interruption: "timeout", started: true }), remaining);
+    }
+    control.signal?.addEventListener("abort", onAbort, { once: true });
+    if (control.signal?.aborted) {
+      onAbort();
+      return;
+    }
+    work.then(
+      (value) => finish({ status: "fulfilled", value }),
+      (error: unknown) => finish({ status: "rejected", error }),
+    );
+  });
+}
+
+async function executeRepositoryOperation<TRepositoryValue, TApplicationValue, TMode extends "read" | "write">(
+  requestClass: TMode,
+  control: OperationControl,
+  execute: (options: ApplicationOperationOptions | undefined) => Promise<TRepositoryValue>,
+  mapValue: (value: TRepositoryValue) => ApplicationOperationResponse<TApplicationValue, TMode>,
+): Promise<ApplicationOperationResponse<TApplicationValue, TMode>> {
+  const interruption = getOperationInterruption(control);
+  if (interruption !== undefined) return operationInterruptionFailure(interruption);
+  const settlement = await runControlled(control, () => execute(createRepositoryOptions(control)));
+  if (settlement.status === "interrupted") {
+    return settlement.started
+      ? persistenceInterruptionFailure(settlement.interruption, requestClass)
+      : operationInterruptionFailure(settlement.interruption);
+  }
+  if (settlement.status === "rejected") return mapThrownFailure(settlement.error, requestClass);
+  return mapValue(settlement.value);
+}
+
+function createRepositoryOptions(control: OperationControl): ApplicationOperationOptions | undefined {
+  const timeoutMs = getRemainingTimeout(control);
+  if (timeoutMs === undefined && control.signal === undefined) return undefined;
+  return {
+    ...(timeoutMs === undefined ? {} : { timeoutMs: Math.max(1, timeoutMs) }),
+    ...(control.signal === undefined ? {} : { signal: control.signal }),
+  };
+}
+
+function getOperationInterruption(control: OperationControl): OperationInterruption | undefined {
+  if (control.signal?.aborted) return "canceled";
+  if (control.deadlineAt !== undefined && control.deadlineAt <= Date.now()) return "timeout";
+  return undefined;
+}
+
+function getRemainingTimeout(control: OperationControl): number | undefined {
+  return control.deadlineAt === undefined ? undefined : Math.max(0, control.deadlineAt - Date.now());
 }
 
 function decodeOperationOptions(options: unknown): RequestDecodeResult<ApplicationOperationOptions | undefined> {
@@ -445,7 +585,7 @@ function decodeOperationOptions(options: unknown): RequestDecodeResult<Applicati
   };
 }
 
-function requestFailure(): ApplicationOperationResponse<never> {
+function requestFailure(): ApplicationFailureResponse {
   return {
     overallStatus: "failure",
     error: {
@@ -464,7 +604,7 @@ function accessFailure(
     message: string;
     retryable: boolean;
   }>,
-): ApplicationOperationResponse<never> {
+): ApplicationFailureResponse {
   return {
     overallStatus: "failure",
     error: {
@@ -477,9 +617,55 @@ function accessFailure(
   };
 }
 
+function operationInterruptionFailure(interruption: OperationInterruption): ApplicationFailureResponse {
+  return {
+    overallStatus: "failure",
+    error:
+      interruption === "timeout"
+        ? {
+            kind: "operation",
+            code: "operation_timeout",
+            message: "Application operation timed out.",
+            retryable: true,
+          }
+        : {
+            kind: "operation",
+            code: "operation_canceled",
+            message: "Application operation was canceled.",
+            retryable: false,
+          },
+    persistence: { status: "not_attempted", effect: "none" },
+  };
+}
+
+function persistenceInterruptionFailure(
+  interruption: OperationInterruption,
+  requestClass: "read" | "write",
+): ApplicationFailureResponse {
+  const effect = requestClass === "write" ? "unknown" : "none";
+  const error = {
+    kind: "persistence" as const,
+    code: interruption === "timeout" ? ("persistence_timeout" as const) : ("persistence_canceled" as const),
+    message: interruption === "timeout" ? "Application operation timed out." : "Application operation was canceled.",
+    retryable: interruption === "timeout",
+  };
+  if (effect === "unknown") {
+    return {
+      overallStatus: "failure",
+      error: { ...error, effect: "unknown" },
+      persistence: { status: "failed", effect: "unknown" },
+    };
+  }
+  return {
+    overallStatus: "failure",
+    error: { ...error, effect: "none" },
+    persistence: { status: "failed", effect: "none" },
+  };
+}
+
 function applicationFailure(
   persistence: Extract<ApplicationPersistenceStatus, Readonly<{ status: "not_attempted" | "failed" }>>,
-): ApplicationOperationResponse<never> {
+): ApplicationFailureResponse {
   return {
     overallStatus: "failure",
     error: {
@@ -495,7 +681,7 @@ function applicationFailure(
 function mapWriteResult<TRepositoryValue, TApplicationValue extends TRepositoryValue>(
   result: RepositoryCommandResult<TRepositoryValue>,
   mapValue: (value: TRepositoryValue) => TApplicationValue,
-): ApplicationOperationResponse<TApplicationValue> {
+): ApplicationOperationResponse<TApplicationValue, "write"> {
   if (!result.ok) return domainFailure(result.error);
   return {
     overallStatus: "success",
@@ -504,7 +690,7 @@ function mapWriteResult<TRepositoryValue, TApplicationValue extends TRepositoryV
   };
 }
 
-function domainFailure(error: RepositoryCommandError | ApplicationDomainError): ApplicationOperationResponse<never> {
+function domainFailure(error: RepositoryCommandError | ApplicationDomainError): ApplicationFailureResponse {
   const projectedError: ApplicationDomainError =
     error.code === "capacity_exceeded"
       ? {
@@ -527,7 +713,7 @@ function domainFailure(error: RepositoryCommandError | ApplicationDomainError): 
   };
 }
 
-function mapThrownFailure(error: unknown, requestClass: "read" | "write"): ApplicationOperationResponse<never> {
+function mapThrownFailure(error: unknown, requestClass: "read" | "write"): ApplicationFailureResponse {
   if (!(error instanceof PersistenceClientError)) {
     return applicationFailure({ status: "failed", effect: requestClass === "write" ? "unknown" : "none" });
   }
@@ -638,6 +824,10 @@ function isNonNegativeSafeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
+function isSafeChildRunLimit(value: unknown): value is number {
+  return isNonNegativeSafeInteger(value) && value <= APPLICATION_MAX_CONCURRENT_CHILD_RUNS;
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value) as unknown;
@@ -742,4 +932,19 @@ function projectSessionDetail(session: SessionDetail): SessionDetail {
 
 function isPageOmission(value: unknown): value is PageOmission {
   return typeof value === "object" && value !== null && "omitted" in value && value.omitted === true;
+}
+
+function projectPageOmission(omission: PageOmission) {
+  return omission.ordinal === undefined
+    ? {
+        kind: "omission" as const,
+        code: "response_size_limit" as const,
+        message: "A Session list item was omitted because the response size limit was reached.",
+      }
+    : {
+        kind: "omission" as const,
+        code: "response_size_limit" as const,
+        message: "A Session list item was omitted because the response size limit was reached.",
+        ordinal: omission.ordinal,
+      };
 }

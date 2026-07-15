@@ -27,6 +27,9 @@ type OmissionIssue = Extract<Partial["issues"][number], Readonly<{ kind: "omissi
 type PartialPersistenceIssue = Extract<Partial["issues"][number], Readonly<{ kind: "persistence" }>>;
 type DomainError = Extract<ApplicationDomainError, Readonly<{ code: ApplicationDomainErrorCode }>>;
 type CapacityError = Extract<DomainError, Readonly<{ code: "capacity_exceeded" }>>;
+type Operations = ApplicationSessionOperations<Authorization>;
+type CreateResponse = Awaited<ReturnType<Operations["create"]>>;
+type ListResponse = Awaited<ReturnType<Operations["list"]>>;
 
 const capacityDetails: ApplicationCapacityExceededDetails = { scope: "application", current: 1, limit: 1 };
 
@@ -64,10 +67,71 @@ const invalidPersistenceFailureEffect: ApplicationOperationResponse<string> = {
   error: { kind: "persistence", code: "persistence_timeout", message: "timeout", retryable: true, effect: "unknown" },
   persistence: { status: "failed", effect: "none" },
 };
+const invalidCreateReadSuccess: CreateResponse = {
+  overallStatus: "success",
+  value: { sessionId: "session-1", workspaceKey: "workspace-1", lifecycleStatus: "active", createdAt: 1 },
+  // @ts-expect-error Session create success must report a committed write
+  persistence: { status: "read", effect: "none" },
+};
+const invalidListCommittedSuccess: ListResponse = {
+  overallStatus: "success",
+  value: { items: [] },
+  // @ts-expect-error Session list success must report a completed read
+  persistence: { status: "committed", effect: "none", replayed: false },
+};
+// @ts-expect-error partial persistence issue and status must report the same failure effect
+const invalidPartialPersistenceEffect: ApplicationOperationResponse<string> = {
+  overallStatus: "partial_success",
+  value: "partial",
+  issues: [
+    {
+      kind: "persistence",
+      code: "persistence_timeout",
+      message: "timeout",
+      retryable: true,
+      effect: "unknown",
+    },
+  ],
+  persistence: { status: "committed", effect: "none", replayed: false },
+};
+// @ts-expect-error write partial success must correlate the issue and persistence effects
+const invalidWritePartialPersistenceEffect: ApplicationOperationResponse<string, "write"> = {
+  overallStatus: "partial_success",
+  value: "partial",
+  issues: [
+    {
+      kind: "persistence",
+      code: "persistence_timeout",
+      message: "timeout",
+      retryable: true,
+      effect: "unknown",
+    },
+  ],
+  persistence: { status: "failed", effect: "none" },
+};
+const validWritePartialPersistenceEffect: ApplicationOperationResponse<string, "write"> = {
+  overallStatus: "partial_success",
+  value: "partial",
+  issues: [
+    {
+      kind: "persistence",
+      code: "persistence_timeout",
+      message: "timeout",
+      retryable: true,
+      effect: "unknown",
+    },
+  ],
+  persistence: { status: "failed", effect: "unknown" },
+};
 void invalidSuccessPersistence;
 void invalidRequestFailurePersistence;
 void invalidDomainFailurePersistence;
 void invalidPersistenceFailureEffect;
+void invalidCreateReadSuccess;
+void invalidListCommittedSuccess;
+void invalidPartialPersistenceEffect;
+void invalidWritePartialPersistenceEffect;
+void validWritePartialPersistenceEffect;
 
 test("public Application Service barrel exposes the transport-neutral Session contract", () => {
   const request = null as ApplicationSessionCreateRequest<Authorization> | null;
@@ -76,7 +140,7 @@ test("public Application Service barrel exposes the transport-neutral Session co
   const operations = null as ApplicationSessionOperations<Authorization> | null;
   const typeContract: readonly [
     Equal<ResponseStatus, "success" | "partial_success" | "failure">,
-    Equal<Failure["error"]["kind"], "request" | "access" | "domain" | "persistence" | "application">,
+    Equal<Failure["error"]["kind"], "request" | "access" | "operation" | "domain" | "persistence" | "application">,
     Equal<OmissionIssue["code"], "response_size_limit">,
     Equal<PartialPersistenceIssue["effect"], "none" | "unknown">,
     Equal<

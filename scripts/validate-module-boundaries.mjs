@@ -60,6 +60,13 @@ const rawWriteFixture = path.join(root, "test", "fixtures", "module-boundaries",
 const repositoryWriteFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-repository-write.ts");
 const rawReadFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-repository-read.ts");
 const publicTypeAliasFixture = path.join(root, "test", "fixtures", "module-boundaries", "public-main-type-alias.ts");
+const nonliteralDynamicImportFixture = path.join(
+  root,
+  "test",
+  "fixtures",
+  "module-boundaries",
+  "nonliteral-dynamic-import.ts",
+);
 const testConfig = ts.getParsedCommandLineOfConfigFile(path.join(root, "tsconfig.test.json"), {}, ts.sys);
 if (testConfig === undefined) {
   throw new Error("tsconfig.test.json could not be parsed for module-boundary validation.");
@@ -71,6 +78,7 @@ const typeProgram = ts.createProgram({
     repositoryWriteFixture,
     rawReadFixture,
     publicTypeAliasFixture,
+    nonliteralDynamicImportFixture,
   ],
   options: testConfig.options,
 });
@@ -155,6 +163,9 @@ for (const file of listSourceFiles(sourceRoot)) {
         `${path.relative(root, file)} dynamically imports RepositoryReadClient outside the Application Service`,
       );
     }
+    if (isNonliteralDynamicImport(node)) {
+      violations.push(`${path.relative(root, file)} uses a non-literal dynamic import outside an internal allowlist`);
+    }
     if (!allowsRepositoryIntegration && isRepositoryWriteRequest(node)) {
       violations.push(`${path.relative(root, file)} calls RepositoryWriteClient outside the Application Service`);
     }
@@ -228,6 +239,15 @@ for (const file of [applicationWriteOwner]) {
   }
 }
 
+{
+  const fixtureSource = typeProgram.getSourceFile(nonliteralDynamicImportFixture);
+  if (fixtureSource === undefined || !containsNonliteralDynamicImport(fixtureSource)) {
+    violations.push(
+      `${path.relative(root, nonliteralDynamicImportFixture)} no longer exercises the non-literal dynamic import rule`,
+    );
+  }
+}
+
 function findExportsDeclaredOutside(sourceFile, allowedDeclarationFile) {
   const moduleSymbol = typeChecker.getSymbolAtLocation(sourceFile);
   if (moduleSymbol === undefined) return [];
@@ -281,6 +301,25 @@ function isRepositoryClientDynamicImport(node, clientFileName) {
     ts.isStringLiteral(moduleSpecifier) &&
     moduleSpecifier.text.endsWith(`/${clientFileName}`)
   );
+}
+
+function isNonliteralDynamicImport(node) {
+  if (!ts.isCallExpression(node) || node.expression.kind !== ts.SyntaxKind.ImportKeyword) return false;
+  const moduleSpecifier = node.arguments[0];
+  return moduleSpecifier === undefined || !ts.isStringLiteral(moduleSpecifier);
+}
+
+function containsNonliteralDynamicImport(sourceFile) {
+  let found = false;
+  const inspect = (node) => {
+    if (isNonliteralDynamicImport(node)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, inspect);
+  };
+  inspect(sourceFile);
+  return found;
 }
 
 function containsRepositoryClientDynamicImport(sourceFile, clientFileName) {

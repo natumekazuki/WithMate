@@ -43,6 +43,20 @@ export type ApplicationAccessError = Readonly<{
   retryable: boolean;
 }>;
 
+export type ApplicationOperationInterruptedError =
+  | Readonly<{
+      kind: "operation";
+      code: "operation_timeout";
+      message: string;
+      retryable: true;
+    }>
+  | Readonly<{
+      kind: "operation";
+      code: "operation_canceled";
+      message: string;
+      retryable: false;
+    }>;
+
 export type ApplicationDomainErrorCode =
   | "request_invalid"
   | "cursor_invalid"
@@ -106,6 +120,7 @@ export type ApplicationInternalError = Readonly<{
 export type ApplicationOperationError =
   | ApplicationRequestError
   | ApplicationAccessError
+  | ApplicationOperationInterruptedError
   | ApplicationDomainError
   | ApplicationPersistenceError
   | ApplicationInternalError;
@@ -142,23 +157,44 @@ export type ApplicationOperationIssue =
     }>
   | ApplicationPersistenceError;
 
-type ApplicationSuccessResponse<TValue> = Readonly<{
+export type ApplicationOperationMode = "read" | "write";
+
+type ApplicationOmissionIssue = Extract<ApplicationOperationIssue, Readonly<{ kind: "omission" }>>;
+
+type ApplicationReadSuccessResponse<TValue> = Readonly<{
   overallStatus: "success";
   value: TValue;
-  persistence: ApplicationReadPersistenceStatus | ApplicationCommittedPersistenceStatus;
+  persistence: ApplicationReadPersistenceStatus;
 }>;
 
-type ApplicationPartialSuccessResponse<TValue> = Readonly<{
+type ApplicationReadPartialSuccessResponse<TValue> = Readonly<{
   overallStatus: "partial_success";
   value: TValue;
-  issues: readonly ApplicationOperationIssue[];
-  persistence:
-    ApplicationReadPersistenceStatus | ApplicationCommittedPersistenceStatus | ApplicationFailedPersistenceStatus;
+  issues: readonly [ApplicationOmissionIssue, ...ApplicationOmissionIssue[]];
+  persistence: ApplicationReadPersistenceStatus;
 }>;
+
+type ApplicationWriteSuccessResponse<TValue> = Readonly<{
+  overallStatus: "success";
+  value: TValue;
+  persistence: ApplicationCommittedPersistenceStatus;
+}>;
+
+type ApplicationWritePartialSuccessResponse<TValue> = {
+  [TEffect in ApplicationFailureEffect]: Readonly<{
+    overallStatus: "partial_success";
+    value: TValue;
+    issues: readonly [
+      ApplicationPersistenceError & Readonly<{ effect: TEffect }>,
+      ...(ApplicationPersistenceError & Readonly<{ effect: TEffect }>)[],
+    ];
+    persistence: ApplicationFailedPersistenceStatus<TEffect>;
+  }>;
+}[ApplicationFailureEffect];
 
 type ApplicationPrePersistenceFailureResponse = Readonly<{
   overallStatus: "failure";
-  error: ApplicationRequestError | ApplicationAccessError;
+  error: ApplicationRequestError | ApplicationAccessError | ApplicationOperationInterruptedError;
   persistence: ApplicationNotAttemptedPersistenceStatus;
 }>;
 
@@ -182,9 +218,12 @@ type ApplicationInternalFailureResponse = Readonly<{
   persistence: ApplicationNotAttemptedPersistenceStatus | ApplicationFailedPersistenceStatus;
 }>;
 
-export type ApplicationOperationResponse<TValue> =
-  | ApplicationSuccessResponse<TValue>
-  | ApplicationPartialSuccessResponse<TValue>
+type ApplicationOutcomeResponse<TValue, TMode extends ApplicationOperationMode> = TMode extends "read"
+  ? ApplicationReadSuccessResponse<TValue> | ApplicationReadPartialSuccessResponse<TValue>
+  : ApplicationWriteSuccessResponse<TValue> | ApplicationWritePartialSuccessResponse<TValue>;
+
+export type ApplicationOperationResponse<TValue, TMode extends ApplicationOperationMode = ApplicationOperationMode> =
+  | ApplicationOutcomeResponse<TValue, TMode>
   | ApplicationPrePersistenceFailureResponse
   | ApplicationDomainFailureResponse
   | ApplicationPersistenceFailureResponse
@@ -256,25 +295,25 @@ export interface ApplicationSessionOperations<TAuthorizationContext> {
   create(
     request: ApplicationSessionCreateRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
-  ): Promise<ApplicationOperationResponse<ApplicationSessionCreateResult>>;
+  ): Promise<ApplicationOperationResponse<ApplicationSessionCreateResult, "write">>;
   list(
     request: ApplicationSessionListRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
-  ): Promise<ApplicationOperationResponse<ApplicationSessionPage>>;
+  ): Promise<ApplicationOperationResponse<ApplicationSessionPage, "read">>;
   read(
     request: ApplicationSessionReadRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
-  ): Promise<ApplicationOperationResponse<ApplicationSessionReadResult>>;
+  ): Promise<ApplicationOperationResponse<ApplicationSessionReadResult, "read">>;
   archive(
     request: ApplicationSessionWriteRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
-  ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult>>;
+  ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult, "write">>;
   unarchive(
     request: ApplicationSessionWriteRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
-  ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult>>;
+  ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult, "write">>;
   close(
     request: ApplicationSessionCloseRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
-  ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult>>;
+  ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult, "write">>;
 }

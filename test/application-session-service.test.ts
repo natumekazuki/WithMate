@@ -5,7 +5,10 @@ import path from "node:path";
 import test from "node:test";
 
 import { type ApplicationAccessValidator, type ApplicationSessionOperationContext } from "../src/main/index.js";
-import { ApplicationSessionService } from "../src/main/application-session-service.js";
+import {
+  APPLICATION_MAX_CONCURRENT_CHILD_RUNS,
+  ApplicationSessionService,
+} from "../src/main/application-session-service.js";
 import { PersistenceClientError, PersistenceWorkerClient } from "../src/main/persistence-worker-client.js";
 import { RepositoryReadClient } from "../src/main/repository-read-client.js";
 import { RepositoryWriteClient } from "../src/main/repository-write-client.js";
@@ -41,6 +44,7 @@ workerTest("Session operations run end-to-end through the Application Service an
         reads: new RepositoryReadClient(client),
         writes: new RepositoryWriteClient(client),
         access: allowingAccess(),
+        snapshotAuthorization: structuredClone,
       });
       const created = await service.create(createRequest());
       assert.equal(created.overallStatus, "success");
@@ -65,6 +69,7 @@ workerTest("Session operations run end-to-end through the Application Service an
         reads: new RepositoryReadClient(client),
         writes: new RepositoryWriteClient(client),
         access: allowingAccess(),
+        snapshotAuthorization: structuredClone,
       });
       const otherCreated = await otherService.create({
         ...createRequest(),
@@ -163,6 +168,7 @@ workerTest("Application list accepts a Repository cursor containing a maximum-le
         reads: new RepositoryReadClient(client),
         writes,
         access: allowingAccess(),
+        snapshotAuthorization: structuredClone,
       });
 
       const first = await service.list({ context, limit: 1 });
@@ -705,6 +711,188 @@ test("operation options are validated and snapshotted before access validation",
   assert.deepEqual(receivedOptions, { timeoutMs: 1_000, signal: controller.signal });
 });
 
+test("operation timeout and cancellation settle while access validation is pending", async () => {
+  let accessCalls = 0;
+  let repositoryCalls = 0;
+  const service = createService({
+    access: {
+      async validateWorkspace() {
+        accessCalls += 1;
+        return new Promise(() => undefined);
+      },
+      async authorize() {
+        accessCalls += 1;
+        return { allowed: true };
+      },
+    },
+    reads: {
+      async sessionsPage() {
+        repositoryCalls += 1;
+        return { items: [] };
+      },
+    },
+  });
+
+  const timedOut = await Promise.race([
+    service.list({ context }, { timeoutMs: 5 }),
+    new Promise<"unsettled">((resolve) => setTimeout(() => resolve("unsettled"), 50)),
+  ]);
+  assert.notEqual(timedOut, "unsettled");
+  if (timedOut === "unsettled") assert.fail("operation timeout did not settle");
+  assert.equal(timedOut.overallStatus, "failure");
+  assert.deepEqual(timedOut.overallStatus === "failure" && timedOut.error, {
+    kind: "operation",
+    code: "operation_timeout",
+    message: "Application operation timed out.",
+    retryable: true,
+  });
+  assert.deepEqual(timedOut.persistence, { status: "not_attempted", effect: "none" });
+
+  const controller = new AbortController();
+  controller.abort();
+  const canceled = await Promise.race([
+    service.list({ context }, { signal: controller.signal }),
+    new Promise<"unsettled">((resolve) => setTimeout(() => resolve("unsettled"), 50)),
+  ]);
+  assert.notEqual(canceled, "unsettled");
+  if (canceled === "unsettled") assert.fail("operation cancellation did not settle");
+  assert.deepEqual(canceled.overallStatus === "failure" && canceled.error, {
+    kind: "operation",
+    code: "operation_canceled",
+    message: "Application operation was canceled.",
+    retryable: false,
+  });
+  assert.deepEqual(canceled.persistence, { status: "not_attempted", effect: "none" });
+  assert.equal(accessCalls, 1);
+  assert.equal(repositoryCalls, 0);
+});
+
+test("operation deadline preserves persistence effect after Repository access starts", async () => {
+  const readService = createService({
+    reads: {
+      async sessionsPage() {
+        return new Promise(() => undefined);
+      },
+    },
+  });
+  const readTimeout = await Promise.race([
+    readService.list({ context }, { timeoutMs: 5 }),
+    new Promise<"unsettled">((resolve) => setTimeout(() => resolve("unsettled"), 50)),
+  ]);
+  assert.notEqual(readTimeout, "unsettled");
+  if (readTimeout === "unsettled") assert.fail("read deadline did not settle");
+  assert.deepEqual(readTimeout.overallStatus === "failure" && readTimeout.error, {
+    kind: "persistence",
+    code: "persistence_timeout",
+    message: "Application operation timed out.",
+    retryable: true,
+    effect: "none",
+  });
+  assert.deepEqual(readTimeout.persistence, { status: "failed", effect: "none" });
+
+  const writeService = createService({
+    writes: {
+      async createSession() {
+        return new Promise(() => undefined);
+      },
+    },
+  });
+  const writeTimeout = await Promise.race([
+    writeService.create(createRequest(), { timeoutMs: 5 }),
+    new Promise<"unsettled">((resolve) => setTimeout(() => resolve("unsettled"), 50)),
+  ]);
+  assert.notEqual(writeTimeout, "unsettled");
+  if (writeTimeout === "unsettled") assert.fail("write deadline did not settle");
+  assert.deepEqual(writeTimeout.overallStatus === "failure" && writeTimeout.error, {
+    kind: "persistence",
+    code: "persistence_timeout",
+    message: "Application operation timed out.",
+    retryable: true,
+    effect: "unknown",
+  });
+  assert.deepEqual(writeTimeout.persistence, { status: "failed", effect: "unknown" });
+});
+
+test("authorization snapshot policy supports non-structured-clone authorization values", async () => {
+  type FunctionAuthorization = Readonly<{ principalId: string; canAccess: () => boolean }>;
+  const authorization: FunctionAuthorization = { principalId: "user-1", canAccess: () => true };
+  const received: FunctionAuthorization[] = [];
+  const service = new ApplicationSessionService<FunctionAuthorization>({
+    reads: {
+      async sessionsPage() {
+        return { items: [] };
+      },
+      async sessionGet() {
+        throw new Error("unreachable");
+      },
+    },
+    writes: {
+      async createSession() {
+        throw new Error("unreachable");
+      },
+      async transitionSession() {
+        throw new Error("unreachable");
+      },
+    },
+    access: {
+      async validateWorkspace(input) {
+        received.push(input.context.authorization);
+        return { allowed: true };
+      },
+      async authorize(input) {
+        received.push(input.context.authorization);
+        return { allowed: true };
+      },
+    },
+    snapshotAuthorization(value: unknown) {
+      const candidate = value as FunctionAuthorization;
+      return { principalId: candidate.principalId, canAccess: candidate.canAccess };
+    },
+  });
+
+  const response = await service.list({ context: { workspaceKey: "workspace-1", authorization } });
+
+  assert.equal(response.overallStatus, "success");
+  assert.equal(received.length, 2);
+  assert.notEqual(received[0], authorization);
+  assert.notEqual(received[1], received[0]);
+  assert.equal(received[0]?.canAccess(), true);
+});
+
+test("create rejects child Run limits above the Application safety cap before ports", async () => {
+  let accessCalls = 0;
+  let writeCalls = 0;
+  const service = createService({
+    access: {
+      async validateWorkspace() {
+        accessCalls += 1;
+        return { allowed: true };
+      },
+      async authorize() {
+        accessCalls += 1;
+        return { allowed: true };
+      },
+    },
+    writes: {
+      async createSession() {
+        writeCalls += 1;
+        throw new Error("unreachable");
+      },
+    },
+  });
+
+  const response = await service.create({
+    ...createRequest(),
+    maxConcurrentChildRuns: APPLICATION_MAX_CONCURRENT_CHILD_RUNS + 1,
+  });
+
+  assert.equal(response.overallStatus, "failure");
+  assert.equal(response.overallStatus === "failure" && response.error.kind, "request");
+  assert.deepEqual(response.persistence, { status: "not_attempted", effect: "none" });
+  assert.equal(accessCalls, 0);
+  assert.equal(writeCalls, 0);
+});
+
 test("access validators receive isolated views of the decoded request snapshot", async () => {
   let authorizationInput: unknown;
   let createCommand: SessionCreateCommand | undefined;
@@ -1243,6 +1431,7 @@ function createService(
     reads,
     writes,
     access: overrides.access ?? allowingAccess(),
+    snapshotAuthorization: (value: unknown) => structuredClone(value) as Authorization,
   });
 }
 

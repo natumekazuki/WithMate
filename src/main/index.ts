@@ -10,6 +10,8 @@ export type {
   ApplicationInternalError,
   ApplicationOperationError,
   ApplicationOperationIssue,
+  ApplicationOperationInterruptedError,
+  ApplicationOperationMode,
   ApplicationOperationOptions,
   ApplicationOperationResponse,
   ApplicationPersistenceError,
