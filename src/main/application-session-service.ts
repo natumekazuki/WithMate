@@ -235,16 +235,30 @@ export class ApplicationSessionService<
     context: ApplicationSessionCreateRequest<TAuthorizationContext>["context"],
   ): Promise<ApplicationOperationResponse<never> | undefined> {
     try {
-      const input = { operation, access, context } as const;
-      const workspace = await this.#access.validateWorkspace(input);
+      const workspace = await this.#access.validateWorkspace(createAccessValidationView(operation, access, context));
       if (!workspace.allowed) return accessFailure(workspace.error);
-      const authorization = await this.#access.authorize(input);
+      const authorization = await this.#access.authorize(createAccessValidationView(operation, access, context));
       if (!authorization.allowed) return accessFailure(authorization.error);
       return undefined;
     } catch {
       return applicationFailure({ status: "not_attempted", effect: "none" });
     }
   }
+}
+
+function createAccessValidationView<TAuthorizationContext>(
+  operation: ApplicationSessionOperation,
+  access: "read" | "write",
+  context: ApplicationSessionCreateRequest<TAuthorizationContext>["context"],
+): Parameters<ApplicationAccessValidator<TAuthorizationContext>["validateWorkspace"]>[0] {
+  return {
+    operation,
+    access,
+    context: {
+      workspaceKey: context.workspaceKey,
+      authorization: structuredClone(context.authorization) as TAuthorizationContext,
+    },
+  };
 }
 
 function decodeCreateRequest<TAuthorizationContext>(
@@ -449,7 +463,7 @@ function mapWriteResult<TRepositoryValue, TApplicationValue extends TRepositoryV
 
 function domainFailure(error: RepositoryCommandError | ApplicationDomainError): ApplicationOperationResponse<never> {
   const projectedError: ApplicationDomainError =
-    error.code === "capacity_exceeded" && error.details !== undefined
+    error.code === "capacity_exceeded"
       ? {
           kind: "domain",
           code: error.code,

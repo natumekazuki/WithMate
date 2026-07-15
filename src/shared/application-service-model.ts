@@ -60,13 +60,21 @@ export type ApplicationCapacityExceededDetails =
   | Readonly<{ scope: "application"; current: number; limit: number }>
   | Readonly<{ scope: "provider"; providerId: string; current: number; limit: number }>;
 
-export type ApplicationDomainError = Readonly<{
-  kind: "domain";
-  code: ApplicationDomainErrorCode;
-  message: string;
-  retryable: boolean;
-  details?: ApplicationCapacityExceededDetails;
-}>;
+export type ApplicationDomainError =
+  | Readonly<{
+      kind: "domain";
+      code: "capacity_exceeded";
+      message: string;
+      retryable: true;
+      details: ApplicationCapacityExceededDetails;
+    }>
+  | Readonly<{
+      kind: "domain";
+      code: Exclude<ApplicationDomainErrorCode, "capacity_exceeded">;
+      message: string;
+      retryable: boolean;
+      details?: never;
+    }>;
 
 export type ApplicationPersistenceError = Readonly<{
   kind: "persistence";

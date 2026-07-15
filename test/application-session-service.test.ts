@@ -4,13 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import {
-  PersistenceClientError,
-  type ApplicationAccessValidator,
-  type ApplicationSessionOperationContext,
-} from "../src/main/index.js";
+import { type ApplicationAccessValidator, type ApplicationSessionOperationContext } from "../src/main/index.js";
 import { ApplicationSessionService } from "../src/main/application-session-service.js";
-import { PersistenceWorkerClient } from "../src/main/persistence-worker-client.js";
+import { PersistenceClientError, PersistenceWorkerClient } from "../src/main/persistence-worker-client.js";
 import { RepositoryReadClient } from "../src/main/repository-read-client.js";
 import { RepositoryWriteClient } from "../src/main/repository-write-client.js";
 import type {
@@ -588,6 +584,65 @@ test("validated request snapshots cannot be changed while access validation is p
   closeGate.resolve();
   await closing;
   assert.deepEqual(closeCommands, [transition(uuid(74), "session-1", "active", "closed")]);
+});
+
+test("access validators receive isolated views of the decoded request snapshot", async () => {
+  let authorizationInput: unknown;
+  let createCommand: SessionCreateCommand | undefined;
+  const service = createService({
+    access: {
+      async validateWorkspace(input) {
+        const mutable = input as unknown as {
+          operation: string;
+          access: string;
+          context: { workspaceKey: string; authorization: { principalId: string } };
+        };
+        mutable.operation = "list";
+        mutable.access = "read";
+        mutable.context.workspaceKey = "workspace-from-workspace-validator";
+        mutable.context.authorization.principalId = "workspace-validator";
+        return { allowed: true };
+      },
+      async authorize(input) {
+        authorizationInput = structuredClone(input);
+        const mutable = input as unknown as {
+          operation: string;
+          access: string;
+          context: { workspaceKey: string; authorization: { principalId: string } };
+        };
+        mutable.operation = "read";
+        mutable.access = "read";
+        mutable.context.workspaceKey = "workspace-from-authorization-validator";
+        mutable.context.authorization.principalId = "authorization-validator";
+        return { allowed: true };
+      },
+    },
+    writes: {
+      async createSession(command) {
+        createCommand = command;
+        return {
+          ok: true,
+          value: {
+            sessionId: command.session.id,
+            workspaceKey: command.session.workspaceKey,
+            lifecycleStatus: "active",
+            createdAt: 1,
+          },
+          replayed: false,
+        };
+      },
+    },
+  });
+
+  const response = await service.create(createRequest());
+
+  assert.equal(response.overallStatus, "success");
+  assert.deepEqual(authorizationInput, {
+    operation: "create",
+    access: "write",
+    context: { workspaceKey: "workspace-1", authorization: { principalId: "user-1" } },
+  });
+  assert.equal(createCommand?.session.workspaceKey, "workspace-1");
 });
 
 test("create rejects malformed additional directories before access validation and Repository writes", async () => {

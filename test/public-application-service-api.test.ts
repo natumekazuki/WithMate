@@ -4,6 +4,8 @@ import test from "node:test";
 import * as publicApi from "../src/main/index.js";
 import {
   type ApplicationAccessValidator,
+  type ApplicationCapacityExceededDetails,
+  type ApplicationDomainError,
   type ApplicationDomainErrorCode,
   type ApplicationOperationResponse,
   type ApplicationPersistenceErrorCode,
@@ -12,9 +14,8 @@ import {
   type ApplicationSessionListItem,
   type ApplicationSessionOperations,
   type ApplicationSessionReadResult,
-  type SessionDetail,
-  type SessionListItem,
 } from "../src/main/index.js";
+import type { SessionDetail, SessionListItem } from "../src/shared/repository-read-model.js";
 import type { RepositoryCommandErrorCode, SessionLifecycleStatus } from "../src/shared/repository-write-model.js";
 
 type Equal<TLeft, TRight> = (<T>() => T extends TLeft ? 1 : 2) extends <T>() => T extends TRight ? 1 : 2 ? true : false;
@@ -24,6 +25,20 @@ type Failure = Extract<ApplicationOperationResponse<string>, Readonly<{ overallS
 type Partial = Extract<ApplicationOperationResponse<string>, Readonly<{ overallStatus: "partial_success" }>>;
 type OmissionIssue = Extract<Partial["issues"][number], Readonly<{ kind: "omission" }>>;
 type PartialPersistenceIssue = Extract<Partial["issues"][number], Readonly<{ kind: "persistence" }>>;
+type DomainError = Extract<ApplicationDomainError, Readonly<{ code: ApplicationDomainErrorCode }>>;
+type CapacityError = Extract<DomainError, Readonly<{ code: "capacity_exceeded" }>>;
+
+const capacityDetails: ApplicationCapacityExceededDetails = { scope: "application", current: 1, limit: 1 };
+
+// @ts-expect-error capacity details are invalid for non-capacity domain errors
+const invalidDomainError: ApplicationDomainError = {
+  kind: "domain",
+  code: "session_busy",
+  message: "Session is busy.",
+  retryable: true,
+  details: capacityDetails,
+};
+void invalidDomainError;
 
 test("public Application Service barrel exposes the transport-neutral Session contract", () => {
   const request = null as ApplicationSessionCreateRequest<Authorization> | null;
@@ -50,12 +65,14 @@ test("public Application Service barrel exposes the transport-neutral Session co
     Equal<ApplicationSessionReadResult["session"], SessionDetail>,
     Equal<ApplicationDomainErrorCode, RepositoryCommandErrorCode | "cursor_invalid">,
     Equal<ApplicationSessionLifecycleStatus, SessionLifecycleStatus>,
-  ] = [true, true, true, true, true, true, true, true, true];
+    Equal<CapacityError["details"], ApplicationCapacityExceededDetails>,
+    Equal<CapacityError["retryable"], true>,
+  ] = [true, true, true, true, true, true, true, true, true, true, true];
 
   assert.equal("ApplicationSessionService" in publicApi, false);
   assert.equal(request, null);
   assert.equal(access, null);
   assert.equal(read, null);
   assert.equal(operations, null);
-  assert.deepEqual(typeContract, [true, true, true, true, true, true, true, true, true]);
+  assert.deepEqual(typeContract, [true, true, true, true, true, true, true, true, true, true, true]);
 });

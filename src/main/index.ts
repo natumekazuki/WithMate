@@ -1,10 +1,3 @@
-export { PERSISTENCE_PROTOCOL_VERSION } from "../shared/persistence-protocol.js";
-export type {
-  PersistenceError,
-  PersistenceErrorCode,
-  PersistenceFailureEffect,
-} from "../shared/persistence-protocol.js";
-export { PersistenceClientError, type PersistenceRequestOptions } from "./persistence-worker-client.js";
 export type {
   ApplicationAccessDecision,
   ApplicationAccessError,
@@ -38,20 +31,3 @@ export type {
   ApplicationSessionTransitionResult,
   ApplicationSessionWriteRequest,
 } from "../shared/application-service-model.js";
-export type {
-  ChildResultListItem,
-  MessageListItem,
-  Page,
-  PageOmission,
-  RecoveryProjection,
-  RunDetail,
-  RunEventListItem,
-  RunOutputListItem,
-  RunOutputPayloadMetadata,
-  SessionDetail,
-  SessionDeletionCleanupPage,
-  SessionDeletionItem,
-  SessionExecutionState,
-  SessionListItem,
-} from "../shared/repository-read-model.js";
-export type { RunOutputCategory, SessionLifecycleStatus } from "../shared/repository-write-model.js";
