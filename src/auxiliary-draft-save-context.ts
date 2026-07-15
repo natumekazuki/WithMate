@@ -43,7 +43,14 @@ export function resolveAuxiliaryDraftSaveResult(
     return current;
   }
 
-  return saved;
+  return {
+    ...saved,
+    messages: current.messages === request.messages ? current.messages : saved.messages,
+    allowedAdditionalDirectories:
+      current.allowedAdditionalDirectories === request.allowedAdditionalDirectories
+        ? current.allowedAdditionalDirectories
+        : saved.allowedAdditionalDirectories,
+  };
 }
 
 export type AuxiliaryDraftSaveOperationResult = {
@@ -90,8 +97,8 @@ export function resolveAppliedAuxiliaryDraftSaveResult(input: {
   const nextSession = resolveAuxiliaryDraftSaveOperationResult(input.current, input.result, {
     compareStatus: input.compareStatus,
   });
-  if (input.result && nextSession === input.result.saved) {
-    input.activeSessionRef.current = input.result.saved;
+  if (input.result && nextSession !== input.current) {
+    input.activeSessionRef.current = nextSession;
   }
   return nextSession;
 }

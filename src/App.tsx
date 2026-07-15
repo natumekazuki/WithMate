@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
 
 import {
   type ComposerPreview,
@@ -77,6 +77,10 @@ import {
   resolveAvailableContextPaneTabs,
 } from "./session-ui-projection.js";
 import { buildMainAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
+import {
+  useMainAuxiliaryRuntimeSession,
+  useMessageListAuxiliarySessions,
+} from "./auxiliary-render-projections.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import { applySessionDocumentTitle, resolveAgentSessionDocumentTitle } from "./chat/window-title.js";
 import { resolveAuditLogOwner } from "./chat/audit-log-owner.js";
@@ -550,12 +554,7 @@ export default function AgentSessionWindowApp() {
     () => sessions.find((session) => session.id === selectedId) ?? sessions[0] ?? null,
     [selectedId, sessions],
   );
-  const displayedSession = useMemo(
-    () => (selectedSession && activeAuxiliarySession
-      ? buildMainAuxiliaryRuntimeSession(selectedSession, activeAuxiliarySession)
-      : selectedSession),
-    [activeAuxiliarySession, selectedSession],
-  );
+  const displayedSession = useMainAuxiliaryRuntimeSession(selectedSession, activeAuxiliarySession);
   const isAuxiliaryMode = activeAuxiliarySession?.status === "active";
   const selectedCompanionGroupMonitorEntries = useMemo(
     () => buildCompanionGroupMonitorEntries(
@@ -701,6 +700,18 @@ export default function AgentSessionWindowApp() {
     seedParts,
     replacements: { name: selectedSessionCharacter?.name || DEFAULT_SESSION_RUNTIME_NAME },
   });
+  const getChangedFilesEmptyText = useCallback(
+    (artifactKey: string, artifactHasSnapshotRisk: boolean) =>
+      artifactHasSnapshotRisk
+        ? "差分は見つからなかったけど、snapshot の上限や省略で取りこぼしがあるかもしれないよ。"
+        : resolveMicrocopy({
+            slot: "empty.changed_files",
+            userCatalog: appSettings.userMicrocopyCatalog,
+            seedParts: ["changed-files-empty", artifactKey],
+            replacements: { name: selectedSessionCharacter?.name || DEFAULT_SESSION_RUNTIME_NAME },
+          }),
+    [appSettings.userMicrocopyCatalog, selectedSessionCharacter?.name],
+  );
   const isSelectedProviderEnabled = useMemo(
     () => !!displayedSession && getProviderAppSettings(appSettings, displayedSession.provider).enabled,
     [appSettings, displayedSession],
@@ -832,12 +843,9 @@ export default function AgentSessionWindowApp() {
   }, [withmateApi]);
 
   const displayedMessages: Message[] = selectedSession ? selectedSession.messages : [];
-  const projectedAuxiliarySessions = useMemo(
-    () => [
-      ...closedAuxiliarySessions,
-      ...(activeAuxiliarySession ? [activeAuxiliarySession] : []),
-    ],
-    [activeAuxiliarySession, closedAuxiliarySessions],
+  const projectedAuxiliarySessions = useMessageListAuxiliarySessions(
+    closedAuxiliarySessions,
+    activeAuxiliarySession,
   );
   const liveAssistantMessageIndex = useMemo(
     () =>
@@ -1099,7 +1107,11 @@ export default function AgentSessionWindowApp() {
   }, [selectedSession?.provider, selectedSessionId]);
 
   useEffect(() => {
-    setComposerPreview(createEmptyComposerPreview());
+    setComposerPreview((current) => (
+      current.attachments.length === 0 && current.errors.length === 0
+        ? current
+        : createEmptyComposerPreview()
+    ));
   }, [activeAuxiliarySession?.composerDraft, draft]);
 
   useEffect(() => {
@@ -3052,10 +3064,7 @@ export default function AgentSessionWindowApp() {
         onResolveLiveApproval: (request, decision) => void handleResolveLiveApproval(request, decision),
         onResolveLiveElicitation: (request, response) => void handleResolveLiveElicitation(request, response),
         onOpenInlinePath: handleOpenInlinePath,
-        getChangedFilesEmptyText: (artifactKey, artifactHasSnapshotRisk) =>
-          artifactHasSnapshotRisk
-            ? "差分は見つからなかったけど、snapshot の上限や省略で取りこぼしがあるかもしれないよ。"
-            : resolveSessionMicrocopy("empty.changed_files", ["changed-files-empty", artifactKey]),
+        getChangedFilesEmptyText,
         onCopyMessageText: handleCopyMessageText,
         onQuoteMessageText: handleQuoteMessageText,
         onToggleRetryDetails: handleToggleRetryDetails,

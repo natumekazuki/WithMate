@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { JSDOM } from "jsdom";
+import React from "react";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 
+import {
+  useCompanionAuxiliaryRuntimeSession,
+  useMainAuxiliaryRuntimeSession,
+  useMessageListAuxiliarySessions,
+} from "../../src/auxiliary-render-projections.js";
 import {
   buildAuxiliaryRuntimeSessionProjection,
   buildCompanionAuxiliaryRuntimeSession,
@@ -10,7 +19,7 @@ import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 import type { CompanionSession } from "../../src/companion-state.js";
 import type { Session } from "../../src/session-state.js";
 
-function createAuxiliarySession(): AuxiliarySession {
+function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
   return {
     id: "auxiliary-1",
     parentSessionId: "parent-1",
@@ -32,6 +41,7 @@ function createAuxiliarySession(): AuxiliarySession {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-02T00:00:00.000Z",
     closedAt: "",
+    ...overrides,
   };
 }
 
@@ -124,6 +134,101 @@ function createCompanionSession(): CompanionSession {
     messages: [{ role: "assistant", text: "companion response" }],
   };
 }
+
+test("Auxiliary render projection は draft-only 更新で履歴と runtime の参照を維持する", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", { pretendToBeVisual: true });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+
+  const root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+  const mainSession = createSession();
+  const companionSession = createCompanionSession();
+  const closedSessions: AuxiliarySession[] = [];
+  let latestProjection: {
+    messageListSessions: ReturnType<typeof useMessageListAuxiliarySessions>;
+    mainRuntime: Session | null;
+    companionRuntime: CompanionSession | null;
+  } | null = null;
+
+  function ProjectionProbe({ activeSession }: { activeSession: AuxiliarySession }) {
+    latestProjection = {
+      messageListSessions: useMessageListAuxiliarySessions(closedSessions, activeSession),
+      mainRuntime: useMainAuxiliaryRuntimeSession(mainSession, activeSession),
+      companionRuntime: useCompanionAuxiliaryRuntimeSession(companionSession, activeSession),
+    };
+    return null;
+  }
+
+  const renderProjection = async (activeSession: AuxiliarySession) => {
+    await act(async () => {
+      root.render(React.createElement(ProjectionProbe, { activeSession }));
+    });
+    assert.ok(latestProjection);
+    return latestProjection;
+  };
+
+  try {
+    const initialSession = createAuxiliarySession();
+    const initial = await renderProjection(initialSession);
+    const draftOnly = await renderProjection({
+      ...initialSession,
+      composerDraft: "typing",
+      updatedAt: "2026-01-03T00:00:00.000Z",
+    });
+
+    assert.equal(draftOnly.messageListSessions, initial.messageListSessions);
+    assert.equal(draftOnly.mainRuntime, initial.mainRuntime);
+    assert.equal(draftOnly.companionRuntime, initial.companionRuntime);
+
+    const transcriptChanged = await renderProjection({
+      ...initialSession,
+      composerDraft: "typing",
+      messages: [...initialSession.messages, { role: "user", text: "next message" }],
+    });
+    assert.notEqual(transcriptChanged.messageListSessions, draftOnly.messageListSessions);
+    assert.notEqual(transcriptChanged.mainRuntime, draftOnly.mainRuntime);
+    assert.notEqual(transcriptChanged.companionRuntime, draftOnly.companionRuntime);
+
+    const runtimeChanged = await renderProjection({
+      ...initialSession,
+      messages: transcriptChanged.mainRuntime?.messages ?? initialSession.messages,
+      model: "gpt-next",
+    });
+    assert.equal(runtimeChanged.messageListSessions, transcriptChanged.messageListSessions);
+    assert.notEqual(runtimeChanged.mainRuntime, transcriptChanged.mainRuntime);
+    assert.notEqual(runtimeChanged.companionRuntime, transcriptChanged.companionRuntime);
+
+    const anchorChanged = await renderProjection({
+      ...initialSession,
+      messages: runtimeChanged.mainRuntime?.messages ?? initialSession.messages,
+      model: "gpt-next",
+      displayAfterMessageIndex: 4,
+    });
+    assert.notEqual(anchorChanged.messageListSessions, runtimeChanged.messageListSessions);
+    assert.equal(anchorChanged.mainRuntime, runtimeChanged.mainRuntime);
+    assert.equal(anchorChanged.companionRuntime, runtimeChanged.companionRuntime);
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      previousActEnvironment;
+  }
+});
 
 test("buildAuxiliaryRuntimeSessionProjection main keeps runtime projection diff fields", () => {
   const parent = createSession();

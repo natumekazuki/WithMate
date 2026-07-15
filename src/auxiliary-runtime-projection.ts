@@ -8,6 +8,24 @@ import type { AuxiliarySession } from "./auxiliary-session-state.js";
 
 type AuxiliaryRuntimeProjectionMode = "main" | "companion";
 
+export type AuxiliaryRuntimeProjectionInput = Pick<
+  AuxiliarySession,
+  | "id"
+  | "runState"
+  | "title"
+  | "provider"
+  | "catalogRevision"
+  | "model"
+  | "reasoningEffort"
+  | "approvalMode"
+  | "codexSandboxMode"
+  | "customAgentName"
+  | "allowedAdditionalDirectories"
+  | "threadId"
+  | "messages"
+  | "updatedAt"
+>;
+
 type AuxiliaryRuntimeSessionProjectionCommon = {
   provider: string;
   catalogRevision: number;
@@ -23,7 +41,7 @@ type AuxiliaryRuntimeSessionProjectionCommon = {
 };
 
 function buildAuxiliaryRuntimeSessionProjectionCommon(
-  auxiliary: AuxiliarySession,
+  auxiliary: AuxiliaryRuntimeProjectionInput,
   options: { cloneAdditionalDirectories: boolean },
 ): AuxiliaryRuntimeSessionProjectionCommon {
   return {
@@ -46,17 +64,17 @@ function buildAuxiliaryRuntimeSessionProjectionCommon(
 export function buildAuxiliaryRuntimeSessionProjection(
   mode: "main",
   parent: Session,
-  auxiliary: AuxiliarySession,
+  auxiliary: AuxiliaryRuntimeProjectionInput,
 ): Session;
 export function buildAuxiliaryRuntimeSessionProjection(
   mode: "companion",
   parent: CompanionSession,
-  auxiliary: AuxiliarySession,
+  auxiliary: AuxiliaryRuntimeProjectionInput,
 ): CompanionSession;
 export function buildAuxiliaryRuntimeSessionProjection(
   mode: AuxiliaryRuntimeProjectionMode,
   parent: Session | CompanionSession,
-  auxiliary: AuxiliarySession,
+  auxiliary: AuxiliaryRuntimeProjectionInput,
 ): Session | CompanionSession {
   const baseProjection = buildAuxiliaryRuntimeSessionProjectionCommon(
     auxiliary,
@@ -89,13 +107,13 @@ export function buildAuxiliaryRuntimeSessionProjection(
   return projection;
 }
 
-export function buildMainAuxiliaryRuntimeSession(parent: Session, auxiliary: AuxiliarySession): Session {
+export function buildMainAuxiliaryRuntimeSession(parent: Session, auxiliary: AuxiliaryRuntimeProjectionInput): Session {
   return buildAuxiliaryRuntimeSessionProjection("main", parent, auxiliary);
 }
 
 export function buildCompanionAuxiliaryRuntimeSession(
   parent: CompanionSession,
-  auxiliary: AuxiliarySession,
+  auxiliary: AuxiliaryRuntimeProjectionInput,
 ): CompanionSession {
   return buildAuxiliaryRuntimeSessionProjection("companion", parent, auxiliary);
 }

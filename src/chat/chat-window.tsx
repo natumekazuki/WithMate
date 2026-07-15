@@ -1,4 +1,4 @@
-import { type ComponentProps, type PointerEventHandler } from "react";
+import { memo, useMemo, useRef, type ComponentProps, type PointerEventHandler } from "react";
 
 import {
   SessionActionDockCompactRow,
@@ -47,6 +47,51 @@ export type ChatWorkbenchSplitterProps = {
   title?: string;
 };
 
+type Callback = (...args: any[]) => any;
+
+function useStableOptionalCallback<T extends Callback>(callback: T | undefined): T | undefined {
+  const callbackRef = useRef(callback);
+  callbackRef.current = callback;
+  const hasCallback = callback !== undefined;
+
+  return useMemo(
+    () => hasCallback
+      ? ((...args: Parameters<T>) => callbackRef.current?.(...args)) as T
+      : undefined,
+    [hasCallback],
+  );
+}
+
+const MemoizedSessionMessageColumn = memo(SessionMessageColumn);
+
+export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
+  const onMessageListScroll = useStableOptionalCallback(props.onMessageListScroll);
+  const onToggleArtifact = useStableOptionalCallback(props.onToggleArtifact);
+  const onLoadArtifactDetail = useStableOptionalCallback(props.onLoadArtifactDetail);
+  const onOpenDiff = useStableOptionalCallback(props.onOpenDiff);
+  const onResolveLiveApproval = useStableOptionalCallback(props.onResolveLiveApproval);
+  const onResolveLiveElicitation = useStableOptionalCallback(props.onResolveLiveElicitation);
+  const onOpenPath = useStableOptionalCallback(props.onOpenPath);
+  const onCopyMessageText = useStableOptionalCallback(props.onCopyMessageText);
+  const onQuoteMessageText = useStableOptionalCallback(props.onQuoteMessageText);
+
+  return (
+    <MemoizedSessionMessageColumn
+      {...props}
+      onMessageListScroll={onMessageListScroll!}
+      onToggleArtifact={onToggleArtifact!}
+      onLoadArtifactDetail={onLoadArtifactDetail}
+      onOpenDiff={onOpenDiff!}
+      onResolveLiveApproval={onResolveLiveApproval!}
+      onResolveLiveElicitation={onResolveLiveElicitation!}
+      onOpenPath={onOpenPath}
+      getChangedFilesEmptyText={props.getChangedFilesEmptyText}
+      onCopyMessageText={onCopyMessageText}
+      onQuoteMessageText={onQuoteMessageText}
+    />
+  );
+}
+
 // Keep every conversation surface on one chat layout. Projection builders own
 // the feature-specific props and content.
 export function ChatWindow({
@@ -62,7 +107,7 @@ export function ChatWindow({
     <SessionChatScreen
       {...screenProps}
       header={isHeaderExpanded ? <SessionHeader {...headerProps} /> : null}
-      messageColumn={<SessionMessageColumn {...messageColumnProps} />}
+      messageColumn={<StableSessionMessageColumn {...messageColumnProps} />}
       actionDock={(
         <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
           {isActionDockExpanded ? (

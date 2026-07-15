@@ -35,6 +35,8 @@ import {
   buildLiveSessionCommonMessageColumnProps,
 } from "./live-session-projection.js";
 
+const getCompanionChangedFilesEmptyText = () => "差分はまだないよ。";
+
 export type CompanionChatProjectionInput = {
   session: CompanionSession;
   character: CharacterProfile;
@@ -343,7 +345,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       onResolveLiveApproval: input.onResolveLiveApproval,
       onResolveLiveElicitation: input.onResolveLiveElicitation,
       onOpenPath: input.onOpenInlinePath,
-      getChangedFilesEmptyText: () => "差分はまだないよ。",
+      getChangedFilesEmptyText: getCompanionChangedFilesEmptyText,
       onCopyMessageText: input.onCopyMessageText,
       onQuoteMessageText: input.onQuoteMessageText,
     }),

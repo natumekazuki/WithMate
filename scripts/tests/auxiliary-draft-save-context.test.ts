@@ -106,7 +106,33 @@ describe("resolveAuxiliaryDraftSaveResult", () => {
     const request = makeAuxiliarySession({ composerDraft: "draft" });
     const saved = makeAuxiliarySession({ composerDraft: "draft", updatedAt: "saved" });
 
-    assert.equal(resolveAuxiliaryDraftSaveResult(current, request, saved), saved);
+    assert.deepEqual(resolveAuxiliaryDraftSaveResult(current, request, saved), saved);
+  });
+
+  it("structured clone 済みの保存応答から変更のない配列参照を引き継ぐ", () => {
+    const messages = [{ role: "assistant" as const, text: "persisted response" }];
+    const allowedAdditionalDirectories = ["C:\\workspace"];
+    const current = makeAuxiliarySession({
+      composerDraft: "draft",
+      messages,
+      allowedAdditionalDirectories,
+    });
+    const request = {
+      ...current,
+      updatedAt: "request",
+    };
+    const saved = structuredClone({
+      ...request,
+      updatedAt: "saved",
+    });
+
+    const resolved = resolveAuxiliaryDraftSaveResult(current, request, saved);
+
+    assert.notEqual(saved.messages, messages);
+    assert.notEqual(saved.allowedAdditionalDirectories, allowedAdditionalDirectories);
+    assert.equal(resolved?.messages, messages);
+    assert.equal(resolved?.allowedAdditionalDirectories, allowedAdditionalDirectories);
+    assert.equal(resolved?.updatedAt, "saved");
   });
 
   it("current がない場合は null を返す", () => {
@@ -165,8 +191,8 @@ describe("resolveAppliedAuxiliaryDraftSaveResult", () => {
       activeSessionRef,
     });
 
-    assert.equal(next, saved);
-    assert.equal(activeSessionRef.current, saved);
+    assert.deepEqual(next, saved);
+    assert.equal(activeSessionRef.current, next);
   });
 
   it("saved を適用しない場合は active ref を維持する", () => {
@@ -197,8 +223,9 @@ describe("createAppliedAuxiliaryDraftSaveResultResolver", () => {
       activeSessionRef,
     });
 
-    assert.equal(resolveResult(current), saved);
-    assert.equal(activeSessionRef.current, saved);
+    const resolved = resolveResult(current);
+    assert.deepEqual(resolved, saved);
+    assert.equal(activeSessionRef.current, resolved);
   });
 
   it("compareStatus が true の場合は status 差異で current を維持する", () => {
@@ -427,7 +454,12 @@ describe("runScheduledAuxiliaryDraftSaveAndApply", () => {
       saved,
     });
     assert.equal(mutationRevision.current, 3);
-    assert.equal(activeSessionRef.current, saved);
+    assert.deepEqual(activeSessionRef.current, saved);
+    assert.equal(activeSessionRef.current?.messages, currentSession.messages);
+    assert.equal(
+      activeSessionRef.current?.allowedAdditionalDirectories,
+      currentSession.allowedAdditionalDirectories,
+    );
     assert.deepEqual(requests, [{
       ...currentSession,
       composerDraft: "after",
@@ -570,7 +602,12 @@ describe("runAuxiliaryDraftChangeAndSaveOperation", () => {
       saved,
     });
     assert.equal(mutationRevision.current, 3);
-    assert.equal(activeSessionRef.current, saved);
+    assert.deepEqual(activeSessionRef.current, saved);
+    assert.equal(activeSessionRef.current?.messages, currentSession.messages);
+    assert.equal(
+      activeSessionRef.current?.allowedAdditionalDirectories,
+      currentSession.allowedAdditionalDirectories,
+    );
     assert.deepEqual(events, ["feedback", "caret:5", "active:after", "save:after", "active:after"]);
   });
 });
