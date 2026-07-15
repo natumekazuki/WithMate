@@ -110,12 +110,23 @@ export type ApplicationOperationError =
   | ApplicationPersistenceError
   | ApplicationInternalError;
 
+type ApplicationNotAttemptedPersistenceStatus = Readonly<{ status: "not_attempted"; effect: "none" }>;
+type ApplicationReadPersistenceStatus = Readonly<{ status: "read"; effect: "none" }>;
+type ApplicationCommittedPersistenceStatus = Readonly<{
+  status: "committed";
+  effect: "none";
+  replayed: boolean;
+}>;
+type ApplicationRejectedPersistenceStatus = Readonly<{ status: "rejected"; effect: "none" }>;
+type ApplicationFailedPersistenceStatus<TEffect extends ApplicationFailureEffect = ApplicationFailureEffect> =
+  Readonly<{ status: "failed"; effect: TEffect }>;
+
 export type ApplicationPersistenceStatus =
-  | Readonly<{ status: "not_attempted"; effect: "none" }>
-  | Readonly<{ status: "read"; effect: "none" }>
-  | Readonly<{ status: "committed"; effect: "none"; replayed: boolean }>
-  | Readonly<{ status: "rejected"; effect: "none" }>
-  | Readonly<{ status: "failed"; effect: ApplicationFailureEffect }>;
+  | ApplicationNotAttemptedPersistenceStatus
+  | ApplicationReadPersistenceStatus
+  | ApplicationCommittedPersistenceStatus
+  | ApplicationRejectedPersistenceStatus
+  | ApplicationFailedPersistenceStatus;
 
 export type ApplicationOperationOptions = Readonly<{
   timeoutMs?: number;
@@ -131,23 +142,53 @@ export type ApplicationOperationIssue =
     }>
   | ApplicationPersistenceError;
 
+type ApplicationSuccessResponse<TValue> = Readonly<{
+  overallStatus: "success";
+  value: TValue;
+  persistence: ApplicationReadPersistenceStatus | ApplicationCommittedPersistenceStatus;
+}>;
+
+type ApplicationPartialSuccessResponse<TValue> = Readonly<{
+  overallStatus: "partial_success";
+  value: TValue;
+  issues: readonly ApplicationOperationIssue[];
+  persistence:
+    ApplicationReadPersistenceStatus | ApplicationCommittedPersistenceStatus | ApplicationFailedPersistenceStatus;
+}>;
+
+type ApplicationPrePersistenceFailureResponse = Readonly<{
+  overallStatus: "failure";
+  error: ApplicationRequestError | ApplicationAccessError;
+  persistence: ApplicationNotAttemptedPersistenceStatus;
+}>;
+
+type ApplicationDomainFailureResponse = Readonly<{
+  overallStatus: "failure";
+  error: ApplicationDomainError;
+  persistence: ApplicationRejectedPersistenceStatus;
+}>;
+
+type ApplicationPersistenceFailureResponse = {
+  [TEffect in ApplicationFailureEffect]: Readonly<{
+    overallStatus: "failure";
+    error: ApplicationPersistenceError & Readonly<{ effect: TEffect }>;
+    persistence: ApplicationFailedPersistenceStatus<TEffect>;
+  }>;
+}[ApplicationFailureEffect];
+
+type ApplicationInternalFailureResponse = Readonly<{
+  overallStatus: "failure";
+  error: ApplicationInternalError;
+  persistence: ApplicationNotAttemptedPersistenceStatus | ApplicationFailedPersistenceStatus;
+}>;
+
 export type ApplicationOperationResponse<TValue> =
-  | Readonly<{
-      overallStatus: "success";
-      value: TValue;
-      persistence: ApplicationPersistenceStatus;
-    }>
-  | Readonly<{
-      overallStatus: "partial_success";
-      value: TValue;
-      issues: readonly ApplicationOperationIssue[];
-      persistence: ApplicationPersistenceStatus;
-    }>
-  | Readonly<{
-      overallStatus: "failure";
-      error: ApplicationOperationError;
-      persistence: ApplicationPersistenceStatus;
-    }>;
+  | ApplicationSuccessResponse<TValue>
+  | ApplicationPartialSuccessResponse<TValue>
+  | ApplicationPrePersistenceFailureResponse
+  | ApplicationDomainFailureResponse
+  | ApplicationPersistenceFailureResponse
+  | ApplicationInternalFailureResponse;
 
 export type ApplicationSessionCreateRequest<TAuthorizationContext> = Readonly<{
   context: ApplicationSessionOperationContext<TAuthorizationContext>;

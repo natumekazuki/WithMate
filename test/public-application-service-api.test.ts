@@ -40,6 +40,35 @@ const invalidDomainError: ApplicationDomainError = {
 };
 void invalidDomainError;
 
+// @ts-expect-error a successful operation cannot have an unknown persistence effect
+const invalidSuccessPersistence: ApplicationOperationResponse<string> = {
+  overallStatus: "success",
+  value: "ok",
+  persistence: { status: "failed", effect: "unknown" },
+};
+// @ts-expect-error request validation failures happen before persistence access
+const invalidRequestFailurePersistence: ApplicationOperationResponse<string> = {
+  overallStatus: "failure",
+  error: { kind: "request", code: "request_invalid", message: "invalid", retryable: false },
+  persistence: { status: "rejected", effect: "none" },
+};
+// @ts-expect-error domain rejection is not a transport failure
+const invalidDomainFailurePersistence: ApplicationOperationResponse<string> = {
+  overallStatus: "failure",
+  error: { kind: "domain", code: "session_busy", message: "busy", retryable: true },
+  persistence: { status: "failed", effect: "none" },
+};
+// @ts-expect-error persistence error and persistence status must report the same effect
+const invalidPersistenceFailureEffect: ApplicationOperationResponse<string> = {
+  overallStatus: "failure",
+  error: { kind: "persistence", code: "persistence_timeout", message: "timeout", retryable: true, effect: "unknown" },
+  persistence: { status: "failed", effect: "none" },
+};
+void invalidSuccessPersistence;
+void invalidRequestFailurePersistence;
+void invalidDomainFailurePersistence;
+void invalidPersistenceFailureEffect;
+
 test("public Application Service barrel exposes the transport-neutral Session contract", () => {
   const request = null as ApplicationSessionCreateRequest<Authorization> | null;
   const access = null as ApplicationAccessValidator<Authorization> | null;

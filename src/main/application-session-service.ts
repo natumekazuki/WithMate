@@ -64,6 +64,8 @@ export class ApplicationSessionService<
   ): Promise<ApplicationOperationResponse<ApplicationSessionCreateResult>> {
     const decoded = decodeCreateRequest<TAuthorizationContext>(request);
     if (!decoded.ok) return decoded.response;
+    const decodedOptions = decodeOperationOptions(options);
+    if (!decodedOptions.ok) return decodedOptions.response;
     const input = decoded.value;
     const denied = await this.#validateAccess("create", "write", input.context);
     if (denied !== undefined) return denied;
@@ -81,7 +83,7 @@ export class ApplicationSessionService<
             maxConcurrentChildRuns: input.maxConcurrentChildRuns,
           },
         },
-        options,
+        decodedOptions.value,
       );
       return mapWriteResult<SessionCreateResult, ApplicationSessionCreateResult>(result, (value) => ({
         sessionId: value.sessionId,
@@ -100,6 +102,8 @@ export class ApplicationSessionService<
   ): Promise<ApplicationOperationResponse<ApplicationSessionPage>> {
     const decoded = decodeListRequest<TAuthorizationContext>(request);
     if (!decoded.ok) return decoded.response;
+    const decodedOptions = decodeOperationOptions(options);
+    if (!decodedOptions.ok) return decodedOptions.response;
     const input = decoded.value;
     const denied = await this.#validateAccess("list", "read", input.context);
     if (denied !== undefined) return denied;
@@ -112,7 +116,7 @@ export class ApplicationSessionService<
           ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
           ...(input.limit === undefined ? {} : { limit: input.limit }),
         },
-        options,
+        decodedOptions.value,
       );
       const items: SessionListItem[] = [];
       const omissions: PageOmission[] = [];
@@ -155,6 +159,8 @@ export class ApplicationSessionService<
   ): Promise<ApplicationOperationResponse<ApplicationSessionReadResult>> {
     const decoded = decodeReadRequest<TAuthorizationContext>(request);
     if (!decoded.ok) return decoded.response;
+    const decodedOptions = decodeOperationOptions(options);
+    if (!decodedOptions.ok) return decodedOptions.response;
     const input = decoded.value;
     const denied = await this.#validateAccess("read", "read", input.context);
     if (denied !== undefined) return denied;
@@ -162,7 +168,7 @@ export class ApplicationSessionService<
     try {
       const repositoryValue = await this.#reads.sessionGet(
         { workspaceKey: input.context.workspaceKey, sessionId: input.sessionId },
-        options,
+        decodedOptions.value,
       );
       const value = projectSessionReadResult(repositoryValue);
       return { overallStatus: "success", value, persistence: { status: "read", effect: "none" } };
@@ -177,7 +183,9 @@ export class ApplicationSessionService<
   ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult>> {
     const decoded = decodeWriteRequest<TAuthorizationContext>(request);
     if (!decoded.ok) return Promise.resolve(decoded.response);
-    return this.#transition("archive", decoded.value, "active", "archived", options);
+    const decodedOptions = decodeOperationOptions(options);
+    if (!decodedOptions.ok) return Promise.resolve(decodedOptions.response);
+    return this.#transition("archive", decoded.value, "active", "archived", decodedOptions.value);
   }
 
   unarchive(
@@ -186,7 +194,9 @@ export class ApplicationSessionService<
   ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult>> {
     const decoded = decodeWriteRequest<TAuthorizationContext>(request);
     if (!decoded.ok) return Promise.resolve(decoded.response);
-    return this.#transition("unarchive", decoded.value, "archived", "active", options);
+    const decodedOptions = decodeOperationOptions(options);
+    if (!decodedOptions.ok) return Promise.resolve(decodedOptions.response);
+    return this.#transition("unarchive", decoded.value, "archived", "active", decodedOptions.value);
   }
 
   close(
@@ -195,7 +205,15 @@ export class ApplicationSessionService<
   ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult>> {
     const decoded = decodeCloseRequest<TAuthorizationContext>(request);
     if (!decoded.ok) return Promise.resolve(decoded.response);
-    return this.#transition("close", decoded.value, decoded.value.expectedLifecycleStatus, "closed", options);
+    const decodedOptions = decodeOperationOptions(options);
+    if (!decodedOptions.ok) return Promise.resolve(decodedOptions.response);
+    return this.#transition(
+      "close",
+      decoded.value,
+      decoded.value.expectedLifecycleStatus,
+      "closed",
+      decodedOptions.value,
+    );
   }
 
   async #transition(
@@ -404,6 +422,29 @@ function decodeRequestFailure<TValue>(): RequestDecodeResult<TValue> {
   return { ok: false, response: requestFailure() };
 }
 
+function decodeOperationOptions(options: unknown): RequestDecodeResult<ApplicationOperationOptions | undefined> {
+  if (options === undefined) return { ok: true, value: undefined };
+  if (!isPlainObject(options) || !hasOnlyKeys(options, ["timeoutMs", "signal"])) {
+    return decodeRequestFailure();
+  }
+  const timeoutMs = options.timeoutMs;
+  const signal = options.signal;
+  if (
+    (timeoutMs !== undefined &&
+      (!Number.isSafeInteger(timeoutMs) || (timeoutMs as number) < 1 || (timeoutMs as number) > 2_147_483_647)) ||
+    (signal !== undefined && !(signal instanceof AbortSignal))
+  ) {
+    return decodeRequestFailure();
+  }
+  return {
+    ok: true,
+    value: {
+      ...(timeoutMs === undefined ? {} : { timeoutMs: timeoutMs as number }),
+      ...(signal === undefined ? {} : { signal }),
+    },
+  };
+}
+
 function requestFailure(): ApplicationOperationResponse<never> {
   return {
     overallStatus: "failure",
@@ -436,7 +477,9 @@ function accessFailure(
   };
 }
 
-function applicationFailure(persistence: ApplicationPersistenceStatus): ApplicationOperationResponse<never> {
+function applicationFailure(
+  persistence: Extract<ApplicationPersistenceStatus, Readonly<{ status: "not_attempted" | "failed" }>>,
+): ApplicationOperationResponse<never> {
   return {
     overallStatus: "failure",
     error: {
@@ -497,16 +540,23 @@ function mapThrownFailure(error: unknown, requestClass: "read" | "write"): Appli
       retryable: persistenceError.retryable,
     });
   }
+  const mappedError = {
+    kind: "persistence" as const,
+    code: mapPersistenceErrorCode(persistenceError.code),
+    message: persistenceError.message,
+    retryable: persistenceError.retryable,
+  };
+  if (persistenceError.effect === "unknown") {
+    return {
+      overallStatus: "failure",
+      error: { ...mappedError, effect: "unknown" },
+      persistence: { status: "failed", effect: "unknown" },
+    };
+  }
   return {
     overallStatus: "failure",
-    error: {
-      kind: "persistence",
-      code: mapPersistenceErrorCode(persistenceError.code),
-      message: persistenceError.message,
-      retryable: persistenceError.retryable,
-      effect: persistenceError.effect,
-    },
-    persistence: { status: "failed", effect: persistenceError.effect },
+    error: { ...mappedError, effect: "none" },
+    persistence: { status: "failed", effect: "none" },
   };
 }
 

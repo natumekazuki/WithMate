@@ -55,15 +55,23 @@ const repositoryWriteClient = path.join(sourceRoot, "main", "repository-write-cl
 const repositoryReadClient = path.join(sourceRoot, "main", "repository-read-client.ts");
 const persistenceWorkerClient = path.join(sourceRoot, "main", "persistence-worker-client.ts");
 const publicMainBarrel = path.join(sourceRoot, "main", "index.ts");
+const publicApplicationModel = path.join(sourceRoot, "shared", "application-service-model.ts");
 const rawWriteFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-persistence-write.ts");
 const repositoryWriteFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-repository-write.ts");
 const rawReadFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-repository-read.ts");
+const publicTypeAliasFixture = path.join(root, "test", "fixtures", "module-boundaries", "public-main-type-alias.ts");
 const testConfig = ts.getParsedCommandLineOfConfigFile(path.join(root, "tsconfig.test.json"), {}, ts.sys);
 if (testConfig === undefined) {
   throw new Error("tsconfig.test.json could not be parsed for module-boundary validation.");
 }
 const typeProgram = ts.createProgram({
-  rootNames: [...listSourceFiles(sourceRoot), rawWriteFixture, repositoryWriteFixture, rawReadFixture],
+  rootNames: [
+    ...listSourceFiles(sourceRoot),
+    rawWriteFixture,
+    repositoryWriteFixture,
+    rawReadFixture,
+    publicTypeAliasFixture,
+  ],
   options: testConfig.options,
 });
 const typeChecker = typeProgram.getTypeChecker();
@@ -71,7 +79,6 @@ const typeChecker = typeProgram.getTypeChecker();
 for (const file of listSourceFiles(sourceRoot)) {
   const sourceRelativePath = path.relative(sourceRoot, file);
   if (
-    file === applicationWriteOwner ||
     file === repositoryWriteClient ||
     file === repositoryReadClient ||
     file === persistenceWorkerClient ||
@@ -82,16 +89,17 @@ for (const file of listSourceFiles(sourceRoot)) {
   }
   const source = fs.readFileSync(file, "utf8");
   const sourceFile = typeProgram.getSourceFile(file) ?? ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const allowsRepositoryIntegration = file === applicationWriteOwner;
   const inspect = (node) => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
       const moduleName = node.moduleSpecifier.text;
-      if (moduleName.endsWith("/repository-write-client.js")) {
+      if (!allowsRepositoryIntegration && moduleName.endsWith("/repository-write-client.js")) {
         violations.push(`${path.relative(root, file)} imports RepositoryWriteClient outside the Application Service`);
       }
-      if (moduleName.endsWith("/repository-read-client.js")) {
+      if (!allowsRepositoryIntegration && moduleName.endsWith("/repository-read-client.js")) {
         violations.push(`${path.relative(root, file)} imports RepositoryReadClient outside the Application Service`);
       }
-      if (moduleName.endsWith("/repository-write-model.js")) {
+      if (!allowsRepositoryIntegration && moduleName.endsWith("/repository-write-model.js")) {
         const imports = node.importClause?.namedBindings;
         if (imports !== undefined && ts.isNamespaceImport(imports)) {
           violations.push(`${path.relative(root, file)} imports Repository write command construction types`);
@@ -114,15 +122,15 @@ for (const file of listSourceFiles(sourceRoot)) {
       ts.isStringLiteral(node.moduleSpecifier)
     ) {
       const moduleName = node.moduleSpecifier.text;
-      if (moduleName.endsWith("/repository-write-client.js")) {
+      if (!allowsRepositoryIntegration && moduleName.endsWith("/repository-write-client.js")) {
         violations.push(
           `${path.relative(root, file)} re-exports RepositoryWriteClient outside the Application Service`,
         );
       }
-      if (moduleName.endsWith("/repository-read-client.js")) {
+      if (!allowsRepositoryIntegration && moduleName.endsWith("/repository-read-client.js")) {
         violations.push(`${path.relative(root, file)} re-exports RepositoryReadClient outside the Application Service`);
       }
-      if (moduleName.endsWith("/repository-write-model.js")) {
+      if (!allowsRepositoryIntegration && moduleName.endsWith("/repository-write-model.js")) {
         if (node.exportClause === undefined || ts.isNamespaceExport(node.exportClause)) {
           violations.push(`${path.relative(root, file)} re-exports Repository write command construction types`);
         } else {
@@ -137,23 +145,23 @@ for (const file of listSourceFiles(sourceRoot)) {
         }
       }
     }
-    if (isRepositoryClientDynamicImport(node, "repository-write-client.js")) {
+    if (!allowsRepositoryIntegration && isRepositoryClientDynamicImport(node, "repository-write-client.js")) {
       violations.push(
         `${path.relative(root, file)} dynamically imports RepositoryWriteClient outside the Application Service`,
       );
     }
-    if (isRepositoryClientDynamicImport(node, "repository-read-client.js")) {
+    if (!allowsRepositoryIntegration && isRepositoryClientDynamicImport(node, "repository-read-client.js")) {
       violations.push(
         `${path.relative(root, file)} dynamically imports RepositoryReadClient outside the Application Service`,
       );
     }
-    if (isRepositoryWriteRequest(node)) {
+    if (!allowsRepositoryIntegration && isRepositoryWriteRequest(node)) {
       violations.push(`${path.relative(root, file)} calls RepositoryWriteClient outside the Application Service`);
     }
     if (isRawPersistenceRequest(node)) {
       violations.push(`${path.relative(root, file)} sends a raw PersistenceWorkerClient request`);
     }
-    if (isRepositoryReadRequest(node)) {
+    if (!allowsRepositoryIntegration && isRepositoryReadRequest(node)) {
       violations.push(`${path.relative(root, file)} calls RepositoryReadClient outside the Application Service`);
     }
     ts.forEachChild(node, inspect);
@@ -196,34 +204,54 @@ for (const file of [applicationWriteOwner]) {
 }
 
 {
-  const source = fs.readFileSync(publicMainBarrel, "utf8");
-  const sourceFile = ts.createSourceFile(publicMainBarrel, source, ts.ScriptTarget.Latest, true);
-  for (const statement of sourceFile.statements) {
-    if (
-      ts.isExportDeclaration(statement) &&
-      statement.moduleSpecifier !== undefined &&
-      ts.isStringLiteral(statement.moduleSpecifier) &&
-      statement.moduleSpecifier.text.endsWith("/application-session-service.js")
-    ) {
+  const sourceFile = typeProgram.getSourceFile(publicMainBarrel);
+  if (sourceFile === undefined) {
+    violations.push(`${path.relative(root, publicMainBarrel)} could not be inspected`);
+  } else {
+    for (const exported of findExportsDeclaredOutside(sourceFile, publicApplicationModel)) {
       violations.push(
-        `${path.relative(root, publicMainBarrel)} exposes the Application Session implementation or DI options`,
+        `${path.relative(root, publicMainBarrel)} exposes internal symbol ${JSON.stringify(exported.name)} from ${path.relative(root, exported.declarationFile)}`,
       );
     }
-    if (
-      ts.isExportDeclaration(statement) &&
-      statement.moduleSpecifier !== undefined &&
-      ts.isStringLiteral(statement.moduleSpecifier) &&
-      statement.moduleSpecifier.text.endsWith("/persistence-worker-client.js") &&
-      (statement.exportClause === undefined ||
-        ts.isNamespaceExport(statement.exportClause) ||
-        (ts.isNamedExports(statement.exportClause) &&
-          statement.exportClause.elements.some(
-            (element) => (element.propertyName?.text ?? element.name.text) === "PersistenceWorkerClient",
-          )))
-    ) {
-      violations.push(`${path.relative(root, publicMainBarrel)} exposes PersistenceWorkerClient raw requests`);
+  }
+}
+
+{
+  const fixtureSource = typeProgram.getSourceFile(publicTypeAliasFixture);
+  if (
+    fixtureSource === undefined ||
+    !findExportsDeclaredOutside(fixtureSource, publicApplicationModel).some(
+      (exported) => path.resolve(exported.declarationFile) === path.resolve(applicationWriteOwner),
+    )
+  ) {
+    violations.push(`${path.relative(root, publicTypeAliasFixture)} no longer exercises the public type origin rule`);
+  }
+}
+
+function findExportsDeclaredOutside(sourceFile, allowedDeclarationFile) {
+  const moduleSymbol = typeChecker.getSymbolAtLocation(sourceFile);
+  if (moduleSymbol === undefined) return [];
+  const forbidden = [];
+  for (const exportedSymbol of typeChecker.getExportsOfModule(moduleSymbol)) {
+    const declarationSymbol = resolveAliasedSymbol(exportedSymbol);
+    for (const declaration of declarationSymbol.getDeclarations() ?? []) {
+      const declarationFile = path.resolve(declaration.getSourceFile().fileName);
+      if (declarationFile !== path.resolve(allowedDeclarationFile)) {
+        forbidden.push({ name: exportedSymbol.getName(), declarationFile });
+      }
     }
   }
+  return forbidden;
+}
+
+function resolveAliasedSymbol(symbol) {
+  const visited = new Set();
+  let current = symbol;
+  while ((current.flags & ts.SymbolFlags.Alias) !== 0 && !visited.has(current)) {
+    visited.add(current);
+    current = typeChecker.getAliasedSymbol(current);
+  }
+  return current;
 }
 
 function isRawPersistenceRequest(node) {

@@ -586,6 +586,125 @@ test("validated request snapshots cannot be changed while access validation is p
   assert.deepEqual(closeCommands, [transition(uuid(74), "session-1", "active", "closed")]);
 });
 
+test("operation options are validated and snapshotted before access validation", async () => {
+  let accessCalls = 0;
+  let readCalls = 0;
+  let writeCalls = 0;
+  const invalidService = createService({
+    access: {
+      async validateWorkspace() {
+        accessCalls += 1;
+        return { allowed: true };
+      },
+      async authorize() {
+        accessCalls += 1;
+        return { allowed: true };
+      },
+    },
+    reads: {
+      async sessionsPage() {
+        readCalls += 1;
+        throw new Error("unreachable");
+      },
+      async sessionGet() {
+        readCalls += 1;
+        throw new Error("unreachable");
+      },
+    },
+    writes: {
+      async createSession() {
+        writeCalls += 1;
+        throw new Error("unreachable");
+      },
+      async transitionSession() {
+        writeCalls += 1;
+        throw new Error("unreachable");
+      },
+    },
+  });
+  const invalidOptions = [
+    null,
+    [],
+    { timeoutMs: 0 },
+    { timeoutMs: -1 },
+    { timeoutMs: 1.5 },
+    { timeoutMs: 2_147_483_648 },
+    { signal: {} },
+    { timeoutMs: 1_000, internal: true },
+  ];
+
+  for (const options of invalidOptions) {
+    const response = await invalidService.create(createRequest(), options as never);
+    assert.equal(response.overallStatus, "failure");
+    assert.equal(response.overallStatus === "failure" && response.error.kind, "request");
+    assert.deepEqual(response.persistence, { status: "not_attempted", effect: "none" });
+  }
+  const invalidOptionOperations = [
+    () => invalidService.create(createRequest(), { timeoutMs: -1 }),
+    () => invalidService.list({ context }, { timeoutMs: -1 }),
+    () => invalidService.read({ context, sessionId: "session-1" }, { timeoutMs: -1 }),
+    () => invalidService.archive({ context, sessionId: "session-1", idempotencyKey: uuid(76) }, { timeoutMs: -1 }),
+    () => invalidService.unarchive({ context, sessionId: "session-1", idempotencyKey: uuid(77) }, { timeoutMs: -1 }),
+    () =>
+      invalidService.close(
+        {
+          context,
+          sessionId: "session-1",
+          idempotencyKey: uuid(78),
+          expectedLifecycleStatus: "active",
+        },
+        { timeoutMs: -1 },
+      ),
+  ];
+  for (const operation of invalidOptionOperations) {
+    const response = await operation();
+    assert.equal(response.overallStatus, "failure");
+    assert.equal(response.overallStatus === "failure" && response.error.kind, "request");
+    assert.deepEqual(response.persistence, { status: "not_attempted", effect: "none" });
+  }
+  assert.equal(accessCalls, 0);
+  assert.equal(readCalls, 0);
+  assert.equal(writeCalls, 0);
+
+  const accessGate = deferred<void>();
+  let receivedOptions: unknown;
+  const controller = new AbortController();
+  const service = createService({
+    access: {
+      async validateWorkspace() {
+        await accessGate.promise;
+        return { allowed: true };
+      },
+      async authorize() {
+        return { allowed: true };
+      },
+    },
+    writes: {
+      async createSession(command, options) {
+        receivedOptions = options;
+        return {
+          ok: true,
+          value: {
+            sessionId: command.session.id,
+            workspaceKey: command.session.workspaceKey,
+            lifecycleStatus: "active",
+            createdAt: 1,
+          },
+          replayed: false,
+        };
+      },
+    },
+  });
+  const mutableOptions = { timeoutMs: 1_000, signal: controller.signal };
+  const creating = service.create(createRequest(), mutableOptions);
+  mutableOptions.timeoutMs = -1;
+  mutableOptions.signal = new AbortController().signal;
+  accessGate.resolve();
+
+  assert.equal((await creating).overallStatus, "success");
+  assert.deepEqual(receivedOptions, { timeoutMs: 1_000, signal: controller.signal });
+});
+
 test("access validators receive isolated views of the decoded request snapshot", async () => {
   let authorizationInput: unknown;
   let createCommand: SessionCreateCommand | undefined;
