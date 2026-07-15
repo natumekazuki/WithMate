@@ -40,6 +40,10 @@ import {
   type ResolvedModelSelection,
 } from "../src/model-catalog.js";
 import { buildArtifactFromOperations } from "./provider-artifact.js";
+import {
+  createDisabledWorkspaceSnapshotCapture,
+  WORKSPACE_DIFF_CAPTURE_ENABLED,
+} from "./workspace-diff-policy.js";
 import { composeProviderPrompt, isCanceledProviderMessage } from "./provider-prompt.js";
 import {
   ProviderTurnError,
@@ -2295,10 +2299,12 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     beforeSnapshotStats: SnapshotCaptureStats,
     providerQuotaTelemetry: ProviderQuotaTelemetry | null,
   ): Promise<RunSessionTurnResult> {
-    const { snapshot: afterSnapshot, stats: afterSnapshotStats } = await captureWorkspaceSnapshot([
-      workspacePath,
-      ...normalizeAllowedAdditionalDirectories(workspacePath, session.allowedAdditionalDirectories),
-    ]);
+    const { snapshot: afterSnapshot, stats: afterSnapshotStats } = WORKSPACE_DIFF_CAPTURE_ENABLED
+      ? await captureWorkspaceSnapshot([
+          workspacePath,
+          ...normalizeAllowedAdditionalDirectories(workspacePath, session.allowedAdditionalDirectories),
+        ])
+      : createDisabledWorkspaceSnapshotCapture();
     const operations = toAuditOperations(steps);
     const providerMetadata = buildCopilotProviderMetadata(rawItems);
     for (const metadata of providerMetadata) {
@@ -2345,10 +2351,12 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     const workspacePath = resolveRunWorkspacePath(input);
 
     const cliPath = resolveCopilotCliPath();
-    const { snapshot: beforeSnapshot, stats: beforeSnapshotStats } = await captureWorkspaceSnapshot([
-      workspacePath,
-      ...normalizeAllowedAdditionalDirectories(workspacePath, input.session.allowedAdditionalDirectories),
-    ]);
+    const { snapshot: beforeSnapshot, stats: beforeSnapshotStats } = WORKSPACE_DIFF_CAPTURE_ENABLED
+      ? await captureWorkspaceSnapshot([
+          workspacePath,
+          ...normalizeAllowedAdditionalDirectories(workspacePath, input.session.allowedAdditionalDirectories),
+        ])
+      : createDisabledWorkspaceSnapshotCapture();
     let session: CopilotSession;
     let selection: ResolvedModelSelection;
     try {

@@ -47,6 +47,10 @@ import {
   type WorkspaceSnapshot,
 } from "./snapshot-ignore.js";
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
+import {
+  createDisabledWorkspaceSnapshotCapture,
+  WORKSPACE_DIFF_CAPTURE_ENABLED,
+} from "./workspace-diff-policy.js";
 import { composeProviderPrompt, isCanceledProviderMessage } from "./provider-prompt.js";
 import { normalizeCodexTokenUsage } from "./provider-token-usage.js";
 import {
@@ -1623,6 +1627,14 @@ export class CodexAdapter implements ProviderTurnAdapter {
     beforeSnapshot: WorkspaceSnapshot;
     beforeSnapshotStats: SnapshotCaptureStats;
   }> {
+    if (!WORKSPACE_DIFF_CAPTURE_ENABLED) {
+      const { snapshot, stats } = createDisabledWorkspaceSnapshotCapture();
+      return {
+        beforeSnapshot: snapshot,
+        beforeSnapshotStats: stats,
+      };
+    }
+
     const snapshotRoots = this.buildSnapshotRoots(input);
     const indexKey = this.buildSnapshotIndexKey(snapshotRoots);
     const cachedIndex = this.workspaceSnapshotIndexes.get(indexKey);
@@ -1652,6 +1664,15 @@ export class CodexAdapter implements ProviderTurnAdapter {
     afterSnapshotStats: SnapshotCaptureStats;
     useSnapshotFallback: boolean;
   }> {
+    if (!WORKSPACE_DIFF_CAPTURE_ENABLED) {
+      const { snapshot, stats } = createDisabledWorkspaceSnapshotCapture();
+      return {
+        afterSnapshot: snapshot,
+        afterSnapshotStats: stats,
+        useSnapshotFallback: false,
+      };
+    }
+
     const snapshotRoots = this.buildSnapshotRoots(input);
     const indexKey = this.buildSnapshotIndexKey(snapshotRoots);
     const cachedIndex = this.workspaceSnapshotIndexes.get(indexKey)
