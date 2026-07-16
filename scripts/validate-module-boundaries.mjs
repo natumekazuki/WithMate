@@ -169,8 +169,8 @@ for (const file of listSourceFiles(sourceRoot)) {
     if (!allowsRepositoryIntegration && isRepositoryWriteRequest(node)) {
       violations.push(`${path.relative(root, file)} calls RepositoryWriteClient outside the Application Service`);
     }
-    if (isRawPersistenceRequest(node)) {
-      violations.push(`${path.relative(root, file)} sends a raw PersistenceWorkerClient request`);
+    if (isRawPersistenceRequestReference(node)) {
+      violations.push(`${path.relative(root, file)} accesses the raw PersistenceWorkerClient request capability`);
     }
     if (!allowsRepositoryIntegration && isRepositoryReadRequest(node)) {
       violations.push(`${path.relative(root, file)} calls RepositoryReadClient outside the Application Service`);
@@ -202,7 +202,7 @@ for (const file of listSourceFiles(sourceRoot)) {
 
 {
   const fixtureSource = typeProgram.getSourceFile(rawWriteFixture);
-  if (fixtureSource === undefined || !containsRawPersistenceRequest(fixtureSource)) {
+  if (fixtureSource === undefined || countRawPersistenceRequestReferences(fixtureSource) < 8) {
     violations.push(`${path.relative(root, rawWriteFixture)} no longer exercises the raw write boundary rule`);
   }
 }
@@ -274,23 +274,54 @@ function resolveAliasedSymbol(symbol) {
   return current;
 }
 
-function isRawPersistenceRequest(node) {
-  if (!ts.isCallExpression(node) || !isMethodCall(node, "request")) return false;
-  const signatureDeclaration = typeChecker.getResolvedSignature(node)?.declaration;
+function isRawPersistenceRequestReference(node) {
+  const symbol = rawPersistenceRequestSymbol(node);
   return (
-    signatureDeclaration !== undefined &&
-    path.resolve(signatureDeclaration.getSourceFile().fileName) === path.resolve(persistenceWorkerClient)
+    symbol !== undefined &&
+    (resolveAliasedSymbol(symbol).getDeclarations() ?? []).some(
+      (declaration) => path.resolve(declaration.getSourceFile().fileName) === path.resolve(persistenceWorkerClient),
+    )
   );
 }
 
-function isMethodCall(node, methodName) {
-  if (ts.isPropertyAccessExpression(node.expression)) return node.expression.name.text === methodName;
-  return (
-    ts.isElementAccessExpression(node.expression) &&
-    node.expression.argumentExpression !== undefined &&
-    ts.isStringLiteral(node.expression.argumentExpression) &&
-    node.expression.argumentExpression.text === methodName
-  );
+function rawPersistenceRequestSymbol(node) {
+  if (ts.isPropertyAccessExpression(node) && node.name.text === "request") {
+    return (
+      typeChecker.getSymbolAtLocation(node.name) ??
+      typeChecker.getTypeAtLocation(node.expression).getProperty("request")
+    );
+  }
+  if (
+    ts.isElementAccessExpression(node) &&
+    node.argumentExpression !== undefined &&
+    typeCanSelectRequest(typeChecker.getTypeAtLocation(node.argumentExpression))
+  ) {
+    return typeChecker.getTypeAtLocation(node.expression).getProperty("request");
+  }
+  if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
+    const propertyName = node.propertyName;
+    const selectsRequest =
+      propertyName === undefined
+        ? node.name.getText() === "request"
+        : ts.isComputedPropertyName(propertyName)
+          ? typeCanSelectRequest(typeChecker.getTypeAtLocation(propertyName.expression))
+          : propertyName.getText() === "request";
+    if (!selectsRequest) return undefined;
+    const declaration = node.parent.parent;
+    if (!ts.isVariableDeclaration(declaration) || declaration.initializer === undefined) return undefined;
+    return typeChecker.getTypeAtLocation(declaration.initializer).getProperty("request");
+  }
+  return undefined;
+}
+
+function typeCanSelectRequest(type, visited = new Set()) {
+  if (visited.has(type)) return false;
+  visited.add(type);
+  if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.String)) !== 0) return true;
+  if (type.isStringLiteral?.()) return type.value === "request";
+  if (type.isUnion?.() && type.types.some((member) => typeCanSelectRequest(member, visited))) return true;
+  const constraint = typeChecker.getBaseConstraintOfType(type);
+  return constraint !== undefined && constraint !== type && typeCanSelectRequest(constraint, visited);
 }
 
 function isRepositoryClientDynamicImport(node, clientFileName) {
@@ -357,17 +388,14 @@ function containsRepositoryWriteRequest(sourceFile) {
   return found;
 }
 
-function containsRawPersistenceRequest(sourceFile) {
-  let found = false;
+function countRawPersistenceRequestReferences(sourceFile) {
+  let count = 0;
   const inspect = (node) => {
-    if (isRawPersistenceRequest(node)) {
-      found = true;
-      return;
-    }
+    if (isRawPersistenceRequestReference(node)) count += 1;
     ts.forEachChild(node, inspect);
   };
   inspect(sourceFile);
-  return found;
+  return count;
 }
 
 function isRepositoryReadRequest(node) {

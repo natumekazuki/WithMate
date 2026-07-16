@@ -223,7 +223,7 @@ workerTest("Application reads chunked Session directory configuration through th
       assert.equal(detail.overallStatus, "success");
       if (detail.overallStatus !== "success") assert.fail("chunked Session detail failed");
       assert.equal(detail.value.session.allowedAdditionalDirectoriesState, "chunked");
-      assert.equal(detail.value.session.allowedAdditionalDirectories, undefined);
+      assert.equal("allowedAdditionalDirectories" in detail.value.session, false);
 
       const chunks: Uint8Array[] = [];
       let offset = 0;
@@ -305,6 +305,49 @@ test("create validates workspace and authorization before issuing a stable Sessi
     replay.overallStatus === "success" && replay.value,
     first.overallStatus === "success" && first.value,
   );
+});
+
+test("create canonicalizes host paths once before authorization and Repository write", async () => {
+  let authorizationDirectories: readonly string[] | undefined;
+  let commandDirectories: readonly string[] | undefined;
+  const rawDirectories =
+    process.platform === "win32"
+      ? ["C:\\allowed\\..\\secret\\child", "c:/SECRET/", "D:/workspace/shared"]
+      : ["/allowed/../secret/child", "/secret/", "/workspace/shared"];
+  const expectedDirectories =
+    process.platform === "win32" ? ["c:\\SECRET", "D:\\workspace\\shared"] : ["/secret", "/workspace/shared"];
+  const service = createService({
+    access: {
+      async validateWorkspace() {
+        return { allowed: true };
+      },
+      async authorize(input) {
+        if (input.operation === "create") authorizationDirectories = input.target.allowedAdditionalDirectories;
+        return { allowed: true };
+      },
+    },
+    writes: {
+      async createSession(command) {
+        commandDirectories = command.session.allowedAdditionalDirectories;
+        return {
+          ok: true,
+          value: {
+            sessionId: command.session.id,
+            workspaceKey: command.session.workspaceKey,
+            lifecycleStatus: "active",
+            createdAt: 1,
+          },
+          replayed: false,
+        };
+      },
+    },
+  });
+
+  const response = await service.create({ ...createRequest(), allowedAdditionalDirectories: rawDirectories });
+
+  assert.equal(response.overallStatus, "success");
+  assert.deepEqual(authorizationDirectories, expectedDirectories);
+  assert.deepEqual(commandDirectories, expectedDirectories);
 });
 
 test("authorization receives isolated operation-specific Session targets and create configuration", async () => {
@@ -942,7 +985,11 @@ test("operation deadline preserves persistence effect after Repository access st
     retryable: true,
     effect: "unknown",
   });
-  assert.deepEqual(writeTimeout.persistence, { status: "failed", effect: "unknown" });
+  assert.deepEqual(writeTimeout.persistence, {
+    status: "failed",
+    effect: "unknown",
+    reconciliation: "exact_request_required",
+  });
 });
 
 test("Application owns the deadline and does not pass a competing timeout to Repository ports", async () => {
@@ -971,7 +1018,11 @@ test("Application owns the deadline and does not pass a competing timeout to Rep
     retryable: true,
     effect: "unknown",
   });
-  assert.deepEqual(response.persistence, { status: "failed", effect: "unknown" });
+  assert.deepEqual(response.persistence, {
+    status: "failed",
+    effect: "unknown",
+    reconciliation: "exact_request_required",
+  });
 });
 
 test("operation deadline starts before request authorization snapshot", async () => {
@@ -1241,6 +1292,7 @@ test("create rejects malformed additional directories before access validation a
     [123] as unknown as readonly string[],
     sparse,
     ["workspace/shared"],
+    ...(process.platform === "win32" ? [["/home/user"], ["\\secret"]] : [["C:\\workspace\\shared"]]),
     oversizedItem,
     tooManyItems,
     oversizedTotal,
@@ -1371,7 +1423,6 @@ test("read projects only known Application response fields", async () => {
       workspaceKey: "workspace-1",
       allowedAdditionalDirectoriesByteLength: 24,
       allowedAdditionalDirectoriesState: "inline",
-      allowedAdditionalDirectories: ["C:\\workspace-shared"],
       defaultCharacterId: "character-1",
       maxConcurrentChildRuns: 2,
       lifecycleStatus: "active",
@@ -1384,6 +1435,42 @@ test("read projects only known Application response fields", async () => {
       activeRunId: "run-active",
       latestRunId: "run-latest",
     },
+  });
+});
+
+test("read never exposes inline directories without the dedicated directory authorization", async () => {
+  const service = createService({
+    access: {
+      async validateWorkspace() {
+        return { allowed: true };
+      },
+      async authorize(input) {
+        return input.operation === "read_directories_chunk"
+          ? {
+              allowed: false,
+              error: { code: "forbidden", message: "Directory access is forbidden.", retryable: false },
+            }
+          : { allowed: true };
+      },
+    },
+  });
+
+  const detail = await service.read({ context, sessionId: "session-1" });
+  const directories = await service.readDirectoriesChunk({
+    context,
+    sessionId: "session-1",
+    offset: 0,
+    maxBytes: 1_024,
+  });
+
+  assert.equal(detail.overallStatus, "success");
+  if (detail.overallStatus !== "success") assert.fail("Session detail failed");
+  assert.equal("allowedAdditionalDirectories" in detail.value.session, false);
+  assert.deepEqual(directories.overallStatus === "failure" && directories.error, {
+    kind: "access",
+    code: "forbidden",
+    message: "Directory access is forbidden.",
+    retryable: false,
   });
 });
 
@@ -1589,7 +1676,272 @@ test("write transport failure preserves unknown effect and is never reported as 
     retryable: false,
     effect: "unknown",
   });
-  assert.deepEqual(response.persistence, { status: "failed", effect: "unknown" });
+  assert.deepEqual(response.persistence, {
+    status: "failed",
+    effect: "unknown",
+    reconciliation: "exact_request_required",
+  });
+});
+
+test("write failures with unknown effect always identify exact-request reconciliation", async () => {
+  const service = createService({
+    writes: {
+      async createSession() {
+        throw persistenceError("worker_crashed", "Persistence Worker crashed.", false, "unknown");
+      },
+    },
+  });
+
+  const response = await service.create(createRequest());
+
+  assert.deepEqual(response.overallStatus === "failure" && response.error, {
+    kind: "persistence",
+    code: "persistence_unavailable",
+    message: "Persistence Worker crashed.",
+    retryable: false,
+    effect: "unknown",
+  });
+  assert.deepEqual(response.persistence, {
+    status: "failed",
+    effect: "unknown",
+    reconciliation: "exact_request_required",
+  });
+});
+
+test("read transport failures never claim an unknown write effect", async () => {
+  const service = createService({
+    reads: {
+      async sessionsPage() {
+        throw persistenceError("worker_crashed", "Persistence Worker crashed.", false, "unknown");
+      },
+    },
+  });
+
+  const response = await service.list({ context });
+
+  assert.deepEqual(response.overallStatus === "failure" && response.error, {
+    kind: "persistence",
+    code: "persistence_unavailable",
+    message: "Persistence Worker crashed.",
+    retryable: false,
+    effect: "none",
+  });
+  assert.deepEqual(response.persistence, { status: "failed", effect: "none" });
+});
+
+test("malformed fulfilled access decisions become pre-persistence application failures", async () => {
+  const malformedDecisions = [
+    () => undefined,
+    () => ({ allowed: false }),
+    () =>
+      Object.defineProperty({}, "allowed", {
+        get: () => {
+          throw new Error("getter failure");
+        },
+      }),
+    () =>
+      new Proxy(
+        {},
+        {
+          getPrototypeOf: () => {
+            throw new Error("proxy failure");
+          },
+        },
+      ),
+  ];
+  for (const malformedPort of ["workspace", "authorization"] as const) {
+    for (const malformedDecision of malformedDecisions) {
+      let repositoryCalls = 0;
+      const service = createService({
+        access: {
+          async validateWorkspace() {
+            return malformedPort === "workspace" ? (malformedDecision() as never) : { allowed: true };
+          },
+          async authorize() {
+            return malformedPort === "authorization" ? (malformedDecision() as never) : { allowed: true };
+          },
+        },
+        reads: {
+          async sessionsPage() {
+            repositoryCalls += 1;
+            return { items: [] };
+          },
+        },
+      });
+
+      const response = await service.list({ context });
+
+      assert.deepEqual(response.overallStatus === "failure" && response.error, {
+        kind: "application",
+        code: "internal_error",
+        message: "Application Service could not complete the operation.",
+        retryable: false,
+      });
+      assert.deepEqual(response.persistence, { status: "not_attempted", effect: "none" });
+      assert.equal(repositoryCalls, 0);
+    }
+  }
+});
+
+test("shape-valid Repository results must match the requested workspace, Session, filter, and lifecycle target", async () => {
+  const listWrongWorkspace = createService({
+    reads: {
+      async sessionsPage() {
+        return { items: [{ ...sessionSummary("session-1"), workspaceKey: "workspace-2" }] };
+      },
+    },
+  });
+  const listWrongLifecycle = createService({
+    reads: {
+      async sessionsPage() {
+        return { items: [{ ...sessionSummary("session-1"), lifecycleStatus: "archived" as const }] };
+      },
+    },
+  });
+  const readWrongTarget = createService({
+    reads: {
+      async sessionGet() {
+        return { session: sessionDetail("session-2", "workspace-2"), execution: { state: "not_started" as const } };
+      },
+    },
+  });
+  const createWrongTarget = createService({
+    writes: {
+      async createSession() {
+        return {
+          ok: true as const,
+          value: {
+            sessionId: "session-other",
+            workspaceKey: "workspace-2",
+            lifecycleStatus: "active" as const,
+            createdAt: 1,
+          },
+          replayed: false,
+        };
+      },
+    },
+  });
+  const transitionWrongTarget = createService({
+    writes: {
+      async transitionSession() {
+        return {
+          ok: true as const,
+          value: { sessionId: "session-other", lifecycleStatus: "active" as const, updatedAt: 1 },
+          replayed: false,
+        };
+      },
+    },
+  });
+
+  const readResponses = [
+    await listWrongWorkspace.list({ context }),
+    await listWrongLifecycle.list({ context, lifecycleStatus: "active" }),
+    await readWrongTarget.read({ context, sessionId: "session-1" }),
+  ];
+  const writeResponses = [
+    await createWrongTarget.create(createRequest()),
+    await transitionWrongTarget.archive({ context, sessionId: "session-1", idempotencyKey: uuid(71) }),
+  ];
+
+  for (const response of readResponses) {
+    assert.equal(response.overallStatus === "failure" && response.error.kind, "application");
+    assert.deepEqual(response.persistence, { status: "failed", effect: "none" });
+  }
+  for (const response of writeResponses) {
+    assert.equal(response.overallStatus === "failure" && response.error.kind, "application");
+    assert.deepEqual(response.persistence, {
+      status: "failed",
+      effect: "unknown",
+      reconciliation: "exact_request_required",
+    });
+  }
+});
+
+test("malformed fulfilled Repository results stay inside the response envelope", async () => {
+  const listService = createService({
+    reads: {
+      async sessionsPage() {
+        return { items: [{}] } as never;
+      },
+    },
+  });
+  const detailService = createService({
+    reads: {
+      async sessionGet() {
+        return { session: undefined, execution: undefined } as never;
+      },
+    },
+  });
+  const chunkService = createService({
+    reads: {
+      async sessionDirectoriesChunk() {
+        return { sessionId: "wrong-session", offset: 0 } as never;
+      },
+    },
+  });
+  const oversizedChunkService = createService({
+    reads: {
+      async sessionDirectoriesChunk() {
+        return { sessionId: "session-1", offset: 0, totalBytes: 5, eof: true, bytes: new ArrayBuffer(5) };
+      },
+    },
+  });
+  const stalledChunkService = createService({
+    reads: {
+      async sessionDirectoriesChunk() {
+        return { sessionId: "session-1", offset: 0, totalBytes: 2, eof: false, bytes: new ArrayBuffer(0) };
+      },
+    },
+  });
+  const createServiceWithMalformedResult = createService({
+    writes: {
+      async createSession() {
+        return { ok: true, value: undefined, replayed: false } as never;
+      },
+    },
+  });
+  const transitionService = createService({
+    writes: {
+      async transitionSession() {
+        return { ok: true, value: { lifecycleStatus: "active" }, replayed: false } as never;
+      },
+    },
+  });
+
+  const readResponses = [
+    await listService.list({ context }),
+    await detailService.read({ context, sessionId: "session-1" }),
+    await chunkService.readDirectoriesChunk({ context, sessionId: "session-1", offset: 0, maxBytes: 1_024 }),
+    await oversizedChunkService.readDirectoriesChunk({ context, sessionId: "session-1", offset: 0, maxBytes: 4 }),
+    await stalledChunkService.readDirectoriesChunk({ context, sessionId: "session-1", offset: 0, maxBytes: 4 }),
+  ];
+  const writeResponses = [
+    await createServiceWithMalformedResult.create(createRequest()),
+    await transitionService.archive({ context, sessionId: "session-1", idempotencyKey: uuid(70) }),
+  ];
+
+  for (const read of readResponses) {
+    assert.deepEqual(read.overallStatus === "failure" && read.error, {
+      kind: "application",
+      code: "internal_error",
+      message: "Application Service could not complete the operation.",
+      retryable: false,
+    });
+    assert.deepEqual(read.persistence, { status: "failed", effect: "none" });
+  }
+  for (const write of writeResponses) {
+    assert.deepEqual(write.overallStatus === "failure" && write.error, {
+      kind: "application",
+      code: "internal_error",
+      message: "Application Service could not complete the operation.",
+      retryable: false,
+    });
+    assert.deepEqual(write.persistence, {
+      status: "failed",
+      effect: "unknown",
+      reconciliation: "exact_request_required",
+    });
+  }
 });
 
 test("unexpected validator failures stay application failures and do not claim persistence effects", async () => {
@@ -1629,7 +1981,11 @@ test("unexpected write failures preserve unknown commit effect", async () => {
 
   assert.equal(response.overallStatus, "failure");
   assert.equal(response.overallStatus === "failure" && response.error.kind, "application");
-  assert.deepEqual(response.persistence, { status: "failed", effect: "unknown" });
+  assert.deepEqual(response.persistence, {
+    status: "failed",
+    effect: "unknown",
+    reconciliation: "exact_request_required",
+  });
 });
 
 function createService(
@@ -1744,6 +2100,23 @@ function sessionSummary(id: string) {
     lastActivityAt: 1,
     executionState: "not_started" as const,
     stateChangedAt: 1,
+  };
+}
+
+function sessionDetail(id: string, workspaceKey = "workspace-1") {
+  return {
+    id,
+    providerId: "codex",
+    workspaceKey,
+    allowedAdditionalDirectoriesByteLength: 2,
+    allowedAdditionalDirectoriesState: "inline" as const,
+    allowedAdditionalDirectories: [],
+    defaultCharacterId: "character-1",
+    maxConcurrentChildRuns: 2,
+    lifecycleStatus: "active" as const,
+    createdAt: 1,
+    updatedAt: 1,
+    lastActivityAt: 1,
   };
 }
 

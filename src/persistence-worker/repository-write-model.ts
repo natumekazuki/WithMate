@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { normalizeAllowedAdditionalDirectories } from "../shared/allowed-additional-directories.js";
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
 import {
   REPOSITORY_WRITE_OPERATIONS,
@@ -2644,6 +2645,7 @@ function prepareSessionCreate(command: SessionCreateCommand): PreparedSessionCre
   const allowedAdditionalDirectories = normalizeAllowedAdditionalDirectories(
     command.session.allowedAdditionalDirectories,
   );
+  if (allowedAdditionalDirectories === undefined) throw invalidCommand();
   const directoriesJson = JSON.stringify(allowedAdditionalDirectories);
   if (Buffer.byteLength(directoriesJson) > 4 * 1024 * 1024) throw invalidCommand();
   return {
@@ -2756,6 +2758,7 @@ function prepareChildStart(command: ChildStartCommand): PreparedChildStart {
   const allowedAdditionalDirectories = normalizeAllowedAdditionalDirectories(
     command.childSession.allowedAdditionalDirectories,
   );
+  if (allowedAdditionalDirectories === undefined) throw invalidCommand();
   const directoriesJson = JSON.stringify(allowedAdditionalDirectories);
   const contentBlocksJson = canonicalJsonString(command.message.contentBlocks);
   const executionSnapshotJson = canonicalJsonString(command.run.executionSnapshot);
@@ -4393,36 +4396,6 @@ function readCollectRow(database: DatabaseSync, deliveryId: string): CollectRow 
     `,
     )
     .get(deliveryId) as CollectRow | undefined;
-}
-
-function normalizeAllowedAdditionalDirectories(directories: readonly string[]): readonly string[] {
-  const normalized = directories.map((value) => {
-    const pathApi = path.win32.isAbsolute(value) ? path.win32 : path.posix.isAbsolute(value) ? path.posix : undefined;
-    if (pathApi === undefined) throw invalidCommand();
-    const normalizedValue = pathApi.normalize(value);
-    const comparisonKey = pathApi === path.win32 ? normalizedValue.toLocaleLowerCase("en-US") : normalizedValue;
-    return { pathApi, value: normalizedValue, comparisonKey };
-  });
-  normalized.sort((left, right) =>
-    left.pathApi === right.pathApi
-      ? left.comparisonKey.length - right.comparisonKey.length || left.comparisonKey.localeCompare(right.comparisonKey)
-      : left.pathApi === path.win32
-        ? -1
-        : 1,
-  );
-  const retained: typeof normalized = [];
-  for (const candidate of normalized) {
-    const redundant = retained.some((parent) => {
-      if (parent.pathApi !== candidate.pathApi) return false;
-      const relative = parent.pathApi.relative(parent.comparisonKey, candidate.comparisonKey);
-      return (
-        relative === "" ||
-        (!parent.pathApi.isAbsolute(relative) && !relative.startsWith(`..${parent.pathApi.sep}`) && relative !== "..")
-      );
-    });
-    if (!redundant) retained.push(candidate);
-  }
-  return retained.map(({ value }) => value);
 }
 
 function runDecoded<T, R>(

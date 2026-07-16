@@ -26,6 +26,7 @@ export type {
   ApplicationSessionDirectoriesAccessTarget,
   ApplicationSessionDirectoriesChunkRequest,
   ApplicationSessionDirectoriesChunkResult,
+  ApplicationSessionDetail,
   ApplicationSessionListItem,
   ApplicationSessionListRequest,
   ApplicationSessionLifecycleStatus,

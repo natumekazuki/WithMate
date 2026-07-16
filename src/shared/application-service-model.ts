@@ -1,4 +1,4 @@
-import type { SessionDetail, SessionExecutionState, SessionListItem } from "./repository-read-model.js";
+import type { SessionExecutionState, SessionListItem } from "./repository-read-model.js";
 
 export type ApplicationSessionOperation =
   "create" | "list" | "read" | "read_directories_chunk" | "archive" | "unarchive" | "close";
@@ -178,7 +178,9 @@ type ApplicationCommittedPersistenceStatus = Readonly<{
 }>;
 type ApplicationRejectedPersistenceStatus = Readonly<{ status: "rejected"; effect: "none" }>;
 type ApplicationFailedPersistenceStatus<TEffect extends ApplicationFailureEffect = ApplicationFailureEffect> =
-  Readonly<{ status: "failed"; effect: TEffect }>;
+  TEffect extends "unknown"
+    ? Readonly<{ status: "failed"; effect: "unknown"; reconciliation: "exact_request_required" }>
+    : Readonly<{ status: "failed"; effect: "none" }>;
 
 export type ApplicationPersistenceStatus =
   | ApplicationNotAttemptedPersistenceStatus
@@ -248,19 +250,31 @@ type ApplicationDomainFailureResponse = Readonly<{
   persistence: ApplicationRejectedPersistenceStatus;
 }>;
 
-type ApplicationPersistenceFailureResponse = {
-  [TEffect in ApplicationFailureEffect]: Readonly<{
+type ApplicationPersistenceFailureEffect<TMode extends ApplicationOperationMode> = TMode extends "read"
+  ? "none"
+  : ApplicationFailureEffect;
+
+type ApplicationPersistenceFailureResponse<TMode extends ApplicationOperationMode> = {
+  [TEffect in ApplicationPersistenceFailureEffect<TMode>]: Readonly<{
     overallStatus: "failure";
     error: ApplicationPersistenceError & Readonly<{ effect: TEffect }>;
     persistence: ApplicationFailedPersistenceStatus<TEffect>;
   }>;
-}[ApplicationFailureEffect];
+}[ApplicationPersistenceFailureEffect<TMode>];
 
-type ApplicationInternalFailureResponse = Readonly<{
-  overallStatus: "failure";
-  error: ApplicationInternalError;
-  persistence: ApplicationNotAttemptedPersistenceStatus | ApplicationFailedPersistenceStatus;
-}>;
+type ApplicationInternalFailureResponse<TMode extends ApplicationOperationMode> =
+  | Readonly<{
+      overallStatus: "failure";
+      error: ApplicationInternalError;
+      persistence: ApplicationNotAttemptedPersistenceStatus;
+    }>
+  | Readonly<{
+      overallStatus: "failure";
+      error: ApplicationInternalError;
+      persistence: TMode extends "read"
+        ? ApplicationFailedPersistenceStatus<"none">
+        : ApplicationFailedPersistenceStatus<"unknown">;
+    }>;
 
 type ApplicationOutcomeResponse<TValue, TMode extends ApplicationOperationMode> = TMode extends "read"
   ? ApplicationReadSuccessResponse<TValue> | ApplicationReadPartialSuccessResponse<TValue>
@@ -270,8 +284,8 @@ export type ApplicationOperationResponse<TValue, TMode extends ApplicationOperat
   | ApplicationOutcomeResponse<TValue, TMode>
   | ApplicationPrePersistenceFailureResponse
   | ApplicationDomainFailureResponse
-  | ApplicationPersistenceFailureResponse
-  | ApplicationInternalFailureResponse;
+  | ApplicationPersistenceFailureResponse<TMode>
+  | ApplicationInternalFailureResponse<TMode>;
 
 export type ApplicationSessionCreateRequest<TAuthorizationContext> = Readonly<{
   context: ApplicationSessionOperationContext<TAuthorizationContext>;
@@ -310,12 +324,26 @@ export type ApplicationSessionReadRequest<TAuthorizationContext> = Readonly<{
 }>;
 
 export type ApplicationSessionReadResult = Readonly<{
-  session: SessionDetail;
+  session: ApplicationSessionDetail;
   execution: Readonly<{
     state: SessionExecutionState;
     activeRunId?: string;
     latestRunId?: string;
   }>;
+}>;
+
+export type ApplicationSessionDetail = Readonly<{
+  id: string;
+  providerId: string;
+  workspaceKey: string;
+  allowedAdditionalDirectoriesByteLength: number;
+  allowedAdditionalDirectoriesState: "inline" | "chunked";
+  defaultCharacterId: string;
+  maxConcurrentChildRuns: number;
+  lifecycleStatus: ApplicationSessionLifecycleStatus;
+  createdAt: number;
+  updatedAt: number;
+  lastActivityAt: number;
 }>;
 
 export type ApplicationSessionDirectoriesChunkRequest<TAuthorizationContext> = Readonly<{

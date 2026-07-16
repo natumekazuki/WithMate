@@ -1,16 +1,17 @@
 import { createHash } from "node:crypto";
-import path from "node:path";
 
 import type {
+  ApplicationAccessDecision,
   ApplicationAccessValidationInput,
   ApplicationAccessValidator,
   ApplicationDomainError,
+  ApplicationDomainErrorCode,
   ApplicationOperationOptions,
   ApplicationOperationResponse,
-  ApplicationPersistenceStatus,
   ApplicationSessionCloseRequest,
   ApplicationSessionCreateRequest,
   ApplicationSessionCreateResult,
+  ApplicationSessionDetail,
   ApplicationSessionDirectoriesChunkRequest,
   ApplicationSessionDirectoriesChunkResult,
   ApplicationSessionListRequest,
@@ -21,30 +22,36 @@ import type {
   ApplicationSessionTransitionResult,
   ApplicationSessionWriteRequest,
 } from "../shared/application-service-model.js";
+import { normalizeAllowedAdditionalDirectories } from "../shared/allowed-additional-directories.js";
 import type { PersistenceError } from "../shared/persistence-protocol.js";
 import { isCanonicalUuid } from "../shared/persistence-runtime-protocol.js";
-import type { PageOmission, SessionDetail, SessionListItem } from "../shared/repository-read-model.js";
-import type {
-  RepositoryCommandError,
-  RepositoryCommandResult,
-  SessionCreateResult,
-  SessionLifecycleStatus,
-  SessionTransitionResult,
-} from "../shared/repository-write-model.js";
+import type { SessionListItem } from "../shared/repository-read-model.js";
+import type { SessionLifecycleStatus } from "../shared/repository-write-model.js";
 import { PersistenceClientError } from "./persistence-worker-client.js";
 import type { RepositoryReadClient } from "./repository-read-client.js";
 import type { RepositoryWriteClient } from "./repository-write-client.js";
 
 type SessionReadPort = Pick<RepositoryReadClient, "sessionsPage" | "sessionGet" | "sessionDirectoriesChunk">;
 type SessionWritePort = Pick<RepositoryWriteClient, "createSession" | "transitionSession">;
-type ApplicationFailureResponse = Extract<ApplicationOperationResponse<never>, Readonly<{ overallStatus: "failure" }>>;
+type ApplicationFailureResponse<TMode extends "read" | "write" = "read" | "write"> = Extract<
+  ApplicationOperationResponse<never, TMode>,
+  Readonly<{ overallStatus: "failure" }>
+>;
+type ApplicationPrePersistenceFailureResponse = Extract<
+  ApplicationFailureResponse,
+  Readonly<{ persistence: Readonly<{ status: "not_attempted" }> }>
+>;
+type ApplicationDomainFailureResponse = Extract<
+  ApplicationFailureResponse<"read">,
+  Readonly<{ error: Readonly<{ kind: "domain" }> }>
+>;
 
 type RequestDecodeResult<TValue> =
-  Readonly<{ ok: true; value: TValue }> | Readonly<{ ok: false; response: ApplicationFailureResponse }>;
+  Readonly<{ ok: true; value: TValue }> | Readonly<{ ok: false; response: ApplicationPrePersistenceFailureResponse }>;
 
 type OperationPreparation<TValue> =
   | Readonly<{ ok: true; input: TValue; control: OperationControl }>
-  | Readonly<{ ok: false; response: ApplicationFailureResponse }>;
+  | Readonly<{ ok: false; response: ApplicationPrePersistenceFailureResponse }>;
 
 type OperationControl = Readonly<{
   deadlineAt?: number;
@@ -109,6 +116,7 @@ export class ApplicationSessionService<
       control,
     );
     if (denied !== undefined) return denied;
+    const sessionId = issueSessionId(input.idempotencyKey);
 
     return executeRepositoryOperation(
       "write",
@@ -118,7 +126,7 @@ export class ApplicationSessionService<
           {
             idempotencyKey: input.idempotencyKey,
             session: {
-              id: issueSessionId(input.idempotencyKey),
+              id: sessionId,
               providerId: input.providerId,
               workspaceKey: input.context.workspaceKey,
               allowedAdditionalDirectories: input.allowedAdditionalDirectories,
@@ -129,12 +137,9 @@ export class ApplicationSessionService<
           repositoryOptions,
         ),
       (result) =>
-        mapWriteResult<SessionCreateResult, ApplicationSessionCreateResult>(result, (value) => ({
-          sessionId: value.sessionId,
-          workspaceKey: value.workspaceKey,
-          lifecycleStatus: value.lifecycleStatus,
-          createdAt: value.createdAt,
-        })),
+        mapWriteResult<ApplicationSessionCreateResult>(result, (value) =>
+          projectSessionCreateResult(value, sessionId, input.context.workspaceKey),
+        ),
     );
   }
 
@@ -174,29 +179,7 @@ export class ApplicationSessionService<
           },
           repositoryOptions,
         ),
-      (page) => {
-        const items: SessionListItem[] = [];
-        const omissions: PageOmission[] = [];
-        for (const item of page.items) {
-          if (isPageOmission(item)) omissions.push(item);
-          else items.push(projectSessionListItem(item));
-        }
-        const value: ApplicationSessionPage =
-          page.nextCursor === undefined ? { items } : { items, nextCursor: page.nextCursor };
-        if (omissions.length === 0) {
-          return { overallStatus: "success", value, persistence: { status: "read", effect: "none" } };
-        }
-        const [firstOmission, ...remainingOmissions] = omissions;
-        if (firstOmission === undefined) {
-          return { overallStatus: "success", value, persistence: { status: "read", effect: "none" } };
-        }
-        return {
-          overallStatus: "partial_success",
-          value,
-          issues: [projectPageOmission(firstOmission), ...remainingOmissions.map(projectPageOmission)],
-          persistence: { status: "read", effect: "none" },
-        };
-      },
+      (value) => projectSessionPage(value, input.context.workspaceKey, input.lifecycleStatus),
     );
   }
 
@@ -230,7 +213,7 @@ export class ApplicationSessionService<
         ),
       (repositoryValue) => ({
         overallStatus: "success",
-        value: projectSessionReadResult(repositoryValue),
+        value: projectSessionReadResult(repositoryValue, input.sessionId, input.context.workspaceKey),
         persistence: { status: "read", effect: "none" },
       }),
     );
@@ -276,13 +259,7 @@ export class ApplicationSessionService<
         ),
       (value) => ({
         overallStatus: "success",
-        value: {
-          sessionId: value.sessionId,
-          offset: value.offset,
-          totalBytes: value.totalBytes,
-          eof: value.eof,
-          bytes: value.bytes,
-        },
+        value: projectSessionDirectoriesChunk(value, input.sessionId, input.offset, input.maxBytes),
         persistence: { status: "read", effect: "none" },
       }),
     );
@@ -360,33 +337,37 @@ export class ApplicationSessionService<
           repositoryOptions,
         ),
       (result) =>
-        mapWriteResult<SessionTransitionResult, ApplicationSessionTransitionResult>(result, (value) => ({
-          sessionId: value.sessionId,
-          lifecycleStatus: value.lifecycleStatus,
-          updatedAt: value.updatedAt,
-        })),
+        mapWriteResult<ApplicationSessionTransitionResult>(result, (value) =>
+          projectSessionTransitionResult(value, request.sessionId, targetLifecycleStatus),
+        ),
     );
   }
 
   async #validateAccess(
     input: ApplicationAccessValidationInput<TAuthorizationContext>,
     control: OperationControl,
-  ): Promise<ApplicationFailureResponse | undefined> {
+  ): Promise<ApplicationPrePersistenceFailureResponse | undefined> {
     const workspace = await runControlled(control, () =>
       this.#access.validateWorkspace(createAccessValidationView(input, this.#snapshotAuthorization)),
     );
     if (workspace.status === "interrupted") return operationInterruptionFailure(workspace.interruption);
-    if (workspace.status === "rejected") return applicationFailure({ status: "not_attempted", effect: "none" });
-    if (!workspace.value.allowed) return accessFailure(workspace.value.error);
+    if (workspace.status === "rejected") return prePersistenceApplicationFailure();
+    const workspaceDecision = safelyProjectAccessDecision(workspace.value);
+    if (workspaceDecision === undefined) return prePersistenceApplicationFailure();
+    if (!workspaceDecision.allowed) return accessFailure(workspaceDecision.error);
 
     const authorization = await runControlled(control, () =>
       this.#access.authorize(createAccessValidationView(input, this.#snapshotAuthorization)),
     );
     if (authorization.status === "interrupted") return operationInterruptionFailure(authorization.interruption);
     if (authorization.status === "rejected") {
-      return applicationFailure({ status: "not_attempted", effect: "none" });
+      return prePersistenceApplicationFailure();
     }
-    if (!authorization.value.allowed) return accessFailure(authorization.value.error);
+    const authorizationDecision = safelyProjectAccessDecision(authorization.value);
+    if (authorizationDecision === undefined) {
+      return prePersistenceApplicationFailure();
+    }
+    if (!authorizationDecision.allowed) return accessFailure(authorizationDecision.error);
     return undefined;
   }
 }
@@ -444,13 +425,15 @@ function decodeCreateRequest<TAuthorizationContext>(
   }
   const context = decodeOperationContext(request.context, snapshotAuthorization);
   if (context === undefined) return decodeRequestFailure();
+  const allowedAdditionalDirectories = normalizeAllowedAdditionalDirectories(request.allowedAdditionalDirectories);
+  if (allowedAdditionalDirectories === undefined) return decodeRequestFailure();
   return {
     ok: true,
     value: {
       context,
       idempotencyKey: request.idempotencyKey,
       providerId: request.providerId,
-      allowedAdditionalDirectories: [...request.allowedAdditionalDirectories],
+      allowedAdditionalDirectories,
       defaultCharacterId: request.defaultCharacterId,
       maxConcurrentChildRuns: request.maxConcurrentChildRuns,
     },
@@ -693,7 +676,11 @@ async function executeRepositoryOperation<TRepositoryValue, TApplicationValue, T
       : operationInterruptionFailure(settlement.interruption);
   }
   if (settlement.status === "rejected") return mapThrownFailure(settlement.error, requestClass);
-  return mapValue(settlement.value);
+  try {
+    return mapValue(settlement.value);
+  } catch {
+    return persistenceApplicationFailure(requestClass);
+  }
 }
 
 function createRepositoryOptions(
@@ -737,7 +724,7 @@ function decodeOperationOptions(options: unknown): RequestDecodeResult<Applicati
   };
 }
 
-function requestFailure(): ApplicationFailureResponse {
+function requestFailure(): ApplicationPrePersistenceFailureResponse {
   return {
     overallStatus: "failure",
     error: {
@@ -756,7 +743,7 @@ function accessFailure(
     message: string;
     retryable: boolean;
   }>,
-): ApplicationFailureResponse {
+): ApplicationPrePersistenceFailureResponse {
   return {
     overallStatus: "failure",
     error: {
@@ -769,7 +756,44 @@ function accessFailure(
   };
 }
 
-function operationInterruptionFailure(interruption: OperationInterruption): ApplicationFailureResponse {
+function projectAccessDecision(value: unknown): ApplicationAccessDecision | undefined {
+  if (!isPlainObject(value)) return undefined;
+  if (value.allowed === true) return { allowed: true };
+  if (value.allowed !== false || !isPlainObject(value.error)) return undefined;
+  const error = value.error;
+  if (
+    !isAccessErrorCode(error.code) ||
+    !isBoundedStringWithLimit(error.message, 4_096) ||
+    typeof error.retryable !== "boolean"
+  ) {
+    return undefined;
+  }
+  return {
+    allowed: false,
+    error: { code: error.code, message: error.message, retryable: error.retryable },
+  };
+}
+
+function safelyProjectAccessDecision(value: unknown): ApplicationAccessDecision | undefined {
+  try {
+    return projectAccessDecision(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function isAccessErrorCode(
+  value: unknown,
+): value is "workspace_invalid" | "workspace_unavailable" | "authorization_invalid" | "forbidden" {
+  return (
+    value === "workspace_invalid" ||
+    value === "workspace_unavailable" ||
+    value === "authorization_invalid" ||
+    value === "forbidden"
+  );
+}
+
+function operationInterruptionFailure(interruption: OperationInterruption): ApplicationPrePersistenceFailureResponse {
   return {
     overallStatus: "failure",
     error:
@@ -790,10 +814,10 @@ function operationInterruptionFailure(interruption: OperationInterruption): Appl
   };
 }
 
-function persistenceInterruptionFailure(
+function persistenceInterruptionFailure<TMode extends "read" | "write">(
   interruption: OperationInterruption,
-  requestClass: "read" | "write",
-): ApplicationFailureResponse {
+  requestClass: TMode,
+): ApplicationFailureResponse<TMode> {
   const effect = requestClass === "write" ? "unknown" : "none";
   const error = {
     kind: "persistence" as const,
@@ -805,19 +829,17 @@ function persistenceInterruptionFailure(
     return {
       overallStatus: "failure",
       error: { ...error, effect: "unknown" },
-      persistence: { status: "failed", effect: "unknown" },
-    };
+      persistence: { status: "failed", effect: "unknown", reconciliation: "exact_request_required" },
+    } as ApplicationFailureResponse<TMode>;
   }
   return {
     overallStatus: "failure",
     error: { ...error, effect: "none" },
     persistence: { status: "failed", effect: "none" },
-  };
+  } as ApplicationFailureResponse<TMode>;
 }
 
-function applicationFailure(
-  persistence: Extract<ApplicationPersistenceStatus, Readonly<{ status: "not_attempted" | "failed" }>>,
-): ApplicationFailureResponse {
+function prePersistenceApplicationFailure(): ApplicationPrePersistenceFailureResponse {
   return {
     overallStatus: "failure",
     error: {
@@ -826,15 +848,39 @@ function applicationFailure(
       message: "Application Service could not complete the operation.",
       retryable: false,
     },
-    persistence,
+    persistence: { status: "not_attempted", effect: "none" },
   };
 }
 
-function mapWriteResult<TRepositoryValue, TApplicationValue extends TRepositoryValue>(
-  result: RepositoryCommandResult<TRepositoryValue>,
-  mapValue: (value: TRepositoryValue) => TApplicationValue,
+function persistenceApplicationFailure<TMode extends "read" | "write">(
+  requestClass: TMode,
+): ApplicationFailureResponse<TMode> {
+  const response = {
+    overallStatus: "failure" as const,
+    error: {
+      kind: "application" as const,
+      code: "internal_error" as const,
+      message: "Application Service could not complete the operation.",
+      retryable: false,
+    },
+    persistence:
+      requestClass === "write"
+        ? ({ status: "failed", effect: "unknown", reconciliation: "exact_request_required" } as const)
+        : ({ status: "failed", effect: "none" } as const),
+  };
+  return response as ApplicationFailureResponse<TMode>;
+}
+
+function mapWriteResult<TApplicationValue>(
+  result: unknown,
+  mapValue: (value: unknown) => TApplicationValue,
 ): ApplicationOperationResponse<TApplicationValue, "write"> {
-  if (!result.ok) return domainFailure(result.error);
+  if (!isPlainObject(result) || typeof result.replayed !== "boolean") return invalidRepositoryValue();
+  if (result.ok === false) {
+    if (result.replayed) return invalidRepositoryValue();
+    return domainFailure(projectRepositoryDomainError(result.error));
+  }
+  if (result.ok !== true) return invalidRepositoryValue();
   return {
     overallStatus: "success",
     value: mapValue(result.value),
@@ -842,32 +888,20 @@ function mapWriteResult<TRepositoryValue, TApplicationValue extends TRepositoryV
   };
 }
 
-function domainFailure(error: RepositoryCommandError | ApplicationDomainError): ApplicationFailureResponse {
-  const projectedError: ApplicationDomainError =
-    error.code === "capacity_exceeded"
-      ? {
-          kind: "domain",
-          code: error.code,
-          message: error.message,
-          retryable: error.retryable,
-          details: projectCapacityExceededDetails(error.details),
-        }
-      : {
-          kind: "domain",
-          code: error.code,
-          message: error.message,
-          retryable: error.retryable,
-        };
+function domainFailure(error: ApplicationDomainError): ApplicationDomainFailureResponse {
   return {
     overallStatus: "failure",
-    error: projectedError,
+    error,
     persistence: { status: "rejected", effect: "none" },
   };
 }
 
-function mapThrownFailure(error: unknown, requestClass: "read" | "write"): ApplicationFailureResponse {
+function mapThrownFailure<TMode extends "read" | "write">(
+  error: unknown,
+  requestClass: TMode,
+): ApplicationFailureResponse<TMode> {
   if (!(error instanceof PersistenceClientError)) {
-    return applicationFailure({ status: "failed", effect: requestClass === "write" ? "unknown" : "none" });
+    return persistenceApplicationFailure(requestClass);
   }
   const persistenceError = error.persistenceError;
   if (requestClass === "read" && isReadDomainError(persistenceError)) {
@@ -884,18 +918,18 @@ function mapThrownFailure(error: unknown, requestClass: "read" | "write"): Appli
     message: persistenceError.message,
     retryable: persistenceError.retryable,
   };
-  if (persistenceError.effect === "unknown") {
+  if (requestClass === "write" && persistenceError.effect === "unknown") {
     return {
       overallStatus: "failure",
       error: { ...mappedError, effect: "unknown" },
-      persistence: { status: "failed", effect: "unknown" },
-    };
+      persistence: { status: "failed", effect: "unknown", reconciliation: "exact_request_required" },
+    } as ApplicationFailureResponse<TMode>;
   }
   return {
     overallStatus: "failure",
     error: { ...mappedError, effect: "none" },
     persistence: { status: "failed", effect: "none" },
-  };
+  } as ApplicationFailureResponse<TMode>;
 }
 
 function mapPersistenceErrorCode(
@@ -995,37 +1029,79 @@ function isSessionLifecycleStatus(value: unknown): value is SessionLifecycleStat
   return value === "active" || value === "archived" || value === "closed";
 }
 
-function projectCapacityExceededDetails(
-  details: NonNullable<ApplicationDomainError["details"]>,
-): NonNullable<ApplicationDomainError["details"]> {
-  switch (details.scope) {
+function projectRepositoryDomainError(value: unknown): ApplicationDomainError {
+  if (
+    !isPlainObject(value) ||
+    !isRepositoryDomainErrorCode(value.code) ||
+    !isBoundedStringWithLimit(value.message, 4_096) ||
+    typeof value.retryable !== "boolean"
+  ) {
+    return invalidRepositoryValue();
+  }
+  if (value.code === "capacity_exceeded") {
+    if (!value.retryable) return invalidRepositoryValue();
+    return {
+      kind: "domain",
+      code: value.code,
+      message: value.message,
+      retryable: true,
+      details: projectCapacityExceededDetails(value.details),
+    };
+  }
+  return {
+    kind: "domain",
+    code: value.code,
+    message: value.message,
+    retryable: value.retryable,
+  };
+}
+
+function isRepositoryDomainErrorCode(value: unknown): value is Exclude<ApplicationDomainErrorCode, "cursor_invalid"> {
+  return (
+    value === "request_invalid" ||
+    value === "not_found" ||
+    value === "reference_invalid" ||
+    value === "lifecycle_conflict" ||
+    value === "session_busy" ||
+    value === "capacity_exceeded" ||
+    value === "idempotency_conflict" ||
+    value === "idempotency_in_progress" ||
+    value === "idempotency_expired"
+  );
+}
+
+function projectCapacityExceededDetails(value: unknown): NonNullable<ApplicationDomainError["details"]> {
+  if (!isPlainObject(value) || !isNonNegativeSafeInteger(value.current) || !isNonNegativeSafeInteger(value.limit)) {
+    return invalidRepositoryValue();
+  }
+  switch (value.scope) {
     case "root":
+      if (!isBoundedString(value.rootSessionId)) return invalidRepositoryValue();
       return {
-        scope: details.scope,
-        rootSessionId: details.rootSessionId,
-        current: details.current,
-        limit: details.limit,
+        scope: value.scope,
+        rootSessionId: value.rootSessionId,
+        current: value.current,
+        limit: value.limit,
       };
     case "application":
-      return { scope: details.scope, current: details.current, limit: details.limit };
+      return { scope: value.scope, current: value.current, limit: value.limit };
     case "provider":
+      if (!isBoundedString(value.providerId)) return invalidRepositoryValue();
       return {
-        scope: details.scope,
-        providerId: details.providerId,
-        current: details.current,
-        limit: details.limit,
+        scope: value.scope,
+        providerId: value.providerId,
+        current: value.current,
+        limit: value.limit,
       };
+    default:
+      return invalidRepositoryValue();
   }
 }
 
 function isAllowedAdditionalDirectories(value: unknown): value is readonly string[] {
   if (!Array.isArray(value) || value.length > 1_024) return false;
   for (let index = 0; index < value.length; index += 1) {
-    if (
-      !Object.hasOwn(value, index) ||
-      !isBoundedStringWithLimit(value[index], 32_768) ||
-      (!path.win32.isAbsolute(value[index]) && !path.posix.isAbsolute(value[index]))
-    ) {
+    if (!Object.hasOwn(value, index) || !isBoundedStringWithLimit(value[index], 32_768)) {
       return false;
     }
   }
@@ -1036,57 +1112,237 @@ function isBoundedStringWithLimit(value: unknown, maxLength: number): value is s
   return typeof value === "string" && value.length > 0 && value.length <= maxLength;
 }
 
-function projectSessionListItem(item: SessionListItem): SessionListItem {
+function projectSessionPage(
+  value: unknown,
+  expectedWorkspaceKey: string,
+  expectedLifecycleStatus: SessionLifecycleStatus | undefined,
+): ApplicationOperationResponse<ApplicationSessionPage, "read"> {
+  if (!isPlainObject(value) || !Array.isArray(value.items)) return invalidRepositoryValue();
+  if (value.nextCursor !== undefined && !isBoundedStringWithLimit(value.nextCursor, 2_048)) {
+    return invalidRepositoryValue();
+  }
+  const items: SessionListItem[] = [];
+  const omissions: ReturnType<typeof projectPageOmission>[] = [];
+  for (let index = 0; index < value.items.length; index += 1) {
+    if (!Object.hasOwn(value.items, index)) return invalidRepositoryValue();
+    const item = value.items[index];
+    if (isPageOmission(item)) omissions.push(projectPageOmission(item));
+    else {
+      const projected = projectSessionListItem(item);
+      if (
+        projected.workspaceKey !== expectedWorkspaceKey ||
+        (expectedLifecycleStatus !== undefined && projected.lifecycleStatus !== expectedLifecycleStatus)
+      ) {
+        return invalidRepositoryValue();
+      }
+      items.push(projected);
+    }
+  }
+  const page: ApplicationSessionPage =
+    value.nextCursor === undefined ? { items } : { items, nextCursor: value.nextCursor };
+  const [firstOmission, ...remainingOmissions] = omissions;
+  return firstOmission === undefined
+    ? { overallStatus: "success", value: page, persistence: { status: "read", effect: "none" } }
+    : {
+        overallStatus: "partial_success",
+        value: page,
+        issues: [firstOmission, ...remainingOmissions],
+        persistence: { status: "read", effect: "none" },
+      };
+}
+
+function projectSessionListItem(value: unknown): SessionListItem {
+  if (
+    !isPlainObject(value) ||
+    !isBoundedString(value.id) ||
+    !isBoundedString(value.workspaceKey) ||
+    !isBoundedString(value.defaultCharacterId) ||
+    !isSessionLifecycleStatus(value.lifecycleStatus) ||
+    !isNonNegativeSafeInteger(value.createdAt) ||
+    !isNonNegativeSafeInteger(value.updatedAt) ||
+    !isNonNegativeSafeInteger(value.lastActivityAt) ||
+    !isSessionExecutionState(value.executionState) ||
+    (value.activeRunId !== undefined && !isBoundedString(value.activeRunId)) ||
+    (value.latestRunId !== undefined && !isBoundedString(value.latestRunId)) ||
+    !isNonNegativeSafeInteger(value.stateChangedAt)
+  ) {
+    return invalidRepositoryValue();
+  }
   return {
-    id: item.id,
-    workspaceKey: item.workspaceKey,
-    defaultCharacterId: item.defaultCharacterId,
-    lifecycleStatus: item.lifecycleStatus,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
-    lastActivityAt: item.lastActivityAt,
-    executionState: item.executionState,
-    ...(item.activeRunId === undefined ? {} : { activeRunId: item.activeRunId }),
-    ...(item.latestRunId === undefined ? {} : { latestRunId: item.latestRunId }),
-    stateChangedAt: item.stateChangedAt,
+    id: value.id,
+    workspaceKey: value.workspaceKey,
+    defaultCharacterId: value.defaultCharacterId,
+    lifecycleStatus: value.lifecycleStatus,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    lastActivityAt: value.lastActivityAt,
+    executionState: value.executionState,
+    ...(value.activeRunId === undefined ? {} : { activeRunId: value.activeRunId }),
+    ...(value.latestRunId === undefined ? {} : { latestRunId: value.latestRunId }),
+    stateChangedAt: value.stateChangedAt,
   };
 }
 
-function projectSessionReadResult(value: ApplicationSessionReadResult): ApplicationSessionReadResult {
+function projectSessionReadResult(
+  value: unknown,
+  expectedSessionId: string,
+  expectedWorkspaceKey: string,
+): ApplicationSessionReadResult {
+  if (!isPlainObject(value) || !isPlainObject(value.execution)) return invalidRepositoryValue();
+  const execution = value.execution;
+  if (
+    !isSessionExecutionState(execution.state) ||
+    (execution.activeRunId !== undefined && !isBoundedString(execution.activeRunId)) ||
+    (execution.latestRunId !== undefined && !isBoundedString(execution.latestRunId))
+  ) {
+    return invalidRepositoryValue();
+  }
+  const session = projectSessionDetail(value.session);
+  if (session.id !== expectedSessionId || session.workspaceKey !== expectedWorkspaceKey) {
+    return invalidRepositoryValue();
+  }
   return {
-    session: projectSessionDetail(value.session),
+    session,
     execution: {
-      state: value.execution.state,
-      ...(value.execution.activeRunId === undefined ? {} : { activeRunId: value.execution.activeRunId }),
-      ...(value.execution.latestRunId === undefined ? {} : { latestRunId: value.execution.latestRunId }),
+      state: execution.state,
+      ...(execution.activeRunId === undefined ? {} : { activeRunId: execution.activeRunId }),
+      ...(execution.latestRunId === undefined ? {} : { latestRunId: execution.latestRunId }),
     },
   };
 }
 
-function projectSessionDetail(session: SessionDetail): SessionDetail {
+function projectSessionDetail(value: unknown): ApplicationSessionDetail {
+  if (
+    !isPlainObject(value) ||
+    !isBoundedString(value.id) ||
+    !isBoundedString(value.providerId) ||
+    !isBoundedString(value.workspaceKey) ||
+    !isNonNegativeSafeInteger(value.allowedAdditionalDirectoriesByteLength) ||
+    (value.allowedAdditionalDirectoriesState !== "inline" && value.allowedAdditionalDirectoriesState !== "chunked") ||
+    !isBoundedString(value.defaultCharacterId) ||
+    !isNonNegativeSafeInteger(value.maxConcurrentChildRuns) ||
+    !isSessionLifecycleStatus(value.lifecycleStatus) ||
+    !isNonNegativeSafeInteger(value.createdAt) ||
+    !isNonNegativeSafeInteger(value.updatedAt) ||
+    !isNonNegativeSafeInteger(value.lastActivityAt)
+  ) {
+    return invalidRepositoryValue();
+  }
   return {
-    id: session.id,
-    providerId: session.providerId,
-    workspaceKey: session.workspaceKey,
-    allowedAdditionalDirectoriesByteLength: session.allowedAdditionalDirectoriesByteLength,
-    allowedAdditionalDirectoriesState: session.allowedAdditionalDirectoriesState,
-    ...(session.allowedAdditionalDirectories === undefined
-      ? {}
-      : { allowedAdditionalDirectories: [...session.allowedAdditionalDirectories] }),
-    defaultCharacterId: session.defaultCharacterId,
-    maxConcurrentChildRuns: session.maxConcurrentChildRuns,
-    lifecycleStatus: session.lifecycleStatus,
-    createdAt: session.createdAt,
-    updatedAt: session.updatedAt,
-    lastActivityAt: session.lastActivityAt,
+    id: value.id,
+    providerId: value.providerId,
+    workspaceKey: value.workspaceKey,
+    allowedAdditionalDirectoriesByteLength: value.allowedAdditionalDirectoriesByteLength,
+    allowedAdditionalDirectoriesState: value.allowedAdditionalDirectoriesState,
+    defaultCharacterId: value.defaultCharacterId,
+    maxConcurrentChildRuns: value.maxConcurrentChildRuns,
+    lifecycleStatus: value.lifecycleStatus,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    lastActivityAt: value.lastActivityAt,
   };
 }
 
-function isPageOmission(value: unknown): value is PageOmission {
-  return typeof value === "object" && value !== null && "omitted" in value && value.omitted === true;
+function projectSessionDirectoriesChunk(
+  value: unknown,
+  expectedSessionId: string,
+  expectedOffset: number,
+  expectedMaxBytes: number,
+): ApplicationSessionDirectoriesChunkResult {
+  if (
+    !isPlainObject(value) ||
+    value.sessionId !== expectedSessionId ||
+    value.offset !== expectedOffset ||
+    !isNonNegativeSafeInteger(value.totalBytes) ||
+    typeof value.eof !== "boolean" ||
+    !(value.bytes instanceof ArrayBuffer)
+  ) {
+    return invalidRepositoryValue();
+  }
+  const byteLength = value.bytes.byteLength;
+  const endOffset = expectedOffset + byteLength;
+  const expectedEof = endOffset >= value.totalBytes;
+  if (
+    byteLength > expectedMaxBytes ||
+    (byteLength === 0 && !value.eof) ||
+    !Number.isSafeInteger(endOffset) ||
+    endOffset > value.totalBytes ||
+    value.eof !== expectedEof
+  ) {
+    return invalidRepositoryValue();
+  }
+  return {
+    sessionId: value.sessionId,
+    offset: value.offset,
+    totalBytes: value.totalBytes,
+    eof: value.eof,
+    bytes: value.bytes,
+  };
 }
 
-function projectPageOmission(omission: PageOmission) {
+function projectSessionCreateResult(
+  value: unknown,
+  expectedSessionId: string,
+  expectedWorkspaceKey: string,
+): ApplicationSessionCreateResult {
+  if (
+    !isPlainObject(value) ||
+    value.sessionId !== expectedSessionId ||
+    value.workspaceKey !== expectedWorkspaceKey ||
+    value.lifecycleStatus !== "active" ||
+    !isNonNegativeSafeInteger(value.createdAt)
+  ) {
+    return invalidRepositoryValue();
+  }
+  return {
+    sessionId: value.sessionId,
+    workspaceKey: value.workspaceKey,
+    lifecycleStatus: value.lifecycleStatus,
+    createdAt: value.createdAt,
+  };
+}
+
+function projectSessionTransitionResult(
+  value: unknown,
+  expectedSessionId: string,
+  expectedLifecycleStatus: SessionLifecycleStatus,
+): ApplicationSessionTransitionResult {
+  if (
+    !isPlainObject(value) ||
+    value.sessionId !== expectedSessionId ||
+    value.lifecycleStatus !== expectedLifecycleStatus ||
+    !isNonNegativeSafeInteger(value.updatedAt)
+  ) {
+    return invalidRepositoryValue();
+  }
+  return { sessionId: expectedSessionId, lifecycleStatus: expectedLifecycleStatus, updatedAt: value.updatedAt };
+}
+
+function isSessionExecutionState(value: unknown): value is SessionListItem["executionState"] {
+  return (
+    value === "not_started" ||
+    value === "running" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "canceled" ||
+    value === "interrupted"
+  );
+}
+
+function isPageOmission(value: unknown): value is Readonly<{
+  omitted: true;
+  reason: "response_size_limit";
+  ordinal?: number;
+}> {
+  return (
+    isPlainObject(value) &&
+    value.omitted === true &&
+    value.reason === "response_size_limit" &&
+    (value.ordinal === undefined || isNonNegativeSafeInteger(value.ordinal))
+  );
+}
+
+function projectPageOmission(omission: ReturnTypeGuard<typeof isPageOmission>) {
   return omission.ordinal === undefined
     ? {
         kind: "omission" as const,
@@ -1099,4 +1355,10 @@ function projectPageOmission(omission: PageOmission) {
         message: "A Session list item was omitted because the response size limit was reached.",
         ordinal: omission.ordinal,
       };
+}
+
+type ReturnTypeGuard<TGuard> = TGuard extends (value: unknown) => value is infer TValue ? TValue : never;
+
+function invalidRepositoryValue(): never {
+  throw new TypeError("Repository result does not match the Application Service contract.");
 }

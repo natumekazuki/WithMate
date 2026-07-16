@@ -16,7 +16,7 @@ import {
   type ApplicationSessionOperations,
   type ApplicationSessionReadResult,
 } from "../src/main/index.js";
-import type { SessionDetail, SessionListItem } from "../src/shared/repository-read-model.js";
+import type { SessionListItem } from "../src/shared/repository-read-model.js";
 import type { RepositoryCommandErrorCode, SessionLifecycleStatus } from "../src/shared/repository-write-model.js";
 
 type Equal<TLeft, TRight> = (<T>() => T extends TLeft ? 1 : 2) extends <T>() => T extends TRight ? 1 : 2 ? true : false;
@@ -63,10 +63,10 @@ const invalidDomainError: ApplicationDomainError = {
 };
 void invalidDomainError;
 
-// @ts-expect-error a successful operation cannot have an unknown persistence effect
 const invalidSuccessPersistence: ApplicationOperationResponse<string> = {
   overallStatus: "success",
   value: "ok",
+  // @ts-expect-error a successful operation cannot have an unknown persistence effect
   persistence: { status: "failed", effect: "unknown" },
 };
 // @ts-expect-error request validation failures happen before persistence access
@@ -141,7 +141,44 @@ const validWritePartialPersistenceEffect: ApplicationOperationResponse<string, "
       effect: "unknown",
     },
   ],
+  persistence: { status: "failed", effect: "unknown", reconciliation: "exact_request_required" },
+};
+const invalidUnknownEffectWithoutReconciliation: ApplicationOperationResponse<string, "write"> = {
+  overallStatus: "failure",
+  error: {
+    kind: "persistence",
+    code: "persistence_canceled",
+    message: "canceled",
+    retryable: false,
+    effect: "unknown",
+  },
+  // @ts-expect-error unknown write effects must tell callers to retry the exact request
   persistence: { status: "failed", effect: "unknown" },
+};
+const invalidReadInternalFailureEffect: ApplicationOperationResponse<string, "read"> = {
+  overallStatus: "failure",
+  error: { kind: "application", code: "internal_error", message: "internal", retryable: false },
+  // @ts-expect-error read-side internal failures cannot claim an unknown write effect
+  persistence: { status: "failed", effect: "unknown", reconciliation: "exact_request_required" },
+};
+const invalidReadPersistenceFailureEffect: ApplicationOperationResponse<string, "read"> = {
+  overallStatus: "failure",
+  error: {
+    kind: "persistence",
+    code: "persistence_timeout",
+    message: "timeout",
+    retryable: true,
+    // @ts-expect-error read persistence errors cannot claim an unknown write effect
+    effect: "unknown",
+  },
+  // @ts-expect-error read persistence status cannot claim an unknown write effect
+  persistence: { status: "failed", effect: "unknown", reconciliation: "exact_request_required" },
+};
+// @ts-expect-error write-side internal failures after persistence starts must preserve an unknown effect
+const invalidWriteInternalFailureEffect: ApplicationOperationResponse<string, "write"> = {
+  overallStatus: "failure",
+  error: { kind: "application", code: "internal_error", message: "internal", retryable: false },
+  persistence: { status: "failed", effect: "none" },
 };
 const validDirectoriesChunk: Extract<DirectoriesChunkResponse, Readonly<{ overallStatus: "success" }>> = {
   overallStatus: "success",
@@ -163,6 +200,10 @@ void invalidListCommittedSuccess;
 void invalidPartialPersistenceEffect;
 void invalidWritePartialPersistenceEffect;
 void validWritePartialPersistenceEffect;
+void invalidUnknownEffectWithoutReconciliation;
+void invalidReadInternalFailureEffect;
+void invalidReadPersistenceFailureEffect;
+void invalidWriteInternalFailureEffect;
 void validDirectoriesChunk;
 
 test("public Application Service barrel exposes the transport-neutral Session contract", () => {
@@ -187,7 +228,7 @@ test("public Application Service barrel exposes the transport-neutral Session co
       | "persistence_operation_failed"
     >,
     Equal<ApplicationSessionListItem, SessionListItem>,
-    Equal<ApplicationSessionReadResult["session"], SessionDetail>,
+    Equal<"allowedAdditionalDirectories" extends keyof ApplicationSessionReadResult["session"] ? true : false, false>,
     Equal<ApplicationDomainErrorCode, RepositoryCommandErrorCode | "cursor_invalid">,
     Equal<ApplicationSessionLifecycleStatus, SessionLifecycleStatus>,
     Equal<CapacityError["details"], ApplicationCapacityExceededDetails>,

@@ -77,6 +77,19 @@ repositoryTest("session create rejects sparse and relative directory arrays and 
     const relativeResult = execute(relative) as CommandResult;
     assert.equal(!relativeResult.ok && relativeResult.error.code, "request_invalid");
 
+    const foreignHostPath = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000117", "session-foreign-host-path");
+    foreignHostPath.session.allowedAdditionalDirectories =
+      process.platform === "win32" ? ["/home/user"] : ["C:\\workspace\\shared"];
+    const foreignHostPathResult = execute(foreignHostPath) as CommandResult;
+    assert.equal(!foreignHostPathResult.ok && foreignHostPathResult.error.code, "request_invalid");
+
+    if (process.platform === "win32") {
+      const rootRelative = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000118", "session-root-relative");
+      rootRelative.session.allowedAdditionalDirectories = ["\\secret"];
+      const rootRelativeResult = execute(rootRelative) as CommandResult;
+      assert.equal(!rootRelativeResult.ok && rootRelativeResult.error.code, "request_invalid");
+    }
+
     const normalized = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000116", "session-normalized");
     normalized.session.allowedAdditionalDirectories = [
       "C:/workspace/shared/child",
