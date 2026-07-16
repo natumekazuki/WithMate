@@ -15,7 +15,7 @@ export function HomeCharactersPanel({
   onEditCharacter,
 }: HomeCharactersPanelProps) {
   return (
-    <div className="home-monitor-content">
+    <div className="home-monitor-body">
       <section className="home-monitor-section">
         <div className="home-monitor-section-head">
           <h3>Characters</h3>

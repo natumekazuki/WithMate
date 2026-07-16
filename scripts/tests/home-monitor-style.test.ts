@@ -21,3 +21,18 @@ test("Home Monitor の status badge は Home session と同じ状態 selector �
     );
   }
 });
+
+test("Home Characters は right pane 内の scroll container を使う", async () => {
+  const [componentSource, stylesSource] = await Promise.all([
+    readFile("src/home/HomeCharactersPanel.tsx", "utf8"),
+    readFile("src/styles.css", "utf8"),
+  ]);
+
+  assert.match(componentSource, /<div className="home-monitor-body">/);
+  const scrollContainerRule = stylesSource.match(/\.home-page \.home-monitor-body\s*{([^}]*)}/)?.[1];
+
+  assert.ok(scrollContainerRule);
+  assert.match(scrollContainerRule, /flex:\s*1 1 auto;/);
+  assert.match(scrollContainerRule, /min-height:\s*0;/);
+  assert.match(scrollContainerRule, /overflow-y:\s*auto;/);
+});
