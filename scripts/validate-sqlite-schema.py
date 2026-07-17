@@ -186,6 +186,30 @@ def validate_connection(
     )
     connection.commit()
 
+    connection.execute("UPDATE sessions SET max_concurrent_child_runs = 1024 WHERE id = 'session-a'")
+    connection.commit()
+    assert connection.execute(
+        "SELECT max_concurrent_child_runs FROM sessions WHERE id = 'session-a'"
+    ).fetchone()[0] == 1024
+
+    expect_integrity_error(
+        connection,
+        "UPDATE sessions SET max_concurrent_child_runs = 1025 WHERE id = 'session-a'",
+        (),
+    )
+
+    expect_integrity_error(
+        connection,
+        """
+        INSERT INTO sessions (
+          id, provider_id, workspace_key, allowed_additional_directories_json,
+          default_character_id, max_concurrent_child_runs, lifecycle_status,
+          created_at, updated_at, last_activity_at
+        ) VALUES ('session-over-limit', 'provider', 'workspace', '[]', 'character', 1025, 'active', 1, 1, 1)
+        """,
+        (),
+    )
+
     expect_integrity_error(
         connection,
         """

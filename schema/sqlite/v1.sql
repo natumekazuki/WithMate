@@ -6,7 +6,7 @@ CREATE TABLE sessions (
     CHECK (json_valid(allowed_additional_directories_json)
       AND json_type(allowed_additional_directories_json) = 'array'),
   default_character_id TEXT NOT NULL CHECK (length(default_character_id) > 0),
-  max_concurrent_child_runs INTEGER NOT NULL CHECK (max_concurrent_child_runs >= 0),
+  max_concurrent_child_runs INTEGER NOT NULL CHECK (max_concurrent_child_runs BETWEEN 0 AND 1024),
   lifecycle_status TEXT NOT NULL CHECK (lifecycle_status IN ('active', 'archived', 'closed')),
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,

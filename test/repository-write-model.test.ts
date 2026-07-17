@@ -77,6 +77,19 @@ repositoryTest("session create rejects sparse and relative directory arrays and 
     const relativeResult = execute(relative) as CommandResult;
     assert.equal(!relativeResult.ok && relativeResult.error.code, "request_invalid");
 
+    const foreignHostPath = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000117", "session-foreign-host-path");
+    foreignHostPath.session.allowedAdditionalDirectories =
+      process.platform === "win32" ? ["/home/user"] : ["C:\\workspace\\shared"];
+    const foreignHostPathResult = execute(foreignHostPath) as CommandResult;
+    assert.equal(!foreignHostPathResult.ok && foreignHostPathResult.error.code, "request_invalid");
+
+    if (process.platform === "win32") {
+      const rootRelative = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000118", "session-root-relative");
+      rootRelative.session.allowedAdditionalDirectories = ["\\secret"];
+      const rootRelativeResult = execute(rootRelative) as CommandResult;
+      assert.equal(!rootRelativeResult.ok && rootRelativeResult.error.code, "request_invalid");
+    }
+
     const normalized = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000116", "session-normalized");
     normalized.session.allowedAdditionalDirectories = [
       "C:/workspace/shared/child",
@@ -93,6 +106,40 @@ repositoryTest("session create rejects sparse and relative directory arrays and 
       "D:\\workspace\\shared",
     ]);
     assert.equal(count(database, "sessions"), 1);
+  });
+});
+
+repositoryTest("Session create and child start reject child Run limits above the durable maximum", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const session = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000119", "session-over-limit");
+    session.session.maxConcurrentChildRuns = 1_025;
+    const sessionResult = create(session) as CommandResult;
+    assert.equal(!sessionResult.ok && sessionResult.error.code, "request_invalid");
+
+    const startChild = operationFor(database, REPOSITORY_WRITE_OPERATIONS.childStart, () => 200);
+    const child = childStartCommand("018f1f4e-7f0a-7000-8000-000000000120", "over-limit");
+    child.childSession.maxConcurrentChildRuns = 1_025;
+    const childResult = startChild(child) as CommandResult;
+    assert.equal(!childResult.ok && childResult.error.code, "request_invalid");
+    assert.equal(count(database, "sessions"), 0);
+  });
+});
+
+repositoryTest("Session create and child start accept the exact durable child Run maximum", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const session = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000121", "session-exact-limit");
+    session.session.maxConcurrentChildRuns = 1_024;
+    assert.equal((create(session) as CommandResult).ok, true);
+  });
+
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const startChild = operationFor(database, REPOSITORY_WRITE_OPERATIONS.childStart, () => 600);
+    const child = childStartCommand("018f1f4e-7f0a-7000-8000-000000000122", "exact-limit");
+    child.childSession.maxConcurrentChildRuns = 1_024;
+    assert.equal((startChild(child) as CommandResult).ok, true);
   });
 });
 
