@@ -88,7 +88,7 @@ WithMate Session と Provider 側の会話を対応付ける外部状態。
 
 ProviderBinding が失効しても WithMate Session と Message は失われない。外部会話を再作成した場合は binding の履歴を診断可能にし、同じ外部 ID であったかのように上書きしない。
 
-外部会話の新規作成はそれ自体が外部副作用である。active BindingがないRun admissionでは`creating` Binding intentをRunAttemptと同じtransactionでdurable commitし、その後だけ`thread/start`等を送る。response lossで作成済みか証明できない場合は自動再送せず、Providerから同じ会話を一意に照合できなければBindingとRunをinvalidated / interruptedへ収束させる。相関不能なProvider側orphan会話は診断対象として許容し、推測相関や自動削除を行わない。
+外部会話の新規作成はそれ自体が外部副作用である。active BindingがないRun admissionでは`creating` Binding intentをRunAttemptと同じtransactionでdurable commitし、その後だけ`thread/start`等を送る。response lossで作成済みか証明できない場合は自動再送せず、Providerから同じ会話を一意に照合できなければBindingとRunをinvalidated / interruptedへ収束させる。Provider送信前にRunを終端する場合は、Application Serviceが未送信または受理不明のどちらかを明示し、Run terminal transactionでBindingとpending Dispatchも同時に収束させる。相関不能なProvider側orphan会話は診断対象として許容し、推測相関や自動削除を行わない。
 
 CLI version、protocol version、negotiated capability は Binding の責務に含めない。これらは外部会話より Provider process / 接続環境に属するため、必要な診断は Provider runtime または専用の接続診断から追跡する。
 
@@ -366,13 +366,13 @@ Run が `failed`、`canceled`、`interrupted` へ遷移した場合も、Session
 ### 実行中の追加指示
 
 - user が確定して送った追加指示は supplemental user Message として timeline に残す。
-- 同じ active Run に関連付け、Message とは別の `RunInputDelivery` で Provider の steer / prompt request への配送を追跡する。user-visible な outcome は `pending` / `accepted` / `rejected` / `ambiguous` を区別し、送信 intent の内部状態として `dispatching` を持つ。配送対象の RunAttempt と bounded な解決理由だけを保持し、本文、idempotency key、Provider correlation ID、response payload は重複保存しない。
+- 同じ active Run に関連付け、Message とは別の `RunInputDelivery` で Provider の steer / prompt request への配送を追跡する。user-visible な outcome は `pending` / `accepted` / `rejected` / `ambiguous` / `aborted` を区別し、送信 intent の内部状態として `dispatching` を持つ。`aborted`はRun終端までProviderへ送信されなかったDeliveryを表す。配送対象の RunAttempt と bounded な解決理由だけを保持し、本文、idempotency key、Provider correlation ID、response payload は重複保存しない。
 - Application Service は admission 直前に Provider capability を再検証する。Persistence Worker は Session が `active`、対象 Run と RunAttempt が active かつ同じ Binding に属することを transaction 内で再検証し、Message、RunInput、`pending` delivery attempt を 1 つの transaction で durable commit してから Provider へ送る。いずれかの事前検証で拒否した入力は Message を作らない。
 - `pending -> dispatching` を durable commit してから Provider へ送る。復旧時に安全に自動送信できるのは `pending` だけとし、`dispatching` のまま受理を証明できない attempt は `ambiguous` へ収束させる。
 - supplemental user Message は送信後に書き換えない。`rejected` 後の修正と明示的な再送は新しい Message / Delivery として記録し、同じ idempotency key の API / CLI 再送だけが既存 Delivery の outcome を返す。
 - timeout や transport 切断で Provider が受理したか証明できない場合は `ambiguous` とし、自動再送しない。user または Agent が明示的に再送する場合も、元 Message と delivery attempt を参照して重複の可能性を表示する。
 - Provider が steering を提供しない場合、暗黙に新しい Run へ変換しない。queueing、拒否、新 Run 作成のどれを採るかを capability に基づき明示する。
-- `pending` / `rejected` / `ambiguous` の supplemental Message を、active Run の終了後に後続 Run の initiating Message として暗黙に転用しない。新しい Run に渡す場合は明示操作で新しい initiating Message と Run admission を作る。
+- `pending` / `rejected` / `ambiguous` / `aborted` の supplemental Message を、active Run の終了後に後続 Run の initiating Message として暗黙に転用しない。新しい Run に渡す場合は明示操作で新しい initiating Message と Run admission を作る。
 
 ### Approval / user input
 
@@ -503,8 +503,8 @@ Auxiliary も Session / Run / Message の共通 contract を使うが、Multi-Ag
 - approval 回答と cancel の競合
 - non-terminal Run の起動時補正
 - unknown / duplicate / out-of-order Provider event
-- supplemental input の accepted / rejected / ambiguous と冪等再送
-- ambiguous supplemental input を後続 Run へ暗黙に転用しないこと
+- supplemental input の accepted / rejected / ambiguous / aborted と冪等再送
+- ambiguous / aborted supplemental input を後続 Run へ暗黙に転用しないこと
 
 Provider 固有の runtime 検証結果が本書の不変条件と矛盾した場合は、Adapter の回避処理を先に検討する。共通 contract を変更する必要がある場合は、Codex と Copilot の両方への影響を確認してから更新する。
 

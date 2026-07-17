@@ -422,6 +422,179 @@ repositoryTest("normal Run admission reuses only the selected active Binding", (
   });
 });
 
+repositoryTest("normal Run admission rejects a reused Binding created by another Session", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000125", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000126", "session-2")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (
+        admit({
+          ...normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000127", "run-2", "create"),
+          sessionId: "session-2",
+        }) as CommandResult
+      ).ok,
+      true,
+    );
+    database.exec(`
+      UPDATE provider_bindings
+      SET session_id = 'session-1', binding_state = 'active', external_conversation_id = 'foreign-conversation'
+      WHERE id = 'binding-run-2';
+      UPDATE run_attempts
+      SET provider_binding_id = 'binding-run-2', attempt_state = 'failed',
+          failure_origin = 'provider', terminal_at = 225
+      WHERE id = 'attempt-run-2';
+      UPDATE runs
+      SET phase = 'failed', failure_origin = 'provider', terminal_at = 225, updated_at = 225, version = version + 1
+      WHERE id = 'run-2';
+    `);
+
+    const result = admit({
+      ...normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000128", "run-1", "reuse"),
+      bindingIntent: { kind: "reuse", bindingId: "binding-run-2" },
+    }) as CommandResult;
+    assert.equal(!result.ok && result.error.code, "reference_invalid");
+    assert.equal(
+      (
+        database.prepare("SELECT COUNT(*) AS count FROM runs WHERE session_id = 'session-1'").get() as {
+          count: number;
+        }
+      ).count,
+      0,
+    );
+  });
+});
+
+repositoryTest("normal Run admission replay rejects a Binding whose creator moved to another Session", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000129", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-00000000012a", "session-2")) as CommandResult).ok,
+      true,
+    );
+    const command = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-00000000012b", "run-1", "create");
+    assert.equal((admit(command) as CommandResult).ok, true);
+    assert.equal(
+      (
+        admit({
+          ...normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-00000000012c", "run-2", "create"),
+          sessionId: "session-2",
+        }) as CommandResult
+      ).ok,
+      true,
+    );
+    database
+      .prepare("UPDATE provider_bindings SET created_by_run_attempt_id = 'attempt-run-2' WHERE id = 'binding-run-1'")
+      .run();
+
+    const replay = admit(command) as CommandResult;
+    assert.equal(!replay.ok && replay.error.code, "reference_invalid");
+  });
+});
+
+repositoryTest("retry Run admission replay rejects a Binding whose creator moved to another Session", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const retry = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runRetry, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-00000000012d", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-00000000012e", "session-2")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-00000000012f", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    makeRunRetryable(database, "run-1", "attempt-run-1", "binding-run-1", 250);
+    const command = retryRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000130", "run-retry", "run-1", "reuse");
+    assert.equal((retry(command) as CommandResult).ok, true);
+    assert.equal(
+      (
+        admit({
+          ...normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000131", "run-foreign", "create"),
+          sessionId: "session-2",
+        }) as CommandResult
+      ).ok,
+      true,
+    );
+    database
+      .prepare(
+        "UPDATE provider_bindings SET created_by_run_attempt_id = 'attempt-run-foreign' WHERE id = 'binding-run-1'",
+      )
+      .run();
+
+    const replay = retry(command) as CommandResult;
+    assert.equal(!replay.ok && replay.error.code, "reference_invalid");
+  });
+});
+
+repositoryTest("normal Run admission replay rejects a changed Binding persistence mode", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000751", "session-1")) as CommandResult).ok,
+      true,
+    );
+    const command = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000752", "run-1", "create");
+    assert.equal((admit(command) as CommandResult).ok, true);
+    database.prepare("UPDATE provider_bindings SET persistence_mode = 'ephemeral' WHERE id = 'binding-run-1'").run();
+
+    const replay = admit(command) as CommandResult;
+    assert.equal(!replay.ok && replay.error.code, "reference_invalid");
+  });
+});
+
+repositoryTest("retry Run admission replay rejects a changed Binding persistence mode", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const retry = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runRetry, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000753", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000754", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    makeRunRetryable(database, "run-1", "attempt-run-1", "binding-run-1", 250);
+    database
+      .prepare(
+        `
+        UPDATE provider_bindings SET binding_state = 'invalidated', external_conversation_id = NULL,
+          invalidated_at = 260, invalidation_reason = 'test replacement'
+        WHERE id = 'binding-run-1'
+      `,
+      )
+      .run();
+    const command = retryRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000755", "run-retry", "run-1", "create");
+    assert.equal((retry(command) as CommandResult).ok, true);
+    database
+      .prepare("UPDATE provider_bindings SET persistence_mode = 'ephemeral' WHERE id = 'binding-run-retry'")
+      .run();
+
+    const replay = retry(command) as CommandResult;
+    assert.equal(!replay.ok && replay.error.code, "reference_invalid");
+  });
+});
+
 repositoryTest("normal Run admission enforces app capacity and the execution snapshot Provider", () => {
   withDatabase((database) => {
     const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
@@ -982,6 +1155,11 @@ repositoryTest("initial child admission atomically creates its tree, Run, Delive
         response_ref_id: "delivery-one",
       },
     );
+    database
+      .prepare("UPDATE provider_bindings SET provider_id = 'other-provider' WHERE id = 'child-binding-one'")
+      .run();
+    const foreignReplay = startChild(command) as CommandResult;
+    assert.equal(!foreignReplay.ok && foreignReplay.error.code, "reference_invalid");
   });
 });
 
@@ -1150,7 +1328,7 @@ repositoryTest("Provider Binding activation atomically links its creating Attemp
   });
 });
 
-repositoryTest("ambiguous Binding creation atomically interrupts the Run and aborts its pending Dispatch", () => {
+repositoryTest("binding.resolve rejects ambiguous creation so run.terminal owns the terminal transition", () => {
   withDatabase((database) => {
     const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
     const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
@@ -1163,9 +1341,29 @@ repositoryTest("ambiguous Binding creation atomically interrupts the Run and abo
       (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000150", "run-1", "create")) as CommandResult).ok,
       true,
     );
-    const command = bindingResolutionCommand("ambiguous");
-    const first = resolve(command) as CommandResult;
-    const replay = resolve(command) as CommandResult;
+    const ambiguous = resolve(ambiguousBindingResolutionPayload()) as CommandResult;
+    assert.equal(!ambiguous.ok && ambiguous.error.code, "request_invalid");
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            `
+            SELECT b.binding_state, a.attempt_state, r.phase, d.dispatch_state
+            FROM provider_bindings b
+            JOIN run_attempts a ON a.id = b.created_by_run_attempt_id
+            JOIN runs r ON r.id = a.run_id
+            JOIN run_dispatches d ON d.run_attempt_id = a.id
+          `,
+          )
+          .get(),
+      },
+      { binding_state: "creating", attempt_state: "preparing", phase: "queued", dispatch_state: "pending" },
+    );
+
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 300);
+    const command = preparingRunTerminalCommand("binding_creation_ambiguous", "interrupted");
+    const first = terminal(command) as CommandResult;
+    const replay = terminal(command) as CommandResult;
     assert.equal(first.ok && !first.replayed, true);
     assert.equal(replay.ok && replay.replayed, true);
     const state = database
@@ -1193,6 +1391,7 @@ repositoryTest("ambiguous Binding creation atomically interrupts the Run and abo
         last_activity_at: 300,
       },
     );
+    assert.equal(count(database, "run_events"), 1);
   });
 });
 
@@ -1351,6 +1550,33 @@ repositoryTest("an ambiguous Dispatch can converge to an accepted external execu
     assert.equal((resolveBinding(bindingResolutionCommand("active")) as CommandResult).ok, true);
     assert.equal((begin(dispatchBeginCommand()) as CommandResult).ok, true);
     assert.equal((resolveDispatch(dispatchResolutionCommand("ambiguous")) as CommandResult).ok, true);
+
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 550);
+    const premature = terminal(preparingRunTerminalCommand("not_applicable", "interrupted")) as CommandResult;
+    assert.equal(!premature.ok && premature.error.code, "lifecycle_conflict");
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            `
+            SELECT b.binding_state, a.attempt_state, r.phase, r.external_side_effect_state, d.dispatch_state
+            FROM provider_bindings b
+            JOIN run_attempts a ON a.provider_binding_id = b.id
+            JOIN runs r ON r.id = a.run_id
+            JOIN run_dispatches d ON d.run_attempt_id = a.id
+          `,
+          )
+          .get(),
+      },
+      {
+        binding_state: "active",
+        attempt_state: "preparing",
+        phase: "starting",
+        external_side_effect_state: "present",
+        dispatch_state: "ambiguous",
+      },
+    );
+    assert.equal(count(database, "run_events"), 0);
 
     database.prepare("UPDATE runs SET phase = 'canceling', cancel_requested_at = 550 WHERE id = 'run-1'").run();
     now = 600;
@@ -1597,6 +1823,161 @@ repositoryTest("ephemeral Binding ownership permits dispatch only in the activat
   });
 });
 
+repositoryTest("ephemeral Dispatch resolution remains available after Worker restart", () => {
+  withDatabase((database) => {
+    let now = 100;
+    const operations = createRepositoryWriteOperations(database, { clock: () => now });
+    const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
+      const operation = operations.get(name);
+      assert.ok(operation);
+      return operation.execute(payload).result as CommandResult;
+    };
+    assert.equal(
+      execute(
+        REPOSITORY_WRITE_OPERATIONS.sessionCreate,
+        sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000182", "session-1"),
+      ).ok,
+      true,
+    );
+    now = 200;
+    const admission = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000183", "run-1", "create");
+    assert.equal(
+      execute(REPOSITORY_WRITE_OPERATIONS.runAdmit, {
+        ...admission,
+        bindingIntent: { ...admission.bindingIntent, persistenceMode: "ephemeral" },
+      }).ok,
+      true,
+    );
+    const ownerToken = "018f1f4e-7f0a-7000-8000-000000000184";
+    now = 300;
+    assert.equal(
+      execute(REPOSITORY_WRITE_OPERATIONS.bindingResolve, {
+        ...bindingResolutionCommand("active"),
+        resolution: { kind: "active", externalConversationId: "external-1", ephemeralOwnerToken: ownerToken },
+      }).ok,
+      true,
+    );
+    now = 400;
+    assert.equal(execute(REPOSITORY_WRITE_OPERATIONS.dispatchBegin, dispatchBeginCommand(ownerToken)).ok, true);
+    now = 500;
+    assert.equal(
+      execute(REPOSITORY_WRITE_OPERATIONS.dispatchResolve, dispatchResolutionCommand("ambiguous", ownerToken)).ok,
+      true,
+    );
+
+    now = 600;
+    const restarted = createRepositoryWriteOperations(database, { clock: () => now });
+    const repair = restarted.get(REPOSITORY_WRITE_OPERATIONS.startupRepair);
+    const resolve = restarted.get(REPOSITORY_WRITE_OPERATIONS.dispatchResolve);
+    const terminal = restarted.get(REPOSITORY_WRITE_OPERATIONS.runTerminal);
+    assert.ok(repair && resolve && terminal);
+    const inspection = repair.execute({}).result as CommandResult;
+    assert.equal(
+      inspection.ok && (inspection.value.inspection as Readonly<Record<string, unknown>>).providerDispatchCandidates,
+      1,
+    );
+    assert.equal(
+      inspection.ok && (inspection.value.inspection as Readonly<Record<string, unknown>>).ephemeralResumeBlockedRuns,
+      1,
+    );
+    const staleOwner = resolve.execute(dispatchResolutionCommand("accepted", ownerToken)).result as CommandResult;
+    assert.equal(!staleOwner.ok && staleOwner.error.code, "reference_invalid");
+    const accepted = resolve.execute(dispatchResolutionCommand("accepted", null)).result as CommandResult;
+    assert.equal(accepted.ok && accepted.value.dispatchState, "accepted");
+    const staleReplay = resolve.execute(dispatchResolutionCommand("accepted", ownerToken)).result as CommandResult;
+    assert.equal(!staleReplay.ok && staleReplay.error.code, "reference_invalid");
+    const recoveredReplay = resolve.execute(dispatchResolutionCommand("accepted", null)).result as CommandResult;
+    assert.equal(recoveredReplay.ok && recoveredReplay.replayed, true);
+    now = 700;
+    const completed = terminal.execute(runTerminalCommand()).result as CommandResult;
+    assert.equal(completed.ok && completed.value.phase, "completed");
+  });
+});
+
+repositoryTest("ephemeral Binding ownership cannot move to another Attempt in the same Session", () => {
+  withDatabase((database) => {
+    let now = 100;
+    const operations = createRepositoryWriteOperations(database, { clock: () => now });
+    const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
+      const operation = operations.get(name);
+      assert.ok(operation);
+      return operation.execute(payload).result as CommandResult;
+    };
+    assert.equal(
+      execute(
+        REPOSITORY_WRITE_OPERATIONS.sessionCreate,
+        sessionCreateCommand("018f1f4e-7f0a-7000-8000-00000000015a", "session-1"),
+      ).ok,
+      true,
+    );
+    now = 200;
+    const admission = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-00000000015b", "run-1", "create");
+    assert.equal(
+      execute(REPOSITORY_WRITE_OPERATIONS.runAdmit, {
+        ...admission,
+        bindingIntent: { ...admission.bindingIntent, persistenceMode: "ephemeral" },
+      }).ok,
+      true,
+    );
+    now = 250;
+    const ownerToken = "018f1f4e-7f0a-7000-8000-00000000015c";
+    assert.equal(
+      execute(REPOSITORY_WRITE_OPERATIONS.bindingResolve, {
+        ...bindingResolutionCommand("active"),
+        resolution: { kind: "active", externalConversationId: "external-1", ephemeralOwnerToken: ownerToken },
+      }).ok,
+      true,
+    );
+    database.exec(`
+      UPDATE run_dispatches SET dispatch_state = 'aborted', resolved_at = 275
+      WHERE run_attempt_id = 'attempt-run-1';
+      UPDATE run_attempts
+      SET attempt_state = 'interrupted', failure_origin = 'application', terminal_at = 275
+      WHERE id = 'attempt-run-1';
+      UPDATE runs
+      SET phase = 'canceled', terminal_at = 275, updated_at = 275, version = version + 1
+      WHERE id = 'run-1';
+      INSERT INTO messages (id, session_id, ordinal, role, content_blocks_json, created_at)
+      VALUES ('message-run-2', 'session-1', 2, 'user', '[]', 300);
+      INSERT INTO runs (
+        id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+        external_side_effect_state, created_at, updated_at, version
+      ) VALUES ('run-2', 'session-1', 2, 'message-run-2', 'queued', '{}', 'none', 300, 300, 0);
+      INSERT INTO run_attempts (
+        id, run_id, ordinal, provider_binding_id, attempt_reason, attempt_state, created_at
+      ) VALUES ('attempt-run-2', 'run-2', 1, 'binding-run-1', 'initial', 'preparing', 300);
+      INSERT INTO run_dispatches (
+        run_attempt_id, dispatch_state, request_fingerprint, provider_idempotency_key, created_at
+      ) SELECT 'attempt-run-2', 'pending', request_fingerprint, provider_idempotency_key, 300
+        FROM run_dispatches WHERE run_attempt_id = 'attempt-run-1';
+    `);
+
+    now = 325;
+    const begin = execute(REPOSITORY_WRITE_OPERATIONS.dispatchBegin, {
+      ...dispatchBeginCommand(ownerToken),
+      runId: "run-2",
+      attemptId: "attempt-run-2",
+    });
+    assert.equal(!begin.ok && begin.error.code, "not_found");
+
+    database
+      .prepare(
+        `
+        UPDATE run_dispatches
+        SET dispatch_state = 'ambiguous', dispatching_at = 325, resolved_at = 350
+        WHERE run_attempt_id = 'attempt-run-2'
+      `,
+      )
+      .run();
+    now = 400;
+    const repair = execute(REPOSITORY_WRITE_OPERATIONS.startupRepair, {});
+    assert.equal(
+      repair.ok && (repair.value.inspection as Readonly<Record<string, unknown>>).providerDispatchCandidates,
+      0,
+    );
+  });
+});
+
 repositoryTest(
   "supplemental input admission atomically creates a user Message, pending Delivery, and replay record",
   () => {
@@ -1639,6 +2020,26 @@ repositoryTest(
           last_activity_at: 600,
         },
       );
+      const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 650);
+      const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 650);
+      assert.equal(
+        (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000168", "session-2")) as CommandResult).ok,
+        true,
+      );
+      assert.equal(
+        (
+          admit({
+            ...normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000167", "run-2", "create"),
+            sessionId: "session-2",
+          }) as CommandResult
+        ).ok,
+        true,
+      );
+      database
+        .prepare("UPDATE provider_bindings SET created_by_run_attempt_id = 'attempt-run-2' WHERE id = 'binding-run-1'")
+        .run();
+      const foreignReplay = admitInput(command) as CommandResult;
+      assert.equal(!foreignReplay.ok && foreignReplay.error.code, "reference_invalid");
     });
   },
 );
@@ -1822,7 +2223,8 @@ repositoryTest("ephemeral supplemental input cannot begin after Worker ownership
     const restarted = createRepositoryWriteOperations(database, { clock: () => 700 });
     const restartedAdmit = restarted.get(REPOSITORY_WRITE_OPERATIONS.runInputAdmit);
     const restartedBegin = restarted.get(REPOSITORY_WRITE_OPERATIONS.runInputBegin);
-    assert.ok(restartedAdmit && restartedBegin);
+    const restartedResolve = restarted.get(REPOSITORY_WRITE_OPERATIONS.runInputResolve);
+    assert.ok(restartedAdmit && restartedBegin && restartedResolve);
     const undeliverable = restartedAdmit.execute({
       ...runInputAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000181", ownerToken),
       message: { id: "message-input-after-restart", contentBlocks: [{ type: "text", text: "later" }] },
@@ -1833,6 +2235,17 @@ repositoryTest("ephemeral supplemental input cannot begin after Worker ownership
     assert.equal(!rejected.ok && rejected.error.code, "reference_invalid");
     const allowed = execute(REPOSITORY_WRITE_OPERATIONS.runInputBegin, runInputBeginCommand(ownerToken));
     assert.equal(allowed.ok && allowed.value.sendAllowed, true);
+    const staleOwner = restartedResolve.execute(runInputResolutionCommand("accepted", ownerToken))
+      .result as CommandResult;
+    assert.equal(!staleOwner.ok && staleOwner.error.code, "reference_invalid");
+    const recovered = restartedResolve.execute(runInputResolutionCommand("accepted", null)).result as CommandResult;
+    assert.equal(recovered.ok && recovered.value.deliveryState, "accepted");
+    const staleReplay = restartedResolve.execute(runInputResolutionCommand("accepted", ownerToken))
+      .result as CommandResult;
+    assert.equal(!staleReplay.ok && staleReplay.error.code, "reference_invalid");
+    const recoveredReplay = restartedResolve.execute(runInputResolutionCommand("accepted", null))
+      .result as CommandResult;
+    assert.equal(recoveredReplay.ok && recoveredReplay.replayed, true);
   });
 });
 
@@ -2061,6 +2474,978 @@ repositoryTest(
     });
   },
 );
+
+repositoryTest("pre-dispatch terminal rejects unresolved intent and releases a Session without startup repair", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000700", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000701", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+
+    const unresolved = terminal(preparingRunTerminalCommand("not_applicable", "canceled")) as CommandResult;
+    assert.equal(!unresolved.ok && unresolved.error.code, "lifecycle_conflict");
+
+    const command = preparingRunTerminalCommand("binding_creation_not_sent", "canceled");
+    const first = terminal(command) as CommandResult;
+    const replay = terminal(command) as CommandResult;
+    assert.equal(first.ok && first.value.phase, "canceled");
+    assert.equal(replay.ok && replay.replayed, true);
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            `
+            SELECT b.binding_state, b.invalidation_reason, a.attempt_state, d.dispatch_state,
+                   r.phase, r.external_side_effect_state
+            FROM provider_bindings b
+            JOIN run_attempts a ON a.id = b.created_by_run_attempt_id
+            JOIN run_dispatches d ON d.run_attempt_id = a.id
+            JOIN runs r ON r.id = a.run_id
+            WHERE r.id = 'run-1'
+          `,
+          )
+          .get(),
+      },
+      {
+        binding_state: "invalidated",
+        invalidation_reason: "conversation_start_not_sent",
+        attempt_state: "interrupted",
+        dispatch_state: "aborted",
+        phase: "canceled",
+        external_side_effect_state: "none",
+      },
+    );
+
+    const next = admit(
+      normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000702", "run-2", "create"),
+    ) as CommandResult;
+    assert.equal(next.ok, true);
+  });
+});
+
+repositoryTest("pre-dispatch terminal distinguishes ambiguous Binding creation from an unsent request", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const resolve = operationFor(database, REPOSITORY_WRITE_OPERATIONS.bindingResolve, () => 300);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000703", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000704", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+
+    const command = preparingRunTerminalCommand("binding_creation_ambiguous", "interrupted");
+    const result = terminal(command) as CommandResult;
+    assert.equal(result.ok && result.value.phase, "interrupted");
+    const lateBindingResolution = resolve(ambiguousBindingResolutionPayload()) as CommandResult;
+    assert.equal(!lateBindingResolution.ok && lateBindingResolution.error.code, "request_invalid");
+    const replay = terminal(command) as CommandResult;
+    assert.equal(replay.ok && replay.replayed, true);
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            `
+            SELECT b.binding_state, b.invalidation_reason, d.dispatch_state,
+                   r.phase, r.external_side_effect_state
+            FROM provider_bindings b
+            JOIN run_attempts a ON a.id = b.created_by_run_attempt_id
+            JOIN run_dispatches d ON d.run_attempt_id = a.id
+            JOIN runs r ON r.id = a.run_id
+            WHERE r.id = 'run-1'
+          `,
+          )
+          .get(),
+      },
+      {
+        binding_state: "invalidated",
+        invalidation_reason: "conversation_start_ambiguous",
+        dispatch_state: "aborted",
+        phase: "interrupted",
+        external_side_effect_state: "unknown",
+      },
+    );
+    assert.equal(count(database, "run_events"), 1);
+  });
+});
+
+repositoryTest(
+  "pre-dispatch terminal preserves an active persistent Binding and aborts only its pending Dispatch",
+  () => {
+    withDatabase((database) => {
+      const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+      const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+      const resolveBinding = operationFor(database, REPOSITORY_WRITE_OPERATIONS.bindingResolve, () => 250);
+      const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 300);
+      assert.equal(
+        (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000705", "session-1")) as CommandResult).ok,
+        true,
+      );
+      assert.equal(
+        (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000706", "run-1", "create")) as CommandResult)
+          .ok,
+        true,
+      );
+      assert.equal((resolveBinding(bindingResolutionCommand("active")) as CommandResult).ok, true);
+
+      const result = terminal(preparingRunTerminalCommand("dispatch_not_sent", "canceled")) as CommandResult;
+      assert.equal(result.ok && result.value.phase, "canceled");
+      assert.deepEqual(
+        {
+          ...database
+            .prepare(
+              `
+            SELECT b.binding_state, b.invalidation_reason, d.dispatch_state,
+                   r.phase, r.external_side_effect_state
+            FROM provider_bindings b
+            JOIN run_attempts a ON a.provider_binding_id = b.id
+            JOIN run_dispatches d ON d.run_attempt_id = a.id
+            JOIN runs r ON r.id = a.run_id
+            WHERE r.id = 'run-1'
+          `,
+            )
+            .get(),
+        },
+        {
+          binding_state: "active",
+          invalidation_reason: null,
+          dispatch_state: "aborted",
+          phase: "canceled",
+          external_side_effect_state: "present",
+        },
+      );
+
+      const next = admit(
+        normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000707", "run-2", "reuse"),
+      ) as CommandResult;
+      assert.equal(next.ok, true);
+    });
+  },
+);
+
+repositoryTest("pre-dispatch terminal replay survives later persistent Binding invalidation", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const resolveBinding = operationFor(database, REPOSITORY_WRITE_OPERATIONS.bindingResolve, () => 250);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000717", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000718", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    assert.equal((resolveBinding(bindingResolutionCommand("active")) as CommandResult).ok, true);
+    const command = preparingRunTerminalCommand("dispatch_not_sent", "canceled");
+    assert.equal((terminal(command) as CommandResult).ok, true);
+    database
+      .prepare(
+        `
+        UPDATE provider_bindings
+        SET binding_state = 'invalidated', invalidated_at = 400, invalidation_reason = 'later_replacement'
+        WHERE id = 'binding-run-1'
+      `,
+      )
+      .run();
+
+    const replay = terminal(command) as CommandResult;
+    assert.equal(replay.ok && replay.replayed, true);
+  });
+});
+
+repositoryTest("pre-dispatch terminal closes a retry admission through the shared Run boundary", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const completeSource = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    assert.equal((completeSource(runTerminalCommand()) as CommandResult).ok, true);
+    const retry = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runRetry, () => 800);
+    assert.equal(
+      (
+        retry(
+          retryRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000719", "run-2", "run-1", "reuse"),
+        ) as CommandResult
+      ).ok,
+      true,
+    );
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 900);
+    const result = terminal({
+      ...preparingRunTerminalCommand("dispatch_not_sent", "canceled"),
+      runId: "run-2",
+      attemptId: "attempt-run-2",
+      terminalEvent: { id: "terminal-event-retry", dedupeKey: "provider-terminal-retry" },
+    }) as CommandResult;
+    assert.equal(result.ok && result.value.phase, "canceled");
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            `
+            SELECT b.binding_state, d.dispatch_state, a.attempt_state, r.phase
+            FROM runs r
+            JOIN run_attempts a ON a.run_id = r.id
+            JOIN run_dispatches d ON d.run_attempt_id = a.id
+            JOIN provider_bindings b ON b.id = a.provider_binding_id
+            WHERE r.id = 'run-2'
+          `,
+          )
+          .get(),
+      },
+      { binding_state: "active", dispatch_state: "aborted", attempt_state: "interrupted", phase: "canceled" },
+    );
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 1_000);
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000720", "run-3", "reuse")) as CommandResult).ok,
+      true,
+    );
+  });
+});
+
+repositoryTest("pre-dispatch terminal rejects a Dispatch whose send outcome is already unresolved", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const resolveBinding = operationFor(database, REPOSITORY_WRITE_OPERATIONS.bindingResolve, () => 250);
+    const beginDispatch = operationFor(database, REPOSITORY_WRITE_OPERATIONS.dispatchBegin, () => 275);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000710", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000711", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    assert.equal((resolveBinding(bindingResolutionCommand("active")) as CommandResult).ok, true);
+    assert.equal((beginDispatch(dispatchBeginCommand()) as CommandResult).ok, true);
+
+    const result = terminal(preparingRunTerminalCommand("dispatch_not_sent", "canceled")) as CommandResult;
+    assert.equal(!result.ok && result.error.code, "lifecycle_conflict");
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            `
+            SELECT b.binding_state, a.attempt_state, d.dispatch_state, r.phase
+            FROM provider_bindings b
+            JOIN run_attempts a ON a.provider_binding_id = b.id
+            JOIN run_dispatches d ON d.run_attempt_id = a.id
+            JOIN runs r ON r.id = a.run_id
+            WHERE r.id = 'run-1'
+          `,
+          )
+          .get(),
+      },
+      { binding_state: "active", attempt_state: "preparing", dispatch_state: "dispatching", phase: "starting" },
+    );
+  });
+});
+
+repositoryTest("pre-dispatch terminal invalidates an active ephemeral Binding before releasing its Session", () => {
+  withDatabase((database) => {
+    let now = 100;
+    const operations = createRepositoryWriteOperations(database, { clock: () => now });
+    const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
+      const operation = operations.get(name);
+      assert.ok(operation);
+      return operation.execute(payload).result as CommandResult;
+    };
+    assert.equal(
+      execute(
+        REPOSITORY_WRITE_OPERATIONS.sessionCreate,
+        sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000712", "session-1"),
+      ).ok,
+      true,
+    );
+    const admission = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000713", "run-1", "create");
+    now = 200;
+    assert.equal(
+      execute(REPOSITORY_WRITE_OPERATIONS.runAdmit, {
+        ...admission,
+        bindingIntent: { ...admission.bindingIntent, persistenceMode: "ephemeral" },
+      }).ok,
+      true,
+    );
+    now = 250;
+    const ownerToken = "018f1f4e-7f0a-7000-8000-000000000714";
+    assert.equal(
+      execute(REPOSITORY_WRITE_OPERATIONS.bindingResolve, {
+        ...bindingResolutionCommand("active"),
+        resolution: { kind: "active", externalConversationId: "external-1", ephemeralOwnerToken: ownerToken },
+      }).ok,
+      true,
+    );
+
+    now = 300;
+    const result = execute(
+      REPOSITORY_WRITE_OPERATIONS.runTerminal,
+      preparingRunTerminalCommand("dispatch_not_sent", "canceled"),
+    );
+    assert.equal(result.ok && result.value.phase, "canceled");
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            `
+            SELECT b.binding_state, b.invalidation_reason, d.dispatch_state,
+                   r.phase, r.external_side_effect_state
+            FROM provider_bindings b
+            JOIN run_attempts a ON a.provider_binding_id = b.id
+            JOIN run_dispatches d ON d.run_attempt_id = a.id
+            JOIN runs r ON r.id = a.run_id
+            WHERE r.id = 'run-1'
+          `,
+          )
+          .get(),
+      },
+      {
+        binding_state: "invalidated",
+        invalidation_reason: "ephemeral_run_terminal",
+        dispatch_state: "aborted",
+        phase: "canceled",
+        external_side_effect_state: "present",
+      },
+    );
+    assert.equal(
+      execute(
+        REPOSITORY_WRITE_OPERATIONS.runAdmit,
+        normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000715", "run-2", "create"),
+      ).ok,
+      true,
+    );
+  });
+});
+
+repositoryTest("Run terminal converges unresolved supplemental input before invalidating an ephemeral Binding", () => {
+  for (const deliveryState of ["pending", "dispatching"] as const) {
+    withDatabase((database) => {
+      let now = 100;
+      const operations = createRepositoryWriteOperations(database, { clock: () => now });
+      const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
+        const operation = operations.get(name);
+        assert.ok(operation);
+        return operation.execute(payload).result as CommandResult;
+      };
+      assert.equal(
+        execute(
+          REPOSITORY_WRITE_OPERATIONS.sessionCreate,
+          sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000713", "session-1"),
+        ).ok,
+        true,
+      );
+      now = 200;
+      const admission = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000714", "run-1", "create");
+      assert.equal(
+        execute(REPOSITORY_WRITE_OPERATIONS.runAdmit, {
+          ...admission,
+          bindingIntent: { ...admission.bindingIntent, persistenceMode: "ephemeral" },
+        }).ok,
+        true,
+      );
+      const ownerToken = "018f1f4e-7f0a-7000-8000-000000000715";
+      now = 300;
+      assert.equal(
+        execute(REPOSITORY_WRITE_OPERATIONS.bindingResolve, {
+          ...bindingResolutionCommand("active"),
+          resolution: { kind: "active", externalConversationId: "external-1", ephemeralOwnerToken: ownerToken },
+        }).ok,
+        true,
+      );
+      now = 400;
+      assert.equal(execute(REPOSITORY_WRITE_OPERATIONS.dispatchBegin, dispatchBeginCommand(ownerToken)).ok, true);
+      now = 500;
+      assert.equal(
+        execute(REPOSITORY_WRITE_OPERATIONS.dispatchResolve, dispatchResolutionCommand("accepted", ownerToken)).ok,
+        true,
+      );
+      now = 600;
+      const inputCommand = runInputAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000716", ownerToken);
+      assert.equal(execute(REPOSITORY_WRITE_OPERATIONS.runInputAdmit, inputCommand).ok, true);
+      if (deliveryState === "dispatching") {
+        now = 650;
+        assert.equal(execute(REPOSITORY_WRITE_OPERATIONS.runInputBegin, runInputBeginCommand(ownerToken)).ok, true);
+      }
+
+      now = 700;
+      const completed = execute(REPOSITORY_WRITE_OPERATIONS.runTerminal, runTerminalCommand());
+      assert.equal(completed.ok && completed.value.phase, "completed");
+      const delivery = database
+        .prepare("SELECT delivery_state, resolution_code, dispatching_at, resolved_at FROM run_input_deliveries")
+        .get() as Record<string, unknown>;
+      assert.deepEqual(
+        { ...delivery },
+        deliveryState === "pending"
+          ? {
+              delivery_state: "aborted",
+              resolution_code: "run_terminal_not_sent",
+              dispatching_at: null,
+              resolved_at: 700,
+            }
+          : {
+              delivery_state: "ambiguous",
+              resolution_code: "process_unknown",
+              dispatching_at: 650,
+              resolved_at: 700,
+            },
+      );
+      const binding = database
+        .prepare("SELECT binding_state, invalidation_reason FROM provider_bindings WHERE id = 'binding-run-1'")
+        .get() as Record<string, unknown>;
+      assert.deepEqual({ ...binding }, { binding_state: "invalidated", invalidation_reason: "ephemeral_run_terminal" });
+      if (deliveryState === "pending") {
+        assert.throws(
+          () =>
+            database
+              .prepare("UPDATE run_input_deliveries SET dispatching_at = 650 WHERE delivery_state = 'aborted'")
+              .run(),
+          /constraint/iu,
+        );
+      }
+
+      const admissionReplay = execute(REPOSITORY_WRITE_OPERATIONS.runInputAdmit, inputCommand);
+      assert.equal(
+        admissionReplay.ok && admissionReplay.replayed && admissionReplay.value.deliveryState,
+        deliveryState === "pending" ? "aborted" : "ambiguous",
+      );
+      if (deliveryState === "dispatching") {
+        const resolutionReplay = execute(REPOSITORY_WRITE_OPERATIONS.runInputResolve, {
+          ...runInputResolutionCommand("ambiguous", null),
+          outcome: { kind: "ambiguous", resolutionCode: "process_unknown" },
+        });
+        assert.equal(resolutionReplay.ok && resolutionReplay.replayed, true);
+      }
+    });
+  }
+});
+
+repositoryTest("Run terminal rolls back supplemental input convergence on a late fault", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const admitInput = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInputAdmit, () => 600);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    assert.equal(
+      (admitInput(runInputAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000717")) as CommandResult).ok,
+      true,
+    );
+    database.exec(`
+      CREATE TRIGGER fail_terminal_after_input_convergence BEFORE INSERT ON run_events
+      WHEN NEW.event_code = 'run.terminal'
+      BEGIN SELECT RAISE(ABORT, 'terminal input convergence fault injection'); END;
+    `);
+
+    assert.throws(() => terminal(runTerminalCommand()), /terminal input convergence fault injection/u);
+    assert.deepEqual(
+      {
+        ...database.prepare("SELECT delivery_state, resolution_code, resolved_at FROM run_input_deliveries").get(),
+      },
+      { delivery_state: "pending", resolution_code: null, resolved_at: null },
+    );
+    assert.equal(
+      (database.prepare("SELECT phase FROM runs WHERE id = 'run-1'").get() as { phase: string }).phase,
+      "active",
+    );
+    assert.equal(count(database, "run_events"), 0);
+  });
+});
+
+repositoryTest("terminal rejects an ephemeral Binding outside the Run Session and Provider scope", () => {
+  for (const mismatch of ["session", "provider"] as const) {
+    withDatabase((database) => {
+      let now = 100;
+      const operations = createRepositoryWriteOperations(database, { clock: () => now });
+      const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
+        const operation = operations.get(name);
+        assert.ok(operation);
+        return operation.execute(payload).result as CommandResult;
+      };
+      assert.equal(
+        execute(
+          REPOSITORY_WRITE_OPERATIONS.sessionCreate,
+          sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000721", "session-1"),
+        ).ok,
+        true,
+      );
+      assert.equal(
+        execute(
+          REPOSITORY_WRITE_OPERATIONS.sessionCreate,
+          sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000722", "session-2"),
+        ).ok,
+        true,
+      );
+      now = 200;
+      const admission = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000723", "run-1", "create");
+      assert.equal(
+        execute(REPOSITORY_WRITE_OPERATIONS.runAdmit, {
+          ...admission,
+          bindingIntent: { ...admission.bindingIntent, persistenceMode: "ephemeral" },
+        }).ok,
+        true,
+      );
+      now = 250;
+      const ownerToken = "018f1f4e-7f0a-7000-8000-000000000724";
+      assert.equal(
+        execute(REPOSITORY_WRITE_OPERATIONS.bindingResolve, {
+          ...bindingResolutionCommand("active"),
+          resolution: { kind: "active", externalConversationId: "external-1", ephemeralOwnerToken: ownerToken },
+        }).ok,
+        true,
+      );
+
+      if (mismatch === "session") {
+        database.prepare("UPDATE provider_bindings SET session_id = 'session-2' WHERE id = 'binding-run-1'").run();
+      } else {
+        database
+          .prepare("UPDATE provider_bindings SET provider_id = 'provider-other' WHERE id = 'binding-run-1'")
+          .run();
+      }
+      now = 300;
+      const terminal = execute(
+        REPOSITORY_WRITE_OPERATIONS.runTerminal,
+        preparingRunTerminalCommand("dispatch_not_sent", "canceled"),
+      );
+      assert.equal(!terminal.ok && terminal.error.code, "reference_invalid");
+      assert.deepEqual(
+        {
+          ...database
+            .prepare(
+              `
+              SELECT b.binding_state, a.attempt_state, d.dispatch_state, r.phase
+              FROM provider_bindings b
+              JOIN run_attempts a ON a.provider_binding_id = b.id
+              JOIN run_dispatches d ON d.run_attempt_id = a.id
+              JOIN runs r ON r.id = a.run_id
+              WHERE b.id = 'binding-run-1'
+            `,
+            )
+            .get(),
+        },
+        { binding_state: "active", attempt_state: "preparing", dispatch_state: "pending", phase: "queued" },
+      );
+
+      if (mismatch === "session") {
+        database.prepare("UPDATE provider_bindings SET session_id = 'session-1' WHERE id = 'binding-run-1'").run();
+      } else {
+        database.prepare("UPDATE provider_bindings SET provider_id = 'provider' WHERE id = 'binding-run-1'").run();
+      }
+      now = 350;
+      const dispatch = execute(REPOSITORY_WRITE_OPERATIONS.dispatchBegin, dispatchBeginCommand(ownerToken));
+      assert.equal(dispatch.ok && dispatch.value.sendAllowed, true);
+    });
+  }
+});
+
+repositoryTest("terminal does not mutate or release a cross-Session ephemeral Binding referenced by an Attempt", () => {
+  withDatabase((database) => {
+    let now = 100;
+    const operations = createRepositoryWriteOperations(database, { clock: () => now });
+    const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
+      const operation = operations.get(name);
+      assert.ok(operation);
+      return operation.execute(payload).result as CommandResult;
+    };
+    assert.equal(
+      execute(
+        REPOSITORY_WRITE_OPERATIONS.sessionCreate,
+        sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000725", "session-1"),
+      ).ok,
+      true,
+    );
+    assert.equal(
+      execute(
+        REPOSITORY_WRITE_OPERATIONS.sessionCreate,
+        sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000726", "session-2"),
+      ).ok,
+      true,
+    );
+
+    now = 200;
+    const firstAdmission = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000727", "run-1", "create");
+    assert.equal(
+      execute(REPOSITORY_WRITE_OPERATIONS.runAdmit, {
+        ...firstAdmission,
+        bindingIntent: { ...firstAdmission.bindingIntent, persistenceMode: "ephemeral" },
+      }).ok,
+      true,
+    );
+    const firstOwner = "018f1f4e-7f0a-7000-8000-000000000728";
+    now = 250;
+    assert.equal(
+      execute(REPOSITORY_WRITE_OPERATIONS.bindingResolve, {
+        ...bindingResolutionCommand("active"),
+        resolution: { kind: "active", externalConversationId: "external-1", ephemeralOwnerToken: firstOwner },
+      }).ok,
+      true,
+    );
+
+    now = 300;
+    const secondAdmission = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000729", "run-2", "create");
+    assert.equal(
+      execute(REPOSITORY_WRITE_OPERATIONS.runAdmit, {
+        ...secondAdmission,
+        sessionId: "session-2",
+        bindingIntent: { ...secondAdmission.bindingIntent, persistenceMode: "ephemeral" },
+      }).ok,
+      true,
+    );
+    const secondOwner = "018f1f4e-7f0a-7000-8000-000000000730";
+    now = 350;
+    assert.equal(
+      execute(REPOSITORY_WRITE_OPERATIONS.bindingResolve, {
+        ...bindingResolutionCommand("active"),
+        sessionId: "session-2",
+        runId: "run-2",
+        attemptId: "attempt-run-2",
+        bindingId: "binding-run-2",
+        resolution: { kind: "active", externalConversationId: "external-2", ephemeralOwnerToken: secondOwner },
+      }).ok,
+      true,
+    );
+
+    database.prepare("UPDATE run_attempts SET provider_binding_id = 'binding-run-2' WHERE id = 'attempt-run-1'").run();
+    now = 400;
+    const terminal = execute(
+      REPOSITORY_WRITE_OPERATIONS.runTerminal,
+      preparingRunTerminalCommand("dispatch_not_sent", "canceled"),
+    );
+    assert.equal(!terminal.ok && terminal.error.code, "reference_invalid");
+    assert.equal(count(database, "run_events"), 0);
+    assert.deepEqual(
+      database
+        .prepare("SELECT id, binding_state FROM provider_bindings ORDER BY id")
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        { id: "binding-run-1", binding_state: "active" },
+        { id: "binding-run-2", binding_state: "active" },
+      ],
+    );
+
+    database.prepare("UPDATE run_attempts SET provider_binding_id = 'binding-run-1' WHERE id = 'attempt-run-1'").run();
+    now = 450;
+    const firstDispatch = execute(REPOSITORY_WRITE_OPERATIONS.dispatchBegin, dispatchBeginCommand(firstOwner));
+    assert.equal(firstDispatch.ok && firstDispatch.value.sendAllowed, true);
+    const secondDispatch = execute(REPOSITORY_WRITE_OPERATIONS.dispatchBegin, {
+      ...dispatchBeginCommand(secondOwner),
+      sessionId: "session-2",
+      runId: "run-2",
+      attemptId: "attempt-run-2",
+      bindingId: "binding-run-2",
+    });
+    assert.equal(secondDispatch.ok && secondDispatch.value.sendAllowed, true);
+  });
+});
+
+repositoryTest("terminal does not mutate an ephemeral Binding owned by another Attempt", () => {
+  withDatabase((database) => {
+    let now = 100;
+    const operations = createRepositoryWriteOperations(database, { clock: () => now });
+    const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
+      const operation = operations.get(name);
+      assert.ok(operation);
+      return operation.execute(payload).result as CommandResult;
+    };
+    assert.equal(
+      execute(
+        REPOSITORY_WRITE_OPERATIONS.sessionCreate,
+        sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000734", "session-1"),
+      ).ok,
+      true,
+    );
+    now = 200;
+    const admission = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000735", "run-1", "create");
+    assert.equal(
+      execute(REPOSITORY_WRITE_OPERATIONS.runAdmit, {
+        ...admission,
+        bindingIntent: { ...admission.bindingIntent, persistenceMode: "ephemeral" },
+      }).ok,
+      true,
+    );
+    const ownerToken = "018f1f4e-7f0a-7000-8000-000000000736";
+    now = 250;
+    assert.equal(
+      execute(REPOSITORY_WRITE_OPERATIONS.bindingResolve, {
+        ...bindingResolutionCommand("active"),
+        resolution: { kind: "active", externalConversationId: "external-1", ephemeralOwnerToken: ownerToken },
+      }).ok,
+      true,
+    );
+    database.exec(`
+      UPDATE run_dispatches
+      SET dispatch_state = 'aborted', resolved_at = 275
+      WHERE run_attempt_id = 'attempt-run-1';
+      UPDATE run_attempts
+      SET attempt_state = 'interrupted', failure_origin = 'application', terminal_at = 275
+      WHERE id = 'attempt-run-1';
+      UPDATE runs
+      SET phase = 'canceled', terminal_at = 275, updated_at = 275, version = version + 1
+      WHERE id = 'run-1';
+      INSERT INTO runs (
+        id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+        external_side_effect_state, created_at, updated_at, version
+      ) SELECT 'run-foreign', session_id, 2, initiating_message_id, 'queued', execution_snapshot_json,
+          'none', 275, 275, 0
+        FROM runs WHERE id = 'run-1';
+      INSERT INTO run_attempts (
+        id, run_id, ordinal, provider_binding_id, attempt_reason, attempt_state, created_at
+      ) VALUES ('attempt-run-foreign', 'run-foreign', 1, 'binding-run-1', 'initial', 'preparing', 275);
+      INSERT INTO run_dispatches (
+        run_attempt_id, dispatch_state, request_fingerprint, provider_idempotency_key, created_at
+      ) SELECT 'attempt-run-foreign', 'pending', request_fingerprint, provider_idempotency_key, 275
+        FROM run_dispatches WHERE run_attempt_id = 'attempt-run-1';
+    `);
+
+    now = 300;
+    const terminal = execute(REPOSITORY_WRITE_OPERATIONS.runTerminal, {
+      ...preparingRunTerminalCommand("dispatch_not_sent", "canceled"),
+      runId: "run-foreign",
+      attemptId: "attempt-run-foreign",
+      terminalEvent: { id: "terminal-event-foreign-attempt", dedupeKey: "provider-terminal-foreign-attempt" },
+    });
+    assert.equal(!terminal.ok && terminal.error.code, "reference_invalid");
+    assert.equal(count(database, "run_events"), 0);
+    assert.equal(
+      (
+        database.prepare("SELECT binding_state FROM provider_bindings WHERE id = 'binding-run-1'").get() as {
+          binding_state: string;
+        }
+      ).binding_state,
+      "active",
+    );
+
+    now = 350;
+    const replay = execute(REPOSITORY_WRITE_OPERATIONS.bindingResolve, {
+      ...bindingResolutionCommand("active"),
+      resolution: { kind: "active", externalConversationId: "external-1", ephemeralOwnerToken: ownerToken },
+    });
+    assert.equal(replay.ok && replay.replayed && replay.value.ephemeralOwnership, "registered");
+  });
+});
+
+repositoryTest("terminal rejects multiple Provider Bindings related to one preparing Attempt", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000731", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000732", "session-2")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000733", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    database
+      .prepare(
+        `
+        INSERT INTO provider_bindings (
+          id, session_id, ordinal, provider_id, persistence_mode, binding_state,
+          created_by_run_attempt_id, created_at, invalidated_at, invalidation_reason
+        ) VALUES (
+          'binding-extra', 'session-2', 1, 'provider', 'ephemeral', 'invalidated',
+          'attempt-run-1', 250, 250, 'test_cross_scope'
+        )
+      `,
+      )
+      .run();
+
+    const result = terminal(preparingRunTerminalCommand("binding_creation_not_sent", "canceled")) as CommandResult;
+    assert.equal(!result.ok && result.error.code, "reference_invalid");
+    assert.equal(count(database, "run_events"), 0);
+    assert.deepEqual(
+      database
+        .prepare("SELECT id, binding_state FROM provider_bindings ORDER BY id")
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        { id: "binding-extra", binding_state: "invalidated" },
+        { id: "binding-run-1", binding_state: "creating" },
+      ],
+    );
+  });
+});
+
+repositoryTest("pre-dispatch child terminal publishes its Delivery while resolving admission state", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const startChild = operationFor(database, REPOSITORY_WRITE_OPERATIONS.childStart, () => 600);
+    const resolve = operationFor(database, REPOSITORY_WRITE_OPERATIONS.bindingResolve, () => 650);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    assert.equal(
+      (startChild(childStartCommand("018f1f4e-7f0a-7000-8000-000000000716", "pre-dispatch")) as CommandResult).ok,
+      true,
+    );
+    const ambiguous = resolve(
+      ambiguousBindingResolutionPayload({
+        sessionId: "child-session-pre-dispatch",
+        runId: "child-run-pre-dispatch",
+        attemptId: "child-attempt-pre-dispatch",
+        bindingId: "child-binding-pre-dispatch",
+      }),
+    ) as CommandResult;
+    assert.equal(!ambiguous.ok && ambiguous.error.code, "request_invalid");
+
+    const result = terminal({
+      sessionId: "child-session-pre-dispatch",
+      workspaceKey: "workspace",
+      runId: "child-run-pre-dispatch",
+      attemptId: "child-attempt-pre-dispatch",
+      terminalEvent: {
+        id: "child-terminal-event-pre-dispatch",
+        dedupeKey: "child-provider-terminal-pre-dispatch",
+      },
+      preDispatchResolution: { kind: "binding_creation_ambiguous" },
+      outcome: {
+        kind: "interrupted",
+        failureOrigin: "transport",
+        providerErrorCode: null,
+        errorSummary: "Conversation creation outcome is unknown.",
+      },
+      outputs: [],
+      childResult: { workflowState: "closed", resultSummary: "Child conversation creation outcome is unknown." },
+    }) as CommandResult;
+    assert.equal(result.ok && result.value.childDeliveryId, "delivery-pre-dispatch");
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            `
+            SELECT b.binding_state, b.invalidation_reason, d.dispatch_state,
+                   c.availability_state, c.terminal_phase_snapshot, g.workflow_state, g.closure_reason
+            FROM provider_bindings b
+            JOIN run_attempts a ON a.id = b.created_by_run_attempt_id
+            JOIN run_dispatches d ON d.run_attempt_id = a.id
+            JOIN child_result_deliveries c ON c.child_run_id = a.run_id
+            JOIN delegations g ON g.id = c.delegation_id
+            WHERE a.run_id = 'child-run-pre-dispatch'
+          `,
+          )
+          .get(),
+      },
+      {
+        binding_state: "invalidated",
+        invalidation_reason: "conversation_start_ambiguous",
+        dispatch_state: "aborted",
+        availability_state: "available",
+        terminal_phase_snapshot: "interrupted",
+        workflow_state: "closed",
+        closure_reason: "interrupted",
+      },
+    );
+    const terminalEventCount = database
+      .prepare("SELECT COUNT(*) AS count FROM run_events WHERE run_id = ? AND event_code = 'run.terminal'")
+      .get("child-run-pre-dispatch") as { count: number };
+    assert.equal(terminalEventCount.count, 1);
+  });
+});
+
+repositoryTest("pre-dispatch terminal rolls back Binding and Dispatch resolution on a late fault", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000708", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000709", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    database.exec(`
+      CREATE TRIGGER fail_pre_dispatch_terminal_event BEFORE INSERT ON run_events
+      WHEN NEW.event_code = 'run.terminal'
+      BEGIN SELECT RAISE(ABORT, 'pre-dispatch terminal fault injection'); END;
+    `);
+
+    assert.throws(
+      () => terminal(preparingRunTerminalCommand("binding_creation_not_sent", "canceled")),
+      /pre-dispatch terminal fault injection/,
+    );
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            `
+            SELECT b.binding_state, b.invalidation_reason, a.attempt_state,
+                   d.dispatch_state, r.phase, r.terminal_at, r.external_side_effect_state
+            FROM provider_bindings b
+            JOIN run_attempts a ON a.id = b.created_by_run_attempt_id
+            JOIN run_dispatches d ON d.run_attempt_id = a.id
+            JOIN runs r ON r.id = a.run_id
+            WHERE r.id = 'run-1'
+          `,
+          )
+          .get(),
+      },
+      {
+        binding_state: "creating",
+        invalidation_reason: null,
+        attempt_state: "preparing",
+        dispatch_state: "pending",
+        phase: "queued",
+        terminal_at: null,
+        external_side_effect_state: "none",
+      },
+    );
+    assert.equal(count(database, "run_events"), 0);
+  });
+});
+
+repositoryTest("Run terminal replay rejects an unresolved ambiguous Dispatch", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    const command = runTerminalCommand();
+    assert.equal((terminal(command) as CommandResult).ok, true);
+    database
+      .prepare("UPDATE run_dispatches SET dispatch_state = 'ambiguous' WHERE run_attempt_id = 'attempt-run-1'")
+      .run();
+
+    const replay = terminal(command) as CommandResult;
+    assert.equal(!replay.ok && replay.error.code, "lifecycle_conflict");
+    assert.equal(count(database, "run_events"), 1);
+  });
+});
+
+repositoryTest("Run terminal exact replay ignores object property order but rejects semantic changes", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    const command = runTerminalCommand();
+    assert.equal((terminal(command) as CommandResult).ok, true);
+
+    const reordered = terminal(reverseObjectKeyOrder(command) as Readonly<Record<string, unknown>>) as CommandResult;
+    assert.equal(reordered.ok && reordered.replayed, true);
+
+    const semanticChange = terminal({
+      ...command,
+      outcome: {
+        ...command.outcome,
+        finalAssistantMessage: {
+          ...command.outcome.finalAssistantMessage,
+          contentBlocks: [{ type: "text", text: "different" }],
+        },
+      },
+    }) as CommandResult;
+    assert.equal(!semanticChange.ok && semanticChange.error.code, "lifecycle_conflict");
+  });
+});
 
 repositoryTest("Run terminal rejects persistence as a Provider Attempt failure origin", () => {
   withDatabase((database) => {
@@ -2365,6 +3750,7 @@ repositoryTest("startup repair converges local state and reports provider reconc
         expiredIdempotencyRecords: 1,
         invalidatedBindings: 1,
         abortedDispatches: 1,
+        settledInputDeliveries: 2,
         availableChildResults: 1,
         repairedDelegations: 1,
         storedOutputPayloads: 1,
@@ -2389,6 +3775,36 @@ repositoryTest("startup repair converges local state and reports provider reconc
           .get(),
       },
       { dispatch_state: "aborted", resolved_at: 100 },
+    );
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            "SELECT delivery_state, resolution_code, dispatching_at, resolved_at FROM run_input_deliveries WHERE message_id = 'repair-collision-delivery'",
+          )
+          .get(),
+      },
+      {
+        delivery_state: "aborted",
+        resolution_code: "run_terminal_not_sent",
+        dispatching_at: null,
+        resolved_at: 100,
+      },
+    );
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            "SELECT delivery_state, resolution_code, dispatching_at, resolved_at FROM run_input_deliveries WHERE message_id = 'repair-dispatching-delivery'",
+          )
+          .get(),
+      },
+      {
+        delivery_state: "ambiguous",
+        resolution_code: "process_unknown",
+        dispatching_at: 3,
+        resolved_at: 100,
+      },
     );
     assert.deepEqual(
       {
@@ -2464,6 +3880,7 @@ repositoryTest("startup repair converges local state and reports provider reconc
         expiredIdempotencyRecords: 0,
         invalidatedBindings: 0,
         abortedDispatches: 0,
+        settledInputDeliveries: 0,
         availableChildResults: 0,
         repairedDelegations: 0,
         storedOutputPayloads: 0,
@@ -2474,6 +3891,251 @@ repositoryTest("startup repair converges local state and reports provider reconc
     const invalid = repair({ unexpected: true }) as CommandResult;
     assert.equal(!invalid.ok && invalid.error.code, "request_invalid");
   });
+});
+
+repositoryTest("startup repair ignores cross-scope Provider Bindings in mutations and inspection", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const repair = operationFor(database, REPOSITORY_WRITE_OPERATIONS.startupRepair, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000737", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000738", "session-2")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000739", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    database
+      .prepare(
+        `
+        INSERT INTO provider_bindings (
+          id, session_id, ordinal, provider_id, persistence_mode, binding_state,
+          created_by_run_attempt_id, created_at, invalidated_at, invalidation_reason
+        ) VALUES (
+          'binding-foreign-invalidated', 'session-2', 1, 'provider', 'ephemeral', 'invalidated',
+          'attempt-run-1', 250, 250, 'test_cross_scope'
+        )
+      `,
+      )
+      .run();
+
+    const result = repair({}) as CommandResult;
+    assert.equal(result.ok && (result.value.repaired as Readonly<Record<string, unknown>>).abortedDispatches, 0);
+    assert.equal(
+      result.ok && (result.value.inspection as Readonly<Record<string, unknown>>).providerBindingCandidates,
+      1,
+    );
+    assert.equal(
+      (
+        database.prepare("SELECT dispatch_state FROM run_dispatches WHERE run_attempt_id = 'attempt-run-1'").get() as {
+          dispatch_state: string;
+        }
+      ).dispatch_state,
+      "pending",
+    );
+  });
+
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const repair = operationFor(database, REPOSITORY_WRITE_OPERATIONS.startupRepair, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000740", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000741", "session-2")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000742", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    database.exec(`
+      INSERT INTO provider_bindings (
+        id, session_id, ordinal, provider_id, persistence_mode, binding_state,
+        created_by_run_attempt_id, created_at
+      ) VALUES (
+        'binding-foreign-creating', 'session-2', 1, 'provider', 'ephemeral', 'creating',
+        'attempt-run-1', 250
+      );
+      UPDATE run_attempts SET attempt_state = 'interrupted', failure_origin = 'application', terminal_at = 275
+      WHERE id = 'attempt-run-1';
+      UPDATE runs SET phase = 'canceled', terminal_at = 275, updated_at = 275, version = version + 1
+      WHERE id = 'run-1';
+    `);
+
+    const result = repair({}) as CommandResult;
+    assert.equal(result.ok && (result.value.repaired as Readonly<Record<string, unknown>>).invalidatedBindings, 1);
+    assert.equal(
+      result.ok && (result.value.inspection as Readonly<Record<string, unknown>>).providerBindingCandidates,
+      0,
+    );
+    assert.equal(
+      (
+        database.prepare("SELECT binding_state FROM provider_bindings WHERE id = 'binding-foreign-creating'").get() as {
+          binding_state: string;
+        }
+      ).binding_state,
+      "creating",
+    );
+  });
+
+  for (const persistenceMode of ["persistent", "ephemeral"] as const) {
+    withDatabase((database) => {
+      let now = 100;
+      const operations = createRepositoryWriteOperations(database, { clock: () => now });
+      const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
+        const operation = operations.get(name);
+        assert.ok(operation);
+        return operation.execute(payload).result as CommandResult;
+      };
+      assert.equal(
+        execute(
+          REPOSITORY_WRITE_OPERATIONS.sessionCreate,
+          sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000743", "session-1"),
+        ).ok,
+        true,
+      );
+      assert.equal(
+        execute(
+          REPOSITORY_WRITE_OPERATIONS.sessionCreate,
+          sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000744", "session-2"),
+        ).ok,
+        true,
+      );
+      now = 200;
+      const admission = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000745", "run-1", "create");
+      assert.equal(
+        execute(REPOSITORY_WRITE_OPERATIONS.runAdmit, {
+          ...admission,
+          bindingIntent: { ...admission.bindingIntent, persistenceMode },
+        }).ok,
+        true,
+      );
+      now = 250;
+      const ownerToken = persistenceMode === "ephemeral" ? "018f1f4e-7f0a-7000-8000-000000000746" : null;
+      assert.equal(
+        execute(REPOSITORY_WRITE_OPERATIONS.bindingResolve, {
+          ...bindingResolutionCommand("active"),
+          resolution: { kind: "active", externalConversationId: "external-1", ephemeralOwnerToken: ownerToken },
+        }).ok,
+        true,
+      );
+      database.prepare("UPDATE provider_bindings SET session_id = 'session-2' WHERE id = 'binding-run-1'").run();
+      database.prepare("UPDATE runs SET phase = 'canceling' WHERE id = 'run-1'").run();
+
+      now = 300;
+      const result = execute(REPOSITORY_WRITE_OPERATIONS.startupRepair, {});
+      assert.equal(result.ok && (result.value.repaired as Readonly<Record<string, unknown>>).abortedDispatches, 0);
+      assert.equal(
+        result.ok && (result.value.inspection as Readonly<Record<string, unknown>>).safeDispatchCandidates,
+        0,
+      );
+      assert.equal(
+        result.ok && (result.value.inspection as Readonly<Record<string, unknown>>).ephemeralResumeBlockedRuns,
+        0,
+      );
+      assert.equal(
+        (
+          database
+            .prepare("SELECT dispatch_state FROM run_dispatches WHERE run_attempt_id = 'attempt-run-1'")
+            .get() as {
+            dispatch_state: string;
+          }
+        ).dispatch_state,
+        "pending",
+      );
+    });
+  }
+});
+
+repositoryTest("startup repair rejects a Binding whose creator Attempt belongs to another Session", () => {
+  for (const scenario of ["active_pending", "invalidated_pending", "dispatching", "ambiguous"] as const) {
+    withDatabase((database) => {
+      const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+      const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+      const repair = operationFor(database, REPOSITORY_WRITE_OPERATIONS.startupRepair, () => 300);
+      assert.equal(
+        (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000747", "session-1")) as CommandResult).ok,
+        true,
+      );
+      assert.equal(
+        (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000748", "session-2")) as CommandResult).ok,
+        true,
+      );
+      assert.equal(
+        (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000749", "run-1", "create")) as CommandResult)
+          .ok,
+        true,
+      );
+      assert.equal(
+        (
+          admit({
+            ...normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000750", "run-2", "create"),
+            sessionId: "session-2",
+          }) as CommandResult
+        ).ok,
+        true,
+      );
+
+      const active = scenario !== "invalidated_pending";
+      database.exec(`
+        UPDATE provider_bindings
+        SET binding_state = 'invalidated', invalidated_at = 225, invalidation_reason = 'fixture_replaced'
+        WHERE id = 'binding-run-1';
+        UPDATE provider_bindings
+        SET session_id = 'session-1', ordinal = 2,
+            binding_state = '${active ? "active" : "invalidated"}',
+            external_conversation_id = ${active ? "'foreign-conversation'" : "NULL"},
+            invalidated_at = ${active ? "NULL" : "225"},
+            invalidation_reason = ${active ? "NULL" : "'fixture_invalidated'"}
+        WHERE id = 'binding-run-2';
+        UPDATE run_attempts SET provider_binding_id = 'binding-run-2' WHERE id = 'attempt-run-1';
+      `);
+      if (scenario === "dispatching") {
+        database
+          .prepare(
+            "UPDATE run_dispatches SET dispatch_state = 'dispatching', dispatching_at = 250 WHERE run_attempt_id = 'attempt-run-1'",
+          )
+          .run();
+      } else if (scenario === "ambiguous") {
+        database
+          .prepare(
+            "UPDATE run_dispatches SET dispatch_state = 'ambiguous', dispatching_at = 250, resolved_at = 275 WHERE run_attempt_id = 'attempt-run-1'",
+          )
+          .run();
+      }
+
+      const result = repair({}) as CommandResult;
+      assert.equal(result.ok, true);
+      const repaired = result.ok ? (result.value.repaired as Readonly<Record<string, unknown>>) : {};
+      const inspection = result.ok ? (result.value.inspection as Readonly<Record<string, unknown>>) : {};
+      assert.equal(repaired.abortedDispatches, 0);
+      assert.equal(inspection.safeDispatchCandidates, 0);
+      assert.equal(inspection.providerDispatchCandidates, 0);
+      assert.equal(
+        (
+          database
+            .prepare("SELECT dispatch_state FROM run_dispatches WHERE run_attempt_id = 'attempt-run-1'")
+            .get() as {
+            dispatch_state: string;
+          }
+        ).dispatch_state,
+        scenario === "invalidated_pending" || scenario === "active_pending" ? "pending" : scenario,
+      );
+      if (scenario === "active_pending") {
+        const begin = operationFor(database, REPOSITORY_WRITE_OPERATIONS.dispatchBegin, () => 325);
+        const dispatch = begin({ ...dispatchBeginCommand(), bindingId: "binding-run-2" }) as CommandResult;
+        assert.equal(!dispatch.ok && dispatch.error.code, "not_found");
+      }
+    });
+  }
 });
 
 repositoryTest("startup repair rolls back every local convergence when a later update fails", () => {
@@ -2506,11 +4168,10 @@ repositoryTest("startup repair rolls back every local convergence when a later u
   });
 });
 
-repositoryTest("startup repair releases a canceled Run's unresolved Binding for the next admission", () => {
+repositoryTest("startup repair releases a legacy canceled Run's unresolved Binding for the next admission", () => {
   withDatabase((database) => {
     const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
     const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
-    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 300);
     const repair = operationFor(database, REPOSITORY_WRITE_OPERATIONS.startupRepair, () => 400);
     assert.equal(
       (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000511", "session-1")) as CommandResult).ok,
@@ -2520,21 +4181,12 @@ repositoryTest("startup repair releases a canceled Run's unresolved Binding for 
       (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000512", "run-1", "create")) as CommandResult).ok,
       true,
     );
-    assert.equal(
-      (
-        terminal({
-          sessionId: "session-1",
-          workspaceKey: "workspace",
-          runId: "run-1",
-          attemptId: "attempt-run-1",
-          terminalEvent: { id: "terminal-event-canceled", dedupeKey: "terminal-canceled" },
-          outcome: { kind: "canceled" },
-          outputs: [],
-          childResult: null,
-        }) as CommandResult
-      ).ok,
-      true,
-    );
+    database.exec(`
+      UPDATE run_attempts SET attempt_state = 'interrupted', failure_origin = 'application', terminal_at = 300
+      WHERE id = 'attempt-run-1';
+      UPDATE runs SET phase = 'canceled', terminal_at = 300, updated_at = 300, version = version + 1
+      WHERE id = 'run-1';
+    `);
 
     const repaired = repair({}) as CommandResult;
     assert.equal(repaired.ok && (repaired.value.repaired as Readonly<Record<string, unknown>>).invalidatedBindings, 1);
@@ -3088,6 +4740,7 @@ function prepareDeletableChild(database: DatabaseSync) {
         runId: "child-run-delete",
         attemptId: "child-attempt-delete",
         terminalEvent: { id: "event-delete-child-terminal", dedupeKey: "dedupe-delete-child-terminal" },
+        preDispatchResolution: { kind: "not_applicable" },
         outcome: {
           kind: "completed",
           finalAssistantMessage: {
@@ -3180,21 +4833,38 @@ function makeRunRetryable(
     .run(terminalAt, terminalAt, runId);
 }
 
-function bindingResolutionCommand(kind: "active" | "ambiguous") {
+function bindingResolutionCommand(_kind: "active") {
   return {
     sessionId: "session-1",
     workspaceKey: "workspace",
     runId: "run-1",
     attemptId: "attempt-run-1",
     bindingId: "binding-run-1",
-    resolution:
-      kind === "active"
-        ? ({ kind: "active", externalConversationId: "external-1", ephemeralOwnerToken: null } as const)
-        : ({
-            kind: "ambiguous",
-            failureOrigin: "transport",
-            errorSummary: "Conversation creation outcome is unknown.",
-          } as const),
+    resolution: { kind: "active", externalConversationId: "external-1", ephemeralOwnerToken: null } as const,
+  };
+}
+
+function ambiguousBindingResolutionPayload(
+  scope: Readonly<{
+    sessionId: string;
+    runId: string;
+    attemptId: string;
+    bindingId: string;
+  }> = {
+    sessionId: "session-1",
+    runId: "run-1",
+    attemptId: "attempt-run-1",
+    bindingId: "binding-run-1",
+  },
+) {
+  return {
+    ...scope,
+    workspaceKey: "workspace",
+    resolution: {
+      kind: "ambiguous",
+      failureOrigin: "transport",
+      errorSummary: "Conversation creation outcome is unknown.",
+    },
   };
 }
 
@@ -3298,6 +4968,7 @@ function runTerminalCommand() {
     runId: "run-1",
     attemptId: "attempt-run-1",
     terminalEvent: { id: "terminal-event-1", dedupeKey: "provider-terminal-1" },
+    preDispatchResolution: { kind: "not_applicable" },
     outcome: {
       kind: "completed",
       finalAssistantMessage: {
@@ -3324,6 +4995,31 @@ function runTerminalCommand() {
   };
 }
 
+function preparingRunTerminalCommand(
+  resolutionKind: "not_applicable" | "binding_creation_not_sent" | "binding_creation_ambiguous" | "dispatch_not_sent",
+  outcomeKind: "canceled" | "interrupted",
+) {
+  return {
+    sessionId: "session-1",
+    workspaceKey: "workspace",
+    runId: "run-1",
+    attemptId: "attempt-run-1",
+    terminalEvent: { id: "terminal-event-pre-dispatch", dedupeKey: "provider-terminal-pre-dispatch" },
+    preDispatchResolution: { kind: resolutionKind },
+    outcome:
+      outcomeKind === "canceled"
+        ? ({ kind: "canceled" } as const)
+        : ({
+            kind: "interrupted",
+            failureOrigin: "transport",
+            providerErrorCode: null,
+            errorSummary: "Conversation creation outcome is unknown.",
+          } as const),
+    outputs: [],
+    childResult: null,
+  };
+}
+
 function childTerminalCommand() {
   return {
     sessionId: "child-session",
@@ -3331,6 +5027,7 @@ function childTerminalCommand() {
     runId: "child-run",
     attemptId: "child-attempt",
     terminalEvent: { id: "child-terminal-event", dedupeKey: "child-provider-terminal" },
+    preDispatchResolution: { kind: "not_applicable" },
     outcome: {
       kind: "completed",
       finalAssistantMessage: {
@@ -3465,6 +5162,7 @@ function insertStartupRepairFixture(database: DatabaseSync): void {
       ('repair-collision-delivery', 'repair-parent', 2, 'user', '[]', 2),
       ('repair-child-message', 'repair-child', 1, 'user', '[]', 1),
       ('repair-child-message-2', 'repair-child', 2, 'user', '[]', 2),
+      ('repair-dispatching-delivery', 'repair-child', 3, 'user', '[]', 3),
       ('repair-safe-message', 'repair-safe', 1, 'user', '[]', 1),
       ('repair-creating-message', 'repair-creating', 1, 'user', '[]', 1),
       ('repair-dispatching-message', 'repair-dispatching', 1, 'user', '[]', 1),
@@ -3545,7 +5243,8 @@ function insertStartupRepairFixture(database: DatabaseSync): void {
       ('repair-inconsistent-delivery', 'repair-inconsistent-delegation', 1, 'repair-child-run-2', 'available',
         'failed', NULL, 2, NULL, NULL, 1, 1, 0);
     INSERT INTO run_input_deliveries VALUES
-      ('repair-collision-delivery', 'repair-parent-run', 'repair-parent-attempt', 'pending', NULL, 2, NULL, NULL);
+      ('repair-collision-delivery', 'repair-parent-run', 'repair-parent-attempt', 'pending', NULL, 2, NULL, NULL),
+      ('repair-dispatching-delivery', 'repair-child-run', 'repair-terminal-attempt', 'dispatching', NULL, 2, 3, NULL);
     INSERT INTO idempotency_records VALUES
       ('018f1f4e-7f0a-7000-8000-000000000501', 'repair-child', 'run.admit', '${fingerprint}',
         'completed', 'success', 'run', 'repair-child-run', '{"runId":"repair-child-run"}', 1, 2, 50),

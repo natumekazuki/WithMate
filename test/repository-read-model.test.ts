@@ -268,6 +268,14 @@ repositoryTest("pending Run Input delivery recovery is run-scoped, paged, and pr
       },
     ]);
     assert.equal(second.nextCursor, undefined);
+    database.prepare("UPDATE provider_bindings SET provider_id = 'other-provider' WHERE id = 'binding-1'").run();
+    const foreignBinding = recoverInputs({
+      sessionId: "session-1",
+      runId: "run-1",
+      workspaceKey: "workspace",
+      limit: 1,
+    }) as PageResult;
+    assert.equal(foreignBinding.items[0]?.bindingId, null);
     assert.throws(
       () =>
         recoverInputs({
@@ -523,6 +531,126 @@ repositoryTest("recovery projection finds a creating Binding and preserves nulla
       assert.equal(Object.hasOwn(withoutAttempt, key), true);
       assert.equal(withoutAttempt[key], null);
     }
+  });
+});
+
+repositoryTest("recovery projection hides Bindings outside the Run owner tuple", () => {
+  for (const scenario of ["foreign_creator_session", "foreign_provider"] as const) {
+    withDatabase((database) => {
+      insertSession(database, "recovery-session", 1);
+      insertSession(database, "creator-session", 1);
+      insertMessage(database, "recovery-message", "recovery-session", 1, "[]");
+      insertMessage(database, "creator-message", "creator-session", 1, "[]");
+      const bindingProvider = scenario === "foreign_provider" ? "other-provider" : "provider";
+      const creatorAttemptId = scenario === "foreign_creator_session" ? "creator-attempt" : "recovery-attempt";
+      const directBindingId = scenario === "foreign_creator_session" ? "'foreign-binding'" : "NULL";
+      database.exec(`
+        BEGIN;
+        INSERT INTO runs (
+          id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+          external_side_effect_state, created_at, updated_at, version
+        ) VALUES
+          ('recovery-run', 'recovery-session', 1, 'recovery-message', 'queued', '{}', 'unknown', 1, 1, 0),
+          ('creator-run', 'creator-session', 1, 'creator-message', 'queued', '{}', 'unknown', 1, 1, 0);
+        INSERT INTO run_attempts (
+          id, run_id, ordinal, provider_binding_id, attempt_reason, attempt_state, created_at
+        ) VALUES
+          ('recovery-attempt', 'recovery-run', 1, ${directBindingId}, 'initial', 'preparing', 1),
+          ('creator-attempt', 'creator-run', 1, NULL, 'initial', 'preparing', 1);
+        INSERT INTO provider_bindings (
+          id, session_id, ordinal, provider_id, external_conversation_id, persistence_mode,
+          binding_state, created_by_run_attempt_id, created_at
+        ) VALUES (
+          'foreign-binding', 'recovery-session', 1, '${bindingProvider}', 'foreign-conversation', 'persistent',
+          'active', '${creatorAttemptId}', 1
+        );
+        INSERT INTO run_dispatches (
+          run_attempt_id, dispatch_state, request_fingerprint, created_at
+        ) VALUES ('recovery-attempt', 'pending', '${"b".repeat(64)}', 1);
+        COMMIT;
+      `);
+
+      const recovery = operationFor(
+        database,
+        "repository.recovery.get",
+      )({
+        sessionId: "recovery-session",
+        runId: "recovery-run",
+        workspaceKey: "workspace",
+      }) as Readonly<Record<string, unknown>>;
+
+      assert.equal(recovery.attemptId, "recovery-attempt");
+      assert.equal(recovery.dispatchState, "pending");
+      for (const key of [
+        "bindingId",
+        "providerId",
+        "persistenceMode",
+        "bindingState",
+        "externalConversationId",
+      ] as const) {
+        assert.equal(recovery[key], null);
+      }
+    });
+  }
+});
+
+repositoryTest("recovery projections hide an ephemeral Binding created by another Attempt", () => {
+  withDatabase((database) => {
+    insertSession(database, "recovery-session", 1);
+    insertMessage(database, "creator-message", "recovery-session", 1, "[]");
+    insertMessage(database, "recovery-message", "recovery-session", 2, "[]");
+    insertMessage(database, "input-message", "recovery-session", 3, "[]");
+    database.exec(`
+      BEGIN;
+      INSERT INTO runs (
+        id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+        external_side_effect_state, created_at, terminal_at, updated_at, version
+      ) VALUES
+        ('creator-run', 'recovery-session', 1, 'creator-message', 'canceled', '{}', 'unknown', 1, 2, 2, 0),
+        ('recovery-run', 'recovery-session', 2, 'recovery-message', 'queued', '{}', 'unknown', 3, NULL, 3, 0);
+      INSERT INTO run_attempts (
+        id, run_id, ordinal, provider_binding_id, attempt_reason, attempt_state,
+        failure_origin, created_at, terminal_at
+      ) VALUES
+        ('creator-attempt', 'creator-run', 1, NULL, 'initial', 'interrupted', 'application', 1, 2),
+        ('recovery-attempt', 'recovery-run', 1, 'ephemeral-binding', 'initial', 'preparing', NULL, 3, NULL);
+      INSERT INTO provider_bindings (
+        id, session_id, ordinal, provider_id, external_conversation_id, persistence_mode,
+        binding_state, created_by_run_attempt_id, created_at
+      ) VALUES (
+        'ephemeral-binding', 'recovery-session', 1, 'provider', 'foreign-conversation', 'ephemeral',
+        'active', 'creator-attempt', 1
+      );
+      INSERT INTO run_dispatches (
+        run_attempt_id, dispatch_state, request_fingerprint, created_at, dispatching_at, resolved_at
+      ) VALUES ('recovery-attempt', 'ambiguous', '${"c".repeat(64)}', 3, 4, 5);
+      INSERT INTO run_input_deliveries (
+        message_id, run_id, run_attempt_id, delivery_state, created_at
+      ) VALUES ('input-message', 'recovery-run', 'recovery-attempt', 'pending', 6);
+      COMMIT;
+    `);
+
+    const recovery = operationFor(
+      database,
+      "repository.recovery.get",
+    )({
+      sessionId: "recovery-session",
+      runId: "recovery-run",
+      workspaceKey: "workspace",
+    }) as Readonly<Record<string, unknown>>;
+    assert.equal(recovery.bindingId, null);
+    assert.equal(recovery.externalConversationId, null);
+    assert.equal(recovery.dispatchState, "ambiguous");
+
+    const deliveries = operationFor(
+      database,
+      "repository.run.input-deliveries.page",
+    )({
+      sessionId: "recovery-session",
+      runId: "recovery-run",
+      workspaceKey: "workspace",
+    }) as PageResult;
+    assert.equal(deliveries.items[0]?.bindingId, null);
   });
 });
 

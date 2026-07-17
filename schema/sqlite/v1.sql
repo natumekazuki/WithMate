@@ -333,7 +333,7 @@ CREATE TABLE run_input_deliveries (
   run_id TEXT NOT NULL,
   run_attempt_id TEXT NOT NULL,
   delivery_state TEXT NOT NULL
-    CHECK (delivery_state IN ('pending', 'dispatching', 'accepted', 'rejected', 'ambiguous')),
+    CHECK (delivery_state IN ('pending', 'dispatching', 'accepted', 'rejected', 'ambiguous', 'aborted')),
   resolution_code TEXT CHECK (resolution_code IS NULL OR length(resolution_code) BETWEEN 1 AND 64),
   created_at INTEGER NOT NULL,
   dispatching_at INTEGER,
@@ -347,6 +347,8 @@ CREATE TABLE run_input_deliveries (
       AND dispatching_at IS NOT NULL AND resolved_at IS NOT NULL AND resolution_code IS NULL)
     OR (delivery_state IN ('rejected', 'ambiguous')
       AND dispatching_at IS NOT NULL AND resolved_at IS NOT NULL AND resolution_code IS NOT NULL)
+    OR (delivery_state = 'aborted'
+      AND dispatching_at IS NULL AND resolved_at IS NOT NULL AND resolution_code IS NOT NULL)
   ),
   FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE RESTRICT,
   FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE RESTRICT,

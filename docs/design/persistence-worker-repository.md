@@ -17,7 +17,7 @@ CP2は`RepositoryReadClient`を使用し、raw operation名を直接組み立て
 - Message本文とstored output payloadのscoped chunk
 - child result delivery page
 
-ProviderBinding、RunAttempt、RunDispatchのrecovery projectionはMain内部専用とし、Renderer / CLIへexternal IDやdispatch情報を直接公開しない。repair、collect、state収束はwriteであるためS6の責務とする。
+ProviderBinding、RunAttempt、RunDispatchのrecovery projectionはMain内部専用とし、Renderer / CLIへexternal IDやdispatch情報を直接公開しない。Binding fieldは、Binding自身のSession / Providerに加え、作成元AttemptのRun Sessionが対象Run Sessionと一致し、ephemeral Bindingなら対象Attemptが作成元でもある場合だけ返す。scope tupleが不一致の場合は、Run、Attempt、Dispatchのprojectionを維持し、Binding ID、Provider ID、外部conversation IDをnullにする。repair、collect、state収束はwriteであるためS6の責務とする。
 
 ## Pagination and snapshot
 
@@ -37,7 +37,7 @@ Session pageは対象Sessionをactivity indexとlimitで先に確定し、その
 
 Message、RunEvent、RunOutput summary、child result、count queryは`run_output_payloads.content`をJOINまたはSELECTしない。RunEventの`dedupe_key`、workspace照合用column、RunOutputのProvider内部IDは公開projectionへ含めない。RunOutput countはmetadata tableから導出し、summary pageはpayload metadataとBLOBを暗黙hydrateしない。category filterの有無でSQLを分け、指定時は`run_output_items_run_category_ordinal_idx`を使う。
 
-Message本文は最大4 MiBであり、Worker response上限を超え得る。64 KiB以下だけtimelineへinlineし、それより大きい本文はbyte lengthと`chunked` stateを返す。Sessionの追加directory JSONとRun execution snapshotも同じinline上限を使う。各JSON本文とstored payloadのchunk operationはscopeを再検証し、最大256 KiBのrange readを専有`ArrayBuffer`でtransferする。最終response上限はJSON metadataとの合計で判定する。
+Message本文は最大4 MiBであり、Worker response上限を超え得る。64 KiB以下だけtimelineへinlineし、それより大きい本文はbyte lengthと`chunked` stateを返す。Sessionの追加directory JSONとRun execution snapshotも同じinline上限を使う。各JSON本文とstored payloadのchunk operationはscopeを再検証し、1024文字以下のscopeと256 KiB以下の要求rangeを受理する。返却byte数は実際のresponse metadataを除いたbudgetへclampし、consumerは返却byte数から次のoffsetを計算する。専有`ArrayBuffer`とJSON metadataの合計をprotocol response上限内に収める。
 
 ## Validation gate
 
@@ -46,5 +46,6 @@ Message本文は最大4 MiBであり、Worker response上限を超え得る。64
 - summary、count、timelineのquery planに`run_output_payloads`が現れない。
 - large fixtureでも返却row数とresponse sizeが固定上限内に収まる。
 - scope不一致、cursor流用、limit超過が明示失敗へ収束する。
+- recovery projectionがscope tuple外のBindingと外部conversation IDを返さない。
 
 single connectionは上記代表queryで有界に処理できている限り維持する。複数read connectionはquery latencyまたはFIFO待ちが実測上の問題になった場合だけ再検討する。

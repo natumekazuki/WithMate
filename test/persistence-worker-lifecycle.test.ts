@@ -8,7 +8,12 @@ import test from "node:test";
 import { PersistenceClientError, PersistenceWorkerClient } from "../src/main/persistence-worker-client.js";
 import { RepositoryReadClient } from "../src/main/repository-read-client.js";
 import { RepositoryWriteClient } from "../src/main/repository-write-client.js";
-import { PERSISTENCE_PROTOCOL_VERSION, type WorkerToMainMessage } from "../src/shared/persistence-protocol.js";
+import {
+  MAX_PERSISTENCE_RESPONSE_BYTES,
+  PERSISTENCE_PROTOCOL_VERSION,
+  type WorkerToMainMessage,
+} from "../src/shared/persistence-protocol.js";
+import { REPOSITORY_CHUNK_LIMITS } from "../src/shared/repository-read-model.js";
 import { PersistenceWorkerRuntime } from "../src/persistence-worker/worker-runtime.js";
 
 const workerUrl = new URL("../src/persistence-worker/worker-entry.ts", import.meta.url);
@@ -331,6 +336,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       runId: scope.runId,
       attemptId: scope.attemptId,
       terminalEvent: { id: "event-worker-terminal", dedupeKey: "provider-event-worker-terminal" },
+      preDispatchResolution: { kind: "not_applicable" },
       outcome: {
         kind: "completed",
         finalAssistantMessage: {
@@ -380,21 +386,13 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       runId: scope.runId,
       workspaceKey: scope.workspaceKey,
     });
-    assert.equal(resumedInputDeliveries.items.length, 1);
-    const resumedInputDelivery = resumedInputDeliveries.items[0];
-    assert.ok(resumedInputDelivery && !("omitted" in resumedInputDelivery));
-    assert.equal(resumedInputDelivery.messageId, "message-worker-input-dispatching");
-    assert.equal(resumedInputDelivery.runId, scope.runId);
-    assert.equal(resumedInputDelivery.attemptId, scope.attemptId);
-    assert.equal(resumedInputDelivery.bindingId, scope.bindingId);
-    assert.equal(resumedInputDelivery.deliveryState, "dispatching");
-    assert.equal(typeof resumedInputDelivery.createdAt, "number");
-    assert.equal(typeof resumedInputDelivery.dispatchingAt, "number");
+    assert.equal(resumedInputDeliveries.items.length, 0);
     const startupRepair = await resumedRepository.repairStartupState();
     assert.deepEqual(startupRepair.ok && startupRepair.value.repaired, {
       expiredIdempotencyRecords: 0,
       invalidatedBindings: 0,
       abortedDispatches: 0,
+      settledInputDeliveries: 0,
       availableChildResults: 0,
       repairedDelegations: 0,
       storedOutputPayloads: 0,
@@ -406,6 +404,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       runId: "run-worker-child",
       attemptId: "attempt-worker-child",
       terminalEvent: { id: "event-worker-child-terminal", dedupeKey: "provider-event-worker-child-terminal" },
+      preDispatchResolution: { kind: "not_applicable" },
       outcome: {
         kind: "completed",
         finalAssistantMessage: {
@@ -907,11 +906,16 @@ test("payload chunks are bounded and transferred as owned ArrayBuffers", async (
     payload: payloadChunkRequest("payload-2", 0, 256 * 1024),
   });
   await waitFor(() => messages.length === 3);
-  const combinedLimitFailure = messages[2];
-  assert.equal(
-    combinedLimitFailure?.kind === "response" && !combinedLimitFailure.ok && combinedLimitFailure.error.code,
-    "response_too_large",
-  );
+  const combinedLimit = messages[2];
+  assert.equal(combinedLimit?.kind === "response" && combinedLimit.ok, true);
+  if (combinedLimit?.kind !== "response" || !combinedLimit.ok) {
+    assert.fail("expected maximum payload chunk request to be clamped");
+  }
+  const combinedLimitResult = combinedLimit.result as { bytes: ArrayBuffer; eof: boolean };
+  assert.ok(combinedLimitResult.bytes.byteLength > 0);
+  assert.ok(combinedLimitResult.bytes.byteLength < REPOSITORY_CHUNK_LIMITS.maxRequestedBytes);
+  assert.equal(combinedLimitResult.eof, false);
+  assert.ok(responseTransferBytes(combinedLimit, transfers[2] ?? []) <= MAX_PERSISTENCE_RESPONSE_BYTES);
 
   runtime.handleMessage({
     protocolVersion: PERSISTENCE_PROTOCOL_VERSION,
@@ -950,6 +954,150 @@ test("payload chunks are bounded and transferred as owned ArrayBuffers", async (
   database.close();
 });
 
+test("all Repository chunk operations clamp envelope metadata and advance without gaps", async () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec(`
+    CREATE TABLE sessions (
+      id TEXT PRIMARY KEY,
+      workspace_key TEXT NOT NULL,
+      allowed_additional_directories_json TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      content_blocks_json TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE runs (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      execution_snapshot_json TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE run_output_items (id TEXT PRIMARY KEY, run_id TEXT NOT NULL) STRICT;
+    CREATE TABLE run_output_payloads (
+      output_item_id TEXT PRIMARY KEY,
+      content BLOB NOT NULL,
+      byte_length INTEGER NOT NULL
+    ) STRICT;
+  `);
+  const sessionId = "会".repeat(REPOSITORY_CHUNK_LIMITS.maxScopeStringLength);
+  const workspaceKey = '"'.repeat(REPOSITORY_CHUNK_LIMITS.maxScopeStringLength);
+  const runId = "\\".repeat(REPOSITORY_CHUNK_LIMITS.maxScopeStringLength);
+  const messageId = "訊".repeat(REPOSITORY_CHUNK_LIMITS.maxScopeStringLength);
+  const outputItemId = '\\"'.repeat(REPOSITORY_CHUNK_LIMITS.maxScopeStringLength / 2);
+  const largeJson = JSON.stringify([{ type: "text", text: "界".repeat(120_000) }]);
+  const largeBytes = Buffer.from(largeJson, "utf8");
+  database.prepare("INSERT INTO sessions VALUES (?, ?, ?)").run(sessionId, workspaceKey, largeJson);
+  database.prepare("INSERT INTO messages VALUES (?, ?, ?)").run(messageId, sessionId, largeJson);
+  database.prepare("INSERT INTO runs VALUES (?, ?, ?)").run(runId, sessionId, largeJson);
+  database.prepare("INSERT INTO run_output_items VALUES (?, ?)").run(outputItemId, runId);
+  database
+    .prepare("INSERT INTO run_output_payloads VALUES (?, ?, ?)")
+    .run(outputItemId, largeBytes, largeBytes.byteLength);
+
+  const messages: WorkerToMainMessage[] = [];
+  const transfers: Array<readonly ArrayBuffer[]> = [];
+  const generationId = "018f1f4e-7f0a-7000-8000-000000000001";
+  const runtime = new PersistenceWorkerRuntime(generationId, database, ":memory:", (message, transferList) => {
+    messages.push(message);
+    transfers.push(transferList ?? []);
+  });
+  let sequence = 0;
+  const send = async (operation: string, payload: Readonly<Record<string, unknown>>) => {
+    const index = messages.length;
+    sequence += 1;
+    runtime.handleMessage({
+      protocolVersion: PERSISTENCE_PROTOCOL_VERSION,
+      generationId,
+      kind: "request",
+      requestId: `018f1f4e-7f0a-7000-8000-${String(sequence).padStart(12, "0")}`,
+      requestSequence: sequence,
+      operation,
+      requestClass: "read",
+      payload,
+    });
+    await waitFor(() => messages.length === index + 1);
+    const response = messages[index];
+    assert.ok(response);
+    return { response, transferList: transfers[index] ?? [] };
+  };
+
+  const cases = [
+    {
+      operation: "repository.session.directories-chunk",
+      payload: { sessionId, workspaceKey, offset: 0, maxBytes: REPOSITORY_CHUNK_LIMITS.maxRequestedBytes },
+    },
+    {
+      operation: "repository.message.content-chunk",
+      payload: { sessionId, messageId, workspaceKey, offset: 0, maxBytes: REPOSITORY_CHUNK_LIMITS.maxRequestedBytes },
+    },
+    {
+      operation: "repository.run.snapshot-chunk",
+      payload: { sessionId, runId, workspaceKey, offset: 0, maxBytes: REPOSITORY_CHUNK_LIMITS.maxRequestedBytes },
+    },
+    {
+      operation: "payload.read_chunk",
+      payload: {
+        sessionId,
+        runId,
+        outputItemId,
+        workspaceKey,
+        offset: 0,
+        maxBytes: REPOSITORY_CHUNK_LIMITS.maxRequestedBytes,
+      },
+    },
+  ] as const;
+
+  for (const candidate of cases) {
+    const first = await send(candidate.operation, candidate.payload);
+    assert.equal(first.response.kind === "response" && first.response.ok, true);
+    if (first.response.kind !== "response" || !first.response.ok) assert.fail("expected first chunk");
+    const firstResult = first.response.result as {
+      offset: number;
+      totalBytes: number;
+      eof: boolean;
+      bytes: ArrayBuffer;
+    };
+    assert.equal(firstResult.offset, 0);
+    assert.equal(firstResult.totalBytes, largeBytes.byteLength);
+    assert.equal(firstResult.eof, false);
+    assert.ok(firstResult.bytes.byteLength > 0);
+    assert.ok(firstResult.bytes.byteLength < REPOSITORY_CHUNK_LIMITS.maxRequestedBytes);
+    assert.equal(first.transferList[0], firstResult.bytes);
+    assert.equal(responseTransferBytes(first.response, first.transferList), MAX_PERSISTENCE_RESPONSE_BYTES);
+
+    const second = await send(candidate.operation, { ...candidate.payload, offset: firstResult.bytes.byteLength });
+    assert.equal(second.response.kind === "response" && second.response.ok, true);
+    if (second.response.kind !== "response" || !second.response.ok) assert.fail("expected second chunk");
+    const secondResult = second.response.result as {
+      offset: number;
+      totalBytes: number;
+      eof: boolean;
+      bytes: ArrayBuffer;
+    };
+    assert.equal(secondResult.offset, firstResult.bytes.byteLength);
+    assert.equal(secondResult.totalBytes, firstResult.totalBytes);
+    assert.equal(secondResult.eof, true);
+    assert.ok(responseTransferBytes(second.response, second.transferList) <= MAX_PERSISTENCE_RESPONSE_BYTES);
+    const reconstructed = Buffer.concat([
+      Buffer.from(new Uint8Array(firstResult.bytes)),
+      Buffer.from(new Uint8Array(secondResult.bytes)),
+    ]);
+    assert.deepEqual(reconstructed, largeBytes);
+  }
+
+  const overlong = await send("repository.session.directories-chunk", {
+    sessionId: `${sessionId}x`,
+    workspaceKey,
+    offset: 0,
+    maxBytes: 1,
+  });
+  assert.equal(
+    overlong.response.kind === "response" && !overlong.response.ok && overlong.response.error.code,
+    "payload_chunk_invalid",
+  );
+  database.close();
+});
+
 function createFixtureClient(databaseName = "unused-test-database.sqlite3"): PersistenceWorkerClient {
   return new PersistenceWorkerClient({
     workerUrl: fixtureWorkerUrl,
@@ -968,6 +1116,13 @@ function payloadChunkRequest(outputItemId: string, offset: number, maxBytes: num
     offset,
     maxBytes,
   };
+}
+
+function responseTransferBytes(response: WorkerToMainMessage, transferList: readonly ArrayBuffer[]): number {
+  const metadataBytes = Buffer.byteLength(
+    JSON.stringify(response, (_key, value: unknown) => (value instanceof ArrayBuffer ? null : value)),
+  );
+  return metadataBytes + transferList.reduce((total, buffer) => total + buffer.byteLength, 0);
 }
 
 function productionRunAdmission(sessionId: string, runId: string, idempotencyKey: string) {

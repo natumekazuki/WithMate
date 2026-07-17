@@ -152,17 +152,11 @@ export type ProviderBindingResolutionCommand = Readonly<{
   runId: string;
   attemptId: string;
   bindingId: string;
-  resolution:
-    | Readonly<{
-        kind: "active";
-        externalConversationId: string;
-        ephemeralOwnerToken: string | null;
-      }>
-    | Readonly<{
-        kind: "ambiguous";
-        failureOrigin: "transport" | "process" | "unknown";
-        errorSummary: string | null;
-      }>;
+  resolution: Readonly<{
+    kind: "active";
+    externalConversationId: string;
+    ephemeralOwnerToken: string | null;
+  }>;
 }>;
 
 export type RunDispatchBeginCommand = Readonly<{
@@ -211,7 +205,8 @@ export type RunInputBeginCommand = Readonly<{
   ephemeralOwnerToken: string | null;
 }>;
 
-export type RunInputResolutionCode = "provider_rejected" | "transport_unknown" | "process_unknown";
+export type RunInputResolutionCode =
+  "provider_rejected" | "transport_unknown" | "process_unknown" | "run_terminal_not_sent";
 
 export type RunInputResolutionCommand = Readonly<{
   sessionId: string;
@@ -293,6 +288,12 @@ export type RunTerminalOutcome =
     }>
   | Readonly<{ kind: "canceled" }>;
 
+export type RunTerminalPreDispatchResolution =
+  | Readonly<{ kind: "not_applicable" }>
+  | Readonly<{ kind: "binding_creation_not_sent" }>
+  | Readonly<{ kind: "binding_creation_ambiguous" }>
+  | Readonly<{ kind: "dispatch_not_sent" }>;
+
 export type RunTerminalCommand = Readonly<{
   sessionId: string;
   workspaceKey: string;
@@ -302,6 +303,7 @@ export type RunTerminalCommand = Readonly<{
     id: string;
     dedupeKey: string;
   }>;
+  preDispatchResolution: RunTerminalPreDispatchResolution;
   outcome: RunTerminalOutcome;
   outputs: readonly RunTerminalOutputDraft[];
   childResult: Readonly<{
@@ -402,6 +404,7 @@ export type StartupRepairResult = Readonly<{
     expiredIdempotencyRecords: number;
     invalidatedBindings: number;
     abortedDispatches: number;
+    settledInputDeliveries: number;
     availableChildResults: number;
     repairedDelegations: number;
     storedOutputPayloads: number;
@@ -457,8 +460,8 @@ export type ProviderBindingResolutionResult = Readonly<{
   runId: string;
   attemptId: string;
   bindingId: string;
-  bindingState: "active" | "invalidated";
-  externalConversationId: string | null;
+  bindingState: "active";
+  externalConversationId: string;
   ephemeralOwnership: "not_applicable" | "registered" | "unavailable";
 }>;
 
@@ -489,7 +492,7 @@ export type RunInputAdmissionResult = Readonly<{
   attemptId: string;
   messageId: string;
   bindingId: string;
-  deliveryState: "pending" | "accepted" | "rejected" | "ambiguous";
+  deliveryState: "pending" | "accepted" | "rejected" | "ambiguous" | "aborted";
   resolutionCode: RunInputResolutionCode | null;
   admittedAt: number;
   dispatchingAt: number | null;
