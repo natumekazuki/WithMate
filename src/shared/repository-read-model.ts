@@ -1,3 +1,5 @@
+import { MAX_PERSISTENCE_RESPONSE_BYTES } from "./persistence-protocol.js";
+
 export const REPOSITORY_READ_OPERATIONS = {
   sessionsPage: "repository.sessions.page",
   sessionGet: "repository.session.get",
@@ -17,6 +19,11 @@ export const REPOSITORY_READ_OPERATIONS = {
   recoveryGet: "repository.recovery.get",
 } as const;
 
+export const REPOSITORY_CHUNK_LIMITS = {
+  maxRequestedBytes: MAX_PERSISTENCE_RESPONSE_BYTES,
+  maxScopeStringLength: 1_024,
+} as const;
+
 export const REPOSITORY_READ_LIMITS = {
   sessions: { default: 25, max: 100 },
   messages: { default: 50, max: 100 },
@@ -34,6 +41,42 @@ export type PageOmission = Readonly<{
 }>;
 
 export type Page<T> = Readonly<{ items: readonly (T | PageOmission)[]; nextCursor?: string }>;
+
+export type RepositoryChunkRange = Readonly<{
+  offset: number;
+  maxBytes: number;
+}>;
+
+export type RepositoryChunkResult<TScope extends Readonly<Record<string, string>>> = TScope &
+  Readonly<{
+    offset: number;
+    totalBytes: number;
+    eof: boolean;
+    bytes: ArrayBuffer;
+  }>;
+
+export type SessionDirectoriesChunkRequest = Readonly<{ sessionId: string; workspaceKey: string }> &
+  RepositoryChunkRange;
+export type SessionDirectoriesChunkResult = RepositoryChunkResult<Readonly<{ sessionId: string }>>;
+
+export type MessageContentChunkRequest = Readonly<{ sessionId: string; messageId: string; workspaceKey: string }> &
+  RepositoryChunkRange;
+export type MessageContentChunkResult = RepositoryChunkResult<Readonly<{ sessionId: string; messageId: string }>>;
+
+export type RunSnapshotChunkRequest = Readonly<{ sessionId: string; runId: string; workspaceKey: string }> &
+  RepositoryChunkRange;
+export type RunSnapshotChunkResult = RepositoryChunkResult<Readonly<{ sessionId: string; runId: string }>>;
+
+export type RunOutputPayloadChunkRequest = Readonly<{
+  sessionId: string;
+  runId: string;
+  outputItemId: string;
+  workspaceKey: string;
+}> &
+  RepositoryChunkRange;
+export type RunOutputPayloadChunkResult = RepositoryChunkResult<
+  Readonly<{ sessionId: string; runId: string; outputItemId: string }>
+>;
 
 export type SessionExecutionState = "not_started" | "running" | "completed" | "failed" | "canceled" | "interrupted";
 

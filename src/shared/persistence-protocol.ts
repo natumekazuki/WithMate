@@ -1,4 +1,5 @@
 export const PERSISTENCE_PROTOCOL_VERSION = 1 as const;
+export const MAX_PERSISTENCE_RESPONSE_BYTES = 256 * 1024;
 
 export type PersistenceProtocolVersion = typeof PERSISTENCE_PROTOCOL_VERSION;
 

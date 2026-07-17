@@ -331,12 +331,22 @@ function runInputDeliveriesPage(database: DatabaseSync, payload: Readonly<Record
     .prepare(
       `
       SELECT i.message_id, i.run_id, i.run_attempt_id AS attempt_id,
-             a.provider_binding_id AS binding_id, i.delivery_state,
+             b.id AS binding_id, i.delivery_state,
              i.created_at, i.dispatching_at
       FROM run_input_deliveries i
       JOIN run_attempts a ON a.id = i.run_attempt_id AND a.run_id = i.run_id
       JOIN runs r ON r.id = i.run_id
       JOIN sessions s ON s.id = r.session_id
+      LEFT JOIN provider_bindings b ON b.id = a.provider_binding_id
+        AND b.session_id = r.session_id AND b.provider_id = s.provider_id
+        AND EXISTS (
+          SELECT 1
+          FROM run_attempts creator_a
+          JOIN runs creator_r ON creator_r.id = creator_a.run_id
+          WHERE creator_a.id = b.created_by_run_attempt_id
+            AND creator_r.session_id = r.session_id
+        )
+        AND (b.persistence_mode = 'persistent' OR b.created_by_run_attempt_id = a.id)
       WHERE i.run_id = ? AND r.session_id = ? AND s.workspace_key = ?
         AND i.delivery_state IN ('pending', 'dispatching')
         AND (? IS NULL OR i.created_at > ? OR (i.created_at = ? AND i.message_id > ?))
@@ -566,6 +576,16 @@ function recoveryGet(database: DatabaseSync, payload: Readonly<Record<string, un
         LIMIT 1
       )
     )
+      AND b.session_id = r.session_id
+      AND b.provider_id = s.provider_id
+      AND EXISTS (
+        SELECT 1
+        FROM run_attempts creator_a
+        JOIN runs creator_r ON creator_r.id = creator_a.run_id
+        WHERE creator_a.id = b.created_by_run_attempt_id
+          AND creator_r.session_id = r.session_id
+      )
+      AND (b.persistence_mode = 'persistent' OR b.created_by_run_attempt_id = a.id)
     LEFT JOIN run_dispatches d ON d.run_attempt_id = a.id
     WHERE r.id = ? AND r.session_id = ? AND s.workspace_key = ?
   `,

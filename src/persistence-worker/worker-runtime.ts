@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 
 import {
+  MAX_PERSISTENCE_RESPONSE_BYTES,
   PERSISTENCE_PROTOCOL_VERSION,
   type MainToWorkerMessage,
   type PersistenceError,
@@ -9,13 +10,10 @@ import {
   type WorkerToMainMessage,
 } from "../shared/persistence-protocol.js";
 import { decodeMainToWorkerMessage, isPlainObject } from "../shared/persistence-runtime-protocol.js";
-import { REPOSITORY_READ_OPERATIONS } from "../shared/repository-read-model.js";
+import { REPOSITORY_CHUNK_LIMITS, REPOSITORY_READ_OPERATIONS } from "../shared/repository-read-model.js";
 import { BoundedSerialExecutor, PersistenceExecutorError } from "./request-executor.js";
 import { createRepositoryReadOperations, RepositoryReadError } from "./repository-read-model.js";
 import { createRepositoryWriteOperations, type RepositoryWriteCapacityOptions } from "./repository-write-model.js";
-
-export const MAX_PERSISTENCE_RESPONSE_BYTES = 256 * 1024;
-export const MAX_PAYLOAD_CHUNK_BYTES = 256 * 1024;
 
 export type PersistenceWorkerPostMessage = (
   message: WorkerToMainMessage,
@@ -29,7 +27,12 @@ type OperationResult = Readonly<{
 
 type OperationDefinition = Readonly<{
   requestClass: PersistenceRequestMessage["requestClass"];
-  execute: (payload: Readonly<Record<string, unknown>>) => OperationResult;
+  execute: (payload: Readonly<Record<string, unknown>>, context: OperationExecutionContext) => OperationResult;
+}>;
+
+type OperationExecutionContext = Readonly<{
+  generationId: string;
+  requestId: string;
 }>;
 
 export class PersistenceWorkerRuntime {
@@ -108,7 +111,9 @@ export class PersistenceWorkerRuntime {
     }
     const payload = message.payload;
     void this.#executor
-      .submit(message.requestId, message.requestClass, () => operation.execute(payload))
+      .submit(message.requestId, message.requestClass, () =>
+        operation.execute(payload, { generationId: this.generationId, requestId: message.requestId }),
+      )
       .then(({ result, transferList }) => {
         const response: PersistenceResponseMessage = {
           protocolVersion: PERSISTENCE_PROTOCOL_VERSION,
@@ -227,28 +232,28 @@ function createOperationRegistry(
       REPOSITORY_READ_OPERATIONS.payloadChunk,
       {
         requestClass: "read",
-        execute: (payload) => readPayloadChunk(database, payload),
+        execute: (payload, context) => readPayloadChunk(database, payload, context),
       },
     ],
     [
       REPOSITORY_READ_OPERATIONS.messageContentChunk,
       {
         requestClass: "read",
-        execute: (payload) => readMessageContentChunk(database, payload),
+        execute: (payload, context) => readMessageContentChunk(database, payload, context),
       },
     ],
     [
       REPOSITORY_READ_OPERATIONS.sessionDirectoriesChunk,
       {
         requestClass: "read",
-        execute: (payload) => readSessionDirectoriesChunk(database, payload),
+        execute: (payload, context) => readSessionDirectoriesChunk(database, payload, context),
       },
     ],
     [
       REPOSITORY_READ_OPERATIONS.runSnapshotChunk,
       {
         requestClass: "read",
-        execute: (payload) => readRunSnapshotChunk(database, payload),
+        execute: (payload, context) => readRunSnapshotChunk(database, payload, context),
       },
     ],
   ]);
@@ -281,29 +286,13 @@ function checkpointDatabase(databasePath: string, mode: "PASSIVE" | "TRUNCATE"):
   }
 }
 
-function readPayloadChunk(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): OperationResult {
-  const { sessionId, runId, outputItemId, workspaceKey, offset, maxBytes } = payload;
-  if (
-    Object.keys(payload).sort().join(",") !== "maxBytes,offset,outputItemId,runId,sessionId,workspaceKey" ||
-    typeof sessionId !== "string" ||
-    sessionId.length === 0 ||
-    typeof runId !== "string" ||
-    runId.length === 0 ||
-    typeof outputItemId !== "string" ||
-    outputItemId.length === 0 ||
-    typeof workspaceKey !== "string" ||
-    workspaceKey.length === 0 ||
-    !Number.isSafeInteger(offset) ||
-    (offset as number) < 0 ||
-    !Number.isSafeInteger(maxBytes) ||
-    (maxBytes as number) < 1
-  ) {
-    throw new PayloadChunkError("payload_chunk_invalid", "Payload chunk request is invalid.");
-  }
-  if ((maxBytes as number) > MAX_PAYLOAD_CHUNK_BYTES) {
-    throw new PayloadChunkError("payload_chunk_too_large", "Payload chunk exceeds the maximum size.");
-  }
-
+function readPayloadChunk(
+  database: DatabaseSync,
+  payload: Readonly<Record<string, unknown>>,
+  context: OperationExecutionContext,
+): OperationResult {
+  const request = readChunkRequest(payload, ["sessionId", "runId", "outputItemId", "workspaceKey"], "Payload");
+  const { sessionId, runId, outputItemId, workspaceKey } = request.scope;
   const row = database
     .prepare(
       `
@@ -315,47 +304,18 @@ function readPayloadChunk(database: DatabaseSync, payload: Readonly<Record<strin
       WHERE p.output_item_id = ? AND o.run_id = ? AND r.session_id = ? AND s.workspace_key = ?
     `,
     )
-    .get(offset as number, maxBytes as number, outputItemId, runId, sessionId, workspaceKey) as
+    .get(request.offset, request.maxBytes, outputItemId, runId, sessionId, workspaceKey) as
     Readonly<{ byte_length: number; chunk: Uint8Array }> | undefined;
-  if (row === undefined) {
-    throw new PayloadChunkError("payload_chunk_invalid", "Payload does not exist.");
-  }
-  const chunk = Uint8Array.from(row.chunk);
-  const bytes = chunk.buffer;
-  return {
-    result: {
-      sessionId,
-      runId,
-      outputItemId,
-      offset,
-      totalBytes: row.byte_length,
-      eof: (offset as number) + chunk.byteLength >= row.byte_length,
-      bytes,
-    },
-    transferList: [bytes],
-  };
+  return chunkResult(row, request, { sessionId, runId, outputItemId }, context, "Payload");
 }
 
-function readMessageContentChunk(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): OperationResult {
-  const { sessionId, messageId, workspaceKey, offset, maxBytes } = payload;
-  if (
-    Object.keys(payload).sort().join(",") !== "maxBytes,messageId,offset,sessionId,workspaceKey" ||
-    typeof sessionId !== "string" ||
-    sessionId.length === 0 ||
-    typeof messageId !== "string" ||
-    messageId.length === 0 ||
-    typeof workspaceKey !== "string" ||
-    workspaceKey.length === 0 ||
-    !Number.isSafeInteger(offset) ||
-    (offset as number) < 0 ||
-    !Number.isSafeInteger(maxBytes) ||
-    (maxBytes as number) < 1
-  ) {
-    throw new PayloadChunkError("payload_chunk_invalid", "Message content chunk request is invalid.");
-  }
-  if ((maxBytes as number) > MAX_PAYLOAD_CHUNK_BYTES) {
-    throw new PayloadChunkError("payload_chunk_too_large", "Message content chunk exceeds the maximum size.");
-  }
+function readMessageContentChunk(
+  database: DatabaseSync,
+  payload: Readonly<Record<string, unknown>>,
+  context: OperationExecutionContext,
+): OperationResult {
+  const request = readChunkRequest(payload, ["sessionId", "messageId", "workspaceKey"], "Message content");
+  const { sessionId, messageId, workspaceKey } = request.scope;
   const row = database
     .prepare(
       `
@@ -365,32 +325,18 @@ function readMessageContentChunk(database: DatabaseSync, payload: Readonly<Recor
     WHERE m.id = ? AND m.session_id = ? AND s.workspace_key = ?
   `,
     )
-    .get(offset as number, maxBytes as number, messageId, sessionId, workspaceKey) as
+    .get(request.offset, request.maxBytes, messageId, sessionId, workspaceKey) as
     Readonly<{ byte_length: number; chunk: Uint8Array }> | undefined;
-  if (row === undefined) {
-    throw new PayloadChunkError("payload_chunk_invalid", "Message does not exist.");
-  }
-  const bytes = Uint8Array.from(row.chunk).buffer;
-  return {
-    result: {
-      sessionId,
-      messageId,
-      offset,
-      totalBytes: row.byte_length,
-      eof: (offset as number) + bytes.byteLength >= row.byte_length,
-      bytes,
-    },
-    transferList: [bytes],
-  };
+  return chunkResult(row, request, { sessionId, messageId }, context, "Message");
 }
 
 function readSessionDirectoriesChunk(
   database: DatabaseSync,
   payload: Readonly<Record<string, unknown>>,
+  context: OperationExecutionContext,
 ): OperationResult {
-  const request = readJsonChunkRequest(payload, ["sessionId", "workspaceKey"]);
-  const sessionId = request.scope.sessionId!;
-  const workspaceKey = request.scope.workspaceKey!;
+  const request = readChunkRequest(payload, ["sessionId", "workspaceKey"], "Session directories");
+  const { sessionId, workspaceKey } = request.scope;
   const row = database
     .prepare(
       `
@@ -401,17 +347,16 @@ function readSessionDirectoriesChunk(
     )
     .get(request.offset, request.maxBytes, sessionId, workspaceKey) as
     Readonly<{ byte_length: number; chunk: Uint8Array }> | undefined;
-  return jsonChunkResult(row, request, { sessionId });
+  return chunkResult(row, request, { sessionId }, context, "Session directories");
 }
 
-function readRunSnapshotChunk(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): OperationResult {
-  const request = readJsonChunkRequest(payload, ["sessionId", "runId", "workspaceKey"]);
-  const runId = request.scope.runId;
-  if (typeof runId !== "string" || runId.length === 0) {
-    throw new PayloadChunkError("payload_chunk_invalid", "Run snapshot chunk request is invalid.");
-  }
-  const sessionId = request.scope.sessionId!;
-  const workspaceKey = request.scope.workspaceKey!;
+function readRunSnapshotChunk(
+  database: DatabaseSync,
+  payload: Readonly<Record<string, unknown>>,
+  context: OperationExecutionContext,
+): OperationResult {
+  const request = readChunkRequest(payload, ["sessionId", "runId", "workspaceKey"], "Run snapshot");
+  const { sessionId, runId, workspaceKey } = request.scope;
   const row = database
     .prepare(
       `
@@ -423,73 +368,114 @@ function readRunSnapshotChunk(database: DatabaseSync, payload: Readonly<Record<s
     )
     .get(request.offset, request.maxBytes, runId, sessionId, workspaceKey) as
     Readonly<{ byte_length: number; chunk: Uint8Array }> | undefined;
-  return jsonChunkResult(row, request, { sessionId, runId });
+  return chunkResult(row, request, { sessionId, runId }, context, "Run snapshot");
 }
 
-function readJsonChunkRequest(payload: Readonly<Record<string, unknown>>, scopeKeys: readonly string[]) {
+function readChunkRequest<const TScopeKey extends string>(
+  payload: Readonly<Record<string, unknown>>,
+  scopeKeys: readonly TScopeKey[],
+  label: string,
+): ChunkRequest<TScopeKey> {
   const expectedKeys = [...scopeKeys, "offset", "maxBytes"].sort();
   if (Object.keys(payload).sort().join(",") !== expectedKeys.join(",")) {
-    throw new PayloadChunkError("payload_chunk_invalid", "JSON chunk request is invalid.");
+    throw new PayloadChunkError("payload_chunk_invalid", `${label} chunk request is invalid.`);
   }
-  if (scopeKeys.some((key) => typeof payload[key] !== "string" || (payload[key] as string).length === 0)) {
-    throw new PayloadChunkError("payload_chunk_invalid", "JSON chunk request scope is invalid.");
+  if (scopeKeys.some((key) => !isChunkScopeString(payload[key]))) {
+    throw new PayloadChunkError("payload_chunk_invalid", `${label} chunk request scope is invalid.`);
   }
-  const sessionId = payload.sessionId;
-  const workspaceKey = payload.workspaceKey;
   const offset = payload.offset;
   const maxBytes = payload.maxBytes;
   if (
-    typeof sessionId !== "string" ||
-    sessionId.length === 0 ||
-    typeof workspaceKey !== "string" ||
-    workspaceKey.length === 0 ||
     !Number.isSafeInteger(offset) ||
     (offset as number) < 0 ||
     !Number.isSafeInteger(maxBytes) ||
     (maxBytes as number) < 1
   ) {
-    throw new PayloadChunkError("payload_chunk_invalid", "JSON chunk request is invalid.");
+    throw new PayloadChunkError("payload_chunk_invalid", `${label} chunk request is invalid.`);
   }
-  if ((maxBytes as number) > MAX_PAYLOAD_CHUNK_BYTES) {
-    throw new PayloadChunkError("payload_chunk_too_large", "JSON chunk exceeds the maximum size.");
+  if ((maxBytes as number) > REPOSITORY_CHUNK_LIMITS.maxRequestedBytes) {
+    throw new PayloadChunkError("payload_chunk_too_large", `${label} chunk exceeds the maximum size.`);
   }
   return {
-    scope: Object.fromEntries(scopeKeys.map((key) => [key, payload[key]])) as Record<string, string>,
+    scope: Object.fromEntries(scopeKeys.map((key) => [key, payload[key] as string])) as Record<TScopeKey, string>,
     offset: offset as number,
     maxBytes: maxBytes as number,
   };
 }
 
-function jsonChunkResult(
+function isChunkScopeString(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= REPOSITORY_CHUNK_LIMITS.maxScopeStringLength;
+}
+
+function chunkResult(
   row: Readonly<{ byte_length: number; chunk: Uint8Array }> | undefined,
   request: Readonly<{ offset: number }>,
   scope: Readonly<Record<string, string>>,
+  context: OperationExecutionContext,
+  label: string,
 ): OperationResult {
-  if (row === undefined) {
-    throw new PayloadChunkError("payload_chunk_invalid", "JSON document does not exist.");
+  if (
+    row === undefined ||
+    !Number.isSafeInteger(row.byte_length) ||
+    row.byte_length < 0 ||
+    !(row.chunk instanceof Uint8Array)
+  ) {
+    throw new PayloadChunkError("payload_chunk_invalid", `${label} does not exist.`);
   }
-  const bytes = Uint8Array.from(row.chunk).buffer;
+  const requestedChunk = Uint8Array.from(row.chunk);
+  const transferBudget = chunkTransferBudget(context, scope, request.offset, row.byte_length);
+  if (transferBudget < 1) throw new ResponseLimitError("Persistence chunk metadata exceeds the response limit.");
+  const returnedChunk =
+    requestedChunk.byteLength <= transferBudget ? requestedChunk : requestedChunk.slice(0, transferBudget);
+  const bytes = returnedChunk.buffer;
   return {
     result: {
       ...scope,
       offset: request.offset,
       totalBytes: row.byte_length,
-      eof: request.offset + bytes.byteLength >= row.byte_length,
+      eof: request.offset + returnedChunk.byteLength >= row.byte_length,
       bytes,
     },
     transferList: [bytes],
   };
 }
 
+function chunkTransferBudget(
+  context: OperationExecutionContext,
+  scope: Readonly<Record<string, string>>,
+  offset: number,
+  totalBytes: number,
+): number {
+  const response = {
+    protocolVersion: PERSISTENCE_PROTOCOL_VERSION,
+    generationId: context.generationId,
+    kind: "response",
+    requestId: context.requestId,
+    ok: true,
+    result: { ...scope, offset, totalBytes, eof: false, bytes: null },
+  };
+  return MAX_PERSISTENCE_RESPONSE_BYTES - serializedResponseBytes(response);
+}
+
 function assertResponseWithinLimit(result: unknown, transferList: readonly ArrayBuffer[] | undefined): void {
   const transferredBytes = transferList?.reduce((total, buffer) => total + buffer.byteLength, 0) ?? 0;
-  const jsonBytes = Buffer.byteLength(
-    JSON.stringify(result, (_key, value: unknown) => (value instanceof ArrayBuffer ? null : value)),
-  );
+  const jsonBytes = serializedResponseBytes(result);
   if (transferredBytes + jsonBytes > MAX_PERSISTENCE_RESPONSE_BYTES) {
     throw new ResponseLimitError("Persistence response exceeds the maximum size.");
   }
 }
+
+function serializedResponseBytes(result: unknown): number {
+  return Buffer.byteLength(
+    JSON.stringify(result, (_key, value: unknown) => (value instanceof ArrayBuffer ? null : value)),
+  );
+}
+
+type ChunkRequest<TScopeKey extends string> = Readonly<{
+  scope: Readonly<Record<TScopeKey, string>>;
+  offset: number;
+  maxBytes: number;
+}>;
 
 class ResponseLimitError extends Error {}
 

@@ -2,13 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  MAX_PERSISTENCE_RESPONSE_BYTES,
   PERSISTENCE_PROTOCOL_VERSION,
+  REPOSITORY_CHUNK_LIMITS,
   RepositoryReadClient,
   RepositoryWriteClient,
   type PersistenceError,
   type RecoveryProjection,
   type RepositoryCommandError,
   type RunOutputCategory,
+  type RunTerminalPreDispatchResolution,
   type SessionExecutionState,
   type SessionLifecycleStatus,
   type StartupRepairCommand,
@@ -36,6 +39,7 @@ test("public repository barrel exposes the CP2 repository and error contract", (
   const repairCommand: StartupRepairCommand = {};
   const repairResult = null as StartupRepairResult | null;
   const recovery = null as RecoveryProjection | null;
+  const terminalPreparation: RunTerminalPreDispatchResolution = { kind: "dispatch_not_sent" };
   const typeContract: readonly [
     Equal<SessionsPageInput["lifecycleStatus"], SessionLifecycleStatus | undefined>,
     Equal<RunOutputsPageInput["category"], RunOutputCategory | undefined>,
@@ -43,6 +47,8 @@ test("public repository barrel exposes the CP2 repository and error contract", (
   ] = [true, true, true];
 
   assert.equal(PERSISTENCE_PROTOCOL_VERSION, 1);
+  assert.equal(MAX_PERSISTENCE_RESPONSE_BYTES, 256 * 1024);
+  assert.deepEqual(REPOSITORY_CHUNK_LIMITS, { maxRequestedBytes: 256 * 1024, maxScopeStringLength: 1_024 });
   assert.equal(typeof RepositoryReadClient, "function");
   assert.equal(typeof RepositoryWriteClient, "function");
   assert.equal(transportError.effect, "unknown");
@@ -50,5 +56,6 @@ test("public repository barrel exposes the CP2 repository and error contract", (
   assert.deepEqual(repairCommand, {});
   assert.equal(repairResult, null);
   assert.equal(recovery, null);
+  assert.equal(terminalPreparation.kind, "dispatch_not_sent");
   assert.deepEqual(typeContract, [true, true, true]);
 });

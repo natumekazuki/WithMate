@@ -1,4 +1,5 @@
-export { PERSISTENCE_PROTOCOL_VERSION } from "../shared/persistence-protocol.js";
+export { MAX_PERSISTENCE_RESPONSE_BYTES, PERSISTENCE_PROTOCOL_VERSION } from "../shared/persistence-protocol.js";
+export { REPOSITORY_CHUNK_LIMITS } from "../shared/repository-read-model.js";
 export type {
   PersistenceError,
   PersistenceErrorCode,
@@ -15,14 +16,24 @@ export { RepositoryReadClient } from "./repository-read-client.js";
 export { RepositoryWriteClient } from "./repository-write-client.js";
 export type {
   ChildResultListItem,
+  MessageContentChunkRequest,
+  MessageContentChunkResult,
   MessageListItem,
   Page,
   PageOmission,
   RecoveryProjection,
+  RepositoryChunkRange,
+  RepositoryChunkResult,
   RunDetail,
   RunEventListItem,
   RunOutputListItem,
+  RunOutputPayloadChunkRequest,
+  RunOutputPayloadChunkResult,
   RunOutputPayloadMetadata,
+  RunSnapshotChunkRequest,
+  RunSnapshotChunkResult,
+  SessionDirectoriesChunkRequest,
+  SessionDirectoriesChunkResult,
   SessionDetail,
   SessionDeletionCleanupPage,
   SessionDeletionItem,
@@ -70,6 +81,7 @@ export {
   type RunTerminalCommand,
   type RunTerminalOutcome,
   type RunTerminalOutputDraft,
+  type RunTerminalPreDispatchResolution,
   type RunTerminalResult,
   type RunExecutionSnapshot,
   type SessionCreateCommand,

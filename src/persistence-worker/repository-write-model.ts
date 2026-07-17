@@ -41,6 +41,7 @@ import {
   type RunOutputResolvePendingResult,
   type RunTerminalCommand,
   type RunTerminalOutputDraft,
+  type RunTerminalPreDispatchResolution,
   type RunTerminalResult,
   type SessionCreateCommand,
   type SessionCreateResult,
@@ -204,7 +205,6 @@ export function createRepositoryWriteOperations(
               execution.registerEphemeralOwner.token,
             );
           }
-          if (execution.removeEphemeralOwner) ephemeralBindingOwners.delete(command.bindingId);
           return execution.result;
         }),
       ),
@@ -294,7 +294,10 @@ export function createRepositoryWriteOperations(
         runDecoded(decodeRunTerminal(payload), (command) => {
           const prepared = prepareRunTerminal(command);
           const now = readClock(clock);
-          return executeRepositoryTransaction(database, () => terminalRun(database, prepared, now));
+          const ephemeralBindingId = readTerminalEphemeralBindingId(database, command);
+          const result = executeRepositoryTransaction(database, () => terminalRun(database, prepared, now));
+          if (result.ok && ephemeralBindingId !== undefined) ephemeralBindingOwners.delete(ephemeralBindingId);
+          return result;
         }),
       ),
     ],
@@ -342,9 +345,12 @@ function repairStartupState(database: DatabaseSync, now: number): RepositoryComm
         AND id IN (
           SELECT a.run_id
           FROM run_attempts a
+          JOIN runs r ON r.id = a.run_id
+          JOIN sessions s ON s.id = r.session_id
           JOIN provider_bindings b ON b.created_by_run_attempt_id = a.id
+            AND b.session_id = r.session_id AND b.provider_id = s.provider_id
           WHERE b.binding_state = 'creating'
-            AND (runs.phase IN ('canceling', 'completed', 'failed', 'canceled', 'interrupted')
+            AND (r.phase IN ('canceling', 'completed', 'failed', 'canceled', 'interrupted')
               OR a.attempt_state IN ('succeeded', 'failed', 'interrupted'))
         )
     `,
@@ -357,12 +363,16 @@ function repairStartupState(database: DatabaseSync, now: number): RepositoryComm
       UPDATE provider_bindings
       SET binding_state = 'invalidated', invalidated_at = ?,
           invalidation_reason = 'conversation_start_ambiguous'
-      WHERE binding_state = 'creating' AND created_by_run_attempt_id IN (
-        SELECT a.id
+      WHERE binding_state = 'creating' AND EXISTS (
+        SELECT 1
         FROM run_attempts a
         JOIN runs r ON r.id = a.run_id
-        WHERE r.phase IN ('canceling', 'completed', 'failed', 'canceled', 'interrupted')
-          OR a.attempt_state IN ('succeeded', 'failed', 'interrupted')
+        JOIN sessions s ON s.id = r.session_id
+        WHERE a.id = provider_bindings.created_by_run_attempt_id
+          AND provider_bindings.session_id = r.session_id
+          AND provider_bindings.provider_id = s.provider_id
+          AND (r.phase IN ('canceling', 'completed', 'failed', 'canceled', 'interrupted')
+            OR a.attempt_state IN ('succeeded', 'failed', 'interrupted'))
       )
     `,
       )
@@ -378,12 +388,61 @@ function repairStartupState(database: DatabaseSync, now: number): RepositoryComm
         SELECT a.id
         FROM run_attempts a
         JOIN runs r ON r.id = a.run_id
-        LEFT JOIN provider_bindings b
-          ON b.id = a.provider_binding_id OR b.created_by_run_attempt_id = a.id
-        WHERE r.phase IN ('canceling', 'completed', 'failed', 'canceled', 'interrupted')
+        JOIN sessions s ON s.id = r.session_id
+        JOIN provider_bindings b
+          ON (b.id = a.provider_binding_id
+            OR (a.provider_binding_id IS NULL AND b.created_by_run_attempt_id = a.id))
+          AND b.session_id = r.session_id AND b.provider_id = s.provider_id
+          AND EXISTS (
+            SELECT 1
+            FROM run_attempts creator_a
+            JOIN runs creator_r ON creator_r.id = creator_a.run_id
+            WHERE creator_a.id = b.created_by_run_attempt_id
+              AND creator_r.session_id = r.session_id
+          )
+          AND (b.persistence_mode = 'persistent' OR b.created_by_run_attempt_id = a.id)
+        WHERE (r.phase IN ('canceling', 'completed', 'failed', 'canceled', 'interrupted')
           OR a.attempt_state IN ('succeeded', 'failed', 'interrupted')
-          OR b.binding_state IN ('invalidated', 'superseded')
+          OR b.binding_state IN ('invalidated', 'superseded'))
       )
+    `,
+      )
+      .run(now).changes,
+  );
+  const abortedInputDeliveries = Number(
+    database
+      .prepare(
+        `
+      UPDATE run_input_deliveries
+      SET delivery_state = 'aborted', resolution_code = 'run_terminal_not_sent', resolved_at = ?
+      WHERE delivery_state = 'pending'
+        AND run_id IN (SELECT id FROM runs WHERE phase IN ('completed', 'failed', 'canceled', 'interrupted'))
+        AND EXISTS (
+          SELECT 1
+          FROM run_attempts a
+          JOIN runs r ON r.id = a.run_id
+          JOIN messages m ON m.id = run_input_deliveries.message_id AND m.session_id = r.session_id
+          WHERE a.id = run_input_deliveries.run_attempt_id AND a.run_id = run_input_deliveries.run_id
+        )
+    `,
+      )
+      .run(now).changes,
+  );
+  const ambiguousInputDeliveries = Number(
+    database
+      .prepare(
+        `
+      UPDATE run_input_deliveries
+      SET delivery_state = 'ambiguous', resolution_code = 'process_unknown', resolved_at = ?
+      WHERE delivery_state = 'dispatching'
+        AND run_id IN (SELECT id FROM runs WHERE phase IN ('completed', 'failed', 'canceled', 'interrupted'))
+        AND EXISTS (
+          SELECT 1
+          FROM run_attempts a
+          JOIN runs r ON r.id = a.run_id
+          JOIN messages m ON m.id = run_input_deliveries.message_id AND m.session_id = r.session_id
+          WHERE a.id = run_input_deliveries.run_attempt_id AND a.run_id = run_input_deliveries.run_id
+        )
     `,
       )
       .run(now).changes,
@@ -488,6 +547,7 @@ function repairStartupState(database: DatabaseSync, now: number): RepositoryComm
         expiredIdempotencyRecords,
         invalidatedBindings,
         abortedDispatches,
+        settledInputDeliveries: abortedInputDeliveries + ambiguousInputDeliveries,
         availableChildResults,
         repairedDelegations,
         storedOutputPayloads,
@@ -508,7 +568,11 @@ function inspectStartupState(database: DatabaseSync): StartupRepairResult["inspe
         FROM run_dispatches d
         JOIN run_attempts a ON a.id = d.run_attempt_id
         JOIN runs r ON r.id = a.run_id
+        JOIN sessions s ON s.id = r.session_id
         JOIN provider_bindings b ON b.id = a.provider_binding_id
+          AND b.session_id = r.session_id AND b.provider_id = s.provider_id
+        JOIN run_attempts creator_a ON creator_a.id = b.created_by_run_attempt_id
+        JOIN runs creator_r ON creator_r.id = creator_a.run_id AND creator_r.session_id = r.session_id
         WHERE d.dispatch_state = 'pending' AND r.phase IN ('queued', 'starting')
           AND a.attempt_state = 'preparing' AND b.binding_state = 'active'
           AND b.persistence_mode = 'persistent'
@@ -516,11 +580,31 @@ function inspectStartupState(database: DatabaseSync): StartupRepairResult["inspe
     ),
     providerBindingCandidates: scalarCount(
       database,
-      "SELECT COUNT(*) AS count FROM provider_bindings WHERE binding_state = 'creating'",
+      `
+        SELECT COUNT(*) AS count
+        FROM provider_bindings b
+        JOIN run_attempts a ON a.id = b.created_by_run_attempt_id
+        JOIN runs r ON r.id = a.run_id
+        JOIN sessions s ON s.id = r.session_id
+        WHERE b.binding_state = 'creating'
+          AND b.session_id = r.session_id AND b.provider_id = s.provider_id
+      `,
     ),
     providerDispatchCandidates: scalarCount(
       database,
-      "SELECT COUNT(*) AS count FROM run_dispatches WHERE dispatch_state IN ('dispatching', 'ambiguous')",
+      `
+        SELECT COUNT(*) AS count
+        FROM run_dispatches d
+        JOIN run_attempts a ON a.id = d.run_attempt_id
+        JOIN runs r ON r.id = a.run_id
+        JOIN sessions s ON s.id = r.session_id
+        JOIN provider_bindings b ON b.id = a.provider_binding_id
+          AND b.session_id = r.session_id AND b.provider_id = s.provider_id
+        JOIN run_attempts creator_a ON creator_a.id = b.created_by_run_attempt_id
+        JOIN runs creator_r ON creator_r.id = creator_a.run_id AND creator_r.session_id = r.session_id
+        WHERE d.dispatch_state IN ('dispatching', 'ambiguous')
+          AND (b.persistence_mode = 'persistent' OR b.created_by_run_attempt_id = a.id)
+      `,
     ),
     ephemeralResumeBlockedRuns: scalarCount(
       database,
@@ -528,7 +612,10 @@ function inspectStartupState(database: DatabaseSync): StartupRepairResult["inspe
         SELECT COUNT(DISTINCT r.id) AS count
         FROM runs r
         JOIN run_attempts a ON a.run_id = r.id AND a.attempt_state IN ('preparing', 'active')
+        JOIN sessions s ON s.id = r.session_id
         JOIN provider_bindings b ON b.id = a.provider_binding_id
+          AND b.session_id = r.session_id AND b.provider_id = s.provider_id
+          AND b.created_by_run_attempt_id = a.id
         WHERE r.phase IN ('queued', 'starting', 'active', 'canceling', 'finalizing')
           AND b.binding_state = 'active' AND b.persistence_mode = 'ephemeral'
       `,
@@ -1034,6 +1121,7 @@ function admitNormalRun(
     "run",
     command.run.id,
     now,
+    (value) => decodeRunAdmissionReplay(database, command, value),
   );
   if (idempotency.kind !== "new") return idempotency.result;
 
@@ -1142,6 +1230,7 @@ function admitRetryRun(
     "run",
     command.run.id,
     now,
+    (value) => decodeRunAdmissionReplay(database, command, value),
   );
   if (idempotency.kind !== "new") return idempotency.result;
 
@@ -1539,9 +1628,8 @@ function resolveProviderBinding(
     );
   }
   if (
-    command.resolution.kind === "active" &&
-    ((row.persistence_mode === "persistent" && command.resolution.ephemeralOwnerToken !== null) ||
-      (row.persistence_mode === "ephemeral" && command.resolution.ephemeralOwnerToken === null))
+    (row.persistence_mode === "persistent" && command.resolution.ephemeralOwnerToken !== null) ||
+    (row.persistence_mode === "ephemeral" && command.resolution.ephemeralOwnerToken === null)
   ) {
     return bindingResolutionFailure(failure("request_invalid", "Ephemeral ownership does not match persistence mode."));
   }
@@ -1557,123 +1645,61 @@ function resolveProviderBinding(
     return bindingResolutionFailure(failure("lifecycle_conflict", "Provider binding resolution state changed."));
   }
 
-  if (command.resolution.kind === "active") {
-    const duplicate = database
-      .prepare(
-        `
-        SELECT 1 FROM provider_bindings
-        WHERE provider_id = ? AND external_conversation_id = ? AND id <> ?
-      `,
-      )
-      .get(row.binding_provider_id, command.resolution.externalConversationId, command.bindingId);
-    if (duplicate !== undefined) {
-      return bindingResolutionFailure(failure("reference_invalid", "External conversation is already bound."));
-    }
-    const bindingUpdate = database
-      .prepare(
-        `
-        UPDATE provider_bindings SET binding_state = 'active', external_conversation_id = ?
-        WHERE id = ? AND binding_state = 'creating'
-      `,
-      )
-      .run(command.resolution.externalConversationId, command.bindingId);
-    const attemptUpdate = database
-      .prepare(
-        `
-        UPDATE run_attempts SET provider_binding_id = ?
-        WHERE id = ? AND run_id = ? AND attempt_state = 'preparing' AND provider_binding_id IS NULL
-      `,
-      )
-      .run(command.bindingId, command.attemptId, command.runId);
-    const runUpdate = database
-      .prepare(
-        `
-        UPDATE runs SET external_side_effect_state = 'present', updated_at = MAX(updated_at, ?),
-          version = version + 1
-        WHERE id = ? AND session_id = ? AND phase IN ('queued','starting','active','canceling','finalizing')
-      `,
-      )
-      .run(now, command.runId, command.sessionId);
-    if (bindingUpdate.changes !== 1 || attemptUpdate.changes !== 1 || runUpdate.changes !== 1) {
-      return bindingResolutionFailure(failure("lifecycle_conflict", "Provider binding activation conflicted."));
-    }
-    const execution: ProviderBindingResolutionExecution = {
-      result: success(
-        bindingResolutionValue(
-          command,
-          "active",
-          command.resolution.externalConversationId,
-          row.persistence_mode === "ephemeral" ? "registered" : "not_applicable",
-        ),
-        false,
-      ),
-      removeEphemeralOwner: false,
-    };
-    return row.persistence_mode === "ephemeral" && command.resolution.ephemeralOwnerToken !== null
-      ? {
-          ...execution,
-          registerEphemeralOwner: { bindingId: command.bindingId, token: command.resolution.ephemeralOwnerToken },
-        }
-      : execution;
+  const duplicate = database
+    .prepare(
+      `
+      SELECT 1 FROM provider_bindings
+      WHERE provider_id = ? AND external_conversation_id = ? AND id <> ?
+    `,
+    )
+    .get(row.binding_provider_id, command.resolution.externalConversationId, command.bindingId);
+  if (duplicate !== undefined) {
+    return bindingResolutionFailure(failure("reference_invalid", "External conversation is already bound."));
   }
-
   const bindingUpdate = database
     .prepare(
       `
-      UPDATE provider_bindings SET binding_state = 'invalidated', invalidated_at = ?,
-        invalidation_reason = 'conversation_start_ambiguous'
-      WHERE id = ? AND binding_state = 'creating'
+      UPDATE provider_bindings SET binding_state = 'active', external_conversation_id = ?
+      WHERE id = ? AND session_id = ? AND provider_id = ? AND binding_state = 'creating'
     `,
     )
-    .run(now, command.bindingId);
+    .run(command.resolution.externalConversationId, command.bindingId, command.sessionId, row.session_provider_id);
   const attemptUpdate = database
     .prepare(
       `
-      UPDATE run_attempts SET attempt_state = 'interrupted', failure_origin = ?, error_summary = ?, terminal_at = ?
+      UPDATE run_attempts SET provider_binding_id = ?
       WHERE id = ? AND run_id = ? AND attempt_state = 'preparing' AND provider_binding_id IS NULL
     `,
     )
-    .run(command.resolution.failureOrigin, command.resolution.errorSummary, now, command.attemptId, command.runId);
+    .run(command.bindingId, command.attemptId, command.runId);
   const runUpdate = database
     .prepare(
       `
-      UPDATE runs SET phase = 'interrupted', failure_origin = ?, error_summary = ?, terminal_at = ?,
-        external_side_effect_state = CASE
-          WHEN external_side_effect_state = 'present' THEN 'present' ELSE 'unknown' END,
-        updated_at = MAX(updated_at, ?), version = version + 1
+      UPDATE runs SET external_side_effect_state = 'present', updated_at = MAX(updated_at, ?),
+        version = version + 1
       WHERE id = ? AND session_id = ? AND phase IN ('queued','starting','active','canceling','finalizing')
     `,
     )
-    .run(command.resolution.failureOrigin, command.resolution.errorSummary, now, now, command.runId, command.sessionId);
-  const dispatchUpdate = database
-    .prepare(
-      `
-      UPDATE run_dispatches SET dispatch_state = 'aborted', resolved_at = ?
-      WHERE run_attempt_id = ? AND dispatch_state = 'pending'
-    `,
-    )
-    .run(now, command.attemptId);
-  const sessionUpdate = database
-    .prepare(
-      `
-      UPDATE sessions SET updated_at = MAX(updated_at, ?), last_activity_at = MAX(last_activity_at, ?)
-      WHERE id = ? AND workspace_key = ?
-    `,
-    )
-    .run(now, now, command.sessionId, command.workspaceKey);
-  if (
-    bindingUpdate.changes !== 1 ||
-    attemptUpdate.changes !== 1 ||
-    runUpdate.changes !== 1 ||
-    dispatchUpdate.changes !== 1 ||
-    sessionUpdate.changes !== 1
-  ) {
-    return bindingResolutionFailure(failure("lifecycle_conflict", "Ambiguous binding resolution conflicted."));
+    .run(now, command.runId, command.sessionId);
+  if (bindingUpdate.changes !== 1 || attemptUpdate.changes !== 1 || runUpdate.changes !== 1) {
+    return bindingResolutionFailure(failure("lifecycle_conflict", "Provider binding activation conflicted."));
   }
-  return {
-    result: success(bindingResolutionValue(command, "invalidated", null, "not_applicable"), false),
-    removeEphemeralOwner: true,
+  const execution: ProviderBindingResolutionExecution = {
+    result: success(
+      bindingResolutionValue(
+        command,
+        command.resolution.externalConversationId,
+        row.persistence_mode === "ephemeral" ? "registered" : "not_applicable",
+      ),
+      false,
+    ),
   };
+  return row.persistence_mode === "ephemeral" && command.resolution.ephemeralOwnerToken !== null
+    ? {
+        ...execution,
+        registerEphemeralOwner: { bindingId: command.bindingId, token: command.resolution.ephemeralOwnerToken },
+      }
+    : execution;
 }
 
 function beginRunDispatch(
@@ -1746,9 +1772,16 @@ function resolveRunDispatch(
 ): RepositoryCommandResult<RunDispatchResolutionResult> {
   const row = readDispatchTransitionRow(database, command);
   if (row === undefined) return failure("not_found", "Run dispatch target was not found.");
+  const tokenFailure = validateExplicitResolutionToken<RunDispatchResolutionResult>(
+    command.bindingId,
+    command.ephemeralOwnerToken,
+    row,
+    ephemeralBindingOwners,
+  );
+  if (tokenFailure !== undefined) return tokenFailure;
   const replay = replayRunDispatchResolution(command, row);
   if (replay !== undefined) return replay;
-  const ownershipFailure = validateDispatchOwnership<RunDispatchResolutionResult>(
+  const ownershipFailure = validateResolutionOwnership<RunDispatchResolutionResult>(
     command.bindingId,
     command.ephemeralOwnerToken,
     row,
@@ -1882,6 +1915,14 @@ function admitRunInput(
       JOIN run_attempts a ON a.run_id = r.id AND a.id = ?
       JOIN provider_bindings b ON b.id = a.provider_binding_id
         AND b.session_id = s.id AND b.provider_id = s.provider_id
+        AND EXISTS (
+          SELECT 1
+          FROM run_attempts creator_a
+          JOIN runs creator_r ON creator_r.id = creator_a.run_id
+          WHERE creator_a.id = b.created_by_run_attempt_id
+            AND creator_r.session_id = s.id
+        )
+        AND (b.persistence_mode = 'persistent' OR b.created_by_run_attempt_id = a.id)
       JOIN run_dispatches d ON d.run_attempt_id = a.id
       WHERE s.id = ? AND s.workspace_key = ?
     `,
@@ -2011,9 +2052,16 @@ function resolveRunInput(
 ): RepositoryCommandResult<RunInputResolutionResult> {
   const row = readRunInputTransitionRow(database, command);
   if (row === undefined) return failure("not_found", "Run input delivery was not found.");
+  const tokenFailure = validateExplicitResolutionToken<RunInputResolutionResult>(
+    command.bindingId,
+    command.ephemeralOwnerToken,
+    row,
+    ephemeralBindingOwners,
+  );
+  if (tokenFailure !== undefined) return tokenFailure;
   const replay = replayRunInputResolution(command, row);
   if (replay !== undefined) return replay;
-  const ownershipFailure = validateDispatchOwnership<RunInputResolutionResult>(
+  const ownershipFailure = validateResolutionOwnership<RunInputResolutionResult>(
     command.bindingId,
     command.ephemeralOwnerToken,
     row,
@@ -2175,22 +2223,49 @@ function terminalRun(
   now: number,
 ): RepositoryCommandResult<RunTerminalResult> {
   const { command } = prepared;
-  const row = database
+  const rows = database
     .prepare(
       `
       SELECT r.phase, r.final_assistant_message_id, r.failure_origin, r.provider_error_code,
              r.error_summary, r.terminal_at, a.attempt_state, s.workspace_key,
-             s.updated_at AS session_updated_at, s.last_activity_at AS session_last_activity_at
+             s.provider_id AS session_provider_id,
+             s.updated_at AS session_updated_at, s.last_activity_at AS session_last_activity_at,
+             a.provider_binding_id, d.dispatch_state,
+             b.id AS binding_id, b.session_id AS binding_session_id, b.provider_id AS binding_provider_id,
+             b.persistence_mode, b.binding_state,
+             b.created_by_run_attempt_id, creator_r.session_id AS binding_creator_session_id,
+             b.invalidation_reason
       FROM runs r
       JOIN run_attempts a ON a.id = ? AND a.run_id = r.id
+      JOIN run_dispatches d ON d.run_attempt_id = a.id
+      LEFT JOIN provider_bindings b
+        ON b.id = a.provider_binding_id
+        OR (a.provider_binding_id IS NULL AND b.created_by_run_attempt_id = a.id)
+      LEFT JOIN run_attempts creator_a ON creator_a.id = b.created_by_run_attempt_id
+      LEFT JOIN runs creator_r ON creator_r.id = creator_a.run_id
       JOIN sessions s ON s.id = r.session_id
       WHERE r.id = ? AND r.session_id = ?
     `,
     )
-    .get(command.attemptId, command.runId, command.sessionId) as TerminalGateRow | undefined;
+    .all(command.attemptId, command.runId, command.sessionId) as unknown as TerminalGateRow[];
+  const [row] = rows;
   if (row === undefined) return failure("not_found", "Run and Attempt were not found in the Session.");
+  if (rows.length !== 1) {
+    return failure("reference_invalid", "Run Attempt resolves to multiple Provider Bindings.");
+  }
   if (row.workspace_key !== command.workspaceKey)
     return failure("reference_invalid", "Workspace scope does not match.");
+  if (
+    row.binding_id !== null &&
+    (row.binding_session_id !== command.sessionId ||
+      row.binding_provider_id !== row.session_provider_id ||
+      row.binding_creator_session_id !== command.sessionId)
+  ) {
+    return failure("reference_invalid", "Provider Binding does not match the Run Session and Provider scope.");
+  }
+  if (row.persistence_mode === "ephemeral" && row.created_by_run_attempt_id !== command.attemptId) {
+    return failure("reference_invalid", "Ephemeral Provider Binding does not belong to the Run Attempt.");
+  }
   if (isTerminalRunPhase(row.phase)) return replayTerminalRun(database, prepared, row);
   if (!isNonTerminalRunPhase(row.phase)) return failure("lifecycle_conflict", "Run cannot transition to terminal.");
   if ((command.outcome.kind === "completed" || command.outcome.kind === "failed") && row.attempt_state !== "active") {
@@ -2203,6 +2278,8 @@ function terminalRun(
   ) {
     return failure("lifecycle_conflict", "Canceled and interrupted outcomes require a live Attempt.");
   }
+  const preparationFailure = validateTerminalPreparation(command, row);
+  if (preparationFailure !== undefined) return preparationFailure;
 
   const child = readChildTerminalRow(database, command.runId);
   if ((child === undefined) !== (command.childResult === null)) {
@@ -2218,6 +2295,10 @@ function terminalRun(
   if (hasTerminalIdentityConflict(database, command, prepared.terminalDedupeKey)) {
     return failure("reference_invalid", "Terminal event, Message, or output identity is already in use.");
   }
+  const inputResolution = settleRunInputDeliveriesForTerminal(database, command, now);
+  if (inputResolution !== undefined) return rollbackWith(inputResolution);
+  const preparationResolution = applyTerminalPreparationResolution(database, command, row, now);
+  if (preparationResolution !== undefined) return rollbackWith(preparationResolution);
   let nextOutputOrdinal = nextOrdinal(database, "run_output_items", "run_id", command.runId);
   for (const output of command.outputs) {
     if (readOutputReplayRow(database, command.runId, output.id, output.providerItemId) !== undefined) {
@@ -2266,7 +2347,11 @@ function terminalRun(
     .prepare(
       `
       UPDATE runs SET phase = ?, final_assistant_message_id = ?, failure_origin = ?,
-        provider_error_code = ?, error_summary = ?, terminal_event_received_at = ?,
+        provider_error_code = ?, error_summary = ?,
+        external_side_effect_state = CASE WHEN ? = 1 THEN
+          CASE WHEN external_side_effect_state = 'present' THEN 'present' ELSE 'unknown' END
+          ELSE external_side_effect_state END,
+        terminal_event_received_at = ?,
         terminal_at = ?, updated_at = ?, version = version + 1
       WHERE id = ? AND session_id = ? AND phase IN ('queued','starting','active','canceling','finalizing')
     `,
@@ -2277,6 +2362,7 @@ function terminalRun(
       runFailureFields.failureOrigin,
       runFailureFields.providerErrorCode,
       runFailureFields.errorSummary,
+      command.preDispatchResolution.kind === "binding_creation_ambiguous" ? 1 : 0,
       now,
       now,
       now,
@@ -2328,6 +2414,148 @@ function terminalRun(
   return success(
     terminalResult(command, finalMessageId, command.terminalEvent.id, childDeliveryId, delegationState, now),
     false,
+  );
+}
+
+function validateTerminalPreparation(
+  command: RunTerminalCommand,
+  row: TerminalGateRow,
+): RepositoryCommandResult<RunTerminalResult> | undefined {
+  const resolution = command.preDispatchResolution.kind;
+  if (resolution === "not_applicable") {
+    if (
+      row.binding_state === "creating" ||
+      isUnresolvedTerminalDispatch(row.dispatch_state) ||
+      (row.attempt_state === "active" && row.dispatch_state !== "accepted")
+    ) {
+      return failure("lifecycle_conflict", "Run preparation must be resolved before terminal transition.");
+    }
+    return undefined;
+  }
+  if (command.outcome.kind !== "canceled" && command.outcome.kind !== "interrupted") {
+    return failure("request_invalid", "Pre-dispatch resolution requires a canceled or interrupted outcome.");
+  }
+  if (row.attempt_state !== "preparing" || row.dispatch_state !== "pending" || row.binding_id === null) {
+    return failure("lifecycle_conflict", "Pre-dispatch resolution state changed.");
+  }
+  if (resolution === "dispatch_not_sent") {
+    return row.binding_state === "active" && row.provider_binding_id === row.binding_id
+      ? undefined
+      : failure("lifecycle_conflict", "Pending Dispatch does not have an active Binding.");
+  }
+  return row.binding_state === "creating" &&
+    row.provider_binding_id === null &&
+    row.created_by_run_attempt_id === command.attemptId
+    ? undefined
+    : failure("lifecycle_conflict", "Pending Binding creation state changed.");
+}
+
+function applyTerminalPreparationResolution(
+  database: DatabaseSync,
+  command: RunTerminalCommand,
+  row: TerminalGateRow,
+  now: number,
+): RepositoryCommandResult<RunTerminalResult> | undefined {
+  const resolution = command.preDispatchResolution.kind;
+  if (resolution === "binding_creation_not_sent" || resolution === "binding_creation_ambiguous") {
+    const invalidationReason =
+      resolution === "binding_creation_not_sent" ? "conversation_start_not_sent" : "conversation_start_ambiguous";
+    const bindingUpdate = database
+      .prepare(
+        `
+        UPDATE provider_bindings
+        SET binding_state = 'invalidated', invalidated_at = ?, invalidation_reason = ?
+        WHERE id = ? AND session_id = ? AND provider_id = ?
+          AND binding_state = 'creating' AND created_by_run_attempt_id = ?
+      `,
+      )
+      .run(now, invalidationReason, row.binding_id, command.sessionId, row.session_provider_id, command.attemptId);
+    const dispatchUpdate = abortPendingDispatch(database, command.attemptId, now);
+    if (bindingUpdate.changes !== 1 || dispatchUpdate !== 1) {
+      return failure("lifecycle_conflict", "Binding creation abort conflicted.");
+    }
+  } else if (resolution === "dispatch_not_sent") {
+    if (abortPendingDispatch(database, command.attemptId, now) !== 1) {
+      return failure("lifecycle_conflict", "Pending Dispatch abort conflicted.");
+    }
+  }
+
+  if (row.persistence_mode === "ephemeral" && row.binding_state === "active") {
+    const bindingUpdate = database
+      .prepare(
+        `
+        UPDATE provider_bindings
+        SET binding_state = 'invalidated', invalidated_at = ?, invalidation_reason = 'ephemeral_run_terminal'
+        WHERE id = ? AND session_id = ? AND provider_id = ?
+          AND binding_state = 'active' AND persistence_mode = 'ephemeral'
+          AND created_by_run_attempt_id = ?
+      `,
+      )
+      .run(now, row.binding_id, command.sessionId, row.session_provider_id, command.attemptId);
+    if (bindingUpdate.changes !== 1) return failure("lifecycle_conflict", "Ephemeral Binding invalidation conflicted.");
+  }
+  return undefined;
+}
+
+function settleRunInputDeliveriesForTerminal(
+  database: DatabaseSync,
+  command: RunTerminalCommand,
+  now: number,
+): RepositoryCommandResult<RunTerminalResult> | undefined {
+  database
+    .prepare(
+      `
+      UPDATE run_input_deliveries
+      SET delivery_state = 'aborted', resolution_code = 'run_terminal_not_sent', resolved_at = ?
+      WHERE run_id = ? AND run_attempt_id = ? AND delivery_state = 'pending'
+        AND EXISTS (
+          SELECT 1 FROM messages m
+          JOIN runs r ON r.id = run_input_deliveries.run_id AND r.session_id = m.session_id
+          JOIN run_attempts a ON a.id = run_input_deliveries.run_attempt_id AND a.run_id = r.id
+          WHERE m.id = run_input_deliveries.message_id
+        )
+    `,
+    )
+    .run(now, command.runId, command.attemptId);
+  database
+    .prepare(
+      `
+      UPDATE run_input_deliveries
+      SET delivery_state = 'ambiguous', resolution_code = 'process_unknown', resolved_at = ?
+      WHERE run_id = ? AND run_attempt_id = ? AND delivery_state = 'dispatching'
+        AND EXISTS (
+          SELECT 1 FROM messages m
+          JOIN runs r ON r.id = run_input_deliveries.run_id AND r.session_id = m.session_id
+          JOIN run_attempts a ON a.id = run_input_deliveries.run_attempt_id AND a.run_id = r.id
+          WHERE m.id = run_input_deliveries.message_id
+        )
+    `,
+    )
+    .run(now, command.runId, command.attemptId);
+  const unresolved = database
+    .prepare(
+      `
+      SELECT 1 FROM run_input_deliveries
+      WHERE run_id = ? AND run_attempt_id = ? AND delivery_state IN ('pending', 'dispatching')
+      LIMIT 1
+    `,
+    )
+    .get(command.runId, command.attemptId);
+  return unresolved === undefined
+    ? undefined
+    : failure("lifecycle_conflict", "Run input delivery terminal resolution conflicted.");
+}
+
+function abortPendingDispatch(database: DatabaseSync, attemptId: string, now: number): number {
+  return Number(
+    database
+      .prepare(
+        `
+        UPDATE run_dispatches SET dispatch_state = 'aborted', resolved_at = ?
+        WHERE run_attempt_id = ? AND dispatch_state = 'pending'
+      `,
+      )
+      .run(now, attemptId).changes,
   );
 }
 
@@ -2534,6 +2762,89 @@ function decodeChildResultCollectReplay(
   return value as ChildResultCollectResult;
 }
 
+function decodeRunAdmissionReplay(
+  database: DatabaseSync,
+  command: NormalRunAdmissionCommand,
+  value: unknown,
+): NormalRunAdmissionResult | undefined;
+function decodeRunAdmissionReplay(
+  database: DatabaseSync,
+  command: RetryRunAdmissionCommand,
+  value: unknown,
+): RetryRunAdmissionResult | undefined;
+function decodeRunAdmissionReplay(
+  database: DatabaseSync,
+  command: NormalRunAdmissionCommand | RetryRunAdmissionCommand,
+  value: unknown,
+): NormalRunAdmissionResult | RetryRunAdmissionResult | undefined {
+  const isRetry = "retryOfRunId" in command;
+  const keys = [
+    "sessionId",
+    "messageId",
+    "runId",
+    "attemptId",
+    "bindingId",
+    "bindingState",
+    "dispatchState",
+    "admittedAt",
+    ...(isRetry ? ["retryOfRunId"] : []),
+  ];
+  if (!isPlainObject(value) || !hasExactKeys(value, keys)) return undefined;
+  const row = database
+    .prepare(
+      `
+      SELECT r.initiating_message_id, r.retry_of_run_id, r.created_at,
+        a.id AS attempt_id, b.id AS binding_id, b.persistence_mode
+      FROM runs r
+      JOIN sessions s ON s.id = r.session_id
+      JOIN run_attempts a ON a.id = ? AND a.run_id = r.id
+      JOIN run_dispatches d ON d.run_attempt_id = a.id
+      JOIN provider_bindings b ON b.id = ?
+        AND (a.provider_binding_id = b.id
+          OR (a.provider_binding_id IS NULL AND b.created_by_run_attempt_id = a.id))
+        AND b.session_id = r.session_id AND b.provider_id = s.provider_id
+      JOIN run_attempts creator_a ON creator_a.id = b.created_by_run_attempt_id
+      JOIN runs creator_r ON creator_r.id = creator_a.run_id AND creator_r.session_id = r.session_id
+      WHERE r.id = ? AND r.session_id = ? AND s.workspace_key = ?
+        AND (b.persistence_mode = 'persistent' OR b.created_by_run_attempt_id = a.id)
+    `,
+    )
+    .get(
+      command.attemptId,
+      command.bindingIntent.bindingId,
+      command.run.id,
+      command.sessionId,
+      command.workspaceKey,
+    ) as
+    | Readonly<{
+        initiating_message_id: string;
+        retry_of_run_id: string | null;
+        created_at: number;
+        attempt_id: string;
+        binding_id: string;
+        persistence_mode: "persistent" | "ephemeral";
+      }>
+    | undefined;
+  const retryOfRunId = isRetry ? command.retryOfRunId : null;
+  if (
+    row === undefined ||
+    row.retry_of_run_id !== retryOfRunId ||
+    value.sessionId !== command.sessionId ||
+    value.messageId !== row.initiating_message_id ||
+    value.runId !== command.run.id ||
+    value.attemptId !== row.attempt_id ||
+    value.bindingId !== row.binding_id ||
+    (command.bindingIntent.kind === "create" && row.persistence_mode !== command.bindingIntent.persistenceMode) ||
+    value.bindingState !== (command.bindingIntent.kind === "create" ? "creating" : "active") ||
+    value.dispatchState !== "pending" ||
+    value.admittedAt !== row.created_at ||
+    (isRetry && value.retryOfRunId !== retryOfRunId)
+  ) {
+    return undefined;
+  }
+  return value as unknown as NormalRunAdmissionResult | RetryRunAdmissionResult;
+}
+
 function decodeChildStartReplay(
   database: DatabaseSync,
   command: ChildStartCommand,
@@ -2567,13 +2878,15 @@ function decodeChildStartReplay(
       SELECT sr.parent_session_id, sr.created_by_parent_run_id, sr.child_session_id,
         sr.orchestration_root_session_id, sr.id AS relation_id, sr.correlation_id, sr.created_at,
         g.id AS delegation_id, d.id AS delivery_id, g.initial_instruction_message_id AS message_id,
-        r.id AS run_id, a.id AS attempt_id, b.id AS binding_id
+        r.id AS run_id, a.id AS attempt_id, b.id AS binding_id, b.persistence_mode
       FROM child_result_deliveries d
       JOIN delegations g ON g.id = d.delegation_id
       JOIN session_relations sr ON sr.id = g.session_relation_id
       JOIN runs r ON r.id = d.child_run_id AND r.session_id = sr.child_session_id
       JOIN run_attempts a ON a.run_id = r.id AND a.ordinal = 1
+      JOIN sessions child_s ON child_s.id = r.session_id
       JOIN provider_bindings b ON b.created_by_run_attempt_id = a.id
+        AND b.session_id = r.session_id AND b.provider_id = child_s.provider_id
       JOIN run_dispatches rd ON rd.run_attempt_id = a.id
       WHERE d.id = ?
     `,
@@ -2592,6 +2905,7 @@ function decodeChildStartReplay(
     row.run_id !== command.run.id ||
     row.attempt_id !== command.attemptId ||
     row.binding_id !== command.binding.id ||
+    row.persistence_mode !== command.binding.persistenceMode ||
     value.parentSessionId !== row.parent_session_id ||
     value.parentRunId !== row.created_by_parent_run_id ||
     value.childSessionId !== row.child_session_id ||
@@ -2855,7 +3169,9 @@ function prepareRunTerminal(command: RunTerminalCommand): PreparedRunTerminal {
     command,
     finalMessageJson,
     // Keep exact-replay identity stable after a pending output resolves without exposing it through RunEvent.summary.
-    terminalDedupeKey: fingerprint({ operation: "run.terminal", command }),
+    terminalDedupeKey: fingerprintJson(
+      canonicalJsonString({ operation: REPOSITORY_WRITE_OPERATIONS.runTerminal, command }),
+    ),
   };
 }
 
@@ -3141,21 +3457,11 @@ function decodeProviderBindingResolution(
     return decodeFailure();
   }
   const resolution = payload.resolution;
-  if (resolution.kind === "active") {
-    if (
-      !hasExactKeys(resolution, ["kind", "externalConversationId", "ephemeralOwnerToken"]) ||
-      !isBoundedString(resolution.externalConversationId, 4_096) ||
-      (resolution.ephemeralOwnerToken !== null && !isCanonicalUuid(resolution.ephemeralOwnerToken))
-    ) {
-      return decodeFailure();
-    }
-  } else if (
-    resolution.kind !== "ambiguous" ||
-    !hasExactKeys(resolution, ["kind", "failureOrigin", "errorSummary"]) ||
-    (resolution.failureOrigin !== "transport" &&
-      resolution.failureOrigin !== "process" &&
-      resolution.failureOrigin !== "unknown") ||
-    (resolution.errorSummary !== null && !isBoundedString(resolution.errorSummary, 1_024))
+  if (
+    resolution.kind !== "active" ||
+    !hasExactKeys(resolution, ["kind", "externalConversationId", "ephemeralOwnerToken"]) ||
+    !isBoundedString(resolution.externalConversationId, 4_096) ||
+    (resolution.ephemeralOwnerToken !== null && !isCanonicalUuid(resolution.ephemeralOwnerToken))
   ) {
     return decodeFailure();
   }
@@ -3288,7 +3594,9 @@ function decodeRunInputResolution(payload: Readonly<Record<string, unknown>>): D
     !hasExactKeys(outcome, ["kind", "resolutionCode"]) ||
     !isRunInputResolutionCode(outcome.resolutionCode) ||
     (outcome.kind === "rejected" && outcome.resolutionCode !== "provider_rejected") ||
-    (outcome.kind === "ambiguous" && outcome.resolutionCode === "provider_rejected")
+    (outcome.kind === "ambiguous" &&
+      outcome.resolutionCode !== "transport_unknown" &&
+      outcome.resolutionCode !== "process_unknown")
   ) {
     return decodeFailure();
   }
@@ -3348,6 +3656,7 @@ function decodeRunTerminal(payload: Readonly<Record<string, unknown>>): DecodeRe
       "runId",
       "attemptId",
       "terminalEvent",
+      "preDispatchResolution",
       "outcome",
       "outputs",
       "childResult",
@@ -3360,6 +3669,7 @@ function decodeRunTerminal(payload: Readonly<Record<string, unknown>>): DecodeRe
     !hasExactKeys(payload.terminalEvent, ["id", "dedupeKey"]) ||
     !isBoundedString(payload.terminalEvent.id, 1024) ||
     !isBoundedString(payload.terminalEvent.dedupeKey, 1024) ||
+    !isRunTerminalPreDispatchResolution(payload.preDispatchResolution) ||
     !isRunTerminalOutcome(payload.outcome) ||
     !isDenseTerminalOutputs(payload.outputs) ||
     !isChildTerminalResult(payload.childResult)
@@ -3513,14 +3823,9 @@ function readBindingResolutionRow(
         b.persistence_mode,
         b.binding_state,
         b.external_conversation_id,
-        b.invalidation_reason,
         a.provider_binding_id,
         a.attempt_state,
-        a.failure_origin AS attempt_failure_origin,
-        a.error_summary AS attempt_error_summary,
         r.phase AS run_phase,
-        r.failure_origin AS run_failure_origin,
-        r.error_summary AS run_error_summary,
         s.provider_id AS session_provider_id,
         d.dispatch_state
       FROM provider_bindings b
@@ -3542,7 +3847,6 @@ function replayBindingResolution(
   ephemeralBindingOwners: ReadonlyMap<string, string>,
 ): ProviderBindingResolutionExecution | undefined {
   if (
-    command.resolution.kind === "active" &&
     row.binding_state === "active" &&
     row.external_conversation_id === command.resolution.externalConversationId &&
     row.provider_binding_id === command.bindingId
@@ -3555,27 +3859,9 @@ function replayBindingResolution(
           : "unavailable";
     return {
       result: success(
-        bindingResolutionValue(command, "active", command.resolution.externalConversationId, ephemeralOwnership),
+        bindingResolutionValue(command, command.resolution.externalConversationId, ephemeralOwnership),
         true,
       ),
-      removeEphemeralOwner: false,
-    };
-  }
-  if (
-    command.resolution.kind === "ambiguous" &&
-    row.binding_state === "invalidated" &&
-    row.invalidation_reason === "conversation_start_ambiguous" &&
-    row.attempt_state === "interrupted" &&
-    row.attempt_failure_origin === command.resolution.failureOrigin &&
-    row.attempt_error_summary === command.resolution.errorSummary &&
-    row.run_phase === "interrupted" &&
-    row.run_failure_origin === command.resolution.failureOrigin &&
-    row.run_error_summary === command.resolution.errorSummary &&
-    row.dispatch_state === "aborted"
-  ) {
-    return {
-      result: success(bindingResolutionValue(command, "invalidated", null, "not_applicable"), true),
-      removeEphemeralOwner: true,
     };
   }
   return undefined;
@@ -3583,8 +3869,7 @@ function replayBindingResolution(
 
 function bindingResolutionValue(
   command: ProviderBindingResolutionCommand,
-  bindingState: "active" | "invalidated",
-  externalConversationId: string | null,
+  externalConversationId: string,
   ephemeralOwnership: ProviderBindingResolutionResult["ephemeralOwnership"],
 ): ProviderBindingResolutionResult {
   return {
@@ -3592,7 +3877,7 @@ function bindingResolutionValue(
     runId: command.runId,
     attemptId: command.attemptId,
     bindingId: command.bindingId,
-    bindingState,
+    bindingState: "active",
     externalConversationId,
     ephemeralOwnership,
   };
@@ -3601,7 +3886,7 @@ function bindingResolutionValue(
 function bindingResolutionFailure(
   result: RepositoryCommandResult<ProviderBindingResolutionResult>,
 ): ProviderBindingResolutionExecution {
-  return { result, removeEphemeralOwner: false };
+  return { result };
 }
 
 function readDispatchTransitionRow(database: DatabaseSync, command: DispatchScope): DispatchTransitionRow | undefined {
@@ -3624,6 +3909,14 @@ function readDispatchTransitionRow(database: DatabaseSync, command: DispatchScop
       JOIN runs r ON r.id = a.run_id
       JOIN sessions s ON s.id = r.session_id
       JOIN provider_bindings b ON b.id = ? AND b.session_id = s.id AND b.provider_id = s.provider_id
+        AND EXISTS (
+          SELECT 1
+          FROM run_attempts creator_a
+          JOIN runs creator_r ON creator_r.id = creator_a.run_id
+          WHERE creator_a.id = b.created_by_run_attempt_id
+            AND creator_r.session_id = s.id
+        )
+        AND (b.persistence_mode = 'persistent' OR b.created_by_run_attempt_id = a.id)
       JOIN run_dispatches d ON d.run_attempt_id = a.id
       WHERE s.id = ? AND s.workspace_key = ? AND r.id = ? AND a.id = ?
     `,
@@ -3647,6 +3940,14 @@ function readRunInputTransitionRow(database: DatabaseSync, command: RunInputScop
       JOIN run_attempts a ON a.id = i.run_attempt_id AND a.run_id = r.id
       JOIN sessions s ON s.id = r.session_id
       JOIN provider_bindings b ON b.id = ? AND b.session_id = s.id AND b.provider_id = s.provider_id
+        AND EXISTS (
+          SELECT 1
+          FROM run_attempts creator_a
+          JOIN runs creator_r ON creator_r.id = creator_a.run_id
+          WHERE creator_a.id = b.created_by_run_attempt_id
+            AND creator_r.session_id = s.id
+        )
+        AND (b.persistence_mode = 'persistent' OR b.created_by_run_attempt_id = a.id)
       JOIN run_dispatches d ON d.run_attempt_id = a.id
       WHERE i.message_id = ? AND s.id = ? AND s.workspace_key = ? AND r.id = ? AND a.id = ?
     `,
@@ -3671,10 +3972,22 @@ function readRunInputAdmissionResult(
       `
       SELECT i.message_id, i.run_id, i.run_attempt_id, i.delivery_state,
         i.resolution_code, i.created_at, i.dispatching_at, i.resolved_at,
-        a.provider_binding_id
+        b.id AS provider_binding_id
       FROM run_input_deliveries i
       JOIN messages m ON m.id = i.message_id AND m.session_id = ?
       JOIN run_attempts a ON a.id = i.run_attempt_id AND a.run_id = i.run_id
+      JOIN runs r ON r.id = i.run_id AND r.session_id = m.session_id
+      JOIN sessions s ON s.id = r.session_id
+      JOIN provider_bindings b ON b.id = a.provider_binding_id
+        AND b.session_id = r.session_id AND b.provider_id = s.provider_id
+        AND EXISTS (
+          SELECT 1
+          FROM run_attempts creator_a
+          JOIN runs creator_r ON creator_r.id = creator_a.run_id
+          WHERE creator_a.id = b.created_by_run_attempt_id
+            AND creator_r.session_id = r.session_id
+        )
+        AND (b.persistence_mode = 'persistent' OR b.created_by_run_attempt_id = a.id)
       WHERE i.message_id = ?
     `,
     )
@@ -3711,6 +4024,53 @@ function validateDispatchOwnership<T>(
   return ephemeralOwnerToken !== null && ephemeralBindingOwners.get(bindingId) === ephemeralOwnerToken
     ? undefined
     : failure("reference_invalid", "Ephemeral Binding live ownership is unavailable.");
+}
+
+function validateResolutionOwnership<T>(
+  bindingId: string,
+  ephemeralOwnerToken: string | null,
+  row: BindingOwnershipRow,
+  ephemeralBindingOwners: ReadonlyMap<string, string>,
+): RepositoryCommandResult<T> | undefined {
+  const tokenFailure = validateExplicitResolutionToken<T>(bindingId, ephemeralOwnerToken, row, ephemeralBindingOwners);
+  if (tokenFailure !== undefined) return tokenFailure;
+  if (row.binding_state !== "active" || row.external_conversation_id === null) {
+    return failure("reference_invalid", "Run resolution requires an active Provider binding.");
+  }
+  return undefined;
+}
+
+function validateExplicitResolutionToken<T>(
+  bindingId: string,
+  ephemeralOwnerToken: string | null,
+  row: BindingOwnershipRow,
+  ephemeralBindingOwners: ReadonlyMap<string, string>,
+): RepositoryCommandResult<T> | undefined {
+  if (ephemeralOwnerToken === null) return undefined;
+  if (row.persistence_mode === "persistent") {
+    return failure("request_invalid", "Persistent Binding does not accept ephemeral ownership.");
+  }
+  return ephemeralBindingOwners.get(bindingId) === ephemeralOwnerToken
+    ? undefined
+    : failure("reference_invalid", "Ephemeral Binding live ownership token does not match.");
+}
+
+function readTerminalEphemeralBindingId(database: DatabaseSync, command: RunTerminalCommand): string | undefined {
+  const row = database
+    .prepare(
+      `
+      SELECT b.id FROM run_attempts a
+      JOIN runs r ON r.id = a.run_id
+      JOIN sessions s ON s.id = r.session_id
+      JOIN provider_bindings b ON b.id = a.provider_binding_id
+        AND b.session_id = r.session_id AND b.provider_id = s.provider_id
+        AND b.created_by_run_attempt_id = a.id
+      WHERE a.id = ? AND a.run_id = ? AND r.session_id = ? AND s.workspace_key = ?
+        AND b.persistence_mode = 'ephemeral'
+    `,
+    )
+    .get(command.attemptId, command.runId, command.sessionId, command.workspaceKey) as { id: string } | undefined;
+  return row?.id;
 }
 
 function runInputBeginValue(
@@ -3832,8 +4192,13 @@ function resolveAdmissionBinding<T>(
   const openBindings = database
     .prepare(
       `
-      SELECT id, provider_id, persistence_mode, binding_state FROM provider_bindings
-      WHERE session_id = ? AND binding_state IN ('creating', 'active')
+      SELECT b.id, b.provider_id, b.persistence_mode, b.binding_state,
+        creator_r.session_id AS creator_session_id, s.provider_id AS session_provider_id
+      FROM provider_bindings b
+      LEFT JOIN run_attempts creator_a ON creator_a.id = b.created_by_run_attempt_id
+      LEFT JOIN runs creator_r ON creator_r.id = creator_a.run_id
+      JOIN sessions s ON s.id = b.session_id
+      WHERE b.session_id = ? AND b.binding_state IN ('creating', 'active')
     `,
     )
     .all(command.sessionId) as unknown as readonly Readonly<{
@@ -3841,6 +4206,8 @@ function resolveAdmissionBinding<T>(
     provider_id: string;
     persistence_mode: "persistent" | "ephemeral";
     binding_state: "creating" | "active";
+    creator_session_id: string | null;
+    session_provider_id: string;
   }>[];
   if (command.bindingIntent.kind === "create") {
     if (openBindings.length !== 0) {
@@ -3853,6 +4220,8 @@ function resolveAdmissionBinding<T>(
     binding === undefined ||
     binding.id !== command.bindingIntent.bindingId ||
     binding.provider_id !== providerId ||
+    binding.provider_id !== binding.session_provider_id ||
+    binding.creator_session_id !== command.sessionId ||
     binding.persistence_mode !== "persistent" ||
     binding.binding_state !== "active"
   ) {
@@ -3932,21 +4301,30 @@ function canResumeProviderBinding(database: DatabaseSync, sessionId: string, pro
   const rows = database
     .prepare(
       `
-      SELECT provider_id, persistence_mode, binding_state FROM provider_bindings
-      WHERE session_id = ? AND binding_state IN ('creating', 'active')
+      SELECT b.provider_id, b.persistence_mode, b.binding_state,
+        creator_r.session_id AS creator_session_id, s.provider_id AS session_provider_id
+      FROM provider_bindings b
+      LEFT JOIN run_attempts creator_a ON creator_a.id = b.created_by_run_attempt_id
+      LEFT JOIN runs creator_r ON creator_r.id = creator_a.run_id
+      JOIN sessions s ON s.id = b.session_id
+      WHERE b.session_id = ? AND b.binding_state IN ('creating', 'active')
     `,
     )
     .all(sessionId) as unknown as readonly Readonly<{
     provider_id: string;
     persistence_mode: "persistent" | "ephemeral";
     binding_state: "creating" | "active";
+    creator_session_id: string | null;
+    session_provider_id: string;
   }>[];
   return (
     rows.length === 0 ||
     (rows.length === 1 &&
       rows[0]?.binding_state === "active" &&
       rows[0].persistence_mode === "persistent" &&
-      rows[0].provider_id === providerId)
+      rows[0].provider_id === providerId &&
+      rows[0].provider_id === rows[0].session_provider_id &&
+      rows[0].creator_session_id === sessionId)
   );
 }
 
@@ -4276,6 +4654,7 @@ function replayTerminalRun(
   const expectedFinalId =
     command.outcome.kind === "completed" ? (command.outcome.finalAssistantMessage?.id ?? null) : null;
   if (
+    !terminalPreparationReplayMatches(command, row) ||
     row.phase !== command.outcome.kind ||
     row.final_assistant_message_id !== expectedFinalId ||
     row.failure_origin !== failureFields.failureOrigin ||
@@ -4313,6 +4692,40 @@ function replayTerminalRun(
     ),
     true,
   );
+}
+
+function terminalPreparationReplayMatches(command: RunTerminalCommand, row: TerminalGateRow): boolean {
+  const resolution = command.preDispatchResolution.kind;
+  if (resolution === "binding_creation_not_sent" || resolution === "binding_creation_ambiguous") {
+    return (
+      row.binding_state === "invalidated" &&
+      row.invalidation_reason ===
+        (resolution === "binding_creation_not_sent" ? "conversation_start_not_sent" : "conversation_start_ambiguous") &&
+      row.created_by_run_attempt_id === command.attemptId &&
+      row.dispatch_state === "aborted"
+    );
+  }
+  if (resolution === "dispatch_not_sent") {
+    return (
+      row.dispatch_state === "aborted" &&
+      row.provider_binding_id === row.binding_id &&
+      (row.persistence_mode === "persistent" ||
+        (row.persistence_mode === "ephemeral" &&
+          row.binding_state === "invalidated" &&
+          row.invalidation_reason === "ephemeral_run_terminal"))
+    );
+  }
+  if (row.binding_state === "creating" || isUnresolvedTerminalDispatch(row.dispatch_state)) {
+    return false;
+  }
+  return (
+    row.persistence_mode !== "ephemeral" ||
+    (row.binding_state === "invalidated" && row.invalidation_reason === "ephemeral_run_terminal")
+  );
+}
+
+function isUnresolvedTerminalDispatch(dispatchState: TerminalGateRow["dispatch_state"]): boolean {
+  return dispatchState === "pending" || dispatchState === "dispatching" || dispatchState === "ambiguous";
 }
 
 function terminalOutputsReplay(
@@ -4568,6 +4981,17 @@ function isRunOutputPayload(value: unknown, allowPending: boolean): boolean {
   return false;
 }
 
+function isRunTerminalPreDispatchResolution(value: unknown): value is RunTerminalPreDispatchResolution {
+  return (
+    isPlainObject(value) &&
+    hasExactKeys(value, ["kind"]) &&
+    (value.kind === "not_applicable" ||
+      value.kind === "binding_creation_not_sent" ||
+      value.kind === "binding_creation_ambiguous" ||
+      value.kind === "dispatch_not_sent")
+  );
+}
+
 function isRunTerminalOutcome(value: unknown): value is RunTerminalCommand["outcome"] {
   if (!isPlainObject(value) || typeof value.kind !== "string") return false;
   if (value.kind === "completed") {
@@ -4637,7 +5061,12 @@ function hasRunInputScope(value: Readonly<Record<string, unknown>>): boolean {
 }
 
 function isRunInputResolutionCode(value: unknown): value is RunInputResolutionCode {
-  return value === "provider_rejected" || value === "transport_unknown" || value === "process_unknown";
+  return (
+    value === "provider_rejected" ||
+    value === "transport_unknown" ||
+    value === "process_unknown" ||
+    value === "run_terminal_not_sent"
+  );
 }
 
 function isDenseBoundedStringArray(value: unknown, maxItems: number, maxLength: number): value is string[] {
@@ -4827,7 +5256,18 @@ type TerminalGateRow = Readonly<{
   error_summary: string | null;
   terminal_at: number | null;
   attempt_state: string;
+  provider_binding_id: string | null;
+  dispatch_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
+  binding_id: string | null;
+  binding_session_id: string | null;
+  binding_provider_id: string | null;
+  persistence_mode: "persistent" | "ephemeral" | null;
+  binding_state: "creating" | "active" | "invalidated" | "superseded" | null;
+  created_by_run_attempt_id: string | null;
+  binding_creator_session_id: string | null;
+  invalidation_reason: string | null;
   workspace_key: string;
+  session_provider_id: string;
   session_updated_at: number;
   session_last_activity_at: number;
 }>;
@@ -4864,6 +5304,7 @@ type ChildStartReplayRow = Readonly<{
   run_id: string;
   attempt_id: string;
   binding_id: string;
+  persistence_mode: "persistent" | "ephemeral";
 }>;
 type BindingResolution<T> =
   | Readonly<{ ok: true; providerBindingId: string | null }>
@@ -4886,21 +5327,15 @@ type BindingResolutionRow = Readonly<{
   persistence_mode: "persistent" | "ephemeral";
   binding_state: "creating" | "active" | "invalidated" | "superseded";
   external_conversation_id: string | null;
-  invalidation_reason: string | null;
   provider_binding_id: string | null;
   attempt_state: "preparing" | "active" | "succeeded" | "failed" | "interrupted";
-  attempt_failure_origin: string | null;
-  attempt_error_summary: string | null;
   run_phase: NonTerminalRunPhase | "completed" | "failed" | "canceled" | "interrupted";
-  run_failure_origin: string | null;
-  run_error_summary: string | null;
   session_provider_id: string;
   dispatch_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
 }>;
 type ProviderBindingResolutionExecution = Readonly<{
   result: RepositoryCommandResult<ProviderBindingResolutionResult>;
   registerEphemeralOwner?: Readonly<{ bindingId: string; token: string }>;
-  removeEphemeralOwner: boolean;
 }>;
 type DispatchScope = Readonly<{
   sessionId: string;
@@ -4945,7 +5380,7 @@ type RunInputTransitionRow = BindingOwnershipRow &
     provider_binding_id: string | null;
     attempt_state: "preparing" | "active" | "succeeded" | "failed" | "interrupted";
     dispatch_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
-    delivery_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous";
+    delivery_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
     resolution_code: RunInputResolutionCode | null;
     dispatching_at: number | null;
     resolved_at: number | null;
@@ -4955,7 +5390,7 @@ type RunInputOutcomeRow = Readonly<{
   run_id: string;
   run_attempt_id: string;
   provider_binding_id: string | null;
-  delivery_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous";
+  delivery_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
   resolution_code: RunInputResolutionCode | null;
   created_at: number;
   dispatching_at: number | null;

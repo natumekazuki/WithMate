@@ -62,9 +62,9 @@ checkpoint失敗はDB破損と同一視せず、`closed.checkpoint=failed`とし
 
 ## Payload chunk
 
-`payload.read_chunk`はSQLite BLOB全体をhydrateせず、`offset`と`maxBytes`で範囲取得する。1 responseはtransfer bufferとJSON metadataの合計で最大256 KiBとし、専有`ArrayBuffer`をtransfer listでMainへ渡す。
+Repositoryの4つのchunk operationは、SQLite BLOB全体をhydrateせず、`offset`と`maxBytes`で範囲取得する。`maxBytes`は要求できる上限であり、返却byte数の保証ではない。各scope文字列は1024文字以下、`maxBytes`は256 KiB以下に制限する。Workerは実際のgeneration ID、request ID、scope、offset、total byte数を含むJSON metadataを先に計量し、transfer bufferを残りbudgetへclampする。1 responseはmetadataとtransfer bufferの合計で256 KiB以下とする。
 
-1 chunkを1 request / responseとするため、consumerがresponse受領後に次requestを発行することがackとbackpressureになる。長寿命cursorをWorker内に保持せず、timeout、cancel、shutdown後にstream resourceを残さない。binaryのfull payloadは通常queryで返さず、明示export operationで同じchunk境界を使う。
+consumerは実際に返されたbyte数を`offset`へ加えて次requestを発行する。1 chunkを1 request / responseとするため、response受領後の次requestがackとbackpressureになる。長寿命cursorをWorker内に保持せず、timeout、cancel、shutdown後にstream resourceを残さない。binaryのfull payloadは通常queryで返さず、明示export operationで同じchunk境界を使う。
 
 ## Errorとdiagnostic
 

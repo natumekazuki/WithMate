@@ -2,6 +2,8 @@ import type { PersistenceWorkerClient } from "./persistence-worker-client.js";
 import {
   REPOSITORY_READ_OPERATIONS,
   type ChildResultListItem,
+  type MessageContentChunkRequest,
+  type MessageContentChunkResult,
   type MessageListItem,
   type Page,
   type RecoveryProjection,
@@ -9,7 +11,13 @@ import {
   type RunEventListItem,
   type RunInputDeliveryRecoveryItem,
   type RunOutputListItem,
+  type RunOutputPayloadChunkRequest,
+  type RunOutputPayloadChunkResult,
   type RunOutputPayloadMetadata,
+  type RunSnapshotChunkRequest,
+  type RunSnapshotChunkResult,
+  type SessionDirectoriesChunkRequest,
+  type SessionDirectoriesChunkResult,
   type SessionDeletionCleanupPage,
   type SessionDetail,
   type SessionExecutionState,
@@ -52,9 +60,9 @@ export class RepositoryReadClient {
   }
 
   sessionDirectoriesChunk(
-    input: Readonly<{ sessionId: string; workspaceKey: string; offset: number; maxBytes: number }>,
+    input: SessionDirectoriesChunkRequest,
     options?: RequestOptions,
-  ): Promise<Readonly<{ sessionId: string; offset: number; totalBytes: number; eof: boolean; bytes: ArrayBuffer }>> {
+  ): Promise<SessionDirectoriesChunkResult> {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.sessionDirectoriesChunk, "read", input, options);
   }
 
@@ -65,19 +73,7 @@ export class RepositoryReadClient {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.messagesPage, "read", input, options);
   }
 
-  messageContentChunk(
-    input: Readonly<{ sessionId: string; messageId: string; workspaceKey: string; offset: number; maxBytes: number }>,
-    options?: RequestOptions,
-  ): Promise<
-    Readonly<{
-      sessionId: string;
-      messageId: string;
-      offset: number;
-      totalBytes: number;
-      eof: boolean;
-      bytes: ArrayBuffer;
-    }>
-  > {
+  messageContentChunk(input: MessageContentChunkRequest, options?: RequestOptions): Promise<MessageContentChunkResult> {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.messageContentChunk, "read", input, options);
   }
 
@@ -95,18 +91,7 @@ export class RepositoryReadClient {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.runGet, "read", input, options);
   }
 
-  runSnapshotChunk(
-    input: Readonly<{
-      sessionId: string;
-      runId: string;
-      workspaceKey: string;
-      offset: number;
-      maxBytes: number;
-    }>,
-    options?: RequestOptions,
-  ): Promise<
-    Readonly<{ sessionId: string; runId: string; offset: number; totalBytes: number; eof: boolean; bytes: ArrayBuffer }>
-  > {
+  runSnapshotChunk(input: RunSnapshotChunkRequest, options?: RequestOptions): Promise<RunSnapshotChunkResult> {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.runSnapshotChunk, "read", input, options);
   }
 
@@ -156,17 +141,7 @@ export class RepositoryReadClient {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.runInputDeliveriesPage, "read", input, options);
   }
 
-  payloadChunk(
-    input: Readonly<{
-      sessionId: string;
-      runId: string;
-      outputItemId: string;
-      workspaceKey: string;
-      offset: number;
-      maxBytes: number;
-    }>,
-    options?: RequestOptions,
-  ): Promise<Readonly<{ offset: number; totalBytes: number; eof: boolean; bytes: ArrayBuffer }>> {
+  payloadChunk(input: RunOutputPayloadChunkRequest, options?: RequestOptions): Promise<RunOutputPayloadChunkResult> {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.payloadChunk, "read", input, options);
   }
 
