@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { HomeLaunchDialog } from "../../src/home/HomeLaunchDialog.js";
+import { filterCharactersByName } from "../../src/home/HomeCharactersPanel.js";
 import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
 import { HomeRecentSessionsPanel } from "../../src/home/HomeRecentSessionsPanel.js";
 import { HomeRightPane } from "../../src/home/HomeRightPane.js";
@@ -914,10 +915,47 @@ describe("HomeRightPane", () => {
     assert.ok(html.includes("Mia"));
     assert.ok(html.includes("説明文"));
     assert.ok(html.includes("Create"));
-    assert.ok(html.includes("Edit"));
+    assert.ok(!html.includes("<h3>Characters</h3>"));
+    assert.ok(html.includes('aria-label="Characterを名前で検索"'));
+    assert.ok(html.includes('placeholder="名前で検索"'));
     assert.ok(html.includes("Default"));
+    assert.match(html, /<button class="home-character-card"/);
+    assert.ok(!html.includes("home-character-card-edit"));
+    assert.ok(!html.includes("2026-01-01T00:00:00.000Z"));
     assert.ok(!html.includes("Your Mate"));
     assert.ok(!html.includes("メイトーク"));
+  });
+
+  it("Character name 検索は前後の空白と大文字小文字を無視する", () => {
+    const characters = [
+      {
+        id: "char-mia",
+        name: "Mia",
+        description: "説明文",
+        iconFilePath: "",
+        theme: { main: "#3b82f6", sub: "#1d4ed8" },
+        state: "active" as const,
+        isDefault: true,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        archivedAt: null,
+      },
+      {
+        id: "char-noah",
+        name: "Noah",
+        description: "別の説明文",
+        iconFilePath: "",
+        theme: { main: "#10b981", sub: "#047857" },
+        state: "active" as const,
+        isDefault: false,
+        createdAt: "2026-01-02T00:00:00.000Z",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+        archivedAt: null,
+      },
+    ];
+
+    assert.deepEqual(filterCharactersByName(characters, " NOA ").map((character) => character.id), ["char-noah"]);
+    assert.deepEqual(filterCharactersByName(characters, "   "), characters);
   });
 
   it("Character が空でも Create Character を表示できる", () => {

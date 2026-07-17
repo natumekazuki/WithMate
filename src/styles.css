@@ -825,7 +825,21 @@ button:disabled {
 }
 
 .home-page .home-character-toolbar {
-  margin: 0 6px 4px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+}
+
+.home-page .home-character-toolbar .toolbar-search-field {
+  padding: 0 10px;
+  border-radius: 14px;
+}
+
+.home-page .home-character-toolbar .toolbar-search-input {
+  padding: 7px 0;
 }
 
 .home-page .home-monitor-body {
@@ -853,6 +867,7 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
@@ -898,7 +913,7 @@ button:disabled {
 
 .home-page .home-character-card {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   width: 100%;
@@ -946,15 +961,6 @@ button:disabled {
   color: var(--muted);
   font-size: 0.78rem;
   line-height: 1.35;
-}
-
-.home-page .home-character-card-updated {
-  opacity: 0.86;
-}
-
-.home-page .home-character-card-edit {
-  color: var(--ink);
-  pointer-events: none;
 }
 
 .home-page .home-monitor-count {
