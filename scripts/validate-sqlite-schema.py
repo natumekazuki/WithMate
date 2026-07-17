@@ -9,8 +9,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DDL_PATH = ROOT / "schema" / "sqlite" / "v2.sql"
-MANIFEST_PATH = ROOT / "schema" / "sqlite" / "manifest-v2.json"
+DDL_PATH = ROOT / "schema" / "sqlite" / "v1.sql"
+MANIFEST_PATH = ROOT / "schema" / "sqlite" / "manifest-v1.json"
 
 
 def expect_integrity_error(connection: sqlite3.Connection, sql: str, params: tuple[object, ...]) -> None:

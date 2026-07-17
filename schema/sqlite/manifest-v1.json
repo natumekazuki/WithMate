@@ -3,7 +3,7 @@
   "applicationId": 1464686132,
   "applicationIdHex": "0x574D5634",
   "applicationIdText": "WMV4",
-  "schemaDefinitionSha256": "0218a796da70d9c44ca928062968663962a8dbc63138d23a443bd3dda47cb022",
+  "schemaDefinitionSha256": "81d95013610955f95b426a2fb171642f2189c9d4dde89ac1e44fae43de09ba45",
   "tables": [
     "child_result_deliveries",
     "delegations",

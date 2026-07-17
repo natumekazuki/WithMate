@@ -2850,7 +2850,7 @@ repositoryTest("Session subtree delete returns a bounded cleanup token for large
 
 repositoryTest("Worker registry accepts Session commands only as write requests", async () => {
   const database = new DatabaseSync(":memory:");
-  database.exec(fs.readFileSync(new URL("../schema/sqlite/v2.sql", import.meta.url), "utf8"));
+  database.exec(fs.readFileSync(new URL("../schema/sqlite/v1.sql", import.meta.url), "utf8"));
   const messages: WorkerToMainMessage[] = [];
   const generationId = "018f1f4e-7f0a-7000-8000-000000000201";
   const runtime = new PersistenceWorkerRuntime(generationId, database, ":memory:", (message) => messages.push(message));
@@ -3618,7 +3618,7 @@ function readLifecycle(database: DatabaseSync, sessionId: string): string {
 function withDatabase(run: (database: DatabaseSync) => void): void {
   const database = new DatabaseSync(":memory:");
   try {
-    database.exec(fs.readFileSync(new URL("../schema/sqlite/v2.sql", import.meta.url), "utf8"));
+    database.exec(fs.readFileSync(new URL("../schema/sqlite/v1.sql", import.meta.url), "utf8"));
     run(database);
   } finally {
     database.close();

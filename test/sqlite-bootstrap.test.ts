@@ -7,13 +7,13 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { resolveCurrentSchemaArtifacts, resolveSchemaV1Artifacts } from "../src/persistence-worker/schema-artifacts.js";
+import { resolveSchemaV1Artifacts } from "../src/persistence-worker/schema-artifacts.js";
 import {
   DatabaseBootstrapError,
   openOrBootstrapDatabase,
   type DatabaseBootstrapErrorCode,
 } from "../src/persistence-worker/sqlite-bootstrap.js";
-import { resolveMigrationPath, type SqliteMigration } from "../src/persistence-worker/sqlite-migrations.js";
+import { resolveMigrationPath } from "../src/persistence-worker/sqlite-migrations.js";
 
 const APPLICATION_ID = 1_464_686_132;
 
@@ -23,7 +23,7 @@ test("missing database is bootstrapped and reopened without reapplying DDL", () 
     const first = openDatabase(databasePath);
     assert.equal(first.initialized, true);
     assert.equal(readPragma(first.database, "application_id"), APPLICATION_ID);
-    assert.equal(readPragma(first.database, "user_version"), 2);
+    assert.equal(readPragma(first.database, "user_version"), 1);
     assert.equal(readPragma(first.database, "journal_mode"), "wal");
     assert.equal(readPragma(first.database, "auto_vacuum"), 2);
     assert.equal(readPragma(first.database, "foreign_keys"), 1);
@@ -35,7 +35,7 @@ test("missing database is bootstrapped and reopened without reapplying DDL", () 
 
     const second = openDatabase(databasePath);
     assert.equal(second.initialized, false);
-    assert.equal(readPragma(second.database, "user_version"), 2);
+    assert.equal(readPragma(second.database, "user_version"), 1);
     second.database.close();
   });
 });
@@ -168,7 +168,7 @@ test("identity mismatch, unknown schema, and future schema are rejected without 
         expectedCode: "database_schema_too_new" as const,
         initialize(database: DatabaseSync) {
           database.exec(
-            `PRAGMA application_id = ${APPLICATION_ID}; PRAGMA user_version = 3; CREATE TABLE future_data (id INTEGER);`,
+            `PRAGMA application_id = ${APPLICATION_ID}; PRAGMA user_version = 2; CREATE TABLE future_data (id INTEGER);`,
           );
         },
       },
@@ -336,137 +336,6 @@ test("migration path requires contiguous single-version steps", () => {
   ];
   assert.deepEqual(resolveMigrationPath(1, 3, migrations), migrations);
   assert.deepEqual(resolveMigrationPath(1, 3, migrations.slice(1)), []);
-});
-
-test("schema v1 migrates to v2 with a backup and clamps legacy child Run limits", () => {
-  withTempDirectory((directory) => {
-    const databasePath = path.join(directory, "runtime.sqlite3");
-    const version1 = openOrBootstrapDatabase({
-      databasePath,
-      legacyDatabasePaths: [],
-      artifacts: resolveSchemaV1Artifacts(),
-    });
-    version1.database
-      .prepare(
-        `
-          INSERT INTO sessions (
-            id, provider_id, workspace_key, allowed_additional_directories_json,
-            default_character_id, max_concurrent_child_runs, lifecycle_status,
-            created_at, updated_at, last_activity_at
-          ) VALUES ('legacy-over-limit', 'provider', 'workspace', '[]', 'character', 1025, 'active', 1, 1, 1)
-        `,
-      )
-      .run();
-    version1.database.close();
-
-    const migrated = openDatabase(databasePath);
-    assert.equal(migrated.initialized, false);
-    assert.equal(readPragma(migrated.database, "user_version"), 2);
-    assert.equal(
-      (
-        migrated.database
-          .prepare("SELECT max_concurrent_child_runs AS value FROM sessions WHERE id = 'legacy-over-limit'")
-          .get() as { value: number }
-      ).value,
-      1024,
-    );
-    migrated.database
-      .prepare(
-        `
-          INSERT INTO sessions (
-            id, provider_id, workspace_key, allowed_additional_directories_json,
-            default_character_id, max_concurrent_child_runs, lifecycle_status,
-            created_at, updated_at, last_activity_at
-          ) VALUES ('exact-limit', 'provider', 'workspace', '[]', 'character', 1024, 'active', 1, 1, 1)
-        `,
-      )
-      .run();
-    assert.throws(() =>
-      migrated.database.prepare("UPDATE sessions SET max_concurrent_child_runs = 1025 WHERE id = 'exact-limit'").run(),
-    );
-    migrated.database.close();
-
-    const backupPaths = fs.readdirSync(directory).filter((name) => name.startsWith("runtime.sqlite3.backup-v1-to-v2"));
-    assert.equal(backupPaths.length, 1);
-    const backup = new DatabaseSync(path.join(directory, backupPaths[0]!), { readOnly: true });
-    assert.equal(readPragma(backup, "user_version"), 1);
-    assert.equal(
-      (
-        backup
-          .prepare("SELECT max_concurrent_child_runs AS value FROM sessions WHERE id = 'legacy-over-limit'")
-          .get() as { value: number }
-      ).value,
-      1025,
-    );
-    backup.close();
-  });
-});
-
-test("failed schema migration rolls back and a later exact retry resumes from v1", () => {
-  withTempDirectory((directory) => {
-    const databasePath = path.join(directory, "runtime.sqlite3");
-    const version1 = openOrBootstrapDatabase({
-      databasePath,
-      legacyDatabasePaths: [],
-      artifacts: resolveSchemaV1Artifacts(),
-    });
-    version1.database
-      .prepare(
-        `
-          INSERT INTO sessions (
-            id, provider_id, workspace_key, allowed_additional_directories_json,
-            default_character_id, max_concurrent_child_runs, lifecycle_status,
-            created_at, updated_at, last_activity_at
-          ) VALUES ('legacy-over-limit', 'provider', 'workspace', '[]', 'character', 1025, 'active', 1, 1, 1)
-        `,
-      )
-      .run();
-    version1.database.close();
-
-    const failingMigration: SqliteMigration = {
-      fromVersion: 1,
-      toVersion: 2,
-      apply(database) {
-        database.exec("UPDATE sessions SET max_concurrent_child_runs = 1024;");
-        throw new Error("injected migration failure");
-      },
-      verify() {},
-    };
-    expectBootstrapError(
-      () =>
-        openOrBootstrapDatabase({
-          databasePath,
-          legacyDatabasePaths: [],
-          artifacts: resolveCurrentSchemaArtifacts(),
-          migrations: [failingMigration],
-        }),
-      "database_bootstrap_failed",
-    );
-
-    const afterFailure = new DatabaseSync(databasePath, { readOnly: true });
-    assert.equal(readPragma(afterFailure, "user_version"), 1);
-    assert.equal(
-      (
-        afterFailure
-          .prepare("SELECT max_concurrent_child_runs AS value FROM sessions WHERE id = 'legacy-over-limit'")
-          .get() as { value: number }
-      ).value,
-      1025,
-    );
-    afterFailure.close();
-
-    const retried = openDatabase(databasePath);
-    assert.equal(readPragma(retried.database, "user_version"), 2);
-    assert.equal(
-      (
-        retried.database
-          .prepare("SELECT max_concurrent_child_runs AS value FROM sessions WHERE id = 'legacy-over-limit'")
-          .get() as { value: number }
-      ).value,
-      1024,
-    );
-    retried.database.close();
-  });
 });
 
 function openDatabase(databasePath: string) {

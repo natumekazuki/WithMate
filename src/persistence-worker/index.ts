@@ -1,9 +1,4 @@
-export {
-  resolveCurrentSchemaArtifacts,
-  resolveSchemaArtifactsForVersion,
-  resolveSchemaV1Artifacts,
-  resolveSchemaV2Artifacts,
-} from "./schema-artifacts.js";
+export { resolveSchemaV1Artifacts } from "./schema-artifacts.js";
 export {
   classifyDatabaseFile,
   DatabaseBootstrapError,

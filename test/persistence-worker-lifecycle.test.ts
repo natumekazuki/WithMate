@@ -618,7 +618,7 @@ workerTest("production Worker preserves safe bootstrap failure classification", 
     await bootstrapClient.shutdown();
 
     const futureSchema = new DatabaseSync(databasePath);
-    futureSchema.exec("PRAGMA user_version = 3;");
+    futureSchema.exec("PRAGMA user_version = 2;");
     futureSchema.close();
     const incompatibleClient = new PersistenceWorkerClient(options);
     await assert.rejects(incompatibleClient.start(), (error: unknown) =>

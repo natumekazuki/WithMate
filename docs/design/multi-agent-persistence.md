@@ -9,7 +9,7 @@
 
 Session / Message / Run の責務と不変条件を SQLite の table 契約へ落とし込み、通常 Run と Multi-Agent child Run が同じ永続化基盤を使えるようにする。
 
-本書の現在の範囲は`schema/sqlite/manifest-v2.json`が列挙する永続化tableと、そのcross-table責務および直接制約とする。現在の完全DDLとobject集合はschema artifactとmanifestを正本とする。
+本書の現在の範囲は`schema/sqlite/manifest-v1.json`が列挙する永続化tableと、そのcross-table責務および直接制約とする。現在の完全DDLとobject集合はschema artifactとmanifestを正本とする。
 
 ## 旧 DB との境界
 
