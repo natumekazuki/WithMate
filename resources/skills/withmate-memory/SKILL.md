@@ -1,6 +1,6 @@
 ---
 name: withmate-memory
-description: Search, append, inspect, and forget WithMate V6 Memory through the installed WithMate Memory CLI when durable project or character context is useful.
+description: Search, append, inspect, and forget WithMate V6 Memory through the installed WithMate Memory CLI when durable project or character context is useful. After a command, test, build, tool, or environment failure, use it only when stored failure patterns, constraints, or workarounds could change the next action; do not trigger on a non-zero exit alone or for a deterministic correction supported by current evidence.
 ---
 
 # WithMate Memory
@@ -16,7 +16,9 @@ Use Memory before making a durable project or character-sensitive decision when 
 - "remember", "forget", "do not use this anymore", "use the same policy as before", or similar user intent
 - a design or implementation review where prior repo-specific direction may matter
 
-Use Memory after an unexpected command, test, build, tool invocation, or environment check failure when a known failure pattern, tooling trap, environment constraint, or workaround could affect the next action.
+Use Memory after an unexpected command, test, build, tool invocation, or environment check failure only when a known failure pattern, tooling trap, environment constraint, or workaround could affect the next action.
+
+A non-zero exit code alone is not a Memory trigger. Skip Memory search when current evidence fully explains the failure and determines a safe corrected action.
 
 Do not use Memory for trivial local edits where the current files and user message fully determine the answer.
 
@@ -36,7 +38,7 @@ Do not use Memory for trivial local edits where the current files and user messa
 1. Search first with an explicit target.
 2. Inspect only relevant hits with `get-entry` when exact wording or rationale matters.
 3. Use retrieved Memory as supporting context, not as a replacement for reading current repo files and source-of-truth docs.
-4. Before repeating the same failed command unchanged or escalating to a broader strategy, search Memory with the command/tool name, subsystem, and error signature when available.
+4. After a failure, diagnose it from current evidence first. Search Memory before retrying when the cause or safe next action remains uncertain, the same failure signature recurs, or the next attempt changes scope, subsystem, strategy, permissions, or environment assumptions. Skip search for a deterministic correction supported by current evidence.
 5. Append only durable, future-useful facts or decisions. Keep title and preview short, body precise, and tags reusable.
 6. If a failure reveals a reusable pattern or reliable workaround that is likely to matter in future sessions, append a concise Memory entry describing the failure signature, likely cause, and next-time guidance.
 7. Forget entries when the user requests removal, correction, privacy cleanup, or no-longer-use semantics.
