@@ -2,9 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import * as publicApi from "../src/main/index.js";
+import type { ApplicationSessionOperations } from "../src/main/index.js";
 import {
-  type ApplicationAccessValidationInput,
-  type ApplicationAccessValidator,
   type ApplicationCapacityExceededDetails,
   type ApplicationDomainError,
   type ApplicationDomainErrorCode,
@@ -13,10 +12,8 @@ import {
   type ApplicationSessionCreateRequest,
   type ApplicationSessionLifecycleStatus,
   type ApplicationSessionListItem,
-  type ApplicationSessionOperations,
   type ApplicationSessionReadResult,
-} from "../src/main/index.js";
-import type { SessionListItem } from "../src/shared/repository-read-model.js";
+} from "../src/shared/application-service-model.js";
 import type { RepositoryCommandErrorCode, SessionLifecycleStatus } from "../src/shared/repository-write-model.js";
 
 type Equal<TLeft, TRight> = (<T>() => T extends TLeft ? 1 : 2) extends <T>() => T extends TRight ? 1 : 2 ? true : false;
@@ -33,23 +30,60 @@ type CreateResponse = Awaited<ReturnType<Operations["create"]>>;
 type ListResponse = Awaited<ReturnType<Operations["list"]>>;
 type DirectoriesChunkResponse = Awaited<ReturnType<Operations["readDirectoriesChunk"]>>;
 
-function assertAuthorizationTarget(input: ApplicationAccessValidationInput<Authorization>): void {
-  if (input.operation === "create") {
-    const directories: readonly string[] = input.target.allowedAdditionalDirectories;
-    void directories;
-    // @ts-expect-error create authorization does not target an existing Session
-    void input.target.sessionId;
-    return;
-  }
-  if (input.operation === "list") {
-    const lifecycle = input.target.lifecycleStatus;
-    void lifecycle;
-    return;
-  }
-  const sessionId: string = input.target.sessionId;
-  void sessionId;
-}
-void assertAuthorizationTarget;
+const listItemBase = {
+  id: "session-1",
+  workspaceKey: "workspace-1",
+  defaultCharacterId: "character-1",
+  lifecycleStatus: "active" as const,
+  createdAt: 1,
+  updatedAt: 1,
+  lastActivityAt: 1,
+  stateChangedAt: 1,
+};
+// @ts-expect-error not_started cannot expose an active Run
+const invalidNotStartedExecution: ApplicationSessionListItem = {
+  ...listItemBase,
+  executionState: "not_started",
+  activeRunId: "run-1",
+};
+// @ts-expect-error running requires both active and latest Run IDs
+const invalidRunningExecution: ApplicationSessionListItem = {
+  ...listItemBase,
+  executionState: "running",
+  activeRunId: "run-1",
+};
+// @ts-expect-error a terminal execution requires the latest Run ID
+const invalidTerminalReadExecution: ApplicationSessionReadResult["execution"] = { state: "completed" };
+// @ts-expect-error archived Sessions cannot expose a running execution
+const invalidArchivedRunningListItem: ApplicationSessionListItem = {
+  ...listItemBase,
+  lifecycleStatus: "archived",
+  executionState: "running",
+  activeRunId: "run-1",
+  latestRunId: "run-1",
+};
+// @ts-expect-error closed Sessions cannot expose a running execution
+const invalidClosedRunningRead: ApplicationSessionReadResult = {
+  session: {
+    id: "session-1",
+    providerId: "codex",
+    workspaceKey: "workspace-1",
+    allowedAdditionalDirectoriesByteLength: 2,
+    allowedAdditionalDirectoriesState: "inline",
+    defaultCharacterId: "character-1",
+    maxConcurrentChildRuns: 2,
+    lifecycleStatus: "closed",
+    createdAt: 1,
+    updatedAt: 1,
+    lastActivityAt: 1,
+  },
+  execution: { state: "running", activeRunId: "run-1", latestRunId: "run-1" },
+};
+void invalidNotStartedExecution;
+void invalidRunningExecution;
+void invalidTerminalReadExecution;
+void invalidArchivedRunningListItem;
+void invalidClosedRunningRead;
 
 const capacityDetails: ApplicationCapacityExceededDetails = { scope: "application", current: 1, limit: 1 };
 
@@ -208,7 +242,6 @@ void validDirectoriesChunk;
 
 test("public Application Service barrel exposes the transport-neutral Session contract", () => {
   const request = null as ApplicationSessionCreateRequest<Authorization> | null;
-  const access = null as ApplicationAccessValidator<Authorization> | null;
   const read = null as ApplicationSessionReadResult | null;
   const operations = null as ApplicationSessionOperations<Authorization> | null;
   const typeContract: readonly [
@@ -227,7 +260,10 @@ test("public Application Service barrel exposes the transport-neutral Session co
       | "persistence_response_too_large"
       | "persistence_operation_failed"
     >,
-    Equal<ApplicationSessionListItem, SessionListItem>,
+    Equal<
+      ApplicationSessionListItem["executionState"],
+      "not_started" | "running" | "completed" | "failed" | "canceled" | "interrupted"
+    >,
     Equal<"allowedAdditionalDirectories" extends keyof ApplicationSessionReadResult["session"] ? true : false, false>,
     Equal<ApplicationDomainErrorCode, RepositoryCommandErrorCode | "cursor_invalid">,
     Equal<ApplicationSessionLifecycleStatus, SessionLifecycleStatus>,
@@ -235,9 +271,8 @@ test("public Application Service barrel exposes the transport-neutral Session co
     Equal<CapacityError["retryable"], true>,
   ] = [true, true, true, true, true, true, true, true, true, true, true];
 
-  assert.equal("ApplicationSessionService" in publicApi, false);
+  assert.deepEqual(Object.keys(publicApi), []);
   assert.equal(request, null);
-  assert.equal(access, null);
   assert.equal(read, null);
   assert.equal(operations, null);
   assert.deepEqual(typeContract, [true, true, true, true, true, true, true, true, true, true, true]);

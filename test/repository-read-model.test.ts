@@ -337,6 +337,28 @@ repositoryTest("session pages apply the byte budget and continue from the last i
   });
 });
 
+repositoryTest("Session schema accepts the exact child Run limit and rejects values above the durable maximum", () => {
+  withDatabase((database) => {
+    database
+      .prepare("INSERT INTO sessions VALUES (?, 'provider', 'workspace', '[]', 'character', ?, 'active', 1, 1, 1)")
+      .run("session-exact-limit", 1_024);
+    assert.throws(
+      () =>
+        database
+          .prepare("INSERT INTO sessions VALUES (?, 'provider', 'workspace', '[]', 'character', ?, 'active', 1, 1, 1)")
+          .run("session-over-limit", 1_025),
+      (error: unknown) => error instanceof Error && error.message.includes("max_concurrent_child_runs_out_of_range"),
+    );
+    assert.throws(
+      () =>
+        database
+          .prepare("UPDATE sessions SET max_concurrent_child_runs = ? WHERE id = 'session-exact-limit'")
+          .run(1_025),
+      (error: unknown) => error instanceof Error && error.message.includes("max_concurrent_child_runs_out_of_range"),
+    );
+  });
+});
+
 repositoryTest("public RunEvent omits internal fields and advances past an oversize first row explicitly", () => {
   withDatabase((database) => {
     insertSession(database, "session-1", 1);
@@ -513,7 +535,7 @@ function operationFor(database: DatabaseSync, name: string) {
 function withDatabase(run: (database: DatabaseSync) => void): void {
   const database = new DatabaseSync(":memory:");
   try {
-    database.exec(fs.readFileSync(new URL("../schema/sqlite/v1.sql", import.meta.url), "utf8"));
+    database.exec(fs.readFileSync(new URL("../schema/sqlite/v2.sql", import.meta.url), "utf8"));
     run(database);
   } finally {
     database.close();

@@ -14,6 +14,8 @@ import type {
   ApplicationSessionDetail,
   ApplicationSessionDirectoriesChunkRequest,
   ApplicationSessionDirectoriesChunkResult,
+  ApplicationSessionExecution,
+  ApplicationSessionListItem,
   ApplicationSessionListRequest,
   ApplicationSessionOperations,
   ApplicationSessionPage,
@@ -22,11 +24,16 @@ import type {
   ApplicationSessionTransitionResult,
   ApplicationSessionWriteRequest,
 } from "../shared/application-service-model.js";
-import { normalizeAllowedAdditionalDirectories } from "../shared/allowed-additional-directories.js";
+import {
+  ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS,
+  allowedAdditionalDirectoriesJsonByteLength,
+  normalizeAllowedAdditionalDirectories,
+} from "../shared/allowed-additional-directories.js";
 import type { PersistenceError } from "../shared/persistence-protocol.js";
 import { isCanonicalUuid } from "../shared/persistence-runtime-protocol.js";
-import type { SessionListItem } from "../shared/repository-read-model.js";
+import { REPOSITORY_READ_LIMITS } from "../shared/repository-read-model.js";
 import type { SessionLifecycleStatus } from "../shared/repository-write-model.js";
+import { MAX_SESSION_CONCURRENT_CHILD_RUNS } from "../shared/session-limits.js";
 import { PersistenceClientError } from "./persistence-worker-client.js";
 import type { RepositoryReadClient } from "./repository-read-client.js";
 import type { RepositoryWriteClient } from "./repository-write-client.js";
@@ -66,7 +73,7 @@ type ControlledSettlement<TValue> =
   | Readonly<{ status: "interrupted"; interruption: OperationInterruption; started: boolean }>;
 
 // admissionはより低いapp / Provider capも適用するが、永続設定値自体をboundedに保つ。
-export const APPLICATION_MAX_CONCURRENT_CHILD_RUNS = 1_024;
+export const APPLICATION_MAX_CONCURRENT_CHILD_RUNS = MAX_SESSION_CONCURRENT_CHILD_RUNS;
 export const APPLICATION_MAX_READ_CHUNK_BYTES = 256 * 1024;
 
 export type ApplicationSessionServiceOptions<TAuthorizationContext> = Readonly<{
@@ -179,7 +186,13 @@ export class ApplicationSessionService<
           },
           repositoryOptions,
         ),
-      (value) => projectSessionPage(value, input.context.workspaceKey, input.lifecycleStatus),
+      (value) =>
+        projectSessionPage(
+          value,
+          input.context.workspaceKey,
+          input.lifecycleStatus,
+          input.limit ?? REPOSITORY_READ_LIMITS.sessions.default,
+        ),
     );
   }
 
@@ -347,29 +360,65 @@ export class ApplicationSessionService<
     input: ApplicationAccessValidationInput<TAuthorizationContext>,
     control: OperationControl,
   ): Promise<ApplicationPrePersistenceFailureResponse | undefined> {
-    const workspace = await runControlled(control, () =>
-      this.#access.validateWorkspace(createAccessValidationView(input, this.#snapshotAuthorization)),
-    );
+    const workspaceInput = prepareAccessValidationView(input, control, this.#snapshotAuthorization);
+    if (!workspaceInput.ok) return workspaceInput.response;
+    const workspace = await runControlled(control, () => this.#access.validateWorkspace(workspaceInput.value));
     if (workspace.status === "interrupted") return operationInterruptionFailure(workspace.interruption);
     if (workspace.status === "rejected") return prePersistenceApplicationFailure();
     const workspaceDecision = safelyProjectAccessDecision(workspace.value);
+    const workspaceProjectionInterruption = getOperationInterruption(control);
+    if (workspaceProjectionInterruption !== undefined) {
+      return operationInterruptionFailure(workspaceProjectionInterruption);
+    }
     if (workspaceDecision === undefined) return prePersistenceApplicationFailure();
     if (!workspaceDecision.allowed) return accessFailure(workspaceDecision.error);
 
-    const authorization = await runControlled(control, () =>
-      this.#access.authorize(createAccessValidationView(input, this.#snapshotAuthorization)),
-    );
+    const authorizationInput = prepareAccessValidationView(input, control, this.#snapshotAuthorization);
+    if (!authorizationInput.ok) return authorizationInput.response;
+    const authorization = await runControlled(control, () => this.#access.authorize(authorizationInput.value));
     if (authorization.status === "interrupted") return operationInterruptionFailure(authorization.interruption);
     if (authorization.status === "rejected") {
       return prePersistenceApplicationFailure();
     }
     const authorizationDecision = safelyProjectAccessDecision(authorization.value);
+    const authorizationProjectionInterruption = getOperationInterruption(control);
+    if (authorizationProjectionInterruption !== undefined) {
+      return operationInterruptionFailure(authorizationProjectionInterruption);
+    }
     if (authorizationDecision === undefined) {
       return prePersistenceApplicationFailure();
     }
     if (!authorizationDecision.allowed) return accessFailure(authorizationDecision.error);
     return undefined;
   }
+}
+
+function prepareAccessValidationView<TAuthorizationContext>(
+  input: ApplicationAccessValidationInput<TAuthorizationContext>,
+  control: OperationControl,
+  snapshotAuthorization: (value: unknown) => TAuthorizationContext,
+):
+  | Readonly<{ ok: true; value: ApplicationAccessValidationInput<TAuthorizationContext> }>
+  | Readonly<{ ok: false; response: ApplicationPrePersistenceFailureResponse }> {
+  const beforeSnapshot = getOperationInterruption(control);
+  if (beforeSnapshot !== undefined) {
+    return { ok: false, response: operationInterruptionFailure(beforeSnapshot) };
+  }
+  let value: ApplicationAccessValidationInput<TAuthorizationContext>;
+  try {
+    value = createAccessValidationView(input, snapshotAuthorization);
+  } catch {
+    const interruption = getOperationInterruption(control);
+    return {
+      ok: false,
+      response:
+        interruption === undefined ? prePersistenceApplicationFailure() : operationInterruptionFailure(interruption),
+    };
+  }
+  const interruption = getOperationInterruption(control);
+  return interruption === undefined
+    ? { ok: true, value }
+    : { ok: false, response: operationInterruptionFailure(interruption) };
 }
 
 function createAccessValidationView<TAuthorizationContext>(
@@ -405,37 +454,44 @@ function decodeCreateRequest<TAuthorizationContext>(
   request: unknown,
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): RequestDecodeResult<ApplicationSessionCreateRequest<TAuthorizationContext>> {
+  const snapshot = snapshotRecord(request, [
+    "context",
+    "idempotencyKey",
+    "providerId",
+    "allowedAdditionalDirectories",
+    "defaultCharacterId",
+    "maxConcurrentChildRuns",
+  ]);
   if (
-    !isPlainObject(request) ||
-    !hasOnlyKeys(request, [
-      "context",
-      "idempotencyKey",
-      "providerId",
-      "allowedAdditionalDirectories",
-      "defaultCharacterId",
-      "maxConcurrentChildRuns",
-    ]) ||
-    !isCanonicalIdempotencyKey(request.idempotencyKey) ||
-    !isBoundedString(request.providerId) ||
-    !isBoundedString(request.defaultCharacterId) ||
-    !isAllowedAdditionalDirectories(request.allowedAdditionalDirectories) ||
-    !isSafeChildRunLimit(request.maxConcurrentChildRuns)
+    snapshot === undefined ||
+    !isCanonicalIdempotencyKey(snapshot.idempotencyKey) ||
+    !isBoundedString(snapshot.providerId) ||
+    !isBoundedString(snapshot.defaultCharacterId) ||
+    !isSafeChildRunLimit(snapshot.maxConcurrentChildRuns)
   ) {
     return decodeRequestFailure();
   }
-  const context = decodeOperationContext(request.context, snapshotAuthorization);
+  const directories = snapshotAllowedAdditionalDirectories(snapshot.allowedAdditionalDirectories);
+  if (directories === undefined) return decodeRequestFailure();
+  const context = decodeOperationContext(snapshot.context, snapshotAuthorization);
   if (context === undefined) return decodeRequestFailure();
-  const allowedAdditionalDirectories = normalizeAllowedAdditionalDirectories(request.allowedAdditionalDirectories);
-  if (allowedAdditionalDirectories === undefined) return decodeRequestFailure();
+  const allowedAdditionalDirectories = normalizeAllowedAdditionalDirectories(directories);
+  if (
+    allowedAdditionalDirectories === undefined ||
+    allowedAdditionalDirectoriesJsonByteLength(allowedAdditionalDirectories) >
+      ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxJsonBytes
+  ) {
+    return decodeRequestFailure();
+  }
   return {
     ok: true,
     value: {
       context,
-      idempotencyKey: request.idempotencyKey,
-      providerId: request.providerId,
+      idempotencyKey: snapshot.idempotencyKey,
+      providerId: snapshot.providerId,
       allowedAdditionalDirectories,
-      defaultCharacterId: request.defaultCharacterId,
-      maxConcurrentChildRuns: request.maxConcurrentChildRuns,
+      defaultCharacterId: snapshot.defaultCharacterId,
+      maxConcurrentChildRuns: snapshot.maxConcurrentChildRuns,
     },
   };
 }
@@ -444,42 +500,44 @@ function decodeWriteRequest<TAuthorizationContext>(
   request: unknown,
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): RequestDecodeResult<ApplicationSessionWriteRequest<TAuthorizationContext>> {
+  const snapshot = snapshotRecord(request, ["context", "sessionId", "idempotencyKey"]);
   if (
-    !isPlainObject(request) ||
-    !hasOnlyKeys(request, ["context", "sessionId", "idempotencyKey"]) ||
-    !isBoundedString(request.sessionId) ||
-    !isCanonicalIdempotencyKey(request.idempotencyKey)
+    snapshot === undefined ||
+    !isBoundedString(snapshot.sessionId) ||
+    !isCanonicalIdempotencyKey(snapshot.idempotencyKey)
   ) {
     return decodeRequestFailure();
   }
-  const context = decodeOperationContext(request.context, snapshotAuthorization);
+  const context = decodeOperationContext(snapshot.context, snapshotAuthorization);
   if (context === undefined) return decodeRequestFailure();
-  return { ok: true, value: { context, sessionId: request.sessionId, idempotencyKey: request.idempotencyKey } };
+  return { ok: true, value: { context, sessionId: snapshot.sessionId, idempotencyKey: snapshot.idempotencyKey } };
 }
 
 function decodeListRequest<TAuthorizationContext>(
   request: unknown,
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): RequestDecodeResult<ApplicationSessionListRequest<TAuthorizationContext>> {
+  const snapshot = snapshotRecord(request, ["context", "lifecycleStatus", "cursor", "limit"]);
   if (
-    !isPlainObject(request) ||
-    !hasOnlyKeys(request, ["context", "lifecycleStatus", "cursor", "limit"]) ||
-    (request.lifecycleStatus !== undefined && !isSessionLifecycleStatus(request.lifecycleStatus)) ||
-    (request.cursor !== undefined && !isBoundedStringWithLimit(request.cursor, 2_048)) ||
-    (request.limit !== undefined &&
-      (!Number.isSafeInteger(request.limit) || (request.limit as number) < 1 || (request.limit as number) > 100))
+    snapshot === undefined ||
+    (snapshot.lifecycleStatus !== undefined && !isSessionLifecycleStatus(snapshot.lifecycleStatus)) ||
+    (snapshot.cursor !== undefined && !isBoundedStringWithLimit(snapshot.cursor, 2_048)) ||
+    (snapshot.limit !== undefined &&
+      (!Number.isSafeInteger(snapshot.limit) ||
+        (snapshot.limit as number) < 1 ||
+        (snapshot.limit as number) > REPOSITORY_READ_LIMITS.sessions.max))
   ) {
     return decodeRequestFailure();
   }
-  const context = decodeOperationContext(request.context, snapshotAuthorization);
+  const context = decodeOperationContext(snapshot.context, snapshotAuthorization);
   if (context === undefined) return decodeRequestFailure();
   return {
     ok: true,
     value: {
       context,
-      ...(request.lifecycleStatus === undefined ? {} : { lifecycleStatus: request.lifecycleStatus }),
-      ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
-      ...(request.limit === undefined ? {} : { limit: request.limit as number }),
+      ...(snapshot.lifecycleStatus === undefined ? {} : { lifecycleStatus: snapshot.lifecycleStatus }),
+      ...(snapshot.cursor === undefined ? {} : { cursor: snapshot.cursor }),
+      ...(snapshot.limit === undefined ? {} : { limit: snapshot.limit as number }),
     },
   };
 }
@@ -488,42 +546,39 @@ function decodeReadRequest<TAuthorizationContext>(
   request: unknown,
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): RequestDecodeResult<ApplicationSessionReadRequest<TAuthorizationContext>> {
-  if (
-    !isPlainObject(request) ||
-    !hasOnlyKeys(request, ["context", "sessionId"]) ||
-    !isBoundedString(request.sessionId)
-  ) {
+  const snapshot = snapshotRecord(request, ["context", "sessionId"]);
+  if (snapshot === undefined || !isBoundedString(snapshot.sessionId)) {
     return decodeRequestFailure();
   }
-  const context = decodeOperationContext(request.context, snapshotAuthorization);
+  const context = decodeOperationContext(snapshot.context, snapshotAuthorization);
   if (context === undefined) return decodeRequestFailure();
-  return { ok: true, value: { context, sessionId: request.sessionId } };
+  return { ok: true, value: { context, sessionId: snapshot.sessionId } };
 }
 
 function decodeDirectoriesChunkRequest<TAuthorizationContext>(
   request: unknown,
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): RequestDecodeResult<ApplicationSessionDirectoriesChunkRequest<TAuthorizationContext>> {
+  const snapshot = snapshotRecord(request, ["context", "sessionId", "offset", "maxBytes"]);
   if (
-    !isPlainObject(request) ||
-    !hasOnlyKeys(request, ["context", "sessionId", "offset", "maxBytes"]) ||
-    !isBoundedString(request.sessionId) ||
-    !isNonNegativeSafeInteger(request.offset) ||
-    !Number.isSafeInteger(request.maxBytes) ||
-    (request.maxBytes as number) < 1 ||
-    (request.maxBytes as number) > APPLICATION_MAX_READ_CHUNK_BYTES
+    snapshot === undefined ||
+    !isBoundedString(snapshot.sessionId) ||
+    !isNonNegativeSafeInteger(snapshot.offset) ||
+    !Number.isSafeInteger(snapshot.maxBytes) ||
+    (snapshot.maxBytes as number) < 1 ||
+    (snapshot.maxBytes as number) > APPLICATION_MAX_READ_CHUNK_BYTES
   ) {
     return decodeRequestFailure();
   }
-  const context = decodeOperationContext(request.context, snapshotAuthorization);
+  const context = decodeOperationContext(snapshot.context, snapshotAuthorization);
   if (context === undefined) return decodeRequestFailure();
   return {
     ok: true,
     value: {
       context,
-      sessionId: request.sessionId,
-      offset: request.offset,
-      maxBytes: request.maxBytes as number,
+      sessionId: snapshot.sessionId,
+      offset: snapshot.offset,
+      maxBytes: snapshot.maxBytes as number,
     },
   };
 }
@@ -532,24 +587,24 @@ function decodeCloseRequest<TAuthorizationContext>(
   request: unknown,
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): RequestDecodeResult<ApplicationSessionCloseRequest<TAuthorizationContext>> {
+  const snapshot = snapshotRecord(request, ["context", "sessionId", "idempotencyKey", "expectedLifecycleStatus"]);
   if (
-    !isPlainObject(request) ||
-    !hasOnlyKeys(request, ["context", "sessionId", "idempotencyKey", "expectedLifecycleStatus"]) ||
-    !isBoundedString(request.sessionId) ||
-    !isCanonicalIdempotencyKey(request.idempotencyKey) ||
-    (request.expectedLifecycleStatus !== "active" && request.expectedLifecycleStatus !== "archived")
+    snapshot === undefined ||
+    !isBoundedString(snapshot.sessionId) ||
+    !isCanonicalIdempotencyKey(snapshot.idempotencyKey) ||
+    (snapshot.expectedLifecycleStatus !== "active" && snapshot.expectedLifecycleStatus !== "archived")
   ) {
     return decodeRequestFailure();
   }
-  const context = decodeOperationContext(request.context, snapshotAuthorization);
+  const context = decodeOperationContext(snapshot.context, snapshotAuthorization);
   if (context === undefined) return decodeRequestFailure();
   return {
     ok: true,
     value: {
       context,
-      sessionId: request.sessionId,
-      idempotencyKey: request.idempotencyKey,
-      expectedLifecycleStatus: request.expectedLifecycleStatus,
+      sessionId: snapshot.sessionId,
+      idempotencyKey: snapshot.idempotencyKey,
+      expectedLifecycleStatus: snapshot.expectedLifecycleStatus,
     },
   };
 }
@@ -558,18 +613,14 @@ function decodeOperationContext<TAuthorizationContext>(
   context: unknown,
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): ApplicationSessionCreateRequest<TAuthorizationContext>["context"] | undefined {
-  if (
-    !isPlainObject(context) ||
-    !hasOnlyKeys(context, ["workspaceKey", "authorization"]) ||
-    !Object.hasOwn(context, "authorization") ||
-    !isBoundedString(context.workspaceKey)
-  ) {
+  const snapshot = snapshotRecord(context, ["workspaceKey", "authorization"]);
+  if (snapshot === undefined || !Object.hasOwn(snapshot, "authorization") || !isBoundedString(snapshot.workspaceKey)) {
     return undefined;
   }
   try {
     return {
-      workspaceKey: context.workspaceKey,
-      authorization: snapshotAuthorization(context.authorization),
+      workspaceKey: snapshot.workspaceKey,
+      authorization: snapshotAuthorization(snapshot.authorization),
     };
   } catch {
     return undefined;
@@ -585,12 +636,22 @@ function prepareOperation<TValue>(
   decodeRequest: () => RequestDecodeResult<TValue>,
 ): OperationPreparation<TValue> {
   const operationStartedAt = Date.now();
-  const decodedOptions = decodeOperationOptions(options);
+  let decodedOptions: RequestDecodeResult<ApplicationOperationOptions | undefined>;
+  try {
+    decodedOptions = decodeOperationOptions(options);
+  } catch {
+    return { ok: false, response: requestFailure() };
+  }
   if (!decodedOptions.ok) return decodedOptions;
   const control = createOperationControl(decodedOptions.value, operationStartedAt);
   const beforeDecode = getOperationInterruption(control);
   if (beforeDecode !== undefined) return { ok: false, response: operationInterruptionFailure(beforeDecode) };
-  const decodedRequest = decodeRequest();
+  let decodedRequest: RequestDecodeResult<TValue>;
+  try {
+    decodedRequest = decodeRequest();
+  } catch {
+    decodedRequest = decodeRequestFailure();
+  }
   const afterDecode = getOperationInterruption(control);
   if (afterDecode !== undefined) return { ok: false, response: operationInterruptionFailure(afterDecode) };
   return decodedRequest.ok
@@ -622,6 +683,15 @@ async function runControlled<TValue>(
   try {
     work = Promise.resolve(start());
   } catch (error) {
+    const interruption = getOperationInterruption(control);
+    if (interruption !== undefined) {
+      try {
+        interruptStartedWork?.();
+      } catch {
+        // operation結果はadapterのabort hookではなくdeadline/cancellationで決まる。
+      }
+      return { status: "interrupted", interruption, started: true };
+    }
     return { status: "rejected", error };
   }
 
@@ -636,10 +706,27 @@ async function runControlled<TValue>(
       resolve(value);
     };
     const interrupt = (interruption: OperationInterruption) => {
-      interruptStartedWork?.();
+      if (settled) return;
+      try {
+        interruptStartedWork?.();
+      } catch {
+        // operation結果はadapterのabort hookではなくdeadline/cancellationで決まる。
+      }
       finish({ status: "interrupted", interruption, started: true });
     };
     const onAbort = () => interrupt("canceled");
+    work.then(
+      (value) => {
+        const interruption = getOperationInterruption(control);
+        if (interruption === undefined) finish({ status: "fulfilled", value });
+        else interrupt(interruption);
+      },
+      (error: unknown) => {
+        const interruption = getOperationInterruption(control);
+        if (interruption === undefined) finish({ status: "rejected", error });
+        else interrupt(interruption);
+      },
+    );
     const remaining = getRemainingTimeout(control);
     if (remaining !== undefined) {
       timer = setTimeout(() => interrupt("timeout"), remaining);
@@ -647,12 +734,7 @@ async function runControlled<TValue>(
     control.signal?.addEventListener("abort", onAbort, { once: true });
     if (control.signal?.aborted) {
       onAbort();
-      return;
     }
-    work.then(
-      (value) => finish({ status: "fulfilled", value }),
-      (error: unknown) => finish({ status: "rejected", error }),
-    );
   });
 }
 
@@ -677,9 +759,16 @@ async function executeRepositoryOperation<TRepositoryValue, TApplicationValue, T
   }
   if (settlement.status === "rejected") return mapThrownFailure(settlement.error, requestClass);
   try {
-    return mapValue(settlement.value);
+    const response = mapValue(settlement.value);
+    const projectionInterruption = getOperationInterruption(control);
+    return projectionInterruption === undefined
+      ? response
+      : persistenceInterruptionFailure(projectionInterruption, requestClass);
   } catch {
-    return persistenceApplicationFailure(requestClass);
+    const projectionInterruption = getOperationInterruption(control);
+    return projectionInterruption === undefined
+      ? persistenceApplicationFailure(requestClass)
+      : persistenceInterruptionFailure(projectionInterruption, requestClass);
   }
 }
 
@@ -703,11 +792,10 @@ function getRemainingTimeout(control: OperationControl): number | undefined {
 
 function decodeOperationOptions(options: unknown): RequestDecodeResult<ApplicationOperationOptions | undefined> {
   if (options === undefined) return { ok: true, value: undefined };
-  if (!isPlainObject(options) || !hasOnlyKeys(options, ["timeoutMs", "signal"])) {
-    return decodeRequestFailure();
-  }
-  const timeoutMs = options.timeoutMs;
-  const signal = options.signal;
+  const snapshot = snapshotRecord(options, ["timeoutMs", "signal"]);
+  if (snapshot === undefined) return decodeRequestFailure();
+  const timeoutMs = snapshot.timeoutMs;
+  const signal = snapshot.signal;
   if (
     (timeoutMs !== undefined &&
       (!Number.isSafeInteger(timeoutMs) || (timeoutMs as number) < 1 || (timeoutMs as number) > 2_147_483_647)) ||
@@ -757,10 +845,12 @@ function accessFailure(
 }
 
 function projectAccessDecision(value: unknown): ApplicationAccessDecision | undefined {
-  if (!isPlainObject(value)) return undefined;
-  if (value.allowed === true) return { allowed: true };
-  if (value.allowed !== false || !isPlainObject(value.error)) return undefined;
-  const error = value.error;
+  const decision = snapshotProjectionRecord(value, ["allowed", "error"]);
+  if (decision === undefined) return undefined;
+  if (decision.allowed === true) return { allowed: true };
+  if (decision.allowed !== false) return undefined;
+  const error = snapshotProjectionRecord(decision.error, ["code", "message", "retryable"]);
+  if (error === undefined) return undefined;
   if (
     !isAccessErrorCode(error.code) ||
     !isBoundedStringWithLimit(error.message, 4_096) ||
@@ -875,16 +965,17 @@ function mapWriteResult<TApplicationValue>(
   result: unknown,
   mapValue: (value: unknown) => TApplicationValue,
 ): ApplicationOperationResponse<TApplicationValue, "write"> {
-  if (!isPlainObject(result) || typeof result.replayed !== "boolean") return invalidRepositoryValue();
-  if (result.ok === false) {
-    if (result.replayed) return invalidRepositoryValue();
-    return domainFailure(projectRepositoryDomainError(result.error));
+  const snapshot = snapshotProjectionRecord(result, ["ok", "replayed", "error", "value"]);
+  if (snapshot === undefined || typeof snapshot.replayed !== "boolean") return invalidRepositoryValue();
+  if (snapshot.ok === false) {
+    if (snapshot.replayed) return invalidRepositoryValue();
+    return domainFailure(projectRepositoryDomainError(snapshot.error));
   }
-  if (result.ok !== true) return invalidRepositoryValue();
+  if (snapshot.ok !== true) return invalidRepositoryValue();
   return {
     overallStatus: "success",
-    value: mapValue(result.value),
-    persistence: { status: "committed", effect: "none", replayed: result.replayed },
+    value: mapValue(snapshot.value),
+    persistence: { status: "committed", effect: "none", replayed: snapshot.replayed },
   };
 }
 
@@ -1020,9 +1111,33 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
-function hasOnlyKeys(value: Readonly<Record<string, unknown>>, allowedKeys: readonly string[]): boolean {
+function snapshotRecord(value: unknown, allowedKeys: readonly string[]): Record<string, unknown> | undefined {
+  if (!isPlainObject(value)) return undefined;
   const allowed = new Set(allowedKeys);
-  return Object.keys(value).every((key) => allowed.has(key));
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key !== "string" || !allowed.has(key))) return undefined;
+  const snapshot: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+  for (const key of keys) snapshot[key as string] = Reflect.get(value, key);
+  return snapshot;
+}
+
+function snapshotProjectionRecord(value: unknown, keys: readonly string[]): Record<string, unknown> | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const snapshot: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+  for (const key of keys) snapshot[key] = Reflect.get(value, key);
+  return snapshot;
+}
+
+function snapshotProjectionArray(value: unknown, maxLength: number): readonly unknown[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const length = Reflect.get(value, "length") as unknown;
+  if (!Number.isSafeInteger(length) || (length as number) < 0 || (length as number) > maxLength) return undefined;
+  const snapshot: unknown[] = [];
+  for (let index = 0; index < (length as number); index += 1) {
+    if (!Object.hasOwn(value, index)) return undefined;
+    snapshot.push(Reflect.get(value, String(index)) as unknown);
+  }
+  return snapshot;
 }
 
 function isSessionLifecycleStatus(value: unknown): value is SessionLifecycleStatus {
@@ -1030,29 +1145,30 @@ function isSessionLifecycleStatus(value: unknown): value is SessionLifecycleStat
 }
 
 function projectRepositoryDomainError(value: unknown): ApplicationDomainError {
+  const snapshot = snapshotProjectionRecord(value, ["code", "message", "retryable", "details"]);
   if (
-    !isPlainObject(value) ||
-    !isRepositoryDomainErrorCode(value.code) ||
-    !isBoundedStringWithLimit(value.message, 4_096) ||
-    typeof value.retryable !== "boolean"
+    snapshot === undefined ||
+    !isRepositoryDomainErrorCode(snapshot.code) ||
+    !isBoundedStringWithLimit(snapshot.message, 4_096) ||
+    typeof snapshot.retryable !== "boolean"
   ) {
     return invalidRepositoryValue();
   }
-  if (value.code === "capacity_exceeded") {
-    if (!value.retryable) return invalidRepositoryValue();
+  if (snapshot.code === "capacity_exceeded") {
+    if (!snapshot.retryable) return invalidRepositoryValue();
     return {
       kind: "domain",
-      code: value.code,
-      message: value.message,
+      code: snapshot.code,
+      message: snapshot.message,
       retryable: true,
-      details: projectCapacityExceededDetails(value.details),
+      details: projectCapacityExceededDetails(snapshot.details),
     };
   }
   return {
     kind: "domain",
-    code: value.code,
-    message: value.message,
-    retryable: value.retryable,
+    code: snapshot.code,
+    message: snapshot.message,
+    retryable: snapshot.retryable,
   };
 }
 
@@ -1071,41 +1187,63 @@ function isRepositoryDomainErrorCode(value: unknown): value is Exclude<Applicati
 }
 
 function projectCapacityExceededDetails(value: unknown): NonNullable<ApplicationDomainError["details"]> {
-  if (!isPlainObject(value) || !isNonNegativeSafeInteger(value.current) || !isNonNegativeSafeInteger(value.limit)) {
+  const snapshot = snapshotProjectionRecord(value, ["scope", "rootSessionId", "providerId", "current", "limit"]);
+  if (
+    snapshot === undefined ||
+    !isNonNegativeSafeInteger(snapshot.current) ||
+    !isNonNegativeSafeInteger(snapshot.limit)
+  ) {
     return invalidRepositoryValue();
   }
-  switch (value.scope) {
+  switch (snapshot.scope) {
     case "root":
-      if (!isBoundedString(value.rootSessionId)) return invalidRepositoryValue();
+      if (!isBoundedString(snapshot.rootSessionId)) return invalidRepositoryValue();
       return {
-        scope: value.scope,
-        rootSessionId: value.rootSessionId,
-        current: value.current,
-        limit: value.limit,
+        scope: snapshot.scope,
+        rootSessionId: snapshot.rootSessionId,
+        current: snapshot.current,
+        limit: snapshot.limit,
       };
     case "application":
-      return { scope: value.scope, current: value.current, limit: value.limit };
+      return { scope: snapshot.scope, current: snapshot.current, limit: snapshot.limit };
     case "provider":
-      if (!isBoundedString(value.providerId)) return invalidRepositoryValue();
+      if (!isBoundedString(snapshot.providerId)) return invalidRepositoryValue();
       return {
-        scope: value.scope,
-        providerId: value.providerId,
-        current: value.current,
-        limit: value.limit,
+        scope: snapshot.scope,
+        providerId: snapshot.providerId,
+        current: snapshot.current,
+        limit: snapshot.limit,
       };
     default:
       return invalidRepositoryValue();
   }
 }
 
-function isAllowedAdditionalDirectories(value: unknown): value is readonly string[] {
-  if (!Array.isArray(value) || value.length > 1_024) return false;
-  for (let index = 0; index < value.length; index += 1) {
-    if (!Object.hasOwn(value, index) || !isBoundedStringWithLimit(value[index], 32_768)) {
-      return false;
-    }
+function snapshotAllowedAdditionalDirectories(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const length = Reflect.get(value, "length") as unknown;
+  if (
+    !Number.isSafeInteger(length) ||
+    (length as number) < 0 ||
+    (length as number) > ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxItems
+  ) {
+    return undefined;
   }
-  return Buffer.byteLength(JSON.stringify(value)) <= 4 * 1_024 * 1_024;
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.length !== (length as number) + 1 || !ownKeys.includes("length")) return undefined;
+  const indexKeys = new Set(ownKeys.filter((key): key is string => typeof key === "string" && key !== "length"));
+  if (indexKeys.size !== length) return undefined;
+  const snapshot: string[] = [];
+  for (let index = 0; index < (length as number); index += 1) {
+    const key = String(index);
+    if (!indexKeys.has(key)) return undefined;
+    const item = Reflect.get(value, key) as unknown;
+    if (!isBoundedStringWithLimit(item, ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxPathLength)) return undefined;
+    snapshot.push(item);
+  }
+  return allowedAdditionalDirectoriesJsonByteLength(snapshot) <= ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxJsonBytes
+    ? snapshot
+    : undefined;
 }
 
 function isBoundedStringWithLimit(value: unknown, maxLength: number): value is string {
@@ -1116,17 +1254,21 @@ function projectSessionPage(
   value: unknown,
   expectedWorkspaceKey: string,
   expectedLifecycleStatus: SessionLifecycleStatus | undefined,
+  expectedLimit: number,
 ): ApplicationOperationResponse<ApplicationSessionPage, "read"> {
-  if (!isPlainObject(value) || !Array.isArray(value.items)) return invalidRepositoryValue();
-  if (value.nextCursor !== undefined && !isBoundedStringWithLimit(value.nextCursor, 2_048)) {
+  const snapshot = snapshotProjectionRecord(value, ["items", "nextCursor"]);
+  const pageItems = snapshotProjectionArray(snapshot?.items, expectedLimit);
+  if (snapshot === undefined || pageItems === undefined) {
     return invalidRepositoryValue();
   }
-  const items: SessionListItem[] = [];
-  const omissions: ReturnType<typeof projectPageOmission>[] = [];
-  for (let index = 0; index < value.items.length; index += 1) {
-    if (!Object.hasOwn(value.items, index)) return invalidRepositoryValue();
-    const item = value.items[index];
-    if (isPageOmission(item)) omissions.push(projectPageOmission(item));
+  if (snapshot.nextCursor !== undefined && !isBoundedStringWithLimit(snapshot.nextCursor, 2_048)) {
+    return invalidRepositoryValue();
+  }
+  const items: ApplicationSessionListItem[] = [];
+  const omissions: NonNullable<ReturnType<typeof projectPageOmission>>[] = [];
+  for (const item of pageItems) {
+    const omission = projectPageOmission(item);
+    if (omission !== undefined) omissions.push(omission);
     else {
       const projected = projectSessionListItem(item);
       if (
@@ -1139,7 +1281,7 @@ function projectSessionPage(
     }
   }
   const page: ApplicationSessionPage =
-    value.nextCursor === undefined ? { items } : { items, nextCursor: value.nextCursor };
+    snapshot.nextCursor === undefined ? { items } : { items, nextCursor: snapshot.nextCursor };
   const [firstOmission, ...remainingOmissions] = omissions;
   return firstOmission === undefined
     ? { overallStatus: "success", value: page, persistence: { status: "read", effect: "none" } }
@@ -1151,36 +1293,60 @@ function projectSessionPage(
       };
 }
 
-function projectSessionListItem(value: unknown): SessionListItem {
+function projectSessionListItem(value: unknown): ApplicationSessionListItem {
+  const snapshot = snapshotProjectionRecord(value, [
+    "id",
+    "workspaceKey",
+    "defaultCharacterId",
+    "lifecycleStatus",
+    "createdAt",
+    "updatedAt",
+    "lastActivityAt",
+    "stateChangedAt",
+    "executionState",
+    "activeRunId",
+    "latestRunId",
+  ]);
   if (
-    !isPlainObject(value) ||
-    !isBoundedString(value.id) ||
-    !isBoundedString(value.workspaceKey) ||
-    !isBoundedString(value.defaultCharacterId) ||
-    !isSessionLifecycleStatus(value.lifecycleStatus) ||
-    !isNonNegativeSafeInteger(value.createdAt) ||
-    !isNonNegativeSafeInteger(value.updatedAt) ||
-    !isNonNegativeSafeInteger(value.lastActivityAt) ||
-    !isSessionExecutionState(value.executionState) ||
-    (value.activeRunId !== undefined && !isBoundedString(value.activeRunId)) ||
-    (value.latestRunId !== undefined && !isBoundedString(value.latestRunId)) ||
-    !isNonNegativeSafeInteger(value.stateChangedAt)
+    snapshot === undefined ||
+    !isBoundedString(snapshot.id) ||
+    !isBoundedString(snapshot.workspaceKey) ||
+    !isBoundedString(snapshot.defaultCharacterId) ||
+    !isSessionLifecycleStatus(snapshot.lifecycleStatus) ||
+    !isNonNegativeSafeInteger(snapshot.createdAt) ||
+    !isNonNegativeSafeInteger(snapshot.updatedAt) ||
+    !isNonNegativeSafeInteger(snapshot.lastActivityAt) ||
+    !isNonNegativeSafeInteger(snapshot.stateChangedAt)
   ) {
     return invalidRepositoryValue();
   }
-  return {
-    id: value.id,
-    workspaceKey: value.workspaceKey,
-    defaultCharacterId: value.defaultCharacterId,
-    lifecycleStatus: value.lifecycleStatus,
-    createdAt: value.createdAt,
-    updatedAt: value.updatedAt,
-    lastActivityAt: value.lastActivityAt,
-    executionState: value.executionState,
-    ...(value.activeRunId === undefined ? {} : { activeRunId: value.activeRunId }),
-    ...(value.latestRunId === undefined ? {} : { latestRunId: value.latestRunId }),
-    stateChangedAt: value.stateChangedAt,
+  const execution = projectSessionExecution(snapshot.executionState, snapshot.activeRunId, snapshot.latestRunId);
+  if (snapshot.lifecycleStatus !== "active" && execution.state === "running") return invalidRepositoryValue();
+  const base = {
+    id: snapshot.id,
+    workspaceKey: snapshot.workspaceKey,
+    defaultCharacterId: snapshot.defaultCharacterId,
+    lifecycleStatus: snapshot.lifecycleStatus,
+    createdAt: snapshot.createdAt,
+    updatedAt: snapshot.updatedAt,
+    lastActivityAt: snapshot.lastActivityAt,
+    stateChangedAt: snapshot.stateChangedAt,
   };
+  switch (execution.state) {
+    case "not_started":
+      return { ...base, executionState: execution.state };
+    case "running":
+      if (snapshot.lifecycleStatus !== "active") return invalidRepositoryValue();
+      return {
+        ...base,
+        lifecycleStatus: "active",
+        executionState: execution.state,
+        activeRunId: execution.activeRunId,
+        latestRunId: execution.latestRunId,
+      };
+    default:
+      return { ...base, executionState: execution.state, latestRunId: execution.latestRunId };
+  }
 }
 
 function projectSessionReadResult(
@@ -1188,58 +1354,68 @@ function projectSessionReadResult(
   expectedSessionId: string,
   expectedWorkspaceKey: string,
 ): ApplicationSessionReadResult {
-  if (!isPlainObject(value) || !isPlainObject(value.execution)) return invalidRepositoryValue();
-  const execution = value.execution;
-  if (
-    !isSessionExecutionState(execution.state) ||
-    (execution.activeRunId !== undefined && !isBoundedString(execution.activeRunId)) ||
-    (execution.latestRunId !== undefined && !isBoundedString(execution.latestRunId))
-  ) {
-    return invalidRepositoryValue();
-  }
-  const session = projectSessionDetail(value.session);
+  const snapshot = snapshotProjectionRecord(value, ["session", "execution"]);
+  const executionSnapshot = snapshotProjectionRecord(snapshot?.execution, ["state", "activeRunId", "latestRunId"]);
+  if (snapshot === undefined || executionSnapshot === undefined) return invalidRepositoryValue();
+  const execution = projectSessionExecution(
+    executionSnapshot.state,
+    executionSnapshot.activeRunId,
+    executionSnapshot.latestRunId,
+  );
+  const session = projectSessionDetail(snapshot.session);
   if (session.id !== expectedSessionId || session.workspaceKey !== expectedWorkspaceKey) {
     return invalidRepositoryValue();
   }
-  return {
-    session,
-    execution: {
-      state: execution.state,
-      ...(execution.activeRunId === undefined ? {} : { activeRunId: execution.activeRunId }),
-      ...(execution.latestRunId === undefined ? {} : { latestRunId: execution.latestRunId }),
-    },
-  };
+  if (session.lifecycleStatus === "active") {
+    return { session: { ...session, lifecycleStatus: "active" }, execution };
+  }
+  if (execution.state === "running") return invalidRepositoryValue();
+  return { session: { ...session, lifecycleStatus: session.lifecycleStatus }, execution };
 }
 
 function projectSessionDetail(value: unknown): ApplicationSessionDetail {
+  const snapshot = snapshotProjectionRecord(value, [
+    "id",
+    "providerId",
+    "workspaceKey",
+    "allowedAdditionalDirectoriesByteLength",
+    "allowedAdditionalDirectoriesState",
+    "defaultCharacterId",
+    "maxConcurrentChildRuns",
+    "lifecycleStatus",
+    "createdAt",
+    "updatedAt",
+    "lastActivityAt",
+  ]);
   if (
-    !isPlainObject(value) ||
-    !isBoundedString(value.id) ||
-    !isBoundedString(value.providerId) ||
-    !isBoundedString(value.workspaceKey) ||
-    !isNonNegativeSafeInteger(value.allowedAdditionalDirectoriesByteLength) ||
-    (value.allowedAdditionalDirectoriesState !== "inline" && value.allowedAdditionalDirectoriesState !== "chunked") ||
-    !isBoundedString(value.defaultCharacterId) ||
-    !isNonNegativeSafeInteger(value.maxConcurrentChildRuns) ||
-    !isSessionLifecycleStatus(value.lifecycleStatus) ||
-    !isNonNegativeSafeInteger(value.createdAt) ||
-    !isNonNegativeSafeInteger(value.updatedAt) ||
-    !isNonNegativeSafeInteger(value.lastActivityAt)
+    snapshot === undefined ||
+    !isBoundedString(snapshot.id) ||
+    !isBoundedString(snapshot.providerId) ||
+    !isBoundedString(snapshot.workspaceKey) ||
+    !isNonNegativeSafeInteger(snapshot.allowedAdditionalDirectoriesByteLength) ||
+    (snapshot.allowedAdditionalDirectoriesState !== "inline" &&
+      snapshot.allowedAdditionalDirectoriesState !== "chunked") ||
+    !isBoundedString(snapshot.defaultCharacterId) ||
+    !isSafeChildRunLimit(snapshot.maxConcurrentChildRuns) ||
+    !isSessionLifecycleStatus(snapshot.lifecycleStatus) ||
+    !isNonNegativeSafeInteger(snapshot.createdAt) ||
+    !isNonNegativeSafeInteger(snapshot.updatedAt) ||
+    !isNonNegativeSafeInteger(snapshot.lastActivityAt)
   ) {
     return invalidRepositoryValue();
   }
   return {
-    id: value.id,
-    providerId: value.providerId,
-    workspaceKey: value.workspaceKey,
-    allowedAdditionalDirectoriesByteLength: value.allowedAdditionalDirectoriesByteLength,
-    allowedAdditionalDirectoriesState: value.allowedAdditionalDirectoriesState,
-    defaultCharacterId: value.defaultCharacterId,
-    maxConcurrentChildRuns: value.maxConcurrentChildRuns,
-    lifecycleStatus: value.lifecycleStatus,
-    createdAt: value.createdAt,
-    updatedAt: value.updatedAt,
-    lastActivityAt: value.lastActivityAt,
+    id: snapshot.id,
+    providerId: snapshot.providerId,
+    workspaceKey: snapshot.workspaceKey,
+    allowedAdditionalDirectoriesByteLength: snapshot.allowedAdditionalDirectoriesByteLength,
+    allowedAdditionalDirectoriesState: snapshot.allowedAdditionalDirectoriesState,
+    defaultCharacterId: snapshot.defaultCharacterId,
+    maxConcurrentChildRuns: snapshot.maxConcurrentChildRuns,
+    lifecycleStatus: snapshot.lifecycleStatus,
+    createdAt: snapshot.createdAt,
+    updatedAt: snapshot.updatedAt,
+    lastActivityAt: snapshot.lastActivityAt,
   };
 }
 
@@ -1249,34 +1425,34 @@ function projectSessionDirectoriesChunk(
   expectedOffset: number,
   expectedMaxBytes: number,
 ): ApplicationSessionDirectoriesChunkResult {
+  const snapshot = snapshotProjectionRecord(value, ["sessionId", "offset", "totalBytes", "eof", "bytes"]);
   if (
-    !isPlainObject(value) ||
-    value.sessionId !== expectedSessionId ||
-    value.offset !== expectedOffset ||
-    !isNonNegativeSafeInteger(value.totalBytes) ||
-    typeof value.eof !== "boolean" ||
-    !(value.bytes instanceof ArrayBuffer)
+    snapshot === undefined ||
+    snapshot.sessionId !== expectedSessionId ||
+    snapshot.offset !== expectedOffset ||
+    !isNonNegativeSafeInteger(snapshot.totalBytes) ||
+    typeof snapshot.eof !== "boolean" ||
+    !(snapshot.bytes instanceof ArrayBuffer)
   ) {
     return invalidRepositoryValue();
   }
-  const byteLength = value.bytes.byteLength;
+  const byteLength = snapshot.bytes.byteLength;
   const endOffset = expectedOffset + byteLength;
-  const expectedEof = endOffset >= value.totalBytes;
   if (
     byteLength > expectedMaxBytes ||
-    (byteLength === 0 && !value.eof) ||
     !Number.isSafeInteger(endOffset) ||
-    endOffset > value.totalBytes ||
-    value.eof !== expectedEof
+    (expectedOffset >= snapshot.totalBytes
+      ? byteLength !== 0 || !snapshot.eof
+      : byteLength === 0 || endOffset > snapshot.totalBytes || snapshot.eof !== (endOffset === snapshot.totalBytes))
   ) {
     return invalidRepositoryValue();
   }
   return {
-    sessionId: value.sessionId,
-    offset: value.offset,
-    totalBytes: value.totalBytes,
-    eof: value.eof,
-    bytes: value.bytes,
+    sessionId: snapshot.sessionId,
+    offset: snapshot.offset,
+    totalBytes: snapshot.totalBytes,
+    eof: snapshot.eof,
+    bytes: snapshot.bytes,
   };
 }
 
@@ -1285,20 +1461,21 @@ function projectSessionCreateResult(
   expectedSessionId: string,
   expectedWorkspaceKey: string,
 ): ApplicationSessionCreateResult {
+  const snapshot = snapshotProjectionRecord(value, ["sessionId", "workspaceKey", "lifecycleStatus", "createdAt"]);
   if (
-    !isPlainObject(value) ||
-    value.sessionId !== expectedSessionId ||
-    value.workspaceKey !== expectedWorkspaceKey ||
-    value.lifecycleStatus !== "active" ||
-    !isNonNegativeSafeInteger(value.createdAt)
+    snapshot === undefined ||
+    snapshot.sessionId !== expectedSessionId ||
+    snapshot.workspaceKey !== expectedWorkspaceKey ||
+    snapshot.lifecycleStatus !== "active" ||
+    !isNonNegativeSafeInteger(snapshot.createdAt)
   ) {
     return invalidRepositoryValue();
   }
   return {
-    sessionId: value.sessionId,
-    workspaceKey: value.workspaceKey,
-    lifecycleStatus: value.lifecycleStatus,
-    createdAt: value.createdAt,
+    sessionId: snapshot.sessionId,
+    workspaceKey: snapshot.workspaceKey,
+    lifecycleStatus: snapshot.lifecycleStatus,
+    createdAt: snapshot.createdAt,
   };
 }
 
@@ -1307,42 +1484,50 @@ function projectSessionTransitionResult(
   expectedSessionId: string,
   expectedLifecycleStatus: SessionLifecycleStatus,
 ): ApplicationSessionTransitionResult {
+  const snapshot = snapshotProjectionRecord(value, ["sessionId", "lifecycleStatus", "updatedAt"]);
   if (
-    !isPlainObject(value) ||
-    value.sessionId !== expectedSessionId ||
-    value.lifecycleStatus !== expectedLifecycleStatus ||
-    !isNonNegativeSafeInteger(value.updatedAt)
+    snapshot === undefined ||
+    snapshot.sessionId !== expectedSessionId ||
+    snapshot.lifecycleStatus !== expectedLifecycleStatus ||
+    !isNonNegativeSafeInteger(snapshot.updatedAt)
   ) {
     return invalidRepositoryValue();
   }
-  return { sessionId: expectedSessionId, lifecycleStatus: expectedLifecycleStatus, updatedAt: value.updatedAt };
+  return { sessionId: expectedSessionId, lifecycleStatus: expectedLifecycleStatus, updatedAt: snapshot.updatedAt };
 }
 
-function isSessionExecutionState(value: unknown): value is SessionListItem["executionState"] {
-  return (
-    value === "not_started" ||
-    value === "running" ||
-    value === "completed" ||
-    value === "failed" ||
-    value === "canceled" ||
-    value === "interrupted"
-  );
+function projectSessionExecution(
+  state: unknown,
+  activeRunId: unknown,
+  latestRunId: unknown,
+): ApplicationSessionExecution {
+  if (state === "not_started") {
+    if (activeRunId !== undefined || latestRunId !== undefined) return invalidRepositoryValue();
+    return { state };
+  }
+  if (state === "running") {
+    if (!isBoundedString(activeRunId) || !isBoundedString(latestRunId) || activeRunId !== latestRunId) {
+      return invalidRepositoryValue();
+    }
+    return { state, activeRunId, latestRunId };
+  }
+  if (state === "completed" || state === "failed" || state === "canceled" || state === "interrupted") {
+    if (activeRunId !== undefined || !isBoundedString(latestRunId)) return invalidRepositoryValue();
+    return { state, latestRunId };
+  }
+  return invalidRepositoryValue();
 }
 
-function isPageOmission(value: unknown): value is Readonly<{
-  omitted: true;
-  reason: "response_size_limit";
-  ordinal?: number;
-}> {
-  return (
-    isPlainObject(value) &&
-    value.omitted === true &&
-    value.reason === "response_size_limit" &&
-    (value.ordinal === undefined || isNonNegativeSafeInteger(value.ordinal))
-  );
-}
-
-function projectPageOmission(omission: ReturnTypeGuard<typeof isPageOmission>) {
+function projectPageOmission(value: unknown) {
+  const omission = snapshotProjectionRecord(value, ["omitted", "reason", "ordinal"]);
+  if (
+    omission === undefined ||
+    omission.omitted !== true ||
+    omission.reason !== "response_size_limit" ||
+    (omission.ordinal !== undefined && !isNonNegativeSafeInteger(omission.ordinal))
+  ) {
+    return undefined;
+  }
   return omission.ordinal === undefined
     ? {
         kind: "omission" as const,
@@ -1356,8 +1541,6 @@ function projectPageOmission(omission: ReturnTypeGuard<typeof isPageOmission>) {
         ordinal: omission.ordinal,
       };
 }
-
-type ReturnTypeGuard<TGuard> = TGuard extends (value: unknown) => value is infer TValue ? TValue : never;
 
 function invalidRepositoryValue(): never {
   throw new TypeError("Repository result does not match the Application Service contract.");

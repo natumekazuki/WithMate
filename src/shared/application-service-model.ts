@@ -1,5 +1,3 @@
-import type { SessionExecutionState, SessionListItem } from "./repository-read-model.js";
-
 export type ApplicationSessionOperation =
   "create" | "list" | "read" | "read_directories_chunk" | "archive" | "unarchive" | "close";
 
@@ -310,8 +308,62 @@ export type ApplicationSessionListRequest<TAuthorizationContext> = Readonly<{
   limit?: number;
 }>;
 
-// Repository read projectionは永続化方式に依存しないCP2公開型なので、同じfieldを複製しない。
-export type ApplicationSessionListItem = SessionListItem;
+export type ApplicationSessionExecutionState =
+  "not_started" | "running" | "completed" | "failed" | "canceled" | "interrupted";
+
+type ApplicationNotStartedExecution = Readonly<{
+  state: "not_started";
+  activeRunId?: never;
+  latestRunId?: never;
+}>;
+
+type ApplicationRunningExecution = Readonly<{
+  state: "running";
+  activeRunId: string;
+  latestRunId: string;
+}>;
+
+type ApplicationTerminalExecution = Readonly<{
+  state: Exclude<ApplicationSessionExecutionState, "not_started" | "running">;
+  activeRunId?: never;
+  latestRunId: string;
+}>;
+
+export type ApplicationSessionExecution =
+  ApplicationNotStartedExecution | ApplicationRunningExecution | ApplicationTerminalExecution;
+
+type ApplicationNonRunningSessionExecution = ApplicationNotStartedExecution | ApplicationTerminalExecution;
+
+type ApplicationSessionListItemBase = Readonly<{
+  id: string;
+  workspaceKey: string;
+  defaultCharacterId: string;
+  lifecycleStatus: ApplicationSessionLifecycleStatus;
+  createdAt: number;
+  updatedAt: number;
+  lastActivityAt: number;
+  stateChangedAt: number;
+}>;
+
+type ApplicationSessionListExecution =
+  | Readonly<{ executionState: "not_started"; activeRunId?: never; latestRunId?: never }>
+  | Readonly<{ executionState: "running"; activeRunId: string; latestRunId: string }>
+  | Readonly<{
+      executionState: Exclude<ApplicationSessionExecutionState, "not_started" | "running">;
+      activeRunId?: never;
+      latestRunId: string;
+    }>;
+
+type ApplicationNonRunningSessionListExecution = Exclude<
+  ApplicationSessionListExecution,
+  Readonly<{ executionState: "running" }>
+>;
+
+export type ApplicationSessionListItem =
+  | (ApplicationSessionListItemBase & Readonly<{ lifecycleStatus: "active" }> & ApplicationSessionListExecution)
+  | (ApplicationSessionListItemBase &
+      Readonly<{ lifecycleStatus: Exclude<ApplicationSessionLifecycleStatus, "active"> }> &
+      ApplicationNonRunningSessionListExecution);
 
 export type ApplicationSessionPage = Readonly<{
   items: readonly ApplicationSessionListItem[];
@@ -323,16 +375,7 @@ export type ApplicationSessionReadRequest<TAuthorizationContext> = Readonly<{
   sessionId: string;
 }>;
 
-export type ApplicationSessionReadResult = Readonly<{
-  session: ApplicationSessionDetail;
-  execution: Readonly<{
-    state: SessionExecutionState;
-    activeRunId?: string;
-    latestRunId?: string;
-  }>;
-}>;
-
-export type ApplicationSessionDetail = Readonly<{
+type ApplicationSessionDetailBase = Readonly<{
   id: string;
   providerId: string;
   workspaceKey: string;
@@ -340,11 +383,24 @@ export type ApplicationSessionDetail = Readonly<{
   allowedAdditionalDirectoriesState: "inline" | "chunked";
   defaultCharacterId: string;
   maxConcurrentChildRuns: number;
-  lifecycleStatus: ApplicationSessionLifecycleStatus;
   createdAt: number;
   updatedAt: number;
   lastActivityAt: number;
 }>;
+
+export type ApplicationSessionDetail = ApplicationSessionDetailBase &
+  Readonly<{ lifecycleStatus: ApplicationSessionLifecycleStatus }>;
+
+export type ApplicationSessionReadResult =
+  | Readonly<{
+      session: ApplicationSessionDetailBase & Readonly<{ lifecycleStatus: "active" }>;
+      execution: ApplicationSessionExecution;
+    }>
+  | Readonly<{
+      session: ApplicationSessionDetailBase &
+        Readonly<{ lifecycleStatus: Exclude<ApplicationSessionLifecycleStatus, "active"> }>;
+      execution: ApplicationNonRunningSessionExecution;
+    }>;
 
 export type ApplicationSessionDirectoriesChunkRequest<TAuthorizationContext> = Readonly<{
   context: ApplicationSessionOperationContext<TAuthorizationContext>;

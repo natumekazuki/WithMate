@@ -109,6 +109,40 @@ repositoryTest("session create rejects sparse and relative directory arrays and 
   });
 });
 
+repositoryTest("Session create and child start reject child Run limits above the durable maximum", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const session = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000119", "session-over-limit");
+    session.session.maxConcurrentChildRuns = 1_025;
+    const sessionResult = create(session) as CommandResult;
+    assert.equal(!sessionResult.ok && sessionResult.error.code, "request_invalid");
+
+    const startChild = operationFor(database, REPOSITORY_WRITE_OPERATIONS.childStart, () => 200);
+    const child = childStartCommand("018f1f4e-7f0a-7000-8000-000000000120", "over-limit");
+    child.childSession.maxConcurrentChildRuns = 1_025;
+    const childResult = startChild(child) as CommandResult;
+    assert.equal(!childResult.ok && childResult.error.code, "request_invalid");
+    assert.equal(count(database, "sessions"), 0);
+  });
+});
+
+repositoryTest("Session create and child start accept the exact durable child Run maximum", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const session = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000121", "session-exact-limit");
+    session.session.maxConcurrentChildRuns = 1_024;
+    assert.equal((create(session) as CommandResult).ok, true);
+  });
+
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const startChild = operationFor(database, REPOSITORY_WRITE_OPERATIONS.childStart, () => 600);
+    const child = childStartCommand("018f1f4e-7f0a-7000-8000-000000000122", "exact-limit");
+    child.childSession.maxConcurrentChildRuns = 1_024;
+    assert.equal((startChild(child) as CommandResult).ok, true);
+  });
+});
+
 repositoryTest("session transitions enforce expected state and reject archive while a Run is active", () => {
   withDatabase((database) => {
     const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
@@ -2816,7 +2850,7 @@ repositoryTest("Session subtree delete returns a bounded cleanup token for large
 
 repositoryTest("Worker registry accepts Session commands only as write requests", async () => {
   const database = new DatabaseSync(":memory:");
-  database.exec(fs.readFileSync(new URL("../schema/sqlite/v1.sql", import.meta.url), "utf8"));
+  database.exec(fs.readFileSync(new URL("../schema/sqlite/v2.sql", import.meta.url), "utf8"));
   const messages: WorkerToMainMessage[] = [];
   const generationId = "018f1f4e-7f0a-7000-8000-000000000201";
   const runtime = new PersistenceWorkerRuntime(generationId, database, ":memory:", (message) => messages.push(message));
@@ -3584,7 +3618,7 @@ function readLifecycle(database: DatabaseSync, sessionId: string): string {
 function withDatabase(run: (database: DatabaseSync) => void): void {
   const database = new DatabaseSync(":memory:");
   try {
-    database.exec(fs.readFileSync(new URL("../schema/sqlite/v1.sql", import.meta.url), "utf8"));
+    database.exec(fs.readFileSync(new URL("../schema/sqlite/v2.sql", import.meta.url), "utf8"));
     run(database);
   } finally {
     database.close();

@@ -5,7 +5,11 @@ import path from "node:path";
 import { constants as sqliteConstants, DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
-import { resolveSchemaV1Artifacts, type SchemaArtifacts } from "./schema-artifacts.js";
+import {
+  resolveCurrentSchemaArtifacts,
+  resolveSchemaArtifactsForVersion,
+  type SchemaArtifacts,
+} from "./schema-artifacts.js";
 import {
   computeSchemaDefinitionSha256,
   loadSqliteSchemaBundle,
@@ -14,6 +18,7 @@ import {
   type SqliteSchemaBundle,
   type SqliteSchemaManifest,
 } from "./sqlite-manifest.js";
+import { resolveMigrationPath, SQLITE_MIGRATIONS, type SqliteMigration } from "./sqlite-migrations.js";
 
 const EXPECTED_ENCODING = "UTF-8";
 const EXPECTED_AUTO_VACUUM = 2;
@@ -69,6 +74,7 @@ export type OpenDatabaseOptions = Readonly<{
   databasePath: string;
   legacyDatabasePaths: readonly string[];
   artifacts?: SchemaArtifacts;
+  migrations?: readonly SqliteMigration[];
 }>;
 
 export type OpenDatabaseResult = Readonly<{
@@ -79,7 +85,7 @@ export type OpenDatabaseResult = Readonly<{
 
 export function openOrBootstrapDatabase(options: OpenDatabaseOptions): OpenDatabaseResult {
   assertDedicatedDatabasePath(options.databasePath, options.legacyDatabasePaths);
-  const bundle = loadBundle(options.artifacts ?? resolveSchemaV1Artifacts());
+  const bundle = loadBundle(options.artifacts ?? resolveCurrentSchemaArtifacts());
   let classification = classifyDatabaseFile(options.databasePath, bundle.manifest);
 
   if (classification.kind === "missing") {
@@ -87,9 +93,12 @@ export function openOrBootstrapDatabase(options: OpenDatabaseOptions): OpenDatab
   }
 
   if (classification.kind === "upgrade") {
-    throw new DatabaseBootstrapError("database_schema_too_old", "Database migration is not available.", {
-      details: { actualVersion: classification.schemaVersion, expectedVersion: bundle.manifest.schemaVersion },
-    });
+    return migrateDatabase(
+      options.databasePath,
+      classification.schemaVersion,
+      bundle,
+      options.migrations ?? SQLITE_MIGRATIONS,
+    );
   }
 
   if (classification.kind === "current") {
@@ -123,6 +132,70 @@ export function openOrBootstrapDatabase(options: OpenDatabaseOptions): OpenDatab
     }
     throw normalizeDatabaseError(error, "database_bootstrap_failed", "Database bootstrap failed.");
   }
+}
+
+function migrateDatabase(
+  databasePath: string,
+  fromVersion: number,
+  currentBundle: SqliteSchemaBundle,
+  migrations: readonly SqliteMigration[],
+): OpenDatabaseResult {
+  const migrationPath = resolveMigrationPath(fromVersion, currentBundle.manifest.schemaVersion, migrations);
+  const sourceArtifacts = resolveSchemaArtifactsForVersion(fromVersion);
+  if (migrationPath.length === 0 || sourceArtifacts === undefined) {
+    throw new DatabaseBootstrapError("database_schema_too_old", "Database migration is not available.", {
+      details: { actualVersion: fromVersion, expectedVersion: currentBundle.manifest.schemaVersion },
+    });
+  }
+
+  const sourceBundle = loadBundle(sourceArtifacts);
+  verifyExistingDatabaseReadOnly(databasePath, sourceBundle.manifest);
+  const database = openWritableDatabase(databasePath);
+  try {
+    database.exec(`PRAGMA busy_timeout = ${EXPECTED_BUSY_TIMEOUT_MS};`);
+    createMigrationBackup(database, databasePath, fromVersion, currentBundle.manifest.schemaVersion);
+    for (const migration of migrationPath) {
+      try {
+        database.exec("BEGIN IMMEDIATE;");
+        assertPragma(database, "user_version", migration.fromVersion);
+        migration.apply(database);
+        migration.verify(database);
+        database.exec(`PRAGMA user_version = ${migration.toVersion};`);
+        assertPragma(database, "user_version", migration.toVersion);
+        database.exec("COMMIT;");
+      } catch (error) {
+        rollbackIfNeeded(database);
+        throw error;
+      }
+      assertPragma(database, "application_id", currentBundle.manifest.applicationId);
+      assertPragma(database, "user_version", migration.toVersion);
+    }
+    verifyPersistentSchema(database, currentBundle.manifest);
+    configureConnection(database);
+    return { database, initialized: false, schemaVersion: currentBundle.manifest.schemaVersion };
+  } catch (error) {
+    rollbackIfNeeded(database);
+    database.close();
+    throw normalizeDatabaseError(error, "database_bootstrap_failed", "Database migration failed.");
+  }
+}
+
+function createMigrationBackup(
+  database: DatabaseSync,
+  databasePath: string,
+  fromVersion: number,
+  toVersion: number,
+): string {
+  const basePath = `${databasePath}.backup-v${fromVersion}-to-v${toVersion}`;
+  let backupPath = basePath;
+  let suffix = 0;
+  while (fs.existsSync(backupPath)) {
+    suffix += 1;
+    backupPath = `${basePath}.${suffix}`;
+  }
+  const quotedPath = backupPath.replaceAll("'", "''");
+  database.exec(`VACUUM INTO '${quotedPath}';`);
+  return backupPath;
 }
 
 export function classifyDatabaseFile(databasePath: string, manifest: SqliteSchemaManifest): DatabaseClassification {
@@ -260,7 +333,7 @@ function assertSchemaDdlHasNoControlStatements(ddl: string): void {
     .replace(/"(?:""|[^"])*"/g, '""')
     .replace(/--[^\r\n]*/g, "")
     .replace(/\/\*[\s\S]*?\*\//g, "");
-  if (/\b(?:ATTACH|DETACH|PRAGMA|BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE)\b/i.test(sqlWithoutLiteralsOrComments)) {
+  if (/\b(?:ATTACH|DETACH|PRAGMA|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)\b/i.test(sqlWithoutLiteralsOrComments)) {
     throw new DatabaseBootstrapError(
       "database_schema_verification_failed",
       "Schema artifact contains a forbidden control statement.",

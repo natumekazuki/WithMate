@@ -4,6 +4,13 @@ import ts from "typescript";
 
 const root = process.cwd();
 const sourceRoot = path.join(root, "src");
+const repositoryCapabilityNames = new Set([
+  "createSession",
+  "transitionSession",
+  "sessionsPage",
+  "sessionGet",
+  "sessionDirectoriesChunk",
+]);
 
 const rules = [
   {
@@ -67,6 +74,13 @@ const nonliteralDynamicImportFixture = path.join(
   "module-boundaries",
   "nonliteral-dynamic-import.ts",
 );
+const repositoryBoundaryBypassesFixture = path.join(
+  root,
+  "test",
+  "fixtures",
+  "module-boundaries",
+  "repository-boundary-bypasses.ts",
+);
 const testConfig = ts.getParsedCommandLineOfConfigFile(path.join(root, "tsconfig.test.json"), {}, ts.sys);
 if (testConfig === undefined) {
   throw new Error("tsconfig.test.json could not be parsed for module-boundary validation.");
@@ -79,6 +93,7 @@ const typeProgram = ts.createProgram({
     rawReadFixture,
     publicTypeAliasFixture,
     nonliteralDynamicImportFixture,
+    repositoryBoundaryBypassesFixture,
   ],
   options: testConfig.options,
 });
@@ -163,6 +178,37 @@ for (const file of listSourceFiles(sourceRoot)) {
         `${path.relative(root, file)} dynamically imports RepositoryReadClient outside the Application Service`,
       );
     }
+    if (!allowsRepositoryIntegration && isRepositoryClientImportEquals(node)) {
+      violations.push(
+        `${path.relative(root, file)} imports a Repository client with import-equals outside the Application Service`,
+      );
+    }
+    if (!allowsRepositoryIntegration && isRepositoryClientImportType(node)) {
+      violations.push(`${path.relative(root, file)} imports a Repository client through an inline import type`);
+    }
+    if (!allowsRepositoryIntegration && isBareRequireRepositoryClient(node)) {
+      violations.push(`${path.relative(root, file)} requires a Repository client outside the Application Service`);
+    }
+    if (!allowsRepositoryIntegration && sourceRelativePath.startsWith(`main${path.sep}`) && isBareRequireCall(node)) {
+      violations.push(`${path.relative(root, file)} uses bare require outside the Application Service integration`);
+    }
+    if (
+      sourceRelativePath.startsWith(`main${path.sep}`) &&
+      (isCreateRequireReference(node) || isNodeModuleCapabilityAcquisition(node))
+    ) {
+      violations.push(
+        `${path.relative(root, file)} accesses createRequire outside the Application Service integration`,
+      );
+    }
+    if (
+      !allowsRepositoryIntegration &&
+      sourceRelativePath.startsWith(`main${path.sep}`) &&
+      isRepositoryCapabilityReference(node)
+    ) {
+      violations.push(
+        `${path.relative(root, file)} declares or accesses a Repository client capability outside the Application Service`,
+      );
+    }
     if (isNonliteralDynamicImport(node)) {
       violations.push(`${path.relative(root, file)} uses a non-literal dynamic import outside an internal allowlist`);
     }
@@ -219,11 +265,39 @@ for (const file of [applicationWriteOwner]) {
   if (sourceFile === undefined) {
     violations.push(`${path.relative(root, publicMainBarrel)} could not be inspected`);
   } else {
+    const exportedNames = typeChecker
+      .getExportsOfModule(typeChecker.getSymbolAtLocation(sourceFile) ?? sourceFile.symbol)
+      .map((symbol) => symbol.getName());
+    for (const exportedName of exportedNames) {
+      if (exportedName !== "ApplicationSessionOperations") {
+        violations.push(
+          `${path.relative(root, publicMainBarrel)} exposes non-operation symbol ${JSON.stringify(exportedName)}`,
+        );
+      }
+    }
     for (const exported of findExportsDeclaredOutside(sourceFile, publicApplicationModel)) {
       violations.push(
         `${path.relative(root, publicMainBarrel)} exposes internal symbol ${JSON.stringify(exported.name)} from ${path.relative(root, exported.declarationFile)}`,
       );
     }
+  }
+}
+
+{
+  const fixtureSource = typeProgram.getSourceFile(repositoryBoundaryBypassesFixture);
+  if (
+    fixtureSource === undefined ||
+    !containsNode(fixtureSource, isRepositoryClientImportEquals) ||
+    !containsNode(fixtureSource, isRepositoryClientImportType) ||
+    !containsNode(fixtureSource, isCreateRequireReference) ||
+    !containsNode(fixtureSource, isRepositoryCapabilityReference) ||
+    !containsNode(fixtureSource, isNodeModuleCapabilityAcquisition) ||
+    !containsNode(fixtureSource, isBareRequireRepositoryClient) ||
+    !containsNode(fixtureSource, isRawPersistenceRequestReference)
+  ) {
+    violations.push(
+      `${path.relative(root, repositoryBoundaryBypassesFixture)} no longer exercises Repository boundary bypass rules`,
+    );
   }
 }
 
@@ -285,7 +359,7 @@ function isRawPersistenceRequestReference(node) {
 }
 
 function rawPersistenceRequestSymbol(node) {
-  if (ts.isPropertyAccessExpression(node) && node.name.text === "request") {
+  if (ts.isPropertyAccessExpression(node) && staticStringValue(node.name) === "request") {
     return (
       typeChecker.getSymbolAtLocation(node.name) ??
       typeChecker.getTypeAtLocation(node.expression).getProperty("request")
@@ -294,7 +368,8 @@ function rawPersistenceRequestSymbol(node) {
   if (
     ts.isElementAccessExpression(node) &&
     node.argumentExpression !== undefined &&
-    typeCanSelectRequest(typeChecker.getTypeAtLocation(node.argumentExpression))
+    (staticStringValue(node.argumentExpression, false) === "request" ||
+      typeCanSelectRequest(typeChecker.getTypeAtLocation(node.argumentExpression)))
   ) {
     return typeChecker.getTypeAtLocation(node.expression).getProperty("request");
   }
@@ -304,8 +379,9 @@ function rawPersistenceRequestSymbol(node) {
       propertyName === undefined
         ? node.name.getText() === "request"
         : ts.isComputedPropertyName(propertyName)
-          ? typeCanSelectRequest(typeChecker.getTypeAtLocation(propertyName.expression))
-          : propertyName.getText() === "request";
+          ? staticStringValue(propertyName.expression, false) === "request" ||
+            typeCanSelectRequest(typeChecker.getTypeAtLocation(propertyName.expression))
+          : staticStringValue(propertyName) === "request";
     if (!selectsRequest) return undefined;
     const declaration = node.parent.parent;
     if (!ts.isVariableDeclaration(declaration) || declaration.initializer === undefined) return undefined;
@@ -332,6 +408,132 @@ function isRepositoryClientDynamicImport(node, clientFileName) {
     ts.isStringLiteral(moduleSpecifier) &&
     moduleSpecifier.text.endsWith(`/${clientFileName}`)
   );
+}
+
+function isRepositoryClientModuleName(moduleName) {
+  return moduleName.endsWith("/repository-write-client.js") || moduleName.endsWith("/repository-read-client.js");
+}
+
+function isRepositoryClientImportEquals(node) {
+  return (
+    ts.isImportEqualsDeclaration(node) &&
+    ts.isExternalModuleReference(node.moduleReference) &&
+    node.moduleReference.expression !== undefined &&
+    ts.isStringLiteral(node.moduleReference.expression) &&
+    isRepositoryClientModuleName(node.moduleReference.expression.text)
+  );
+}
+
+function isRepositoryClientImportType(node) {
+  return (
+    ts.isImportTypeNode(node) &&
+    ts.isLiteralTypeNode(node.argument) &&
+    ts.isStringLiteral(node.argument.literal) &&
+    isRepositoryClientModuleName(node.argument.literal.text)
+  );
+}
+
+function isCreateRequireReference(node) {
+  if (staticStringValue(node) === "createRequire") return true;
+  if (ts.isPropertyAccessExpression(node)) return staticStringValue(node.name) === "createRequire";
+  return (
+    ts.isElementAccessExpression(node) &&
+    node.argumentExpression !== undefined &&
+    staticStringValue(node.argumentExpression, false) === "createRequire"
+  );
+}
+
+function isRepositoryCapabilityReference(node) {
+  const direct = staticStringValue(node);
+  if (direct !== undefined && repositoryCapabilityNames.has(direct)) return true;
+  if (ts.isPropertyAccessExpression(node)) return repositoryCapabilityNames.has(node.name.text);
+  return (
+    ts.isElementAccessExpression(node) &&
+    node.argumentExpression !== undefined &&
+    repositoryCapabilityNames.has(staticStringValue(node.argumentExpression, false) ?? "")
+  );
+}
+
+function isNodeModuleCapabilityAcquisition(node) {
+  if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+    return node.moduleSpecifier.text === "node:module";
+  }
+  if (
+    ts.isImportEqualsDeclaration(node) &&
+    ts.isExternalModuleReference(node.moduleReference) &&
+    node.moduleReference.expression !== undefined
+  ) {
+    return staticStringValue(node.moduleReference.expression, false) === "node:module";
+  }
+  if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+    return staticStringValue(node.arguments[0], false) === "node:module";
+  }
+  return (
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "require" &&
+    staticStringValue(node.arguments[0], false) === "node:module"
+  );
+}
+
+function isBareRequireRepositoryClient(node) {
+  if (!isBareRequireCall(node)) return false;
+  const moduleName = staticStringValue(node.arguments[0], false);
+  return moduleName !== undefined && isRepositoryClientModuleName(moduleName);
+}
+
+function isBareRequireCall(node) {
+  return ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "require";
+}
+
+function staticStringValue(node, allowIdentifierName = true, visited = new Set()) {
+  if (node === undefined) return undefined;
+  if (ts.isIdentifier(node)) {
+    if (allowIdentifierName) return node.text;
+    const symbol = typeChecker.getSymbolAtLocation(node);
+    if (symbol === undefined || visited.has(symbol)) return undefined;
+    visited.add(symbol);
+    for (const declaration of symbol.getDeclarations() ?? []) {
+      if (
+        ts.isVariableDeclaration(declaration) &&
+        declaration.initializer !== undefined &&
+        ts.isVariableDeclarationList(declaration.parent) &&
+        (declaration.parent.flags & ts.NodeFlags.Const) !== 0
+      ) {
+        return staticStringValue(declaration.initializer, false, visited);
+      }
+    }
+    return undefined;
+  }
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isSatisfiesExpression(node)
+  ) {
+    return staticStringValue(node.expression, allowIdentifierName, visited);
+  }
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = staticStringValue(node.left, false, new Set(visited));
+    const right = staticStringValue(node.right, false, new Set(visited));
+    return left === undefined || right === undefined ? undefined : left + right;
+  }
+  return undefined;
+}
+
+function containsNode(sourceFile, predicate) {
+  let found = false;
+  const inspect = (node) => {
+    if (predicate(node)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, inspect);
+  };
+  inspect(sourceFile);
+  return found;
 }
 
 function isNonliteralDynamicImport(node) {

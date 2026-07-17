@@ -4,11 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import {
-  type ApplicationAccessValidationInput,
-  type ApplicationAccessValidator,
-  type ApplicationSessionOperationContext,
-} from "../src/main/index.js";
+import type {
+  ApplicationAccessValidationInput,
+  ApplicationAccessValidator,
+  ApplicationSessionOperationContext,
+} from "../src/shared/application-service-model.js";
 import {
   APPLICATION_MAX_CONCURRENT_CHILD_RUNS,
   APPLICATION_MAX_READ_CHUNK_BYTES,
@@ -91,6 +91,18 @@ workerTest("Session operations run end-to-end through the Application Service an
       const foreignRead = await service.read({ context, sessionId: otherSessionId });
       assert.equal(
         foreignRead.overallStatus === "failure" && foreignRead.error.kind === "domain" && foreignRead.error.code,
+        "not_found",
+      );
+      const foreignDirectories = await service.readDirectoriesChunk({
+        context,
+        sessionId: otherSessionId,
+        offset: 0,
+        maxBytes: 1_024,
+      });
+      assert.equal(
+        foreignDirectories.overallStatus === "failure" &&
+          foreignDirectories.error.kind === "domain" &&
+          foreignDirectories.error.code,
         "not_found",
       );
       const foreignArchive = await service.archive({
@@ -243,6 +255,17 @@ workerTest("Application reads chunked Session directory configuration through th
       }
       const decoded = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
       assert.deepEqual(decoded, allowedAdditionalDirectories);
+
+      const beyondEof = await service.readDirectoriesChunk({
+        context,
+        sessionId: created.value.sessionId,
+        offset: detail.value.session.allowedAdditionalDirectoriesByteLength + 10,
+        maxBytes: 32 * 1_024,
+      });
+      assert.equal(beyondEof.overallStatus, "success");
+      if (beyondEof.overallStatus !== "success") assert.fail("post-EOF Session directory chunk failed");
+      assert.equal(beyondEof.value.bytes.byteLength, 0);
+      assert.equal(beyondEof.value.eof, true);
     } finally {
       await client.shutdown();
     }
@@ -755,6 +778,96 @@ test("validated request snapshots cannot be changed while access validation is p
   assert.deepEqual(closeCommands, [transition(uuid(74), "session-1", "active", "closed")]);
 });
 
+test("request fields are read once into the validated snapshot", async () => {
+  let reads = 0;
+  let authorizedLimit: number | undefined;
+  let persistedLimit: number | undefined;
+  const service = createService({
+    access: {
+      async validateWorkspace() {
+        return { allowed: true };
+      },
+      async authorize(input) {
+        if (input.operation === "create") authorizedLimit = input.target.maxConcurrentChildRuns;
+        return { allowed: true };
+      },
+    },
+    writes: {
+      async createSession(command) {
+        persistedLimit = command.session.maxConcurrentChildRuns;
+        return {
+          ok: true,
+          value: {
+            sessionId: command.session.id,
+            workspaceKey: command.session.workspaceKey,
+            lifecycleStatus: "active",
+            createdAt: 1,
+          },
+          replayed: false,
+        };
+      },
+    },
+  });
+  const request = { ...createRequest() } as Record<string, unknown>;
+  Object.defineProperty(request, "maxConcurrentChildRuns", {
+    enumerable: true,
+    get() {
+      reads += 1;
+      return reads === 1 ? 2 : APPLICATION_MAX_CONCURRENT_CHILD_RUNS + 1;
+    },
+  });
+
+  const response = await service.create(request as never);
+
+  assert.equal(response.overallStatus, "success");
+  assert.equal(reads, 1);
+  assert.equal(authorizedLimit, 2);
+  assert.equal(persistedLimit, 2);
+});
+
+test("request and option traps stay inside a request failure envelope", async () => {
+  const service = createService();
+  const throwingRequest = new Proxy(
+    {},
+    {
+      getPrototypeOf() {
+        throw new Error("request trap");
+      },
+    },
+  );
+  const throwingOptions = Object.defineProperty({}, "timeoutMs", {
+    enumerable: true,
+    get() {
+      throw new Error("options getter");
+    },
+  });
+  const throwingDirectories = ["C:\\workspace-shared"];
+  Object.defineProperty(throwingDirectories, "toJSON", {
+    enumerable: true,
+    get() {
+      throw new Error("toJSON getter");
+    },
+  });
+
+  const operations = [
+    () => service.create(throwingRequest as never),
+    () => service.list(throwingRequest as never),
+    () => service.read(throwingRequest as never),
+    () => service.readDirectoriesChunk(throwingRequest as never),
+    () => service.archive(throwingRequest as never),
+    () => service.unarchive(throwingRequest as never),
+    () => service.close(throwingRequest as never),
+    () => service.list({ context }, throwingOptions as never),
+    () => service.create({ ...createRequest(), allowedAdditionalDirectories: throwingDirectories }),
+  ];
+
+  for (const operation of operations) {
+    const response = await operation();
+    assert.equal(response.overallStatus === "failure" && response.error.kind, "request");
+    assert.deepEqual(response.persistence, { status: "not_attempted", effect: "none" });
+  }
+});
+
 test("operation options are validated and snapshotted before access validation", async () => {
   let accessCalls = 0;
   let readCalls = 0;
@@ -992,6 +1105,142 @@ test("operation deadline preserves persistence effect after Repository access st
   });
 });
 
+test("Repository fulfillment after the absolute deadline cannot become success", async () => {
+  const blockPastDeadline = () => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 20) {
+      // Simulate synchronous adapter work that delays the event loop beyond the operation deadline.
+    }
+  };
+  const readService = createService({
+    reads: {
+      async sessionsPage() {
+        blockPastDeadline();
+        return { items: [] };
+      },
+    },
+  });
+  const writeService = createService({
+    writes: {
+      async createSession(command) {
+        blockPastDeadline();
+        return {
+          ok: true,
+          value: {
+            sessionId: command.session.id,
+            workspaceKey: command.session.workspaceKey,
+            lifecycleStatus: "active",
+            createdAt: 1,
+          },
+          replayed: false,
+        };
+      },
+    },
+  });
+
+  const read = await readService.list({ context }, { timeoutMs: 5 });
+  const write = await writeService.create(createRequest(), { timeoutMs: 5 });
+
+  assert.equal(read.overallStatus === "failure" && read.error.code, "persistence_timeout");
+  assert.deepEqual(read.persistence, { status: "failed", effect: "none" });
+  assert.equal(write.overallStatus === "failure" && write.error.code, "persistence_timeout");
+  assert.deepEqual(write.persistence, {
+    status: "failed",
+    effect: "unknown",
+    reconciliation: "exact_request_required",
+  });
+});
+
+test("Repository and access response projection remain inside the operation deadline", async () => {
+  const blockPastDeadline = () => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 20) {
+      // Projection is synchronous, so the caller-visible deadline must be checked after it completes.
+    }
+  };
+  const repositoryPage = Object.defineProperty({}, "items", {
+    enumerable: true,
+    get() {
+      blockPastDeadline();
+      return [];
+    },
+  });
+  const repositoryService = createService({
+    reads: {
+      async sessionsPage() {
+        return repositoryPage as never;
+      },
+    },
+  });
+  const accessDecision = Object.defineProperty({}, "allowed", {
+    enumerable: true,
+    get() {
+      blockPastDeadline();
+      return true;
+    },
+  });
+  const accessService = createService({
+    access: {
+      async validateWorkspace() {
+        return accessDecision as never;
+      },
+      async authorize() {
+        throw new Error("unreachable");
+      },
+    },
+  });
+
+  const repositoryResponse = await repositoryService.list({ context }, { timeoutMs: 5 });
+  const accessResponse = await accessService.list({ context }, { timeoutMs: 5 });
+
+  assert.equal(repositoryResponse.overallStatus === "failure" && repositoryResponse.error.code, "persistence_timeout");
+  assert.deepEqual(repositoryResponse.persistence, { status: "failed", effect: "none" });
+  assert.equal(accessResponse.overallStatus === "failure" && accessResponse.error.code, "operation_timeout");
+  assert.deepEqual(accessResponse.persistence, { status: "not_attempted", effect: "none" });
+});
+
+test("abort during Repository start observes a later rejection without unhandledRejection", async () => {
+  const controller = new AbortController();
+  const unhandled: unknown[] = [];
+  const onUnhandled = (error: unknown) => unhandled.push(error);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    const service = createService({
+      reads: {
+        async sessionsPage() {
+          controller.abort();
+          throw new Error("repository rejection after abort");
+        },
+      },
+    });
+
+    const response = await service.list({ context }, { signal: controller.signal });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(response.overallStatus === "failure" && response.error.code, "persistence_canceled");
+    assert.deepEqual(response.persistence, { status: "failed", effect: "none" });
+    assert.deepEqual(unhandled, []);
+
+    const synchronousController = new AbortController();
+    const synchronousService = createService({
+      reads: {
+        sessionsPage() {
+          synchronousController.abort();
+          throw new Error("synchronous repository rejection after abort");
+        },
+      },
+    });
+    const synchronousResponse = await synchronousService.list({ context }, { signal: synchronousController.signal });
+    assert.equal(
+      synchronousResponse.overallStatus === "failure" && synchronousResponse.error.code,
+      "persistence_canceled",
+    );
+    assert.deepEqual(synchronousResponse.persistence, { status: "failed", effect: "none" });
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+});
+
 test("Application owns the deadline and does not pass a competing timeout to Repository ports", async () => {
   let receivedOptions: Readonly<{ timeoutMs?: number; signal?: AbortSignal }> | undefined;
   const service = createService({
@@ -1060,6 +1309,40 @@ test("operation deadline starts before request authorization snapshot", async ()
     retryable: false,
   });
   assert.equal(snapshots, 1);
+});
+
+test("operation deadline is rechecked after each access validation snapshot", async () => {
+  let snapshots = 0;
+  let workspaceCalls = 0;
+  const service = new ApplicationSessionService<Authorization>({
+    reads: createServiceReads(),
+    writes: createServiceWrites(),
+    access: {
+      async validateWorkspace() {
+        workspaceCalls += 1;
+        return { allowed: true };
+      },
+      async authorize() {
+        return { allowed: true };
+      },
+    },
+    snapshotAuthorization(value: unknown) {
+      snapshots += 1;
+      if (snapshots === 2) {
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < 30) {
+          // The access view must not invoke its validator after consuming the deadline.
+        }
+      }
+      return structuredClone(value) as Authorization;
+    },
+  });
+
+  const response = await service.list({ context }, { timeoutMs: 5 });
+
+  assert.equal(response.overallStatus === "failure" && response.error.code, "operation_timeout");
+  assert.deepEqual(response.persistence, { status: "not_attempted", effect: "none" });
+  assert.equal(workspaceCalls, 0);
 });
 
 test("Session directory chunks use workspace-scoped authorization and project known response fields", async () => {
@@ -1191,6 +1474,35 @@ test("create rejects child Run limits above the Application safety cap before po
   assert.equal(writeCalls, 0);
 });
 
+test("create accepts the exact Application child Run safety cap", async () => {
+  let persistedLimit: number | undefined;
+  const service = createService({
+    writes: {
+      async createSession(command) {
+        persistedLimit = command.session.maxConcurrentChildRuns;
+        return {
+          ok: true,
+          value: {
+            sessionId: command.session.id,
+            workspaceKey: command.session.workspaceKey,
+            lifecycleStatus: "active",
+            createdAt: 1,
+          },
+          replayed: false,
+        };
+      },
+    },
+  });
+
+  const response = await service.create({
+    ...createRequest(),
+    maxConcurrentChildRuns: APPLICATION_MAX_CONCURRENT_CHILD_RUNS,
+  });
+
+  assert.equal(response.overallStatus, "success");
+  assert.equal(persistedLimit, APPLICATION_MAX_CONCURRENT_CHILD_RUNS);
+});
+
 test("access validators receive isolated views of the decoded request snapshot", async () => {
   let authorizationInput: unknown;
   let createCommand: SessionCreateCommand | undefined;
@@ -1288,6 +1600,10 @@ test("create rejects malformed additional directories before access validation a
   const oversizedItem = [`C:\\${"a".repeat(32_768)}`];
   const tooManyItems = Array.from({ length: 1_025 }, (_, index) => `C:\\directory-${index}`);
   const oversizedTotal = Array.from({ length: 129 }, (_, index) => `C:\\directory-${index}\\${"a".repeat(32_740)}`);
+  const normalizedOversizedTotal = Array.from(
+    { length: 127 },
+    (_, index) => `C:/directory-${index}/${"a/".repeat(16_360)}z`,
+  );
   const invalidDirectories = [
     [123] as unknown as readonly string[],
     sparse,
@@ -1296,6 +1612,7 @@ test("create rejects malformed additional directories before access validation a
     oversizedItem,
     tooManyItems,
     oversizedTotal,
+    ...(process.platform === "win32" ? [normalizedOversizedTotal] : []),
   ];
 
   for (const allowedAdditionalDirectories of invalidDirectories) {
@@ -1382,6 +1699,112 @@ test("list keeps workspace scope and represents bounded omissions as partial suc
   ]);
 });
 
+test("list rejects Repository pages that exceed the requested aggregate limit", async () => {
+  const service = createService({
+    reads: {
+      async sessionsPage() {
+        return { items: [sessionSummary("session-1"), sessionSummary("session-2")] };
+      },
+    },
+  });
+
+  const response = await service.list({ context, limit: 1 });
+
+  assert.equal(response.overallStatus === "failure" && response.error.kind, "application");
+  assert.deepEqual(response.persistence, { status: "failed", effect: "none" });
+});
+
+test("Repository page fields are read once before aggregate validation and projection", async () => {
+  let itemReads = 0;
+  const page = Object.defineProperty({}, "items", {
+    enumerable: true,
+    get() {
+      itemReads += 1;
+      return itemReads === 1
+        ? [sessionSummary("session-1")]
+        : [sessionSummary("session-1"), sessionSummary("session-2")];
+    },
+  });
+  const service = createService({
+    reads: {
+      async sessionsPage() {
+        return page as never;
+      },
+    },
+  });
+
+  const response = await service.list({ context, limit: 1 });
+
+  assert.equal(response.overallStatus, "success");
+  assert.deepEqual(response.overallStatus === "success" && response.value.items, [sessionSummary("session-1")]);
+  assert.equal(itemReads, 1);
+});
+
+test("list and detail reject impossible execution state and Run ID combinations", async () => {
+  const invalidItems = [
+    { ...sessionSummary("session-1"), activeRunId: "run-active" },
+    { ...sessionSummary("session-1"), executionState: "running" as const },
+    { ...sessionSummary("session-1"), executionState: "completed" as const },
+    {
+      ...sessionSummary("session-1"),
+      lifecycleStatus: "archived" as const,
+      executionState: "running" as const,
+      activeRunId: "run-active",
+      latestRunId: "run-active",
+    },
+    {
+      ...sessionSummary("session-1"),
+      executionState: "running" as const,
+      activeRunId: "run-active",
+      latestRunId: "run-latest",
+    },
+  ];
+  for (const item of invalidItems) {
+    const service = createService({
+      reads: {
+        async sessionsPage() {
+          return { items: [item] };
+        },
+      },
+    });
+    const response = await service.list({ context });
+    assert.equal(response.overallStatus === "failure" && response.error.kind, "application");
+  }
+
+  const invalidExecutions = [
+    { state: "not_started" as const, activeRunId: "run-active" },
+    { state: "running" as const, latestRunId: "run-latest" },
+    { state: "running" as const, activeRunId: "run-active", latestRunId: "run-latest" },
+    { state: "completed" as const },
+  ];
+  for (const execution of invalidExecutions) {
+    const service = createService({
+      reads: {
+        async sessionGet() {
+          return { session: sessionDetail("session-1"), execution };
+        },
+      },
+    });
+    const response = await service.read({ context, sessionId: "session-1" });
+    assert.equal(response.overallStatus === "failure" && response.error.kind, "application");
+  }
+
+  for (const lifecycleStatus of ["archived", "closed"] as const) {
+    const service = createService({
+      reads: {
+        async sessionGet() {
+          return {
+            session: { ...sessionDetail("session-1"), lifecycleStatus },
+            execution: { state: "running" as const, activeRunId: "run-active", latestRunId: "run-active" },
+          };
+        },
+      },
+    });
+    const response = await service.read({ context, sessionId: "session-1" });
+    assert.equal(response.overallStatus === "failure" && response.error.kind, "application");
+  }
+});
+
 test("read projects only known Application response fields", async () => {
   const service = createService({
     reads: {
@@ -1405,7 +1828,7 @@ test("read projects only known Application response fields", async () => {
           execution: {
             state: "running",
             activeRunId: "run-active",
-            latestRunId: "run-latest",
+            latestRunId: "run-active",
             internalSecret: "repository-only",
           },
           internalSecret: "repository-only",
@@ -1433,7 +1856,7 @@ test("read projects only known Application response fields", async () => {
     execution: {
       state: "running",
       activeRunId: "run-active",
-      latestRunId: "run-latest",
+      latestRunId: "run-active",
     },
   });
 });

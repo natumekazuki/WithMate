@@ -3,8 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { normalizeAllowedAdditionalDirectories } from "../shared/allowed-additional-directories.js";
+import {
+  ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS,
+  normalizeAllowedAdditionalDirectories,
+} from "../shared/allowed-additional-directories.js";
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
+import { MAX_SESSION_CONCURRENT_CHILD_RUNS } from "../shared/session-limits.js";
 import {
   REPOSITORY_WRITE_OPERATIONS,
   type ChildResultCollectCommand,
@@ -2647,7 +2651,9 @@ function prepareSessionCreate(command: SessionCreateCommand): PreparedSessionCre
   );
   if (allowedAdditionalDirectories === undefined) throw invalidCommand();
   const directoriesJson = JSON.stringify(allowedAdditionalDirectories);
-  if (Buffer.byteLength(directoriesJson) > 4 * 1024 * 1024) throw invalidCommand();
+  if (Buffer.byteLength(directoriesJson) > ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxJsonBytes) {
+    throw invalidCommand();
+  }
   return {
     command,
     directoriesJson,
@@ -2764,7 +2770,7 @@ function prepareChildStart(command: ChildStartCommand): PreparedChildStart {
   const executionSnapshotJson = canonicalJsonString(command.run.executionSnapshot);
   const providerRequestJson = canonicalJsonString(command.dispatch.providerRequest);
   if (
-    Buffer.byteLength(directoriesJson) > 4 * 1024 * 1024 ||
+    Buffer.byteLength(directoriesJson) > ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxJsonBytes ||
     Buffer.byteLength(contentBlocksJson) > 4 * 1024 * 1024 ||
     Buffer.byteLength(executionSnapshotJson) > 256 * 1024 ||
     Buffer.byteLength(providerRequestJson) > 256 * 1024
@@ -2920,9 +2926,14 @@ function decodeSessionCreate(payload: Readonly<Record<string, unknown>>): Decode
     !isBoundedString(session.providerId, 1_024) ||
     !isBoundedString(session.workspaceKey, 1_024) ||
     !isBoundedString(session.defaultCharacterId, 1_024) ||
-    !isDenseBoundedStringArray(session.allowedAdditionalDirectories, 1_024, 32_768) ||
+    !isDenseBoundedStringArray(
+      session.allowedAdditionalDirectories,
+      ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxItems,
+      ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxPathLength,
+    ) ||
     !Number.isSafeInteger(session.maxConcurrentChildRuns) ||
-    (session.maxConcurrentChildRuns as number) < 0
+    (session.maxConcurrentChildRuns as number) < 0 ||
+    (session.maxConcurrentChildRuns as number) > MAX_SESSION_CONCURRENT_CHILD_RUNS
   ) {
     return decodeFailure();
   }
@@ -3091,10 +3102,15 @@ function decodeChildStart(payload: Readonly<Record<string, unknown>>): DecodeRes
     ]) ||
     !isBoundedString(payload.childSession.id, 1_024) ||
     !isBoundedString(payload.childSession.providerId, 1_024) ||
-    !isDenseBoundedStringArray(payload.childSession.allowedAdditionalDirectories, 1_024, 32_768) ||
+    !isDenseBoundedStringArray(
+      payload.childSession.allowedAdditionalDirectories,
+      ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxItems,
+      ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxPathLength,
+    ) ||
     !isBoundedString(payload.childSession.defaultCharacterId, 1_024) ||
     !Number.isSafeInteger(payload.childSession.maxConcurrentChildRuns) ||
     (payload.childSession.maxConcurrentChildRuns as number) < 0 ||
+    (payload.childSession.maxConcurrentChildRuns as number) > MAX_SESSION_CONCURRENT_CHILD_RUNS ||
     !isPlainObject(payload.relation) ||
     !hasExactKeys(payload.relation, ["id", "correlationId", "label", "purposeSummary"]) ||
     !isBoundedString(payload.relation.id, 1_024) ||
