@@ -1,7 +1,9 @@
 import { MAX_PERSISTENCE_RESPONSE_BYTES } from "./persistence-protocol.js";
+import type { LocalRepositoryMetadata } from "./session-metadata.js";
 
 export const REPOSITORY_READ_OPERATIONS = {
   sessionsPage: "repository.sessions.page",
+  localRepositoriesPage: "repository.local-repositories.page",
   sessionGet: "repository.session.get",
   sessionDirectoriesChunk: "repository.session.directories-chunk",
   messagesPage: "repository.messages.page",
@@ -26,6 +28,7 @@ export const REPOSITORY_CHUNK_LIMITS = {
 
 export const REPOSITORY_READ_LIMITS = {
   sessions: { default: 25, max: 100 },
+  localRepositories: { default: 25, max: 100 },
   messages: { default: 50, max: 100 },
   events: { default: 100, max: 200 },
   outputs: { default: 100, max: 200 },
@@ -81,6 +84,7 @@ export type SessionExecutionState = "not_started" | "running" | "completed" | "f
 
 export type SessionListItem = Readonly<{
   id: string;
+  title: string;
   workspaceKey: string;
   workspacePath: string;
   defaultCharacterId: string;
@@ -92,10 +96,20 @@ export type SessionListItem = Readonly<{
   activeRunId?: string;
   latestRunId?: string;
   stateChangedAt: number;
+}> &
+  LocalRepositoryMetadata;
+
+export type LocalRepositoryListItem = Readonly<{
+  localRepositoryKey: string;
+  repositoryNames: readonly string[];
+  repositoryNameCount: number;
+  sessionCount: number;
+  lastActivityAt: number;
 }>;
 
 export type SessionDetail = Readonly<{
   id: string;
+  title: string;
   providerId: string;
   workspaceKey: string;
   workspacePath: string;
@@ -108,7 +122,8 @@ export type SessionDetail = Readonly<{
   createdAt: number;
   updatedAt: number;
   lastActivityAt: number;
-}>;
+}> &
+  LocalRepositoryMetadata;
 
 export type RunDetail = Readonly<{
   id: string;

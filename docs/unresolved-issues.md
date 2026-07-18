@@ -13,6 +13,14 @@
 - その後、ユーザー提供の Notion export zip から `Issue 1969d4b6f262803db370fdfb463fb02a.csv` を確認した。
 - export CSV の未完了 view は 59 件で、内訳は `進行中` 10 件、`未着手` 49 件だった。
 
+## Resolved Since Collection
+
+この節は収集時点の外部Issue一覧から、repository内の実装と契約へ反映済みになった項目を示す。外部Issue自体のclose状態は主張しない。
+
+| # | Title | Resolution |
+| --- | --- | --- |
+| [#77](https://github.com/natumekazuki/WithMate/issues/77) | セッション情報にリポジトリ名(フォルダ名)を追加したい | `docs/adr/007-session-display-and-local-repository-metadata.md`とSession persistence / API contractへ反映済み |
+
 ## GitHub Open Issues
 
 | # | Title | Initial Bucket | Summary | Updated |
@@ -28,7 +36,6 @@
 | [#107](https://github.com/natumekazuki/WithMate/issues/107) | feat: Browser Use / Browser Preview の基盤を追加する | Browser / Future | Browser Preview、screenshot、console/network、visual comment、agent context artifact を追加する構想。 | 2026-05-05 |
 | [#106](https://github.com/natumekazuki/WithMate/issues/106) | Codexでエラー発生して復帰してもエラーメッセージが残り続ける | Provider / UI Bug | transient reconnect error が復帰後も message 欄と LatestCommand に残る。 | 2026-05-03 |
 | [#89](https://github.com/natumekazuki/WithMate/issues/89) | ChatGPTを開いてコードをコピペまたはファイル添付して直接チャット出来る画面が欲しい | Provider alternative | SDK token を使わず、ChatGPT を開いて直接 chat する画面を検討する。 | 2026-04-25 |
-| [#77](https://github.com/natumekazuki/WithMate/issues/77) | セッション情報にリポジトリ名(フォルダ名)を追加したい | Session metadata | session に repository name / folder path を保持する。 | 2026-04-17 |
 | [#74](https://github.com/natumekazuki/WithMate/issues/74) | 非同期指示機能 | Session workflow | session memo file を作り、同一 session 内の補助指示として使う。 | 2026-04-16 |
 | [#70](https://github.com/natumekazuki/WithMate/issues/70) | cancel押してからフリーズする | Session runtime / Bug | cancel 処理中に画面が安定しなくなる。 | 2026-04-15 |
 | [#64](https://github.com/natumekazuki/WithMate/issues/64) | Tasksが完了しても消えてない？ | Copilot tasks / Bug | Copilot Tasks が完了後も残る、または main 完了後も running 表示になる。 | 2026-04-14 |

@@ -1,4 +1,5 @@
 import { ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS } from "../shared/allowed-additional-directories.js";
+import { SESSION_METADATA_LIMITS, type LocalRepositoryMetadata } from "../shared/session-metadata.js";
 
 export const CLI_SCHEMA_VERSION = "withmate-cli-v1" as const;
 
@@ -24,11 +25,15 @@ export const CLI_SESSION_LIMITS = {
   maxCursorLength: 2_048,
   maxIdentifierLength: 1_024,
   maxAdditionalDirectories: ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxItems,
+  maxTitleLength: SESSION_METADATA_LIMITS.titleMaxLength,
+  maxQueryLength: SESSION_METADATA_LIMITS.queryMaxLength,
+  maxRepositoryFilters: SESSION_METADATA_LIMITS.repositoryFilterMaxItems,
 } as const;
 
 export type CliExitCode = (typeof CLI_EXIT_CODES)[keyof typeof CLI_EXIT_CODES];
 
-export type CliSessionOperation = "create" | "list" | "read" | "directories-chunk" | "archive" | "unarchive" | "close";
+export type CliSessionOperation =
+  "create" | "rename" | "list" | "repositories" | "read" | "directories-chunk" | "archive" | "unarchive" | "close";
 
 export type CliCommandIdentity<TOperation extends CliSessionOperation = CliSessionOperation> = Readonly<{
   namespace: "session";
@@ -40,6 +45,7 @@ type CliTimeoutOption = Readonly<{ timeoutMs?: number }>;
 export type CliSessionCreateCommand = CliTimeoutOption &
   Readonly<{
     identity: CliCommandIdentity<"create">;
+    title: string;
     workspacePath: string;
     idempotencyKey: string;
     providerId: string;
@@ -53,6 +59,23 @@ export type CliSessionListCommand = CliTimeoutOption &
     identity: CliCommandIdentity<"list">;
     workspacePath?: string;
     lifecycleStatus?: "active" | "archived" | "closed";
+    localRepositoryKeys?: readonly string[];
+    query?: string;
+    cursor?: string;
+    limit: number;
+  }>;
+
+export type CliSessionRenameCommand = CliTimeoutOption &
+  Readonly<{
+    identity: CliCommandIdentity<"rename">;
+    sessionId: string;
+    title: string;
+    idempotencyKey: string;
+  }>;
+
+export type CliLocalRepositoriesCommand = CliTimeoutOption &
+  Readonly<{
+    identity: CliCommandIdentity<"repositories">;
     cursor?: string;
     limit: number;
   }>;
@@ -88,7 +111,9 @@ export type CliSessionCloseCommand = CliTimeoutOption &
 
 export type CliValidatedCommand =
   | CliSessionCreateCommand
+  | CliSessionRenameCommand
   | CliSessionListCommand
+  | CliLocalRepositoriesCommand
   | CliSessionReadCommand
   | CliSessionDirectoriesChunkCommand
   | CliSessionWriteCommand<"archive">
@@ -300,10 +325,12 @@ export type CliApplicationResponse<TValue, TMode extends "read" | "write"> =
 
 export type CliSessionCreateValue = Readonly<{
   sessionId: string;
+  title: string;
   workspacePath: string;
   lifecycleStatus: "active";
   createdAt: number;
-}>;
+}> &
+  LocalRepositoryMetadata;
 
 export type CliSessionListValue = Readonly<{
   items: readonly CliSessionListItem[];
@@ -314,6 +341,7 @@ export type CliSessionExecutionState = "not_started" | "running" | "completed" |
 
 type CliSessionListItemBase = Readonly<{
   id: string;
+  title: string;
   workspacePath: string;
   defaultCharacterId: string;
   lifecycleStatus: "active" | "archived" | "closed";
@@ -321,7 +349,8 @@ type CliSessionListItemBase = Readonly<{
   updatedAt: number;
   lastActivityAt: number;
   stateChangedAt: number;
-}>;
+}> &
+  LocalRepositoryMetadata;
 
 type CliSessionListExecution =
   | Readonly<{ executionState: "not_started"; activeRunId?: never; latestRunId?: never }>
@@ -340,6 +369,7 @@ export type CliSessionListItem =
 
 export type CliSessionDetail = Readonly<{
   id: string;
+  title: string;
   providerId: string;
   workspacePath: string;
   allowedAdditionalDirectoriesByteLength: number;
@@ -350,7 +380,8 @@ export type CliSessionDetail = Readonly<{
   createdAt: number;
   updatedAt: number;
   lastActivityAt: number;
-}>;
+}> &
+  LocalRepositoryMetadata;
 
 export type CliSessionExecution =
   | Readonly<{ state: "not_started"; activeRunId?: never; latestRunId?: never }>
@@ -384,9 +415,23 @@ export type CliSessionTransitionValue<TLifecycleStatus extends "active" | "archi
   updatedAt: number;
 }>;
 
+export type CliSessionRenameValue = Readonly<{ sessionId: string; title: string; updatedAt: number }>;
+export type CliLocalRepositoryListValue = Readonly<{
+  items: readonly Readonly<{
+    localRepositoryKey: string;
+    repositoryNames: readonly string[];
+    repositoryNameCount: number;
+    sessionCount: number;
+    lastActivityAt: number;
+  }>[];
+  nextCursor?: string;
+}>;
+
 type CliOperationContract = {
   create: Readonly<{ mode: "write"; value: CliSessionCreateValue }>;
+  rename: Readonly<{ mode: "write"; value: CliSessionRenameValue }>;
   list: Readonly<{ mode: "read"; value: CliSessionListValue }>;
+  repositories: Readonly<{ mode: "read"; value: CliLocalRepositoryListValue }>;
   read: Readonly<{ mode: "read"; value: CliSessionReadValue }>;
   "directories-chunk": Readonly<{ mode: "read"; value: CliSessionDirectoriesChunkValue }>;
   archive: Readonly<{ mode: "write"; value: CliSessionTransitionValue<"archived"> }>;

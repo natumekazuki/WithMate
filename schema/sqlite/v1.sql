@@ -1,8 +1,15 @@
 CREATE TABLE sessions (
   id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 1024),
+  title TEXT NOT NULL CHECK (
+    length(title) BETWEEN 1 AND 512
+    AND title = trim(title)
+    AND instr(title, char(0)) = 0
+  ),
   provider_id TEXT NOT NULL CHECK (length(provider_id) > 0),
   workspace_key TEXT NOT NULL CHECK (length(workspace_key) > 0),
   workspace_path TEXT NOT NULL CHECK (length(workspace_path) BETWEEN 1 AND 32768),
+  local_repository_key TEXT,
+  repository_name TEXT,
   allowed_additional_directories_json TEXT NOT NULL
     CHECK (json_valid(allowed_additional_directories_json)
       AND json_type(allowed_additional_directories_json) = 'array'),
@@ -11,7 +18,19 @@ CREATE TABLE sessions (
   lifecycle_status TEXT NOT NULL CHECK (lifecycle_status IN ('active', 'archived', 'closed')),
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  last_activity_at INTEGER NOT NULL CHECK (last_activity_at >= created_at)
+  last_activity_at INTEGER NOT NULL CHECK (last_activity_at >= created_at),
+  CHECK (
+    (local_repository_key IS NULL AND repository_name IS NULL)
+    OR (
+      local_repository_key IS NOT NULL
+      AND repository_name IS NOT NULL
+      AND length(local_repository_key) = 91
+      AND substr(local_repository_key, 1, 27) = 'local-repository-v1-sha256-'
+      AND substr(local_repository_key, 28) NOT GLOB '*[^0-9a-f]*'
+      AND length(repository_name) BETWEEN 1 AND 1024
+      AND instr(repository_name, char(0)) = 0
+    )
+  )
 ) STRICT;
 
 CREATE INDEX sessions_lifecycle_activity_idx
@@ -20,6 +39,9 @@ CREATE INDEX sessions_workspace_activity_idx
   ON sessions(workspace_key, last_activity_at DESC, id DESC);
 CREATE INDEX sessions_activity_idx
   ON sessions(last_activity_at DESC, id DESC);
+CREATE INDEX sessions_repository_activity_idx
+  ON sessions(local_repository_key, last_activity_at DESC, id DESC)
+  WHERE local_repository_key IS NOT NULL;
 
 CREATE TABLE messages (
   id TEXT PRIMARY KEY CHECK (length(id) > 0),

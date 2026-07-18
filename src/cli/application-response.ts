@@ -1,5 +1,12 @@
 import { normalizeHostAbsolutePath, WORKSPACE_PATH_MAX_LENGTH } from "../shared/workspace-path.js";
 import {
+  isCanonicalSessionTitle,
+  isLocalRepositoryKey,
+  isRepositoryName,
+  sessionSearchKey,
+  snapshotLocalRepositoryMetadata,
+} from "../shared/session-metadata.js";
+import {
   CLI_EXIT_CODES,
   CLI_SCHEMA_VERSION,
   CLI_SESSION_LIMITS,
@@ -29,7 +36,9 @@ type CommandFor<TOperation extends CliSessionOperation> = Extract<
 
 const operationModes: Readonly<Record<CliSessionOperation, OperationMode>> = {
   create: "write",
+  rename: "write",
   list: "read",
+  repositories: "read",
   read: "read",
   "directories-chunk": "read",
   archive: "write",
@@ -92,7 +101,7 @@ function projectApplicationResponse(
     if (issues.length === 0) malformed();
     if (mode === "read") {
       if (persistence.status !== "read" || issues.some((issue) => issue.kind !== "omission")) malformed();
-      if (isCommandFor(command, "list")) {
+      if (isCommandFor(command, "list") || isCommandFor(command, "repositories")) {
         const page = record(projectedValue);
         if (!Array.isArray(page.items) || page.items.length + issues.length > command.limit) malformed();
       }
@@ -119,8 +128,10 @@ function projectApplicationResponse(
 }
 
 function projectOperationValue(command: CliValidatedCommand, value: unknown): unknown {
-  if (isCommandFor(command, "create")) return projectCreateValue(value, command.workspacePath);
+  if (isCommandFor(command, "create")) return projectCreateValue(value, command.title, command.workspacePath);
+  if (isCommandFor(command, "rename")) return projectRenameValue(value, command.sessionId, command.title);
   if (isCommandFor(command, "list")) return projectListValue(value, command);
+  if (isCommandFor(command, "repositories")) return projectRepositoriesValue(value, command.limit);
   if (isCommandFor(command, "read")) return projectReadValue(value, command.sessionId);
   if (isCommandFor(command, "directories-chunk")) {
     return projectDirectoriesChunkValue(value, command.sessionId, command.offset, command.maxBytes);
@@ -131,13 +142,30 @@ function projectOperationValue(command: CliValidatedCommand, value: unknown): un
   malformed();
 }
 
-function projectCreateValue(value: unknown, expectedWorkspacePath: string): unknown {
+function projectRenameValue(value: unknown, expectedSessionId: string, expectedTitle: string): unknown {
   const item = record(value);
   const sessionId = boundedString(item.sessionId);
+  const title = sessionTitle(item.title);
+  const updatedAt = nonNegativeInteger(item.updatedAt);
+  if (sessionId !== expectedSessionId || title !== expectedTitle) malformed();
+  return { sessionId, title, updatedAt };
+}
+
+function projectCreateValue(value: unknown, expectedTitle: string, expectedWorkspacePath: string): unknown {
+  const item = record(value);
+  const sessionId = boundedString(item.sessionId);
+  const title = sessionTitle(item.title);
   const workspacePath = normalizedAbsolutePath(item.workspacePath);
+  const repositoryMetadata = localRepositoryMetadata(item);
   const createdAt = nonNegativeInteger(item.createdAt);
-  if (item.lifecycleStatus !== "active" || !sameHostPathIdentity(workspacePath, expectedWorkspacePath)) malformed();
-  return { sessionId, workspacePath, lifecycleStatus: "active", createdAt };
+  if (
+    item.lifecycleStatus !== "active" ||
+    title !== expectedTitle ||
+    !sameHostPathIdentity(workspacePath, expectedWorkspacePath)
+  ) {
+    malformed();
+  }
+  return { sessionId, title, workspacePath, ...repositoryMetadata, lifecycleStatus: "active", createdAt };
 }
 
 function projectListValue(value: unknown, command: CommandFor<"list">): unknown {
@@ -147,7 +175,19 @@ function projectListValue(value: unknown, command: CommandFor<"list">): unknown 
   if (
     (expectedWorkspacePath !== undefined &&
       items.some((item) => !sameHostPathIdentity(item.workspacePath, expectedWorkspacePath))) ||
-    (command.lifecycleStatus !== undefined && items.some((item) => item.lifecycleStatus !== command.lifecycleStatus))
+    (command.lifecycleStatus !== undefined && items.some((item) => item.lifecycleStatus !== command.lifecycleStatus)) ||
+    (command.localRepositoryKeys !== undefined &&
+      items.some(
+        (item) =>
+          item.localRepositoryKey === null || !command.localRepositoryKeys!.includes(item.localRepositoryKey as string),
+      )) ||
+    (command.query !== undefined &&
+      items.some(
+        (item) =>
+          !sessionSearchKey(item.title as string).includes(sessionSearchKey(command.query!)) &&
+          (item.repositoryName === null ||
+            !sessionSearchKey(item.repositoryName as string).includes(sessionSearchKey(command.query!))),
+      ))
   ) {
     malformed();
   }
@@ -155,10 +195,44 @@ function projectListValue(value: unknown, command: CommandFor<"list">): unknown 
   return nextCursor === undefined ? { items } : { items, nextCursor };
 }
 
-function projectListItem(value: unknown): Readonly<Record<string, string | number>> {
+function projectRepositoriesValue(value: unknown, limit: number): unknown {
+  const page = record(value);
+  const items = snapshotDenseArray(page.items, limit).map((value) => {
+    const item = record(value);
+    if (!isLocalRepositoryKey(item.localRepositoryKey)) malformed();
+    const repositoryNames = snapshotDenseArray(item.repositoryNames, 100);
+    if (
+      repositoryNames.length === 0 ||
+      repositoryNames.some((name) => !isRepositoryName(name)) ||
+      new Set(repositoryNames).size !== repositoryNames.length
+    ) {
+      malformed();
+    }
+    const repositoryNameCount = nonNegativeInteger(item.repositoryNameCount);
+    const sessionCount = nonNegativeInteger(item.sessionCount);
+    const lastActivityAt = nonNegativeInteger(item.lastActivityAt);
+    if (repositoryNameCount < repositoryNames.length || repositoryNameCount > sessionCount || sessionCount < 1) {
+      malformed();
+    }
+    return {
+      localRepositoryKey: item.localRepositoryKey,
+      repositoryNames,
+      repositoryNameCount,
+      sessionCount,
+      lastActivityAt,
+    };
+  });
+  if (new Set(items.map(({ localRepositoryKey }) => localRepositoryKey)).size !== items.length) malformed();
+  const nextCursor = optionalBoundedString(page.nextCursor, CLI_SESSION_LIMITS.maxCursorLength);
+  return nextCursor === undefined ? { items } : { items, nextCursor };
+}
+
+function projectListItem(value: unknown): Readonly<Record<string, string | number | null>> {
   const item = record(value);
   const id = boundedString(item.id);
+  const title = sessionTitle(item.title);
   const workspacePath = normalizedAbsolutePath(item.workspacePath);
+  const repositoryMetadata = localRepositoryMetadata(item);
   const defaultCharacterId = boundedString(item.defaultCharacterId);
   const lifecycleStatus = lifecycle(item.lifecycleStatus);
   const createdAt = nonNegativeInteger(item.createdAt);
@@ -172,7 +246,9 @@ function projectListItem(value: unknown): Readonly<Record<string, string | numbe
   if (lifecycleStatus !== "active" && executionState === "running") malformed();
   return {
     id,
+    title,
     workspacePath,
+    ...repositoryMetadata,
     defaultCharacterId,
     lifecycleStatus,
     createdAt,
@@ -196,8 +272,10 @@ function projectReadValue(value: unknown, expectedSessionId: string): unknown {
   return {
     session: {
       id: sessionId,
+      title: sessionTitle(session.title),
       providerId: boundedString(session.providerId),
       workspacePath: normalizedAbsolutePath(session.workspacePath),
+      ...localRepositoryMetadata(session),
       allowedAdditionalDirectoriesByteLength: nonNegativeInteger(session.allowedAdditionalDirectoriesByteLength),
       allowedAdditionalDirectoriesState: enumValue(session.allowedAdditionalDirectoriesState, ["inline", "chunked"]),
       defaultCharacterId: boundedString(session.defaultCharacterId),
@@ -497,6 +575,17 @@ function record(value: unknown): Readonly<Record<string, unknown>> {
 function boundedString(value: unknown, maxLength: number = CLI_SESSION_LIMITS.maxIdentifierLength): string {
   if (typeof value !== "string" || value.length === 0 || value.length > maxLength || value.includes("\0")) malformed();
   return value;
+}
+
+function sessionTitle(value: unknown): string {
+  if (!isCanonicalSessionTitle(value)) malformed();
+  return value;
+}
+
+function localRepositoryMetadata(value: Readonly<Record<string, unknown>>) {
+  const metadata = snapshotLocalRepositoryMetadata(value.localRepositoryKey, value.repositoryName);
+  if (metadata === undefined) malformed();
+  return metadata;
 }
 
 function optionalBoundedString(

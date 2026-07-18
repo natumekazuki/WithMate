@@ -234,7 +234,9 @@ function successfulOperations(
   };
   return {
     create: unsupported,
+    updateTitle: unsupported,
     list: unsupported,
+    listLocalRepositories: unsupported,
     read: async (request, options) => read(request, options) as Awaited<ReturnType<Operations["read"]>>,
     readDirectoriesChunk: unsupported,
     archive: unsupported,
@@ -250,8 +252,11 @@ function readSuccess() {
     value: {
       session: {
         id: "session-1",
+        title: "Session 1",
         providerId: "codex",
         workspacePath,
+        localRepositoryKey: null,
+        repositoryName: null,
         allowedAdditionalDirectoriesByteLength: 2,
         allowedAdditionalDirectoriesState: "inline",
         defaultCharacterId: "character-1",

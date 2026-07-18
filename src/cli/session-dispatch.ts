@@ -43,6 +43,7 @@ export async function dispatchCliSessionCommand<TAuthorizationContext>(
       response = await dependencies.operations.create(
         {
           context,
+          title: command.title,
           workspacePath: command.workspacePath,
           idempotencyKey: command.idempotencyKey,
           providerId: command.providerId,
@@ -58,6 +59,27 @@ export async function dispatchCliSessionCommand<TAuthorizationContext>(
           context,
           ...(command.workspacePath === undefined ? {} : { workspacePath: command.workspacePath }),
           ...(command.lifecycleStatus === undefined ? {} : { lifecycleStatus: command.lifecycleStatus }),
+          ...(command.localRepositoryKeys === undefined ? {} : { localRepositoryKeys: command.localRepositoryKeys }),
+          ...(command.query === undefined ? {} : { query: command.query }),
+          ...(command.cursor === undefined ? {} : { cursor: command.cursor }),
+          limit: command.limit,
+        },
+        options,
+      );
+    } else if (isCommandFor(command, "rename")) {
+      response = await dependencies.operations.updateTitle(
+        {
+          context,
+          sessionId: command.sessionId,
+          title: command.title,
+          idempotencyKey: command.idempotencyKey,
+        },
+        options,
+      );
+    } else if (isCommandFor(command, "repositories")) {
+      response = await dependencies.operations.listLocalRepositories(
+        {
+          context,
           ...(command.cursor === undefined ? {} : { cursor: command.cursor }),
           limit: command.limit,
         },

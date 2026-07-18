@@ -1,0 +1,32 @@
+# ADR 008: Sessionの型付きfilterとローカルRepository集約
+
+- Status: Accepted
+- Date: 2026-07-18
+
+## Context
+
+Sessionを実用的に選択するには、Workspaceとlifecycleに加えて、ローカルRepositoryによる絞り込み、titleまたはRepository名による検索、登録済みRepositoryの候補一覧が必要である。任意の論理式やfield projectionを受けるGraphQL形式は将来の拡張性を持つ一方、validation、authorization scope、cursor identity、実行量の上限を一度に公開契約へ持ち込む。
+
+`repositoryName`は表示値であり一意ではない。同じ名称を持つ別cloneが存在し、同じ`localRepositoryKey`にもcaseだけ異なる履歴上の名称が保存され得る。Git管理外のSessionはRepository identityを持たない。
+
+## Decision
+
+Session一覧はboundedな型付きfilterを受ける。各filter fieldはAND、`localRepositoryKeys`内はORとして評価する。queryはtrimした非空文字列とし、Session titleまたは`repositoryName`のcase-insensitive containsに一致するSessionを返す。queryと検索対象は、ApplicationとSQLite read modelの双方でNFC正規化後にECMAScriptのUnicode lowercase変換を適用する。cursorはWorkspace、lifecycle、Repository key集合、queryを含むcanonical scopeへ結び付け、異なるfilterへの再利用を拒否する。
+
+登録済みRepository一覧は`localRepositoryKey`ごとに集約する。Git管理外のnull metadataは除外し、各itemは直近に使われた順で重複を除いた`repositoryNames`、全名称数、Session数、最終activity時刻を返す。名称配列はresource limitでboundedにし、全名称数を別fieldで保持する。集約一覧は最終activity時刻とkeyの降順keyset cursorを使用する。
+
+title更新とRepository集約にはApplication APIとCLI operationを設ける。Session一覧のfilterは既存operationを拡張し、独立した汎用query言語は追加しない。Repository metadataの再検出やremote単位の同一性はこの契約へ含めない。
+
+## Alternatives
+
+- GraphQLまたは任意のfilter ASTを公開する: 現在必要な検索条件に対してauthorization、cost制御、cursor scopeの公開面が過大になるため採用しない。
+- `repositoryName`を一意なfilter keyにする: 同名Repositoryを区別できないため採用しない。
+- Repository一覧で単一の最新名称だけ返す: 同じkeyに保存された名称variationを隠すため採用しない。
+- Git管理外Workspaceへpath由来の擬似Repository keyを付ける: Git Repositoryと通常directoryの意味を混同するため採用しない。
+
+## Consequences
+
+- callerはRepository候補を列挙し、opaqueなkeyでSessionを絞り込める。
+- 同名Repositoryは別keyとして共存し、表示側は名称だけでidentityを判断できない。
+- queryはSQLite組み込みのASCII中心の`lower`へ依存せず、Applicationと同じ検索key生成規則で照合される。locale固有の照合、Unicode full case folding、索引付き全文検索が必要になった場合は、照合規則とschemaを別のdecisionとして変更する。
+- filter追加時はcursor scope、authorization target、Application / CLI projection、response budgetを同じ変更で更新する必要がある。

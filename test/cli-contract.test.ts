@@ -7,6 +7,8 @@ import {
   CLI_EXIT_CODES,
   CLI_SCHEMA_VERSION,
   type CliOperationOutput,
+  type CliSessionDetail,
+  type CliSessionListItem,
   type CliSessionOperation,
   type CliStructuredOutput,
   type CliValidatedCommand,
@@ -20,10 +22,12 @@ const workspacePath = path.resolve("workspace-1");
 const otherWorkspacePath = path.resolve("workspace-2");
 const additionalDirectory = path.resolve("workspace-shared");
 const oversizedWorkspacePath = path.join(path.parse(workspacePath).root, "w".repeat(WORKSPACE_PATH_MAX_LENGTH));
+const localRepositoryKey = `local-repository-v1-sha256-${"a".repeat(64)}`;
 
 const commands = {
   create: {
     identity: { namespace: "session", operation: "create" },
+    title: "Session title",
     workspacePath,
     idempotencyKey: uuid,
     providerId: "codex",
@@ -32,6 +36,13 @@ const commands = {
     maxConcurrentChildRuns: 2,
   },
   list: { identity: { namespace: "session", operation: "list" }, limit: 25 },
+  rename: {
+    identity: { namespace: "session", operation: "rename" },
+    sessionId: "session-1",
+    title: "Renamed",
+    idempotencyKey: uuid,
+  },
+  repositories: { identity: { namespace: "session", operation: "repositories" }, limit: 25 },
   read: { identity: { namespace: "session", operation: "read" }, sessionId: "session-1" },
   "directories-chunk": {
     identity: { namespace: "session", operation: "directories-chunk" },
@@ -63,7 +74,15 @@ const invalidCreatePersistence: CliOperationOutput<"create"> = {
   command: { namespace: "session", operation: "create" },
   applicationResponse: {
     overallStatus: "success",
-    value: { sessionId: "session-1", workspacePath, lifecycleStatus: "active", createdAt: 1 },
+    value: {
+      sessionId: "session-1",
+      title: "Session title",
+      workspacePath,
+      localRepositoryKey: null,
+      repositoryName: null,
+      lifecycleStatus: "active",
+      createdAt: 1,
+    },
     // @ts-expect-error create success cannot report read persistence
     persistence: { status: "read", effect: "none" },
   },
@@ -108,10 +127,44 @@ const invalidUsageOutput: CliStructuredOutput = {
   // @ts-expect-error usage failures cannot contain an Application response
   applicationResponse: {},
 };
+// @ts-expect-error local repository metadata must be both present or both null
+const invalidCliListRepositoryPair: CliSessionListItem = {
+  id: "session-1",
+  title: "Session title",
+  workspacePath,
+  localRepositoryKey,
+  repositoryName: null,
+  defaultCharacterId: "character-1",
+  lifecycleStatus: "active",
+  createdAt: 1,
+  updatedAt: 1,
+  lastActivityAt: 1,
+  stateChangedAt: 1,
+  executionState: "not_started",
+};
+// @ts-expect-error local repository metadata must be both present or both null
+const invalidCliDetailRepositoryPair: CliSessionDetail = {
+  id: "session-1",
+  title: "Session title",
+  providerId: "codex",
+  workspacePath,
+  localRepositoryKey: null,
+  repositoryName: "WithMate",
+  allowedAdditionalDirectoriesByteLength: 2,
+  allowedAdditionalDirectoriesState: "inline",
+  defaultCharacterId: "character-1",
+  maxConcurrentChildRuns: 2,
+  lifecycleStatus: "active",
+  createdAt: 1,
+  updatedAt: 1,
+  lastActivityAt: 1,
+};
 void invalidCreatePersistence;
 void invalidUnknownEffect;
 void invalidArchiveLifecycle;
 void invalidUsageOutput;
+void invalidCliListRepositoryPair;
+void invalidCliDetailRepositoryPair;
 
 test("help and version parsing are runtime-free actions", () => {
   assert.deepEqual(parseCliArgv([]), { kind: "help", topic: { kind: "root" } });
@@ -132,6 +185,8 @@ test("create requires caller-owned idempotency and accepts repeatable absolute d
   const parsed = parseCliArgv([
     "session",
     "create",
+    "--title",
+    "  Session title  ",
     "--workspace",
     workspacePath,
     "--idempotency-key",
@@ -154,6 +209,7 @@ test("create requires caller-owned idempotency and accepts repeatable absolute d
     kind: "command",
     command: {
       identity: { namespace: "session", operation: "create" },
+      title: "Session title",
       workspacePath,
       idempotencyKey: uuid,
       providerId: "codex",
@@ -173,6 +229,8 @@ test("create rejects additional-directory counts above the Application request l
   const result = parseCliArgv([
     "session",
     "create",
+    "--title",
+    "Session title",
     "--workspace",
     workspacePath,
     "--idempotency-key",
@@ -194,6 +252,8 @@ test("create accepts zero as the Application child Run capacity", () => {
   const parsed = parseCliArgv([
     "session",
     "create",
+    "--title",
+    "Session title",
     "--workspace",
     workspacePath,
     "--idempotency-key",
@@ -210,6 +270,7 @@ test("create accepts zero as the Application child Run capacity", () => {
     kind: "command",
     command: {
       identity: { namespace: "session", operation: "create" },
+      title: "Session title",
       workspacePath,
       idempotencyKey: uuid,
       providerId: "codex",
@@ -219,6 +280,39 @@ test("create accepts zero as the Application child Run capacity", () => {
     },
   });
   assert.match(helpText({ kind: "operation", command: { namespace: "session", operation: "create" } }), /0\.\.1024/u);
+});
+
+test("create requires one bounded non-empty title", () => {
+  const requiredOptions = [
+    "--workspace",
+    workspacePath,
+    "--idempotency-key",
+    uuid,
+    "--provider",
+    "codex",
+    "--default-character",
+    "character-1",
+    "--max-concurrent-child-runs",
+    "1",
+  ];
+  const cases = [
+    { argv: ["session", "create", ...requiredOptions], code: "missing_option" },
+    { argv: ["session", "create", "--title", "   ", ...requiredOptions], code: "invalid_option_value" },
+    {
+      argv: ["session", "create", "--title", "x".repeat(513), ...requiredOptions],
+      code: "invalid_option_value",
+    },
+    {
+      argv: ["session", "create", "--title", "one", "--title", "two", ...requiredOptions],
+      code: "duplicate_option",
+    },
+  ];
+
+  for (const candidate of cases) {
+    const result = parseCliArgv(candidate.argv);
+    assert.equal(result.kind, "usage_failure");
+    assert.equal(result.kind === "usage_failure" && result.output.error.code, candidate.code);
+  }
 });
 
 test("Workspace is optional for list and absent from direct Session commands", () => {
@@ -309,6 +403,8 @@ test("invalid argv has one stable usage classification and never falls back to d
       argv: [
         "session",
         "create",
+        "--title",
+        "Session title",
         "--workspace",
         workspacePath,
         "--idempotency-key",
@@ -369,7 +465,10 @@ test("Application success is explicitly projected without internal fields", () =
     overallStatus: "success",
     value: {
       sessionId: "session-1",
+      title: "Session title",
       workspacePath,
+      localRepositoryKey: null,
+      repositoryName: null,
       lifecycleStatus: "active",
       createdAt: 1,
       internalSecret: "hidden",
@@ -387,11 +486,69 @@ test("Application success is explicitly projected without internal fields", () =
     command: { namespace: "session", operation: "create" },
     applicationResponse: {
       overallStatus: "success",
-      value: { sessionId: "session-1", workspacePath, lifecycleStatus: "active", createdAt: 1 },
+      value: {
+        sessionId: "session-1",
+        title: "Session title",
+        workspacePath,
+        localRepositoryKey: null,
+        repositoryName: null,
+        lifecycleStatus: "active",
+        createdAt: 1,
+      },
       persistence: { status: "committed", effect: "none", replayed: false },
     },
   });
   assert.equal(serializeCliStructuredOutput(result.output).includes("internalSecret"), false);
+});
+
+test("Repository identity metadata is projected only as an atomic valid pair", () => {
+  const malformedResponses = [
+    {
+      command: commands.create,
+      response: {
+        overallStatus: "success",
+        value: {
+          sessionId: "session-1",
+          title: "Session title",
+          workspacePath,
+          localRepositoryKey,
+          repositoryName: null,
+          lifecycleStatus: "active",
+          createdAt: 1,
+        },
+        persistence: { status: "committed", effect: "none", replayed: false },
+      },
+    },
+    {
+      command: commands.list,
+      response: {
+        overallStatus: "success",
+        value: { items: [{ ...listItem(), localRepositoryKey: null, repositoryName: "WithMate" }] },
+        persistence: { status: "read", effect: "none" },
+      },
+    },
+    {
+      command: commands.read,
+      response: {
+        overallStatus: "success",
+        value: {
+          ...readValue("session-1"),
+          session: {
+            ...readValue("session-1").session,
+            localRepositoryKey: "invalid",
+            repositoryName: "WithMate",
+          },
+        },
+        persistence: { status: "read", effect: "none" },
+      },
+    },
+  ];
+
+  for (const candidate of malformedResponses) {
+    const result = projectCliOperationOutput(candidate.command, candidate.response);
+    assert.equal(result.ok, false);
+    assert.equal(!result.ok && result.output.error.code, "malformed_application_response");
+  }
 });
 
 test("Session read preserves bounded Application child Run capacity", () => {
@@ -424,7 +581,15 @@ test("Workspace request correlation uses host path identity", () => {
     { ...commands.create, workspacePath: equivalentWorkspacePath },
     {
       overallStatus: "success",
-      value: { sessionId: "session-1", workspacePath, lifecycleStatus: "active", createdAt: 1 },
+      value: {
+        sessionId: "session-1",
+        title: "Session title",
+        workspacePath,
+        localRepositoryKey: null,
+        repositoryName: null,
+        lifecycleStatus: "active",
+        createdAt: 1,
+      },
       persistence: { status: "committed", effect: "none", replayed: true },
     },
   );
@@ -449,7 +614,10 @@ test("oversized Workspace paths in Application fulfillments are never projected 
         overallStatus: "success",
         value: {
           sessionId: "session-1",
+          title: "Session title",
           workspacePath: oversizedWorkspacePath,
+          localRepositoryKey: null,
+          repositoryName: null,
           lifecycleStatus: "active",
           createdAt: 1,
         },
@@ -677,7 +845,10 @@ test("Application fulfillment is correlated with the validated request scope", (
         overallStatus: "success",
         value: {
           sessionId: "session-1",
+          title: "Session title",
           workspacePath: otherWorkspacePath,
+          localRepositoryKey: null,
+          repositoryName: null,
           lifecycleStatus: "active",
           createdAt: 1,
         },
@@ -904,7 +1075,10 @@ test("structured serialization emits exactly one newline-terminated JSON object"
 function listItem() {
   return {
     id: "session-1",
+    title: "Session 1",
     workspacePath,
+    localRepositoryKey: null,
+    repositoryName: null,
     defaultCharacterId: "character-1",
     lifecycleStatus: "active",
     createdAt: 1,
@@ -919,8 +1093,11 @@ function readValue(sessionId: string) {
   return {
     session: {
       id: sessionId,
+      title: `Session ${sessionId}`,
       providerId: "codex",
       workspacePath,
+      localRepositoryKey: null,
+      repositoryName: null,
       allowedAdditionalDirectoriesByteLength: 2,
       allowedAdditionalDirectoriesState: "inline",
       defaultCharacterId: "character-1",

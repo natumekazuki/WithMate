@@ -62,10 +62,12 @@ def insert_session(connection: sqlite3.Connection, session_id: str) -> None:
     connection.execute(
         """
         INSERT INTO sessions (
-          id, provider_id, workspace_key, workspace_path, allowed_additional_directories_json,
+          id, title, provider_id, workspace_key, workspace_path, local_repository_key, repository_name,
+          allowed_additional_directories_json,
           default_character_id, max_concurrent_child_runs, lifecycle_status,
           created_at, updated_at, last_activity_at
-        ) VALUES (?, 'codex', 'workspace', '/workspace', '[]', 'character', 4, 'active', 1, 1, 1)
+        ) VALUES (?, 'Session title', 'codex', 'workspace', '/workspace', NULL, NULL, '[]',
+          'character', 4, 'active', 1, 1, 1)
         """,
         (session_id,),
     )
@@ -192,6 +194,16 @@ def validate_connection(
         "SELECT max_concurrent_child_runs FROM sessions WHERE id = 'session-a'"
     ).fetchone()[0] == 1024
 
+    local_repository_key = "local-repository-v1-sha256-" + ("a" * 64)
+    connection.execute(
+        "UPDATE sessions SET local_repository_key = ?, repository_name = 'WithMate' WHERE id = 'session-a'",
+        (local_repository_key,),
+    )
+    connection.commit()
+    assert connection.execute(
+        "SELECT local_repository_key, repository_name FROM sessions WHERE id = 'session-a'"
+    ).fetchone() == (local_repository_key, "WithMate")
+
     expect_integrity_error(
         connection,
         "UPDATE sessions SET max_concurrent_child_runs = 1025 WHERE id = 'session-a'",
@@ -200,12 +212,40 @@ def validate_connection(
 
     expect_integrity_error(
         connection,
+        "UPDATE sessions SET title = '   ' WHERE id = 'session-b'",
+        (),
+    )
+    expect_integrity_error(
+        connection,
+        "UPDATE sessions SET title = ? WHERE id = 'session-b'",
+        ("x" * 513,),
+    )
+    expect_integrity_error(
+        connection,
+        "UPDATE sessions SET local_repository_key = ? WHERE id = 'session-b'",
+        (local_repository_key,),
+    )
+    expect_integrity_error(
+        connection,
+        "UPDATE sessions SET repository_name = 'WithMate' WHERE id = 'session-b'",
+        (),
+    )
+    expect_integrity_error(
+        connection,
+        "UPDATE sessions SET local_repository_key = 'invalid', repository_name = 'WithMate' WHERE id = 'session-b'",
+        (),
+    )
+
+    expect_integrity_error(
+        connection,
         """
         INSERT INTO sessions (
-          id, provider_id, workspace_key, workspace_path, allowed_additional_directories_json,
+          id, title, provider_id, workspace_key, workspace_path, local_repository_key, repository_name,
+          allowed_additional_directories_json,
           default_character_id, max_concurrent_child_runs, lifecycle_status,
           created_at, updated_at, last_activity_at
-        ) VALUES ('session-over-limit', 'provider', 'workspace', '/workspace', '[]', 'character', 1025, 'active', 1, 1, 1)
+        ) VALUES ('session-over-limit', 'Session title', 'provider', 'workspace', '/workspace', NULL, NULL,
+          '[]', 'character', 1025, 'active', 1, 1, 1)
         """,
         (),
     )
@@ -214,10 +254,12 @@ def validate_connection(
         connection,
         """
         INSERT INTO sessions (
-          id, provider_id, workspace_key, workspace_path, allowed_additional_directories_json,
+          id, title, provider_id, workspace_key, workspace_path, local_repository_key, repository_name,
+          allowed_additional_directories_json,
           default_character_id, max_concurrent_child_runs, lifecycle_status,
           created_at, updated_at, last_activity_at
-        ) VALUES (?, 'provider', 'workspace', '/workspace', '[]', 'character', 4, 'active', 1, 1, 1)
+        ) VALUES (?, 'Session title', 'provider', 'workspace', '/workspace', NULL, NULL,
+          '[]', 'character', 4, 'active', 1, 1, 1)
         """,
         ("s" * 1025,),
     )
@@ -400,7 +442,7 @@ def validate_connection(
         "duplicateUniqueAutoindexCheck": "ok",
         "foreignKeyCheck": "ok",
         "quickCheck": quick_check,
-        "constraintRejectionChecks": 9,
+        "constraintRejectionChecks": 14,
         "canonicalUuidAcceptanceCheck": "ok",
         "storedPayloadAtomicityCheck": "ok",
         "deferredForeignKeyCycleCheck": "ok",

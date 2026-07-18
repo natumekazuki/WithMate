@@ -9,6 +9,7 @@ import {
 } from "../shared/allowed-additional-directories.js";
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
 import { MAX_SESSION_CONCURRENT_CHILD_RUNS } from "../shared/session-limits.js";
+import { isCanonicalSessionTitle, snapshotLocalRepositoryMetadata } from "../shared/session-metadata.js";
 import { resolveWorkspaceIdentity } from "../shared/workspace-path.js";
 import {
   REPOSITORY_WRITE_OPERATIONS,
@@ -59,6 +60,8 @@ import {
   type SessionLifecycleStatus,
   type SessionTransitionCommand,
   type SessionTransitionResult,
+  type SessionUpdateTitleCommand,
+  type SessionUpdateTitleResult,
 } from "../shared/repository-write-model.js";
 import { executeWriteTransaction } from "./request-executor.js";
 
@@ -121,6 +124,15 @@ export function createRepositoryWriteOperations(
           const prepared = prepareSessionCreate(command);
           const now = readClock(clock);
           return executeWriteTransaction(database, () => createSession(database, prepared, now, retentionMs));
+        }),
+      ),
+    ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.sessionUpdateTitle,
+      write((payload) =>
+        runDecoded(decodeSessionUpdateTitle(payload), (command) => {
+          const now = readClock(clock);
+          return executeWriteTransaction(database, () => updateSessionTitle(database, command, now, retentionMs));
         }),
       ),
     ],
@@ -729,21 +741,32 @@ function createSession(
     return failure("lifecycle_conflict", "Session already exists.");
   }
   const session = prepared.command.session;
+  const repositoryMetadata =
+    session.localRepositoryKey === null
+      ? ({ localRepositoryKey: null, repositoryName: null } as const)
+      : ({
+          localRepositoryKey: session.localRepositoryKey,
+          repositoryName: session.repositoryName,
+        } as const);
   database
     .prepare(
       `
       INSERT INTO sessions (
-        id, provider_id, workspace_key, workspace_path, allowed_additional_directories_json,
+        id, title, provider_id, workspace_key, workspace_path, local_repository_key, repository_name,
+        allowed_additional_directories_json,
         default_character_id, max_concurrent_child_runs, lifecycle_status,
         created_at, updated_at, last_activity_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
     `,
     )
     .run(
       session.id,
+      session.title,
       session.providerId,
       session.workspaceKey,
       session.workspacePath,
+      session.localRepositoryKey,
+      session.repositoryName,
       prepared.directoriesJson,
       session.defaultCharacterId,
       session.maxConcurrentChildRuns,
@@ -753,10 +776,12 @@ function createSession(
     );
   const value: SessionCreateResult = {
     sessionId: session.id,
+    title: session.title,
     workspaceKey: session.workspaceKey,
     workspacePath: session.workspacePath,
     lifecycleStatus: "active",
     createdAt: now,
+    ...repositoryMetadata,
   };
   completeIdempotency(
     database,
@@ -766,6 +791,63 @@ function createSession(
     prepared.fingerprint,
     "session",
     session.id,
+    value,
+    now,
+    retentionMs,
+  );
+  return success(value, false);
+}
+
+function updateSessionTitle(
+  database: DatabaseSync,
+  command: SessionUpdateTitleCommand,
+  now: number,
+  retentionMs: number,
+): RepositoryCommandResult<SessionUpdateTitleResult> {
+  const identity = readAndExpireIdempotencyRecord(database, command.idempotencyKey, now);
+  if (
+    identity !== undefined &&
+    (identity.scope_session_id !== command.sessionId || identity.operation !== "session.update-title")
+  ) {
+    return failure("idempotency_conflict", "Idempotency key was used differently.");
+  }
+  const row = database.prepare("SELECT workspace_key, updated_at FROM sessions WHERE id = ?").get(command.sessionId) as
+    Readonly<{ workspace_key: string; updated_at: number }> | undefined;
+  if (row === undefined) {
+    return identity === undefined
+      ? failure("not_found", "Session was not found.")
+      : failure("reference_invalid", "Idempotent response reference is invalid.");
+  }
+  const requestFingerprint = fingerprint({
+    operation: "session.update-title",
+    sessionId: command.sessionId,
+    workspaceKey: row.workspace_key,
+    title: command.title,
+  });
+  const idempotency = checkIdempotency<SessionUpdateTitleResult>(
+    database,
+    command.idempotencyKey,
+    "session.update-title",
+    requestFingerprint,
+    command.sessionId,
+    "session",
+    command.sessionId,
+    now,
+  );
+  if (idempotency.kind !== "new") return idempotency.result;
+  const updatedAt = Math.max(now, row.updated_at);
+  database
+    .prepare("UPDATE sessions SET title = ?, updated_at = ? WHERE id = ? AND workspace_key = ?")
+    .run(command.title, updatedAt, command.sessionId, row.workspace_key);
+  const value = { sessionId: command.sessionId, title: command.title, updatedAt } as const;
+  completeIdempotency(
+    database,
+    command.idempotencyKey,
+    command.sessionId,
+    "session.update-title",
+    requestFingerprint,
+    "session",
+    command.sessionId,
     value,
     now,
     retentionMs,
@@ -1371,9 +1453,18 @@ function startChild(
   if (idempotency.kind !== "new") return idempotency.result;
 
   const parentSession = database
-    .prepare("SELECT lifecycle_status, workspace_path FROM sessions WHERE id = ? AND workspace_key = ?")
+    .prepare(
+      `SELECT lifecycle_status, workspace_path, local_repository_key, repository_name
+       FROM sessions WHERE id = ? AND workspace_key = ?`,
+    )
     .get(command.parentSessionId, command.workspaceKey) as
-    { lifecycle_status: SessionLifecycleStatus; workspace_path: string } | undefined;
+    | {
+        lifecycle_status: SessionLifecycleStatus;
+        workspace_path: string;
+        local_repository_key: string | null;
+        repository_name: string | null;
+      }
+    | undefined;
   if (parentSession === undefined) return failure("not_found", "Parent Session was not found.");
   if (parentSession.lifecycle_status !== "active") {
     return failure("lifecycle_conflict", "Child admission requires an active parent Session.");
@@ -1424,17 +1515,21 @@ function startChild(
     .prepare(
       `
       INSERT INTO sessions (
-        id, provider_id, workspace_key, workspace_path, allowed_additional_directories_json,
+        id, title, provider_id, workspace_key, workspace_path, local_repository_key, repository_name,
+        allowed_additional_directories_json,
         default_character_id, max_concurrent_child_runs, lifecycle_status,
         created_at, updated_at, last_activity_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
     `,
     )
     .run(
       command.childSession.id,
+      command.childSession.title,
       command.childSession.providerId,
       command.workspaceKey,
       parentSession.workspace_path,
+      parentSession.local_repository_key,
+      parentSession.repository_name,
       prepared.directoriesJson,
       command.childSession.defaultCharacterId,
       command.childSession.maxConcurrentChildRuns,
@@ -2988,10 +3083,16 @@ function completeIdempotency<T extends object>(
 
 function prepareSessionCreate(command: SessionCreateCommand): PreparedSessionCreate {
   const workspace = resolveWorkspaceIdentity(command.session.workspacePath);
+  const repository = snapshotLocalRepositoryMetadata(
+    command.session.localRepositoryKey,
+    command.session.repositoryName,
+  );
   if (
     workspace === undefined ||
     workspace.workspacePath !== command.session.workspacePath ||
-    workspace.workspaceKey !== command.session.workspaceKey
+    workspace.workspaceKey !== command.session.workspaceKey ||
+    !isCanonicalSessionTitle(command.session.title) ||
+    repository === undefined
   ) {
     throw invalidCommand();
   }
@@ -3006,10 +3107,13 @@ function prepareSessionCreate(command: SessionCreateCommand): PreparedSessionCre
   return {
     command,
     directoriesJson,
+    // Git-derived metadata is an environment snapshot, not caller intent. Excluding it lets an
+    // exact retry replay the first persisted snapshot even if Repository detection later changes.
     fingerprint: fingerprint({
       operation: "session.create",
       session: {
         id: command.session.id,
+        title: command.session.title,
         providerId: command.session.providerId,
         workspaceKey: command.session.workspaceKey,
         workspacePath: command.session.workspacePath,
@@ -3272,18 +3376,23 @@ function decodeSessionCreate(payload: Readonly<Record<string, unknown>>): Decode
   if (
     !hasExactKeys(session, [
       "id",
+      "title",
       "providerId",
       "workspaceKey",
       "workspacePath",
+      "localRepositoryKey",
+      "repositoryName",
       "allowedAdditionalDirectories",
       "defaultCharacterId",
       "maxConcurrentChildRuns",
     ]) ||
     !isBoundedString(session.id, 1_024) ||
+    !isCanonicalSessionTitle(session.title) ||
     !isBoundedString(session.providerId, 1_024) ||
     !isBoundedString(session.workspaceKey, 1_024) ||
     !isBoundedString(session.workspacePath, 32_768) ||
     !isBoundedString(session.defaultCharacterId, 1_024) ||
+    snapshotLocalRepositoryMetadata(session.localRepositoryKey, session.repositoryName) === undefined ||
     !isDenseBoundedStringArray(
       session.allowedAdditionalDirectories,
       ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxItems,
@@ -3314,6 +3423,18 @@ function decodeSessionTransition(payload: Readonly<Record<string, unknown>>): De
     return decodeFailure();
   }
   return { ok: true, value: payload as unknown as SessionTransitionCommand };
+}
+
+function decodeSessionUpdateTitle(payload: Readonly<Record<string, unknown>>): DecodeResult<SessionUpdateTitleCommand> {
+  if (
+    !hasExactKeys(payload, ["sessionId", "idempotencyKey", "title"]) ||
+    !isBoundedString(payload.sessionId, 1_024) ||
+    !isCanonicalUuid(payload.idempotencyKey) ||
+    !isCanonicalSessionTitle(payload.title)
+  ) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as SessionUpdateTitleCommand };
 }
 
 function decodeSessionDeleteSubtree(
@@ -3446,12 +3567,14 @@ function decodeChildStart(payload: Readonly<Record<string, unknown>>): DecodeRes
     !isPlainObject(payload.childSession) ||
     !hasExactKeys(payload.childSession, [
       "id",
+      "title",
       "providerId",
       "allowedAdditionalDirectories",
       "defaultCharacterId",
       "maxConcurrentChildRuns",
     ]) ||
     !isBoundedString(payload.childSession.id, 1_024) ||
+    !isCanonicalSessionTitle(payload.childSession.title) ||
     !isBoundedString(payload.childSession.providerId, 1_024) ||
     !isDenseBoundedStringArray(
       payload.childSession.allowedAdditionalDirectories,

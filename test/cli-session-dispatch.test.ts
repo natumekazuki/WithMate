@@ -22,6 +22,8 @@ test("all Session argv dispatch only public Application operation requests", asy
     [
       "session",
       "create",
+      "--title",
+      "Session title",
       "--workspace",
       workspacePath,
       "--idempotency-key",
@@ -79,6 +81,7 @@ test("all Session argv dispatch only public Application operation requests", asy
       operation: "create",
       request: {
         context: { authorization },
+        title: "Session title",
         workspacePath,
         idempotencyKey: uuid,
         providerId: "codex",
@@ -150,13 +153,23 @@ test("caller idempotency survives exact retry and conflicting request reuse", as
     }
     return {
       overallStatus: "success",
-      value: { sessionId: "session-1", workspacePath, lifecycleStatus: "active", createdAt: 1 },
+      value: {
+        sessionId: "session-1",
+        title: "Session title",
+        workspacePath,
+        localRepositoryKey: null,
+        repositoryName: null,
+        lifecycleStatus: "active",
+        createdAt: 1,
+      },
       persistence: { status: "committed", effect: "none", replayed: createCount > 1 },
     };
   });
   const baseArgv = [
     "session",
     "create",
+    "--title",
+    "Session title",
     "--workspace",
     workspacePath,
     "--idempotency-key",
@@ -345,7 +358,9 @@ function recordingOperations(
   }
   const operations: Operations = {
     create: (request, options) => invoke("create", request, options),
+    updateTitle: (request, options) => invoke("updateTitle", request, options),
     list: (request, options) => invoke("list", request, options),
+    listLocalRepositories: (request, options) => invoke("listLocalRepositories", request, options),
     read: (request, options) => invoke("read", request, options),
     readDirectoriesChunk: (request, options) => invoke("readDirectoriesChunk", request, options),
     archive: (request, options) => invoke("archive", request, options),
@@ -362,11 +377,27 @@ function successResponse(operation: OperationName): unknown {
     case "create":
       return {
         overallStatus: "success",
-        value: { sessionId: "session-1", workspacePath, lifecycleStatus: "active", createdAt: 1 },
+        value: {
+          sessionId: "session-1",
+          title: "Session title",
+          workspacePath,
+          localRepositoryKey: null,
+          repositoryName: null,
+          lifecycleStatus: "active",
+          createdAt: 1,
+        },
+        persistence: writePersistence,
+      };
+    case "updateTitle":
+      return {
+        overallStatus: "success",
+        value: { sessionId: "session-1", title: "Renamed", updatedAt: 2 },
         persistence: writePersistence,
       };
     case "list":
       return { overallStatus: "success", value: { items: [listItem()] }, persistence: readPersistence };
+    case "listLocalRepositories":
+      return { overallStatus: "success", value: { items: [] }, persistence: readPersistence };
     case "read":
       return { overallStatus: "success", value: readValue(), persistence: readPersistence };
     case "readDirectoriesChunk":
@@ -401,7 +432,10 @@ function transitionResponse(status: "active" | "archived" | "closed", persistenc
 function listItem() {
   return {
     id: "session-1",
+    title: "Session 1",
     workspacePath,
+    localRepositoryKey: null,
+    repositoryName: null,
     defaultCharacterId: "character-1",
     lifecycleStatus: "active",
     createdAt: 1,
@@ -416,8 +450,11 @@ function readValue() {
   return {
     session: {
       id: "session-1",
+      title: "Session 1",
       providerId: "codex",
       workspacePath,
+      localRepositoryKey: null,
+      repositoryName: null,
       allowedAdditionalDirectoriesByteLength: 2,
       allowedAdditionalDirectoriesState: "inline",
       defaultCharacterId: "character-1",

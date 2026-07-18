@@ -1,6 +1,11 @@
 import { normalizeHostAbsolutePath, WORKSPACE_PATH_MAX_LENGTH } from "../shared/workspace-path.js";
 import { isCanonicalUuid } from "../shared/persistence-runtime-protocol.js";
 import {
+  canonicalizeSessionQuery,
+  canonicalizeSessionTitle,
+  isLocalRepositoryKey,
+} from "../shared/session-metadata.js";
+import {
   CLI_EXIT_CODES,
   CLI_SCHEMA_VERSION,
   CLI_SESSION_LIMITS,
@@ -27,7 +32,9 @@ type OptionParseResult =
 
 const operations = new Set<CliSessionOperation>([
   "create",
+  "rename",
   "list",
+  "repositories",
   "read",
   "directories-chunk",
   "archive",
@@ -72,8 +79,12 @@ function parseSessionCommand(identity: CliCommandIdentity, argv: readonly string
   switch (identity.operation) {
     case "create":
       return parseCreate(identity as CliCommandIdentity<"create">, argv);
+    case "rename":
+      return parseRename(identity as CliCommandIdentity<"rename">, argv);
     case "list":
       return parseList(identity as CliCommandIdentity<"list">, argv);
+    case "repositories":
+      return parseRepositories(identity as CliCommandIdentity<"repositories">, argv);
     case "read":
       return parseRead(identity as CliCommandIdentity<"read">, argv);
     case "directories-chunk":
@@ -87,8 +98,29 @@ function parseSessionCommand(identity: CliCommandIdentity, argv: readonly string
   }
 }
 
+function parseRename(identity: CliCommandIdentity<"rename">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--title": requiredOption(canonicalizeSessionTitle),
+    "--idempotency-key": requiredOption(parseUuid),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      title: parsed.values["--title"] as string,
+      idempotencyKey: parsed.values["--idempotency-key"] as string,
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
 function parseCreate(identity: CliCommandIdentity<"create">, argv: readonly string[]): CliParseResult {
   const parsed = parseOptions(identity, argv, {
+    "--title": requiredOption((value) => canonicalizeSessionTitle(value)),
     "--workspace": requiredOption(normalizeAbsolutePathValue),
     "--idempotency-key": requiredOption(parseUuid),
     "--provider": requiredOption(parseIdentifier),
@@ -105,6 +137,7 @@ function parseCreate(identity: CliCommandIdentity<"create">, argv: readonly stri
   if (!parsed.ok) return parsed.result;
   const command: CliValidatedCommand = {
     identity,
+    title: parsed.values["--title"] as string,
     workspacePath: parsed.values["--workspace"] as string,
     idempotencyKey: parsed.values["--idempotency-key"] as string,
     providerId: parsed.values["--provider"] as string,
@@ -120,6 +153,11 @@ function parseList(identity: CliCommandIdentity<"list">, argv: readonly string[]
   const parsed = parseOptions(identity, argv, {
     "--workspace": option(normalizeAbsolutePathValue),
     "--lifecycle-status": option((value) => parseEnum(value, ["active", "archived", "closed"] as const)),
+    "--repository-key": option((value) => (isLocalRepositoryKey(value) ? value : undefined), {
+      multiple: true,
+      maxOccurrences: CLI_SESSION_LIMITS.maxRepositoryFilters,
+    }),
+    "--query": option(canonicalizeSessionQuery),
     "--cursor": option((value) => parseBoundedString(value, CLI_SESSION_LIMITS.maxCursorLength)),
     "--limit": option((value) => parseInteger(value, 1, CLI_SESSION_LIMITS.listMaxItems)),
     ...timeoutOption,
@@ -133,6 +171,28 @@ function parseList(identity: CliCommandIdentity<"list">, argv: readonly string[]
       ...(parsed.values["--lifecycle-status"] === undefined
         ? {}
         : { lifecycleStatus: parsed.values["--lifecycle-status"] as "active" | "archived" | "closed" }),
+      ...(parsed.values["--repository-key"] === undefined
+        ? {}
+        : { localRepositoryKeys: [...new Set(parsed.values["--repository-key"] as string[])].sort() }),
+      ...(parsed.values["--query"] === undefined ? {} : { query: parsed.values["--query"] as string }),
+      ...(parsed.values["--cursor"] === undefined ? {} : { cursor: parsed.values["--cursor"] as string }),
+      limit: (parsed.values["--limit"] as number | undefined) ?? CLI_SESSION_LIMITS.listDefaultItems,
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
+function parseRepositories(identity: CliCommandIdentity<"repositories">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--cursor": option((value) => parseBoundedString(value, CLI_SESSION_LIMITS.maxCursorLength)),
+    "--limit": option((value) => parseInteger(value, 1, CLI_SESSION_LIMITS.listMaxItems)),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
       ...(parsed.values["--cursor"] === undefined ? {} : { cursor: parsed.values["--cursor"] as string }),
       limit: (parsed.values["--limit"] as number | undefined) ?? CLI_SESSION_LIMITS.listDefaultItems,
       ...optionalTimeout(parsed.values),

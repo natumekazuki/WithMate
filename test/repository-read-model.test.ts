@@ -67,9 +67,12 @@ repositoryTest("Session detail preserves its Provider before the first Run", () 
     assert.deepEqual(detail, {
       session: {
         id: "session-without-run",
+        title: "Session",
         providerId: "provider",
         workspaceKey: "workspace",
         workspacePath: path.resolve("workspace"),
+        localRepositoryKey: null,
+        repositoryName: null,
         allowedAdditionalDirectoriesByteLength: 2,
         allowedAdditionalDirectoriesState: "inline",
         allowedAdditionalDirectories: [],
@@ -343,7 +346,9 @@ repositoryTest("session pages apply the byte budget and continue from the last i
     insertSession(database, maximumSessionId, 200);
     for (let index = 0; index < 100; index += 1) {
       database
-        .prepare("INSERT INTO sessions VALUES (?, 'provider', 'workspace', ?, '[]', ?, 4, 'active', 1, 1, ?)")
+        .prepare(
+          "INSERT INTO sessions VALUES (?, 'Session', 'provider', 'workspace', ?, NULL, NULL, '[]', ?, 4, 'active', 1, 1, ?)",
+        )
         .run(`session-${String(index).padStart(3, "0")}`, path.resolve("workspace"), "c".repeat(3_000), index + 1);
     }
     const sessions = operationFor(database, "repository.sessions.page");
@@ -367,13 +372,15 @@ repositoryTest("session pages apply the byte budget and continue from the last i
 repositoryTest("Session schema accepts the exact child Run limit and rejects values above the durable maximum", () => {
   withDatabase((database) => {
     database
-      .prepare("INSERT INTO sessions VALUES (?, 'provider', 'workspace', ?, '[]', 'character', ?, 'active', 1, 1, 1)")
+      .prepare(
+        "INSERT INTO sessions VALUES (?, 'Session', 'provider', 'workspace', ?, NULL, NULL, '[]', 'character', ?, 'active', 1, 1, 1)",
+      )
       .run("session-exact-limit", path.resolve("workspace"), 1_024);
     assert.throws(
       () =>
         database
           .prepare(
-            "INSERT INTO sessions VALUES (?, 'provider', 'workspace', ?, '[]', 'character', ?, 'active', 1, 1, 1)",
+            "INSERT INTO sessions VALUES (?, 'Session', 'provider', 'workspace', ?, NULL, NULL, '[]', 'character', ?, 'active', 1, 1, 1)",
           )
           .run("session-over-limit", path.resolve("workspace"), 1_025),
       (error: unknown) => error instanceof Error && error.message.includes("CHECK constraint failed"),
@@ -710,7 +717,9 @@ function insertSession(database: DatabaseSync, id: string, activity: number): vo
 
 function insertSessionWithWorkspace(database: DatabaseSync, id: string, workspaceKey: string, activity: number): void {
   database
-    .prepare("INSERT INTO sessions VALUES (?, 'provider', ?, ?, '[]', 'character', 4, 'active', 1, ?, ?)")
+    .prepare(
+      "INSERT INTO sessions VALUES (?, 'Session', 'provider', ?, ?, NULL, NULL, '[]', 'character', 4, 'active', 1, ?, ?)",
+    )
     .run(id, workspaceKey, path.resolve(workspaceKey), activity, activity);
 }
 

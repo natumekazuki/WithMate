@@ -14,12 +14,14 @@ import {
   APPLICATION_MAX_READ_CHUNK_BYTES,
   ApplicationSessionService,
 } from "../src/main/application-session-service.js";
+import type { LocalRepositoryMetadataResolver } from "../src/main/local-repository-metadata.js";
 import { PersistenceClientError, PersistenceWorkerClient } from "../src/main/persistence-worker-client.js";
 import { RepositoryReadClient } from "../src/main/repository-read-client.js";
 import { RepositoryWriteClient } from "../src/main/repository-write-client.js";
 import type {
   RepositoryCommandError,
   SessionCreateCommand,
+  SessionCreateResult,
   SessionTransitionCommand,
 } from "../src/shared/repository-write-model.js";
 import { resolveWorkspaceIdentity } from "../src/shared/workspace-path.js";
@@ -36,6 +38,7 @@ const context: ApplicationSessionOperationContext<Authorization> = {
 const workerUrl = new URL("../src/persistence-worker/worker-entry.ts", import.meta.url);
 const workerOptions = { execArgv: ["--import", "tsx"] };
 const workerTest = Number.parseInt(process.versions.node, 10) >= 24 ? test : test.skip;
+const localRepositoryKey = `local-repository-v1-sha256-${"a".repeat(64)}`;
 
 workerTest("Session operations run end-to-end through the Application Service and production Repository", async () => {
   await withTempDirectory(async (directory) => {
@@ -164,9 +167,12 @@ workerTest("Application list accepts a Repository cursor containing a maximum-le
           idempotencyKey,
           session: {
             id,
+            title: "Cursor boundary Session",
             providerId: "codex",
             workspaceKey: workspace.workspaceKey,
             workspacePath: workspace.workspacePath,
+            localRepositoryKey: null,
+            repositoryName: null,
             allowedAdditionalDirectories: [],
             defaultCharacterId: "character-1",
             maxConcurrentChildRuns: 2,
@@ -276,13 +282,7 @@ test("create validates workspace and authorization before issuing a stable Sessi
         commands.push(command);
         return {
           ok: true,
-          value: {
-            sessionId: command.session.id,
-            workspaceKey: command.session.workspaceKey,
-            workspacePath: command.session.workspacePath,
-            lifecycleStatus: "active",
-            createdAt: 100,
-          },
+          value: sessionCreateResult(command, 100),
           replayed: commands.length > 1,
         };
       },
@@ -309,9 +309,12 @@ test("create validates workspace and authorization before issuing a stable Sessi
     idempotencyKey: request.idempotencyKey,
     session: {
       id: commands[0]?.session.id,
+      title: request.title,
       providerId: "codex",
       workspaceKey: workspace.workspaceKey,
       workspacePath: workspace.workspacePath,
+      localRepositoryKey: null,
+      repositoryName: null,
       allowedAdditionalDirectories: ["C:\\workspace-shared"],
       defaultCharacterId: "character-1",
       maxConcurrentChildRuns: 2,
@@ -323,6 +326,124 @@ test("create validates workspace and authorization before issuing a stable Sessi
     replay.overallStatus === "success" && replay.value,
     first.overallStatus === "success" && first.value,
   );
+});
+
+test("create resolves and persists local Repository metadata after authorization", async () => {
+  const events: string[] = [];
+  let persisted: SessionCreateCommand | undefined;
+  const service = createService({
+    access: allowingAccess(events),
+    async resolveLocalRepositoryMetadata(workspacePath, signal) {
+      events.push("resolve-repository");
+      assert.equal(workspacePath, workspace.workspacePath);
+      assert.equal(signal.aborted, false);
+      return {
+        status: "found",
+        metadata: { localRepositoryKey, repositoryName: "WithMate" },
+      };
+    },
+    writes: {
+      async createSession(command) {
+        events.push("write");
+        persisted = command;
+        return {
+          ok: true,
+          value: sessionCreateResult(command, 1),
+          replayed: false,
+        };
+      },
+    },
+  });
+
+  const response = await service.create(createRequest());
+
+  assert.equal(response.overallStatus, "success");
+  assert.deepEqual(events, ["workspace:create", "authorize:create", "resolve-repository", "write"]);
+  assert.equal(persisted?.session.localRepositoryKey, localRepositoryKey);
+  assert.equal(persisted?.session.repositoryName, "WithMate");
+  assert.equal(response.overallStatus === "success" && response.value.localRepositoryKey, localRepositoryKey);
+  assert.equal(response.overallStatus === "success" && response.value.repositoryName, "WithMate");
+});
+
+test("exact create retry returns the persisted Repository snapshot when Git detection changes", async () => {
+  let resolutionCount = 0;
+  let stored: SessionCreateResult | undefined;
+  const service = createService({
+    async resolveLocalRepositoryMetadata() {
+      resolutionCount += 1;
+      return resolutionCount === 1
+        ? { status: "found", metadata: { localRepositoryKey, repositoryName: "WithMate" } }
+        : { status: "unavailable" };
+    },
+    writes: {
+      async createSession(command) {
+        stored ??= sessionCreateResult(command, 1);
+        return { ok: true, value: stored, replayed: resolutionCount > 1 };
+      },
+    },
+  });
+
+  const first = await service.create(createRequest());
+  const replay = await service.create(createRequest());
+
+  assert.equal(first.overallStatus, "success");
+  assert.equal(replay.overallStatus, "success");
+  assert.equal(replay.overallStatus === "success" && replay.value.localRepositoryKey, localRepositoryKey);
+  assert.equal(replay.overallStatus === "success" && replay.value.repositoryName, "WithMate");
+  assert.deepEqual(replay.persistence, { status: "committed", effect: "none", replayed: true });
+});
+
+test("malformed Repository metadata resolution fails before persistence", async () => {
+  let writes = 0;
+  const service = createService({
+    resolveLocalRepositoryMetadata: async () =>
+      ({ status: "found", metadata: { localRepositoryKey: null, repositoryName: null } }) as never,
+    writes: {
+      async createSession() {
+        writes += 1;
+        throw new Error("unreachable");
+      },
+    },
+  });
+
+  const response = await service.create(createRequest());
+
+  assert.equal(response.overallStatus, "failure");
+  assert.equal(response.overallStatus === "failure" && response.error.kind, "application");
+  assert.deepEqual(response.persistence, { status: "not_attempted", effect: "none" });
+  assert.equal(writes, 0);
+});
+
+test("Repository metadata resolution observes the Application deadline before persistence", async () => {
+  let resolverAborted = false;
+  let writes = 0;
+  const service = createService({
+    resolveLocalRepositoryMetadata: async (_workspacePath, signal) =>
+      new Promise((_, reject) => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            resolverAborted = true;
+            reject(new Error("aborted"));
+          },
+          { once: true },
+        );
+      }),
+    writes: {
+      async createSession() {
+        writes += 1;
+        throw new Error("unreachable");
+      },
+    },
+  });
+
+  const response = await service.create(createRequest(), { timeoutMs: 10 });
+
+  assert.equal(response.overallStatus, "failure");
+  assert.equal(response.overallStatus === "failure" && response.error.code, "operation_timeout");
+  assert.deepEqual(response.persistence, { status: "not_attempted", effect: "none" });
+  assert.equal(resolverAborted, true);
+  assert.equal(writes, 0);
 });
 
 test("create validates every canonical directory candidate before compacting the Repository value", async () => {
@@ -355,13 +476,7 @@ test("create validates every canonical directory candidate before compacting the
         commandDirectories = command.session.allowedAdditionalDirectories;
         return {
           ok: true,
-          value: {
-            sessionId: command.session.id,
-            workspaceKey: command.session.workspaceKey,
-            workspacePath: command.session.workspacePath,
-            lifecycleStatus: "active",
-            createdAt: 1,
-          },
+          value: sessionCreateResult(command, 1),
           replayed: false,
         };
       },
@@ -406,6 +521,7 @@ test("authorization receives isolated operation-specific Session targets and cre
         operation: "create",
         target: {
           kind: "session_create",
+          title: "Session title",
           workspacePath: workspace.workspacePath,
           providerId: "codex",
           allowedAdditionalDirectories: ["C:\\mutated"],
@@ -432,6 +548,7 @@ test("request and access rejection happen before Repository access", async () =>
   let workspaceChecks = 0;
   let authorizationChecks = 0;
   let writes = 0;
+  let repositoryResolutions = 0;
   const access: ApplicationAccessValidator<Authorization> = {
     async validateWorkspace() {
       workspaceChecks += 1;
@@ -447,6 +564,10 @@ test("request and access rejection happen before Repository access", async () =>
   };
   const service = createService({
     access,
+    async resolveLocalRepositoryMetadata() {
+      repositoryResolutions += 1;
+      return { status: "not_git" };
+    },
     writes: {
       async createSession() {
         writes += 1;
@@ -466,6 +587,7 @@ test("request and access rejection happen before Repository access", async () =>
   assert.deepEqual(forbidden.persistence, { status: "not_attempted", effect: "none" });
   assert.equal(workspaceChecks, 1);
   assert.equal(authorizationChecks, 1);
+  assert.equal(repositoryResolutions, 0);
   assert.equal(writes, 0);
 });
 
@@ -595,13 +717,7 @@ test("validated request snapshots cannot be changed while access validation is p
         createCommand = command;
         return {
           ok: true,
-          value: {
-            sessionId: command.session.id,
-            workspaceKey: command.session.workspaceKey,
-            workspacePath: command.session.workspacePath,
-            lifecycleStatus: "active",
-            createdAt: 1,
-          },
+          value: sessionCreateResult(command, 1),
           replayed: false,
         };
       },
@@ -609,6 +725,7 @@ test("validated request snapshots cannot be changed while access validation is p
   });
   const mutableCreate = {
     context: { authorization: { principalId: "user-1" } },
+    title: "Snapshot title",
     workspacePath: workspace.workspacePath,
     idempotencyKey: uuid(70),
     providerId: "codex",
@@ -687,9 +804,12 @@ test("validated request snapshots cannot be changed while access validation is p
         return {
           session: {
             id: input.sessionId,
+            title: `Session ${input.sessionId}`,
             providerId: "codex",
             workspaceKey: workspace.workspaceKey,
             workspacePath: workspace.workspacePath,
+            localRepositoryKey: null,
+            repositoryName: null,
             allowedAdditionalDirectoriesByteLength: 2,
             allowedAdditionalDirectoriesState: "inline",
             allowedAdditionalDirectories: [],
@@ -806,13 +926,7 @@ test("request fields are read once into the validated snapshot", async () => {
         persistedLimit = command.session.maxConcurrentChildRuns;
         return {
           ok: true,
-          value: {
-            sessionId: command.session.id,
-            workspaceKey: command.session.workspaceKey,
-            workspacePath: command.session.workspacePath,
-            lifecycleStatus: "active",
-            createdAt: 1,
-          },
+          value: sessionCreateResult(command, 1),
           replayed: false,
         };
       },
@@ -981,13 +1095,7 @@ test("operation options are validated and snapshotted before access validation",
         receivedOptions = options;
         return {
           ok: true,
-          value: {
-            sessionId: command.session.id,
-            workspaceKey: command.session.workspaceKey,
-            workspacePath: command.session.workspacePath,
-            lifecycleStatus: "active",
-            createdAt: 1,
-          },
+          value: sessionCreateResult(command, 1),
           replayed: false,
         };
       },
@@ -1137,13 +1245,7 @@ test("Repository fulfillment after the absolute deadline cannot become success",
         blockPastDeadline();
         return {
           ok: true,
-          value: {
-            sessionId: command.session.id,
-            workspaceKey: command.session.workspaceKey,
-            workspacePath: command.session.workspacePath,
-            lifecycleStatus: "active",
-            createdAt: 1,
-          },
+          value: sessionCreateResult(command, 1),
           replayed: false,
         };
       },
@@ -1491,13 +1593,7 @@ test("create accepts the exact Application child Run safety cap", async () => {
         persistedLimit = command.session.maxConcurrentChildRuns;
         return {
           ok: true,
-          value: {
-            sessionId: command.session.id,
-            workspaceKey: command.session.workspaceKey,
-            workspacePath: command.session.workspacePath,
-            lifecycleStatus: "active",
-            createdAt: 1,
-          },
+          value: sessionCreateResult(command, 1),
           replayed: false,
         };
       },
@@ -1553,13 +1649,7 @@ test("access validators receive isolated views of the decoded request snapshot",
         createCommand = command;
         return {
           ok: true,
-          value: {
-            sessionId: command.session.id,
-            workspaceKey: command.session.workspaceKey,
-            workspacePath: command.session.workspacePath,
-            lifecycleStatus: "active",
-            createdAt: 1,
-          },
+          value: sessionCreateResult(command, 1),
           replayed: false,
         };
       },
@@ -1575,6 +1665,7 @@ test("access validators receive isolated views of the decoded request snapshot",
     context: { authorization: { principalId: "user-1" } },
     target: {
       kind: "session_create",
+      title: "Session title",
       workspacePath: workspace.workspacePath,
       providerId: "codex",
       allowedAdditionalDirectories: ["C:\\workspace-shared"],
@@ -1637,6 +1728,41 @@ test("create rejects malformed additional directories before access validation a
   assert.equal(workspaceChecks, 0);
   assert.equal(authorizationChecks, 0);
   assert.equal(writes, 0);
+});
+
+test("create canonicalizes a bounded title and rejects invalid titles before access", async () => {
+  let canonicalTitle: string | undefined;
+  let accessChecks = 0;
+  const service = createService({
+    access: {
+      async validateWorkspace() {
+        accessChecks += 1;
+        return { allowed: true };
+      },
+      async authorize() {
+        accessChecks += 1;
+        return { allowed: true };
+      },
+    },
+    writes: {
+      async createSession(command) {
+        canonicalTitle = command.session.title;
+        return createServiceWrites().createSession(command);
+      },
+    },
+  });
+
+  const accepted = await service.create({ ...createRequest(), title: "  Canonical title  " });
+  assert.equal(accepted.overallStatus, "success");
+  assert.equal(canonicalTitle, "Canonical title");
+  assert.equal(accessChecks, 2);
+
+  for (const title of ["   ", "x".repeat(513), "invalid\0title", 123] as readonly unknown[]) {
+    const rejected = await service.create({ ...createRequest(), title } as never);
+    assert.equal(rejected.overallStatus, "failure");
+    assert.equal(rejected.overallStatus === "failure" && rejected.error.kind, "request");
+  }
+  assert.equal(accessChecks, 2);
 });
 
 test("create workspace rejection skips authorization and Repository access", async () => {
@@ -1852,9 +1978,12 @@ test("read projects only known Application response fields", async () => {
         return {
           session: {
             id: "session-1",
+            title: "Session 1",
             providerId: "codex",
             workspaceKey: workspace.workspaceKey,
             workspacePath: workspace.workspacePath,
+            localRepositoryKey: null,
+            repositoryName: null,
             allowedAdditionalDirectoriesByteLength: 24,
             allowedAdditionalDirectoriesState: "inline",
             allowedAdditionalDirectories: ["C:\\workspace-shared"],
@@ -1883,8 +2012,11 @@ test("read projects only known Application response fields", async () => {
   assert.deepEqual(response.overallStatus === "success" && response.value, {
     session: {
       id: "session-1",
+      title: "Session 1",
       providerId: "codex",
       workspacePath: workspace.workspacePath,
+      localRepositoryKey: null,
+      repositoryName: null,
       allowedAdditionalDirectoriesByteLength: 24,
       allowedAdditionalDirectoriesState: "inline",
       defaultCharacterId: "character-1",
@@ -2270,8 +2402,11 @@ test("shape-valid Repository results must match the requested workspace, Session
           ok: true as const,
           value: {
             sessionId: "session-other",
+            title: "Session title",
             workspaceKey: otherWorkspace.workspaceKey,
             workspacePath: otherWorkspace.workspacePath,
+            localRepositoryKey: null,
+            repositoryName: null,
             lifecycleStatus: "active" as const,
             createdAt: 1,
           },
@@ -2452,6 +2587,7 @@ function createService(
     access?: ApplicationAccessValidator<Authorization>;
     reads?: Partial<ReadPort>;
     writes?: Partial<WritePort>;
+    resolveLocalRepositoryMetadata?: LocalRepositoryMetadataResolver;
   } = {},
 ): ApplicationSessionService<Authorization> {
   const reads: ReadPort = {
@@ -2466,6 +2602,9 @@ function createService(
     reads,
     writes,
     access: overrides.access ?? allowingAccess(),
+    ...(overrides.resolveLocalRepositoryMetadata === undefined
+      ? {}
+      : { resolveLocalRepositoryMetadata: overrides.resolveLocalRepositoryMetadata }),
     snapshotAuthorization: (value: unknown) => structuredClone(value) as Authorization,
   });
 }
@@ -2479,9 +2618,12 @@ function createServiceReads(): ReadPort {
       return {
         session: {
           id: "session-1",
+          title: "Session 1",
           providerId: "codex",
           workspaceKey: workspace.workspaceKey,
           workspacePath: workspace.workspacePath,
+          localRepositoryKey: null,
+          repositoryName: null,
           allowedAdditionalDirectoriesByteLength: 2,
           allowedAdditionalDirectoriesState: "inline",
           allowedAdditionalDirectories: [],
@@ -2506,13 +2648,7 @@ function createServiceWrites(): WritePort {
     async createSession(command) {
       return {
         ok: true,
-        value: {
-          sessionId: command.session.id,
-          workspaceKey: command.session.workspaceKey,
-          workspacePath: command.session.workspacePath,
-          lifecycleStatus: "active",
-          createdAt: 1,
-        },
+        value: sessionCreateResult(command, 1),
         replayed: false,
       };
     },
@@ -2523,6 +2659,25 @@ function createServiceWrites(): WritePort {
         replayed: false,
       };
     },
+  };
+}
+
+function sessionCreateResult(command: SessionCreateCommand, createdAt: number): SessionCreateResult {
+  const repositoryMetadata =
+    command.session.localRepositoryKey === null
+      ? ({ localRepositoryKey: null, repositoryName: null } as const)
+      : ({
+          localRepositoryKey: command.session.localRepositoryKey,
+          repositoryName: command.session.repositoryName,
+        } as const);
+  return {
+    sessionId: command.session.id,
+    title: command.session.title,
+    workspaceKey: command.session.workspaceKey,
+    workspacePath: command.session.workspacePath,
+    lifecycleStatus: "active",
+    createdAt,
+    ...repositoryMetadata,
   };
 }
 
@@ -2542,6 +2697,7 @@ function allowingAccess(events: string[] = []): ApplicationAccessValidator<Autho
 function createRequest() {
   return {
     context,
+    title: "Session title",
     workspacePath: workspace.workspacePath,
     idempotencyKey: uuid(1),
     providerId: "codex",
@@ -2554,8 +2710,11 @@ function createRequest() {
 function sessionSummary(id: string) {
   return {
     id,
+    title: `Session ${id}`,
     workspaceKey: workspace.workspaceKey,
     workspacePath: workspace.workspacePath,
+    localRepositoryKey: null,
+    repositoryName: null,
     defaultCharacterId: "character-1",
     lifecycleStatus: "active" as const,
     createdAt: 1,
@@ -2577,9 +2736,12 @@ function sessionDetail(
 ) {
   return {
     id,
+    title: `Session ${id}`,
     providerId: "codex",
     workspaceKey: sessionWorkspace.workspaceKey,
     workspacePath: sessionWorkspace.workspacePath,
+    localRepositoryKey: null,
+    repositoryName: null,
     allowedAdditionalDirectoriesByteLength: 2,
     allowedAdditionalDirectoriesState: "inline" as const,
     allowedAdditionalDirectories: [],

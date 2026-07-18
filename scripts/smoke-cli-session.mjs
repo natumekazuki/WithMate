@@ -22,6 +22,7 @@ const invalidAdditionalDirectoryKey = "018f1f4e-7f0a-7000-8000-000000000007";
 const archiveKey = "018f1f4e-7f0a-7000-8000-000000000002";
 const unarchiveKey = "018f1f4e-7f0a-7000-8000-000000000003";
 const closeKey = "018f1f4e-7f0a-7000-8000-000000000004";
+const renameKey = "018f1f4e-7f0a-7000-8000-000000000008";
 
 fs.mkdirSync(workspacePath, { recursive: true });
 fs.mkdirSync(secondWorkspacePath, { recursive: true });
@@ -40,6 +41,8 @@ try {
   const createArgs = [
     "session",
     "create",
+    "--title",
+    "Primary Session",
     "--workspace",
     workspacePath,
     "--idempotency-key",
@@ -56,6 +59,9 @@ try {
   const created = runJson(createArgs, environment, 0);
   const sessionId = created.applicationResponse.value.sessionId;
   assert.equal(typeof sessionId, "string");
+  assert.equal(created.applicationResponse.value.title, "Primary Session");
+  assert.equal(created.applicationResponse.value.localRepositoryKey, null);
+  assert.equal(created.applicationResponse.value.repositoryName, null);
   const replay = runJson(createArgs, environment, 0);
   assert.equal(replay.applicationResponse.persistence.replayed, true);
 
@@ -63,6 +69,8 @@ try {
     [
       "session",
       "create",
+      "--title",
+      "Unavailable Workspace Session",
       "--workspace",
       path.join(tempDirectory, "missing-workspace"),
       "--idempotency-key",
@@ -83,6 +91,8 @@ try {
     [
       "session",
       "create",
+      "--title",
+      "Invalid Directory Session",
       "--workspace",
       workspacePath,
       "--idempotency-key",
@@ -107,6 +117,8 @@ try {
     [
       "session",
       "create",
+      "--title",
+      "Secondary Session",
       "--workspace",
       secondWorkspacePath,
       "--idempotency-key",
@@ -123,6 +135,9 @@ try {
   );
   const secondSessionId = secondCreated.applicationResponse.value.sessionId;
   const secondRead = runJson(["session", "read", "--session-id", secondSessionId], environment, 0);
+  assert.equal(secondRead.applicationResponse.value.session.title, "Secondary Session");
+  assert.equal(secondRead.applicationResponse.value.session.localRepositoryKey, null);
+  assert.equal(secondRead.applicationResponse.value.session.repositoryName, null);
   assert.equal(secondRead.applicationResponse.value.session.maxConcurrentChildRuns, 0);
 
   const allSessions = runJson(["session", "list", "--limit", "10"], environment, 0);
@@ -131,6 +146,29 @@ try {
     new Set([sessionId, secondSessionId]),
   );
 
+  const renamed = runJson(
+    [
+      "session",
+      "rename",
+      "--session-id",
+      sessionId,
+      "--title",
+      "Renamed Primary Session",
+      "--idempotency-key",
+      renameKey,
+    ],
+    environment,
+    0,
+  );
+  assert.equal(renamed.applicationResponse.value.title, "Renamed Primary Session");
+  const searched = runJson(["session", "list", "--query", "renamed primary", "--limit", "10"], environment, 0);
+  assert.deepEqual(
+    searched.applicationResponse.value.items.map((item) => item.id),
+    [sessionId],
+  );
+  const repositories = runJson(["session", "repositories", "--limit", "10"], environment, 0);
+  assert.deepEqual(repositories.applicationResponse.value.items, []);
+
   const listed = runJson(["session", "list", "--workspace", workspacePath, "--limit", "10"], environment, 0);
   assert.deepEqual(
     listed.applicationResponse.value.items.map((item) => item.id),
@@ -138,6 +176,8 @@ try {
   );
   const read = runJson(["session", "read", "--session-id", sessionId], environment, 0);
   assert.equal(read.applicationResponse.value.session.id, sessionId);
+  assert.equal(read.applicationResponse.value.session.title, "Renamed Primary Session");
+  assert.equal(listed.applicationResponse.value.items[0].title, "Renamed Primary Session");
   const chunk = runJson(
     ["session", "directories-chunk", "--session-id", sessionId, "--offset", "0", "--max-bytes", "1024"],
     environment,
@@ -183,7 +223,17 @@ try {
 
   console.log(
     JSON.stringify({
-      commands: ["create", "list", "read", "directories-chunk", "archive", "unarchive", "close"],
+      commands: [
+        "create",
+        "rename",
+        "list",
+        "repositories",
+        "read",
+        "directories-chunk",
+        "archive",
+        "unarchive",
+        "close",
+      ],
       exactRetry: "replayed",
       appWideList: "verified",
       workspaceRejection: "classified",

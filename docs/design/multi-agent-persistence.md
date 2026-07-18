@@ -93,9 +93,12 @@ run_input_deliveries
 | Column | Type | Null | 意味 |
 | --- | --- | --- | --- |
 | `id` | `TEXT` | no | WithMate Session ID |
+| `title` | `TEXT` | no | callerが作成時に指定する表示名 |
 | `provider_id` | `TEXT` | no | Session 作成時に固定する論理 Provider ID |
 | `workspace_key` | `TEXT` | no | host OSのpath identityから導出する比較用key。表示やpath解決には使用しない |
 | `workspace_path` | `TEXT` | no | Session作成時に検証・正規化したworkspaceのabsolute path |
+| `local_repository_key` | `TEXT` | yes | local Git Repository familyのversion付きopaque key |
+| `repository_name` | `TEXT` | yes | local Git Repositoryの表示・検索用名称 |
 | `allowed_additional_directories_json` | `TEXT` | no | userが明示許可したworkspace外directoryのabsolute path配列 |
 | `default_character_id` | `TEXT` | no | Session の既定 Character ID |
 | `max_concurrent_child_runs` | `INTEGER` | no | この Session が orchestration root のときに配下全体へ適用する child Run 同時実行上限 |
@@ -107,6 +110,7 @@ run_input_deliveries
 ### 制約
 
 - primary key は `id`。
+- `title`はcanonicalなnon-empty valueとし、一意性を要求しない。`local_repository_key`と`repository_name`は同時に値を持つか、同時にnullとする。導出とsnapshot規則は`docs/adr/007-session-display-and-local-repository-metadata.md`を参照する。
 - `allowed_additional_directories_json`は重複と包含関係を正規化したJSON arrayとする。WithMate管理のSession Files directoryは暗黙許可し、本fieldへ保存しない。
 - `max_concurrent_child_runs` は 0 以上、Application Service の安全上限以下とする。`0` は Multi-Agent child Run の新規開始を無効化する。
 - child Session の値は所属 tree の capacity 判定に使わない。すべての子孫は `session_relations.orchestration_root_session_id` が指す root Session の値を参照する。

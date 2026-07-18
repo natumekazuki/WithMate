@@ -43,7 +43,7 @@ Session
 責務:
 
 - WithMate 内で安定した Session ID を持つ。
-- Provider、workspace、既定の Character、作成日時、lifecycle 状態を保持する。
+- title、Provider、workspace、ローカルRepository metadata、既定の Character、作成日時、lifecycle 状態を保持する。
 - Message の順序と Run の所属を定める。
 - ProviderBinding を通して外部会話と対応する。
 - CLI / GUI から同じ履歴を参照できるようにする。
@@ -51,7 +51,7 @@ Session
 
 初期版では Session 作成後の Provider を変更しない。別 Provider へ引き継ぐ場合は、新しい Session を作成し、必要なら元 Session との relation と引き継いだ context を明示する。既存 Session の ProviderBinding だけを差し替える方式は、Provider 側履歴と WithMate 履歴の対応が不透明になるため採用しない。
 
-Session は会話の利用可否を示す`lifecycleStatus`、Multi-Agent capacity設定、recent order用の`lastActivityAt` projectionを永続化する。最新の論理実行を示す状態はRunから導出し、Session rowへ重複保存しない。`lastActivityAt`はMessage追加、Run受理、Run terminal確定で単調増加させる並び順であり、実行状態の正本ではない。
+Session は会話の利用可否を示す`lifecycleStatus`、Multi-Agent capacity設定、recent order用の`lastActivityAt` projectionを永続化する。表示名とローカルRepository snapshotの意味は`docs/adr/007-session-display-and-local-repository-metadata.md`を正本とする。最新の論理実行を示す状態はRunから導出し、Session rowへ重複保存しない。`lastActivityAt`はMessage追加、Run受理、Run terminal確定で単調増加させる並び順であり、実行状態の正本ではない。
 
 | Field | Value | 意味 |
 | --- | --- | --- |

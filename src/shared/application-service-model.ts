@@ -1,5 +1,15 @@
+import type { LocalRepositoryMetadata } from "./session-metadata.js";
+
 export type ApplicationSessionOperation =
-  "create" | "list" | "read" | "read_directories_chunk" | "archive" | "unarchive" | "close";
+  | "create"
+  | "update_title"
+  | "list"
+  | "list_local_repositories"
+  | "read"
+  | "read_directories_chunk"
+  | "archive"
+  | "unarchive"
+  | "close";
 
 export type ApplicationSessionOperationContext<TAuthorizationContext> = Readonly<{
   authorization: TAuthorizationContext;
@@ -18,6 +28,7 @@ export type ApplicationAccessDecision =
 
 export type ApplicationSessionCreateAccessTarget = Readonly<{
   kind: "session_create";
+  title: string;
   workspacePath: string;
   providerId: string;
   allowedAdditionalDirectories: readonly string[];
@@ -30,6 +41,13 @@ export type ApplicationSessionCollectionAccessTarget = Readonly<{
   scope: "all_sessions";
   workspacePath?: string;
   lifecycleStatus?: ApplicationSessionLifecycleStatus;
+  localRepositoryKeys?: readonly string[];
+  query?: string;
+}>;
+
+export type ApplicationLocalRepositoryCollectionAccessTarget = Readonly<{
+  kind: "local_repository_collection";
+  scope: "all_sessions";
 }>;
 
 export type ApplicationSessionAccessTarget = Readonly<{
@@ -54,6 +72,12 @@ export type ApplicationAccessValidationInput<TAuthorizationContext> =
   | (ApplicationAccessValidationBase<TAuthorizationContext> &
       Readonly<{ operation: "list"; access: "read"; target: ApplicationSessionCollectionAccessTarget }>)
   | (ApplicationAccessValidationBase<TAuthorizationContext> &
+      Readonly<{
+        operation: "list_local_repositories";
+        access: "read";
+        target: ApplicationLocalRepositoryCollectionAccessTarget;
+      }>)
+  | (ApplicationAccessValidationBase<TAuthorizationContext> &
       Readonly<{ operation: "read"; access: "read"; target: ApplicationSessionAccessTarget }>)
   | (ApplicationAccessValidationBase<TAuthorizationContext> &
       Readonly<{
@@ -63,7 +87,7 @@ export type ApplicationAccessValidationInput<TAuthorizationContext> =
       }>)
   | (ApplicationAccessValidationBase<TAuthorizationContext> &
       Readonly<{
-        operation: "archive" | "unarchive" | "close";
+        operation: "update_title" | "archive" | "unarchive" | "close";
         access: "write";
         target: ApplicationSessionAccessTarget;
       }>);
@@ -291,6 +315,7 @@ export type ApplicationOperationResponse<TValue, TMode extends ApplicationOperat
 
 export type ApplicationSessionCreateRequest<TAuthorizationContext> = Readonly<{
   context: ApplicationSessionOperationContext<TAuthorizationContext>;
+  title: string;
   workspacePath: string;
   idempotencyKey: string;
   providerId: string;
@@ -301,17 +326,40 @@ export type ApplicationSessionCreateRequest<TAuthorizationContext> = Readonly<{
 
 export type ApplicationSessionCreateResult = Readonly<{
   sessionId: string;
+  title: string;
   workspacePath: string;
   lifecycleStatus: "active";
   createdAt: number;
-}>;
+}> &
+  LocalRepositoryMetadata;
 
 export type ApplicationSessionListRequest<TAuthorizationContext> = Readonly<{
   context: ApplicationSessionOperationContext<TAuthorizationContext>;
   workspacePath?: string;
   lifecycleStatus?: ApplicationSessionLifecycleStatus;
+  localRepositoryKeys?: readonly string[];
+  query?: string;
   cursor?: string;
   limit?: number;
+}>;
+
+export type ApplicationLocalRepositoryListRequest<TAuthorizationContext> = Readonly<{
+  context: ApplicationSessionOperationContext<TAuthorizationContext>;
+  cursor?: string;
+  limit?: number;
+}>;
+
+export type ApplicationLocalRepositoryListItem = Readonly<{
+  localRepositoryKey: string;
+  repositoryNames: readonly string[];
+  repositoryNameCount: number;
+  sessionCount: number;
+  lastActivityAt: number;
+}>;
+
+export type ApplicationLocalRepositoryPage = Readonly<{
+  items: readonly ApplicationLocalRepositoryListItem[];
+  nextCursor?: string;
 }>;
 
 export type ApplicationSessionExecutionState =
@@ -342,6 +390,7 @@ type ApplicationNonRunningSessionExecution = ApplicationNotStartedExecution | Ap
 
 type ApplicationSessionListItemBase = Readonly<{
   id: string;
+  title: string;
   workspacePath: string;
   defaultCharacterId: string;
   lifecycleStatus: ApplicationSessionLifecycleStatus;
@@ -349,7 +398,8 @@ type ApplicationSessionListItemBase = Readonly<{
   updatedAt: number;
   lastActivityAt: number;
   stateChangedAt: number;
-}>;
+}> &
+  LocalRepositoryMetadata;
 
 type ApplicationSessionListExecution =
   | Readonly<{ executionState: "not_started"; activeRunId?: never; latestRunId?: never }>
@@ -383,6 +433,7 @@ export type ApplicationSessionReadRequest<TAuthorizationContext> = Readonly<{
 
 type ApplicationSessionDetailBase = Readonly<{
   id: string;
+  title: string;
   providerId: string;
   workspacePath: string;
   allowedAdditionalDirectoriesByteLength: number;
@@ -392,7 +443,8 @@ type ApplicationSessionDetailBase = Readonly<{
   createdAt: number;
   updatedAt: number;
   lastActivityAt: number;
-}>;
+}> &
+  LocalRepositoryMetadata;
 
 export type ApplicationSessionDetail = ApplicationSessionDetailBase &
   Readonly<{ lifecycleStatus: ApplicationSessionLifecycleStatus }>;
@@ -429,6 +481,15 @@ export type ApplicationSessionWriteRequest<TAuthorizationContext> = Readonly<{
   idempotencyKey: string;
 }>;
 
+export type ApplicationSessionUpdateTitleRequest<TAuthorizationContext> =
+  ApplicationSessionWriteRequest<TAuthorizationContext> & Readonly<{ title: string }>;
+
+export type ApplicationSessionUpdateTitleResult = Readonly<{
+  sessionId: string;
+  title: string;
+  updatedAt: number;
+}>;
+
 export type ApplicationSessionCloseRequest<TAuthorizationContext> =
   ApplicationSessionWriteRequest<TAuthorizationContext> & Readonly<{ expectedLifecycleStatus: "active" | "archived" }>;
 
@@ -445,10 +506,18 @@ export interface ApplicationSessionOperations<TAuthorizationContext> {
     request: ApplicationSessionCreateRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionCreateResult, "write">>;
+  updateTitle(
+    request: ApplicationSessionUpdateTitleRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationSessionUpdateTitleResult, "write">>;
   list(
     request: ApplicationSessionListRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionPage, "read">>;
+  listLocalRepositories(
+    request: ApplicationLocalRepositoryListRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationLocalRepositoryPage, "read">>;
   read(
     request: ApplicationSessionReadRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,

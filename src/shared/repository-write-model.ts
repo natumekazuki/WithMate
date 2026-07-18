@@ -1,5 +1,8 @@
+import type { LocalRepositoryMetadata, SessionMetadata } from "./session-metadata.js";
+
 export const REPOSITORY_WRITE_OPERATIONS = {
   sessionCreate: "repository.session.create",
+  sessionUpdateTitle: "repository.session.update-title",
   sessionTransition: "repository.session.transition",
   sessionDeleteSubtree: "repository.session.delete-subtree",
   sessionDeletionCleanupComplete: "repository.session-deletion.cleanup.complete",
@@ -44,7 +47,8 @@ export type SessionCreateCommand = Readonly<{
     allowedAdditionalDirectories: readonly string[];
     defaultCharacterId: string;
     maxConcurrentChildRuns: number;
-  }>;
+  }> &
+    SessionMetadata;
 }>;
 
 export type SessionTransitionCommand = Readonly<{
@@ -52,6 +56,12 @@ export type SessionTransitionCommand = Readonly<{
   idempotencyKey: string;
   expectedLifecycleStatus: "active" | "archived";
   targetLifecycleStatus: SessionLifecycleStatus;
+}>;
+
+export type SessionUpdateTitleCommand = Readonly<{
+  sessionId: string;
+  idempotencyKey: string;
+  title: string;
 }>;
 
 export type SessionDeleteSubtreeCommand = Readonly<{
@@ -117,6 +127,7 @@ export type ChildStartCommand = Readonly<{
   idempotencyKey: string;
   childSession: Readonly<{
     id: string;
+    title: string;
     providerId: string;
     allowedAdditionalDirectories: readonly string[];
     defaultCharacterId: string;
@@ -376,15 +387,23 @@ export type RepositoryCommandResult<T> =
 
 export type SessionCreateResult = Readonly<{
   sessionId: string;
+  title: string;
   workspaceKey: string;
   workspacePath: string;
   lifecycleStatus: "active";
   createdAt: number;
-}>;
+}> &
+  LocalRepositoryMetadata;
 
 export type SessionTransitionResult = Readonly<{
   sessionId: string;
   lifecycleStatus: SessionLifecycleStatus;
+  updatedAt: number;
+}>;
+
+export type SessionUpdateTitleResult = Readonly<{
+  sessionId: string;
+  title: string;
   updatedAt: number;
 }>;
 

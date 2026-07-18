@@ -17,6 +17,7 @@ import { resolveWorkspaceIdentity } from "../src/shared/workspace-path.js";
 const repositoryTest = Number.parseInt(process.versions.node, 10) >= 24 ? test : test.skip;
 const TEST_WORKSPACE = requiredWorkspaceIdentity(path.resolve("workspace"));
 const OTHER_TEST_WORKSPACE = requiredWorkspaceIdentity(path.resolve("other-workspace"));
+const LOCAL_REPOSITORY_KEY = `local-repository-v1-sha256-${"a".repeat(64)}`;
 
 function requiredWorkspaceIdentity(value: string): NonNullable<ReturnType<typeof resolveWorkspaceIdentity>> {
   const workspace = resolveWorkspaceIdentity(value);
@@ -27,7 +28,15 @@ function requiredWorkspaceIdentity(value: string): NonNullable<ReturnType<typeof
 repositoryTest("session create commits a completed idempotency record and replays exactly", () => {
   withDatabase((database) => {
     const execute = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
-    const command = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000101", "session-1");
+    const baseCommand = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000101", "session-1");
+    const command = {
+      ...baseCommand,
+      session: {
+        ...baseCommand.session,
+        localRepositoryKey: LOCAL_REPOSITORY_KEY,
+        repositoryName: "WithMate",
+      },
+    };
     const first = execute(command) as CommandResult;
     const replay = execute(command) as CommandResult;
     const reorderedReplay = execute({
@@ -37,16 +46,37 @@ repositoryTest("session create commits a completed idempotency record and replay
         allowedAdditionalDirectories: command.session.allowedAdditionalDirectories,
         workspaceKey: command.session.workspaceKey,
         workspacePath: command.session.workspacePath,
+        repositoryName: command.session.repositoryName,
+        localRepositoryKey: command.session.localRepositoryKey,
         providerId: command.session.providerId,
+        title: command.session.title,
         id: command.session.id,
       },
       idempotencyKey: command.idempotencyKey,
+    }) as CommandResult;
+    const changedDetectionReplay = execute({
+      ...command,
+      session: {
+        ...command.session,
+        localRepositoryKey: `local-repository-v1-sha256-${"b".repeat(64)}`,
+        repositoryName: "MovedWithMate",
+      },
     }) as CommandResult;
 
     assert.equal(first.ok && !first.replayed, true);
     assert.equal(replay.ok && replay.replayed, true);
     assert.equal(reorderedReplay.ok && reorderedReplay.replayed, true);
+    assert.equal(changedDetectionReplay.ok && changedDetectionReplay.replayed, true);
     assert.deepEqual(replay.ok && replay.value, first.ok && first.value);
+    assert.deepEqual(changedDetectionReplay.ok && changedDetectionReplay.value, first.ok && first.value);
+    assert.deepEqual(
+      {
+        ...(database
+          .prepare("SELECT title, local_repository_key, repository_name FROM sessions WHERE id = 'session-1'")
+          .get() as Record<string, unknown>),
+      },
+      { title: command.session.title, local_repository_key: LOCAL_REPOSITORY_KEY, repository_name: "WithMate" },
+    );
     assert.equal(count(database, "sessions"), 1);
     assert.equal(count(database, "idempotency_records"), 1);
     const record = database.prepare("SELECT record_state, response_ref_type FROM idempotency_records").get() as Record<
@@ -87,7 +117,33 @@ repositoryTest("malformed create and reused keys with a different fingerprint ma
       },
     }) as CommandResult;
     assert.equal(!conflict.ok && conflict.error.code, "idempotency_conflict");
+    const titleConflict = execute({
+      ...command,
+      session: { ...command.session, title: "A different title" },
+    }) as CommandResult;
+    assert.equal(!titleConflict.ok && titleConflict.error.code, "idempotency_conflict");
     assert.equal(count(database, "sessions"), 1);
+  });
+});
+
+repositoryTest("session create rejects invalid title and partial Repository metadata before mutation", () => {
+  withDatabase((database) => {
+    const execute = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const base = sessionCreateCommand("018f1f4e-7f0a-7000-8000-00000000010a", "session-invalid-metadata");
+    const invalidSessions = [
+      { ...base.session, title: "   " },
+      { ...base.session, title: "x".repeat(513) },
+      { ...base.session, localRepositoryKey: LOCAL_REPOSITORY_KEY, repositoryName: null },
+      { ...base.session, localRepositoryKey: null, repositoryName: "WithMate" },
+      { ...base.session, localRepositoryKey: "local-repository-v1-sha256-invalid", repositoryName: "WithMate" },
+    ];
+
+    for (const session of invalidSessions) {
+      const result = execute({ ...base, session }) as CommandResult;
+      assert.equal(!result.ok && result.error.code, "request_invalid");
+    }
+    assert.equal(count(database, "sessions"), 0);
+    assert.equal(count(database, "idempotency_records"), 0);
   });
 });
 
@@ -1203,6 +1259,9 @@ repositoryTest("retry Run admission rolls back new rows while preserving its sou
 repositoryTest("initial child admission atomically creates its tree, Run, Delivery, and replay handle", () => {
   withDatabase((database) => {
     activatePersistentRun(database);
+    database
+      .prepare("UPDATE sessions SET local_repository_key = ?, repository_name = ? WHERE id = 'session-1'")
+      .run(LOCAL_REPOSITORY_KEY, "WithMate");
     const startChild = operationFor(database, "repository.child.start", () => 600);
     const command = childStartCommand("018f1f4e-7f0a-7000-8000-000000000324", "one");
     const first = startChild(command) as CommandResult;
@@ -1220,6 +1279,14 @@ repositoryTest("initial child admission atomically creates its tree, Run, Delive
     assert.equal(count(database, "session_relations"), 1);
     assert.equal(count(database, "delegations"), 1);
     assert.equal(count(database, "child_result_deliveries"), 1);
+    assert.deepEqual(
+      {
+        ...(database
+          .prepare("SELECT title, local_repository_key, repository_name FROM sessions WHERE id = 'child-session-one'")
+          .get() as Record<string, unknown>),
+      },
+      { title: "Child one", local_repository_key: LOCAL_REPOSITORY_KEY, repository_name: "WithMate" },
+    );
     const relation = database
       .prepare(
         `
@@ -2471,10 +2538,12 @@ repositoryTest("Run output independently enforces Run, Session, and app cumulati
           .prepare(
             `
             INSERT INTO sessions (
-              id, provider_id, workspace_key, workspace_path, allowed_additional_directories_json,
+              id, title, provider_id, workspace_key, workspace_path, local_repository_key, repository_name,
+              allowed_additional_directories_json,
               default_character_id, max_concurrent_child_runs, lifecycle_status,
               created_at, updated_at, last_activity_at
-            ) VALUES ('session-app-quota-history', 'provider', 'workspace', '/workspace', '[]', 'character', 4, 'active', 1, 1, 1)
+            ) VALUES ('session-app-quota-history', 'Quota history', 'provider', 'workspace', '/workspace', NULL, NULL,
+              '[]', 'character', 4, 'active', 1, 1, 1)
           `,
           )
           .run();
@@ -4531,8 +4600,8 @@ repositoryTest("Session subtree delete rejects relations that cross a workspace 
   withDatabase((database) => {
     database.exec(`
       INSERT INTO sessions VALUES
-        ('workspace-a-root', 'provider', 'workspace-a', '/workspace-a', '[]', 'character', 4, 'closed', 1, 3, 3),
-        ('workspace-b-child', 'provider', 'workspace-b', '/workspace-b', '[]', 'character', 4, 'closed', 1, 3, 3);
+        ('workspace-a-root', 'Workspace A', 'provider', 'workspace-a', '/workspace-a', NULL, NULL, '[]', 'character', 4, 'closed', 1, 3, 3),
+        ('workspace-b-child', 'Workspace B', 'provider', 'workspace-b', '/workspace-b', NULL, NULL, '[]', 'character', 4, 'closed', 1, 3, 3);
       INSERT INTO messages VALUES ('workspace-a-message', 'workspace-a-root', 1, 'user', '[]', 1);
       INSERT INTO runs (
         id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
@@ -4561,7 +4630,7 @@ repositoryTest("Session subtree delete returns a bounded cleanup token for large
   withDatabase((database) => {
     database.exec(`
       INSERT INTO sessions VALUES
-        ('large-delete-root', 'provider', 'workspace', '/workspace', '[]', 'character', 300, 'closed', 1, 3, 3);
+        ('large-delete-root', 'Large delete root', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 300, 'closed', 1, 3, 3);
       INSERT INTO messages VALUES ('large-delete-message', 'large-delete-root', 1, 'user', '[]', 1);
       INSERT INTO runs (
         id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
@@ -4570,7 +4639,7 @@ repositoryTest("Session subtree delete returns a bounded cleanup token for large
         'none', 1, 2, 2, 0);
     `);
     const insertSession = database.prepare(
-      "INSERT INTO sessions VALUES (?, 'provider', 'workspace', '/workspace', '[]', 'character', 0, 'closed', 1, 3, 3)",
+      "INSERT INTO sessions VALUES (?, 'Large delete child', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 0, 'closed', 1, 3, 3)",
     );
     const insertRelation = database.prepare(
       `
@@ -4659,9 +4728,12 @@ function sessionCreateCommand(idempotencyKey: string, sessionId: string) {
     idempotencyKey,
     session: {
       id: sessionId,
+      title: `Session ${sessionId}`,
       providerId: "provider",
       workspaceKey: TEST_WORKSPACE.workspaceKey,
       workspacePath: TEST_WORKSPACE.workspacePath,
+      localRepositoryKey: null,
+      repositoryName: null,
       allowedAdditionalDirectories: ["C:/workspace/shared"],
       defaultCharacterId: "character",
       maxConcurrentChildRuns: 4,
@@ -4747,6 +4819,7 @@ function childStartCommand(
     idempotencyKey,
     childSession: {
       id: `child-session-${suffix}`,
+      title: `Child ${suffix}`,
       providerId: "provider",
       allowedAdditionalDirectories: ["C:/workspace/shared"],
       defaultCharacterId: "child-character",
@@ -4878,10 +4951,10 @@ function insertTerminalSessionTree(database: DatabaseSync): void {
   database.exec(`
     BEGIN IMMEDIATE;
     INSERT INTO sessions VALUES
-      ('tree-root', 'provider', 'workspace', '/workspace', '[]', 'character', 4, 'closed', 1, 4, 4),
-      ('tree-middle', 'provider', 'workspace', '/workspace', '[]', 'character', 4, 'closed', 1, 4, 4),
-      ('tree-leaf', 'provider', 'workspace', '/workspace', '[]', 'character', 4, 'closed', 1, 4, 4),
-      ('unrelated-tree-session', 'provider', 'workspace', '/workspace', '[]', 'character', 4, 'closed', 1, 4, 4);
+      ('tree-root', 'Tree root', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'closed', 1, 4, 4),
+      ('tree-middle', 'Tree middle', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'closed', 1, 4, 4),
+      ('tree-leaf', 'Tree leaf', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'closed', 1, 4, 4),
+      ('unrelated-tree-session', 'Unrelated tree', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'closed', 1, 4, 4);
     INSERT INTO messages VALUES
       ('tree-root-message', 'tree-root', 1, 'user', '[]', 1),
       ('tree-middle-message', 'tree-middle', 1, 'user', '[]', 1),
@@ -5158,8 +5231,8 @@ function insertChildScenario(database: DatabaseSync): void {
   database.exec(`
     BEGIN IMMEDIATE;
     INSERT INTO sessions VALUES
-      ('parent-session', 'provider', 'workspace', '/workspace', '[]', 'character', 4, 'active', 1, 1, 1),
-      ('child-session', 'provider', 'workspace', '/workspace', '[]', 'character', 4, 'active', 1, 1, 1);
+      ('parent-session', 'Parent session', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 1, 1),
+      ('child-session', 'Child session', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 1, 1);
     INSERT INTO messages VALUES
       ('parent-message', 'parent-session', 1, 'user', '[]', 1),
       ('child-message', 'child-session', 1, 'user', '[]', 1);
@@ -5252,13 +5325,13 @@ function insertStartupRepairFixture(database: DatabaseSync): void {
   database.exec(`
     BEGIN;
     INSERT INTO sessions VALUES
-      ('repair-parent', 'provider', 'workspace', '/workspace', '[]', 'character', 4, 'active', 1, 20, 20),
-      ('repair-child', 'provider', 'workspace', '/workspace', '[]', 'character', 4, 'active', 1, 20, 20),
-      ('repair-safe', 'provider', 'workspace', '/workspace', '[]', 'character', 4, 'active', 1, 2, 2),
-      ('repair-creating', 'provider', 'workspace', '/workspace', '[]', 'character', 4, 'active', 1, 2, 2),
-      ('repair-dispatching', 'provider', 'workspace', '/workspace', '[]', 'character', 4, 'active', 1, 2, 2),
-      ('repair-ephemeral', 'provider', 'workspace', '/workspace', '[]', 'character', 4, 'active', 1, 2, 2),
-      ('repair-diagnostic', 'provider', 'workspace', '/workspace', '[]', 'character', 4, 'active', 1, 2, 2);
+      ('repair-parent', 'Repair parent', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 20, 20),
+      ('repair-child', 'Repair child', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 20, 20),
+      ('repair-safe', 'Repair safe', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 2, 2),
+      ('repair-creating', 'Repair creating', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 2, 2),
+      ('repair-dispatching', 'Repair dispatching', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 2, 2),
+      ('repair-ephemeral', 'Repair ephemeral', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 2, 2),
+      ('repair-diagnostic', 'Repair diagnostic', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 2, 2);
     INSERT INTO messages VALUES
       ('repair-parent-message', 'repair-parent', 1, 'user', '[]', 1),
       ('repair-collision-delivery', 'repair-parent', 2, 'user', '[]', 2),
