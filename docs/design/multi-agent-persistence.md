@@ -94,7 +94,8 @@ run_input_deliveries
 | --- | --- | --- | --- |
 | `id` | `TEXT` | no | WithMate Session ID |
 | `provider_id` | `TEXT` | no | Session 作成時に固定する論理 Provider ID |
-| `workspace_key` | `TEXT` | no | 検証済み workspace を参照する安定 key。絶対 path そのものは保存しない |
+| `workspace_key` | `TEXT` | no | host OSのpath identityから導出する比較用key。表示やpath解決には使用しない |
+| `workspace_path` | `TEXT` | no | Session作成時に検証・正規化したworkspaceのabsolute path |
 | `allowed_additional_directories_json` | `TEXT` | no | userが明示許可したworkspace外directoryのabsolute path配列 |
 | `default_character_id` | `TEXT` | no | Session の既定 Character ID |
 | `max_concurrent_child_runs` | `INTEGER` | no | この Session が orchestration root のときに配下全体へ適用する child Run 同時実行上限 |
@@ -117,8 +118,9 @@ run_input_deliveries
 
 - `INDEX sessions_lifecycle_activity_idx (lifecycle_status, last_activity_at DESC, id DESC)`
 - `INDEX sessions_workspace_activity_idx (workspace_key, last_activity_at DESC, id DESC)`
+- `INDEX sessions_activity_idx (last_activity_at DESC, id DESC)`
 
-Session一覧は`(last_activity_at, id)`のkeyset cursorでpaginateし、1回のqueryでSession headerと、各Sessionのordinal最大Runをwindow functionまたは同等のset queryで結合して`executionState` / `activeRunId` / `latestRunId` / `lastActivityAt`を返す。SessionごとのN+1 query、全Session hydrate、`run_output_payloads` joinは禁止する。
+Session一覧はアプリ全体を既定scopeとし、workspaceとlifecycleを任意filterとして受ける。`(last_activity_at, id)`のkeyset cursorでpaginateし、1回のqueryでSession headerと、各Sessionのordinal最大Runをwindow functionまたは同等のset queryで結合して`executionState` / `activeRunId` / `latestRunId` / `lastActivityAt`を返す。SessionごとのN+1 query、全Session hydrate、`run_output_payloads` joinは禁止する。
 
 ## `provider_bindings`
 

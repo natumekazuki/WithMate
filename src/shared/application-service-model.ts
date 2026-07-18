@@ -2,7 +2,6 @@ export type ApplicationSessionOperation =
   "create" | "list" | "read" | "read_directories_chunk" | "archive" | "unarchive" | "close";
 
 export type ApplicationSessionOperationContext<TAuthorizationContext> = Readonly<{
-  workspaceKey: string;
   authorization: TAuthorizationContext;
 }>;
 
@@ -19,6 +18,7 @@ export type ApplicationAccessDecision =
 
 export type ApplicationSessionCreateAccessTarget = Readonly<{
   kind: "session_create";
+  workspacePath: string;
   providerId: string;
   allowedAdditionalDirectories: readonly string[];
   defaultCharacterId: string;
@@ -27,6 +27,8 @@ export type ApplicationSessionCreateAccessTarget = Readonly<{
 
 export type ApplicationSessionCollectionAccessTarget = Readonly<{
   kind: "session_collection";
+  scope: "all_sessions";
+  workspacePath?: string;
   lifecycleStatus?: ApplicationSessionLifecycleStatus;
 }>;
 
@@ -67,7 +69,9 @@ export type ApplicationAccessValidationInput<TAuthorizationContext> =
       }>);
 
 export interface ApplicationAccessValidator<TAuthorizationContext> {
-  validateWorkspace(input: ApplicationAccessValidationInput<TAuthorizationContext>): Promise<ApplicationAccessDecision>;
+  validateWorkspace(
+    input: Extract<ApplicationAccessValidationInput<TAuthorizationContext>, Readonly<{ operation: "create" }>>,
+  ): Promise<ApplicationAccessDecision>;
   authorize(input: ApplicationAccessValidationInput<TAuthorizationContext>): Promise<ApplicationAccessDecision>;
 }
 
@@ -287,6 +291,7 @@ export type ApplicationOperationResponse<TValue, TMode extends ApplicationOperat
 
 export type ApplicationSessionCreateRequest<TAuthorizationContext> = Readonly<{
   context: ApplicationSessionOperationContext<TAuthorizationContext>;
+  workspacePath: string;
   idempotencyKey: string;
   providerId: string;
   allowedAdditionalDirectories: readonly string[];
@@ -296,13 +301,14 @@ export type ApplicationSessionCreateRequest<TAuthorizationContext> = Readonly<{
 
 export type ApplicationSessionCreateResult = Readonly<{
   sessionId: string;
-  workspaceKey: string;
+  workspacePath: string;
   lifecycleStatus: "active";
   createdAt: number;
 }>;
 
 export type ApplicationSessionListRequest<TAuthorizationContext> = Readonly<{
   context: ApplicationSessionOperationContext<TAuthorizationContext>;
+  workspacePath?: string;
   lifecycleStatus?: ApplicationSessionLifecycleStatus;
   cursor?: string;
   limit?: number;
@@ -336,7 +342,7 @@ type ApplicationNonRunningSessionExecution = ApplicationNotStartedExecution | Ap
 
 type ApplicationSessionListItemBase = Readonly<{
   id: string;
-  workspaceKey: string;
+  workspacePath: string;
   defaultCharacterId: string;
   lifecycleStatus: ApplicationSessionLifecycleStatus;
   createdAt: number;
@@ -378,7 +384,7 @@ export type ApplicationSessionReadRequest<TAuthorizationContext> = Readonly<{
 type ApplicationSessionDetailBase = Readonly<{
   id: string;
   providerId: string;
-  workspaceKey: string;
+  workspacePath: string;
   allowedAdditionalDirectoriesByteLength: number;
   allowedAdditionalDirectoriesState: "inline" | "chunked";
   defaultCharacterId: string;

@@ -33,7 +33,7 @@ export class RepositoryReadClient {
 
   sessionsPage(
     input: Readonly<{
-      workspaceKey: string;
+      workspaceKey?: string;
       lifecycleStatus?: SessionLifecycleStatus;
       cursor?: string;
       limit?: number;
@@ -44,7 +44,7 @@ export class RepositoryReadClient {
   }
 
   sessionGet(
-    input: Readonly<{ sessionId: string; workspaceKey: string }>,
+    input: Readonly<{ sessionId: string }>,
     options?: RequestOptions,
   ): Promise<
     Readonly<{

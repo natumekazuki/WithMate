@@ -9,6 +9,7 @@ import {
 } from "../shared/allowed-additional-directories.js";
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
 import { MAX_SESSION_CONCURRENT_CHILD_RUNS } from "../shared/session-limits.js";
+import { resolveWorkspaceIdentity } from "../shared/workspace-path.js";
 import {
   REPOSITORY_WRITE_OPERATIONS,
   type ChildResultCollectCommand,
@@ -732,16 +733,17 @@ function createSession(
     .prepare(
       `
       INSERT INTO sessions (
-        id, provider_id, workspace_key, allowed_additional_directories_json,
+        id, provider_id, workspace_key, workspace_path, allowed_additional_directories_json,
         default_character_id, max_concurrent_child_runs, lifecycle_status,
         created_at, updated_at, last_activity_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
     `,
     )
     .run(
       session.id,
       session.providerId,
       session.workspaceKey,
+      session.workspacePath,
       prepared.directoriesJson,
       session.defaultCharacterId,
       session.maxConcurrentChildRuns,
@@ -752,6 +754,7 @@ function createSession(
   const value: SessionCreateResult = {
     sessionId: session.id,
     workspaceKey: session.workspaceKey,
+    workspacePath: session.workspacePath,
     lifecycleStatus: "active",
     createdAt: now,
   };
@@ -777,23 +780,40 @@ function transitionSession(
   retentionMs: number,
 ): RepositoryCommandResult<SessionTransitionResult> {
   const command = prepared.command;
+  const idempotencyIdentity = readAndExpireIdempotencyRecord(database, command.idempotencyKey, now);
+  if (
+    idempotencyIdentity !== undefined &&
+    (idempotencyIdentity.scope_session_id !== command.sessionId || idempotencyIdentity.operation !== prepared.operation)
+  ) {
+    return failure("idempotency_conflict", "Idempotency key was used differently.");
+  }
+  const row = database
+    .prepare("SELECT workspace_key, lifecycle_status, updated_at, provider_id FROM sessions WHERE id = ?")
+    .get(command.sessionId) as
+    | Readonly<{
+        workspace_key: string;
+        lifecycle_status: SessionLifecycleStatus;
+        updated_at: number;
+        provider_id: string;
+      }>
+    | undefined;
+  if (row === undefined) {
+    return idempotencyIdentity === undefined
+      ? failure("not_found", "Session was not found.")
+      : failure("reference_invalid", "Idempotent response reference is invalid.");
+  }
+  const requestFingerprint = sessionTransitionFingerprint(command, prepared.operation, row.workspace_key);
   const idempotency = checkIdempotency<SessionTransitionResult>(
     database,
     command.idempotencyKey,
     prepared.operation,
-    prepared.fingerprint,
+    requestFingerprint,
     command.sessionId,
     "session",
     command.sessionId,
     now,
   );
   if (idempotency.kind !== "new") return idempotency.result;
-
-  const row = database
-    .prepare("SELECT lifecycle_status, updated_at, provider_id FROM sessions WHERE id = ? AND workspace_key = ?")
-    .get(command.sessionId, command.workspaceKey) as
-    Readonly<{ lifecycle_status: SessionLifecycleStatus; updated_at: number; provider_id: string }> | undefined;
-  if (row === undefined) return failure("not_found", "Session was not found.");
   if (row.lifecycle_status !== command.expectedLifecycleStatus) {
     return failure("lifecycle_conflict", "Session lifecycle changed before the command committed.");
   }
@@ -818,7 +838,7 @@ function transitionSession(
       command.targetLifecycleStatus,
       updatedAt,
       command.sessionId,
-      command.workspaceKey,
+      row.workspace_key,
       command.expectedLifecycleStatus,
     );
   if (update.changes !== 1) return failure("lifecycle_conflict", "Session lifecycle update conflicted.");
@@ -832,7 +852,7 @@ function transitionSession(
     command.idempotencyKey,
     command.sessionId,
     prepared.operation,
-    prepared.fingerprint,
+    requestFingerprint,
     "session",
     command.sessionId,
     value,
@@ -1351,8 +1371,9 @@ function startChild(
   if (idempotency.kind !== "new") return idempotency.result;
 
   const parentSession = database
-    .prepare("SELECT lifecycle_status FROM sessions WHERE id = ? AND workspace_key = ?")
-    .get(command.parentSessionId, command.workspaceKey) as { lifecycle_status: SessionLifecycleStatus } | undefined;
+    .prepare("SELECT lifecycle_status, workspace_path FROM sessions WHERE id = ? AND workspace_key = ?")
+    .get(command.parentSessionId, command.workspaceKey) as
+    { lifecycle_status: SessionLifecycleStatus; workspace_path: string } | undefined;
   if (parentSession === undefined) return failure("not_found", "Parent Session was not found.");
   if (parentSession.lifecycle_status !== "active") {
     return failure("lifecycle_conflict", "Child admission requires an active parent Session.");
@@ -1403,16 +1424,17 @@ function startChild(
     .prepare(
       `
       INSERT INTO sessions (
-        id, provider_id, workspace_key, allowed_additional_directories_json,
+        id, provider_id, workspace_key, workspace_path, allowed_additional_directories_json,
         default_character_id, max_concurrent_child_runs, lifecycle_status,
         created_at, updated_at, last_activity_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
     `,
     )
     .run(
       command.childSession.id,
       command.childSession.providerId,
       command.workspaceKey,
+      parentSession.workspace_path,
       prepared.directoriesJson,
       command.childSession.defaultCharacterId,
       command.childSession.maxConcurrentChildRuns,
@@ -2673,21 +2695,9 @@ function checkIdempotency<T>(
   now: number,
   decodeReplay?: (value: unknown) => T | undefined,
 ): Readonly<{ kind: "new" }> | Readonly<{ kind: "replay" | "failure"; result: RepositoryCommandResult<T> }> {
-  const row = database.prepare("SELECT * FROM idempotency_records WHERE idempotency_key = ?").get(key) as
-    IdempotencyRow | undefined;
+  const row = readAndExpireIdempotencyRecord(database, key, now);
   if (row === undefined) return { kind: "new" };
   const expired = row.record_state === "expired" || (row.expires_at !== null && row.expires_at <= now);
-  if (expired && row.record_state === "completed") {
-    database
-      .prepare(
-        `
-        UPDATE idempotency_records SET record_state = 'expired', response_kind = NULL,
-          response_ref_type = NULL, response_ref_id = NULL, response_envelope_json = NULL
-        WHERE idempotency_key = ? AND record_state = 'completed'
-      `,
-      )
-      .run(key);
-  }
   if (
     row.scope_session_id !== expectedScopeSessionId ||
     row.operation !== operation ||
@@ -2721,6 +2731,23 @@ function checkIdempotency<T>(
     return { kind: "failure", result: failure("reference_invalid", "Idempotent response envelope is invalid.") };
   }
   return { kind: "replay", result: success(replay, true) };
+}
+
+function readAndExpireIdempotencyRecord(database: DatabaseSync, key: string, now: number): IdempotencyRow | undefined {
+  const row = database.prepare("SELECT * FROM idempotency_records WHERE idempotency_key = ?").get(key) as
+    IdempotencyRow | undefined;
+  if (row !== undefined && row.record_state === "completed" && row.expires_at !== null && row.expires_at <= now) {
+    database
+      .prepare(
+        `
+        UPDATE idempotency_records SET record_state = 'expired', response_kind = NULL,
+          response_ref_type = NULL, response_ref_id = NULL, response_envelope_json = NULL
+        WHERE idempotency_key = ? AND record_state = 'completed'
+      `,
+      )
+      .run(key);
+  }
+  return row;
 }
 
 function decodeChildResultCollectReplay(
@@ -2960,6 +2987,14 @@ function completeIdempotency<T extends object>(
 }
 
 function prepareSessionCreate(command: SessionCreateCommand): PreparedSessionCreate {
+  const workspace = resolveWorkspaceIdentity(command.session.workspacePath);
+  if (
+    workspace === undefined ||
+    workspace.workspacePath !== command.session.workspacePath ||
+    workspace.workspaceKey !== command.session.workspaceKey
+  ) {
+    throw invalidCommand();
+  }
   const allowedAdditionalDirectories = normalizeAllowedAdditionalDirectories(
     command.session.allowedAdditionalDirectories,
   );
@@ -2977,6 +3012,7 @@ function prepareSessionCreate(command: SessionCreateCommand): PreparedSessionCre
         id: command.session.id,
         providerId: command.session.providerId,
         workspaceKey: command.session.workspaceKey,
+        workspacePath: command.session.workspacePath,
         allowedAdditionalDirectories,
         defaultCharacterId: command.session.defaultCharacterId,
         maxConcurrentChildRuns: command.session.maxConcurrentChildRuns,
@@ -2987,17 +3023,21 @@ function prepareSessionCreate(command: SessionCreateCommand): PreparedSessionCre
 
 function prepareSessionTransition(command: SessionTransitionCommand): PreparedSessionTransition {
   const operation = lifecycleOperation(command.expectedLifecycleStatus, command.targetLifecycleStatus);
-  return {
-    command,
+  return { command, operation };
+}
+
+function sessionTransitionFingerprint(
+  command: SessionTransitionCommand,
+  operation: string,
+  workspaceKey: string,
+): string {
+  return fingerprint({
     operation,
-    fingerprint: fingerprint({
-      operation,
-      sessionId: command.sessionId,
-      workspaceKey: command.workspaceKey,
-      expectedLifecycleStatus: command.expectedLifecycleStatus,
-      targetLifecycleStatus: command.targetLifecycleStatus,
-    }),
-  };
+    sessionId: command.sessionId,
+    workspaceKey,
+    expectedLifecycleStatus: command.expectedLifecycleStatus,
+    targetLifecycleStatus: command.targetLifecycleStatus,
+  });
 }
 
 function prepareNormalRunAdmission(command: NormalRunAdmissionCommand): PreparedNormalRunAdmission {
@@ -3234,6 +3274,7 @@ function decodeSessionCreate(payload: Readonly<Record<string, unknown>>): Decode
       "id",
       "providerId",
       "workspaceKey",
+      "workspacePath",
       "allowedAdditionalDirectories",
       "defaultCharacterId",
       "maxConcurrentChildRuns",
@@ -3241,6 +3282,7 @@ function decodeSessionCreate(payload: Readonly<Record<string, unknown>>): Decode
     !isBoundedString(session.id, 1_024) ||
     !isBoundedString(session.providerId, 1_024) ||
     !isBoundedString(session.workspaceKey, 1_024) ||
+    !isBoundedString(session.workspacePath, 32_768) ||
     !isBoundedString(session.defaultCharacterId, 1_024) ||
     !isDenseBoundedStringArray(
       session.allowedAdditionalDirectories,
@@ -3258,15 +3300,8 @@ function decodeSessionCreate(payload: Readonly<Record<string, unknown>>): Decode
 
 function decodeSessionTransition(payload: Readonly<Record<string, unknown>>): DecodeResult<SessionTransitionCommand> {
   if (
-    !hasExactKeys(payload, [
-      "sessionId",
-      "workspaceKey",
-      "idempotencyKey",
-      "expectedLifecycleStatus",
-      "targetLifecycleStatus",
-    ]) ||
+    !hasExactKeys(payload, ["sessionId", "idempotencyKey", "expectedLifecycleStatus", "targetLifecycleStatus"]) ||
     !isBoundedString(payload.sessionId, 1_024) ||
-    !isBoundedString(payload.workspaceKey, 1_024) ||
     !isCanonicalUuid(payload.idempotencyKey) ||
     (payload.expectedLifecycleStatus !== "active" && payload.expectedLifecycleStatus !== "archived") ||
     !isLifecycleStatus(payload.targetLifecycleStatus)
@@ -5151,7 +5186,6 @@ type PreparedSessionCreate = Readonly<{
 type PreparedSessionTransition = Readonly<{
   command: SessionTransitionCommand;
   operation: string;
-  fingerprint: string;
 }>;
 type PreparedNormalRunAdmission = Readonly<{
   command: NormalRunAdmissionCommand;

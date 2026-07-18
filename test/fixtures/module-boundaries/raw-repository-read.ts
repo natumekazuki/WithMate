@@ -2,4 +2,4 @@ import type { RepositoryReadClient } from "../../../src/main/repository-read-cli
 
 declare const reads: RepositoryReadClient;
 
-void reads["sessionGet"]({ workspaceKey: "unvalidated-workspace", sessionId: "session-1" });
+void reads["sessionGet"]({ sessionId: "session-1" });

@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import {
   createRepositoryReadOperations,
   REPOSITORY_PAGE_SQL,
+  REPOSITORY_SESSION_PAGE_SQL,
   RepositoryReadError,
 } from "../src/persistence-worker/repository-read-model.js";
 
@@ -21,7 +23,7 @@ repositoryTest("session page derives execution state with a bounded keyset curso
     database.prepare("UPDATE runs SET updated_at = 99 WHERE id = 'run-1'").run();
     const operation = operationFor(database, "repository.sessions.page");
 
-    const first = operation({ workspaceKey: "workspace", lifecycleStatus: "active", limit: 2 }) as PageResult;
+    const first = operation({ lifecycleStatus: "active", limit: 2 }) as PageResult;
     assert.deepEqual(
       first.items.map((item) => item.id),
       ["session-1", "session-2"],
@@ -37,7 +39,6 @@ repositoryTest("session page derives execution state with a bounded keyset curso
     assert.equal(typeof first.nextCursor, "string");
 
     const second = operation({
-      workspaceKey: "workspace",
       lifecycleStatus: "active",
       limit: 2,
       cursor: first.nextCursor,
@@ -61,7 +62,6 @@ repositoryTest("Session detail preserves its Provider before the first Run", () 
       "repository.session.get",
     )({
       sessionId: "session-without-run",
-      workspaceKey: "workspace",
     }) as Readonly<Record<string, unknown>>;
 
     assert.deepEqual(detail, {
@@ -69,6 +69,7 @@ repositoryTest("Session detail preserves its Provider before the first Run", () 
         id: "session-without-run",
         providerId: "provider",
         workspaceKey: "workspace",
+        workspacePath: path.resolve("workspace"),
         allowedAdditionalDirectoriesByteLength: 2,
         allowedAdditionalDirectoriesState: "inline",
         allowedAdditionalDirectories: [],
@@ -81,6 +82,26 @@ repositoryTest("Session detail preserves its Provider before the first Run", () 
       },
       execution: { state: "not_started" },
     });
+  });
+});
+
+repositoryTest("Session pages are global by default and accept Workspace only as an optional filter", () => {
+  withDatabase((database) => {
+    insertSessionWithWorkspace(database, "session-workspace", "workspace", 20);
+    insertSessionWithWorkspace(database, "session-other", "other", 10);
+    const operation = operationFor(database, "repository.sessions.page");
+
+    const global = operation({ limit: 10 }) as PageResult;
+    assert.deepEqual(
+      global.items.map((item) => item.id),
+      ["session-workspace", "session-other"],
+    );
+
+    const filtered = operation({ workspaceKey: "other", limit: 10 }) as PageResult;
+    assert.deepEqual(
+      filtered.items.map((item) => item.id),
+      ["session-other"],
+    );
   });
 });
 
@@ -144,9 +165,7 @@ repositoryTest("child result rejects a relation whose child belongs to another w
   withDatabase((database) => {
     insertSession(database, "parent", 1);
     insertSession(database, "root", 1);
-    database
-      .prepare("INSERT INTO sessions VALUES ('child', 'provider', 'other', '[]', 'character', 4, 'active', 1, 1, 1)")
-      .run();
+    insertSessionWithWorkspace(database, "child", "other", 1);
     insertMessage(database, "parent-message", "parent", 1, "[]");
     insertMessage(database, "child-message", "child", 1, "[]");
     insertRun(database, "parent-run", "parent", "parent-message", "completed", 1);
@@ -324,8 +343,8 @@ repositoryTest("session pages apply the byte budget and continue from the last i
     insertSession(database, maximumSessionId, 200);
     for (let index = 0; index < 100; index += 1) {
       database
-        .prepare("INSERT INTO sessions VALUES (?, 'provider', 'workspace', '[]', ?, 4, 'active', 1, 1, ?)")
-        .run(`session-${String(index).padStart(3, "0")}`, "c".repeat(3_000), index + 1);
+        .prepare("INSERT INTO sessions VALUES (?, 'provider', 'workspace', ?, '[]', ?, 4, 'active', 1, 1, ?)")
+        .run(`session-${String(index).padStart(3, "0")}`, path.resolve("workspace"), "c".repeat(3_000), index + 1);
     }
     const sessions = operationFor(database, "repository.sessions.page");
     const maximumIdPage = sessions({ workspaceKey: "workspace", limit: 1 }) as PageResult;
@@ -348,13 +367,15 @@ repositoryTest("session pages apply the byte budget and continue from the last i
 repositoryTest("Session schema accepts the exact child Run limit and rejects values above the durable maximum", () => {
   withDatabase((database) => {
     database
-      .prepare("INSERT INTO sessions VALUES (?, 'provider', 'workspace', '[]', 'character', ?, 'active', 1, 1, 1)")
-      .run("session-exact-limit", 1_024);
+      .prepare("INSERT INTO sessions VALUES (?, 'provider', 'workspace', ?, '[]', 'character', ?, 'active', 1, 1, 1)")
+      .run("session-exact-limit", path.resolve("workspace"), 1_024);
     assert.throws(
       () =>
         database
-          .prepare("INSERT INTO sessions VALUES (?, 'provider', 'workspace', '[]', 'character', ?, 'active', 1, 1, 1)")
-          .run("session-over-limit", 1_025),
+          .prepare(
+            "INSERT INTO sessions VALUES (?, 'provider', 'workspace', ?, '[]', 'character', ?, 'active', 1, 1, 1)",
+          )
+          .run("session-over-limit", path.resolve("workspace"), 1_025),
       (error: unknown) => error instanceof Error && error.message.includes("CHECK constraint failed"),
     );
     assert.throws(
@@ -396,6 +417,16 @@ repositoryTest("public RunEvent omits internal fields and advances past an overs
 repositoryTest("representative ordinal queries use covering indexes and never scan payloads", () => {
   withDatabase((database) => {
     const plans = [
+      database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_SESSION_PAGE_SQL.all}`).all(null, null, null, null, 10),
+      database
+        .prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_SESSION_PAGE_SQL.lifecycle}`)
+        .all("active", null, null, null, null, 10),
+      database
+        .prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_SESSION_PAGE_SQL.workspace}`)
+        .all("workspace", null, null, null, null, 10),
+      database
+        .prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_SESSION_PAGE_SQL.workspaceLifecycle}`)
+        .all("workspace", "active", null, null, null, null, 10),
       database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.messages}`).all(1024, "s", "w", 0, 10),
       database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.runEvents}`).all("r", "s", "w", 0, 10),
       database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.runOutputs}`).all("r", "s", "w", 0, 10),
@@ -404,6 +435,9 @@ repositoryTest("representative ordinal queries use covering indexes and never sc
         .all("r", "s", "w", "operation", 0, 10),
     ].flat() as unknown as readonly Readonly<{ detail: string }>[];
     const details = plans.map((row) => row.detail).join("\n");
+    assert.match(details, /sessions_activity_idx/u);
+    assert.match(details, /sessions_lifecycle_activity_idx/u);
+    assert.match(details, /sessions_workspace_activity_idx/u);
     assert.match(details, /messages_session_ordinal_uq/u);
     assert.match(details, /run_events_run_ordinal_uq/u);
     assert.match(details, /run_output_items_run_ordinal_uq/u);
@@ -676,8 +710,8 @@ function insertSession(database: DatabaseSync, id: string, activity: number): vo
 
 function insertSessionWithWorkspace(database: DatabaseSync, id: string, workspaceKey: string, activity: number): void {
   database
-    .prepare("INSERT INTO sessions VALUES (?, 'provider', ?, '[]', 'character', 4, 'active', 1, ?, ?)")
-    .run(id, workspaceKey, activity, activity);
+    .prepare("INSERT INTO sessions VALUES (?, 'provider', ?, ?, '[]', 'character', 4, 'active', 1, ?, ?)")
+    .run(id, workspaceKey, path.resolve(workspaceKey), activity, activity);
 }
 
 function insertMessage(database: DatabaseSync, id: string, sessionId: string, ordinal: number, content: string): void {

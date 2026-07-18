@@ -22,13 +22,15 @@ import type {
   SessionCreateCommand,
   SessionTransitionCommand,
 } from "../src/shared/repository-write-model.js";
+import { resolveWorkspaceIdentity } from "../src/shared/workspace-path.js";
 
 type Authorization = Readonly<{ principalId: string }>;
 type ReadPort = Pick<RepositoryReadClient, "sessionsPage" | "sessionGet" | "sessionDirectoriesChunk">;
 type WritePort = Pick<RepositoryWriteClient, "createSession" | "transitionSession">;
 
+const workspace = resolveWorkspaceIdentity(path.resolve("workspace-1"))!;
+const otherWorkspace = resolveWorkspaceIdentity(path.resolve("workspace-2"))!;
 const context: ApplicationSessionOperationContext<Authorization> = {
-  workspaceKey: "workspace-1",
   authorization: { principalId: "user-1" },
 };
 const workerUrl = new URL("../src/persistence-worker/worker-entry.ts", import.meta.url);
@@ -67,7 +69,6 @@ workerTest("Session operations run end-to-end through the Application Service an
       );
 
       const otherContext: ApplicationSessionOperationContext<Authorization> = {
-        workspaceKey: "workspace-2",
         authorization: { principalId: "user-2" },
       };
       const otherService = new ApplicationSessionService({
@@ -79,53 +80,44 @@ workerTest("Session operations run end-to-end through the Application Service an
       const otherCreated = await otherService.create({
         ...createRequest(),
         context: otherContext,
+        workspacePath: otherWorkspace.workspacePath,
         idempotencyKey: uuid(30),
       });
       assert.equal(otherCreated.overallStatus, "success");
       if (otherCreated.overallStatus !== "success") assert.fail("other workspace Session creation failed");
       const otherSessionId = otherCreated.value.sessionId;
 
-      const listed = await service.list({ context });
+      const listed = await service.list({ context, workspacePath: workspace.workspacePath });
       assert.equal(listed.overallStatus, "success");
       assert.deepEqual(listed.overallStatus === "success" && listed.value.items.map((item) => item.id), [sessionId]);
-      const foreignRead = await service.read({ context, sessionId: otherSessionId });
-      assert.equal(
-        foreignRead.overallStatus === "failure" && foreignRead.error.kind === "domain" && foreignRead.error.code,
-        "not_found",
+      const globallyListed = await service.list({ context });
+      assert.equal(globallyListed.overallStatus, "success");
+      assert.deepEqual(
+        globallyListed.overallStatus === "success" && globallyListed.value.items.map((item) => item.id).sort(),
+        [otherSessionId, sessionId].sort(),
       );
+      const foreignRead = await service.read({ context, sessionId: otherSessionId });
+      assert.equal(foreignRead.overallStatus, "success");
       const foreignDirectories = await service.readDirectoriesChunk({
         context,
         sessionId: otherSessionId,
         offset: 0,
         maxBytes: 1_024,
       });
-      assert.equal(
-        foreignDirectories.overallStatus === "failure" &&
-          foreignDirectories.error.kind === "domain" &&
-          foreignDirectories.error.code,
-        "not_found",
-      );
+      assert.equal(foreignDirectories.overallStatus, "success");
       const foreignArchive = await service.archive({
         context,
         sessionId: otherSessionId,
         idempotencyKey: uuid(31),
       });
-      assert.equal(
-        foreignArchive.overallStatus === "failure" &&
-          foreignArchive.error.kind === "domain" &&
-          foreignArchive.error.code,
-        "not_found",
-      );
+      assert.equal(foreignArchive.overallStatus, "success");
       const foreignClose = await service.close({
         context,
         sessionId: otherSessionId,
         idempotencyKey: uuid(32),
-        expectedLifecycleStatus: "active",
+        expectedLifecycleStatus: "archived",
       });
-      assert.equal(
-        foreignClose.overallStatus === "failure" && foreignClose.error.kind === "domain" && foreignClose.error.code,
-        "not_found",
-      );
+      assert.equal(foreignClose.overallStatus, "success");
       const detail = await service.read({ context, sessionId });
       assert.equal(detail.overallStatus, "success");
       assert.equal(detail.overallStatus === "success" && detail.value.execution.state, "not_started");
@@ -173,7 +165,8 @@ workerTest("Application list accepts a Repository cursor containing a maximum-le
           session: {
             id,
             providerId: "codex",
-            workspaceKey: context.workspaceKey,
+            workspaceKey: workspace.workspaceKey,
+            workspacePath: workspace.workspacePath,
             allowedAdditionalDirectories: [],
             defaultCharacterId: "character-1",
             maxConcurrentChildRuns: 2,
@@ -286,6 +279,7 @@ test("create validates workspace and authorization before issuing a stable Sessi
           value: {
             sessionId: command.session.id,
             workspaceKey: command.session.workspaceKey,
+            workspacePath: command.session.workspacePath,
             lifecycleStatus: "active",
             createdAt: 100,
           },
@@ -316,7 +310,8 @@ test("create validates workspace and authorization before issuing a stable Sessi
     session: {
       id: commands[0]?.session.id,
       providerId: "codex",
-      workspaceKey: "workspace-1",
+      workspaceKey: workspace.workspaceKey,
+      workspacePath: workspace.workspacePath,
       allowedAdditionalDirectories: ["C:\\workspace-shared"],
       defaultCharacterId: "character-1",
       maxConcurrentChildRuns: 2,
@@ -330,7 +325,8 @@ test("create validates workspace and authorization before issuing a stable Sessi
   );
 });
 
-test("create canonicalizes host paths once before authorization and Repository write", async () => {
+test("create validates every canonical directory candidate before compacting the Repository value", async () => {
+  let workspaceValidationDirectories: readonly string[] | undefined;
   let authorizationDirectories: readonly string[] | undefined;
   let commandDirectories: readonly string[] | undefined;
   const rawDirectories =
@@ -339,9 +335,14 @@ test("create canonicalizes host paths once before authorization and Repository w
       : ["/allowed/../secret/child", "/secret/", "/workspace/shared"];
   const expectedDirectories =
     process.platform === "win32" ? ["c:\\SECRET", "D:\\workspace\\shared"] : ["/secret", "/workspace/shared"];
+  const expectedValidationDirectories =
+    process.platform === "win32"
+      ? ["C:\\secret\\child", "c:\\SECRET", "D:\\workspace\\shared"]
+      : ["/secret/child", "/secret", "/workspace/shared"];
   const service = createService({
     access: {
-      async validateWorkspace() {
+      async validateWorkspace(input) {
+        workspaceValidationDirectories = input.target.allowedAdditionalDirectories;
         return { allowed: true };
       },
       async authorize(input) {
@@ -357,6 +358,7 @@ test("create canonicalizes host paths once before authorization and Repository w
           value: {
             sessionId: command.session.id,
             workspaceKey: command.session.workspaceKey,
+            workspacePath: command.session.workspacePath,
             lifecycleStatus: "active",
             createdAt: 1,
           },
@@ -369,7 +371,8 @@ test("create canonicalizes host paths once before authorization and Repository w
   const response = await service.create({ ...createRequest(), allowedAdditionalDirectories: rawDirectories });
 
   assert.equal(response.overallStatus, "success");
-  assert.deepEqual(authorizationDirectories, expectedDirectories);
+  assert.deepEqual(workspaceValidationDirectories, expectedValidationDirectories);
+  assert.deepEqual(authorizationDirectories, expectedValidationDirectories);
   assert.deepEqual(commandDirectories, expectedDirectories);
 });
 
@@ -403,13 +406,17 @@ test("authorization receives isolated operation-specific Session targets and cre
         operation: "create",
         target: {
           kind: "session_create",
+          workspacePath: workspace.workspacePath,
           providerId: "codex",
           allowedAdditionalDirectories: ["C:\\mutated"],
           defaultCharacterId: "character-1",
           maxConcurrentChildRuns: 2,
         },
       },
-      { operation: "list", target: { kind: "session_collection", lifecycleStatus: "active" } },
+      {
+        operation: "list",
+        target: { kind: "session_collection", scope: "all_sessions", lifecycleStatus: "active" },
+      },
       { operation: "read", target: { kind: "session", sessionId: "session-1" } },
       { operation: "archive", target: { kind: "session", sessionId: "session-2" } },
       {
@@ -591,6 +598,7 @@ test("validated request snapshots cannot be changed while access validation is p
           value: {
             sessionId: command.session.id,
             workspaceKey: command.session.workspaceKey,
+            workspacePath: command.session.workspacePath,
             lifecycleStatus: "active",
             createdAt: 1,
           },
@@ -600,7 +608,8 @@ test("validated request snapshots cannot be changed while access validation is p
     },
   });
   const mutableCreate = {
-    context: { workspaceKey: "workspace-1", authorization: { principalId: "user-1" } },
+    context: { authorization: { principalId: "user-1" } },
+    workspacePath: workspace.workspacePath,
     idempotencyKey: uuid(70),
     providerId: "codex",
     allowedAdditionalDirectories: ["C:\\workspace-shared"],
@@ -608,14 +617,15 @@ test("validated request snapshots cannot be changed while access validation is p
     maxConcurrentChildRuns: 2,
   };
   const creating = createServiceUnderTest.create(mutableCreate);
-  mutableCreate.context.workspaceKey = "workspace-mutated";
+  mutableCreate.workspacePath = otherWorkspace.workspacePath;
   mutableCreate.context.authorization.principalId = "user-mutated";
   mutableCreate.idempotencyKey = uuid(71);
   mutableCreate.providerId = "mutated-provider";
   mutableCreate.allowedAdditionalDirectories[0] = "C:\\mutated";
   createGate.resolve();
   await creating;
-  assert.equal(createCommand?.session.workspaceKey, "workspace-1");
+  assert.equal(createCommand?.session.workspaceKey, workspace.workspaceKey);
+  assert.equal(createCommand?.session.workspacePath, workspace.workspacePath);
   assert.equal(createCommand?.idempotencyKey, uuid(70));
   assert.equal(createCommand?.session.providerId, "codex");
   assert.deepEqual(createCommand?.session.allowedAdditionalDirectories, ["C:\\workspace-shared"]);
@@ -627,10 +637,10 @@ test("validated request snapshots cannot be changed while access validation is p
   const readService = createService({
     access: {
       async validateWorkspace() {
-        await readGate.promise;
         return { allowed: true };
       },
       async authorize() {
+        await readGate.promise;
         return { allowed: true };
       },
     },
@@ -642,20 +652,21 @@ test("validated request snapshots cannot be changed while access validation is p
     },
   });
   const mutableList = {
-    context: { workspaceKey: "workspace-1", authorization: { principalId: "user-1" } },
+    context: { authorization: { principalId: "user-1" } },
+    workspacePath: workspace.workspacePath,
     lifecycleStatus: "active" as "active" | "archived" | "closed",
     cursor: "cursor-original",
     limit: 10,
   };
   const listing = readService.list(mutableList);
-  mutableList.context.workspaceKey = "workspace-mutated";
+  mutableList.workspacePath = otherWorkspace.workspacePath;
   mutableList.lifecycleStatus = "archived";
   mutableList.cursor = "cursor-mutated";
   mutableList.limit = 20;
   readGate.resolve();
   await listing;
   assert.deepEqual(readInputs, [
-    { workspaceKey: "workspace-1", lifecycleStatus: "active", cursor: "cursor-original", limit: 10 },
+    { workspaceKey: workspace.workspaceKey, lifecycleStatus: "active", cursor: "cursor-original", limit: 10 },
   ]);
 
   const detailGate = deferred<void>();
@@ -663,10 +674,10 @@ test("validated request snapshots cannot be changed while access validation is p
   const detailService = createService({
     access: {
       async validateWorkspace() {
-        await detailGate.promise;
         return { allowed: true };
       },
       async authorize() {
+        await detailGate.promise;
         return { allowed: true };
       },
     },
@@ -677,7 +688,8 @@ test("validated request snapshots cannot be changed while access validation is p
           session: {
             id: input.sessionId,
             providerId: "codex",
-            workspaceKey: input.workspaceKey,
+            workspaceKey: workspace.workspaceKey,
+            workspacePath: workspace.workspacePath,
             allowedAdditionalDirectoriesByteLength: 2,
             allowedAdditionalDirectoriesState: "inline",
             allowedAdditionalDirectories: [],
@@ -694,24 +706,23 @@ test("validated request snapshots cannot be changed while access validation is p
     },
   });
   const mutableRead = {
-    context: { workspaceKey: "workspace-1", authorization: { principalId: "user-1" } },
+    context: { authorization: { principalId: "user-1" } },
     sessionId: "session-1",
   };
   const reading = detailService.read(mutableRead);
-  mutableRead.context.workspaceKey = "workspace-mutated";
   mutableRead.sessionId = "session-mutated";
   detailGate.resolve();
   await reading;
-  assert.deepEqual(detailInputs, [{ workspaceKey: "workspace-1", sessionId: "session-1" }]);
+  assert.deepEqual(detailInputs, [{ sessionId: "session-1" }]);
 
   const transitionGate = deferred<void>();
   const transitionService = createService({
     access: {
       async validateWorkspace() {
-        await transitionGate.promise;
         return { allowed: true };
       },
       async authorize() {
+        await transitionGate.promise;
         return { allowed: true };
       },
     },
@@ -727,12 +738,11 @@ test("validated request snapshots cannot be changed while access validation is p
     },
   });
   const mutableTransition = {
-    context: { workspaceKey: "workspace-1", authorization: { principalId: "user-1" } },
+    context: { authorization: { principalId: "user-1" } },
     sessionId: "session-1",
     idempotencyKey: uuid(72),
   };
   const archiving = transitionService.archive(mutableTransition);
-  mutableTransition.context.workspaceKey = "workspace-mutated";
   mutableTransition.sessionId = "session-mutated";
   mutableTransition.idempotencyKey = uuid(73);
   transitionGate.resolve();
@@ -744,10 +754,10 @@ test("validated request snapshots cannot be changed while access validation is p
   const closeService = createService({
     access: {
       async validateWorkspace() {
-        await closeGate.promise;
         return { allowed: true };
       },
       async authorize() {
+        await closeGate.promise;
         return { allowed: true };
       },
     },
@@ -763,13 +773,12 @@ test("validated request snapshots cannot be changed while access validation is p
     },
   });
   const mutableClose = {
-    context: { workspaceKey: "workspace-1", authorization: { principalId: "user-1" } },
+    context: { authorization: { principalId: "user-1" } },
     sessionId: "session-1",
     idempotencyKey: uuid(74),
     expectedLifecycleStatus: "active" as "active" | "archived",
   };
   const closing = closeService.close(mutableClose);
-  mutableClose.context.workspaceKey = "workspace-mutated";
   mutableClose.sessionId = "session-mutated";
   mutableClose.idempotencyKey = uuid(75);
   mutableClose.expectedLifecycleStatus = "archived";
@@ -800,6 +809,7 @@ test("request fields are read once into the validated snapshot", async () => {
           value: {
             sessionId: command.session.id,
             workspaceKey: command.session.workspaceKey,
+            workspacePath: command.session.workspacePath,
             lifecycleStatus: "active",
             createdAt: 1,
           },
@@ -974,6 +984,7 @@ test("operation options are validated and snapshotted before access validation",
           value: {
             sessionId: command.session.id,
             workspaceKey: command.session.workspaceKey,
+            workspacePath: command.session.workspacePath,
             lifecycleStatus: "active",
             createdAt: 1,
           },
@@ -1006,11 +1017,11 @@ test("operation timeout and cancellation settle while access validation is pendi
     access: {
       async validateWorkspace() {
         accessCalls += 1;
-        return new Promise(() => undefined);
+        return { allowed: true };
       },
       async authorize() {
         accessCalls += 1;
-        return { allowed: true };
+        return new Promise(() => undefined);
       },
     },
     reads: {
@@ -1129,6 +1140,7 @@ test("Repository fulfillment after the absolute deadline cannot become success",
           value: {
             sessionId: command.session.id,
             workspaceKey: command.session.workspaceKey,
+            workspacePath: command.session.workspacePath,
             lifecycleStatus: "active",
             createdAt: 1,
           },
@@ -1182,10 +1194,10 @@ test("Repository and access response projection remain inside the operation dead
   const accessService = createService({
     access: {
       async validateWorkspace() {
-        return accessDecision as never;
+        return { allowed: true };
       },
       async authorize() {
-        throw new Error("unreachable");
+        return accessDecision as never;
       },
     },
   });
@@ -1345,10 +1357,9 @@ test("operation deadline is rechecked after each access validation snapshot", as
   assert.equal(workspaceCalls, 0);
 });
 
-test("Session directory chunks use workspace-scoped authorization and project known response fields", async () => {
+test("Session directory chunks use Session-scoped authorization and project known response fields", async () => {
   const bytes = new TextEncoder().encode('["C:\\\\shared"]');
-  let repositoryInput:
-    Readonly<{ sessionId: string; workspaceKey: string; offset: number; maxBytes: number }> | undefined;
+  let repositoryInput: Readonly<{ sessionId: string; offset: number; maxBytes: number }> | undefined;
   const service = createService({
     reads: {
       async sessionDirectoriesChunk(input) {
@@ -1374,7 +1385,6 @@ test("Session directory chunks use workspace-scoped authorization and project kn
 
   assert.deepEqual(repositoryInput, {
     sessionId: "session-1",
-    workspaceKey: "workspace-1",
     offset: 0,
     maxBytes: 64 * 1024,
   });
@@ -1431,12 +1441,11 @@ test("authorization snapshot policy supports non-structured-clone authorization 
     },
   });
 
-  const response = await service.list({ context: { workspaceKey: "workspace-1", authorization } });
+  const response = await service.list({ context: { authorization } });
 
   assert.equal(response.overallStatus, "success");
-  assert.equal(received.length, 2);
+  assert.equal(received.length, 1);
   assert.notEqual(received[0], authorization);
-  assert.notEqual(received[1], received[0]);
   assert.equal(received[0]?.canAccess(), true);
 });
 
@@ -1485,6 +1494,7 @@ test("create accepts the exact Application child Run safety cap", async () => {
           value: {
             sessionId: command.session.id,
             workspaceKey: command.session.workspaceKey,
+            workspacePath: command.session.workspacePath,
             lifecycleStatus: "active",
             createdAt: 1,
           },
@@ -1512,13 +1522,13 @@ test("access validators receive isolated views of the decoded request snapshot",
         const mutable = input as unknown as {
           operation: string;
           access: string;
-          context: { workspaceKey: string; authorization: { principalId: string } };
-          target: { allowedAdditionalDirectories: string[] };
+          context: { authorization: { principalId: string } };
+          target: { workspacePath: string; allowedAdditionalDirectories: string[] };
         };
         mutable.operation = "list";
         mutable.access = "read";
-        mutable.context.workspaceKey = "workspace-from-workspace-validator";
         mutable.context.authorization.principalId = "workspace-validator";
+        mutable.target.workspacePath = otherWorkspace.workspacePath;
         mutable.target.allowedAdditionalDirectories[0] = "C:\\workspace-validator";
         return { allowed: true };
       },
@@ -1527,13 +1537,13 @@ test("access validators receive isolated views of the decoded request snapshot",
         const mutable = input as unknown as {
           operation: string;
           access: string;
-          context: { workspaceKey: string; authorization: { principalId: string } };
-          target: { allowedAdditionalDirectories: string[] };
+          context: { authorization: { principalId: string } };
+          target: { workspacePath: string; allowedAdditionalDirectories: string[] };
         };
         mutable.operation = "read";
         mutable.access = "read";
-        mutable.context.workspaceKey = "workspace-from-authorization-validator";
         mutable.context.authorization.principalId = "authorization-validator";
+        mutable.target.workspacePath = otherWorkspace.workspacePath;
         mutable.target.allowedAdditionalDirectories[0] = "C:\\authorization-validator";
         return { allowed: true };
       },
@@ -1546,6 +1556,7 @@ test("access validators receive isolated views of the decoded request snapshot",
           value: {
             sessionId: command.session.id,
             workspaceKey: command.session.workspaceKey,
+            workspacePath: command.session.workspacePath,
             lifecycleStatus: "active",
             createdAt: 1,
           },
@@ -1561,16 +1572,18 @@ test("access validators receive isolated views of the decoded request snapshot",
   assert.deepEqual(authorizationInput, {
     operation: "create",
     access: "write",
-    context: { workspaceKey: "workspace-1", authorization: { principalId: "user-1" } },
+    context: { authorization: { principalId: "user-1" } },
     target: {
       kind: "session_create",
+      workspacePath: workspace.workspacePath,
       providerId: "codex",
       allowedAdditionalDirectories: ["C:\\workspace-shared"],
       defaultCharacterId: "character-1",
       maxConcurrentChildRuns: 2,
     },
   });
-  assert.equal(createCommand?.session.workspaceKey, "workspace-1");
+  assert.equal(createCommand?.session.workspaceKey, workspace.workspaceKey);
+  assert.equal(createCommand?.session.workspacePath, workspace.workspacePath);
   assert.deepEqual(createCommand?.session.allowedAdditionalDirectories, ["C:\\workspace-shared"]);
 });
 
@@ -1626,9 +1639,9 @@ test("create rejects malformed additional directories before access validation a
   assert.equal(writes, 0);
 });
 
-test("workspace rejection skips authorization and Repository access", async () => {
+test("create workspace rejection skips authorization and Repository access", async () => {
   let authorizationChecks = 0;
-  let reads = 0;
+  let writes = 0;
   const service = createService({
     access: {
       async validateWorkspace() {
@@ -1642,15 +1655,15 @@ test("workspace rejection skips authorization and Repository access", async () =
         return { allowed: true };
       },
     },
-    reads: {
-      async sessionsPage() {
-        reads += 1;
-        return { items: [] };
+    writes: {
+      async createSession() {
+        writes += 1;
+        throw new Error("unreachable");
       },
     },
   });
 
-  const response = await service.list({ context });
+  const response = await service.create(createRequest());
 
   assert.equal(response.overallStatus, "failure");
   assert.deepEqual(response.overallStatus === "failure" && response.error, {
@@ -1660,10 +1673,10 @@ test("workspace rejection skips authorization and Repository access", async () =
     retryable: true,
   });
   assert.equal(authorizationChecks, 0);
-  assert.equal(reads, 0);
+  assert.equal(writes, 0);
 });
 
-test("list keeps workspace scope and represents bounded omissions as partial success", async () => {
+test("list applies an optional workspace filter and represents bounded omissions as partial success", async () => {
   let receivedWorkspace: string | undefined;
   const service = createService({
     reads: {
@@ -1681,13 +1694,18 @@ test("list keeps workspace scope and represents bounded omissions as partial suc
     },
   });
 
-  const response = await service.list({ context, lifecycleStatus: "active", limit: 10 });
+  const response = await service.list({
+    context,
+    workspacePath: workspace.workspacePath,
+    lifecycleStatus: "active",
+    limit: 10,
+  });
 
-  assert.equal(receivedWorkspace, "workspace-1");
+  assert.equal(receivedWorkspace, workspace.workspaceKey);
   assert.equal(response.overallStatus, "partial_success");
   assert.deepEqual(response.persistence, { status: "read", effect: "none" });
   assert.deepEqual(response.overallStatus === "partial_success" && response.value, {
-    items: [sessionSummary("session-1"), sessionSummary("session-2")],
+    items: [publicSessionSummary("session-1"), publicSessionSummary("session-2")],
     nextCursor: "cursor-2",
   });
   assert.deepEqual(response.overallStatus === "partial_success" && response.issues, [
@@ -1698,6 +1716,28 @@ test("list keeps workspace scope and represents bounded omissions as partial suc
     },
   ]);
 });
+
+test(
+  "Windows Workspace filters use path identity instead of display-path casing",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const service = createService({
+      reads: {
+        async sessionsPage() {
+          return { items: [sessionSummary("session-1")] };
+        },
+      },
+    });
+    const alternateCasePath = workspace.workspacePath.replace(/[A-Za-z]/u, (character) =>
+      character === character.toUpperCase() ? character.toLowerCase() : character.toUpperCase(),
+    );
+
+    const response = await service.list({ context, workspacePath: alternateCasePath });
+
+    assert.equal(response.overallStatus, "success");
+    assert.deepEqual(response.overallStatus === "success" && response.value.items, [publicSessionSummary("session-1")]);
+  },
+);
 
 test("list rejects Repository pages that exceed the requested aggregate limit", async () => {
   const service = createService({
@@ -1736,7 +1776,7 @@ test("Repository page fields are read once before aggregate validation and proje
   const response = await service.list({ context, limit: 1 });
 
   assert.equal(response.overallStatus, "success");
-  assert.deepEqual(response.overallStatus === "success" && response.value.items, [sessionSummary("session-1")]);
+  assert.deepEqual(response.overallStatus === "success" && response.value.items, [publicSessionSummary("session-1")]);
   assert.equal(itemReads, 1);
 });
 
@@ -1813,7 +1853,8 @@ test("read projects only known Application response fields", async () => {
           session: {
             id: "session-1",
             providerId: "codex",
-            workspaceKey: "workspace-1",
+            workspaceKey: workspace.workspaceKey,
+            workspacePath: workspace.workspacePath,
             allowedAdditionalDirectoriesByteLength: 24,
             allowedAdditionalDirectoriesState: "inline",
             allowedAdditionalDirectories: ["C:\\workspace-shared"],
@@ -1843,7 +1884,7 @@ test("read projects only known Application response fields", async () => {
     session: {
       id: "session-1",
       providerId: "codex",
-      workspaceKey: "workspace-1",
+      workspacePath: workspace.workspacePath,
       allowedAdditionalDirectoriesByteLength: 24,
       allowedAdditionalDirectoriesState: "inline",
       defaultCharacterId: "character-1",
@@ -1960,7 +2001,7 @@ test("archive, unarchive, and close assemble only the allowed lifecycle commands
   }
 });
 
-test("unarchive revalidates workspace and authorization on every exact retry", async () => {
+test("unarchive reauthorizes the Session on every exact retry without Workspace validation", async () => {
   const events: string[] = [];
   let calls = 0;
   const service = createService({
@@ -1982,14 +2023,7 @@ test("unarchive revalidates workspace and authorization on every exact retry", a
   await service.unarchive(request);
   const replay = await service.unarchive(request);
 
-  assert.deepEqual(events, [
-    "workspace:unarchive",
-    "authorize:unarchive",
-    "write",
-    "workspace:unarchive",
-    "authorize:unarchive",
-    "write",
-  ]);
+  assert.deepEqual(events, ["authorize:unarchive", "write", "authorize:unarchive", "write"]);
   assert.deepEqual(replay.persistence, { status: "committed", effect: "none", replayed: true });
 });
 
@@ -2192,7 +2226,8 @@ test("malformed fulfilled access decisions become pre-persistence application fa
         },
       });
 
-      const response = await service.list({ context });
+      const response =
+        malformedPort === "workspace" ? await service.create(createRequest()) : await service.list({ context });
 
       assert.deepEqual(response.overallStatus === "failure" && response.error, {
         kind: "application",
@@ -2224,7 +2259,7 @@ test("shape-valid Repository results must match the requested workspace, Session
   const readWrongTarget = createService({
     reads: {
       async sessionGet() {
-        return { session: sessionDetail("session-2", "workspace-2"), execution: { state: "not_started" as const } };
+        return { session: sessionDetail("session-2", otherWorkspace), execution: { state: "not_started" as const } };
       },
     },
   });
@@ -2235,7 +2270,8 @@ test("shape-valid Repository results must match the requested workspace, Session
           ok: true as const,
           value: {
             sessionId: "session-other",
-            workspaceKey: "workspace-2",
+            workspaceKey: otherWorkspace.workspaceKey,
+            workspacePath: otherWorkspace.workspacePath,
             lifecycleStatus: "active" as const,
             createdAt: 1,
           },
@@ -2379,7 +2415,7 @@ test("unexpected validator failures stay application failures and do not claim p
     },
   });
 
-  const response = await service.list({ context });
+  const response = await service.create(createRequest());
 
   assert.equal(response.overallStatus, "failure");
   assert.deepEqual(response.overallStatus === "failure" && response.error, {
@@ -2444,7 +2480,8 @@ function createServiceReads(): ReadPort {
         session: {
           id: "session-1",
           providerId: "codex",
-          workspaceKey: "workspace-1",
+          workspaceKey: workspace.workspaceKey,
+          workspacePath: workspace.workspacePath,
           allowedAdditionalDirectoriesByteLength: 2,
           allowedAdditionalDirectoriesState: "inline",
           allowedAdditionalDirectories: [],
@@ -2472,6 +2509,7 @@ function createServiceWrites(): WritePort {
         value: {
           sessionId: command.session.id,
           workspaceKey: command.session.workspaceKey,
+          workspacePath: command.session.workspacePath,
           lifecycleStatus: "active",
           createdAt: 1,
         },
@@ -2504,6 +2542,7 @@ function allowingAccess(events: string[] = []): ApplicationAccessValidator<Autho
 function createRequest() {
   return {
     context,
+    workspacePath: workspace.workspacePath,
     idempotencyKey: uuid(1),
     providerId: "codex",
     allowedAdditionalDirectories: ["C:\\workspace-shared"],
@@ -2515,7 +2554,8 @@ function createRequest() {
 function sessionSummary(id: string) {
   return {
     id,
-    workspaceKey: "workspace-1",
+    workspaceKey: workspace.workspaceKey,
+    workspacePath: workspace.workspacePath,
     defaultCharacterId: "character-1",
     lifecycleStatus: "active" as const,
     createdAt: 1,
@@ -2526,11 +2566,20 @@ function sessionSummary(id: string) {
   };
 }
 
-function sessionDetail(id: string, workspaceKey = "workspace-1") {
+function publicSessionSummary(id: string) {
+  const { workspaceKey: _workspaceKey, ...summary } = sessionSummary(id);
+  return summary;
+}
+
+function sessionDetail(
+  id: string,
+  sessionWorkspace: Readonly<{ workspaceKey: string; workspacePath: string }> = workspace,
+) {
   return {
     id,
     providerId: "codex",
-    workspaceKey,
+    workspaceKey: sessionWorkspace.workspaceKey,
+    workspacePath: sessionWorkspace.workspacePath,
     allowedAdditionalDirectoriesByteLength: 2,
     allowedAdditionalDirectoriesState: "inline" as const,
     allowedAdditionalDirectories: [],
@@ -2549,7 +2598,7 @@ function transition(
   expectedLifecycleStatus: "active" | "archived",
   targetLifecycleStatus: "active" | "archived" | "closed",
 ): SessionTransitionCommand {
-  return { sessionId, workspaceKey: "workspace-1", idempotencyKey, expectedLifecycleStatus, targetLifecycleStatus };
+  return { sessionId, idempotencyKey, expectedLifecycleStatus, targetLifecycleStatus };
 }
 
 function persistenceError(

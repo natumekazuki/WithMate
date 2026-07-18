@@ -1,32 +1,47 @@
 import path from "node:path";
 
+import { normalizeHostAbsolutePath } from "./workspace-path.js";
+
 export const ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS = {
   maxItems: 1_024,
   maxPathLength: 32_768,
   maxJsonBytes: 4 * 1_024 * 1_024,
 } as const;
 
-export function normalizeAllowedAdditionalDirectories(directories: readonly string[]): readonly string[] | undefined {
-  const normalized = directories.map((value) => {
-    if (!isHostFullyQualifiedPath(value)) return undefined;
-    const normalizedValue = stripTrailingSeparators(path.normalize(value));
-    const comparisonKey = process.platform === "win32" ? normalizedValue.toLocaleLowerCase("en-US") : normalizedValue;
-    return { value: normalizedValue, comparisonKey };
-  });
-  if (normalized.some((value) => value === undefined)) return undefined;
+export type CanonicalAllowedAdditionalDirectory = Readonly<{
+  path: string;
+  comparisonKey: string;
+}>;
 
-  const candidates = normalized as { value: string; comparisonKey: string }[];
+export function canonicalizeAllowedAdditionalDirectories(
+  directories: readonly string[],
+): readonly CanonicalAllowedAdditionalDirectory[] | undefined {
+  const canonical = directories.map((value) => normalizeHostAbsolutePath(value));
+  return canonical.some((value) => value === undefined)
+    ? undefined
+    : (canonical as readonly CanonicalAllowedAdditionalDirectory[]);
+}
+
+export function compactCanonicalAllowedAdditionalDirectories(
+  directories: readonly CanonicalAllowedAdditionalDirectory[],
+): readonly string[] {
+  const candidates = [...directories];
   candidates.sort(
     (left, right) =>
       left.comparisonKey.length - right.comparisonKey.length || left.comparisonKey.localeCompare(right.comparisonKey),
   );
-  const retained: typeof candidates = [];
+  const retained: CanonicalAllowedAdditionalDirectory[] = [];
   const root: DirectoryPrefixNode = { children: new Map() };
   for (const candidate of candidates) {
     if (!retainDirectory(root, candidate.comparisonKey)) continue;
     retained.push(candidate);
   }
-  return retained.map(({ value }) => value);
+  return retained.map(({ path: value }) => value);
+}
+
+export function normalizeAllowedAdditionalDirectories(directories: readonly string[]): readonly string[] | undefined {
+  const canonical = canonicalizeAllowedAdditionalDirectories(directories);
+  return canonical === undefined ? undefined : compactCanonicalAllowedAdditionalDirectories(canonical);
 }
 
 export function allowedAdditionalDirectoriesJsonByteLength(directories: readonly string[]): number {
@@ -99,22 +114,4 @@ function commonPrefixLength(edge: string, value: string, valueOffset: number): n
     length += 1;
   }
   return length;
-}
-
-function stripTrailingSeparators(value: string): string {
-  const root = path.parse(value).root;
-  let end = value.length;
-  while (end > root.length && (value[end - 1] === "/" || value[end - 1] === "\\")) end -= 1;
-  return value.slice(0, end);
-}
-
-function isHostFullyQualifiedPath(value: string): boolean {
-  if (process.platform !== "win32") return path.isAbsolute(value);
-
-  const windowsPath = value.replaceAll("/", "\\");
-  if (/^[A-Za-z]:\\/.test(windowsPath)) return true;
-  if (/^\\\\\?\\[A-Za-z]:\\/.test(windowsPath)) return true;
-  if (/^\\\\\?\\UNC\\[^\\]+\\[^\\]+(?:\\|$)/i.test(windowsPath)) return true;
-  if (/^\\\\[.?]\\/.test(windowsPath)) return false;
-  return /^\\\\[^\\]+\\[^\\]+(?:\\|$)/.test(windowsPath);
 }

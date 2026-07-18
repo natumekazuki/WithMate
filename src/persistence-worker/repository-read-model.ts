@@ -44,6 +44,50 @@ export const REPOSITORY_PAGE_SQL = {
   `,
 } as const;
 
+const SESSION_PAGE_COLUMNS = `
+  SELECT id, workspace_key, workspace_path, default_character_id, lifecycle_status,
+         created_at, updated_at, last_activity_at
+  FROM sessions`;
+const SESSION_PAGE_PROJECTION = `
+  SELECT s.*,
+    (SELECT id FROM runs WHERE session_id = s.id
+      AND phase IN ('queued','starting','active','canceling','finalizing') LIMIT 1) AS active_run_id,
+    (SELECT created_at FROM runs WHERE session_id = s.id
+      AND phase IN ('queued','starting','active','canceling','finalizing') LIMIT 1) AS active_run_created_at,
+    (SELECT id FROM runs WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_id,
+    (SELECT phase FROM runs WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_phase,
+    (SELECT terminal_at FROM runs
+      WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_terminal_at
+  FROM page_sessions s
+  ORDER BY s.last_activity_at DESC, s.id DESC`;
+
+function sessionPageSql(filter: "all" | "lifecycle" | "workspace" | "workspace_lifecycle"): string {
+  const scope =
+    filter === "all"
+      ? ""
+      : filter === "lifecycle"
+        ? "lifecycle_status = ? AND "
+        : filter === "workspace"
+          ? "workspace_key = ? AND "
+          : "workspace_key = ? AND lifecycle_status = ? AND ";
+  return `
+    WITH page_sessions AS MATERIALIZED (
+      ${SESSION_PAGE_COLUMNS}
+      WHERE ${scope}(? IS NULL OR last_activity_at < ? OR (last_activity_at = ? AND id < ?))
+      ORDER BY last_activity_at DESC, id DESC
+      LIMIT ?
+    )
+    ${SESSION_PAGE_PROJECTION}
+  `;
+}
+
+export const REPOSITORY_SESSION_PAGE_SQL = {
+  all: sessionPageSql("all"),
+  lifecycle: sessionPageSql("lifecycle"),
+  workspace: sessionPageSql("workspace"),
+  workspaceLifecycle: sessionPageSql("workspace_lifecycle"),
+} as const;
+
 export type RepositoryReadOperation = Readonly<{
   requestClass: "read";
   execute: (payload: Readonly<Record<string, unknown>>) => Readonly<{ result: unknown }>;
@@ -90,10 +134,10 @@ export function createRepositoryReadOperations(database: DatabaseSync): Readonly
 
 function sessionsPage(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
   assertExactKeys(payload, ["workspaceKey", "lifecycleStatus", "cursor", "limit"]);
-  const workspaceKey = requiredString(payload.workspaceKey, "workspaceKey");
+  const workspaceKey = optionalString(payload.workspaceKey, "workspaceKey");
   const lifecycleStatus = optionalEnum(payload.lifecycleStatus, ["active", "archived", "closed"]);
   const limit = readLimit(payload.limit, REPOSITORY_READ_LIMITS.sessions);
-  const scope = scopeDigest({ workspaceKey, lifecycleStatus: lifecycleStatus ?? null });
+  const scope = scopeDigest({ workspaceKey: workspaceKey ?? null, lifecycleStatus: lifecycleStatus ?? null });
   const cursor = decodeCursor(payload.cursor, "sessions", scope, 2);
   if (cursor !== undefined && (!Number.isSafeInteger(cursor[0]) || typeof cursor[1] !== "string")) {
     throw invalidCursor();
@@ -101,46 +145,24 @@ function sessionsPage(database: DatabaseSync, payload: Readonly<Record<string, u
   const cursorTime = cursor?.[0] as number | undefined;
   const cursorId = cursor?.[1] as string | undefined;
 
-  const rows = database
-    .prepare(
-      `
-      WITH page_sessions AS MATERIALIZED (
-        SELECT id, workspace_key, default_character_id, lifecycle_status,
-               created_at, updated_at, last_activity_at
-        FROM sessions
-        WHERE workspace_key = ?
-          AND (? IS NULL OR lifecycle_status = ?)
-          AND (? IS NULL OR last_activity_at < ? OR (last_activity_at = ? AND id < ?))
-        ORDER BY last_activity_at DESC, id DESC
-        LIMIT ?
-      )
-      SELECT s.*,
-        (SELECT id FROM runs WHERE session_id = s.id
-          AND phase IN ('queued','starting','active','canceling','finalizing') LIMIT 1) AS active_run_id,
-        (SELECT created_at FROM runs WHERE session_id = s.id
-          AND phase IN ('queued','starting','active','canceling','finalizing') LIMIT 1) AS active_run_created_at,
-        (SELECT id FROM runs WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_id,
-        (SELECT phase FROM runs WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_phase,
-        (SELECT terminal_at FROM runs
-          WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_terminal_at
-      FROM page_sessions s
-      ORDER BY s.last_activity_at DESC, s.id DESC
-    `,
-    )
-    .all(
-      workspaceKey,
-      lifecycleStatus ?? null,
-      lifecycleStatus ?? null,
-      cursorTime ?? null,
-      cursorTime ?? null,
-      cursorTime ?? null,
-      cursorId ?? null,
-      limit + 1,
-    ) as unknown as readonly SessionPageRow[];
+  const cursorParameters = [cursorTime ?? null, cursorTime ?? null, cursorTime ?? null, cursorId ?? null, limit + 1];
+  const query =
+    workspaceKey === undefined
+      ? lifecycleStatus === undefined
+        ? { sql: REPOSITORY_SESSION_PAGE_SQL.all, parameters: cursorParameters }
+        : { sql: REPOSITORY_SESSION_PAGE_SQL.lifecycle, parameters: [lifecycleStatus, ...cursorParameters] }
+      : lifecycleStatus === undefined
+        ? { sql: REPOSITORY_SESSION_PAGE_SQL.workspace, parameters: [workspaceKey, ...cursorParameters] }
+        : {
+            sql: REPOSITORY_SESSION_PAGE_SQL.workspaceLifecycle,
+            parameters: [workspaceKey, lifecycleStatus, ...cursorParameters],
+          };
+  const rows = database.prepare(query.sql).all(...query.parameters) as unknown as readonly SessionPageRow[];
   const page = splitPage(rows, limit);
   const mappedPage = budgetPage(page, (row) => ({
     id: row.id,
     workspaceKey: row.workspace_key,
+    workspacePath: row.workspace_path,
     defaultCharacterId: row.default_character_id,
     lifecycleStatus: row.lifecycle_status,
     createdAt: row.created_at,
@@ -165,13 +187,12 @@ function sessionsPage(database: DatabaseSync, payload: Readonly<Record<string, u
 }
 
 function sessionGet(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
-  assertExactKeys(payload, ["sessionId", "workspaceKey"]);
+  assertExactKeys(payload, ["sessionId"]);
   const sessionId = requiredString(payload.sessionId, "sessionId");
-  const workspaceKey = requiredString(payload.workspaceKey, "workspaceKey");
   const row = database
     .prepare(
       `
-      SELECT s.id, s.provider_id, s.workspace_key, s.default_character_id, s.max_concurrent_child_runs,
+      SELECT s.id, s.provider_id, s.workspace_key, s.workspace_path, s.default_character_id, s.max_concurrent_child_runs,
         s.lifecycle_status, s.created_at, s.updated_at, s.last_activity_at,
         length(CAST(s.allowed_additional_directories_json AS BLOB)) AS directories_byte_length,
         CASE WHEN length(CAST(s.allowed_additional_directories_json AS BLOB)) <= ?
@@ -180,16 +201,17 @@ function sessionGet(database: DatabaseSync, payload: Readonly<Record<string, unk
           AND phase IN ('queued','starting','active','canceling','finalizing') LIMIT 1) AS active_run_id,
         (SELECT id FROM runs WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_id,
         (SELECT phase FROM runs WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_phase
-      FROM sessions s WHERE s.id = ? AND s.workspace_key = ?
+      FROM sessions s WHERE s.id = ?
     `,
     )
-    .get(INLINE_MESSAGE_BYTES, sessionId, workspaceKey) as SessionDetailRow | undefined;
+    .get(INLINE_MESSAGE_BYTES, sessionId) as SessionDetailRow | undefined;
   if (row === undefined) throw notFound();
   return {
     session: {
       id: row.id,
       providerId: row.provider_id,
       workspaceKey: row.workspace_key,
+      workspacePath: row.workspace_path,
       allowedAdditionalDirectoriesByteLength: row.directories_byte_length,
       allowedAdditionalDirectoriesState: row.inline_directories === null ? "chunked" : "inline",
       ...(row.inline_directories === null
@@ -813,6 +835,7 @@ type MessageRow = Readonly<{
 type SessionPageRow = Readonly<{
   id: string;
   workspace_key: string;
+  workspace_path: string;
   default_character_id: string;
   lifecycle_status: string;
   created_at: number;

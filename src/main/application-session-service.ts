@@ -27,16 +27,20 @@ import type {
 import {
   ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS,
   allowedAdditionalDirectoriesJsonByteLength,
-  normalizeAllowedAdditionalDirectories,
+  canonicalizeAllowedAdditionalDirectories,
+  compactCanonicalAllowedAdditionalDirectories,
 } from "../shared/allowed-additional-directories.js";
+import type { CanonicalAllowedAdditionalDirectory } from "../shared/allowed-additional-directories.js";
 import type { PersistenceError } from "../shared/persistence-protocol.js";
 import { isCanonicalUuid } from "../shared/persistence-runtime-protocol.js";
 import { REPOSITORY_READ_LIMITS } from "../shared/repository-read-model.js";
 import type { SessionLifecycleStatus } from "../shared/repository-write-model.js";
 import { MAX_SESSION_CONCURRENT_CHILD_RUNS } from "../shared/session-limits.js";
+import { resolveWorkspaceIdentity } from "../shared/workspace-path.js";
 import { PersistenceClientError } from "./persistence-worker-client.js";
-import type { RepositoryReadClient } from "./repository-read-client.js";
-import type { RepositoryWriteClient } from "./repository-write-client.js";
+import type { PersistenceWorkerClient } from "./persistence-worker-client.js";
+import { RepositoryReadClient } from "./repository-read-client.js";
+import { RepositoryWriteClient } from "./repository-write-client.js";
 
 type SessionReadPort = Pick<RepositoryReadClient, "sessionsPage" | "sessionGet" | "sessionDirectoriesChunk">;
 type SessionWritePort = Pick<RepositoryWriteClient, "createSession" | "transitionSession">;
@@ -72,6 +76,12 @@ type ControlledSettlement<TValue> =
   | Readonly<{ status: "rejected"; error: unknown }>
   | Readonly<{ status: "interrupted"; interruption: OperationInterruption; started: boolean }>;
 
+type DecodedSessionCreateRequest<TAuthorizationContext> = Omit<
+  ApplicationSessionCreateRequest<TAuthorizationContext>,
+  "allowedAdditionalDirectories"
+> &
+  Readonly<{ allowedAdditionalDirectories: readonly CanonicalAllowedAdditionalDirectory[] }>;
+
 // admissionはより低いapp / Provider capも適用するが、永続設定値自体をboundedに保つ。
 export const APPLICATION_MAX_CONCURRENT_CHILD_RUNS = MAX_SESSION_CONCURRENT_CHILD_RUNS;
 export const APPLICATION_MAX_READ_CHUNK_BYTES = 256 * 1024;
@@ -82,6 +92,17 @@ export type ApplicationSessionServiceOptions<TAuthorizationContext> = Readonly<{
   access: ApplicationAccessValidator<TAuthorizationContext>;
   snapshotAuthorization(value: unknown): TAuthorizationContext;
 }>;
+
+export function createApplicationSessionOperations<TAuthorizationContext>(
+  worker: PersistenceWorkerClient,
+  options: Pick<ApplicationSessionServiceOptions<TAuthorizationContext>, "access" | "snapshotAuthorization">,
+): ApplicationSessionOperations<TAuthorizationContext> {
+  return new ApplicationSessionService({
+    reads: new RepositoryReadClient(worker),
+    writes: new RepositoryWriteClient(worker),
+    ...options,
+  });
+}
 
 export class ApplicationSessionService<
   TAuthorizationContext,
@@ -107,6 +128,9 @@ export class ApplicationSessionService<
     );
     if (!prepared.ok) return prepared.response;
     const { input, control } = prepared;
+    const workspace = resolveWorkspaceIdentity(input.workspacePath);
+    if (workspace === undefined) return requestFailure();
+    const validationDirectories = input.allowedAdditionalDirectories.map(({ path: directoryPath }) => directoryPath);
     const denied = await this.#validateAccess(
       {
         operation: "create",
@@ -114,15 +138,18 @@ export class ApplicationSessionService<
         context: input.context,
         target: {
           kind: "session_create",
+          workspacePath: workspace.workspacePath,
           providerId: input.providerId,
-          allowedAdditionalDirectories: [...input.allowedAdditionalDirectories],
+          allowedAdditionalDirectories: validationDirectories,
           defaultCharacterId: input.defaultCharacterId,
           maxConcurrentChildRuns: input.maxConcurrentChildRuns,
         },
       },
       control,
+      true,
     );
     if (denied !== undefined) return denied;
+    const persistedDirectories = compactCanonicalAllowedAdditionalDirectories(input.allowedAdditionalDirectories);
     const sessionId = issueSessionId(input.idempotencyKey);
 
     return executeRepositoryOperation(
@@ -135,8 +162,9 @@ export class ApplicationSessionService<
             session: {
               id: sessionId,
               providerId: input.providerId,
-              workspaceKey: input.context.workspaceKey,
-              allowedAdditionalDirectories: input.allowedAdditionalDirectories,
+              workspaceKey: workspace.workspaceKey,
+              workspacePath: workspace.workspacePath,
+              allowedAdditionalDirectories: persistedDirectories,
               defaultCharacterId: input.defaultCharacterId,
               maxConcurrentChildRuns: input.maxConcurrentChildRuns,
             },
@@ -145,7 +173,7 @@ export class ApplicationSessionService<
         ),
       (result) =>
         mapWriteResult<ApplicationSessionCreateResult>(result, (value) =>
-          projectSessionCreateResult(value, sessionId, input.context.workspaceKey),
+          projectSessionCreateResult(value, sessionId, workspace),
         ),
     );
   }
@@ -159,6 +187,8 @@ export class ApplicationSessionService<
     );
     if (!prepared.ok) return prepared.response;
     const { input, control } = prepared;
+    const workspace = input.workspacePath === undefined ? undefined : resolveWorkspaceIdentity(input.workspacePath);
+    if (input.workspacePath !== undefined && workspace === undefined) return requestFailure();
     const denied = await this.#validateAccess(
       {
         operation: "list",
@@ -166,10 +196,13 @@ export class ApplicationSessionService<
         context: input.context,
         target: {
           kind: "session_collection",
+          scope: "all_sessions",
+          ...(workspace === undefined ? {} : { workspacePath: workspace.workspacePath }),
           ...(input.lifecycleStatus === undefined ? {} : { lifecycleStatus: input.lifecycleStatus }),
         },
       },
       control,
+      false,
     );
     if (denied !== undefined) return denied;
 
@@ -179,7 +212,7 @@ export class ApplicationSessionService<
       (repositoryOptions) =>
         this.#reads.sessionsPage(
           {
-            workspaceKey: input.context.workspaceKey,
+            ...(workspace === undefined ? {} : { workspaceKey: workspace.workspaceKey }),
             ...(input.lifecycleStatus === undefined ? {} : { lifecycleStatus: input.lifecycleStatus }),
             ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
             ...(input.limit === undefined ? {} : { limit: input.limit }),
@@ -189,7 +222,7 @@ export class ApplicationSessionService<
       (value) =>
         projectSessionPage(
           value,
-          input.context.workspaceKey,
+          workspace,
           input.lifecycleStatus,
           input.limit ?? REPOSITORY_READ_LIMITS.sessions.default,
         ),
@@ -213,20 +246,17 @@ export class ApplicationSessionService<
         target: { kind: "session", sessionId: input.sessionId },
       },
       control,
+      false,
     );
     if (denied !== undefined) return denied;
 
     return executeRepositoryOperation(
       "read",
       control,
-      (repositoryOptions) =>
-        this.#reads.sessionGet(
-          { workspaceKey: input.context.workspaceKey, sessionId: input.sessionId },
-          repositoryOptions,
-        ),
+      (repositoryOptions) => this.#reads.sessionGet({ sessionId: input.sessionId }, repositoryOptions),
       (repositoryValue) => ({
         overallStatus: "success",
-        value: projectSessionReadResult(repositoryValue, input.sessionId, input.context.workspaceKey),
+        value: projectSessionReadResult(repositoryValue, input.sessionId),
         persistence: { status: "read", effect: "none" },
       }),
     );
@@ -254,6 +284,7 @@ export class ApplicationSessionService<
         },
       },
       control,
+      false,
     );
     if (denied !== undefined) return denied;
 
@@ -264,7 +295,6 @@ export class ApplicationSessionService<
         this.#reads.sessionDirectoriesChunk(
           {
             sessionId: input.sessionId,
-            workspaceKey: input.context.workspaceKey,
             offset: input.offset,
             maxBytes: input.maxBytes,
           },
@@ -332,6 +362,7 @@ export class ApplicationSessionService<
         target: { kind: "session", sessionId: request.sessionId },
       },
       control,
+      false,
     );
     if (denied !== undefined) return denied;
 
@@ -342,7 +373,6 @@ export class ApplicationSessionService<
         this.#writes.transitionSession(
           {
             sessionId: request.sessionId,
-            workspaceKey: request.context.workspaceKey,
             idempotencyKey: request.idempotencyKey,
             expectedLifecycleStatus,
             targetLifecycleStatus,
@@ -359,19 +389,29 @@ export class ApplicationSessionService<
   async #validateAccess(
     input: ApplicationAccessValidationInput<TAuthorizationContext>,
     control: OperationControl,
+    validateWorkspace: boolean,
   ): Promise<ApplicationPrePersistenceFailureResponse | undefined> {
-    const workspaceInput = prepareAccessValidationView(input, control, this.#snapshotAuthorization);
-    if (!workspaceInput.ok) return workspaceInput.response;
-    const workspace = await runControlled(control, () => this.#access.validateWorkspace(workspaceInput.value));
-    if (workspace.status === "interrupted") return operationInterruptionFailure(workspace.interruption);
-    if (workspace.status === "rejected") return prePersistenceApplicationFailure();
-    const workspaceDecision = safelyProjectAccessDecision(workspace.value);
-    const workspaceProjectionInterruption = getOperationInterruption(control);
-    if (workspaceProjectionInterruption !== undefined) {
-      return operationInterruptionFailure(workspaceProjectionInterruption);
+    if (validateWorkspace) {
+      const workspaceInput = prepareAccessValidationView(input, control, this.#snapshotAuthorization);
+      if (!workspaceInput.ok) return workspaceInput.response;
+      const workspace = await runControlled(control, () =>
+        this.#access.validateWorkspace(
+          workspaceInput.value as Extract<
+            ApplicationAccessValidationInput<TAuthorizationContext>,
+            Readonly<{ operation: "create" }>
+          >,
+        ),
+      );
+      if (workspace.status === "interrupted") return operationInterruptionFailure(workspace.interruption);
+      if (workspace.status === "rejected") return prePersistenceApplicationFailure();
+      const workspaceDecision = safelyProjectAccessDecision(workspace.value);
+      const workspaceProjectionInterruption = getOperationInterruption(control);
+      if (workspaceProjectionInterruption !== undefined) {
+        return operationInterruptionFailure(workspaceProjectionInterruption);
+      }
+      if (workspaceDecision === undefined) return prePersistenceApplicationFailure();
+      if (!workspaceDecision.allowed) return accessFailure(workspaceDecision.error);
     }
-    if (workspaceDecision === undefined) return prePersistenceApplicationFailure();
-    if (!workspaceDecision.allowed) return accessFailure(workspaceDecision.error);
 
     const authorizationInput = prepareAccessValidationView(input, control, this.#snapshotAuthorization);
     if (!authorizationInput.ok) return authorizationInput.response;
@@ -426,7 +466,6 @@ function createAccessValidationView<TAuthorizationContext>(
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): ApplicationAccessValidationInput<TAuthorizationContext> {
   const context = {
-    workspaceKey: input.context.workspaceKey,
     authorization: snapshotAuthorization(input.context.authorization),
   };
   switch (input.operation) {
@@ -453,9 +492,10 @@ function createAccessValidationView<TAuthorizationContext>(
 function decodeCreateRequest<TAuthorizationContext>(
   request: unknown,
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
-): RequestDecodeResult<ApplicationSessionCreateRequest<TAuthorizationContext>> {
+): RequestDecodeResult<DecodedSessionCreateRequest<TAuthorizationContext>> {
   const snapshot = snapshotRecord(request, [
     "context",
+    "workspacePath",
     "idempotencyKey",
     "providerId",
     "allowedAdditionalDirectories",
@@ -464,6 +504,7 @@ function decodeCreateRequest<TAuthorizationContext>(
   ]);
   if (
     snapshot === undefined ||
+    typeof snapshot.workspacePath !== "string" ||
     !isCanonicalIdempotencyKey(snapshot.idempotencyKey) ||
     !isBoundedString(snapshot.providerId) ||
     !isBoundedString(snapshot.defaultCharacterId) ||
@@ -475,11 +516,14 @@ function decodeCreateRequest<TAuthorizationContext>(
   if (directories === undefined) return decodeRequestFailure();
   const context = decodeOperationContext(snapshot.context, snapshotAuthorization);
   if (context === undefined) return decodeRequestFailure();
-  const allowedAdditionalDirectories = normalizeAllowedAdditionalDirectories(directories);
+  const workspace = resolveWorkspaceIdentity(snapshot.workspacePath);
+  if (workspace === undefined) return decodeRequestFailure();
+  const allowedAdditionalDirectories = canonicalizeAllowedAdditionalDirectories(directories);
   if (
     allowedAdditionalDirectories === undefined ||
-    allowedAdditionalDirectoriesJsonByteLength(allowedAdditionalDirectories) >
-      ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxJsonBytes
+    allowedAdditionalDirectoriesJsonByteLength(
+      allowedAdditionalDirectories.map(({ path: directoryPath }) => directoryPath),
+    ) > ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxJsonBytes
   ) {
     return decodeRequestFailure();
   }
@@ -487,6 +531,7 @@ function decodeCreateRequest<TAuthorizationContext>(
     ok: true,
     value: {
       context,
+      workspacePath: workspace.workspacePath,
       idempotencyKey: snapshot.idempotencyKey,
       providerId: snapshot.providerId,
       allowedAdditionalDirectories,
@@ -517,9 +562,10 @@ function decodeListRequest<TAuthorizationContext>(
   request: unknown,
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): RequestDecodeResult<ApplicationSessionListRequest<TAuthorizationContext>> {
-  const snapshot = snapshotRecord(request, ["context", "lifecycleStatus", "cursor", "limit"]);
+  const snapshot = snapshotRecord(request, ["context", "workspacePath", "lifecycleStatus", "cursor", "limit"]);
   if (
     snapshot === undefined ||
+    (snapshot.workspacePath !== undefined && typeof snapshot.workspacePath !== "string") ||
     (snapshot.lifecycleStatus !== undefined && !isSessionLifecycleStatus(snapshot.lifecycleStatus)) ||
     (snapshot.cursor !== undefined && !isBoundedStringWithLimit(snapshot.cursor, 2_048)) ||
     (snapshot.limit !== undefined &&
@@ -531,10 +577,14 @@ function decodeListRequest<TAuthorizationContext>(
   }
   const context = decodeOperationContext(snapshot.context, snapshotAuthorization);
   if (context === undefined) return decodeRequestFailure();
+  const workspace =
+    snapshot.workspacePath === undefined ? undefined : resolveWorkspaceIdentity(snapshot.workspacePath as string);
+  if (snapshot.workspacePath !== undefined && workspace === undefined) return decodeRequestFailure();
   return {
     ok: true,
     value: {
       context,
+      ...(workspace === undefined ? {} : { workspacePath: workspace.workspacePath }),
       ...(snapshot.lifecycleStatus === undefined ? {} : { lifecycleStatus: snapshot.lifecycleStatus }),
       ...(snapshot.cursor === undefined ? {} : { cursor: snapshot.cursor }),
       ...(snapshot.limit === undefined ? {} : { limit: snapshot.limit as number }),
@@ -613,13 +663,12 @@ function decodeOperationContext<TAuthorizationContext>(
   context: unknown,
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): ApplicationSessionCreateRequest<TAuthorizationContext>["context"] | undefined {
-  const snapshot = snapshotRecord(context, ["workspaceKey", "authorization"]);
-  if (snapshot === undefined || !Object.hasOwn(snapshot, "authorization") || !isBoundedString(snapshot.workspaceKey)) {
+  const snapshot = snapshotRecord(context, ["authorization"]);
+  if (snapshot === undefined || !Object.hasOwn(snapshot, "authorization")) {
     return undefined;
   }
   try {
     return {
-      workspaceKey: snapshot.workspaceKey,
       authorization: snapshotAuthorization(snapshot.authorization),
     };
   } catch {
@@ -1252,7 +1301,7 @@ function isBoundedStringWithLimit(value: unknown, maxLength: number): value is s
 
 function projectSessionPage(
   value: unknown,
-  expectedWorkspaceKey: string,
+  expectedWorkspace: Readonly<{ workspaceKey: string; workspacePath: string }> | undefined,
   expectedLifecycleStatus: SessionLifecycleStatus | undefined,
   expectedLimit: number,
 ): ApplicationOperationResponse<ApplicationSessionPage, "read"> {
@@ -1272,7 +1321,8 @@ function projectSessionPage(
     else {
       const projected = projectSessionListItem(item);
       if (
-        projected.workspaceKey !== expectedWorkspaceKey ||
+        (expectedWorkspace !== undefined &&
+          resolveWorkspaceIdentity(projected.workspacePath)?.workspaceKey !== expectedWorkspace.workspaceKey) ||
         (expectedLifecycleStatus !== undefined && projected.lifecycleStatus !== expectedLifecycleStatus)
       ) {
         return invalidRepositoryValue();
@@ -1297,6 +1347,7 @@ function projectSessionListItem(value: unknown): ApplicationSessionListItem {
   const snapshot = snapshotProjectionRecord(value, [
     "id",
     "workspaceKey",
+    "workspacePath",
     "defaultCharacterId",
     "lifecycleStatus",
     "createdAt",
@@ -1311,6 +1362,7 @@ function projectSessionListItem(value: unknown): ApplicationSessionListItem {
     snapshot === undefined ||
     !isBoundedString(snapshot.id) ||
     !isBoundedString(snapshot.workspaceKey) ||
+    typeof snapshot.workspacePath !== "string" ||
     !isBoundedString(snapshot.defaultCharacterId) ||
     !isSessionLifecycleStatus(snapshot.lifecycleStatus) ||
     !isNonNegativeSafeInteger(snapshot.createdAt) ||
@@ -1320,11 +1372,13 @@ function projectSessionListItem(value: unknown): ApplicationSessionListItem {
   ) {
     return invalidRepositoryValue();
   }
+  const workspace = resolveWorkspaceIdentity(snapshot.workspacePath);
+  if (workspace === undefined || workspace.workspaceKey !== snapshot.workspaceKey) return invalidRepositoryValue();
   const execution = projectSessionExecution(snapshot.executionState, snapshot.activeRunId, snapshot.latestRunId);
   if (snapshot.lifecycleStatus !== "active" && execution.state === "running") return invalidRepositoryValue();
   const base = {
     id: snapshot.id,
-    workspaceKey: snapshot.workspaceKey,
+    workspacePath: workspace.workspacePath,
     defaultCharacterId: snapshot.defaultCharacterId,
     lifecycleStatus: snapshot.lifecycleStatus,
     createdAt: snapshot.createdAt,
@@ -1349,11 +1403,7 @@ function projectSessionListItem(value: unknown): ApplicationSessionListItem {
   }
 }
 
-function projectSessionReadResult(
-  value: unknown,
-  expectedSessionId: string,
-  expectedWorkspaceKey: string,
-): ApplicationSessionReadResult {
+function projectSessionReadResult(value: unknown, expectedSessionId: string): ApplicationSessionReadResult {
   const snapshot = snapshotProjectionRecord(value, ["session", "execution"]);
   const executionSnapshot = snapshotProjectionRecord(snapshot?.execution, ["state", "activeRunId", "latestRunId"]);
   if (snapshot === undefined || executionSnapshot === undefined) return invalidRepositoryValue();
@@ -1363,7 +1413,7 @@ function projectSessionReadResult(
     executionSnapshot.latestRunId,
   );
   const session = projectSessionDetail(snapshot.session);
-  if (session.id !== expectedSessionId || session.workspaceKey !== expectedWorkspaceKey) {
+  if (session.id !== expectedSessionId) {
     return invalidRepositoryValue();
   }
   if (session.lifecycleStatus === "active") {
@@ -1378,6 +1428,7 @@ function projectSessionDetail(value: unknown): ApplicationSessionDetail {
     "id",
     "providerId",
     "workspaceKey",
+    "workspacePath",
     "allowedAdditionalDirectoriesByteLength",
     "allowedAdditionalDirectoriesState",
     "defaultCharacterId",
@@ -1392,6 +1443,7 @@ function projectSessionDetail(value: unknown): ApplicationSessionDetail {
     !isBoundedString(snapshot.id) ||
     !isBoundedString(snapshot.providerId) ||
     !isBoundedString(snapshot.workspaceKey) ||
+    typeof snapshot.workspacePath !== "string" ||
     !isNonNegativeSafeInteger(snapshot.allowedAdditionalDirectoriesByteLength) ||
     (snapshot.allowedAdditionalDirectoriesState !== "inline" &&
       snapshot.allowedAdditionalDirectoriesState !== "chunked") ||
@@ -1404,10 +1456,12 @@ function projectSessionDetail(value: unknown): ApplicationSessionDetail {
   ) {
     return invalidRepositoryValue();
   }
+  const workspace = resolveWorkspaceIdentity(snapshot.workspacePath);
+  if (workspace === undefined || workspace.workspaceKey !== snapshot.workspaceKey) return invalidRepositoryValue();
   return {
     id: snapshot.id,
     providerId: snapshot.providerId,
-    workspaceKey: snapshot.workspaceKey,
+    workspacePath: workspace.workspacePath,
     allowedAdditionalDirectoriesByteLength: snapshot.allowedAdditionalDirectoriesByteLength,
     allowedAdditionalDirectoriesState: snapshot.allowedAdditionalDirectoriesState,
     defaultCharacterId: snapshot.defaultCharacterId,
@@ -1459,13 +1513,20 @@ function projectSessionDirectoriesChunk(
 function projectSessionCreateResult(
   value: unknown,
   expectedSessionId: string,
-  expectedWorkspaceKey: string,
+  expectedWorkspace: Readonly<{ workspaceKey: string; workspacePath: string }>,
 ): ApplicationSessionCreateResult {
-  const snapshot = snapshotProjectionRecord(value, ["sessionId", "workspaceKey", "lifecycleStatus", "createdAt"]);
+  const snapshot = snapshotProjectionRecord(value, [
+    "sessionId",
+    "workspaceKey",
+    "workspacePath",
+    "lifecycleStatus",
+    "createdAt",
+  ]);
   if (
     snapshot === undefined ||
     snapshot.sessionId !== expectedSessionId ||
-    snapshot.workspaceKey !== expectedWorkspaceKey ||
+    snapshot.workspaceKey !== expectedWorkspace.workspaceKey ||
+    snapshot.workspacePath !== expectedWorkspace.workspacePath ||
     snapshot.lifecycleStatus !== "active" ||
     !isNonNegativeSafeInteger(snapshot.createdAt)
   ) {
@@ -1473,7 +1534,7 @@ function projectSessionCreateResult(
   }
   return {
     sessionId: snapshot.sessionId,
-    workspaceKey: snapshot.workspaceKey,
+    workspacePath: expectedWorkspace.workspacePath,
     lifecycleStatus: snapshot.lifecycleStatus,
     createdAt: snapshot.createdAt,
   };

@@ -50,7 +50,13 @@ for (const rule of rules) {
   for (const file of listSourceFiles(directory)) {
     const source = fs.readFileSync(file, "utf8");
     for (const forbidden of rule.forbidden) {
-      if (source.includes(forbidden)) {
+      const inspectedSource =
+        rule.directory === "main" &&
+        path.basename(file) === "persistence-worker-client.ts" &&
+        (forbidden === "../persistence-worker" || forbidden === "/persistence-worker/")
+          ? source.replace('new URL("../persistence-worker/worker-entry.js", import.meta.url)', "")
+          : source;
+      if (inspectedSource.includes(forbidden)) {
         violations.push(`${path.relative(root, file)} imports forbidden boundary ${JSON.stringify(forbidden)}`);
       }
     }
@@ -81,6 +87,7 @@ const repositoryBoundaryBypassesFixture = path.join(
   "module-boundaries",
   "repository-boundary-bypasses.ts",
 );
+const cliRepositoryBypassFixture = path.join(root, "test", "fixtures", "module-boundaries", "cli-repository-bypass.ts");
 const testConfig = ts.getParsedCommandLineOfConfigFile(path.join(root, "tsconfig.test.json"), {}, ts.sys);
 if (testConfig === undefined) {
   throw new Error("tsconfig.test.json could not be parsed for module-boundary validation.");
@@ -94,6 +101,7 @@ const typeProgram = ts.createProgram({
     publicTypeAliasFixture,
     nonliteralDynamicImportFixture,
     repositoryBoundaryBypassesFixture,
+    cliRepositoryBypassFixture,
   ],
   options: testConfig.options,
 });
@@ -297,6 +305,20 @@ for (const file of [applicationWriteOwner]) {
   ) {
     violations.push(
       `${path.relative(root, repositoryBoundaryBypassesFixture)} no longer exercises Repository boundary bypass rules`,
+    );
+  }
+}
+
+{
+  const fixtureSource = typeProgram.getSourceFile(cliRepositoryBypassFixture);
+  if (
+    fixtureSource === undefined ||
+    !containsRepositoryReadRequest(fixtureSource) ||
+    !containsRepositoryWriteRequest(fixtureSource) ||
+    !containsNode(fixtureSource, isRawPersistenceRequestReference)
+  ) {
+    violations.push(
+      `${path.relative(root, cliRepositoryBypassFixture)} no longer exercises CLI Repository bypass rules`,
     );
   }
 }

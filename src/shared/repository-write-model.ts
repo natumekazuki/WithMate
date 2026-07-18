@@ -40,6 +40,7 @@ export type SessionCreateCommand = Readonly<{
     id: string;
     providerId: string;
     workspaceKey: string;
+    workspacePath: string;
     allowedAdditionalDirectories: readonly string[];
     defaultCharacterId: string;
     maxConcurrentChildRuns: number;
@@ -48,7 +49,6 @@ export type SessionCreateCommand = Readonly<{
 
 export type SessionTransitionCommand = Readonly<{
   sessionId: string;
-  workspaceKey: string;
   idempotencyKey: string;
   expectedLifecycleStatus: "active" | "archived";
   targetLifecycleStatus: SessionLifecycleStatus;
@@ -377,6 +377,7 @@ export type RepositoryCommandResult<T> =
 export type SessionCreateResult = Readonly<{
   sessionId: string;
   workspaceKey: string;
+  workspacePath: string;
   lifecycleStatus: "active";
   createdAt: number;
 }>;

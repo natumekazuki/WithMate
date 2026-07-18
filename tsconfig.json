@@ -4,6 +4,7 @@
     { "path": "./tsconfig.shared.json" },
     { "path": "./tsconfig.main.json" },
     { "path": "./tsconfig.persistence-worker.json" },
+    { "path": "./tsconfig.cli.json" },
     { "path": "./tsconfig.test.json" }
   ]
 }

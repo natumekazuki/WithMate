@@ -55,8 +55,7 @@ export type RepositoryChunkResult<TScope extends Readonly<Record<string, string>
     bytes: ArrayBuffer;
   }>;
 
-export type SessionDirectoriesChunkRequest = Readonly<{ sessionId: string; workspaceKey: string }> &
-  RepositoryChunkRange;
+export type SessionDirectoriesChunkRequest = Readonly<{ sessionId: string }> & RepositoryChunkRange;
 export type SessionDirectoriesChunkResult = RepositoryChunkResult<Readonly<{ sessionId: string }>>;
 
 export type MessageContentChunkRequest = Readonly<{ sessionId: string; messageId: string; workspaceKey: string }> &
@@ -83,6 +82,7 @@ export type SessionExecutionState = "not_started" | "running" | "completed" | "f
 export type SessionListItem = Readonly<{
   id: string;
   workspaceKey: string;
+  workspacePath: string;
   defaultCharacterId: string;
   lifecycleStatus: "active" | "archived" | "closed";
   createdAt: number;
@@ -98,6 +98,7 @@ export type SessionDetail = Readonly<{
   id: string;
   providerId: string;
   workspaceKey: string;
+  workspacePath: string;
   allowedAdditionalDirectoriesByteLength: number;
   allowedAdditionalDirectoriesState: "inline" | "chunked";
   allowedAdditionalDirectories?: readonly string[];

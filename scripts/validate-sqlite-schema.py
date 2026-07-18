@@ -62,10 +62,10 @@ def insert_session(connection: sqlite3.Connection, session_id: str) -> None:
     connection.execute(
         """
         INSERT INTO sessions (
-          id, provider_id, workspace_key, allowed_additional_directories_json,
+          id, provider_id, workspace_key, workspace_path, allowed_additional_directories_json,
           default_character_id, max_concurrent_child_runs, lifecycle_status,
           created_at, updated_at, last_activity_at
-        ) VALUES (?, 'codex', 'workspace', '[]', 'character', 4, 'active', 1, 1, 1)
+        ) VALUES (?, 'codex', 'workspace', '/workspace', '[]', 'character', 4, 'active', 1, 1, 1)
         """,
         (session_id,),
     )
@@ -202,10 +202,10 @@ def validate_connection(
         connection,
         """
         INSERT INTO sessions (
-          id, provider_id, workspace_key, allowed_additional_directories_json,
+          id, provider_id, workspace_key, workspace_path, allowed_additional_directories_json,
           default_character_id, max_concurrent_child_runs, lifecycle_status,
           created_at, updated_at, last_activity_at
-        ) VALUES ('session-over-limit', 'provider', 'workspace', '[]', 'character', 1025, 'active', 1, 1, 1)
+        ) VALUES ('session-over-limit', 'provider', 'workspace', '/workspace', '[]', 'character', 1025, 'active', 1, 1, 1)
         """,
         (),
     )
@@ -214,10 +214,10 @@ def validate_connection(
         connection,
         """
         INSERT INTO sessions (
-          id, provider_id, workspace_key, allowed_additional_directories_json,
+          id, provider_id, workspace_key, workspace_path, allowed_additional_directories_json,
           default_character_id, max_concurrent_child_runs, lifecycle_status,
           created_at, updated_at, last_activity_at
-        ) VALUES (?, 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 1, 1)
+        ) VALUES (?, 'provider', 'workspace', '/workspace', '[]', 'character', 4, 'active', 1, 1, 1)
         """,
         ("s" * 1025,),
     )

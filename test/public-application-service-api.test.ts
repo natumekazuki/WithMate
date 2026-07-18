@@ -32,7 +32,7 @@ type DirectoriesChunkResponse = Awaited<ReturnType<Operations["readDirectoriesCh
 
 const listItemBase = {
   id: "session-1",
-  workspaceKey: "workspace-1",
+  workspacePath: "C:\\workspace-1",
   defaultCharacterId: "character-1",
   lifecycleStatus: "active" as const,
   createdAt: 1,
@@ -67,7 +67,7 @@ const invalidClosedRunningRead: ApplicationSessionReadResult = {
   session: {
     id: "session-1",
     providerId: "codex",
-    workspaceKey: "workspace-1",
+    workspacePath: "C:\\workspace-1",
     allowedAdditionalDirectoriesByteLength: 2,
     allowedAdditionalDirectoriesState: "inline",
     defaultCharacterId: "character-1",
@@ -123,7 +123,7 @@ const invalidPersistenceFailureEffect: ApplicationOperationResponse<string> = {
 };
 const invalidCreateReadSuccess: CreateResponse = {
   overallStatus: "success",
-  value: { sessionId: "session-1", workspaceKey: "workspace-1", lifecycleStatus: "active", createdAt: 1 },
+  value: { sessionId: "session-1", workspacePath: "C:\\workspace-1", lifecycleStatus: "active", createdAt: 1 },
   // @ts-expect-error Session create success must report a committed write
   persistence: { status: "read", effect: "none" },
 };

@@ -11,7 +11,7 @@ import { decodeMainToWorkerMessage, decodeWorkerToMainMessage } from "../shared/
 export type PersistenceWorkerClientState = "idle" | "starting" | "ready" | "closing" | "closed" | "failed";
 
 export type PersistenceWorkerClientOptions = Readonly<{
-  workerUrl: URL;
+  workerUrl?: URL;
   databasePath: string;
   legacyDatabasePaths: readonly string[];
   maxQueueDepth?: number;
@@ -57,8 +57,11 @@ export class PersistenceWorkerClient {
   #resolveExit: ((exitCode: number) => void) | undefined;
   #expectedExit = false;
   #nextRequestSequence = 1;
+  readonly #workerUrl: URL;
 
-  constructor(readonly options: PersistenceWorkerClientOptions) {}
+  constructor(readonly options: PersistenceWorkerClientOptions) {
+    this.#workerUrl = options.workerUrl ?? new URL("../persistence-worker/worker-entry.js", import.meta.url);
+  }
 
   get state(): PersistenceWorkerClientState {
     return this.#state;
@@ -83,7 +86,7 @@ export class PersistenceWorkerClient {
 
     let worker: Worker;
     try {
-      worker = new Worker(this.options.workerUrl, {
+      worker = new Worker(this.#workerUrl, {
         ...this.options.workerOptions,
         workerData: {
           generationId: this.generationId,

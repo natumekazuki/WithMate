@@ -49,3 +49,19 @@
 - S8 Integration Gateでpublic repository API、Main / Worker依存境界、clean install、Windows compiled smoke、SQLite sidecar cleanup、性能baselineを確認した。
 - Node.js 24で全116 test、schema validator、runtime probe、lint、typecheck、build、formatを通し、materialなcorrectness / data-loss findingがないことを確認した。
 - CP1を`完了`へ更新し、現在地をCP2 Application Service / CLI Control Plane着手前へ進めた。
+
+## 2026-07-18: CP2 Session CLI control plane完了
+
+- `ApplicationSessionOperations`の全Session操作を、version付きJSONと安定したexit codeを持つ`withmate session` CLIから実行可能にした。
+- Sessionを主たる指定単位とし、Workspaceはcreate時に保存し、listの任意filterとして扱う契約へ統一した。
+- caller supplied idempotency key、Application responseの明示的projection、Workerのstart / shutdown ownership、CLIからRepositoryへの迂回禁止を実行可能な契約で固定した。
+- 全244 test、CLI process smoke、compiled persistence smoke、lint、typecheck、build、format、SQLite schema検証を通した。
+- CP2全体は進行中のままとし、Run操作と後続control planeは別sliceで扱う。
+
+### Accepted risks
+
+| ID | 発生条件と影響 | 検知と復旧 | 再判断条件 |
+| --- | --- | --- | --- |
+| CP2-CLI-R1 | create時の`fs.stat`はOS I/O自体をcancelできないため、応答しないnetwork mountではoperation timeout後もprocessが残る可能性がある。 | 呼び出し元のprocess timeoutで検知し、対象processを終了できる。Session commit前でありデータ影響はない。 | network Workspaceをsupported scopeへ含める場合に、別processでの検証またはcancel可能な境界を検討する。 |
+| CP2-CLI-R2 | base branchで作成されたpre-release schema v1 DBは、同じversion内のschema hash変更によりstartup時に拒否される可能性がある。 | startup failureとして検知できる。互換契約のない開発DBは再作成できる。 | schema v1の外部利用開始前、または既存DB保持がaccepted contractになった時点でmigration方針を決める。 |
+| CP2-CLI-R3 | Windowsの通常path、extended-length path、UNC aliasはfile identityまで同一化しないため、同じdirectoryを別Workspaceとして扱う可能性がある。 | list結果のWorkspace path差異で検知でき、SessionはIDで引き続き操作できる。 | file pickerや外部callerが複数のpath表現を渡す段階で、realpathまたはfile identityによる同一化を検討する。 |

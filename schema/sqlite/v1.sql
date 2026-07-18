@@ -2,6 +2,7 @@ CREATE TABLE sessions (
   id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 1024),
   provider_id TEXT NOT NULL CHECK (length(provider_id) > 0),
   workspace_key TEXT NOT NULL CHECK (length(workspace_key) > 0),
+  workspace_path TEXT NOT NULL CHECK (length(workspace_path) BETWEEN 1 AND 32768),
   allowed_additional_directories_json TEXT NOT NULL
     CHECK (json_valid(allowed_additional_directories_json)
       AND json_type(allowed_additional_directories_json) = 'array'),
@@ -17,6 +18,8 @@ CREATE INDEX sessions_lifecycle_activity_idx
   ON sessions(lifecycle_status, last_activity_at DESC, id DESC);
 CREATE INDEX sessions_workspace_activity_idx
   ON sessions(workspace_key, last_activity_at DESC, id DESC);
+CREATE INDEX sessions_activity_idx
+  ON sessions(last_activity_at DESC, id DESC);
 
 CREATE TABLE messages (
   id TEXT PRIMARY KEY CHECK (length(id) > 0),
