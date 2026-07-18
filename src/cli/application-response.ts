@@ -6,6 +6,7 @@ import {
   sessionSearchKey,
   snapshotLocalRepositoryMetadata,
 } from "../shared/session-metadata.js";
+import { MAX_SESSION_TREE_SIZE } from "../shared/session-limits.js";
 import {
   CLI_EXIT_CODES,
   CLI_SCHEMA_VERSION,
@@ -19,6 +20,8 @@ import {
   type CliPersistenceError,
   type CliPersistenceStatus,
   type CliRuntimeFailureOutput,
+  type CliSessionCleanupIssue,
+  type CliSessionDeleteResponse,
   type CliSessionOperation,
   type CliStructuredOutput,
   type CliValidatedCommand,
@@ -29,6 +32,7 @@ export type CliOperationProjectionResult =
   | Readonly<{ ok: false; output: CliRuntimeFailureOutput; exitCode: typeof CLI_EXIT_CODES.runtimeFailure }>;
 
 type OperationMode = "read" | "write";
+type ProjectedApplicationResponse = CliApplicationResponse<unknown, OperationMode> | CliSessionDeleteResponse;
 type CommandFor<TOperation extends CliSessionOperation> = Extract<
   CliValidatedCommand,
   Readonly<{ identity: CliCommandIdentity<TOperation> }>
@@ -44,6 +48,7 @@ const operationModes: Readonly<Record<CliSessionOperation, OperationMode>> = {
   archive: "write",
   unarchive: "write",
   close: "write",
+  delete: "write",
 };
 
 export function projectCliOperationOutput(
@@ -82,24 +87,37 @@ function projectApplicationResponse(
   command: CliValidatedCommand,
   mode: OperationMode,
   value: unknown,
-): CliApplicationResponse<unknown, OperationMode> {
+): ProjectedApplicationResponse {
   const response = record(value);
   const overallStatus = response.overallStatus;
   if (overallStatus === "success") {
     const persistence = projectPersistenceStatus(response.persistence);
     if (mode === "read" ? persistence.status !== "read" : persistence.status !== "committed") malformed();
+    const projectedValue = projectOperationValue(command, response.value);
+    if (isCommandFor(command, "delete") && record(projectedValue).cleanupStatus !== "completed") malformed();
     return {
       overallStatus,
-      value: projectOperationValue(command, response.value),
+      value: projectedValue,
       persistence,
-    } as CliApplicationResponse<unknown, OperationMode>;
+    } as ProjectedApplicationResponse;
   }
   if (overallStatus === "partial_success") {
     const persistence = projectPersistenceStatus(response.persistence);
     const issues = projectIssues(response.issues);
     const projectedValue = projectOperationValue(command, response.value);
     if (issues.length === 0) malformed();
-    if (mode === "read") {
+    if (isCommandFor(command, "delete")) {
+      const deletion = record(projectedValue);
+      if (
+        persistence.status !== "committed" ||
+        deletion.cleanupStatus !== "pending" ||
+        issues.length !== 1 ||
+        issues[0]?.kind !== "cleanup" ||
+        issues[0].cleanupToken !== deletion.cleanupToken
+      ) {
+        malformed();
+      }
+    } else if (mode === "read") {
       if (persistence.status !== "read" || issues.some((issue) => issue.kind !== "omission")) malformed();
       if (isCommandFor(command, "list") || isCommandFor(command, "repositories")) {
         const page = record(projectedValue);
@@ -118,13 +136,13 @@ function projectApplicationResponse(
       value: projectedValue,
       issues,
       persistence,
-    } as CliApplicationResponse<unknown, OperationMode>;
+    } as ProjectedApplicationResponse;
   }
   if (overallStatus !== "failure") malformed();
   const error = projectApplicationError(response.error);
   const persistence = projectPersistenceStatus(response.persistence);
-  if (!failureCombinationIsValid(mode, error, persistence)) malformed();
-  return { overallStatus, error, persistence } as CliApplicationResponse<unknown, OperationMode>;
+  if (!failureCombinationIsValid(mode, isCommandFor(command, "delete"), error, persistence)) malformed();
+  return { overallStatus, error, persistence } as ProjectedApplicationResponse;
 }
 
 function projectOperationValue(command: CliValidatedCommand, value: unknown): unknown {
@@ -139,7 +157,26 @@ function projectOperationValue(command: CliValidatedCommand, value: unknown): un
   if (isCommandFor(command, "archive")) return projectTransitionValue(value, command.sessionId, "archived");
   if (isCommandFor(command, "unarchive")) return projectTransitionValue(value, command.sessionId, "active");
   if (isCommandFor(command, "close")) return projectTransitionValue(value, command.sessionId, "closed");
+  if (isCommandFor(command, "delete")) {
+    return projectDeleteValue(value, command.sessionId, command.idempotencyKey);
+  }
   malformed();
+}
+
+function projectDeleteValue(value: unknown, expectedSessionId: string, expectedCleanupToken: string): unknown {
+  const deletion = record(value);
+  const sessionId = boundedString(deletion.sessionId);
+  const cleanupToken = boundedString(deletion.cleanupToken);
+  const deletedSessionCount = positiveInteger(deletion.deletedSessionCount);
+  const cleanupStatus = enumValue(deletion.cleanupStatus, ["completed", "pending"] as const);
+  if (
+    sessionId !== expectedSessionId ||
+    cleanupToken !== expectedCleanupToken ||
+    deletedSessionCount > MAX_SESSION_TREE_SIZE ||
+    deletion.localOnly !== true
+  )
+    malformed();
+  return { sessionId, cleanupToken, deletedSessionCount, localOnly: true, cleanupStatus };
 }
 
 function projectRenameValue(value: unknown, expectedSessionId: string, expectedTitle: string): unknown {
@@ -430,9 +467,11 @@ function projectDomainError(error: Readonly<Record<string, unknown>>, message: s
     "reference_invalid",
     "lifecycle_conflict",
     "session_busy",
+    "insufficient_disk_space",
     "idempotency_conflict",
     "idempotency_in_progress",
     "idempotency_expired",
+    "identity_exhausted",
   ] as const);
   return { kind: "domain", code, message, retryable: error.retryable as boolean };
 }
@@ -443,8 +482,8 @@ function projectCapacityDetails(
   const details = record(value);
   const current = nonNegativeInteger(details.current);
   const limit = nonNegativeInteger(details.limit);
-  if (details.scope === "root") {
-    return { scope: "root", rootSessionId: boundedString(details.rootSessionId), current, limit };
+  if (details.scope === "root" || details.scope === "session_tree") {
+    return { scope: details.scope, rootSessionId: boundedString(details.rootSessionId), current, limit };
   }
   if (details.scope === "provider") {
     return { scope: "provider", providerId: boundedString(details.providerId), current, limit };
@@ -484,9 +523,28 @@ function projectIssues(value: unknown): readonly CliApplicationIssue[] {
         ? { kind: "omission", code: "response_size_limit", message }
         : { kind: "omission", code: "response_size_limit", message, ordinal };
     }
+    if (issue.kind === "cleanup") return projectCleanupIssue(issue);
     if (issue.kind !== "persistence") malformed();
     return projectPersistenceError(issue, boundedString(issue.message, 8_192));
   });
+}
+
+function projectCleanupIssue(issue: Readonly<Record<string, unknown>>): CliSessionCleanupIssue {
+  if (
+    issue.code !== "session_files_cleanup_pending" ||
+    issue.retryable !== true ||
+    issue.reconciliation !== "exact_request_required"
+  ) {
+    malformed();
+  }
+  return {
+    kind: "cleanup",
+    code: "session_files_cleanup_pending",
+    message: boundedString(issue.message, 8_192),
+    cleanupToken: boundedString(issue.cleanupToken),
+    retryable: true,
+    reconciliation: "exact_request_required",
+  };
 }
 
 function snapshotDenseArray(value: unknown, maxLength: number): readonly unknown[] {
@@ -505,6 +563,7 @@ function snapshotDenseArray(value: unknown, maxLength: number): readonly unknown
 
 function failureCombinationIsValid(
   mode: OperationMode,
+  deletion: boolean,
   error: CliApplicationError,
   persistence: CliPersistenceStatus,
 ): boolean {
@@ -525,12 +584,13 @@ function failureCombinationIsValid(
       return (
         persistence.status === "not_attempted" ||
         (mode === "read" && persistence.status === "failed" && persistence.effect === "none") ||
+        (deletion && persistence.status === "failed" && persistence.effect === "none") ||
         (mode === "write" && persistence.status === "failed" && persistence.effect === "unknown")
       );
   }
 }
 
-function exitCodeForApplicationResponse(response: CliApplicationResponse<unknown, OperationMode>): CliExitCode {
+function exitCodeForApplicationResponse(response: ProjectedApplicationResponse): CliExitCode {
   if (response.overallStatus === "success") return CLI_EXIT_CODES.success;
   if (response.overallStatus === "partial_success") return CLI_EXIT_CODES.partialSuccess;
   switch (response.error.kind) {
@@ -614,6 +674,12 @@ function sameHostPathIdentity(left: unknown, right: string): boolean {
 function nonNegativeInteger(value: unknown): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) malformed();
   return value as number;
+}
+
+function positiveInteger(value: unknown): number {
+  const integer = nonNegativeInteger(value);
+  if (integer === 0) malformed();
+  return integer;
 }
 
 function childRunLimit(value: unknown): number {

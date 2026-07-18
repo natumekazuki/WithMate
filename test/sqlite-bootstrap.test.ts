@@ -146,6 +146,66 @@ test("schema artifact cannot escape the worker-owned transaction", () => {
   });
 });
 
+test("schema artifact cannot retain TEMP schema objects in the Worker connection", () => {
+  withTempDirectory((directory) => {
+    const databasePath = path.join(directory, "runtime.sqlite3");
+    const tempTriggerDdlPath = path.join(directory, "temp-trigger-v1.sql");
+    const artifacts = resolveSchemaV1Artifacts();
+    const ddl = `${fs.readFileSync(artifacts.ddlUrl, "utf8")}
+      CREATE TEMP TRIGGER escaped_session_insert
+      AFTER INSERT ON main.sessions
+      BEGIN SELECT 1; END;
+    `;
+    fs.writeFileSync(tempTriggerDdlPath, ddl, "utf8");
+
+    expectBootstrapError(() => {
+      const opened = openOrBootstrapDatabase({
+        databasePath,
+        legacyDatabasePaths: [],
+        artifacts: {
+          ddlUrl: pathToFileURL(tempTriggerDdlPath),
+          manifestUrl: artifacts.manifestUrl,
+        },
+      });
+      opened.database.close();
+    }, "database_bootstrap_failed");
+
+    const failedDatabase = new DatabaseSync(databasePath, { readOnly: true });
+    assert.equal(readPragma(failedDatabase, "user_version"), 0);
+    assert.equal(readUserObjectCount(failedDatabase), 0);
+    failedDatabase.close();
+  });
+});
+
+test("schema artifact cannot retain a TEMP virtual table in the Worker connection", () => {
+  withTempDirectory((directory) => {
+    const databasePath = path.join(directory, "runtime.sqlite3");
+    const tempVirtualTableDdlPath = path.join(directory, "temp-virtual-table-v1.sql");
+    const artifacts = resolveSchemaV1Artifacts();
+    const ddl = `${fs.readFileSync(artifacts.ddlUrl, "utf8")}
+      CREATE VIRTUAL TABLE temp.escaped_schema USING dbstat;
+    `;
+    fs.writeFileSync(tempVirtualTableDdlPath, ddl, "utf8");
+
+    expectBootstrapError(() => {
+      const opened = openOrBootstrapDatabase({
+        databasePath,
+        legacyDatabasePaths: [],
+        artifacts: {
+          ddlUrl: pathToFileURL(tempVirtualTableDdlPath),
+          manifestUrl: artifacts.manifestUrl,
+        },
+      });
+      opened.database.close();
+    }, "database_bootstrap_failed");
+
+    const failedDatabase = new DatabaseSync(databasePath, { readOnly: true });
+    assert.equal(readPragma(failedDatabase, "user_version"), 0);
+    assert.equal(readUserObjectCount(failedDatabase), 0);
+    failedDatabase.close();
+  });
+});
+
 test("identity mismatch, unknown schema, and future schema are rejected without file mutation", () => {
   withTempDirectory((directory) => {
     const cases = [
@@ -236,7 +296,7 @@ test("hot bootstrap journal is recovered only after snapshot classification", ()
   withTempDirectory((directory) => {
     const child = spawnHotJournalRecoveryProcess(directory);
     assert.equal(child.status, 0, child.stderr);
-    assert.deepEqual(JSON.parse(child.stdout), { initialized: true, userObjectCount: 17 });
+    assert.deepEqual(JSON.parse(child.stdout), { initialized: true, userObjectCount: 19 });
   });
 });
 

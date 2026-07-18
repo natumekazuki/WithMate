@@ -48,7 +48,9 @@ completed recordの保持期間はWorker所有の30日とする。期限はcalle
 
 ## Session commands
 
-`repository.session.create`はactive Sessionとself-scopeのcompleted IdempotencyRecordを同じtransactionで作成する。ProviderBindingは作成しない。追加許可directoryはdenseな文字列配列かつabsolute pathだけを受理し、Worker境界で字句正規化して重複・包含される子pathを除外した値をfingerprintと保存に使用する。symlink / junctionを含む実在path検証はRun admission前のMain processが担う。
+`repository.session.create`はRepositoryがSession IDを発行し、active Session、allocator更新、self-scopeのcompleted IdempotencyRecordを同じtransactionで作成する。generated IDはcommandとfingerprintに含めない。exact retryはIdempotencyRecord、response reference、Session rowの組を再検証してcommit済みIDを返す。明示削除後の同一create requestは新しいincarnationとして別IDを発行する。詳細な発行境界はADR 010を正本とする。
+
+ProviderBindingはSession作成時に作成しない。追加許可directoryはdenseな文字列配列かつabsolute pathだけを受理し、Worker境界で字句正規化して重複・包含される子pathを除外した値をfingerprintと保存に使用する。symlink / junctionを含む実在path検証はRun admission前のMain processが担う。
 
 `repository.session.transition`はexpected lifecycleを必須とし、次だけを許可する。
 
@@ -80,7 +82,7 @@ retryは通常Run admissionと同じactive Session、app全体 / Provider別capa
 
 ## Initial child admission
 
-`repository.child.start`はProvider起動前に、初回child Sessionと親子relation、instruction Message、そのMessageを参照するDelegation / Run、最初のAttempt / Binding intent / Dispatch、pending Child Delivery、parent Session scopeのIdempotencyRecordを一つのtransactionで確定する。root配下のnon-terminal child Run上限と、通常Runと共有するapp全体 / Provider別上限を同じtransactionで判定し、入れ子でもroot Sessionの設定を使用する。capacity超過または途中失敗ではchild treeを部分作成しない。
+`repository.child.start`はProvider起動前にRepositoryがchild Session IDを発行し、初回child Sessionと親子relation、instruction Message、そのMessageを参照するDelegation / Run、最初のAttempt / Binding intent / Dispatch、pending Child Delivery、parent Session scopeのIdempotencyRecordを一つのtransactionで確定する。generated IDはcommandとfingerprintに含めず、exact retryではDeliveryからrelationとchild Sessionを再検証してIDを復元する。root配下のnon-terminal child Run上限と、通常Runと共有するapp全体 / Provider別上限を同じtransactionで判定し、入れ子でもroot Sessionの設定を使用する。capacity超過または途中失敗ではchild treeを部分作成しない。
 
 orchestration全体のroot capacityとProvider起動境界は`docs/design/multi-agent-orchestration.md`、現在のcommand型と実行可能な契約は`src/shared/repository-write-model.ts`、`test/repository-write-model.test.ts`、production Worker経路は`test/persistence-worker-lifecycle.test.ts`を正本とする。Auxiliary固有の親Session排他とcontext引継ぎはこのcommandへ暗黙適用せず、CP5のApplication Service policyとして扱う。
 

@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import type {
   ApplicationAccessDecision,
   ApplicationAccessValidationInput,
@@ -13,6 +11,9 @@ import type {
   ApplicationSessionCloseRequest,
   ApplicationSessionCreateRequest,
   ApplicationSessionCreateResult,
+  ApplicationSessionDeleteRequest,
+  ApplicationSessionDeleteResponse,
+  ApplicationSessionDeleteResult,
   ApplicationSessionDetail,
   ApplicationSessionDirectoriesChunkRequest,
   ApplicationSessionDirectoriesChunkResult,
@@ -39,7 +40,8 @@ import type { PersistenceError } from "../shared/persistence-protocol.js";
 import { isCanonicalUuid } from "../shared/persistence-runtime-protocol.js";
 import { REPOSITORY_READ_LIMITS } from "../shared/repository-read-model.js";
 import type { SessionLifecycleStatus } from "../shared/repository-write-model.js";
-import { MAX_SESSION_CONCURRENT_CHILD_RUNS } from "../shared/session-limits.js";
+import { MAX_SESSION_CONCURRENT_CHILD_RUNS, MAX_SESSION_TREE_SIZE } from "../shared/session-limits.js";
+import { isIssuedSessionId } from "../shared/session-id.js";
 import {
   canonicalizeSessionQuery,
   canonicalizeSessionTitle,
@@ -57,10 +59,17 @@ import { PersistenceClientError } from "./persistence-worker-client.js";
 import type { PersistenceWorkerClient } from "./persistence-worker-client.js";
 import { RepositoryReadClient } from "./repository-read-client.js";
 import { RepositoryWriteClient } from "./repository-write-client.js";
+import type { SessionFilesCleanupPort } from "./session-files-cleanup.js";
 
-type SessionReadPort = Pick<RepositoryReadClient, "sessionsPage" | "sessionGet" | "sessionDirectoriesChunk"> &
+type SessionReadPort = Pick<
+  RepositoryReadClient,
+  "sessionsPage" | "sessionGet" | "sessionDirectoriesChunk" | "sessionDeletionStatusGet" | "sessionDeletionCleanupPage"
+> &
   Partial<Pick<RepositoryReadClient, "localRepositoriesPage">>;
-type SessionWritePort = Pick<RepositoryWriteClient, "createSession" | "transitionSession"> &
+type SessionWritePort = Pick<
+  RepositoryWriteClient,
+  "createSession" | "transitionSession" | "deleteSessionSubtree" | "completeSessionDeletionCleanup"
+> &
   Partial<Pick<RepositoryWriteClient, "updateSessionTitle">>;
 type ApplicationFailureResponse<TMode extends "read" | "write" = "read" | "write"> = Extract<
   ApplicationOperationResponse<never, TMode>,
@@ -73,6 +82,10 @@ type ApplicationPrePersistenceFailureResponse = Extract<
 type ApplicationDomainFailureResponse = Extract<
   ApplicationFailureResponse<"read">,
   Readonly<{ error: Readonly<{ kind: "domain" }> }>
+>;
+type ApplicationSessionDeleteFailureResponse = Extract<
+  ApplicationSessionDeleteResponse,
+  Readonly<{ overallStatus: "failure" }>
 >;
 
 type RequestDecodeResult<TValue> =
@@ -100,6 +113,31 @@ type DecodedSessionCreateRequest<TAuthorizationContext> = Omit<
 > &
   Readonly<{ allowedAdditionalDirectories: readonly CanonicalAllowedAdditionalDirectory[] }>;
 
+type SessionDeletionStatus = Readonly<{
+  cleanupToken: string;
+  workspaceKey: string;
+  deletedSessionCount: number;
+  localOnly: true;
+  status: "pending" | "completed";
+}>;
+
+type SessionDeletionBase = Readonly<{
+  sessionId: string;
+  cleanupToken: string;
+  deletedSessionCount: number;
+  localOnly: true;
+  replayed: boolean;
+}>;
+
+type DeletionReadResolution<TValue> =
+  | Readonly<{ status: "fulfilled"; value: TValue }>
+  | Readonly<{ status: "not_found"; response: ApplicationSessionDeleteFailureResponse }>
+  | Readonly<{ status: "failed"; response: ApplicationSessionDeleteFailureResponse }>;
+
+type DeletionWriteResolution<TValue> =
+  | Readonly<{ status: "fulfilled"; value: TValue; replayed: boolean }>
+  | Readonly<{ status: "failed"; response: ApplicationSessionDeleteFailureResponse }>;
+
 // admissionはより低いapp / Provider capも適用するが、永続設定値自体をboundedに保つ。
 export const APPLICATION_MAX_CONCURRENT_CHILD_RUNS = MAX_SESSION_CONCURRENT_CHILD_RUNS;
 export const APPLICATION_MAX_READ_CHUNK_BYTES = 256 * 1024;
@@ -107,6 +145,7 @@ export const APPLICATION_MAX_READ_CHUNK_BYTES = 256 * 1024;
 export type ApplicationSessionServiceOptions<TAuthorizationContext> = Readonly<{
   reads: SessionReadPort;
   writes: SessionWritePort;
+  sessionFiles: SessionFilesCleanupPort;
   access: ApplicationAccessValidator<TAuthorizationContext>;
   resolveLocalRepositoryMetadata?: LocalRepositoryMetadataResolver;
   snapshotAuthorization(value: unknown): TAuthorizationContext;
@@ -114,7 +153,10 @@ export type ApplicationSessionServiceOptions<TAuthorizationContext> = Readonly<{
 
 export function createApplicationSessionOperations<TAuthorizationContext>(
   worker: PersistenceWorkerClient,
-  options: Pick<ApplicationSessionServiceOptions<TAuthorizationContext>, "access" | "snapshotAuthorization">,
+  options: Pick<
+    ApplicationSessionServiceOptions<TAuthorizationContext>,
+    "access" | "sessionFiles" | "snapshotAuthorization"
+  >,
 ): ApplicationSessionOperations<TAuthorizationContext> {
   return new ApplicationSessionService({
     reads: new RepositoryReadClient(worker),
@@ -129,6 +171,7 @@ export class ApplicationSessionService<
 > implements ApplicationSessionOperations<TAuthorizationContext> {
   readonly #reads: SessionReadPort;
   readonly #writes: SessionWritePort;
+  readonly #sessionFiles: SessionFilesCleanupPort;
   readonly #access: ApplicationAccessValidator<TAuthorizationContext>;
   readonly #resolveLocalRepositoryMetadata: LocalRepositoryMetadataResolver;
   readonly #snapshotAuthorization: (value: unknown) => TAuthorizationContext;
@@ -136,6 +179,7 @@ export class ApplicationSessionService<
   constructor(options: ApplicationSessionServiceOptions<TAuthorizationContext>) {
     this.#reads = options.reads;
     this.#writes = options.writes;
+    this.#sessionFiles = options.sessionFiles;
     this.#access = options.access;
     this.#resolveLocalRepositoryMetadata =
       options.resolveLocalRepositoryMetadata ?? (async () => ({ status: "not_git" }));
@@ -188,8 +232,6 @@ export class ApplicationSessionService<
         : projectLocalRepositoryMetadataResolution(repositoryResolution.value);
     if (repositoryMetadata === undefined) return prePersistenceApplicationFailure();
     const persistedDirectories = compactCanonicalAllowedAdditionalDirectories(input.allowedAdditionalDirectories);
-    const sessionId = issueSessionId(input.idempotencyKey);
-
     return executeRepositoryOperation(
       "write",
       control,
@@ -198,7 +240,6 @@ export class ApplicationSessionService<
           {
             idempotencyKey: input.idempotencyKey,
             session: {
-              id: sessionId,
               title: input.title,
               providerId: input.providerId,
               workspaceKey: workspace.workspaceKey,
@@ -213,7 +254,7 @@ export class ApplicationSessionService<
         ),
       (result) =>
         mapWriteResult<ApplicationSessionCreateResult>(result, (value) =>
-          projectSessionCreateResult(value, sessionId, input.title, workspace),
+          projectSessionCreateResult(value, input.title, workspace),
         ),
     );
   }
@@ -469,6 +510,186 @@ export class ApplicationSessionService<
     );
   }
 
+  async delete(
+    request: ApplicationSessionDeleteRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationSessionDeleteResponse> {
+    const prepared = prepareOperation(options, () =>
+      decodeWriteRequest<TAuthorizationContext>(request, this.#snapshotAuthorization),
+    );
+    if (!prepared.ok) return prepared.response;
+    const { input, control } = prepared;
+    const denied = await this.#validateAccess(
+      {
+        operation: "delete",
+        access: "write",
+        context: input.context,
+        target: { kind: "session", sessionId: input.sessionId },
+      },
+      control,
+      false,
+    );
+    if (denied !== undefined) return denied;
+
+    const initialStatus = await executeDeletionRead(
+      control,
+      (repositoryOptions) =>
+        this.#reads.sessionDeletionStatusGet({ cleanupToken: input.idempotencyKey }, repositoryOptions),
+      (value) => projectSessionDeletionStatus(value, input.idempotencyKey),
+    );
+    let workspaceKey: string;
+    if (initialStatus.status === "fulfilled") {
+      workspaceKey = initialStatus.value.workspaceKey;
+    } else if (initialStatus.status === "failed") {
+      return initialStatus.response;
+    } else {
+      const session = await executeDeletionRead(
+        control,
+        (repositoryOptions) => this.#reads.sessionGet({ sessionId: input.sessionId }, repositoryOptions),
+        (value) => projectSessionDeletionWorkspace(value, input.sessionId),
+      );
+      if (session.status === "fulfilled") {
+        workspaceKey = session.value;
+      } else if (session.status === "failed") {
+        return session.response;
+      } else {
+        const racedStatus = await executeDeletionRead(
+          control,
+          (repositoryOptions) =>
+            this.#reads.sessionDeletionStatusGet({ cleanupToken: input.idempotencyKey }, repositoryOptions),
+          (value) => projectSessionDeletionStatus(value, input.idempotencyKey),
+        );
+        if (racedStatus.status === "fulfilled") workspaceKey = racedStatus.value.workspaceKey;
+        else return racedStatus.status === "not_found" ? session.response : racedStatus.response;
+      }
+    }
+
+    const primary = await executeDeletionWrite(
+      control,
+      (repositoryOptions) =>
+        this.#writes.deleteSessionSubtree(
+          { deletionId: input.idempotencyKey, sessionId: input.sessionId, workspaceKey },
+          repositoryOptions,
+        ),
+      (value) => projectSessionDeletionPrimary(value, input.sessionId, input.idempotencyKey),
+    );
+    if (primary.status === "failed") return primary.response;
+    const deletion: SessionDeletionBase = { ...primary.value, replayed: primary.replayed };
+
+    const currentStatus = await executeDeletionRead(
+      control,
+      (repositoryOptions) =>
+        this.#reads.sessionDeletionStatusGet({ cleanupToken: input.idempotencyKey }, repositoryOptions),
+      (value) => projectSessionDeletionStatus(value, input.idempotencyKey),
+    );
+    if (currentStatus.status !== "fulfilled" || !matchesSessionDeletion(currentStatus.value, deletion, workspaceKey)) {
+      return pendingSessionDeletionResponse(deletion);
+    }
+    if (currentStatus.value.status === "completed") return completedSessionDeletionResponse(deletion);
+    return this.#cleanupSessionDeletion(deletion, workspaceKey, control);
+  }
+
+  async #cleanupSessionDeletion(
+    deletion: SessionDeletionBase,
+    workspaceKey: string,
+    control: OperationControl,
+  ): Promise<ApplicationSessionDeleteResponse> {
+    const seenSessionIds = new Set<string>();
+    const validatedSessionIds: string[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    let expectedOrdinal = 1;
+    let sawRequestedSession = false;
+
+    while (true) {
+      if (cursor !== undefined) seenCursors.add(cursor);
+      const page = await executeDeletionRead(
+        control,
+        (repositoryOptions) =>
+          this.#reads.sessionDeletionCleanupPage(
+            {
+              cleanupToken: deletion.cleanupToken,
+              workspaceKey,
+              ...(cursor === undefined ? {} : { cursor }),
+              limit: REPOSITORY_READ_LIMITS.sessionDeletionItems.max,
+            },
+            repositoryOptions,
+          ),
+        (value) => projectSessionDeletionCleanupPage(value, deletion),
+      );
+      if (page.status !== "fulfilled") return this.#reconcileSessionDeletion(deletion, workspaceKey, control);
+
+      const pageSessionIds = new Set<string>();
+      for (const item of page.value.items) {
+        if (
+          item.ordinal !== expectedOrdinal ||
+          item.ordinal > deletion.deletedSessionCount ||
+          seenSessionIds.has(item.sessionId) ||
+          pageSessionIds.has(item.sessionId)
+        ) {
+          return this.#reconcileSessionDeletion(deletion, workspaceKey, control);
+        }
+        pageSessionIds.add(item.sessionId);
+        expectedOrdinal += 1;
+      }
+      if (
+        (page.value.nextCursor !== undefined &&
+          (page.value.items.length === 0 || seenCursors.has(page.value.nextCursor))) ||
+        (page.value.nextCursor === undefined && expectedOrdinal !== deletion.deletedSessionCount + 1)
+      ) {
+        return this.#reconcileSessionDeletion(deletion, workspaceKey, control);
+      }
+
+      for (const item of page.value.items) {
+        seenSessionIds.add(item.sessionId);
+        validatedSessionIds.push(item.sessionId);
+        if (item.sessionId === deletion.sessionId) sawRequestedSession = true;
+      }
+      if (page.value.nextCursor === undefined) break;
+      cursor = page.value.nextCursor;
+    }
+
+    if (!sawRequestedSession || seenSessionIds.size !== deletion.deletedSessionCount) {
+      return this.#reconcileSessionDeletion(deletion, workspaceKey, control);
+    }
+    for (const sessionId of validatedSessionIds) {
+      const cleanup = await runControlled(control, () => this.#sessionFiles.deleteSessionFiles(sessionId));
+      if (cleanup.status !== "fulfilled") {
+        return this.#reconcileSessionDeletion(deletion, workspaceKey, control);
+      }
+    }
+    const completion = await executeDeletionWrite(
+      control,
+      (repositoryOptions) =>
+        this.#writes.completeSessionDeletionCleanup(
+          { cleanupToken: deletion.cleanupToken, workspaceKey },
+          repositoryOptions,
+        ),
+      (value) => projectSessionDeletionCompletion(value, deletion.cleanupToken),
+    );
+    return completion.status === "fulfilled"
+      ? completedSessionDeletionResponse(deletion)
+      : this.#reconcileSessionDeletion(deletion, workspaceKey, control);
+  }
+
+  async #reconcileSessionDeletion(
+    deletion: SessionDeletionBase,
+    workspaceKey: string,
+    control: OperationControl,
+  ): Promise<ApplicationSessionDeleteResponse> {
+    const status = await executeDeletionRead(
+      control,
+      (repositoryOptions) =>
+        this.#reads.sessionDeletionStatusGet({ cleanupToken: deletion.cleanupToken }, repositoryOptions),
+      (value) => projectSessionDeletionStatus(value, deletion.cleanupToken),
+    );
+    return status.status === "fulfilled" &&
+      status.value.status === "completed" &&
+      matchesSessionDeletion(status.value, deletion, workspaceKey)
+      ? completedSessionDeletionResponse(deletion)
+      : pendingSessionDeletionResponse(deletion);
+  }
+
   async #transition(
     operation: "archive" | "unarchive" | "close",
     request: ApplicationSessionWriteRequest<TAuthorizationContext>,
@@ -620,6 +841,7 @@ function createAccessValidationView<TAuthorizationContext>(
     case "update_title":
     case "unarchive":
     case "close":
+    case "delete":
       return { operation: input.operation, access: input.access, context, target: { ...input.target } };
   }
 }
@@ -1032,6 +1254,105 @@ async function executeRepositoryOperation<TRepositoryValue, TApplicationValue, T
   }
 }
 
+async function executeDeletionRead<TRepositoryValue, TProjectedValue>(
+  control: OperationControl,
+  execute: (options: ApplicationOperationOptions | undefined) => Promise<TRepositoryValue>,
+  project: (value: TRepositoryValue) => TProjectedValue,
+): Promise<DeletionReadResolution<TProjectedValue>> {
+  const repositoryAbort = new AbortController();
+  const settlement = await runControlled(
+    control,
+    () => execute(createRepositoryOptions(control, repositoryAbort.signal)),
+    () => repositoryAbort.abort(),
+  );
+  if (settlement.status === "interrupted") {
+    return {
+      status: "failed",
+      response: (settlement.started
+        ? persistenceInterruptionFailure(settlement.interruption, "read")
+        : operationInterruptionFailure(settlement.interruption)) as ApplicationSessionDeleteFailureResponse,
+    };
+  }
+  if (settlement.status === "rejected") {
+    const response = mapThrownFailure(settlement.error, "read") as ApplicationSessionDeleteFailureResponse;
+    return settlement.error instanceof PersistenceClientError && settlement.error.persistenceError.code === "not_found"
+      ? { status: "not_found", response }
+      : { status: "failed", response };
+  }
+  try {
+    const value = project(settlement.value);
+    const interruption = getOperationInterruption(control);
+    return interruption === undefined
+      ? { status: "fulfilled", value }
+      : {
+          status: "failed",
+          response: persistenceInterruptionFailure(interruption, "read") as ApplicationSessionDeleteFailureResponse,
+        };
+  } catch {
+    const interruption = getOperationInterruption(control);
+    return {
+      status: "failed",
+      response: (interruption === undefined
+        ? persistenceApplicationFailure("read")
+        : persistenceInterruptionFailure(interruption, "read")) as ApplicationSessionDeleteFailureResponse,
+    };
+  }
+}
+
+async function executeDeletionWrite<TRepositoryValue, TProjectedValue>(
+  control: OperationControl,
+  execute: (options: ApplicationOperationOptions | undefined) => Promise<TRepositoryValue>,
+  project: (value: unknown) => TProjectedValue,
+): Promise<DeletionWriteResolution<TProjectedValue>> {
+  const repositoryAbort = new AbortController();
+  const settlement = await runControlled(
+    control,
+    () => execute(createRepositoryOptions(control, repositoryAbort.signal)),
+    () => repositoryAbort.abort(),
+  );
+  if (settlement.status === "interrupted") {
+    return {
+      status: "failed",
+      response: (settlement.started
+        ? persistenceInterruptionFailure(settlement.interruption, "write")
+        : operationInterruptionFailure(settlement.interruption)) as ApplicationSessionDeleteFailureResponse,
+    };
+  }
+  if (settlement.status === "rejected") {
+    return {
+      status: "failed",
+      response: mapThrownFailure(settlement.error, "write") as ApplicationSessionDeleteFailureResponse,
+    };
+  }
+  try {
+    const response = mapWriteResult<TProjectedValue>(settlement.value, project);
+    const interruption = getOperationInterruption(control);
+    if (interruption !== undefined) {
+      return {
+        status: "failed",
+        response: persistenceInterruptionFailure(interruption, "write") as ApplicationSessionDeleteFailureResponse,
+      };
+    }
+    return response.overallStatus === "success"
+      ? { status: "fulfilled", value: response.value, replayed: response.persistence.replayed }
+      : {
+          status: "failed",
+          response:
+            response.overallStatus === "failure"
+              ? (response as ApplicationSessionDeleteFailureResponse)
+              : (persistenceApplicationFailure("write") as ApplicationSessionDeleteFailureResponse),
+        };
+  } catch {
+    const interruption = getOperationInterruption(control);
+    return {
+      status: "failed",
+      response: (interruption === undefined
+        ? persistenceApplicationFailure("write")
+        : persistenceInterruptionFailure(interruption, "write")) as ApplicationSessionDeleteFailureResponse,
+    };
+  }
+}
+
 function createRepositoryOptions(
   control: OperationControl,
   repositorySignal: AbortSignal,
@@ -1345,12 +1666,176 @@ function isReadDomainError(
   return error.code === "request_invalid" || error.code === "cursor_invalid" || error.code === "not_found";
 }
 
-function issueSessionId(idempotencyKey: string): string {
-  return `session_${createHash("sha256").update(`withmate.application.session.v1\0${idempotencyKey}`, "utf8").digest("hex")}`;
+function projectSessionDeletionStatus(value: unknown, expectedCleanupToken: string): SessionDeletionStatus {
+  const snapshot = snapshotProjectionRecord(value, [
+    "cleanupToken",
+    "workspaceKey",
+    "deletedSessionCount",
+    "localOnly",
+    "status",
+  ]);
+  if (
+    snapshot === undefined ||
+    snapshot.cleanupToken !== expectedCleanupToken ||
+    !isBoundedString(snapshot.workspaceKey) ||
+    !isPositiveSafeInteger(snapshot.deletedSessionCount) ||
+    snapshot.deletedSessionCount > MAX_SESSION_TREE_SIZE ||
+    snapshot.localOnly !== true ||
+    (snapshot.status !== "pending" && snapshot.status !== "completed")
+  ) {
+    return invalidRepositoryValue();
+  }
+  return {
+    cleanupToken: expectedCleanupToken,
+    workspaceKey: snapshot.workspaceKey,
+    deletedSessionCount: snapshot.deletedSessionCount,
+    localOnly: true,
+    status: snapshot.status,
+  };
+}
+
+function projectSessionDeletionWorkspace(value: unknown, expectedSessionId: string): string {
+  const snapshot = snapshotProjectionRecord(value, ["session"]);
+  const session = snapshotProjectionRecord(snapshot?.session, ["id", "workspaceKey"]);
+  if (
+    snapshot === undefined ||
+    session === undefined ||
+    session.id !== expectedSessionId ||
+    !isBoundedString(session.workspaceKey)
+  ) {
+    return invalidRepositoryValue();
+  }
+  return session.workspaceKey;
+}
+
+function projectSessionDeletionPrimary(
+  value: unknown,
+  sessionId: string,
+  expectedCleanupToken: string,
+): Omit<SessionDeletionBase, "replayed"> {
+  const snapshot = snapshotProjectionRecord(value, ["cleanupToken", "deletedSessionCount", "localOnly"]);
+  if (
+    snapshot === undefined ||
+    snapshot.cleanupToken !== expectedCleanupToken ||
+    !isPositiveSafeInteger(snapshot.deletedSessionCount) ||
+    snapshot.deletedSessionCount > MAX_SESSION_TREE_SIZE ||
+    snapshot.localOnly !== true
+  ) {
+    return invalidRepositoryValue();
+  }
+  return {
+    sessionId,
+    cleanupToken: expectedCleanupToken,
+    deletedSessionCount: snapshot.deletedSessionCount,
+    localOnly: true,
+  };
+}
+
+function projectSessionDeletionCleanupPage(value: unknown, deletion: SessionDeletionBase) {
+  const snapshot = snapshotProjectionRecord(value, [
+    "cleanupToken",
+    "deletedSessionCount",
+    "localOnly",
+    "items",
+    "nextCursor",
+  ]);
+  const items = snapshotProjectionArray(snapshot?.items, REPOSITORY_READ_LIMITS.sessionDeletionItems.max);
+  if (
+    snapshot === undefined ||
+    snapshot.cleanupToken !== deletion.cleanupToken ||
+    snapshot.deletedSessionCount !== deletion.deletedSessionCount ||
+    snapshot.localOnly !== true ||
+    items === undefined ||
+    (snapshot.nextCursor !== undefined && !isBoundedStringWithLimit(snapshot.nextCursor, 2_048))
+  ) {
+    return invalidRepositoryValue();
+  }
+  return {
+    items: items.map((item) => {
+      const projected = snapshotProjectionRecord(item, ["ordinal", "sessionId"]);
+      if (
+        projected === undefined ||
+        !isPositiveSafeInteger(projected.ordinal) ||
+        !isIssuedSessionId(projected.sessionId)
+      ) {
+        return invalidRepositoryValue();
+      }
+      return { ordinal: projected.ordinal, sessionId: projected.sessionId };
+    }),
+    ...(snapshot.nextCursor === undefined ? {} : { nextCursor: snapshot.nextCursor }),
+  };
+}
+
+function projectSessionDeletionCompletion(value: unknown, expectedCleanupToken: string): true {
+  const snapshot = snapshotProjectionRecord(value, ["cleanupToken", "cleanupCompleted"]);
+  if (snapshot === undefined || snapshot.cleanupToken !== expectedCleanupToken || snapshot.cleanupCompleted !== true) {
+    return invalidRepositoryValue();
+  }
+  return true;
+}
+
+function matchesSessionDeletion(
+  status: SessionDeletionStatus,
+  deletion: SessionDeletionBase,
+  workspaceKey: string,
+): boolean {
+  return (
+    status.cleanupToken === deletion.cleanupToken &&
+    status.workspaceKey === workspaceKey &&
+    status.deletedSessionCount === deletion.deletedSessionCount &&
+    status.localOnly === deletion.localOnly
+  );
+}
+
+function completedSessionDeletionResponse(
+  deletion: SessionDeletionBase,
+): Extract<ApplicationSessionDeleteResponse, Readonly<{ overallStatus: "success" }>> {
+  return {
+    overallStatus: "success",
+    value: publicSessionDeletionResult(deletion, "completed"),
+    persistence: { status: "committed", effect: "none", replayed: deletion.replayed },
+  };
+}
+
+function pendingSessionDeletionResponse(
+  deletion: SessionDeletionBase,
+): Extract<ApplicationSessionDeleteResponse, Readonly<{ overallStatus: "partial_success" }>> {
+  return {
+    overallStatus: "partial_success",
+    value: publicSessionDeletionResult(deletion, "pending"),
+    issues: [
+      {
+        kind: "cleanup",
+        code: "session_files_cleanup_pending",
+        message: "Session data was deleted, but Session Files cleanup is pending.",
+        cleanupToken: deletion.cleanupToken,
+        retryable: true,
+        reconciliation: "exact_request_required",
+      },
+    ],
+    persistence: { status: "committed", effect: "none", replayed: deletion.replayed },
+  };
+}
+
+function publicSessionDeletionResult<TStatus extends ApplicationSessionDeleteResult["cleanupStatus"]>(
+  deletion: SessionDeletionBase,
+  cleanupStatus: TStatus,
+): Extract<ApplicationSessionDeleteResult, Readonly<{ cleanupStatus: TStatus }>> {
+  return {
+    sessionId: deletion.sessionId,
+    cleanupToken: deletion.cleanupToken,
+    deletedSessionCount: deletion.deletedSessionCount,
+    localOnly: true,
+    cleanupStatus,
+  } as Extract<ApplicationSessionDeleteResult, Readonly<{ cleanupStatus: TStatus }>>;
 }
 
 function isBoundedString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 1_024;
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
 }
 
 function isCanonicalIdempotencyKey(value: unknown): value is string {
@@ -1440,9 +1925,11 @@ function isRepositoryDomainErrorCode(value: unknown): value is Exclude<Applicati
     value === "lifecycle_conflict" ||
     value === "session_busy" ||
     value === "capacity_exceeded" ||
+    value === "insufficient_disk_space" ||
     value === "idempotency_conflict" ||
     value === "idempotency_in_progress" ||
-    value === "idempotency_expired"
+    value === "idempotency_expired" ||
+    value === "identity_exhausted"
   );
 }
 
@@ -1457,6 +1944,7 @@ function projectCapacityExceededDetails(value: unknown): NonNullable<Application
   }
   switch (snapshot.scope) {
     case "root":
+    case "session_tree":
       if (!isBoundedString(snapshot.rootSessionId)) return invalidRepositoryValue();
       return {
         scope: snapshot.scope,
@@ -1814,7 +2302,6 @@ function projectSessionDirectoriesChunk(
 
 function projectSessionCreateResult(
   value: unknown,
-  expectedSessionId: string,
   expectedTitle: string,
   expectedWorkspace: Readonly<{ workspaceKey: string; workspacePath: string }>,
 ): ApplicationSessionCreateResult {
@@ -1830,7 +2317,7 @@ function projectSessionCreateResult(
   ]);
   if (
     snapshot === undefined ||
-    snapshot.sessionId !== expectedSessionId ||
+    !isIssuedSessionId(snapshot.sessionId) ||
     snapshot.title !== expectedTitle ||
     snapshot.workspaceKey !== expectedWorkspace.workspaceKey ||
     snapshot.workspacePath !== expectedWorkspace.workspacePath ||

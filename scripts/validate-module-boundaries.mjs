@@ -10,6 +10,10 @@ const repositoryCapabilityNames = new Set([
   "sessionsPage",
   "sessionGet",
   "sessionDirectoriesChunk",
+  "sessionDeletionStatusGet",
+  "sessionDeletionCleanupPage",
+  "deleteSessionSubtree",
+  "completeSessionDeletionCleanup",
 ]);
 
 const rules = [

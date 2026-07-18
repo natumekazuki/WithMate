@@ -78,13 +78,17 @@ run_input_deliveries
 
 | 概念 | SQLite 表現 | 規則 |
 | --- | --- | --- |
-| WithMate ID | `TEXT` | Application Service が発行する不透過 ID。Provider ID を使用しない |
+| WithMate ID | `TEXT` | Repositoryが発行する不透過ID。Provider IDを使用しない |
 | timestamp | `INTEGER` | UTC Unix epoch milliseconds |
 | enum | `TEXT` + `CHECK` | 未知値を黙って受理しない |
 | JSON | `TEXT` | UTF-8 JSON。Application Service の schema validation と `json_valid` の `CHECK` の両方を使う |
 | boolean | `INTEGER` | `0` / `1` に限定する |
 
 時刻は並び順や一意性の基準に使わない。Message / Run の順序は Session 内の `ordinal` を基準にする。
+
+## `session_identity_allocator`
+
+通常Sessionとchild Sessionに共通するincarnation identityの発行状態を保持する。DB固有namespaceと次のsequenceをsingleton rowに保存し、ID発行、Session関連row、completed IdempotencyRecordを同じwrite transactionで確定する。現在のcolumn制約はschema、発行と上限時のfailure modeはRepository sourceとtest、判断理由はADR 010を正本とする。
 
 ## `sessions`
 
@@ -330,6 +334,8 @@ timeline 取得は `session_id` と ordinal cursor を使い、offset pagination
 ## `idempotency_records`
 
 Application Serviceのwriteと単一Deliveryのcollect操作に対して、同じidempotency keyの重複実行を防ぎ、確定済み応答を再構築するための軽量な記録を保持する。複数Deliveryを待つ`waitAny` / `waitAll`はread-onlyで本tableを使用しない。keyはCLI / GUIがアプリ全体で一意なUUIDとして生成する。
+
+通常writeのIdempotencyRecordとSession deletionのmanifest / 完了tombstoneは、`idempotency_key_claims`で同じapp-wide key namespaceを共有する。claimは`standard`または`session_deletion`の一方だけを所有でき、兄弟tableへのinsert triggerとRepository preflightの両方でcross-operation再利用を拒否する。response保存先を分けることはkey namespaceを分ける根拠にしない。
 
 | Column | Type | Null | 意味 |
 | --- | --- | --- | --- |
@@ -714,12 +720,15 @@ exportRunOutputPayload(outputItemId, destinationGrant)
 
 ### Session treeの明示削除
 
-1. 削除対象Sessionをrootとするsubtreeをrecursive queryで確定し、同じSQLite write transaction内で対象Sessionのlifecycleと全Runを再検証する。tree membershipやbusy判定をtransaction外のsnapshotだけで確定しない。
+1. 削除対象Sessionをrootとするsubtreeをrecursive queryでconnection-localなSQL worksetへ確定し、同じSQLite write transaction内で対象Sessionのlifecycleと全Runを再検証する。tree membershipやbusy判定をtransaction外のsnapshotだけで確定せず、関連ID群をprocess memoryへ展開しない。
 2. subtree内にnon-terminal Runが1件でもあればtransaction全体をrollbackし、`session_busy`を返す。deleteは暗黙のcancelを行わない。
 3. subtreeのSession、Message、Run、Attempt、Dispatch、output/payload/event/input delivery、ProviderBinding、relation、Delegation、ChildResultDelivery、`scope_session_id`がsubtreeに属するIdempotencyRecordを物理削除する。Session tombstone、Delivery tombstone、復元用rowは残さない。
 4. 親Sessionがsubtree外に残る場合、subtreeのSession / Run / relation / Delegation / Deliveryをsubjectとする親側RunEventを削除する。`child.start`のように親へscopeしたIdempotencyRecordは削除せず、response refを消して`expired` tombstoneへ進める。RunEvent ordinalの欠番は許容する。child result本文は親MessageやRunOutputItemへ複製保存しないため、親の会話本文や無関係なoutputは削除しない。
 5. 外部キーは`RESTRICT`を維持し、関連rowをbottom-upで明示削除する。ProviderBindingとRunAttemptの循環参照、およびBindingのself referenceはdelete transaction中だけdeferred foreign keyとして検証し、commit時に参照が残っていないことを保証する。
 6. SQLite commit後のSession Files削除はApplication Serviceが担う。削除対象外にcleanup manifestを原子的に作成し、成功応答はboundedなtokenと件数だけを返す。Application ServiceはIDをpage取得してfilesを冪等削除した後にmanifestを完了させる。応答消失時の再開、物理削除、local-only境界の判断は`docs/adr/001-session-subtree-delete-cleanup-manifest.md`を正本とする。
+7. 削除済みSession IDは新しいincarnationへ再利用しない。通常Session createの同一requestを削除後に再実行した場合は新しいIDを発行し、旧deleteの再送は削除時のIDだけを対象とする。child startのparent scope tombstoneは従来どおり同じkeyの再利用を拒否する。
+8. 1 treeはrootを含め4,096 Sessionまでとし、child admission、delete、Application / CLI projectionへ同じaggregate上限を適用する。上限を超えるtreeは部分削除へ暗黙変換せず、`capacity_exceeded`でmutation前に拒否する。
+9. 対象payload bytesと更新対象row数からWAL増分を保守的に見積もり、空き容量を取得できない場合またはdisk reserveを割る場合は`insufficient_disk_space`でmanifest作成前に拒否する。
 
 明示deleteと自動retentionは別操作とする。初期版で確定するのはuserによるlocal明示deleteだけであり、自動retention期間は後続設計とする。初期版はProvider側Thread / Sessionの削除を要求・保証せず、local Binding削除後にremote cleanupを再試行できない。UI / APIの確認文と結果は`local_only=true`を明示し、「Provider側データも削除した」と表示しない。remote delete保証が要件化した時点で、subtree外cleanup outboxを導入してから契約を変更する。
 
@@ -740,6 +749,7 @@ exportRunOutputPayload(outputItemId, destinationGrant)
 
 | Table | 永続化する理由 |
 | --- | --- |
+| `session_identity_allocator` | 通常Sessionとchild Sessionに共通するincarnation identityの非再利用 |
 | `sessions` | 会話 lifecycle、設定、一覧・復旧の起点 |
 | `messages` | 確定済み user / final assistant 会話履歴 |
 | `runs` | 論理実行、terminal outcome、修復判断の基準 |
@@ -752,6 +762,7 @@ exportRunOutputPayload(outputItemId, destinationGrant)
 | `run_attempts` | 外部実行 ID、内部再試行、安全な復旧判断 |
 | `run_dispatches` | Provider request の二重送信防止 |
 | `idempotency_records` | process 再起動や応答切断をまたぐ重複操作防止 |
+| `idempotency_key_claims` | 通常writeとSession deletionに共通するapp-wide key所有権 |
 | `run_events` | 再起動後の cursor follow と出来事の履歴 |
 | `run_input_deliveries` | steer の二重配送防止と受理不明状態の保持 |
 | `session_deletion_manifests` | DB commit後のSession Files cleanup再開とboundedな削除応答 |
@@ -811,7 +822,7 @@ root capacity使用数は、`session_relations.orchestration_root_session_id`配
 - connectionごとに旧実装と同じ`wal_autocheckpoint=256`、`journal_size_limit=67108864`、`busy_timeout=5000`を設定する。正常shutdownでは`wal_checkpoint(TRUNCATE)`をbounded timeout付きで試行し、失敗をDB破損やdelete rollbackとして扱わない。
 - Session subtree deleteはrowと参照を1 transactionで削除するが、DB fileの即時縮小やProvider側削除までは保証しない。commit後に`wal_checkpoint(PASSIVE)`を要求し、freelistが閾値を超えた場合だけidle maintenanceで最大1024 pageずつ`incremental_vacuum`する。foregroundでfull `VACUUM`を実行しない。
 - privacy保証は、query可能なrowをcommit時に除去し、`secure_delete=FAST`とcheckpoint / incremental vacuumで再利用pageをbest-effort消去・回収する範囲とする。OS、filesystem、SSD、backup、Provider側copyからの即時不可逆消去は保証しない。
-- 大規模subtree deleteは対象payload bytesと想定WAL増分を事前計測し、disk reserveを割る場合は`insufficient_disk_space`で開始前に拒否する。実装前にpayload量を段階的に増やしたdeleteでtransaction時間、WAL peak、writer停止時間、checkpoint / reclaim後の容量を実測する。
+- 大規模subtree deleteは対象payload bytesと更新対象row数から想定WAL増分を事前計測し、disk reserveを割る場合は`insufficient_disk_space`で開始前に拒否する。release前の容量試験ではpayload量を段階的に増やし、transaction時間、WAL peak、writer停止時間、checkpoint / reclaim後の容量を実測する。
 
 ## 検証 Gate
 
@@ -854,6 +865,7 @@ root capacity使用数は、`session_relations.orchestration_root_session_id`配
 - subtree内にnon-terminal RunがあるSession deleteが`session_busy`で全rollbackし、暗黙cancelを行わない。
 - terminalなroot / intermediate child / leaf Sessionのdeleteで対象subtreeと関連local dataが残らず、subtree外の無関係なSession dataは維持される。
 - Session delete後に削除済みIdempotencyRecordから旧responseを再送しない。
+- 通常Session createを明示削除後に同一requestで再実行しても別IDになり、旧delete再送が新incarnationを変更しない。
 - `child.start -> terminal -> child subtree delete -> 同一key再送`でparent scopeのexpired tombstoneが新規child作成を拒否する。
 - local-only deleteの確認・結果がProvider側削除を保証せず、Binding削除後にremote cleanup可能と誤表示しない。
 - Delegation の initial instruction を変更できず、補足指示と exact retry で latest 参照が正しく進む。

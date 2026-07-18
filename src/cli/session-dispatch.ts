@@ -112,6 +112,11 @@ export async function dispatchCliSessionCommand<TAuthorizationContext>(
         },
         options,
       );
+    } else if (isCommandFor(command, "delete")) {
+      response = await dependencies.operations.delete(
+        { context, sessionId: command.sessionId, idempotencyKey: command.idempotencyKey },
+        options,
+      );
     } else {
       throw new TypeError("Unsupported CLI Session command.");
     }

@@ -15,6 +15,7 @@ import {
 } from "../src/cli/contract.js";
 import { helpText } from "../src/cli/help.js";
 import { parseCliArgv } from "../src/cli/parser.js";
+import { MAX_SESSION_TREE_SIZE } from "../src/shared/session-limits.js";
 import { WORKSPACE_PATH_MAX_LENGTH } from "../src/shared/workspace-path.js";
 
 const uuid = "018f1f4e-7f0a-7000-8000-000000000001";
@@ -65,6 +66,11 @@ const commands = {
     sessionId: "session-1",
     idempotencyKey: uuid,
     expectedLifecycleStatus: "active",
+  },
+  delete: {
+    identity: { namespace: "session", operation: "delete" },
+    sessionId: "session-1",
+    idempotencyKey: uuid,
   },
 } as const satisfies Readonly<Record<CliSessionOperation, CliValidatedCommand>>;
 
@@ -119,6 +125,50 @@ const invalidArchiveLifecycle: CliOperationOutput<"archive"> = {
     persistence: { status: "committed", effect: "none", replayed: false },
   },
 };
+const invalidDeleteSuccessState: CliOperationOutput<"delete"> = {
+  schemaVersion: CLI_SCHEMA_VERSION,
+  kind: "operation",
+  command: { namespace: "session", operation: "delete" },
+  applicationResponse: {
+    overallStatus: "success",
+    value: {
+      sessionId: "session-1",
+      cleanupToken: uuid,
+      deletedSessionCount: 1,
+      localOnly: true,
+      // @ts-expect-error delete success requires completed cleanup
+      cleanupStatus: "pending",
+    },
+    persistence: { status: "committed", effect: "none", replayed: false },
+  },
+};
+const invalidDeletePartialState: CliOperationOutput<"delete"> = {
+  schemaVersion: CLI_SCHEMA_VERSION,
+  kind: "operation",
+  command: { namespace: "session", operation: "delete" },
+  applicationResponse: {
+    overallStatus: "partial_success",
+    value: {
+      sessionId: "session-1",
+      cleanupToken: uuid,
+      deletedSessionCount: 1,
+      localOnly: true,
+      // @ts-expect-error delete partial success requires pending cleanup
+      cleanupStatus: "completed",
+    },
+    issues: [
+      {
+        kind: "cleanup",
+        code: "session_files_cleanup_pending",
+        message: "pending",
+        cleanupToken: uuid,
+        retryable: true,
+        reconciliation: "exact_request_required",
+      },
+    ],
+    persistence: { status: "committed", effect: "none", replayed: false },
+  },
+};
 const invalidUsageOutput: CliStructuredOutput = {
   schemaVersion: CLI_SCHEMA_VERSION,
   kind: "usage_failure",
@@ -162,6 +212,8 @@ const invalidCliDetailRepositoryPair: CliSessionDetail = {
 void invalidCreatePersistence;
 void invalidUnknownEffect;
 void invalidArchiveLifecycle;
+void invalidDeleteSuccessState;
+void invalidDeletePartialState;
 void invalidUsageOutput;
 void invalidCliListRepositoryPair;
 void invalidCliDetailRepositoryPair;
@@ -176,9 +228,13 @@ test("help and version parsing are runtime-free actions", () => {
   assert.deepEqual(parseCliArgv(["--version"]), { kind: "version" });
   assert.match(helpText({ kind: "root" }), /withmate session --help/u);
   const sessionHelp = helpText({ kind: "session" });
-  for (const operation of ["create", "list", "read", "directories-chunk", "archive", "unarchive", "close"]) {
+  for (const operation of ["create", "list", "read", "directories-chunk", "archive", "unarchive", "close", "delete"]) {
     assert.match(sessionHelp, new RegExp(`\\b${operation}\\b`, "u"));
   }
+  const deleteHelp = helpText({ kind: "operation", command: { namespace: "session", operation: "delete" } });
+  assert.match(deleteHelp, /irreversibly/iu);
+  assert.match(deleteHelp, /local WithMate Session data/iu);
+  assert.match(deleteHelp, /Provider thread or Session is not deleted/iu);
 });
 
 test("create requires caller-owned idempotency and accepts repeatable absolute directories", () => {
@@ -373,6 +429,55 @@ test("all Session operation argv map to validated transport commands", () => {
       },
     },
   );
+  assert.deepEqual(
+    parseCliArgv([
+      "session",
+      "delete",
+      "--session-id",
+      "session-1",
+      "--idempotency-key",
+      uuid,
+      "--confirm-local-only",
+      "--timeout-ms",
+      "250",
+    ]),
+    {
+      kind: "command",
+      command: {
+        identity: { namespace: "session", operation: "delete" },
+        sessionId: "session-1",
+        idempotencyKey: uuid,
+        timeoutMs: 250,
+      },
+    },
+  );
+});
+
+test("delete requires a valueless local-only confirmation before runtime dispatch", () => {
+  const base = ["session", "delete", "--session-id", "session-1", "--idempotency-key", uuid] as const;
+  const cases = [
+    { argv: base, code: "missing_option" },
+    { argv: [...base, "--confirm-local-only", "true"], code: "unexpected_argument" },
+    { argv: [...base, "--confirm-local-only", "--confirm-local-only"], code: "duplicate_option" },
+    { argv: [...base, "--confirm-local-only", "--workspace", workspacePath], code: "unknown_option" },
+    {
+      argv: [
+        "session",
+        "delete",
+        "--session-id",
+        "session-1",
+        "--idempotency-key",
+        uuid.toUpperCase(),
+        "--confirm-local-only",
+      ],
+      code: "invalid_option_value",
+    },
+  ] as const;
+  for (const candidate of cases) {
+    const result = parseCliArgv(candidate.argv);
+    assert.equal(result.kind, "usage_failure");
+    assert.equal(result.kind === "usage_failure" && result.output.error.code, candidate.code);
+  }
 });
 
 test("invalid argv has one stable usage classification and never falls back to defaults", () => {
@@ -666,6 +771,144 @@ test("bounded list omissions remain partial success with exit code 10", () => {
     issues: [{ kind: "omission", code: "response_size_limit", message: "omitted" }],
     persistence: { status: "read", effect: "none" },
   });
+});
+
+test("delete projects completed and pending cleanup outcomes without internal fields", () => {
+  const completed = projectCliOperationOutput(commands.delete, {
+    overallStatus: "success",
+    value: {
+      sessionId: "session-1",
+      cleanupToken: uuid,
+      deletedSessionCount: 2,
+      localOnly: true,
+      cleanupStatus: "completed",
+      workspaceKey: "hidden",
+    },
+    persistence: { status: "committed", effect: "none", replayed: true, workerId: "hidden" },
+  });
+  assert.equal(completed.ok && completed.exitCode, CLI_EXIT_CODES.success);
+  assert.deepEqual(completed.ok && completed.output.applicationResponse, {
+    overallStatus: "success",
+    value: {
+      sessionId: "session-1",
+      cleanupToken: uuid,
+      deletedSessionCount: 2,
+      localOnly: true,
+      cleanupStatus: "completed",
+    },
+    persistence: { status: "committed", effect: "none", replayed: true },
+  });
+
+  const pending = projectCliOperationOutput(commands.delete, {
+    overallStatus: "partial_success",
+    value: {
+      sessionId: "session-1",
+      cleanupToken: uuid,
+      deletedSessionCount: 2,
+      localOnly: true,
+      cleanupStatus: "pending",
+    },
+    issues: [
+      {
+        kind: "cleanup",
+        code: "session_files_cleanup_pending",
+        message: "Session Files cleanup is pending.",
+        cleanupToken: uuid,
+        retryable: true,
+        reconciliation: "exact_request_required",
+        rawPath: "hidden",
+      },
+    ],
+    persistence: { status: "committed", effect: "none", replayed: false },
+  });
+  assert.equal(pending.ok && pending.exitCode, CLI_EXIT_CODES.partialSuccess);
+  assert.deepEqual(pending.ok && pending.output.applicationResponse, {
+    overallStatus: "partial_success",
+    value: {
+      sessionId: "session-1",
+      cleanupToken: uuid,
+      deletedSessionCount: 2,
+      localOnly: true,
+      cleanupStatus: "pending",
+    },
+    issues: [
+      {
+        kind: "cleanup",
+        code: "session_files_cleanup_pending",
+        message: "Session Files cleanup is pending.",
+        cleanupToken: uuid,
+        retryable: true,
+        reconciliation: "exact_request_required",
+      },
+    ],
+    persistence: { status: "committed", effect: "none", replayed: false },
+  });
+});
+
+test("delete rejects inconsistent cleanup outcomes and accepts pre-primary read failures", () => {
+  const malformed = [
+    {
+      overallStatus: "success",
+      value: {
+        sessionId: "session-1",
+        cleanupToken: uuid,
+        deletedSessionCount: MAX_SESSION_TREE_SIZE + 1,
+        localOnly: true,
+        cleanupStatus: "completed",
+      },
+      persistence: { status: "committed", effect: "none", replayed: false },
+    },
+    {
+      overallStatus: "success",
+      value: {
+        sessionId: "session-1",
+        cleanupToken: uuid,
+        deletedSessionCount: 1,
+        localOnly: true,
+        cleanupStatus: "pending",
+      },
+      persistence: { status: "committed", effect: "none", replayed: false },
+    },
+    {
+      overallStatus: "partial_success",
+      value: {
+        sessionId: "session-1",
+        cleanupToken: uuid,
+        deletedSessionCount: 1,
+        localOnly: true,
+        cleanupStatus: "pending",
+      },
+      issues: [
+        {
+          kind: "cleanup",
+          code: "session_files_cleanup_pending",
+          message: "pending",
+          cleanupToken: "018f1f4e-7f0a-7000-8000-000000000099",
+          retryable: true,
+          reconciliation: "exact_request_required",
+        },
+      ],
+      persistence: { status: "committed", effect: "none", replayed: false },
+    },
+  ];
+  for (const response of malformed) {
+    const result = projectCliOperationOutput(commands.delete, response);
+    assert.equal(result.ok, false);
+    assert.equal(!result.ok && result.output.error.code, "malformed_application_response");
+  }
+
+  const prePrimaryReadFailure = projectCliOperationOutput(commands.delete, {
+    overallStatus: "failure",
+    error: {
+      kind: "application",
+      code: "internal_error",
+      message: "Application Service could not complete the operation.",
+      retryable: false,
+    },
+    persistence: { status: "failed", effect: "none" },
+  });
+  assert.equal(prePrimaryReadFailure.ok, true);
+  assert.equal(prePrimaryReadFailure.ok && prePrimaryReadFailure.exitCode, CLI_EXIT_CODES.runtimeFailure);
 });
 
 test("directory chunks have a stable base64 representation with explicit byte metadata", () => {

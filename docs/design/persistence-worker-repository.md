@@ -4,7 +4,7 @@
 
 この文書は、Persistence WorkerがCP2へ提供するRepository read契約を定める。SQLite tableと不変条件は`docs/design/multi-agent-persistence.md`、Worker lifecycleとresponse上限は`docs/design/persistence-worker-lifecycle.md`を正本とする。
 
-Main / Application Serviceはcallerの認可を行う。Persistence Workerは認証主体を扱わないが、受け取った`workspaceKey`、`sessionId`、`runId`、child relationをSQL JOINで再検証する。IDだけを指定したreadは提供せず、所属不一致は存在の有無を漏らさない`not_found`へ畳む。
+Main / Application Serviceはcallerの認可を行う。Persistence Workerは認証主体を扱わないが、通常のSession / Run readでは、受け取った`workspaceKey`、`sessionId`、`runId`、child relationをSQL JOINで再検証する。通常readはIDだけでscopeを決めず、所属不一致を存在の有無を漏らさない`not_found`へ畳む。削除済みSessionのexact retryに限り、ADR 009に従うMain内部readがcleanup tokenからpending / completed状態とworkspace bindingを復元する。この内部scopeをpublic responseへ投影しない。
 
 ## Public surface
 

@@ -1,1 +1,2 @@
 export const MAX_SESSION_CONCURRENT_CHILD_RUNS = 1_024;
+export const MAX_SESSION_TREE_SIZE = 4_096;

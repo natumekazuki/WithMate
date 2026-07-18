@@ -25,6 +25,7 @@ Operations:
   archive              Archive a Session
   unarchive            Unarchive a Session
   close                Close an active or archived Session
+  delete               Irreversibly delete local Session data only
 
 Run 'withmate session <operation> --help' for operation options.
 `;
@@ -104,6 +105,20 @@ Required options:
   --session-id <session-id>
   --idempotency-key <lowercase-uuid>
   --expected-lifecycle-status <active|archived>
+
+Optional options:
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
+  delete: `Usage: withmate session delete [options]
+
+Irreversibly deletes local WithMate Session data and Session Files only.
+The Provider thread or Session is not deleted.
+
+Required options:
+  --session-id <session-id>
+  --idempotency-key <lowercase-uuid>
+  --confirm-local-only
 
 Optional options:
   --timeout-ms <1..2147483647>

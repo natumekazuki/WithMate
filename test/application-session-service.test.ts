@@ -14,10 +14,12 @@ import {
   APPLICATION_MAX_READ_CHUNK_BYTES,
   ApplicationSessionService,
 } from "../src/main/application-session-service.js";
+import { MAX_SESSION_TREE_SIZE } from "../src/shared/session-limits.js";
 import type { LocalRepositoryMetadataResolver } from "../src/main/local-repository-metadata.js";
 import { PersistenceClientError, PersistenceWorkerClient } from "../src/main/persistence-worker-client.js";
 import { RepositoryReadClient } from "../src/main/repository-read-client.js";
 import { RepositoryWriteClient } from "../src/main/repository-write-client.js";
+import type { SessionFilesCleanupPort } from "../src/main/session-files-cleanup.js";
 import type {
   RepositoryCommandError,
   SessionCreateCommand,
@@ -27,8 +29,14 @@ import type {
 import { resolveWorkspaceIdentity } from "../src/shared/workspace-path.js";
 
 type Authorization = Readonly<{ principalId: string }>;
-type ReadPort = Pick<RepositoryReadClient, "sessionsPage" | "sessionGet" | "sessionDirectoriesChunk">;
-type WritePort = Pick<RepositoryWriteClient, "createSession" | "transitionSession">;
+type ReadPort = Pick<
+  RepositoryReadClient,
+  "sessionsPage" | "sessionGet" | "sessionDirectoriesChunk" | "sessionDeletionStatusGet" | "sessionDeletionCleanupPage"
+>;
+type WritePort = Pick<
+  RepositoryWriteClient,
+  "createSession" | "transitionSession" | "deleteSessionSubtree" | "completeSessionDeletionCleanup"
+>;
 
 const workspace = resolveWorkspaceIdentity(path.resolve("workspace-1"))!;
 const otherWorkspace = resolveWorkspaceIdentity(path.resolve("workspace-2"))!;
@@ -39,6 +47,11 @@ const workerUrl = new URL("../src/persistence-worker/worker-entry.ts", import.me
 const workerOptions = { execArgv: ["--import", "tsx"] };
 const workerTest = Number.parseInt(process.versions.node, 10) >= 24 ? test : test.skip;
 const localRepositoryKey = `local-repository-v1-sha256-${"a".repeat(64)}`;
+const successfulSessionFiles: SessionFilesCleanupPort = { async deleteSessionFiles() {} };
+const deletionSessionId = issuedSessionId(1);
+const deletionChildSessionId1 = issuedSessionId(2);
+const deletionChildSessionId2 = issuedSessionId(3);
+const unrelatedDeletionSessionId = issuedSessionId(4);
 
 workerTest("Session operations run end-to-end through the Application Service and production Repository", async () => {
   await withTempDirectory(async (directory) => {
@@ -53,6 +66,7 @@ workerTest("Session operations run end-to-end through the Application Service an
       const service = new ApplicationSessionService({
         reads: new RepositoryReadClient(client),
         writes: new RepositoryWriteClient(client),
+        sessionFiles: successfulSessionFiles,
         access: allowingAccess(),
         snapshotAuthorization: structuredClone,
       });
@@ -77,6 +91,7 @@ workerTest("Session operations run end-to-end through the Application Service an
       const otherService = new ApplicationSessionService({
         reads: new RepositoryReadClient(client),
         writes: new RepositoryWriteClient(client),
+        sessionFiles: successfulSessionFiles,
         access: allowingAccess(),
         snapshotAuthorization: structuredClone,
       });
@@ -121,6 +136,22 @@ workerTest("Session operations run end-to-end through the Application Service an
         expectedLifecycleStatus: "archived",
       });
       assert.equal(foreignClose.overallStatus, "success");
+      const foreignDelete = await service.delete({
+        context,
+        sessionId: otherSessionId,
+        idempotencyKey: uuid(33),
+      });
+      assert.equal(foreignDelete.overallStatus, "success");
+      assert.equal(foreignDelete.overallStatus === "success" && foreignDelete.value.cleanupStatus, "completed");
+      const foreignDeleteReplay = await service.delete({
+        context,
+        sessionId: otherSessionId,
+        idempotencyKey: uuid(33),
+      });
+      assert.equal(foreignDeleteReplay.overallStatus, "success");
+      assert.deepEqual(foreignDeleteReplay.persistence, { status: "committed", effect: "none", replayed: true });
+      const deletedRead = await service.read({ context, sessionId: otherSessionId });
+      assert.equal(deletedRead.overallStatus === "failure" && deletedRead.error.code, "not_found");
       const detail = await service.read({ context, sessionId });
       assert.equal(detail.overallStatus, "success");
       assert.equal(detail.overallStatus === "success" && detail.value.execution.state, "not_started");
@@ -148,7 +179,7 @@ workerTest("Session operations run end-to-end through the Application Service an
   });
 });
 
-workerTest("Application list accepts a Repository cursor containing a maximum-length Session ID", async () => {
+workerTest("Application list accepts a Repository cursor containing issued Session IDs", async () => {
   await withTempDirectory(async (directory) => {
     const client = new PersistenceWorkerClient({
       workerUrl,
@@ -159,14 +190,10 @@ workerTest("Application list accepts a Repository cursor containing a maximum-le
     await client.start();
     try {
       const writes = new RepositoryWriteClient(client);
-      for (const [id, idempotencyKey] of [
-        ["z".repeat(1_024), uuid(60)],
-        ["a".repeat(1_024), uuid(61)],
-      ] as const) {
+      for (const idempotencyKey of [uuid(60), uuid(61)] as const) {
         const result = await writes.createSession({
           idempotencyKey,
           session: {
-            id,
             title: "Cursor boundary Session",
             providerId: "codex",
             workspaceKey: workspace.workspaceKey,
@@ -183,6 +210,7 @@ workerTest("Application list accepts a Repository cursor containing a maximum-le
       const service = new ApplicationSessionService({
         reads: new RepositoryReadClient(client),
         writes,
+        sessionFiles: successfulSessionFiles,
         access: allowingAccess(),
         snapshotAuthorization: structuredClone,
       });
@@ -191,7 +219,7 @@ workerTest("Application list accepts a Repository cursor containing a maximum-le
       assert.equal(first.overallStatus, "success");
       if (first.overallStatus !== "success") assert.fail("first Session page failed");
       assert.ok(first.value.nextCursor !== undefined);
-      assert.ok(first.value.nextCursor.length > 1_024);
+      assert.ok(first.value.nextCursor.length > 0);
       assert.ok(first.value.nextCursor.length <= 2_048);
 
       const second = await service.list({ context, limit: 1, cursor: first.value.nextCursor });
@@ -218,6 +246,7 @@ workerTest("Application reads chunked Session directory configuration through th
       const service = new ApplicationSessionService({
         reads: new RepositoryReadClient(client),
         writes: new RepositoryWriteClient(client),
+        sessionFiles: successfulSessionFiles,
         access: allowingAccess(),
         snapshotAuthorization: structuredClone,
       });
@@ -271,7 +300,7 @@ workerTest("Application reads chunked Session directory configuration through th
   });
 });
 
-test("create validates workspace and authorization before issuing a stable Session ID", async () => {
+test("create validates workspace and authorization before accepting a Repository-issued Session ID", async () => {
   const events: string[] = [];
   const commands: SessionCreateCommand[] = [];
   const service = createService({
@@ -303,12 +332,12 @@ test("create validates workspace and authorization before issuing a stable Sessi
   ]);
   assert.equal(first.overallStatus, "success");
   assert.equal(replay.overallStatus, "success");
-  assert.equal(commands[0]?.session.id, commands[1]?.session.id);
-  assert.match(commands[0]?.session.id ?? "", /^session_[0-9a-f]{64}$/);
+  if (first.overallStatus !== "success" || replay.overallStatus !== "success") assert.fail("create failed");
+  assert.equal(first.value.sessionId, replay.value.sessionId);
+  assert.match(first.value.sessionId, /^session_[0-9a-f]{96}$/);
   assert.deepEqual(commands[0], {
     idempotencyKey: request.idempotencyKey,
     session: {
-      id: commands[0]?.session.id,
       title: request.title,
       providerId: "codex",
       workspaceKey: workspace.workspaceKey,
@@ -677,6 +706,7 @@ test("every operation returns a request envelope for malformed transport input b
     () => service.archive({ context: null } as never),
     () => service.unarchive(null as never),
     () => service.close(null as never),
+    () => service.delete(null as never),
     () =>
       service.close({
         context,
@@ -981,6 +1011,7 @@ test("request and option traps stay inside a request failure envelope", async ()
     () => service.archive(throwingRequest as never),
     () => service.unarchive(throwingRequest as never),
     () => service.close(throwingRequest as never),
+    () => service.delete(throwingRequest as never),
     () => service.list({ context }, throwingOptions as never),
     () => service.create({ ...createRequest(), allowedAdditionalDirectories: throwingDirectories }),
   ];
@@ -1393,6 +1424,7 @@ test("operation deadline starts before request authorization snapshot", async ()
   const service = new ApplicationSessionService<Authorization>({
     reads: createServiceReads(),
     writes: createServiceWrites(),
+    sessionFiles: successfulSessionFiles,
     access: allowingAccess(),
     snapshotAuthorization(value: unknown) {
       snapshots += 1;
@@ -1431,6 +1463,7 @@ test("operation deadline is rechecked after each access validation snapshot", as
   const service = new ApplicationSessionService<Authorization>({
     reads: createServiceReads(),
     writes: createServiceWrites(),
+    sessionFiles: successfulSessionFiles,
     access: {
       async validateWorkspace() {
         workspaceCalls += 1;
@@ -1518,6 +1551,12 @@ test("authorization snapshot policy supports non-structured-clone authorization 
       async sessionDirectoriesChunk() {
         throw new Error("unreachable");
       },
+      async sessionDeletionStatusGet() {
+        throw new Error("unreachable");
+      },
+      async sessionDeletionCleanupPage() {
+        throw new Error("unreachable");
+      },
     },
     writes: {
       async createSession() {
@@ -1526,7 +1565,14 @@ test("authorization snapshot policy supports non-structured-clone authorization 
       async transitionSession() {
         throw new Error("unreachable");
       },
+      async deleteSessionSubtree() {
+        throw new Error("unreachable");
+      },
+      async completeSessionDeletionCleanup() {
+        throw new Error("unreachable");
+      },
     },
+    sessionFiles: successfulSessionFiles,
     access: {
       async validateWorkspace(input) {
         received.push(input.context.authorization);
@@ -2582,11 +2628,951 @@ test("unexpected write failures preserve unknown commit effect", async () => {
   });
 });
 
+test("Session delete authorization rejection prevents every Repository and filesystem side effect", async () => {
+  let portCalls = 0;
+  const called = (): never => {
+    portCalls += 1;
+    throw new Error("denied delete must not call ports");
+  };
+  const service = createService({
+    access: {
+      async validateWorkspace(): Promise<never> {
+        throw new Error("delete must not validate a Workspace");
+      },
+      async authorize() {
+        return {
+          allowed: false,
+          error: { code: "forbidden", message: "Operation is not permitted.", retryable: false },
+        };
+      },
+    },
+    reads: {
+      async sessionDeletionStatusGet() {
+        return called();
+      },
+      async sessionGet() {
+        return called();
+      },
+      async sessionDeletionCleanupPage() {
+        return called();
+      },
+    },
+    writes: {
+      async deleteSessionSubtree() {
+        return called();
+      },
+      async completeSessionDeletionCleanup() {
+        return called();
+      },
+    },
+    sessionFiles: {
+      async deleteSessionFiles() {
+        called();
+      },
+    },
+  });
+
+  const response = await service.delete({ context, sessionId: "session-1", idempotencyKey: uuid(79) });
+
+  assert.equal(response.overallStatus, "failure");
+  assert.equal(response.overallStatus === "failure" && response.error.code, "forbidden");
+  assert.deepEqual(response.persistence, { status: "not_attempted", effect: "none" });
+  assert.equal(portCalls, 0);
+});
+
+test("Session delete authorizes its target, commits the subtree, cleans bounded pages sequentially, and completes", async () => {
+  const events: string[] = [];
+  let statusCalls = 0;
+  const cleanupToken = uuid(80);
+  const service = createService({
+    access: {
+      async validateWorkspace(): Promise<never> {
+        throw new Error("delete must not validate a Workspace");
+      },
+      async authorize(input) {
+        events.push(`authorize:${input.operation}:${input.target.kind}`);
+        return { allowed: true };
+      },
+    },
+    reads: {
+      async sessionDeletionStatusGet({ cleanupToken: receivedToken }) {
+        assert.equal(receivedToken, cleanupToken);
+        statusCalls += 1;
+        if (statusCalls === 1) throw persistenceError("not_found", "Deletion was not found.", false, "none");
+        return {
+          cleanupToken,
+          workspaceKey: workspace.workspaceKey,
+          deletedSessionCount: 3,
+          localOnly: true,
+          status: "pending",
+        };
+      },
+      async sessionDeletionCleanupPage(input) {
+        assert.equal(input.limit, 200);
+        events.push(`page:${input.cursor ?? "first"}`);
+        return input.cursor === undefined
+          ? {
+              cleanupToken,
+              deletedSessionCount: 3,
+              localOnly: true,
+              items: [
+                { ordinal: 1, sessionId: deletionSessionId },
+                { ordinal: 2, sessionId: deletionChildSessionId1 },
+              ],
+              nextCursor: "cursor-2",
+            }
+          : {
+              cleanupToken,
+              deletedSessionCount: 3,
+              localOnly: true,
+              items: [{ ordinal: 3, sessionId: deletionChildSessionId2 }],
+            };
+      },
+    },
+    writes: {
+      async deleteSessionSubtree(command) {
+        events.push(`delete:${command.sessionId}`);
+        assert.deepEqual(command, {
+          deletionId: cleanupToken,
+          sessionId: deletionSessionId,
+          workspaceKey: workspace.workspaceKey,
+        });
+        return {
+          ok: true,
+          value: { cleanupToken, deletedSessionCount: 3, localOnly: true },
+          replayed: false,
+        };
+      },
+      async completeSessionDeletionCleanup(command) {
+        events.push("complete");
+        assert.deepEqual(command, { cleanupToken, workspaceKey: workspace.workspaceKey });
+        return { ok: true, value: { cleanupToken, cleanupCompleted: true }, replayed: false };
+      },
+    },
+    sessionFiles: {
+      async deleteSessionFiles(sessionId) {
+        events.push(`files:${sessionId}`);
+      },
+    },
+  });
+
+  const response = await service.delete({ context, sessionId: deletionSessionId, idempotencyKey: cleanupToken });
+
+  assert.deepEqual(response, {
+    overallStatus: "success",
+    value: {
+      sessionId: deletionSessionId,
+      cleanupToken,
+      deletedSessionCount: 3,
+      localOnly: true,
+      cleanupStatus: "completed",
+    },
+    persistence: { status: "committed", effect: "none", replayed: false },
+  });
+  assert.deepEqual(events, [
+    "authorize:delete:session",
+    `delete:${deletionSessionId}`,
+    "page:first",
+    "page:cursor-2",
+    `files:${deletionSessionId}`,
+    `files:${deletionChildSessionId1}`,
+    `files:${deletionChildSessionId2}`,
+    "complete",
+  ]);
+});
+
+test("completed Session deletion retries verify the original fingerprint and skip manifest cleanup", async () => {
+  let pageCalls = 0;
+  let fileCalls = 0;
+  let completionCalls = 0;
+  let authorizationCalls = 0;
+  const cleanupToken = uuid(81);
+  const service = createService({
+    access: {
+      async validateWorkspace(): Promise<never> {
+        throw new Error("delete must not validate a Workspace");
+      },
+      async authorize() {
+        authorizationCalls += 1;
+        return { allowed: true };
+      },
+    },
+    reads: {
+      async sessionDeletionStatusGet() {
+        return {
+          cleanupToken,
+          workspaceKey: otherWorkspace.workspaceKey,
+          deletedSessionCount: 2,
+          localOnly: true,
+          status: "completed",
+        };
+      },
+      async sessionDeletionCleanupPage(): Promise<never> {
+        pageCalls += 1;
+        throw new Error("completed deletion must not page");
+      },
+    },
+    writes: {
+      async deleteSessionSubtree(command) {
+        assert.deepEqual(command, {
+          deletionId: cleanupToken,
+          sessionId: "deleted-session",
+          workspaceKey: otherWorkspace.workspaceKey,
+        });
+        return {
+          ok: true,
+          value: { cleanupToken, deletedSessionCount: 2, localOnly: true },
+          replayed: true,
+        };
+      },
+      async completeSessionDeletionCleanup(): Promise<never> {
+        completionCalls += 1;
+        throw new Error("completed deletion must not complete again");
+      },
+    },
+    sessionFiles: {
+      async deleteSessionFiles() {
+        fileCalls += 1;
+      },
+    },
+  });
+
+  const response = await service.delete({ context, sessionId: "deleted-session", idempotencyKey: cleanupToken });
+  const secondResponse = await service.delete({ context, sessionId: "deleted-session", idempotencyKey: cleanupToken });
+
+  assert.equal(response.overallStatus, "success");
+  assert.equal(secondResponse.overallStatus, "success");
+  assert.deepEqual(response.persistence, { status: "committed", effect: "none", replayed: true });
+  assert.equal(authorizationCalls, 2);
+  assert.equal(pageCalls, 0);
+  assert.equal(fileCalls, 0);
+  assert.equal(completionCalls, 0);
+});
+
+test("reusing a completed deletion key for another Session is still verified by the primary fingerprint", async () => {
+  const cleanupToken = uuid(88);
+  let cleanupCalls = 0;
+  const service = createService({
+    reads: {
+      async sessionDeletionStatusGet() {
+        return {
+          cleanupToken,
+          workspaceKey: workspace.workspaceKey,
+          deletedSessionCount: 1,
+          localOnly: true,
+          status: "completed",
+        };
+      },
+    },
+    writes: {
+      async deleteSessionSubtree(command) {
+        assert.equal(command.sessionId, "different-session");
+        return {
+          ok: false,
+          error: {
+            code: "idempotency_conflict",
+            message: "Deletion key already has another target.",
+            retryable: false,
+          },
+          replayed: false,
+        };
+      },
+    },
+    sessionFiles: {
+      async deleteSessionFiles() {
+        cleanupCalls += 1;
+      },
+    },
+  });
+
+  const response = await service.delete({ context, sessionId: "different-session", idempotencyKey: cleanupToken });
+
+  assert.equal(response.overallStatus, "failure");
+  assert.equal(response.overallStatus === "failure" && response.error.code, "idempotency_conflict");
+  assert.deepEqual(response.persistence, { status: "rejected", effect: "none" });
+  assert.equal(cleanupCalls, 0);
+});
+
+test("busy Session deletion is rejected before any manifest page or filesystem cleanup", async () => {
+  let cleanupCalls = 0;
+  let completionCalls = 0;
+  const service = createService({
+    writes: {
+      async deleteSessionSubtree() {
+        return {
+          ok: false,
+          error: { code: "session_busy", message: "Session subtree has a non-terminal Run.", retryable: true },
+          replayed: false,
+        };
+      },
+      async completeSessionDeletionCleanup(): Promise<never> {
+        completionCalls += 1;
+        throw new Error("busy deletion must not complete cleanup");
+      },
+    },
+    reads: {
+      async sessionDeletionCleanupPage(): Promise<never> {
+        cleanupCalls += 1;
+        throw new Error("busy deletion must not page cleanup");
+      },
+    },
+    sessionFiles: {
+      async deleteSessionFiles() {
+        cleanupCalls += 1;
+      },
+    },
+  });
+
+  const response = await service.delete({ context, sessionId: "session-1", idempotencyKey: uuid(82) });
+
+  assert.equal(response.overallStatus, "failure");
+  assert.equal(response.overallStatus === "failure" && response.error.kind, "domain");
+  assert.equal(response.overallStatus === "failure" && response.error.code, "session_busy");
+  assert.deepEqual(response.persistence, { status: "rejected", effect: "none" });
+  assert.equal(cleanupCalls, 0);
+  assert.equal(completionCalls, 0);
+});
+
+test("Session deletion rejects insufficient disk before cleanup", async () => {
+  let cleanupCalls = 0;
+  const service = createService({
+    writes: {
+      async deleteSessionSubtree() {
+        return {
+          ok: false,
+          error: {
+            code: "insufficient_disk_space",
+            message: "Session deletion would violate the SQLite disk reserve.",
+            retryable: true,
+          },
+          replayed: false,
+        };
+      },
+    },
+    sessionFiles: {
+      async deleteSessionFiles() {
+        cleanupCalls += 1;
+      },
+    },
+  });
+
+  const response = await service.delete({ context, sessionId: "session-1", idempotencyKey: uuid(98) });
+
+  assert.deepEqual(response.overallStatus === "failure" && response.error, {
+    kind: "domain",
+    code: "insufficient_disk_space",
+    message: "Session deletion would violate the SQLite disk reserve.",
+    retryable: true,
+  });
+  assert.deepEqual(response.persistence, { status: "rejected", effect: "none" });
+  assert.equal(cleanupCalls, 0);
+});
+
+test("Session deletion rejects Repository counts above the aggregate contract", async () => {
+  let cleanupCalls = 0;
+  const cleanupToken = uuid(99);
+  const service = createService({
+    writes: {
+      async deleteSessionSubtree() {
+        return {
+          ok: true,
+          value: { cleanupToken, deletedSessionCount: MAX_SESSION_TREE_SIZE + 1, localOnly: true },
+          replayed: false,
+        } as never;
+      },
+    },
+    sessionFiles: {
+      async deleteSessionFiles() {
+        cleanupCalls += 1;
+      },
+    },
+  });
+
+  const response = await service.delete({ context, sessionId: "session-1", idempotencyKey: cleanupToken });
+
+  assert.deepEqual(response.overallStatus === "failure" && response.error, {
+    kind: "application",
+    code: "internal_error",
+    message: "Application Service could not complete the operation.",
+    retryable: false,
+  });
+  assert.deepEqual(response.persistence, {
+    status: "failed",
+    effect: "unknown",
+    reconciliation: "exact_request_required",
+  });
+  assert.equal(cleanupCalls, 0);
+});
+
+test("post-commit Session Files failure returns a committed pending result with exact retry guidance", async () => {
+  const cleanupToken = uuid(83);
+  let completionCalls = 0;
+  const service = createService({
+    reads: {
+      async sessionDeletionStatusGet() {
+        return {
+          cleanupToken,
+          workspaceKey: workspace.workspaceKey,
+          deletedSessionCount: 1,
+          localOnly: true,
+          status: "pending",
+        };
+      },
+    },
+    writes: {
+      async deleteSessionSubtree() {
+        return {
+          ok: true,
+          value: { cleanupToken, deletedSessionCount: 1, localOnly: true },
+          replayed: true,
+        };
+      },
+      async completeSessionDeletionCleanup(): Promise<never> {
+        completionCalls += 1;
+        throw new Error("failed files cleanup must preserve the manifest");
+      },
+    },
+    sessionFiles: {
+      async deleteSessionFiles() {
+        throw new Error("raw filesystem path must not escape");
+      },
+    },
+  });
+
+  const response = await service.delete({ context, sessionId: deletionSessionId, idempotencyKey: cleanupToken });
+
+  assert.deepEqual(response, {
+    overallStatus: "partial_success",
+    value: {
+      sessionId: deletionSessionId,
+      cleanupToken,
+      deletedSessionCount: 1,
+      localOnly: true,
+      cleanupStatus: "pending",
+    },
+    issues: [
+      {
+        kind: "cleanup",
+        code: "session_files_cleanup_pending",
+        message: "Session data was deleted, but Session Files cleanup is pending.",
+        cleanupToken,
+        retryable: true,
+        reconciliation: "exact_request_required",
+      },
+    ],
+    persistence: { status: "committed", effect: "none", replayed: true },
+  });
+  assert.equal(completionCalls, 0);
+  assert.doesNotMatch(JSON.stringify(response), /raw filesystem|[A-Z]:\\/u);
+});
+
+test("exact retry reauthorizes and resumes Session Files cleanup after a post-commit failure", async () => {
+  const cleanupToken = uuid(93);
+  let authorizationCalls = 0;
+  let primaryCalls = 0;
+  let fileCalls = 0;
+  let completionCalls = 0;
+  const service = createService({
+    access: {
+      async validateWorkspace(): Promise<never> {
+        throw new Error("delete must not validate a Workspace");
+      },
+      async authorize() {
+        authorizationCalls += 1;
+        return { allowed: true };
+      },
+    },
+    reads: {
+      async sessionDeletionStatusGet() {
+        return {
+          cleanupToken,
+          workspaceKey: workspace.workspaceKey,
+          deletedSessionCount: 1,
+          localOnly: true,
+          status: "pending",
+        };
+      },
+    },
+    writes: {
+      async deleteSessionSubtree() {
+        primaryCalls += 1;
+        return {
+          ok: true,
+          value: { cleanupToken, deletedSessionCount: 1, localOnly: true },
+          replayed: primaryCalls > 1,
+        };
+      },
+      async completeSessionDeletionCleanup() {
+        completionCalls += 1;
+        return { ok: true, value: { cleanupToken, cleanupCompleted: true }, replayed: false };
+      },
+    },
+    sessionFiles: {
+      async deleteSessionFiles() {
+        fileCalls += 1;
+        if (fileCalls === 1) throw new Error("first cleanup attempt failed");
+      },
+    },
+  });
+
+  const request = { context, sessionId: deletionSessionId, idempotencyKey: cleanupToken } as const;
+  const first = await service.delete(request);
+  const retry = await service.delete(request);
+
+  assert.equal(first.overallStatus, "partial_success");
+  assert.equal(retry.overallStatus, "success");
+  assert.deepEqual(retry.persistence, { status: "committed", effect: "none", replayed: true });
+  assert.equal(authorizationCalls, 2);
+  assert.equal(primaryCalls, 2);
+  assert.equal(fileCalls, 2);
+  assert.equal(completionCalls, 1);
+});
+
+test("a concurrent exact retry that completes before paging converges to completed success", async () => {
+  const cleanupToken = uuid(84);
+  let statusCalls = 0;
+  const service = createService({
+    reads: {
+      async sessionDeletionStatusGet() {
+        statusCalls += 1;
+        return {
+          cleanupToken,
+          workspaceKey: workspace.workspaceKey,
+          deletedSessionCount: 1,
+          localOnly: true,
+          status: statusCalls < 3 ? "pending" : "completed",
+        };
+      },
+      async sessionDeletionCleanupPage() {
+        throw persistenceError("not_found", "Manifest was completed by another retry.", false, "none");
+      },
+    },
+    writes: {
+      async deleteSessionSubtree() {
+        return {
+          ok: true,
+          value: { cleanupToken, deletedSessionCount: 1, localOnly: true },
+          replayed: true,
+        };
+      },
+    },
+  });
+
+  const response = await service.delete({ context, sessionId: "session-1", idempotencyKey: cleanupToken });
+
+  assert.equal(response.overallStatus, "success");
+  assert.equal(response.overallStatus === "success" && response.value.cleanupStatus, "completed");
+  assert.equal(statusCalls, 3);
+});
+
+test("a primary commit racing between missing status and missing Session rejoins exact retry by status", async () => {
+  const cleanupToken = uuid(91);
+  let statusCalls = 0;
+  let primaryCalls = 0;
+  const service = createService({
+    reads: {
+      async sessionDeletionStatusGet() {
+        statusCalls += 1;
+        if (statusCalls === 1) throw persistenceError("not_found", "Deletion was not found.", false, "none");
+        return {
+          cleanupToken,
+          workspaceKey: workspace.workspaceKey,
+          deletedSessionCount: 1,
+          localOnly: true,
+          status: statusCalls === 2 ? "pending" : "completed",
+        };
+      },
+      async sessionGet() {
+        throw persistenceError("not_found", "Session was concurrently deleted.", false, "none");
+      },
+    },
+    writes: {
+      async deleteSessionSubtree(command) {
+        primaryCalls += 1;
+        assert.equal(command.workspaceKey, workspace.workspaceKey);
+        return {
+          ok: true,
+          value: { cleanupToken, deletedSessionCount: 1, localOnly: true },
+          replayed: true,
+        };
+      },
+    },
+  });
+
+  const response = await service.delete({ context, sessionId: "session-1", idempotencyKey: cleanupToken });
+
+  assert.equal(response.overallStatus, "success");
+  assert.deepEqual(response.persistence, { status: "committed", effect: "none", replayed: true });
+  assert.equal(statusCalls, 3);
+  assert.equal(primaryCalls, 1);
+});
+
+test("malformed deletion manifest pages preserve committed deletion as pending and never complete cleanup", async () => {
+  const cleanupToken = uuid(85);
+  let completionCalls = 0;
+  const service = createService({
+    reads: {
+      async sessionDeletionStatusGet() {
+        return {
+          cleanupToken,
+          workspaceKey: workspace.workspaceKey,
+          deletedSessionCount: 2,
+          localOnly: true,
+          status: "pending",
+        };
+      },
+      async sessionDeletionCleanupPage() {
+        return {
+          cleanupToken,
+          deletedSessionCount: 2,
+          localOnly: true,
+          items: [
+            { ordinal: 1, sessionId: deletionSessionId },
+            { ordinal: 1, sessionId: deletionChildSessionId1 },
+          ],
+        };
+      },
+    },
+    writes: {
+      async deleteSessionSubtree() {
+        return {
+          ok: true,
+          value: { cleanupToken, deletedSessionCount: 2, localOnly: true },
+          replayed: false,
+        };
+      },
+      async completeSessionDeletionCleanup(): Promise<never> {
+        completionCalls += 1;
+        throw new Error("malformed manifest must not complete");
+      },
+    },
+  });
+
+  const response = await service.delete({ context, sessionId: deletionSessionId, idempotencyKey: cleanupToken });
+
+  assert.equal(response.overallStatus, "partial_success");
+  assert.equal(response.overallStatus === "partial_success" && response.value.cleanupStatus, "pending");
+  assert.equal(completionCalls, 0);
+});
+
+test("a malformed Session ID anywhere in the deletion manifest prevents every filesystem cleanup", async () => {
+  const cleanupToken = uuid(96);
+  let fileCalls = 0;
+  const service = createService({
+    reads: {
+      async sessionDeletionStatusGet() {
+        return {
+          cleanupToken,
+          workspaceKey: workspace.workspaceKey,
+          deletedSessionCount: 2,
+          localOnly: true,
+          status: "pending",
+        };
+      },
+      async sessionDeletionCleanupPage() {
+        return {
+          cleanupToken,
+          deletedSessionCount: 2,
+          localOnly: true,
+          items: [
+            { ordinal: 1, sessionId: deletionSessionId },
+            { ordinal: 2, sessionId: "../invalid" },
+          ],
+        };
+      },
+    },
+    sessionFiles: {
+      async deleteSessionFiles() {
+        fileCalls += 1;
+      },
+    },
+  });
+
+  const response = await service.delete({ context, sessionId: deletionSessionId, idempotencyKey: cleanupToken });
+
+  assert.equal(response.overallStatus, "partial_success");
+  assert.equal(fileCalls, 0);
+});
+
+test("deletion manifest omissions and cursor replay remain pending without cleanup completion", async () => {
+  for (const failureMode of ["omission", "cursor_replay"] as const) {
+    const cleanupToken = failureMode === "omission" ? uuid(89) : uuid(90);
+    let pageCalls = 0;
+    let completionCalls = 0;
+    const service = createService({
+      reads: {
+        async sessionDeletionStatusGet() {
+          return {
+            cleanupToken,
+            workspaceKey: workspace.workspaceKey,
+            deletedSessionCount: failureMode === "omission" ? 1 : 2,
+            localOnly: true,
+            status: "pending",
+          };
+        },
+        async sessionDeletionCleanupPage() {
+          pageCalls += 1;
+          if (failureMode === "omission") {
+            return {
+              cleanupToken,
+              deletedSessionCount: 1,
+              localOnly: true,
+              items: [{ omitted: true, reason: "response_size_limit", ordinal: 1 }],
+            } as never;
+          }
+          return pageCalls === 1
+            ? {
+                cleanupToken,
+                deletedSessionCount: 2,
+                localOnly: true,
+                items: [{ ordinal: 1, sessionId: deletionSessionId }],
+                nextCursor: "cursor-repeat",
+              }
+            : {
+                cleanupToken,
+                deletedSessionCount: 2,
+                localOnly: true,
+                items: [{ ordinal: 2, sessionId: deletionChildSessionId1 }],
+                nextCursor: "cursor-repeat",
+              };
+        },
+      },
+      writes: {
+        async deleteSessionSubtree() {
+          return {
+            ok: true,
+            value: {
+              cleanupToken,
+              deletedSessionCount: failureMode === "omission" ? 1 : 2,
+              localOnly: true,
+            },
+            replayed: false,
+          };
+        },
+        async completeSessionDeletionCleanup(): Promise<never> {
+          completionCalls += 1;
+          throw new Error("malformed manifest must not complete");
+        },
+      },
+    });
+
+    const response = await service.delete({ context, sessionId: deletionSessionId, idempotencyKey: cleanupToken });
+
+    assert.equal(response.overallStatus, "partial_success", failureMode);
+    assert.equal(completionCalls, 0, failureMode);
+  }
+});
+
+test("deletion manifest count mismatch and requested root omission never complete cleanup", async () => {
+  for (const failureMode of ["count_mismatch", "root_omission"] as const) {
+    const cleanupToken = failureMode === "count_mismatch" ? uuid(94) : uuid(95);
+    const deletedSessionCount = failureMode === "count_mismatch" ? 2 : 1;
+    let completionCalls = 0;
+    let fileCalls = 0;
+    const service = createService({
+      reads: {
+        async sessionDeletionStatusGet() {
+          return {
+            cleanupToken,
+            workspaceKey: workspace.workspaceKey,
+            deletedSessionCount,
+            localOnly: true,
+            status: "pending",
+          };
+        },
+        async sessionDeletionCleanupPage() {
+          return {
+            cleanupToken,
+            deletedSessionCount,
+            localOnly: true,
+            items: [
+              {
+                ordinal: 1,
+                sessionId: failureMode === "count_mismatch" ? deletionSessionId : unrelatedDeletionSessionId,
+              },
+            ],
+          };
+        },
+      },
+      writes: {
+        async deleteSessionSubtree() {
+          return {
+            ok: true,
+            value: { cleanupToken, deletedSessionCount, localOnly: true },
+            replayed: false,
+          };
+        },
+        async completeSessionDeletionCleanup(): Promise<never> {
+          completionCalls += 1;
+          throw new Error("malformed manifest must not complete");
+        },
+      },
+      sessionFiles: {
+        async deleteSessionFiles() {
+          fileCalls += 1;
+        },
+      },
+    });
+
+    const response = await service.delete({ context, sessionId: deletionSessionId, idempotencyKey: cleanupToken });
+
+    assert.equal(response.overallStatus, "partial_success", failureMode);
+    assert.equal(completionCalls, 0, failureMode);
+    assert.equal(fileCalls, 0, failureMode);
+  }
+});
+
+test("primary delete timeout remains unknown failure while post-primary cleanup timeout is committed partial success", async () => {
+  const primaryToken = uuid(86);
+  const primaryTimeout = createService({
+    reads: {
+      async sessionDeletionStatusGet() {
+        return {
+          cleanupToken: primaryToken,
+          workspaceKey: workspace.workspaceKey,
+          deletedSessionCount: 1,
+          localOnly: true,
+          status: "pending",
+        };
+      },
+    },
+    writes: {
+      async deleteSessionSubtree() {
+        return new Promise(() => undefined);
+      },
+    },
+  });
+
+  const primaryResponse = await primaryTimeout.delete(
+    { context, sessionId: "session-1", idempotencyKey: primaryToken },
+    { timeoutMs: 5 },
+  );
+  assert.equal(primaryResponse.overallStatus, "failure");
+  assert.deepEqual(primaryResponse.persistence, {
+    status: "failed",
+    effect: "unknown",
+    reconciliation: "exact_request_required",
+  });
+
+  const cleanupToken = uuid(87);
+  const cleanupTimeout = createService({
+    reads: {
+      async sessionDeletionStatusGet() {
+        return {
+          cleanupToken,
+          workspaceKey: workspace.workspaceKey,
+          deletedSessionCount: 1,
+          localOnly: true,
+          status: "pending",
+        };
+      },
+    },
+    writes: {
+      async deleteSessionSubtree() {
+        return {
+          ok: true,
+          value: { cleanupToken, deletedSessionCount: 1, localOnly: true },
+          replayed: false,
+        };
+      },
+    },
+    sessionFiles: {
+      async deleteSessionFiles() {
+        return new Promise(() => undefined);
+      },
+    },
+  });
+
+  const cleanupResponse = await cleanupTimeout.delete(
+    { context, sessionId: deletionSessionId, idempotencyKey: cleanupToken },
+    { timeoutMs: 5 },
+  );
+  assert.equal(cleanupResponse.overallStatus, "partial_success");
+  assert.deepEqual(cleanupResponse.persistence, { status: "committed", effect: "none", replayed: false });
+});
+
+test("cancellation during deletion read projection is reported as a started Repository cancellation", async () => {
+  const controller = new AbortController();
+  const cleanupToken = uuid(91);
+  const malformedStatus = Object.defineProperty({}, "cleanupToken", {
+    enumerable: true,
+    get() {
+      controller.abort();
+      throw new Error("projection failed after cancellation");
+    },
+  });
+  const service = createService({
+    reads: {
+      async sessionDeletionStatusGet() {
+        return malformedStatus as never;
+      },
+    },
+  });
+
+  const response = await service.delete(
+    { context, sessionId: deletionSessionId, idempotencyKey: cleanupToken },
+    { signal: controller.signal },
+  );
+
+  assert.equal(response.overallStatus, "failure");
+  assert.deepEqual(response.overallStatus === "failure" && response.error, {
+    kind: "persistence",
+    code: "persistence_canceled",
+    message: "Application operation was canceled.",
+    retryable: false,
+    effect: "none",
+  });
+  assert.deepEqual(response.persistence, { status: "failed", effect: "none" });
+});
+
+test("cancellation during cleanup completion projection preserves committed deletion as pending", async () => {
+  const controller = new AbortController();
+  const cleanupToken = uuid(92);
+  let completionCalls = 0;
+  const completionValue = Object.defineProperty({ cleanupCompleted: true }, "cleanupToken", {
+    enumerable: true,
+    get() {
+      controller.abort();
+      return cleanupToken;
+    },
+  });
+  const service = createService({
+    reads: {
+      async sessionDeletionStatusGet() {
+        return {
+          cleanupToken,
+          workspaceKey: workspace.workspaceKey,
+          deletedSessionCount: 1,
+          localOnly: true,
+          status: "pending",
+        };
+      },
+    },
+    writes: {
+      async completeSessionDeletionCleanup() {
+        completionCalls += 1;
+        return { ok: true, value: completionValue as never, replayed: false };
+      },
+    },
+  });
+
+  const response = await service.delete(
+    { context, sessionId: deletionSessionId, idempotencyKey: cleanupToken },
+    { signal: controller.signal },
+  );
+
+  assert.equal(completionCalls, 1);
+  assert.equal(response.overallStatus, "partial_success");
+  assert.equal(response.overallStatus === "partial_success" && response.value.cleanupStatus, "pending");
+  assert.deepEqual(response.persistence, { status: "committed", effect: "none", replayed: false });
+});
+
 function createService(
   overrides: {
     access?: ApplicationAccessValidator<Authorization>;
     reads?: Partial<ReadPort>;
     writes?: Partial<WritePort>;
+    sessionFiles?: SessionFilesCleanupPort;
     resolveLocalRepositoryMetadata?: LocalRepositoryMetadataResolver;
   } = {},
 ): ApplicationSessionService<Authorization> {
@@ -2601,6 +3587,7 @@ function createService(
   return new ApplicationSessionService({
     reads,
     writes,
+    sessionFiles: overrides.sessionFiles ?? successfulSessionFiles,
     access: overrides.access ?? allowingAccess(),
     ...(overrides.resolveLocalRepositoryMetadata === undefined
       ? {}
@@ -2614,10 +3601,10 @@ function createServiceReads(): ReadPort {
     async sessionsPage() {
       return { items: [] };
     },
-    async sessionGet() {
+    async sessionGet(input) {
       return {
         session: {
-          id: "session-1",
+          id: input.sessionId,
           title: "Session 1",
           providerId: "codex",
           workspaceKey: workspace.workspaceKey,
@@ -2640,6 +3627,17 @@ function createServiceReads(): ReadPort {
     async sessionDirectoriesChunk(input) {
       return { sessionId: input.sessionId, offset: input.offset, totalBytes: 2, eof: true, bytes: new ArrayBuffer(2) };
     },
+    async sessionDeletionStatusGet() {
+      throw persistenceError("not_found", "Session deletion was not found.", false, "none");
+    },
+    async sessionDeletionCleanupPage(input) {
+      return {
+        cleanupToken: input.cleanupToken,
+        deletedSessionCount: 1,
+        localOnly: true,
+        items: [{ ordinal: 1, sessionId: deletionSessionId }],
+      };
+    },
   };
 }
 
@@ -2659,6 +3657,20 @@ function createServiceWrites(): WritePort {
         replayed: false,
       };
     },
+    async deleteSessionSubtree(command) {
+      return {
+        ok: true,
+        value: { cleanupToken: command.deletionId, deletedSessionCount: 1, localOnly: true },
+        replayed: false,
+      };
+    },
+    async completeSessionDeletionCleanup(command) {
+      return {
+        ok: true,
+        value: { cleanupToken: command.cleanupToken, cleanupCompleted: true },
+        replayed: false,
+      };
+    },
   };
 }
 
@@ -2671,7 +3683,7 @@ function sessionCreateResult(command: SessionCreateCommand, createdAt: number): 
           repositoryName: command.session.repositoryName,
         } as const);
   return {
-    sessionId: command.session.id,
+    sessionId: `session_${"0".repeat(95)}1`,
     title: command.session.title,
     workspaceKey: command.session.workspaceKey,
     workspacePath: command.session.workspacePath,
@@ -2679,6 +3691,10 @@ function sessionCreateResult(command: SessionCreateCommand, createdAt: number): 
     createdAt,
     ...repositoryMetadata,
   };
+}
+
+function issuedSessionId(ordinal: number): string {
+  return `session_${ordinal.toString(16).padStart(96, "0")}`;
 }
 
 function allowingAccess(events: string[] = []): ApplicationAccessValidator<Authorization> {

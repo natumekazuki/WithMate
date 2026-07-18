@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -8,7 +8,7 @@ import {
   normalizeAllowedAdditionalDirectories,
 } from "../shared/allowed-additional-directories.js";
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
-import { MAX_SESSION_CONCURRENT_CHILD_RUNS } from "../shared/session-limits.js";
+import { MAX_SESSION_CONCURRENT_CHILD_RUNS, MAX_SESSION_TREE_SIZE } from "../shared/session-limits.js";
 import { isCanonicalSessionTitle, snapshotLocalRepositoryMetadata } from "../shared/session-metadata.js";
 import { resolveWorkspaceIdentity } from "../shared/workspace-path.js";
 import {
@@ -74,6 +74,8 @@ export const RUN_OUTPUT_PAYLOAD_LIMITS = {
   minimumReserveBytes: 1024 * 1024 * 1024,
 } as const;
 export const RUN_OUTPUT_SQLITE_WRITE_MARGIN_BYTES = 64 * 1024;
+export const SESSION_SUBTREE_DELETE_WAL_FIXED_MARGIN_BYTES = 64 * 1024;
+export const SESSION_SUBTREE_DELETE_WAL_PAGES_PER_ROW = 8;
 
 export type RepositoryWriteOperation = Readonly<{
   requestClass: "write";
@@ -91,6 +93,7 @@ type WriteOptions = Readonly<{
   databasePath?: string;
   diskCapacity?: () => Readonly<{ availableBytes: number; totalBytes: number }>;
   payloadLimits?: Partial<typeof RUN_OUTPUT_PAYLOAD_LIMITS>;
+  sessionIdAllocator?: SessionIdAllocator;
 }> &
   Partial<RepositoryWriteCapacityOptions>;
 
@@ -105,6 +108,7 @@ export function createRepositoryWriteOperations(
   const ephemeralBindingOwners = new Map<string, string>();
   const payloadLimits = resolvePayloadLimits(options.payloadLimits);
   const diskCapacity = options.diskCapacity ?? createDiskCapacityProbe(options.databasePath);
+  const sessionIdAllocator = options.sessionIdAllocator ?? allocateSessionId;
   if (!Number.isSafeInteger(retentionMs) || retentionMs < 1) {
     throw new RangeError("idempotencyRetentionMs must be a positive safe integer.");
   }
@@ -123,7 +127,9 @@ export function createRepositoryWriteOperations(
         runDecoded(decodeSessionCreate(payload), (command) => {
           const prepared = prepareSessionCreate(command);
           const now = readClock(clock);
-          return executeWriteTransaction(database, () => createSession(database, prepared, now, retentionMs));
+          return executeWriteTransaction(database, () =>
+            createSession(database, prepared, now, retentionMs, sessionIdAllocator),
+          );
         }),
       ),
     ],
@@ -151,7 +157,14 @@ export function createRepositoryWriteOperations(
       write((payload) =>
         runDecoded(decodeSessionDeleteSubtree(payload), (command) => {
           const now = readClock(clock);
-          return executeWriteTransaction(database, () => deleteSessionSubtree(database, command, now));
+          resetSessionDeletionWorkset(database);
+          try {
+            return executeWriteTransaction(database, () =>
+              deleteSessionSubtree(database, command, now, diskCapacity, payloadLimits.minimumReserveBytes),
+            );
+          } finally {
+            clearSessionDeletionWorkset(database);
+          }
         }),
       ),
     ],
@@ -204,7 +217,15 @@ export function createRepositoryWriteOperations(
           const prepared = prepareChildStart(command);
           const now = readClock(clock);
           return executeWriteTransaction(database, () =>
-            startChild(database, prepared, now, retentionMs, maxConcurrentRuns, maxConcurrentRunsPerProvider),
+            startChild(
+              database,
+              prepared,
+              now,
+              retentionMs,
+              maxConcurrentRuns,
+              maxConcurrentRunsPerProvider,
+              sessionIdAllocator,
+            ),
           );
         }),
       ),
@@ -724,21 +745,15 @@ function createSession(
   prepared: PreparedSessionCreate,
   now: number,
   retentionMs: number,
+  sessionIdAllocator: SessionIdAllocator,
 ): RepositoryCommandResult<SessionCreateResult> {
-  const idempotency = checkIdempotency<SessionCreateResult>(
-    database,
-    prepared.command.idempotencyKey,
-    "session.create",
-    prepared.fingerprint,
-    prepared.command.session.id,
-    "session",
-    prepared.command.session.id,
-    now,
-  );
+  const idempotency = checkSessionCreateIdempotency(database, prepared, now);
   if (idempotency.kind !== "new") return idempotency.result;
 
-  if (database.prepare("SELECT 1 FROM sessions WHERE id = ?").get(prepared.command.session.id) !== undefined) {
-    return failure("lifecycle_conflict", "Session already exists.");
+  const sessionId = sessionIdAllocator(database, prepared.allocationNonce, prepared.command.idempotencyKey);
+  if (sessionId === undefined) return failure("identity_exhausted", "Session identity space is exhausted.");
+  if (sessionIdentityExists(database, sessionId)) {
+    rollbackWith(failure("identity_exhausted", "Session identity space is exhausted."));
   }
   const session = prepared.command.session;
   const repositoryMetadata =
@@ -760,7 +775,7 @@ function createSession(
     `,
     )
     .run(
-      session.id,
+      sessionId,
       session.title,
       session.providerId,
       session.workspaceKey,
@@ -775,7 +790,7 @@ function createSession(
       now,
     );
   const value: SessionCreateResult = {
-    sessionId: session.id,
+    sessionId,
     title: session.title,
     workspaceKey: session.workspaceKey,
     workspacePath: session.workspacePath,
@@ -786,11 +801,11 @@ function createSession(
   completeIdempotency(
     database,
     prepared.command.idempotencyKey,
-    session.id,
+    sessionId,
     "session.create",
     prepared.fingerprint,
     "session",
-    session.id,
+    sessionId,
     value,
     now,
     retentionMs,
@@ -804,6 +819,9 @@ function updateSessionTitle(
   now: number,
   retentionMs: number,
 ): RepositoryCommandResult<SessionUpdateTitleResult> {
+  if (idempotencyKeyClaimKind(database, command.idempotencyKey) === "session_deletion") {
+    return failure("idempotency_conflict", "Idempotency key was used differently.");
+  }
   const identity = readAndExpireIdempotencyRecord(database, command.idempotencyKey, now);
   if (
     identity !== undefined &&
@@ -862,6 +880,9 @@ function transitionSession(
   retentionMs: number,
 ): RepositoryCommandResult<SessionTransitionResult> {
   const command = prepared.command;
+  if (idempotencyKeyClaimKind(database, command.idempotencyKey) === "session_deletion") {
+    return failure("idempotency_conflict", "Idempotency key was used differently.");
+  }
   const idempotencyIdentity = readAndExpireIdempotencyRecord(database, command.idempotencyKey, now);
   if (
     idempotencyIdentity !== undefined &&
@@ -948,10 +969,16 @@ function deleteSessionSubtree(
   database: DatabaseSync,
   command: SessionDeleteSubtreeCommand,
   now: number,
+  diskCapacity: DiskCapacityProbe,
+  minimumDiskReserveBytes: number,
 ): RepositoryCommandResult<SessionDeleteSubtreeResult> {
   const requestFingerprint = fingerprintJson(
     canonicalJsonString({ sessionId: command.sessionId, workspaceKey: command.workspaceKey }),
   );
+  const idempotencyClaimKind = idempotencyKeyClaimKind(database, command.deletionId);
+  if (idempotencyClaimKind === "standard") {
+    return failure("idempotency_conflict", "Idempotency key was used differently.");
+  }
   const existing = database
     .prepare(
       `
@@ -1011,7 +1038,10 @@ function deleteSessionSubtree(
       true,
     );
   }
-  const subtree = database
+  if (idempotencyClaimKind === "session_deletion") {
+    return failure("reference_invalid", "Session deletion idempotency claim is missing its durable state.");
+  }
+  database
     .prepare(
       `
       WITH RECURSIVE subtree(id, workspace_key) AS (
@@ -1021,66 +1051,49 @@ function deleteSessionSubtree(
         FROM session_relations sr
         JOIN subtree parent ON parent.id = sr.parent_session_id
         JOIN sessions child ON child.id = sr.child_session_id
+        LIMIT ?
       )
+      INSERT INTO temp.session_deletion_workset (id, workspace_key)
       SELECT id, workspace_key FROM subtree ORDER BY id
     `,
     )
-    .all(command.sessionId, command.workspaceKey) as Array<{ id: string; workspace_key: string }>;
-  if (subtree.length === 0) return failure("not_found", "Session subtree root was not found.");
-  if (subtree.some((row) => row.workspace_key !== command.workspaceKey)) {
+    .run(command.sessionId, command.workspaceKey, MAX_SESSION_TREE_SIZE + 1);
+  const subtree = database
+    .prepare(
+      `
+      SELECT COUNT(*) AS session_count,
+        COUNT(*) FILTER (WHERE workspace_key <> ?) AS foreign_workspace_count
+      FROM temp.session_deletion_workset
+    `,
+    )
+    .get(command.workspaceKey) as { session_count: number; foreign_workspace_count: number };
+  if (subtree.session_count === 0) return failure("not_found", "Session subtree root was not found.");
+  if (subtree.session_count > MAX_SESSION_TREE_SIZE) {
+    return capacityFailure({
+      scope: "session_tree",
+      rootSessionId: command.sessionId,
+      current: subtree.session_count,
+      limit: MAX_SESSION_TREE_SIZE,
+    });
+  }
+  if (subtree.foreign_workspace_count !== 0) {
     return failure("reference_invalid", "Session subtree crosses a workspace boundary.");
   }
 
-  const sessionIds = subtree.map((row) => row.id);
-  const sessionIdsJson = JSON.stringify(sessionIds);
   const busy = database
     .prepare(
       `
       SELECT 1 FROM runs
-      WHERE session_id IN (SELECT value FROM json_each(?))
+      WHERE session_id IN (SELECT id FROM temp.session_deletion_workset)
         AND phase IN ('queued','starting','active','canceling','finalizing')
       LIMIT 1
     `,
     )
-    .get(sessionIdsJson);
+    .get();
   if (busy !== undefined) return failure("session_busy", "Session subtree has a non-terminal Run.");
 
-  const runRows = database
-    .prepare(
-      `
-      SELECT id, session_id, ordinal FROM runs
-      WHERE session_id IN (SELECT value FROM json_each(?))
-      ORDER BY session_id, ordinal DESC
-    `,
-    )
-    .all(sessionIdsJson) as Array<{ id: string; session_id: string; ordinal: number }>;
-  const runIds = runRows.map((row) => row.id);
-  const runIdsJson = JSON.stringify(runIds);
-  const relationIds = selectStringIds(
-    database,
-    `
-      SELECT id FROM session_relations
-      WHERE parent_session_id IN (SELECT value FROM json_each(?))
-        OR child_session_id IN (SELECT value FROM json_each(?))
-        OR orchestration_root_session_id IN (SELECT value FROM json_each(?))
-    `,
-    sessionIdsJson,
-    sessionIdsJson,
-    sessionIdsJson,
-  );
-  const relationIdsJson = JSON.stringify(relationIds);
-  const delegationIds = selectStringIds(
-    database,
-    "SELECT id FROM delegations WHERE session_relation_id IN (SELECT value FROM json_each(?))",
-    relationIdsJson,
-  );
-  const delegationIdsJson = JSON.stringify(delegationIds);
-  const deliveryIds = selectStringIds(
-    database,
-    "SELECT id FROM child_result_deliveries WHERE delegation_id IN (SELECT value FROM json_each(?))",
-    delegationIdsJson,
-  );
-  const deliveryIdsJson = JSON.stringify(deliveryIds);
+  const diskAdmission = admitSessionSubtreeDelete(database, diskCapacity, minimumDiskReserveBytes);
+  if (diskAdmission !== undefined) return diskAdmission;
 
   database
     .prepare(
@@ -1090,13 +1103,17 @@ function deleteSessionSubtree(
       ) VALUES (?, ?, ?, ?, ?, ?)
     `,
     )
-    .run(command.deletionId, command.workspaceKey, command.sessionId, requestFingerprint, sessionIds.length, now);
-  const insertDeletionItem = database.prepare(
-    "INSERT INTO session_deletion_items (deletion_id, ordinal, session_id) VALUES (?, ?, ?)",
-  );
-  for (const [index, sessionId] of sessionIds.entries()) {
-    insertDeletionItem.run(command.deletionId, index + 1, sessionId);
-  }
+    .run(command.deletionId, command.workspaceKey, command.sessionId, requestFingerprint, subtree.session_count, now);
+  database
+    .prepare(
+      `
+      INSERT INTO session_deletion_items (deletion_id, ordinal, session_id)
+      SELECT ?, ROW_NUMBER() OVER (ORDER BY id), id
+      FROM temp.session_deletion_workset
+      ORDER BY id
+    `,
+    )
+    .run(command.deletionId);
 
   // Binding/Attempt and output item/payload pairs form intentional deferred cycles that must disappear together.
   database.exec("PRAGMA defer_foreign_keys = ON;");
@@ -1105,75 +1122,175 @@ function deleteSessionSubtree(
     .prepare(
       `
       DELETE FROM run_events
-      WHERE run_id NOT IN (SELECT value FROM json_each(?))
+      WHERE run_id NOT IN (
+          SELECT id FROM runs WHERE session_id IN (SELECT id FROM temp.session_deletion_workset)
+        )
         AND (
-          (subject_type = 'session' AND subject_id IN (SELECT value FROM json_each(?)))
-          OR (subject_type = 'run' AND subject_id IN (SELECT value FROM json_each(?)))
-          OR (subject_type = 'session_relation' AND subject_id IN (SELECT value FROM json_each(?)))
-          OR (subject_type = 'delegation' AND subject_id IN (SELECT value FROM json_each(?)))
-          OR (subject_type = 'child_result_delivery' AND subject_id IN (SELECT value FROM json_each(?)))
+          (subject_type = 'session' AND subject_id IN (SELECT id FROM temp.session_deletion_workset))
+          OR (subject_type = 'run' AND subject_id IN (
+            SELECT id FROM runs WHERE session_id IN (SELECT id FROM temp.session_deletion_workset)
+          ))
+          OR (subject_type = 'session_relation' AND subject_id IN (
+            SELECT id FROM session_relations
+            WHERE parent_session_id IN (SELECT id FROM temp.session_deletion_workset)
+              OR child_session_id IN (SELECT id FROM temp.session_deletion_workset)
+              OR orchestration_root_session_id IN (SELECT id FROM temp.session_deletion_workset)
+          ))
+          OR (subject_type = 'delegation' AND subject_id IN (
+            SELECT id FROM delegations WHERE session_relation_id IN (
+              SELECT id FROM session_relations
+              WHERE parent_session_id IN (SELECT id FROM temp.session_deletion_workset)
+                OR child_session_id IN (SELECT id FROM temp.session_deletion_workset)
+                OR orchestration_root_session_id IN (SELECT id FROM temp.session_deletion_workset)
+            )
+          ))
+          OR (subject_type = 'child_result_delivery' AND subject_id IN (
+            SELECT id FROM child_result_deliveries WHERE delegation_id IN (
+              SELECT id FROM delegations WHERE session_relation_id IN (
+                SELECT id FROM session_relations
+                WHERE parent_session_id IN (SELECT id FROM temp.session_deletion_workset)
+                  OR child_session_id IN (SELECT id FROM temp.session_deletion_workset)
+                  OR orchestration_root_session_id IN (SELECT id FROM temp.session_deletion_workset)
+              )
+            )
+          ))
         )
     `,
     )
-    .run(runIdsJson, sessionIdsJson, runIdsJson, relationIdsJson, delegationIdsJson, deliveryIdsJson);
+    .run();
   database
     .prepare(
       `
       UPDATE idempotency_records
       SET record_state = 'expired', response_kind = NULL, response_ref_type = NULL,
         response_ref_id = NULL, response_envelope_json = NULL
-      WHERE scope_session_id NOT IN (SELECT value FROM json_each(?))
+      WHERE scope_session_id NOT IN (SELECT id FROM temp.session_deletion_workset)
         AND record_state = 'completed'
         AND (
-          (response_ref_type = 'session' AND response_ref_id IN (SELECT value FROM json_each(?)))
-          OR (response_ref_type = 'run' AND response_ref_id IN (SELECT value FROM json_each(?)))
-          OR (response_ref_type = 'delivery' AND response_ref_id IN (SELECT value FROM json_each(?)))
+          (response_ref_type = 'session' AND response_ref_id IN (SELECT id FROM temp.session_deletion_workset))
+          OR (response_ref_type = 'run' AND response_ref_id IN (
+            SELECT id FROM runs WHERE session_id IN (SELECT id FROM temp.session_deletion_workset)
+          ))
+          OR (response_ref_type = 'delivery' AND response_ref_id IN (
+            SELECT id FROM child_result_deliveries WHERE delegation_id IN (
+              SELECT id FROM delegations WHERE session_relation_id IN (
+                SELECT id FROM session_relations
+                WHERE parent_session_id IN (SELECT id FROM temp.session_deletion_workset)
+                  OR child_session_id IN (SELECT id FROM temp.session_deletion_workset)
+                  OR orchestration_root_session_id IN (SELECT id FROM temp.session_deletion_workset)
+              )
+            )
+          ))
         )
     `,
     )
-    .run(sessionIdsJson, sessionIdsJson, runIdsJson, deliveryIdsJson);
+    .run();
   database
-    .prepare("DELETE FROM idempotency_records WHERE scope_session_id IN (SELECT value FROM json_each(?))")
-    .run(sessionIdsJson);
+    .prepare("DELETE FROM idempotency_records WHERE scope_session_id IN (SELECT id FROM temp.session_deletion_workset)")
+    .run();
   database
-    .prepare("DELETE FROM child_result_deliveries WHERE id IN (SELECT value FROM json_each(?))")
-    .run(deliveryIdsJson);
-  database.prepare("DELETE FROM delegations WHERE id IN (SELECT value FROM json_each(?))").run(delegationIdsJson);
-  database.prepare("DELETE FROM session_relations WHERE id IN (SELECT value FROM json_each(?))").run(relationIdsJson);
-  database.prepare("DELETE FROM run_events WHERE run_id IN (SELECT value FROM json_each(?))").run(runIdsJson);
-  database.prepare("DELETE FROM run_input_deliveries WHERE run_id IN (SELECT value FROM json_each(?))").run(runIdsJson);
+    .prepare(
+      `
+      DELETE FROM child_result_deliveries WHERE delegation_id IN (
+        SELECT id FROM delegations WHERE session_relation_id IN (
+          SELECT id FROM session_relations
+          WHERE parent_session_id IN (SELECT id FROM temp.session_deletion_workset)
+            OR child_session_id IN (SELECT id FROM temp.session_deletion_workset)
+            OR orchestration_root_session_id IN (SELECT id FROM temp.session_deletion_workset)
+        )
+      )
+    `,
+    )
+    .run();
+  database
+    .prepare(
+      `
+      DELETE FROM delegations WHERE session_relation_id IN (
+        SELECT id FROM session_relations
+        WHERE parent_session_id IN (SELECT id FROM temp.session_deletion_workset)
+          OR child_session_id IN (SELECT id FROM temp.session_deletion_workset)
+          OR orchestration_root_session_id IN (SELECT id FROM temp.session_deletion_workset)
+      )
+    `,
+    )
+    .run();
+  database
+    .prepare(
+      `
+      DELETE FROM session_relations
+      WHERE parent_session_id IN (SELECT id FROM temp.session_deletion_workset)
+        OR child_session_id IN (SELECT id FROM temp.session_deletion_workset)
+        OR orchestration_root_session_id IN (SELECT id FROM temp.session_deletion_workset)
+    `,
+    )
+    .run();
+  database
+    .prepare(
+      `
+      DELETE FROM run_events
+      WHERE run_id IN (SELECT id FROM runs WHERE session_id IN (SELECT id FROM temp.session_deletion_workset))
+    `,
+    )
+    .run();
+  database
+    .prepare(
+      `
+      DELETE FROM run_input_deliveries
+      WHERE run_id IN (SELECT id FROM runs WHERE session_id IN (SELECT id FROM temp.session_deletion_workset))
+    `,
+    )
+    .run();
   database
     .prepare(
       `
       DELETE FROM run_output_payloads
       WHERE output_item_id IN (
-        SELECT id FROM run_output_items WHERE run_id IN (SELECT value FROM json_each(?))
+        SELECT id FROM run_output_items WHERE run_id IN (
+          SELECT id FROM runs WHERE session_id IN (SELECT id FROM temp.session_deletion_workset)
+        )
       )
     `,
     )
-    .run(runIdsJson);
-  database.prepare("DELETE FROM run_output_items WHERE run_id IN (SELECT value FROM json_each(?))").run(runIdsJson);
+    .run();
+  database
+    .prepare(
+      `
+      DELETE FROM run_output_items
+      WHERE run_id IN (SELECT id FROM runs WHERE session_id IN (SELECT id FROM temp.session_deletion_workset))
+    `,
+    )
+    .run();
   database
     .prepare(
       `
       DELETE FROM run_dispatches
       WHERE run_attempt_id IN (
-        SELECT id FROM run_attempts WHERE run_id IN (SELECT value FROM json_each(?))
+        SELECT id FROM run_attempts WHERE run_id IN (
+          SELECT id FROM runs WHERE session_id IN (SELECT id FROM temp.session_deletion_workset)
+        )
       )
     `,
     )
-    .run(runIdsJson);
+    .run();
   database
-    .prepare("DELETE FROM provider_bindings WHERE session_id IN (SELECT value FROM json_each(?))")
-    .run(sessionIdsJson);
-  database.prepare("DELETE FROM run_attempts WHERE run_id IN (SELECT value FROM json_each(?))").run(runIdsJson);
-  const deleteRun = database.prepare("DELETE FROM runs WHERE id = ?");
-  for (const run of runRows) deleteRun.run(run.id);
-  database.prepare("DELETE FROM messages WHERE session_id IN (SELECT value FROM json_each(?))").run(sessionIdsJson);
-  const deleteSession = database.prepare("DELETE FROM sessions WHERE id = ?");
-  for (const sessionId of sessionIds) deleteSession.run(sessionId);
+    .prepare("DELETE FROM provider_bindings WHERE session_id IN (SELECT id FROM temp.session_deletion_workset)")
+    .run();
+  database
+    .prepare(
+      `
+      DELETE FROM run_attempts
+      WHERE run_id IN (SELECT id FROM runs WHERE session_id IN (SELECT id FROM temp.session_deletion_workset))
+    `,
+    )
+    .run();
+  database.prepare("DELETE FROM runs WHERE session_id IN (SELECT id FROM temp.session_deletion_workset)").run();
+  database.prepare("DELETE FROM messages WHERE session_id IN (SELECT id FROM temp.session_deletion_workset)").run();
+  database.prepare("DELETE FROM sessions WHERE id IN (SELECT id FROM temp.session_deletion_workset)").run();
 
-  return success({ cleanupToken: command.deletionId, deletedSessionCount: sessionIds.length, localOnly: true }, false);
+  return success(
+    { cleanupToken: command.deletionId, deletedSessionCount: subtree.session_count, localOnly: true },
+    false,
+  );
 }
 
 function completeSessionDeletionCleanup(
@@ -1181,6 +1298,10 @@ function completeSessionDeletionCleanup(
   command: SessionDeletionCleanupCompleteCommand,
   now: number,
 ): RepositoryCommandResult<SessionDeletionCleanupCompleteResult> {
+  const idempotencyClaimKind = idempotencyKeyClaimKind(database, command.cleanupToken);
+  if (idempotencyClaimKind === "standard") {
+    return failure("idempotency_conflict", "Idempotency key was used differently.");
+  }
   const completed = database
     .prepare("SELECT workspace_key FROM session_deletion_completion_tombstones WHERE deletion_id = ?")
     .get(command.cleanupToken) as { workspace_key: string } | undefined;
@@ -1202,12 +1323,155 @@ function completeSessionDeletionCleanup(
     `,
     )
     .run(now, command.cleanupToken, command.workspaceKey);
-  if (inserted.changes !== 1) return failure("not_found", "Session deletion cleanup manifest was not found.");
+  if (inserted.changes !== 1) {
+    if (
+      idempotencyClaimKind === "session_deletion" &&
+      database.prepare("SELECT 1 FROM session_deletion_manifests WHERE deletion_id = ?").get(command.cleanupToken) ===
+        undefined
+    ) {
+      return failure("reference_invalid", "Session deletion idempotency claim is missing its durable state.");
+    }
+    return failure("not_found", "Session deletion cleanup manifest was not found.");
+  }
   const deleted = database
     .prepare("DELETE FROM session_deletion_manifests WHERE deletion_id = ? AND workspace_key = ?")
     .run(command.cleanupToken, command.workspaceKey);
   if (deleted.changes !== 1) throw new Error("Session deletion cleanup manifest disappeared during completion.");
   return success({ cleanupToken: command.cleanupToken, cleanupCompleted: true }, false);
+}
+
+function resetSessionDeletionWorkset(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TEMP TABLE IF NOT EXISTS session_deletion_workset (
+      id TEXT PRIMARY KEY,
+      workspace_key TEXT NOT NULL
+    ) WITHOUT ROWID;
+    DELETE FROM temp.session_deletion_workset;
+  `);
+}
+
+function clearSessionDeletionWorkset(database: DatabaseSync): void {
+  try {
+    database.exec("DELETE FROM temp.session_deletion_workset;");
+  } catch {
+    // The next deletion recreates and clears this connection-local workset before it can be observed.
+  }
+}
+
+function admitSessionSubtreeDelete(
+  database: DatabaseSync,
+  diskCapacity: DiskCapacityProbe,
+  minimumDiskReserveBytes: number,
+): RepositoryCommandResult<SessionDeleteSubtreeResult> | undefined {
+  const estimate = database
+    .prepare(
+      `
+      WITH
+        target_runs(id) AS (
+          SELECT id FROM runs WHERE session_id IN (SELECT id FROM temp.session_deletion_workset)
+        ),
+        target_attempts(id) AS (
+          SELECT id FROM run_attempts WHERE run_id IN (SELECT id FROM target_runs)
+        ),
+        target_outputs(id) AS (
+          SELECT id FROM run_output_items WHERE run_id IN (SELECT id FROM target_runs)
+        ),
+        target_relations(id) AS (
+          SELECT id FROM session_relations
+          WHERE parent_session_id IN (SELECT id FROM temp.session_deletion_workset)
+            OR child_session_id IN (SELECT id FROM temp.session_deletion_workset)
+            OR orchestration_root_session_id IN (SELECT id FROM temp.session_deletion_workset)
+        ),
+        target_delegations(id) AS (
+          SELECT id FROM delegations WHERE session_relation_id IN (SELECT id FROM target_relations)
+        ),
+        target_deliveries(id) AS (
+          SELECT id FROM child_result_deliveries WHERE delegation_id IN (SELECT id FROM target_delegations)
+        )
+      SELECT
+        (SELECT COUNT(*) FROM temp.session_deletion_workset)
+        + (SELECT COUNT(*) FROM messages WHERE session_id IN (SELECT id FROM temp.session_deletion_workset))
+        + (SELECT COUNT(*) FROM target_runs)
+        + (SELECT COUNT(*) FROM provider_bindings WHERE session_id IN (SELECT id FROM temp.session_deletion_workset))
+        + (SELECT COUNT(*) FROM target_attempts)
+        + (SELECT COUNT(*) FROM run_dispatches WHERE run_attempt_id IN (SELECT id FROM target_attempts))
+        + (SELECT COUNT(*) FROM run_events WHERE
+            run_id IN (SELECT id FROM target_runs)
+            OR (subject_type = 'session' AND subject_id IN (SELECT id FROM temp.session_deletion_workset))
+            OR (subject_type = 'run' AND subject_id IN (SELECT id FROM target_runs))
+            OR (subject_type = 'session_relation' AND subject_id IN (SELECT id FROM target_relations))
+            OR (subject_type = 'delegation' AND subject_id IN (SELECT id FROM target_delegations))
+            OR (subject_type = 'child_result_delivery' AND subject_id IN (SELECT id FROM target_deliveries)))
+        + (SELECT COUNT(*) FROM run_input_deliveries WHERE run_id IN (SELECT id FROM target_runs))
+        + (SELECT COUNT(*) FROM target_outputs)
+        + (SELECT COUNT(*) FROM run_output_payloads WHERE output_item_id IN (SELECT id FROM target_outputs))
+        + (SELECT COUNT(*) FROM target_relations)
+        + (SELECT COUNT(*) FROM target_delegations)
+        + (SELECT COUNT(*) FROM target_deliveries)
+        + (SELECT COUNT(*) FROM idempotency_records WHERE
+            scope_session_id IN (SELECT id FROM temp.session_deletion_workset)
+            OR (record_state = 'completed' AND (
+              (response_ref_type = 'session' AND response_ref_id IN (SELECT id FROM temp.session_deletion_workset))
+              OR (response_ref_type = 'run' AND response_ref_id IN (SELECT id FROM target_runs))
+              OR (response_ref_type = 'delivery' AND response_ref_id IN (SELECT id FROM target_deliveries)))))
+        + (SELECT COUNT(*) FROM temp.session_deletion_workset)
+        + 2 AS affected_row_count,
+        COALESCE((SELECT SUM(length(CAST(allowed_additional_directories_json AS BLOB))) FROM sessions
+          WHERE id IN (SELECT id FROM temp.session_deletion_workset)), 0)
+        + COALESCE((SELECT SUM(length(CAST(content_blocks_json AS BLOB))) FROM messages
+          WHERE session_id IN (SELECT id FROM temp.session_deletion_workset)), 0)
+        + COALESCE((SELECT SUM(length(CAST(execution_snapshot_json AS BLOB))) FROM runs
+          WHERE id IN (SELECT id FROM target_runs)), 0)
+        + COALESCE((SELECT SUM(length(CAST(response_envelope_json AS BLOB))) FROM idempotency_records WHERE
+            scope_session_id IN (SELECT id FROM temp.session_deletion_workset)
+            OR (record_state = 'completed' AND (
+              (response_ref_type = 'session' AND response_ref_id IN (SELECT id FROM temp.session_deletion_workset))
+              OR (response_ref_type = 'run' AND response_ref_id IN (SELECT id FROM target_runs))
+              OR (response_ref_type = 'delivery' AND response_ref_id IN (SELECT id FROM target_deliveries))))), 0)
+        + COALESCE((SELECT SUM(byte_length) FROM run_output_payloads
+          WHERE output_item_id IN (SELECT id FROM target_outputs)), 0) AS payload_bytes
+    `,
+    )
+    .get() as { affected_row_count: number; payload_bytes: number };
+  const pageSize = (database.prepare("PRAGMA page_size").get() as { page_size: number }).page_size;
+  if (
+    !Number.isSafeInteger(estimate.affected_row_count) ||
+    estimate.affected_row_count < 0 ||
+    !Number.isSafeInteger(estimate.payload_bytes) ||
+    estimate.payload_bytes < 0 ||
+    !Number.isSafeInteger(pageSize) ||
+    pageSize < 1
+  ) {
+    return failure("insufficient_disk_space", "Session deletion disk requirement could not be bounded.", true);
+  }
+  let capacity: ReturnType<DiskCapacityProbe>;
+  try {
+    capacity = diskCapacity();
+  } catch {
+    return failure("insufficient_disk_space", "Available disk capacity could not be determined.", true);
+  }
+  if (
+    !Number.isSafeInteger(capacity.availableBytes) ||
+    capacity.availableBytes < 0 ||
+    !Number.isSafeInteger(capacity.totalBytes) ||
+    capacity.totalBytes < 0
+  ) {
+    return failure("insufficient_disk_space", "Available disk capacity could not be determined.", true);
+  }
+  const reserve = Math.max(minimumDiskReserveBytes, Math.ceil(capacity.totalBytes * 0.1));
+  const estimatedWalBytes = saturatedSafeInteger(
+    BigInt(estimate.payload_bytes) +
+      BigInt(estimate.affected_row_count) * BigInt(pageSize) * BigInt(SESSION_SUBTREE_DELETE_WAL_PAGES_PER_ROW) +
+      BigInt(SESSION_SUBTREE_DELETE_WAL_FIXED_MARGIN_BYTES),
+  );
+  if (capacity.availableBytes - reserve < estimatedWalBytes) {
+    return failure("insufficient_disk_space", "Session deletion would violate the SQLite disk reserve.", true);
+  }
+  return undefined;
+}
+
+function saturatedSafeInteger(value: bigint): number {
+  return Number(value > BigInt(Number.MAX_SAFE_INTEGER) ? BigInt(Number.MAX_SAFE_INTEGER) : value);
 }
 
 function admitNormalRun(
@@ -1437,6 +1701,7 @@ function startChild(
   retentionMs: number,
   maxConcurrentRuns: number,
   maxConcurrentRunsPerProvider: number,
+  sessionIdAllocator: SessionIdAllocator,
 ): RepositoryCommandResult<ChildStartResult> {
   const { command } = prepared;
   const idempotency = checkIdempotency<ChildStartResult>(
@@ -1448,7 +1713,7 @@ function startChild(
     "delivery",
     command.deliveryId,
     now,
-    (value) => decodeChildStartReplay(database, command, value),
+    (value) => decodeChildStartReplay(database, prepared, value),
   );
   if (idempotency.kind !== "new") return idempotency.result;
 
@@ -1500,6 +1765,15 @@ function startChild(
       limit: root.max_concurrent_child_runs,
     });
   }
+  const sessionTreeSize = countSessionTree(database, parentRun.root_session_id);
+  if (sessionTreeSize >= MAX_SESSION_TREE_SIZE) {
+    return capacityFailure({
+      scope: "session_tree",
+      rootSessionId: parentRun.root_session_id,
+      current: sessionTreeSize,
+      limit: MAX_SESSION_TREE_SIZE,
+    });
+  }
   const capacityExceeded = findRunCapacityExceeded(
     database,
     command.childSession.providerId,
@@ -1509,6 +1783,11 @@ function startChild(
   if (capacityExceeded !== undefined) return capacityFailure(capacityExceeded);
   if (hasChildStartIdentityConflict(database, command)) {
     return failure("lifecycle_conflict", "Child admission identity already exists.");
+  }
+  const childSessionId = sessionIdAllocator(database, prepared.allocationNonce, command.idempotencyKey);
+  if (childSessionId === undefined) return failure("identity_exhausted", "Session identity space is exhausted.");
+  if (sessionIdentityExists(database, childSessionId)) {
+    rollbackWith(failure("identity_exhausted", "Session identity space is exhausted."));
   }
 
   database
@@ -1523,7 +1802,7 @@ function startChild(
     `,
     )
     .run(
-      command.childSession.id,
+      childSessionId,
       command.childSession.title,
       command.childSession.providerId,
       command.workspaceKey,
@@ -1544,9 +1823,9 @@ function startChild(
       VALUES (?, ?, 1, 'user', ?, ?)
     `,
     )
-    .run(command.message.id, command.childSession.id, prepared.contentBlocksJson, now);
+    .run(command.message.id, childSessionId, prepared.contentBlocksJson, now);
   const admissionCommand: RunAdmissionCommand = {
-    sessionId: command.childSession.id,
+    sessionId: childSessionId,
     run: command.run,
     attemptId: command.attemptId,
     bindingIntent: {
@@ -1580,7 +1859,7 @@ function startChild(
     .run(
       command.relation.id,
       command.parentSessionId,
-      command.childSession.id,
+      childSessionId,
       parentRun.root_session_id,
       command.parentRunId,
       command.relation.correlationId,
@@ -1621,7 +1900,7 @@ function startChild(
   const value: ChildStartResult = {
     parentSessionId: command.parentSessionId,
     parentRunId: command.parentRunId,
-    childSessionId: command.childSession.id,
+    childSessionId,
     orchestrationRootSessionId: parentRun.root_session_id,
     relationId: command.relation.id,
     correlationId: command.relation.correlationId,
@@ -2779,6 +3058,117 @@ function collectChildResult(
   return success(value, false);
 }
 
+function checkSessionCreateIdempotency(
+  database: DatabaseSync,
+  prepared: PreparedSessionCreate,
+  now: number,
+):
+  | Readonly<{ kind: "new" }>
+  | Readonly<{ kind: "replay" | "failure"; result: RepositoryCommandResult<SessionCreateResult> }> {
+  if (idempotencyKeyClaimKind(database, prepared.command.idempotencyKey) === "session_deletion") {
+    return { kind: "failure", result: failure("idempotency_conflict", "Idempotency key was used differently.") };
+  }
+  const row = readAndExpireIdempotencyRecord(database, prepared.command.idempotencyKey, now);
+  if (row === undefined) return { kind: "new" };
+  const expired = row.record_state === "expired" || (row.expires_at !== null && row.expires_at <= now);
+  if (row.operation !== "session.create" || row.request_fingerprint !== prepared.fingerprint) {
+    return { kind: "failure", result: failure("idempotency_conflict", "Idempotency key was used differently.") };
+  }
+  if (row.record_state === "in_progress") {
+    return { kind: "failure", result: failure("idempotency_in_progress", "Idempotent command is in progress.", true) };
+  }
+  if (expired) {
+    return { kind: "failure", result: failure("idempotency_expired", "Idempotency key has expired.") };
+  }
+  if (
+    row.response_kind !== "success" ||
+    row.response_ref_type !== "session" ||
+    row.response_ref_id === null ||
+    row.scope_session_id !== row.response_ref_id ||
+    row.response_envelope_json === null ||
+    !hasResponseReference(database, "session.create", "session", row.response_ref_id, row.scope_session_id)
+  ) {
+    return { kind: "failure", result: failure("reference_invalid", "Idempotent response reference is invalid.") };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.response_envelope_json);
+  } catch {
+    return { kind: "failure", result: failure("reference_invalid", "Idempotent response envelope is invalid.") };
+  }
+  const replay = decodeSessionCreateReplay(database, prepared, row.scope_session_id, parsed);
+  if (replay === undefined) {
+    return { kind: "failure", result: failure("reference_invalid", "Idempotent response envelope is invalid.") };
+  }
+  return { kind: "replay", result: success(replay, true) };
+}
+
+function decodeSessionCreateReplay(
+  database: DatabaseSync,
+  prepared: PreparedSessionCreate,
+  sessionId: string,
+  value: unknown,
+): SessionCreateResult | undefined {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "sessionId",
+      "title",
+      "workspaceKey",
+      "workspacePath",
+      "lifecycleStatus",
+      "createdAt",
+      "localRepositoryKey",
+      "repositoryName",
+    ])
+  ) {
+    return undefined;
+  }
+  const row = database
+    .prepare(
+      `
+      SELECT provider_id, workspace_key, workspace_path, local_repository_key, repository_name,
+        allowed_additional_directories_json, default_character_id, max_concurrent_child_runs,
+        created_at
+      FROM sessions WHERE id = ?
+    `,
+    )
+    .get(sessionId) as
+    | Readonly<{
+        provider_id: string;
+        workspace_key: string;
+        workspace_path: string;
+        local_repository_key: string | null;
+        repository_name: string | null;
+        allowed_additional_directories_json: string;
+        default_character_id: string;
+        max_concurrent_child_runs: number;
+        created_at: number;
+      }>
+    | undefined;
+  const command = prepared.command.session;
+  if (
+    row === undefined ||
+    row.provider_id !== command.providerId ||
+    row.workspace_key !== command.workspaceKey ||
+    row.workspace_path !== command.workspacePath ||
+    row.allowed_additional_directories_json !== prepared.directoriesJson ||
+    row.default_character_id !== command.defaultCharacterId ||
+    row.max_concurrent_child_runs !== command.maxConcurrentChildRuns ||
+    value.sessionId !== sessionId ||
+    value.title !== command.title ||
+    value.workspaceKey !== row.workspace_key ||
+    value.workspacePath !== row.workspace_path ||
+    value.lifecycleStatus !== "active" ||
+    value.createdAt !== row.created_at ||
+    value.localRepositoryKey !== row.local_repository_key ||
+    value.repositoryName !== row.repository_name
+  ) {
+    return undefined;
+  }
+  return value as SessionCreateResult;
+}
+
 function checkIdempotency<T>(
   database: DatabaseSync,
   key: string,
@@ -2790,6 +3180,9 @@ function checkIdempotency<T>(
   now: number,
   decodeReplay?: (value: unknown) => T | undefined,
 ): Readonly<{ kind: "new" }> | Readonly<{ kind: "replay" | "failure"; result: RepositoryCommandResult<T> }> {
+  if (idempotencyKeyClaimKind(database, key) === "session_deletion") {
+    return { kind: "failure", result: failure("idempotency_conflict", "Idempotency key was used differently.") };
+  }
   const row = readAndExpireIdempotencyRecord(database, key, now);
   if (row === undefined) return { kind: "new" };
   const expired = row.record_state === "expired" || (row.expires_at !== null && row.expires_at <= now);
@@ -2828,6 +3221,47 @@ function checkIdempotency<T>(
   return { kind: "replay", result: success(replay, true) };
 }
 
+const SESSION_ID_SEQUENCE_LIMIT = 1n << 128n;
+const SESSION_ID_HEX_PATTERN = /^[0-9a-f]{32}$/;
+
+function allocateSessionId(
+  database: DatabaseSync,
+  allocationNonce: string,
+  _allocationKey: string,
+): string | undefined {
+  if (!SESSION_ID_HEX_PATTERN.test(allocationNonce)) throw new Error("Session identity nonce is invalid.");
+  let row = database
+    .prepare("SELECT namespace, next_sequence FROM session_identity_allocator WHERE singleton = 1")
+    .get() as Readonly<{ namespace: string; next_sequence: string }> | undefined;
+  if (row === undefined) {
+    const namespace = randomUUID().replaceAll("-", "");
+    database
+      .prepare("INSERT INTO session_identity_allocator (singleton, namespace, next_sequence) VALUES (1, ?, ?)")
+      .run(namespace, formatAllocatorSequence(2n));
+    row = { namespace, next_sequence: formatAllocatorSequence(1n) };
+  } else {
+    const sequence = BigInt(`0x${row.next_sequence}`);
+    if (sequence >= SESSION_ID_SEQUENCE_LIMIT) return undefined;
+    database
+      .prepare("UPDATE session_identity_allocator SET next_sequence = ? WHERE singleton = 1")
+      .run(formatAllocatorSequence(sequence + 1n));
+  }
+  const sequence = BigInt(`0x${row.next_sequence}`);
+  if (sequence < 1n || sequence >= SESSION_ID_SEQUENCE_LIMIT || !SESSION_ID_HEX_PATTERN.test(row.namespace)) {
+    return undefined;
+  }
+  // The nonce keeps restored database forks practically disjoint while namespace+sequence is injective in one history.
+  return `session_${row.namespace}${sequence.toString(16).padStart(32, "0")}${allocationNonce}`;
+}
+
+function formatAllocatorSequence(value: bigint): string {
+  return value.toString(16).padStart(33, "0");
+}
+
+function sessionIdentityExists(database: DatabaseSync, sessionId: string): boolean {
+  return database.prepare("SELECT 1 FROM sessions WHERE id = ?").get(sessionId) !== undefined;
+}
+
 function readAndExpireIdempotencyRecord(database: DatabaseSync, key: string, now: number): IdempotencyRow | undefined {
   const row = database.prepare("SELECT * FROM idempotency_records WHERE idempotency_key = ?").get(key) as
     IdempotencyRow | undefined;
@@ -2843,6 +3277,13 @@ function readAndExpireIdempotencyRecord(database: DatabaseSync, key: string, now
       .run(key);
   }
   return row;
+}
+
+function idempotencyKeyClaimKind(database: DatabaseSync, key: string): "standard" | "session_deletion" | undefined {
+  return (
+    database.prepare("SELECT claim_kind FROM idempotency_key_claims WHERE idempotency_key = ?").get(key) as
+      { claim_kind: "standard" | "session_deletion" } | undefined
+  )?.claim_kind;
 }
 
 function decodeChildResultCollectReplay(
@@ -2974,9 +3415,10 @@ function decodeRunAdmissionReplay(
 
 function decodeChildStartReplay(
   database: DatabaseSync,
-  command: ChildStartCommand,
+  prepared: PreparedChildStart,
   value: unknown,
 ): ChildStartResult | undefined {
+  const { command } = prepared;
   if (
     !isPlainObject(value) ||
     !hasExactKeys(value, [
@@ -3005,7 +3447,12 @@ function decodeChildStartReplay(
       SELECT sr.parent_session_id, sr.created_by_parent_run_id, sr.child_session_id,
         sr.orchestration_root_session_id, sr.id AS relation_id, sr.correlation_id, sr.created_at,
         g.id AS delegation_id, d.id AS delivery_id, g.initial_instruction_message_id AS message_id,
-        r.id AS run_id, a.id AS attempt_id, b.id AS binding_id, b.persistence_mode
+        r.id AS run_id, a.id AS attempt_id, b.id AS binding_id, b.persistence_mode,
+        child_s.provider_id AS child_provider_id,
+        child_s.workspace_key AS child_workspace_key,
+        child_s.allowed_additional_directories_json AS child_directories_json,
+        child_s.default_character_id AS child_default_character_id,
+        child_s.max_concurrent_child_runs AS child_max_concurrent_child_runs
       FROM child_result_deliveries d
       JOIN delegations g ON g.id = d.delegation_id
       JOIN session_relations sr ON sr.id = g.session_relation_id
@@ -3023,7 +3470,11 @@ function decodeChildStartReplay(
     row === undefined ||
     row.parent_session_id !== command.parentSessionId ||
     row.created_by_parent_run_id !== command.parentRunId ||
-    row.child_session_id !== command.childSession.id ||
+    row.child_provider_id !== command.childSession.providerId ||
+    row.child_workspace_key !== command.workspaceKey ||
+    row.child_directories_json !== prepared.directoriesJson ||
+    row.child_default_character_id !== command.childSession.defaultCharacterId ||
+    row.child_max_concurrent_child_runs !== command.childSession.maxConcurrentChildRuns ||
     row.relation_id !== command.relation.id ||
     row.correlation_id !== command.relation.correlationId ||
     row.delegation_id !== command.delegation.id ||
@@ -3107,12 +3558,12 @@ function prepareSessionCreate(command: SessionCreateCommand): PreparedSessionCre
   return {
     command,
     directoriesJson,
+    allocationNonce: randomUUID().replaceAll("-", ""),
     // Git-derived metadata is an environment snapshot, not caller intent. Excluding it lets an
     // exact retry replay the first persisted snapshot even if Repository detection later changes.
     fingerprint: fingerprint({
       operation: "session.create",
       session: {
-        id: command.session.id,
         title: command.session.title,
         providerId: command.session.providerId,
         workspaceKey: command.session.workspaceKey,
@@ -3242,6 +3693,7 @@ function prepareChildStart(command: ChildStartCommand): PreparedChildStart {
     contentBlocksJson,
     executionSnapshotJson,
     dispatchFingerprint,
+    allocationNonce: randomUUID().replaceAll("-", ""),
     fingerprint: fingerprintJson(
       canonicalJsonString({
         operation: REPOSITORY_WRITE_OPERATIONS.childStart,
@@ -3375,7 +3827,6 @@ function decodeSessionCreate(payload: Readonly<Record<string, unknown>>): Decode
   const session = payload.session;
   if (
     !hasExactKeys(session, [
-      "id",
       "title",
       "providerId",
       "workspaceKey",
@@ -3386,7 +3837,6 @@ function decodeSessionCreate(payload: Readonly<Record<string, unknown>>): Decode
       "defaultCharacterId",
       "maxConcurrentChildRuns",
     ]) ||
-    !isBoundedString(session.id, 1_024) ||
     !isCanonicalSessionTitle(session.title) ||
     !isBoundedString(session.providerId, 1_024) ||
     !isBoundedString(session.workspaceKey, 1_024) ||
@@ -3566,14 +4016,12 @@ function decodeChildStart(payload: Readonly<Record<string, unknown>>): DecodeRes
     !isBoundedString(payload.deliveryId, 1_024) ||
     !isPlainObject(payload.childSession) ||
     !hasExactKeys(payload.childSession, [
-      "id",
       "title",
       "providerId",
       "allowedAdditionalDirectories",
       "defaultCharacterId",
       "maxConcurrentChildRuns",
     ]) ||
-    !isBoundedString(payload.childSession.id, 1_024) ||
     !isCanonicalSessionTitle(payload.childSession.title) ||
     !isBoundedString(payload.childSession.providerId, 1_024) ||
     !isDenseBoundedStringArray(
@@ -3948,13 +4396,26 @@ function countNonTerminalChildren(database: DatabaseSync, rootSessionId: string)
   return row.count;
 }
 
-function selectStringIds(database: DatabaseSync, sql: string, ...params: string[]): string[] {
-  return (database.prepare(sql).all(...params) as Array<{ id: string }>).map((row) => row.id);
+function countSessionTree(database: DatabaseSync, rootSessionId: string): number {
+  const row = database
+    .prepare(
+      `
+      WITH RECURSIVE subtree(id) AS (
+        SELECT id FROM sessions WHERE id = ?
+        UNION
+        SELECT child_session_id FROM session_relations
+        JOIN subtree ON parent_session_id = subtree.id
+        LIMIT ?
+      )
+      SELECT COUNT(*) AS count FROM subtree
+    `,
+    )
+    .get(rootSessionId, MAX_SESSION_TREE_SIZE + 1) as { count: number };
+  return row.count;
 }
 
 function hasChildStartIdentityConflict(database: DatabaseSync, command: ChildStartCommand): boolean {
   return (
-    database.prepare("SELECT 1 FROM sessions WHERE id = ?").get(command.childSession.id) !== undefined ||
     database.prepare("SELECT 1 FROM messages WHERE id = ?").get(command.message.id) !== undefined ||
     database.prepare("SELECT 1 FROM runs WHERE id = ?").get(command.run.id) !== undefined ||
     database.prepare("SELECT 1 FROM run_attempts WHERE id = ?").get(command.attemptId) !== undefined ||
@@ -5035,9 +5496,11 @@ function capacityFailure<T>(details: RepositoryCapacityExceededDetails): Reposit
   const message =
     details.scope === "root"
       ? "Child Run capacity is exhausted."
-      : details.scope === "application"
-        ? "Application Run capacity is exhausted."
-        : "Provider Run capacity is exhausted.";
+      : details.scope === "session_tree"
+        ? "Session tree capacity is exhausted."
+        : details.scope === "application"
+          ? "Application Run capacity is exhausted."
+          : "Provider Run capacity is exhausted.";
   return { ok: false, error: { code: "capacity_exceeded", message, retryable: true, details }, replayed: false };
 }
 
@@ -5304,6 +5767,7 @@ type DecodeResult<T> = Readonly<{ ok: true; value: T }> | DecodeFailure;
 type PreparedSessionCreate = Readonly<{
   command: SessionCreateCommand;
   directoriesJson: string;
+  allocationNonce: string;
   fingerprint: string;
 }>;
 type PreparedSessionTransition = Readonly<{
@@ -5329,8 +5793,14 @@ type PreparedChildStart = Readonly<{
   contentBlocksJson: string;
   executionSnapshotJson: string;
   dispatchFingerprint: string;
+  allocationNonce: string;
   fingerprint: string;
 }>;
+type SessionIdAllocator = (
+  database: DatabaseSync,
+  allocationNonce: string,
+  allocationKey: string,
+) => string | undefined;
 type RunAdmissionCommand = Readonly<{
   sessionId: string;
   run: RunAdmissionDraft;
@@ -5451,6 +5921,11 @@ type ChildStartReplayRow = Readonly<{
   attempt_id: string;
   binding_id: string;
   persistence_mode: "persistent" | "ephemeral";
+  child_provider_id: string;
+  child_workspace_key: string;
+  child_directories_json: string;
+  child_default_character_id: string;
+  child_max_concurrent_child_runs: number;
 }>;
 type BindingResolution<T> =
   | Readonly<{ ok: true; providerBindingId: string | null }>

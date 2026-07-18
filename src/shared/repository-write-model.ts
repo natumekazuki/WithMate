@@ -40,7 +40,6 @@ export type RunExecutionSnapshot = Readonly<{
 export type SessionCreateCommand = Readonly<{
   idempotencyKey: string;
   session: Readonly<{
-    id: string;
     providerId: string;
     workspaceKey: string;
     workspacePath: string;
@@ -126,7 +125,6 @@ export type ChildStartCommand = Readonly<{
   workspaceKey: string;
   idempotencyKey: string;
   childSession: Readonly<{
-    id: string;
     title: string;
     providerId: string;
     allowedAdditionalDirectories: readonly string[];
@@ -355,12 +353,15 @@ export type RepositoryCommandErrorCode =
   | "lifecycle_conflict"
   | "session_busy"
   | "capacity_exceeded"
+  | "insufficient_disk_space"
   | "idempotency_conflict"
   | "idempotency_in_progress"
-  | "idempotency_expired";
+  | "idempotency_expired"
+  | "identity_exhausted";
 
 export type RepositoryCapacityExceededDetails =
   | Readonly<{ scope: "root"; rootSessionId: string; current: number; limit: number }>
+  | Readonly<{ scope: "session_tree"; rootSessionId: string; current: number; limit: number }>
   | Readonly<{ scope: "application"; current: number; limit: number }>
   | Readonly<{ scope: "provider"; providerId: string; current: number; limit: number }>;
 

@@ -65,3 +65,21 @@
 | CP2-CLI-R1 | create時の`fs.stat`はOS I/O自体をcancelできないため、応答しないnetwork mountではoperation timeout後もprocessが残る可能性がある。 | 呼び出し元のprocess timeoutで検知し、対象processを終了できる。Session commit前でありデータ影響はない。 | network Workspaceをsupported scopeへ含める場合に、別processでの検証またはcancel可能な境界を検討する。 |
 | CP2-CLI-R2 | base branchで作成されたpre-release schema v1 DBは、同じversion内のschema hash変更によりstartup時に拒否される可能性がある。 | startup failureとして検知できる。互換契約のない開発DBは再作成できる。 | schema v1の外部利用開始前、または既存DB保持がaccepted contractになった時点でmigration方針を決める。 |
 | CP2-CLI-R3 | Windowsの通常path、extended-length path、UNC aliasはfile identityまで同一化しないため、同じdirectoryを別Workspaceとして扱う可能性がある。 | list結果のWorkspace path差異で検知でき、SessionはIDで引き続き操作できる。 | file pickerや外部callerが複数のpath表現を渡す段階で、realpathまたはfile identityによる同一化を検討する。 |
+
+## 2026-07-18: CP2 Session local-only delete CLI slice
+
+- `withmate session delete`から、Session subtreeの主DB削除、Session Files削除、cleanup完了記録までをApplication Service経由で実行可能にした。
+- `--confirm-local-only`を必須のvalueless CLI確認とし、Provider側のthreadまたはSessionを削除しないことをhelpへ明記した。
+- primary commit後のcleanup失敗を、committed valueとcleanup tokenを保持する`partial_success`（exit code 10）として公開し、同一requestのexact retryでpending cleanupを再開する契約を追加した。
+- busy subtreeの非変更、same-key/different-session競合、manifest page検証、Session Filesの固定root・symlink/junction拒否・missing時成功を実行可能なcontractで確認した。
+- Session IDをRepository所有のincarnation identityへ変更し、通常Sessionとchild Sessionの両入口を同じallocatorへ統合した。削除後の通常create再送は別IDを発行し、旧delete再送が新incarnationを対象にしない。
+- Session Files cleanupはRepository発行IDだけを内部入力として受け、検証済みrootへ作業directoryを固定したhelper processから相対削除する。manifest全体の検証が終わるまでfilesystem副作用を開始しない。
+- CP2全体は進行中のままとする。Session Files orphan sweepと、process crashで残ったcleanupの自動探索・再開は後続sliceで扱う。
+
+## 2026-07-19: CP2 Session delete review対応
+
+- Session Files cleanupをDB所有application data directoryのidentityへ結び付け、親directory差し替え時にreplacement側を削除しない回帰contractを追加した。
+- 通常writeとSession deletionのidempotency keyを共有claim registryへ統合し、cross-operation key再利用をRepositoryとSQLite schemaの双方向で拒否した。
+- Session treeを4,096件に制限し、child admission、Repository delete、Application / CLI projection、schema manifestへ同じaggregate契約を展開した。
+- subtree deleteをconnection-localなSQL worksetによるset-based削除へ変更し、関連ID群の全件hydrateを除去した。対象payload bytesと更新対象row数によるWAL見積りがdisk reserveを割る場合は、durable mutation前に`insufficient_disk_space`で拒否する。
+- schema installは永続triggerを許可しつつ、transaction controlとTEMP schema objectをSQLite authorizerで拒否し、Worker connectionへschema artifactが残る経路を閉じた。

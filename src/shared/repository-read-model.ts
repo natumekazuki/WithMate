@@ -17,6 +17,7 @@ export const REPOSITORY_READ_OPERATIONS = {
   runInputDeliveriesPage: "repository.run.input-deliveries.page",
   payloadChunk: "payload.read_chunk",
   childResultsPage: "repository.child-results.page",
+  sessionDeletionStatusGet: "repository.session-deletion.status.get",
   sessionDeletionCleanupPage: "repository.session-deletion.cleanup.page",
   recoveryGet: "repository.recovery.get",
 } as const;
@@ -192,6 +193,14 @@ export type ChildResultListItem = Readonly<{
 export type SessionDeletionItem = Readonly<{
   ordinal: number;
   sessionId: string;
+}>;
+
+export type SessionDeletionStatus = Readonly<{
+  cleanupToken: string;
+  workspaceKey: string;
+  deletedSessionCount: number;
+  localOnly: true;
+  status: "pending" | "completed";
 }>;
 
 export type SessionDeletionCleanupPage = Page<SessionDeletionItem> &

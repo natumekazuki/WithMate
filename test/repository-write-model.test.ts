@@ -12,6 +12,7 @@ import {
 import { PersistenceWorkerRuntime } from "../src/persistence-worker/worker-runtime.js";
 import { PERSISTENCE_PROTOCOL_VERSION, type WorkerToMainMessage } from "../src/shared/persistence-protocol.js";
 import { REPOSITORY_WRITE_OPERATIONS } from "../src/shared/repository-write-model.js";
+import { MAX_SESSION_TREE_SIZE } from "../src/shared/session-limits.js";
 import { resolveWorkspaceIdentity } from "../src/shared/workspace-path.js";
 
 const repositoryTest = Number.parseInt(process.versions.node, 10) >= 24 ? test : test.skip;
@@ -50,7 +51,6 @@ repositoryTest("session create commits a completed idempotency record and replay
         localRepositoryKey: command.session.localRepositoryKey,
         providerId: command.session.providerId,
         title: command.session.title,
-        id: command.session.id,
       },
       idempotencyKey: command.idempotencyKey,
     }) as CommandResult;
@@ -87,6 +87,73 @@ repositoryTest("session create commits a completed idempotency record and replay
   });
 });
 
+repositoryTest("session create replay preserves the original response after mutable Session state changes", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const command = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000615", "session-mutable-replay");
+    const first = create(command) as CommandResult;
+    assert.equal(first.ok, true);
+    database
+      .prepare("UPDATE sessions SET title = 'Renamed', lifecycle_status = 'archived', updated_at = 200 WHERE id = ?")
+      .run("session-mutable-replay");
+
+    const replay = create(command) as CommandResult;
+    assert.equal(replay.ok && replay.replayed, true);
+    assert.deepEqual(replay.ok && replay.value, first.ok && first.value);
+  });
+});
+
+repositoryTest("Session identity allocation rolls back with a failed Session insert", () => {
+  withDatabase((database) => {
+    database.exec(`
+      CREATE TRIGGER fail_session_identity_insert BEFORE INSERT ON sessions
+      BEGIN SELECT RAISE(ABORT, 'Session identity insert fault'); END;
+    `);
+    const create = createRepositoryWriteOperations(database, { clock: () => 100 }).get(
+      REPOSITORY_WRITE_OPERATIONS.sessionCreate,
+    );
+    assert.ok(create);
+    const command = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000612", "unused-test-identity");
+    assert.throws(() => create.execute(command).result, /Session identity insert fault/u);
+    assert.equal(count(database, "session_identity_allocator"), 0);
+    assert.equal(count(database, "sessions"), 0);
+
+    database.exec("DROP TRIGGER fail_session_identity_insert;");
+    const created = create.execute(command).result as CommandResult;
+    assert.equal(created.ok, true);
+    assert.match(created.ok ? (created.value.sessionId as string) : "", /^session_[0-9a-f]{96}$/);
+    assert.deepEqual(
+      {
+        ...(database
+          .prepare("SELECT next_sequence FROM session_identity_allocator WHERE singleton = 1")
+          .get() as Record<string, unknown>),
+      },
+      { next_sequence: "000000000000000000000000000000002" },
+    );
+  });
+});
+
+repositoryTest("Session identity exhaustion is a typed no-effect rejection", () => {
+  withDatabase((database) => {
+    database
+      .prepare("INSERT INTO session_identity_allocator (singleton, namespace, next_sequence) VALUES (1, ?, ?)")
+      .run("a".repeat(32), "1" + "0".repeat(32));
+    const create = createRepositoryWriteOperations(database, { clock: () => 100 }).get(
+      REPOSITORY_WRITE_OPERATIONS.sessionCreate,
+    );
+    assert.ok(create);
+    const result = create.execute(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000613", "unused-test-identity"))
+      .result as CommandResult;
+    assert.deepEqual(!result.ok && result.error, {
+      code: "identity_exhausted",
+      message: "Session identity space is exhausted.",
+      retryable: false,
+    });
+    assert.equal(count(database, "sessions"), 0);
+    assert.equal(count(database, "idempotency_records"), 0);
+  });
+});
+
 repositoryTest("malformed create and reused keys with a different fingerprint make no domain mutation", () => {
   withDatabase((database) => {
     const execute = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
@@ -95,6 +162,14 @@ repositoryTest("malformed create and reused keys with a different fingerprint ma
       unexpected: true,
     }) as CommandResult;
     assert.equal(!malformed.ok && malformed.error.code, "request_invalid");
+    assert.equal(count(database, "sessions"), 0);
+
+    const callerOwnedIdentity = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000614", "session-caller-owned");
+    const callerOwnedIdentityResult = execute({
+      ...callerOwnedIdentity,
+      session: { ...callerOwnedIdentity.session, id: "session-caller-owned" },
+    }) as CommandResult;
+    assert.equal(!callerOwnedIdentityResult.ok && callerOwnedIdentityResult.error.code, "request_invalid");
     assert.equal(count(database, "sessions"), 0);
 
     const mismatchedWorkspace = sessionCreateCommand(
@@ -205,6 +280,11 @@ repositoryTest("Session create and child start reject child Run limits above the
     child.childSession.maxConcurrentChildRuns = 1_025;
     const childResult = startChild(child) as CommandResult;
     assert.equal(!childResult.ok && childResult.error.code, "request_invalid");
+    const callerOwnedChildIdentity = startChild({
+      ...child,
+      childSession: { ...child.childSession, id: "child-session-caller-owned", maxConcurrentChildRuns: 4 },
+    }) as CommandResult;
+    assert.equal(!callerOwnedChildIdentity.ok && callerOwnedChildIdentity.error.code, "request_invalid");
     assert.equal(count(database, "sessions"), 0);
   });
 });
@@ -1947,7 +2027,10 @@ for (const outcome of ["rejected", "ambiguous"] as const) {
 repositoryTest("ephemeral Binding ownership permits dispatch only in the activating Worker generation", () => {
   withDatabase((database) => {
     let now = 100;
-    const operations = createRepositoryWriteOperations(database, { clock: () => now });
+    const operations = createRepositoryWriteOperations(database, {
+      clock: () => now,
+      sessionIdAllocator: testSessionIdAllocator,
+    });
     const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
       const operation = operations.get(name);
       assert.ok(operation);
@@ -1976,7 +2059,10 @@ repositoryTest("ephemeral Binding ownership permits dispatch only in the activat
     const activated = execute(REPOSITORY_WRITE_OPERATIONS.bindingResolve, resolution);
     assert.equal(activated.ok && activated.value.ephemeralOwnership, "registered");
 
-    const restartedOperations = createRepositoryWriteOperations(database, { clock: () => 400 });
+    const restartedOperations = createRepositoryWriteOperations(database, {
+      clock: () => 400,
+      sessionIdAllocator: testSessionIdAllocator,
+    });
     const restartedResolve = restartedOperations.get(REPOSITORY_WRITE_OPERATIONS.bindingResolve);
     const restartedBegin = restartedOperations.get(REPOSITORY_WRITE_OPERATIONS.dispatchBegin);
     assert.ok(restartedResolve && restartedBegin);
@@ -1994,7 +2080,10 @@ repositoryTest("ephemeral Binding ownership permits dispatch only in the activat
 repositoryTest("ephemeral Dispatch resolution remains available after Worker restart", () => {
   withDatabase((database) => {
     let now = 100;
-    const operations = createRepositoryWriteOperations(database, { clock: () => now });
+    const operations = createRepositoryWriteOperations(database, {
+      clock: () => now,
+      sessionIdAllocator: testSessionIdAllocator,
+    });
     const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
       const operation = operations.get(name);
       assert.ok(operation);
@@ -2034,7 +2123,10 @@ repositoryTest("ephemeral Dispatch resolution remains available after Worker res
     );
 
     now = 600;
-    const restarted = createRepositoryWriteOperations(database, { clock: () => now });
+    const restarted = createRepositoryWriteOperations(database, {
+      clock: () => now,
+      sessionIdAllocator: testSessionIdAllocator,
+    });
     const repair = restarted.get(REPOSITORY_WRITE_OPERATIONS.startupRepair);
     const resolve = restarted.get(REPOSITORY_WRITE_OPERATIONS.dispatchResolve);
     const terminal = restarted.get(REPOSITORY_WRITE_OPERATIONS.runTerminal);
@@ -2065,7 +2157,10 @@ repositoryTest("ephemeral Dispatch resolution remains available after Worker res
 repositoryTest("ephemeral Binding ownership cannot move to another Attempt in the same Session", () => {
   withDatabase((database) => {
     let now = 100;
-    const operations = createRepositoryWriteOperations(database, { clock: () => now });
+    const operations = createRepositoryWriteOperations(database, {
+      clock: () => now,
+      sessionIdAllocator: testSessionIdAllocator,
+    });
     const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
       const operation = operations.get(name);
       assert.ok(operation);
@@ -2341,7 +2436,10 @@ for (const outcome of ["accepted", "rejected", "ambiguous"] as const) {
 repositoryTest("ephemeral supplemental input cannot begin after Worker ownership is lost", () => {
   withDatabase((database) => {
     let now = 100;
-    const operations = createRepositoryWriteOperations(database, { clock: () => now });
+    const operations = createRepositoryWriteOperations(database, {
+      clock: () => now,
+      sessionIdAllocator: testSessionIdAllocator,
+    });
     const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
       const operation = operations.get(name);
       assert.ok(operation);
@@ -2388,7 +2486,10 @@ repositoryTest("ephemeral supplemental input cannot begin after Worker ownership
       true,
     );
 
-    const restarted = createRepositoryWriteOperations(database, { clock: () => 700 });
+    const restarted = createRepositoryWriteOperations(database, {
+      clock: () => 700,
+      sessionIdAllocator: testSessionIdAllocator,
+    });
     const restartedAdmit = restarted.get(REPOSITORY_WRITE_OPERATIONS.runInputAdmit);
     const restartedBegin = restarted.get(REPOSITORY_WRITE_OPERATIONS.runInputBegin);
     const restartedResolve = restarted.get(REPOSITORY_WRITE_OPERATIONS.runInputResolve);
@@ -2471,6 +2572,7 @@ repositoryTest("Run output quota omission and payload insert failure never leave
     activatePersistentRun(database);
     const limited = createRepositoryWriteOperations(database, {
       clock: () => 600,
+      sessionIdAllocator: testSessionIdAllocator,
       payloadLimits: { itemBytes: 4, runBytes: 4, sessionBytes: 4, appBytes: 4, minimumReserveBytes: 0 },
       diskCapacity: () => ({ availableBytes: 100, totalBytes: 100 }),
     }).get(REPOSITORY_WRITE_OPERATIONS.runOutputAppend);
@@ -2500,6 +2602,7 @@ repositoryTest("Run output disk reserve includes conservative SQLite write overh
     };
     const omitted = createRepositoryWriteOperations(database, {
       ...options,
+      sessionIdAllocator: testSessionIdAllocator,
       diskCapacity: () => ({
         availableBytes: requiredBytes + RUN_OUTPUT_SQLITE_WRITE_MARGIN_BYTES + 9,
         totalBytes: 100,
@@ -2512,6 +2615,7 @@ repositoryTest("Run output disk reserve includes conservative SQLite write overh
 
     const stored = createRepositoryWriteOperations(database, {
       ...options,
+      sessionIdAllocator: testSessionIdAllocator,
       diskCapacity: () => ({
         availableBytes: requiredBytes + RUN_OUTPUT_SQLITE_WRITE_MARGIN_BYTES + 10,
         totalBytes: 100,
@@ -2558,6 +2662,7 @@ repositoryTest("Run output independently enforces Run, Session, and app cumulati
 
       const append = createRepositoryWriteOperations(database, {
         clock: () => 600,
+        sessionIdAllocator: testSessionIdAllocator,
         payloadLimits: {
           itemBytes: 10,
           runBytes: quota === "run" ? 4 : 100,
@@ -2926,7 +3031,10 @@ repositoryTest("pre-dispatch terminal rejects a Dispatch whose send outcome is a
 repositoryTest("pre-dispatch terminal invalidates an active ephemeral Binding before releasing its Session", () => {
   withDatabase((database) => {
     let now = 100;
-    const operations = createRepositoryWriteOperations(database, { clock: () => now });
+    const operations = createRepositoryWriteOperations(database, {
+      clock: () => now,
+      sessionIdAllocator: testSessionIdAllocator,
+    });
     const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
       const operation = operations.get(name);
       assert.ok(operation);
@@ -3002,7 +3110,10 @@ repositoryTest("Run terminal converges unresolved supplemental input before inva
   for (const deliveryState of ["pending", "dispatching"] as const) {
     withDatabase((database) => {
       let now = 100;
-      const operations = createRepositoryWriteOperations(database, { clock: () => now });
+      const operations = createRepositoryWriteOperations(database, {
+        clock: () => now,
+        sessionIdAllocator: testSessionIdAllocator,
+      });
       const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
         const operation = operations.get(name);
         assert.ok(operation);
@@ -3134,7 +3245,10 @@ repositoryTest("terminal rejects an ephemeral Binding outside the Run Session an
   for (const mismatch of ["session", "provider"] as const) {
     withDatabase((database) => {
       let now = 100;
-      const operations = createRepositoryWriteOperations(database, { clock: () => now });
+      const operations = createRepositoryWriteOperations(database, {
+        clock: () => now,
+        sessionIdAllocator: testSessionIdAllocator,
+      });
       const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
         const operation = operations.get(name);
         assert.ok(operation);
@@ -3219,7 +3333,10 @@ repositoryTest("terminal rejects an ephemeral Binding outside the Run Session an
 repositoryTest("terminal does not mutate or release a cross-Session ephemeral Binding referenced by an Attempt", () => {
   withDatabase((database) => {
     let now = 100;
-    const operations = createRepositoryWriteOperations(database, { clock: () => now });
+    const operations = createRepositoryWriteOperations(database, {
+      clock: () => now,
+      sessionIdAllocator: testSessionIdAllocator,
+    });
     const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
       const operation = operations.get(name);
       assert.ok(operation);
@@ -3320,7 +3437,10 @@ repositoryTest("terminal does not mutate or release a cross-Session ephemeral Bi
 repositoryTest("terminal does not mutate an ephemeral Binding owned by another Attempt", () => {
   withDatabase((database) => {
     let now = 100;
-    const operations = createRepositoryWriteOperations(database, { clock: () => now });
+    const operations = createRepositoryWriteOperations(database, {
+      clock: () => now,
+      sessionIdAllocator: testSessionIdAllocator,
+    });
     const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
       const operation = operations.get(name);
       assert.ok(operation);
@@ -4159,7 +4279,10 @@ repositoryTest("startup repair ignores cross-scope Provider Bindings in mutation
   for (const persistenceMode of ["persistent", "ephemeral"] as const) {
     withDatabase((database) => {
       let now = 100;
-      const operations = createRepositoryWriteOperations(database, { clock: () => now });
+      const operations = createRepositoryWriteOperations(database, {
+        clock: () => now,
+        sessionIdAllocator: testSessionIdAllocator,
+      });
       const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
         const operation = operations.get(name);
         assert.ok(operation);
@@ -4499,6 +4622,159 @@ repositoryTest("Session subtree delete removes local child data and preserves pa
   });
 });
 
+repositoryTest("root create issues a new incarnation while the deleted identity awaits cleanup", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const remove = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionDeleteSubtree, () => 200);
+    const complete = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionDeletionCleanupComplete, () => 300);
+    const createCommand = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000408", "session-generation-reuse");
+    const firstCreate = create(createCommand) as CommandResult;
+    assert.equal(firstCreate.ok, true);
+    if (!firstCreate.ok) assert.fail("first Session creation failed");
+    const deleteCommand = {
+      deletionId: "018f1f4e-7f0a-7000-8000-000000000409",
+      sessionId: firstCreate.value.sessionId as string,
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
+    };
+
+    assert.equal((remove(deleteCommand) as CommandResult).ok, true);
+
+    testSessionIds.set(createCommand.idempotencyKey, "session-generation-reuse-2");
+    const recreated = create(createCommand) as CommandResult;
+    assert.equal(recreated.ok && recreated.value.sessionId, "session-generation-reuse-2");
+    assert.notEqual(recreated.ok && recreated.value.sessionId, deleteCommand.sessionId);
+    assert.equal(database.prepare("SELECT 1 FROM sessions WHERE id = ?").get(deleteCommand.sessionId), undefined);
+    assert.equal(count(database, "session_deletion_items"), 1);
+
+    assert.equal(
+      (
+        complete({
+          cleanupToken: deleteCommand.deletionId,
+          workspaceKey: deleteCommand.workspaceKey,
+        }) as CommandResult
+      ).ok,
+      true,
+    );
+    const recreatedReplay = create(createCommand) as CommandResult;
+    assert.equal(recreatedReplay.ok && recreatedReplay.replayed, true);
+    assert.equal(recreatedReplay.ok && recreatedReplay.value.sessionId, "session-generation-reuse-2");
+
+    const oldDeleteReplay = remove(deleteCommand) as CommandResult;
+    assert.equal(oldDeleteReplay.ok && oldDeleteReplay.replayed, true);
+    assert.notEqual(
+      database.prepare("SELECT 1 FROM sessions WHERE id = 'session-generation-reuse-2'").get(),
+      undefined,
+    );
+  });
+});
+
+repositoryTest("Session deletion and standard writes share one idempotency key namespace", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const remove = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionDeleteSubtree, () => 200);
+    const complete = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionDeletionCleanupComplete, () => 300);
+    const standardFirstKey = "018f1f4e-7f0a-7000-8000-000000000414";
+    const standardFirst = create(sessionCreateCommand(standardFirstKey, "standard-first")) as CommandResult;
+    assert.equal(standardFirst.ok, true);
+    if (!standardFirst.ok) assert.fail("standard Session creation failed");
+    const standardFirstSessionId = standardFirst.value.sessionId as string;
+
+    const deleteWithStandardKey = remove({
+      deletionId: standardFirstKey,
+      sessionId: standardFirstSessionId,
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
+    }) as CommandResult;
+    assert.equal(!deleteWithStandardKey.ok && deleteWithStandardKey.error.code, "idempotency_conflict");
+    assert.notEqual(database.prepare("SELECT 1 FROM sessions WHERE id = ?").get(standardFirstSessionId), undefined);
+    assert.equal(
+      database.prepare("SELECT 1 FROM session_deletion_manifests WHERE deletion_id = ?").get(standardFirstKey),
+      undefined,
+    );
+    const cleanupWithStandardKey = complete({
+      cleanupToken: standardFirstKey,
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
+    }) as CommandResult;
+    assert.equal(!cleanupWithStandardKey.ok && cleanupWithStandardKey.error.code, "idempotency_conflict");
+
+    const deletionFirstKey = "018f1f4e-7f0a-7000-8000-000000000415";
+    const deletionTarget = create(
+      sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000416", "deletion-first-target"),
+    ) as CommandResult;
+    assert.equal(deletionTarget.ok, true);
+    if (!deletionTarget.ok) assert.fail("deletion target creation failed");
+    const deletionCommand = {
+      deletionId: deletionFirstKey,
+      sessionId: deletionTarget.value.sessionId,
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
+    };
+    assert.equal((remove(deletionCommand) as CommandResult).ok, true);
+
+    const createDuringPendingDeletion = create(
+      sessionCreateCommand(deletionFirstKey, "pending-conflict"),
+    ) as CommandResult;
+    assert.equal(!createDuringPendingDeletion.ok && createDuringPendingDeletion.error.code, "idempotency_conflict");
+    assert.equal(
+      (complete({ cleanupToken: deletionFirstKey, workspaceKey: TEST_WORKSPACE.workspaceKey }) as CommandResult).ok,
+      true,
+    );
+    const createAfterCompletedDeletion = create(
+      sessionCreateCommand(deletionFirstKey, "completed-conflict"),
+    ) as CommandResult;
+    assert.equal(!createAfterCompletedDeletion.ok && createAfterCompletedDeletion.error.code, "idempotency_conflict");
+    assert.equal(
+      (
+        database
+          .prepare("SELECT claim_kind FROM idempotency_key_claims WHERE idempotency_key = ?")
+          .get(deletionFirstKey) as {
+          claim_kind: string;
+        }
+      ).claim_kind,
+      "session_deletion",
+    );
+  });
+});
+
+repositoryTest("child start issues a different identity while a deleted child awaits cleanup", () => {
+  withDatabase((database) => {
+    prepareDeletableChild(database);
+    const remove = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionDeleteSubtree, () => 900);
+    const complete = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionDeletionCleanupComplete, () => 920);
+    const startChild = operationFor(database, REPOSITORY_WRITE_OPERATIONS.childStart, () => 930);
+    const deleteCommand = {
+      deletionId: "018f1f4e-7f0a-7000-8000-000000000410",
+      sessionId: "child-session-delete",
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
+    };
+    const replacement = childStartCommand("018f1f4e-7f0a-7000-8000-000000000411", "replacement");
+
+    assert.equal((remove(deleteCommand) as CommandResult).ok, true);
+    const recreated = startChild(replacement) as CommandResult;
+    assert.equal(recreated.ok && recreated.value.childSessionId, "child-session-replacement");
+    assert.notEqual(recreated.ok && recreated.value.childSessionId, deleteCommand.sessionId);
+    assert.equal(database.prepare("SELECT 1 FROM sessions WHERE id = ?").get(deleteCommand.sessionId), undefined);
+    assert.notEqual(
+      database.prepare("SELECT 1 FROM session_relations WHERE id = ?").get(replacement.relation.id),
+      undefined,
+    );
+
+    assert.equal(
+      (
+        complete({
+          cleanupToken: deleteCommand.deletionId,
+          workspaceKey: deleteCommand.workspaceKey,
+        }) as CommandResult
+      ).ok,
+      true,
+    );
+    const recreatedReplay = startChild(replacement) as CommandResult;
+    assert.equal(recreatedReplay.ok && recreatedReplay.replayed, true);
+
+    const oldDeleteReplay = remove(deleteCommand) as CommandResult;
+    assert.equal(oldDeleteReplay.ok && oldDeleteReplay.replayed, true);
+    assert.notEqual(database.prepare("SELECT 1 FROM sessions WHERE id = 'child-session-replacement'").get(), undefined);
+  });
+});
+
 repositoryTest("Session deletion cleanup completion rolls back its tombstone when manifest deletion fails", () => {
   withDatabase((database) => {
     prepareDeletableChild(database);
@@ -4670,6 +4946,95 @@ repositoryTest("Session subtree delete returns a bounded cleanup token for large
   });
 });
 
+repositoryTest("Session tree admission and deletion enforce one aggregate size limit", () => {
+  withDatabase((database) => {
+    insertSessionTreeAtSize(database, MAX_SESSION_TREE_SIZE);
+    const startChild = operationFor(database, REPOSITORY_WRITE_OPERATIONS.childStart, () => 900);
+    const child = childStartCommand(
+      "018f1f4e-7f0a-7000-8000-000000000408",
+      "tree-capacity",
+      "bounded-tree-root",
+      "bounded-tree-run",
+    );
+    const admission = startChild(child) as CommandResult;
+    assert.deepEqual(!admission.ok && admission.error, {
+      code: "capacity_exceeded",
+      message: "Session tree capacity is exhausted.",
+      retryable: true,
+      details: {
+        scope: "session_tree",
+        rootSessionId: "bounded-tree-root",
+        current: MAX_SESSION_TREE_SIZE,
+        limit: MAX_SESSION_TREE_SIZE,
+      },
+    });
+    assert.equal(count(database, "sessions"), MAX_SESSION_TREE_SIZE);
+  });
+
+  withDatabase((database) => {
+    insertSessionTreeAtSize(database, MAX_SESSION_TREE_SIZE + 1);
+    database
+      .prepare("UPDATE runs SET phase = 'completed', terminal_at = 2, updated_at = 2 WHERE id = 'bounded-tree-run'")
+      .run();
+    const remove = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionDeleteSubtree, () => 900);
+    const result = remove({
+      deletionId: "018f1f4e-7f0a-7000-8000-000000000409",
+      sessionId: "bounded-tree-root",
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
+    }) as CommandResult;
+    assert.deepEqual(!result.ok && result.error, {
+      code: "capacity_exceeded",
+      message: "Session tree capacity is exhausted.",
+      retryable: true,
+      details: {
+        scope: "session_tree",
+        rootSessionId: "bounded-tree-root",
+        current: MAX_SESSION_TREE_SIZE + 1,
+        limit: MAX_SESSION_TREE_SIZE,
+      },
+    });
+    assert.equal(count(database, "sessions"), MAX_SESSION_TREE_SIZE + 1);
+    assert.equal(count(database, "session_deletion_manifests"), 0);
+  });
+});
+
+repositoryTest("Session subtree delete checks disk reserve before durable mutation", () => {
+  withDatabase((database) => {
+    prepareDeletableChild(database);
+    const largeMessageJson = JSON.stringify([{ type: "text", text: "x".repeat(3 * 1024 * 1024) }]);
+    const largeExecutionSnapshotJson = JSON.stringify({ context: "y".repeat(200 * 1024) });
+    database
+      .prepare("UPDATE messages SET content_blocks_json = ? WHERE session_id = 'child-session-delete'")
+      .run(largeMessageJson);
+    database
+      .prepare("UPDATE runs SET execution_snapshot_json = ? WHERE session_id = 'child-session-delete'")
+      .run(largeExecutionSnapshotJson);
+    const command = {
+      deletionId: "018f1f4e-7f0a-7000-8000-000000000410",
+      sessionId: "child-session-delete",
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
+    };
+    const operation = createRepositoryWriteOperations(database, {
+      clock: () => 900,
+      sessionIdAllocator: testSessionIdAllocator,
+      payloadLimits: { minimumReserveBytes: 0 },
+      diskCapacity: () => ({ availableBytes: 2 * 1024 * 1024, totalBytes: 0 }),
+    }).get(REPOSITORY_WRITE_OPERATIONS.sessionDeleteSubtree);
+    assert.ok(operation);
+    const rejected = operation.execute(command).result as CommandResult;
+    assert.equal(!rejected.ok && rejected.error.code, "insufficient_disk_space");
+    assert.notEqual(database.prepare("SELECT 1 FROM sessions WHERE id = ?").get(command.sessionId), undefined);
+    assert.equal(count(database, "session_deletion_manifests"), 0);
+    assert.equal(
+      database.prepare("SELECT 1 FROM idempotency_key_claims WHERE idempotency_key = ?").get(command.deletionId),
+      undefined,
+    );
+
+    const remove = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionDeleteSubtree, () => 901);
+    assert.equal((remove(command) as CommandResult).ok, true);
+  });
+});
+
 repositoryTest("Worker registry accepts Session commands only as write requests", async () => {
   const database = new DatabaseSync(":memory:");
   database.exec(fs.readFileSync(new URL("../schema/sqlite/v1.sql", import.meta.url), "utf8"));
@@ -4708,6 +5073,12 @@ repositoryTest("Worker registry accepts Session commands only as write requests"
   database.close();
 });
 
+const testSessionIds = new Map<string, string>();
+
+function testSessionIdAllocator(_database: DatabaseSync, _allocationNonce: string, allocationKey: string) {
+  return testSessionIds.get(allocationKey);
+}
+
 function operationFor(
   database: DatabaseSync,
   name: string,
@@ -4718,16 +5089,21 @@ function operationFor(
     maxConcurrentRunsPerProvider: 4,
   },
 ) {
-  const operation = createRepositoryWriteOperations(database, { clock, idempotencyRetentionMs, ...capacity }).get(name);
+  const operation = createRepositoryWriteOperations(database, {
+    clock,
+    idempotencyRetentionMs,
+    sessionIdAllocator: testSessionIdAllocator,
+    ...capacity,
+  }).get(name);
   assert.ok(operation);
   return (payload: Readonly<Record<string, unknown>>) => operation.execute(payload).result;
 }
 
 function sessionCreateCommand(idempotencyKey: string, sessionId: string) {
+  testSessionIds.set(idempotencyKey, sessionId);
   return {
     idempotencyKey,
     session: {
-      id: sessionId,
       title: `Session ${sessionId}`,
       providerId: "provider",
       workspaceKey: TEST_WORKSPACE.workspaceKey,
@@ -4812,13 +5188,13 @@ function childStartCommand(
   parentSessionId = "session-1",
   parentRunId = "run-1",
 ) {
+  testSessionIds.set(idempotencyKey, `child-session-${suffix}`);
   return {
     parentSessionId,
     parentRunId,
     workspaceKey: TEST_WORKSPACE.workspaceKey,
     idempotencyKey,
     childSession: {
-      id: `child-session-${suffix}`,
       title: `Child ${suffix}`,
       providerId: "provider",
       allowedAdditionalDirectories: ["C:/workspace/shared"],
@@ -4973,6 +5349,61 @@ function insertTerminalSessionTree(database: DatabaseSync): void {
         'tree-middle-leaf-correlation', NULL, NULL, 2);
     COMMIT;
   `);
+}
+
+function insertSessionTreeAtSize(database: DatabaseSync, size: number): void {
+  assert.ok(size >= 1);
+  database.exec("BEGIN IMMEDIATE;");
+  database
+    .prepare(
+      `
+      INSERT INTO sessions (
+        id, title, provider_id, workspace_key, workspace_path, local_repository_key, repository_name,
+        allowed_additional_directories_json, default_character_id, max_concurrent_child_runs,
+        lifecycle_status, created_at, updated_at, last_activity_at
+      ) VALUES ('bounded-tree-root', 'Bounded tree root', 'provider', ?, ?, NULL, NULL, '[]',
+        'character', 1024, 'active', 1, 1, 1)
+    `,
+    )
+    .run(TEST_WORKSPACE.workspaceKey, TEST_WORKSPACE.workspacePath);
+  database
+    .prepare("INSERT INTO messages VALUES ('bounded-tree-message', 'bounded-tree-root', 1, 'user', '[]', 1)")
+    .run();
+  database
+    .prepare(
+      `
+      INSERT INTO runs (
+        id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+        external_side_effect_state, created_at, updated_at, version
+      ) VALUES ('bounded-tree-run', 'bounded-tree-root', 1, 'bounded-tree-message', 'active', '{}',
+        'present', 1, 1, 0)
+    `,
+    )
+    .run();
+  const insertSession = database.prepare(
+    `
+    INSERT INTO sessions (
+      id, title, provider_id, workspace_key, workspace_path, local_repository_key, repository_name,
+      allowed_additional_directories_json, default_character_id, max_concurrent_child_runs,
+      lifecycle_status, created_at, updated_at, last_activity_at
+    ) VALUES (?, 'Bounded tree child', 'provider', ?, ?, NULL, NULL, '[]', 'character', 0, 'closed', 1, 1, 1)
+  `,
+  );
+  const insertRelation = database.prepare(
+    `
+    INSERT INTO session_relations (
+      id, parent_session_id, child_session_id, orchestration_root_session_id,
+      created_by_parent_run_id, correlation_id, label, purpose_summary, created_at
+    ) VALUES (?, 'bounded-tree-root', ?, 'bounded-tree-root', 'bounded-tree-run', ?, NULL, NULL, 1)
+  `,
+  );
+  for (let index = 1; index < size; index += 1) {
+    const suffix = index.toString().padStart(4, "0");
+    const sessionId = `bounded-tree-session-${suffix}`;
+    insertSession.run(sessionId, TEST_WORKSPACE.workspaceKey, TEST_WORKSPACE.workspacePath);
+    insertRelation.run(`bounded-tree-relation-${suffix}`, sessionId, `bounded-tree-correlation-${suffix}`);
+  }
+  database.exec("COMMIT;");
 }
 
 function makeRunRetryable(

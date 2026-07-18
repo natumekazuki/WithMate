@@ -10,7 +10,6 @@ void reads.sessionGet({ sessionId: "session-1" });
 void writes.createSession({
   idempotencyKey: "00000000-0000-4000-8000-000000000001",
   session: {
-    id: "session-1",
     title: "Session 1",
     providerId: "codex",
     workspaceKey: "unvalidated-workspace",

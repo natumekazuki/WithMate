@@ -3,10 +3,11 @@
   "applicationId": 1464686132,
   "applicationIdHex": "0x574D5634",
   "applicationIdText": "WMV4",
-  "schemaDefinitionSha256": "e2eaaf72f0bf881e314262a1af482fcedf99a38f210c342ea3962b4fd77dd69c",
+  "schemaDefinitionSha256": "d503d096b10916a71572154a604c945f10cc7df95dff6468d5ebe377758168ad",
   "tables": [
     "child_result_deliveries",
     "delegations",
+    "idempotency_key_claims",
     "idempotency_records",
     "messages",
     "provider_bindings",
@@ -20,6 +21,7 @@
     "session_deletion_completion_tombstones",
     "session_deletion_items",
     "session_deletion_manifests",
+    "session_identity_allocator",
     "session_relations",
     "sessions"
   ],
@@ -72,5 +74,10 @@
     "sessions_repository_activity_idx",
     "sessions_workspace_activity_idx"
   ],
-  "triggers": []
+  "triggers": [
+    "idempotency_records_claim_after_delete",
+    "idempotency_records_claim_before_insert",
+    "session_deletion_completion_tombstones_claim_before_insert",
+    "session_deletion_manifests_claim_before_insert"
+  ]
 }

@@ -10,6 +10,7 @@ import {
   type ApplicationOperationResponse,
   type ApplicationPersistenceErrorCode,
   type ApplicationSessionCreateRequest,
+  type ApplicationSessionDeleteResponse,
   type ApplicationSessionLifecycleStatus,
   type ApplicationSessionListItem,
   type ApplicationSessionReadResult,
@@ -29,6 +30,8 @@ type Operations = ApplicationSessionOperations<Authorization>;
 type CreateResponse = Awaited<ReturnType<Operations["create"]>>;
 type ListResponse = Awaited<ReturnType<Operations["list"]>>;
 type DirectoriesChunkResponse = Awaited<ReturnType<Operations["readDirectoriesChunk"]>>;
+type DeleteResponse = Awaited<ReturnType<Operations["delete"]>>;
+type DeleteCleanupIssue = Extract<DeleteResponse, Readonly<{ overallStatus: "partial_success" }>>["issues"][number];
 const localRepositoryKey = `local-repository-v1-sha256-${"a".repeat(64)}`;
 
 const listItemBase = {
@@ -265,6 +268,52 @@ const validDirectoriesChunk: Extract<DirectoriesChunkResponse, Readonly<{ overal
   },
   persistence: { status: "read", effect: "none" },
 };
+const validDeletePartial: ApplicationSessionDeleteResponse = {
+  overallStatus: "partial_success",
+  value: {
+    sessionId: "session-1",
+    cleanupToken: "018f1f4e-7f0a-7000-8000-000000000001",
+    deletedSessionCount: 1,
+    localOnly: true,
+    cleanupStatus: "pending",
+  },
+  issues: [
+    {
+      kind: "cleanup",
+      code: "session_files_cleanup_pending",
+      message: "cleanup pending",
+      cleanupToken: "018f1f4e-7f0a-7000-8000-000000000001",
+      retryable: true,
+      reconciliation: "exact_request_required",
+    },
+  ],
+  persistence: { status: "committed", effect: "none", replayed: false },
+};
+const invalidDeleteSuccess: ApplicationSessionDeleteResponse = {
+  overallStatus: "success",
+  value: {
+    sessionId: "session-1",
+    cleanupToken: "018f1f4e-7f0a-7000-8000-000000000001",
+    deletedSessionCount: 1,
+    localOnly: true,
+    // @ts-expect-error delete success requires completed cleanup
+    cleanupStatus: "pending",
+  },
+  persistence: { status: "committed", effect: "none", replayed: false },
+};
+const invalidDeletePartial: ApplicationSessionDeleteResponse = {
+  overallStatus: "partial_success",
+  value: {
+    sessionId: "session-1",
+    cleanupToken: "018f1f4e-7f0a-7000-8000-000000000001",
+    deletedSessionCount: 1,
+    localOnly: true,
+    // @ts-expect-error delete partial success requires pending cleanup
+    cleanupStatus: "completed",
+  },
+  issues: validDeletePartial.issues,
+  persistence: { status: "committed", effect: "none", replayed: false },
+};
 void invalidSuccessPersistence;
 void invalidRequestFailurePersistence;
 void invalidDomainFailurePersistence;
@@ -279,6 +328,9 @@ void invalidReadInternalFailureEffect;
 void invalidReadPersistenceFailureEffect;
 void invalidWriteInternalFailureEffect;
 void validDirectoriesChunk;
+void validDeletePartial;
+void invalidDeleteSuccess;
+void invalidDeletePartial;
 
 test("public Application Service barrel exposes the transport-neutral Session contract", () => {
   const request = null as ApplicationSessionCreateRequest<Authorization> | null;
@@ -309,11 +361,12 @@ test("public Application Service barrel exposes the transport-neutral Session co
     Equal<ApplicationSessionLifecycleStatus, SessionLifecycleStatus>,
     Equal<CapacityError["details"], ApplicationCapacityExceededDetails>,
     Equal<CapacityError["retryable"], true>,
-  ] = [true, true, true, true, true, true, true, true, true, true, true];
+    Equal<DeleteCleanupIssue["kind"], "cleanup">,
+  ] = [true, true, true, true, true, true, true, true, true, true, true, true];
 
   assert.deepEqual(Object.keys(publicApi), []);
   assert.equal(request, null);
   assert.equal(read, null);
   assert.equal(operations, null);
-  assert.deepEqual(typeContract, [true, true, true, true, true, true, true, true, true, true, true]);
+  assert.deepEqual(typeContract, [true, true, true, true, true, true, true, true, true, true, true, true]);
 });
