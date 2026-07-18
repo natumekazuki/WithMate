@@ -212,6 +212,17 @@ def validate_connection(
 
     expect_integrity_error(
         connection,
+        "INSERT INTO session_identity_allocator (singleton, namespace, next_sequence) VALUES (1, ?, ?)",
+        ("g" * 32, "0" * 32 + "1"),
+    )
+    expect_integrity_error(
+        connection,
+        "INSERT INTO session_identity_allocator (singleton, namespace, next_sequence) VALUES (1, ?, ?)",
+        ("a" * 32, "0" * 33),
+    )
+
+    expect_integrity_error(
+        connection,
         "UPDATE sessions SET title = '   ' WHERE id = 'session-b'",
         (),
     )
@@ -350,6 +361,48 @@ def validate_connection(
     )
     connection.commit()
 
+    expect_integrity_error(
+        connection,
+        """
+        INSERT INTO session_deletion_manifests (
+          deletion_id, workspace_key, root_session_id, request_fingerprint,
+          deleted_session_count, created_at
+        ) VALUES (?, 'workspace', 'session-a', ?, 1, 1)
+        """,
+        ("00000000-0000-0000-0000-000000000001", "b" * 64),
+    )
+    deletion_key = "00000000-0000-0000-0000-000000000002"
+    connection.execute(
+        """
+        INSERT INTO session_deletion_manifests (
+          deletion_id, workspace_key, root_session_id, request_fingerprint,
+          deleted_session_count, created_at
+        ) VALUES (?, 'workspace', 'session-a', ?, 1, 1)
+        """,
+        (deletion_key, "b" * 64),
+    )
+    connection.commit()
+    expect_integrity_error(
+        connection,
+        """
+        INSERT INTO idempotency_records (
+          idempotency_key, scope_session_id, operation, request_fingerprint,
+          record_state, created_at
+        ) VALUES (?, 'session-a', 'run.start', ?, 'in_progress', 1)
+        """,
+        (deletion_key, "c" * 64),
+    )
+    expect_integrity_error(
+        connection,
+        """
+        INSERT INTO session_deletion_manifests (
+          deletion_id, workspace_key, root_session_id, request_fingerprint,
+          deleted_session_count, created_at
+        ) VALUES (?, 'workspace', 'session-a', ?, 4097, 1)
+        """,
+        ("00000000-0000-0000-0000-000000000003", "d" * 64),
+    )
+
     expect_commit_integrity_error(
         connection,
         """
@@ -442,8 +495,10 @@ def validate_connection(
         "duplicateUniqueAutoindexCheck": "ok",
         "foreignKeyCheck": "ok",
         "quickCheck": quick_check,
-        "constraintRejectionChecks": 14,
+        "constraintRejectionChecks": 19,
         "canonicalUuidAcceptanceCheck": "ok",
+        "appWideIdempotencyNamespaceCheck": "ok",
+        "sessionTreeAggregateLimitCheck": "ok",
         "storedPayloadAtomicityCheck": "ok",
         "deferredForeignKeyCycleCheck": "ok",
     }

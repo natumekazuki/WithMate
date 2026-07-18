@@ -33,7 +33,16 @@ export const CLI_SESSION_LIMITS = {
 export type CliExitCode = (typeof CLI_EXIT_CODES)[keyof typeof CLI_EXIT_CODES];
 
 export type CliSessionOperation =
-  "create" | "rename" | "list" | "repositories" | "read" | "directories-chunk" | "archive" | "unarchive" | "close";
+  | "create"
+  | "rename"
+  | "list"
+  | "repositories"
+  | "read"
+  | "directories-chunk"
+  | "archive"
+  | "unarchive"
+  | "close"
+  | "delete";
 
 export type CliCommandIdentity<TOperation extends CliSessionOperation = CliSessionOperation> = Readonly<{
   namespace: "session";
@@ -109,6 +118,13 @@ export type CliSessionCloseCommand = CliTimeoutOption &
     expectedLifecycleStatus: "active" | "archived";
   }>;
 
+export type CliSessionDeleteCommand = CliTimeoutOption &
+  Readonly<{
+    identity: CliCommandIdentity<"delete">;
+    sessionId: string;
+    idempotencyKey: string;
+  }>;
+
 export type CliValidatedCommand =
   | CliSessionCreateCommand
   | CliSessionRenameCommand
@@ -118,7 +134,8 @@ export type CliValidatedCommand =
   | CliSessionDirectoriesChunkCommand
   | CliSessionWriteCommand<"archive">
   | CliSessionWriteCommand<"unarchive">
-  | CliSessionCloseCommand;
+  | CliSessionCloseCommand
+  | CliSessionDeleteCommand;
 
 export type CliHelpTopic =
   | Readonly<{ kind: "root" }>
@@ -184,6 +201,7 @@ export type CliApplicationError =
       retryable: true;
       details:
         | Readonly<{ scope: "root"; rootSessionId: string; current: number; limit: number }>
+        | Readonly<{ scope: "session_tree"; rootSessionId: string; current: number; limit: number }>
         | Readonly<{ scope: "application"; current: number; limit: number }>
         | Readonly<{ scope: "provider"; providerId: string; current: number; limit: number }>;
     }>
@@ -196,9 +214,11 @@ export type CliApplicationError =
         | "reference_invalid"
         | "lifecycle_conflict"
         | "session_busy"
+        | "insufficient_disk_space"
         | "idempotency_conflict"
         | "idempotency_in_progress"
-        | "idempotency_expired";
+        | "idempotency_expired"
+        | "identity_exhausted";
       message: string;
       retryable: boolean;
       details?: never;
@@ -235,8 +255,18 @@ export type CliApplicationIssue =
       message: string;
       ordinal?: number;
     }>
+  | CliSessionCleanupIssue
   | CliPersistenceError<"none">
   | CliPersistenceError<"unknown">;
+
+export type CliSessionCleanupIssue = Readonly<{
+  kind: "cleanup";
+  code: "session_files_cleanup_pending";
+  message: string;
+  cleanupToken: string;
+  retryable: true;
+  reconciliation: "exact_request_required";
+}>;
 
 type CliReadSuccess<TValue> = Readonly<{
   overallStatus: "success";
@@ -416,6 +446,36 @@ export type CliSessionTransitionValue<TLifecycleStatus extends "active" | "archi
 }>;
 
 export type CliSessionRenameValue = Readonly<{ sessionId: string; title: string; updatedAt: number }>;
+type CliSessionDeleteValueBase = Readonly<{
+  sessionId: string;
+  cleanupToken: string;
+  deletedSessionCount: number;
+  localOnly: true;
+}>;
+
+export type CliSessionDeleteValue =
+  | (CliSessionDeleteValueBase & Readonly<{ cleanupStatus: "completed" }>)
+  | (CliSessionDeleteValueBase & Readonly<{ cleanupStatus: "pending" }>);
+
+type CliSessionDeleteFailureResponse = Extract<
+  CliApplicationResponse<never, "read"> | CliApplicationResponse<never, "write">,
+  Readonly<{ overallStatus: "failure" }>
+>;
+
+export type CliSessionDeleteResponse =
+  | Readonly<{
+      overallStatus: "success";
+      value: Extract<CliSessionDeleteValue, Readonly<{ cleanupStatus: "completed" }>>;
+      persistence: Readonly<{ status: "committed"; effect: "none"; replayed: boolean }>;
+    }>
+  | Readonly<{
+      overallStatus: "partial_success";
+      value: Extract<CliSessionDeleteValue, Readonly<{ cleanupStatus: "pending" }>>;
+      issues: readonly [CliSessionCleanupIssue];
+      persistence: Readonly<{ status: "committed"; effect: "none"; replayed: boolean }>;
+    }>
+  | CliSessionDeleteFailureResponse;
+
 export type CliLocalRepositoryListValue = Readonly<{
   items: readonly Readonly<{
     localRepositoryKey: string;
@@ -437,17 +497,19 @@ type CliOperationContract = {
   archive: Readonly<{ mode: "write"; value: CliSessionTransitionValue<"archived"> }>;
   unarchive: Readonly<{ mode: "write"; value: CliSessionTransitionValue<"active"> }>;
   close: Readonly<{ mode: "write"; value: CliSessionTransitionValue<"closed"> }>;
+  delete: Readonly<{ mode: "write"; value: CliSessionDeleteValue }>;
 };
+
+type CliOperationApplicationResponse<TOperation extends CliSessionOperation> = TOperation extends "delete"
+  ? CliSessionDeleteResponse
+  : CliApplicationResponse<CliOperationContract[TOperation]["value"], CliOperationContract[TOperation]["mode"]>;
 
 export type CliOperationOutput<TOperation extends CliSessionOperation = CliSessionOperation> = {
   [TCurrent in TOperation]: Readonly<{
     schemaVersion: typeof CLI_SCHEMA_VERSION;
     kind: "operation";
     command: CliCommandIdentity<TCurrent>;
-    applicationResponse: CliApplicationResponse<
-      CliOperationContract[TCurrent]["value"],
-      CliOperationContract[TCurrent]["mode"]
-    >;
+    applicationResponse: CliOperationApplicationResponse<TCurrent>;
   }>;
 }[TOperation];
 

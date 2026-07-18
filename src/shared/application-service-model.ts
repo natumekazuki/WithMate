@@ -9,7 +9,8 @@ export type ApplicationSessionOperation =
   | "read_directories_chunk"
   | "archive"
   | "unarchive"
-  | "close";
+  | "close"
+  | "delete";
 
 export type ApplicationSessionOperationContext<TAuthorizationContext> = Readonly<{
   authorization: TAuthorizationContext;
@@ -87,7 +88,7 @@ export type ApplicationAccessValidationInput<TAuthorizationContext> =
       }>)
   | (ApplicationAccessValidationBase<TAuthorizationContext> &
       Readonly<{
-        operation: "update_title" | "archive" | "unarchive" | "close";
+        operation: "update_title" | "archive" | "unarchive" | "close" | "delete";
         access: "write";
         target: ApplicationSessionAccessTarget;
       }>);
@@ -135,12 +136,15 @@ export type ApplicationDomainErrorCode =
   | "lifecycle_conflict"
   | "session_busy"
   | "capacity_exceeded"
+  | "insufficient_disk_space"
   | "idempotency_conflict"
   | "idempotency_in_progress"
-  | "idempotency_expired";
+  | "idempotency_expired"
+  | "identity_exhausted";
 
 export type ApplicationCapacityExceededDetails =
   | Readonly<{ scope: "root"; rootSessionId: string; current: number; limit: number }>
+  | Readonly<{ scope: "session_tree"; rootSessionId: string; current: number; limit: number }>
   | Readonly<{ scope: "application"; current: number; limit: number }>
   | Readonly<{ scope: "provider"; providerId: string; current: number; limit: number }>;
 
@@ -220,6 +224,15 @@ export type ApplicationOperationOptions = Readonly<{
   signal?: AbortSignal;
 }>;
 
+export type ApplicationSessionCleanupIssue = Readonly<{
+  kind: "cleanup";
+  code: "session_files_cleanup_pending";
+  message: string;
+  cleanupToken: string;
+  retryable: true;
+  reconciliation: "exact_request_required";
+}>;
+
 export type ApplicationOperationIssue =
   | Readonly<{
       kind: "omission";
@@ -227,6 +240,7 @@ export type ApplicationOperationIssue =
       message: string;
       ordinal?: number;
     }>
+  | ApplicationSessionCleanupIssue
   | ApplicationPersistenceError;
 
 export type ApplicationOperationMode = "read" | "write";
@@ -481,6 +495,39 @@ export type ApplicationSessionWriteRequest<TAuthorizationContext> = Readonly<{
   idempotencyKey: string;
 }>;
 
+export type ApplicationSessionDeleteRequest<TAuthorizationContext> =
+  ApplicationSessionWriteRequest<TAuthorizationContext>;
+
+type ApplicationSessionDeleteResultBase = Readonly<{
+  sessionId: string;
+  cleanupToken: string;
+  deletedSessionCount: number;
+  localOnly: true;
+}>;
+
+export type ApplicationSessionDeleteResult =
+  | (ApplicationSessionDeleteResultBase & Readonly<{ cleanupStatus: "completed" }>)
+  | (ApplicationSessionDeleteResultBase & Readonly<{ cleanupStatus: "pending" }>);
+
+type ApplicationSessionDeleteFailureResponse = Extract<
+  ApplicationOperationResponse<never, "read"> | ApplicationOperationResponse<never, "write">,
+  Readonly<{ overallStatus: "failure" }>
+>;
+
+export type ApplicationSessionDeleteResponse =
+  | Readonly<{
+      overallStatus: "success";
+      value: Extract<ApplicationSessionDeleteResult, Readonly<{ cleanupStatus: "completed" }>>;
+      persistence: ApplicationCommittedPersistenceStatus;
+    }>
+  | Readonly<{
+      overallStatus: "partial_success";
+      value: Extract<ApplicationSessionDeleteResult, Readonly<{ cleanupStatus: "pending" }>>;
+      issues: readonly [ApplicationSessionCleanupIssue];
+      persistence: ApplicationCommittedPersistenceStatus;
+    }>
+  | ApplicationSessionDeleteFailureResponse;
+
 export type ApplicationSessionUpdateTitleRequest<TAuthorizationContext> =
   ApplicationSessionWriteRequest<TAuthorizationContext> & Readonly<{ title: string }>;
 
@@ -538,4 +585,8 @@ export interface ApplicationSessionOperations<TAuthorizationContext> {
     request: ApplicationSessionCloseRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationSessionTransitionResult, "write">>;
+  delete(
+    request: ApplicationSessionDeleteRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationSessionDeleteResponse>;
 }

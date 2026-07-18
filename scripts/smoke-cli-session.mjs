@@ -23,6 +23,7 @@ const archiveKey = "018f1f4e-7f0a-7000-8000-000000000002";
 const unarchiveKey = "018f1f4e-7f0a-7000-8000-000000000003";
 const closeKey = "018f1f4e-7f0a-7000-8000-000000000004";
 const renameKey = "018f1f4e-7f0a-7000-8000-000000000008";
+const deleteKey = "018f1f4e-7f0a-7000-8000-000000000009";
 
 fs.mkdirSync(workspacePath, { recursive: true });
 fs.mkdirSync(secondWorkspacePath, { recursive: true });
@@ -36,6 +37,12 @@ try {
   const invalid = invoke(["session", "read"], environment);
   assert.equal(invalid.status, 20);
   assert.equal(parseJsonOutput(invalid).kind, "usage_failure");
+  const unconfirmedDelete = invoke(
+    ["session", "delete", "--session-id", "session-1", "--idempotency-key", deleteKey],
+    environment,
+  );
+  assert.equal(unconfirmedDelete.status, 20);
+  assert.equal(parseJsonOutput(unconfirmedDelete).kind, "usage_failure");
   assert.equal(fs.existsSync(applicationDirectory), false, "help or parse failure started application persistence");
 
   const createArgs = [
@@ -201,6 +208,34 @@ try {
     environment,
     0,
   );
+  const sessionFilesRoot = path.join(applicationDirectory, "session-files");
+  const sessionFilesPath = path.join(sessionFilesRoot, sessionId);
+  fs.mkdirSync(path.join(sessionFilesPath, "nested"), { recursive: true });
+  fs.writeFileSync(path.join(sessionFilesPath, "nested", "output.txt"), "local session output");
+  const deleteArgs = [
+    "session",
+    "delete",
+    "--session-id",
+    sessionId,
+    "--idempotency-key",
+    deleteKey,
+    "--confirm-local-only",
+  ];
+  const deleted = runJson(deleteArgs, environment, 0);
+  assert.deepEqual(deleted.applicationResponse.value, {
+    sessionId,
+    cleanupToken: deleteKey,
+    deletedSessionCount: 1,
+    localOnly: true,
+    cleanupStatus: "completed",
+  });
+  assert.equal(fs.existsSync(sessionFilesPath), false);
+  const deleteReplay = runJson(deleteArgs, environment, 0);
+  assert.equal(deleteReplay.applicationResponse.persistence.replayed, true);
+  assert.equal(deleteReplay.applicationResponse.value.cleanupStatus, "completed");
+  const deletedRead = runJson(["session", "read", "--session-id", sessionId], environment, 22);
+  assert.equal(deletedRead.applicationResponse.error.code, "not_found");
+  assert.deepEqual(fs.readdirSync(sessionFilesRoot), [], "Session Files cleanup artifacts remained after retry");
   const missing = runJson(["session", "read", "--session-id", "missing-session"], environment, 22);
   assert.equal(missing.applicationResponse.error.code, "not_found");
 
@@ -233,8 +268,9 @@ try {
         "archive",
         "unarchive",
         "close",
+        "delete",
       ],
-      exactRetry: "replayed",
+      exactRetry: "create-and-delete-replayed",
       appWideList: "verified",
       workspaceRejection: "classified",
       additionalDirectoryValidation: "verified-before-compaction",
@@ -242,6 +278,7 @@ try {
       parseRuntimeIsolation: "verified",
       bootstrapFailure: "classified",
       sqliteSidecars: "none",
+      sessionFilesCleanupArtifacts: "none",
     }),
   );
 } finally {

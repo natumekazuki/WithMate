@@ -1,7 +1,5 @@
 import fs from "node:fs/promises";
 import type { Stats } from "node:fs";
-import os from "node:os";
-import path from "node:path";
 
 import type {
   ApplicationAccessDecision,
@@ -10,11 +8,13 @@ import type {
   ApplicationSessionOperations,
 } from "../shared/application-service-model.js";
 import { createApplicationSessionOperations } from "./application-session-service.js";
+import { resolveApplicationDataRoot, resolveWithMateDatabasePathFromRoot } from "./application-data-path.js";
 import { PersistenceWorkerClient } from "./persistence-worker-client.js";
+import { LocalSessionFilesCleanup } from "./session-files-cleanup.js";
 
-const APPLICATION_DIRECTORY_NAME = "WithMate";
-const DATABASE_FILE_NAME = "withmate.sqlite3";
 const localCliAuthorization = Object.freeze({ transport: "local_cli", principal: "current_os_user" } as const);
+
+export { resolveWithMateDatabasePath } from "./application-data-path.js";
 
 export type LocalCliAuthorization = typeof localCliAuthorization;
 
@@ -25,14 +25,19 @@ export type CliSessionRuntime = Readonly<{
 }>;
 
 export async function startCliSessionRuntime(): Promise<CliSessionRuntime> {
+  const applicationDataRoot = resolveApplicationDataRoot();
+  const databasePath = resolveWithMateDatabasePathFromRoot(applicationDataRoot);
+  const sessionFiles = await LocalSessionFilesCleanup.bindToApplicationDataRoot(applicationDataRoot);
   const client = new PersistenceWorkerClient({
-    databasePath: resolveWithMateDatabasePath(),
+    databasePath,
     legacyDatabasePaths: [],
   });
   await client.start();
   try {
+    await sessionFiles.assertStorageOwner();
     const operations = createApplicationSessionOperations(client, {
       access: new LocalCliAccessValidator(),
+      sessionFiles,
       snapshotAuthorization,
     });
     return {
@@ -44,18 +49,6 @@ export async function startCliSessionRuntime(): Promise<CliSessionRuntime> {
     await client.shutdown().catch(() => undefined);
     throw error;
   }
-}
-
-export function resolveWithMateDatabasePath(
-  environment: NodeJS.ProcessEnv = process.env,
-  platform: NodeJS.Platform = process.platform,
-  homeDirectory: string = os.homedir(),
-): string {
-  return path.join(
-    resolveApplicationDataRoot(environment, platform, homeDirectory),
-    APPLICATION_DIRECTORY_NAME,
-    DATABASE_FILE_NAME,
-  );
 }
 
 class LocalCliAccessValidator implements ApplicationAccessValidator<LocalCliAuthorization> {
@@ -116,19 +109,4 @@ function authorizationInvalid(): ApplicationAccessDecision {
       retryable: false,
     },
   };
-}
-
-function resolveApplicationDataRoot(
-  environment: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform,
-  homeDirectory: string,
-): string {
-  if (platform === "win32")
-    return absoluteEnvironmentPath(environment.APPDATA) ?? path.join(homeDirectory, "AppData", "Roaming");
-  if (platform === "darwin") return path.join(homeDirectory, "Library", "Application Support");
-  return absoluteEnvironmentPath(environment.XDG_CONFIG_HOME) ?? path.join(homeDirectory, ".config");
-}
-
-function absoluteEnvironmentPath(value: string | undefined): string | undefined {
-  return value !== undefined && path.isAbsolute(value) ? path.normalize(value) : undefined;
 }

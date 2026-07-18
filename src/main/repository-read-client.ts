@@ -20,6 +20,7 @@ import {
   type SessionDirectoriesChunkRequest,
   type SessionDirectoriesChunkResult,
   type SessionDeletionCleanupPage,
+  type SessionDeletionStatus,
   type SessionDetail,
   type SessionExecutionState,
   type SessionListItem,
@@ -173,6 +174,13 @@ export class RepositoryReadClient {
     options?: RequestOptions,
   ): Promise<SessionDeletionCleanupPage> {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.sessionDeletionCleanupPage, "read", input, options);
+  }
+
+  sessionDeletionStatusGet(
+    input: Readonly<{ cleanupToken: string }>,
+    options?: RequestOptions,
+  ): Promise<SessionDeletionStatus> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.sessionDeletionStatusGet, "read", input, options);
   }
 
   recoveryGet(

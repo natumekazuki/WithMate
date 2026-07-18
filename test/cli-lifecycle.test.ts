@@ -35,9 +35,14 @@ test("help and parse failures do not register signals or start runtime", async (
 
   const help = await runCliLifecycle(["--help"], dependencies);
   const invalid = await runCliLifecycle(["session", "read"], dependencies);
+  const unconfirmedDelete = await runCliLifecycle(
+    ["session", "delete", "--session-id", "session-1", "--idempotency-key", "018f1f4e-7f0a-7000-8000-000000000001"],
+    dependencies,
+  );
 
   assert.equal(help.exitCode, CLI_EXIT_CODES.success);
   assert.equal(invalid.exitCode, CLI_EXIT_CODES.usageInvalid);
+  assert.equal(unconfirmedDelete.exitCode, CLI_EXIT_CODES.usageInvalid);
   assert.equal(starts, 0);
   assert.equal(registrations, 0);
 });
@@ -242,6 +247,7 @@ function successfulOperations(
     archive: unsupported,
     unarchive: unsupported,
     close: unsupported,
+    delete: unsupported,
   };
 }
 

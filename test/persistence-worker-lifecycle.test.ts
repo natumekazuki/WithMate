@@ -68,7 +68,6 @@ workerTest("production Worker restores a Session Provider before its first Run",
     const created = await new RepositoryWriteClient(client).createSession({
       idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000381",
       session: {
-        id: "session-provider-recovery",
         title: "Provider recovery",
         providerId: "provider-recovery",
         workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
@@ -81,16 +80,111 @@ workerTest("production Worker restores a Session Provider before its first Run",
       },
     });
     assert.equal(created.ok, true);
+    if (!created.ok) assert.fail("Session creation failed");
+    const sessionId = created.value.sessionId;
     await client.shutdown();
 
     const resumedClient = new PersistenceWorkerClient(options);
     await resumedClient.start();
     const restored = await new RepositoryReadClient(resumedClient).sessionGet({
-      sessionId: "session-provider-recovery",
+      sessionId,
     });
     assert.equal(restored.session.providerId, "provider-recovery");
     assert.equal(restored.execution.state, "not_started");
     await resumedClient.shutdown();
+  });
+});
+
+workerTest("Repository serializes Session identity issuance and never revives a deleted incarnation", async () => {
+  await withTempDirectory(async (directory) => {
+    const databasePath = path.join(directory, "session-identity.sqlite3");
+    const options = { workerUrl, databasePath, legacyDatabasePaths: [], workerOptions } as const;
+    const firstClient = new PersistenceWorkerClient(options);
+    const secondClient = new PersistenceWorkerClient(options);
+    await firstClient.start();
+    await secondClient.start();
+    const firstRepository = new RepositoryWriteClient(firstClient);
+    const secondRepository = new RepositoryWriteClient(secondClient);
+    const firstCommand = productionSessionCreate("Identity one", "018f1f4e-7f0a-7000-8000-000000000391");
+    const secondCommand = productionSessionCreate("Identity two", "018f1f4e-7f0a-7000-8000-000000000392");
+
+    const [first, second] = await Promise.all([
+      firstRepository.createSession(firstCommand),
+      secondRepository.createSession(secondCommand),
+    ]);
+    assert.equal(first.ok, true);
+    assert.equal(second.ok, true);
+    if (!first.ok || !second.ok) assert.fail("concurrent Session creation failed");
+    assert.match(first.value.sessionId, /^session_[0-9a-f]{96}$/);
+    assert.match(second.value.sessionId, /^session_[0-9a-f]{96}$/);
+    assert.notEqual(first.value.sessionId, second.value.sessionId);
+
+    const replay = await secondRepository.createSession(firstCommand);
+    assert.equal(replay.ok && replay.replayed, true);
+    assert.equal(replay.ok && replay.value.sessionId, first.value.sessionId);
+    const deletion = await firstRepository.deleteSessionSubtree({
+      deletionId: "018f1f4e-7f0a-7000-8000-000000000393",
+      sessionId: first.value.sessionId,
+      workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
+    });
+    assert.equal(deletion.ok, true);
+
+    const recreated = await secondRepository.createSession(firstCommand);
+    assert.equal(recreated.ok, true);
+    if (!recreated.ok) assert.fail("Session recreation failed");
+    assert.notEqual(recreated.value.sessionId, first.value.sessionId);
+    await firstRepository.completeSessionDeletionCleanup({
+      cleanupToken: "018f1f4e-7f0a-7000-8000-000000000393",
+      workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
+    });
+    const oldDeleteReplay = await firstRepository.deleteSessionSubtree({
+      deletionId: "018f1f4e-7f0a-7000-8000-000000000393",
+      sessionId: first.value.sessionId,
+      workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
+    });
+    assert.equal(oldDeleteReplay.ok && oldDeleteReplay.replayed, true);
+    const surviving = await new RepositoryReadClient(secondClient).sessionGet({
+      sessionId: recreated.value.sessionId,
+    });
+    assert.equal(surviving.session.id, recreated.value.sessionId);
+
+    await Promise.all([firstClient.shutdown(), secondClient.shutdown()]);
+    const resumedClient = new PersistenceWorkerClient(options);
+    await resumedClient.start();
+    const resumed = await new RepositoryWriteClient(resumedClient).createSession(
+      productionSessionCreate("Identity after restart", "018f1f4e-7f0a-7000-8000-000000000394"),
+    );
+    assert.equal(resumed.ok, true);
+    if (!resumed.ok) assert.fail("post-restart Session creation failed");
+    assert.notEqual(resumed.value.sessionId, first.value.sessionId);
+    assert.notEqual(resumed.value.sessionId, second.value.sessionId);
+    assert.notEqual(resumed.value.sessionId, recreated.value.sessionId);
+    await resumedClient.shutdown();
+  });
+});
+
+workerTest("Session create response loss replays the committed Repository-issued identity", async () => {
+  await withTempDirectory(async (directory) => {
+    const databasePath = path.join(directory, "session-identity-response-loss.sqlite3");
+    const client = new PersistenceWorkerClient({ workerUrl, databasePath, legacyDatabasePaths: [], workerOptions });
+    await client.start();
+    const repository = new RepositoryWriteClient(client);
+    const blocker = new DatabaseSync(databasePath);
+    blocker.exec("PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE;");
+    const command = productionSessionCreate("Identity response loss", "018f1f4e-7f0a-7000-8000-000000000395");
+    try {
+      await assert.rejects(repository.createSession(command, { timeoutMs: 10 }), (error: unknown) =>
+        isClientError(error, "request_timeout", "unknown"),
+      );
+    } finally {
+      blocker.exec("COMMIT;");
+      blocker.close();
+    }
+
+    const replay = await repository.createSession(command);
+    assert.equal(replay.ok && replay.replayed, true);
+    assert.match(replay.ok ? replay.value.sessionId : "", /^session_[0-9a-f]{96}$/);
+    await client.shutdown();
   });
 });
 
@@ -106,15 +200,15 @@ workerTest("production Worker applies configured Run capacity", async () => {
     });
     await client.start();
     const repository = new RepositoryWriteClient(client);
-    for (const [sessionId, idempotencyKey] of [
-      ["session-capacity-1", "018f1f4e-7f0a-7000-8000-000000000301"],
-      ["session-capacity-2", "018f1f4e-7f0a-7000-8000-000000000302"],
+    const sessionIds: string[] = [];
+    for (const [title, idempotencyKey] of [
+      ["Session capacity 1", "018f1f4e-7f0a-7000-8000-000000000301"],
+      ["Session capacity 2", "018f1f4e-7f0a-7000-8000-000000000302"],
     ] as const) {
       const result = await repository.createSession({
         idempotencyKey,
         session: {
-          id: sessionId,
-          title: `Session ${sessionId}`,
+          title,
           providerId: "provider",
           workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
           workspacePath: PRODUCTION_TEST_WORKSPACE.workspacePath,
@@ -126,12 +220,14 @@ workerTest("production Worker applies configured Run capacity", async () => {
         },
       });
       assert.equal(result.ok, true);
+      if (!result.ok) assert.fail("Session creation failed");
+      sessionIds.push(result.value.sessionId);
     }
     const first = await repository.admitNormalRun(
-      productionRunAdmission("session-capacity-1", "run-capacity-1", "018f1f4e-7f0a-7000-8000-000000000303"),
+      productionRunAdmission(sessionIds[0]!, "run-capacity-1", "018f1f4e-7f0a-7000-8000-000000000303"),
     );
     const second = await repository.admitNormalRun(
-      productionRunAdmission("session-capacity-2", "run-capacity-2", "018f1f4e-7f0a-7000-8000-000000000304"),
+      productionRunAdmission(sessionIds[1]!, "run-capacity-2", "018f1f4e-7f0a-7000-8000-000000000304"),
     );
     assert.equal(first.ok, true);
     assert.equal(second.ok, false);
@@ -155,40 +251,33 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
     const client = new PersistenceWorkerClient(options);
     await client.start();
     const repository = new RepositoryWriteClient(client);
-    assert.equal(
-      (
-        await repository.createSession({
-          idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000321",
-          session: {
-            id: "session-worker-integration",
-            title: "Worker integration",
-            providerId: "provider",
-            workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
-            workspacePath: PRODUCTION_TEST_WORKSPACE.workspacePath,
-            localRepositoryKey: null,
-            repositoryName: null,
-            allowedAdditionalDirectories: [],
-            defaultCharacterId: "character",
-            maxConcurrentChildRuns: 2,
-          },
-        })
-      ).ok,
-      true,
-    );
+    const created = await repository.createSession({
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000321",
+      session: {
+        title: "Worker integration",
+        providerId: "provider",
+        workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
+        workspacePath: PRODUCTION_TEST_WORKSPACE.workspacePath,
+        localRepositoryKey: null,
+        repositoryName: null,
+        allowedAdditionalDirectories: [],
+        defaultCharacterId: "character",
+        maxConcurrentChildRuns: 2,
+      },
+    });
+    assert.equal(created.ok, true);
+    if (!created.ok) assert.fail("Session creation failed");
+    const rootSessionId = created.value.sessionId;
     assert.equal(
       (
         await repository.admitNormalRun(
-          productionRunAdmission(
-            "session-worker-integration",
-            "run-worker-integration",
-            "018f1f4e-7f0a-7000-8000-000000000322",
-          ),
+          productionRunAdmission(rootSessionId, "run-worker-integration", "018f1f4e-7f0a-7000-8000-000000000322"),
         )
       ).ok,
       true,
     );
     const scope = {
-      sessionId: "session-worker-integration",
+      sessionId: rootSessionId,
       workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
       runId: "run-worker-integration",
       attemptId: "attempt-run-worker-integration",
@@ -264,14 +353,18 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       true,
     );
     const childCommand = productionChildStart(
-      "session-worker-integration",
+      rootSessionId,
       "run-worker-integration",
       "018f1f4e-7f0a-7000-8000-000000000323",
     );
     const child = await repository.startChild(childCommand);
-    assert.equal(child.ok && child.value.childSessionId, "session-worker-child");
+    assert.equal(child.ok, true);
+    if (!child.ok) assert.fail("Child creation failed");
+    const childSessionId = child.value.childSessionId;
+    assert.match(childSessionId, /^session_[0-9a-f]{96}$/);
+    assert.notEqual(childSessionId, rootSessionId);
     const childScope = {
-      sessionId: "session-worker-child",
+      sessionId: childSessionId,
       workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
       runId: "run-worker-child",
       attemptId: "attempt-worker-child",
@@ -418,7 +511,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       omittedOutputPayloads: 0,
     });
     const childTerminal = await resumedRepository.completeRun({
-      sessionId: "session-worker-child",
+      sessionId: childSessionId,
       workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
       runId: "run-worker-child",
       attemptId: "attempt-worker-child",
@@ -436,8 +529,8 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
     });
     assert.equal(childTerminal.ok && childTerminal.value.childDeliveryId, "delivery-worker-child");
     const collected = await resumedRepository.collectChildResult({
-      parentSessionId: "session-worker-integration",
-      childSessionId: "session-worker-child",
+      parentSessionId: rootSessionId,
+      childSessionId,
       workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
       idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000324",
       deliveryId: "delivery-worker-child",
@@ -448,7 +541,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
     assert.equal(collected.ok && collected.value.resultSummary, "child done");
     const deleted = await resumedRepository.deleteSessionSubtree({
       deletionId: "018f1f4e-7f0a-7000-8000-000000000325",
-      sessionId: "session-worker-child",
+      sessionId: childSessionId,
       workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
     });
     assert.deepEqual(deleted.ok && deleted.value, {
@@ -456,11 +549,24 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       deletedSessionCount: 1,
       localOnly: true,
     });
-    const cleanup = await new RepositoryReadClient(resumedClient).sessionDeletionCleanupPage({
+    const resumedReadRepository = new RepositoryReadClient(resumedClient);
+    assert.deepEqual(
+      await resumedReadRepository.sessionDeletionStatusGet({
+        cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
+      }),
+      {
+        cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
+        workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
+        deletedSessionCount: 1,
+        localOnly: true,
+        status: "pending",
+      },
+    );
+    const cleanup = await resumedReadRepository.sessionDeletionCleanupPage({
       cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
       workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
     });
-    assert.deepEqual(cleanup.items, [{ ordinal: 1, sessionId: "session-worker-child" }]);
+    assert.deepEqual(cleanup.items, [{ ordinal: 1, sessionId: childSessionId }]);
     const cleanupCompleted = await resumedRepository.completeSessionDeletionCleanup({
       cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
       workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
@@ -469,6 +575,18 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
       cleanupCompleted: true,
     });
+    assert.deepEqual(
+      await resumedReadRepository.sessionDeletionStatusGet({
+        cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
+      }),
+      {
+        cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
+        workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
+        deletedSessionCount: 1,
+        localOnly: true,
+        status: "completed",
+      },
+    );
     await resumedClient.shutdown();
 
     const cleanupReplayClient = new PersistenceWorkerClient(options);
@@ -503,15 +621,15 @@ workerTest("BEGIN IMMEDIATE serializes capacity admission across database connec
     await secondClient.start();
     const firstRepository = new RepositoryWriteClient(firstClient);
     const secondRepository = new RepositoryWriteClient(secondClient);
-    for (const [sessionId, idempotencyKey] of [
-      ["session-race-1", "018f1f4e-7f0a-7000-8000-000000000305"],
-      ["session-race-2", "018f1f4e-7f0a-7000-8000-000000000306"],
+    const sessionIds: string[] = [];
+    for (const [title, idempotencyKey] of [
+      ["Session race 1", "018f1f4e-7f0a-7000-8000-000000000305"],
+      ["Session race 2", "018f1f4e-7f0a-7000-8000-000000000306"],
     ] as const) {
       const result = await firstRepository.createSession({
         idempotencyKey,
         session: {
-          id: sessionId,
-          title: `Session ${sessionId}`,
+          title,
           providerId: "provider",
           workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
           workspacePath: PRODUCTION_TEST_WORKSPACE.workspacePath,
@@ -523,14 +641,16 @@ workerTest("BEGIN IMMEDIATE serializes capacity admission across database connec
         },
       });
       assert.equal(result.ok, true);
+      if (!result.ok) assert.fail("Session creation failed");
+      sessionIds.push(result.value.sessionId);
     }
 
     const results = await Promise.all([
       firstRepository.admitNormalRun(
-        productionRunAdmission("session-race-1", "run-race-1", "018f1f4e-7f0a-7000-8000-000000000307"),
+        productionRunAdmission(sessionIds[0]!, "run-race-1", "018f1f4e-7f0a-7000-8000-000000000307"),
       ),
       secondRepository.admitNormalRun(
-        productionRunAdmission("session-race-2", "run-race-2", "018f1f4e-7f0a-7000-8000-000000000308"),
+        productionRunAdmission(sessionIds[1]!, "run-race-2", "018f1f4e-7f0a-7000-8000-000000000308"),
       ),
     ]);
     assert.equal(results.filter((result) => result.ok).length, 1);
@@ -545,40 +665,33 @@ workerTest("timed-out Dispatch begin converges without granting a second Provide
     const client = new PersistenceWorkerClient({ workerUrl, databasePath, legacyDatabasePaths: [], workerOptions });
     await client.start();
     const repository = new RepositoryWriteClient(client);
-    assert.equal(
-      (
-        await repository.createSession({
-          idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000351",
-          session: {
-            id: "session-dispatch-timeout",
-            title: "Dispatch timeout",
-            providerId: "provider",
-            workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
-            workspacePath: PRODUCTION_TEST_WORKSPACE.workspacePath,
-            localRepositoryKey: null,
-            repositoryName: null,
-            allowedAdditionalDirectories: [],
-            defaultCharacterId: "character",
-            maxConcurrentChildRuns: 2,
-          },
-        })
-      ).ok,
-      true,
-    );
+    const created = await repository.createSession({
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000351",
+      session: {
+        title: "Dispatch timeout",
+        providerId: "provider",
+        workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
+        workspacePath: PRODUCTION_TEST_WORKSPACE.workspacePath,
+        localRepositoryKey: null,
+        repositoryName: null,
+        allowedAdditionalDirectories: [],
+        defaultCharacterId: "character",
+        maxConcurrentChildRuns: 2,
+      },
+    });
+    assert.equal(created.ok, true);
+    if (!created.ok) assert.fail("Session creation failed");
+    const sessionId = created.value.sessionId;
     assert.equal(
       (
         await repository.admitNormalRun(
-          productionRunAdmission(
-            "session-dispatch-timeout",
-            "run-dispatch-timeout",
-            "018f1f4e-7f0a-7000-8000-000000000352",
-          ),
+          productionRunAdmission(sessionId, "run-dispatch-timeout", "018f1f4e-7f0a-7000-8000-000000000352"),
         )
       ).ok,
       true,
     );
     const scope = {
-      sessionId: "session-dispatch-timeout",
+      sessionId,
       workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
       runId: "run-dispatch-timeout",
       attemptId: "attempt-run-dispatch-timeout",
@@ -688,7 +801,6 @@ workerTest("pre-aborted production write never reaches the database", async () =
     const command = {
       idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000371",
       session: {
-        id: "session-pre-aborted",
         title: "Pre-aborted",
         providerId: "provider",
         workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
@@ -1157,6 +1269,23 @@ function responseTransferBytes(response: WorkerToMainMessage, transferList: read
   return metadataBytes + transferList.reduce((total, buffer) => total + buffer.byteLength, 0);
 }
 
+function productionSessionCreate(title: string, idempotencyKey: string) {
+  return {
+    idempotencyKey,
+    session: {
+      title,
+      providerId: "provider",
+      workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
+      workspacePath: PRODUCTION_TEST_WORKSPACE.workspacePath,
+      localRepositoryKey: null,
+      repositoryName: null,
+      allowedAdditionalDirectories: [],
+      defaultCharacterId: "character",
+      maxConcurrentChildRuns: 2,
+    },
+  } as const;
+}
+
 function productionRunAdmission(sessionId: string, runId: string, idempotencyKey: string) {
   return {
     sessionId,
@@ -1188,7 +1317,6 @@ function productionChildStart(parentSessionId: string, parentRunId: string, idem
     workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
     idempotencyKey,
     childSession: {
-      id: "session-worker-child",
       title: "Worker child",
       providerId: "provider",
       allowedAdditionalDirectories: [],

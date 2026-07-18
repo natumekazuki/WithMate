@@ -165,6 +165,10 @@ export function createRepositoryReadOperations(database: DatabaseSync): Readonly
     ],
     [REPOSITORY_READ_OPERATIONS.childResultsPage, read((payload) => ({ result: childResultsPage(database, payload) }))],
     [
+      REPOSITORY_READ_OPERATIONS.sessionDeletionStatusGet,
+      read((payload) => ({ result: sessionDeletionStatusGet(database, payload) })),
+    ],
+    [
       REPOSITORY_READ_OPERATIONS.sessionDeletionCleanupPage,
       read((payload) => ({ result: sessionDeletionCleanupPage(database, payload) })),
     ],
@@ -705,6 +709,39 @@ function sessionDeletionCleanupPage(database: DatabaseSync, payload: Readonly<Re
     cursorScope,
     (row) => ({ ordinal: row.ordinal, sessionId: row.session_id }),
   );
+}
+
+function sessionDeletionStatusGet(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
+  assertExactKeys(payload, ["cleanupToken"]);
+  const cleanupToken = requiredString(payload.cleanupToken, "cleanupToken");
+  if (!isCanonicalUuid(cleanupToken)) throw invalidRequest("cleanupToken");
+  const rows = database
+    .prepare(
+      `
+      SELECT workspace_key, deleted_session_count, 'pending' AS status
+      FROM session_deletion_manifests
+      WHERE deletion_id = ?
+      UNION ALL
+      SELECT workspace_key, deleted_session_count, 'completed' AS status
+      FROM session_deletion_completion_tombstones
+      WHERE deletion_id = ?
+    `,
+    )
+    .all(cleanupToken, cleanupToken) as unknown as readonly Readonly<{
+    workspace_key: string;
+    deleted_session_count: number;
+    status: "pending" | "completed";
+  }>[];
+  if (rows.length === 0) throw notFound();
+  if (rows.length !== 1) throw new Error("Session deletion status is ambiguous.");
+  const row = rows[0]!;
+  return {
+    cleanupToken,
+    workspaceKey: row.workspace_key,
+    deletedSessionCount: row.deleted_session_count,
+    localOnly: true,
+    status: row.status,
+  };
 }
 
 function recoveryGet(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {

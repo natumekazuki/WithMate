@@ -454,6 +454,66 @@ repositoryTest("representative ordinal queries use covering indexes and never sc
   });
 });
 
+repositoryTest("Session deletion status resolves pending and completed workspace bindings by deletion ID", () => {
+  withDatabase((database) => {
+    const pendingToken = "018f1f4e-7f0a-7000-8000-000000000449";
+    const completedToken = "018f1f4e-7f0a-7000-8000-000000000450";
+    database
+      .prepare(
+        `
+        INSERT INTO session_deletion_manifests (
+          deletion_id, workspace_key, root_session_id, request_fingerprint, deleted_session_count, created_at
+        ) VALUES (?, 'pending-workspace', 'deleted-root', ?, 3, 1)
+      `,
+      )
+      .run(pendingToken, "a".repeat(64));
+    database
+      .prepare(
+        `
+        INSERT INTO session_deletion_completion_tombstones (
+          deletion_id, workspace_key, request_fingerprint, deleted_session_count, completed_at
+        ) VALUES (?, 'completed-workspace', ?, 2, 2)
+      `,
+      )
+      .run(completedToken, "b".repeat(64));
+    const status = operationFor(database, "repository.session-deletion.status.get");
+
+    assert.deepEqual(status({ cleanupToken: pendingToken }), {
+      cleanupToken: pendingToken,
+      workspaceKey: "pending-workspace",
+      deletedSessionCount: 3,
+      localOnly: true,
+      status: "pending",
+    });
+    assert.deepEqual(status({ cleanupToken: completedToken }), {
+      cleanupToken: completedToken,
+      workspaceKey: "completed-workspace",
+      deletedSessionCount: 2,
+      localOnly: true,
+      status: "completed",
+    });
+  });
+});
+
+repositoryTest("Session deletion status rejects invalid, missing, and expanded requests", () => {
+  withDatabase((database) => {
+    const status = operationFor(database, "repository.session-deletion.status.get");
+
+    assert.throws(
+      () => status({ cleanupToken: "not-a-uuid" }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "request_invalid",
+    );
+    assert.throws(
+      () => status({ cleanupToken: "018f1f4e-7f0a-7000-8000-000000000448" }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "not_found",
+    );
+    assert.throws(
+      () => status({ cleanupToken: "018f1f4e-7f0a-7000-8000-000000000448", workspaceKey: "workspace" }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "request_invalid",
+    );
+  });
+});
+
 repositoryTest("Session deletion cleanup manifest is recoverable through bounded pages", () => {
   withDatabase((database) => {
     const cleanupToken = "018f1f4e-7f0a-7000-8000-000000000451";

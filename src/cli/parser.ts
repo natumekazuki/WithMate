@@ -18,12 +18,15 @@ import {
   type CliValidatedCommand,
 } from "./contract.js";
 
-type OptionDefinition = Readonly<{
-  required?: boolean;
-  multiple?: boolean;
-  maxOccurrences?: number;
-  parse: (value: string) => unknown | undefined;
-}>;
+type OptionDefinition =
+  | Readonly<{ kind: "flag"; required?: boolean }>
+  | Readonly<{
+      kind: "value";
+      required?: boolean;
+      multiple?: boolean;
+      maxOccurrences?: number;
+      parse: (value: string) => unknown | undefined;
+    }>;
 
 type ParsedOptions = Readonly<Record<string, unknown>>;
 
@@ -40,6 +43,7 @@ const operations = new Set<CliSessionOperation>([
   "archive",
   "unarchive",
   "close",
+  "delete",
 ]);
 
 const timeoutOption = {
@@ -95,7 +99,28 @@ function parseSessionCommand(identity: CliCommandIdentity, argv: readonly string
       return parseWrite(identity as CliCommandIdentity<"unarchive">, argv);
     case "close":
       return parseClose(identity as CliCommandIdentity<"close">, argv);
+    case "delete":
+      return parseDelete(identity as CliCommandIdentity<"delete">, argv);
   }
+}
+
+function parseDelete(identity: CliCommandIdentity<"delete">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--idempotency-key": requiredOption(parseUuid),
+    "--confirm-local-only": flag({ required: true }),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      idempotencyKey: parsed.values["--idempotency-key"] as string,
+      ...optionalTimeout(parsed.values),
+    },
+  };
 }
 
 function parseRename(identity: CliCommandIdentity<"rename">, argv: readonly string[]): CliParseResult {
@@ -284,7 +309,7 @@ function parseOptions(
   definitions: Readonly<Record<string, OptionDefinition>>,
 ): OptionParseResult {
   const collected = new Map<string, string[]>();
-  for (let index = 0; index < argv.length; index += 2) {
+  for (let index = 0; index < argv.length;) {
     const name = argv[index];
     if (name === undefined || !name.startsWith("--")) {
       return { ok: false, result: usageFailure(identity, "unexpected_argument", "Unexpected positional argument.") };
@@ -293,11 +318,22 @@ function parseOptions(
     if (definition === undefined) {
       return { ok: false, result: usageFailure(identity, "unknown_option", "Unknown option.") };
     }
+    const existing = collected.get(name);
+    if (definition.kind === "flag") {
+      if (existing !== undefined) {
+        return {
+          ok: false,
+          result: usageFailure(identity, "duplicate_option", `Option '${name}' cannot be repeated.`),
+        };
+      }
+      collected.set(name, [""]);
+      index += 1;
+      continue;
+    }
     const value = argv[index + 1];
     if (value === undefined || value.startsWith("--")) {
       return { ok: false, result: usageFailure(identity, "missing_option", `Option '${name}' requires a value.`) };
     }
-    const existing = collected.get(name);
     if (existing !== undefined && !definition.multiple) {
       return { ok: false, result: usageFailure(identity, "duplicate_option", `Option '${name}' cannot be repeated.`) };
     }
@@ -313,6 +349,7 @@ function parseOptions(
     }
     if (existing === undefined) collected.set(name, [value]);
     else existing.push(value);
+    index += 2;
   }
 
   const values: Record<string, unknown> = {};
@@ -322,6 +359,10 @@ function parseOptions(
       if (definition.required) {
         return { ok: false, result: usageFailure(identity, "missing_option", `Required option '${name}' is missing.`) };
       }
+      continue;
+    }
+    if (definition.kind === "flag") {
+      values[name] = true;
       continue;
     }
     const parsedValues: unknown[] = [];
@@ -341,14 +382,18 @@ function parseOptions(
 }
 
 function option(
-  parse: OptionDefinition["parse"],
+  parse: Extract<OptionDefinition, Readonly<{ kind: "value" }>>["parse"],
   settings: Readonly<{ required?: boolean; multiple?: boolean; maxOccurrences?: number }> = {},
 ): OptionDefinition {
-  return { parse, ...settings };
+  return { kind: "value", parse, ...settings };
 }
 
-function requiredOption(parse: OptionDefinition["parse"]): OptionDefinition {
+function requiredOption(parse: Extract<OptionDefinition, Readonly<{ kind: "value" }>>["parse"]): OptionDefinition {
   return option(parse, { required: true });
+}
+
+function flag(settings: Readonly<{ required?: boolean }> = {}): OptionDefinition {
+  return { kind: "flag", ...settings };
 }
 
 function parseUuid(value: string): string | undefined {

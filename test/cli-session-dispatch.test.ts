@@ -65,6 +65,7 @@ test("all Session argv dispatch only public Application operation requests", asy
       "--expected-lifecycle-status",
       "active",
     ],
+    ["session", "delete", "--session-id", "session-1", "--idempotency-key", uuid, "--confirm-local-only"],
   ] as const;
 
   for (const argv of invocations) {
@@ -130,6 +131,11 @@ test("all Session argv dispatch only public Application operation requests", asy
         idempotencyKey: uuid,
         expectedLifecycleStatus: "active",
       },
+      options: {},
+    },
+    {
+      operation: "delete",
+      request: { context: { authorization }, sessionId: "session-1", idempotencyKey: uuid },
       options: {},
     },
   ]);
@@ -274,6 +280,47 @@ test("Application response families remain observable at the argv boundary", asy
       ),
       exitCode: CLI_EXIT_CODES.canceled,
     },
+    {
+      argv: ["session", "delete", "--session-id", "session-1", "--idempotency-key", uuid, "--confirm-local-only"],
+      response: {
+        overallStatus: "partial_success",
+        value: {
+          sessionId: "session-1",
+          cleanupToken: uuid,
+          deletedSessionCount: 1,
+          localOnly: true,
+          cleanupStatus: "pending",
+        },
+        issues: [
+          {
+            kind: "cleanup",
+            code: "session_files_cleanup_pending",
+            message: "Session Files cleanup is pending.",
+            cleanupToken: uuid,
+            retryable: true,
+            reconciliation: "exact_request_required",
+          },
+        ],
+        persistence: { status: "committed", effect: "none", replayed: false },
+      },
+      exitCode: CLI_EXIT_CODES.partialSuccess,
+    },
+    {
+      argv: ["session", "delete", "--session-id", "session-1", "--idempotency-key", uuid, "--confirm-local-only"],
+      response: failure(
+        { kind: "domain", code: "session_busy", message: "busy", retryable: true },
+        { status: "rejected", effect: "none" },
+      ),
+      exitCode: CLI_EXIT_CODES.domainRejected,
+    },
+    {
+      argv: ["session", "delete", "--session-id", "session-1", "--idempotency-key", uuid, "--confirm-local-only"],
+      response: failure(
+        { kind: "persistence", code: "persistence_unavailable", message: "lost", retryable: true, effect: "unknown" },
+        { status: "failed", effect: "unknown", reconciliation: "exact_request_required" },
+      ),
+      exitCode: CLI_EXIT_CODES.persistenceFailedUnknownEffect,
+    },
   ] as const;
 
   for (const candidate of cases) {
@@ -366,6 +413,7 @@ function recordingOperations(
     archive: (request, options) => invoke("archive", request, options),
     unarchive: (request, options) => invoke("unarchive", request, options),
     close: (request, options) => invoke("close", request, options),
+    delete: (request, options) => invoke("delete", request, options),
   };
   return { operations, calls };
 }
@@ -418,6 +466,18 @@ function successResponse(operation: OperationName): unknown {
       return transitionResponse("active", writePersistence);
     case "close":
       return transitionResponse("closed", writePersistence);
+    case "delete":
+      return {
+        overallStatus: "success",
+        value: {
+          sessionId: "session-1",
+          cleanupToken: uuid,
+          deletedSessionCount: 1,
+          localOnly: true,
+          cleanupStatus: "completed",
+        },
+        persistence: writePersistence,
+      };
   }
 }
 

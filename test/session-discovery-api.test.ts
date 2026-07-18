@@ -15,11 +15,12 @@ import { resolveWorkspaceIdentity } from "../src/shared/workspace-path.js";
 const repositoryTest = Number.parseInt(process.versions.node, 10) >= 24 ? test : test.skip;
 const repositoryKey = `local-repository-v1-sha256-${"a".repeat(64)}`;
 const otherRepositoryKey = `local-repository-v1-sha256-${"b".repeat(64)}`;
+const testSessionIds = new Map<string, string>();
 
 repositoryTest("title update is idempotent and immediately participates in Session search", () => {
   withDatabase((database) => {
     let now = 100;
-    const writes = createRepositoryWriteOperations(database, { clock: () => now });
+    const writes = createTestWriteOperations(database, () => now);
     execute(writes, REPOSITORY_WRITE_OPERATIONS.sessionCreate, createCommand("session-1", uuid(1), "Initial", "Repo"));
     execute(writes, REPOSITORY_WRITE_OPERATIONS.sessionCreate, createCommand("session-2", uuid(3), "Other", "Repo"));
     now = 200;
@@ -119,7 +120,7 @@ repositoryTest("title update is idempotent and immediately participates in Sessi
 repositoryTest("local Repository listing groups names by key and excludes non-Git Sessions", () => {
   withDatabase((database) => {
     let now = 100;
-    const writes = createRepositoryWriteOperations(database, { clock: () => now });
+    const writes = createTestWriteOperations(database, () => now);
     execute(writes, REPOSITORY_WRITE_OPERATIONS.sessionCreate, createCommand("session-1", uuid(1), "One", "Repo"));
     now = 110;
     execute(writes, REPOSITORY_WRITE_OPERATIONS.sessionCreate, createCommand("session-2", uuid(2), "Two", "repo"));
@@ -167,7 +168,7 @@ repositoryTest("local Repository listing groups names by key and excludes non-Gi
 repositoryTest("local Repository names are bounded while aggregate counts remain complete", () => {
   withDatabase((database) => {
     let now = 100;
-    const writes = createRepositoryWriteOperations(database, { clock: () => now });
+    const writes = createTestWriteOperations(database, () => now);
     for (let ordinal = 0; ordinal <= 100; ordinal += 1) {
       now = 100 + ordinal;
       execute(
@@ -280,6 +281,12 @@ test("Application authorizes new operations and forwards canonical Session filte
       async sessionDirectoriesChunk(): Promise<never> {
         throw new Error("unexpected");
       },
+      async sessionDeletionStatusGet(): Promise<never> {
+        throw new Error("unexpected");
+      },
+      async sessionDeletionCleanupPage(): Promise<never> {
+        throw new Error("unexpected");
+      },
     },
     writes: {
       async createSession(): Promise<never> {
@@ -296,7 +303,14 @@ test("Application authorizes new operations and forwards canonical Session filte
       async transitionSession(): Promise<never> {
         throw new Error("unexpected");
       },
+      async deleteSessionSubtree(): Promise<never> {
+        throw new Error("unexpected");
+      },
+      async completeSessionDeletionCleanup(): Promise<never> {
+        throw new Error("unexpected");
+      },
     },
+    sessionFiles: { async deleteSessionFiles() {} },
     access: {
       async validateWorkspace() {
         return { allowed: true } as const;
@@ -347,10 +361,10 @@ function createCommand(
 ) {
   const workspace = resolveWorkspaceIdentity(path.resolve("workspace"));
   assert.ok(workspace);
+  testSessionIds.set(idempotencyKey, id);
   return {
     idempotencyKey,
     session: {
-      id,
       title,
       providerId: "codex",
       workspaceKey: workspace.workspaceKey,
@@ -362,6 +376,13 @@ function createCommand(
       maxConcurrentChildRuns: 1,
     },
   } as const;
+}
+
+function createTestWriteOperations(database: DatabaseSync, clock: () => number) {
+  return createRepositoryWriteOperations(database, {
+    clock,
+    sessionIdAllocator: (_database, _nonce, allocationKey) => testSessionIds.get(allocationKey),
+  });
 }
 
 function execute(

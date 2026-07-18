@@ -1,3 +1,17 @@
+CREATE TABLE session_identity_allocator (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  namespace TEXT NOT NULL CHECK (
+    length(namespace) = 32
+    AND namespace NOT GLOB '*[^0-9a-f]*'
+  ),
+  next_sequence TEXT NOT NULL CHECK (
+    length(next_sequence) = 33
+    AND next_sequence NOT GLOB '*[^0-9a-f]*'
+    AND next_sequence >= '000000000000000000000000000000001'
+    AND next_sequence <= '100000000000000000000000000000000'
+  )
+) STRICT;
+
 CREATE TABLE sessions (
   id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 1024),
   title TEXT NOT NULL CHECK (
@@ -227,6 +241,19 @@ CREATE TABLE run_dispatches (
 
 CREATE INDEX run_dispatches_state_created_idx ON run_dispatches(dispatch_state, created_at);
 
+CREATE TABLE idempotency_key_claims (
+  idempotency_key TEXT PRIMARY KEY
+    CHECK (length(idempotency_key) = 36
+      AND idempotency_key = lower(idempotency_key)
+      AND substr(idempotency_key, 9, 1) = '-'
+      AND substr(idempotency_key, 14, 1) = '-'
+      AND substr(idempotency_key, 19, 1) = '-'
+      AND substr(idempotency_key, 24, 1) = '-'
+      AND length(replace(idempotency_key, '-', '')) = 32
+      AND replace(idempotency_key, '-', '') NOT GLOB '*[^0-9a-f]*'),
+  claim_kind TEXT NOT NULL CHECK (claim_kind IN ('standard', 'session_deletion'))
+) STRICT;
+
 CREATE TABLE idempotency_records (
   idempotency_key TEXT PRIMARY KEY
     CHECK (length(idempotency_key) = 36
@@ -276,6 +303,24 @@ CREATE TABLE idempotency_records (
   FOREIGN KEY (scope_session_id) REFERENCES sessions(id) ON DELETE RESTRICT
 ) STRICT;
 
+CREATE TRIGGER idempotency_records_claim_before_insert
+BEFORE INSERT ON idempotency_records
+BEGIN
+  INSERT OR IGNORE INTO idempotency_key_claims (idempotency_key, claim_kind)
+    VALUES (NEW.idempotency_key, 'standard');
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM idempotency_key_claims
+    WHERE idempotency_key = NEW.idempotency_key AND claim_kind = 'standard'
+  ) THEN RAISE(ABORT, 'idempotency key claim conflict') END;
+END;
+
+CREATE TRIGGER idempotency_records_claim_after_delete
+AFTER DELETE ON idempotency_records
+BEGIN
+  DELETE FROM idempotency_key_claims
+  WHERE idempotency_key = OLD.idempotency_key AND claim_kind = 'standard';
+END;
+
 CREATE INDEX idempotency_records_state_created_idx
   ON idempotency_records(record_state, created_at);
 CREATE INDEX idempotency_records_expires_idx
@@ -298,9 +343,20 @@ CREATE TABLE session_deletion_manifests (
   request_fingerprint TEXT NOT NULL
     CHECK (length(request_fingerprint) = 64
       AND request_fingerprint NOT GLOB '*[^0-9a-f]*'),
-  deleted_session_count INTEGER NOT NULL CHECK (deleted_session_count >= 1),
+  deleted_session_count INTEGER NOT NULL CHECK (deleted_session_count BETWEEN 1 AND 4096),
   created_at INTEGER NOT NULL
 ) STRICT;
+
+CREATE TRIGGER session_deletion_manifests_claim_before_insert
+BEFORE INSERT ON session_deletion_manifests
+BEGIN
+  INSERT OR IGNORE INTO idempotency_key_claims (idempotency_key, claim_kind)
+    VALUES (NEW.deletion_id, 'session_deletion');
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM idempotency_key_claims
+    WHERE idempotency_key = NEW.deletion_id AND claim_kind = 'session_deletion'
+  ) THEN RAISE(ABORT, 'idempotency key claim conflict') END;
+END;
 
 CREATE INDEX session_deletion_manifests_workspace_created_idx
   ON session_deletion_manifests(workspace_key, created_at, deletion_id);
@@ -319,13 +375,24 @@ CREATE TABLE session_deletion_completion_tombstones (
   request_fingerprint TEXT NOT NULL
     CHECK (length(request_fingerprint) = 64
       AND request_fingerprint NOT GLOB '*[^0-9a-f]*'),
-  deleted_session_count INTEGER NOT NULL CHECK (deleted_session_count >= 1),
+  deleted_session_count INTEGER NOT NULL CHECK (deleted_session_count BETWEEN 1 AND 4096),
   completed_at INTEGER NOT NULL
 ) STRICT;
 
+CREATE TRIGGER session_deletion_completion_tombstones_claim_before_insert
+BEFORE INSERT ON session_deletion_completion_tombstones
+BEGIN
+  INSERT OR IGNORE INTO idempotency_key_claims (idempotency_key, claim_kind)
+    VALUES (NEW.deletion_id, 'session_deletion');
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM idempotency_key_claims
+    WHERE idempotency_key = NEW.deletion_id AND claim_kind = 'session_deletion'
+  ) THEN RAISE(ABORT, 'idempotency key claim conflict') END;
+END;
+
 CREATE TABLE session_deletion_items (
   deletion_id TEXT NOT NULL,
-  ordinal INTEGER NOT NULL CHECK (ordinal >= 1),
+  ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 1 AND 4096),
   session_id TEXT NOT NULL CHECK (length(session_id) BETWEEN 1 AND 1024),
   PRIMARY KEY (deletion_id, ordinal),
   FOREIGN KEY (deletion_id) REFERENCES session_deletion_manifests(deletion_id) ON DELETE CASCADE

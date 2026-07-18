@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-14
+- Updated: 2026-07-19
 
 ## Context
 
@@ -15,7 +16,13 @@ Session subtreeのdomain rowはSQLite transaction内で物理削除し、Session
 
 呼び出し側は削除前にUUIDのdeletion IDを確定する。削除commandはこのIDをexact replay key兼cleanup tokenとして扱い、成功応答にはtoken、削除件数、local-only表示だけを返す。削除対象Session IDはboundedなpage readで取得する。
 
-Application Serviceはpageを最後まで取得し、各Session Filesを冪等削除した後にcleanup完了commandを送る。cleanup完了前のcrashでは同じtokenから再開する。完了commandはmanifestとitemを削除し、同じtransactionで`session_deletion_completion_tombstones`へ固定長のtoken、boundedなworkspace key、request fingerprint、削除件数、完了時刻だけを保存する。plaintextのSession IDは完了tombstoneへ残さない。
+deletion IDは専用manifestで応答を保持するが、keyの所有権は通常writeと共通のapp-wide namespaceへclaimする。通常IdempotencyRecordと削除manifest / 完了tombstoneは、共有claim registryを介して同じkeyのcross-operation再利用を双方向に拒否する。通常recordがscope Sessionの物理削除で消える場合は通常claimも消し、完了tombstoneを持つdeletion claimは保持する。
+
+1つのSession treeはrootを含め4,096 Sessionまでとし、child admissionとsubtree deleteで同じ上限を適用する。削除対象はconnection-localなSQL worksetへ確定し、Run、relation、Delegation、DeliveryなどのID群をApplicationまたはRepositoryの配列へ展開しない。Application Serviceがmanifest全体を検証するために保持できるSession ID数も同じ上限で制約する。
+
+domain mutation前に、対象payload bytesと更新対象row数からSQLite WAL増分を保守的に見積もる。filesystemの空き容量を取得できない場合、または見積り後にdisk reserveを維持できない場合は`insufficient_disk_space`として再試行可能に拒否し、manifest、claim、domain rowを変更しない。
+
+Application Serviceはpageを最後まで取得し、ordinal、件数、cursor、重複、omission、root Session包含をmanifest全体で検証してから、各Session Filesを冪等削除する。検証完了前にfilesystem副作用を開始しない。全itemの削除後にcleanup完了commandを送り、cleanup完了前のcrashでは同じtokenから再開する。完了commandはmanifestとitemを削除し、同じtransactionで`session_deletion_completion_tombstones`へ固定長のtoken、boundedなworkspace key、request fingerprint、削除件数、完了時刻だけを保存する。plaintextのSession IDは完了tombstoneへ残さない。
 
 完了tombstoneは、cleanup完了commandのcommit後に応答を失った再送を`success / replayed=true`へ収束させる。削除commandの再送もrequest fingerprintとworkspaceを照合し、同じ削除結果を返す。異なるrequestでtokenを再利用した場合は成功扱いしない。Provider側データの削除はmanifestと完了tombstoneの対象に含めない。
 
@@ -29,11 +36,15 @@ workspace境界を越えるrelationを含むtreeは、manifest作成およびdom
 - cleanup対象をprocess memoryだけに保持する: crash recoveryできないため採用しない。
 - 完了後に全recordを削除する: cleanup完了commit後の応答消失を`not_found`と区別できないため採用しない。
 - 汎用IdempotencyRecordを使用する: 削除対象Sessionへのscope外部キーを保持できず、scope契約の変更が他commandへ波及するため採用しない。
+- deletion IDを通常writeとは別namespaceにする: app-wide key契約を操作種別ごとに分断し、同じkeyが不可逆な別操作を表せるため採用しない。
+- subtreeを無制限にして全IDをprocess memoryへ展開する: 有効なdomain状態だけでmemory exhaustionを起こせるため採用しない。
 
 ## Consequences
 
 - SQLite内のdomain削除とcleanup manifest作成は原子的になり、応答消失後も同じdeletion IDで結果を再取得できる。
 - Worker responseはtree件数に依存せずboundedになる。
+- Session treeの最大規模は4,096件となり、上限到達後にchildを追加するには既存branchの削除が必要になる。
+- disk admissionにより空き容量不足では削除が開始されず、空き容量確保後に同じdeletion IDで再試行できる。
 - filesystem cleanupはeventualかつ冪等であり、SQLite commit時点ではSession Filesが残る可能性がある。
 - cleanup完了まで、削除済みSession IDとworkspace keyを含むmanifestがsubtree外に残る。Application Serviceはfiles削除より先にcleanup完了を記録してはならない。
 - cleanup完了後はSession IDとitemを消去するが、exact replayのためrequest fingerprintを含むboundedな完了tombstoneを保持する。自動retention期間は初期版の契約に追加せず、将来導入する場合はreplay保証期間とtoken再利用規則を同時に決定する。

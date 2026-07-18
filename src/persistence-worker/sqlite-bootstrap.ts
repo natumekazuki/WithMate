@@ -242,15 +242,26 @@ function executeSchemaDdl(database: DatabaseSync, ddl: string): void {
     sqliteConstants.SQLITE_ATTACH,
     sqliteConstants.SQLITE_DETACH,
     sqliteConstants.SQLITE_PRAGMA,
+    sqliteConstants.SQLITE_CREATE_TEMP_INDEX,
+    sqliteConstants.SQLITE_CREATE_TEMP_TABLE,
+    sqliteConstants.SQLITE_CREATE_TEMP_TRIGGER,
+    sqliteConstants.SQLITE_CREATE_TEMP_VIEW,
+    sqliteConstants.SQLITE_CREATE_VTABLE,
   ]);
 
-  databaseWithAuthorizer.setAuthorizer?.((actionCode) =>
+  if (databaseWithAuthorizer.setAuthorizer === undefined) {
+    throw new DatabaseBootstrapError(
+      "database_schema_verification_failed",
+      "SQLite authorizer is unavailable for schema installation.",
+    );
+  }
+  databaseWithAuthorizer.setAuthorizer((actionCode) =>
     deniedActions.has(actionCode) ? sqliteConstants.SQLITE_DENY : sqliteConstants.SQLITE_OK,
   );
   try {
     database.exec(ddl);
   } finally {
-    databaseWithAuthorizer.setAuthorizer?.(null);
+    databaseWithAuthorizer.setAuthorizer(null);
   }
 }
 
@@ -260,12 +271,57 @@ function assertSchemaDdlHasNoControlStatements(ddl: string): void {
     .replace(/"(?:""|[^"])*"/g, '""')
     .replace(/--[^\r\n]*/g, "")
     .replace(/\/\*[\s\S]*?\*\//g, "");
-  if (/\b(?:ATTACH|DETACH|PRAGMA|BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE)\b/i.test(sqlWithoutLiteralsOrComments)) {
+  const tokens = sqlWithoutLiteralsOrComments.match(/[A-Za-z_][A-Za-z_0-9]*|;/g) ?? [];
+  const forbidden = new Set(["ATTACH", "DETACH", "PRAGMA", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE"]);
+  let statementWords: string[] = [];
+  let inTriggerBody = false;
+  let triggerCaseDepth = 0;
+  let invalid = false;
+  for (const token of tokens) {
+    const normalized = token.toUpperCase();
+    if (inTriggerBody) {
+      if (forbidden.has(normalized) || normalized === "BEGIN") {
+        invalid = true;
+        break;
+      }
+      if (normalized === "CASE") triggerCaseDepth += 1;
+      if (normalized === "END") {
+        if (triggerCaseDepth > 0) triggerCaseDepth -= 1;
+        else inTriggerBody = false;
+      }
+      continue;
+    }
+    if (normalized === ";") {
+      statementWords = [];
+      continue;
+    }
+    if (forbidden.has(normalized) || normalized === "END") {
+      invalid = true;
+      break;
+    }
+    if (normalized === "BEGIN") {
+      if (!isCreateTriggerPrefix(statementWords)) {
+        invalid = true;
+        break;
+      }
+      inTriggerBody = true;
+      triggerCaseDepth = 0;
+      continue;
+    }
+    statementWords.push(normalized);
+  }
+  if (invalid) {
     throw new DatabaseBootstrapError(
       "database_schema_verification_failed",
       "Schema artifact contains a forbidden control statement.",
     );
   }
+}
+
+function isCreateTriggerPrefix(words: readonly string[]): boolean {
+  if (words[0] !== "CREATE") return false;
+  const triggerIndex = words[1] === "TEMP" || words[1] === "TEMPORARY" ? 2 : 1;
+  return words[triggerIndex] === "TRIGGER";
 }
 
 function configureConnection(database: DatabaseSync): void {
