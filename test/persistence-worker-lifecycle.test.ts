@@ -14,12 +14,20 @@ import {
   type WorkerToMainMessage,
 } from "../src/shared/persistence-protocol.js";
 import { REPOSITORY_CHUNK_LIMITS } from "../src/shared/repository-read-model.js";
+import { resolveWorkspaceIdentity } from "../src/shared/workspace-path.js";
 import { PersistenceWorkerRuntime } from "../src/persistence-worker/worker-runtime.js";
 
 const workerUrl = new URL("../src/persistence-worker/worker-entry.ts", import.meta.url);
 const fixtureWorkerUrl = new URL("./fixtures/persistence-worker-fixture.ts", import.meta.url);
 const workerOptions = { execArgv: ["--import", "tsx"] };
 const workerTest = Number.parseInt(process.versions.node, 10) >= 24 ? test : test.skip;
+const PRODUCTION_TEST_WORKSPACE = requiredWorkspaceIdentity(path.resolve("workspace"));
+
+function requiredWorkspaceIdentity(value: string): NonNullable<ReturnType<typeof resolveWorkspaceIdentity>> {
+  const workspace = resolveWorkspaceIdentity(value);
+  assert.ok(workspace);
+  return workspace;
+}
 
 workerTest("worker starts once, serves requests, checkpoints, and closes gracefully", async () => {
   await withTempDirectory(async (directory) => {
@@ -61,8 +69,12 @@ workerTest("production Worker restores a Session Provider before its first Run",
       idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000381",
       session: {
         id: "session-provider-recovery",
+        title: "Provider recovery",
         providerId: "provider-recovery",
-        workspaceKey: "workspace",
+        workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
+        workspacePath: PRODUCTION_TEST_WORKSPACE.workspacePath,
+        localRepositoryKey: null,
+        repositoryName: null,
         allowedAdditionalDirectories: [],
         defaultCharacterId: "character",
         maxConcurrentChildRuns: 2,
@@ -75,7 +87,6 @@ workerTest("production Worker restores a Session Provider before its first Run",
     await resumedClient.start();
     const restored = await new RepositoryReadClient(resumedClient).sessionGet({
       sessionId: "session-provider-recovery",
-      workspaceKey: "workspace",
     });
     assert.equal(restored.session.providerId, "provider-recovery");
     assert.equal(restored.execution.state, "not_started");
@@ -103,8 +114,12 @@ workerTest("production Worker applies configured Run capacity", async () => {
         idempotencyKey,
         session: {
           id: sessionId,
+          title: `Session ${sessionId}`,
           providerId: "provider",
-          workspaceKey: "workspace",
+          workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
+          workspacePath: PRODUCTION_TEST_WORKSPACE.workspacePath,
+          localRepositoryKey: null,
+          repositoryName: null,
           allowedAdditionalDirectories: [],
           defaultCharacterId: "character",
           maxConcurrentChildRuns: 2,
@@ -146,8 +161,12 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
           idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000321",
           session: {
             id: "session-worker-integration",
+            title: "Worker integration",
             providerId: "provider",
-            workspaceKey: "workspace",
+            workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
+            workspacePath: PRODUCTION_TEST_WORKSPACE.workspacePath,
+            localRepositoryKey: null,
+            repositoryName: null,
             allowedAdditionalDirectories: [],
             defaultCharacterId: "character",
             maxConcurrentChildRuns: 2,
@@ -170,7 +189,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
     );
     const scope = {
       sessionId: "session-worker-integration",
-      workspaceKey: "workspace",
+      workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
       runId: "run-worker-integration",
       attemptId: "attempt-run-worker-integration",
       bindingId: "binding-run-worker-integration",
@@ -253,7 +272,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
     assert.equal(child.ok && child.value.childSessionId, "session-worker-child");
     const childScope = {
       sessionId: "session-worker-child",
-      workspaceKey: "workspace",
+      workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
       runId: "run-worker-child",
       attemptId: "attempt-worker-child",
       bindingId: "binding-worker-child",
@@ -400,7 +419,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
     });
     const childTerminal = await resumedRepository.completeRun({
       sessionId: "session-worker-child",
-      workspaceKey: "workspace",
+      workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
       runId: "run-worker-child",
       attemptId: "attempt-worker-child",
       terminalEvent: { id: "event-worker-child-terminal", dedupeKey: "provider-event-worker-child-terminal" },
@@ -419,7 +438,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
     const collected = await resumedRepository.collectChildResult({
       parentSessionId: "session-worker-integration",
       childSessionId: "session-worker-child",
-      workspaceKey: "workspace",
+      workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
       idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000324",
       deliveryId: "delivery-worker-child",
       collectingParentRunId: "run-worker-integration",
@@ -430,7 +449,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
     const deleted = await resumedRepository.deleteSessionSubtree({
       deletionId: "018f1f4e-7f0a-7000-8000-000000000325",
       sessionId: "session-worker-child",
-      workspaceKey: "workspace",
+      workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
     });
     assert.deepEqual(deleted.ok && deleted.value, {
       cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
@@ -439,12 +458,12 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
     });
     const cleanup = await new RepositoryReadClient(resumedClient).sessionDeletionCleanupPage({
       cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
-      workspaceKey: "workspace",
+      workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
     });
     assert.deepEqual(cleanup.items, [{ ordinal: 1, sessionId: "session-worker-child" }]);
     const cleanupCompleted = await resumedRepository.completeSessionDeletionCleanup({
       cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
-      workspaceKey: "workspace",
+      workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
     });
     assert.deepEqual(cleanupCompleted.ok && cleanupCompleted.value, {
       cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
@@ -456,7 +475,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
     await cleanupReplayClient.start();
     const cleanupReplay = await new RepositoryWriteClient(cleanupReplayClient).completeSessionDeletionCleanup({
       cleanupToken: "018f1f4e-7f0a-7000-8000-000000000325",
-      workspaceKey: "workspace",
+      workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
     });
     assert.equal(cleanupReplay.ok && cleanupReplay.replayed, true);
     assert.deepEqual(cleanupReplay.ok && cleanupReplay.value, {
@@ -492,8 +511,12 @@ workerTest("BEGIN IMMEDIATE serializes capacity admission across database connec
         idempotencyKey,
         session: {
           id: sessionId,
+          title: `Session ${sessionId}`,
           providerId: "provider",
-          workspaceKey: "workspace",
+          workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
+          workspacePath: PRODUCTION_TEST_WORKSPACE.workspacePath,
+          localRepositoryKey: null,
+          repositoryName: null,
           allowedAdditionalDirectories: [],
           defaultCharacterId: "character",
           maxConcurrentChildRuns: 2,
@@ -528,8 +551,12 @@ workerTest("timed-out Dispatch begin converges without granting a second Provide
           idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000351",
           session: {
             id: "session-dispatch-timeout",
+            title: "Dispatch timeout",
             providerId: "provider",
-            workspaceKey: "workspace",
+            workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
+            workspacePath: PRODUCTION_TEST_WORKSPACE.workspacePath,
+            localRepositoryKey: null,
+            repositoryName: null,
             allowedAdditionalDirectories: [],
             defaultCharacterId: "character",
             maxConcurrentChildRuns: 2,
@@ -552,7 +579,7 @@ workerTest("timed-out Dispatch begin converges without granting a second Provide
     );
     const scope = {
       sessionId: "session-dispatch-timeout",
-      workspaceKey: "workspace",
+      workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
       runId: "run-dispatch-timeout",
       attemptId: "attempt-run-dispatch-timeout",
       bindingId: "binding-run-dispatch-timeout",
@@ -662,8 +689,12 @@ workerTest("pre-aborted production write never reaches the database", async () =
       idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000371",
       session: {
         id: "session-pre-aborted",
+        title: "Pre-aborted",
         providerId: "provider",
-        workspaceKey: "workspace",
+        workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
+        workspacePath: PRODUCTION_TEST_WORKSPACE.workspacePath,
+        localRepositoryKey: null,
+        repositoryName: null,
         allowedAdditionalDirectories: [],
         defaultCharacterId: "character",
         maxConcurrentChildRuns: 2,
@@ -672,9 +703,10 @@ workerTest("pre-aborted production write never reaches the database", async () =
     await assert.rejects(repository.createSession(command, { signal: controller.signal }), (error: unknown) =>
       isClientError(error, "request_canceled", "none"),
     );
-    assert.deepEqual(await new RepositoryReadClient(client).sessionsPage({ workspaceKey: "workspace" }), {
-      items: [],
-    });
+    assert.deepEqual(
+      await new RepositoryReadClient(client).sessionsPage({ workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey }),
+      { items: [] },
+    );
     const created = await repository.createSession(command);
     assert.equal(created.ok && created.replayed, false);
     await client.shutdown();
@@ -1024,7 +1056,7 @@ test("all Repository chunk operations clamp envelope metadata and advance withou
   const cases = [
     {
       operation: "repository.session.directories-chunk",
-      payload: { sessionId, workspaceKey, offset: 0, maxBytes: REPOSITORY_CHUNK_LIMITS.maxRequestedBytes },
+      payload: { sessionId, offset: 0, maxBytes: REPOSITORY_CHUNK_LIMITS.maxRequestedBytes },
     },
     {
       operation: "repository.message.content-chunk",
@@ -1128,7 +1160,7 @@ function responseTransferBytes(response: WorkerToMainMessage, transferList: read
 function productionRunAdmission(sessionId: string, runId: string, idempotencyKey: string) {
   return {
     sessionId,
-    workspaceKey: "workspace",
+    workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
     idempotencyKey,
     message: { id: `message-${runId}`, contentBlocks: [{ type: "text", text: "hello" }] },
     run: {
@@ -1139,7 +1171,7 @@ function productionRunAdmission(sessionId: string, runId: string, idempotencyKey
         reasoning: { effort: "medium" },
         approval: { mode: "on-request" },
         sandbox: { mode: "workspace-write" },
-        workspace: { key: "workspace" },
+        workspace: { key: PRODUCTION_TEST_WORKSPACE.workspaceKey },
         character: null,
       },
     },
@@ -1153,10 +1185,11 @@ function productionChildStart(parentSessionId: string, parentRunId: string, idem
   return {
     parentSessionId,
     parentRunId,
-    workspaceKey: "workspace",
+    workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
     idempotencyKey,
     childSession: {
       id: "session-worker-child",
+      title: "Worker child",
       providerId: "provider",
       allowedAdditionalDirectories: [],
       defaultCharacterId: "character",
@@ -1184,7 +1217,7 @@ function productionChildStart(parentSessionId: string, parentRunId: string, idem
         reasoning: { effort: "medium" },
         approval: { mode: "on-request" },
         sandbox: { mode: "workspace-write" },
-        workspace: { key: "workspace" },
+        workspace: { key: PRODUCTION_TEST_WORKSPACE.workspaceKey },
         character: { id: "character" },
       },
     },

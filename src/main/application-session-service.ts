@@ -8,6 +8,8 @@ import type {
   ApplicationDomainErrorCode,
   ApplicationOperationOptions,
   ApplicationOperationResponse,
+  ApplicationLocalRepositoryListRequest,
+  ApplicationLocalRepositoryPage,
   ApplicationSessionCloseRequest,
   ApplicationSessionCreateRequest,
   ApplicationSessionCreateResult,
@@ -22,24 +24,44 @@ import type {
   ApplicationSessionReadRequest,
   ApplicationSessionReadResult,
   ApplicationSessionTransitionResult,
+  ApplicationSessionUpdateTitleRequest,
+  ApplicationSessionUpdateTitleResult,
   ApplicationSessionWriteRequest,
 } from "../shared/application-service-model.js";
 import {
   ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS,
   allowedAdditionalDirectoriesJsonByteLength,
-  normalizeAllowedAdditionalDirectories,
+  canonicalizeAllowedAdditionalDirectories,
+  compactCanonicalAllowedAdditionalDirectories,
 } from "../shared/allowed-additional-directories.js";
+import type { CanonicalAllowedAdditionalDirectory } from "../shared/allowed-additional-directories.js";
 import type { PersistenceError } from "../shared/persistence-protocol.js";
 import { isCanonicalUuid } from "../shared/persistence-runtime-protocol.js";
 import { REPOSITORY_READ_LIMITS } from "../shared/repository-read-model.js";
 import type { SessionLifecycleStatus } from "../shared/repository-write-model.js";
 import { MAX_SESSION_CONCURRENT_CHILD_RUNS } from "../shared/session-limits.js";
+import {
+  canonicalizeSessionQuery,
+  canonicalizeSessionTitle,
+  isLocalRepositoryKey,
+  isRepositoryName,
+  isCanonicalSessionTitle,
+  SESSION_METADATA_LIMITS,
+  sessionSearchKey,
+  snapshotLocalRepositoryMetadata,
+  type LocalRepositoryMetadata,
+} from "../shared/session-metadata.js";
+import { resolveWorkspaceIdentity } from "../shared/workspace-path.js";
+import { resolveLocalRepositoryMetadata, type LocalRepositoryMetadataResolver } from "./local-repository-metadata.js";
 import { PersistenceClientError } from "./persistence-worker-client.js";
-import type { RepositoryReadClient } from "./repository-read-client.js";
-import type { RepositoryWriteClient } from "./repository-write-client.js";
+import type { PersistenceWorkerClient } from "./persistence-worker-client.js";
+import { RepositoryReadClient } from "./repository-read-client.js";
+import { RepositoryWriteClient } from "./repository-write-client.js";
 
-type SessionReadPort = Pick<RepositoryReadClient, "sessionsPage" | "sessionGet" | "sessionDirectoriesChunk">;
-type SessionWritePort = Pick<RepositoryWriteClient, "createSession" | "transitionSession">;
+type SessionReadPort = Pick<RepositoryReadClient, "sessionsPage" | "sessionGet" | "sessionDirectoriesChunk"> &
+  Partial<Pick<RepositoryReadClient, "localRepositoriesPage">>;
+type SessionWritePort = Pick<RepositoryWriteClient, "createSession" | "transitionSession"> &
+  Partial<Pick<RepositoryWriteClient, "updateSessionTitle">>;
 type ApplicationFailureResponse<TMode extends "read" | "write" = "read" | "write"> = Extract<
   ApplicationOperationResponse<never, TMode>,
   Readonly<{ overallStatus: "failure" }>
@@ -72,6 +94,12 @@ type ControlledSettlement<TValue> =
   | Readonly<{ status: "rejected"; error: unknown }>
   | Readonly<{ status: "interrupted"; interruption: OperationInterruption; started: boolean }>;
 
+type DecodedSessionCreateRequest<TAuthorizationContext> = Omit<
+  ApplicationSessionCreateRequest<TAuthorizationContext>,
+  "allowedAdditionalDirectories"
+> &
+  Readonly<{ allowedAdditionalDirectories: readonly CanonicalAllowedAdditionalDirectory[] }>;
+
 // admissionはより低いapp / Provider capも適用するが、永続設定値自体をboundedに保つ。
 export const APPLICATION_MAX_CONCURRENT_CHILD_RUNS = MAX_SESSION_CONCURRENT_CHILD_RUNS;
 export const APPLICATION_MAX_READ_CHUNK_BYTES = 256 * 1024;
@@ -80,8 +108,21 @@ export type ApplicationSessionServiceOptions<TAuthorizationContext> = Readonly<{
   reads: SessionReadPort;
   writes: SessionWritePort;
   access: ApplicationAccessValidator<TAuthorizationContext>;
+  resolveLocalRepositoryMetadata?: LocalRepositoryMetadataResolver;
   snapshotAuthorization(value: unknown): TAuthorizationContext;
 }>;
+
+export function createApplicationSessionOperations<TAuthorizationContext>(
+  worker: PersistenceWorkerClient,
+  options: Pick<ApplicationSessionServiceOptions<TAuthorizationContext>, "access" | "snapshotAuthorization">,
+): ApplicationSessionOperations<TAuthorizationContext> {
+  return new ApplicationSessionService({
+    reads: new RepositoryReadClient(worker),
+    writes: new RepositoryWriteClient(worker),
+    resolveLocalRepositoryMetadata,
+    ...options,
+  });
+}
 
 export class ApplicationSessionService<
   TAuthorizationContext,
@@ -89,12 +130,15 @@ export class ApplicationSessionService<
   readonly #reads: SessionReadPort;
   readonly #writes: SessionWritePort;
   readonly #access: ApplicationAccessValidator<TAuthorizationContext>;
+  readonly #resolveLocalRepositoryMetadata: LocalRepositoryMetadataResolver;
   readonly #snapshotAuthorization: (value: unknown) => TAuthorizationContext;
 
   constructor(options: ApplicationSessionServiceOptions<TAuthorizationContext>) {
     this.#reads = options.reads;
     this.#writes = options.writes;
     this.#access = options.access;
+    this.#resolveLocalRepositoryMetadata =
+      options.resolveLocalRepositoryMetadata ?? (async () => ({ status: "not_git" }));
     this.#snapshotAuthorization = options.snapshotAuthorization;
   }
 
@@ -107,6 +151,9 @@ export class ApplicationSessionService<
     );
     if (!prepared.ok) return prepared.response;
     const { input, control } = prepared;
+    const workspace = resolveWorkspaceIdentity(input.workspacePath);
+    if (workspace === undefined) return requestFailure();
+    const validationDirectories = input.allowedAdditionalDirectories.map(({ path: directoryPath }) => directoryPath);
     const denied = await this.#validateAccess(
       {
         operation: "create",
@@ -114,15 +161,33 @@ export class ApplicationSessionService<
         context: input.context,
         target: {
           kind: "session_create",
+          title: input.title,
+          workspacePath: workspace.workspacePath,
           providerId: input.providerId,
-          allowedAdditionalDirectories: [...input.allowedAdditionalDirectories],
+          allowedAdditionalDirectories: validationDirectories,
           defaultCharacterId: input.defaultCharacterId,
           maxConcurrentChildRuns: input.maxConcurrentChildRuns,
         },
       },
       control,
+      true,
     );
     if (denied !== undefined) return denied;
+    const repositoryAbort = new AbortController();
+    const repositoryResolution = await runControlled(
+      control,
+      () => this.#resolveLocalRepositoryMetadata(workspace.workspacePath, repositoryAbort.signal),
+      () => repositoryAbort.abort(),
+    );
+    if (repositoryResolution.status === "interrupted") {
+      return operationInterruptionFailure(repositoryResolution.interruption);
+    }
+    const repositoryMetadata =
+      repositoryResolution.status === "rejected"
+        ? ({ localRepositoryKey: null, repositoryName: null } as const)
+        : projectLocalRepositoryMetadataResolution(repositoryResolution.value);
+    if (repositoryMetadata === undefined) return prePersistenceApplicationFailure();
+    const persistedDirectories = compactCanonicalAllowedAdditionalDirectories(input.allowedAdditionalDirectories);
     const sessionId = issueSessionId(input.idempotencyKey);
 
     return executeRepositoryOperation(
@@ -134,9 +199,12 @@ export class ApplicationSessionService<
             idempotencyKey: input.idempotencyKey,
             session: {
               id: sessionId,
+              title: input.title,
               providerId: input.providerId,
-              workspaceKey: input.context.workspaceKey,
-              allowedAdditionalDirectories: input.allowedAdditionalDirectories,
+              workspaceKey: workspace.workspaceKey,
+              workspacePath: workspace.workspacePath,
+              ...repositoryMetadata,
+              allowedAdditionalDirectories: persistedDirectories,
               defaultCharacterId: input.defaultCharacterId,
               maxConcurrentChildRuns: input.maxConcurrentChildRuns,
             },
@@ -145,7 +213,7 @@ export class ApplicationSessionService<
         ),
       (result) =>
         mapWriteResult<ApplicationSessionCreateResult>(result, (value) =>
-          projectSessionCreateResult(value, sessionId, input.context.workspaceKey),
+          projectSessionCreateResult(value, sessionId, input.title, workspace),
         ),
     );
   }
@@ -159,6 +227,8 @@ export class ApplicationSessionService<
     );
     if (!prepared.ok) return prepared.response;
     const { input, control } = prepared;
+    const workspace = input.workspacePath === undefined ? undefined : resolveWorkspaceIdentity(input.workspacePath);
+    if (input.workspacePath !== undefined && workspace === undefined) return requestFailure();
     const denied = await this.#validateAccess(
       {
         operation: "list",
@@ -166,10 +236,15 @@ export class ApplicationSessionService<
         context: input.context,
         target: {
           kind: "session_collection",
+          scope: "all_sessions",
+          ...(workspace === undefined ? {} : { workspacePath: workspace.workspacePath }),
           ...(input.lifecycleStatus === undefined ? {} : { lifecycleStatus: input.lifecycleStatus }),
+          ...(input.localRepositoryKeys === undefined ? {} : { localRepositoryKeys: input.localRepositoryKeys }),
+          ...(input.query === undefined ? {} : { query: input.query }),
         },
       },
       control,
+      false,
     );
     if (denied !== undefined) return denied;
 
@@ -179,8 +254,10 @@ export class ApplicationSessionService<
       (repositoryOptions) =>
         this.#reads.sessionsPage(
           {
-            workspaceKey: input.context.workspaceKey,
+            ...(workspace === undefined ? {} : { workspaceKey: workspace.workspaceKey }),
             ...(input.lifecycleStatus === undefined ? {} : { lifecycleStatus: input.lifecycleStatus }),
+            ...(input.localRepositoryKeys === undefined ? {} : { localRepositoryKeys: input.localRepositoryKeys }),
+            ...(input.query === undefined ? {} : { querySearchKey: sessionSearchKey(input.query) }),
             ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
             ...(input.limit === undefined ? {} : { limit: input.limit }),
           },
@@ -189,10 +266,88 @@ export class ApplicationSessionService<
       (value) =>
         projectSessionPage(
           value,
-          input.context.workspaceKey,
+          workspace,
           input.lifecycleStatus,
+          input.localRepositoryKeys,
+          input.query,
           input.limit ?? REPOSITORY_READ_LIMITS.sessions.default,
         ),
+    );
+  }
+
+  async updateTitle(
+    request: ApplicationSessionUpdateTitleRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationSessionUpdateTitleResult, "write">> {
+    const prepared = prepareOperation(options, () =>
+      decodeUpdateTitleRequest<TAuthorizationContext>(request, this.#snapshotAuthorization),
+    );
+    if (!prepared.ok) return prepared.response;
+    const { input, control } = prepared;
+    const denied = await this.#validateAccess(
+      {
+        operation: "update_title",
+        access: "write",
+        context: input.context,
+        target: { kind: "session", sessionId: input.sessionId },
+      },
+      control,
+      false,
+    );
+    if (denied !== undefined) return denied;
+    const updateSessionTitle = this.#writes.updateSessionTitle;
+    if (updateSessionTitle === undefined) return prePersistenceApplicationFailure();
+    return executeRepositoryOperation(
+      "write",
+      control,
+      (repositoryOptions) =>
+        updateSessionTitle.call(
+          this.#writes,
+          { sessionId: input.sessionId, idempotencyKey: input.idempotencyKey, title: input.title },
+          repositoryOptions,
+        ),
+      (result) =>
+        mapWriteResult<ApplicationSessionUpdateTitleResult>(result, (value) =>
+          projectSessionUpdateTitleResult(value, input.sessionId, input.title),
+        ),
+    );
+  }
+
+  async listLocalRepositories(
+    request: ApplicationLocalRepositoryListRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationLocalRepositoryPage, "read">> {
+    const prepared = prepareOperation(options, () =>
+      decodeLocalRepositoryListRequest<TAuthorizationContext>(request, this.#snapshotAuthorization),
+    );
+    if (!prepared.ok) return prepared.response;
+    const { input, control } = prepared;
+    const denied = await this.#validateAccess(
+      {
+        operation: "list_local_repositories",
+        access: "read",
+        context: input.context,
+        target: { kind: "local_repository_collection", scope: "all_sessions" },
+      },
+      control,
+      false,
+    );
+    if (denied !== undefined) return denied;
+    const localRepositoriesPage = this.#reads.localRepositoriesPage;
+    if (localRepositoriesPage === undefined) return prePersistenceApplicationFailure();
+    return executeRepositoryOperation(
+      "read",
+      control,
+      (repositoryOptions) =>
+        localRepositoriesPage.call(
+          this.#reads,
+          {
+            ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+            ...(input.limit === undefined ? {} : { limit: input.limit }),
+          },
+          repositoryOptions,
+        ),
+      (value) => projectLocalRepositoryPage(value, input.limit ?? REPOSITORY_READ_LIMITS.localRepositories.default),
     );
   }
 
@@ -213,20 +368,17 @@ export class ApplicationSessionService<
         target: { kind: "session", sessionId: input.sessionId },
       },
       control,
+      false,
     );
     if (denied !== undefined) return denied;
 
     return executeRepositoryOperation(
       "read",
       control,
-      (repositoryOptions) =>
-        this.#reads.sessionGet(
-          { workspaceKey: input.context.workspaceKey, sessionId: input.sessionId },
-          repositoryOptions,
-        ),
+      (repositoryOptions) => this.#reads.sessionGet({ sessionId: input.sessionId }, repositoryOptions),
       (repositoryValue) => ({
         overallStatus: "success",
-        value: projectSessionReadResult(repositoryValue, input.sessionId, input.context.workspaceKey),
+        value: projectSessionReadResult(repositoryValue, input.sessionId),
         persistence: { status: "read", effect: "none" },
       }),
     );
@@ -254,6 +406,7 @@ export class ApplicationSessionService<
         },
       },
       control,
+      false,
     );
     if (denied !== undefined) return denied;
 
@@ -264,7 +417,6 @@ export class ApplicationSessionService<
         this.#reads.sessionDirectoriesChunk(
           {
             sessionId: input.sessionId,
-            workspaceKey: input.context.workspaceKey,
             offset: input.offset,
             maxBytes: input.maxBytes,
           },
@@ -332,6 +484,7 @@ export class ApplicationSessionService<
         target: { kind: "session", sessionId: request.sessionId },
       },
       control,
+      false,
     );
     if (denied !== undefined) return denied;
 
@@ -342,7 +495,6 @@ export class ApplicationSessionService<
         this.#writes.transitionSession(
           {
             sessionId: request.sessionId,
-            workspaceKey: request.context.workspaceKey,
             idempotencyKey: request.idempotencyKey,
             expectedLifecycleStatus,
             targetLifecycleStatus,
@@ -359,19 +511,29 @@ export class ApplicationSessionService<
   async #validateAccess(
     input: ApplicationAccessValidationInput<TAuthorizationContext>,
     control: OperationControl,
+    validateWorkspace: boolean,
   ): Promise<ApplicationPrePersistenceFailureResponse | undefined> {
-    const workspaceInput = prepareAccessValidationView(input, control, this.#snapshotAuthorization);
-    if (!workspaceInput.ok) return workspaceInput.response;
-    const workspace = await runControlled(control, () => this.#access.validateWorkspace(workspaceInput.value));
-    if (workspace.status === "interrupted") return operationInterruptionFailure(workspace.interruption);
-    if (workspace.status === "rejected") return prePersistenceApplicationFailure();
-    const workspaceDecision = safelyProjectAccessDecision(workspace.value);
-    const workspaceProjectionInterruption = getOperationInterruption(control);
-    if (workspaceProjectionInterruption !== undefined) {
-      return operationInterruptionFailure(workspaceProjectionInterruption);
+    if (validateWorkspace) {
+      const workspaceInput = prepareAccessValidationView(input, control, this.#snapshotAuthorization);
+      if (!workspaceInput.ok) return workspaceInput.response;
+      const workspace = await runControlled(control, () =>
+        this.#access.validateWorkspace(
+          workspaceInput.value as Extract<
+            ApplicationAccessValidationInput<TAuthorizationContext>,
+            Readonly<{ operation: "create" }>
+          >,
+        ),
+      );
+      if (workspace.status === "interrupted") return operationInterruptionFailure(workspace.interruption);
+      if (workspace.status === "rejected") return prePersistenceApplicationFailure();
+      const workspaceDecision = safelyProjectAccessDecision(workspace.value);
+      const workspaceProjectionInterruption = getOperationInterruption(control);
+      if (workspaceProjectionInterruption !== undefined) {
+        return operationInterruptionFailure(workspaceProjectionInterruption);
+      }
+      if (workspaceDecision === undefined) return prePersistenceApplicationFailure();
+      if (!workspaceDecision.allowed) return accessFailure(workspaceDecision.error);
     }
-    if (workspaceDecision === undefined) return prePersistenceApplicationFailure();
-    if (!workspaceDecision.allowed) return accessFailure(workspaceDecision.error);
 
     const authorizationInput = prepareAccessValidationView(input, control, this.#snapshotAuthorization);
     if (!authorizationInput.ok) return authorizationInput.response;
@@ -426,7 +588,6 @@ function createAccessValidationView<TAuthorizationContext>(
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): ApplicationAccessValidationInput<TAuthorizationContext> {
   const context = {
-    workspaceKey: input.context.workspaceKey,
     authorization: snapshotAuthorization(input.context.authorization),
   };
   switch (input.operation) {
@@ -438,12 +599,25 @@ function createAccessValidationView<TAuthorizationContext>(
         target: { ...input.target, allowedAdditionalDirectories: [...input.target.allowedAdditionalDirectories] },
       };
     case "list":
+      return {
+        operation: input.operation,
+        access: input.access,
+        context,
+        target: {
+          ...input.target,
+          ...(input.target.localRepositoryKeys === undefined
+            ? {}
+            : { localRepositoryKeys: [...input.target.localRepositoryKeys] }),
+        },
+      };
+    case "list_local_repositories":
       return { operation: input.operation, access: input.access, context, target: { ...input.target } };
     case "read":
       return { operation: input.operation, access: input.access, context, target: { ...input.target } };
     case "read_directories_chunk":
       return { operation: input.operation, access: input.access, context, target: { ...input.target } };
     case "archive":
+    case "update_title":
     case "unarchive":
     case "close":
       return { operation: input.operation, access: input.access, context, target: { ...input.target } };
@@ -453,9 +627,11 @@ function createAccessValidationView<TAuthorizationContext>(
 function decodeCreateRequest<TAuthorizationContext>(
   request: unknown,
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
-): RequestDecodeResult<ApplicationSessionCreateRequest<TAuthorizationContext>> {
+): RequestDecodeResult<DecodedSessionCreateRequest<TAuthorizationContext>> {
   const snapshot = snapshotRecord(request, [
     "context",
+    "title",
+    "workspacePath",
     "idempotencyKey",
     "providerId",
     "allowedAdditionalDirectories",
@@ -464,6 +640,8 @@ function decodeCreateRequest<TAuthorizationContext>(
   ]);
   if (
     snapshot === undefined ||
+    typeof snapshot.title !== "string" ||
+    typeof snapshot.workspacePath !== "string" ||
     !isCanonicalIdempotencyKey(snapshot.idempotencyKey) ||
     !isBoundedString(snapshot.providerId) ||
     !isBoundedString(snapshot.defaultCharacterId) ||
@@ -475,11 +653,16 @@ function decodeCreateRequest<TAuthorizationContext>(
   if (directories === undefined) return decodeRequestFailure();
   const context = decodeOperationContext(snapshot.context, snapshotAuthorization);
   if (context === undefined) return decodeRequestFailure();
-  const allowedAdditionalDirectories = normalizeAllowedAdditionalDirectories(directories);
+  const workspace = resolveWorkspaceIdentity(snapshot.workspacePath);
+  if (workspace === undefined) return decodeRequestFailure();
+  const title = canonicalizeSessionTitle(snapshot.title);
+  if (title === undefined) return decodeRequestFailure();
+  const allowedAdditionalDirectories = canonicalizeAllowedAdditionalDirectories(directories);
   if (
     allowedAdditionalDirectories === undefined ||
-    allowedAdditionalDirectoriesJsonByteLength(allowedAdditionalDirectories) >
-      ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxJsonBytes
+    allowedAdditionalDirectoriesJsonByteLength(
+      allowedAdditionalDirectories.map(({ path: directoryPath }) => directoryPath),
+    ) > ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxJsonBytes
   ) {
     return decodeRequestFailure();
   }
@@ -487,6 +670,8 @@ function decodeCreateRequest<TAuthorizationContext>(
     ok: true,
     value: {
       context,
+      title,
+      workspacePath: workspace.workspacePath,
       idempotencyKey: snapshot.idempotencyKey,
       providerId: snapshot.providerId,
       allowedAdditionalDirectories,
@@ -517,10 +702,28 @@ function decodeListRequest<TAuthorizationContext>(
   request: unknown,
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): RequestDecodeResult<ApplicationSessionListRequest<TAuthorizationContext>> {
-  const snapshot = snapshotRecord(request, ["context", "lifecycleStatus", "cursor", "limit"]);
+  const snapshot = snapshotRecord(request, [
+    "context",
+    "workspacePath",
+    "lifecycleStatus",
+    "localRepositoryKeys",
+    "query",
+    "cursor",
+    "limit",
+  ]);
+  const repositoryKeys = snapshotProjectionArray(
+    snapshot?.localRepositoryKeys,
+    SESSION_METADATA_LIMITS.repositoryFilterMaxItems,
+  );
   if (
     snapshot === undefined ||
+    (snapshot.workspacePath !== undefined && typeof snapshot.workspacePath !== "string") ||
     (snapshot.lifecycleStatus !== undefined && !isSessionLifecycleStatus(snapshot.lifecycleStatus)) ||
+    (snapshot.localRepositoryKeys !== undefined &&
+      (repositoryKeys === undefined ||
+        repositoryKeys.length === 0 ||
+        repositoryKeys.some((key) => !isLocalRepositoryKey(key)))) ||
+    (snapshot.query !== undefined && typeof snapshot.query !== "string") ||
     (snapshot.cursor !== undefined && !isBoundedStringWithLimit(snapshot.cursor, 2_048)) ||
     (snapshot.limit !== undefined &&
       (!Number.isSafeInteger(snapshot.limit) ||
@@ -531,15 +734,73 @@ function decodeListRequest<TAuthorizationContext>(
   }
   const context = decodeOperationContext(snapshot.context, snapshotAuthorization);
   if (context === undefined) return decodeRequestFailure();
+  const workspace =
+    snapshot.workspacePath === undefined ? undefined : resolveWorkspaceIdentity(snapshot.workspacePath as string);
+  if (snapshot.workspacePath !== undefined && workspace === undefined) return decodeRequestFailure();
+  const query = snapshot.query === undefined ? undefined : canonicalizeSessionQuery(snapshot.query as string);
+  if (snapshot.query !== undefined && query === undefined) return decodeRequestFailure();
+  const localRepositoryKeys =
+    repositoryKeys === undefined ? undefined : [...new Set(repositoryKeys as string[])].sort();
   return {
     ok: true,
     value: {
       context,
+      ...(workspace === undefined ? {} : { workspacePath: workspace.workspacePath }),
       ...(snapshot.lifecycleStatus === undefined ? {} : { lifecycleStatus: snapshot.lifecycleStatus }),
+      ...(localRepositoryKeys === undefined ? {} : { localRepositoryKeys }),
+      ...(query === undefined ? {} : { query }),
       ...(snapshot.cursor === undefined ? {} : { cursor: snapshot.cursor }),
       ...(snapshot.limit === undefined ? {} : { limit: snapshot.limit as number }),
     },
   };
+}
+
+function decodeUpdateTitleRequest<TAuthorizationContext>(
+  request: unknown,
+  snapshotAuthorization: (value: unknown) => TAuthorizationContext,
+): RequestDecodeResult<ApplicationSessionUpdateTitleRequest<TAuthorizationContext>> {
+  const snapshot = snapshotRecord(request, ["context", "sessionId", "idempotencyKey", "title"]);
+  if (
+    snapshot === undefined ||
+    !isBoundedString(snapshot.sessionId) ||
+    !isCanonicalIdempotencyKey(snapshot.idempotencyKey) ||
+    typeof snapshot.title !== "string"
+  ) {
+    return decodeRequestFailure();
+  }
+  const context = decodeOperationContext(snapshot.context, snapshotAuthorization);
+  const title = canonicalizeSessionTitle(snapshot.title);
+  return context === undefined || title === undefined
+    ? decodeRequestFailure()
+    : { ok: true, value: { context, sessionId: snapshot.sessionId, idempotencyKey: snapshot.idempotencyKey, title } };
+}
+
+function decodeLocalRepositoryListRequest<TAuthorizationContext>(
+  request: unknown,
+  snapshotAuthorization: (value: unknown) => TAuthorizationContext,
+): RequestDecodeResult<ApplicationLocalRepositoryListRequest<TAuthorizationContext>> {
+  const snapshot = snapshotRecord(request, ["context", "cursor", "limit"]);
+  if (
+    snapshot === undefined ||
+    (snapshot.cursor !== undefined && !isBoundedStringWithLimit(snapshot.cursor, 2_048)) ||
+    (snapshot.limit !== undefined &&
+      (!Number.isSafeInteger(snapshot.limit) ||
+        (snapshot.limit as number) < 1 ||
+        (snapshot.limit as number) > REPOSITORY_READ_LIMITS.localRepositories.max))
+  ) {
+    return decodeRequestFailure();
+  }
+  const context = decodeOperationContext(snapshot.context, snapshotAuthorization);
+  return context === undefined
+    ? decodeRequestFailure()
+    : {
+        ok: true,
+        value: {
+          context,
+          ...(snapshot.cursor === undefined ? {} : { cursor: snapshot.cursor }),
+          ...(snapshot.limit === undefined ? {} : { limit: snapshot.limit as number }),
+        },
+      };
 }
 
 function decodeReadRequest<TAuthorizationContext>(
@@ -613,13 +874,12 @@ function decodeOperationContext<TAuthorizationContext>(
   context: unknown,
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): ApplicationSessionCreateRequest<TAuthorizationContext>["context"] | undefined {
-  const snapshot = snapshotRecord(context, ["workspaceKey", "authorization"]);
-  if (snapshot === undefined || !Object.hasOwn(snapshot, "authorization") || !isBoundedString(snapshot.workspaceKey)) {
+  const snapshot = snapshotRecord(context, ["authorization"]);
+  if (snapshot === undefined || !Object.hasOwn(snapshot, "authorization")) {
     return undefined;
   }
   try {
     return {
-      workspaceKey: snapshot.workspaceKey,
       authorization: snapshotAuthorization(snapshot.authorization),
     };
   } catch {
@@ -1252,8 +1512,10 @@ function isBoundedStringWithLimit(value: unknown, maxLength: number): value is s
 
 function projectSessionPage(
   value: unknown,
-  expectedWorkspaceKey: string,
+  expectedWorkspace: Readonly<{ workspaceKey: string; workspacePath: string }> | undefined,
   expectedLifecycleStatus: SessionLifecycleStatus | undefined,
+  expectedLocalRepositoryKeys: readonly string[] | undefined,
+  expectedQuery: string | undefined,
   expectedLimit: number,
 ): ApplicationOperationResponse<ApplicationSessionPage, "read"> {
   const snapshot = snapshotProjectionRecord(value, ["items", "nextCursor"]);
@@ -1272,8 +1534,16 @@ function projectSessionPage(
     else {
       const projected = projectSessionListItem(item);
       if (
-        projected.workspaceKey !== expectedWorkspaceKey ||
-        (expectedLifecycleStatus !== undefined && projected.lifecycleStatus !== expectedLifecycleStatus)
+        (expectedWorkspace !== undefined &&
+          resolveWorkspaceIdentity(projected.workspacePath)?.workspaceKey !== expectedWorkspace.workspaceKey) ||
+        (expectedLifecycleStatus !== undefined && projected.lifecycleStatus !== expectedLifecycleStatus) ||
+        (expectedLocalRepositoryKeys !== undefined &&
+          (projected.localRepositoryKey === null ||
+            !expectedLocalRepositoryKeys.includes(projected.localRepositoryKey))) ||
+        (expectedQuery !== undefined &&
+          !sessionSearchKey(projected.title).includes(sessionSearchKey(expectedQuery)) &&
+          (projected.repositoryName === null ||
+            !sessionSearchKey(projected.repositoryName).includes(sessionSearchKey(expectedQuery))))
       ) {
         return invalidRepositoryValue();
       }
@@ -1293,10 +1563,80 @@ function projectSessionPage(
       };
 }
 
+function projectLocalRepositoryPage(
+  value: unknown,
+  expectedLimit: number,
+): ApplicationOperationResponse<ApplicationLocalRepositoryPage, "read"> {
+  const snapshot = snapshotProjectionRecord(value, ["items", "nextCursor"]);
+  const pageItems = snapshotProjectionArray(snapshot?.items, expectedLimit);
+  if (snapshot === undefined || pageItems === undefined) return invalidRepositoryValue();
+  if (snapshot.nextCursor !== undefined && !isBoundedStringWithLimit(snapshot.nextCursor, 2_048)) {
+    return invalidRepositoryValue();
+  }
+  const items = [];
+  const omissions: NonNullable<ReturnType<typeof projectPageOmission>>[] = [];
+  for (const item of pageItems) {
+    const omission = projectPageOmission(item, "Repository list item");
+    if (omission === undefined) items.push(projectLocalRepositoryListItem(item));
+    else omissions.push(omission);
+  }
+  if (new Set(items.map(({ localRepositoryKey }) => localRepositoryKey)).size !== items.length) {
+    return invalidRepositoryValue();
+  }
+  const page = snapshot.nextCursor === undefined ? { items } : { items, nextCursor: snapshot.nextCursor };
+  const [firstOmission, ...remainingOmissions] = omissions;
+  return firstOmission === undefined
+    ? { overallStatus: "success", value: page, persistence: { status: "read", effect: "none" } }
+    : {
+        overallStatus: "partial_success",
+        value: page,
+        issues: [firstOmission, ...remainingOmissions],
+        persistence: { status: "read", effect: "none" },
+      };
+}
+
+function projectLocalRepositoryListItem(value: unknown) {
+  const snapshot = snapshotProjectionRecord(value, [
+    "localRepositoryKey",
+    "repositoryNames",
+    "repositoryNameCount",
+    "sessionCount",
+    "lastActivityAt",
+  ]);
+  const names = snapshotProjectionArray(snapshot?.repositoryNames, SESSION_METADATA_LIMITS.repositoryNamesPerItemMax);
+  if (
+    snapshot === undefined ||
+    !isLocalRepositoryKey(snapshot.localRepositoryKey) ||
+    names === undefined ||
+    names.length === 0 ||
+    names.some((name) => !isRepositoryName(name)) ||
+    new Set(names).size !== names.length ||
+    !Number.isSafeInteger(snapshot.repositoryNameCount) ||
+    (snapshot.repositoryNameCount as number) < names.length ||
+    !Number.isSafeInteger(snapshot.sessionCount) ||
+    (snapshot.sessionCount as number) < 1 ||
+    (snapshot.repositoryNameCount as number) > (snapshot.sessionCount as number) ||
+    !isNonNegativeSafeInteger(snapshot.lastActivityAt)
+  ) {
+    return invalidRepositoryValue();
+  }
+  return {
+    localRepositoryKey: snapshot.localRepositoryKey,
+    repositoryNames: names as string[],
+    repositoryNameCount: snapshot.repositoryNameCount as number,
+    sessionCount: snapshot.sessionCount as number,
+    lastActivityAt: snapshot.lastActivityAt,
+  };
+}
+
 function projectSessionListItem(value: unknown): ApplicationSessionListItem {
   const snapshot = snapshotProjectionRecord(value, [
     "id",
+    "title",
     "workspaceKey",
+    "workspacePath",
+    "localRepositoryKey",
+    "repositoryName",
     "defaultCharacterId",
     "lifecycleStatus",
     "createdAt",
@@ -1310,7 +1650,9 @@ function projectSessionListItem(value: unknown): ApplicationSessionListItem {
   if (
     snapshot === undefined ||
     !isBoundedString(snapshot.id) ||
+    !isCanonicalSessionTitle(snapshot.title) ||
     !isBoundedString(snapshot.workspaceKey) ||
+    typeof snapshot.workspacePath !== "string" ||
     !isBoundedString(snapshot.defaultCharacterId) ||
     !isSessionLifecycleStatus(snapshot.lifecycleStatus) ||
     !isNonNegativeSafeInteger(snapshot.createdAt) ||
@@ -1320,11 +1662,17 @@ function projectSessionListItem(value: unknown): ApplicationSessionListItem {
   ) {
     return invalidRepositoryValue();
   }
+  const workspace = resolveWorkspaceIdentity(snapshot.workspacePath);
+  if (workspace === undefined || workspace.workspaceKey !== snapshot.workspaceKey) return invalidRepositoryValue();
+  const repositoryMetadata = snapshotLocalRepositoryMetadata(snapshot.localRepositoryKey, snapshot.repositoryName);
+  if (repositoryMetadata === undefined) return invalidRepositoryValue();
   const execution = projectSessionExecution(snapshot.executionState, snapshot.activeRunId, snapshot.latestRunId);
   if (snapshot.lifecycleStatus !== "active" && execution.state === "running") return invalidRepositoryValue();
   const base = {
     id: snapshot.id,
-    workspaceKey: snapshot.workspaceKey,
+    title: snapshot.title,
+    workspacePath: workspace.workspacePath,
+    ...repositoryMetadata,
     defaultCharacterId: snapshot.defaultCharacterId,
     lifecycleStatus: snapshot.lifecycleStatus,
     createdAt: snapshot.createdAt,
@@ -1349,11 +1697,7 @@ function projectSessionListItem(value: unknown): ApplicationSessionListItem {
   }
 }
 
-function projectSessionReadResult(
-  value: unknown,
-  expectedSessionId: string,
-  expectedWorkspaceKey: string,
-): ApplicationSessionReadResult {
+function projectSessionReadResult(value: unknown, expectedSessionId: string): ApplicationSessionReadResult {
   const snapshot = snapshotProjectionRecord(value, ["session", "execution"]);
   const executionSnapshot = snapshotProjectionRecord(snapshot?.execution, ["state", "activeRunId", "latestRunId"]);
   if (snapshot === undefined || executionSnapshot === undefined) return invalidRepositoryValue();
@@ -1363,7 +1707,7 @@ function projectSessionReadResult(
     executionSnapshot.latestRunId,
   );
   const session = projectSessionDetail(snapshot.session);
-  if (session.id !== expectedSessionId || session.workspaceKey !== expectedWorkspaceKey) {
+  if (session.id !== expectedSessionId) {
     return invalidRepositoryValue();
   }
   if (session.lifecycleStatus === "active") {
@@ -1376,8 +1720,12 @@ function projectSessionReadResult(
 function projectSessionDetail(value: unknown): ApplicationSessionDetail {
   const snapshot = snapshotProjectionRecord(value, [
     "id",
+    "title",
     "providerId",
     "workspaceKey",
+    "workspacePath",
+    "localRepositoryKey",
+    "repositoryName",
     "allowedAdditionalDirectoriesByteLength",
     "allowedAdditionalDirectoriesState",
     "defaultCharacterId",
@@ -1390,8 +1738,10 @@ function projectSessionDetail(value: unknown): ApplicationSessionDetail {
   if (
     snapshot === undefined ||
     !isBoundedString(snapshot.id) ||
+    !isCanonicalSessionTitle(snapshot.title) ||
     !isBoundedString(snapshot.providerId) ||
     !isBoundedString(snapshot.workspaceKey) ||
+    typeof snapshot.workspacePath !== "string" ||
     !isNonNegativeSafeInteger(snapshot.allowedAdditionalDirectoriesByteLength) ||
     (snapshot.allowedAdditionalDirectoriesState !== "inline" &&
       snapshot.allowedAdditionalDirectoriesState !== "chunked") ||
@@ -1404,10 +1754,16 @@ function projectSessionDetail(value: unknown): ApplicationSessionDetail {
   ) {
     return invalidRepositoryValue();
   }
+  const workspace = resolveWorkspaceIdentity(snapshot.workspacePath);
+  if (workspace === undefined || workspace.workspaceKey !== snapshot.workspaceKey) return invalidRepositoryValue();
+  const repositoryMetadata = snapshotLocalRepositoryMetadata(snapshot.localRepositoryKey, snapshot.repositoryName);
+  if (repositoryMetadata === undefined) return invalidRepositoryValue();
   return {
     id: snapshot.id,
+    title: snapshot.title,
     providerId: snapshot.providerId,
-    workspaceKey: snapshot.workspaceKey,
+    workspacePath: workspace.workspacePath,
+    ...repositoryMetadata,
     allowedAdditionalDirectoriesByteLength: snapshot.allowedAdditionalDirectoriesByteLength,
     allowedAdditionalDirectoriesState: snapshot.allowedAdditionalDirectoriesState,
     defaultCharacterId: snapshot.defaultCharacterId,
@@ -1459,24 +1815,53 @@ function projectSessionDirectoriesChunk(
 function projectSessionCreateResult(
   value: unknown,
   expectedSessionId: string,
-  expectedWorkspaceKey: string,
+  expectedTitle: string,
+  expectedWorkspace: Readonly<{ workspaceKey: string; workspacePath: string }>,
 ): ApplicationSessionCreateResult {
-  const snapshot = snapshotProjectionRecord(value, ["sessionId", "workspaceKey", "lifecycleStatus", "createdAt"]);
+  const snapshot = snapshotProjectionRecord(value, [
+    "sessionId",
+    "title",
+    "workspaceKey",
+    "workspacePath",
+    "localRepositoryKey",
+    "repositoryName",
+    "lifecycleStatus",
+    "createdAt",
+  ]);
   if (
     snapshot === undefined ||
     snapshot.sessionId !== expectedSessionId ||
-    snapshot.workspaceKey !== expectedWorkspaceKey ||
+    snapshot.title !== expectedTitle ||
+    snapshot.workspaceKey !== expectedWorkspace.workspaceKey ||
+    snapshot.workspacePath !== expectedWorkspace.workspacePath ||
     snapshot.lifecycleStatus !== "active" ||
     !isNonNegativeSafeInteger(snapshot.createdAt)
   ) {
     return invalidRepositoryValue();
   }
+  const repositoryMetadata = snapshotLocalRepositoryMetadata(snapshot.localRepositoryKey, snapshot.repositoryName);
+  if (repositoryMetadata === undefined) return invalidRepositoryValue();
   return {
     sessionId: snapshot.sessionId,
-    workspaceKey: snapshot.workspaceKey,
+    title: snapshot.title,
+    workspacePath: expectedWorkspace.workspacePath,
+    ...repositoryMetadata,
     lifecycleStatus: snapshot.lifecycleStatus,
     createdAt: snapshot.createdAt,
   };
+}
+
+function projectLocalRepositoryMetadataResolution(value: unknown): LocalRepositoryMetadata | undefined {
+  const resolution = snapshotProjectionRecord(value, ["status", "metadata"]);
+  if (resolution === undefined) return undefined;
+  if (resolution.status === "not_git" || resolution.status === "unavailable") {
+    return resolution.metadata === undefined ? { localRepositoryKey: null, repositoryName: null } : undefined;
+  }
+  if (resolution.status !== "found") return undefined;
+  const metadata = snapshotProjectionRecord(resolution.metadata, ["localRepositoryKey", "repositoryName"]);
+  if (metadata === undefined) return undefined;
+  const projected = snapshotLocalRepositoryMetadata(metadata.localRepositoryKey, metadata.repositoryName);
+  return projected?.localRepositoryKey === null ? undefined : projected;
 }
 
 function projectSessionTransitionResult(
@@ -1494,6 +1879,23 @@ function projectSessionTransitionResult(
     return invalidRepositoryValue();
   }
   return { sessionId: expectedSessionId, lifecycleStatus: expectedLifecycleStatus, updatedAt: snapshot.updatedAt };
+}
+
+function projectSessionUpdateTitleResult(
+  value: unknown,
+  expectedSessionId: string,
+  expectedTitle: string,
+): ApplicationSessionUpdateTitleResult {
+  const snapshot = snapshotProjectionRecord(value, ["sessionId", "title", "updatedAt"]);
+  if (
+    snapshot === undefined ||
+    snapshot.sessionId !== expectedSessionId ||
+    snapshot.title !== expectedTitle ||
+    !isNonNegativeSafeInteger(snapshot.updatedAt)
+  ) {
+    return invalidRepositoryValue();
+  }
+  return { sessionId: expectedSessionId, title: expectedTitle, updatedAt: snapshot.updatedAt };
 }
 
 function projectSessionExecution(
@@ -1518,7 +1920,7 @@ function projectSessionExecution(
   return invalidRepositoryValue();
 }
 
-function projectPageOmission(value: unknown) {
+function projectPageOmission(value: unknown, subject = "Session list item") {
   const omission = snapshotProjectionRecord(value, ["omitted", "reason", "ordinal"]);
   if (
     omission === undefined ||
@@ -1532,12 +1934,12 @@ function projectPageOmission(value: unknown) {
     ? {
         kind: "omission" as const,
         code: "response_size_limit" as const,
-        message: "A Session list item was omitted because the response size limit was reached.",
+        message: `A ${subject} was omitted because the response size limit was reached.`,
       }
     : {
         kind: "omission" as const,
         code: "response_size_limit" as const,
-        message: "A Session list item was omitted because the response size limit was reached.",
+        message: `A ${subject} was omitted because the response size limit was reached.`,
         ordinal: omission.ordinal,
       };
 }

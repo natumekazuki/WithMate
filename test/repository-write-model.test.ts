@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
@@ -11,13 +12,31 @@ import {
 import { PersistenceWorkerRuntime } from "../src/persistence-worker/worker-runtime.js";
 import { PERSISTENCE_PROTOCOL_VERSION, type WorkerToMainMessage } from "../src/shared/persistence-protocol.js";
 import { REPOSITORY_WRITE_OPERATIONS } from "../src/shared/repository-write-model.js";
+import { resolveWorkspaceIdentity } from "../src/shared/workspace-path.js";
 
 const repositoryTest = Number.parseInt(process.versions.node, 10) >= 24 ? test : test.skip;
+const TEST_WORKSPACE = requiredWorkspaceIdentity(path.resolve("workspace"));
+const OTHER_TEST_WORKSPACE = requiredWorkspaceIdentity(path.resolve("other-workspace"));
+const LOCAL_REPOSITORY_KEY = `local-repository-v1-sha256-${"a".repeat(64)}`;
+
+function requiredWorkspaceIdentity(value: string): NonNullable<ReturnType<typeof resolveWorkspaceIdentity>> {
+  const workspace = resolveWorkspaceIdentity(value);
+  assert.ok(workspace);
+  return workspace;
+}
 
 repositoryTest("session create commits a completed idempotency record and replays exactly", () => {
   withDatabase((database) => {
     const execute = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
-    const command = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000101", "session-1");
+    const baseCommand = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000101", "session-1");
+    const command = {
+      ...baseCommand,
+      session: {
+        ...baseCommand.session,
+        localRepositoryKey: LOCAL_REPOSITORY_KEY,
+        repositoryName: "WithMate",
+      },
+    };
     const first = execute(command) as CommandResult;
     const replay = execute(command) as CommandResult;
     const reorderedReplay = execute({
@@ -26,16 +45,38 @@ repositoryTest("session create commits a completed idempotency record and replay
         defaultCharacterId: command.session.defaultCharacterId,
         allowedAdditionalDirectories: command.session.allowedAdditionalDirectories,
         workspaceKey: command.session.workspaceKey,
+        workspacePath: command.session.workspacePath,
+        repositoryName: command.session.repositoryName,
+        localRepositoryKey: command.session.localRepositoryKey,
         providerId: command.session.providerId,
+        title: command.session.title,
         id: command.session.id,
       },
       idempotencyKey: command.idempotencyKey,
+    }) as CommandResult;
+    const changedDetectionReplay = execute({
+      ...command,
+      session: {
+        ...command.session,
+        localRepositoryKey: `local-repository-v1-sha256-${"b".repeat(64)}`,
+        repositoryName: "MovedWithMate",
+      },
     }) as CommandResult;
 
     assert.equal(first.ok && !first.replayed, true);
     assert.equal(replay.ok && replay.replayed, true);
     assert.equal(reorderedReplay.ok && reorderedReplay.replayed, true);
+    assert.equal(changedDetectionReplay.ok && changedDetectionReplay.replayed, true);
     assert.deepEqual(replay.ok && replay.value, first.ok && first.value);
+    assert.deepEqual(changedDetectionReplay.ok && changedDetectionReplay.value, first.ok && first.value);
+    assert.deepEqual(
+      {
+        ...(database
+          .prepare("SELECT title, local_repository_key, repository_name FROM sessions WHERE id = 'session-1'")
+          .get() as Record<string, unknown>),
+      },
+      { title: command.session.title, local_repository_key: LOCAL_REPOSITORY_KEY, repository_name: "WithMate" },
+    );
     assert.equal(count(database, "sessions"), 1);
     assert.equal(count(database, "idempotency_records"), 1);
     const record = database.prepare("SELECT record_state, response_ref_type FROM idempotency_records").get() as Record<
@@ -56,11 +97,53 @@ repositoryTest("malformed create and reused keys with a different fingerprint ma
     assert.equal(!malformed.ok && malformed.error.code, "request_invalid");
     assert.equal(count(database, "sessions"), 0);
 
+    const mismatchedWorkspace = sessionCreateCommand(
+      "018f1f4e-7f0a-7000-8000-000000000119",
+      "session-workspace-mismatch",
+    );
+    mismatchedWorkspace.session.workspaceKey = "workspace-key-for-another-path";
+    const mismatchedWorkspaceResult = execute(mismatchedWorkspace) as CommandResult;
+    assert.equal(!mismatchedWorkspaceResult.ok && mismatchedWorkspaceResult.error.code, "request_invalid");
+    assert.equal(count(database, "sessions"), 0);
+
     const command = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000103", "session-1");
     assert.equal((execute(command) as CommandResult).ok, true);
-    const conflict = execute({ ...command, session: { ...command.session, workspaceKey: "other" } }) as CommandResult;
+    const conflict = execute({
+      ...command,
+      session: {
+        ...command.session,
+        workspaceKey: OTHER_TEST_WORKSPACE.workspaceKey,
+        workspacePath: OTHER_TEST_WORKSPACE.workspacePath,
+      },
+    }) as CommandResult;
     assert.equal(!conflict.ok && conflict.error.code, "idempotency_conflict");
+    const titleConflict = execute({
+      ...command,
+      session: { ...command.session, title: "A different title" },
+    }) as CommandResult;
+    assert.equal(!titleConflict.ok && titleConflict.error.code, "idempotency_conflict");
     assert.equal(count(database, "sessions"), 1);
+  });
+});
+
+repositoryTest("session create rejects invalid title and partial Repository metadata before mutation", () => {
+  withDatabase((database) => {
+    const execute = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const base = sessionCreateCommand("018f1f4e-7f0a-7000-8000-00000000010a", "session-invalid-metadata");
+    const invalidSessions = [
+      { ...base.session, title: "   " },
+      { ...base.session, title: "x".repeat(513) },
+      { ...base.session, localRepositoryKey: LOCAL_REPOSITORY_KEY, repositoryName: null },
+      { ...base.session, localRepositoryKey: null, repositoryName: "WithMate" },
+      { ...base.session, localRepositoryKey: "local-repository-v1-sha256-invalid", repositoryName: "WithMate" },
+    ];
+
+    for (const session of invalidSessions) {
+      const result = execute({ ...base, session }) as CommandResult;
+      assert.equal(!result.ok && result.error.code, "request_invalid");
+    }
+    assert.equal(count(database, "sessions"), 0);
+    assert.equal(count(database, "idempotency_records"), 0);
   });
 });
 
@@ -154,7 +237,6 @@ repositoryTest("session transitions enforce expected state and reject archive wh
     insertActiveRun(database, "session-1");
     const busy = transition({
       sessionId: "session-1",
-      workspaceKey: "workspace",
       idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000105",
       expectedLifecycleStatus: "active",
       targetLifecycleStatus: "archived",
@@ -166,21 +248,94 @@ repositoryTest("session transitions enforce expected state and reject archive wh
     database.exec("DELETE FROM run_dispatches; DELETE FROM run_attempts; DELETE FROM runs; DELETE FROM messages;");
     const archived = transition({
       sessionId: "session-1",
-      workspaceKey: "workspace",
       idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000106",
       expectedLifecycleStatus: "active",
       targetLifecycleStatus: "archived",
     }) as CommandResult;
     assert.equal(archived.ok, true);
+    const replay = transition({
+      sessionId: "session-1",
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000106",
+      expectedLifecycleStatus: "active",
+      targetLifecycleStatus: "archived",
+    }) as CommandResult;
+    assert.equal(replay.ok && replay.replayed, true);
+    const conflict = transition({
+      sessionId: "session-1",
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000106",
+      expectedLifecycleStatus: "archived",
+      targetLifecycleStatus: "closed",
+    }) as CommandResult;
+    assert.equal(!conflict.ok && conflict.error.code, "idempotency_conflict");
+    const foreignSessionConflict = transition({
+      sessionId: "session-does-not-exist",
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000106",
+      expectedLifecycleStatus: "active",
+      targetLifecycleStatus: "archived",
+    }) as CommandResult;
+    assert.equal(!foreignSessionConflict.ok && foreignSessionConflict.error.code, "idempotency_conflict");
     const stale = transition({
       sessionId: "session-1",
-      workspaceKey: "workspace",
       idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000107",
       expectedLifecycleStatus: "active",
       targetLifecycleStatus: "closed",
     }) as CommandResult;
     assert.equal(!stale.ok && stale.error.code, "lifecycle_conflict");
     assert.equal(readLifecycle(database, "session-1"), "archived");
+  });
+});
+
+repositoryTest("expired transition keys are scrubbed before a cross-Session conflict", () => {
+  withDatabase((database) => {
+    let now = 100;
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => now);
+    const transition = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionTransition, () => now, 1);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000119", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000120", "session-2")) as CommandResult).ok,
+      true,
+    );
+    const idempotencyKey = "018f1f4e-7f0a-7000-8000-000000000121";
+    assert.equal(
+      (
+        transition({
+          sessionId: "session-1",
+          idempotencyKey,
+          expectedLifecycleStatus: "active",
+          targetLifecycleStatus: "archived",
+        }) as CommandResult
+      ).ok,
+      true,
+    );
+
+    now = 101;
+    const conflict = transition({
+      sessionId: "session-2",
+      idempotencyKey,
+      expectedLifecycleStatus: "active",
+      targetLifecycleStatus: "archived",
+    }) as CommandResult;
+
+    assert.equal(!conflict.ok && conflict.error.code, "idempotency_conflict");
+    assert.deepEqual(
+      {
+        ...(database
+          .prepare(
+            "SELECT record_state, response_kind, response_ref_type, response_ref_id, response_envelope_json FROM idempotency_records WHERE idempotency_key = ?",
+          )
+          .get(idempotencyKey) as Readonly<Record<string, unknown>>),
+      },
+      {
+        record_state: "expired",
+        response_kind: null,
+        response_ref_type: null,
+        response_ref_id: null,
+        response_envelope_json: null,
+      },
+    );
   });
 });
 
@@ -216,7 +371,14 @@ repositoryTest("expired idempotency responses are scrubbed before reporting a fi
     const command = sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000117", "session-1");
     assert.equal((execute(command) as CommandResult).ok, true);
     now = 101;
-    const conflict = execute({ ...command, session: { ...command.session, workspaceKey: "other" } }) as CommandResult;
+    const conflict = execute({
+      ...command,
+      session: {
+        ...command.session,
+        workspaceKey: OTHER_TEST_WORKSPACE.workspaceKey,
+        workspacePath: OTHER_TEST_WORKSPACE.workspacePath,
+      },
+    }) as CommandResult;
     assert.equal(!conflict.ok && conflict.error.code, "idempotency_conflict");
     const record = database
       .prepare(
@@ -250,7 +412,6 @@ repositoryTest("unarchive rejects an open ProviderBinding for a different Provid
       (
         transition({
           sessionId: "session-1",
-          workspaceKey: "workspace",
           idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000111",
           expectedLifecycleStatus: "active",
           targetLifecycleStatus: "archived",
@@ -273,7 +434,6 @@ repositoryTest("unarchive rejects an open ProviderBinding for a different Provid
     database.exec("PRAGMA foreign_keys = ON;");
     const result = transition({
       sessionId: "session-1",
-      workspaceKey: "workspace",
       idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000112",
       expectedLifecycleStatus: "archived",
       targetLifecycleStatus: "active",
@@ -297,7 +457,6 @@ repositoryTest("unarchive rejects an open ProviderBinding for a different Provid
     database.exec("PRAGMA foreign_keys = ON;");
     const creating = transition({
       sessionId: "session-1",
-      workspaceKey: "workspace",
       idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000113",
       expectedLifecycleStatus: "archived",
       targetLifecycleStatus: "active",
@@ -320,7 +479,6 @@ repositoryTest("unarchive rejects an open ProviderBinding for a different Provid
     database.exec("PRAGMA foreign_keys = ON;");
     const ephemeral = transition({
       sessionId: "session-1",
-      workspaceKey: "workspace",
       idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000118",
       expectedLifecycleStatus: "archived",
       targetLifecycleStatus: "active",
@@ -667,7 +825,6 @@ repositoryTest("normal Run admission rejects inactive or busy Sessions without p
       (
         transition({
           sessionId: "session-1",
-          workspaceKey: "workspace",
           idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000126",
           expectedLifecycleStatus: "active",
           targetLifecycleStatus: "archived",
@@ -1102,6 +1259,9 @@ repositoryTest("retry Run admission rolls back new rows while preserving its sou
 repositoryTest("initial child admission atomically creates its tree, Run, Delivery, and replay handle", () => {
   withDatabase((database) => {
     activatePersistentRun(database);
+    database
+      .prepare("UPDATE sessions SET local_repository_key = ?, repository_name = ? WHERE id = 'session-1'")
+      .run(LOCAL_REPOSITORY_KEY, "WithMate");
     const startChild = operationFor(database, "repository.child.start", () => 600);
     const command = childStartCommand("018f1f4e-7f0a-7000-8000-000000000324", "one");
     const first = startChild(command) as CommandResult;
@@ -1119,6 +1279,14 @@ repositoryTest("initial child admission atomically creates its tree, Run, Delive
     assert.equal(count(database, "session_relations"), 1);
     assert.equal(count(database, "delegations"), 1);
     assert.equal(count(database, "child_result_deliveries"), 1);
+    assert.deepEqual(
+      {
+        ...(database
+          .prepare("SELECT title, local_repository_key, repository_name FROM sessions WHERE id = 'child-session-one'")
+          .get() as Record<string, unknown>),
+      },
+      { title: "Child one", local_repository_key: LOCAL_REPOSITORY_KEY, repository_name: "WithMate" },
+    );
     const relation = database
       .prepare(
         `
@@ -2370,10 +2538,12 @@ repositoryTest("Run output independently enforces Run, Session, and app cumulati
           .prepare(
             `
             INSERT INTO sessions (
-              id, provider_id, workspace_key, allowed_additional_directories_json,
+              id, title, provider_id, workspace_key, workspace_path, local_repository_key, repository_name,
+              allowed_additional_directories_json,
               default_character_id, max_concurrent_child_runs, lifecycle_status,
               created_at, updated_at, last_activity_at
-            ) VALUES ('session-app-quota-history', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 1, 1)
+            ) VALUES ('session-app-quota-history', 'Quota history', 'provider', 'workspace', '/workspace', NULL, NULL,
+              '[]', 'character', 4, 'active', 1, 1, 1)
           `,
           )
           .run();
@@ -3302,7 +3472,7 @@ repositoryTest("pre-dispatch child terminal publishes its Delivery while resolvi
 
     const result = terminal({
       sessionId: "child-session-pre-dispatch",
-      workspaceKey: "workspace",
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
       runId: "child-run-pre-dispatch",
       attemptId: "child-attempt-pre-dispatch",
       terminalEvent: {
@@ -3487,7 +3657,7 @@ repositoryTest("terminal pending output resolves one-way after terminal commit",
     const resolve = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runOutputResolvePending, () => 800);
     const command = {
       sessionId: "session-1",
-      workspaceKey: "workspace",
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
       runId: "run-1",
       outputItemId: "output-pending-1",
       resolution: {
@@ -3523,7 +3693,7 @@ repositoryTest("pending payload resolution rolls back an inserted payload on a s
     const resolve = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runOutputResolvePending, () => 800);
     const result = resolve({
       sessionId: "session-1",
-      workspaceKey: "workspace",
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
       runId: "run-1",
       outputItemId: "output-pending-1",
       resolution: {
@@ -4231,7 +4401,7 @@ repositoryTest("Session subtree delete removes local child data and preserves pa
     const command = {
       deletionId: "018f1f4e-7f0a-7000-8000-000000000401",
       sessionId: "child-session-delete",
-      workspaceKey: "workspace",
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
     };
     const result = remove(command) as CommandResult;
 
@@ -4278,7 +4448,7 @@ repositoryTest("Session subtree delete removes local child data and preserves pa
       database,
       REPOSITORY_WRITE_OPERATIONS.sessionDeletionCleanupComplete,
       () => 902,
-    )({ cleanupToken: command.deletionId, workspaceKey: "workspace" }) as CommandResult;
+    )({ cleanupToken: command.deletionId, workspaceKey: TEST_WORKSPACE.workspaceKey }) as CommandResult;
     assert.equal(cleanup.ok && cleanup.replayed, false);
     assert.deepEqual(cleanup.ok && cleanup.value, {
       cleanupToken: command.deletionId,
@@ -4297,7 +4467,7 @@ repositoryTest("Session subtree delete removes local child data and preserves pa
           )
           .get(command.deletionId) as Record<string, unknown>),
       },
-      { workspace_key: "workspace", deleted_session_count: 1, completed_at: 902 },
+      { workspace_key: TEST_WORKSPACE.workspaceKey, deleted_session_count: 1, completed_at: 902 },
     );
     assert.equal(
       database
@@ -4311,7 +4481,7 @@ repositoryTest("Session subtree delete removes local child data and preserves pa
       database,
       REPOSITORY_WRITE_OPERATIONS.sessionDeletionCleanupComplete,
       () => 903,
-    )({ cleanupToken: command.deletionId, workspaceKey: "workspace" }) as CommandResult;
+    )({ cleanupToken: command.deletionId, workspaceKey: TEST_WORKSPACE.workspaceKey }) as CommandResult;
     assert.equal(cleanupReplay.ok && cleanupReplay.replayed, true);
     assert.deepEqual(cleanupReplay.ok && cleanupReplay.value, cleanup.ok && cleanup.value);
 
@@ -4335,7 +4505,7 @@ repositoryTest("Session deletion cleanup completion rolls back its tombstone whe
     const command = {
       deletionId: "018f1f4e-7f0a-7000-8000-000000000407",
       sessionId: "child-session-delete",
-      workspaceKey: "workspace",
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
     };
     const remove = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionDeleteSubtree, () => 900);
     assert.equal((remove(command) as CommandResult).ok, true);
@@ -4362,7 +4532,7 @@ repositoryTest("Session subtree delete rejects busy trees and rolls back late fa
     const result = remove({
       deletionId: "018f1f4e-7f0a-7000-8000-000000000402",
       sessionId: "session-1",
-      workspaceKey: "workspace",
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
     }) as CommandResult;
     assert.equal(!result.ok && result.error.code, "session_busy");
     assert.equal(count(database, "sessions"), 1);
@@ -4381,7 +4551,7 @@ repositoryTest("Session subtree delete rejects busy trees and rolls back late fa
         remove({
           deletionId: "018f1f4e-7f0a-7000-8000-000000000403",
           sessionId: "child-session-delete",
-          workspaceKey: "workspace",
+          workspaceKey: TEST_WORKSPACE.workspaceKey,
         }),
       /subtree delete fault injection/u,
     );
@@ -4430,8 +4600,8 @@ repositoryTest("Session subtree delete rejects relations that cross a workspace 
   withDatabase((database) => {
     database.exec(`
       INSERT INTO sessions VALUES
-        ('workspace-a-root', 'provider', 'workspace-a', '[]', 'character', 4, 'closed', 1, 3, 3),
-        ('workspace-b-child', 'provider', 'workspace-b', '[]', 'character', 4, 'closed', 1, 3, 3);
+        ('workspace-a-root', 'Workspace A', 'provider', 'workspace-a', '/workspace-a', NULL, NULL, '[]', 'character', 4, 'closed', 1, 3, 3),
+        ('workspace-b-child', 'Workspace B', 'provider', 'workspace-b', '/workspace-b', NULL, NULL, '[]', 'character', 4, 'closed', 1, 3, 3);
       INSERT INTO messages VALUES ('workspace-a-message', 'workspace-a-root', 1, 'user', '[]', 1);
       INSERT INTO runs (
         id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
@@ -4460,7 +4630,7 @@ repositoryTest("Session subtree delete returns a bounded cleanup token for large
   withDatabase((database) => {
     database.exec(`
       INSERT INTO sessions VALUES
-        ('large-delete-root', 'provider', 'workspace', '[]', 'character', 300, 'closed', 1, 3, 3);
+        ('large-delete-root', 'Large delete root', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 300, 'closed', 1, 3, 3);
       INSERT INTO messages VALUES ('large-delete-message', 'large-delete-root', 1, 'user', '[]', 1);
       INSERT INTO runs (
         id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
@@ -4469,7 +4639,7 @@ repositoryTest("Session subtree delete returns a bounded cleanup token for large
         'none', 1, 2, 2, 0);
     `);
     const insertSession = database.prepare(
-      "INSERT INTO sessions VALUES (?, 'provider', 'workspace', '[]', 'character', 0, 'closed', 1, 3, 3)",
+      "INSERT INTO sessions VALUES (?, 'Large delete child', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 0, 'closed', 1, 3, 3)",
     );
     const insertRelation = database.prepare(
       `
@@ -4558,8 +4728,12 @@ function sessionCreateCommand(idempotencyKey: string, sessionId: string) {
     idempotencyKey,
     session: {
       id: sessionId,
+      title: `Session ${sessionId}`,
       providerId: "provider",
-      workspaceKey: "workspace",
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
+      workspacePath: TEST_WORKSPACE.workspacePath,
+      localRepositoryKey: null,
+      repositoryName: null,
       allowedAdditionalDirectories: ["C:/workspace/shared"],
       defaultCharacterId: "character",
       maxConcurrentChildRuns: 4,
@@ -4570,7 +4744,7 @@ function sessionCreateCommand(idempotencyKey: string, sessionId: string) {
 function normalRunAdmissionCommand(idempotencyKey: string, runId: string, binding: "create" | "reuse") {
   return {
     sessionId: "session-1",
-    workspaceKey: "workspace",
+    workspaceKey: TEST_WORKSPACE.workspaceKey,
     idempotencyKey,
     message: { id: `message-${runId}`, contentBlocks: [{ type: "text", text: "hello" }] },
     run: {
@@ -4581,7 +4755,7 @@ function normalRunAdmissionCommand(idempotencyKey: string, runId: string, bindin
         reasoning: { effort: "medium" },
         approval: { mode: "on-request" },
         sandbox: { mode: "workspace-write" },
-        workspace: { key: "workspace" },
+        workspace: { key: TEST_WORKSPACE.workspaceKey },
         character: null,
       },
     },
@@ -4605,7 +4779,7 @@ function retryRunAdmissionCommand(
 ) {
   return {
     sessionId: "session-1",
-    workspaceKey: "workspace",
+    workspaceKey: TEST_WORKSPACE.workspaceKey,
     idempotencyKey,
     retryOfRunId,
     run: {
@@ -4616,7 +4790,7 @@ function retryRunAdmissionCommand(
         reasoning: { effort: "medium" },
         approval: { mode: "on-request" },
         sandbox: { mode: "workspace-write" },
-        workspace: { key: "workspace" },
+        workspace: { key: TEST_WORKSPACE.workspaceKey },
         character: null,
       },
     },
@@ -4641,10 +4815,11 @@ function childStartCommand(
   return {
     parentSessionId,
     parentRunId,
-    workspaceKey: "workspace",
+    workspaceKey: TEST_WORKSPACE.workspaceKey,
     idempotencyKey,
     childSession: {
       id: `child-session-${suffix}`,
+      title: `Child ${suffix}`,
       providerId: "provider",
       allowedAdditionalDirectories: ["C:/workspace/shared"],
       defaultCharacterId: "child-character",
@@ -4672,7 +4847,7 @@ function childStartCommand(
         reasoning: { effort: "medium" },
         approval: { mode: "on-request" },
         sandbox: { mode: "workspace-write" },
-        workspace: { key: "workspace" },
+        workspace: { key: TEST_WORKSPACE.workspaceKey },
         character: { id: "child-character" },
       },
     },
@@ -4736,7 +4911,7 @@ function prepareDeletableChild(database: DatabaseSync) {
     (
       terminal({
         sessionId: "child-session-delete",
-        workspaceKey: "workspace",
+        workspaceKey: TEST_WORKSPACE.workspaceKey,
         runId: "child-run-delete",
         attemptId: "child-attempt-delete",
         terminalEvent: { id: "event-delete-child-terminal", dedupeKey: "dedupe-delete-child-terminal" },
@@ -4760,7 +4935,7 @@ function prepareDeletableChild(database: DatabaseSync) {
       collect({
         parentSessionId: "session-1",
         childSessionId: "child-session-delete",
-        workspaceKey: "workspace",
+        workspaceKey: TEST_WORKSPACE.workspaceKey,
         idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000332",
         deliveryId: "delivery-delete",
         collectingParentRunId: "run-1",
@@ -4776,10 +4951,10 @@ function insertTerminalSessionTree(database: DatabaseSync): void {
   database.exec(`
     BEGIN IMMEDIATE;
     INSERT INTO sessions VALUES
-      ('tree-root', 'provider', 'workspace', '[]', 'character', 4, 'closed', 1, 4, 4),
-      ('tree-middle', 'provider', 'workspace', '[]', 'character', 4, 'closed', 1, 4, 4),
-      ('tree-leaf', 'provider', 'workspace', '[]', 'character', 4, 'closed', 1, 4, 4),
-      ('unrelated-tree-session', 'provider', 'workspace', '[]', 'character', 4, 'closed', 1, 4, 4);
+      ('tree-root', 'Tree root', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'closed', 1, 4, 4),
+      ('tree-middle', 'Tree middle', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'closed', 1, 4, 4),
+      ('tree-leaf', 'Tree leaf', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'closed', 1, 4, 4),
+      ('unrelated-tree-session', 'Unrelated tree', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'closed', 1, 4, 4);
     INSERT INTO messages VALUES
       ('tree-root-message', 'tree-root', 1, 'user', '[]', 1),
       ('tree-middle-message', 'tree-middle', 1, 'user', '[]', 1),
@@ -4836,7 +5011,7 @@ function makeRunRetryable(
 function bindingResolutionCommand(_kind: "active") {
   return {
     sessionId: "session-1",
-    workspaceKey: "workspace",
+    workspaceKey: TEST_WORKSPACE.workspaceKey,
     runId: "run-1",
     attemptId: "attempt-run-1",
     bindingId: "binding-run-1",
@@ -4859,7 +5034,7 @@ function ambiguousBindingResolutionPayload(
 ) {
   return {
     ...scope,
-    workspaceKey: "workspace",
+    workspaceKey: TEST_WORKSPACE.workspaceKey,
     resolution: {
       kind: "ambiguous",
       failureOrigin: "transport",
@@ -4871,7 +5046,7 @@ function ambiguousBindingResolutionPayload(
 function dispatchBeginCommand(ephemeralOwnerToken: string | null = null) {
   return {
     sessionId: "session-1",
-    workspaceKey: "workspace",
+    workspaceKey: TEST_WORKSPACE.workspaceKey,
     runId: "run-1",
     attemptId: "attempt-run-1",
     bindingId: "binding-run-1",
@@ -4886,7 +5061,7 @@ function dispatchResolutionCommand(
 ) {
   return {
     sessionId: "session-1",
-    workspaceKey: "workspace",
+    workspaceKey: TEST_WORKSPACE.workspaceKey,
     runId: "run-1",
     attemptId: "attempt-run-1",
     bindingId: "binding-run-1",
@@ -4899,7 +5074,7 @@ function dispatchResolutionCommand(
 function runInputAdmissionCommand(idempotencyKey: string, ephemeralOwnerToken: string | null = null) {
   return {
     sessionId: "session-1",
-    workspaceKey: "workspace",
+    workspaceKey: TEST_WORKSPACE.workspaceKey,
     idempotencyKey,
     runId: "run-1",
     attemptId: "attempt-run-1",
@@ -4911,7 +5086,7 @@ function runInputAdmissionCommand(idempotencyKey: string, ephemeralOwnerToken: s
 function runInputBeginCommand(ephemeralOwnerToken: string | null = null) {
   return {
     sessionId: "session-1",
-    workspaceKey: "workspace",
+    workspaceKey: TEST_WORKSPACE.workspaceKey,
     runId: "run-1",
     attemptId: "attempt-run-1",
     messageId: "message-input-1",
@@ -4940,7 +5115,7 @@ function runOutputAppendCommand(outputId: string, providerItemId: string | null,
   const bytes = new TextEncoder().encode(content);
   return {
     sessionId: "session-1",
-    workspaceKey: "workspace",
+    workspaceKey: TEST_WORKSPACE.workspaceKey,
     runId: "run-1",
     item: {
       id: outputId,
@@ -4964,7 +5139,7 @@ function runOutputAppendCommand(outputId: string, providerItemId: string | null,
 function runTerminalCommand() {
   return {
     sessionId: "session-1",
-    workspaceKey: "workspace",
+    workspaceKey: TEST_WORKSPACE.workspaceKey,
     runId: "run-1",
     attemptId: "attempt-run-1",
     terminalEvent: { id: "terminal-event-1", dedupeKey: "provider-terminal-1" },
@@ -5001,7 +5176,7 @@ function preparingRunTerminalCommand(
 ) {
   return {
     sessionId: "session-1",
-    workspaceKey: "workspace",
+    workspaceKey: TEST_WORKSPACE.workspaceKey,
     runId: "run-1",
     attemptId: "attempt-run-1",
     terminalEvent: { id: "terminal-event-pre-dispatch", dedupeKey: "provider-terminal-pre-dispatch" },
@@ -5056,8 +5231,8 @@ function insertChildScenario(database: DatabaseSync): void {
   database.exec(`
     BEGIN IMMEDIATE;
     INSERT INTO sessions VALUES
-      ('parent-session', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 1, 1),
-      ('child-session', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 1, 1);
+      ('parent-session', 'Parent session', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 1, 1),
+      ('child-session', 'Child session', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 1, 1);
     INSERT INTO messages VALUES
       ('parent-message', 'parent-session', 1, 'user', '[]', 1),
       ('child-message', 'child-session', 1, 'user', '[]', 1);
@@ -5150,13 +5325,13 @@ function insertStartupRepairFixture(database: DatabaseSync): void {
   database.exec(`
     BEGIN;
     INSERT INTO sessions VALUES
-      ('repair-parent', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 20, 20),
-      ('repair-child', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 20, 20),
-      ('repair-safe', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 2, 2),
-      ('repair-creating', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 2, 2),
-      ('repair-dispatching', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 2, 2),
-      ('repair-ephemeral', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 2, 2),
-      ('repair-diagnostic', 'provider', 'workspace', '[]', 'character', 4, 'active', 1, 2, 2);
+      ('repair-parent', 'Repair parent', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 20, 20),
+      ('repair-child', 'Repair child', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 20, 20),
+      ('repair-safe', 'Repair safe', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 2, 2),
+      ('repair-creating', 'Repair creating', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 2, 2),
+      ('repair-dispatching', 'Repair dispatching', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 2, 2),
+      ('repair-ephemeral', 'Repair ephemeral', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 2, 2),
+      ('repair-diagnostic', 'Repair diagnostic', 'provider', 'workspace', '/workspace', NULL, NULL, '[]', 'character', 4, 'active', 1, 2, 2);
     INSERT INTO messages VALUES
       ('repair-parent-message', 'repair-parent', 1, 'user', '[]', 1),
       ('repair-collision-delivery', 'repair-parent', 2, 'user', '[]', 2),

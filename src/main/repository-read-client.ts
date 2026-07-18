@@ -5,6 +5,7 @@ import {
   type MessageContentChunkRequest,
   type MessageContentChunkResult,
   type MessageListItem,
+  type LocalRepositoryListItem,
   type Page,
   type RecoveryProjection,
   type RunDetail,
@@ -33,8 +34,10 @@ export class RepositoryReadClient {
 
   sessionsPage(
     input: Readonly<{
-      workspaceKey: string;
+      workspaceKey?: string;
       lifecycleStatus?: SessionLifecycleStatus;
+      localRepositoryKeys?: readonly string[];
+      querySearchKey?: string;
       cursor?: string;
       limit?: number;
     }>,
@@ -43,8 +46,15 @@ export class RepositoryReadClient {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.sessionsPage, "read", input, options);
   }
 
+  localRepositoriesPage(
+    input: Readonly<{ cursor?: string; limit?: number }>,
+    options?: RequestOptions,
+  ): Promise<Page<LocalRepositoryListItem>> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.localRepositoriesPage, "read", input, options);
+  }
+
   sessionGet(
-    input: Readonly<{ sessionId: string; workspaceKey: string }>,
+    input: Readonly<{ sessionId: string }>,
     options?: RequestOptions,
   ): Promise<
     Readonly<{
