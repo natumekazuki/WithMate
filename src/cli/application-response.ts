@@ -25,6 +25,7 @@ import {
   type CliSessionOperation,
   type CliStructuredOutput,
   type CliValidatedCommand,
+  type CliValidatedSessionCommand,
 } from "./contract.js";
 
 export type CliOperationProjectionResult =
@@ -34,7 +35,7 @@ export type CliOperationProjectionResult =
 type OperationMode = "read" | "write";
 type ProjectedApplicationResponse = CliApplicationResponse<unknown, OperationMode> | CliSessionDeleteResponse;
 type CommandFor<TOperation extends CliSessionOperation> = Extract<
-  CliValidatedCommand,
+  CliValidatedSessionCommand,
   Readonly<{ identity: CliCommandIdentity<TOperation> }>
 >;
 
@@ -56,15 +57,17 @@ export function projectCliOperationOutput(
   applicationResponse: unknown,
 ): CliOperationProjectionResult {
   try {
+    if (command.identity.namespace !== "session") throw new TypeError("Expected a Session command.");
+    const sessionCommand = command as CliValidatedSessionCommand;
     const projected = projectApplicationResponse(
-      command,
-      operationModes[command.identity.operation],
+      sessionCommand,
+      operationModes[sessionCommand.identity.operation],
       applicationResponse,
     );
     const output = {
       schemaVersion: CLI_SCHEMA_VERSION,
       kind: "operation",
-      command: { namespace: "session", operation: command.identity.operation },
+      command: { namespace: "session", operation: sessionCommand.identity.operation },
       applicationResponse: projected,
     } as CliOperationOutput;
     return { ok: true, output, exitCode: exitCodeForApplicationResponse(projected) };
@@ -83,8 +86,43 @@ export function serializeCliStructuredOutput(output: CliStructuredOutput): strin
   return `${serialized}\n`;
 }
 
+export function projectCliReadApplicationResponse<TValue>(
+  value: unknown,
+  projectValue: (value: unknown) => TValue,
+  maxIssues: number,
+): CliApplicationResponse<TValue, "read"> {
+  const response = record(value);
+  if (response.overallStatus === "success") {
+    const persistence = projectPersistenceStatus(response.persistence);
+    if (persistence.status !== "read") malformed();
+    return { overallStatus: "success", value: projectValue(response.value), persistence };
+  }
+  if (response.overallStatus === "partial_success") {
+    const persistence = projectPersistenceStatus(response.persistence);
+    const issues = projectIssuesWithLimit(response.issues, maxIssues);
+    if (persistence.status !== "read" || issues.length === 0 || issues.some((issue) => issue.kind !== "omission")) {
+      malformed();
+    }
+    return {
+      overallStatus: "partial_success",
+      value: projectValue(response.value),
+      issues,
+      persistence,
+    } as CliApplicationResponse<TValue, "read">;
+  }
+  if (response.overallStatus !== "failure") malformed();
+  const error = projectApplicationError(response.error);
+  const persistence = projectPersistenceStatus(response.persistence);
+  if (!failureCombinationIsValid("read", false, error, persistence)) malformed();
+  return { overallStatus: "failure", error, persistence } as CliApplicationResponse<TValue, "read">;
+}
+
+export function exitCodeForCliApplicationResponse(response: CliApplicationResponse<unknown, "read">): CliExitCode {
+  return exitCodeForApplicationResponse(response);
+}
+
 function projectApplicationResponse(
-  command: CliValidatedCommand,
+  command: CliValidatedSessionCommand,
   mode: OperationMode,
   value: unknown,
 ): ProjectedApplicationResponse {
@@ -145,7 +183,7 @@ function projectApplicationResponse(
   return { overallStatus, error, persistence } as ProjectedApplicationResponse;
 }
 
-function projectOperationValue(command: CliValidatedCommand, value: unknown): unknown {
+function projectOperationValue(command: CliValidatedSessionCommand, value: unknown): unknown {
   if (isCommandFor(command, "create")) return projectCreateValue(value, command.title, command.workspacePath);
   if (isCommandFor(command, "rename")) return projectRenameValue(value, command.sessionId, command.title);
   if (isCommandFor(command, "list")) return projectListValue(value, command);
@@ -513,7 +551,11 @@ function projectPersistenceError(
 }
 
 function projectIssues(value: unknown): readonly CliApplicationIssue[] {
-  return snapshotDenseArray(value, CLI_SESSION_LIMITS.listMaxItems).map((candidate) => {
+  return projectIssuesWithLimit(value, CLI_SESSION_LIMITS.listMaxItems);
+}
+
+function projectIssuesWithLimit(value: unknown, maxIssues: number): readonly CliApplicationIssue[] {
+  return snapshotDenseArray(value, maxIssues).map((candidate) => {
     const issue = record(candidate);
     if (issue.kind === "omission") {
       if (issue.code !== "response_size_limit") malformed();
@@ -617,7 +659,7 @@ function runtimeProjectionFailure(command: CliCommandIdentity): CliRuntimeFailur
   return {
     schemaVersion: CLI_SCHEMA_VERSION,
     kind: "runtime_failure",
-    command: { namespace: "session", operation: command.operation },
+    command,
     error: {
       kind: "runtime",
       code: "malformed_application_response",
@@ -716,7 +758,7 @@ function enumValue<TValue extends string>(value: unknown, allowed: readonly TVal
 }
 
 function isCommandFor<TOperation extends CliSessionOperation>(
-  command: CliValidatedCommand,
+  command: CliValidatedSessionCommand,
   operation: TOperation,
 ): command is CommandFor<TOperation> {
   return command.identity.operation === operation;

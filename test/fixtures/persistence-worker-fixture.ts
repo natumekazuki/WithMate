@@ -9,7 +9,13 @@ if (parentPort === null || !isPlainObject(workerData) || typeof workerData.gener
 
 const port = parentPort;
 const generationId = workerData.generationId;
-port.postMessage({ protocolVersion: PERSISTENCE_PROTOCOL_VERSION, generationId, kind: "ready" });
+const sendReady = () =>
+  port.postMessage({ protocolVersion: PERSISTENCE_PROTOCOL_VERSION, generationId, kind: "ready" });
+if (typeof workerData.databasePath === "string" && workerData.databasePath.includes("slow-start")) {
+  setTimeout(sendReady, 10_000);
+} else {
+  sendReady();
+}
 port.on("message", (rawMessage: unknown) => {
   const decoded = decodeMainToWorkerMessage(rawMessage);
   if (!decoded.ok) {

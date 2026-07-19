@@ -7,10 +7,12 @@ import {
 } from "../shared/session-metadata.js";
 import {
   CLI_EXIT_CODES,
+  CLI_RUN_LIMITS,
   CLI_SCHEMA_VERSION,
   CLI_SESSION_LIMITS,
   type CliCommandIdentity,
   type CliParseResult,
+  type CliRunOperation,
   type CliSessionOperation,
   type CliSessionWriteCommand,
   type CliUsageErrorCode,
@@ -33,7 +35,7 @@ type ParsedOptions = Readonly<Record<string, unknown>>;
 type OptionParseResult =
   Readonly<{ ok: true; values: ParsedOptions }> | Readonly<{ ok: false; result: CliParseResult }>;
 
-const operations = new Set<CliSessionOperation>([
+const sessionOperations = new Set<CliSessionOperation>([
   "create",
   "rename",
   "list",
@@ -45,6 +47,7 @@ const operations = new Set<CliSessionOperation>([
   "close",
   "delete",
 ]);
+const runOperations = new Set<CliRunOperation>(["status", "events", "follow"]);
 
 const timeoutOption = {
   "--timeout-ms": option((value) => parseInteger(value, 1, CLI_SESSION_LIMITS.maxTimeoutMs)),
@@ -56,30 +59,48 @@ export function parseCliArgv(argv: readonly string[]): CliParseResult {
     return { kind: "help", topic: { kind: "root" } };
   }
   if (isExact(snapshot, "--version") || isExact(snapshot, "-V")) return { kind: "version" };
-  if (snapshot[0] !== "session") {
+  const namespace = snapshot[0];
+  if (namespace !== "session" && namespace !== "run") {
     return usageFailure(null, "unknown_command", "Unknown command. Run 'withmate --help' for usage.");
   }
   if (
     snapshot.length === 1 ||
     (snapshot.length === 2 && (snapshot[1] === "--help" || snapshot[1] === "-h" || snapshot[1] === "help"))
   ) {
-    return { kind: "help", topic: { kind: "session" } };
+    return { kind: "help", topic: { kind: namespace } };
   }
 
   const operation = snapshot[1];
-  if (!isSessionOperation(operation)) {
-    return usageFailure(null, "unknown_command", "Unknown Session operation. Run 'withmate session --help' for usage.");
+  if (namespace === "session") {
+    if (!isSessionOperation(operation)) {
+      return usageFailure(
+        null,
+        "unknown_command",
+        "Unknown Session operation. Run 'withmate session --help' for usage.",
+      );
+    }
+    const identity: CliCommandIdentity<CliSessionOperation> = { namespace, operation };
+    const operationArgv = snapshot.slice(2);
+    if (isExact(operationArgv, "--help") || isExact(operationArgv, "-h")) {
+      return { kind: "help", topic: { kind: "operation", command: identity } };
+    }
+    return parseSessionCommand(identity, operationArgv);
   }
-  const identity: CliCommandIdentity = { namespace: "session", operation };
+  if (!isRunOperation(operation)) {
+    return usageFailure(null, "unknown_command", "Unknown Run operation. Run 'withmate run --help' for usage.");
+  }
+  const identity: CliCommandIdentity<CliRunOperation> = { namespace, operation };
   const operationArgv = snapshot.slice(2);
   if (isExact(operationArgv, "--help") || isExact(operationArgv, "-h")) {
     return { kind: "help", topic: { kind: "operation", command: identity } };
   }
-
-  return parseSessionCommand(identity, operationArgv);
+  return parseRunCommand(identity, operationArgv);
 }
 
-function parseSessionCommand(identity: CliCommandIdentity, argv: readonly string[]): CliParseResult {
+function parseSessionCommand(
+  identity: CliCommandIdentity<CliSessionOperation>,
+  argv: readonly string[],
+): CliParseResult {
   switch (identity.operation) {
     case "create":
       return parseCreate(identity as CliCommandIdentity<"create">, argv);
@@ -102,6 +123,83 @@ function parseSessionCommand(identity: CliCommandIdentity, argv: readonly string
     case "delete":
       return parseDelete(identity as CliCommandIdentity<"delete">, argv);
   }
+}
+
+function parseRunCommand(identity: CliCommandIdentity<CliRunOperation>, argv: readonly string[]): CliParseResult {
+  switch (identity.operation) {
+    case "status":
+      return parseRunStatus(identity as CliCommandIdentity<"status">, argv);
+    case "events":
+      return parseRunEvents(identity as CliCommandIdentity<"events">, argv);
+    case "follow":
+      return parseRunFollow(identity as CliCommandIdentity<"follow">, argv);
+  }
+}
+
+function parseRunStatus(identity: CliCommandIdentity<"status">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--run-id": requiredOption(parseIdentifier),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      runId: parsed.values["--run-id"] as string,
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
+function parseRunEvents(identity: CliCommandIdentity<"events">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--run-id": requiredOption(parseIdentifier),
+    "--cursor": option((value) => parseBoundedString(value, CLI_SESSION_LIMITS.maxCursorLength)),
+    "--limit": option((value) => parseInteger(value, 1, CLI_RUN_LIMITS.eventsMaxItems)),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      runId: parsed.values["--run-id"] as string,
+      ...(parsed.values["--cursor"] === undefined ? {} : { cursor: parsed.values["--cursor"] as string }),
+      limit: (parsed.values["--limit"] as number | undefined) ?? CLI_RUN_LIMITS.eventsDefaultItems,
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
+function parseRunFollow(identity: CliCommandIdentity<"follow">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--run-id": requiredOption(parseIdentifier),
+    "--cursor": option((value) => parseBoundedString(value, CLI_SESSION_LIMITS.maxCursorLength)),
+    "--limit": option((value) => parseInteger(value, 1, CLI_RUN_LIMITS.eventsMaxItems)),
+    "--wait-ms": option((value) => parseInteger(value, 0, CLI_RUN_LIMITS.followMaxWaitMs)),
+    "--poll-ms": option((value) => parseInteger(value, CLI_RUN_LIMITS.followMinPollMs, CLI_RUN_LIMITS.followMaxPollMs)),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      runId: parsed.values["--run-id"] as string,
+      ...(parsed.values["--cursor"] === undefined ? {} : { cursor: parsed.values["--cursor"] as string }),
+      limit: (parsed.values["--limit"] as number | undefined) ?? CLI_RUN_LIMITS.eventsDefaultItems,
+      waitMs: (parsed.values["--wait-ms"] as number | undefined) ?? CLI_RUN_LIMITS.followDefaultWaitMs,
+      pollMs: (parsed.values["--poll-ms"] as number | undefined) ?? CLI_RUN_LIMITS.followDefaultPollMs,
+      ...optionalTimeout(parsed.values),
+    },
+  };
 }
 
 function parseDelete(identity: CliCommandIdentity<"delete">, argv: readonly string[]): CliParseResult {
@@ -432,7 +530,11 @@ function isExact(values: readonly string[], expected: string): boolean {
 }
 
 function isSessionOperation(value: string | undefined): value is CliSessionOperation {
-  return value !== undefined && operations.has(value as CliSessionOperation);
+  return value !== undefined && sessionOperations.has(value as CliSessionOperation);
+}
+
+function isRunOperation(value: string | undefined): value is CliRunOperation {
+  return value !== undefined && runOperations.has(value as CliRunOperation);
 }
 
 function usageFailure(

@@ -251,6 +251,15 @@ export type RunEventListItem = Readonly<{
   createdAt: number;
 }>;
 
+export type RunEventPage = Readonly<{
+  sessionId: string;
+  runId: string;
+  workspaceKey: string;
+  items: readonly (RunEventListItem | PageOmission)[];
+  continuationCursor: string;
+  hasMore: boolean;
+}>;
+
 export type RunOutputListItem = Readonly<{
   id: string;
   runId: string;

@@ -2,6 +2,7 @@ import RepositoryReadClient = require("../../../src/main/repository-read-client.
 import * as moduleApi from "node:module";
 
 import type { PersistenceWorkerClient } from "../../../src/main/persistence-worker-client.js";
+import { REPOSITORY_READ_OPERATIONS } from "../../../src/shared/repository-read-model.js";
 
 type InlineWriteClient = import("../../../src/main/repository-write-client.js").RepositoryWriteClient;
 type LocalWritePort = { [key: string]: (command: unknown) => Promise<unknown> };
@@ -19,6 +20,7 @@ const structuralWriteKey = "create" + "Session";
 const rawRequestKey = "re" + "quest";
 const structuralWrite = localWritePort[structuralWriteKey]!({});
 const rawRequest = rawPersistenceClient[rawRequestKey as "request"];
+const rawReadOperation = REPOSITORY_READ_OPERATIONS.runGet;
 
 void RepositoryReadClient;
 void (null as InlineWriteClient | LocalWritePort | null);
@@ -27,3 +29,4 @@ void bareRequiredClient;
 void dynamicallyImportedModuleApi;
 void structuralWrite;
 void rawRequest;
+void rawReadOperation;
