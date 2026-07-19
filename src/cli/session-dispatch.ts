@@ -6,11 +6,11 @@ import {
   type CliCommandIdentity,
   type CliRuntimeFailureOutput,
   type CliSessionOperation,
-  type CliValidatedCommand,
+  type CliValidatedSessionCommand,
 } from "./contract.js";
 
 type CommandFor<TOperation extends CliSessionOperation> = Extract<
-  CliValidatedCommand,
+  CliValidatedSessionCommand,
   Readonly<{ identity: CliCommandIdentity<TOperation> }>
 >;
 
@@ -18,6 +18,7 @@ export type CliSessionDispatchDependencies<TAuthorizationContext> = Readonly<{
   operations: ApplicationSessionOperations<TAuthorizationContext>;
   authorization: TAuthorizationContext;
   signal?: AbortSignal;
+  timeoutMs?: number;
 }>;
 
 export type CliSessionDispatchResult =
@@ -29,13 +30,14 @@ export type CliSessionDispatchResult =
     }>;
 
 export async function dispatchCliSessionCommand<TAuthorizationContext>(
-  command: CliValidatedCommand,
+  command: CliValidatedSessionCommand,
   dependencies: CliSessionDispatchDependencies<TAuthorizationContext>,
 ): Promise<CliSessionDispatchResult> {
   try {
     const context = { authorization: dependencies.authorization } as const;
+    const timeoutMs = dependencies.timeoutMs ?? command.timeoutMs;
     const options = {
-      ...(command.timeoutMs === undefined ? {} : { timeoutMs: command.timeoutMs }),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
       ...(dependencies.signal === undefined ? {} : { signal: dependencies.signal }),
     };
     let response: unknown;
@@ -141,7 +143,7 @@ export async function dispatchCliSessionCommand<TAuthorizationContext>(
 }
 
 function isCommandFor<TOperation extends CliSessionOperation>(
-  command: CliValidatedCommand,
+  command: CliValidatedSessionCommand,
   operation: TOperation,
 ): command is CommandFor<TOperation> {
   return command.identity.operation === operation;

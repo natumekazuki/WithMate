@@ -437,7 +437,7 @@ function runEventsPage(database: DatabaseSync, payload: Readonly<Record<string, 
     .all(scope.runId, scope.sessionId, scope.workspaceKey, afterOrdinal, limit + 1) as unknown as readonly OrdinalRow[];
   assertRunScopeExists(database, scope);
   const page = splitPage(rows, limit);
-  return ordinalPage(scope, page, "run_events", cursorScope, (row) => ({
+  const budgeted = budgetPage(page, (row) => ({
     id: row.id,
     runId: row.run_id,
     ordinal: row.ordinal,
@@ -447,6 +447,13 @@ function runEventsPage(database: DatabaseSync, payload: Readonly<Record<string, 
     ...(row.summary === null ? {} : { summary: row.summary }),
     createdAt: row.created_at,
   }));
+  const continuationOrdinal = budgeted.lastRow?.ordinal ?? afterOrdinal;
+  return {
+    ...scope,
+    items: budgeted.items,
+    continuationCursor: encodeCursor("run_events", cursorScope, [continuationOrdinal]),
+    hasMore: budgeted.hasMore,
+  };
 }
 
 function runOutputCounts(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {

@@ -55,6 +55,38 @@ workerTest("worker starts once, serves requests, checkpoints, and closes gracefu
   });
 });
 
+workerTest("startup abort terminates a not-yet-ready Worker with a cancellation failure", async () => {
+  const controller = new AbortController();
+  const client = new PersistenceWorkerClient({
+    workerUrl: fixtureWorkerUrl,
+    databasePath: path.resolve("slow-start-test.sqlite3"),
+    legacyDatabasePaths: [],
+    workerOptions,
+    startupTimeoutMs: 10_000,
+  });
+  const startup = client.start({ signal: controller.signal });
+  controller.abort();
+
+  await assert.rejects(startup, (error: unknown) => isClientError(error, "request_canceled", "none"));
+  assert.equal(client.state, "failed");
+});
+
+workerTest("shutdown abort terminates a Worker that cannot acknowledge closure", async () => {
+  const controller = new AbortController();
+  const client = new PersistenceWorkerClient({
+    workerUrl: fixtureWorkerUrl,
+    databasePath: path.resolve("abort-shutdown-test.sqlite3"),
+    legacyDatabasePaths: [],
+    workerOptions,
+  });
+  await client.start();
+  const shutdown = client.shutdown(10_000, controller.signal);
+  controller.abort();
+
+  await assert.rejects(shutdown, (error: unknown) => isClientError(error, "request_canceled", "unknown"));
+  assert.equal(client.state, "failed");
+});
+
 workerTest("production Worker restores a Session Provider before its first Run", async () => {
   await withTempDirectory(async (directory) => {
     const options = {

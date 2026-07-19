@@ -1,15 +1,17 @@
-import type { CliHelpTopic, CliSessionOperation } from "./contract.js";
+import type { CliHelpTopic, CliRunOperation, CliSessionOperation } from "./contract.js";
 
 const ROOT_HELP = `Usage: withmate <namespace> <operation> [options]
 
 Namespaces:
   session    Create, inspect, and change Session lifecycle state
+  run        Observe persisted Run state and events
 
 Global options:
   -h, --help       Show help without starting the application runtime
   -V, --version    Show the executable version without starting the application runtime
 
 Run 'withmate session --help' for Session operations.
+Run 'withmate run --help' for Run observation operations.
 Operation results and failures are written as one withmate-cli-v1 JSON object to stdout.
 `;
 
@@ -28,6 +30,17 @@ Operations:
   delete               Irreversibly delete local Session data only
 
 Run 'withmate session <operation> --help' for operation options.
+`;
+
+const RUN_HELP = `Usage: withmate run <operation> [options]
+
+Operations:
+  status    Read the persisted Run status
+  events    Read a bounded RunEvent page
+  follow    Wait for events, terminal closure, or a bounded deadline
+
+Run mutation is not available from this CLI.
+Run 'withmate run <operation> --help' for operation options.
 `;
 
 const OPERATION_HELP: Readonly<Record<CliSessionOperation, string>> = {
@@ -126,14 +139,57 @@ Optional options:
 `,
 };
 
+const RUN_OPERATION_HELP: Readonly<Record<CliRunOperation, string>> = {
+  status: `Usage: withmate run status [options]
+
+Required options:
+  --session-id <session-id>
+  --run-id <run-id>
+
+Optional options:
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
+  events: `Usage: withmate run events [options]
+
+Required options:
+  --session-id <session-id>
+  --run-id <run-id>
+
+Optional options:
+  --cursor <opaque-cursor>
+  --limit <1..200>    Default: 100
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
+  follow: `Usage: withmate run follow [options]
+
+Required options:
+  --session-id <session-id>
+  --run-id <run-id>
+
+Optional options:
+  --cursor <opaque-cursor>
+  --limit <1..200>       Default: 100
+  --wait-ms <0..30000>   Default: 10000
+  --poll-ms <25..5000>   Default: 250
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
+};
+
 export function helpText(topic: CliHelpTopic): string {
   switch (topic.kind) {
     case "root":
       return ROOT_HELP;
     case "session":
       return SESSION_HELP;
+    case "run":
+      return RUN_HELP;
     case "operation":
-      return OPERATION_HELP[topic.command.operation];
+      return topic.command.namespace === "session"
+        ? OPERATION_HELP[topic.command.operation]
+        : RUN_OPERATION_HELP[topic.command.operation];
   }
 }
 

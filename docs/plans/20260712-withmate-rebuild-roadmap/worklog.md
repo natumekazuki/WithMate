@@ -83,3 +83,18 @@
 - Session treeを4,096件に制限し、child admission、Repository delete、Application / CLI projection、schema manifestへ同じaggregate契約を展開した。
 - subtree deleteをconnection-localなSQL worksetによるset-based削除へ変更し、関連ID群の全件hydrateを除去した。対象payload bytesと更新対象row数によるWAL見積りがdisk reserveを割る場合は、durable mutation前に`insufficient_disk_space`で拒否する。
 - schema installは永続triggerを許可しつつ、transaction controlとTEMP schema objectをSQLite authorizerで拒否し、Worker connectionへschema artifactが残る経路を閉じた。
+
+## 2026-07-19: CP2 Run observation control plane
+
+- Provider非依存で成立する`ApplicationRunOperations`と`withmate run status|events|follow`を追加し、永続化済みRunの状態とbounded RunEvent pageをApplication Service経由で観測可能にした。
+- followを1 invocation 1 responseのbounded long-pollとし、event、terminal closure、deadline、SIGINT abortを分離した。terminal status後のevent probe、opaque continuation、page / wait / poll上限を実行可能なcontractで固定した。
+- Run statusとeventをallowlist projectionへ限定し、execution snapshot、Provider error code、内部ID、version、external side effect metadataをpublic出力から除外した。
+- Run namespaceは既存`withmate-cli-v1`、exit code、stdout JSON、Workerのexactly-once shutdown契約へ追加した。CLI hard timeoutとSIGINTをbootstrap、operation、shutdownへ通し、parse / helpがruntimeを起動しないことをprocess smokeで確認した。
+- production CLIには`start`、`retry`、active `cancel`を追加していない。Provider request / execution snapshotの構築、dispatch継続process、Provider interruptとterminal outcomeの相関を所有するruntimeが未確定である。
+- Run observation sliceは完了したが、mutation操作が残るためCP2全体は進行中のままとする。Provider runtime ownershipはCP3との境界を含む後続sliceで決定する。
+
+### Accepted risks
+
+| ID | 発生条件と影響 | 検知と復旧 | 再判断条件 |
+| --- | --- | --- | --- |
+| CP2-RUN-R1 | 将来live activity portをproductionへ接続した際、port rejectionまたはmalformed responseでは永続Run statusを取得済みでもApplication internal failureと`persistence.status='failed'`を返す。現行productionはdefault null portのため到達せず、データ破損や情報漏洩はない。 | structured failureとexit code 50で検知し、statusを再実行できる。永続Run stateは変更されない。 | CP3でlive activity portを接続する前に、補助表示を`null`へ縮退するか、persistence read済みのinternal failureを表せるenvelopeへ拡張するかを決定する。 |

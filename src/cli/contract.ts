@@ -1,4 +1,5 @@
 import { ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS } from "../shared/allowed-additional-directories.js";
+import { APPLICATION_RUN_LIMITS } from "../shared/application-run-model.js";
 import { SESSION_METADATA_LIMITS, type LocalRepositoryMetadata } from "../shared/session-metadata.js";
 
 export const CLI_SCHEMA_VERSION = "withmate-cli-v1" as const;
@@ -30,6 +31,17 @@ export const CLI_SESSION_LIMITS = {
   maxRepositoryFilters: SESSION_METADATA_LIMITS.repositoryFilterMaxItems,
 } as const;
 
+export const CLI_RUN_LIMITS = {
+  maxSummaryLength: APPLICATION_RUN_LIMITS.maxSummaryLength,
+  eventsDefaultItems: APPLICATION_RUN_LIMITS.eventsDefaultItems,
+  eventsMaxItems: APPLICATION_RUN_LIMITS.eventsMaxItems,
+  followDefaultWaitMs: APPLICATION_RUN_LIMITS.followDefaultWaitMs,
+  followMaxWaitMs: APPLICATION_RUN_LIMITS.followMaxWaitMs,
+  followDefaultPollMs: APPLICATION_RUN_LIMITS.followDefaultPollMs,
+  followMinPollMs: APPLICATION_RUN_LIMITS.followMinPollMs,
+  followMaxPollMs: APPLICATION_RUN_LIMITS.followMaxPollMs,
+} as const;
+
 export type CliExitCode = (typeof CLI_EXIT_CODES)[keyof typeof CLI_EXIT_CODES];
 
 export type CliSessionOperation =
@@ -44,10 +56,14 @@ export type CliSessionOperation =
   | "close"
   | "delete";
 
-export type CliCommandIdentity<TOperation extends CliSessionOperation = CliSessionOperation> = Readonly<{
-  namespace: "session";
-  operation: TOperation;
-}>;
+export type CliRunOperation = "status" | "events" | "follow";
+export type CliOperation = CliSessionOperation | CliRunOperation;
+
+export type CliCommandIdentity<TOperation extends CliOperation = CliOperation> = TOperation extends CliSessionOperation
+  ? Readonly<{ namespace: "session"; operation: TOperation }>
+  : TOperation extends CliRunOperation
+    ? Readonly<{ namespace: "run"; operation: TOperation }>
+    : never;
 
 type CliTimeoutOption = Readonly<{ timeoutMs?: number }>;
 
@@ -125,7 +141,34 @@ export type CliSessionDeleteCommand = CliTimeoutOption &
     idempotencyKey: string;
   }>;
 
-export type CliValidatedCommand =
+export type CliRunStatusCommand = CliTimeoutOption &
+  Readonly<{
+    identity: CliCommandIdentity<"status">;
+    sessionId: string;
+    runId: string;
+  }>;
+
+export type CliRunEventsCommand = CliTimeoutOption &
+  Readonly<{
+    identity: CliCommandIdentity<"events">;
+    sessionId: string;
+    runId: string;
+    cursor?: string;
+    limit: number;
+  }>;
+
+export type CliRunFollowCommand = CliTimeoutOption &
+  Readonly<{
+    identity: CliCommandIdentity<"follow">;
+    sessionId: string;
+    runId: string;
+    cursor?: string;
+    limit: number;
+    waitMs: number;
+    pollMs: number;
+  }>;
+
+export type CliValidatedSessionCommand =
   | CliSessionCreateCommand
   | CliSessionRenameCommand
   | CliSessionListCommand
@@ -137,9 +180,14 @@ export type CliValidatedCommand =
   | CliSessionCloseCommand
   | CliSessionDeleteCommand;
 
+export type CliValidatedRunCommand = CliRunStatusCommand | CliRunEventsCommand | CliRunFollowCommand;
+
+export type CliValidatedCommand = CliValidatedSessionCommand | CliValidatedRunCommand;
+
 export type CliHelpTopic =
   | Readonly<{ kind: "root" }>
   | Readonly<{ kind: "session" }>
+  | Readonly<{ kind: "run" }>
   | Readonly<{ kind: "operation"; command: CliCommandIdentity }>;
 
 export type CliUsageErrorCode =
@@ -487,6 +535,117 @@ export type CliLocalRepositoryListValue = Readonly<{
   nextCursor?: string;
 }>;
 
+export type CliRunPhase =
+  "queued" | "starting" | "active" | "canceling" | "finalizing" | "completed" | "failed" | "canceled" | "interrupted";
+
+export type CliRunLiveActivity = "running" | "waiting_approval" | "waiting_input" | "waiting_child";
+
+export type CliRunFailureSummary = Readonly<{
+  origin: "provider" | "transport" | "process" | "application" | "persistence" | "unknown";
+  summary?: string;
+}>;
+
+export type CliRunCancellationSummary = Readonly<{
+  requestedAt: number;
+  acknowledgedAt?: number;
+}>;
+
+type CliRunStatusBase = Readonly<{
+  sessionId: string;
+  runId: string;
+  retryOfRunId?: string;
+  createdAt: number;
+  startedAt?: number;
+  updatedAt: number;
+}>;
+
+type CliRunInactiveStatus = CliRunStatusBase &
+  Readonly<{
+    phase: "queued" | "starting" | "finalizing";
+    liveActivity: null;
+    failure?: never;
+    cancellation?: never;
+    terminalAt?: never;
+  }>;
+
+type CliRunActiveStatus = CliRunStatusBase &
+  Readonly<{
+    phase: "active";
+    liveActivity: CliRunLiveActivity | null;
+    failure?: never;
+    cancellation?: never;
+    terminalAt?: never;
+  }>;
+
+type CliRunCancelingStatus = CliRunStatusBase &
+  Readonly<{
+    phase: "canceling";
+    liveActivity: null;
+    cancellation?: CliRunCancellationSummary;
+    failure?: never;
+    terminalAt?: never;
+  }>;
+
+type CliRunCompletedStatus = CliRunStatusBase &
+  Readonly<{
+    phase: "completed";
+    liveActivity: null;
+    terminalAt: number;
+    failure?: never;
+    cancellation?: never;
+  }>;
+
+type CliRunFailedStatus = CliRunStatusBase &
+  Readonly<{
+    phase: "failed" | "interrupted";
+    liveActivity: null;
+    terminalAt: number;
+    failure: CliRunFailureSummary;
+    cancellation?: CliRunCancellationSummary;
+  }>;
+
+type CliRunCanceledStatus = CliRunStatusBase &
+  Readonly<{
+    phase: "canceled";
+    liveActivity: null;
+    terminalAt: number;
+    cancellation?: CliRunCancellationSummary;
+    failure?: never;
+  }>;
+
+export type CliRunStatusValue =
+  | CliRunInactiveStatus
+  | CliRunActiveStatus
+  | CliRunCancelingStatus
+  | CliRunCompletedStatus
+  | CliRunFailedStatus
+  | CliRunCanceledStatus;
+
+export type CliRunEvent = Readonly<{
+  ordinal: number;
+  kind: "run_terminal" | "child_result_collected" | "unknown";
+  summary?: string;
+  createdAt: number;
+}>;
+
+export type CliRunEventsValue = Readonly<{
+  sessionId: string;
+  runId: string;
+  items: readonly CliRunEvent[];
+  nextCursor: string;
+}>;
+
+type CliTerminalRunStatus = Extract<
+  CliRunStatusValue,
+  Readonly<{ phase: "completed" | "failed" | "canceled" | "interrupted" }>
+>;
+type CliNonTerminalRunStatus = Exclude<CliRunStatusValue, CliTerminalRunStatus>;
+
+export type CliRunFollowValue =
+  | Readonly<{ reason: "events"; status: CliRunStatusValue; events: CliRunEventsValue }>
+  | Readonly<{ reason: "terminal"; status: CliTerminalRunStatus; events: CliRunEventsValue }>
+  | Readonly<{ reason: "deadline"; status: CliNonTerminalRunStatus; events: CliRunEventsValue }>;
+
 type CliOperationContract = {
   create: Readonly<{ mode: "write"; value: CliSessionCreateValue }>;
   rename: Readonly<{ mode: "write"; value: CliSessionRenameValue }>;
@@ -513,8 +672,35 @@ export type CliOperationOutput<TOperation extends CliSessionOperation = CliSessi
   }>;
 }[TOperation];
 
+type CliRunOperationContract = {
+  status: CliRunStatusValue;
+  events: CliRunEventsValue;
+  follow: CliRunFollowValue;
+};
+
+type CliRunOperationApplicationResponse<TOperation extends CliRunOperation> = CliApplicationResponse<
+  CliRunOperationContract[TOperation],
+  "read"
+>;
+
+export type CliRunOperationOutput<TOperation extends CliRunOperation = CliRunOperation> = {
+  [TCurrent in TOperation]: Readonly<{
+    schemaVersion: typeof CLI_SCHEMA_VERSION;
+    kind: "operation";
+    command: CliCommandIdentity<TCurrent>;
+    applicationResponse: CliRunOperationApplicationResponse<TCurrent>;
+  }>;
+}[TOperation];
+
+export type CliAnyOperationOutput = CliOperationOutput | CliRunOperationOutput;
+
 export type CliRuntimeFailureCode =
-  "bootstrap_failed" | "malformed_application_response" | "shutdown_failed" | "internal_failure";
+  | "bootstrap_failed"
+  | "malformed_application_response"
+  | "lifecycle_timeout"
+  | "lifecycle_canceled"
+  | "shutdown_failed"
+  | "internal_failure";
 
 export type CliRuntimeError =
   | Readonly<{
@@ -527,6 +713,12 @@ export type CliRuntimeError =
       kind: "runtime";
       code: "malformed_application_response";
       stage: "operation";
+      message: string;
+    }>
+  | Readonly<{
+      kind: "runtime";
+      code: "lifecycle_timeout" | "lifecycle_canceled";
+      stage: "bootstrap" | "shutdown";
       message: string;
     }>
   | Readonly<{
@@ -549,18 +741,31 @@ export type CliRuntimeFailureOutput = Readonly<{
   error: CliRuntimeError;
 }>;
 
-export type CliLifecycleFailureOutput<TOperation extends CliSessionOperation = CliSessionOperation> = {
-  [TCurrent in TOperation]: Readonly<{
-    schemaVersion: typeof CLI_SCHEMA_VERSION;
-    kind: "lifecycle_failure";
-    command: CliCommandIdentity<TCurrent>;
-    applicationResponse: CliOperationOutput<TCurrent>["applicationResponse"];
-    error: Extract<CliRuntimeError, Readonly<{ code: "shutdown_failed" }>>;
-  }>;
-}[TOperation];
+type CliApplicationResponseFor<TOperation extends CliOperation> = TOperation extends CliSessionOperation
+  ? CliOperationApplicationResponse<TOperation>
+  : TOperation extends CliRunOperation
+    ? CliRunOperationApplicationResponse<TOperation>
+    : never;
+
+export type CliLifecycleFailureOutput<TOperation extends CliOperation = CliOperation> = TOperation extends CliOperation
+  ? Readonly<{
+      schemaVersion: typeof CLI_SCHEMA_VERSION;
+      kind: "lifecycle_failure";
+      command: CliCommandIdentity<TOperation>;
+      applicationResponse: CliApplicationResponseFor<TOperation>;
+      error: Extract<
+        CliRuntimeError,
+        Readonly<{ code: "shutdown_failed" | "lifecycle_timeout" | "lifecycle_canceled" }>
+      >;
+    }>
+  : never;
 
 export type CliStructuredOutput =
-  CliUsageFailureOutput | CliOperationOutput | CliRuntimeFailureOutput | CliLifecycleFailureOutput;
+  | CliUsageFailureOutput
+  | CliOperationOutput
+  | CliRunOperationOutput
+  | CliRuntimeFailureOutput
+  | CliLifecycleFailureOutput;
 
 export type CliParseResult =
   | Readonly<{ kind: "command"; command: CliValidatedCommand }>

@@ -4,17 +4,22 @@ import ts from "typescript";
 
 const root = process.cwd();
 const sourceRoot = path.join(root, "src");
-const repositoryCapabilityNames = new Set([
+const repositoryWriteCapabilityNames = new Set([
   "createSession",
   "transitionSession",
-  "sessionsPage",
-  "sessionGet",
-  "sessionDirectoriesChunk",
-  "sessionDeletionStatusGet",
-  "sessionDeletionCleanupPage",
   "deleteSessionSubtree",
   "completeSessionDeletionCleanup",
 ]);
+const repositoryReadCapabilityNames = new Set([
+  "sessionsPage",
+  "sessionGet",
+  "runGet",
+  "runEventsPage",
+  "sessionDirectoriesChunk",
+  "sessionDeletionStatusGet",
+  "sessionDeletionCleanupPage",
+]);
+const repositoryCapabilityNames = new Set([...repositoryReadCapabilityNames, ...repositoryWriteCapabilityNames]);
 
 const rules = [
   {
@@ -67,12 +72,14 @@ for (const rule of rules) {
   }
 }
 
-const applicationWriteOwner = path.join(sourceRoot, "main", "application-session-service.ts");
+const applicationSessionOwner = path.join(sourceRoot, "main", "application-session-service.ts");
+const applicationRunOwner = path.join(sourceRoot, "main", "application-run-service.ts");
 const repositoryWriteClient = path.join(sourceRoot, "main", "repository-write-client.ts");
 const repositoryReadClient = path.join(sourceRoot, "main", "repository-read-client.ts");
 const persistenceWorkerClient = path.join(sourceRoot, "main", "persistence-worker-client.ts");
 const publicMainBarrel = path.join(sourceRoot, "main", "index.ts");
 const publicApplicationModel = path.join(sourceRoot, "shared", "application-service-model.ts");
+const publicApplicationRunModel = path.join(sourceRoot, "shared", "application-run-model.ts");
 const rawWriteFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-persistence-write.ts");
 const repositoryWriteFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-repository-write.ts");
 const rawReadFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-repository-read.ts");
@@ -124,17 +131,18 @@ for (const file of listSourceFiles(sourceRoot)) {
   }
   const source = fs.readFileSync(file, "utf8");
   const sourceFile = typeProgram.getSourceFile(file) ?? ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
-  const allowsRepositoryIntegration = file === applicationWriteOwner;
+  const allowsRepositoryReadIntegration = file === applicationSessionOwner || file === applicationRunOwner;
+  const allowsRepositoryWriteIntegration = file === applicationSessionOwner;
   const inspect = (node) => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
       const moduleName = node.moduleSpecifier.text;
-      if (!allowsRepositoryIntegration && moduleName.endsWith("/repository-write-client.js")) {
+      if (!allowsRepositoryWriteIntegration && moduleName.endsWith("/repository-write-client.js")) {
         violations.push(`${path.relative(root, file)} imports RepositoryWriteClient outside the Application Service`);
       }
-      if (!allowsRepositoryIntegration && moduleName.endsWith("/repository-read-client.js")) {
+      if (!allowsRepositoryReadIntegration && moduleName.endsWith("/repository-read-client.js")) {
         violations.push(`${path.relative(root, file)} imports RepositoryReadClient outside the Application Service`);
       }
-      if (!allowsRepositoryIntegration && moduleName.endsWith("/repository-write-model.js")) {
+      if (!allowsRepositoryWriteIntegration && moduleName.endsWith("/repository-write-model.js")) {
         const imports = node.importClause?.namedBindings;
         if (imports !== undefined && ts.isNamespaceImport(imports)) {
           violations.push(`${path.relative(root, file)} imports Repository write command construction types`);
@@ -157,15 +165,15 @@ for (const file of listSourceFiles(sourceRoot)) {
       ts.isStringLiteral(node.moduleSpecifier)
     ) {
       const moduleName = node.moduleSpecifier.text;
-      if (!allowsRepositoryIntegration && moduleName.endsWith("/repository-write-client.js")) {
+      if (!allowsRepositoryWriteIntegration && moduleName.endsWith("/repository-write-client.js")) {
         violations.push(
           `${path.relative(root, file)} re-exports RepositoryWriteClient outside the Application Service`,
         );
       }
-      if (!allowsRepositoryIntegration && moduleName.endsWith("/repository-read-client.js")) {
+      if (!allowsRepositoryReadIntegration && moduleName.endsWith("/repository-read-client.js")) {
         violations.push(`${path.relative(root, file)} re-exports RepositoryReadClient outside the Application Service`);
       }
-      if (!allowsRepositoryIntegration && moduleName.endsWith("/repository-write-model.js")) {
+      if (!allowsRepositoryWriteIntegration && moduleName.endsWith("/repository-write-model.js")) {
         if (node.exportClause === undefined || ts.isNamespaceExport(node.exportClause)) {
           violations.push(`${path.relative(root, file)} re-exports Repository write command construction types`);
         } else {
@@ -180,28 +188,42 @@ for (const file of listSourceFiles(sourceRoot)) {
         }
       }
     }
-    if (!allowsRepositoryIntegration && isRepositoryClientDynamicImport(node, "repository-write-client.js")) {
+    if (!allowsRepositoryWriteIntegration && isRepositoryClientDynamicImport(node, "repository-write-client.js")) {
       violations.push(
         `${path.relative(root, file)} dynamically imports RepositoryWriteClient outside the Application Service`,
       );
     }
-    if (!allowsRepositoryIntegration && isRepositoryClientDynamicImport(node, "repository-read-client.js")) {
+    if (!allowsRepositoryReadIntegration && isRepositoryClientDynamicImport(node, "repository-read-client.js")) {
       violations.push(
         `${path.relative(root, file)} dynamically imports RepositoryReadClient outside the Application Service`,
       );
     }
-    if (!allowsRepositoryIntegration && isRepositoryClientImportEquals(node)) {
+    if (
+      (!allowsRepositoryWriteIntegration && isRepositoryClientImportEquals(node, "repository-write-client.js")) ||
+      (!allowsRepositoryReadIntegration && isRepositoryClientImportEquals(node, "repository-read-client.js"))
+    ) {
       violations.push(
         `${path.relative(root, file)} imports a Repository client with import-equals outside the Application Service`,
       );
     }
-    if (!allowsRepositoryIntegration && isRepositoryClientImportType(node)) {
+    if (
+      (!allowsRepositoryWriteIntegration && isRepositoryClientImportType(node, "repository-write-client.js")) ||
+      (!allowsRepositoryReadIntegration && isRepositoryClientImportType(node, "repository-read-client.js"))
+    ) {
       violations.push(`${path.relative(root, file)} imports a Repository client through an inline import type`);
     }
-    if (!allowsRepositoryIntegration && isBareRequireRepositoryClient(node)) {
+    if (
+      (!allowsRepositoryWriteIntegration && isBareRequireRepositoryClient(node, "repository-write-client.js")) ||
+      (!allowsRepositoryReadIntegration && isBareRequireRepositoryClient(node, "repository-read-client.js"))
+    ) {
       violations.push(`${path.relative(root, file)} requires a Repository client outside the Application Service`);
     }
-    if (!allowsRepositoryIntegration && sourceRelativePath.startsWith(`main${path.sep}`) && isBareRequireCall(node)) {
+    if (
+      !allowsRepositoryReadIntegration &&
+      !allowsRepositoryWriteIntegration &&
+      sourceRelativePath.startsWith(`main${path.sep}`) &&
+      isBareRequireCall(node)
+    ) {
       violations.push(`${path.relative(root, file)} uses bare require outside the Application Service integration`);
     }
     if (
@@ -213,9 +235,8 @@ for (const file of listSourceFiles(sourceRoot)) {
       );
     }
     if (
-      !allowsRepositoryIntegration &&
       sourceRelativePath.startsWith(`main${path.sep}`) &&
-      isRepositoryCapabilityReference(node)
+      isForbiddenRepositoryCapabilityReference(node, allowsRepositoryReadIntegration, allowsRepositoryWriteIntegration)
     ) {
       violations.push(
         `${path.relative(root, file)} declares or accesses a Repository client capability outside the Application Service`,
@@ -224,13 +245,13 @@ for (const file of listSourceFiles(sourceRoot)) {
     if (isNonliteralDynamicImport(node)) {
       violations.push(`${path.relative(root, file)} uses a non-literal dynamic import outside an internal allowlist`);
     }
-    if (!allowsRepositoryIntegration && isRepositoryWriteRequest(node)) {
+    if (!allowsRepositoryWriteIntegration && isRepositoryWriteRequest(node)) {
       violations.push(`${path.relative(root, file)} calls RepositoryWriteClient outside the Application Service`);
     }
     if (isRawPersistenceRequestReference(node)) {
       violations.push(`${path.relative(root, file)} accesses the raw PersistenceWorkerClient request capability`);
     }
-    if (!allowsRepositoryIntegration && isRepositoryReadRequest(node)) {
+    if (!allowsRepositoryReadIntegration && isRepositoryReadRequest(node)) {
       violations.push(`${path.relative(root, file)} calls RepositoryReadClient outside the Application Service`);
     }
     ts.forEachChild(node, inspect);
@@ -265,9 +286,9 @@ for (const file of listSourceFiles(sourceRoot)) {
   }
 }
 
-for (const file of [applicationWriteOwner]) {
+for (const file of [applicationSessionOwner, applicationRunOwner]) {
   const source = fs.readFileSync(file, "utf8");
-  if (source.includes("REPOSITORY_WRITE_OPERATIONS") || source.includes("repository.session.")) {
+  if (containsRawRepositoryOperationName(source)) {
     violations.push(`${path.relative(root, file)} exposes a raw persistence operation name`);
   }
 }
@@ -281,13 +302,16 @@ for (const file of [applicationWriteOwner]) {
       .getExportsOfModule(typeChecker.getSymbolAtLocation(sourceFile) ?? sourceFile.symbol)
       .map((symbol) => symbol.getName());
     for (const exportedName of exportedNames) {
-      if (exportedName !== "ApplicationSessionOperations") {
+      if (exportedName !== "ApplicationSessionOperations" && exportedName !== "ApplicationRunOperations") {
         violations.push(
           `${path.relative(root, publicMainBarrel)} exposes non-operation symbol ${JSON.stringify(exportedName)}`,
         );
       }
     }
-    for (const exported of findExportsDeclaredOutside(sourceFile, publicApplicationModel)) {
+    for (const exported of findExportsDeclaredOutside(sourceFile, [
+      publicApplicationModel,
+      publicApplicationRunModel,
+    ])) {
       violations.push(
         `${path.relative(root, publicMainBarrel)} exposes internal symbol ${JSON.stringify(exported.name)} from ${path.relative(root, exported.declarationFile)}`,
       );
@@ -299,12 +323,29 @@ for (const file of [applicationWriteOwner]) {
   const fixtureSource = typeProgram.getSourceFile(repositoryBoundaryBypassesFixture);
   if (
     fixtureSource === undefined ||
-    !containsNode(fixtureSource, isRepositoryClientImportEquals) ||
-    !containsNode(fixtureSource, isRepositoryClientImportType) ||
+    !containsNode(
+      fixtureSource,
+      (node) =>
+        isRepositoryClientImportEquals(node, "repository-write-client.js") ||
+        isRepositoryClientImportEquals(node, "repository-read-client.js"),
+    ) ||
+    !containsNode(
+      fixtureSource,
+      (node) =>
+        isRepositoryClientImportType(node, "repository-write-client.js") ||
+        isRepositoryClientImportType(node, "repository-read-client.js"),
+    ) ||
     !containsNode(fixtureSource, isCreateRequireReference) ||
     !containsNode(fixtureSource, isRepositoryCapabilityReference) ||
+    !containsNode(fixtureSource, (node) => isForbiddenRepositoryCapabilityReference(node, true, false)) ||
+    !containsRawRepositoryOperationName(fs.readFileSync(repositoryBoundaryBypassesFixture, "utf8")) ||
     !containsNode(fixtureSource, isNodeModuleCapabilityAcquisition) ||
-    !containsNode(fixtureSource, isBareRequireRepositoryClient) ||
+    !containsNode(
+      fixtureSource,
+      (node) =>
+        isBareRequireRepositoryClient(node, "repository-write-client.js") ||
+        isBareRequireRepositoryClient(node, "repository-read-client.js"),
+    ) ||
     !containsNode(fixtureSource, isRawPersistenceRequestReference)
   ) {
     violations.push(
@@ -331,8 +372,8 @@ for (const file of [applicationWriteOwner]) {
   const fixtureSource = typeProgram.getSourceFile(publicTypeAliasFixture);
   if (
     fixtureSource === undefined ||
-    !findExportsDeclaredOutside(fixtureSource, publicApplicationModel).some(
-      (exported) => path.resolve(exported.declarationFile) === path.resolve(applicationWriteOwner),
+    !findExportsDeclaredOutside(fixtureSource, [publicApplicationModel]).some(
+      (exported) => path.resolve(exported.declarationFile) === path.resolve(applicationSessionOwner),
     )
   ) {
     violations.push(`${path.relative(root, publicTypeAliasFixture)} no longer exercises the public type origin rule`);
@@ -348,15 +389,16 @@ for (const file of [applicationWriteOwner]) {
   }
 }
 
-function findExportsDeclaredOutside(sourceFile, allowedDeclarationFile) {
+function findExportsDeclaredOutside(sourceFile, allowedDeclarationFiles) {
   const moduleSymbol = typeChecker.getSymbolAtLocation(sourceFile);
   if (moduleSymbol === undefined) return [];
+  const allowedFiles = new Set(allowedDeclarationFiles.map((file) => path.resolve(file)));
   const forbidden = [];
   for (const exportedSymbol of typeChecker.getExportsOfModule(moduleSymbol)) {
     const declarationSymbol = resolveAliasedSymbol(exportedSymbol);
     for (const declaration of declarationSymbol.getDeclarations() ?? []) {
       const declarationFile = path.resolve(declaration.getSourceFile().fileName);
-      if (declarationFile !== path.resolve(allowedDeclarationFile)) {
+      if (!allowedFiles.has(declarationFile)) {
         forbidden.push({ name: exportedSymbol.getName(), declarationFile });
       }
     }
@@ -436,26 +478,26 @@ function isRepositoryClientDynamicImport(node, clientFileName) {
   );
 }
 
-function isRepositoryClientModuleName(moduleName) {
-  return moduleName.endsWith("/repository-write-client.js") || moduleName.endsWith("/repository-read-client.js");
+function isRepositoryClientModuleName(moduleName, clientFileName) {
+  return moduleName.endsWith(`/${clientFileName}`);
 }
 
-function isRepositoryClientImportEquals(node) {
+function isRepositoryClientImportEquals(node, clientFileName) {
   return (
     ts.isImportEqualsDeclaration(node) &&
     ts.isExternalModuleReference(node.moduleReference) &&
     node.moduleReference.expression !== undefined &&
     ts.isStringLiteral(node.moduleReference.expression) &&
-    isRepositoryClientModuleName(node.moduleReference.expression.text)
+    isRepositoryClientModuleName(node.moduleReference.expression.text, clientFileName)
   );
 }
 
-function isRepositoryClientImportType(node) {
+function isRepositoryClientImportType(node, clientFileName) {
   return (
     ts.isImportTypeNode(node) &&
     ts.isLiteralTypeNode(node.argument) &&
     ts.isStringLiteral(node.argument.literal) &&
-    isRepositoryClientModuleName(node.argument.literal.text)
+    isRepositoryClientModuleName(node.argument.literal.text, clientFileName)
   );
 }
 
@@ -470,13 +512,32 @@ function isCreateRequireReference(node) {
 }
 
 function isRepositoryCapabilityReference(node) {
+  return isNamedRepositoryCapabilityReference(node, repositoryCapabilityNames);
+}
+
+function containsRawRepositoryOperationName(source) {
+  return (
+    source.includes("REPOSITORY_READ_OPERATIONS") ||
+    source.includes("REPOSITORY_WRITE_OPERATIONS") ||
+    source.includes("repository.")
+  );
+}
+
+function isForbiddenRepositoryCapabilityReference(node, allowsRead, allowsWrite) {
+  return (
+    (!allowsRead && isNamedRepositoryCapabilityReference(node, repositoryReadCapabilityNames)) ||
+    (!allowsWrite && isNamedRepositoryCapabilityReference(node, repositoryWriteCapabilityNames))
+  );
+}
+
+function isNamedRepositoryCapabilityReference(node, capabilityNames) {
   const direct = staticStringValue(node);
-  if (direct !== undefined && repositoryCapabilityNames.has(direct)) return true;
-  if (ts.isPropertyAccessExpression(node)) return repositoryCapabilityNames.has(node.name.text);
+  if (direct !== undefined && capabilityNames.has(direct)) return true;
+  if (ts.isPropertyAccessExpression(node)) return capabilityNames.has(node.name.text);
   return (
     ts.isElementAccessExpression(node) &&
     node.argumentExpression !== undefined &&
-    repositoryCapabilityNames.has(staticStringValue(node.argumentExpression, false) ?? "")
+    capabilityNames.has(staticStringValue(node.argumentExpression, false) ?? "")
   );
 }
 
@@ -502,10 +563,10 @@ function isNodeModuleCapabilityAcquisition(node) {
   );
 }
 
-function isBareRequireRepositoryClient(node) {
+function isBareRequireRepositoryClient(node, clientFileName) {
   if (!isBareRequireCall(node)) return false;
   const moduleName = staticStringValue(node.arguments[0], false);
-  return moduleName !== undefined && isRepositoryClientModuleName(moduleName);
+  return moduleName !== undefined && isRepositoryClientModuleName(moduleName, clientFileName);
 }
 
 function isBareRequireCall(node) {

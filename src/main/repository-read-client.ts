@@ -9,7 +9,7 @@ import {
   type Page,
   type RecoveryProjection,
   type RunDetail,
-  type RunEventListItem,
+  type RunEventPage,
   type RunInputDeliveryRecoveryItem,
   type RunOutputListItem,
   type RunOutputPayloadChunkRequest,
@@ -91,7 +91,7 @@ export class RepositoryReadClient {
   runEventsPage(
     input: Readonly<{ sessionId: string; runId: string; workspaceKey: string; cursor?: string; limit?: number }>,
     options?: RequestOptions,
-  ): Promise<Page<RunEventListItem> & Readonly<{ sessionId: string; runId: string; workspaceKey: string }>> {
+  ): Promise<RunEventPage> {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.runEventsPage, "read", input, options);
   }
 

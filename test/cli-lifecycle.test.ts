@@ -6,14 +6,15 @@ import { Writable } from "node:stream";
 import test from "node:test";
 
 import { CLI_EXIT_CODES } from "../src/cli/contract.js";
-import { runCliLifecycle } from "../src/cli/lifecycle.js";
+import { runCliLifecycle, type CliLifecycleControl } from "../src/cli/lifecycle.js";
 import { writeCliInvocationResult, type CliTextOutputStream } from "../src/cli/process-output.js";
 import { CLI_VERSION } from "../src/cli/version.js";
-import type { ApplicationSessionOperations } from "../src/main/index.js";
-import { resolveWithMateDatabasePath } from "../src/main/cli-session-runtime.js";
+import type { ApplicationRunOperations, ApplicationSessionOperations } from "../src/main/index.js";
+import { resolveWithMateDatabasePath } from "../src/main/cli-runtime.js";
 
 type Authorization = Readonly<{ transport: "test" }>;
 type Operations = ApplicationSessionOperations<Authorization>;
+type RunOperations = ApplicationRunOperations<Authorization>;
 
 const authorization: Authorization = { transport: "test" };
 const readArgv = ["session", "read", "--session-id", "session-1"] as const;
@@ -34,17 +35,60 @@ test("help and parse failures do not register signals or start runtime", async (
   };
 
   const help = await runCliLifecycle(["--help"], dependencies);
+  const runHelp = await runCliLifecycle(["run", "--help"], dependencies);
   const invalid = await runCliLifecycle(["session", "read"], dependencies);
+  const invalidRun = await runCliLifecycle(["run", "status", "--session-id", "session-1"], dependencies);
   const unconfirmedDelete = await runCliLifecycle(
     ["session", "delete", "--session-id", "session-1", "--idempotency-key", "018f1f4e-7f0a-7000-8000-000000000001"],
     dependencies,
   );
 
   assert.equal(help.exitCode, CLI_EXIT_CODES.success);
+  assert.equal(runHelp.exitCode, CLI_EXIT_CODES.success);
   assert.equal(invalid.exitCode, CLI_EXIT_CODES.usageInvalid);
+  assert.equal(invalidRun.exitCode, CLI_EXIT_CODES.usageInvalid);
   assert.equal(unconfirmedDelete.exitCode, CLI_EXIT_CODES.usageInvalid);
   assert.equal(starts, 0);
   assert.equal(registrations, 0);
+});
+
+test("Run operation completion writes one JSON object and performs one clean shutdown", async () => {
+  let statusCalls = 0;
+  let shutdowns = 0;
+  const runOperations = unsupportedRunOperations();
+  runOperations.status = async () => {
+    statusCalls += 1;
+    return {
+      overallStatus: "success",
+      value: {
+        sessionId: "session-1",
+        runId: "run-1",
+        phase: "active",
+        liveActivity: null,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      persistence: { status: "read", effect: "none" },
+    };
+  };
+  const result = await runCliLifecycle(["run", "status", "--session-id", "session-1", "--run-id", "run-1"], {
+    version: CLI_VERSION,
+    startRuntime: async () =>
+      runtime(
+        successfulOperations(),
+        async () => {
+          shutdowns += 1;
+          return { checkpoint: "completed" };
+        },
+        runOperations,
+      ),
+  });
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.stderr, "");
+  assert.equal(result.exitCode, CLI_EXIT_CODES.success);
+  assert.equal((output.command as Readonly<Record<string, unknown>>).namespace, "run");
+  assert.equal(statusCalls, 1);
+  assert.equal(shutdowns, 1);
 });
 
 test("operation completion always performs one clean shutdown", async () => {
@@ -91,6 +135,58 @@ test("bootstrap failure is sanitized and never attempts shutdown", async () => {
   assert.equal(removals, 1);
 });
 
+test("the command timeout bounds bootstrap with the lifecycle timeout contract", async () => {
+  let observedControl: CliLifecycleControl | undefined;
+  const result = await runCliLifecycle([...readArgv, "--timeout-ms", "20"], {
+    version: CLI_VERSION,
+    startRuntime: (control) => {
+      observedControl = control;
+      return new Promise(() => undefined);
+    },
+  });
+
+  assert.equal(result.exitCode, CLI_EXIT_CODES.timeout);
+  assert.deepEqual(oneJsonObject(result.stdout).error, {
+    kind: "runtime",
+    code: "lifecycle_timeout",
+    stage: "bootstrap",
+    message: "CLI lifecycle timed out.",
+  });
+  assert.equal(typeof observedControl?.timeoutMs, "number");
+  assert.equal((observedControl?.timeoutMs ?? 0) > 0, true);
+  assert.equal((observedControl?.timeoutMs ?? 0) <= 20, true);
+  assert.equal(observedControl?.signal instanceof AbortSignal, true);
+});
+
+test("SIGINT bounds bootstrap with the lifecycle cancellation contract", async () => {
+  let interrupt: (() => void) | undefined;
+  let observedAborted = false;
+  const result = await runCliLifecycle(readArgv, {
+    version: CLI_VERSION,
+    registerInterrupt: (abort) => {
+      interrupt = abort;
+      return () => {
+        interrupt = undefined;
+      };
+    },
+    startRuntime: async (control) => {
+      interrupt?.();
+      observedAborted = control?.signal?.aborted === true;
+      throw new Error("startup canceled");
+    },
+  });
+
+  assert.equal(result.exitCode, CLI_EXIT_CODES.canceled);
+  assert.deepEqual(oneJsonObject(result.stdout).error, {
+    kind: "runtime",
+    code: "lifecycle_canceled",
+    stage: "bootstrap",
+    message: "CLI lifecycle was canceled.",
+  });
+  assert.equal(observedAborted, true);
+  assert.equal(interrupt, undefined);
+});
+
 test("shutdown rejection and failed checkpoint preserve the Application response", async () => {
   const shutdowns = [
     async () => {
@@ -118,6 +214,66 @@ test("shutdown rejection and failed checkpoint preserve the Application response
   }
 });
 
+test("the command timeout bounds shutdown and preserves the Application response", async () => {
+  let shutdownControl: CliLifecycleControl | undefined;
+  const result = await runCliLifecycle([...readArgv, "--timeout-ms", "30"], {
+    version: CLI_VERSION,
+    startRuntime: async () =>
+      runtime(successfulOperations(), (control) => {
+        shutdownControl = control;
+        return new Promise(() => undefined);
+      }),
+  });
+
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.exitCode, CLI_EXIT_CODES.timeout);
+  assert.equal(output.kind, "lifecycle_failure");
+  assert.equal((output.applicationResponse as Readonly<Record<string, unknown>>).overallStatus, "success");
+  assert.deepEqual(output.error, {
+    kind: "runtime",
+    code: "lifecycle_timeout",
+    stage: "shutdown",
+    message: "CLI lifecycle timed out during shutdown.",
+  });
+  assert.equal(typeof shutdownControl?.timeoutMs, "number");
+  assert.equal((shutdownControl?.timeoutMs ?? 0) > 0, true);
+  assert.equal((shutdownControl?.timeoutMs ?? 0) <= 30, true);
+});
+
+test("SIGINT bounds shutdown and preserves the Application response", async () => {
+  let interrupt: (() => void) | undefined;
+  let shutdowns = 0;
+  const result = await runCliLifecycle(readArgv, {
+    version: CLI_VERSION,
+    registerInterrupt: (abort) => {
+      interrupt = abort;
+      return () => {
+        interrupt = undefined;
+      };
+    },
+    startRuntime: async () =>
+      runtime(successfulOperations(), async (control) => {
+        shutdowns += 1;
+        interrupt?.();
+        assert.equal(control?.signal?.aborted, true);
+        throw new Error("shutdown canceled");
+      }),
+  });
+
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.exitCode, CLI_EXIT_CODES.canceled);
+  assert.equal(output.kind, "lifecycle_failure");
+  assert.equal((output.applicationResponse as Readonly<Record<string, unknown>>).overallStatus, "success");
+  assert.deepEqual(output.error, {
+    kind: "runtime",
+    code: "lifecycle_canceled",
+    stage: "shutdown",
+    message: "CLI lifecycle was canceled during shutdown.",
+  });
+  assert.equal(shutdowns, 1);
+  assert.equal(interrupt, undefined);
+});
+
 test("shutdown failure takes precedence when the operation also fails internally", async () => {
   const operations = successfulOperations(() => {
     throw new Error("operation failure");
@@ -141,6 +297,7 @@ test("SIGINT aborts the Application operation and still shuts down", async () =>
   let shutdowns = 0;
   let observedAborted = false;
   const operations = successfulOperations((_request, options) => {
+    interrupt?.();
     observedAborted = options?.signal?.aborted === true;
     return {
       overallStatus: "failure",
@@ -151,7 +308,6 @@ test("SIGINT aborts the Application operation and still shuts down", async () =>
   const result = await runCliLifecycle(readArgv, {
     version: CLI_VERSION,
     startRuntime: async () => {
-      interrupt?.();
       return runtime(operations, async () => {
         shutdowns += 1;
         return { checkpoint: "completed" };
@@ -164,6 +320,50 @@ test("SIGINT aborts the Application operation and still shuts down", async () =>
       };
     },
   });
+
+  assert.equal(result.exitCode, CLI_EXIT_CODES.canceled);
+  assert.equal(observedAborted, true);
+  assert.equal(shutdowns, 1);
+  assert.equal(interrupt, undefined);
+});
+
+test("SIGINT aborts Run follow without becoming Run cancellation and still shuts down once", async () => {
+  let interrupt: (() => void) | undefined;
+  let shutdowns = 0;
+  let observedAborted = false;
+  const runOperations = unsupportedRunOperations({
+    follow: async (_request, options) => {
+      interrupt?.();
+      observedAborted = options?.signal?.aborted === true;
+      return {
+        overallStatus: "failure",
+        error: { kind: "operation", code: "operation_canceled", message: "canceled", retryable: false },
+        persistence: { status: "not_attempted", effect: "none" },
+      };
+    },
+  });
+  const result = await runCliLifecycle(
+    ["run", "follow", "--session-id", "session-1", "--run-id", "run-1", "--wait-ms", "100", "--poll-ms", "25"],
+    {
+      version: CLI_VERSION,
+      startRuntime: async () => {
+        return runtime(
+          successfulOperations(),
+          async () => {
+            shutdowns += 1;
+            return { checkpoint: "completed" };
+          },
+          runOperations,
+        );
+      },
+      registerInterrupt: (abort) => {
+        interrupt = abort;
+        return () => {
+          interrupt = undefined;
+        };
+      },
+    },
+  );
 
   assert.equal(result.exitCode, CLI_EXIT_CODES.canceled);
   assert.equal(observedAborted, true);
@@ -223,11 +423,25 @@ test("CLI version and app-owned database location are fixed contracts", () => {
 
 function runtime(
   operations: Operations,
-  shutdown: () => Promise<Readonly<{ checkpoint: "completed" | "failed" }>> = async () => ({
+  shutdown: (
+    control?: CliLifecycleControl,
+  ) => Promise<Readonly<{ checkpoint: "completed" | "failed" }>> = async () => ({
     checkpoint: "completed",
   }),
+  runOperations: RunOperations = unsupportedRunOperations(),
 ) {
-  return { operations, authorization, shutdown } as const;
+  return { operations, runOperations, authorization, shutdown } as const;
+}
+
+function unsupportedRunOperations(overrides: Partial<RunOperations> = {}): RunOperations {
+  const unsupported = async (): Promise<never> => {
+    throw new Error("unexpected Run operation");
+  };
+  return {
+    status: overrides.status ?? unsupported,
+    events: overrides.events ?? unsupported,
+    follow: overrides.follow ?? unsupported,
+  };
 }
 
 function successfulOperations(

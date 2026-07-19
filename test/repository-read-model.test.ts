@@ -413,11 +413,64 @@ repositoryTest("public RunEvent omits internal fields and advances past an overs
       sessionId: "session-1",
       runId: "run-1",
       workspaceKey: "workspace",
-    }) as PageResult;
+    }) as RunEventPageResult;
     assert.deepEqual(result.items[0], { omitted: true, reason: "response_size_limit", ordinal: 1 });
     assert.equal(result.items[1]?.id, "event-2");
     assert.equal(Object.hasOwn(result.items[1] ?? {}, "dedupeKey"), false);
     assert.equal(Object.hasOwn(result.items[1] ?? {}, "workspaceKey"), false);
+    assert.equal(typeof result.continuationCursor, "string");
+    assert.equal(result.hasMore, false);
+
+    database
+      .prepare("INSERT INTO run_events VALUES ('event-3', 'run-1', 3, 'event', NULL, NULL, NULL, 'later', 3)")
+      .run();
+    const continuation = operationFor(
+      database,
+      "repository.run.events.page",
+    )({
+      sessionId: "session-1",
+      runId: "run-1",
+      workspaceKey: "workspace",
+      cursor: result.continuationCursor,
+    }) as RunEventPageResult;
+    assert.deepEqual(
+      continuation.items.map((item) => item.id),
+      ["event-3"],
+    );
+    assert.equal(continuation.hasMore, false);
+  });
+});
+
+repositoryTest("RunEvent continuation is usable when the initial page is empty", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-empty", 1);
+    insertMessage(database, "message-empty", "session-empty", 1, "[]");
+    insertRun(database, "run-empty", "session-empty", "message-empty", "active", 1);
+    const operation = operationFor(database, "repository.run.events.page");
+    const empty = operation({
+      sessionId: "session-empty",
+      runId: "run-empty",
+      workspaceKey: "workspace",
+    }) as RunEventPageResult;
+    assert.deepEqual(empty.items, []);
+    assert.equal(typeof empty.continuationCursor, "string");
+    assert.equal(empty.hasMore, false);
+
+    database
+      .prepare(
+        "INSERT INTO run_events VALUES ('event-after-empty', 'run-empty', 1, 'event', NULL, NULL, NULL, 'later', 2)",
+      )
+      .run();
+    const next = operation({
+      sessionId: "session-empty",
+      runId: "run-empty",
+      workspaceKey: "workspace",
+      cursor: empty.continuationCursor,
+    }) as RunEventPageResult;
+    assert.deepEqual(
+      next.items.map((item) => item.id),
+      ["event-after-empty"],
+    );
   });
 });
 
@@ -810,4 +863,10 @@ function insertRun(
 type PageResult = Readonly<{
   items: readonly Readonly<Record<string, unknown>>[];
   nextCursor?: string;
+}>;
+
+type RunEventPageResult = Readonly<{
+  items: readonly Readonly<Record<string, unknown>>[];
+  continuationCursor: string;
+  hasMore: boolean;
 }>;
