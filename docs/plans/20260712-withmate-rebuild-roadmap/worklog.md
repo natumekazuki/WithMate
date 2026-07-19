@@ -91,10 +91,41 @@
 - Run statusとeventをallowlist projectionへ限定し、execution snapshot、Provider error code、内部ID、version、external side effect metadataをpublic出力から除外した。
 - Run namespaceは既存`withmate-cli-v1`、exit code、stdout JSON、Workerのexactly-once shutdown契約へ追加した。CLI hard timeoutとSIGINTをbootstrap、operation、shutdownへ通し、parse / helpがruntimeを起動しないことをprocess smokeで確認した。
 - production CLIには`start`、`retry`、active `cancel`を追加していない。Provider request / execution snapshotの構築、dispatch継続process、Provider interruptとterminal outcomeの相関を所有するruntimeが未確定である。
-- Run observation sliceは完了したが、mutation操作が残るためCP2全体は進行中のままとする。Provider runtime ownershipはCP3との境界を含む後続sliceで決定する。
+- Run observation sliceは完了したが、Provider runtime ownershipとmutation操作のcheckpoint帰属が未確定だったため、CP2全体は進行中のままとした。現在の帰属はD-006を参照する。
 
 ### Accepted risks
 
 | ID | 発生条件と影響 | 検知と復旧 | 再判断条件 |
 | --- | --- | --- | --- |
 | CP2-RUN-R1 | 将来live activity portをproductionへ接続した際、port rejectionまたはmalformed responseでは永続Run statusを取得済みでもApplication internal failureと`persistence.status='failed'`を返す。現行productionはdefault null portのため到達せず、データ破損や情報漏洩はない。 | structured failureとexit code 50で検知し、statusを再実行できる。永続Run stateは変更されない。 | CP3でlive activity portを接続する前に、補助表示を`null`へ縮退するか、persistence read済みのinternal failureを表せるenvelopeへ拡張するかを決定する。 |
+
+## 2026-07-19: CP2 Run output control plane
+
+- 長期判断は`docs/adr/012-run-output-control-plane.md`、public型は`src/shared/application-run-output-model.ts`、Applicationとfilesystem publicationの実行可能な契約は`test/application-run-output-service.test.ts`と`test/run-output-exporter.test.ts`を正本とする。
+- `ApplicationRunOutputOperations`と`withmate run output-counts|outputs|output-preview|output-chunk|output-export`を追加し、永続化済みRun outputをApplication Service経由で扱えるようにした。
+- Countsとitem pageをpayload BLOBから分離し、scope付きpoint readでpayload stateとredactionの組を検証する。TextとJSONは64 KiB previewと256 KiB chunkに制限し、binary本文はexplicit exportだけが消費する。
+- ExportはCLI userが選んだabsolute destination grantをApplication side-effect boundaryへ渡す。Same-directory temporary fileへの逐次write、backpressure、lengthとSHA-256の照合、exclusive hard-link publishにより、既存destinationを上書きしない。
+- Publicationは`published`、`not_published`、`unknown`を区別する。Timeout、cancel、helper response lossでpublish成否を確定できない場合は、destinationを確認してから再試行する。
+- CLIは既存Run commandと同じJSON envelope、exit code、hard timeout、SIGINT、exactly-once shutdownを維持する。実DB smokeでcounts、list、preview、chunk、export、no-clobber、SQLite sidecar cleanupを確認した。
+- Run output sliceは完了した。CP2にはSession Message timeline / content chunkとSession Run historyのApplication / CLI公開が残るため、CP2全体は進行中のままとする。
+
+### Accepted risks
+
+| ID | 発生条件と影響 | 検知と復旧 | 再判断条件 |
+| --- | --- | --- | --- |
+| CP2-RUN-OUTPUT-R1 | Destination directoryを同じcurrent OS userの敵対processがexport中に置換した場合、pathname raceを完全には防げない。通常のidentity不一致は検知するが、敵対processに対するsecurity boundaryにはしない。 | Identity不一致またはpublication不明として検知できる場合は`unknown`を返し、destinationを確認してから再試行する。 | Sharedまたはuntrusted directory、別principal、adversarial local processをsupported scopeへ含める場合は、native directory handle相対operationを検討する。 |
+| CP2-RUN-OUTPUT-R2 | Process crashまたは強制終了では、publish前またはpublish後cleanup前のsame-directory temporary fileが残る可能性がある。Destinationは既存fileを上書きしないが、temporary fileがdiskを消費する。 | 停止後に`.withmate-output-*.tmp`を確認し、export processが動いていないことを確認して削除する。Destinationの有無と内容を確認してから再試行する。 | Long-lived runtime、automatic retry、定期maintenanceを導入する場合は、temporary file ownershipとsafe sweepを設計する。 |
+
+## 2026-07-19: CP2 / CP3 / CP5 scope再整理
+
+- CP2はProvider非依存の永続control planeとし、残作業をSession Message timeline / content chunkとSession Run historyのApplication / CLI公開へ絞った。
+- 単一SessionのRun `start` / `retry` / active `cancel`、supplemental input、approval / elicitation responseは、Provider dispatchとlive runtimeを所有するCP3へ移した。
+- child Session / Delegationの`start` / `follow-up` / `message` / `wait` / `collect` / `cancel` / `kill`はCP5へまとめた。作成済みchild Sessionへの追加指示もCP5の対象とする。
+- CP6はCP3で確定する共通Run operation contractへ依存させ、Session Files cleanupとRun output export temporary fileのorphan sweep / crash recoveryはCP8へ移した。
+- 具体的なCLI operation名は未確定であり、CP3とCP5でApplication contractと同時に決定する。現在のCP2実装とpublic contractは変更していない。
+
+## 2026-07-19: CP2 Run output review対応
+
+- Destination directoryの解決とidentity検証をexport helperへ移し、中断通知後も終了しないhelperを猶予時間後に強制終了するよう変更した。非協調helperを使うprocess-level testで、owner processがhard deadline内に終了することを確認した。
+- `payload_unavailable`をdiscriminated unionへ変更し、`pending`と`retryable: true`、それ以外のreasonと`retryable: false`だけをApplication型とCLI型で許可する。CLI projectorはraw responseの矛盾した組を両方向とも拒否する。
+- Node.js 24.18.0で全407 test、SQLite schema validator、typecheck、build、Run CLI process smokeを通した。既定shellのNode.js 22.22.1ではruntime guardが意図どおりfail-fastすることも確認した。

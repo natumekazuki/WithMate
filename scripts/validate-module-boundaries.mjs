@@ -10,14 +10,29 @@ const repositoryWriteCapabilityNames = new Set([
   "deleteSessionSubtree",
   "completeSessionDeletionCleanup",
 ]);
+const runOutputReadCapabilityNames = new Set([
+  "runOutputCounts",
+  "runOutputsPage",
+  "runOutputGet",
+  "runOutputPayloadMetadata",
+  "payloadChunk",
+]);
 const repositoryReadCapabilityNames = new Set([
   "sessionsPage",
+  "localRepositoriesPage",
   "sessionGet",
+  "sessionDirectoriesChunk",
+  "messagesPage",
+  "messageContentChunk",
   "runGet",
   "runEventsPage",
-  "sessionDirectoriesChunk",
+  "runSnapshotChunk",
+  ...runOutputReadCapabilityNames,
+  "runInputDeliveriesPage",
+  "childResultsPage",
   "sessionDeletionStatusGet",
   "sessionDeletionCleanupPage",
+  "recoveryGet",
 ]);
 const repositoryCapabilityNames = new Set([...repositoryReadCapabilityNames, ...repositoryWriteCapabilityNames]);
 
@@ -74,12 +89,14 @@ for (const rule of rules) {
 
 const applicationSessionOwner = path.join(sourceRoot, "main", "application-session-service.ts");
 const applicationRunOwner = path.join(sourceRoot, "main", "application-run-service.ts");
+const applicationRunOutputOwner = path.join(sourceRoot, "main", "application-run-output-service.ts");
 const repositoryWriteClient = path.join(sourceRoot, "main", "repository-write-client.ts");
 const repositoryReadClient = path.join(sourceRoot, "main", "repository-read-client.ts");
 const persistenceWorkerClient = path.join(sourceRoot, "main", "persistence-worker-client.ts");
 const publicMainBarrel = path.join(sourceRoot, "main", "index.ts");
 const publicApplicationModel = path.join(sourceRoot, "shared", "application-service-model.ts");
 const publicApplicationRunModel = path.join(sourceRoot, "shared", "application-run-model.ts");
+const publicApplicationRunOutputModel = path.join(sourceRoot, "shared", "application-run-output-model.ts");
 const rawWriteFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-persistence-write.ts");
 const repositoryWriteFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-repository-write.ts");
 const rawReadFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-repository-read.ts");
@@ -131,7 +148,8 @@ for (const file of listSourceFiles(sourceRoot)) {
   }
   const source = fs.readFileSync(file, "utf8");
   const sourceFile = typeProgram.getSourceFile(file) ?? ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
-  const allowsRepositoryReadIntegration = file === applicationSessionOwner || file === applicationRunOwner;
+  const allowsRepositoryReadIntegration =
+    file === applicationSessionOwner || file === applicationRunOwner || file === applicationRunOutputOwner;
   const allowsRepositoryWriteIntegration = file === applicationSessionOwner;
   const inspect = (node) => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
@@ -286,7 +304,7 @@ for (const file of listSourceFiles(sourceRoot)) {
   }
 }
 
-for (const file of [applicationSessionOwner, applicationRunOwner]) {
+for (const file of [applicationSessionOwner, applicationRunOwner, applicationRunOutputOwner]) {
   const source = fs.readFileSync(file, "utf8");
   if (containsRawRepositoryOperationName(source)) {
     violations.push(`${path.relative(root, file)} exposes a raw persistence operation name`);
@@ -302,7 +320,11 @@ for (const file of [applicationSessionOwner, applicationRunOwner]) {
       .getExportsOfModule(typeChecker.getSymbolAtLocation(sourceFile) ?? sourceFile.symbol)
       .map((symbol) => symbol.getName());
     for (const exportedName of exportedNames) {
-      if (exportedName !== "ApplicationSessionOperations" && exportedName !== "ApplicationRunOperations") {
+      if (
+        exportedName !== "ApplicationSessionOperations" &&
+        exportedName !== "ApplicationRunOperations" &&
+        exportedName !== "ApplicationRunOutputOperations"
+      ) {
         violations.push(
           `${path.relative(root, publicMainBarrel)} exposes non-operation symbol ${JSON.stringify(exportedName)}`,
         );
@@ -311,6 +333,7 @@ for (const file of [applicationSessionOwner, applicationRunOwner]) {
     for (const exported of findExportsDeclaredOutside(sourceFile, [
       publicApplicationModel,
       publicApplicationRunModel,
+      publicApplicationRunOutputModel,
     ])) {
       violations.push(
         `${path.relative(root, publicMainBarrel)} exposes internal symbol ${JSON.stringify(exported.name)} from ${path.relative(root, exported.declarationFile)}`,
@@ -337,6 +360,9 @@ for (const file of [applicationSessionOwner, applicationRunOwner]) {
     ) ||
     !containsNode(fixtureSource, isCreateRequireReference) ||
     !containsNode(fixtureSource, isRepositoryCapabilityReference) ||
+    ![...runOutputReadCapabilityNames].every((capabilityName) =>
+      containsNode(fixtureSource, (node) => isNamedRepositoryCapabilityReference(node, new Set([capabilityName]))),
+    ) ||
     !containsNode(fixtureSource, (node) => isForbiddenRepositoryCapabilityReference(node, true, false)) ||
     !containsRawRepositoryOperationName(fs.readFileSync(repositoryBoundaryBypassesFixture, "utf8")) ||
     !containsNode(fixtureSource, isNodeModuleCapabilityAcquisition) ||

@@ -12,6 +12,7 @@ import {
   type RunEventPage,
   type RunInputDeliveryRecoveryItem,
   type RunOutputListItem,
+  type RunOutputItemDetail,
   type RunOutputPayloadChunkRequest,
   type RunOutputPayloadChunkResult,
   type RunOutputPayloadMetadata,
@@ -134,6 +135,13 @@ export class RepositoryReadClient {
     }>
   > {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.runOutputCounts, "read", input, options);
+  }
+
+  runOutputGet(
+    input: Readonly<{ sessionId: string; runId: string; outputItemId: string; workspaceKey: string }>,
+    options?: RequestOptions,
+  ): Promise<RunOutputItemDetail> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.runOutputGet, "read", input, options);
   }
 
   runOutputPayloadMetadata(

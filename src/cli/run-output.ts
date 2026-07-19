@@ -13,6 +13,7 @@ import {
   type CliRuntimeFailureOutput,
   type CliValidatedRunCommand,
 } from "./contract.js";
+import { isRunOutputCommand, projectCliRunOutputOperationOutput } from "./run-output-payload.js";
 
 export type CliRunOperationProjectionResult =
   | Readonly<{ ok: true; output: CliRunOperationOutput; exitCode: CliExitCode }>
@@ -22,6 +23,7 @@ export function projectCliRunOperationOutput(
   command: CliValidatedRunCommand,
   applicationResponse: unknown,
 ): CliRunOperationProjectionResult {
+  if (isRunOutputCommand(command)) return projectCliRunOutputOperationOutput(command, applicationResponse);
   try {
     const projected = projectCliReadApplicationResponse(
       applicationResponse,

@@ -140,7 +140,39 @@ export type ApplicationDomainErrorCode =
   | "idempotency_conflict"
   | "idempotency_in_progress"
   | "idempotency_expired"
-  | "identity_exhausted";
+  | "identity_exhausted"
+  | "payload_unavailable"
+  | "payload_format_unsupported"
+  | "destination_exists"
+  | "destination_invalid"
+  | "payload_integrity_mismatch";
+
+export type ApplicationRunOutputPayloadUnavailableDetails = Readonly<{
+  reason: "no_payload" | "pending" | "size_limit" | "redaction" | "persistence_failure";
+}>;
+
+export type ApplicationRunOutputPayloadUnavailableError =
+  | Readonly<{
+      kind: "domain";
+      code: "payload_unavailable";
+      message: string;
+      retryable: true;
+      details: Readonly<{ reason: "pending" }>;
+    }>
+  | Readonly<{
+      kind: "domain";
+      code: "payload_unavailable";
+      message: string;
+      retryable: false;
+      details: Readonly<{
+        reason: Exclude<ApplicationRunOutputPayloadUnavailableDetails["reason"], "pending">;
+      }>;
+    }>;
+
+export type ApplicationRunOutputPayloadFormatDetails = Readonly<{
+  format: "binary";
+  supportedAction: "export";
+}>;
 
 export type ApplicationCapacityExceededDetails =
   | Readonly<{ scope: "root"; rootSessionId: string; current: number; limit: number }>
@@ -156,9 +188,20 @@ export type ApplicationDomainError =
       retryable: true;
       details: ApplicationCapacityExceededDetails;
     }>
+  | ApplicationRunOutputPayloadUnavailableError
   | Readonly<{
       kind: "domain";
-      code: Exclude<ApplicationDomainErrorCode, "capacity_exceeded">;
+      code: "payload_format_unsupported";
+      message: string;
+      retryable: false;
+      details: ApplicationRunOutputPayloadFormatDetails;
+    }>
+  | Readonly<{
+      kind: "domain";
+      code: Exclude<
+        ApplicationDomainErrorCode,
+        "capacity_exceeded" | "payload_unavailable" | "payload_format_unsupported"
+      >;
       message: string;
       retryable: boolean;
       details?: never;

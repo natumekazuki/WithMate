@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   createRepositoryReadOperations,
   REPOSITORY_PAGE_SQL,
+  REPOSITORY_RUN_OUTPUT_ITEM_SQL,
   REPOSITORY_SESSION_PAGE_SQL,
   RepositoryReadError,
 } from "../src/persistence-worker/repository-read-model.js";
@@ -164,6 +165,63 @@ repositoryTest("timeline and output summary remain bounded without hydrating pay
   });
 });
 
+repositoryTest("Run output cursors are scoped to the workspace, Session, Run, and optional category", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    insertSession(database, "session-2", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    insertMessage(database, "message-2", "session-2", 1, "[]");
+    insertRun(database, "run-1", "session-1", "message-1", "completed", 1);
+    insertRun(database, "run-2", "session-2", "message-2", "completed", 1);
+    for (const [ordinal, category] of [
+      [1, "operation"],
+      [2, "operation"],
+      [3, "diagnostic"],
+    ] as const) {
+      database
+        .prepare(
+          `INSERT INTO run_output_items VALUES
+            (?, 'run-1', ?, ?, 'command', NULL, 'summary', 'complete',
+             'none', NULL, NULL, 'not_required', ?)`,
+        )
+        .run(`output-${ordinal}`, ordinal, category, ordinal);
+    }
+    const read = operationFor(database, "repository.run.outputs.page");
+    const first = read({
+      sessionId: "session-1",
+      runId: "run-1",
+      workspaceKey: "workspace",
+      category: "operation",
+      limit: 1,
+    }) as PageResult;
+    assert.equal(typeof first.nextCursor, "string");
+    assert.equal(
+      (
+        read({
+          sessionId: "session-1",
+          runId: "run-1",
+          workspaceKey: "workspace",
+          category: "operation",
+          cursor: first.nextCursor,
+          limit: 1,
+        }) as PageResult
+      ).items[0]?.id,
+      "output-2",
+    );
+    for (const scope of [
+      { sessionId: "session-1", runId: "run-1", workspaceKey: "workspace", category: "diagnostic" },
+      { sessionId: "session-1", runId: "run-1", workspaceKey: "other", category: "operation" },
+      { sessionId: "session-2", runId: "run-1", workspaceKey: "workspace", category: "operation" },
+      { sessionId: "session-2", runId: "run-2", workspaceKey: "workspace", category: "operation" },
+    ]) {
+      assert.throws(
+        () => read({ ...scope, cursor: first.nextCursor, limit: 1 }),
+        (error: unknown) => error instanceof RepositoryReadError && error.code === "cursor_invalid",
+      );
+    }
+  });
+});
+
 repositoryTest("child result rejects a relation whose child belongs to another workspace", () => {
   withDatabase((database) => {
     insertSession(database, "parent", 1);
@@ -221,6 +279,165 @@ repositoryTest("run-scoped reads hide resources outside the requested workspace"
     assert.throws(
       () => events({ sessionId: "session-1", runId: "run-1", workspaceKey: "other" }),
       (error: unknown) => error instanceof RepositoryReadError && error.code === "not_found",
+    );
+  });
+});
+
+repositoryTest("Run output point reads preserve every payload state without reading payload content", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    insertRun(database, "run-1", "session-1", "message-1", "completed", 1);
+    const states = [
+      ["none", "none", null, null, "not_required"],
+      ["pending-not-required", "pending", 7, null, "not_required"],
+      ["pending-redacted", "pending", 8, null, "redacted"],
+      ["stored-not-required", "stored", 9, "self", "not_required"],
+      ["stored-redacted", "stored", 10, "self", "redacted"],
+      ["omitted-size-not-required", "omitted_size_limit", 11, null, "not_required"],
+      ["omitted-size-redacted", "omitted_size_limit", 12, null, "redacted"],
+      ["omitted-redaction", "omitted_redaction", 13, null, "unknown"],
+      ["omitted-persistence-not-required", "omitted_persistence", 14, null, "not_required"],
+      ["omitted-persistence-redacted", "omitted_persistence", 15, null, "redacted"],
+    ] as const;
+    const insert = database.prepare(`
+      INSERT INTO run_output_items (
+        id, run_id, ordinal, category, kind, summary, completion_state, payload_state,
+        payload_original_byte_length, stored_payload_id, redaction_state, created_at
+      ) VALUES (?, 'run-1', ?, 'operation', 'command', 'summary', 'complete', ?, ?, ?, ?, ?)
+    `);
+    database.exec("BEGIN;");
+    for (const [index, [name, state, originalBytes, storedPayloadId, redactionState]] of states.entries()) {
+      const id = `output-${name}`;
+      insert.run(
+        id,
+        index + 1,
+        state,
+        originalBytes,
+        storedPayloadId === "self" ? id : storedPayloadId,
+        redactionState,
+        index + 1,
+      );
+      if (state === "stored") {
+        database
+          .prepare("INSERT INTO run_output_payloads VALUES (?, 'text', 'text/plain', ?, ?, ?, 1)")
+          .run(id, Buffer.alloc(originalBytes, 1), originalBytes, "0".repeat(64));
+      }
+    }
+    database.exec("COMMIT;");
+
+    const read = operationFor(database, "repository.run.output.get");
+    for (const [index, [name, state, originalBytes, storedPayloadId, redactionState]] of states.entries()) {
+      const id = `output-${name}`;
+      const result = read({
+        sessionId: "session-1",
+        runId: "run-1",
+        outputItemId: id,
+        workspaceKey: "workspace",
+      }) as Readonly<Record<string, unknown>>;
+      assert.deepEqual(result, {
+        sessionId: "session-1",
+        runId: "run-1",
+        workspaceKey: "workspace",
+        item: {
+          id,
+          runId: "run-1",
+          ordinal: index + 1,
+          category: "operation",
+          kind: "command",
+          summary: "summary",
+          completionState: "complete",
+          payloadState: state,
+          ...(originalBytes === null ? {} : { payloadOriginalByteLength: originalBytes }),
+          ...(storedPayloadId === null ? {} : { storedPayloadId: id }),
+          redactionState,
+          createdAt: index + 1,
+        },
+      });
+      assert.equal(JSON.stringify(result).includes("payload-content"), false);
+    }
+    const plan = database
+      .prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_RUN_OUTPUT_ITEM_SQL}`)
+      .all("output-none", "run-1", "session-1", "workspace") as unknown as readonly Readonly<{
+      detail: string;
+    }>[];
+    assert.doesNotMatch(plan.map(({ detail }) => detail).join("\n"), /run_output_payloads/u);
+  });
+});
+
+repositoryTest("Run output point reads reject impossible persistence tuples without exposing raw state", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    insertRun(database, "run-1", "session-1", "message-1", "completed", 1);
+    database.exec("PRAGMA ignore_check_constraints = ON;");
+    database
+      .prepare(
+        `INSERT INTO run_output_items VALUES
+          ('output-invalid-enum', 'run-1', 1, 'operation', 'command', NULL, 'summary', 'complete',
+           'future_state', 7, NULL, 'not_required', 1),
+          ('output-invalid-tuple', 'run-1', 2, 'operation', 'command', NULL, 'summary', 'complete',
+           'stored', 7, NULL, 'unknown', 2)`,
+      )
+      .run();
+    database.exec("PRAGMA ignore_check_constraints = OFF;");
+
+    const read = operationFor(database, "repository.run.output.get");
+    for (const outputItemId of ["output-invalid-enum", "output-invalid-tuple"]) {
+      assert.throws(
+        () =>
+          read({
+            sessionId: "session-1",
+            runId: "run-1",
+            outputItemId,
+            workspaceKey: "workspace",
+          }),
+        (error: unknown) =>
+          error instanceof TypeError &&
+          error.message === "Repository projection violates the persistence contract." &&
+          !error.message.includes("future_state"),
+      );
+    }
+  });
+});
+
+repositoryTest("Run output point reads hide every mismatched owner tuple and reject expanded requests", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    insertSession(database, "session-2", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    insertMessage(database, "message-2", "session-2", 1, "[]");
+    insertRun(database, "run-1", "session-1", "message-1", "completed", 1);
+    insertRun(database, "run-2", "session-2", "message-2", "completed", 1);
+    database
+      .prepare(
+        `INSERT INTO run_output_items VALUES
+          ('output-1', 'run-1', 1, 'operation', 'command', NULL, 'summary', 'complete',
+           'none', NULL, NULL, 'not_required', 1)`,
+      )
+      .run();
+    const read = operationFor(database, "repository.run.output.get");
+    for (const request of [
+      { sessionId: "session-1", runId: "run-1", outputItemId: "missing", workspaceKey: "workspace" },
+      { sessionId: "session-2", runId: "run-1", outputItemId: "output-1", workspaceKey: "workspace" },
+      { sessionId: "session-1", runId: "run-2", outputItemId: "output-1", workspaceKey: "workspace" },
+      { sessionId: "session-1", runId: "run-1", outputItemId: "output-1", workspaceKey: "other" },
+    ]) {
+      assert.throws(
+        () => read(request),
+        (error: unknown) => error instanceof RepositoryReadError && error.code === "not_found",
+      );
+    }
+    assert.throws(
+      () =>
+        read({
+          sessionId: "session-1",
+          runId: "run-1",
+          outputItemId: "output-1",
+          workspaceKey: "workspace",
+          includePayload: true,
+        }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "request_invalid",
     );
   });
 });

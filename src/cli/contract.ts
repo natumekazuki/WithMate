@@ -1,5 +1,9 @@
 import { ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS } from "../shared/allowed-additional-directories.js";
 import { APPLICATION_RUN_LIMITS } from "../shared/application-run-model.js";
+import {
+  APPLICATION_RUN_OUTPUT_CATEGORIES,
+  APPLICATION_RUN_OUTPUT_LIMITS,
+} from "../shared/application-run-output-model.js";
 import { SESSION_METADATA_LIMITS, type LocalRepositoryMetadata } from "../shared/session-metadata.js";
 
 export const CLI_SCHEMA_VERSION = "withmate-cli-v1" as const;
@@ -40,7 +44,16 @@ export const CLI_RUN_LIMITS = {
   followDefaultPollMs: APPLICATION_RUN_LIMITS.followDefaultPollMs,
   followMinPollMs: APPLICATION_RUN_LIMITS.followMinPollMs,
   followMaxPollMs: APPLICATION_RUN_LIMITS.followMaxPollMs,
+  outputsDefaultItems: APPLICATION_RUN_OUTPUT_LIMITS.outputsDefaultItems,
+  outputsMaxItems: APPLICATION_RUN_OUTPUT_LIMITS.outputsMaxItems,
+  previewDefaultBytes: APPLICATION_RUN_OUTPUT_LIMITS.previewDefaultBytes,
+  previewMaxBytes: APPLICATION_RUN_OUTPUT_LIMITS.previewMaxBytes,
+  chunkDefaultBytes: APPLICATION_RUN_OUTPUT_LIMITS.chunkDefaultBytes,
+  chunkMaxBytes: APPLICATION_RUN_OUTPUT_LIMITS.chunkMaxBytes,
+  maxDestinationPathLength: APPLICATION_RUN_OUTPUT_LIMITS.maxDestinationPathLength,
 } as const;
+
+export const CLI_RUN_OUTPUT_CATEGORIES = APPLICATION_RUN_OUTPUT_CATEGORIES;
 
 export type CliExitCode = (typeof CLI_EXIT_CODES)[keyof typeof CLI_EXIT_CODES];
 
@@ -56,7 +69,8 @@ export type CliSessionOperation =
   | "close"
   | "delete";
 
-export type CliRunOperation = "status" | "events" | "follow";
+export type CliRunOperation =
+  "status" | "events" | "follow" | "output-counts" | "outputs" | "output-preview" | "output-chunk" | "output-export";
 export type CliOperation = CliSessionOperation | CliRunOperation;
 
 export type CliCommandIdentity<TOperation extends CliOperation = CliOperation> = TOperation extends CliSessionOperation
@@ -168,6 +182,31 @@ export type CliRunFollowCommand = CliTimeoutOption &
     pollMs: number;
   }>;
 
+type CliRunOutputScopeCommand<TOperation extends CliRunOperation> = CliTimeoutOption &
+  Readonly<{
+    identity: CliCommandIdentity<TOperation>;
+    sessionId: string;
+    runId: string;
+  }>;
+
+export type CliRunOutputCountsCommand = CliRunOutputScopeCommand<"output-counts">;
+
+export type CliRunOutputsCommand = CliRunOutputScopeCommand<"outputs"> &
+  Readonly<{
+    category?: (typeof CLI_RUN_OUTPUT_CATEGORIES)[number];
+    cursor?: string;
+    limit: number;
+  }>;
+
+export type CliRunOutputPreviewCommand = CliRunOutputScopeCommand<"output-preview"> &
+  Readonly<{ outputItemId: string; maxBytes: number }>;
+
+export type CliRunOutputChunkCommand = CliRunOutputScopeCommand<"output-chunk"> &
+  Readonly<{ outputItemId: string; offset: number; maxBytes: number }>;
+
+export type CliRunOutputExportCommand = CliRunOutputScopeCommand<"output-export"> &
+  Readonly<{ outputItemId: string; destination: string }>;
+
 export type CliValidatedSessionCommand =
   | CliSessionCreateCommand
   | CliSessionRenameCommand
@@ -180,7 +219,15 @@ export type CliValidatedSessionCommand =
   | CliSessionCloseCommand
   | CliSessionDeleteCommand;
 
-export type CliValidatedRunCommand = CliRunStatusCommand | CliRunEventsCommand | CliRunFollowCommand;
+export type CliValidatedRunCommand =
+  | CliRunStatusCommand
+  | CliRunEventsCommand
+  | CliRunFollowCommand
+  | CliRunOutputCountsCommand
+  | CliRunOutputsCommand
+  | CliRunOutputPreviewCommand
+  | CliRunOutputChunkCommand
+  | CliRunOutputExportCommand;
 
 export type CliValidatedCommand = CliValidatedSessionCommand | CliValidatedRunCommand;
 
@@ -216,6 +263,22 @@ export type CliPersistenceStatus =
   | Readonly<{ status: "rejected"; effect: "none" }>
   | Readonly<{ status: "failed"; effect: "none" }>
   | Readonly<{ status: "failed"; effect: "unknown"; reconciliation: "exact_request_required" }>;
+
+export type CliRunOutputPayloadUnavailableError =
+  | Readonly<{
+      kind: "domain";
+      code: "payload_unavailable";
+      message: string;
+      retryable: true;
+      details: Readonly<{ reason: "pending" }>;
+    }>
+  | Readonly<{
+      kind: "domain";
+      code: "payload_unavailable";
+      message: string;
+      retryable: false;
+      details: Readonly<{ reason: "no_payload" | "size_limit" | "redaction" | "persistence_failure" }>;
+    }>;
 
 export type CliApplicationError =
   | Readonly<{
@@ -253,6 +316,14 @@ export type CliApplicationError =
         | Readonly<{ scope: "application"; current: number; limit: number }>
         | Readonly<{ scope: "provider"; providerId: string; current: number; limit: number }>;
     }>
+  | CliRunOutputPayloadUnavailableError
+  | Readonly<{
+      kind: "domain";
+      code: "payload_format_unsupported";
+      message: string;
+      retryable: false;
+      details: Readonly<{ format: "binary"; supportedAction: "export" }>;
+    }>
   | Readonly<{
       kind: "domain";
       code:
@@ -266,7 +337,10 @@ export type CliApplicationError =
         | "idempotency_conflict"
         | "idempotency_in_progress"
         | "idempotency_expired"
-        | "identity_exhausted";
+        | "identity_exhausted"
+        | "destination_exists"
+        | "destination_invalid"
+        | "payload_integrity_mismatch";
       message: string;
       retryable: boolean;
       details?: never;
@@ -304,6 +378,7 @@ export type CliApplicationIssue =
       ordinal?: number;
     }>
   | CliSessionCleanupIssue
+  | CliRunOutputExportCleanupIssue
   | CliPersistenceError<"none">
   | CliPersistenceError<"unknown">;
 
@@ -314,6 +389,13 @@ export type CliSessionCleanupIssue = Readonly<{
   cleanupToken: string;
   retryable: true;
   reconciliation: "exact_request_required";
+}>;
+
+export type CliRunOutputExportCleanupIssue = Readonly<{
+  kind: "cleanup";
+  code: "export_temporary_cleanup_pending";
+  message: string;
+  retryable: true;
 }>;
 
 type CliReadSuccess<TValue> = Readonly<{
@@ -646,6 +728,174 @@ export type CliRunFollowValue =
   | Readonly<{ reason: "terminal"; status: CliTerminalRunStatus; events: CliRunEventsValue }>
   | Readonly<{ reason: "deadline"; status: CliNonTerminalRunStatus; events: CliRunEventsValue }>;
 
+export type CliRunOutputCategory = (typeof CLI_RUN_OUTPUT_CATEGORIES)[number];
+export type CliRunOutputRedaction = "not_required" | "applied" | "undetermined";
+
+export type CliRunOutputAvailability =
+  | Readonly<{ kind: "none"; redaction: "not_required" }>
+  | Readonly<{
+      kind: "pending";
+      originalByteLength: number;
+      redaction: "not_required" | "applied";
+    }>
+  | Readonly<{
+      kind: "stored";
+      originalByteLength: number;
+      redaction: "not_required" | "applied";
+    }>
+  | Readonly<{
+      kind: "omitted";
+      reason: "size_limit" | "persistence_failure";
+      originalByteLength: number;
+      redaction: "not_required" | "applied";
+    }>
+  | Readonly<{
+      kind: "omitted";
+      reason: "redaction";
+      originalByteLength: number;
+      redaction: "undetermined";
+    }>;
+
+export type CliRunOutputItem = Readonly<{
+  id: string;
+  ordinal: number;
+  category: CliRunOutputCategory;
+  kind: string;
+  summary: string;
+  completionState: "complete" | "partial";
+  availability: CliRunOutputAvailability;
+  createdAt: number;
+}>;
+
+export type CliRunOutputCountsValue = Readonly<{
+  sessionId: string;
+  runId: string;
+  totalCount: number;
+  partialCount: number;
+  byCategory: Readonly<Record<CliRunOutputCategory, number>>;
+}>;
+
+export type CliRunOutputsValue = Readonly<{
+  sessionId: string;
+  runId: string;
+  items: readonly CliRunOutputItem[];
+  nextCursor?: string;
+}>;
+
+type CliRunOutputStoredMetadata = Readonly<{
+  sessionId: string;
+  runId: string;
+  outputItemId: string;
+  mediaType?: string;
+  storedByteLength: number;
+  contentSha256: string;
+}>;
+
+export type CliRunOutputPreviewValue =
+  | (CliRunOutputStoredMetadata &
+      Readonly<{
+        format: "text" | "json";
+        preview: string;
+        previewByteLength: number;
+        truncated: boolean;
+      }>)
+  | (CliRunOutputStoredMetadata & Readonly<{ format: "binary" }>);
+
+type CliRunOutputChunkBase = Readonly<{
+  sessionId: string;
+  runId: string;
+  outputItemId: string;
+  format: "text" | "json";
+  offset: number;
+  totalBytes: number;
+  chunk: Readonly<{ encoding: "base64"; byteLength: number; data: string }>;
+}>;
+
+export type CliRunOutputChunkValue = CliRunOutputChunkBase &
+  (Readonly<{ eof: true; nextOffset?: never }> | Readonly<{ eof: false; nextOffset: number }>);
+
+export type CliRunOutputExportValue = Readonly<{
+  sessionId: string;
+  runId: string;
+  outputItemId: string;
+  format: "text" | "json" | "binary";
+  storedByteLength: number;
+  contentSha256: string;
+}>;
+
+export type CliRunOutputPublication =
+  | Readonly<{ status: "published" }>
+  | Readonly<{ status: "not_published"; temporaryCleanup: "complete" | "pending" }>
+  | Readonly<{ status: "unknown"; reconciliation: "inspect_destination_before_retry" }>;
+
+type CliRunOutputExportFailure =
+  | Readonly<{
+      overallStatus: "failure";
+      error: Extract<CliApplicationError, Readonly<{ kind: "request" | "access" | "operation" | "application" }>>;
+      publication: Readonly<{ status: "not_published"; temporaryCleanup: "complete" }>;
+      persistence: Readonly<{ status: "not_attempted"; effect: "none" }>;
+    }>
+  | Readonly<{
+      overallStatus: "failure";
+      error: Extract<CliApplicationError, Readonly<{ code: "payload_unavailable" }>>;
+      publication: Readonly<{ status: "not_published"; temporaryCleanup: "complete" }>;
+      persistence: Readonly<{ status: "rejected"; effect: "none" }>;
+    }>
+  | Readonly<{
+      overallStatus: "failure";
+      error: Readonly<{
+        kind: "domain";
+        code: "request_invalid" | "cursor_invalid" | "not_found";
+        message: string;
+        retryable: boolean;
+        details?: never;
+      }>;
+      publication: CliRunOutputFailedPublication;
+      persistence: Readonly<{ status: "rejected"; effect: "none" }>;
+    }>
+  | Readonly<{
+      overallStatus: "failure";
+      error: CliPersistenceError<"none"> | Extract<CliApplicationError, Readonly<{ kind: "application" }>>;
+      publication: CliRunOutputFailedPublication;
+      persistence: Readonly<{ status: "failed"; effect: "none" }>;
+    }>
+  | Readonly<{
+      overallStatus: "failure";
+      error: Extract<CliApplicationError, Readonly<{ kind: "operation" | "application" }>>;
+      publication: CliRunOutputFailedPublication;
+      persistence: Readonly<{ status: "read"; effect: "none" }>;
+    }>
+  | Readonly<{
+      overallStatus: "failure";
+      error: Readonly<{
+        kind: "domain";
+        code: "destination_exists" | "destination_invalid" | "payload_integrity_mismatch";
+        message: string;
+        retryable: false;
+        details?: never;
+      }>;
+      publication: Readonly<{ status: "not_published"; temporaryCleanup: "complete" | "pending" }>;
+      persistence: Readonly<{ status: "read"; effect: "none" }>;
+    }>;
+
+type CliRunOutputFailedPublication = Exclude<CliRunOutputPublication, Readonly<{ status: "published" }>>;
+
+export type CliRunOutputExportResponse =
+  | Readonly<{
+      overallStatus: "success";
+      value: CliRunOutputExportValue;
+      publication: Readonly<{ status: "published" }>;
+      persistence: Readonly<{ status: "read"; effect: "none" }>;
+    }>
+  | Readonly<{
+      overallStatus: "partial_success";
+      value: CliRunOutputExportValue;
+      issues: readonly [CliRunOutputExportCleanupIssue];
+      publication: Readonly<{ status: "published" }>;
+      persistence: Readonly<{ status: "read"; effect: "none" }>;
+    }>
+  | CliRunOutputExportFailure;
+
 type CliOperationContract = {
   create: Readonly<{ mode: "write"; value: CliSessionCreateValue }>;
   rename: Readonly<{ mode: "write"; value: CliSessionRenameValue }>;
@@ -676,12 +926,16 @@ type CliRunOperationContract = {
   status: CliRunStatusValue;
   events: CliRunEventsValue;
   follow: CliRunFollowValue;
+  "output-counts": CliRunOutputCountsValue;
+  outputs: CliRunOutputsValue;
+  "output-preview": CliRunOutputPreviewValue;
+  "output-chunk": CliRunOutputChunkValue;
+  "output-export": CliRunOutputExportValue;
 };
 
-type CliRunOperationApplicationResponse<TOperation extends CliRunOperation> = CliApplicationResponse<
-  CliRunOperationContract[TOperation],
-  "read"
->;
+type CliRunOperationApplicationResponse<TOperation extends CliRunOperation> = TOperation extends "output-export"
+  ? CliRunOutputExportResponse
+  : CliApplicationResponse<CliRunOperationContract[TOperation], "read">;
 
 export type CliRunOperationOutput<TOperation extends CliRunOperation = CliRunOperation> = {
   [TCurrent in TOperation]: Readonly<{
@@ -718,7 +972,7 @@ export type CliRuntimeError =
   | Readonly<{
       kind: "runtime";
       code: "lifecycle_timeout" | "lifecycle_canceled";
-      stage: "bootstrap" | "shutdown";
+      stage: "bootstrap" | "operation" | "shutdown";
       message: string;
     }>
   | Readonly<{

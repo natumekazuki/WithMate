@@ -1,4 +1,8 @@
-import type { ApplicationRunOperations, ApplicationSessionOperations } from "../main/index.js";
+import type {
+  ApplicationRunOperations,
+  ApplicationRunOutputOperations,
+  ApplicationSessionOperations,
+} from "../main/index.js";
 import { serializeCliStructuredOutput } from "./application-response.js";
 import {
   CLI_EXIT_CODES,
@@ -13,14 +17,15 @@ import {
 import type { CliInvocationResult } from "./invocation.js";
 import { renderCliParseResult } from "./invocation.js";
 import { parseCliArgv } from "./parser.js";
-import { dispatchCliRunCommand } from "./run-dispatch.js";
-import { dispatchCliSessionCommand } from "./session-dispatch.js";
+import { dispatchCliRunCommand, type CliRunDispatchResult } from "./run-dispatch.js";
+import { dispatchCliSessionCommand, type CliSessionDispatchResult } from "./session-dispatch.js";
 
 export type CliLifecycleControl = Readonly<{ timeoutMs?: number; signal?: AbortSignal }>;
 
 export type CliOperationRuntime<TAuthorizationContext> = Readonly<{
   operations: ApplicationSessionOperations<TAuthorizationContext>;
   runOperations: ApplicationRunOperations<TAuthorizationContext>;
+  runOutputOperations: ApplicationRunOutputOperations<TAuthorizationContext>;
   authorization: TAuthorizationContext;
   shutdown(control?: CliLifecycleControl): Promise<Readonly<{ checkpoint: "completed" | "failed" }>>;
 }>;
@@ -30,6 +35,12 @@ export type CliLifecycleDependencies<TAuthorizationContext> = Readonly<{
   startRuntime(control?: CliLifecycleControl): Promise<CliOperationRuntime<TAuthorizationContext>>;
   registerInterrupt?(abort: () => void): () => void;
 }>;
+
+type CliDispatchResult = CliSessionDispatchResult | CliRunDispatchResult;
+type PromptSettlement<TValue> =
+  | Readonly<{ status: "fulfilled"; value: TValue }>
+  | Readonly<{ status: "rejected"; error: unknown }>
+  | Readonly<{ status: "pending" }>;
 
 export async function runCliLifecycle<TAuthorizationContext>(
   argv: readonly string[],
@@ -65,44 +76,85 @@ export async function runCliLifecycle<TAuthorizationContext>(
   }
 
   let operationResult;
+  let operationPromise: Promise<CliDispatchResult> | undefined;
+  let operationInterruption: "timeout" | "canceled" | undefined;
+  let applicationInterruptionMismatch = false;
   let shutdownFailure: "shutdown_failed" | "lifecycle_timeout" | "lifecycle_canceled" | undefined;
   try {
     const operationControl = operationTimeout(deadlineAt);
-    operationResult =
+    operationPromise =
       parsed.command.identity.namespace === "session"
-        ? await dispatchCliSessionCommand(parsed.command as CliValidatedSessionCommand, {
+        ? dispatchCliSessionCommand(parsed.command as CliValidatedSessionCommand, {
             operations: runtime.operations,
             authorization: runtime.authorization,
             signal: abortController.signal,
             ...operationControl,
           })
-        : await dispatchCliRunCommand(parsed.command as CliValidatedRunCommand, {
+        : dispatchCliRunCommand(parsed.command as CliValidatedRunCommand, {
             operations: runtime.runOperations,
+            outputOperations: runtime.runOutputOperations,
             authorization: runtime.authorization,
             signal: abortController.signal,
             ...operationControl,
           });
-  } catch {
-    operationResult = {
-      ok: false as const,
-      output: operationRuntimeFailure(parsed.command.identity),
-      exitCode: CLI_EXIT_CODES.runtimeFailure,
-    };
+    operationResult = await waitForStage(operationPromise, deadlineAt, abortController.signal);
+  } catch (error) {
+    operationInterruption = lifecycleStageInterruption(error, deadlineAt, abortController.signal);
+    if (operationInterruption !== undefined) {
+      if (operationInterruption === "timeout") abortController.abort();
+      const applicationResult =
+        operationPromise === undefined ? undefined : await waitForApplicationInterruption(operationPromise);
+      const applicationInterruption =
+        applicationResult === undefined ? undefined : applicationInterruptionFor(applicationResult);
+      if (applicationResult !== undefined && applicationInterruption !== undefined) {
+        operationResult = applicationResult;
+        applicationInterruptionMismatch = applicationInterruption !== operationInterruption;
+      } else {
+        operationResult = {
+          ok: false as const,
+          output: runtimeInterruptionFailure(parsed.command.identity, "operation", operationInterruption),
+          exitCode: interruptionExitCode(operationInterruption),
+        };
+      }
+    } else {
+      operationResult = {
+        ok: false as const,
+        output: operationRuntimeFailure(parsed.command.identity),
+        exitCode: CLI_EXIT_CODES.runtimeFailure,
+      };
+    }
   } finally {
     const shutdownSignal = abortController.signal;
     try {
-      const shutdown = await waitForStage(
+      const shutdownPromise = Promise.resolve().then(() =>
         runtime.shutdown(lifecycleControl(deadlineAt, shutdownSignal)),
-        deadlineAt,
-        shutdownSignal,
       );
-      if (shutdown.checkpoint !== "completed") shutdownFailure = "shutdown_failed";
+      if (operationInterruption === undefined) {
+        const shutdown = await waitForStage(shutdownPromise, deadlineAt, shutdownSignal);
+        if (shutdown.checkpoint !== "completed") shutdownFailure = "shutdown_failed";
+      } else {
+        const shutdown = await waitForPromptSettlement(shutdownPromise);
+        if (shutdown.status === "fulfilled") {
+          if (shutdown.value.checkpoint !== "completed") shutdownFailure = "shutdown_failed";
+        } else if (shutdown.status === "rejected") {
+          shutdownFailure = "shutdown_failed";
+        } else {
+          shutdownFailure = `lifecycle_${lifecycleInterruption(deadlineAt, shutdownSignal) ?? operationInterruption}`;
+        }
+      }
     } catch (error) {
       const interruption = lifecycleStageInterruption(error, deadlineAt, shutdownSignal);
       shutdownFailure = interruption === undefined ? "shutdown_failed" : `lifecycle_${interruption}`;
     } finally {
       removeInterrupt?.();
     }
+  }
+
+  if (
+    operationInterruption !== undefined &&
+    shutdownFailure === `lifecycle_${operationInterruption === "timeout" ? "timeout" : "canceled"}`
+  ) {
+    shutdownFailure = undefined;
   }
 
   if (shutdownFailure !== undefined) {
@@ -126,6 +178,17 @@ export async function runCliLifecycle<TAuthorizationContext>(
       );
     }
     return structuredResult(runtimeFailure(parsed.command.identity, "shutdown_failed"));
+  }
+
+  if (
+    applicationInterruptionMismatch &&
+    operationInterruption !== undefined &&
+    operationResult.output.kind === "operation"
+  ) {
+    return structuredResult(
+      operationLifecycleFailure(operationResult.output, operationInterruption),
+      interruptionExitCode(operationInterruption),
+    );
   }
 
   return {
@@ -198,7 +261,7 @@ function operationRuntimeFailure(command: CliCommandIdentity): CliRuntimeFailure
 
 function runtimeInterruptionFailure(
   command: CliCommandIdentity,
-  stage: "bootstrap" | "shutdown",
+  stage: "bootstrap" | "operation" | "shutdown",
   interruption: "timeout" | "canceled",
 ): CliRuntimeFailureOutput {
   return {
@@ -209,7 +272,10 @@ function runtimeInterruptionFailure(
       kind: "runtime",
       code: interruption === "timeout" ? "lifecycle_timeout" : "lifecycle_canceled",
       stage,
-      message: interruption === "timeout" ? "CLI lifecycle timed out." : "CLI lifecycle was canceled.",
+      message:
+        interruption === "timeout"
+          ? `CLI lifecycle timed out${stage === "operation" ? " during operation" : ""}.`
+          : `CLI lifecycle was canceled${stage === "operation" ? " during operation" : ""}.`,
     },
   };
 }
@@ -237,6 +303,19 @@ function lifecycleFailure(
   } as CliLifecycleFailureOutput;
 }
 
+function operationLifecycleFailure(
+  operationOutput: CliAnyOperationOutput,
+  interruption: "timeout" | "canceled",
+): CliLifecycleFailureOutput {
+  return {
+    schemaVersion: CLI_SCHEMA_VERSION,
+    kind: "lifecycle_failure",
+    command: operationOutput.command,
+    applicationResponse: operationOutput.applicationResponse,
+    error: runtimeInterruptionFailure(operationOutput.command, "operation", interruption).error,
+  } as CliLifecycleFailureOutput;
+}
+
 function lifecycleControl(deadlineAt: number | undefined, signal: AbortSignal | undefined): CliLifecycleControl {
   return {
     ...(deadlineAt === undefined ? {} : { timeoutMs: Math.max(1, deadlineAt - Date.now()) }),
@@ -252,8 +331,8 @@ function lifecycleInterruption(
   deadlineAt: number | undefined,
   signal: AbortSignal | undefined,
 ): "timeout" | "canceled" | undefined {
-  if (signal?.aborted) return "canceled";
-  return deadlineAt !== undefined && Date.now() >= deadlineAt ? "timeout" : undefined;
+  if (deadlineAt !== undefined && Date.now() >= deadlineAt) return "timeout";
+  return signal?.aborted ? "canceled" : undefined;
 }
 
 function lifecycleStageInterruption(
@@ -301,6 +380,47 @@ async function waitForStage<TValue>(
     if (timer !== undefined) clearTimeout(timer);
     if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
   }
+}
+
+async function waitForApplicationInterruption(
+  operation: Promise<CliDispatchResult>,
+): Promise<CliDispatchResult | undefined> {
+  const settlement = await waitForPromptSettlement(operation);
+  return settlement.status === "fulfilled" ? settlement.value : undefined;
+}
+
+async function waitForPromptSettlement<TValue>(operation: Promise<TValue>): Promise<PromptSettlement<TValue>> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let nextTurn: ReturnType<typeof setImmediate> | undefined;
+    const finish = (result: PromptSettlement<TValue>) => {
+      if (settled) return;
+      settled = true;
+      if (nextTurn !== undefined) clearImmediate(nextTurn);
+      resolve(result);
+    };
+    operation.then(
+      (value) => finish({ status: "fulfilled", value }),
+      (error: unknown) => finish({ status: "rejected", error }),
+    );
+    // Preserve prompt operation and shutdown outcomes that own publication or checkpoint timing before the lifecycle fallback.
+    nextTurn = setImmediate(() => finish({ status: "pending" }));
+  });
+}
+
+function applicationInterruptionFor(result: CliDispatchResult): "timeout" | "canceled" | undefined {
+  if (result.output.kind !== "operation") return undefined;
+  const response = result.output.applicationResponse;
+  if (response.overallStatus !== "failure" || response.error.kind !== "operation") return undefined;
+  const interruption =
+    response.error.code === "operation_timeout"
+      ? "timeout"
+      : response.error.code === "operation_canceled"
+        ? "canceled"
+        : undefined;
+  return interruption !== undefined && result.exitCode === interruptionExitCode(interruption)
+    ? interruption
+    : undefined;
 }
 
 class CliLifecycleInterruptionError extends Error {
