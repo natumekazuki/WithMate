@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 import { PersistenceWorkerClient } from "../dist/main/persistence-worker-client.js";
 import { RepositoryReadClient } from "../dist/main/repository-read-client.js";
@@ -19,6 +20,14 @@ const sessionCreateKey = "018f1f4e-7f0a-7000-8000-000000000501";
 const runAdmitKey = "018f1f4e-7f0a-7000-8000-000000000502";
 const runId = "run-smoke-1";
 const attemptId = "attempt-run-smoke-1";
+const outputItemId = "output-run-smoke-1";
+const binaryOutputItemId = "output-run-smoke-binary-1";
+const outputSource = '{ "escaped": "\\u3042", "number": 1.0 }\n';
+const outputBytes = new TextEncoder().encode(outputSource);
+const binaryOutputBytes = Uint8Array.from([0, 1, 2, 127, 128, 255, 10]);
+const binaryOutputSha256 = createHash("sha256").update(binaryOutputBytes).digest("hex");
+const exportPath = path.join(tempDirectory, "exported-output.bin");
+const timedOutExportPath = path.join(tempDirectory, "timed-out-output.bin");
 
 fs.mkdirSync(workspacePath, { recursive: true });
 
@@ -81,13 +90,90 @@ try {
       dispatch: { providerRequest: { prompt: "observe me" }, providerIdempotencyKey: null },
     });
     assert.equal(admission.ok, true);
+    const binding = await writes.resolveProviderBinding({
+      sessionId,
+      workspaceKey,
+      runId,
+      attemptId,
+      bindingId: "binding-run-smoke-1",
+      resolution: {
+        kind: "active",
+        externalConversationId: "conversation-run-smoke-1",
+        ephemeralOwnerToken: null,
+      },
+    });
+    assert.equal(binding.ok, true);
+    const dispatch = await writes.beginRunDispatch({
+      sessionId,
+      workspaceKey,
+      runId,
+      attemptId,
+      bindingId: "binding-run-smoke-1",
+      providerRequest: { prompt: "observe me" },
+      ephemeralOwnerToken: null,
+    });
+    assert.equal(dispatch.ok, true);
+    const dispatchResolution = await writes.resolveRunDispatch({
+      sessionId,
+      workspaceKey,
+      runId,
+      attemptId,
+      bindingId: "binding-run-smoke-1",
+      ephemeralOwnerToken: null,
+      outcome: { kind: "accepted", externalExecutionId: "execution-run-smoke-1" },
+    });
+    assert.equal(dispatchResolution.ok, true);
+    const appended = await writes.appendRunOutput({
+      sessionId,
+      workspaceKey,
+      runId,
+      item: {
+        id: outputItemId,
+        category: "diagnostic",
+        kind: "trace",
+        providerItemId: "provider-output-must-not-leak",
+        summary: "smoke output",
+        completionState: "complete",
+        payload: {
+          state: "stored",
+          originalByteLength: outputBytes.byteLength,
+          redactionState: "not_required",
+          payloadFormat: "json",
+          mediaType: "application/json",
+          content: outputBytes,
+        },
+      },
+    });
+    assert.equal(appended.ok, true);
+    const binaryAppended = await writes.appendRunOutput({
+      sessionId,
+      workspaceKey,
+      runId,
+      item: {
+        id: binaryOutputItemId,
+        category: "diagnostic",
+        kind: "artifact",
+        providerItemId: "provider-binary-output-must-not-leak",
+        summary: "smoke binary output",
+        completionState: "complete",
+        payload: {
+          state: "stored",
+          originalByteLength: binaryOutputBytes.byteLength,
+          redactionState: "not_required",
+          payloadFormat: "binary",
+          mediaType: "application/octet-stream",
+          content: binaryOutputBytes,
+        },
+      },
+    });
+    assert.equal(binaryAppended.ok, true);
     const terminal = await writes.completeRun({
       sessionId,
       workspaceKey,
       runId,
       attemptId,
       terminalEvent: { id: "event-run-smoke-terminal", dedupeKey: "run-smoke-terminal" },
-      preDispatchResolution: { kind: "binding_creation_not_sent" },
+      preDispatchResolution: { kind: "not_applicable" },
       outcome: {
         kind: "interrupted",
         failureOrigin: "transport",
@@ -139,6 +225,142 @@ try {
     ["run_terminal"],
   );
 
+  const outputCounts = runJson(["run", "output-counts", "--session-id", sessionId, "--run-id", runId], environment, 0);
+  assert.equal(outputCounts.applicationResponse.value.totalCount, 2);
+  assert.equal(outputCounts.applicationResponse.value.byCategory.diagnostic, 2);
+
+  const outputs = runJson(
+    ["run", "outputs", "--session-id", sessionId, "--run-id", runId, "--category", "diagnostic"],
+    environment,
+    0,
+  );
+  assert.equal(outputs.applicationResponse.value.items.length, 2);
+  assert.equal(outputs.applicationResponse.value.items[0].id, outputItemId);
+  assert.equal(outputs.applicationResponse.value.items[0].availability.kind, "stored");
+  assert.equal(JSON.stringify(outputs).includes("provider-output-must-not-leak"), false);
+  assert.equal(JSON.stringify(outputs).includes("storedPayloadId"), false);
+
+  const preview = runJson(
+    ["run", "output-preview", "--session-id", sessionId, "--run-id", runId, "--output-item-id", outputItemId],
+    environment,
+    0,
+  );
+  assert.equal(preview.applicationResponse.value.format, "json");
+  assert.equal(preview.applicationResponse.value.preview, outputSource);
+  assert.equal(preview.applicationResponse.value.truncated, false);
+
+  const chunkMaxBytes = 7;
+  const chunks = [];
+  let chunkOffset = 0;
+  for (;;) {
+    const chunk = runJson(
+      [
+        "run",
+        "output-chunk",
+        "--session-id",
+        sessionId,
+        "--run-id",
+        runId,
+        "--output-item-id",
+        outputItemId,
+        "--offset",
+        String(chunkOffset),
+        "--max-bytes",
+        String(chunkMaxBytes),
+      ],
+      environment,
+      0,
+    );
+    const value = chunk.applicationResponse.value;
+    assert.equal(value.offset, chunkOffset);
+    assert.equal(value.chunk.encoding, "base64");
+    const decoded = Buffer.from(value.chunk.data, "base64");
+    assert.equal(decoded.byteLength, value.chunk.byteLength);
+    chunks.push(decoded);
+    if (value.eof) break;
+    assert.equal(value.nextOffset, chunkOffset + decoded.byteLength);
+    chunkOffset = value.nextOffset;
+  }
+  assert.deepEqual(Buffer.concat(chunks), Buffer.from(outputBytes));
+
+  const binaryPreview = runJson(
+    ["run", "output-preview", "--session-id", sessionId, "--run-id", runId, "--output-item-id", binaryOutputItemId],
+    environment,
+    0,
+  );
+  assert.equal(binaryPreview.applicationResponse.value.format, "binary");
+  assert.equal(binaryPreview.applicationResponse.value.storedByteLength, binaryOutputBytes.byteLength);
+  assert.equal(binaryPreview.applicationResponse.value.contentSha256, binaryOutputSha256);
+  assert.equal("preview" in binaryPreview.applicationResponse.value, false);
+
+  runJson(
+    [
+      "run",
+      "output-export",
+      "--session-id",
+      sessionId,
+      "--run-id",
+      runId,
+      "--output-item-id",
+      binaryOutputItemId,
+      "--destination",
+      timedOutExportPath,
+      "--timeout-ms",
+      "1",
+    ],
+    environment,
+    40,
+  );
+  assert.equal(fs.existsSync(timedOutExportPath), false);
+  assert.deepEqual(
+    fs.readdirSync(tempDirectory).filter((entry) => entry.includes(".withmate-output-")),
+    [],
+  );
+
+  const exported = runJson(
+    [
+      "run",
+      "output-export",
+      "--session-id",
+      sessionId,
+      "--run-id",
+      runId,
+      "--output-item-id",
+      binaryOutputItemId,
+      "--destination",
+      exportPath,
+    ],
+    environment,
+    0,
+  );
+  assert.equal(exported.applicationResponse.publication.status, "published");
+  assert.equal(exported.applicationResponse.value.storedByteLength, binaryOutputBytes.byteLength);
+  assert.equal(exported.applicationResponse.value.contentSha256, binaryOutputSha256);
+  assert.deepEqual(fs.readFileSync(exportPath), Buffer.from(binaryOutputBytes));
+  assert.equal(JSON.stringify(exported).includes(exportPath), false);
+  const existingDestination = runJson(
+    [
+      "run",
+      "output-export",
+      "--session-id",
+      sessionId,
+      "--run-id",
+      runId,
+      "--output-item-id",
+      binaryOutputItemId,
+      "--destination",
+      exportPath,
+    ],
+    environment,
+    22,
+  );
+  assert.equal(existingDestination.applicationResponse.error.code, "destination_exists");
+  assert.deepEqual(fs.readFileSync(exportPath), Buffer.from(binaryOutputBytes));
+  assert.deepEqual(
+    fs.readdirSync(tempDirectory).filter((entry) => entry.includes(".withmate-output-")),
+    [],
+  );
+
   const missing = runJson(["run", "status", "--session-id", sessionId, "--run-id", "missing-run"], environment, 22);
   assert.equal(missing.applicationResponse.error.code, "not_found");
 
@@ -148,10 +370,21 @@ try {
 
   console.log(
     JSON.stringify({
-      commands: ["status", "events", "follow"],
+      commands: [
+        "status",
+        "events",
+        "follow",
+        "output-counts",
+        "outputs",
+        "output-preview",
+        "output-chunk",
+        "output-export",
+      ],
       parseRuntimeIsolation: "verified",
       terminalDrain: "verified",
       providerMetadataProjection: "verified",
+      runOutputControlPlane: "verified",
+      exportNoClobber: "verified",
       sqliteSidecars: "none",
     }),
   );

@@ -357,7 +357,16 @@ test("public Application Service barrel exposes the transport-neutral Session co
       "not_started" | "running" | "completed" | "failed" | "canceled" | "interrupted"
     >,
     Equal<"allowedAdditionalDirectories" extends keyof ApplicationSessionReadResult["session"] ? true : false, false>,
-    Equal<ApplicationDomainErrorCode, RepositoryCommandErrorCode | "cursor_invalid">,
+    Equal<
+      ApplicationDomainErrorCode,
+      | RepositoryCommandErrorCode
+      | "cursor_invalid"
+      | "payload_unavailable"
+      | "payload_format_unsupported"
+      | "destination_exists"
+      | "destination_invalid"
+      | "payload_integrity_mismatch"
+    >,
     Equal<ApplicationSessionLifecycleStatus, SessionLifecycleStatus>,
     Equal<CapacityError["details"], ApplicationCapacityExceededDetails>,
     Equal<CapacityError["retryable"], true>,

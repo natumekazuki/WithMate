@@ -8,6 +8,7 @@ import {
 import {
   CLI_EXIT_CODES,
   CLI_RUN_LIMITS,
+  CLI_RUN_OUTPUT_CATEGORIES,
   CLI_SCHEMA_VERSION,
   CLI_SESSION_LIMITS,
   type CliCommandIdentity,
@@ -47,7 +48,16 @@ const sessionOperations = new Set<CliSessionOperation>([
   "close",
   "delete",
 ]);
-const runOperations = new Set<CliRunOperation>(["status", "events", "follow"]);
+const runOperations = new Set<CliRunOperation>([
+  "status",
+  "events",
+  "follow",
+  "output-counts",
+  "outputs",
+  "output-preview",
+  "output-chunk",
+  "output-export",
+]);
 
 const timeoutOption = {
   "--timeout-ms": option((value) => parseInteger(value, 1, CLI_SESSION_LIMITS.maxTimeoutMs)),
@@ -133,6 +143,16 @@ function parseRunCommand(identity: CliCommandIdentity<CliRunOperation>, argv: re
       return parseRunEvents(identity as CliCommandIdentity<"events">, argv);
     case "follow":
       return parseRunFollow(identity as CliCommandIdentity<"follow">, argv);
+    case "output-counts":
+      return parseRunOutputCounts(identity as CliCommandIdentity<"output-counts">, argv);
+    case "outputs":
+      return parseRunOutputs(identity as CliCommandIdentity<"outputs">, argv);
+    case "output-preview":
+      return parseRunOutputPreview(identity as CliCommandIdentity<"output-preview">, argv);
+    case "output-chunk":
+      return parseRunOutputChunk(identity as CliCommandIdentity<"output-chunk">, argv);
+    case "output-export":
+      return parseRunOutputExport(identity as CliCommandIdentity<"output-export">, argv);
   }
 }
 
@@ -199,6 +219,97 @@ function parseRunFollow(identity: CliCommandIdentity<"follow">, argv: readonly s
       pollMs: (parsed.values["--poll-ms"] as number | undefined) ?? CLI_RUN_LIMITS.followDefaultPollMs,
       ...optionalTimeout(parsed.values),
     },
+  };
+}
+
+function parseRunOutputCounts(identity: CliCommandIdentity<"output-counts">, argv: readonly string[]): CliParseResult {
+  const parsed = parseRunOutputScope(identity, argv, {});
+  if (!parsed.ok) return parsed.result;
+  return runOutputCommand(identity, parsed.values);
+}
+
+function parseRunOutputs(identity: CliCommandIdentity<"outputs">, argv: readonly string[]): CliParseResult {
+  const parsed = parseRunOutputScope(identity, argv, {
+    "--category": option((value) => parseEnum(value, CLI_RUN_OUTPUT_CATEGORIES)),
+    "--cursor": option((value) => parseBoundedString(value, CLI_SESSION_LIMITS.maxCursorLength)),
+    "--limit": option((value) => parseInteger(value, 1, CLI_RUN_LIMITS.outputsMaxItems)),
+  });
+  if (!parsed.ok) return parsed.result;
+  return runOutputCommand(identity, parsed.values, {
+    ...(parsed.values["--category"] === undefined ? {} : { category: parsed.values["--category"] }),
+    ...(parsed.values["--cursor"] === undefined ? {} : { cursor: parsed.values["--cursor"] }),
+    limit: (parsed.values["--limit"] as number | undefined) ?? CLI_RUN_LIMITS.outputsDefaultItems,
+  });
+}
+
+function parseRunOutputPreview(
+  identity: CliCommandIdentity<"output-preview">,
+  argv: readonly string[],
+): CliParseResult {
+  const parsed = parseRunOutputScope(identity, argv, {
+    "--output-item-id": requiredOption(parseIdentifier),
+    "--max-bytes": option((value) => parseInteger(value, 1, CLI_RUN_LIMITS.previewMaxBytes)),
+  });
+  if (!parsed.ok) return parsed.result;
+  return runOutputCommand(identity, parsed.values, {
+    outputItemId: parsed.values["--output-item-id"],
+    maxBytes: (parsed.values["--max-bytes"] as number | undefined) ?? CLI_RUN_LIMITS.previewDefaultBytes,
+  });
+}
+
+function parseRunOutputChunk(identity: CliCommandIdentity<"output-chunk">, argv: readonly string[]): CliParseResult {
+  const parsed = parseRunOutputScope(identity, argv, {
+    "--output-item-id": requiredOption(parseIdentifier),
+    "--offset": requiredOption((value) => parseInteger(value, 0, Number.MAX_SAFE_INTEGER)),
+    "--max-bytes": option((value) => parseInteger(value, 1, CLI_RUN_LIMITS.chunkMaxBytes)),
+  });
+  if (!parsed.ok) return parsed.result;
+  return runOutputCommand(identity, parsed.values, {
+    outputItemId: parsed.values["--output-item-id"],
+    offset: parsed.values["--offset"],
+    maxBytes: (parsed.values["--max-bytes"] as number | undefined) ?? CLI_RUN_LIMITS.chunkDefaultBytes,
+  });
+}
+
+function parseRunOutputExport(identity: CliCommandIdentity<"output-export">, argv: readonly string[]): CliParseResult {
+  const parsed = parseRunOutputScope(identity, argv, {
+    "--output-item-id": requiredOption(parseIdentifier),
+    "--destination": requiredOption(parseExportDestination),
+  });
+  if (!parsed.ok) return parsed.result;
+  return runOutputCommand(identity, parsed.values, {
+    outputItemId: parsed.values["--output-item-id"],
+    destination: parsed.values["--destination"],
+  });
+}
+
+function parseRunOutputScope(
+  identity: CliCommandIdentity<CliRunOperation>,
+  argv: readonly string[],
+  options: Readonly<Record<string, OptionDefinition>>,
+): OptionParseResult {
+  return parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--run-id": requiredOption(parseIdentifier),
+    ...options,
+    ...timeoutOption,
+  });
+}
+
+function runOutputCommand(
+  identity: CliCommandIdentity<CliRunOperation>,
+  values: ParsedOptions,
+  operationValues: Readonly<Record<string, unknown>> = {},
+): CliParseResult {
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: values["--session-id"] as string,
+      runId: values["--run-id"] as string,
+      ...operationValues,
+      ...optionalTimeout(values),
+    } as CliValidatedCommand,
   };
 }
 
@@ -501,6 +612,13 @@ function parseUuid(value: string): string | undefined {
 function normalizeAbsolutePathValue(value: string): string | undefined {
   const normalized = normalizeHostAbsolutePath(value);
   return normalized === undefined || normalized.path.length > WORKSPACE_PATH_MAX_LENGTH ? undefined : normalized.path;
+}
+
+function parseExportDestination(value: string): string | undefined {
+  const normalized = normalizeAbsolutePathValue(value);
+  return normalized === undefined || normalized.length > CLI_RUN_LIMITS.maxDestinationPathLength
+    ? undefined
+    : normalized;
 }
 
 function parseIdentifier(value: string): string | undefined {

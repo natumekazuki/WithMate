@@ -5,11 +5,16 @@ import test from "node:test";
 import ts from "typescript";
 
 import * as publicApi from "../src/main/index.js";
-import type { ApplicationRunOperations, ApplicationSessionOperations } from "../src/main/index.js";
+import type {
+  ApplicationRunOperations,
+  ApplicationRunOutputOperations,
+  ApplicationSessionOperations,
+} from "../src/main/index.js";
 
 type Authorization = Readonly<{ principalId: string }>;
 type SessionListInput = Parameters<ApplicationSessionOperations<Authorization>["list"]>[0];
 type RunStatusInput = Parameters<ApplicationRunOperations<Authorization>["status"]>[0];
+type RunOutputCountsInput = Parameters<ApplicationRunOutputOperations<Authorization>["outputCounts"]>[0];
 
 test("public Main barrel exposes only the transport-neutral Application contract", () => {
   const sourcePath = new URL("../src/main/index.ts", import.meta.url);
@@ -24,9 +29,15 @@ test("public Main barrel exposes only the transport-neutral Application contract
   );
   const listInput = null as SessionListInput | null;
   const statusInput = null as RunStatusInput | null;
+  const outputCountsInput = null as RunOutputCountsInput | null;
 
-  assert.deepEqual(exportedModules, ["../shared/application-service-model.js", "../shared/application-run-model.js"]);
+  assert.deepEqual(exportedModules, [
+    "../shared/application-service-model.js",
+    "../shared/application-run-model.js",
+    "../shared/application-run-output-model.js",
+  ]);
   assert.deepEqual(Object.keys(publicApi), []);
   assert.equal(listInput, null);
   assert.equal(statusInput, null);
+  assert.equal(outputCountsInput, null);
 });

@@ -34,3 +34,14 @@ GUI visual explorationは先行可能だが、production GUI実装はApplication
 - status: accepted
 
 `old/docs/`および`old/docs/plans/`のroadmapは旧実装の履歴であり、現行roadmapの進捗、scope、API、schema判断へ使用しない。
+
+## D-006: control planeとruntime orchestrationをcheckpointで分離する
+
+- date: 2026-07-19
+- status: accepted
+
+CP2はProvider非依存の永続control planeを担当し、Session操作、Message timeline、Session Run history、Run status / events / outputをApplication ServiceとCLIから利用可能にする。CP3はProvider runtimeを必要とする単一SessionのRun start / retry / active cancel、supplemental input、approval / elicitation responseを担当する。CP5はchild Session / Delegationのstart / follow-up / message / wait / collect / cancel / killを担当する。
+
+Run開始や追加指示はProvider dispatch、live runtime、外部副作用との相関を必要とするため、Provider未接続のCP2 Gateへ含めない。childへの追加指示はDelegationのlatest Message / Runとdeliveryを同じorchestration contractで更新する必要があるため、CP5へまとめる。具体的なCLI operation名は各checkpointでpublic contractを確定するときに決める。
+
+CP6はCP3で成立した共通Run operationへCopilot Adapterを接続するため、CP3に依存する。Session Files cleanupとRun output export temporary fileのorphan sweep / crash recoveryは、運用hardeningを担当するCP8へ置く。

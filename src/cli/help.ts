@@ -35,9 +35,14 @@ Run 'withmate session <operation> --help' for operation options.
 const RUN_HELP = `Usage: withmate run <operation> [options]
 
 Operations:
-  status    Read the persisted Run status
-  events    Read a bounded RunEvent page
-  follow    Wait for events, terminal closure, or a bounded deadline
+  status            Read the persisted Run status
+  events            Read a bounded RunEvent page
+  follow            Wait for events, terminal closure, or a bounded deadline
+  output-counts     Count persisted Run outputs by category
+  outputs           Read a bounded Run output page
+  output-preview    Preview bounded text or JSON output
+  output-chunk      Read a bounded text or JSON output chunk
+  output-export     Export a stored output without overwriting a destination
 
 Run mutation is not available from this CLI.
 Run 'withmate run <operation> --help' for operation options.
@@ -176,6 +181,59 @@ Optional options:
   --timeout-ms <1..2147483647>
   -h, --help
 `,
+  "output-counts": runOutputScopeHelp("output-counts"),
+  outputs: `Usage: withmate run outputs [options]
+
+Required options:
+  --session-id <session-id>
+  --run-id <run-id>
+
+Optional options:
+  --category <assistant_detail|operation|interaction|telemetry|diagnostic|provider_metadata>
+  --cursor <opaque-cursor>
+  --limit <1..200>    Default: 100
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
+  "output-preview": `Usage: withmate run output-preview [options]
+
+Required options:
+  --session-id <session-id>
+  --run-id <run-id>
+  --output-item-id <output-item-id>
+
+Optional options:
+  --max-bytes <1..65536>    Default: 65536
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
+  "output-chunk": `Usage: withmate run output-chunk [options]
+
+Required options:
+  --session-id <session-id>
+  --run-id <run-id>
+  --output-item-id <output-item-id>
+  --offset <non-negative-integer>
+
+Optional options:
+  --max-bytes <1..262144>    Default: 65536
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
+  "output-export": `Usage: withmate run output-export [options]
+
+Required options:
+  --session-id <session-id>
+  --run-id <run-id>
+  --output-item-id <output-item-id>
+  --destination <absolute-path>
+
+The destination is never overwritten. Inspect it before retrying an unknown publication outcome.
+
+Optional options:
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
 };
 
 export function helpText(topic: CliHelpTopic): string {
@@ -199,6 +257,19 @@ function writeHelp(operation: "archive" | "unarchive"): string {
 Required options:
   --session-id <session-id>
   --idempotency-key <lowercase-uuid>
+
+Optional options:
+  --timeout-ms <1..2147483647>
+  -h, --help
+`;
+}
+
+function runOutputScopeHelp(operation: "output-counts"): string {
+  return `Usage: withmate run ${operation} [options]
+
+Required options:
+  --session-id <session-id>
+  --run-id <run-id>
 
 Optional options:
   --timeout-ms <1..2147483647>

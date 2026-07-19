@@ -12,8 +12,14 @@ import type {
   ApplicationRunAccessValidator,
   ApplicationRunOperations,
 } from "../shared/application-run-model.js";
+import type {
+  ApplicationRunOutputAccessValidationInput,
+  ApplicationRunOutputAccessValidator,
+  ApplicationRunOutputOperations,
+} from "../shared/application-run-output-model.js";
 import { resolveApplicationDataRoot, resolveWithMateDatabasePathFromRoot } from "./application-data-path.js";
 import { createApplicationRunOperations } from "./application-run-service.js";
+import { createApplicationRunOutputOperations } from "./application-run-output-service.js";
 import { createApplicationSessionOperations } from "./application-session-service.js";
 import { PersistenceWorkerClient } from "./persistence-worker-client.js";
 import { LocalSessionFilesCleanup } from "./session-files-cleanup.js";
@@ -29,6 +35,7 @@ export type CliRuntimeControl = Readonly<{ timeoutMs?: number; signal?: AbortSig
 export type CliRuntime = Readonly<{
   operations: ApplicationSessionOperations<LocalCliAuthorization>;
   runOperations: ApplicationRunOperations<LocalCliAuthorization>;
+  runOutputOperations: ApplicationRunOutputOperations<LocalCliAuthorization>;
   authorization: LocalCliAuthorization;
   shutdown(control?: CliRuntimeControl): Promise<Readonly<{ checkpoint: "completed" | "failed" }>>;
 }>;
@@ -54,6 +61,7 @@ export async function startCliRuntime(control: CliRuntimeControl = {}): Promise<
     return {
       operations: createApplicationSessionOperations(client, { access, sessionFiles, snapshotAuthorization }),
       runOperations: createApplicationRunOperations(client, { access, snapshotAuthorization }),
+      runOutputOperations: createApplicationRunOutputOperations(client, { access, snapshotAuthorization }),
       authorization: localCliAuthorization,
       shutdown: (shutdownControl = {}) => client.shutdown(shutdownControl.timeoutMs ?? 10_000, shutdownControl.signal),
     };
@@ -94,7 +102,10 @@ function remainingTimeout(deadlineAt: number | undefined): number {
 }
 
 class LocalCliAccessValidator
-  implements ApplicationAccessValidator<LocalCliAuthorization>, ApplicationRunAccessValidator<LocalCliAuthorization>
+  implements
+    ApplicationAccessValidator<LocalCliAuthorization>,
+    ApplicationRunAccessValidator<LocalCliAuthorization>,
+    ApplicationRunOutputAccessValidator<LocalCliAuthorization>
 {
   async validateWorkspace(
     input: Extract<ApplicationAccessValidationInput<LocalCliAuthorization>, Readonly<{ operation: "create" }>>,
@@ -131,7 +142,8 @@ class LocalCliAccessValidator
   async authorize(
     input:
       | ApplicationAccessValidationInput<LocalCliAuthorization>
-      | ApplicationRunAccessValidationInput<LocalCliAuthorization>,
+      | ApplicationRunAccessValidationInput<LocalCliAuthorization>
+      | ApplicationRunOutputAccessValidationInput<LocalCliAuthorization>,
   ): Promise<ApplicationAccessDecision> {
     return isLocalCliAuthorization(input.context.authorization) ? { allowed: true } : authorizationInvalid();
   }

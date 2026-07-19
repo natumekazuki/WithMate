@@ -1,13 +1,25 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { REPOSITORY_READ_LIMITS, REPOSITORY_READ_OPERATIONS } from "../shared/repository-read-model.js";
+import {
+  REPOSITORY_READ_LIMITS,
+  REPOSITORY_READ_OPERATIONS,
+  type RunOutputListItem,
+} from "../shared/repository-read-model.js";
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
 import { isLocalRepositoryKey, SESSION_METADATA_LIMITS, sessionSearchKey } from "../shared/session-metadata.js";
 
 const INLINE_MESSAGE_BYTES = 64 * 1024;
 const MAX_PAGE_JSON_BYTES = 192 * 1024;
 const SESSION_SEARCH_SQL_FUNCTION = "withmate_session_search_key";
+const RUN_OUTPUT_CATEGORIES = [
+  "assistant_detail",
+  "operation",
+  "interaction",
+  "telemetry",
+  "diagnostic",
+  "provider_metadata",
+] as const;
 
 export const REPOSITORY_PAGE_SQL = {
   messages: `
@@ -45,6 +57,16 @@ export const REPOSITORY_PAGE_SQL = {
     ORDER BY o.ordinal ASC LIMIT ?
   `,
 } as const;
+
+export const REPOSITORY_RUN_OUTPUT_ITEM_SQL = `
+  SELECT o.id, o.run_id, o.ordinal, o.category, o.kind, o.summary, o.completion_state,
+         o.payload_state, o.payload_original_byte_length, o.stored_payload_id,
+         o.redaction_state, o.created_at
+  FROM run_output_items o
+  JOIN runs r ON r.id = o.run_id
+  JOIN sessions s ON s.id = r.session_id
+  WHERE o.id = ? AND o.run_id = ? AND r.session_id = ? AND s.workspace_key = ?
+`;
 
 const SESSION_PAGE_COLUMNS = `
   SELECT id, title, workspace_key, workspace_path, local_repository_key, repository_name,
@@ -155,6 +177,7 @@ export function createRepositoryReadOperations(database: DatabaseSync): Readonly
     [REPOSITORY_READ_OPERATIONS.runEventsPage, read((payload) => ({ result: runEventsPage(database, payload) }))],
     [REPOSITORY_READ_OPERATIONS.runOutputCounts, read((payload) => ({ result: runOutputCounts(database, payload) }))],
     [REPOSITORY_READ_OPERATIONS.runOutputsPage, read((payload) => ({ result: runOutputsPage(database, payload) }))],
+    [REPOSITORY_READ_OPERATIONS.runOutputGet, read((payload) => ({ result: runOutputGet(database, payload) }))],
     [
       REPOSITORY_READ_OPERATIONS.runInputDeliveriesPage,
       read((payload) => ({ result: runInputDeliveriesPage(database, payload) })),
@@ -577,22 +600,90 @@ function runOutputsPage(database: DatabaseSync, payload: Readonly<Record<string,
         )) as unknown as readonly OrdinalRow[];
   assertRunScopeExists(database, scope);
   const page = splitPage(rows, limit);
-  return ordinalPage(scope, page, "run_outputs", cursorScope, (row) => ({
+  return ordinalPage(scope, page, "run_outputs", cursorScope, (row) => decodeRunOutputItem(row as RunOutputItemRow));
+}
+
+function runOutputGet(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
+  const scope = readRunScope(payload, ["sessionId", "runId", "outputItemId", "workspaceKey"]);
+  const outputItemId = requiredString(payload.outputItemId, "outputItemId");
+  const row = database
+    .prepare(REPOSITORY_RUN_OUTPUT_ITEM_SQL)
+    .get(outputItemId, scope.runId, scope.sessionId, scope.workspaceKey) as RunOutputItemRow | undefined;
+  if (row === undefined) throw notFound();
+  return {
+    ...scope,
+    item: decodeRunOutputItem(row),
+  };
+}
+
+function decodeRunOutputItem(row: RunOutputItemRow): RunOutputListItem {
+  if (
+    !RUN_OUTPUT_CATEGORIES.includes(row.category as (typeof RUN_OUTPUT_CATEGORIES)[number]) ||
+    (row.completion_state !== "complete" && row.completion_state !== "partial")
+  ) {
+    throw persistenceContractViolation();
+  }
+  const base = {
     id: row.id,
     runId: row.run_id,
     ordinal: row.ordinal,
-    category: row.category,
+    category: row.category as RunOutputListItem["category"],
     kind: row.kind,
     summary: row.summary,
     completionState: row.completion_state,
-    payloadState: row.payload_state,
-    ...(row.payload_original_byte_length === null
-      ? {}
-      : { payloadOriginalByteLength: row.payload_original_byte_length }),
-    ...(row.stored_payload_id === null ? {} : { storedPayloadId: row.stored_payload_id }),
-    redactionState: row.redaction_state,
     createdAt: row.created_at,
-  }));
+  } as const;
+  if (
+    row.payload_state === "none" &&
+    row.payload_original_byte_length === null &&
+    row.stored_payload_id === null &&
+    row.redaction_state === "not_required"
+  ) {
+    return { ...base, payloadState: "none", redactionState: "not_required" };
+  }
+  if (
+    (row.payload_state === "pending" ||
+      row.payload_state === "omitted_size_limit" ||
+      row.payload_state === "omitted_persistence") &&
+    isNonNegativeInteger(row.payload_original_byte_length) &&
+    row.stored_payload_id === null &&
+    (row.redaction_state === "not_required" || row.redaction_state === "redacted")
+  ) {
+    return {
+      ...base,
+      payloadState: row.payload_state,
+      payloadOriginalByteLength: row.payload_original_byte_length,
+      redactionState: row.redaction_state,
+    };
+  }
+  if (
+    row.payload_state === "stored" &&
+    isNonNegativeInteger(row.payload_original_byte_length) &&
+    row.stored_payload_id === row.id &&
+    (row.redaction_state === "not_required" || row.redaction_state === "redacted")
+  ) {
+    return {
+      ...base,
+      payloadState: "stored",
+      payloadOriginalByteLength: row.payload_original_byte_length,
+      storedPayloadId: row.stored_payload_id,
+      redactionState: row.redaction_state,
+    };
+  }
+  if (
+    row.payload_state === "omitted_redaction" &&
+    isNonNegativeInteger(row.payload_original_byte_length) &&
+    row.stored_payload_id === null &&
+    row.redaction_state === "unknown"
+  ) {
+    return {
+      ...base,
+      payloadState: "omitted_redaction",
+      payloadOriginalByteLength: row.payload_original_byte_length,
+      redactionState: "unknown",
+    };
+  }
+  throw persistenceContractViolation();
 }
 
 function runOutputPayloadMetadata(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
@@ -1023,7 +1114,29 @@ function notFound(): RepositoryReadError {
   return new RepositoryReadError("not_found", "Repository resource was not found.");
 }
 
+function persistenceContractViolation(): TypeError {
+  return new TypeError("Repository projection violates the persistence contract.");
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
 type OrdinalRow = Readonly<Record<string, unknown> & { ordinal: number }>;
+type RunOutputItemRow = Readonly<{
+  id: string;
+  run_id: string;
+  ordinal: number;
+  category: string;
+  kind: string;
+  summary: string;
+  completion_state: string;
+  payload_state: string;
+  payload_original_byte_length: number | null;
+  stored_payload_id: string | null;
+  redaction_state: string;
+  created_at: number;
+}>;
 type RunInputDeliveryRow = Readonly<Record<string, unknown>> &
   Readonly<{
     message_id: string;

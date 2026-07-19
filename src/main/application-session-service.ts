@@ -1,6 +1,7 @@
 import type {
   ApplicationAccessDecision,
   ApplicationAccessValidationInput,
+  ApplicationCapacityExceededDetails,
   ApplicationAccessValidator,
   ApplicationDomainError,
   ApplicationDomainErrorCode,
@@ -1917,7 +1918,17 @@ function projectRepositoryDomainError(value: unknown): ApplicationDomainError {
   };
 }
 
-function isRepositoryDomainErrorCode(value: unknown): value is Exclude<ApplicationDomainErrorCode, "cursor_invalid"> {
+function isRepositoryDomainErrorCode(
+  value: unknown,
+): value is Exclude<
+  ApplicationDomainErrorCode,
+  | "cursor_invalid"
+  | "payload_unavailable"
+  | "payload_format_unsupported"
+  | "destination_exists"
+  | "destination_invalid"
+  | "payload_integrity_mismatch"
+> {
   return (
     value === "request_invalid" ||
     value === "not_found" ||
@@ -1933,7 +1944,7 @@ function isRepositoryDomainErrorCode(value: unknown): value is Exclude<Applicati
   );
 }
 
-function projectCapacityExceededDetails(value: unknown): NonNullable<ApplicationDomainError["details"]> {
+function projectCapacityExceededDetails(value: unknown): ApplicationCapacityExceededDetails {
   const snapshot = snapshotProjectionRecord(value, ["scope", "rootSessionId", "providerId", "current", "limit"]);
   if (
     snapshot === undefined ||

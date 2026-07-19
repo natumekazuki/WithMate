@@ -9,15 +9,32 @@ import { CLI_EXIT_CODES } from "../src/cli/contract.js";
 import { runCliLifecycle, type CliLifecycleControl } from "../src/cli/lifecycle.js";
 import { writeCliInvocationResult, type CliTextOutputStream } from "../src/cli/process-output.js";
 import { CLI_VERSION } from "../src/cli/version.js";
-import type { ApplicationRunOperations, ApplicationSessionOperations } from "../src/main/index.js";
+import type {
+  ApplicationRunOperations,
+  ApplicationRunOutputOperations,
+  ApplicationSessionOperations,
+} from "../src/main/index.js";
 import { resolveWithMateDatabasePath } from "../src/main/cli-runtime.js";
 
 type Authorization = Readonly<{ transport: "test" }>;
 type Operations = ApplicationSessionOperations<Authorization>;
 type RunOperations = ApplicationRunOperations<Authorization>;
+type RunOutputOperations = ApplicationRunOutputOperations<Authorization>;
 
 const authorization: Authorization = { transport: "test" };
 const readArgv = ["session", "read", "--session-id", "session-1"] as const;
+const exportArgv = [
+  "run",
+  "output-export",
+  "--session-id",
+  "session-1",
+  "--run-id",
+  "run-1",
+  "--output-item-id",
+  "output-1",
+  "--destination",
+  path.resolve("output.bin"),
+] as const;
 
 test("help and parse failures do not register signals or start runtime", async () => {
   let starts = 0;
@@ -38,6 +55,21 @@ test("help and parse failures do not register signals or start runtime", async (
   const runHelp = await runCliLifecycle(["run", "--help"], dependencies);
   const invalid = await runCliLifecycle(["session", "read"], dependencies);
   const invalidRun = await runCliLifecycle(["run", "status", "--session-id", "session-1"], dependencies);
+  const invalidExport = await runCliLifecycle(
+    [
+      "run",
+      "output-export",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--output-item-id",
+      "output-1",
+      "--destination",
+      "relative.txt",
+    ],
+    dependencies,
+  );
   const unconfirmedDelete = await runCliLifecycle(
     ["session", "delete", "--session-id", "session-1", "--idempotency-key", "018f1f4e-7f0a-7000-8000-000000000001"],
     dependencies,
@@ -47,6 +79,7 @@ test("help and parse failures do not register signals or start runtime", async (
   assert.equal(runHelp.exitCode, CLI_EXIT_CODES.success);
   assert.equal(invalid.exitCode, CLI_EXIT_CODES.usageInvalid);
   assert.equal(invalidRun.exitCode, CLI_EXIT_CODES.usageInvalid);
+  assert.equal(invalidExport.exitCode, CLI_EXIT_CODES.usageInvalid);
   assert.equal(unconfirmedDelete.exitCode, CLI_EXIT_CODES.usageInvalid);
   assert.equal(starts, 0);
   assert.equal(registrations, 0);
@@ -88,6 +121,53 @@ test("Run operation completion writes one JSON object and performs one clean shu
   assert.equal(result.exitCode, CLI_EXIT_CODES.success);
   assert.equal((output.command as Readonly<Record<string, unknown>>).namespace, "run");
   assert.equal(statusCalls, 1);
+  assert.equal(shutdowns, 1);
+});
+
+test("Run output completion writes one JSON object and performs one clean shutdown", async () => {
+  let outputCalls = 0;
+  let shutdowns = 0;
+  const runOutputOperations = unsupportedRunOutputOperations({
+    outputCounts: async () => {
+      outputCalls += 1;
+      return {
+        overallStatus: "success",
+        value: {
+          sessionId: "session-1",
+          runId: "run-1",
+          totalCount: 0,
+          partialCount: 0,
+          byCategory: {
+            assistant_detail: 0,
+            operation: 0,
+            interaction: 0,
+            telemetry: 0,
+            diagnostic: 0,
+            provider_metadata: 0,
+          },
+        },
+        persistence: { status: "read", effect: "none" },
+      };
+    },
+  });
+  const result = await runCliLifecycle(["run", "output-counts", "--session-id", "session-1", "--run-id", "run-1"], {
+    version: CLI_VERSION,
+    startRuntime: async () =>
+      runtime(
+        successfulOperations(),
+        async () => {
+          shutdowns += 1;
+          return { checkpoint: "completed" };
+        },
+        unsupportedRunOperations(),
+        runOutputOperations,
+      ),
+  });
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.stderr, "");
+  assert.equal(result.exitCode, CLI_EXIT_CODES.success);
+  assert.equal((output.command as Readonly<Record<string, unknown>>).operation, "output-counts");
+  assert.equal(outputCalls, 1);
   assert.equal(shutdowns, 1);
 });
 
@@ -327,6 +407,304 @@ test("SIGINT aborts the Application operation and still shuts down", async () =>
   assert.equal(interrupt, undefined);
 });
 
+test("the hard timeout bounds a non-cooperative Application operation and still starts shutdown", async () => {
+  let shutdowns = 0;
+  const startedAt = Date.now();
+  const result = await runCliLifecycle([...readArgv, "--timeout-ms", "20"], {
+    version: CLI_VERSION,
+    startRuntime: async () =>
+      runtime(
+        successfulOperations(() => new Promise(() => undefined)),
+        async () => {
+          shutdowns += 1;
+          return { checkpoint: "completed" };
+        },
+      ),
+  });
+
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.exitCode, CLI_EXIT_CODES.timeout);
+  assert.deepEqual(output.error, {
+    kind: "runtime",
+    code: "lifecycle_timeout",
+    stage: "operation",
+    message: "CLI lifecycle timed out during operation.",
+  });
+  assert.equal(Date.now() - startedAt < 200, true);
+  assert.equal(shutdowns, 1);
+});
+
+test("SIGINT bounds a non-cooperative Application operation and still starts shutdown", async () => {
+  let interrupt: (() => void) | undefined;
+  let shutdowns = 0;
+  const result = await runCliLifecycle(readArgv, {
+    version: CLI_VERSION,
+    registerInterrupt: (abort) => {
+      interrupt = abort;
+      return () => {
+        interrupt = undefined;
+      };
+    },
+    startRuntime: async () =>
+      runtime(
+        successfulOperations(() => {
+          interrupt?.();
+          return new Promise(() => undefined);
+        }),
+        async () => {
+          shutdowns += 1;
+          return { checkpoint: "completed" };
+        },
+      ),
+  });
+
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.exitCode, CLI_EXIT_CODES.canceled);
+  assert.deepEqual(output.error, {
+    kind: "runtime",
+    code: "lifecycle_canceled",
+    stage: "operation",
+    message: "CLI lifecycle was canceled during operation.",
+  });
+  assert.equal(shutdowns, 1);
+  assert.equal(interrupt, undefined);
+});
+
+test("SIGINT preserves an export Application failure when publication is ambiguous", async () => {
+  let interrupt: (() => void) | undefined;
+  let shutdowns = 0;
+  const runOutputOperations = unsupportedRunOutputOperations({
+    outputExport: async (_request, options) =>
+      new Promise((resolve) => {
+        options?.signal?.addEventListener(
+          "abort",
+          () =>
+            resolve({
+              overallStatus: "failure",
+              error: {
+                kind: "operation",
+                code: "operation_canceled",
+                message: "Application operation was canceled.",
+                retryable: false,
+              },
+              publication: { status: "unknown", reconciliation: "inspect_destination_before_retry" },
+              persistence: { status: "read", effect: "none" },
+            }),
+          { once: true },
+        );
+        interrupt?.();
+      }),
+  });
+  const result = await runCliLifecycle(exportArgv, {
+    version: CLI_VERSION,
+    registerInterrupt: (abort) => {
+      interrupt = abort;
+      return () => {
+        interrupt = undefined;
+      };
+    },
+    startRuntime: async () =>
+      runtime(
+        successfulOperations(),
+        async () => {
+          shutdowns += 1;
+          return { checkpoint: "completed" };
+        },
+        unsupportedRunOperations(),
+        runOutputOperations,
+      ),
+  });
+
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.exitCode, CLI_EXIT_CODES.canceled);
+  assert.equal(output.kind, "operation");
+  assert.deepEqual((output.applicationResponse as Readonly<Record<string, unknown>>).publication, {
+    status: "unknown",
+    reconciliation: "inspect_destination_before_retry",
+  });
+  assert.equal(shutdowns, 1);
+  assert.equal(interrupt, undefined);
+});
+
+test("shutdown failure retains precedence after an interrupted export reports ambiguous publication", async () => {
+  let interrupt: (() => void) | undefined;
+  const runOutputOperations = unsupportedRunOutputOperations({
+    outputExport: async (_request, options) =>
+      new Promise((resolve) => {
+        options?.signal?.addEventListener(
+          "abort",
+          () =>
+            resolve({
+              overallStatus: "failure",
+              error: {
+                kind: "operation",
+                code: "operation_canceled",
+                message: "Application operation was canceled.",
+                retryable: false,
+              },
+              publication: { status: "unknown", reconciliation: "inspect_destination_before_retry" },
+              persistence: { status: "read", effect: "none" },
+            }),
+          { once: true },
+        );
+        interrupt?.();
+      }),
+  });
+  const result = await runCliLifecycle(exportArgv, {
+    version: CLI_VERSION,
+    registerInterrupt: (abort) => {
+      interrupt = abort;
+      return () => {
+        interrupt = undefined;
+      };
+    },
+    startRuntime: async () =>
+      runtime(
+        successfulOperations(),
+        async () => ({ checkpoint: "failed" }),
+        unsupportedRunOperations(),
+        runOutputOperations,
+      ),
+  });
+
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.exitCode, CLI_EXIT_CODES.runtimeFailure);
+  assert.equal(output.kind, "lifecycle_failure");
+  assert.deepEqual((output.applicationResponse as Readonly<Record<string, unknown>>).publication, {
+    status: "unknown",
+    reconciliation: "inspect_destination_before_retry",
+  });
+  assert.equal((output.error as Readonly<Record<string, unknown>>).code, "shutdown_failed");
+  assert.equal(interrupt, undefined);
+});
+
+test("prompt shutdown rejection retains precedence after an interrupted export", async () => {
+  let interrupt: (() => void) | undefined;
+  const result = await runCliLifecycle(exportArgv, {
+    version: CLI_VERSION,
+    registerInterrupt: (abort) => {
+      interrupt = abort;
+      return () => {
+        interrupt = undefined;
+      };
+    },
+    startRuntime: async () =>
+      runtime(
+        successfulOperations(),
+        async () => {
+          throw new Error("shutdown failure");
+        },
+        unsupportedRunOperations(),
+        canceledExportOperations(() => interrupt?.()),
+      ),
+  });
+
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.exitCode, CLI_EXIT_CODES.runtimeFailure);
+  assert.equal(output.kind, "lifecycle_failure");
+  assert.deepEqual((output.applicationResponse as Readonly<Record<string, unknown>>).publication, {
+    status: "unknown",
+    reconciliation: "inspect_destination_before_retry",
+  });
+  assert.equal((output.error as Readonly<Record<string, unknown>>).code, "shutdown_failed");
+  assert.equal(interrupt, undefined);
+});
+
+test("an interrupted export remains bounded when shutdown does not cooperate", async () => {
+  let interrupt: (() => void) | undefined;
+  let shutdowns = 0;
+  const startedAt = Date.now();
+  const result = await runCliLifecycle(exportArgv, {
+    version: CLI_VERSION,
+    registerInterrupt: (abort) => {
+      interrupt = abort;
+      return () => {
+        interrupt = undefined;
+      };
+    },
+    startRuntime: async () =>
+      runtime(
+        successfulOperations(),
+        () => {
+          shutdowns += 1;
+          return new Promise(() => undefined);
+        },
+        unsupportedRunOperations(),
+        canceledExportOperations(() => interrupt?.()),
+      ),
+  });
+
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.exitCode, CLI_EXIT_CODES.canceled);
+  assert.equal(output.kind, "operation");
+  assert.deepEqual((output.applicationResponse as Readonly<Record<string, unknown>>).publication, {
+    status: "unknown",
+    reconciliation: "inspect_destination_before_retry",
+  });
+  assert.equal(Date.now() - startedAt < 200, true);
+  assert.equal(shutdowns, 1);
+  assert.equal(interrupt, undefined);
+});
+
+test("hard timeout preserves a skewed export cancellation and ambiguous publication", async () => {
+  let shutdowns = 0;
+  const runOutputOperations = unsupportedRunOutputOperations({
+    outputExport: async (_request, options) =>
+      new Promise((resolve) => {
+        options?.signal?.addEventListener(
+          "abort",
+          () =>
+            resolve({
+              overallStatus: "failure",
+              error: {
+                kind: "operation",
+                code: "operation_canceled",
+                message: "Application operation was canceled by lifecycle timeout.",
+                retryable: false,
+              },
+              publication: { status: "unknown", reconciliation: "inspect_destination_before_retry" },
+              persistence: { status: "read", effect: "none" },
+            }),
+          { once: true },
+        );
+      }),
+  });
+  const startedAt = Date.now();
+  const result = await runCliLifecycle([...exportArgv, "--timeout-ms", "20"], {
+    version: CLI_VERSION,
+    startRuntime: async () =>
+      runtime(
+        successfulOperations(),
+        async () => {
+          shutdowns += 1;
+          return { checkpoint: "completed" };
+        },
+        unsupportedRunOperations(),
+        runOutputOperations,
+      ),
+  });
+
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.exitCode, CLI_EXIT_CODES.timeout);
+  assert.equal(output.kind, "lifecycle_failure");
+  assert.deepEqual((output.applicationResponse as Readonly<Record<string, unknown>>).publication, {
+    status: "unknown",
+    reconciliation: "inspect_destination_before_retry",
+  });
+  assert.equal(
+    ((output.applicationResponse as Readonly<Record<string, unknown>>).error as Readonly<Record<string, unknown>>).code,
+    "operation_canceled",
+  );
+  assert.deepEqual(output.error, {
+    kind: "runtime",
+    code: "lifecycle_timeout",
+    stage: "operation",
+    message: "CLI lifecycle timed out during operation.",
+  });
+  assert.equal(Date.now() - startedAt < 200, true);
+  assert.equal(shutdowns, 1);
+});
+
 test("SIGINT aborts Run follow without becoming Run cancellation and still shuts down once", async () => {
   let interrupt: (() => void) | undefined;
   let shutdowns = 0;
@@ -429,8 +807,9 @@ function runtime(
     checkpoint: "completed",
   }),
   runOperations: RunOperations = unsupportedRunOperations(),
+  runOutputOperations: RunOutputOperations = unsupportedRunOutputOperations(),
 ) {
-  return { operations, runOperations, authorization, shutdown } as const;
+  return { operations, runOperations, runOutputOperations, authorization, shutdown } as const;
 }
 
 function unsupportedRunOperations(overrides: Partial<RunOperations> = {}): RunOperations {
@@ -442,6 +821,44 @@ function unsupportedRunOperations(overrides: Partial<RunOperations> = {}): RunOp
     events: overrides.events ?? unsupported,
     follow: overrides.follow ?? unsupported,
   };
+}
+
+function unsupportedRunOutputOperations(overrides: Partial<RunOutputOperations> = {}): RunOutputOperations {
+  const unsupported = async (): Promise<never> => {
+    throw new Error("unexpected Run output operation");
+  };
+  return {
+    outputCounts: overrides.outputCounts ?? unsupported,
+    outputs: overrides.outputs ?? unsupported,
+    outputPreview: overrides.outputPreview ?? unsupported,
+    outputChunk: overrides.outputChunk ?? unsupported,
+    outputExport: overrides.outputExport ?? unsupported,
+  };
+}
+
+function canceledExportOperations(onReady: () => void): RunOutputOperations {
+  return unsupportedRunOutputOperations({
+    outputExport: async (_request, options) =>
+      new Promise((resolve) => {
+        options?.signal?.addEventListener(
+          "abort",
+          () =>
+            resolve({
+              overallStatus: "failure",
+              error: {
+                kind: "operation",
+                code: "operation_canceled",
+                message: "Application operation was canceled.",
+                retryable: false,
+              },
+              publication: { status: "unknown", reconciliation: "inspect_destination_before_retry" },
+              persistence: { status: "read", effect: "none" },
+            }),
+          { once: true },
+        );
+        onReady();
+      }),
+  });
 }
 
 function successfulOperations(

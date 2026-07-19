@@ -20,6 +20,10 @@ import {
   type CliPersistenceError,
   type CliPersistenceStatus,
   type CliRuntimeFailureOutput,
+  type CliRunOutputExportCleanupIssue,
+  type CliRunOutputExportResponse,
+  type CliRunOutputExportValue,
+  type CliRunOutputPublication,
   type CliSessionCleanupIssue,
   type CliSessionDeleteResponse,
   type CliSessionOperation,
@@ -51,6 +55,31 @@ const operationModes: Readonly<Record<CliSessionOperation, OperationMode>> = {
   close: "write",
   delete: "write",
 };
+
+const BASE_DOMAIN_CODES = [
+  "capacity_exceeded",
+  "request_invalid",
+  "cursor_invalid",
+  "not_found",
+  "reference_invalid",
+  "lifecycle_conflict",
+  "session_busy",
+  "insufficient_disk_space",
+  "idempotency_conflict",
+  "idempotency_in_progress",
+  "idempotency_expired",
+  "identity_exhausted",
+] as const;
+
+const RUN_OUTPUT_EXPORT_DOMAIN_CODES = [
+  "request_invalid",
+  "cursor_invalid",
+  "not_found",
+  "payload_unavailable",
+  "destination_exists",
+  "destination_invalid",
+  "payload_integrity_mismatch",
+] as const;
 
 export function projectCliOperationOutput(
   command: CliValidatedCommand,
@@ -91,6 +120,24 @@ export function projectCliReadApplicationResponse<TValue>(
   projectValue: (value: unknown) => TValue,
   maxIssues: number,
 ): CliApplicationResponse<TValue, "read"> {
+  return projectCliScopedReadApplicationResponse(value, projectValue, maxIssues, BASE_DOMAIN_CODES);
+}
+
+export function projectCliRunOutputReadApplicationResponse<TValue>(
+  value: unknown,
+  projectValue: (value: unknown) => TValue,
+  maxIssues: number,
+  allowedDomainCodes: readonly string[],
+): CliApplicationResponse<TValue, "read"> {
+  return projectCliScopedReadApplicationResponse(value, projectValue, maxIssues, allowedDomainCodes);
+}
+
+function projectCliScopedReadApplicationResponse<TValue>(
+  value: unknown,
+  projectValue: (value: unknown) => TValue,
+  maxIssues: number,
+  allowedDomainCodes: readonly string[],
+): CliApplicationResponse<TValue, "read"> {
   const response = record(value);
   if (response.overallStatus === "success") {
     const persistence = projectPersistenceStatus(response.persistence);
@@ -111,14 +158,89 @@ export function projectCliReadApplicationResponse<TValue>(
     } as CliApplicationResponse<TValue, "read">;
   }
   if (response.overallStatus !== "failure") malformed();
-  const error = projectApplicationError(response.error);
+  const error = projectApplicationError(response.error, allowedDomainCodes);
   const persistence = projectPersistenceStatus(response.persistence);
   if (!failureCombinationIsValid("read", false, error, persistence)) malformed();
   return { overallStatus: "failure", error, persistence } as CliApplicationResponse<TValue, "read">;
 }
 
+export function projectCliRunOutputExportApplicationResponse(
+  value: unknown,
+  projectValue: (value: unknown) => CliRunOutputExportValue,
+): CliRunOutputExportResponse {
+  const response = record(value);
+  const publication = projectRunOutputPublication(response.publication);
+  if (response.overallStatus === "success") {
+    const persistence = projectPersistenceStatus(response.persistence);
+    if (persistence.status !== "read" || publication.status !== "published") malformed();
+    return { overallStatus: "success", value: projectValue(response.value), publication, persistence };
+  }
+  if (response.overallStatus === "partial_success") {
+    const persistence = projectPersistenceStatus(response.persistence);
+    const issues = projectIssuesWithLimit(response.issues, 1);
+    if (
+      persistence.status !== "read" ||
+      publication.status !== "published" ||
+      issues.length !== 1 ||
+      issues[0]?.kind !== "cleanup" ||
+      issues[0].code !== "export_temporary_cleanup_pending"
+    ) {
+      malformed();
+    }
+    return {
+      overallStatus: "partial_success",
+      value: projectValue(response.value),
+      issues: issues as readonly [CliRunOutputExportCleanupIssue],
+      publication,
+      persistence,
+    };
+  }
+  if (response.overallStatus !== "failure") malformed();
+  const error = projectApplicationError(response.error, RUN_OUTPUT_EXPORT_DOMAIN_CODES);
+  const persistence = projectPersistenceStatus(response.persistence);
+  if (!runOutputExportFailureCombinationIsValid(error, persistence, publication)) malformed();
+  return { overallStatus: "failure", error, publication, persistence } as CliRunOutputExportResponse;
+}
+
+function runOutputExportFailureCombinationIsValid(
+  error: CliApplicationError,
+  persistence: CliPersistenceStatus,
+  publication: CliRunOutputPublication,
+): boolean {
+  if (publication.status === "published") return false;
+  const definitelyUnpublished = publication.status === "not_published" && publication.temporaryCleanup === "complete";
+  if (persistence.status === "not_attempted") {
+    return definitelyUnpublished && failureCombinationIsValid("read", false, error, persistence);
+  }
+  if (persistence.status === "rejected") {
+    if (error.kind !== "domain") return false;
+    if (error.code === "payload_unavailable") {
+      return definitelyUnpublished && error.retryable === (error.details.reason === "pending");
+    }
+    return (
+      ["request_invalid", "cursor_invalid", "not_found"].includes(error.code) &&
+      failureCombinationIsValid("read", false, error, persistence)
+    );
+  }
+  if (persistence.status === "failed") {
+    return failureCombinationIsValid("read", false, error, persistence);
+  }
+  if (persistence.status !== "read") return false;
+  if (error.kind === "operation" || error.kind === "application") return true;
+  return (
+    error.kind === "domain" &&
+    ["destination_exists", "destination_invalid", "payload_integrity_mismatch"].includes(error.code) &&
+    !error.retryable &&
+    publication.status === "not_published"
+  );
+}
+
 export function exitCodeForCliApplicationResponse(response: CliApplicationResponse<unknown, "read">): CliExitCode {
   return exitCodeForApplicationResponse(response);
+}
+
+export function exitCodeForCliRunOutputExportResponse(response: CliRunOutputExportResponse): CliExitCode {
+  return exitCodeForApplicationResponse(response as ProjectedApplicationResponse);
 }
 
 function projectApplicationResponse(
@@ -151,6 +273,7 @@ function projectApplicationResponse(
         deletion.cleanupStatus !== "pending" ||
         issues.length !== 1 ||
         issues[0]?.kind !== "cleanup" ||
+        issues[0].code !== "session_files_cleanup_pending" ||
         issues[0].cleanupToken !== deletion.cleanupToken
       ) {
         malformed();
@@ -450,7 +573,10 @@ function projectPersistenceStatus(value: unknown): CliPersistenceStatus {
   malformed();
 }
 
-function projectApplicationError(value: unknown): CliApplicationError {
+function projectApplicationError(
+  value: unknown,
+  allowedDomainCodes: readonly string[] = BASE_DOMAIN_CODES,
+): CliApplicationError {
   const error = record(value);
   const message = boundedString(error.message, 8_192);
   if (typeof error.retryable !== "boolean") malformed();
@@ -476,7 +602,7 @@ function projectApplicationError(value: unknown): CliApplicationError {
       }
       malformed();
     case "domain":
-      return projectDomainError(error, message);
+      return projectDomainError(error, message, allowedDomainCodes);
     case "persistence":
       return projectPersistenceError(error, message);
     case "application":
@@ -487,7 +613,12 @@ function projectApplicationError(value: unknown): CliApplicationError {
   }
 }
 
-function projectDomainError(error: Readonly<Record<string, unknown>>, message: string): CliApplicationError {
+function projectDomainError(
+  error: Readonly<Record<string, unknown>>,
+  message: string,
+  allowedDomainCodes: readonly string[],
+): CliApplicationError {
+  if (typeof error.code !== "string" || !allowedDomainCodes.includes(error.code)) malformed();
   if (error.code === "capacity_exceeded") {
     if (!error.retryable) malformed();
     return {
@@ -496,6 +627,45 @@ function projectDomainError(error: Readonly<Record<string, unknown>>, message: s
       message,
       retryable: true,
       details: projectCapacityDetails(error.details),
+    };
+  }
+  if (error.code === "payload_unavailable") {
+    const details = record(error.details);
+    const reason = enumValue(details.reason, [
+      "no_payload",
+      "pending",
+      "size_limit",
+      "redaction",
+      "persistence_failure",
+    ] as const);
+    if (reason === "pending") {
+      if (!error.retryable) malformed();
+      return {
+        kind: "domain",
+        code: error.code,
+        message,
+        retryable: true,
+        details: { reason: "pending" },
+      };
+    }
+    if (error.retryable) malformed();
+    return {
+      kind: "domain",
+      code: error.code,
+      message,
+      retryable: false,
+      details: { reason },
+    };
+  }
+  if (error.code === "payload_format_unsupported") {
+    const details = record(error.details);
+    if (error.retryable || details.format !== "binary" || details.supportedAction !== "export") malformed();
+    return {
+      kind: "domain",
+      code: error.code,
+      message,
+      retryable: false,
+      details: { format: "binary", supportedAction: "export" },
     };
   }
   const code = enumValue(error.code, [
@@ -510,6 +680,9 @@ function projectDomainError(error: Readonly<Record<string, unknown>>, message: s
     "idempotency_in_progress",
     "idempotency_expired",
     "identity_exhausted",
+    "destination_exists",
+    "destination_invalid",
+    "payload_integrity_mismatch",
   ] as const);
   return { kind: "domain", code, message, retryable: error.retryable as boolean };
 }
@@ -571,7 +744,18 @@ function projectIssuesWithLimit(value: unknown, maxIssues: number): readonly Cli
   });
 }
 
-function projectCleanupIssue(issue: Readonly<Record<string, unknown>>): CliSessionCleanupIssue {
+function projectCleanupIssue(
+  issue: Readonly<Record<string, unknown>>,
+): CliSessionCleanupIssue | CliRunOutputExportCleanupIssue {
+  if (issue.code === "export_temporary_cleanup_pending") {
+    if (issue.retryable !== true) malformed();
+    return {
+      kind: "cleanup",
+      code: issue.code,
+      message: boundedString(issue.message, 8_192),
+      retryable: true,
+    };
+  }
   if (
     issue.code !== "session_files_cleanup_pending" ||
     issue.retryable !== true ||
@@ -587,6 +771,21 @@ function projectCleanupIssue(issue: Readonly<Record<string, unknown>>): CliSessi
     retryable: true,
     reconciliation: "exact_request_required",
   };
+}
+
+function projectRunOutputPublication(value: unknown): CliRunOutputPublication {
+  const publication = record(value);
+  if (publication.status === "published") return { status: "published" };
+  if (
+    publication.status === "not_published" &&
+    (publication.temporaryCleanup === "complete" || publication.temporaryCleanup === "pending")
+  ) {
+    return { status: "not_published", temporaryCleanup: publication.temporaryCleanup };
+  }
+  if (publication.status === "unknown" && publication.reconciliation === "inspect_destination_before_retry") {
+    return { status: "unknown", reconciliation: "inspect_destination_before_retry" };
+  }
+  malformed();
 }
 
 function snapshotDenseArray(value: unknown, maxLength: number): readonly unknown[] {

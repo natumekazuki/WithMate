@@ -1,5 +1,6 @@
 import { MAX_PERSISTENCE_RESPONSE_BYTES } from "./persistence-protocol.js";
 import type { LocalRepositoryMetadata } from "./session-metadata.js";
+import type { RunOutputCategory } from "./repository-write-model.js";
 
 export const REPOSITORY_READ_OPERATIONS = {
   sessionsPage: "repository.sessions.page",
@@ -13,6 +14,7 @@ export const REPOSITORY_READ_OPERATIONS = {
   runSnapshotChunk: "repository.run.snapshot-chunk",
   runOutputsPage: "repository.run.outputs.page",
   runOutputCounts: "repository.run.outputs.counts",
+  runOutputGet: "repository.run.output.get",
   runOutputPayloadMetadata: "repository.run.output.payload-metadata",
   runInputDeliveriesPage: "repository.run.input-deliveries.page",
   payloadChunk: "payload.read_chunk",
@@ -163,6 +165,13 @@ export type RunOutputPayloadMetadata = Readonly<{
   createdAt: number;
 }>;
 
+export type RunOutputItemDetail = Readonly<{
+  sessionId: string;
+  runId: string;
+  workspaceKey: string;
+  item: RunOutputListItem;
+}>;
+
 export type RunInputDeliveryRecoveryItem = Readonly<{
   messageId: string;
   runId: string;
@@ -260,17 +269,36 @@ export type RunEventPage = Readonly<{
   hasMore: boolean;
 }>;
 
+type RunOutputPayloadProjection =
+  | Readonly<{
+      payloadState: "none";
+      redactionState: "not_required";
+    }>
+  | Readonly<{
+      payloadState: "pending" | "omitted_size_limit" | "omitted_persistence";
+      payloadOriginalByteLength: number;
+      redactionState: "not_required" | "redacted";
+    }>
+  | Readonly<{
+      payloadState: "stored";
+      payloadOriginalByteLength: number;
+      storedPayloadId: string;
+      redactionState: "not_required" | "redacted";
+    }>
+  | Readonly<{
+      payloadState: "omitted_redaction";
+      payloadOriginalByteLength: number;
+      redactionState: "unknown";
+    }>;
+
 export type RunOutputListItem = Readonly<{
   id: string;
   runId: string;
   ordinal: number;
-  category: string;
+  category: RunOutputCategory;
   kind: string;
   summary: string;
   completionState: "complete" | "partial";
-  payloadState: string;
-  payloadOriginalByteLength?: number;
-  storedPayloadId?: string;
-  redactionState: string;
   createdAt: number;
-}>;
+}> &
+  RunOutputPayloadProjection;
