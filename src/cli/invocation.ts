@@ -1,4 +1,4 @@
-import type { ApplicationSessionOperations } from "../main/index.js";
+import type { ApplicationSessionMessageOperations, ApplicationSessionOperations } from "../main/index.js";
 import { serializeCliStructuredOutput } from "./application-response.js";
 import { CLI_EXIT_CODES, type CliExitCode, type CliParseResult, type CliValidatedSessionCommand } from "./contract.js";
 import { helpText } from "./help.js";
@@ -14,6 +14,7 @@ export type CliInvocationResult = Readonly<{
 export type CliInvocationDependencies<TAuthorizationContext> = Readonly<{
   version: string;
   operations: ApplicationSessionOperations<TAuthorizationContext>;
+  messageOperations: ApplicationSessionMessageOperations<TAuthorizationContext>;
   authorization: TAuthorizationContext;
   signal?: AbortSignal;
 }>;

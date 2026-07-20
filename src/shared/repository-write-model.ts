@@ -1,4 +1,5 @@
 import type { LocalRepositoryMetadata, SessionMetadata } from "./session-metadata.js";
+import type { TextContentBlock } from "./message-content.js";
 
 export const REPOSITORY_WRITE_OPERATIONS = {
   sessionCreate: "repository.session.create",
@@ -100,7 +101,7 @@ export type NormalRunAdmissionCommand = Readonly<{
   idempotencyKey: string;
   message: Readonly<{
     id: string;
-    contentBlocks: readonly RepositoryJsonValue[];
+    contentBlocks: readonly TextContentBlock[];
   }>;
   run: RunAdmissionDraft;
   attemptId: string;
@@ -143,7 +144,7 @@ export type ChildStartCommand = Readonly<{
   }>;
   message: Readonly<{
     id: string;
-    contentBlocks: readonly RepositoryJsonValue[];
+    contentBlocks: readonly TextContentBlock[];
   }>;
   run: RunAdmissionDraft;
   attemptId: string;
@@ -200,7 +201,7 @@ export type RunInputAdmissionCommand = Readonly<{
   ephemeralOwnerToken: string | null;
   message: Readonly<{
     id: string;
-    contentBlocks: readonly RepositoryJsonValue[];
+    contentBlocks: readonly TextContentBlock[];
   }>;
 }>;
 
@@ -286,7 +287,7 @@ export type RunTerminalOutcome =
       kind: "completed";
       finalAssistantMessage: Readonly<{
         id: string;
-        contentBlocks: readonly RepositoryJsonValue[];
+        contentBlocks: readonly TextContentBlock[];
       }> | null;
     }>
   | Readonly<{

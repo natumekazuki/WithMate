@@ -12,6 +12,7 @@ import { CLI_VERSION } from "../src/cli/version.js";
 import type {
   ApplicationRunOperations,
   ApplicationRunOutputOperations,
+  ApplicationSessionMessageOperations,
   ApplicationSessionOperations,
 } from "../src/main/index.js";
 import { resolveWithMateDatabasePath } from "../src/main/cli-runtime.js";
@@ -20,6 +21,7 @@ type Authorization = Readonly<{ transport: "test" }>;
 type Operations = ApplicationSessionOperations<Authorization>;
 type RunOperations = ApplicationRunOperations<Authorization>;
 type RunOutputOperations = ApplicationRunOutputOperations<Authorization>;
+type MessageOperations = ApplicationSessionMessageOperations<Authorization>;
 
 const authorization: Authorization = { transport: "test" };
 const readArgv = ["session", "read", "--session-id", "session-1"] as const;
@@ -53,7 +55,12 @@ test("help and parse failures do not register signals or start runtime", async (
 
   const help = await runCliLifecycle(["--help"], dependencies);
   const runHelp = await runCliLifecycle(["run", "--help"], dependencies);
+  const messageHelp = await runCliLifecycle(["session", "messages", "--help"], dependencies);
   const invalid = await runCliLifecycle(["session", "read"], dependencies);
+  const invalidMessage = await runCliLifecycle(
+    ["session", "message-content-chunk", "--session-id", "session-1"],
+    dependencies,
+  );
   const invalidRun = await runCliLifecycle(["run", "status", "--session-id", "session-1"], dependencies);
   const invalidExport = await runCliLifecycle(
     [
@@ -77,7 +84,9 @@ test("help and parse failures do not register signals or start runtime", async (
 
   assert.equal(help.exitCode, CLI_EXIT_CODES.success);
   assert.equal(runHelp.exitCode, CLI_EXIT_CODES.success);
+  assert.equal(messageHelp.exitCode, CLI_EXIT_CODES.success);
   assert.equal(invalid.exitCode, CLI_EXIT_CODES.usageInvalid);
+  assert.equal(invalidMessage.exitCode, CLI_EXIT_CODES.usageInvalid);
   assert.equal(invalidRun.exitCode, CLI_EXIT_CODES.usageInvalid);
   assert.equal(invalidExport.exitCode, CLI_EXIT_CODES.usageInvalid);
   assert.equal(unconfirmedDelete.exitCode, CLI_EXIT_CODES.usageInvalid);
@@ -168,6 +177,42 @@ test("Run output completion writes one JSON object and performs one clean shutdo
   assert.equal(result.exitCode, CLI_EXIT_CODES.success);
   assert.equal((output.command as Readonly<Record<string, unknown>>).operation, "output-counts");
   assert.equal(outputCalls, 1);
+  assert.equal(shutdowns, 1);
+});
+
+test("Session Message completion writes one JSON object and performs one clean shutdown", async () => {
+  let messageCalls = 0;
+  let shutdowns = 0;
+  const messageOperations = unsupportedMessageOperations({
+    messages: async () => {
+      messageCalls += 1;
+      return {
+        overallStatus: "success",
+        value: { sessionId: "session-1", items: [] },
+        persistence: { status: "read", effect: "none" },
+      };
+    },
+  });
+  const result = await runCliLifecycle(["session", "messages", "--session-id", "session-1"], {
+    version: CLI_VERSION,
+    startRuntime: async () =>
+      runtime(
+        successfulOperations(),
+        async () => {
+          shutdowns += 1;
+          return { checkpoint: "completed" };
+        },
+        unsupportedRunOperations(),
+        unsupportedRunOutputOperations(),
+        messageOperations,
+      ),
+  });
+
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.stderr, "");
+  assert.equal(result.exitCode, CLI_EXIT_CODES.success);
+  assert.equal((output.command as Readonly<Record<string, unknown>>).operation, "messages");
+  assert.equal(messageCalls, 1);
   assert.equal(shutdowns, 1);
 });
 
@@ -808,8 +853,19 @@ function runtime(
   }),
   runOperations: RunOperations = unsupportedRunOperations(),
   runOutputOperations: RunOutputOperations = unsupportedRunOutputOperations(),
+  messageOperations: MessageOperations = unsupportedMessageOperations(),
 ) {
-  return { operations, runOperations, runOutputOperations, authorization, shutdown } as const;
+  return { operations, messageOperations, runOperations, runOutputOperations, authorization, shutdown } as const;
+}
+
+function unsupportedMessageOperations(overrides: Partial<MessageOperations> = {}): MessageOperations {
+  const unsupported = async (): Promise<never> => {
+    throw new Error("unexpected Message operation");
+  };
+  return {
+    messages: overrides.messages ?? unsupported,
+    messageContentChunk: overrides.messageContentChunk ?? unsupported,
+  };
 }
 
 function unsupportedRunOperations(overrides: Partial<RunOperations> = {}): RunOperations {

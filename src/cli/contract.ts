@@ -4,6 +4,8 @@ import {
   APPLICATION_RUN_OUTPUT_CATEGORIES,
   APPLICATION_RUN_OUTPUT_LIMITS,
 } from "../shared/application-run-output-model.js";
+import { APPLICATION_SESSION_MESSAGE_LIMITS } from "../shared/application-session-message-model.js";
+import type { TextContentBlock } from "../shared/message-content.js";
 import { SESSION_METADATA_LIMITS, type LocalRepositoryMetadata } from "../shared/session-metadata.js";
 
 export const CLI_SCHEMA_VERSION = "withmate-cli-v1" as const;
@@ -55,6 +57,12 @@ export const CLI_RUN_LIMITS = {
 
 export const CLI_RUN_OUTPUT_CATEGORIES = APPLICATION_RUN_OUTPUT_CATEGORIES;
 
+export const CLI_SESSION_MESSAGE_LIMITS = {
+  messagesDefaultItems: APPLICATION_SESSION_MESSAGE_LIMITS.messagesDefaultItems,
+  messagesMaxItems: APPLICATION_SESSION_MESSAGE_LIMITS.messagesMaxItems,
+  chunkMaxBytes: APPLICATION_SESSION_MESSAGE_LIMITS.chunkMaxBytes,
+} as const;
+
 export type CliExitCode = (typeof CLI_EXIT_CODES)[keyof typeof CLI_EXIT_CODES];
 
 export type CliSessionOperation =
@@ -64,6 +72,8 @@ export type CliSessionOperation =
   | "repositories"
   | "read"
   | "directories-chunk"
+  | "messages"
+  | "message-content-chunk"
   | "archive"
   | "unarchive"
   | "close"
@@ -129,6 +139,23 @@ export type CliSessionDirectoriesChunkCommand = CliTimeoutOption &
   Readonly<{
     identity: CliCommandIdentity<"directories-chunk">;
     sessionId: string;
+    offset: number;
+    maxBytes: number;
+  }>;
+
+export type CliSessionMessagesCommand = CliTimeoutOption &
+  Readonly<{
+    identity: CliCommandIdentity<"messages">;
+    sessionId: string;
+    cursor?: string;
+    limit: number;
+  }>;
+
+export type CliSessionMessageContentChunkCommand = CliTimeoutOption &
+  Readonly<{
+    identity: CliCommandIdentity<"message-content-chunk">;
+    sessionId: string;
+    messageId: string;
     offset: number;
     maxBytes: number;
   }>;
@@ -214,6 +241,8 @@ export type CliValidatedSessionCommand =
   | CliLocalRepositoriesCommand
   | CliSessionReadCommand
   | CliSessionDirectoriesChunkCommand
+  | CliSessionMessagesCommand
+  | CliSessionMessageContentChunkCommand
   | CliSessionWriteCommand<"archive">
   | CliSessionWriteCommand<"unarchive">
   | CliSessionCloseCommand
@@ -569,6 +598,37 @@ export type CliSessionDirectoriesChunkValue = Readonly<{
   }>;
 }>;
 
+type CliSessionMessageItemBase = Readonly<{
+  id: string;
+  ordinal: number;
+  role: "user" | "assistant";
+  contentByteLength: number;
+  createdAt: number;
+}>;
+
+export type CliSessionMessageItem = CliSessionMessageItemBase &
+  (
+    | Readonly<{ content: Readonly<{ state: "inline"; blocks: readonly TextContentBlock[] }> }>
+    | Readonly<{ content: Readonly<{ state: "chunked"; blocks?: never }> }>
+  );
+
+export type CliSessionMessagesValue = Readonly<{
+  sessionId: string;
+  items: readonly CliSessionMessageItem[];
+  nextCursor?: string;
+}>;
+
+type CliSessionMessageContentChunkBase = Readonly<{
+  sessionId: string;
+  messageId: string;
+  offset: number;
+  totalBytes: number;
+  chunk: Readonly<{ encoding: "base64"; byteLength: number; data: string }>;
+}>;
+
+export type CliSessionMessageContentChunkValue = CliSessionMessageContentChunkBase &
+  (Readonly<{ eof: true; nextOffset?: never }> | Readonly<{ eof: false; nextOffset: number }>);
+
 export type CliSessionTransitionValue<TLifecycleStatus extends "active" | "archived" | "closed"> = Readonly<{
   sessionId: string;
   lifecycleStatus: TLifecycleStatus;
@@ -903,6 +963,8 @@ type CliOperationContract = {
   repositories: Readonly<{ mode: "read"; value: CliLocalRepositoryListValue }>;
   read: Readonly<{ mode: "read"; value: CliSessionReadValue }>;
   "directories-chunk": Readonly<{ mode: "read"; value: CliSessionDirectoriesChunkValue }>;
+  messages: Readonly<{ mode: "read"; value: CliSessionMessagesValue }>;
+  "message-content-chunk": Readonly<{ mode: "read"; value: CliSessionMessageContentChunkValue }>;
   archive: Readonly<{ mode: "write"; value: CliSessionTransitionValue<"archived"> }>;
   unarchive: Readonly<{ mode: "write"; value: CliSessionTransitionValue<"active"> }>;
   close: Readonly<{ mode: "write"; value: CliSessionTransitionValue<"closed"> }>;
@@ -911,7 +973,12 @@ type CliOperationContract = {
 
 type CliOperationApplicationResponse<TOperation extends CliSessionOperation> = TOperation extends "delete"
   ? CliSessionDeleteResponse
-  : CliApplicationResponse<CliOperationContract[TOperation]["value"], CliOperationContract[TOperation]["mode"]>;
+  : TOperation extends "message-content-chunk"
+    ? Exclude<
+        CliApplicationResponse<CliOperationContract[TOperation]["value"], "read">,
+        Readonly<{ overallStatus: "partial_success" }>
+      >
+    : CliApplicationResponse<CliOperationContract[TOperation]["value"], CliOperationContract[TOperation]["mode"]>;
 
 export type CliOperationOutput<TOperation extends CliSessionOperation = CliSessionOperation> = {
   [TCurrent in TOperation]: Readonly<{

@@ -51,6 +51,18 @@ const commands = {
     offset: 4,
     maxBytes: 4,
   },
+  messages: {
+    identity: { namespace: "session", operation: "messages" },
+    sessionId: "session-1",
+    limit: 50,
+  },
+  "message-content-chunk": {
+    identity: { namespace: "session", operation: "message-content-chunk" },
+    sessionId: "session-1",
+    messageId: "message-1",
+    offset: 0,
+    maxBytes: 4,
+  },
   archive: {
     identity: { namespace: "session", operation: "archive" },
     sessionId: "session-1",
@@ -110,6 +122,26 @@ const invalidUnknownEffect: CliOperationOutput<"archive"> = {
     persistence: { status: "failed", effect: "unknown" },
   },
 };
+const invalidPartialMessageChunk: CliOperationOutput<"message-content-chunk"> = {
+  schemaVersion: CLI_SCHEMA_VERSION,
+  kind: "operation",
+  command: { namespace: "session", operation: "message-content-chunk" },
+  applicationResponse: {
+    // @ts-expect-error Message content chunks cannot report omission partial success
+    overallStatus: "partial_success",
+    value: {
+      sessionId: "session-1",
+      messageId: "message-1",
+      offset: 0,
+      totalBytes: 2,
+      chunk: { encoding: "base64", byteLength: 2, data: "AAA=" },
+      eof: true,
+    },
+    issues: [{ kind: "omission", code: "response_size_limit", message: "omitted", ordinal: 1 }],
+    persistence: { status: "read", effect: "none" },
+  },
+};
+void invalidPartialMessageChunk;
 const invalidArchiveLifecycle: CliOperationOutput<"archive"> = {
   schemaVersion: CLI_SCHEMA_VERSION,
   kind: "operation",

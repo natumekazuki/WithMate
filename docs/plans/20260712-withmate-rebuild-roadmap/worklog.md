@@ -129,3 +129,13 @@
 - Destination directoryの解決とidentity検証をexport helperへ移し、中断通知後も終了しないhelperを猶予時間後に強制終了するよう変更した。非協調helperを使うprocess-level testで、owner processがhard deadline内に終了することを確認した。
 - `payload_unavailable`をdiscriminated unionへ変更し、`pending`と`retryable: true`、それ以外のreasonと`retryable: false`だけをApplication型とCLI型で許可する。CLI projectorはraw responseの矛盾した組を両方向とも拒否する。
 - Node.js 24.18.0で全407 test、SQLite schema validator、typecheck、build、Run CLI process smokeを通した。既定shellのNode.js 22.22.1ではruntime guardが意図どおりfail-fastすることも確認した。
+
+## 2026-07-20: CP2 Session Message control plane
+
+- 初期Message content blockをexact keysの`{ type: "text", text: string }`へ固定し、dense array、10,000 block、UTF-8 4 MiB上限を共有validatorで検証する。normal Run admission、Run terminal、supplemental input、child startの全write siblingを同じ境界へ集約した。
+- `ApplicationSessionMessageOperations`へ`messages`と`messageContentChunk`を追加した。authorization後にSessionからinternal workspace scopeを解決し、Repositoryでworkspace / Session / Messageの組を再検証する。public pageはordinal順のopaque cursor、inline 64 KiB、bounded omissionを持ち、大きい本文とRunOutput / Provider payloadをhydrateしない。
+- `withmate session messages`と`withmate session message-content-chunk`を追加した。CLIはApplication responseを再検証し、chunkのactual bytesから`nextOffset`を確認してbase64へ一度だけ投影する。help / parse failureのruntime非起動、既存exit code、timeout / SIGINT、exactly-once shutdownを維持する。
+- 既存`smoke-cli-run.mjs`を拡張し、実DB上のuser / assistant Message、small-limit cursor、inline / chunked分離、base64長、actual offsetでの本文再構成、wrong scopeの`not_found`、RunOutput非混入、SQLite sidecar cleanupを確認した。
+- public contractは`src/shared/message-content.ts`、`src/shared/application-session-message-model.ts`、対応するtype / testを正本とする。ADR 006とD-006のhydrate分離、cursor、CLI ownershipの判断は変えていないため、新規ADRと設計文書の更新は行わない。
+- Node.js 24.18.0で全435 testとSQLite schema validator、runtime guard、format、module boundary / lint、typecheck、buildを通した。Session CLI、Run / Message CLI、compiled persistenceのprocess smokeもGreenで、SQLite sidecarが残らないことを確認した。
+- Session Message sliceは完了した。CP2全体はSession Run historyと統合Gateが残るため、引き続き進行中とする。

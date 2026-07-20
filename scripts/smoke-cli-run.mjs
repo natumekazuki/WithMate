@@ -18,8 +18,19 @@ const environment = isolatedEnvironment(appDataRoot);
 const databasePath = expectedDatabasePath(appDataRoot);
 const sessionCreateKey = "018f1f4e-7f0a-7000-8000-000000000501";
 const runAdmitKey = "018f1f4e-7f0a-7000-8000-000000000502";
+const wrongScopeSessionCreateKey = "018f1f4e-7f0a-7000-8000-000000000503";
+const interruptedRunAdmitKey = "018f1f4e-7f0a-7000-8000-000000000504";
 const runId = "run-smoke-1";
 const attemptId = "attempt-run-smoke-1";
+const interruptedRunId = "run-smoke-interrupted-1";
+const interruptedAttemptId = "attempt-run-smoke-interrupted-1";
+const interruptedMessageId = "message-run-smoke-interrupted-1";
+const userMessageId = "message-run-smoke-1";
+const assistantMessageId = "message-run-smoke-2";
+const userMessageBlocks = [{ type: "text", text: "observe me" }];
+const assistantMessageText = "a".repeat(70 * 1024);
+const assistantMessageBlocks = [{ type: "text", text: assistantMessageText }];
+const assistantMessageBytes = new TextEncoder().encode(JSON.stringify([{ text: assistantMessageText, type: "text" }]));
 const outputItemId = "output-run-smoke-1";
 const binaryOutputItemId = "output-run-smoke-binary-1";
 const outputSource = '{ "escaped": "\\u3042", "number": 1.0 }\n';
@@ -38,6 +49,12 @@ try {
   const invalid = invoke(["run", "status", "--session-id", "missing-run-id"], environment);
   assert.equal(invalid.status, 20);
   assert.equal(parseJsonOutput(invalid).kind, "usage_failure");
+  const messageHelp = invoke(["session", "messages", "--help"], environment);
+  assert.equal(messageHelp.status, 0);
+  assert.match(messageHelp.stdout, /^Usage: withmate session messages/u);
+  const invalidMessage = invoke(["session", "message-content-chunk", "--session-id", "missing"], environment);
+  assert.equal(invalidMessage.status, 20);
+  assert.equal(parseJsonOutput(invalidMessage).kind, "usage_failure");
   assert.equal(fs.existsSync(path.dirname(databasePath)), false, "Run help or parse failure started persistence");
 
   const created = runJson(
@@ -61,6 +78,27 @@ try {
     0,
   );
   const sessionId = created.applicationResponse.value.sessionId;
+  const wrongScopeCreated = runJson(
+    [
+      "session",
+      "create",
+      "--title",
+      "Wrong scope Session",
+      "--workspace",
+      workspacePath,
+      "--idempotency-key",
+      wrongScopeSessionCreateKey,
+      "--provider",
+      "codex",
+      "--default-character",
+      "character-1",
+      "--max-concurrent-child-runs",
+      "1",
+    ],
+    environment,
+    0,
+  );
+  const wrongScopeSessionId = wrongScopeCreated.applicationResponse.value.sessionId;
   const worker = new PersistenceWorkerClient({ databasePath, legacyDatabasePaths: [] });
   await worker.start();
   try {
@@ -72,7 +110,7 @@ try {
       sessionId,
       workspaceKey,
       idempotencyKey: runAdmitKey,
-      message: { id: "message-run-smoke-1", contentBlocks: [{ type: "text", text: "observe me" }] },
+      message: { id: userMessageId, contentBlocks: userMessageBlocks },
       run: {
         id: runId,
         executionSnapshot: {
@@ -175,24 +213,84 @@ try {
       terminalEvent: { id: "event-run-smoke-terminal", dedupeKey: "run-smoke-terminal" },
       preDispatchResolution: { kind: "not_applicable" },
       outcome: {
-        kind: "interrupted",
-        failureOrigin: "transport",
-        providerErrorCode: "must-not-leak",
-        errorSummary: "Provider dispatch was not started.",
+        kind: "completed",
+        finalAssistantMessage: { id: assistantMessageId, contentBlocks: assistantMessageBlocks },
       },
       outputs: [],
       childResult: null,
     });
     assert.equal(terminal.ok, true);
+
+    const interruptedAdmission = await writes.admitNormalRun({
+      sessionId,
+      workspaceKey,
+      idempotencyKey: interruptedRunAdmitKey,
+      message: { id: interruptedMessageId, contentBlocks: [{ type: "text", text: "interrupt me" }] },
+      run: {
+        id: interruptedRunId,
+        executionSnapshot: {
+          providerId: "codex",
+          model: "smoke-model",
+          reasoning: { effort: "medium" },
+          approval: { mode: "on-request" },
+          sandbox: { mode: "workspace-write" },
+          workspace: { key: workspaceKey },
+          character: null,
+        },
+      },
+      attemptId: interruptedAttemptId,
+      bindingIntent: { kind: "reuse", bindingId: "binding-run-smoke-1" },
+      dispatch: { providerRequest: { prompt: "interrupt me" }, providerIdempotencyKey: null },
+    });
+    assert.equal(interruptedAdmission.ok, true);
+    const interruptedDispatch = await writes.beginRunDispatch({
+      sessionId,
+      workspaceKey,
+      runId: interruptedRunId,
+      attemptId: interruptedAttemptId,
+      bindingId: "binding-run-smoke-1",
+      providerRequest: { prompt: "interrupt me" },
+      ephemeralOwnerToken: null,
+    });
+    assert.equal(interruptedDispatch.ok, true);
+    const interruptedDispatchResolution = await writes.resolveRunDispatch({
+      sessionId,
+      workspaceKey,
+      runId: interruptedRunId,
+      attemptId: interruptedAttemptId,
+      bindingId: "binding-run-smoke-1",
+      ephemeralOwnerToken: null,
+      outcome: { kind: "accepted", externalExecutionId: "execution-run-smoke-interrupted-1" },
+    });
+    assert.equal(interruptedDispatchResolution.ok, true);
+    const interruptedTerminal = await writes.completeRun({
+      sessionId,
+      workspaceKey,
+      runId: interruptedRunId,
+      attemptId: interruptedAttemptId,
+      terminalEvent: {
+        id: "event-run-smoke-interrupted-terminal",
+        dedupeKey: "run-smoke-interrupted-terminal",
+      },
+      preDispatchResolution: { kind: "not_applicable" },
+      outcome: {
+        kind: "interrupted",
+        failureOrigin: "transport",
+        providerErrorCode: "must-not-leak",
+        errorSummary: "Provider dispatch was interrupted.",
+      },
+      outputs: [],
+      childResult: null,
+    });
+    assert.equal(interruptedTerminal.ok, true);
   } finally {
     const shutdown = await worker.shutdown();
     assert.equal(shutdown.checkpoint, "completed");
   }
 
   const status = runJson(["run", "status", "--session-id", sessionId, "--run-id", runId], environment, 0);
-  assert.equal(status.applicationResponse.value.phase, "interrupted");
-  assert.equal(status.applicationResponse.value.failure.origin, "transport");
-  assert.equal(JSON.stringify(status).includes("must-not-leak"), false);
+  assert.equal(status.applicationResponse.value.phase, "completed");
+  assert.equal("failure" in status.applicationResponse.value, false);
 
   const events = runJson(
     ["run", "events", "--session-id", sessionId, "--run-id", runId, "--limit", "10"],
@@ -219,11 +317,27 @@ try {
     0,
   );
   assert.equal(follow.applicationResponse.value.reason, "terminal");
-  assert.equal(follow.applicationResponse.value.status.phase, "interrupted");
+  assert.equal(follow.applicationResponse.value.status.phase, "completed");
   assert.deepEqual(
     follow.applicationResponse.value.events.items.map((event) => event.kind),
     ["run_terminal"],
   );
+
+  const interruptedStatus = runJson(
+    ["run", "status", "--session-id", sessionId, "--run-id", interruptedRunId],
+    environment,
+    0,
+  );
+  assert.equal(interruptedStatus.applicationResponse.value.phase, "interrupted");
+  assert.equal(interruptedStatus.applicationResponse.value.failure.origin, "transport");
+  assert.equal(JSON.stringify(interruptedStatus).includes("must-not-leak"), false);
+  const interruptedFollow = runJson(
+    ["run", "follow", "--session-id", sessionId, "--run-id", interruptedRunId, "--wait-ms", "100", "--poll-ms", "25"],
+    environment,
+    0,
+  );
+  assert.equal(interruptedFollow.applicationResponse.value.status.phase, "interrupted");
+  assert.equal(JSON.stringify(interruptedFollow).includes("must-not-leak"), false);
 
   const outputCounts = runJson(["run", "output-counts", "--session-id", sessionId, "--run-id", runId], environment, 0);
   assert.equal(outputCounts.applicationResponse.value.totalCount, 2);
@@ -282,6 +396,102 @@ try {
     chunkOffset = value.nextOffset;
   }
   assert.deepEqual(Buffer.concat(chunks), Buffer.from(outputBytes));
+
+  const firstMessagePage = runJson(["session", "messages", "--session-id", sessionId, "--limit", "1"], environment, 0);
+  assert.equal(firstMessagePage.applicationResponse.value.items.length, 1);
+  assert.equal(firstMessagePage.applicationResponse.value.items[0].id, userMessageId);
+  assert.equal(firstMessagePage.applicationResponse.value.items[0].ordinal, 1);
+  assert.deepEqual(firstMessagePage.applicationResponse.value.items[0].content, {
+    state: "inline",
+    blocks: userMessageBlocks,
+  });
+  const messageCursor = firstMessagePage.applicationResponse.value.nextCursor;
+  assert.equal(typeof messageCursor, "string");
+  const secondMessagePage = runJson(
+    ["session", "messages", "--session-id", sessionId, "--cursor", messageCursor, "--limit", "1"],
+    environment,
+    0,
+  );
+  assert.equal(secondMessagePage.applicationResponse.value.items.length, 1);
+  assert.equal(secondMessagePage.applicationResponse.value.items[0].id, assistantMessageId);
+  assert.equal(secondMessagePage.applicationResponse.value.items[0].ordinal, 2);
+  assert.equal(secondMessagePage.applicationResponse.value.items[0].content.state, "chunked");
+  assert.equal("blocks" in secondMessagePage.applicationResponse.value.items[0].content, false);
+  assert.equal(
+    secondMessagePage.applicationResponse.value.items[0].contentByteLength,
+    assistantMessageBytes.byteLength,
+  );
+  assert.equal(JSON.stringify(secondMessagePage).includes("provider-output-must-not-leak"), false);
+  assert.equal(JSON.stringify(secondMessagePage).includes("smoke output"), false);
+  assert.equal(JSON.stringify(secondMessagePage).includes(assistantMessageText), false);
+
+  const messageChunks = [];
+  let messageOffset = 0;
+  for (;;) {
+    const messageChunk = runJson(
+      [
+        "session",
+        "message-content-chunk",
+        "--session-id",
+        sessionId,
+        "--message-id",
+        assistantMessageId,
+        "--offset",
+        String(messageOffset),
+        "--max-bytes",
+        String(32 * 1024),
+      ],
+      environment,
+      0,
+    );
+    const value = messageChunk.applicationResponse.value;
+    assert.equal(value.offset, messageOffset);
+    assert.equal(value.chunk.encoding, "base64");
+    const decoded = Buffer.from(value.chunk.data, "base64");
+    assert.equal(decoded.byteLength, value.chunk.byteLength);
+    messageChunks.push(decoded);
+    if (value.eof) break;
+    assert.equal(value.nextOffset, messageOffset + decoded.byteLength);
+    messageOffset = value.nextOffset;
+  }
+  assert.deepEqual(Buffer.concat(messageChunks), Buffer.from(assistantMessageBytes));
+
+  const missingMessage = runJson(
+    [
+      "session",
+      "message-content-chunk",
+      "--session-id",
+      sessionId,
+      "--message-id",
+      "missing-message",
+      "--offset",
+      "0",
+      "--max-bytes",
+      "1",
+    ],
+    environment,
+    22,
+  );
+  assert.equal(missingMessage.applicationResponse.error.code, "not_found");
+  const wrongScopeMessage = runJson(
+    [
+      "session",
+      "message-content-chunk",
+      "--session-id",
+      wrongScopeSessionId,
+      "--message-id",
+      assistantMessageId,
+      "--offset",
+      "0",
+      "--max-bytes",
+      "1",
+    ],
+    environment,
+    22,
+  );
+  assert.equal(wrongScopeMessage.applicationResponse.error.code, "not_found");
+  const wrongSessionMessage = runJson(["session", "messages", "--session-id", "missing-session"], environment, 22);
+  assert.equal(wrongSessionMessage.applicationResponse.error.code, "not_found");
 
   const binaryPreview = runJson(
     ["run", "output-preview", "--session-id", sessionId, "--run-id", runId, "--output-item-id", binaryOutputItemId],
@@ -379,11 +589,14 @@ try {
         "output-preview",
         "output-chunk",
         "output-export",
+        "messages",
+        "message-content-chunk",
       ],
       parseRuntimeIsolation: "verified",
       terminalDrain: "verified",
       providerMetadataProjection: "verified",
       runOutputControlPlane: "verified",
+      sessionMessageControlPlane: "verified",
       exportNoClobber: "verified",
       sqliteSidecars: "none",
     }),

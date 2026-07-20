@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import * as publicApi from "../src/main/index.js";
-import type { ApplicationSessionOperations } from "../src/main/index.js";
+import type { ApplicationSessionMessageOperations, ApplicationSessionOperations } from "../src/main/index.js";
+import type {
+  ApplicationSessionMessageContentChunk,
+  ApplicationSessionMessageItem,
+} from "../src/shared/application-session-message-model.js";
 import {
   type ApplicationCapacityExceededDetails,
   type ApplicationDomainError,
@@ -27,12 +31,62 @@ type PartialPersistenceIssue = Extract<Partial["issues"][number], Readonly<{ kin
 type DomainError = Extract<ApplicationDomainError, Readonly<{ code: ApplicationDomainErrorCode }>>;
 type CapacityError = Extract<DomainError, Readonly<{ code: "capacity_exceeded" }>>;
 type Operations = ApplicationSessionOperations<Authorization>;
+type MessageOperations = ApplicationSessionMessageOperations<Authorization>;
+type MessagePageResponse = Awaited<ReturnType<MessageOperations["messages"]>>;
+type MessageChunkResponse = Awaited<ReturnType<MessageOperations["messageContentChunk"]>>;
 type CreateResponse = Awaited<ReturnType<Operations["create"]>>;
 type ListResponse = Awaited<ReturnType<Operations["list"]>>;
 type DirectoriesChunkResponse = Awaited<ReturnType<Operations["readDirectoriesChunk"]>>;
 type DeleteResponse = Awaited<ReturnType<Operations["delete"]>>;
 type DeleteCleanupIssue = Extract<DeleteResponse, Readonly<{ overallStatus: "partial_success" }>>["issues"][number];
 const localRepositoryKey = `local-repository-v1-sha256-${"a".repeat(64)}`;
+
+const messageItemBase = {
+  id: "message-1",
+  ordinal: 1,
+  role: "user" as const,
+  contentByteLength: 2,
+  createdAt: 1,
+};
+// @ts-expect-error inline Message content requires blocks
+const invalidInlineMessage: ApplicationSessionMessageItem = { ...messageItemBase, content: { state: "inline" } };
+const invalidChunkedMessage: ApplicationSessionMessageItem = {
+  ...messageItemBase,
+  // @ts-expect-error chunked Message content cannot carry blocks
+  content: { state: "chunked", blocks: [] },
+};
+const invalidChunkedContentVariable = { state: "chunked" as const, blocks: [] };
+const invalidChunkedMessageVariable: ApplicationSessionMessageItem = {
+  ...messageItemBase,
+  // @ts-expect-error chunked Message content cannot carry blocks through a structural variable
+  content: invalidChunkedContentVariable,
+};
+// @ts-expect-error EOF Message chunks cannot expose a next offset
+const invalidEofMessageChunk: ApplicationSessionMessageContentChunk = {
+  sessionId: "session-1",
+  messageId: "message-1",
+  offset: 0,
+  totalBytes: 2,
+  byteLength: 2,
+  bytes: new ArrayBuffer(2),
+  eof: true,
+  nextOffset: 2,
+};
+// @ts-expect-error non-EOF Message chunks require a next offset
+const invalidProgressMessageChunk: ApplicationSessionMessageContentChunk = {
+  sessionId: "session-1",
+  messageId: "message-1",
+  offset: 0,
+  totalBytes: 2,
+  byteLength: 1,
+  bytes: new ArrayBuffer(1),
+  eof: false,
+};
+void invalidInlineMessage;
+void invalidChunkedMessage;
+void invalidChunkedMessageVariable;
+void invalidEofMessageChunk;
+void invalidProgressMessageChunk;
 
 const listItemBase = {
   id: "session-1",
@@ -378,4 +432,24 @@ test("public Application Service barrel exposes the transport-neutral Session co
   assert.equal(read, null);
   assert.equal(operations, null);
   assert.deepEqual(typeContract, [true, true, true, true, true, true, true, true, true, true, true, true]);
+});
+
+test("public Application Service barrel exposes the transport-neutral Session Message contract", () => {
+  const operations = null as MessageOperations | null;
+  type PageValue = Extract<MessagePageResponse, Readonly<{ overallStatus: "success" }>>["value"];
+  type ChunkValue = Extract<MessageChunkResponse, Readonly<{ overallStatus: "success" }>>["value"];
+  type InlineContent = Extract<PageValue["items"][number]["content"], Readonly<{ state: "inline" }>>;
+  type ChunkedContent = Extract<PageValue["items"][number]["content"], Readonly<{ state: "chunked" }>>;
+  type EofChunk = Extract<ChunkValue, Readonly<{ eof: true }>>;
+  type ProgressChunk = Extract<ChunkValue, Readonly<{ eof: false }>>;
+  const typeContract: readonly [
+    Equal<InlineContent["blocks"][number], Readonly<{ type: "text"; text: string }>>,
+    Equal<ChunkedContent["blocks"], undefined>,
+    Equal<EofChunk["nextOffset"], undefined>,
+    Equal<ProgressChunk["nextOffset"], number>,
+    Equal<ChunkValue["bytes"], ArrayBuffer>,
+  ] = [true, true, true, true, true];
+
+  assert.equal(operations, null);
+  assert.deepEqual(typeContract, [true, true, true, true, true]);
 });

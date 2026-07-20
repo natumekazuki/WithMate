@@ -7,6 +7,8 @@ import {
   snapshotLocalRepositoryMetadata,
 } from "../shared/session-metadata.js";
 import { MAX_SESSION_TREE_SIZE } from "../shared/session-limits.js";
+import { APPLICATION_SESSION_MESSAGE_LIMITS } from "../shared/application-session-message-model.js";
+import { snapshotMessageContentBlocks } from "../shared/message-content.js";
 import {
   CLI_EXIT_CODES,
   CLI_SCHEMA_VERSION,
@@ -50,6 +52,8 @@ const operationModes: Readonly<Record<CliSessionOperation, OperationMode>> = {
   repositories: "read",
   read: "read",
   "directories-chunk": "read",
+  messages: "read",
+  "message-content-chunk": "read",
   archive: "write",
   unarchive: "write",
   close: "write",
@@ -266,6 +270,7 @@ function projectApplicationResponse(
     const issues = projectIssues(response.issues);
     const projectedValue = projectOperationValue(command, response.value);
     if (issues.length === 0) malformed();
+    if (isCommandFor(command, "message-content-chunk")) malformed();
     if (isCommandFor(command, "delete")) {
       const deletion = record(projectedValue);
       if (
@@ -280,9 +285,10 @@ function projectApplicationResponse(
       }
     } else if (mode === "read") {
       if (persistence.status !== "read" || issues.some((issue) => issue.kind !== "omission")) malformed();
-      if (isCommandFor(command, "list") || isCommandFor(command, "repositories")) {
+      if (isCommandFor(command, "list") || isCommandFor(command, "repositories") || isCommandFor(command, "messages")) {
         const page = record(projectedValue);
         if (!Array.isArray(page.items) || page.items.length + issues.length > command.limit) malformed();
+        if (isCommandFor(command, "messages")) validateMessagePageOmissions(page.items, issues);
       }
     } else {
       if (
@@ -314,6 +320,16 @@ function projectOperationValue(command: CliValidatedSessionCommand, value: unkno
   if (isCommandFor(command, "read")) return projectReadValue(value, command.sessionId);
   if (isCommandFor(command, "directories-chunk")) {
     return projectDirectoriesChunkValue(value, command.sessionId, command.offset, command.maxBytes);
+  }
+  if (isCommandFor(command, "messages")) return projectMessagesValue(value, command);
+  if (isCommandFor(command, "message-content-chunk")) {
+    return projectMessageContentChunkValue(
+      value,
+      command.sessionId,
+      command.messageId,
+      command.offset,
+      command.maxBytes,
+    );
   }
   if (isCommandFor(command, "archive")) return projectTransitionValue(value, command.sessionId, "archived");
   if (isCommandFor(command, "unarchive")) return projectTransitionValue(value, command.sessionId, "active");
@@ -537,6 +553,115 @@ function projectDirectoriesChunkValue(
   };
 }
 
+function projectMessagesValue(value: unknown, command: CommandFor<"messages">): unknown {
+  const page = exactRecord(value, ["sessionId", "items", "nextCursor"]);
+  const sessionId = boundedString(page.sessionId);
+  const nextCursor = optionalBoundedString(page.nextCursor, CLI_SESSION_LIMITS.maxCursorLength);
+  const rawItems = snapshotDenseArray(page.items, command.limit);
+  if (
+    sessionId !== command.sessionId ||
+    (rawItems.length === 0 && nextCursor !== undefined) ||
+    (nextCursor !== undefined && nextCursor === command.cursor)
+  ) {
+    malformed();
+  }
+  let previousOrdinal = 0;
+  const items = rawItems.map((candidate) => {
+    const item = exactRecord(candidate, ["id", "ordinal", "role", "contentByteLength", "createdAt", "content"]);
+    const id = boundedString(item.id);
+    const ordinal = positiveInteger(item.ordinal);
+    const role = enumValue(item.role, ["user", "assistant"] as const);
+    const contentByteLength = positiveInteger(item.contentByteLength);
+    const createdAt = nonNegativeInteger(item.createdAt);
+    if (
+      ordinal <= previousOrdinal ||
+      contentByteLength < 2 ||
+      contentByteLength > APPLICATION_SESSION_MESSAGE_LIMITS.maxContentBytes
+    ) {
+      malformed();
+    }
+    previousOrdinal = ordinal;
+    const content = exactRecord(item.content, ["state", "blocks"]);
+    const base = { id, ordinal, role, contentByteLength, createdAt } as const;
+    if (content.state === "inline") {
+      if (contentByteLength > APPLICATION_SESSION_MESSAGE_LIMITS.inlineMaxBytes || !Object.hasOwn(content, "blocks")) {
+        malformed();
+      }
+      const blocks = snapshotMessageContentBlocks(content.blocks);
+      if (blocks === undefined || new TextEncoder().encode(JSON.stringify(blocks)).byteLength !== contentByteLength) {
+        malformed();
+      }
+      return { ...base, content: { state: "inline" as const, blocks } };
+    }
+    if (
+      content.state !== "chunked" ||
+      contentByteLength <= APPLICATION_SESSION_MESSAGE_LIMITS.inlineMaxBytes ||
+      Object.hasOwn(content, "blocks")
+    ) {
+      malformed();
+    }
+    return { ...base, content: { state: "chunked" as const } };
+  });
+  return { sessionId, items, ...(nextCursor === undefined ? {} : { nextCursor }) };
+}
+
+function projectMessageContentChunkValue(
+  value: unknown,
+  expectedSessionId: string,
+  expectedMessageId: string,
+  expectedOffset: number,
+  requestedMaxBytes: number,
+): unknown {
+  const valueChunk = exactRecord(value, [
+    "sessionId",
+    "messageId",
+    "offset",
+    "totalBytes",
+    "byteLength",
+    "bytes",
+    "eof",
+    "nextOffset",
+  ]);
+  const sessionId = boundedString(valueChunk.sessionId);
+  const messageId = boundedString(valueChunk.messageId);
+  const offset = nonNegativeInteger(valueChunk.offset);
+  const totalBytes = positiveInteger(valueChunk.totalBytes);
+  const byteLength = nonNegativeInteger(valueChunk.byteLength);
+  const eof = valueChunk.eof;
+  const bytes = valueChunk.bytes;
+  if (typeof eof !== "boolean" || !(bytes instanceof ArrayBuffer)) malformed();
+  const actualByteLength = bytes.byteLength;
+  const endOffset = offset + actualByteLength;
+  const hasNextOffset = Object.hasOwn(valueChunk, "nextOffset");
+  const nextOffset = hasNextOffset ? nonNegativeInteger(valueChunk.nextOffset) : undefined;
+  if (
+    sessionId !== expectedSessionId ||
+    messageId !== expectedMessageId ||
+    offset !== expectedOffset ||
+    byteLength !== actualByteLength ||
+    actualByteLength > requestedMaxBytes ||
+    totalBytes < 2 ||
+    totalBytes > APPLICATION_SESSION_MESSAGE_LIMITS.maxContentBytes ||
+    !Number.isSafeInteger(endOffset) ||
+    (eof ? hasNextOffset : nextOffset !== endOffset) ||
+    (offset < totalBytes
+      ? actualByteLength === 0 || endOffset > totalBytes || eof !== (endOffset === totalBytes)
+      : actualByteLength !== 0 || !eof)
+  ) {
+    malformed();
+  }
+  const data = Buffer.from(bytes).toString("base64");
+  if (Buffer.from(data, "base64").byteLength !== actualByteLength) malformed();
+  const base = {
+    sessionId,
+    messageId,
+    offset,
+    totalBytes,
+    chunk: { encoding: "base64" as const, byteLength: actualByteLength, data },
+  } as const;
+  return eof ? { ...base, eof: true } : { ...base, eof: false, nextOffset: endOffset };
+}
+
 function projectTransitionValue(
   value: unknown,
   expectedSessionId: string,
@@ -727,13 +852,25 @@ function projectIssues(value: unknown): readonly CliApplicationIssue[] {
   return projectIssuesWithLimit(value, CLI_SESSION_LIMITS.listMaxItems);
 }
 
+function validateMessagePageOmissions(items: readonly unknown[], issues: readonly CliApplicationIssue[]): void {
+  const itemOrdinals = new Set<number>();
+  for (const candidate of items) itemOrdinals.add(positiveInteger(record(candidate).ordinal));
+  let previousOmissionOrdinal = 0;
+  for (const issue of issues) {
+    if (issue.kind !== "omission") malformed();
+    if (issue.ordinal === undefined) continue;
+    if (issue.ordinal <= previousOmissionOrdinal || itemOrdinals.has(issue.ordinal)) malformed();
+    previousOmissionOrdinal = issue.ordinal;
+  }
+}
+
 function projectIssuesWithLimit(value: unknown, maxIssues: number): readonly CliApplicationIssue[] {
   return snapshotDenseArray(value, maxIssues).map((candidate) => {
     const issue = record(candidate);
     if (issue.kind === "omission") {
       if (issue.code !== "response_size_limit") malformed();
       const message = boundedString(issue.message, 8_192);
-      const ordinal = issue.ordinal === undefined ? undefined : nonNegativeInteger(issue.ordinal);
+      const ordinal = issue.ordinal === undefined ? undefined : positiveInteger(issue.ordinal);
       return ordinal === undefined
         ? { kind: "omission", code: "response_size_limit", message }
         : { kind: "omission", code: "response_size_limit", message, ordinal };
@@ -790,14 +927,18 @@ function projectRunOutputPublication(value: unknown): CliRunOutputPublication {
 
 function snapshotDenseArray(value: unknown, maxLength: number): readonly unknown[] {
   if (!Array.isArray(value)) malformed();
+  if (Object.getPrototypeOf(value) !== Array.prototype) malformed();
   const length = value.length;
   if (length > maxLength) malformed();
+  const allowedKeys = new Set(["length", ...Array.from({ length }, (_unused, index) => String(index))]);
+  if (Reflect.ownKeys(value).some((key) => typeof key !== "string" || !allowedKeys.has(key))) malformed();
   const snapshot: unknown[] = [];
   for (let index = 0; index < length; index += 1) {
-    if (value.length !== length || !Object.hasOwn(value, index)) malformed();
-    const item = value[index];
-    if (value.length !== length) malformed();
-    snapshot.push(item);
+    const descriptor = Object.getOwnPropertyDescriptor(value, index);
+    if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor) || value.length !== length) {
+      malformed();
+    }
+    snapshot.push(descriptor.value);
   }
   return snapshot;
 }
@@ -870,7 +1011,22 @@ function runtimeProjectionFailure(command: CliCommandIdentity): CliRuntimeFailur
 
 function record(value: unknown): Readonly<Record<string, unknown>> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) malformed();
-  return value as Readonly<Record<string, unknown>>;
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  if (prototype !== Object.prototype && prototype !== null) malformed();
+  const entries: [string, unknown][] = [];
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") malformed();
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) malformed();
+    entries.push([key, descriptor.value]);
+  }
+  return Object.fromEntries(entries);
+}
+
+function exactRecord(value: unknown, allowedKeys: readonly string[]): Readonly<Record<string, unknown>> {
+  const projected = record(value);
+  if (Object.keys(projected).some((key) => !allowedKeys.includes(key))) malformed();
+  return projected;
 }
 
 function boundedString(value: unknown, maxLength: number = CLI_SESSION_LIMITS.maxIdentifierLength): string {

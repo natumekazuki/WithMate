@@ -24,6 +24,9 @@ Operations:
   repositories         List local Repositories registered by Sessions
   read                 Read a Session by Session ID
   directories-chunk    Read a bounded chunk of additional-directory configuration
+  messages             Read a bounded Message timeline page
+  message-content-chunk
+                       Read a bounded raw Message content chunk
   archive              Archive a Session
   unarchive            Unarchive a Session
   close                Close an active or archived Session
@@ -108,6 +111,29 @@ Optional options:
 
 Required options:
   --session-id <session-id>
+  --offset <non-negative-integer>
+  --max-bytes <1..262144>
+
+Optional options:
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
+  messages: `Usage: withmate session messages [options]
+
+Required options:
+  --session-id <session-id>
+
+Optional options:
+  --cursor <opaque-cursor>
+  --limit <1..100>    Default: 50
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
+  "message-content-chunk": `Usage: withmate session message-content-chunk [options]
+
+Required options:
+  --session-id <session-id>
+  --message-id <message-id>
   --offset <non-negative-integer>
   --max-bytes <1..262144>
 

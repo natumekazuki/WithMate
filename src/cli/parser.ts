@@ -11,6 +11,7 @@ import {
   CLI_RUN_OUTPUT_CATEGORIES,
   CLI_SCHEMA_VERSION,
   CLI_SESSION_LIMITS,
+  CLI_SESSION_MESSAGE_LIMITS,
   type CliCommandIdentity,
   type CliParseResult,
   type CliRunOperation,
@@ -43,6 +44,8 @@ const sessionOperations = new Set<CliSessionOperation>([
   "repositories",
   "read",
   "directories-chunk",
+  "messages",
+  "message-content-chunk",
   "archive",
   "unarchive",
   "close",
@@ -124,6 +127,10 @@ function parseSessionCommand(
       return parseRead(identity as CliCommandIdentity<"read">, argv);
     case "directories-chunk":
       return parseDirectoriesChunk(identity as CliCommandIdentity<"directories-chunk">, argv);
+    case "messages":
+      return parseMessages(identity as CliCommandIdentity<"messages">, argv);
+    case "message-content-chunk":
+      return parseMessageContentChunk(identity as CliCommandIdentity<"message-content-chunk">, argv);
     case "archive":
       return parseWrite(identity as CliCommandIdentity<"archive">, argv);
     case "unarchive":
@@ -466,6 +473,51 @@ function parseDirectoriesChunk(
     command: {
       identity,
       sessionId: parsed.values["--session-id"] as string,
+      offset: parsed.values["--offset"] as number,
+      maxBytes: parsed.values["--max-bytes"] as number,
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
+function parseMessages(identity: CliCommandIdentity<"messages">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--cursor": option((value) => parseBoundedString(value, CLI_SESSION_LIMITS.maxCursorLength)),
+    "--limit": option((value) => parseInteger(value, 1, CLI_SESSION_MESSAGE_LIMITS.messagesMaxItems)),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      ...(parsed.values["--cursor"] === undefined ? {} : { cursor: parsed.values["--cursor"] as string }),
+      limit: (parsed.values["--limit"] as number | undefined) ?? CLI_SESSION_MESSAGE_LIMITS.messagesDefaultItems,
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
+function parseMessageContentChunk(
+  identity: CliCommandIdentity<"message-content-chunk">,
+  argv: readonly string[],
+): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--message-id": requiredOption(parseIdentifier),
+    "--offset": requiredOption((value) => parseInteger(value, 0, Number.MAX_SAFE_INTEGER)),
+    "--max-bytes": requiredOption((value) => parseInteger(value, 1, CLI_SESSION_MESSAGE_LIMITS.chunkMaxBytes)),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      messageId: parsed.values["--message-id"] as string,
       offset: parsed.values["--offset"] as number,
       maxBytes: parsed.values["--max-bytes"] as number,
       ...optionalTimeout(parsed.values),
