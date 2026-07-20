@@ -7,6 +7,7 @@ import { buildCharacterThemeStyle } from "../theme-utils.js";
 import { CharacterAvatar } from "../ui-utils.js";
 import type { LaunchWorkspace } from "./home-launch-projection.js";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
+import { DEFAULT_CHARACTER_THEME_COLORS } from "../character-state.js";
 
 export type HomeLaunchDialogProps = {
   open: boolean;
@@ -18,6 +19,7 @@ export type HomeLaunchDialogProps = {
   selectedLaunchProviderId: string | null;
   characterOptions: CharacterCatalogEntry[];
   selectedCharacterId: string | null;
+  randomCharacterSelected: boolean;
   charactersLoaded: boolean;
   canStartSession: boolean;
   launchFeedback: string;
@@ -28,6 +30,7 @@ export type HomeLaunchDialogProps = {
   onBrowseWorkspace: () => void;
   onSelectProvider: (providerId: string) => void;
   onSelectCharacter: (characterId: string) => void;
+  onSelectRandomCharacter: () => void;
   onStartSession: (mode: "session" | "companion") => void;
 };
 
@@ -41,6 +44,7 @@ export function HomeLaunchDialog({
   selectedLaunchProviderId,
   characterOptions,
   selectedCharacterId,
+  randomCharacterSelected,
   charactersLoaded,
   canStartSession,
   launchFeedback,
@@ -51,6 +55,7 @@ export function HomeLaunchDialog({
   onBrowseWorkspace,
   onSelectProvider,
   onSelectCharacter,
+  onSelectRandomCharacter,
   onStartSession,
 }: HomeLaunchDialogProps) {
   const titleInputRef = useRef<HTMLInputElement | null>(null);
@@ -173,6 +178,21 @@ export function HomeLaunchDialog({
                 focusRovingItemByKey(event, { orientation: "vertical", activateOnFocus: true });
               }}
             >
+              <button
+                className={`launch-character-option${randomCharacterSelected ? " selected" : ""}`}
+                type="button"
+                role="radio"
+                aria-checked={randomCharacterSelected}
+                tabIndex={randomCharacterSelected ? 0 : -1}
+                style={buildCharacterThemeStyle(DEFAULT_CHARACTER_THEME_COLORS)}
+                onClick={onSelectRandomCharacter}
+              >
+                <span className="character-avatar tiny" aria-hidden="true">R</span>
+                <span className="launch-character-copy">
+                  <strong>ランダム</strong>
+                  <span>最近使っていないCharacterを優先</span>
+                </span>
+              </button>
               {characterOptions.map((character) => (
                 <button
                   key={character.id}

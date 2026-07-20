@@ -52,6 +52,7 @@ describe("home-launch-handlers", () => {
       characterEntries: [createCharacterEntry({ id: "old", name: "Old" })],
       selectedLaunchProviderId: "codex",
       sessions: [],
+      sessionSummariesLoadStatus: "loaded",
       refreshCharacterEntries: async () => {
         refreshCount += 1;
         return latestEntries;
@@ -75,6 +76,13 @@ describe("home-launch-handlers", () => {
     assert.equal(refreshCount, 1);
     assert.equal(draft.open, true);
     assert.equal(draft.characterId, "new-default");
+    assert.equal(draft.characterSelectionMode, "specific");
     assert.deepEqual(feedback, [""]);
+
+    handlers.onSelectRandomLaunchCharacter();
+    assert.equal(draft.characterSelectionMode, "random");
+
+    handlers.onSelectLaunchCharacter("new-default");
+    assert.equal(draft.characterSelectionMode, "specific");
   });
 });

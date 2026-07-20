@@ -4,6 +4,7 @@ import type { CreateSessionInput, SessionSummary } from "../session-state.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { CreateCompanionSessionInput, CompanionSession } from "../companion-state.js";
 import type { ModelCatalogProvider } from "../model-catalog.js";
+import type { SessionSummariesLoadStatus } from "../session-summary-subscription.js";
 import type { HomeLaunchDraft } from "./home-launch-state.js";
 import {
   closeLaunchDraft,
@@ -12,6 +13,7 @@ import {
   setLaunchWorkspaceFromPath,
   updateLaunchDraftForCharacterSelection,
   updateLaunchDraftForProviderSelection,
+  updateLaunchDraftForRandomCharacterSelection,
 } from "./home-launch-state.js";
 import { startHomeLaunch } from "./home-launch-actions.js";
 
@@ -24,6 +26,7 @@ type HomeLaunchHandlersContext = {
   characterEntries: readonly CharacterCatalogEntry[];
   selectedLaunchProviderId: string | null;
   sessions: readonly SessionSummary[];
+  sessionSummariesLoadStatus: SessionSummariesLoadStatus;
   refreshCharacterEntries: () => Promise<readonly CharacterCatalogEntry[]>;
   setLaunchFeedback: (message: string) => void;
   setLaunchStarting: (launchStarting: boolean) => void;
@@ -43,6 +46,7 @@ export type HomeLaunchHandlers = {
   onCloseLaunchDialog: () => void;
   onSelectLaunchProvider: (providerId: string) => void;
   onSelectLaunchCharacter: (characterId: string) => void;
+  onSelectRandomLaunchCharacter: () => void;
   onChangeMode: (mode: HomeLaunchDraft["mode"]) => void;
   onChangeTitle: (value: string) => void;
   onStartSession: (mode?: HomeLaunchDraft["mode"]) => void;
@@ -57,6 +61,7 @@ export function buildHomeLaunchHandlers({
   characterEntries,
   selectedLaunchProviderId,
   sessions,
+  sessionSummariesLoadStatus,
   refreshCharacterEntries,
   setLaunchFeedback,
   setLaunchStarting,
@@ -116,6 +121,7 @@ export function buildHomeLaunchHandlers({
       selectedProviderId: selectedLaunchProviderId,
       characterEntries,
       sessions,
+      sessionSummariesLoadStatus,
       createSession,
       createCompanionSession,
       openSessionWindow,
@@ -136,6 +142,10 @@ export function buildHomeLaunchHandlers({
     onSelectLaunchCharacter: (characterId) => {
       setLaunchFeedback("");
       setLaunchDraft((current) => updateLaunchDraftForCharacterSelection(current, characterId));
+    },
+    onSelectRandomLaunchCharacter: () => {
+      setLaunchFeedback("");
+      setLaunchDraft((current) => updateLaunchDraftForRandomCharacterSelection(current));
     },
     onChangeMode: (mode) => {
       setLaunchFeedback("");

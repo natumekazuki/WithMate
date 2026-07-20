@@ -27,7 +27,7 @@ WithMate では、`Recent Sessions` が 2 の `resume` 側を担う。
 
 - 作業ディレクトリの選択
 - session title の入力
-- 現在選択中の Character の確認
+- 現在選択中の Character、またはランダム選択の確認
 - Provider の確認
 - approval mode は provider-neutral 3 mode の正本を使い、New Session の default は `safety` で初期化する
 - 新規セッション開始
@@ -132,6 +132,9 @@ React モックでは次の形がよい。
 - provider は launch dialog 内で chip 選択し、enabled provider が 0 件なら start できない
 - `Character` は card で切り替える
 - `Character` は portrait 付きカードで切り替える
+- Character一覧の先頭にランダム選択カードを置く。ランダム選択時は、通常Sessionの最終利用順を使い、最近使っていないactive Characterほど高い重みで抽選する
+- Character利用履歴がない場合はactive Characterを均等に抽選し、active Characterが0件なら既存のneutral fallbackを使う
+- Session履歴の読み込み中または取得失敗時はランダム選択で開始せず、取得成功した0件と区別する
 - `Character` には検索入力があり、`name / description` の部分一致で絞り込める
 - launch dialog 内の character card も Home と同じ theme rule を使う
   - background = character `main`
@@ -149,10 +152,6 @@ React モックでは次の形がよい。
 
 - 将来的にはアプリ設定で `workspace root directory` を持てるようにし、その配下へ UUID ディレクトリを自動作成して空 workspace から session を起動できるようにする
 - この方式は `既存ディレクトリを選ぶ` 導線とは別扱いにし、`New Session` dialog の別 action か `Settings` 由来の launch preset として扱う
-
-## Open Questions
-
-- Character は固定選択にするか、launch 時に変えられるようにするか
 
 ## Next Step
 

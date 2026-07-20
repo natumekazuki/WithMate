@@ -517,6 +517,7 @@ describe("HomeLaunchDialog", () => {
     mode: "session" | "companion",
     options = characterOptions,
     charactersLoaded = true,
+    randomCharacterSelected = false,
   ) => renderToStaticMarkup(
     <HomeLaunchDialog
       open={true}
@@ -527,7 +528,8 @@ describe("HomeLaunchDialog", () => {
       enabledLaunchProviders={[{ id: "codex", label: "Codex" }]}
       selectedLaunchProviderId="codex"
       characterOptions={options}
-      selectedCharacterId={options[0]?.id ?? null}
+      selectedCharacterId={randomCharacterSelected ? null : options[0]?.id ?? null}
+      randomCharacterSelected={randomCharacterSelected}
       charactersLoaded={charactersLoaded}
       canStartSession={true}
       launchFeedback=""
@@ -538,6 +540,7 @@ describe("HomeLaunchDialog", () => {
       onBrowseWorkspace={noOp}
       onSelectProvider={noOp}
       onSelectCharacter={noOp}
+      onSelectRandomCharacter={noOp}
       onStartSession={noOp}
     />,
   );
@@ -549,6 +552,22 @@ describe("HomeLaunchDialog", () => {
     assert.ok(html.includes("Mia"));
     assert.ok(html.includes("Default"));
     assert.ok(html.includes("Default character"));
+    assert.ok(html.includes("ランダム"));
+    assert.ok(html.indexOf("ランダム") < html.indexOf("Mia"));
+    assert.ok(html.includes("最近使っていないCharacterを優先"));
+  });
+
+  it("random選択時は一覧先頭のランダムcardだけを選択状態にする", () => {
+    const html = renderHomeLaunchDialog("session", characterOptions, true, true);
+
+    assert.match(
+      html,
+      /<button class="launch-character-option selected"[^>]*aria-checked="true"[^>]*>(?:(?!<\/button>).)*ランダム/s,
+    );
+    assert.doesNotMatch(
+      html,
+      /<button class="launch-character-option selected"[^>]*>(?:(?!<\/button>).)*Mia/s,
+    );
   });
 
   it("companion mode でも Character selector が含まれる", () => {

@@ -2,7 +2,10 @@ import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../model-catalog.js";
 import { getProviderAppSettings, type AppSettings } from "../provider-settings-state.js";
 import { resolveSelectedLaunchProviderId } from "../launch/launch-provider-selection.js";
-import { resolveLaunchCharacterId } from "./home-launch-state.js";
+import {
+  resolveLaunchCharacterId,
+  type LaunchCharacterSelectionMode,
+} from "./home-launch-state.js";
 
 export type LaunchWorkspace = {
   label: string;
@@ -15,6 +18,7 @@ export type HomeLaunchProjection = {
   selectedLaunchProvider: ModelCatalogProvider | null;
   characterOptions: CharacterCatalogEntry[];
   selectedCharacter: CharacterCatalogEntry | null;
+  randomCharacterSelected: boolean;
   charactersLoaded: boolean;
   launchWorkspacePathLabel: string;
   canStartSession: boolean;
@@ -38,6 +42,7 @@ export function buildHomeLaunchProjection({
   launchTitle,
   launchWorkspace,
   launchCharacterId,
+  launchCharacterSelectionMode = "specific",
   characterEntries = [],
   charactersLoaded = true,
   appSettings,
@@ -48,6 +53,7 @@ export function buildHomeLaunchProjection({
   launchTitle: string;
   launchWorkspace: LaunchWorkspace | null;
   launchCharacterId?: string;
+  launchCharacterSelectionMode?: LaunchCharacterSelectionMode;
   characterEntries?: readonly CharacterCatalogEntry[];
   charactersLoaded?: boolean;
   appSettings: AppSettings;
@@ -61,14 +67,16 @@ export function buildHomeLaunchProjection({
     enabledLaunchProviders.find((provider) => provider.id === selectedLaunchProviderId) ?? null;
   const activeCharacterEntries = characterEntries.filter((character) => character.state === "active");
   const selectedCharacterId = resolveLaunchCharacterId(activeCharacterEntries, launchCharacterId);
-  const selectedCharacter =
-    activeCharacterEntries.find((character) => character.id === selectedCharacterId) ?? null;
+  const selectedCharacter = launchCharacterSelectionMode === "random"
+    ? null
+    : activeCharacterEntries.find((character) => character.id === selectedCharacterId) ?? null;
 
   return {
     enabledLaunchProviders,
     selectedLaunchProvider,
     characterOptions: [...activeCharacterEntries],
     selectedCharacter,
+    randomCharacterSelected: launchCharacterSelectionMode === "random",
     charactersLoaded,
     launchWorkspacePathLabel: launchWorkspace ? launchWorkspace.path : "workspace",
     canStartSession: charactersLoaded && !!launchTitle.trim() && !!launchWorkspace && !!selectedLaunchProvider,
