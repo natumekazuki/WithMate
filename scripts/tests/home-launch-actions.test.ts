@@ -44,18 +44,32 @@ function createReadyDraft(mode: HomeLaunchDraft["mode"] = "session"): HomeLaunch
 }
 
 function createCharacterEntries(): CharacterCatalogEntry[] {
-  return [{
-    id: "mia",
-    name: "Mia",
-    description: "Character profile",
-    iconFilePath: "character.png",
-    theme: { main: "#222222", sub: "#eeeeee" },
-    state: "active",
-    isDefault: true,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    archivedAt: null,
-  }];
+  return [
+    {
+      id: "mia",
+      name: "Mia",
+      description: "Character profile",
+      iconFilePath: "character.png",
+      theme: { main: "#222222", sub: "#eeeeee" },
+      state: "active",
+      isDefault: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+    },
+    {
+      id: "noa",
+      name: "Noa",
+      description: "Second character",
+      iconFilePath: "noa.png",
+      theme: { main: "#333333", sub: "#dddddd" },
+      state: "active",
+      isDefault: false,
+      createdAt: "2026-01-02T00:00:00.000Z",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+      archivedAt: null,
+    },
+  ];
 }
 
 function createCompanionSession(): CompanionSession {
@@ -94,7 +108,7 @@ function createCompanionSession(): CompanionSession {
   };
 }
 
-function createSessionSummary(): SessionSummary {
+function createSessionSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
   return {
     id: "session-1",
     taskTitle: "Task",
@@ -120,6 +134,7 @@ function createSessionSummary(): SessionSummary {
     customAgentName: "",
     allowedAdditionalDirectories: [],
     threadId: "",
+    ...overrides,
   };
 }
 
@@ -150,6 +165,7 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
       characterEntries: createCharacterEntries(),
       selectedProviderId: "codex",
       sessions: [],
+      sessionSummariesLoadStatus: "loaded" as const,
       createSession: async () => createSessionSummary(),
       createCompanionSession: async () => createCompanionSession(),
       openSessionWindow: async (sessionId: string) => {
@@ -218,9 +234,92 @@ describe("home-launch-actions", () => {
     assert.deepEqual(harness.openedSessions, ["session-1"]);
   });
 
+  it("random選択では最近使っていないCharacterを重み付きで選んでsessionを作成する", async () => {
+    let capturedCharacterId = "";
+    const harness = createStartHomeLaunchHarness({
+      draft: {
+        ...createReadyDraft(),
+        characterSelectionMode: "random",
+      },
+      sessions: [createSessionSummary({ id: "recent-mia", characterId: "mia" })],
+      random: () => 0.4,
+      createSession: async (input) => {
+        capturedCharacterId = input.characterId;
+        return createSessionSummary();
+      },
+    });
+
+    await startHomeLaunch(harness.input);
+
+    assert.equal(capturedCharacterId, "noa");
+    assert.deepEqual(harness.openedSessions, ["session-1"]);
+  });
+
+  it("履歴の読み込み中はrandom選択のsessionを開始しない", async () => {
+    let createCount = 0;
+    const harness = createStartHomeLaunchHarness({
+      draft: {
+        ...createReadyDraft(),
+        characterSelectionMode: "random",
+      },
+      sessionSummariesLoadStatus: "loading",
+      createSession: async () => {
+        createCount += 1;
+        return createSessionSummary();
+      },
+    });
+
+    await startHomeLaunch(harness.input);
+
+    assert.equal(createCount, 0);
+    assert.deepEqual(harness.feedback, ["Session 履歴を読み込んでるよ。完了してからもう一度開始してね。"]);
+    assert.deepEqual(harness.startingStates, []);
+  });
+
+  it("履歴の読み込み失敗後はrandom選択のsessionを開始しない", async () => {
+    let createCount = 0;
+    const harness = createStartHomeLaunchHarness({
+      draft: {
+        ...createReadyDraft(),
+        characterSelectionMode: "random",
+      },
+      sessionSummariesLoadStatus: "error",
+      createSession: async () => {
+        createCount += 1;
+        return createSessionSummary();
+      },
+    });
+
+    await startHomeLaunch(harness.input);
+
+    assert.equal(createCount, 0);
+    assert.deepEqual(harness.feedback, ["Session 履歴を読み込めていないため、ランダム選択を開始できないよ。"]);
+    assert.deepEqual(harness.startingStates, []);
+  });
+
+  it("履歴の読み込み失敗後でも固定Characterのsessionは開始できる", async () => {
+    let capturedCharacterId = "";
+    const harness = createStartHomeLaunchHarness({
+      sessionSummariesLoadStatus: "error",
+      createSession: async (input) => {
+        capturedCharacterId = input.characterId;
+        return createSessionSummary();
+      },
+    });
+
+    await startHomeLaunch(harness.input);
+
+    assert.equal(capturedCharacterId, "mia");
+    assert.deepEqual(harness.openedSessions, ["session-1"]);
+  });
+
   it("Mate 未作成でも neutral character で session を作成する", async () => {
     let capturedCharacterId = "";
     const harness = createStartHomeLaunchHarness({
+      draft: {
+        ...createReadyDraft(),
+        characterSelectionMode: "random",
+      },
       mateState: "not_created",
       mateProfile: null,
       characterEntries: [],
@@ -255,6 +354,29 @@ describe("home-launch-actions", () => {
     assert.deepEqual(harness.feedback, ["Companion を開始してるよ..."]);
     assert.deepEqual(harness.startingStates, [true, false]);
     assert.equal(harness.closeCount, 1);
+    assert.deepEqual(harness.companionSummaries, ["companion-1"]);
+    assert.deepEqual(harness.openedCompanionSessions, ["companion-1"]);
+  });
+
+  it("random選択では最近使っていないCharacterを重み付きで選んでcompanionを作成する", async () => {
+    let capturedCharacterId = "";
+    const harness = createStartHomeLaunchHarness({
+      draft: {
+        ...createReadyDraft("companion"),
+        characterSelectionMode: "random",
+      },
+      requestedMode: "companion",
+      sessions: [createSessionSummary({ id: "recent-mia", characterId: "mia" })],
+      random: () => 0.4,
+      createCompanionSession: async (input) => {
+        capturedCharacterId = input.characterId;
+        return createCompanionSession();
+      },
+    });
+
+    await startHomeLaunch(harness.input);
+
+    assert.equal(capturedCharacterId, "noa");
     assert.deepEqual(harness.companionSummaries, ["companion-1"]);
     assert.deepEqual(harness.openedCompanionSessions, ["companion-1"]);
   });

@@ -30,12 +30,17 @@ type LastUsedSessionSelectionSource = Pick<
   "provider" | "model" | "reasoningEffort" | "customAgentName"
 >;
 
+type CharacterUsageSessionSource = Pick<SessionSummary, "characterId" | "sessionKind">;
+
+export type LaunchCharacterSelectionMode = "specific" | "random";
+
 export type HomeLaunchDraft = {
   open: boolean;
   mode: "session" | "companion";
   title: string;
   workspace: LaunchWorkspace | null;
   providerId: string;
+  characterSelectionMode: LaunchCharacterSelectionMode;
   characterId: string;
   model: string;
   reasoningEffort: ModelReasoningEffort;
@@ -50,6 +55,7 @@ export function createClosedLaunchDraft(): HomeLaunchDraft {
     title: "",
     workspace: null,
     providerId: "",
+    characterSelectionMode: "specific",
     characterId: "",
     model: DEFAULT_MODEL_ID,
     reasoningEffort: DEFAULT_REASONING_EFFORT,
@@ -71,6 +77,7 @@ export function openLaunchDraft(
     title: "",
     workspace: null,
     providerId: defaultProviderId,
+    characterSelectionMode: "specific",
     characterId: defaultCharacterId,
     model: DEFAULT_MODEL_ID,
     reasoningEffort: DEFAULT_REASONING_EFFORT,
@@ -85,18 +92,22 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
   selectedProviderId,
   lastUsedSelection,
   characterEntries = [],
+  sessions = [],
+  random = Math.random,
 }: {
   draft: HomeLaunchDraft;
   mateProfile: MateProfile | null;
   selectedProviderId: string | null;
   lastUsedSelection?: Pick<CreateSessionInput, "model" | "reasoningEffort" | "customAgentName"> | null;
   characterEntries?: readonly CharacterCatalogEntry[];
+  sessions?: readonly CharacterUsageSessionSource[];
+  random?: () => number;
 }): CreateCompanionSessionInput | null {
   const normalizedTitle = draft.title.trim();
   if (!normalizedTitle || !draft.workspace || !selectedProviderId) {
     return null;
   }
-  const characterSnapshot = buildLaunchCharacterSnapshot(characterEntries, draft.characterId);
+  const characterSnapshot = buildLaunchCharacterSnapshot(characterEntries, draft, sessions, random);
 
   const companionModel = draft.mode === "companion"
     ? lastUsedSelection?.model ?? draft.model
@@ -129,6 +140,7 @@ export function closeLaunchDraft(draft: HomeLaunchDraft): HomeLaunchDraft {
     title: "",
     workspace: null,
     providerId: "",
+    characterSelectionMode: "specific",
     characterId: "",
   };
 }
@@ -165,7 +177,17 @@ export function updateLaunchDraftForCharacterSelection(
 ): HomeLaunchDraft {
   return {
     ...draft,
+    characterSelectionMode: "specific",
     characterId,
+  };
+}
+
+export function updateLaunchDraftForRandomCharacterSelection(
+  draft: HomeLaunchDraft,
+): HomeLaunchDraft {
+  return {
+    ...draft,
+    characterSelectionMode: "random",
   };
 }
 
@@ -220,6 +242,8 @@ export function buildCreateSessionInputFromLaunchDraft({
   approvalMode,
   lastUsedSelection,
   characterEntries = [],
+  sessions = [],
+  random = Math.random,
 }: {
   draft: HomeLaunchDraft;
   mateProfile: MateProfile | null;
@@ -227,12 +251,14 @@ export function buildCreateSessionInputFromLaunchDraft({
   approvalMode: ApprovalMode;
   lastUsedSelection?: Pick<CreateSessionInput, "model" | "reasoningEffort" | "customAgentName"> | null;
   characterEntries?: readonly CharacterCatalogEntry[];
+  sessions?: readonly CharacterUsageSessionSource[];
+  random?: () => number;
 }): CreateSessionInput | null {
   const normalizedTitle = draft.title.trim();
   if (!normalizedTitle || !draft.workspace || !selectedProviderId) {
     return null;
   }
-  const characterSnapshot = buildLaunchCharacterSnapshot(characterEntries, draft.characterId);
+  const characterSnapshot = buildLaunchCharacterSnapshot(characterEntries, draft, sessions, random);
 
   return {
     provider: selectedProviderId,
@@ -263,6 +289,50 @@ export function resolveLaunchCharacterId(
   return activeEntries[0]?.id ?? "";
 }
 
+export function selectWeightedRandomLaunchCharacterId(
+  entries: readonly CharacterCatalogEntry[],
+  sessionsByLastActiveDesc: readonly CharacterUsageSessionSource[],
+  random: () => number = Math.random,
+): string {
+  const activeEntries = entries.filter((entry) => entry.state === "active");
+  if (activeEntries.length === 0) {
+    return "";
+  }
+
+  const activeCharacterIds = new Set(activeEntries.map((entry) => entry.id));
+  const recencyRanks = new Map<string, number>();
+  for (const session of sessionsByLastActiveDesc) {
+    if (
+      session.sessionKind !== "default" ||
+      !activeCharacterIds.has(session.characterId) ||
+      recencyRanks.has(session.characterId)
+    ) {
+      continue;
+    }
+    recencyRanks.set(session.characterId, recencyRanks.size);
+  }
+
+  const weightedEntries = activeEntries.map((entry) => ({
+    entry,
+    weight: (recencyRanks.get(entry.id) ?? recencyRanks.size) + 1,
+  }));
+  const totalWeight = weightedEntries.reduce((total, candidate) => total + candidate.weight, 0);
+  const randomValue = random();
+  const normalizedRandomValue = Number.isFinite(randomValue)
+    ? Math.min(Math.max(randomValue, 0), 1 - Number.EPSILON)
+    : 0;
+  let remainingWeight = normalizedRandomValue * totalWeight;
+
+  for (const candidate of weightedEntries) {
+    remainingWeight -= candidate.weight;
+    if (remainingWeight < 0) {
+      return candidate.entry.id;
+    }
+  }
+
+  return weightedEntries.at(-1)?.entry.id ?? "";
+}
+
 function resolveLaunchCharacterEntry(
   entries: readonly CharacterCatalogEntry[],
   characterId: string | null | undefined,
@@ -273,8 +343,13 @@ function resolveLaunchCharacterEntry(
 
 function buildLaunchCharacterSnapshot(
   entries: readonly CharacterCatalogEntry[],
-  characterId: string | null | undefined,
+  draft: Pick<HomeLaunchDraft, "characterId" | "characterSelectionMode">,
+  sessions: readonly CharacterUsageSessionSource[],
+  random: () => number,
 ): LaunchCharacterSnapshot {
+  const characterId = draft.characterSelectionMode === "random"
+    ? selectWeightedRandomLaunchCharacterId(entries, sessions, random)
+    : draft.characterId;
   const character = resolveLaunchCharacterEntry(entries, characterId);
   if (!character) {
     return {

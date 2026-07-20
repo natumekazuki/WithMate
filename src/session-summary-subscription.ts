@@ -1,5 +1,7 @@
 import type { SessionSummary } from "./session-state.js";
 
+export type SessionSummariesLoadStatus = "loading" | "loaded" | "error";
+
 export type SessionSummariesSubscriptionApi = {
   listSessionSummaries: () => Promise<SessionSummary[]>;
   subscribeSessionSummaries: (

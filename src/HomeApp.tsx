@@ -6,7 +6,10 @@ import {
 } from "./provider-settings-state.js";
 import { startAppSettingsSubscription } from "./app-settings-subscription.js";
 import { type SessionSummary } from "./session-state.js";
-import { startSessionSummariesSubscription } from "./session-summary-subscription.js";
+import {
+  startSessionSummariesSubscription,
+  type SessionSummariesLoadStatus,
+} from "./session-summary-subscription.js";
 import {
   type AuxiliarySessionSummary,
 } from "./auxiliary-session-state.js";
@@ -71,13 +74,22 @@ import { createHomeActiveAuxiliarySessionRefresher } from "./home/home-active-au
 
 type HomeRightPaneView = "monitor" | "characters";
 
+type HomeSessionSummariesState = {
+  status: SessionSummariesLoadStatus;
+  summaries: SessionSummary[];
+};
+
 export default function HomeApp() {
   const desktopRuntime = isDesktopRuntime();
   const homeWindowMode = useMemo(() => getHomeWindowMode(), []);
   const isMonitorWindowMode = homeWindowMode === "monitor";
   const isSettingsWindowMode = homeWindowMode === "settings";
   const isMemoryReviewWindowMode = homeWindowMode === "memory-review";
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [sessionSummariesState, setSessionSummariesState] = useState<HomeSessionSummariesState>({
+    status: "loading",
+    summaries: [],
+  });
+  const sessions = sessionSummariesState.summaries;
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
   const [activeAuxiliarySessions, setActiveAuxiliarySessions] = useState<AuxiliarySessionSummary[]>([]);
   const [openSessionWindowIds, setOpenSessionWindowIds] = useState<string[]>([]);
@@ -137,6 +149,10 @@ export default function HomeApp() {
     }));
   };
 
+  const applyLoadedSessionSummaries = (summaries: SessionSummary[]) => {
+    setSessionSummariesState({ status: "loaded", summaries });
+  };
+
   const refreshCharacterEntries = async (
     api: NonNullable<ReturnType<typeof getWithMateApi>>,
   ): Promise<CharacterCatalogEntry[]> => {
@@ -167,6 +183,11 @@ export default function HomeApp() {
       setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
     };
 
+    const handleInitialSessionSummaryLoadError = (error: unknown) => {
+      setSessionSummariesState((current) => ({ ...current, status: "error" }));
+      handleInitialSummaryLoadError(error);
+    };
+
     let unsubscribeSessions: (() => void) | null = null;
     let unsubscribeCompanionSessions: (() => void) | null = null;
 
@@ -177,8 +198,8 @@ export default function HomeApp() {
 
       unsubscribeSessions = startSessionSummariesSubscription({
         api: withmateApi,
-        applySummaries: setSessions,
-        onInitialLoadError: handleInitialSummaryLoadError,
+        applySummaries: applyLoadedSessionSummaries,
+        onInitialLoadError: handleInitialSessionSummaryLoadError,
       });
       unsubscribeCompanionSessions = startCompanionSessionSummariesSubscription({
         api: withmateApi,
@@ -347,6 +368,7 @@ export default function HomeApp() {
       launchTitle: launchDraft.title,
       launchWorkspace: launchDraft.workspace,
       launchCharacterId: launchDraft.characterId,
+      launchCharacterSelectionMode: launchDraft.characterSelectionMode,
       characterEntries,
       charactersLoaded,
       appSettings,
@@ -385,6 +407,7 @@ export default function HomeApp() {
     characterEntries,
     selectedLaunchProviderId: selectedLaunchProvider?.id ?? null,
     sessions,
+    sessionSummariesLoadStatus: sessionSummariesState.status,
     refreshCharacterEntries: async () => {
       const api = getWithMateApi();
       if (!api) {
@@ -401,10 +424,13 @@ export default function HomeApp() {
     createSession: async (input) => await withWithMateApi((api) => api.createSession(input)),
     createCompanionSession: async (input) => await withWithMateApi((api) => api.createCompanionSession(input)),
     upsertSessionSummary: (summary) => {
-      setSessions((current) => [
-        summary,
-        ...current.filter((session) => session.id !== summary.id),
-      ]);
+      setSessionSummariesState((current) => ({
+        ...current,
+        summaries: [
+          summary,
+          ...current.summaries.filter((session) => session.id !== summary.id),
+        ],
+      }));
     },
     upsertCompanionSessionSummary: (summary) => {
       setCompanionSessions((current) => [
@@ -427,7 +453,7 @@ export default function HomeApp() {
     setMateCreating,
     setMateAvatarUpdating,
     setLaunchFeedback,
-    setSessions,
+    setSessions: applyLoadedSessionSummaries,
     setCompanionSessions,
   });
 
@@ -470,7 +496,7 @@ export default function HomeApp() {
       if (!api) {
         return;
       }
-      setSessions(await api.listSessionSummaries());
+      applyLoadedSessionSummaries(await api.listSessionSummaries());
     },
     onSettingsSaved: () => {
       const api = getWithMateApi();
@@ -584,6 +610,7 @@ export default function HomeApp() {
       onBrowseWorkspace: () => void homeLaunchHandlers.onBrowseWorkspace(),
       onSelectProvider: homeLaunchHandlers.onSelectLaunchProvider,
       onSelectCharacter: homeLaunchHandlers.onSelectLaunchCharacter,
+      onSelectRandomCharacter: homeLaunchHandlers.onSelectRandomLaunchCharacter,
       onStartSession: (mode) => void homeLaunchHandlers.onStartSession(mode),
     }),
   });

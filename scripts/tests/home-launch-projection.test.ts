@@ -110,9 +110,27 @@ describe("home-launch-projection", () => {
     assert.deepEqual(enabledOnlyCodex.enabledLaunchProviders.map((provider) => provider.id), ["codex"]);
     assert.equal(enabledOnlyCodex.selectedLaunchProvider?.id, "codex");
     assert.equal(enabledOnlyCodex.selectedCharacter?.id, "noa");
+    assert.equal(enabledOnlyCodex.randomCharacterSelected, false);
     assert.deepEqual(enabledOnlyCodex.characterOptions.map((character) => character.id), ["mia", "noa"]);
     assert.equal(enabledOnlyCodex.launchWorkspacePathLabel, "F:/work/demo");
     assert.equal(enabledOnlyCodex.canStartSession, true);
+  });
+
+  it("random character選択時は固定Characterを選択状態にしない", () => {
+    const projection = buildHomeLaunchProjection({
+      launchProviderId: "codex",
+      launchTitle: "task",
+      launchWorkspace: { label: "demo", path: "F:/work/demo", branch: "" },
+      launchCharacterId: "mia",
+      launchCharacterSelectionMode: "random",
+      characterEntries: createCharacters(),
+      appSettings: createDefaultAppSettings(),
+      modelCatalog: createCatalog(),
+    });
+
+    assert.equal(projection.selectedCharacter, null);
+    assert.equal(projection.randomCharacterSelected, true);
+    assert.equal(projection.canStartSession, true);
   });
 
   it("Character catalog 読み込み前は開始不可にする", () => {

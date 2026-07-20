@@ -15,9 +15,11 @@ import {
   resolveLastUsedSessionSelection,
   resolveLaunchCharacterId,
   resolveLaunchValidationMessage,
+  selectWeightedRandomLaunchCharacterId,
   setLaunchWorkspaceFromPath,
   updateLaunchDraftForCharacterSelection,
   updateLaunchDraftForProviderSelection,
+  updateLaunchDraftForRandomCharacterSelection,
 } from "../../src/home/home-launch-state.js";
 import type { MateProfile } from "../../src/mate/mate-state.js";
 
@@ -79,6 +81,7 @@ describe("home-launch-state", () => {
       title: "",
       workspace: null,
       providerId: "codex",
+      characterSelectionMode: "specific",
       characterId: "mia",
       model: DEFAULT_MODEL_ID,
       reasoningEffort: DEFAULT_REASONING_EFFORT,
@@ -92,6 +95,7 @@ describe("home-launch-state", () => {
       title: "",
       workspace: null,
       providerId: "",
+      characterSelectionMode: "specific",
       characterId: "",
       model: DEFAULT_MODEL_ID,
       reasoningEffort: DEFAULT_REASONING_EFFORT,
@@ -151,6 +155,17 @@ describe("home-launch-state", () => {
     const draft = updateLaunchDraftForCharacterSelection(createClosedLaunchDraft(), "mia");
 
     assert.equal(draft.characterId, "mia");
+    assert.equal(draft.characterSelectionMode, "specific");
+  });
+
+  it("random character 選択時に launch draft の選択modeを更新する", () => {
+    const draft = updateLaunchDraftForRandomCharacterSelection({
+      ...createClosedLaunchDraft(),
+      characterId: "mia",
+    });
+
+    assert.equal(draft.characterId, "mia");
+    assert.equal(draft.characterSelectionMode, "random");
   });
 
   it("character selection は既存選択、default順の先頭、空文字の順で解決する", () => {
@@ -171,6 +186,58 @@ describe("home-launch-state", () => {
     ];
 
     assert.equal(resolveLaunchCharacterId(entries, "mia"), "noa");
+  });
+
+  it("random character selection は最近使っていないactive Characterほど選択範囲を広くする", () => {
+    const entries = [
+      createCharacterEntry({ id: "mia", name: "Mia" }),
+      createCharacterEntry({ id: "noa", name: "Noa" }),
+      createCharacterEntry({ id: "yui", name: "Yui" }),
+      createCharacterEntry({ id: "archived", name: "Archived", state: "archived" }),
+    ];
+    const sessions = [
+      { characterId: "mia", sessionKind: "default" as const },
+      { characterId: "yui", sessionKind: "character-authoring" as const },
+      { characterId: "archived", sessionKind: "default" as const },
+      { characterId: "noa", sessionKind: "default" as const },
+    ];
+    const selectionCounts = new Map(entries.map((entry) => [entry.id, 0] as const));
+
+    for (let index = 0; index < 600; index += 1) {
+      const characterId = selectWeightedRandomLaunchCharacterId(
+        entries,
+        sessions,
+        () => (index + 0.5) / 600,
+      );
+      selectionCounts.set(characterId, (selectionCounts.get(characterId) ?? 0) + 1);
+    }
+
+    assert.ok((selectionCounts.get("yui") ?? 0) > (selectionCounts.get("noa") ?? 0));
+    assert.ok((selectionCounts.get("noa") ?? 0) > (selectionCounts.get("mia") ?? 0));
+    assert.equal(selectionCounts.get("archived"), 0);
+  });
+
+  it("random character selection はactive Characterがなければ空IDを返す", () => {
+    assert.equal(selectWeightedRandomLaunchCharacterId([], [], () => 0.5), "");
+  });
+
+  it("random character selection は利用履歴がなければactive Characterを均等に選ぶ", () => {
+    const entries = [
+      createCharacterEntry({ id: "mia", name: "Mia" }),
+      createCharacterEntry({ id: "noa", name: "Noa" }),
+    ];
+    const selectionCounts = new Map(entries.map((entry) => [entry.id, 0] as const));
+
+    for (let index = 0; index < 200; index += 1) {
+      const characterId = selectWeightedRandomLaunchCharacterId(
+        entries,
+        [],
+        () => (index + 0.5) / 200,
+      );
+      selectionCounts.set(characterId, (selectionCounts.get(characterId) ?? 0) + 1);
+    }
+
+    assert.deepEqual(Object.fromEntries(selectionCounts), { mia: 100, noa: 100 });
   });
 
   it("launch validation message は既存の優先順位で返す", () => {

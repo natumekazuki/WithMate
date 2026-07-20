@@ -4,6 +4,7 @@ import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionI
 import { createCompanionSessionSummary } from "../companion-state.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { CreateSessionInput, SessionSummary } from "../session-state.js";
+import type { SessionSummariesLoadStatus } from "../session-summary-subscription.js";
 import { projectSessionSummary } from "../session-state.js";
 import {
   buildCreateCompanionSessionInputFromLaunchDraft,
@@ -26,6 +27,7 @@ export type StartHomeLaunchInput = {
   characterEntries: readonly CharacterCatalogEntry[];
   selectedProviderId: string | null;
   sessions: readonly SessionSummary[];
+  sessionSummariesLoadStatus: SessionSummariesLoadStatus;
   createSession: HomeLaunchSessionCreator;
   createCompanionSession: HomeLaunchCompanionSessionCreator;
   openSessionWindow: (sessionId: string) => Promise<void>;
@@ -35,6 +37,7 @@ export type StartHomeLaunchInput = {
   setLaunchStarting: (launchStarting: boolean) => void;
   upsertSessionSummary: (summary: SessionSummary) => void;
   upsertCompanionSessionSummary: (summary: CompanionSessionSummary) => void;
+  random?: () => number;
 };
 
 export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void> {
@@ -54,6 +57,15 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
     return;
   }
 
+  if (input.draft.characterSelectionMode === "random" && input.sessionSummariesLoadStatus !== "loaded") {
+    input.setLaunchFeedback(
+      input.sessionSummariesLoadStatus === "loading"
+        ? "Session 履歴を読み込んでるよ。完了してからもう一度開始してね。"
+        : "Session 履歴を読み込めていないため、ランダム選択を開始できないよ。",
+    );
+    return;
+  }
+
   input.setLaunchFeedback(requestedMode === "companion" ? "Companion を開始してるよ..." : "Session を開始してるよ...");
   input.setLaunchStarting(true);
 
@@ -65,6 +77,8 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
         mateProfile: input.mateProfile,
         selectedProviderId: input.selectedProviderId,
         characterEntries: input.characterEntries,
+        sessions: input.sessions,
+        random: input.random,
         lastUsedSelection,
       });
       if (!companionInput) {
@@ -90,6 +104,8 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
       selectedProviderId: input.selectedProviderId,
       approvalMode: DEFAULT_APPROVAL_MODE,
       characterEntries: input.characterEntries,
+      sessions: input.sessions,
+      random: input.random,
       lastUsedSelection,
     });
     if (!sessionInput) {
