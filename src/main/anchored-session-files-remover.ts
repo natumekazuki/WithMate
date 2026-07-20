@@ -43,7 +43,13 @@ if (
       ) {
         throw new Error("invalid request");
       }
-      fs.rmSync(message.sessionId, { recursive: true, force: true, maxRetries: 0 });
+      // 一時的なfilesystem errorだけをbounded retryし、固定済みroot外へ対象を広げない。
+      fs.rmSync(message.sessionId, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
       sendAndExit({ type: "completed" }, 0);
     } catch {
       sendAndExit({ type: "filesystem_failed" }, 1);
