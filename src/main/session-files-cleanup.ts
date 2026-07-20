@@ -7,6 +7,7 @@ import {
   resolveWithMateSessionFilesRoot,
 } from "./application-data-path.js";
 import {
+  AnchoredSessionFilesRemoveError,
   removeSessionFilesFromAnchoredRoot,
   type AnchoredSessionFilesRemoveHook,
   type SessionFilesRootIdentity,
@@ -143,6 +144,8 @@ export class LocalSessionFilesCleanup implements SessionFilesCleanupPort {
       await this.#beforeAnchor?.();
       await removeSessionFilesFromAnchoredRoot(
         this.#sessionFilesRoot,
+        canonicalApplicationDirectory.path,
+        canonicalApplicationDirectory.identity,
         canonicalSessionFilesRoot.path,
         canonicalSessionFilesRoot.identity,
         sessionId,
@@ -150,7 +153,10 @@ export class LocalSessionFilesCleanup implements SessionFilesCleanupPort {
       );
     } catch (error) {
       if (error instanceof SessionFilesCleanupError) throw error;
-      throw new SessionFilesCleanupError("filesystem_failed", { cause: error });
+      throw new SessionFilesCleanupError(
+        "filesystem_failed",
+        error instanceof AnchoredSessionFilesRemoveError ? { cause: error.diagnostic } : undefined,
+      );
     }
   }
 }

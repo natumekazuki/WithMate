@@ -40,6 +40,32 @@ test("Session Files cleanup succeeds idempotently when the fixed root is absent"
   });
 });
 
+test("Session Files cleanup does not retain raw filesystem errors as diagnostic causes", async () => {
+  await withTempDirectory(async (applicationDataRoot) => {
+    const deniedPath = path.join(applicationDataRoot, "private-owner");
+    const deniedFileSystem: Pick<typeof fs, "lstat" | "realpath" | "stat"> = {
+      lstat: (async () => {
+        throw Object.assign(new Error(`Access denied: ${deniedPath}`), {
+          code: "EACCES",
+          path: deniedPath,
+          syscall: "lstat",
+        });
+      }) as typeof fs.lstat,
+      realpath: fs.realpath.bind(fs),
+      stat: fs.stat.bind(fs),
+    };
+
+    await assert.rejects(
+      new LocalSessionFilesCleanup(applicationDataRoot, deniedFileSystem).deleteSessionFiles(issuedSessionId(20)),
+      (error: unknown) =>
+        error instanceof SessionFilesCleanupError &&
+        error.code === "filesystem_failed" &&
+        error.message === "Session Files cleanup failed." &&
+        error.cause === undefined,
+    );
+  });
+});
+
 test("Session Files cleanup maps an anchored deletion failure and leaves work for exact retry", async () => {
   await withTempDirectory(async (applicationDataRoot) => {
     const root = resolveWithMateSessionFilesRoot(applicationDataRoot);
@@ -56,7 +82,9 @@ test("Session Files cleanup maps an anchored deletion failure and leaves work fo
       (error: unknown) =>
         error instanceof SessionFilesCleanupError &&
         error.code === "filesystem_failed" &&
-        error.message === "Session Files cleanup failed.",
+        error.message === "Session Files cleanup failed." &&
+        Object.isFrozen(error.cause) &&
+        assert.deepEqual(error.cause, { kind: "filesystem_failed", code: "UNKNOWN" }) === undefined,
     );
     assert.equal(await exists(target), true);
 
@@ -189,6 +217,78 @@ test("Session Files cleanup rejects an ordinary fixed-root replacement before he
 
     assert.equal(await fs.readFile(path.join(movedRoot, sessionId, "original.txt"), "utf8"), "original");
     assert.equal(await fs.readFile(path.join(root, sessionId, "keep.txt"), "utf8"), "keep");
+  });
+});
+
+test("Session Files cleanup rejects a same-identity root junction before helper anchoring", async () => {
+  await withTempDirectory(async (applicationDataRoot) => {
+    const root = resolveWithMateSessionFilesRoot(applicationDataRoot);
+    const movedRoot = path.join(path.dirname(root), "session-files-moved-before-anchor");
+    const sessionId = issuedSessionId(18);
+    await fs.mkdir(path.join(root, sessionId), { recursive: true });
+    await fs.writeFile(path.join(root, sessionId, "keep.txt"), "keep");
+
+    await assert.rejects(
+      new LocalSessionFilesCleanup(applicationDataRoot, fs, undefined, async () => {
+        await fs.rename(root, movedRoot);
+        await fs.symlink(movedRoot, root, process.platform === "win32" ? "junction" : "dir");
+      }).deleteSessionFiles(sessionId),
+      (error: unknown) => error instanceof SessionFilesCleanupError && error.code === "filesystem_failed",
+    );
+
+    assert.equal(await fs.readFile(path.join(movedRoot, sessionId, "keep.txt"), "utf8"), "keep");
+  });
+});
+
+test("Session Files cleanup rejects a same-identity application junction before helper anchoring", async () => {
+  await withTempDirectory(async (applicationDataRoot) => {
+    const root = resolveWithMateSessionFilesRoot(applicationDataRoot);
+    const applicationDirectory = path.dirname(root);
+    const movedApplicationDirectory = path.join(applicationDataRoot, "WithMate-moved-before-anchor");
+    const sessionId = issuedSessionId(19);
+    await fs.mkdir(path.join(root, sessionId), { recursive: true });
+    await fs.writeFile(path.join(root, sessionId, "keep.txt"), "keep");
+
+    await assert.rejects(
+      new LocalSessionFilesCleanup(applicationDataRoot, fs, undefined, async () => {
+        await fs.rename(applicationDirectory, movedApplicationDirectory);
+        await fs.symlink(
+          movedApplicationDirectory,
+          applicationDirectory,
+          process.platform === "win32" ? "junction" : "dir",
+        );
+      }).deleteSessionFiles(sessionId),
+      (error: unknown) => error instanceof SessionFilesCleanupError && error.code === "filesystem_failed",
+    );
+
+    assert.equal(
+      await fs.readFile(path.join(movedApplicationDirectory, "session-files", sessionId, "keep.txt"), "utf8"),
+      "keep",
+    );
+  });
+});
+
+test("Session Files cleanup anchors by root identity when canonical path spelling differs", async () => {
+  await withTempDirectory(async (applicationDataRoot) => {
+    const root = resolveWithMateSessionFilesRoot(applicationDataRoot);
+    const sessionId = issuedSessionId(17);
+    const target = path.join(root, sessionId);
+    await fs.mkdir(target, { recursive: true });
+    await fs.writeFile(path.join(target, "delete.txt"), "delete");
+    const alternateCanonicalPathFileSystem: Pick<typeof fs, "lstat" | "realpath" | "stat"> = {
+      lstat: fs.lstat.bind(fs),
+      stat: fs.stat.bind(fs),
+      realpath: (async (entryPath: Parameters<typeof fs.realpath>[0]) => {
+        const canonicalPath = await fs.realpath(entryPath);
+        return `${canonicalPath}${path.sep}`;
+      }) as typeof fs.realpath,
+    };
+
+    await new LocalSessionFilesCleanup(applicationDataRoot, alternateCanonicalPathFileSystem).deleteSessionFiles(
+      sessionId,
+    );
+
+    assert.equal(await exists(target), false);
   });
 });
 
