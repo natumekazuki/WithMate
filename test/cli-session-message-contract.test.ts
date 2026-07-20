@@ -5,10 +5,15 @@ import { CLI_EXIT_CODES, CLI_SESSION_MESSAGE_LIMITS, type CliValidatedSessionCom
 import { helpText } from "../src/cli/help.js";
 import { parseCliArgv } from "../src/cli/parser.js";
 import { dispatchCliSessionCommand } from "../src/cli/session-dispatch.js";
-import type { ApplicationSessionMessageOperations, ApplicationSessionOperations } from "../src/main/index.js";
+import type {
+  ApplicationSessionMessageOperations,
+  ApplicationSessionOperations,
+  ApplicationSessionRunOperations,
+} from "../src/main/index.js";
 
 type Authorization = Readonly<{ principal: "local-user" }>;
 type MessageOperations = ApplicationSessionMessageOperations<Authorization>;
+type SessionRunOperations = ApplicationSessionRunOperations<Authorization>;
 
 const authorization: Authorization = { principal: "local-user" };
 
@@ -257,6 +262,42 @@ test("Message page dispatch propagates authorization and strictly projects inlin
     });
     assert.equal(JSON.stringify(result.output).includes("workspaceKey"), false);
   }
+});
+
+test("Message omission-only partial pages preserve a progressing cursor", async () => {
+  const command = parsedCommand([
+    "session",
+    "messages",
+    "--session-id",
+    "session-1",
+    "--cursor",
+    "cursor-1",
+    "--limit",
+    "1",
+  ]);
+  const result = await dispatchCliSessionCommand(
+    command,
+    dependencies(
+      messageOperationsFixture({
+        messages: async () => ({
+          overallStatus: "partial_success",
+          value: { sessionId: "session-1", items: [], nextCursor: "cursor-2" },
+          issues: [
+            {
+              kind: "omission",
+              code: "response_size_limit",
+              message: "Message was omitted because the response size limit was reached.",
+              ordinal: 1,
+            },
+          ],
+          persistence: { status: "read", effect: "none" },
+        }),
+      }),
+    ),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.exitCode, CLI_EXIT_CODES.partialSuccess);
 });
 
 test("Message content chunk dispatch emits base64 for actual bytes and preserves EOF coupling", async () => {
@@ -509,7 +550,20 @@ function parsedCommand(argv: readonly string[]): CliValidatedSessionCommand {
 }
 
 function dependencies(messageOperations: MessageOperations) {
-  return { operations: unsupportedSessionOperations(), messageOperations, authorization } as const;
+  return {
+    operations: unsupportedSessionOperations(),
+    messageOperations,
+    sessionRunOperations: unsupportedSessionRunOperations(),
+    authorization,
+  } as const;
+}
+
+function unsupportedSessionRunOperations(): SessionRunOperations {
+  return {
+    async runs(): Promise<never> {
+      throw new Error("unexpected Session Run operation");
+    },
+  };
 }
 
 function messageOperationsFixture(overrides: Partial<MessageOperations>): MessageOperations {

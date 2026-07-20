@@ -13,6 +13,7 @@ import {
   CLI_EXIT_CODES,
   CLI_SCHEMA_VERSION,
   CLI_SESSION_LIMITS,
+  CLI_SESSION_RUN_LIMITS,
   type CliApplicationError,
   type CliApplicationIssue,
   type CliApplicationResponse,
@@ -53,6 +54,7 @@ const operationModes: Readonly<Record<CliSessionOperation, OperationMode>> = {
   read: "read",
   "directories-chunk": "read",
   messages: "read",
+  runs: "read",
   "message-content-chunk": "read",
   archive: "write",
   unarchive: "write",
@@ -84,6 +86,8 @@ const RUN_OUTPUT_EXPORT_DOMAIN_CODES = [
   "destination_invalid",
   "payload_integrity_mismatch",
 ] as const;
+
+const RUN_HISTORY_DOMAIN_CODES = ["request_invalid", "cursor_invalid", "not_found"] as const;
 
 export function projectCliOperationOutput(
   command: CliValidatedCommand,
@@ -252,10 +256,13 @@ function projectApplicationResponse(
   mode: OperationMode,
   value: unknown,
 ): ProjectedApplicationResponse {
-  const response = record(value);
+  const response = isCommandFor(command, "runs")
+    ? exactRecord(value, ["overallStatus", "value", "issues", "error", "persistence"])
+    : record(value);
   const overallStatus = response.overallStatus;
   if (overallStatus === "success") {
-    const persistence = projectPersistenceStatus(response.persistence);
+    if (isCommandFor(command, "runs")) requireAbsent(response, ["issues", "error"]);
+    const persistence = projectSessionPersistenceStatus(command, response.persistence);
     if (mode === "read" ? persistence.status !== "read" : persistence.status !== "committed") malformed();
     const projectedValue = projectOperationValue(command, response.value);
     if (isCommandFor(command, "delete") && record(projectedValue).cleanupStatus !== "completed") malformed();
@@ -266,9 +273,16 @@ function projectApplicationResponse(
     } as ProjectedApplicationResponse;
   }
   if (overallStatus === "partial_success") {
-    const persistence = projectPersistenceStatus(response.persistence);
-    const issues = projectIssues(response.issues);
-    const projectedValue = projectOperationValue(command, response.value);
+    if (isCommandFor(command, "runs")) requireAbsent(response, ["error"]);
+    const persistence = projectSessionPersistenceStatus(command, response.persistence);
+    const issues = isCommandFor(command, "runs")
+      ? projectRunOmissionIssues(response.issues, command.limit)
+      : projectIssues(response.issues);
+    const projectedValue = projectOperationValue(
+      command,
+      response.value,
+      issues.some((issue) => issue.kind === "omission"),
+    );
     if (issues.length === 0) malformed();
     if (isCommandFor(command, "message-content-chunk")) malformed();
     if (isCommandFor(command, "delete")) {
@@ -285,10 +299,16 @@ function projectApplicationResponse(
       }
     } else if (mode === "read") {
       if (persistence.status !== "read" || issues.some((issue) => issue.kind !== "omission")) malformed();
-      if (isCommandFor(command, "list") || isCommandFor(command, "repositories") || isCommandFor(command, "messages")) {
+      if (
+        isCommandFor(command, "list") ||
+        isCommandFor(command, "repositories") ||
+        isCommandFor(command, "messages") ||
+        isCommandFor(command, "runs")
+      ) {
         const page = record(projectedValue);
         if (!Array.isArray(page.items) || page.items.length + issues.length > command.limit) malformed();
         if (isCommandFor(command, "messages")) validateMessagePageOmissions(page.items, issues);
+        if (isCommandFor(command, "runs")) validateRunPageOmissions(page.items, issues);
       }
     } else {
       if (
@@ -306,13 +326,20 @@ function projectApplicationResponse(
     } as ProjectedApplicationResponse;
   }
   if (overallStatus !== "failure") malformed();
-  const error = projectApplicationError(response.error);
-  const persistence = projectPersistenceStatus(response.persistence);
+  if (isCommandFor(command, "runs")) requireAbsent(response, ["value", "issues"]);
+  const error = isCommandFor(command, "runs")
+    ? projectRunApplicationError(response.error)
+    : projectApplicationError(response.error);
+  const persistence = projectSessionPersistenceStatus(command, response.persistence);
   if (!failureCombinationIsValid(mode, isCommandFor(command, "delete"), error, persistence)) malformed();
   return { overallStatus, error, persistence } as ProjectedApplicationResponse;
 }
 
-function projectOperationValue(command: CliValidatedSessionCommand, value: unknown): unknown {
+function projectOperationValue(
+  command: CliValidatedSessionCommand,
+  value: unknown,
+  allowOmissionOnlyCursor: boolean = false,
+): unknown {
   if (isCommandFor(command, "create")) return projectCreateValue(value, command.title, command.workspacePath);
   if (isCommandFor(command, "rename")) return projectRenameValue(value, command.sessionId, command.title);
   if (isCommandFor(command, "list")) return projectListValue(value, command);
@@ -321,7 +348,8 @@ function projectOperationValue(command: CliValidatedSessionCommand, value: unkno
   if (isCommandFor(command, "directories-chunk")) {
     return projectDirectoriesChunkValue(value, command.sessionId, command.offset, command.maxBytes);
   }
-  if (isCommandFor(command, "messages")) return projectMessagesValue(value, command);
+  if (isCommandFor(command, "messages")) return projectMessagesValue(value, command, allowOmissionOnlyCursor);
+  if (isCommandFor(command, "runs")) return projectRunsValue(value, command, allowOmissionOnlyCursor);
   if (isCommandFor(command, "message-content-chunk")) {
     return projectMessageContentChunkValue(
       value,
@@ -553,14 +581,18 @@ function projectDirectoriesChunkValue(
   };
 }
 
-function projectMessagesValue(value: unknown, command: CommandFor<"messages">): unknown {
+function projectMessagesValue(
+  value: unknown,
+  command: CommandFor<"messages">,
+  allowOmissionOnlyCursor: boolean,
+): unknown {
   const page = exactRecord(value, ["sessionId", "items", "nextCursor"]);
   const sessionId = boundedString(page.sessionId);
   const nextCursor = optionalBoundedString(page.nextCursor, CLI_SESSION_LIMITS.maxCursorLength);
   const rawItems = snapshotDenseArray(page.items, command.limit);
   if (
     sessionId !== command.sessionId ||
-    (rawItems.length === 0 && nextCursor !== undefined) ||
+    (rawItems.length === 0 && nextCursor !== undefined && !allowOmissionOnlyCursor) ||
     (nextCursor !== undefined && nextCursor === command.cursor)
   ) {
     malformed();
@@ -603,6 +635,136 @@ function projectMessagesValue(value: unknown, command: CommandFor<"messages">): 
     return { ...base, content: { state: "chunked" as const } };
   });
   return { sessionId, items, ...(nextCursor === undefined ? {} : { nextCursor }) };
+}
+
+function projectRunsValue(value: unknown, command: CommandFor<"runs">, allowOmissionOnlyCursor: boolean): unknown {
+  const page = exactRecord(value, ["sessionId", "items", "nextCursor"]);
+  const sessionId = boundedString(page.sessionId);
+  const nextCursor = optionalBoundedString(page.nextCursor, CLI_SESSION_LIMITS.maxCursorLength);
+  const rawItems = snapshotDenseArray(page.items, command.limit);
+  if (
+    sessionId !== command.sessionId ||
+    (rawItems.length === 0 && nextCursor !== undefined && !allowOmissionOnlyCursor) ||
+    (nextCursor !== undefined && nextCursor === command.cursor)
+  ) {
+    malformed();
+  }
+  let previousOrdinal = 0;
+  const items = rawItems.map((candidate) => {
+    const item = exactRecord(candidate, [
+      "runId",
+      "ordinal",
+      "initiatingMessageId",
+      "finalAssistantMessageId",
+      "retryOfRunId",
+      "phase",
+      "failure",
+      "cancellation",
+      "createdAt",
+      "startedAt",
+      "terminalAt",
+      "updatedAt",
+    ]);
+    const runId = boundedString(item.runId);
+    const ordinal = positiveInteger(item.ordinal);
+    const initiatingMessageId = boundedString(item.initiatingMessageId);
+    const finalAssistantMessageId = optionalBoundedString(item.finalAssistantMessageId);
+    const retryOfRunId = optionalBoundedString(item.retryOfRunId);
+    const createdAt = nonNegativeInteger(item.createdAt);
+    const startedAt = item.startedAt === undefined ? undefined : nonNegativeInteger(item.startedAt);
+    const updatedAt = nonNegativeInteger(item.updatedAt);
+    const phase = enumValue(item.phase, [
+      "queued",
+      "starting",
+      "active",
+      "canceling",
+      "finalizing",
+      "completed",
+      "failed",
+      "canceled",
+      "interrupted",
+    ] as const);
+    if (ordinal <= previousOrdinal) malformed();
+    previousOrdinal = ordinal;
+    const base = {
+      runId,
+      ordinal,
+      initiatingMessageId,
+      ...(retryOfRunId === undefined ? {} : { retryOfRunId }),
+      createdAt,
+      ...(startedAt === undefined ? {} : { startedAt }),
+      updatedAt,
+    } as const;
+    switch (phase) {
+      case "queued":
+      case "starting":
+      case "active":
+      case "finalizing":
+        requireAbsent(item, ["finalAssistantMessageId", "failure", "cancellation", "terminalAt"]);
+        return { ...base, phase };
+      case "canceling":
+        requireAbsent(item, ["finalAssistantMessageId", "failure", "terminalAt"]);
+        return {
+          ...base,
+          phase,
+          ...(item.cancellation === undefined ? {} : { cancellation: projectRunCancellation(item.cancellation) }),
+        };
+      case "completed":
+        requireAbsent(item, ["failure", "cancellation"]);
+        return {
+          ...base,
+          phase,
+          ...(finalAssistantMessageId === undefined ? {} : { finalAssistantMessageId }),
+          terminalAt: nonNegativeInteger(item.terminalAt),
+        };
+      case "failed":
+      case "interrupted":
+        requireAbsent(item, ["finalAssistantMessageId"]);
+        return {
+          ...base,
+          phase,
+          terminalAt: nonNegativeInteger(item.terminalAt),
+          failure: projectRunFailure(item.failure),
+          ...(item.cancellation === undefined ? {} : { cancellation: projectRunCancellation(item.cancellation) }),
+        };
+      case "canceled":
+        requireAbsent(item, ["finalAssistantMessageId", "failure"]);
+        return {
+          ...base,
+          phase,
+          terminalAt: nonNegativeInteger(item.terminalAt),
+          ...(item.cancellation === undefined ? {} : { cancellation: projectRunCancellation(item.cancellation) }),
+        };
+    }
+  });
+  return { sessionId, items, ...(nextCursor === undefined ? {} : { nextCursor }) };
+}
+
+function projectRunFailure(value: unknown) {
+  const failure = exactRecord(value, ["origin", "summary"]);
+  return {
+    origin: enumValue(failure.origin, [
+      "provider",
+      "transport",
+      "process",
+      "application",
+      "persistence",
+      "unknown",
+    ] as const),
+    ...(failure.summary === undefined
+      ? {}
+      : { summary: boundedString(failure.summary, CLI_SESSION_RUN_LIMITS.maxSummaryLength) }),
+  };
+}
+
+function projectRunCancellation(value: unknown) {
+  const cancellation = exactRecord(value, ["requestedAt", "acknowledgedAt"]);
+  return {
+    requestedAt: nonNegativeInteger(cancellation.requestedAt),
+    ...(cancellation.acknowledgedAt === undefined
+      ? {}
+      : { acknowledgedAt: nonNegativeInteger(cancellation.acknowledgedAt) }),
+  };
 }
 
 function projectMessageContentChunkValue(
@@ -696,6 +858,37 @@ function projectPersistenceStatus(value: unknown): CliPersistenceStatus {
       malformed();
   }
   malformed();
+}
+
+function projectSessionPersistenceStatus(command: CliValidatedSessionCommand, value: unknown): CliPersistenceStatus {
+  if (!isCommandFor(command, "runs")) return projectPersistenceStatus(value);
+  const persistence = record(value);
+  switch (persistence.status) {
+    case "not_attempted":
+    case "read":
+    case "rejected":
+      return projectPersistenceStatus(exactRecord(persistence, ["status", "effect"]));
+    case "committed":
+      return projectPersistenceStatus(exactRecord(persistence, ["status", "effect", "replayed"]));
+    case "failed":
+      return projectPersistenceStatus(
+        exactRecord(
+          persistence,
+          persistence.effect === "unknown" ? ["status", "effect", "reconciliation"] : ["status", "effect"],
+        ),
+      );
+    default:
+      malformed();
+  }
+}
+
+function projectRunApplicationError(value: unknown): CliApplicationError {
+  const error = record(value);
+  const allowedKeys =
+    error.kind === "persistence"
+      ? ["kind", "code", "message", "retryable", "effect"]
+      : ["kind", "code", "message", "retryable"];
+  return projectApplicationError(exactRecord(error, allowedKeys), RUN_HISTORY_DOMAIN_CODES);
 }
 
 function projectApplicationError(
@@ -864,6 +1057,36 @@ function validateMessagePageOmissions(items: readonly unknown[], issues: readonl
   }
 }
 
+function validateRunPageOmissions(items: readonly unknown[], issues: readonly CliApplicationIssue[]): void {
+  const itemOrdinals = new Set<number>();
+  for (const candidate of items) itemOrdinals.add(positiveInteger(record(candidate).ordinal));
+  let previousOmissionOrdinal = 0;
+  for (const issue of issues) {
+    if (
+      issue.kind !== "omission" ||
+      issue.ordinal === undefined ||
+      issue.ordinal <= previousOmissionOrdinal ||
+      itemOrdinals.has(issue.ordinal)
+    ) {
+      malformed();
+    }
+    previousOmissionOrdinal = issue.ordinal;
+  }
+}
+
+function projectRunOmissionIssues(value: unknown, maxIssues: number): readonly CliApplicationIssue[] {
+  return snapshotDenseArray(value, maxIssues).map((candidate) => {
+    const issue = exactRecord(candidate, ["kind", "code", "message", "ordinal"]);
+    if (issue.kind !== "omission" || issue.code !== "response_size_limit") malformed();
+    return {
+      kind: "omission" as const,
+      code: "response_size_limit" as const,
+      message: boundedString(issue.message, 8_192),
+      ordinal: positiveInteger(issue.ordinal),
+    };
+  });
+}
+
 function projectIssuesWithLimit(value: unknown, maxIssues: number): readonly CliApplicationIssue[] {
   return snapshotDenseArray(value, maxIssues).map((candidate) => {
     const issue = record(candidate);
@@ -1027,6 +1250,10 @@ function exactRecord(value: unknown, allowedKeys: readonly string[]): Readonly<R
   const projected = record(value);
   if (Object.keys(projected).some((key) => !allowedKeys.includes(key))) malformed();
   return projected;
+}
+
+function requireAbsent(value: Readonly<Record<string, unknown>>, keys: readonly string[]): void {
+  if (keys.some((key) => Object.hasOwn(value, key))) malformed();
 }
 
 function boundedString(value: unknown, maxLength: number = CLI_SESSION_LIMITS.maxIdentifierLength): string {

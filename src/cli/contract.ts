@@ -5,6 +5,7 @@ import {
   APPLICATION_RUN_OUTPUT_LIMITS,
 } from "../shared/application-run-output-model.js";
 import { APPLICATION_SESSION_MESSAGE_LIMITS } from "../shared/application-session-message-model.js";
+import { APPLICATION_SESSION_RUN_LIMITS } from "../shared/application-session-run-model.js";
 import type { TextContentBlock } from "../shared/message-content.js";
 import { SESSION_METADATA_LIMITS, type LocalRepositoryMetadata } from "../shared/session-metadata.js";
 
@@ -63,6 +64,12 @@ export const CLI_SESSION_MESSAGE_LIMITS = {
   chunkMaxBytes: APPLICATION_SESSION_MESSAGE_LIMITS.chunkMaxBytes,
 } as const;
 
+export const CLI_SESSION_RUN_LIMITS = {
+  runsDefaultItems: APPLICATION_SESSION_RUN_LIMITS.runsDefaultItems,
+  runsMaxItems: APPLICATION_SESSION_RUN_LIMITS.runsMaxItems,
+  maxSummaryLength: APPLICATION_SESSION_RUN_LIMITS.maxSummaryLength,
+} as const;
+
 export type CliExitCode = (typeof CLI_EXIT_CODES)[keyof typeof CLI_EXIT_CODES];
 
 export type CliSessionOperation =
@@ -73,6 +80,7 @@ export type CliSessionOperation =
   | "read"
   | "directories-chunk"
   | "messages"
+  | "runs"
   | "message-content-chunk"
   | "archive"
   | "unarchive"
@@ -146,6 +154,14 @@ export type CliSessionDirectoriesChunkCommand = CliTimeoutOption &
 export type CliSessionMessagesCommand = CliTimeoutOption &
   Readonly<{
     identity: CliCommandIdentity<"messages">;
+    sessionId: string;
+    cursor?: string;
+    limit: number;
+  }>;
+
+export type CliSessionRunsCommand = CliTimeoutOption &
+  Readonly<{
+    identity: CliCommandIdentity<"runs">;
     sessionId: string;
     cursor?: string;
     limit: number;
@@ -242,6 +258,7 @@ export type CliValidatedSessionCommand =
   | CliSessionReadCommand
   | CliSessionDirectoriesChunkCommand
   | CliSessionMessagesCommand
+  | CliSessionRunsCommand
   | CliSessionMessageContentChunkCommand
   | CliSessionWriteCommand<"archive">
   | CliSessionWriteCommand<"unarchive">
@@ -692,6 +709,64 @@ export type CliRunCancellationSummary = Readonly<{
   acknowledgedAt?: number;
 }>;
 
+type CliSessionRunItemBase = Readonly<{
+  runId: string;
+  ordinal: number;
+  initiatingMessageId: string;
+  finalAssistantMessageId?: string;
+  retryOfRunId?: string;
+  createdAt: number;
+  startedAt?: number;
+  updatedAt: number;
+}>;
+
+export type CliSessionRunItem =
+  | (CliSessionRunItemBase &
+      Readonly<{
+        phase: "queued" | "starting" | "active" | "finalizing";
+        finalAssistantMessageId?: never;
+        terminalAt?: never;
+        failure?: never;
+        cancellation?: never;
+      }>)
+  | (CliSessionRunItemBase &
+      Readonly<{
+        phase: "canceling";
+        finalAssistantMessageId?: never;
+        terminalAt?: never;
+        failure?: never;
+        cancellation?: CliRunCancellationSummary;
+      }>)
+  | (CliSessionRunItemBase &
+      Readonly<{
+        phase: "completed";
+        terminalAt: number;
+        failure?: never;
+        cancellation?: never;
+      }>)
+  | (CliSessionRunItemBase &
+      Readonly<{
+        phase: "failed" | "interrupted";
+        finalAssistantMessageId?: never;
+        terminalAt: number;
+        failure: CliRunFailureSummary;
+        cancellation?: CliRunCancellationSummary;
+      }>)
+  | (CliSessionRunItemBase &
+      Readonly<{
+        phase: "canceled";
+        finalAssistantMessageId?: never;
+        terminalAt: number;
+        failure?: never;
+        cancellation?: CliRunCancellationSummary;
+      }>);
+
+export type CliSessionRunsValue = Readonly<{
+  sessionId: string;
+  items: readonly CliSessionRunItem[];
+  nextCursor?: string;
+}>;
+
 type CliRunStatusBase = Readonly<{
   sessionId: string;
   runId: string;
@@ -964,6 +1039,7 @@ type CliOperationContract = {
   read: Readonly<{ mode: "read"; value: CliSessionReadValue }>;
   "directories-chunk": Readonly<{ mode: "read"; value: CliSessionDirectoriesChunkValue }>;
   messages: Readonly<{ mode: "read"; value: CliSessionMessagesValue }>;
+  runs: Readonly<{ mode: "read"; value: CliSessionRunsValue }>;
   "message-content-chunk": Readonly<{ mode: "read"; value: CliSessionMessageContentChunkValue }>;
   archive: Readonly<{ mode: "write"; value: CliSessionTransitionValue<"archived"> }>;
   unarchive: Readonly<{ mode: "write"; value: CliSessionTransitionValue<"active"> }>;

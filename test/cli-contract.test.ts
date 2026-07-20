@@ -56,6 +56,11 @@ const commands = {
     sessionId: "session-1",
     limit: 50,
   },
+  runs: {
+    identity: { namespace: "session", operation: "runs" },
+    sessionId: "session-1",
+    limit: 50,
+  },
   "message-content-chunk": {
     identity: { namespace: "session", operation: "message-content-chunk" },
     sessionId: "session-1",

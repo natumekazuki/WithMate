@@ -24,6 +24,7 @@ const repositoryReadCapabilityNames = new Set([
   "sessionDirectoriesChunk",
   "messagesPage",
   "messageContentChunk",
+  "runsPage",
   "runGet",
   "runEventsPage",
   "runSnapshotChunk",
@@ -89,6 +90,7 @@ for (const rule of rules) {
 
 const applicationSessionOwner = path.join(sourceRoot, "main", "application-session-service.ts");
 const applicationSessionMessageOwner = path.join(sourceRoot, "main", "application-session-message-service.ts");
+const applicationSessionRunOwner = path.join(sourceRoot, "main", "application-session-run-service.ts");
 const applicationRunOwner = path.join(sourceRoot, "main", "application-run-service.ts");
 const applicationRunOutputOwner = path.join(sourceRoot, "main", "application-run-output-service.ts");
 const repositoryWriteClient = path.join(sourceRoot, "main", "repository-write-client.ts");
@@ -97,6 +99,7 @@ const persistenceWorkerClient = path.join(sourceRoot, "main", "persistence-worke
 const publicMainBarrel = path.join(sourceRoot, "main", "index.ts");
 const publicApplicationModel = path.join(sourceRoot, "shared", "application-service-model.ts");
 const publicApplicationSessionMessageModel = path.join(sourceRoot, "shared", "application-session-message-model.ts");
+const publicApplicationSessionRunModel = path.join(sourceRoot, "shared", "application-session-run-model.ts");
 const publicApplicationRunModel = path.join(sourceRoot, "shared", "application-run-model.ts");
 const publicApplicationRunOutputModel = path.join(sourceRoot, "shared", "application-run-output-model.ts");
 const rawWriteFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-persistence-write.ts");
@@ -153,6 +156,7 @@ for (const file of listSourceFiles(sourceRoot)) {
   const allowsRepositoryReadIntegration =
     file === applicationSessionOwner ||
     file === applicationSessionMessageOwner ||
+    file === applicationSessionRunOwner ||
     file === applicationRunOwner ||
     file === applicationRunOutputOwner;
   const allowsRepositoryWriteIntegration = file === applicationSessionOwner;
@@ -312,6 +316,7 @@ for (const file of listSourceFiles(sourceRoot)) {
 for (const file of [
   applicationSessionOwner,
   applicationSessionMessageOwner,
+  applicationSessionRunOwner,
   applicationRunOwner,
   applicationRunOutputOwner,
 ]) {
@@ -333,6 +338,7 @@ for (const file of [
       if (
         exportedName !== "ApplicationSessionOperations" &&
         exportedName !== "ApplicationSessionMessageOperations" &&
+        exportedName !== "ApplicationSessionRunOperations" &&
         exportedName !== "ApplicationRunOperations" &&
         exportedName !== "ApplicationRunOutputOperations"
       ) {
@@ -344,6 +350,7 @@ for (const file of [
     for (const exported of findExportsDeclaredOutside(sourceFile, [
       publicApplicationModel,
       publicApplicationSessionMessageModel,
+      publicApplicationSessionRunModel,
       publicApplicationRunModel,
       publicApplicationRunOutputModel,
     ])) {

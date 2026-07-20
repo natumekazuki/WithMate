@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import * as publicApi from "../src/main/index.js";
-import type { ApplicationSessionMessageOperations, ApplicationSessionOperations } from "../src/main/index.js";
+import type {
+  ApplicationSessionMessageOperations,
+  ApplicationSessionOperations,
+  ApplicationSessionRunOperations,
+} from "../src/main/index.js";
 import type {
   ApplicationSessionMessageContentChunk,
   ApplicationSessionMessageItem,
@@ -19,6 +23,7 @@ import {
   type ApplicationSessionListItem,
   type ApplicationSessionReadResult,
 } from "../src/shared/application-service-model.js";
+import type { ApplicationSessionRunItem } from "../src/shared/application-session-run-model.js";
 import type { RepositoryCommandErrorCode, SessionLifecycleStatus } from "../src/shared/repository-write-model.js";
 
 type Equal<TLeft, TRight> = (<T>() => T extends TLeft ? 1 : 2) extends <T>() => T extends TRight ? 1 : 2 ? true : false;
@@ -34,6 +39,8 @@ type Operations = ApplicationSessionOperations<Authorization>;
 type MessageOperations = ApplicationSessionMessageOperations<Authorization>;
 type MessagePageResponse = Awaited<ReturnType<MessageOperations["messages"]>>;
 type MessageChunkResponse = Awaited<ReturnType<MessageOperations["messageContentChunk"]>>;
+type SessionRunOperations = ApplicationSessionRunOperations<Authorization>;
+type SessionRunPageResponse = Awaited<ReturnType<SessionRunOperations["runs"]>>;
 type CreateResponse = Awaited<ReturnType<Operations["create"]>>;
 type ListResponse = Awaited<ReturnType<Operations["list"]>>;
 type DirectoriesChunkResponse = Awaited<ReturnType<Operations["readDirectoriesChunk"]>>;
@@ -87,6 +94,36 @@ void invalidChunkedMessage;
 void invalidChunkedMessageVariable;
 void invalidEofMessageChunk;
 void invalidProgressMessageChunk;
+
+const runHistoryItemBase = {
+  runId: "run-1",
+  ordinal: 1,
+  initiatingMessageId: "message-1",
+  createdAt: 1,
+  updatedAt: 2,
+};
+// @ts-expect-error non-completed Run history items cannot expose a final Assistant Message
+const invalidActiveRunHistoryItem: ApplicationSessionRunItem = {
+  ...runHistoryItemBase,
+  phase: "active",
+  finalAssistantMessageId: "message-2",
+};
+// @ts-expect-error failed Run history items require a public failure summary
+const invalidFailedRunHistoryItem: ApplicationSessionRunItem = {
+  ...runHistoryItemBase,
+  phase: "failed",
+  terminalAt: 2,
+};
+// @ts-expect-error completed Run history items cannot expose cancellation state
+const invalidCompletedRunHistoryItem: ApplicationSessionRunItem = {
+  ...runHistoryItemBase,
+  phase: "completed",
+  terminalAt: 2,
+  cancellation: { requestedAt: 1 },
+};
+void invalidActiveRunHistoryItem;
+void invalidFailedRunHistoryItem;
+void invalidCompletedRunHistoryItem;
 
 const listItemBase = {
   id: "session-1",
@@ -448,6 +485,28 @@ test("public Application Service barrel exposes the transport-neutral Session Me
     Equal<EofChunk["nextOffset"], undefined>,
     Equal<ProgressChunk["nextOffset"], number>,
     Equal<ChunkValue["bytes"], ArrayBuffer>,
+  ] = [true, true, true, true, true];
+
+  assert.equal(operations, null);
+  assert.deepEqual(typeContract, [true, true, true, true, true]);
+});
+
+test("public Application Service barrel exposes the transport-neutral Session Run history contract", () => {
+  const operations = null as SessionRunOperations | null;
+  type PageValue = Extract<SessionRunPageResponse, Readonly<{ overallStatus: "success" }>>["value"];
+  type RunItem = PageValue["items"][number];
+  type Completed = Extract<RunItem, Readonly<{ phase: "completed" }>>;
+  type Failed = Extract<RunItem, Readonly<{ phase: "failed" | "interrupted" }>>;
+  type NonTerminal = Extract<RunItem, Readonly<{ phase: "queued" | "starting" | "active" | "finalizing" }>>;
+  const typeContract: readonly [
+    Equal<Completed["terminalAt"], number>,
+    Equal<Completed["finalAssistantMessageId"], string | undefined>,
+    Equal<
+      Failed["failure"]["origin"],
+      "provider" | "transport" | "process" | "application" | "persistence" | "unknown"
+    >,
+    Equal<NonTerminal["terminalAt"], undefined>,
+    Equal<"liveActivity" extends keyof RunItem ? true : false, false>,
   ] = [true, true, true, true, true];
 
   assert.equal(operations, null);

@@ -39,6 +39,26 @@ export const REPOSITORY_PAGE_SQL = {
     WHERE s.id = ? AND s.workspace_key = ?
     ORDER BY m.ordinal ASC
   `,
+  runs: `
+    SELECT CASE WHEN r.id IS NULL THEN 1 ELSE 0 END AS scope_only,
+           r.id AS run_id, r.session_id, r.ordinal, r.initiating_message_id,
+           r.final_assistant_message_id, r.retry_of_run_id, r.phase,
+           r.failure_origin, r.error_summary, r.cancel_requested_at, r.cancel_acknowledged_at,
+           r.created_at, r.started_at, r.terminal_at, r.updated_at,
+           s.workspace_key
+    FROM sessions s
+    LEFT JOIN (
+      SELECT id, session_id, ordinal, initiating_message_id, final_assistant_message_id,
+             retry_of_run_id, phase, failure_origin, error_summary,
+             cancel_requested_at, cancel_acknowledged_at,
+             created_at, started_at, terminal_at, updated_at
+      FROM runs
+      WHERE session_id = ? AND ordinal > ?
+      ORDER BY ordinal ASC LIMIT ?
+    ) r ON r.session_id = s.id
+    WHERE s.id = ? AND s.workspace_key = ?
+    ORDER BY r.ordinal ASC
+  `,
   runEvents: `
     SELECT e.id, e.run_id, e.ordinal, e.event_code, e.subject_type, e.subject_id, e.summary, e.created_at
     FROM run_events e
@@ -181,6 +201,7 @@ export function createRepositoryReadOperations(database: DatabaseSync): Readonly
     ],
     [REPOSITORY_READ_OPERATIONS.sessionGet, read((payload) => ({ result: sessionGet(database, payload) }))],
     [REPOSITORY_READ_OPERATIONS.messagesPage, read((payload) => ({ result: messagesPage(database, payload) }))],
+    [REPOSITORY_READ_OPERATIONS.runsPage, read((payload) => ({ result: runsPage(database, payload) }))],
     [REPOSITORY_READ_OPERATIONS.runGet, read((payload) => ({ result: runGet(database, payload) }))],
     [REPOSITORY_READ_OPERATIONS.runEventsPage, read((payload) => ({ result: runEventsPage(database, payload) }))],
     [REPOSITORY_READ_OPERATIONS.runOutputCounts, read((payload) => ({ result: runOutputCounts(database, payload) }))],
@@ -442,6 +463,49 @@ function messagesPage(database: DatabaseSync, payload: Readonly<Record<string, u
     contentState: row.inline_content === null ? "chunked" : "inline",
     ...(row.inline_content === null ? {} : { contentBlocks: JSON.parse(row.inline_content) as unknown }),
     createdAt: row.created_at,
+  }));
+}
+
+function runsPage(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
+  const scope = readSessionScope(payload, ["sessionId", "workspaceKey", "cursor", "limit"]);
+  const limit = readLimit(payload.limit, REPOSITORY_READ_LIMITS.runs);
+  const cursorScope = scopeDigest(scope);
+  const afterOrdinal = decodeOrdinalCursor(payload.cursor, "runs", cursorScope);
+  const queryRows = database
+    .prepare(REPOSITORY_PAGE_SQL.runs)
+    .all(
+      scope.sessionId,
+      afterOrdinal,
+      limit + 1,
+      scope.sessionId,
+      scope.workspaceKey,
+    ) as unknown as readonly RunHistoryQueryRow[];
+  if (queryRows.length === 0) throw notFound();
+  let rows: readonly RunHistoryRow[];
+  if (queryRows[0]?.scope_only === 1) {
+    if (queryRows.length !== 1) throw persistenceContractViolation();
+    rows = [];
+  } else {
+    if (queryRows.some((row) => row.scope_only !== 0)) throw persistenceContractViolation();
+    rows = queryRows as unknown as readonly RunHistoryRow[];
+  }
+  const page = splitPage(rows, limit);
+  return ordinalPage(scope, page, "runs", cursorScope, (row) => ({
+    runId: row.run_id,
+    sessionId: row.session_id,
+    ordinal: row.ordinal,
+    initiatingMessageId: row.initiating_message_id,
+    ...(row.final_assistant_message_id === null ? {} : { finalAssistantMessageId: row.final_assistant_message_id }),
+    ...(row.retry_of_run_id === null ? {} : { retryOfRunId: row.retry_of_run_id }),
+    phase: row.phase,
+    ...(row.failure_origin === null ? {} : { failureOrigin: row.failure_origin }),
+    ...(row.error_summary === null ? {} : { errorSummary: row.error_summary }),
+    ...(row.cancel_requested_at === null ? {} : { cancelRequestedAt: row.cancel_requested_at }),
+    ...(row.cancel_acknowledged_at === null ? {} : { cancelAcknowledgedAt: row.cancel_acknowledged_at }),
+    createdAt: row.created_at,
+    ...(row.started_at === null ? {} : { startedAt: row.started_at }),
+    ...(row.terminal_at === null ? {} : { terminalAt: row.terminal_at }),
+    updatedAt: row.updated_at,
   }));
 }
 
@@ -1225,6 +1289,25 @@ type MessageRow = Readonly<{
   workspace_key: string;
 }>;
 type MessageQueryRow = Readonly<Record<string, unknown>> & Readonly<{ scope_only: number }>;
+type RunHistoryRow = Readonly<{
+  run_id: string;
+  session_id: string;
+  ordinal: number;
+  initiating_message_id: string;
+  final_assistant_message_id: string | null;
+  retry_of_run_id: string | null;
+  phase: string;
+  failure_origin: string | null;
+  error_summary: string | null;
+  cancel_requested_at: number | null;
+  cancel_acknowledged_at: number | null;
+  created_at: number;
+  started_at: number | null;
+  terminal_at: number | null;
+  updated_at: number;
+  workspace_key: string;
+}>;
+type RunHistoryQueryRow = Readonly<Record<string, unknown>> & Readonly<{ scope_only: number }>;
 type SessionPageRow = Readonly<{
   id: string;
   title: string;

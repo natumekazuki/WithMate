@@ -10,6 +10,7 @@ import type {
   ApplicationRunOutputOperations,
   ApplicationSessionMessageOperations,
   ApplicationSessionOperations,
+  ApplicationSessionRunOperations,
 } from "../src/main/index.js";
 
 type Authorization = Readonly<{ principalId: string }>;
@@ -17,6 +18,7 @@ type SessionListInput = Parameters<ApplicationSessionOperations<Authorization>["
 type RunStatusInput = Parameters<ApplicationRunOperations<Authorization>["status"]>[0];
 type RunOutputCountsInput = Parameters<ApplicationRunOutputOperations<Authorization>["outputCounts"]>[0];
 type MessageChunkInput = Parameters<ApplicationSessionMessageOperations<Authorization>["messageContentChunk"]>[0];
+type SessionRunsInput = Parameters<ApplicationSessionRunOperations<Authorization>["runs"]>[0];
 
 test("public Main barrel exposes only the transport-neutral Application contract", () => {
   const sourcePath = new URL("../src/main/index.ts", import.meta.url);
@@ -33,10 +35,12 @@ test("public Main barrel exposes only the transport-neutral Application contract
   const statusInput = null as RunStatusInput | null;
   const outputCountsInput = null as RunOutputCountsInput | null;
   const messageChunkInput = null as MessageChunkInput | null;
+  const sessionRunsInput = null as SessionRunsInput | null;
 
   assert.deepEqual(exportedModules, [
     "../shared/application-service-model.js",
     "../shared/application-session-message-model.js",
+    "../shared/application-session-run-model.js",
     "../shared/application-run-model.js",
     "../shared/application-run-output-model.js",
   ]);
@@ -45,4 +49,5 @@ test("public Main barrel exposes only the transport-neutral Application contract
   assert.equal(statusInput, null);
   assert.equal(outputCountsInput, null);
   assert.equal(messageChunkInput, null);
+  assert.equal(sessionRunsInput, null);
 });

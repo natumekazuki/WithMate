@@ -20,11 +20,15 @@ const sessionCreateKey = "018f1f4e-7f0a-7000-8000-000000000501";
 const runAdmitKey = "018f1f4e-7f0a-7000-8000-000000000502";
 const wrongScopeSessionCreateKey = "018f1f4e-7f0a-7000-8000-000000000503";
 const interruptedRunAdmitKey = "018f1f4e-7f0a-7000-8000-000000000504";
+const noFinalRunAdmitKey = "018f1f4e-7f0a-7000-8000-000000000505";
 const runId = "run-smoke-1";
 const attemptId = "attempt-run-smoke-1";
 const interruptedRunId = "run-smoke-interrupted-1";
 const interruptedAttemptId = "attempt-run-smoke-interrupted-1";
 const interruptedMessageId = "message-run-smoke-interrupted-1";
+const noFinalRunId = "run-smoke-no-final-1";
+const noFinalAttemptId = "attempt-run-smoke-no-final-1";
+const noFinalMessageId = "message-run-smoke-no-final-1";
 const userMessageId = "message-run-smoke-1";
 const assistantMessageId = "message-run-smoke-2";
 const userMessageBlocks = [{ type: "text", text: "observe me" }];
@@ -52,6 +56,9 @@ try {
   const messageHelp = invoke(["session", "messages", "--help"], environment);
   assert.equal(messageHelp.status, 0);
   assert.match(messageHelp.stdout, /^Usage: withmate session messages/u);
+  const runHistoryHelp = invoke(["session", "runs", "--help"], environment);
+  assert.equal(runHistoryHelp.status, 0);
+  assert.match(runHistoryHelp.stdout, /^Usage: withmate session runs/u);
   const invalidMessage = invoke(["session", "message-content-chunk", "--session-id", "missing"], environment);
   assert.equal(invalidMessage.status, 20);
   assert.equal(parseJsonOutput(invalidMessage).kind, "usage_failure");
@@ -283,17 +290,131 @@ try {
       childResult: null,
     });
     assert.equal(interruptedTerminal.ok, true);
+
+    const noFinalAdmission = await writes.admitNormalRun({
+      sessionId,
+      workspaceKey,
+      idempotencyKey: noFinalRunAdmitKey,
+      message: { id: noFinalMessageId, contentBlocks: [{ type: "text", text: "complete without a reply" }] },
+      run: {
+        id: noFinalRunId,
+        executionSnapshot: {
+          providerId: "codex",
+          model: "smoke-model",
+          reasoning: { effort: "medium" },
+          approval: { mode: "on-request" },
+          sandbox: { mode: "workspace-write" },
+          workspace: { key: workspaceKey },
+          character: null,
+        },
+      },
+      attemptId: noFinalAttemptId,
+      bindingIntent: { kind: "reuse", bindingId: "binding-run-smoke-1" },
+      dispatch: { providerRequest: { prompt: "complete without a reply" }, providerIdempotencyKey: null },
+    });
+    assert.equal(noFinalAdmission.ok, true);
+    const noFinalDispatch = await writes.beginRunDispatch({
+      sessionId,
+      workspaceKey,
+      runId: noFinalRunId,
+      attemptId: noFinalAttemptId,
+      bindingId: "binding-run-smoke-1",
+      providerRequest: { prompt: "complete without a reply" },
+      ephemeralOwnerToken: null,
+    });
+    assert.equal(noFinalDispatch.ok, true);
+    const noFinalDispatchResolution = await writes.resolveRunDispatch({
+      sessionId,
+      workspaceKey,
+      runId: noFinalRunId,
+      attemptId: noFinalAttemptId,
+      bindingId: "binding-run-smoke-1",
+      ephemeralOwnerToken: null,
+      outcome: { kind: "accepted", externalExecutionId: "execution-run-smoke-no-final-1" },
+    });
+    assert.equal(noFinalDispatchResolution.ok, true);
+    const noFinalTerminal = await writes.completeRun({
+      sessionId,
+      workspaceKey,
+      runId: noFinalRunId,
+      attemptId: noFinalAttemptId,
+      terminalEvent: { id: "event-run-smoke-no-final-terminal", dedupeKey: "run-smoke-no-final-terminal" },
+      preDispatchResolution: { kind: "not_applicable" },
+      outcome: { kind: "completed", finalAssistantMessage: null },
+      outputs: [],
+      childResult: null,
+    });
+    assert.equal(noFinalTerminal.ok, true);
   } finally {
     const shutdown = await worker.shutdown();
     assert.equal(shutdown.checkpoint, "completed");
   }
 
-  const status = runJson(["run", "status", "--session-id", sessionId, "--run-id", runId], environment, 0);
+  const firstRunPage = runJson(["session", "runs", "--session-id", sessionId, "--limit", "1"], environment, 0);
+  assert.equal(firstRunPage.applicationResponse.value.items.length, 1);
+  const firstRun = firstRunPage.applicationResponse.value.items[0];
+  assert.equal(firstRun.runId, runId);
+  assert.equal(firstRun.ordinal, 1);
+  assert.equal(firstRun.phase, "completed");
+  assert.equal(firstRun.finalAssistantMessageId, assistantMessageId);
+  const status = runJson(["run", "status", "--session-id", sessionId, "--run-id", firstRun.runId], environment, 0);
   assert.equal(status.applicationResponse.value.phase, "completed");
   assert.equal("failure" in status.applicationResponse.value, false);
+  for (const field of ["createdAt", "startedAt", "terminalAt", "updatedAt"]) {
+    assert.equal(status.applicationResponse.value[field], firstRun[field], `Run history drifted from status: ${field}`);
+  }
+  const runCursor = firstRunPage.applicationResponse.value.nextCursor;
+  assert.equal(typeof runCursor, "string");
+  const firstRunPageJson = JSON.stringify(firstRunPage);
+  for (const forbidden of [
+    "executionSnapshot",
+    "providerId",
+    "providerErrorCode",
+    "terminalEventReceivedAt",
+    "externalSideEffectState",
+    '"version":',
+    "workspaceKey",
+    "attemptId",
+    "outputs",
+  ]) {
+    assert.equal(firstRunPageJson.includes(forbidden), false, `Run history exposed ${forbidden}`);
+  }
+  const secondRunPage = runJson(
+    ["session", "runs", "--session-id", sessionId, "--cursor", runCursor, "--limit", "1"],
+    environment,
+    0,
+  );
+  assert.equal(secondRunPage.applicationResponse.value.items.length, 1);
+  assert.equal(secondRunPage.applicationResponse.value.items[0].runId, interruptedRunId);
+  assert.equal(secondRunPage.applicationResponse.value.items[0].ordinal, 2);
+  assert.equal(secondRunPage.applicationResponse.value.items[0].phase, "interrupted");
+  assert.deepEqual(secondRunPage.applicationResponse.value.items[0].failure, {
+    origin: "transport",
+    summary: "Provider dispatch was interrupted.",
+  });
+  assert.equal(JSON.stringify(secondRunPage).includes("must-not-leak"), false);
+  const secondRunCursor = secondRunPage.applicationResponse.value.nextCursor;
+  assert.equal(typeof secondRunCursor, "string");
+  const thirdRunPage = runJson(
+    ["session", "runs", "--session-id", sessionId, "--cursor", secondRunCursor, "--limit", "1"],
+    environment,
+    0,
+  );
+  assert.equal(thirdRunPage.applicationResponse.value.items.length, 1);
+  assert.equal(thirdRunPage.applicationResponse.value.items[0].runId, noFinalRunId);
+  assert.equal(thirdRunPage.applicationResponse.value.items[0].ordinal, 3);
+  assert.equal(thirdRunPage.applicationResponse.value.items[0].phase, "completed");
+  assert.equal("finalAssistantMessageId" in thirdRunPage.applicationResponse.value.items[0], false);
+  assert.equal("nextCursor" in thirdRunPage.applicationResponse.value, false);
+  const reusedRunCursor = runJson(
+    ["session", "runs", "--session-id", wrongScopeSessionId, "--cursor", runCursor, "--limit", "1"],
+    environment,
+    22,
+  );
+  assert.equal(reusedRunCursor.applicationResponse.error.code, "cursor_invalid");
 
   const events = runJson(
-    ["run", "events", "--session-id", sessionId, "--run-id", runId, "--limit", "10"],
+    ["run", "events", "--session-id", sessionId, "--run-id", firstRun.runId, "--limit", "10"],
     environment,
     0,
   );
@@ -339,7 +460,11 @@ try {
   assert.equal(interruptedFollow.applicationResponse.value.status.phase, "interrupted");
   assert.equal(JSON.stringify(interruptedFollow).includes("must-not-leak"), false);
 
-  const outputCounts = runJson(["run", "output-counts", "--session-id", sessionId, "--run-id", runId], environment, 0);
+  const outputCounts = runJson(
+    ["run", "output-counts", "--session-id", sessionId, "--run-id", firstRun.runId],
+    environment,
+    0,
+  );
   assert.equal(outputCounts.applicationResponse.value.totalCount, 2);
   assert.equal(outputCounts.applicationResponse.value.byCategory.diagnostic, 2);
 
@@ -492,6 +617,8 @@ try {
   assert.equal(wrongScopeMessage.applicationResponse.error.code, "not_found");
   const wrongSessionMessage = runJson(["session", "messages", "--session-id", "missing-session"], environment, 22);
   assert.equal(wrongSessionMessage.applicationResponse.error.code, "not_found");
+  const wrongSessionRuns = runJson(["session", "runs", "--session-id", "missing-session"], environment, 22);
+  assert.equal(wrongSessionRuns.applicationResponse.error.code, "not_found");
 
   const binaryPreview = runJson(
     ["run", "output-preview", "--session-id", sessionId, "--run-id", runId, "--output-item-id", binaryOutputItemId],
@@ -590,6 +717,7 @@ try {
         "output-chunk",
         "output-export",
         "messages",
+        "runs",
         "message-content-chunk",
       ],
       parseRuntimeIsolation: "verified",
@@ -597,6 +725,7 @@ try {
       providerMetadataProjection: "verified",
       runOutputControlPlane: "verified",
       sessionMessageControlPlane: "verified",
+      sessionRunHistoryControlPlane: "verified",
       exportNoClobber: "verified",
       sqliteSidecars: "none",
     }),
