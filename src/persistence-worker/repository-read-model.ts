@@ -1,21 +1,63 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { REPOSITORY_READ_LIMITS, REPOSITORY_READ_OPERATIONS } from "../shared/repository-read-model.js";
+import {
+  REPOSITORY_READ_LIMITS,
+  REPOSITORY_READ_OPERATIONS,
+  type RunOutputListItem,
+} from "../shared/repository-read-model.js";
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
+import { isLocalRepositoryKey, SESSION_METADATA_LIMITS, sessionSearchKey } from "../shared/session-metadata.js";
 
 const INLINE_MESSAGE_BYTES = 64 * 1024;
 const MAX_PAGE_JSON_BYTES = 192 * 1024;
+const SESSION_SEARCH_SQL_FUNCTION = "withmate_session_search_key";
+const RUN_OUTPUT_CATEGORIES = [
+  "assistant_detail",
+  "operation",
+  "interaction",
+  "telemetry",
+  "diagnostic",
+  "provider_metadata",
+] as const;
 
 export const REPOSITORY_PAGE_SQL = {
   messages: `
-    SELECT m.id, m.session_id, m.ordinal, m.role,
-           length(CAST(m.content_blocks_json AS BLOB)) AS content_byte_length,
-           CASE WHEN length(CAST(m.content_blocks_json AS BLOB)) <= ? THEN m.content_blocks_json END AS inline_content,
-           m.created_at, s.workspace_key
-    FROM messages m JOIN sessions s ON s.id = m.session_id
-    WHERE m.session_id = ? AND s.workspace_key = ? AND m.ordinal > ?
-    ORDER BY m.ordinal ASC LIMIT ?
+    SELECT CASE WHEN m.id IS NULL THEN 1 ELSE 0 END AS scope_only,
+           m.id, m.session_id, m.ordinal, m.role, m.content_byte_length, m.inline_content, m.created_at,
+           s.workspace_key
+    FROM sessions s
+    LEFT JOIN (
+      SELECT id, session_id, ordinal, role,
+             length(CAST(content_blocks_json AS BLOB)) AS content_byte_length,
+             CASE WHEN length(CAST(content_blocks_json AS BLOB)) <= ? THEN content_blocks_json END AS inline_content,
+             created_at
+      FROM messages
+      WHERE session_id = ? AND ordinal > ?
+      ORDER BY ordinal ASC LIMIT ?
+    ) m ON m.session_id = s.id
+    WHERE s.id = ? AND s.workspace_key = ?
+    ORDER BY m.ordinal ASC
+  `,
+  runs: `
+    SELECT CASE WHEN r.id IS NULL THEN 1 ELSE 0 END AS scope_only,
+           r.id AS run_id, r.session_id, r.ordinal, r.initiating_message_id,
+           r.final_assistant_message_id, r.retry_of_run_id, r.phase,
+           r.failure_origin, r.error_summary, r.cancel_requested_at, r.cancel_acknowledged_at,
+           r.created_at, r.started_at, r.terminal_at, r.updated_at,
+           s.workspace_key
+    FROM sessions s
+    LEFT JOIN (
+      SELECT id, session_id, ordinal, initiating_message_id, final_assistant_message_id,
+             retry_of_run_id, phase, failure_origin, error_summary,
+             cancel_requested_at, cancel_acknowledged_at,
+             created_at, started_at, terminal_at, updated_at
+      FROM runs
+      WHERE session_id = ? AND ordinal > ?
+      ORDER BY ordinal ASC LIMIT ?
+    ) r ON r.session_id = s.id
+    WHERE s.id = ? AND s.workspace_key = ?
+    ORDER BY r.ordinal ASC
   `,
   runEvents: `
     SELECT e.id, e.run_id, e.ordinal, e.event_code, e.subject_type, e.subject_id, e.summary, e.created_at
@@ -44,6 +86,91 @@ export const REPOSITORY_PAGE_SQL = {
   `,
 } as const;
 
+export const REPOSITORY_RUN_OUTPUT_ITEM_SQL = `
+  SELECT o.id, o.run_id, o.ordinal, o.category, o.kind, o.summary, o.completion_state,
+         o.payload_state, o.payload_original_byte_length, o.stored_payload_id,
+         o.redaction_state, o.created_at
+  FROM run_output_items o
+  JOIN runs r ON r.id = o.run_id
+  JOIN sessions s ON s.id = r.session_id
+  WHERE o.id = ? AND o.run_id = ? AND r.session_id = ? AND s.workspace_key = ?
+`;
+
+const SESSION_PAGE_COLUMNS = `
+  SELECT id, title, workspace_key, workspace_path, local_repository_key, repository_name,
+         default_character_id, lifecycle_status,
+         created_at, updated_at, last_activity_at
+  FROM sessions`;
+const SESSION_PAGE_PROJECTION = `
+  SELECT s.*,
+    (SELECT id FROM runs WHERE session_id = s.id
+      AND phase IN ('queued','starting','active','canceling','finalizing') LIMIT 1) AS active_run_id,
+    (SELECT created_at FROM runs WHERE session_id = s.id
+      AND phase IN ('queued','starting','active','canceling','finalizing') LIMIT 1) AS active_run_created_at,
+    (SELECT id FROM runs WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_id,
+    (SELECT phase FROM runs WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_phase,
+    (SELECT terminal_at FROM runs
+      WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_terminal_at
+  FROM page_sessions s
+  ORDER BY s.last_activity_at DESC, s.id DESC`;
+
+function sessionPageSql(filter: "all" | "lifecycle" | "workspace" | "workspace_lifecycle"): string {
+  const scope =
+    filter === "all"
+      ? ""
+      : filter === "lifecycle"
+        ? "lifecycle_status = ? AND "
+        : filter === "workspace"
+          ? "workspace_key = ? AND "
+          : "workspace_key = ? AND lifecycle_status = ? AND ";
+  return `
+    WITH page_sessions AS MATERIALIZED (
+      ${SESSION_PAGE_COLUMNS}
+      WHERE ${scope}(? IS NULL OR last_activity_at < ? OR (last_activity_at = ? AND id < ?))
+      ORDER BY last_activity_at DESC, id DESC
+      LIMIT ?
+    )
+    ${SESSION_PAGE_PROJECTION}
+  `;
+}
+
+function filteredSessionPageSql(
+  hasWorkspace: boolean,
+  hasLifecycle: boolean,
+  repositoryKeyCount: number,
+  hasQuery: boolean,
+): string {
+  const filters = [
+    ...(hasWorkspace ? ["workspace_key = ?"] : []),
+    ...(hasLifecycle ? ["lifecycle_status = ?"] : []),
+    ...(repositoryKeyCount === 0
+      ? []
+      : [`local_repository_key IN (${Array.from({ length: repositoryKeyCount }, () => "?").join(", ")})`]),
+    ...(hasQuery
+      ? [
+          `(instr(${SESSION_SEARCH_SQL_FUNCTION}(title), ?) > 0 OR instr(${SESSION_SEARCH_SQL_FUNCTION}(repository_name), ?) > 0)`,
+        ]
+      : []),
+  ];
+  return `
+    WITH page_sessions AS MATERIALIZED (
+      ${SESSION_PAGE_COLUMNS}
+      WHERE ${filters.length === 0 ? "" : `${filters.join(" AND ")} AND `}
+        (? IS NULL OR last_activity_at < ? OR (last_activity_at = ? AND id < ?))
+      ORDER BY last_activity_at DESC, id DESC
+      LIMIT ?
+    )
+    ${SESSION_PAGE_PROJECTION}
+  `;
+}
+
+export const REPOSITORY_SESSION_PAGE_SQL = {
+  all: sessionPageSql("all"),
+  lifecycle: sessionPageSql("lifecycle"),
+  workspace: sessionPageSql("workspace"),
+  workspaceLifecycle: sessionPageSql("workspace_lifecycle"),
+} as const;
+
 export type RepositoryReadOperation = Readonly<{
   requestClass: "read";
   execute: (payload: Readonly<Record<string, unknown>>) => Readonly<{ result: unknown }>;
@@ -59,18 +186,27 @@ export class RepositoryReadError extends Error {
 }
 
 export function createRepositoryReadOperations(database: DatabaseSync): ReadonlyMap<string, RepositoryReadOperation> {
+  database.function(SESSION_SEARCH_SQL_FUNCTION, { deterministic: true }, (value) =>
+    typeof value === "string" ? sessionSearchKey(value) : null,
+  );
   const read = (execute: RepositoryReadOperation["execute"]): RepositoryReadOperation => ({
     requestClass: "read",
     execute,
   });
   return new Map([
     [REPOSITORY_READ_OPERATIONS.sessionsPage, read((payload) => ({ result: sessionsPage(database, payload) }))],
+    [
+      REPOSITORY_READ_OPERATIONS.localRepositoriesPage,
+      read((payload) => ({ result: localRepositoriesPage(database, payload) })),
+    ],
     [REPOSITORY_READ_OPERATIONS.sessionGet, read((payload) => ({ result: sessionGet(database, payload) }))],
     [REPOSITORY_READ_OPERATIONS.messagesPage, read((payload) => ({ result: messagesPage(database, payload) }))],
+    [REPOSITORY_READ_OPERATIONS.runsPage, read((payload) => ({ result: runsPage(database, payload) }))],
     [REPOSITORY_READ_OPERATIONS.runGet, read((payload) => ({ result: runGet(database, payload) }))],
     [REPOSITORY_READ_OPERATIONS.runEventsPage, read((payload) => ({ result: runEventsPage(database, payload) }))],
     [REPOSITORY_READ_OPERATIONS.runOutputCounts, read((payload) => ({ result: runOutputCounts(database, payload) }))],
     [REPOSITORY_READ_OPERATIONS.runOutputsPage, read((payload) => ({ result: runOutputsPage(database, payload) }))],
+    [REPOSITORY_READ_OPERATIONS.runOutputGet, read((payload) => ({ result: runOutputGet(database, payload) }))],
     [
       REPOSITORY_READ_OPERATIONS.runInputDeliveriesPage,
       read((payload) => ({ result: runInputDeliveriesPage(database, payload) })),
@@ -81,6 +217,10 @@ export function createRepositoryReadOperations(database: DatabaseSync): Readonly
     ],
     [REPOSITORY_READ_OPERATIONS.childResultsPage, read((payload) => ({ result: childResultsPage(database, payload) }))],
     [
+      REPOSITORY_READ_OPERATIONS.sessionDeletionStatusGet,
+      read((payload) => ({ result: sessionDeletionStatusGet(database, payload) })),
+    ],
+    [
       REPOSITORY_READ_OPERATIONS.sessionDeletionCleanupPage,
       read((payload) => ({ result: sessionDeletionCleanupPage(database, payload) })),
     ],
@@ -89,11 +229,25 @@ export function createRepositoryReadOperations(database: DatabaseSync): Readonly
 }
 
 function sessionsPage(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
-  assertExactKeys(payload, ["workspaceKey", "lifecycleStatus", "cursor", "limit"]);
-  const workspaceKey = requiredString(payload.workspaceKey, "workspaceKey");
+  assertExactKeys(payload, [
+    "workspaceKey",
+    "lifecycleStatus",
+    "localRepositoryKeys",
+    "querySearchKey",
+    "cursor",
+    "limit",
+  ]);
+  const workspaceKey = optionalString(payload.workspaceKey, "workspaceKey");
   const lifecycleStatus = optionalEnum(payload.lifecycleStatus, ["active", "archived", "closed"]);
+  const localRepositoryKeys = optionalLocalRepositoryKeys(payload.localRepositoryKeys);
+  const querySearchKey = optionalQuerySearchKey(payload.querySearchKey);
   const limit = readLimit(payload.limit, REPOSITORY_READ_LIMITS.sessions);
-  const scope = scopeDigest({ workspaceKey, lifecycleStatus: lifecycleStatus ?? null });
+  const scope = scopeDigest({
+    workspaceKey: workspaceKey ?? null,
+    lifecycleStatus: lifecycleStatus ?? null,
+    localRepositoryKeys,
+    querySearchKey: querySearchKey ?? null,
+  });
   const cursor = decodeCursor(payload.cursor, "sessions", scope, 2);
   if (cursor !== undefined && (!Number.isSafeInteger(cursor[0]) || typeof cursor[1] !== "string")) {
     throw invalidCursor();
@@ -101,77 +255,136 @@ function sessionsPage(database: DatabaseSync, payload: Readonly<Record<string, u
   const cursorTime = cursor?.[0] as number | undefined;
   const cursorId = cursor?.[1] as string | undefined;
 
+  const cursorParameters = [cursorTime ?? null, cursorTime ?? null, cursorTime ?? null, cursorId ?? null, limit + 1];
+  const query = {
+    sql: filteredSessionPageSql(
+      workspaceKey !== undefined,
+      lifecycleStatus !== undefined,
+      localRepositoryKeys.length,
+      querySearchKey !== undefined,
+    ),
+    parameters: [
+      ...(workspaceKey === undefined ? [] : [workspaceKey]),
+      ...(lifecycleStatus === undefined ? [] : [lifecycleStatus]),
+      ...localRepositoryKeys,
+      ...(querySearchKey === undefined ? [] : [querySearchKey, querySearchKey]),
+      ...cursorParameters,
+    ],
+  };
+  const rows = database.prepare(query.sql).all(...query.parameters) as unknown as readonly SessionPageRow[];
+  const page = splitPage(rows, limit);
+  return budgetPage(
+    page,
+    (row) => ({
+      id: row.id,
+      title: row.title,
+      workspaceKey: row.workspace_key,
+      workspacePath: row.workspace_path,
+      localRepositoryKey: row.local_repository_key,
+      repositoryName: row.repository_name,
+      defaultCharacterId: row.default_character_id,
+      lifecycleStatus: row.lifecycle_status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      lastActivityAt: row.last_activity_at,
+      executionState: row.active_run_id !== null ? "running" : (row.latest_run_phase ?? "not_started"),
+      ...(row.active_run_id === null ? {} : { activeRunId: row.active_run_id }),
+      ...(row.latest_run_id === null ? {} : { latestRunId: row.latest_run_id }),
+      stateChangedAt:
+        row.active_run_id === null
+          ? (row.latest_run_terminal_at ?? row.created_at)
+          : (row.active_run_created_at ?? row.created_at),
+    }),
+    (budgeted) => ({
+      items: budgeted.items,
+      ...(budgeted.hasMore && budgeted.lastRow !== undefined
+        ? {
+            nextCursor: encodeCursor("sessions", scope, [budgeted.lastRow.last_activity_at, budgeted.lastRow.id]),
+          }
+        : {}),
+    }),
+  );
+}
+
+function localRepositoriesPage(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
+  assertExactKeys(payload, ["cursor", "limit"]);
+  const limit = readLimit(payload.limit, REPOSITORY_READ_LIMITS.localRepositories);
+  const scope = scopeDigest({ collection: "local_repositories" });
+  const cursor = decodeCursor(payload.cursor, "local_repositories", scope, 2);
+  if (cursor !== undefined && (!Number.isSafeInteger(cursor[0]) || !isLocalRepositoryKey(cursor[1]))) {
+    throw invalidCursor();
+  }
+  const cursorTime = cursor?.[0] as number | undefined;
+  const cursorKey = cursor?.[1] as string | undefined;
   const rows = database
     .prepare(
       `
-      WITH page_sessions AS MATERIALIZED (
-        SELECT id, workspace_key, default_character_id, lifecycle_status,
-               created_at, updated_at, last_activity_at
+      WITH repository_stats AS MATERIALIZED (
+        SELECT local_repository_key, COUNT(*) AS session_count,
+               COUNT(DISTINCT repository_name) AS repository_name_count,
+               MAX(last_activity_at) AS last_activity_at
         FROM sessions
-        WHERE workspace_key = ?
-          AND (? IS NULL OR lifecycle_status = ?)
-          AND (? IS NULL OR last_activity_at < ? OR (last_activity_at = ? AND id < ?))
-        ORDER BY last_activity_at DESC, id DESC
+        WHERE local_repository_key IS NOT NULL
+        GROUP BY local_repository_key
+      ), page_repositories AS MATERIALIZED (
+        SELECT * FROM repository_stats
+        WHERE (? IS NULL OR last_activity_at < ? OR
+          (last_activity_at = ? AND local_repository_key < ?))
+        ORDER BY last_activity_at DESC, local_repository_key DESC
         LIMIT ?
       )
-      SELECT s.*,
-        (SELECT id FROM runs WHERE session_id = s.id
-          AND phase IN ('queued','starting','active','canceling','finalizing') LIMIT 1) AS active_run_id,
-        (SELECT created_at FROM runs WHERE session_id = s.id
-          AND phase IN ('queued','starting','active','canceling','finalizing') LIMIT 1) AS active_run_created_at,
-        (SELECT id FROM runs WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_id,
-        (SELECT phase FROM runs WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_phase,
-        (SELECT terminal_at FROM runs
-          WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_terminal_at
-      FROM page_sessions s
-      ORDER BY s.last_activity_at DESC, s.id DESC
+      SELECT p.*,
+        (SELECT json_group_array(repository_name) FROM (
+          SELECT repository_name FROM sessions n
+          WHERE n.local_repository_key = p.local_repository_key
+          GROUP BY repository_name
+          ORDER BY MAX(last_activity_at) DESC, repository_name ASC
+          LIMIT ?
+        )) AS repository_names_json
+      FROM page_repositories p
+      ORDER BY p.last_activity_at DESC, p.local_repository_key DESC
     `,
     )
     .all(
-      workspaceKey,
-      lifecycleStatus ?? null,
-      lifecycleStatus ?? null,
       cursorTime ?? null,
       cursorTime ?? null,
       cursorTime ?? null,
-      cursorId ?? null,
+      cursorKey ?? null,
       limit + 1,
-    ) as unknown as readonly SessionPageRow[];
+      SESSION_METADATA_LIMITS.repositoryNamesPerItemMax,
+    ) as unknown as readonly LocalRepositoryPageRow[];
   const page = splitPage(rows, limit);
-  const mappedPage = budgetPage(page, (row) => ({
-    id: row.id,
-    workspaceKey: row.workspace_key,
-    defaultCharacterId: row.default_character_id,
-    lifecycleStatus: row.lifecycle_status,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    lastActivityAt: row.last_activity_at,
-    executionState: row.active_run_id !== null ? "running" : (row.latest_run_phase ?? "not_started"),
-    ...(row.active_run_id === null ? {} : { activeRunId: row.active_run_id }),
-    ...(row.latest_run_id === null ? {} : { latestRunId: row.latest_run_id }),
-    stateChangedAt:
-      row.active_run_id === null
-        ? (row.latest_run_terminal_at ?? row.created_at)
-        : (row.active_run_created_at ?? row.created_at),
-  }));
-  return {
-    items: mappedPage.items,
-    ...(mappedPage.hasMore
-      ? {
-          nextCursor: encodeCursor("sessions", scope, [mappedPage.lastRow!.last_activity_at, mappedPage.lastRow!.id]),
-        }
-      : {}),
-  };
+  return budgetPage(
+    page,
+    (row) => ({
+      localRepositoryKey: row.local_repository_key,
+      repositoryNames: decodeRepositoryNames(row.repository_names_json),
+      repositoryNameCount: row.repository_name_count,
+      sessionCount: row.session_count,
+      lastActivityAt: row.last_activity_at,
+    }),
+    (budgeted) => ({
+      items: budgeted.items,
+      ...(budgeted.hasMore && budgeted.lastRow !== undefined
+        ? {
+            nextCursor: encodeCursor("local_repositories", scope, [
+              budgeted.lastRow.last_activity_at,
+              budgeted.lastRow.local_repository_key,
+            ]),
+          }
+        : {}),
+    }),
+  );
 }
 
 function sessionGet(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
-  assertExactKeys(payload, ["sessionId", "workspaceKey"]);
+  assertExactKeys(payload, ["sessionId"]);
   const sessionId = requiredString(payload.sessionId, "sessionId");
-  const workspaceKey = requiredString(payload.workspaceKey, "workspaceKey");
   const row = database
     .prepare(
       `
-      SELECT s.id, s.provider_id, s.workspace_key, s.default_character_id, s.max_concurrent_child_runs,
+      SELECT s.id, s.title, s.provider_id, s.workspace_key, s.workspace_path,
+        s.local_repository_key, s.repository_name, s.default_character_id, s.max_concurrent_child_runs,
         s.lifecycle_status, s.created_at, s.updated_at, s.last_activity_at,
         length(CAST(s.allowed_additional_directories_json AS BLOB)) AS directories_byte_length,
         CASE WHEN length(CAST(s.allowed_additional_directories_json AS BLOB)) <= ?
@@ -180,16 +393,20 @@ function sessionGet(database: DatabaseSync, payload: Readonly<Record<string, unk
           AND phase IN ('queued','starting','active','canceling','finalizing') LIMIT 1) AS active_run_id,
         (SELECT id FROM runs WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_id,
         (SELECT phase FROM runs WHERE session_id = s.id ORDER BY ordinal DESC LIMIT 1) AS latest_run_phase
-      FROM sessions s WHERE s.id = ? AND s.workspace_key = ?
+      FROM sessions s WHERE s.id = ?
     `,
     )
-    .get(INLINE_MESSAGE_BYTES, sessionId, workspaceKey) as SessionDetailRow | undefined;
+    .get(INLINE_MESSAGE_BYTES, sessionId) as SessionDetailRow | undefined;
   if (row === undefined) throw notFound();
   return {
     session: {
       id: row.id,
+      title: row.title,
       providerId: row.provider_id,
       workspaceKey: row.workspace_key,
+      workspacePath: row.workspace_path,
+      localRepositoryKey: row.local_repository_key,
+      repositoryName: row.repository_name,
       allowedAdditionalDirectoriesByteLength: row.directories_byte_length,
       allowedAdditionalDirectoriesState: row.inline_directories === null ? "chunked" : "inline",
       ...(row.inline_directories === null
@@ -215,16 +432,27 @@ function messagesPage(database: DatabaseSync, payload: Readonly<Record<string, u
   const limit = readLimit(payload.limit, REPOSITORY_READ_LIMITS.messages);
   const cursorScope = scopeDigest(scope);
   const afterOrdinal = decodeOrdinalCursor(payload.cursor, "messages", cursorScope);
-  const rows = database
+  const queryRows = database
     .prepare(REPOSITORY_PAGE_SQL.messages)
     .all(
       INLINE_MESSAGE_BYTES,
       scope.sessionId,
-      scope.workspaceKey,
       afterOrdinal,
       limit + 1,
-    ) as unknown as readonly MessageRow[];
-  assertScopeExists(database, scope.sessionId, scope.workspaceKey);
+      scope.sessionId,
+      scope.workspaceKey,
+    ) as unknown as readonly MessageQueryRow[];
+  if (queryRows.length === 0) throw notFound();
+  let rows: readonly MessageRow[];
+  if (queryRows[0]?.scope_only === 1) {
+    if (queryRows.length !== 1) throw new TypeError("Repository projection violates the persistence contract.");
+    rows = [];
+  } else {
+    if (queryRows.some((row) => row.scope_only !== 0)) {
+      throw new TypeError("Repository projection violates the persistence contract.");
+    }
+    rows = queryRows as unknown as readonly MessageRow[];
+  }
   const page = splitPage(rows, limit);
   return ordinalPage(scope, page, "messages", cursorScope, (row) => ({
     id: row.id,
@@ -235,6 +463,49 @@ function messagesPage(database: DatabaseSync, payload: Readonly<Record<string, u
     contentState: row.inline_content === null ? "chunked" : "inline",
     ...(row.inline_content === null ? {} : { contentBlocks: JSON.parse(row.inline_content) as unknown }),
     createdAt: row.created_at,
+  }));
+}
+
+function runsPage(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
+  const scope = readSessionScope(payload, ["sessionId", "workspaceKey", "cursor", "limit"]);
+  const limit = readLimit(payload.limit, REPOSITORY_READ_LIMITS.runs);
+  const cursorScope = scopeDigest(scope);
+  const afterOrdinal = decodeOrdinalCursor(payload.cursor, "runs", cursorScope);
+  const queryRows = database
+    .prepare(REPOSITORY_PAGE_SQL.runs)
+    .all(
+      scope.sessionId,
+      afterOrdinal,
+      limit + 1,
+      scope.sessionId,
+      scope.workspaceKey,
+    ) as unknown as readonly RunHistoryQueryRow[];
+  if (queryRows.length === 0) throw notFound();
+  let rows: readonly RunHistoryRow[];
+  if (queryRows[0]?.scope_only === 1) {
+    if (queryRows.length !== 1) throw persistenceContractViolation();
+    rows = [];
+  } else {
+    if (queryRows.some((row) => row.scope_only !== 0)) throw persistenceContractViolation();
+    rows = queryRows as unknown as readonly RunHistoryRow[];
+  }
+  const page = splitPage(rows, limit);
+  return ordinalPage(scope, page, "runs", cursorScope, (row) => ({
+    runId: row.run_id,
+    sessionId: row.session_id,
+    ordinal: row.ordinal,
+    initiatingMessageId: row.initiating_message_id,
+    ...(row.final_assistant_message_id === null ? {} : { finalAssistantMessageId: row.final_assistant_message_id }),
+    ...(row.retry_of_run_id === null ? {} : { retryOfRunId: row.retry_of_run_id }),
+    phase: row.phase,
+    ...(row.failure_origin === null ? {} : { failureOrigin: row.failure_origin }),
+    ...(row.error_summary === null ? {} : { errorSummary: row.error_summary }),
+    ...(row.cancel_requested_at === null ? {} : { cancelRequestedAt: row.cancel_requested_at }),
+    ...(row.cancel_acknowledged_at === null ? {} : { cancelAcknowledgedAt: row.cancel_acknowledged_at }),
+    createdAt: row.created_at,
+    ...(row.started_at === null ? {} : { startedAt: row.started_at }),
+    ...(row.terminal_at === null ? {} : { terminalAt: row.terminal_at }),
+    updatedAt: row.updated_at,
   }));
 }
 
@@ -278,16 +549,25 @@ function runEventsPage(database: DatabaseSync, payload: Readonly<Record<string, 
     .all(scope.runId, scope.sessionId, scope.workspaceKey, afterOrdinal, limit + 1) as unknown as readonly OrdinalRow[];
   assertRunScopeExists(database, scope);
   const page = splitPage(rows, limit);
-  return ordinalPage(scope, page, "run_events", cursorScope, (row) => ({
-    id: row.id,
-    runId: row.run_id,
-    ordinal: row.ordinal,
-    eventCode: row.event_code,
-    ...(row.subject_type === null ? {} : { subjectType: row.subject_type }),
-    ...(row.subject_id === null ? {} : { subjectId: row.subject_id }),
-    ...(row.summary === null ? {} : { summary: row.summary }),
-    createdAt: row.created_at,
-  }));
+  return budgetPage(
+    page,
+    (row) => ({
+      id: row.id,
+      runId: row.run_id,
+      ordinal: row.ordinal,
+      eventCode: row.event_code,
+      ...(row.subject_type === null ? {} : { subjectType: row.subject_type }),
+      ...(row.subject_id === null ? {} : { subjectId: row.subject_id }),
+      ...(row.summary === null ? {} : { summary: row.summary }),
+      createdAt: row.created_at,
+    }),
+    (budgeted) => ({
+      ...scope,
+      items: budgeted.items,
+      continuationCursor: encodeCursor("run_events", cursorScope, [budgeted.lastRow?.ordinal ?? afterOrdinal]),
+      hasMore: budgeted.hasMore,
+    }),
+  );
 }
 
 function runOutputCounts(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
@@ -366,27 +646,30 @@ function runInputDeliveriesPage(database: DatabaseSync, payload: Readonly<Record
     ) as unknown as readonly RunInputDeliveryRow[];
   assertRunScopeExists(database, scope);
   const page = splitPage(rows, limit);
-  const budgeted = budgetPage(page, (row) => ({
-    messageId: row.message_id,
-    runId: row.run_id,
-    attemptId: row.attempt_id,
-    bindingId: row.binding_id,
-    deliveryState: row.delivery_state,
-    createdAt: row.created_at,
-    dispatchingAt: row.dispatching_at,
-  }));
-  return {
-    ...scope,
-    items: budgeted.items,
-    ...(budgeted.hasMore && budgeted.lastRow !== undefined
-      ? {
-          nextCursor: encodeCursor("run_input_deliveries", cursorScope, [
-            budgeted.lastRow.created_at,
-            budgeted.lastRow.message_id,
-          ]),
-        }
-      : {}),
-  };
+  return budgetPage(
+    page,
+    (row) => ({
+      messageId: row.message_id,
+      runId: row.run_id,
+      attemptId: row.attempt_id,
+      bindingId: row.binding_id,
+      deliveryState: row.delivery_state,
+      createdAt: row.created_at,
+      dispatchingAt: row.dispatching_at,
+    }),
+    (budgeted) => ({
+      ...scope,
+      items: budgeted.items,
+      ...(budgeted.hasMore && budgeted.lastRow !== undefined
+        ? {
+            nextCursor: encodeCursor("run_input_deliveries", cursorScope, [
+              budgeted.lastRow.created_at,
+              budgeted.lastRow.message_id,
+            ]),
+          }
+        : {}),
+    }),
+  );
 }
 
 function runOutputsPage(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
@@ -411,22 +694,90 @@ function runOutputsPage(database: DatabaseSync, payload: Readonly<Record<string,
         )) as unknown as readonly OrdinalRow[];
   assertRunScopeExists(database, scope);
   const page = splitPage(rows, limit);
-  return ordinalPage(scope, page, "run_outputs", cursorScope, (row) => ({
+  return ordinalPage(scope, page, "run_outputs", cursorScope, (row) => decodeRunOutputItem(row as RunOutputItemRow));
+}
+
+function runOutputGet(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
+  const scope = readRunScope(payload, ["sessionId", "runId", "outputItemId", "workspaceKey"]);
+  const outputItemId = requiredString(payload.outputItemId, "outputItemId");
+  const row = database
+    .prepare(REPOSITORY_RUN_OUTPUT_ITEM_SQL)
+    .get(outputItemId, scope.runId, scope.sessionId, scope.workspaceKey) as RunOutputItemRow | undefined;
+  if (row === undefined) throw notFound();
+  return {
+    ...scope,
+    item: decodeRunOutputItem(row),
+  };
+}
+
+function decodeRunOutputItem(row: RunOutputItemRow): RunOutputListItem {
+  if (
+    !RUN_OUTPUT_CATEGORIES.includes(row.category as (typeof RUN_OUTPUT_CATEGORIES)[number]) ||
+    (row.completion_state !== "complete" && row.completion_state !== "partial")
+  ) {
+    throw persistenceContractViolation();
+  }
+  const base = {
     id: row.id,
     runId: row.run_id,
     ordinal: row.ordinal,
-    category: row.category,
+    category: row.category as RunOutputListItem["category"],
     kind: row.kind,
     summary: row.summary,
     completionState: row.completion_state,
-    payloadState: row.payload_state,
-    ...(row.payload_original_byte_length === null
-      ? {}
-      : { payloadOriginalByteLength: row.payload_original_byte_length }),
-    ...(row.stored_payload_id === null ? {} : { storedPayloadId: row.stored_payload_id }),
-    redactionState: row.redaction_state,
     createdAt: row.created_at,
-  }));
+  } as const;
+  if (
+    row.payload_state === "none" &&
+    row.payload_original_byte_length === null &&
+    row.stored_payload_id === null &&
+    row.redaction_state === "not_required"
+  ) {
+    return { ...base, payloadState: "none", redactionState: "not_required" };
+  }
+  if (
+    (row.payload_state === "pending" ||
+      row.payload_state === "omitted_size_limit" ||
+      row.payload_state === "omitted_persistence") &&
+    isNonNegativeInteger(row.payload_original_byte_length) &&
+    row.stored_payload_id === null &&
+    (row.redaction_state === "not_required" || row.redaction_state === "redacted")
+  ) {
+    return {
+      ...base,
+      payloadState: row.payload_state,
+      payloadOriginalByteLength: row.payload_original_byte_length,
+      redactionState: row.redaction_state,
+    };
+  }
+  if (
+    row.payload_state === "stored" &&
+    isNonNegativeInteger(row.payload_original_byte_length) &&
+    row.stored_payload_id === row.id &&
+    (row.redaction_state === "not_required" || row.redaction_state === "redacted")
+  ) {
+    return {
+      ...base,
+      payloadState: "stored",
+      payloadOriginalByteLength: row.payload_original_byte_length,
+      storedPayloadId: row.stored_payload_id,
+      redactionState: row.redaction_state,
+    };
+  }
+  if (
+    row.payload_state === "omitted_redaction" &&
+    isNonNegativeInteger(row.payload_original_byte_length) &&
+    row.stored_payload_id === null &&
+    row.redaction_state === "unknown"
+  ) {
+    return {
+      ...base,
+      payloadState: "omitted_redaction",
+      payloadOriginalByteLength: row.payload_original_byte_length,
+      redactionState: "unknown",
+    };
+  }
+  throw persistenceContractViolation();
 }
 
 function runOutputPayloadMetadata(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
@@ -552,6 +903,39 @@ function sessionDeletionCleanupPage(database: DatabaseSync, payload: Readonly<Re
   );
 }
 
+function sessionDeletionStatusGet(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
+  assertExactKeys(payload, ["cleanupToken"]);
+  const cleanupToken = requiredString(payload.cleanupToken, "cleanupToken");
+  if (!isCanonicalUuid(cleanupToken)) throw invalidRequest("cleanupToken");
+  const rows = database
+    .prepare(
+      `
+      SELECT workspace_key, deleted_session_count, 'pending' AS status
+      FROM session_deletion_manifests
+      WHERE deletion_id = ?
+      UNION ALL
+      SELECT workspace_key, deleted_session_count, 'completed' AS status
+      FROM session_deletion_completion_tombstones
+      WHERE deletion_id = ?
+    `,
+    )
+    .all(cleanupToken, cleanupToken) as unknown as readonly Readonly<{
+    workspace_key: string;
+    deleted_session_count: number;
+    status: "pending" | "completed";
+  }>[];
+  if (rows.length === 0) throw notFound();
+  if (rows.length !== 1) throw new Error("Session deletion status is ambiguous.");
+  const row = rows[0]!;
+  return {
+    cleanupToken,
+    workspaceKey: row.workspace_key,
+    deletedSessionCount: row.deleted_session_count,
+    localOnly: true,
+    status: row.status,
+  };
+}
+
 function recoveryGet(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
   const scope = readRunScope(payload, ["sessionId", "runId", "workspaceKey"]);
   const row = database
@@ -608,15 +992,6 @@ function readRunScope(payload: Readonly<Record<string, unknown>>, keys: readonly
   return { ...scope, runId: requiredString(payload.runId, "runId") };
 }
 
-function assertScopeExists(database: DatabaseSync, sessionId: string, workspaceKey: string): void {
-  if (
-    database.prepare("SELECT 1 FROM sessions WHERE id = ? AND workspace_key = ?").get(sessionId, workspaceKey) ===
-    undefined
-  ) {
-    throw notFound();
-  }
-}
-
 function assertRunScopeExists(
   database: DatabaseSync,
   scope: Readonly<{ sessionId: string; runId: string; workspaceKey: string }>,
@@ -634,53 +1009,99 @@ function assertRunScopeExists(
     throw notFound();
 }
 
-function ordinalPage<T extends OrdinalRow, R>(
+function ordinalPage<T extends OrdinalRow, R extends Readonly<Record<string, unknown>>>(
   scope: object,
   page: Readonly<{ items: readonly T[]; hasMore: boolean }>,
   kind: string,
   cursorScope: string,
   map: (row: T) => R,
 ): unknown {
-  const budgeted = budgetPage(page, map);
-  return {
+  return budgetPage(page, map, (budgeted) => ({
     ...scope,
     items: budgeted.items,
     ...(budgeted.hasMore && budgeted.lastRow !== undefined
       ? { nextCursor: encodeCursor(kind, cursorScope, [budgeted.lastRow.ordinal]) }
       : {}),
-  };
+  }));
 }
 
-function budgetPage<T extends Readonly<Record<string, unknown>>, R>(
-  page: Readonly<{ items: readonly T[]; hasMore: boolean }>,
-  map: (row: T) => R,
-): Readonly<{
-  items: readonly (R | Readonly<{ omitted: true; reason: "response_size_limit"; ordinal?: number }>)[];
+type PageOmission = Readonly<{ omitted: true; reason: "response_size_limit"; ordinal?: number }>;
+type BudgetedPage<T, R> = Readonly<{
+  items: readonly (R | PageOmission)[];
   hasMore: boolean;
   lastRow?: T;
-}> {
-  const items: (R | Readonly<{ omitted: true; reason: "response_size_limit"; ordinal?: number }>)[] = [];
-  let bytes = 0;
+}>;
+type PageProjection = Readonly<Record<string, unknown> & { items: readonly unknown[] }>;
+
+function budgetPage<
+  T extends Readonly<Record<string, unknown>>,
+  R extends Readonly<Record<string, unknown>>,
+  P extends PageProjection,
+>(
+  page: Readonly<{ items: readonly T[]; hasMore: boolean }>,
+  map: (row: T) => R,
+  project: (budgeted: BudgetedPage<T, R>) => P,
+): P {
+  const items: (R | PageOmission)[] = [];
+  let itemsJsonBytes = 0;
   let consumed = 0;
-  for (const row of page.items) {
+  for (let index = 0; index < page.items.length; index += 1) {
+    const row = page.items[index]!;
     const item = map(row);
-    const itemBytes = Buffer.byteLength(JSON.stringify(item));
-    if (itemBytes > MAX_PAGE_JSON_BYTES) {
-      const ordinal = typeof row.ordinal === "number" ? row.ordinal : undefined;
-      items.push({ omitted: true, reason: "response_size_limit", ...(ordinal === undefined ? {} : { ordinal }) });
-      consumed += 1;
+    const itemJsonBytes = jsonBytes(item);
+    const candidate = budgetedPage(page, [...items, item], index + 1);
+    if (pageJsonBytes(project, candidate, itemsJsonBytes + itemJsonBytes) <= MAX_PAGE_JSON_BYTES) {
+      items.push(item);
+      itemsJsonBytes += itemJsonBytes;
+      consumed = index + 1;
       continue;
     }
-    if (bytes + itemBytes > MAX_PAGE_JSON_BYTES) break;
-    items.push(item);
-    bytes += itemBytes;
-    consumed += 1;
+
+    const itemOnly = budgetedPage(page, [item], index + 1);
+    if (pageJsonBytes(project, itemOnly, itemJsonBytes) <= MAX_PAGE_JSON_BYTES) break;
+
+    const ordinal = typeof row.ordinal === "number" ? row.ordinal : undefined;
+    const omission: PageOmission = {
+      omitted: true,
+      reason: "response_size_limit",
+      ...(ordinal === undefined ? {} : { ordinal }),
+    };
+    const omissionJsonBytes = jsonBytes(omission);
+    const omittedCandidate = budgetedPage(page, [...items, omission], index + 1);
+    if (pageJsonBytes(project, omittedCandidate, itemsJsonBytes + omissionJsonBytes) > MAX_PAGE_JSON_BYTES) break;
+    items.push(omission);
+    itemsJsonBytes += omissionJsonBytes;
+    consumed = index + 1;
   }
+
+  const result = project(budgetedPage(page, items, consumed));
+  if (jsonBytes(result) > MAX_PAGE_JSON_BYTES) throw persistenceContractViolation();
+  return result;
+}
+
+function budgetedPage<T, R>(
+  page: Readonly<{ items: readonly T[]; hasMore: boolean }>,
+  items: readonly (R | PageOmission)[],
+  consumed: number,
+): BudgetedPage<T, R> {
   return {
     items,
     hasMore: page.hasMore || consumed < page.items.length,
     ...(consumed === 0 ? {} : { lastRow: page.items[consumed - 1] }),
   };
+}
+
+function pageJsonBytes<T, R, P extends PageProjection>(
+  project: (budgeted: BudgetedPage<T, R>) => P,
+  budgeted: BudgetedPage<T, R>,
+  itemsJsonBytes: number,
+): number {
+  const emptyItemsProjection = project({ ...budgeted, items: [] });
+  return jsonBytes(emptyItemsProjection) + itemsJsonBytes + Math.max(0, budgeted.items.length - 1);
+}
+
+function jsonBytes(value: Readonly<Record<string, unknown>>): number {
+  return Buffer.byteLength(JSON.stringify(value));
 }
 
 function splitPage<T>(rows: readonly T[], limit: number): Readonly<{ items: readonly T[]; hasMore: boolean }> {
@@ -745,6 +1166,41 @@ function optionalEnum<T extends string>(value: unknown, allowed: readonly T[]): 
   return value as T;
 }
 
+function optionalLocalRepositoryKeys(value: unknown): readonly string[] {
+  if (value === undefined) return [];
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > SESSION_METADATA_LIMITS.repositoryFilterMaxItems ||
+    value.some((item) => !isLocalRepositoryKey(item))
+  ) {
+    throw invalidRequest("localRepositoryKeys");
+  }
+  return [...new Set(value as string[])].sort();
+}
+
+function optionalQuerySearchKey(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > SESSION_METADATA_LIMITS.queryMaxLength * 3 ||
+    value.includes("\0") ||
+    sessionSearchKey(value) !== value
+  ) {
+    throw invalidRequest("querySearchKey");
+  }
+  return value;
+}
+
+function decodeRepositoryNames(value: string): readonly string[] {
+  const parsed = JSON.parse(value) as unknown;
+  if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string")) {
+    throw new TypeError("Repository names projection is invalid.");
+  }
+  return parsed;
+}
+
 function assertExactKeys(payload: Readonly<Record<string, unknown>>, allowed: readonly string[]): void {
   if (Object.keys(payload).some((key) => !allowed.includes(key))) throw invalidRequest("payload");
 }
@@ -789,7 +1245,29 @@ function notFound(): RepositoryReadError {
   return new RepositoryReadError("not_found", "Repository resource was not found.");
 }
 
+function persistenceContractViolation(): TypeError {
+  return new TypeError("Repository projection violates the persistence contract.");
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
 type OrdinalRow = Readonly<Record<string, unknown> & { ordinal: number }>;
+type RunOutputItemRow = Readonly<{
+  id: string;
+  run_id: string;
+  ordinal: number;
+  category: string;
+  kind: string;
+  summary: string;
+  completion_state: string;
+  payload_state: string;
+  payload_original_byte_length: number | null;
+  stored_payload_id: string | null;
+  redaction_state: string;
+  created_at: number;
+}>;
 type RunInputDeliveryRow = Readonly<Record<string, unknown>> &
   Readonly<{
     message_id: string;
@@ -810,9 +1288,33 @@ type MessageRow = Readonly<{
   created_at: number;
   workspace_key: string;
 }>;
+type MessageQueryRow = Readonly<Record<string, unknown>> & Readonly<{ scope_only: number }>;
+type RunHistoryRow = Readonly<{
+  run_id: string;
+  session_id: string;
+  ordinal: number;
+  initiating_message_id: string;
+  final_assistant_message_id: string | null;
+  retry_of_run_id: string | null;
+  phase: string;
+  failure_origin: string | null;
+  error_summary: string | null;
+  cancel_requested_at: number | null;
+  cancel_acknowledged_at: number | null;
+  created_at: number;
+  started_at: number | null;
+  terminal_at: number | null;
+  updated_at: number;
+  workspace_key: string;
+}>;
+type RunHistoryQueryRow = Readonly<Record<string, unknown>> & Readonly<{ scope_only: number }>;
 type SessionPageRow = Readonly<{
   id: string;
+  title: string;
   workspace_key: string;
+  workspace_path: string;
+  local_repository_key: string | null;
+  repository_name: string | null;
   default_character_id: string;
   lifecycle_status: string;
   created_at: number;
@@ -823,6 +1325,13 @@ type SessionPageRow = Readonly<{
   latest_run_id: string | null;
   latest_run_phase: string | null;
   latest_run_terminal_at: number | null;
+}>;
+type LocalRepositoryPageRow = Readonly<{
+  local_repository_key: string;
+  repository_names_json: string;
+  repository_name_count: number;
+  session_count: number;
+  last_activity_at: number;
 }>;
 type SessionDetailRow = Omit<SessionPageRow, "active_run_created_at" | "latest_run_terminal_at"> &
   Readonly<{

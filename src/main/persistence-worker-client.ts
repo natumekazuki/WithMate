@@ -11,7 +11,7 @@ import { decodeMainToWorkerMessage, decodeWorkerToMainMessage } from "../shared/
 export type PersistenceWorkerClientState = "idle" | "starting" | "ready" | "closing" | "closed" | "failed";
 
 export type PersistenceWorkerClientOptions = Readonly<{
-  workerUrl: URL;
+  workerUrl?: URL;
   databasePath: string;
   legacyDatabasePaths: readonly string[];
   maxQueueDepth?: number;
@@ -25,6 +25,8 @@ export type PersistenceRequestOptions = Readonly<{
   timeoutMs?: number;
   signal?: AbortSignal;
 }>;
+
+export type PersistenceStartOptions = Readonly<{ signal?: AbortSignal }>;
 
 export class PersistenceClientError extends Error {
   constructor(readonly persistenceError: PersistenceError) {
@@ -57,19 +59,26 @@ export class PersistenceWorkerClient {
   #resolveExit: ((exitCode: number) => void) | undefined;
   #expectedExit = false;
   #nextRequestSequence = 1;
+  readonly #workerUrl: URL;
 
-  constructor(readonly options: PersistenceWorkerClientOptions) {}
+  constructor(readonly options: PersistenceWorkerClientOptions) {
+    this.#workerUrl = options.workerUrl ?? new URL("../persistence-worker/worker-entry.js", import.meta.url);
+  }
 
   get state(): PersistenceWorkerClientState {
     return this.#state;
   }
 
-  start(): Promise<void> {
+  start(options: PersistenceStartOptions = {}): Promise<void> {
     if (this.#startPromise !== undefined) {
       return this.#startPromise;
     }
     if (this.#state !== "idle") {
       return Promise.reject(clientError("worker_not_ready", "Persistence worker cannot be started.", false, "none"));
+    }
+    if (options.signal?.aborted) {
+      this.#state = "failed";
+      return Promise.reject(clientError("request_canceled", "Persistence worker startup was canceled.", false, "none"));
     }
 
     this.#state = "starting";
@@ -83,7 +92,7 @@ export class PersistenceWorkerClient {
 
     let worker: Worker;
     try {
-      worker = new Worker(this.options.workerUrl, {
+      worker = new Worker(this.#workerUrl, {
         ...this.options.workerOptions,
         workerData: {
           generationId: this.generationId,
@@ -103,14 +112,29 @@ export class PersistenceWorkerClient {
     worker.on("error", () => this.#handleCrash());
     worker.on("exit", (exitCode) => this.#handleExit(exitCode));
 
+    const onAbort = () => {
+      if (this.#state !== "starting") return;
+      this.#expectedExit = true;
+      this.#failStartup(clientError("request_canceled", "Persistence worker startup was canceled.", false, "none"));
+      void worker.terminate();
+    };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    if (options.signal?.aborted) onAbort();
+
     const startupTimer = setTimeout(() => {
       if (this.#state !== "starting") {
         return;
       }
+      this.#expectedExit = true;
       void worker.terminate();
       this.#failStartup(clientError("worker_start_failed", "Persistence worker startup timed out.", true, "none"));
     }, this.options.startupTimeoutMs ?? 10_000);
-    this.#startPromise.finally(() => clearTimeout(startupTimer)).catch(() => undefined);
+    this.#startPromise
+      .finally(() => {
+        clearTimeout(startupTimer);
+        options.signal?.removeEventListener("abort", onAbort);
+      })
+      .catch(() => undefined);
     return this.#startPromise;
   }
 
@@ -192,7 +216,7 @@ export class PersistenceWorkerClient {
    * 新規requestを拒否し、実行中request、primary connection、WAL checkpointの順に終了する。
    * timeoutによるterminateは正常shutdownとして扱わない。
    */
-  shutdown(timeoutMs = 10_000): Promise<Readonly<{ checkpoint: "completed" | "failed" }>> {
+  shutdown(timeoutMs = 10_000, signal?: AbortSignal): Promise<Readonly<{ checkpoint: "completed" | "failed" }>> {
     if (this.#shutdownPromise !== undefined) {
       return this.#shutdownPromise;
     }
@@ -222,21 +246,29 @@ export class PersistenceWorkerClient {
       this.#rejectClosed?.(error);
     }
 
-    this.#shutdownPromise = this.#finishShutdown(closed, timeoutMs);
+    this.#shutdownPromise = this.#finishShutdown(closed, timeoutMs, signal);
     return this.#shutdownPromise;
   }
 
   async #finishShutdown(
     closed: Promise<"completed" | "failed">,
     timeoutMs: number,
+    signal: AbortSignal | undefined,
   ): Promise<Readonly<{ checkpoint: "completed" | "failed" }>> {
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
     const forced = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(
         () =>
           reject(clientError("worker_shutdown_forced", "Persistence worker shutdown was forced.", false, "unknown")),
         timeoutMs,
       );
+      if (signal !== undefined) {
+        onAbort = () =>
+          reject(clientError("request_canceled", "Persistence worker shutdown was canceled.", false, "unknown"));
+        signal.addEventListener("abort", onAbort, { once: true });
+        if (signal.aborted) onAbort();
+      }
     });
     try {
       const checkpoint = await Promise.race([
@@ -259,6 +291,7 @@ export class PersistenceWorkerClient {
       if (timer !== undefined) {
         clearTimeout(timer);
       }
+      if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
     }
   }
 

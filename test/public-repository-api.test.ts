@@ -1,61 +1,53 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 
-import {
-  MAX_PERSISTENCE_RESPONSE_BYTES,
-  PERSISTENCE_PROTOCOL_VERSION,
-  REPOSITORY_CHUNK_LIMITS,
-  RepositoryReadClient,
-  RepositoryWriteClient,
-  type PersistenceError,
-  type RecoveryProjection,
-  type RepositoryCommandError,
-  type RunOutputCategory,
-  type RunTerminalPreDispatchResolution,
-  type SessionExecutionState,
-  type SessionLifecycleStatus,
-  type StartupRepairCommand,
-  type StartupRepairResult,
+import ts from "typescript";
+
+import * as publicApi from "../src/main/index.js";
+import type {
+  ApplicationRunOperations,
+  ApplicationRunOutputOperations,
+  ApplicationSessionMessageOperations,
+  ApplicationSessionOperations,
+  ApplicationSessionRunOperations,
 } from "../src/main/index.js";
 
-type Equal<TLeft, TRight> = (<T>() => T extends TLeft ? 1 : 2) extends <T>() => T extends TRight ? 1 : 2 ? true : false;
+type Authorization = Readonly<{ principalId: string }>;
+type SessionListInput = Parameters<ApplicationSessionOperations<Authorization>["list"]>[0];
+type RunStatusInput = Parameters<ApplicationRunOperations<Authorization>["status"]>[0];
+type RunOutputCountsInput = Parameters<ApplicationRunOutputOperations<Authorization>["outputCounts"]>[0];
+type MessageChunkInput = Parameters<ApplicationSessionMessageOperations<Authorization>["messageContentChunk"]>[0];
+type SessionRunsInput = Parameters<ApplicationSessionRunOperations<Authorization>["runs"]>[0];
 
-type SessionsPageInput = Parameters<RepositoryReadClient["sessionsPage"]>[0];
-type RunOutputsPageInput = Parameters<RepositoryReadClient["runOutputsPage"]>[0];
-type SessionGetState = Awaited<ReturnType<RepositoryReadClient["sessionGet"]>>["execution"]["state"];
+test("public Main barrel exposes only the transport-neutral Application contract", () => {
+  const sourcePath = new URL("../src/main/index.ts", import.meta.url);
+  const source = fs.readFileSync(sourcePath, "utf8");
+  const sourceFile = ts.createSourceFile(sourcePath.pathname, source, ts.ScriptTarget.Latest, true);
+  const exportedModules = sourceFile.statements.flatMap((statement) =>
+    ts.isExportDeclaration(statement) &&
+    statement.moduleSpecifier !== undefined &&
+    ts.isStringLiteral(statement.moduleSpecifier)
+      ? [statement.moduleSpecifier.text]
+      : [],
+  );
+  const listInput = null as SessionListInput | null;
+  const statusInput = null as RunStatusInput | null;
+  const outputCountsInput = null as RunOutputCountsInput | null;
+  const messageChunkInput = null as MessageChunkInput | null;
+  const sessionRunsInput = null as SessionRunsInput | null;
 
-test("public repository barrel exposes the CP2 repository and error contract", () => {
-  const transportError: PersistenceError = {
-    code: "request_timeout",
-    message: "timed out",
-    retryable: false,
-    effect: "unknown",
-  };
-  const domainError: RepositoryCommandError = {
-    code: "not_found",
-    message: "not found",
-    retryable: false,
-  };
-  const repairCommand: StartupRepairCommand = {};
-  const repairResult = null as StartupRepairResult | null;
-  const recovery = null as RecoveryProjection | null;
-  const terminalPreparation: RunTerminalPreDispatchResolution = { kind: "dispatch_not_sent" };
-  const typeContract: readonly [
-    Equal<SessionsPageInput["lifecycleStatus"], SessionLifecycleStatus | undefined>,
-    Equal<RunOutputsPageInput["category"], RunOutputCategory | undefined>,
-    Equal<SessionGetState, SessionExecutionState>,
-  ] = [true, true, true];
-
-  assert.equal(PERSISTENCE_PROTOCOL_VERSION, 1);
-  assert.equal(MAX_PERSISTENCE_RESPONSE_BYTES, 256 * 1024);
-  assert.deepEqual(REPOSITORY_CHUNK_LIMITS, { maxRequestedBytes: 256 * 1024, maxScopeStringLength: 1_024 });
-  assert.equal(typeof RepositoryReadClient, "function");
-  assert.equal(typeof RepositoryWriteClient, "function");
-  assert.equal(transportError.effect, "unknown");
-  assert.equal(domainError.code, "not_found");
-  assert.deepEqual(repairCommand, {});
-  assert.equal(repairResult, null);
-  assert.equal(recovery, null);
-  assert.equal(terminalPreparation.kind, "dispatch_not_sent");
-  assert.deepEqual(typeContract, [true, true, true]);
+  assert.deepEqual(exportedModules, [
+    "../shared/application-service-model.js",
+    "../shared/application-session-message-model.js",
+    "../shared/application-session-run-model.js",
+    "../shared/application-run-model.js",
+    "../shared/application-run-output-model.js",
+  ]);
+  assert.deepEqual(Object.keys(publicApi), []);
+  assert.equal(listInput, null);
+  assert.equal(statusInput, null);
+  assert.equal(outputCountsInput, null);
+  assert.equal(messageChunkInput, null);
+  assert.equal(sessionRunsInput, null);
 });

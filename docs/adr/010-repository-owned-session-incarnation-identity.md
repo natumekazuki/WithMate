@@ -1,0 +1,61 @@
+# ADR 010: Repository所有のSession incarnation identity
+
+- Status: Accepted
+- Date: 2026-07-18
+- Updated: 2026-07-19
+- Partially supersedes: ADR 003、ADR 009
+
+## Context
+
+Session Files cleanupはSQLite commit後に進み、同じdeletion IDによる再送で再開する。削除前と削除後のSessionが同じIDを持つと、古いcleanup処理やdelete再送が新しいSessionのfilesまたはrowを対象にできる。Application Serviceがcreateのidempotency keyからSession IDを決定する方式では、明示削除後に同じcreate requestを再実行すると、このID再利用が発生する。
+
+通常Sessionとchild Sessionには別の作成入口がある。どちらか一方だけでID再利用を防ぐと、もう一方から同じ問題を再導入できる。IDの非再利用はApplication Serviceや個別callerの規約ではなく、両入口を所有するRepositoryの不変条件にする必要がある。
+
+## Decision
+
+Session IDは、Session rowが存在する期間だけの表示名ではなく、1回の作成から明示削除までのincarnation identityとする。Repositoryは通常Session createとchild Session startの両方でIDを発行し、作成commandはSession IDを受け取らない。
+
+ID発行には、DBごとのrandom namespace、単調増加する128 bit sequence、作成試行ごとの128 bit nonceを使用する。namespaceと次のsequenceはsingleton allocator rowに保存する。発行、allocator更新、Session row、関連row、completed idempotency recordは同じ`BEGIN IMMEDIATE` transactionに含める。domain gateは発行前に評価し、transactionがrollbackした番号は、commit済みincarnationを表していないため再使用できる。sequence上限では`identity_exhausted`を副作用なしで返す。
+
+通常Session createでは、generated IDをrequest fingerprintへ含めない。completed idempotency recordが存在する間のexact retryは、recordのscope、response reference、response envelope、実在するSession rowの組を再検証し、最初にcommitしたIDを返す。Session明示削除ではself-scopeのidempotency recordも物理削除するため、削除後に同じcreate requestを再実行した場合は、新しいincarnationとして別IDを発行する。
+
+child Session startもgenerated IDをfingerprintへ含めない。exact retryではparent scopeのrecordからDelivery、relation、child Sessionを辿ってIDを再構築する。childだけを削除した場合、parent scopeの古いrecordはresponse referenceを失ったexpired tombstoneとして残るため、同じkeyの再送では新しいchildを作らない。新しいchild作成には新しいkeyを使用する。
+
+Session IDを受けるread、update、deleteのpublic requestはopaque stringのまま維持する。発行形式はRepository generator、schema allocator、create resultの内部projectionで検証し、public入力の表現契約にはしない。
+
+Session Files cleanupの内部入力は、Repositoryが発行する小文字hexのSession IDだけに制限する。publicなread、update、delete入力をopaque stringとして扱うことと、commit済みmanifestからfilesystem pathを構成する内部境界の検証を分ける。これによりWindowsのcase-insensitive aliasを別Sessionとしてcleanupできないようにする。
+
+cleanupは事前検証した`session-files` rootを作業directoryとする短命なhelper processから、Session IDを相対名として直接削除する。親processはrootのcanonical pathとfilesystem identityを取得し、helperは実際の作業directoryがそのpathとidentityの両方に一致することを確認してから削除を開始する。rootを検証してからpathnameだけを引き継ぐ方式は、helper起動前に別の通常directoryへ置換されても検出できないため採用しない。直接削除は途中まで進んでも冪等retryで残りを回収でき、incarnation identityを再利用しないため新しいSessionを同じpathで巻き込まない。
+
+`session-files` rootはpath上の親子関係だけでなく、DBを所有するapplication data directoryのincarnationへ結び付ける。production compositionはapplication data directoryと`session-files` rootのidentityを取得してから同じapplication data directory配下のDBを開き、Worker起動後とcleanup開始時に両identityを再検証する。child rootのidentity取得後にも親identityを再検証し、helperがroot identityを確認する前に親directoryがrename・差し替えされた場合はreplacement側を削除せずmanifestをpendingに残す。helperのidentity確認完了をcleanup root固定の線形化点とし、その後に親pathが差し替えられても、helperは固定済みの旧rootだけを削除して同じ旧DBのmanifestを完了できる。
+
+schema v1は正式release前のためallocator tableをv1へ追加し、manifest hashを更新する。旧schema hashの開発用DBはmigrationせず拒否する。DB backupの復元や複製を正式な運用契約には含めない。nonceは復元元と復元先で同じnamespaceとsequenceが進む場合の衝突確率を抑えるが、将来restoreを提供するときはnamespace rotationを手順へ含める。
+
+## Alternatives
+
+- Application Serviceでidempotency keyからIDを決定する: 削除後の同じrequestで古いincarnationを復活させるため採用しない。
+- cleanup完了まで削除済みIDだけを予約する: 完了後には再利用でき、遅延したdelete再送との世代衝突を解消しないため採用しない。
+- 削除済みIDのtombstoneを期限なく保持する: local明示削除のprivacy境界を弱め、ID数に比例する永続状態を増やすため採用しない。
+- 長期claimでcleanup workerに世代所有権を与える: crash recoveryとclaim期限の新しい状態機械が必要になり、identity自体を非再利用にする方が兄弟入口を含めて単純なため採用しない。
+- namespaceとsequenceをhashへ変換する: 衝突時の契約が必要になり、構造的に一意な組を不必要に非単射へ変えるため採用しない。
+- Session directoryを同じroot内の`.deleting-*`へ移動する: 正規Session IDと隔離名が同じ名前空間を共有し、別Sessionを隔離済み対象として削除できるため採用しない。
+- 検証済みpathを親processからrenameまたは再帰削除する: rootの検証とfilesystem syscallの間にjunctionへ差し替える競合を閉じられないため採用しない。
+- `session-files` rootだけを固定してapplication data directoryをpathで再解決する: DB ownerとは別incarnationの同名directoryへcleanupを適用できるため採用しない。
+
+## Consequences
+
+- 古いdelete再送と遅延したfilesystem cleanupは、削除後に作成されたSessionをIDで対象にできない。
+- 通常Sessionとchild Sessionは同じ発行境界を通り、process再起動と複数connectionでもallocator更新が直列化される。
+- commit後の応答消失は同じIDのexact replayへ収束し、commit前のrollbackは外部にIDを公開しない。
+- 明示削除後の通常create再送は、新しいIDを持つ新規作成になる。削除前のIDを復元する操作ではない。
+- IDは従来より長くなるが、既存の1024文字上限とSession Files path component上限に収まる。
+- Session Files削除はhelper processの起動コストを伴うが、root実体を作業directoryへ固定し、partial cleanupは同じmanifestから再開できる。
+- filesystemが安定したdirectory identityを返さない場合は削除を進めず、cleanup manifestをpendingとして残す。
+- helperによるroot固定前にapplication data directoryまたは`session-files` rootが差し替えられた場合は、別incarnationへ副作用を出さずpendingとして再試行できる。固定後の差し替えではreplacement側に触れず、固定済みの旧rootだけをcleanupする。
+- restoreを正式対応するときは、複製DB間のidentity分離をmigrationまたは運用手順として追加する必要がある。
+
+## Related decisions
+
+- `docs/adr/001-session-subtree-delete-cleanup-manifest.md`
+- `docs/adr/003-application-service-operation-envelope.md`
+- `docs/adr/009-session-delete-application-outcome.md`

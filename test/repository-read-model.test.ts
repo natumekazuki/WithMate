@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import {
   createRepositoryReadOperations,
   REPOSITORY_PAGE_SQL,
+  REPOSITORY_RUN_OUTPUT_ITEM_SQL,
+  REPOSITORY_SESSION_PAGE_SQL,
   RepositoryReadError,
 } from "../src/persistence-worker/repository-read-model.js";
 
@@ -21,7 +24,7 @@ repositoryTest("session page derives execution state with a bounded keyset curso
     database.prepare("UPDATE runs SET updated_at = 99 WHERE id = 'run-1'").run();
     const operation = operationFor(database, "repository.sessions.page");
 
-    const first = operation({ workspaceKey: "workspace", lifecycleStatus: "active", limit: 2 }) as PageResult;
+    const first = operation({ lifecycleStatus: "active", limit: 2 }) as PageResult;
     assert.deepEqual(
       first.items.map((item) => item.id),
       ["session-1", "session-2"],
@@ -37,7 +40,6 @@ repositoryTest("session page derives execution state with a bounded keyset curso
     assert.equal(typeof first.nextCursor, "string");
 
     const second = operation({
-      workspaceKey: "workspace",
       lifecycleStatus: "active",
       limit: 2,
       cursor: first.nextCursor,
@@ -61,14 +63,17 @@ repositoryTest("Session detail preserves its Provider before the first Run", () 
       "repository.session.get",
     )({
       sessionId: "session-without-run",
-      workspaceKey: "workspace",
     }) as Readonly<Record<string, unknown>>;
 
     assert.deepEqual(detail, {
       session: {
         id: "session-without-run",
+        title: "Session",
         providerId: "provider",
         workspaceKey: "workspace",
+        workspacePath: path.resolve("workspace"),
+        localRepositoryKey: null,
+        repositoryName: null,
         allowedAdditionalDirectoriesByteLength: 2,
         allowedAdditionalDirectoriesState: "inline",
         allowedAdditionalDirectories: [],
@@ -81,6 +86,26 @@ repositoryTest("Session detail preserves its Provider before the first Run", () 
       },
       execution: { state: "not_started" },
     });
+  });
+});
+
+repositoryTest("Session pages are global by default and accept Workspace only as an optional filter", () => {
+  withDatabase((database) => {
+    insertSessionWithWorkspace(database, "session-workspace", "workspace", 20);
+    insertSessionWithWorkspace(database, "session-other", "other", 10);
+    const operation = operationFor(database, "repository.sessions.page");
+
+    const global = operation({ limit: 10 }) as PageResult;
+    assert.deepEqual(
+      global.items.map((item) => item.id),
+      ["session-workspace", "session-other"],
+    );
+
+    const filtered = operation({ workspaceKey: "other", limit: 10 }) as PageResult;
+    assert.deepEqual(
+      filtered.items.map((item) => item.id),
+      ["session-other"],
+    );
   });
 });
 
@@ -123,7 +148,7 @@ repositoryTest("timeline and output summary remain bounded without hydrating pay
     assert.equal(Object.hasOwn(messages.items[0] ?? {}, "contentBlocks"), false);
     assert.ok(messages.items.length < 6);
     assert.equal(typeof messages.nextCursor, "string");
-    assert.ok(Buffer.byteLength(JSON.stringify(messages)) < 256 * 1024);
+    assert.ok(Buffer.byteLength(JSON.stringify(messages)) <= 192 * 1024);
 
     const outputs = operationFor(
       database,
@@ -140,13 +165,404 @@ repositoryTest("timeline and output summary remain bounded without hydrating pay
   });
 });
 
+repositoryTest("Message page budgets its complete JSON body including scope and cursor", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    const content = JSON.stringify([{ type: "text", text: "x".repeat(65_290) }]);
+    assert.ok(Buffer.byteLength(content) <= 64 * 1024);
+    for (let ordinal = 1; ordinal <= 4; ordinal += 1) {
+      insertMessage(database, `message-${ordinal}`, "session-1", ordinal, content);
+    }
+    const messages = operationFor(database, "repository.messages.page");
+
+    const first = messages({ sessionId: "session-1", workspaceKey: "workspace", limit: 4 }) as PageResult;
+    assert.ok(first.items.length > 0 && first.items.length < 4);
+    assert.ok(Buffer.byteLength(JSON.stringify(first)) <= 192 * 1024);
+    assert.equal(typeof first.nextCursor, "string");
+
+    const second = messages({
+      sessionId: "session-1",
+      workspaceKey: "workspace",
+      cursor: first.nextCursor,
+      limit: 4,
+    }) as PageResult;
+    assert.ok(Buffer.byteLength(JSON.stringify(second)) <= 192 * 1024);
+    assert.deepEqual(
+      [...first.items, ...second.items].map((item) => item.id),
+      ["message-1", "message-2", "message-3", "message-4"],
+    );
+  });
+});
+
+repositoryTest("Message page keeps one SQL snapshot when its Session is deleted after the statement", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-empty", 1);
+    insertSession(database, "session-1", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    const emptyPage = operationFor(
+      database,
+      "repository.messages.page",
+    )({ sessionId: "session-empty", workspaceKey: "workspace" }) as PageResult;
+    assert.deepEqual(emptyPage.items, []);
+
+    const preparedSql: string[] = [];
+    let deleteAfterPageRead = true;
+    const observedDatabase = new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql: string) => {
+            preparedSql.push(sql);
+            const statement = target.prepare(sql);
+            if (sql !== REPOSITORY_PAGE_SQL.messages) return statement;
+            return new Proxy(statement, {
+              get(statementTarget, statementProperty) {
+                if (statementProperty === "all") {
+                  return (...parameters: Parameters<typeof statementTarget.all>) => {
+                    const rows = statementTarget.all(...parameters);
+                    if (deleteAfterPageRead) {
+                      deleteAfterPageRead = false;
+                      target.exec(`
+                        BEGIN IMMEDIATE;
+                        DELETE FROM messages WHERE session_id = 'session-1';
+                        DELETE FROM sessions WHERE id = 'session-1';
+                        COMMIT;
+                      `);
+                    }
+                    return rows;
+                  };
+                }
+                const value = Reflect.get(statementTarget, statementProperty, statementTarget) as unknown;
+                return typeof value === "function" ? value.bind(statementTarget) : value;
+              },
+            });
+          };
+        }
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const operation = operationFor(observedDatabase, "repository.messages.page");
+
+    const beforeDelete = operation({ sessionId: "session-1", workspaceKey: "workspace" }) as PageResult;
+    assert.deepEqual(
+      beforeDelete.items.map((item) => item.id),
+      ["message-1"],
+    );
+    assert.equal(preparedSql.length, 1);
+
+    assert.throws(
+      () => operation({ sessionId: "session-1", workspaceKey: "workspace" }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "not_found",
+    );
+    assert.equal(preparedSql.length, 2);
+  });
+});
+
+repositoryTest("Run history is Session-scoped, keyset paged, and projects only durable public headers", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-empty", 1);
+    insertSession(database, "session-1", 1);
+    insertSession(database, "session-2", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    insertMessage(database, "message-2", "session-1", 2, "[]");
+    insertMessage(database, "message-3", "session-1", 3, "[]");
+    insertMessage(database, "message-4", "session-1", 4, "[]");
+    insertHistoryRun(database, {
+      id: "run-1",
+      sessionId: "session-1",
+      ordinal: 1,
+      initiatingMessageId: "message-1",
+      finalAssistantMessageId: "message-2",
+      phase: "completed",
+      timestamp: 10,
+    });
+    insertHistoryRun(database, {
+      id: "run-2",
+      sessionId: "session-1",
+      ordinal: 3,
+      initiatingMessageId: "message-3",
+      retryOfRunId: "run-1",
+      phase: "failed",
+      failureOrigin: "provider",
+      errorSummary: "bounded failure",
+      timestamp: 20,
+    });
+    const operation = operationFor(database, "repository.runs.page");
+
+    const empty = operation({ sessionId: "session-empty", workspaceKey: "workspace" }) as PageResult;
+    assert.deepEqual(empty, { sessionId: "session-empty", workspaceKey: "workspace", items: [] });
+
+    const first = operation({ sessionId: "session-1", workspaceKey: "workspace", limit: 1 }) as PageResult;
+    assert.deepEqual(first.items, [
+      {
+        runId: "run-1",
+        sessionId: "session-1",
+        ordinal: 1,
+        initiatingMessageId: "message-1",
+        finalAssistantMessageId: "message-2",
+        phase: "completed",
+        createdAt: 10,
+        startedAt: 10,
+        terminalAt: 10,
+        updatedAt: 10,
+      },
+    ]);
+    assert.equal(typeof first.nextCursor, "string");
+    assert.equal(JSON.stringify(first).includes("secret snapshot"), false);
+    assert.equal(JSON.stringify(first).includes("secret-provider-code"), false);
+    assert.equal(JSON.stringify(first).includes("externalSideEffectState"), false);
+    assert.equal(JSON.stringify(first).includes("version"), false);
+
+    insertHistoryRun(database, {
+      id: "run-3",
+      sessionId: "session-1",
+      ordinal: 5,
+      initiatingMessageId: "message-4",
+      phase: "canceled",
+      cancelRequestedAt: 29,
+      cancelAcknowledgedAt: 30,
+      timestamp: 30,
+    });
+    const second = operation({
+      sessionId: "session-1",
+      workspaceKey: "workspace",
+      cursor: first.nextCursor,
+      limit: 10,
+    }) as PageResult;
+    assert.deepEqual(
+      second.items.map((item) => item.runId),
+      ["run-2", "run-3"],
+    );
+    assert.equal(second.nextCursor, undefined);
+
+    assert.throws(
+      () => operation({ sessionId: "session-empty", workspaceKey: "workspace", cursor: first.nextCursor }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "cursor_invalid",
+    );
+    assert.throws(
+      () => operation({ sessionId: "session-1", workspaceKey: "other", cursor: first.nextCursor }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "cursor_invalid",
+    );
+    for (const request of [
+      { sessionId: "session-1", workspaceKey: "other" },
+      { sessionId: "missing", workspaceKey: "workspace" },
+    ]) {
+      assert.throws(
+        () => operation(request),
+        (error: unknown) => error instanceof RepositoryReadError && error.code === "not_found",
+      );
+    }
+    for (const request of [
+      { sessionId: "session-1", workspaceKey: "workspace", limit: 0 },
+      { sessionId: "session-1", workspaceKey: "workspace", limit: 101 },
+      { sessionId: "session-1", workspaceKey: "workspace", unexpected: true },
+    ]) {
+      assert.throws(
+        () => operation(request),
+        (error: unknown) => error instanceof RepositoryReadError && error.code === "request_invalid",
+      );
+    }
+  });
+});
+
+repositoryTest("Run history preserves every non-terminal header shape without terminal details", () => {
+  for (const phase of ["queued", "starting", "active", "canceling", "finalizing"] as const) {
+    withDatabase((database) => {
+      insertSession(database, `session-${phase}`, 1);
+      insertMessage(database, `message-${phase}`, `session-${phase}`, 1, "[]");
+      insertHistoryRun(database, {
+        id: `run-${phase}`,
+        sessionId: `session-${phase}`,
+        ordinal: 1,
+        initiatingMessageId: `message-${phase}`,
+        phase,
+        ...(phase === "canceling" ? { cancelRequestedAt: 2 } : {}),
+        timestamp: 1,
+      });
+
+      const page = operationFor(
+        database,
+        "repository.runs.page",
+      )({
+        sessionId: `session-${phase}`,
+        workspaceKey: "workspace",
+      }) as PageResult;
+      assert.deepEqual(page.items, [
+        {
+          runId: `run-${phase}`,
+          sessionId: `session-${phase}`,
+          ordinal: 1,
+          initiatingMessageId: `message-${phase}`,
+          phase,
+          ...(phase === "canceling" ? { cancelRequestedAt: 2 } : {}),
+          createdAt: 1,
+          startedAt: 1,
+          updatedAt: 1,
+        },
+      ]);
+    });
+  }
+});
+
+repositoryTest("Run history applies default 50 and accepts the exact 50 and 100 item limits", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    const queriedLimits: number[] = [];
+    const observedDatabase = new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql: string) => {
+            const statement = target.prepare(sql);
+            if (sql !== REPOSITORY_PAGE_SQL.runs) return statement;
+            return new Proxy(statement, {
+              get(statementTarget, statementProperty) {
+                if (statementProperty === "all") {
+                  return (...parameters: Parameters<typeof statementTarget.all>) => {
+                    queriedLimits.push(parameters[2] as number);
+                    return statementTarget.all(...parameters);
+                  };
+                }
+                const value = Reflect.get(statementTarget, statementProperty, statementTarget) as unknown;
+                return typeof value === "function" ? value.bind(statementTarget) : value;
+              },
+            });
+          };
+        }
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const operation = operationFor(observedDatabase, "repository.runs.page");
+
+    operation({ sessionId: "session-1", workspaceKey: "workspace" });
+    operation({ sessionId: "session-1", workspaceKey: "workspace", limit: 50 });
+    operation({ sessionId: "session-1", workspaceKey: "workspace", limit: 100 });
+    assert.deepEqual(queriedLimits, [51, 51, 101]);
+  });
+});
+
+repositoryTest("Run history resolves scope and page in one SQL statement with bounded omission progress", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    insertMessage(database, "message-2", "session-1", 2, "[]");
+    insertHistoryRun(database, {
+      id: "run-large",
+      sessionId: "session-1",
+      ordinal: 1,
+      initiatingMessageId: "message-1",
+      phase: "failed",
+      failureOrigin: "provider",
+      errorSummary: "x".repeat(200 * 1024),
+      timestamp: 1,
+    });
+    insertHistoryRun(database, {
+      id: "run-next",
+      sessionId: "session-1",
+      ordinal: 2,
+      initiatingMessageId: "message-2",
+      phase: "completed",
+      timestamp: 2,
+    });
+    const preparedSql: string[] = [];
+    const observedDatabase = new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql: string) => {
+            preparedSql.push(sql);
+            return target.prepare(sql);
+          };
+        }
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const operation = operationFor(observedDatabase, "repository.runs.page");
+
+    preparedSql.length = 0;
+    const first = operation({ sessionId: "session-1", workspaceKey: "workspace", limit: 1 }) as PageResult;
+    assert.deepEqual(first.items, [{ omitted: true, reason: "response_size_limit", ordinal: 1 }]);
+    assert.equal(typeof first.nextCursor, "string");
+    assert.ok(Buffer.byteLength(JSON.stringify(first)) <= 192 * 1024);
+    assert.deepEqual(preparedSql, [REPOSITORY_PAGE_SQL.runs]);
+
+    preparedSql.length = 0;
+    const next = operation({
+      sessionId: "session-1",
+      workspaceKey: "workspace",
+      cursor: first.nextCursor,
+      limit: 1,
+    }) as PageResult;
+    assert.deepEqual(
+      next.items.map((item) => item.runId),
+      ["run-next"],
+    );
+    assert.deepEqual(preparedSql, [REPOSITORY_PAGE_SQL.runs]);
+  });
+});
+
+repositoryTest("Run output cursors are scoped to the workspace, Session, Run, and optional category", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    insertSession(database, "session-2", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    insertMessage(database, "message-2", "session-2", 1, "[]");
+    insertRun(database, "run-1", "session-1", "message-1", "completed", 1);
+    insertRun(database, "run-2", "session-2", "message-2", "completed", 1);
+    for (const [ordinal, category] of [
+      [1, "operation"],
+      [2, "operation"],
+      [3, "diagnostic"],
+    ] as const) {
+      database
+        .prepare(
+          `INSERT INTO run_output_items VALUES
+            (?, 'run-1', ?, ?, 'command', NULL, 'summary', 'complete',
+             'none', NULL, NULL, 'not_required', ?)`,
+        )
+        .run(`output-${ordinal}`, ordinal, category, ordinal);
+    }
+    const read = operationFor(database, "repository.run.outputs.page");
+    const first = read({
+      sessionId: "session-1",
+      runId: "run-1",
+      workspaceKey: "workspace",
+      category: "operation",
+      limit: 1,
+    }) as PageResult;
+    assert.equal(typeof first.nextCursor, "string");
+    assert.equal(
+      (
+        read({
+          sessionId: "session-1",
+          runId: "run-1",
+          workspaceKey: "workspace",
+          category: "operation",
+          cursor: first.nextCursor,
+          limit: 1,
+        }) as PageResult
+      ).items[0]?.id,
+      "output-2",
+    );
+    for (const scope of [
+      { sessionId: "session-1", runId: "run-1", workspaceKey: "workspace", category: "diagnostic" },
+      { sessionId: "session-1", runId: "run-1", workspaceKey: "other", category: "operation" },
+      { sessionId: "session-2", runId: "run-1", workspaceKey: "workspace", category: "operation" },
+      { sessionId: "session-2", runId: "run-2", workspaceKey: "workspace", category: "operation" },
+    ]) {
+      assert.throws(
+        () => read({ ...scope, cursor: first.nextCursor, limit: 1 }),
+        (error: unknown) => error instanceof RepositoryReadError && error.code === "cursor_invalid",
+      );
+    }
+  });
+});
+
 repositoryTest("child result rejects a relation whose child belongs to another workspace", () => {
   withDatabase((database) => {
     insertSession(database, "parent", 1);
     insertSession(database, "root", 1);
-    database
-      .prepare("INSERT INTO sessions VALUES ('child', 'provider', 'other', '[]', 'character', 4, 'active', 1, 1, 1)")
-      .run();
+    insertSessionWithWorkspace(database, "child", "other", 1);
     insertMessage(database, "parent-message", "parent", 1, "[]");
     insertMessage(database, "child-message", "child", 1, "[]");
     insertRun(database, "parent-run", "parent", "parent-message", "completed", 1);
@@ -199,6 +615,165 @@ repositoryTest("run-scoped reads hide resources outside the requested workspace"
     assert.throws(
       () => events({ sessionId: "session-1", runId: "run-1", workspaceKey: "other" }),
       (error: unknown) => error instanceof RepositoryReadError && error.code === "not_found",
+    );
+  });
+});
+
+repositoryTest("Run output point reads preserve every payload state without reading payload content", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    insertRun(database, "run-1", "session-1", "message-1", "completed", 1);
+    const states = [
+      ["none", "none", null, null, "not_required"],
+      ["pending-not-required", "pending", 7, null, "not_required"],
+      ["pending-redacted", "pending", 8, null, "redacted"],
+      ["stored-not-required", "stored", 9, "self", "not_required"],
+      ["stored-redacted", "stored", 10, "self", "redacted"],
+      ["omitted-size-not-required", "omitted_size_limit", 11, null, "not_required"],
+      ["omitted-size-redacted", "omitted_size_limit", 12, null, "redacted"],
+      ["omitted-redaction", "omitted_redaction", 13, null, "unknown"],
+      ["omitted-persistence-not-required", "omitted_persistence", 14, null, "not_required"],
+      ["omitted-persistence-redacted", "omitted_persistence", 15, null, "redacted"],
+    ] as const;
+    const insert = database.prepare(`
+      INSERT INTO run_output_items (
+        id, run_id, ordinal, category, kind, summary, completion_state, payload_state,
+        payload_original_byte_length, stored_payload_id, redaction_state, created_at
+      ) VALUES (?, 'run-1', ?, 'operation', 'command', 'summary', 'complete', ?, ?, ?, ?, ?)
+    `);
+    database.exec("BEGIN;");
+    for (const [index, [name, state, originalBytes, storedPayloadId, redactionState]] of states.entries()) {
+      const id = `output-${name}`;
+      insert.run(
+        id,
+        index + 1,
+        state,
+        originalBytes,
+        storedPayloadId === "self" ? id : storedPayloadId,
+        redactionState,
+        index + 1,
+      );
+      if (state === "stored") {
+        database
+          .prepare("INSERT INTO run_output_payloads VALUES (?, 'text', 'text/plain', ?, ?, ?, 1)")
+          .run(id, Buffer.alloc(originalBytes, 1), originalBytes, "0".repeat(64));
+      }
+    }
+    database.exec("COMMIT;");
+
+    const read = operationFor(database, "repository.run.output.get");
+    for (const [index, [name, state, originalBytes, storedPayloadId, redactionState]] of states.entries()) {
+      const id = `output-${name}`;
+      const result = read({
+        sessionId: "session-1",
+        runId: "run-1",
+        outputItemId: id,
+        workspaceKey: "workspace",
+      }) as Readonly<Record<string, unknown>>;
+      assert.deepEqual(result, {
+        sessionId: "session-1",
+        runId: "run-1",
+        workspaceKey: "workspace",
+        item: {
+          id,
+          runId: "run-1",
+          ordinal: index + 1,
+          category: "operation",
+          kind: "command",
+          summary: "summary",
+          completionState: "complete",
+          payloadState: state,
+          ...(originalBytes === null ? {} : { payloadOriginalByteLength: originalBytes }),
+          ...(storedPayloadId === null ? {} : { storedPayloadId: id }),
+          redactionState,
+          createdAt: index + 1,
+        },
+      });
+      assert.equal(JSON.stringify(result).includes("payload-content"), false);
+    }
+    const plan = database
+      .prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_RUN_OUTPUT_ITEM_SQL}`)
+      .all("output-none", "run-1", "session-1", "workspace") as unknown as readonly Readonly<{
+      detail: string;
+    }>[];
+    assert.doesNotMatch(plan.map(({ detail }) => detail).join("\n"), /run_output_payloads/u);
+  });
+});
+
+repositoryTest("Run output point reads reject impossible persistence tuples without exposing raw state", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    insertRun(database, "run-1", "session-1", "message-1", "completed", 1);
+    database.exec("PRAGMA ignore_check_constraints = ON;");
+    database
+      .prepare(
+        `INSERT INTO run_output_items VALUES
+          ('output-invalid-enum', 'run-1', 1, 'operation', 'command', NULL, 'summary', 'complete',
+           'future_state', 7, NULL, 'not_required', 1),
+          ('output-invalid-tuple', 'run-1', 2, 'operation', 'command', NULL, 'summary', 'complete',
+           'stored', 7, NULL, 'unknown', 2)`,
+      )
+      .run();
+    database.exec("PRAGMA ignore_check_constraints = OFF;");
+
+    const read = operationFor(database, "repository.run.output.get");
+    for (const outputItemId of ["output-invalid-enum", "output-invalid-tuple"]) {
+      assert.throws(
+        () =>
+          read({
+            sessionId: "session-1",
+            runId: "run-1",
+            outputItemId,
+            workspaceKey: "workspace",
+          }),
+        (error: unknown) =>
+          error instanceof TypeError &&
+          error.message === "Repository projection violates the persistence contract." &&
+          !error.message.includes("future_state"),
+      );
+    }
+  });
+});
+
+repositoryTest("Run output point reads hide every mismatched owner tuple and reject expanded requests", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    insertSession(database, "session-2", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    insertMessage(database, "message-2", "session-2", 1, "[]");
+    insertRun(database, "run-1", "session-1", "message-1", "completed", 1);
+    insertRun(database, "run-2", "session-2", "message-2", "completed", 1);
+    database
+      .prepare(
+        `INSERT INTO run_output_items VALUES
+          ('output-1', 'run-1', 1, 'operation', 'command', NULL, 'summary', 'complete',
+           'none', NULL, NULL, 'not_required', 1)`,
+      )
+      .run();
+    const read = operationFor(database, "repository.run.output.get");
+    for (const request of [
+      { sessionId: "session-1", runId: "run-1", outputItemId: "missing", workspaceKey: "workspace" },
+      { sessionId: "session-2", runId: "run-1", outputItemId: "output-1", workspaceKey: "workspace" },
+      { sessionId: "session-1", runId: "run-2", outputItemId: "output-1", workspaceKey: "workspace" },
+      { sessionId: "session-1", runId: "run-1", outputItemId: "output-1", workspaceKey: "other" },
+    ]) {
+      assert.throws(
+        () => read(request),
+        (error: unknown) => error instanceof RepositoryReadError && error.code === "not_found",
+      );
+    }
+    assert.throws(
+      () =>
+        read({
+          sessionId: "session-1",
+          runId: "run-1",
+          outputItemId: "output-1",
+          workspaceKey: "workspace",
+          includePayload: true,
+        }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "request_invalid",
     );
   });
 });
@@ -324,8 +899,10 @@ repositoryTest("session pages apply the byte budget and continue from the last i
     insertSession(database, maximumSessionId, 200);
     for (let index = 0; index < 100; index += 1) {
       database
-        .prepare("INSERT INTO sessions VALUES (?, 'provider', 'workspace', '[]', ?, 4, 'active', 1, 1, ?)")
-        .run(`session-${String(index).padStart(3, "0")}`, "c".repeat(3_000), index + 1);
+        .prepare(
+          "INSERT INTO sessions VALUES (?, 'Session', 'provider', 'workspace', ?, NULL, NULL, '[]', ?, 4, 'active', 1, 1, ?)",
+        )
+        .run(`session-${String(index).padStart(3, "0")}`, path.resolve("workspace"), "c".repeat(3_000), index + 1);
     }
     const sessions = operationFor(database, "repository.sessions.page");
     const maximumIdPage = sessions({ workspaceKey: "workspace", limit: 1 }) as PageResult;
@@ -334,12 +911,38 @@ repositoryTest("session pages apply the byte budget and continue from the last i
     assert.doesNotThrow(() => sessions({ workspaceKey: "workspace", limit: 1, cursor: maximumIdPage.nextCursor }));
     const first = sessions({ workspaceKey: "workspace", limit: 100 }) as PageResult;
     assert.ok(first.items.length < 100);
-    assert.ok(Buffer.byteLength(JSON.stringify(first)) < 256 * 1024);
+    assert.ok(Buffer.byteLength(JSON.stringify(first)) <= 192 * 1024);
     assert.equal(typeof first.nextCursor, "string");
     const second = sessions({ workspaceKey: "workspace", limit: 100, cursor: first.nextCursor }) as PageResult;
     assert.ok(second.items.length > 0);
     assert.throws(
       () => insertSession(database, "x".repeat(1_025), 300),
+      (error: unknown) => error instanceof Error && error.message.includes("CHECK constraint failed"),
+    );
+  });
+});
+
+repositoryTest("Session schema accepts the exact child Run limit and rejects values above the durable maximum", () => {
+  withDatabase((database) => {
+    database
+      .prepare(
+        "INSERT INTO sessions VALUES (?, 'Session', 'provider', 'workspace', ?, NULL, NULL, '[]', 'character', ?, 'active', 1, 1, 1)",
+      )
+      .run("session-exact-limit", path.resolve("workspace"), 1_024);
+    assert.throws(
+      () =>
+        database
+          .prepare(
+            "INSERT INTO sessions VALUES (?, 'Session', 'provider', 'workspace', ?, NULL, NULL, '[]', 'character', ?, 'active', 1, 1, 1)",
+          )
+          .run("session-over-limit", path.resolve("workspace"), 1_025),
+      (error: unknown) => error instanceof Error && error.message.includes("CHECK constraint failed"),
+    );
+    assert.throws(
+      () =>
+        database
+          .prepare("UPDATE sessions SET max_concurrent_child_runs = ? WHERE id = 'session-exact-limit'")
+          .run(1_025),
       (error: unknown) => error instanceof Error && error.message.includes("CHECK constraint failed"),
     );
   });
@@ -363,18 +966,88 @@ repositoryTest("public RunEvent omits internal fields and advances past an overs
       sessionId: "session-1",
       runId: "run-1",
       workspaceKey: "workspace",
-    }) as PageResult;
+    }) as RunEventPageResult;
     assert.deepEqual(result.items[0], { omitted: true, reason: "response_size_limit", ordinal: 1 });
     assert.equal(result.items[1]?.id, "event-2");
     assert.equal(Object.hasOwn(result.items[1] ?? {}, "dedupeKey"), false);
     assert.equal(Object.hasOwn(result.items[1] ?? {}, "workspaceKey"), false);
+    assert.equal(typeof result.continuationCursor, "string");
+    assert.equal(result.hasMore, false);
+
+    database
+      .prepare("INSERT INTO run_events VALUES ('event-3', 'run-1', 3, 'event', NULL, NULL, NULL, 'later', 3)")
+      .run();
+    const continuation = operationFor(
+      database,
+      "repository.run.events.page",
+    )({
+      sessionId: "session-1",
+      runId: "run-1",
+      workspaceKey: "workspace",
+      cursor: result.continuationCursor,
+    }) as RunEventPageResult;
+    assert.deepEqual(
+      continuation.items.map((item) => item.id),
+      ["event-3"],
+    );
+    assert.equal(continuation.hasMore, false);
+  });
+});
+
+repositoryTest("RunEvent continuation is usable when the initial page is empty", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-empty", 1);
+    insertMessage(database, "message-empty", "session-empty", 1, "[]");
+    insertRun(database, "run-empty", "session-empty", "message-empty", "active", 1);
+    const operation = operationFor(database, "repository.run.events.page");
+    const empty = operation({
+      sessionId: "session-empty",
+      runId: "run-empty",
+      workspaceKey: "workspace",
+    }) as RunEventPageResult;
+    assert.deepEqual(empty.items, []);
+    assert.equal(typeof empty.continuationCursor, "string");
+    assert.equal(empty.hasMore, false);
+
+    database
+      .prepare(
+        "INSERT INTO run_events VALUES ('event-after-empty', 'run-empty', 1, 'event', NULL, NULL, NULL, 'later', 2)",
+      )
+      .run();
+    const next = operation({
+      sessionId: "session-empty",
+      runId: "run-empty",
+      workspaceKey: "workspace",
+      cursor: empty.continuationCursor,
+    }) as RunEventPageResult;
+    assert.deepEqual(
+      next.items.map((item) => item.id),
+      ["event-after-empty"],
+    );
   });
 });
 
 repositoryTest("representative ordinal queries use covering indexes and never scan payloads", () => {
   withDatabase((database) => {
+    const runPlan = database
+      .prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.runs}`)
+      .all("s", 0, 10, "s", "w") as unknown as readonly Readonly<{ detail: string }>[];
+    const runDetails = runPlan.map((row) => row.detail).join("\n");
+    assert.match(runDetails, /runs_session_ordinal_uq/u);
+    assert.doesNotMatch(runDetails, /USE TEMP B-TREE FOR ORDER BY/u);
+
     const plans = [
-      database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.messages}`).all(1024, "s", "w", 0, 10),
+      database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_SESSION_PAGE_SQL.all}`).all(null, null, null, null, 10),
+      database
+        .prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_SESSION_PAGE_SQL.lifecycle}`)
+        .all("active", null, null, null, null, 10),
+      database
+        .prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_SESSION_PAGE_SQL.workspace}`)
+        .all("workspace", null, null, null, null, 10),
+      database
+        .prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_SESSION_PAGE_SQL.workspaceLifecycle}`)
+        .all("workspace", "active", null, null, null, null, 10),
+      database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.messages}`).all(1024, "s", 0, 10, "s", "w"),
       database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.runEvents}`).all("r", "s", "w", 0, 10),
       database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.runOutputs}`).all("r", "s", "w", 0, 10),
       database
@@ -382,12 +1055,75 @@ repositoryTest("representative ordinal queries use covering indexes and never sc
         .all("r", "s", "w", "operation", 0, 10),
     ].flat() as unknown as readonly Readonly<{ detail: string }>[];
     const details = plans.map((row) => row.detail).join("\n");
+    assert.match(details, /sessions_activity_idx/u);
+    assert.match(details, /sessions_lifecycle_activity_idx/u);
+    assert.match(details, /sessions_workspace_activity_idx/u);
     assert.match(details, /messages_session_ordinal_uq/u);
     assert.match(details, /run_events_run_ordinal_uq/u);
     assert.match(details, /run_output_items_run_ordinal_uq/u);
     assert.match(details, /run_output_items_run_category_ordinal_idx/u);
     assert.doesNotMatch(details, /run_output_payloads/u);
     assert.doesNotMatch(details, /USE TEMP B-TREE FOR ORDER BY/u);
+  });
+});
+
+repositoryTest("Session deletion status resolves pending and completed workspace bindings by deletion ID", () => {
+  withDatabase((database) => {
+    const pendingToken = "018f1f4e-7f0a-7000-8000-000000000449";
+    const completedToken = "018f1f4e-7f0a-7000-8000-000000000450";
+    database
+      .prepare(
+        `
+        INSERT INTO session_deletion_manifests (
+          deletion_id, workspace_key, root_session_id, request_fingerprint, deleted_session_count, created_at
+        ) VALUES (?, 'pending-workspace', 'deleted-root', ?, 3, 1)
+      `,
+      )
+      .run(pendingToken, "a".repeat(64));
+    database
+      .prepare(
+        `
+        INSERT INTO session_deletion_completion_tombstones (
+          deletion_id, workspace_key, request_fingerprint, deleted_session_count, completed_at
+        ) VALUES (?, 'completed-workspace', ?, 2, 2)
+      `,
+      )
+      .run(completedToken, "b".repeat(64));
+    const status = operationFor(database, "repository.session-deletion.status.get");
+
+    assert.deepEqual(status({ cleanupToken: pendingToken }), {
+      cleanupToken: pendingToken,
+      workspaceKey: "pending-workspace",
+      deletedSessionCount: 3,
+      localOnly: true,
+      status: "pending",
+    });
+    assert.deepEqual(status({ cleanupToken: completedToken }), {
+      cleanupToken: completedToken,
+      workspaceKey: "completed-workspace",
+      deletedSessionCount: 2,
+      localOnly: true,
+      status: "completed",
+    });
+  });
+});
+
+repositoryTest("Session deletion status rejects invalid, missing, and expanded requests", () => {
+  withDatabase((database) => {
+    const status = operationFor(database, "repository.session-deletion.status.get");
+
+    assert.throws(
+      () => status({ cleanupToken: "not-a-uuid" }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "request_invalid",
+    );
+    assert.throws(
+      () => status({ cleanupToken: "018f1f4e-7f0a-7000-8000-000000000448" }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "not_found",
+    );
+    assert.throws(
+      () => status({ cleanupToken: "018f1f4e-7f0a-7000-8000-000000000448", workspaceKey: "workspace" }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "request_invalid",
+    );
   });
 });
 
@@ -654,8 +1390,10 @@ function insertSession(database: DatabaseSync, id: string, activity: number): vo
 
 function insertSessionWithWorkspace(database: DatabaseSync, id: string, workspaceKey: string, activity: number): void {
   database
-    .prepare("INSERT INTO sessions VALUES (?, 'provider', ?, '[]', 'character', 4, 'active', 1, ?, ?)")
-    .run(id, workspaceKey, activity, activity);
+    .prepare(
+      "INSERT INTO sessions VALUES (?, 'Session', 'provider', ?, ?, NULL, NULL, '[]', 'character', 4, 'active', 1, ?, ?)",
+    )
+    .run(id, workspaceKey, path.resolve(workspaceKey), activity, activity);
 }
 
 function insertMessage(database: DatabaseSync, id: string, sessionId: string, ordinal: number, content: string): void {
@@ -682,7 +1420,71 @@ function insertRun(
     .run(id, sessionId, messageId, phase, timestamp, timestamp, phase === "completed" ? timestamp : null, timestamp);
 }
 
+function insertHistoryRun(
+  database: DatabaseSync,
+  run: Readonly<{
+    id: string;
+    sessionId: string;
+    ordinal: number;
+    initiatingMessageId: string;
+    finalAssistantMessageId?: string;
+    retryOfRunId?: string;
+    phase:
+      | "queued"
+      | "starting"
+      | "active"
+      | "canceling"
+      | "finalizing"
+      | "completed"
+      | "failed"
+      | "canceled"
+      | "interrupted";
+    failureOrigin?: string;
+    errorSummary?: string;
+    cancelRequestedAt?: number;
+    cancelAcknowledgedAt?: number;
+    timestamp: number;
+  }>,
+): void {
+  database
+    .prepare(
+      `
+    INSERT INTO runs (
+      id, session_id, ordinal, initiating_message_id, final_assistant_message_id, retry_of_run_id,
+      phase, execution_snapshot_json, failure_origin, provider_error_code, error_summary,
+      cancel_requested_at, cancel_acknowledged_at, external_side_effect_state,
+      created_at, started_at, terminal_at, updated_at, version
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'present', ?, ?, ?, ?, 7)
+  `,
+    )
+    .run(
+      run.id,
+      run.sessionId,
+      run.ordinal,
+      run.initiatingMessageId,
+      run.finalAssistantMessageId ?? null,
+      run.retryOfRunId ?? null,
+      run.phase,
+      JSON.stringify({ marker: "secret snapshot" }),
+      run.failureOrigin ?? null,
+      "secret-provider-code",
+      run.errorSummary ?? null,
+      run.cancelRequestedAt ?? null,
+      run.cancelAcknowledgedAt ?? null,
+      run.timestamp,
+      run.timestamp,
+      ["completed", "failed", "canceled", "interrupted"].includes(run.phase) ? run.timestamp : null,
+      run.timestamp,
+    );
+}
+
 type PageResult = Readonly<{
   items: readonly Readonly<Record<string, unknown>>[];
   nextCursor?: string;
+}>;
+
+type RunEventPageResult = Readonly<{
+  items: readonly Readonly<Record<string, unknown>>[];
+  continuationCursor: string;
+  hasMore: boolean;
 }>;

@@ -1,20 +1,26 @@
 import { MAX_PERSISTENCE_RESPONSE_BYTES } from "./persistence-protocol.js";
+import type { LocalRepositoryMetadata } from "./session-metadata.js";
+import type { RunOutputCategory } from "./repository-write-model.js";
 
 export const REPOSITORY_READ_OPERATIONS = {
   sessionsPage: "repository.sessions.page",
+  localRepositoriesPage: "repository.local-repositories.page",
   sessionGet: "repository.session.get",
   sessionDirectoriesChunk: "repository.session.directories-chunk",
   messagesPage: "repository.messages.page",
   messageContentChunk: "repository.message.content-chunk",
+  runsPage: "repository.runs.page",
   runEventsPage: "repository.run.events.page",
   runGet: "repository.run.get",
   runSnapshotChunk: "repository.run.snapshot-chunk",
   runOutputsPage: "repository.run.outputs.page",
   runOutputCounts: "repository.run.outputs.counts",
+  runOutputGet: "repository.run.output.get",
   runOutputPayloadMetadata: "repository.run.output.payload-metadata",
   runInputDeliveriesPage: "repository.run.input-deliveries.page",
   payloadChunk: "payload.read_chunk",
   childResultsPage: "repository.child-results.page",
+  sessionDeletionStatusGet: "repository.session-deletion.status.get",
   sessionDeletionCleanupPage: "repository.session-deletion.cleanup.page",
   recoveryGet: "repository.recovery.get",
 } as const;
@@ -26,7 +32,9 @@ export const REPOSITORY_CHUNK_LIMITS = {
 
 export const REPOSITORY_READ_LIMITS = {
   sessions: { default: 25, max: 100 },
+  localRepositories: { default: 25, max: 100 },
   messages: { default: 50, max: 100 },
+  runs: { default: 50, max: 100 },
   events: { default: 100, max: 200 },
   outputs: { default: 100, max: 200 },
   runInputDeliveries: { default: 100, max: 200 },
@@ -55,8 +63,7 @@ export type RepositoryChunkResult<TScope extends Readonly<Record<string, string>
     bytes: ArrayBuffer;
   }>;
 
-export type SessionDirectoriesChunkRequest = Readonly<{ sessionId: string; workspaceKey: string }> &
-  RepositoryChunkRange;
+export type SessionDirectoriesChunkRequest = Readonly<{ sessionId: string }> & RepositoryChunkRange;
 export type SessionDirectoriesChunkResult = RepositoryChunkResult<Readonly<{ sessionId: string }>>;
 
 export type MessageContentChunkRequest = Readonly<{ sessionId: string; messageId: string; workspaceKey: string }> &
@@ -82,7 +89,9 @@ export type SessionExecutionState = "not_started" | "running" | "completed" | "f
 
 export type SessionListItem = Readonly<{
   id: string;
+  title: string;
   workspaceKey: string;
+  workspacePath: string;
   defaultCharacterId: string;
   lifecycleStatus: "active" | "archived" | "closed";
   createdAt: number;
@@ -92,12 +101,23 @@ export type SessionListItem = Readonly<{
   activeRunId?: string;
   latestRunId?: string;
   stateChangedAt: number;
+}> &
+  LocalRepositoryMetadata;
+
+export type LocalRepositoryListItem = Readonly<{
+  localRepositoryKey: string;
+  repositoryNames: readonly string[];
+  repositoryNameCount: number;
+  sessionCount: number;
+  lastActivityAt: number;
 }>;
 
 export type SessionDetail = Readonly<{
   id: string;
+  title: string;
   providerId: string;
   workspaceKey: string;
+  workspacePath: string;
   allowedAdditionalDirectoriesByteLength: number;
   allowedAdditionalDirectoriesState: "inline" | "chunked";
   allowedAdditionalDirectories?: readonly string[];
@@ -107,7 +127,8 @@ export type SessionDetail = Readonly<{
   createdAt: number;
   updatedAt: number;
   lastActivityAt: number;
-}>;
+}> &
+  LocalRepositoryMetadata;
 
 export type RunDetail = Readonly<{
   id: string;
@@ -134,6 +155,24 @@ export type RunDetail = Readonly<{
   version: number;
 }>;
 
+export type RunHistoryListItem = Readonly<{
+  runId: string;
+  sessionId: string;
+  ordinal: number;
+  initiatingMessageId: string;
+  finalAssistantMessageId?: string;
+  retryOfRunId?: string;
+  phase: string;
+  failureOrigin?: string;
+  errorSummary?: string;
+  cancelRequestedAt?: number;
+  cancelAcknowledgedAt?: number;
+  createdAt: number;
+  startedAt?: number;
+  terminalAt?: number;
+  updatedAt: number;
+}>;
+
 export type RunOutputPayloadMetadata = Readonly<{
   sessionId: string;
   runId: string;
@@ -144,6 +183,13 @@ export type RunOutputPayloadMetadata = Readonly<{
   byteLength: number;
   contentSha256: string;
   createdAt: number;
+}>;
+
+export type RunOutputItemDetail = Readonly<{
+  sessionId: string;
+  runId: string;
+  workspaceKey: string;
+  item: RunOutputListItem;
 }>;
 
 export type RunInputDeliveryRecoveryItem = Readonly<{
@@ -176,6 +222,14 @@ export type ChildResultListItem = Readonly<{
 export type SessionDeletionItem = Readonly<{
   ordinal: number;
   sessionId: string;
+}>;
+
+export type SessionDeletionStatus = Readonly<{
+  cleanupToken: string;
+  workspaceKey: string;
+  deletedSessionCount: number;
+  localOnly: true;
+  status: "pending" | "completed";
 }>;
 
 export type SessionDeletionCleanupPage = Page<SessionDeletionItem> &
@@ -226,17 +280,45 @@ export type RunEventListItem = Readonly<{
   createdAt: number;
 }>;
 
+export type RunEventPage = Readonly<{
+  sessionId: string;
+  runId: string;
+  workspaceKey: string;
+  items: readonly (RunEventListItem | PageOmission)[];
+  continuationCursor: string;
+  hasMore: boolean;
+}>;
+
+type RunOutputPayloadProjection =
+  | Readonly<{
+      payloadState: "none";
+      redactionState: "not_required";
+    }>
+  | Readonly<{
+      payloadState: "pending" | "omitted_size_limit" | "omitted_persistence";
+      payloadOriginalByteLength: number;
+      redactionState: "not_required" | "redacted";
+    }>
+  | Readonly<{
+      payloadState: "stored";
+      payloadOriginalByteLength: number;
+      storedPayloadId: string;
+      redactionState: "not_required" | "redacted";
+    }>
+  | Readonly<{
+      payloadState: "omitted_redaction";
+      payloadOriginalByteLength: number;
+      redactionState: "unknown";
+    }>;
+
 export type RunOutputListItem = Readonly<{
   id: string;
   runId: string;
   ordinal: number;
-  category: string;
+  category: RunOutputCategory;
   kind: string;
   summary: string;
   completionState: "complete" | "partial";
-  payloadState: string;
-  payloadOriginalByteLength?: number;
-  storedPayloadId?: string;
-  redactionState: string;
   createdAt: number;
-}>;
+}> &
+  RunOutputPayloadProjection;

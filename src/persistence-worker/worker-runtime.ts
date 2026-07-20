@@ -327,6 +327,9 @@ function readMessageContentChunk(
     )
     .get(request.offset, request.maxBytes, messageId, sessionId, workspaceKey) as
     Readonly<{ byte_length: number; chunk: Uint8Array }> | undefined;
+  if (row === undefined) {
+    throw new RepositoryReadError("not_found", "Repository resource was not found.");
+  }
   return chunkResult(row, request, { sessionId, messageId }, context, "Message");
 }
 
@@ -335,18 +338,21 @@ function readSessionDirectoriesChunk(
   payload: Readonly<Record<string, unknown>>,
   context: OperationExecutionContext,
 ): OperationResult {
-  const request = readChunkRequest(payload, ["sessionId", "workspaceKey"], "Session directories");
-  const { sessionId, workspaceKey } = request.scope;
+  const request = readChunkRequest(payload, ["sessionId"], "Session directories");
+  const { sessionId } = request.scope;
   const row = database
     .prepare(
       `
     SELECT length(CAST(allowed_additional_directories_json AS BLOB)) AS byte_length,
            substr(CAST(allowed_additional_directories_json AS BLOB), ? + 1, ?) AS chunk
-    FROM sessions WHERE id = ? AND workspace_key = ?
+    FROM sessions WHERE id = ?
   `,
     )
-    .get(request.offset, request.maxBytes, sessionId, workspaceKey) as
+    .get(request.offset, request.maxBytes, sessionId) as
     Readonly<{ byte_length: number; chunk: Uint8Array }> | undefined;
+  if (row === undefined) {
+    throw new RepositoryReadError("not_found", "Repository resource was not found.");
+  }
   return chunkResult(row, request, { sessionId }, context, "Session directories");
 }
 

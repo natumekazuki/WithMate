@@ -13,7 +13,7 @@ Persistence Workerの再起動時には、local transactionの途中状態、Pro
 
 `repository.startup.repair`はPersistence Worker内の単一write transactionとして実行し、local recordだけを反復可能かつ単調に収束させる。Provider I/Oを行わず、外部conversation ID、external execution ID、terminal outcomeを推測しない。
 
-通常実行中にApplication ServiceがProvider送信前のcancelまたは中断を確定できる場合は、startup repairへ委ねず、`repository.run.terminal`でRun、Attempt、Binding、Dispatchを同時に収束させる。このcaller証明と状態遷移は`docs/adr/003-pre-dispatch-run-terminal-resolution.md`を正本とする。
+通常実行中にApplication ServiceがProvider送信前のcancelまたは中断を確定できる場合は、startup repairへ委ねず、`repository.run.terminal`でRun、Attempt、Binding、Dispatchを同時に収束させる。このcaller証明と状態遷移は`docs/adr/005-pre-dispatch-run-terminal-resolution.md`を正本とする。
 
 terminalまたはcanceling Runが所有する未解決のcreating Bindingは、Provider応答を関連付けられるlive ownerではないためinvalidatedへ進める。外部会話作成が未送信だったことを証明できない場合、Runのexternal side effectは`unknown`へ単調更新する。未送信を証明できるpending Dispatchだけをabortし、dispatchingまたはambiguous Dispatchは自動再送しない。
 

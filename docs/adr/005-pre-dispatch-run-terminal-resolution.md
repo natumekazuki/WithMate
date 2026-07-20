@@ -1,4 +1,4 @@
-# ADR 003: Provider送信前のRun終端で未確定状態を同時に収束させる
+# ADR 005: Provider送信前のRun終端で未確定状態を同時に収束させる
 
 - Status: Accepted
 - Date: 2026-07-16

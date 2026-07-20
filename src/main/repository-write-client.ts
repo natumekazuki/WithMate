@@ -36,6 +36,8 @@ import {
   type SessionDeletionCleanupCompleteResult,
   type SessionTransitionCommand,
   type SessionTransitionResult,
+  type SessionUpdateTitleCommand,
+  type SessionUpdateTitleResult,
   type StartupRepairCommand,
   type StartupRepairResult,
 } from "../shared/repository-write-model.js";
@@ -62,6 +64,13 @@ export class RepositoryWriteClient {
     options?: RequestOptions,
   ): Promise<RepositoryCommandResult<SessionTransitionResult>> {
     return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.sessionTransition, "write", command, options);
+  }
+
+  updateSessionTitle(
+    command: SessionUpdateTitleCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<SessionUpdateTitleResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.sessionUpdateTitle, "write", command, options);
   }
 
   deleteSessionSubtree(

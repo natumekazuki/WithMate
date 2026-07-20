@@ -5,12 +5,15 @@ import {
   type MessageContentChunkRequest,
   type MessageContentChunkResult,
   type MessageListItem,
+  type LocalRepositoryListItem,
   type Page,
   type RecoveryProjection,
   type RunDetail,
-  type RunEventListItem,
+  type RunEventPage,
+  type RunHistoryListItem,
   type RunInputDeliveryRecoveryItem,
   type RunOutputListItem,
+  type RunOutputItemDetail,
   type RunOutputPayloadChunkRequest,
   type RunOutputPayloadChunkResult,
   type RunOutputPayloadMetadata,
@@ -19,6 +22,7 @@ import {
   type SessionDirectoriesChunkRequest,
   type SessionDirectoriesChunkResult,
   type SessionDeletionCleanupPage,
+  type SessionDeletionStatus,
   type SessionDetail,
   type SessionExecutionState,
   type SessionListItem,
@@ -33,8 +37,10 @@ export class RepositoryReadClient {
 
   sessionsPage(
     input: Readonly<{
-      workspaceKey: string;
+      workspaceKey?: string;
       lifecycleStatus?: SessionLifecycleStatus;
+      localRepositoryKeys?: readonly string[];
+      querySearchKey?: string;
       cursor?: string;
       limit?: number;
     }>,
@@ -43,8 +49,15 @@ export class RepositoryReadClient {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.sessionsPage, "read", input, options);
   }
 
+  localRepositoriesPage(
+    input: Readonly<{ cursor?: string; limit?: number }>,
+    options?: RequestOptions,
+  ): Promise<Page<LocalRepositoryListItem>> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.localRepositoriesPage, "read", input, options);
+  }
+
   sessionGet(
-    input: Readonly<{ sessionId: string; workspaceKey: string }>,
+    input: Readonly<{ sessionId: string }>,
     options?: RequestOptions,
   ): Promise<
     Readonly<{
@@ -77,10 +90,17 @@ export class RepositoryReadClient {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.messageContentChunk, "read", input, options);
   }
 
+  runsPage(
+    input: Readonly<{ sessionId: string; workspaceKey: string; cursor?: string; limit?: number }>,
+    options?: RequestOptions,
+  ): Promise<Page<RunHistoryListItem> & Readonly<{ sessionId: string; workspaceKey: string }>> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.runsPage, "read", input, options);
+  }
+
   runEventsPage(
     input: Readonly<{ sessionId: string; runId: string; workspaceKey: string; cursor?: string; limit?: number }>,
     options?: RequestOptions,
-  ): Promise<Page<RunEventListItem> & Readonly<{ sessionId: string; runId: string; workspaceKey: string }>> {
+  ): Promise<RunEventPage> {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.runEventsPage, "read", input, options);
   }
 
@@ -125,6 +145,13 @@ export class RepositoryReadClient {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.runOutputCounts, "read", input, options);
   }
 
+  runOutputGet(
+    input: Readonly<{ sessionId: string; runId: string; outputItemId: string; workspaceKey: string }>,
+    options?: RequestOptions,
+  ): Promise<RunOutputItemDetail> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.runOutputGet, "read", input, options);
+  }
+
   runOutputPayloadMetadata(
     input: Readonly<{ sessionId: string; runId: string; outputItemId: string; workspaceKey: string }>,
     options?: RequestOptions,
@@ -163,6 +190,13 @@ export class RepositoryReadClient {
     options?: RequestOptions,
   ): Promise<SessionDeletionCleanupPage> {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.sessionDeletionCleanupPage, "read", input, options);
+  }
+
+  sessionDeletionStatusGet(
+    input: Readonly<{ cleanupToken: string }>,
+    options?: RequestOptions,
+  ): Promise<SessionDeletionStatus> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.sessionDeletionStatusGet, "read", input, options);
   }
 
   recoveryGet(

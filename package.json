@@ -5,6 +5,9 @@
   "description": "WithMate desktop coding agent",
   "type": "module",
   "main": "dist/main/index.js",
+  "bin": {
+    "withmate": "dist/cli/entry.js"
+  },
   "engines": {
     "node": ">=24.16 <25",
     "npm": ">=10.9 <12"
@@ -15,9 +18,11 @@
     "clean": "tsc -b --clean",
     "format": "prettier --write \"*.json\" \"src/**/*.ts\" \"test/**/*.ts\" \"scripts/*.mjs\"",
     "format:check": "prettier --check \"*.json\" \"src/**/*.ts\" \"test/**/*.ts\" \"scripts/*.mjs\"",
-    "lint": "node scripts/validate-module-boundaries.mjs && node --check scripts/assert-runtime-version.mjs && node --check scripts/probe-runtime-persistence.mjs && node --check scripts/run-sqlite-schema-validator.mjs && node --check scripts/smoke-compiled-persistence.mjs && node --check scripts/validate-module-boundaries.mjs",
+    "lint": "node scripts/validate-module-boundaries.mjs && node --check scripts/assert-runtime-version.mjs && node --check scripts/probe-runtime-persistence.mjs && node --check scripts/run-sqlite-schema-validator.mjs && node --check scripts/smoke-cli-session.mjs && node --check scripts/smoke-cli-run.mjs && node --check scripts/smoke-compiled-persistence.mjs && node --check scripts/validate-module-boundaries.mjs",
     "pretest": "npm run check:runtime",
     "probe:runtime-persistence": "node scripts/probe-runtime-persistence.mjs",
+    "smoke:cli-session": "node scripts/smoke-cli-session.mjs",
+    "smoke:cli-run": "node scripts/smoke-cli-run.mjs",
     "smoke:compiled-persistence": "node scripts/smoke-compiled-persistence.mjs",
     "test": "tsx --test test/*.test.ts && node scripts/run-sqlite-schema-validator.mjs",
     "typecheck": "tsc -b --pretty false"

@@ -11,6 +11,7 @@
 | Carry | 新バージョンの backlog / design / implementation task へ引き継ぐ |
 | Drop | 新バージョンには引き継がない |
 | Merge | 別 Issue / task に統合して扱う |
+| Done | 新バージョンのsource、executable contract、必要なADRへ反映済み |
 | Defer | 初期版では扱わず、将来候補として残す |
 | Unknown | 追加確認が必要 |
 
@@ -29,7 +30,7 @@
 | GitHub [#107](https://github.com/natumekazuki/WithMate/issues/107) | feat: Browser Use / Browser Preview の基盤を追加する | Drop | アプリで持つ機能ではないため、新バージョンには引き継がない。 |
 | GitHub [#106](https://github.com/natumekazuki/WithMate/issues/106) | Codexでエラー発生して復帰してもエラーメッセージが残り続ける | Drop | 旧 UI のエラー表示残留は引き継がない。新バージョンで再発した場合は新しい Issue を立てる。 |
 | GitHub [#89](https://github.com/natumekazuki/WithMate/issues/89) | ChatGPTを開いてコードをコピペまたはファイル添付して直接チャット出来る画面が欲しい | Drop | ChatGPT 直接利用画面は新アプリの機能として持たないため、引き継がない。 |
-| GitHub [#77](https://github.com/natumekazuki/WithMate/issues/77) | セッション情報にリポジトリ名(フォルダ名)を追加したい | Carry | session metadata として repository / folder name は必要なため、新 persistence / Home session list 設計へ引き継ぐ。 |
+| GitHub [#77](https://github.com/natumekazuki/WithMate/issues/77) | セッション情報にリポジトリ名(フォルダ名)を追加したい | Done | `docs/adr/007-session-display-and-local-repository-metadata.md`のRepository metadataとSession projectionへ反映した。 |
 | GitHub [#74](https://github.com/natumekazuki/WithMate/issues/74) | 非同期指示機能 | Carry | memo file 方式は引き継がない。JSON-RPC 方式で実行中に追加メッセージを投げられる場合に実装する。 |
 | GitHub [#70](https://github.com/natumekazuki/WithMate/issues/70) | cancel押してからフリーズする | Drop | 旧実装の cancel フリーズ症状は引き継がない。新バージョンで再発した場合は新しい Issue を立てる。 |
 | GitHub [#64](https://github.com/natumekazuki/WithMate/issues/64) | Tasksが完了しても消えてない？ | Drop | 旧 Copilot Tasks 表示の症状は引き継がない。新バージョンで再発した場合は新しい Issue を立てる。 |

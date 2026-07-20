@@ -1,5 +1,9 @@
+import type { LocalRepositoryMetadata, SessionMetadata } from "./session-metadata.js";
+import type { TextContentBlock } from "./message-content.js";
+
 export const REPOSITORY_WRITE_OPERATIONS = {
   sessionCreate: "repository.session.create",
+  sessionUpdateTitle: "repository.session.update-title",
   sessionTransition: "repository.session.transition",
   sessionDeleteSubtree: "repository.session.delete-subtree",
   sessionDeletionCleanupComplete: "repository.session-deletion.cleanup.complete",
@@ -37,21 +41,27 @@ export type RunExecutionSnapshot = Readonly<{
 export type SessionCreateCommand = Readonly<{
   idempotencyKey: string;
   session: Readonly<{
-    id: string;
     providerId: string;
     workspaceKey: string;
+    workspacePath: string;
     allowedAdditionalDirectories: readonly string[];
     defaultCharacterId: string;
     maxConcurrentChildRuns: number;
-  }>;
+  }> &
+    SessionMetadata;
 }>;
 
 export type SessionTransitionCommand = Readonly<{
   sessionId: string;
-  workspaceKey: string;
   idempotencyKey: string;
   expectedLifecycleStatus: "active" | "archived";
   targetLifecycleStatus: SessionLifecycleStatus;
+}>;
+
+export type SessionUpdateTitleCommand = Readonly<{
+  sessionId: string;
+  idempotencyKey: string;
+  title: string;
 }>;
 
 export type SessionDeleteSubtreeCommand = Readonly<{
@@ -91,7 +101,7 @@ export type NormalRunAdmissionCommand = Readonly<{
   idempotencyKey: string;
   message: Readonly<{
     id: string;
-    contentBlocks: readonly RepositoryJsonValue[];
+    contentBlocks: readonly TextContentBlock[];
   }>;
   run: RunAdmissionDraft;
   attemptId: string;
@@ -116,7 +126,7 @@ export type ChildStartCommand = Readonly<{
   workspaceKey: string;
   idempotencyKey: string;
   childSession: Readonly<{
-    id: string;
+    title: string;
     providerId: string;
     allowedAdditionalDirectories: readonly string[];
     defaultCharacterId: string;
@@ -134,7 +144,7 @@ export type ChildStartCommand = Readonly<{
   }>;
   message: Readonly<{
     id: string;
-    contentBlocks: readonly RepositoryJsonValue[];
+    contentBlocks: readonly TextContentBlock[];
   }>;
   run: RunAdmissionDraft;
   attemptId: string;
@@ -191,7 +201,7 @@ export type RunInputAdmissionCommand = Readonly<{
   ephemeralOwnerToken: string | null;
   message: Readonly<{
     id: string;
-    contentBlocks: readonly RepositoryJsonValue[];
+    contentBlocks: readonly TextContentBlock[];
   }>;
 }>;
 
@@ -277,7 +287,7 @@ export type RunTerminalOutcome =
       kind: "completed";
       finalAssistantMessage: Readonly<{
         id: string;
-        contentBlocks: readonly RepositoryJsonValue[];
+        contentBlocks: readonly TextContentBlock[];
       }> | null;
     }>
   | Readonly<{
@@ -344,12 +354,15 @@ export type RepositoryCommandErrorCode =
   | "lifecycle_conflict"
   | "session_busy"
   | "capacity_exceeded"
+  | "insufficient_disk_space"
   | "idempotency_conflict"
   | "idempotency_in_progress"
-  | "idempotency_expired";
+  | "idempotency_expired"
+  | "identity_exhausted";
 
 export type RepositoryCapacityExceededDetails =
   | Readonly<{ scope: "root"; rootSessionId: string; current: number; limit: number }>
+  | Readonly<{ scope: "session_tree"; rootSessionId: string; current: number; limit: number }>
   | Readonly<{ scope: "application"; current: number; limit: number }>
   | Readonly<{ scope: "provider"; providerId: string; current: number; limit: number }>;
 
@@ -376,14 +389,23 @@ export type RepositoryCommandResult<T> =
 
 export type SessionCreateResult = Readonly<{
   sessionId: string;
+  title: string;
   workspaceKey: string;
+  workspacePath: string;
   lifecycleStatus: "active";
   createdAt: number;
-}>;
+}> &
+  LocalRepositoryMetadata;
 
 export type SessionTransitionResult = Readonly<{
   sessionId: string;
   lifecycleStatus: SessionLifecycleStatus;
+  updatedAt: number;
+}>;
+
+export type SessionUpdateTitleResult = Readonly<{
+  sessionId: string;
+  title: string;
   updatedAt: number;
 }>;
 
