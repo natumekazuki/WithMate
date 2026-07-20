@@ -1,9 +1,9 @@
 # Questions
 
 - status: 質問なし
-- updated: 2026-07-19
+- updated: 2026-07-20
 
-現在、CP2着手を止める回答待ちはない。
+現在、CP3着手前に回答待ちとして作業を止める項目はない。Q-11はCP3開始時にProvider runtime、dispatch、recovery contractと同時に確定する。
 
 ## Checkpoint到達時に判断する項目
 

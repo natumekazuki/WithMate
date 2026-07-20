@@ -149,3 +149,13 @@
 - Node.js 24.18.0で全459 testとSQLite schema validator、runtime guard、format、module boundary / lint、typecheck、buildを通した。Session CLI、Run / Message / Session Run history CLI、compiled persistenceのprocess smokeもGreenだった。
 - public contractは`src/shared/application-session-run-model.ts`、共有phase projection、対応するtype / testを正本とする。既存ADR 006 / 011とD-006のauthorization、projection ownership、CP2 / CP3 / CP5分離を変更していないため、新規ADRとdesign文書の更新は行わない。
 - Session Run history sliceは完了した。CP2全体は次の`test/cp02-control-plane-gate`による統合Gateが残るため、引き続き進行中とする。
+
+## 2026-07-20: CP2 Control Plane統合Gate完了
+
+- Session createからMessage timeline、Session Run history、Run status / events / follow、output counts / list / preview / chunk / exportまでを、Providerを起動せずproduction CLIで辿った。large Messageとtext / JSON outputはactual byte offsetで再構成し、binary outputはexplicit exportだけで公開した。
+- owner / scope、opaque cursor、192 KiB page budget、64 KiB inline / preview、256 KiB chunk、4 MiB Message上限、16 / 64 MiB output quota、payload非hydrate、strict allowlist projectionを、Application、Repository、CLI contractと実DB smokeへ対応付けた。
+- exact retry、same-key / different fingerprintまたはoperationのconflict、Session incarnation、commit応答喪失後のsame identity replay、`effect: "unknown"`と`reconciliation: "exact_request_required"`の組を既存Application、Repository、Worker contractで確認した。同じfailure timingを重複するtestは追加していない。
+- 独立Gate evidence reviewで、Session renameの構造的Repository write bypassをmodule-boundary checkerが検出できない`blocking` findingを確認した。Session writeの5操作を同じ禁止capability集合とnegative fixture health checkへ揃え、修正前のRed、修正後のGreen、targeted re-review findingなしで閉じた。
+- Node.js 24.18.0でruntime guard、format、lint、typecheck、全459 testとSQLite schema validator、buildを通した。build後のSession CLI、Run / Message / Session Run history CLI、compiled persistenceのprocess smokeもGreenで、SQLite sidecarとSession Files cleanup artifactが残らないことを確認した。
+- 既存accepted riskのCP2-CLI-R1からR3、CP2-RUN-R1、CP2-RUN-OUTPUT-R1からR2は、発生条件、影響、検知、復旧、再判断条件が引き続き妥当である。Gateではnetwork Workspace、path aliasのfile identity化、live activity port、adversarial directory、schema migration、temporary file orphan sweepをsupported scopeへ追加していない。新しいrisk-candidateと未実行のGate validationはない。
+- 既存ADR 003 / 006 / 011 / 012とD-006の責務、failure、checkpoint分離を変更していないため、新規ADRとdesign文書の更新は不要と判断した。CP2を`完了`とし、現在地をCP3着手前へ進めた。CP3は`未着手`のままで、Q-11は回答していない。

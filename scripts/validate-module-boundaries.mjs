@@ -4,12 +4,14 @@ import ts from "typescript";
 
 const root = process.cwd();
 const sourceRoot = path.join(root, "src");
-const repositoryWriteCapabilityNames = new Set([
+const applicationSessionWriteCapabilityNames = [
   "createSession",
+  "updateSessionTitle",
   "transitionSession",
   "deleteSessionSubtree",
   "completeSessionDeletionCleanup",
-]);
+];
+const repositoryWriteCapabilityNames = new Set(applicationSessionWriteCapabilityNames);
 const runOutputReadCapabilityNames = new Set([
   "runOutputCounts",
   "runOutputsPage",
@@ -383,6 +385,14 @@ for (const file of [
       containsNode(fixtureSource, (node) => isNamedRepositoryCapabilityReference(node, new Set([capabilityName]))),
     ) ||
     !containsNode(fixtureSource, (node) => isForbiddenRepositoryCapabilityReference(node, true, false)) ||
+    !applicationSessionWriteCapabilityNames.every((capabilityName) =>
+      containsNode(
+        fixtureSource,
+        (node) =>
+          isNamedRepositoryCapabilityReference(node, new Set([capabilityName])) &&
+          isForbiddenRepositoryCapabilityReference(node, true, false),
+      ),
+    ) ||
     !containsRawRepositoryOperationName(fs.readFileSync(repositoryBoundaryBypassesFixture, "utf8")) ||
     !containsNode(fixtureSource, isNodeModuleCapabilityAcquisition) ||
     !containsNode(
