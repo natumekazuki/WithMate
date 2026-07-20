@@ -23,13 +23,16 @@ const sendAndExit = (message, code) => {
 };
 process.once("disconnect", () => process.exit(1));
 
-if (
-  normalize(actualRoot) !== normalize(expectedRoot) ||
-  actualIdentity.device !== expectedIdentity.device ||
-  actualIdentity.inode !== expectedIdentity.inode ||
-  actualIdentity.birthtimeNanoseconds !== expectedIdentity.birthtimeNanoseconds
-) {
-  sendAndExit({ type: "unsafe_root" }, 2);
+const identityMismatches = [];
+if (normalize(actualRoot) !== normalize(expectedRoot)) identityMismatches.push("canonical_root");
+if (actualIdentity.device !== expectedIdentity.device) identityMismatches.push("device");
+if (actualIdentity.inode !== expectedIdentity.inode) identityMismatches.push("inode");
+if (actualIdentity.birthtimeNanoseconds !== expectedIdentity.birthtimeNanoseconds) {
+  identityMismatches.push("birthtime");
+}
+
+if (identityMismatches.length > 0) {
+  sendAndExit({ type: "unsafe_root", mismatches: identityMismatches }, 2);
 } else {
   if (process.send) process.send({ type: "ready" });
   process.once("message", (message) => {
@@ -43,13 +46,7 @@ if (
       ) {
         throw new Error("invalid request");
       }
-      // 一時的なfilesystem errorだけをbounded retryし、固定済みroot外へ対象を広げない。
-      fs.rmSync(message.sessionId, {
-        recursive: true,
-        force: true,
-        maxRetries: 5,
-        retryDelay: 50,
-      });
+      fs.rmSync(message.sessionId, { recursive: true, force: true, maxRetries: 0 });
       sendAndExit({ type: "completed" }, 0);
     } catch (error) {
       const code =
@@ -128,7 +125,16 @@ export async function removeSessionFilesFromAnchoredRoot(
       const type = (message as Readonly<{ type?: unknown }>).type;
       if (type === "unsafe_root") {
         responseReceived = true;
-        responseError = new Error("Session Files root changed before cleanup.");
+        const mismatches = (message as Readonly<{ mismatches?: unknown }>).mismatches;
+        responseError = new Error(
+          Array.isArray(mismatches) &&
+            mismatches.length > 0 &&
+            mismatches.every((mismatch) =>
+              ["canonical_root", "device", "inode", "birthtime"].includes(String(mismatch)),
+            )
+            ? `Session Files root changed before cleanup (${mismatches.join(", ")}).`
+            : "Session Files root changed before cleanup.",
+        );
         return;
       }
       if (type === "filesystem_failed") {
