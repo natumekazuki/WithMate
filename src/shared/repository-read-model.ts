@@ -9,6 +9,7 @@ export const REPOSITORY_READ_OPERATIONS = {
   sessionDirectoriesChunk: "repository.session.directories-chunk",
   messagesPage: "repository.messages.page",
   messageContentChunk: "repository.message.content-chunk",
+  runsPage: "repository.runs.page",
   runEventsPage: "repository.run.events.page",
   runGet: "repository.run.get",
   runSnapshotChunk: "repository.run.snapshot-chunk",
@@ -33,6 +34,7 @@ export const REPOSITORY_READ_LIMITS = {
   sessions: { default: 25, max: 100 },
   localRepositories: { default: 25, max: 100 },
   messages: { default: 50, max: 100 },
+  runs: { default: 50, max: 100 },
   events: { default: 100, max: 200 },
   outputs: { default: 100, max: 200 },
   runInputDeliveries: { default: 100, max: 200 },
@@ -151,6 +153,24 @@ export type RunDetail = Readonly<{
   terminalAt?: number;
   updatedAt: number;
   version: number;
+}>;
+
+export type RunHistoryListItem = Readonly<{
+  runId: string;
+  sessionId: string;
+  ordinal: number;
+  initiatingMessageId: string;
+  finalAssistantMessageId?: string;
+  retryOfRunId?: string;
+  phase: string;
+  failureOrigin?: string;
+  errorSummary?: string;
+  cancelRequestedAt?: number;
+  cancelAcknowledgedAt?: number;
+  createdAt: number;
+  startedAt?: number;
+  terminalAt?: number;
+  updatedAt: number;
 }>;
 
 export type RunOutputPayloadMetadata = Readonly<{

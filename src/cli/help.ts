@@ -25,6 +25,7 @@ Operations:
   read                 Read a Session by Session ID
   directories-chunk    Read a bounded chunk of additional-directory configuration
   messages             Read a bounded Message timeline page
+  runs                 Read a bounded persisted Run history page
   message-content-chunk
                        Read a bounded raw Message content chunk
   archive              Archive a Session
@@ -119,6 +120,17 @@ Optional options:
   -h, --help
 `,
   messages: `Usage: withmate session messages [options]
+
+Required options:
+  --session-id <session-id>
+
+Optional options:
+  --cursor <opaque-cursor>
+  --limit <1..100>    Default: 50
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
+  runs: `Usage: withmate session runs [options]
 
 Required options:
   --session-id <session-id>

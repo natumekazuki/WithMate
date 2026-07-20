@@ -75,6 +75,15 @@ test("Run status accepts canceled persistence without cancel timestamps and expo
   }
 });
 
+test("Run status shares the history cancellation invariant for phases that cannot expose cancellation", async () => {
+  for (const phase of ["queued", "starting", "active", "finalizing", "completed"] as const) {
+    const service = createService({
+      reads: reads({ run: { ...repositoryRun(phase), cancelRequestedAt: 2 } }),
+    });
+    assert.deepEqual(await service.status(request()), internalReadFailure());
+  }
+});
+
 test("Run status accepts the full persisted failure summary bound", async () => {
   const summary = "x".repeat(4_096);
   const service = createService({

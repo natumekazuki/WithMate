@@ -139,3 +139,13 @@
 - public contractは`src/shared/message-content.ts`、`src/shared/application-session-message-model.ts`、対応するtype / testを正本とする。ADR 006とD-006のhydrate分離、cursor、CLI ownershipの判断は変えていないため、新規ADRと設計文書の更新は行わない。
 - Node.js 24.18.0で全435 testとSQLite schema validator、runtime guard、format、module boundary / lint、typecheck、buildを通した。Session CLI、Run / Message CLI、compiled persistenceのprocess smokeもGreenで、SQLite sidecarが残らないことを確認した。
 - Session Message sliceは完了した。CP2全体はSession Run historyと統合Gateが残るため、引き続き進行中とする。
+
+## 2026-07-20: CP2 Session Run history control plane
+
+- Repository readへSession / Workspace scope付きの`runs.page`を追加した。Run headerだけを`runs_session_ordinal_uq`によるordinal keysetで1 statement取得し、default 50 / maximum 100、opaque scope cursor、192 KiB response budget、ordinal付きomissionを適用する。execution snapshot、Message本文、RunEvent、RunOutput、RunAttempt、RunDispatch、ProviderBindingは取得しない。
+- `ApplicationSessionRunOperations.runs`を追加した。`session_runs` authorization後にSessionからinternal Workspace scopeを解決し、Repository境界で再検証する。Run historyと既存Run statusは永続phase / failure / cancellation / timestamp projectionを共有し、completedでfinal assistant Messageがない組を含むphase-specific unionへ投影する。
+- `withmate session runs --session-id <id> [--cursor <cursor>] [--limit <1..100>] [--timeout-ms <ms>]`を追加した。既存Session CLIのversion付きJSON、exit code、timeout / SIGINT、exactly-once shutdownを維持し、Application responseをstrict allowlistで再検証する。
+- 実DB process smokeで、3件のRunのordinal page、small-limit cursor、別Sessionへのcursor流用拒否、completedかつfinal assistant Messageなし、historyとstatusのtimestamp一致、historyで得たRun IDからevents / outputへの遷移、internal field非露出、help時のruntime非起動、SQLite sidecar cleanupを確認した。
+- Node.js 24.18.0で全459 testとSQLite schema validator、runtime guard、format、module boundary / lint、typecheck、buildを通した。Session CLI、Run / Message / Session Run history CLI、compiled persistenceのprocess smokeもGreenだった。
+- public contractは`src/shared/application-session-run-model.ts`、共有phase projection、対応するtype / testを正本とする。既存ADR 006 / 011とD-006のauthorization、projection ownership、CP2 / CP3 / CP5分離を変更していないため、新規ADRとdesign文書の更新は行わない。
+- Session Run history sliceは完了した。CP2全体は次の`test/cp02-control-plane-gate`による統合Gateが残るため、引き続き進行中とする。

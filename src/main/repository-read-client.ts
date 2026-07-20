@@ -10,6 +10,7 @@ import {
   type RecoveryProjection,
   type RunDetail,
   type RunEventPage,
+  type RunHistoryListItem,
   type RunInputDeliveryRecoveryItem,
   type RunOutputListItem,
   type RunOutputItemDetail,
@@ -87,6 +88,13 @@ export class RepositoryReadClient {
 
   messageContentChunk(input: MessageContentChunkRequest, options?: RequestOptions): Promise<MessageContentChunkResult> {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.messageContentChunk, "read", input, options);
+  }
+
+  runsPage(
+    input: Readonly<{ sessionId: string; workspaceKey: string; cursor?: string; limit?: number }>,
+    options?: RequestOptions,
+  ): Promise<Page<RunHistoryListItem> & Readonly<{ sessionId: string; workspaceKey: string }>> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.runsPage, "read", input, options);
   }
 
   runEventsPage(

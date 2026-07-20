@@ -258,6 +258,249 @@ repositoryTest("Message page keeps one SQL snapshot when its Session is deleted 
   });
 });
 
+repositoryTest("Run history is Session-scoped, keyset paged, and projects only durable public headers", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-empty", 1);
+    insertSession(database, "session-1", 1);
+    insertSession(database, "session-2", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    insertMessage(database, "message-2", "session-1", 2, "[]");
+    insertMessage(database, "message-3", "session-1", 3, "[]");
+    insertMessage(database, "message-4", "session-1", 4, "[]");
+    insertHistoryRun(database, {
+      id: "run-1",
+      sessionId: "session-1",
+      ordinal: 1,
+      initiatingMessageId: "message-1",
+      finalAssistantMessageId: "message-2",
+      phase: "completed",
+      timestamp: 10,
+    });
+    insertHistoryRun(database, {
+      id: "run-2",
+      sessionId: "session-1",
+      ordinal: 3,
+      initiatingMessageId: "message-3",
+      retryOfRunId: "run-1",
+      phase: "failed",
+      failureOrigin: "provider",
+      errorSummary: "bounded failure",
+      timestamp: 20,
+    });
+    const operation = operationFor(database, "repository.runs.page");
+
+    const empty = operation({ sessionId: "session-empty", workspaceKey: "workspace" }) as PageResult;
+    assert.deepEqual(empty, { sessionId: "session-empty", workspaceKey: "workspace", items: [] });
+
+    const first = operation({ sessionId: "session-1", workspaceKey: "workspace", limit: 1 }) as PageResult;
+    assert.deepEqual(first.items, [
+      {
+        runId: "run-1",
+        sessionId: "session-1",
+        ordinal: 1,
+        initiatingMessageId: "message-1",
+        finalAssistantMessageId: "message-2",
+        phase: "completed",
+        createdAt: 10,
+        startedAt: 10,
+        terminalAt: 10,
+        updatedAt: 10,
+      },
+    ]);
+    assert.equal(typeof first.nextCursor, "string");
+    assert.equal(JSON.stringify(first).includes("secret snapshot"), false);
+    assert.equal(JSON.stringify(first).includes("secret-provider-code"), false);
+    assert.equal(JSON.stringify(first).includes("externalSideEffectState"), false);
+    assert.equal(JSON.stringify(first).includes("version"), false);
+
+    insertHistoryRun(database, {
+      id: "run-3",
+      sessionId: "session-1",
+      ordinal: 5,
+      initiatingMessageId: "message-4",
+      phase: "canceled",
+      cancelRequestedAt: 29,
+      cancelAcknowledgedAt: 30,
+      timestamp: 30,
+    });
+    const second = operation({
+      sessionId: "session-1",
+      workspaceKey: "workspace",
+      cursor: first.nextCursor,
+      limit: 10,
+    }) as PageResult;
+    assert.deepEqual(
+      second.items.map((item) => item.runId),
+      ["run-2", "run-3"],
+    );
+    assert.equal(second.nextCursor, undefined);
+
+    assert.throws(
+      () => operation({ sessionId: "session-empty", workspaceKey: "workspace", cursor: first.nextCursor }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "cursor_invalid",
+    );
+    assert.throws(
+      () => operation({ sessionId: "session-1", workspaceKey: "other", cursor: first.nextCursor }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "cursor_invalid",
+    );
+    for (const request of [
+      { sessionId: "session-1", workspaceKey: "other" },
+      { sessionId: "missing", workspaceKey: "workspace" },
+    ]) {
+      assert.throws(
+        () => operation(request),
+        (error: unknown) => error instanceof RepositoryReadError && error.code === "not_found",
+      );
+    }
+    for (const request of [
+      { sessionId: "session-1", workspaceKey: "workspace", limit: 0 },
+      { sessionId: "session-1", workspaceKey: "workspace", limit: 101 },
+      { sessionId: "session-1", workspaceKey: "workspace", unexpected: true },
+    ]) {
+      assert.throws(
+        () => operation(request),
+        (error: unknown) => error instanceof RepositoryReadError && error.code === "request_invalid",
+      );
+    }
+  });
+});
+
+repositoryTest("Run history preserves every non-terminal header shape without terminal details", () => {
+  for (const phase of ["queued", "starting", "active", "canceling", "finalizing"] as const) {
+    withDatabase((database) => {
+      insertSession(database, `session-${phase}`, 1);
+      insertMessage(database, `message-${phase}`, `session-${phase}`, 1, "[]");
+      insertHistoryRun(database, {
+        id: `run-${phase}`,
+        sessionId: `session-${phase}`,
+        ordinal: 1,
+        initiatingMessageId: `message-${phase}`,
+        phase,
+        ...(phase === "canceling" ? { cancelRequestedAt: 2 } : {}),
+        timestamp: 1,
+      });
+
+      const page = operationFor(
+        database,
+        "repository.runs.page",
+      )({
+        sessionId: `session-${phase}`,
+        workspaceKey: "workspace",
+      }) as PageResult;
+      assert.deepEqual(page.items, [
+        {
+          runId: `run-${phase}`,
+          sessionId: `session-${phase}`,
+          ordinal: 1,
+          initiatingMessageId: `message-${phase}`,
+          phase,
+          ...(phase === "canceling" ? { cancelRequestedAt: 2 } : {}),
+          createdAt: 1,
+          startedAt: 1,
+          updatedAt: 1,
+        },
+      ]);
+    });
+  }
+});
+
+repositoryTest("Run history applies default 50 and accepts the exact 50 and 100 item limits", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    const queriedLimits: number[] = [];
+    const observedDatabase = new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql: string) => {
+            const statement = target.prepare(sql);
+            if (sql !== REPOSITORY_PAGE_SQL.runs) return statement;
+            return new Proxy(statement, {
+              get(statementTarget, statementProperty) {
+                if (statementProperty === "all") {
+                  return (...parameters: Parameters<typeof statementTarget.all>) => {
+                    queriedLimits.push(parameters[2] as number);
+                    return statementTarget.all(...parameters);
+                  };
+                }
+                const value = Reflect.get(statementTarget, statementProperty, statementTarget) as unknown;
+                return typeof value === "function" ? value.bind(statementTarget) : value;
+              },
+            });
+          };
+        }
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const operation = operationFor(observedDatabase, "repository.runs.page");
+
+    operation({ sessionId: "session-1", workspaceKey: "workspace" });
+    operation({ sessionId: "session-1", workspaceKey: "workspace", limit: 50 });
+    operation({ sessionId: "session-1", workspaceKey: "workspace", limit: 100 });
+    assert.deepEqual(queriedLimits, [51, 51, 101]);
+  });
+});
+
+repositoryTest("Run history resolves scope and page in one SQL statement with bounded omission progress", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    insertMessage(database, "message-2", "session-1", 2, "[]");
+    insertHistoryRun(database, {
+      id: "run-large",
+      sessionId: "session-1",
+      ordinal: 1,
+      initiatingMessageId: "message-1",
+      phase: "failed",
+      failureOrigin: "provider",
+      errorSummary: "x".repeat(200 * 1024),
+      timestamp: 1,
+    });
+    insertHistoryRun(database, {
+      id: "run-next",
+      sessionId: "session-1",
+      ordinal: 2,
+      initiatingMessageId: "message-2",
+      phase: "completed",
+      timestamp: 2,
+    });
+    const preparedSql: string[] = [];
+    const observedDatabase = new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql: string) => {
+            preparedSql.push(sql);
+            return target.prepare(sql);
+          };
+        }
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const operation = operationFor(observedDatabase, "repository.runs.page");
+
+    preparedSql.length = 0;
+    const first = operation({ sessionId: "session-1", workspaceKey: "workspace", limit: 1 }) as PageResult;
+    assert.deepEqual(first.items, [{ omitted: true, reason: "response_size_limit", ordinal: 1 }]);
+    assert.equal(typeof first.nextCursor, "string");
+    assert.ok(Buffer.byteLength(JSON.stringify(first)) <= 192 * 1024);
+    assert.deepEqual(preparedSql, [REPOSITORY_PAGE_SQL.runs]);
+
+    preparedSql.length = 0;
+    const next = operation({
+      sessionId: "session-1",
+      workspaceKey: "workspace",
+      cursor: first.nextCursor,
+      limit: 1,
+    }) as PageResult;
+    assert.deepEqual(
+      next.items.map((item) => item.runId),
+      ["run-next"],
+    );
+    assert.deepEqual(preparedSql, [REPOSITORY_PAGE_SQL.runs]);
+  });
+});
+
 repositoryTest("Run output cursors are scoped to the workspace, Session, Run, and optional category", () => {
   withDatabase((database) => {
     insertSession(database, "session-1", 1);
@@ -786,6 +1029,13 @@ repositoryTest("RunEvent continuation is usable when the initial page is empty",
 
 repositoryTest("representative ordinal queries use covering indexes and never scan payloads", () => {
   withDatabase((database) => {
+    const runPlan = database
+      .prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.runs}`)
+      .all("s", 0, 10, "s", "w") as unknown as readonly Readonly<{ detail: string }>[];
+    const runDetails = runPlan.map((row) => row.detail).join("\n");
+    assert.match(runDetails, /runs_session_ordinal_uq/u);
+    assert.doesNotMatch(runDetails, /USE TEMP B-TREE FOR ORDER BY/u);
+
     const plans = [
       database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_SESSION_PAGE_SQL.all}`).all(null, null, null, null, 10),
       database
@@ -1168,6 +1418,64 @@ function insertRun(
   `,
     )
     .run(id, sessionId, messageId, phase, timestamp, timestamp, phase === "completed" ? timestamp : null, timestamp);
+}
+
+function insertHistoryRun(
+  database: DatabaseSync,
+  run: Readonly<{
+    id: string;
+    sessionId: string;
+    ordinal: number;
+    initiatingMessageId: string;
+    finalAssistantMessageId?: string;
+    retryOfRunId?: string;
+    phase:
+      | "queued"
+      | "starting"
+      | "active"
+      | "canceling"
+      | "finalizing"
+      | "completed"
+      | "failed"
+      | "canceled"
+      | "interrupted";
+    failureOrigin?: string;
+    errorSummary?: string;
+    cancelRequestedAt?: number;
+    cancelAcknowledgedAt?: number;
+    timestamp: number;
+  }>,
+): void {
+  database
+    .prepare(
+      `
+    INSERT INTO runs (
+      id, session_id, ordinal, initiating_message_id, final_assistant_message_id, retry_of_run_id,
+      phase, execution_snapshot_json, failure_origin, provider_error_code, error_summary,
+      cancel_requested_at, cancel_acknowledged_at, external_side_effect_state,
+      created_at, started_at, terminal_at, updated_at, version
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'present', ?, ?, ?, ?, 7)
+  `,
+    )
+    .run(
+      run.id,
+      run.sessionId,
+      run.ordinal,
+      run.initiatingMessageId,
+      run.finalAssistantMessageId ?? null,
+      run.retryOfRunId ?? null,
+      run.phase,
+      JSON.stringify({ marker: "secret snapshot" }),
+      run.failureOrigin ?? null,
+      "secret-provider-code",
+      run.errorSummary ?? null,
+      run.cancelRequestedAt ?? null,
+      run.cancelAcknowledgedAt ?? null,
+      run.timestamp,
+      run.timestamp,
+      ["completed", "failed", "canceled", "interrupted"].includes(run.phase) ? run.timestamp : null,
+      run.timestamp,
+    );
 }
 
 type PageResult = Readonly<{

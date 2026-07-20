@@ -4,7 +4,6 @@ import type {
   ApplicationRunEvent,
   ApplicationRunEventPage,
   ApplicationRunEventsRequest,
-  ApplicationRunFailureSummary,
   ApplicationRunFollowRequest,
   ApplicationRunFollowResult,
   ApplicationRunLiveActivity,
@@ -22,6 +21,7 @@ import type {
 } from "../shared/application-service-model.js";
 import type { PersistenceError } from "../shared/persistence-protocol.js";
 import type { RunEventPage } from "../shared/repository-read-model.js";
+import { projectPersistedRun } from "./application-run-projection.js";
 import { PersistenceClientError } from "./persistence-worker-client.js";
 import type { PersistenceWorkerClient } from "./persistence-worker-client.js";
 import { RepositoryReadClient } from "./repository-read-client.js";
@@ -593,81 +593,56 @@ function projectRunStatus(
   const runId = boundedString(run.id);
   const sessionId = boundedString(run.sessionId);
   if (runId !== expected.runId || sessionId !== expected.sessionId) throw new TypeError("Run identity mismatch.");
-  const phase = runPhase(run.phase);
-  const retryOfRunId = optionalBoundedString(run.retryOfRunId, APPLICATION_RUN_LIMITS.maxIdentifierLength);
-  const createdAt = nonNegativeInteger(run.createdAt);
-  const startedAt = optionalNonNegativeInteger(run.startedAt);
-  const updatedAt = nonNegativeInteger(run.updatedAt);
-  const terminalAt = optionalNonNegativeInteger(run.terminalAt);
   const version = nonNegativeInteger(run.version);
-  const failureOrigin = optionalFailureOrigin(run.failureOrigin);
-  const errorSummary = optionalBoundedString(run.errorSummary, APPLICATION_RUN_LIMITS.maxSummaryLength);
-  const requestedAt = optionalNonNegativeInteger(run.cancelRequestedAt);
-  const acknowledgedAt = optionalNonNegativeInteger(run.cancelAcknowledgedAt);
-  if (acknowledgedAt !== undefined && requestedAt === undefined)
-    throw new TypeError("Cancel acknowledgment has no request.");
-  const cancellation =
-    requestedAt === undefined
-      ? undefined
-      : { requestedAt, ...(acknowledgedAt === undefined ? {} : { acknowledgedAt }) };
+  const persisted = projectPersistedRun(run);
   const base = {
     sessionId,
     runId,
-    ...(retryOfRunId === undefined ? {} : { retryOfRunId }),
-    createdAt,
-    ...(startedAt === undefined ? {} : { startedAt }),
-    updatedAt,
+    ...(persisted.retryOfRunId === undefined ? {} : { retryOfRunId: persisted.retryOfRunId }),
+    createdAt: persisted.createdAt,
+    ...(persisted.startedAt === undefined ? {} : { startedAt: persisted.startedAt }),
+    updatedAt: persisted.updatedAt,
   } as const;
 
-  if (!terminalPhases.has(phase) && terminalAt !== undefined)
-    throw new TypeError("Non-terminal Run has terminal time.");
-  if (terminalPhases.has(phase) && terminalAt === undefined) throw new TypeError("Terminal Run has no terminal time.");
-  if (phase !== "failed" && phase !== "interrupted" && (failureOrigin !== undefined || errorSummary !== undefined)) {
-    throw new TypeError("Non-failure Run has failure details.");
-  }
-  if ((phase === "failed" || phase === "interrupted") && failureOrigin === undefined) {
-    throw new TypeError("Failure Run has no origin.");
-  }
-
   let status: ApplicationRunStatus;
-  switch (phase) {
+  switch (persisted.phase) {
     case "queued":
     case "starting":
     case "finalizing":
-      status = { ...base, phase, liveActivity: null };
+      status = { ...base, phase: persisted.phase, liveActivity: null };
       break;
     case "active":
-      status = { ...base, phase, liveActivity: null };
+      status = { ...base, phase: persisted.phase, liveActivity: null };
       break;
     case "canceling":
-      status = { ...base, phase, liveActivity: null, ...(cancellation === undefined ? {} : { cancellation }) };
-      break;
-    case "completed":
-      status = { ...base, phase, liveActivity: null, terminalAt: terminalAt as number };
-      break;
-    case "failed":
-    case "interrupted": {
-      const failure: ApplicationRunFailureSummary = {
-        origin: failureOrigin as ApplicationRunFailureSummary["origin"],
-        ...(errorSummary === undefined ? {} : { summary: errorSummary }),
-      };
       status = {
         ...base,
-        phase,
+        phase: persisted.phase,
         liveActivity: null,
-        terminalAt: terminalAt as number,
-        failure,
-        ...(cancellation === undefined ? {} : { cancellation }),
+        ...(persisted.cancellation === undefined ? {} : { cancellation: persisted.cancellation }),
       };
       break;
-    }
+    case "completed":
+      status = { ...base, phase: persisted.phase, liveActivity: null, terminalAt: persisted.terminalAt };
+      break;
+    case "failed":
+    case "interrupted":
+      status = {
+        ...base,
+        phase: persisted.phase,
+        liveActivity: null,
+        terminalAt: persisted.terminalAt,
+        failure: persisted.failure,
+        ...(persisted.cancellation === undefined ? {} : { cancellation: persisted.cancellation }),
+      };
+      break;
     case "canceled":
       status = {
         ...base,
-        phase,
+        phase: persisted.phase,
         liveActivity: null,
-        terminalAt: terminalAt as number,
-        ...(cancellation === undefined ? {} : { cancellation }),
+        terminalAt: persisted.terminalAt,
+        ...(persisted.cancellation === undefined ? {} : { cancellation: persisted.cancellation }),
       };
       break;
   }
@@ -1052,10 +1027,6 @@ function nonNegativeInteger(value: unknown): number {
   return result;
 }
 
-function optionalNonNegativeInteger(value: unknown): number | undefined {
-  return optionalInteger(value, 0, Number.MAX_SAFE_INTEGER);
-}
-
 function positiveInteger(value: unknown): number {
   const result = optionalInteger(value, 1, Number.MAX_SAFE_INTEGER);
   if (result === undefined) throw new TypeError("Positive integer is required.");
@@ -1065,24 +1036,4 @@ function positiveInteger(value: unknown): number {
 function enumString<TValue extends string>(value: unknown, allowed: readonly TValue[]): TValue {
   if (typeof value !== "string" || !allowed.includes(value as TValue)) throw new TypeError("Enum is invalid.");
   return value as TValue;
-}
-
-function runPhase(value: unknown): ApplicationRunPhase {
-  return enumString(value, [
-    "queued",
-    "starting",
-    "active",
-    "canceling",
-    "finalizing",
-    "completed",
-    "failed",
-    "canceled",
-    "interrupted",
-  ]);
-}
-
-function optionalFailureOrigin(value: unknown): ApplicationRunFailureSummary["origin"] | undefined {
-  return value === undefined
-    ? undefined
-    : enumString(value, ["provider", "transport", "process", "application", "persistence", "unknown"] as const);
 }

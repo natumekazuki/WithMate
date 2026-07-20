@@ -14,6 +14,7 @@ import type {
   ApplicationRunOutputOperations,
   ApplicationSessionMessageOperations,
   ApplicationSessionOperations,
+  ApplicationSessionRunOperations,
 } from "../src/main/index.js";
 import { resolveWithMateDatabasePath } from "../src/main/cli-runtime.js";
 
@@ -22,6 +23,7 @@ type Operations = ApplicationSessionOperations<Authorization>;
 type RunOperations = ApplicationRunOperations<Authorization>;
 type RunOutputOperations = ApplicationRunOutputOperations<Authorization>;
 type MessageOperations = ApplicationSessionMessageOperations<Authorization>;
+type SessionRunOperations = ApplicationSessionRunOperations<Authorization>;
 
 const authorization: Authorization = { transport: "test" };
 const readArgv = ["session", "read", "--session-id", "session-1"] as const;
@@ -213,6 +215,43 @@ test("Session Message completion writes one JSON object and performs one clean s
   assert.equal(result.exitCode, CLI_EXIT_CODES.success);
   assert.equal((output.command as Readonly<Record<string, unknown>>).operation, "messages");
   assert.equal(messageCalls, 1);
+  assert.equal(shutdowns, 1);
+});
+
+test("Session Run history completion writes one JSON object and performs one clean shutdown", async () => {
+  let runHistoryCalls = 0;
+  let shutdowns = 0;
+  const sessionRunOperations = unsupportedSessionRunOperations({
+    runs: async () => {
+      runHistoryCalls += 1;
+      return {
+        overallStatus: "success",
+        value: { sessionId: "session-1", items: [] },
+        persistence: { status: "read", effect: "none" },
+      };
+    },
+  });
+  const result = await runCliLifecycle(["session", "runs", "--session-id", "session-1"], {
+    version: CLI_VERSION,
+    startRuntime: async () =>
+      runtime(
+        successfulOperations(),
+        async () => {
+          shutdowns += 1;
+          return { checkpoint: "completed" };
+        },
+        unsupportedRunOperations(),
+        unsupportedRunOutputOperations(),
+        unsupportedMessageOperations(),
+        sessionRunOperations,
+      ),
+  });
+
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.stderr, "");
+  assert.equal(result.exitCode, CLI_EXIT_CODES.success);
+  assert.equal((output.command as Readonly<Record<string, unknown>>).operation, "runs");
+  assert.equal(runHistoryCalls, 1);
   assert.equal(shutdowns, 1);
 });
 
@@ -854,8 +893,17 @@ function runtime(
   runOperations: RunOperations = unsupportedRunOperations(),
   runOutputOperations: RunOutputOperations = unsupportedRunOutputOperations(),
   messageOperations: MessageOperations = unsupportedMessageOperations(),
+  sessionRunOperations: SessionRunOperations = unsupportedSessionRunOperations(),
 ) {
-  return { operations, messageOperations, runOperations, runOutputOperations, authorization, shutdown } as const;
+  return {
+    operations,
+    messageOperations,
+    sessionRunOperations,
+    runOperations,
+    runOutputOperations,
+    authorization,
+    shutdown,
+  } as const;
 }
 
 function unsupportedMessageOperations(overrides: Partial<MessageOperations> = {}): MessageOperations {
@@ -866,6 +914,13 @@ function unsupportedMessageOperations(overrides: Partial<MessageOperations> = {}
     messages: overrides.messages ?? unsupported,
     messageContentChunk: overrides.messageContentChunk ?? unsupported,
   };
+}
+
+function unsupportedSessionRunOperations(overrides: Partial<SessionRunOperations> = {}): SessionRunOperations {
+  const unsupported = async (): Promise<never> => {
+    throw new Error("unexpected Session Run operation");
+  };
+  return { runs: overrides.runs ?? unsupported };
 }
 
 function unsupportedRunOperations(overrides: Partial<RunOperations> = {}): RunOperations {

@@ -12,6 +12,7 @@ import {
   CLI_SCHEMA_VERSION,
   CLI_SESSION_LIMITS,
   CLI_SESSION_MESSAGE_LIMITS,
+  CLI_SESSION_RUN_LIMITS,
   type CliCommandIdentity,
   type CliParseResult,
   type CliRunOperation,
@@ -45,6 +46,7 @@ const sessionOperations = new Set<CliSessionOperation>([
   "read",
   "directories-chunk",
   "messages",
+  "runs",
   "message-content-chunk",
   "archive",
   "unarchive",
@@ -129,6 +131,8 @@ function parseSessionCommand(
       return parseDirectoriesChunk(identity as CliCommandIdentity<"directories-chunk">, argv);
     case "messages":
       return parseMessages(identity as CliCommandIdentity<"messages">, argv);
+    case "runs":
+      return parseRuns(identity as CliCommandIdentity<"runs">, argv);
     case "message-content-chunk":
       return parseMessageContentChunk(identity as CliCommandIdentity<"message-content-chunk">, argv);
     case "archive":
@@ -495,6 +499,26 @@ function parseMessages(identity: CliCommandIdentity<"messages">, argv: readonly 
       sessionId: parsed.values["--session-id"] as string,
       ...(parsed.values["--cursor"] === undefined ? {} : { cursor: parsed.values["--cursor"] as string }),
       limit: (parsed.values["--limit"] as number | undefined) ?? CLI_SESSION_MESSAGE_LIMITS.messagesDefaultItems,
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
+function parseRuns(identity: CliCommandIdentity<"runs">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--cursor": option((value) => parseBoundedString(value, CLI_SESSION_LIMITS.maxCursorLength)),
+    "--limit": option((value) => parseInteger(value, 1, CLI_SESSION_RUN_LIMITS.runsMaxItems)),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      ...(parsed.values["--cursor"] === undefined ? {} : { cursor: parsed.values["--cursor"] as string }),
+      limit: (parsed.values["--limit"] as number | undefined) ?? CLI_SESSION_RUN_LIMITS.runsDefaultItems,
       ...optionalTimeout(parsed.values),
     },
   };

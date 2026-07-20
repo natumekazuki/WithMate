@@ -1,4 +1,8 @@
-import type { ApplicationSessionMessageOperations, ApplicationSessionOperations } from "../main/index.js";
+import type {
+  ApplicationSessionMessageOperations,
+  ApplicationSessionOperations,
+  ApplicationSessionRunOperations,
+} from "../main/index.js";
 import { projectCliOperationOutput, type CliOperationProjectionResult } from "./application-response.js";
 import {
   CLI_EXIT_CODES,
@@ -17,6 +21,7 @@ type CommandFor<TOperation extends CliSessionOperation> = Extract<
 export type CliSessionDispatchDependencies<TAuthorizationContext> = Readonly<{
   operations: ApplicationSessionOperations<TAuthorizationContext>;
   messageOperations: ApplicationSessionMessageOperations<TAuthorizationContext>;
+  sessionRunOperations: ApplicationSessionRunOperations<TAuthorizationContext>;
   authorization: TAuthorizationContext;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -97,6 +102,16 @@ export async function dispatchCliSessionCommand<TAuthorizationContext>(
       );
     } else if (isCommandFor(command, "messages")) {
       response = await dependencies.messageOperations.messages(
+        {
+          context,
+          sessionId: command.sessionId,
+          ...(command.cursor === undefined ? {} : { cursor: command.cursor }),
+          limit: command.limit,
+        },
+        options,
+      );
+    } else if (isCommandFor(command, "runs")) {
+      response = await dependencies.sessionRunOperations.runs(
         {
           context,
           sessionId: command.sessionId,
