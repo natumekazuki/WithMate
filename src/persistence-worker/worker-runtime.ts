@@ -327,6 +327,9 @@ function readMessageContentChunk(
     )
     .get(request.offset, request.maxBytes, messageId, sessionId, workspaceKey) as
     Readonly<{ byte_length: number; chunk: Uint8Array }> | undefined;
+  if (row === undefined) {
+    throw new RepositoryReadError("not_found", "Repository resource was not found.");
+  }
   return chunkResult(row, request, { sessionId, messageId }, context, "Message");
 }
 

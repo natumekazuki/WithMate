@@ -1,6 +1,7 @@
 import type {
   ApplicationRunOperations,
   ApplicationRunOutputOperations,
+  ApplicationSessionMessageOperations,
   ApplicationSessionOperations,
 } from "../main/index.js";
 import { serializeCliStructuredOutput } from "./application-response.js";
@@ -24,6 +25,7 @@ export type CliLifecycleControl = Readonly<{ timeoutMs?: number; signal?: AbortS
 
 export type CliOperationRuntime<TAuthorizationContext> = Readonly<{
   operations: ApplicationSessionOperations<TAuthorizationContext>;
+  messageOperations: ApplicationSessionMessageOperations<TAuthorizationContext>;
   runOperations: ApplicationRunOperations<TAuthorizationContext>;
   runOutputOperations: ApplicationRunOutputOperations<TAuthorizationContext>;
   authorization: TAuthorizationContext;
@@ -86,6 +88,7 @@ export async function runCliLifecycle<TAuthorizationContext>(
       parsed.command.identity.namespace === "session"
         ? dispatchCliSessionCommand(parsed.command as CliValidatedSessionCommand, {
             operations: runtime.operations,
+            messageOperations: runtime.messageOperations,
             authorization: runtime.authorization,
             signal: abortController.signal,
             ...operationControl,

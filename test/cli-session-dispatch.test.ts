@@ -4,10 +4,11 @@ import test from "node:test";
 
 import { CLI_EXIT_CODES, CLI_SCHEMA_VERSION } from "../src/cli/contract.js";
 import { runCliWithSessionOperations } from "../src/cli/invocation.js";
-import type { ApplicationSessionOperations } from "../src/main/index.js";
+import type { ApplicationSessionMessageOperations, ApplicationSessionOperations } from "../src/main/index.js";
 
 type Authorization = Readonly<{ principal: string }>;
 type Operations = ApplicationSessionOperations<Authorization>;
+type MessageOperations = ApplicationSessionMessageOperations<Authorization>;
 type OperationName = keyof Operations;
 type Call = Readonly<{ operation: OperationName; request: unknown; options: unknown }>;
 
@@ -387,7 +388,14 @@ test("help, version, and argv failures have stable output without invoking opera
 });
 
 function dependencies(operations: Operations) {
-  return { version: "0.1.0", operations, authorization } as const;
+  return { version: "0.1.0", operations, messageOperations: unsupportedMessageOperations(), authorization } as const;
+}
+
+function unsupportedMessageOperations(): MessageOperations {
+  const unsupported = async (): Promise<never> => {
+    throw new Error("unexpected Message operation");
+  };
+  return { messages: unsupported, messageContentChunk: unsupported };
 }
 
 function recordingOperations(

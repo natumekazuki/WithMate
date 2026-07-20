@@ -7,6 +7,7 @@ import {
   ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS,
   normalizeAllowedAdditionalDirectories,
 } from "../shared/allowed-additional-directories.js";
+import { snapshotMessageContentBlocks } from "../shared/message-content.js";
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
 import { MAX_SESSION_CONCURRENT_CHILD_RUNS, MAX_SESSION_TREE_SIZE } from "../shared/session-limits.js";
 import { isCanonicalSessionTitle, snapshotLocalRepositoryMetadata } from "../shared/session-metadata.js";
@@ -76,6 +77,7 @@ export const RUN_OUTPUT_PAYLOAD_LIMITS = {
 export const RUN_OUTPUT_SQLITE_WRITE_MARGIN_BYTES = 64 * 1024;
 export const SESSION_SUBTREE_DELETE_WAL_FIXED_MARGIN_BYTES = 64 * 1024;
 export const SESSION_SUBTREE_DELETE_WAL_PAGES_PER_ROW = 8;
+const USER_VISIBLE_TEXT_PATTERN = /[^\p{White_Space}\p{Default_Ignorable_Code_Point}\p{Cc}]/u;
 
 export type RepositoryWriteOperation = Readonly<{
   requestClass: "write";
@@ -3921,6 +3923,9 @@ function decodeStartupRepair(
 }
 
 function decodeNormalRunAdmission(payload: Readonly<Record<string, unknown>>): DecodeResult<NormalRunAdmissionCommand> {
+  const contentBlocks = isPlainObject(payload.message)
+    ? snapshotMessageContentBlocks(payload.message.contentBlocks)
+    : undefined;
   if (
     !hasExactKeys(payload, [
       "sessionId",
@@ -3939,7 +3944,7 @@ function decodeNormalRunAdmission(payload: Readonly<Record<string, unknown>>): D
     !isPlainObject(payload.message) ||
     !hasExactKeys(payload.message, ["id", "contentBlocks"]) ||
     !isBoundedString(payload.message.id, 1_024) ||
-    !isDenseJsonArray(payload.message.contentBlocks, 10_000) ||
+    contentBlocks === undefined ||
     !isPlainObject(payload.run) ||
     !hasExactKeys(payload.run, ["id", "executionSnapshot"]) ||
     !isBoundedString(payload.run.id, 1_024) ||
@@ -3954,7 +3959,13 @@ function decodeNormalRunAdmission(payload: Readonly<Record<string, unknown>>): D
   ) {
     return decodeFailure();
   }
-  return { ok: true, value: payload as unknown as NormalRunAdmissionCommand };
+  return {
+    ok: true,
+    value: {
+      ...(payload as unknown as NormalRunAdmissionCommand),
+      message: { id: payload.message.id as string, contentBlocks },
+    },
+  };
 }
 
 function decodeRetryRunAdmission(payload: Readonly<Record<string, unknown>>): DecodeResult<RetryRunAdmissionCommand> {
@@ -3992,6 +4003,9 @@ function decodeRetryRunAdmission(payload: Readonly<Record<string, unknown>>): De
 }
 
 function decodeChildStart(payload: Readonly<Record<string, unknown>>): DecodeResult<ChildStartCommand> {
+  const contentBlocks = isPlainObject(payload.message)
+    ? snapshotMessageContentBlocks(payload.message.contentBlocks)
+    : undefined;
   if (
     !hasExactKeys(payload, [
       "parentSessionId",
@@ -4046,7 +4060,7 @@ function decodeChildStart(payload: Readonly<Record<string, unknown>>): DecodeRes
     !isPlainObject(payload.message) ||
     !hasExactKeys(payload.message, ["id", "contentBlocks"]) ||
     !isBoundedString(payload.message.id, 1_024) ||
-    !isDenseJsonArray(payload.message.contentBlocks, 10_000) ||
+    contentBlocks === undefined ||
     !isPlainObject(payload.run) ||
     !hasExactKeys(payload.run, ["id", "executionSnapshot"]) ||
     !isBoundedString(payload.run.id, 1_024) ||
@@ -4064,7 +4078,13 @@ function decodeChildStart(payload: Readonly<Record<string, unknown>>): DecodeRes
   ) {
     return decodeFailure();
   }
-  return { ok: true, value: payload as unknown as ChildStartCommand };
+  return {
+    ok: true,
+    value: {
+      ...(payload as unknown as ChildStartCommand),
+      message: { id: payload.message.id as string, contentBlocks },
+    },
+  };
 }
 
 function decodeProviderBindingResolution(
@@ -4148,6 +4168,9 @@ function decodeRunDispatchResolution(
 }
 
 function decodeRunInputAdmission(payload: Readonly<Record<string, unknown>>): DecodeResult<RunInputAdmissionCommand> {
+  const contentBlocks = isPlainObject(payload.message)
+    ? snapshotMessageContentBlocks(payload.message.contentBlocks)
+    : undefined;
   if (
     !hasExactKeys(payload, [
       "sessionId",
@@ -4167,11 +4190,17 @@ function decodeRunInputAdmission(payload: Readonly<Record<string, unknown>>): De
     !isPlainObject(payload.message) ||
     !hasExactKeys(payload.message, ["id", "contentBlocks"]) ||
     !isBoundedString(payload.message.id, 1_024) ||
-    !isDenseJsonArray(payload.message.contentBlocks, 10_000)
+    contentBlocks === undefined
   ) {
     return decodeFailure();
   }
-  return { ok: true, value: payload as unknown as RunInputAdmissionCommand };
+  return {
+    ok: true,
+    value: {
+      ...(payload as unknown as RunInputAdmissionCommand),
+      message: { id: payload.message.id as string, contentBlocks },
+    },
+  };
 }
 
 function decodeRunInputBegin(payload: Readonly<Record<string, unknown>>): DecodeResult<RunInputBeginCommand> {
@@ -4274,6 +4303,7 @@ function decodeRunOutputResolvePending(
 }
 
 function decodeRunTerminal(payload: Readonly<Record<string, unknown>>): DecodeResult<RunTerminalCommand> {
+  const outcome = snapshotRunTerminalOutcome(payload.outcome);
   if (
     !hasExactKeys(payload, [
       "sessionId",
@@ -4295,13 +4325,13 @@ function decodeRunTerminal(payload: Readonly<Record<string, unknown>>): DecodeRe
     !isBoundedString(payload.terminalEvent.id, 1024) ||
     !isBoundedString(payload.terminalEvent.dedupeKey, 1024) ||
     !isRunTerminalPreDispatchResolution(payload.preDispatchResolution) ||
-    !isRunTerminalOutcome(payload.outcome) ||
+    outcome === undefined ||
     !isDenseTerminalOutputs(payload.outputs) ||
     !isChildTerminalResult(payload.childResult)
   ) {
     return decodeFailure();
   }
-  return { ok: true, value: payload as unknown as RunTerminalCommand };
+  return { ok: true, value: { ...(payload as unknown as RunTerminalCommand), outcome } };
 }
 
 function decodeChildResultCollect(payload: Readonly<Record<string, unknown>>): DecodeResult<ChildResultCollectCommand> {
@@ -5602,26 +5632,42 @@ function isRunTerminalPreDispatchResolution(value: unknown): value is RunTermina
   );
 }
 
-function isRunTerminalOutcome(value: unknown): value is RunTerminalCommand["outcome"] {
-  if (!isPlainObject(value) || typeof value.kind !== "string") return false;
+function snapshotRunTerminalOutcome(value: unknown): RunTerminalCommand["outcome"] | undefined {
+  if (!isPlainObject(value) || typeof value.kind !== "string") return undefined;
   if (value.kind === "completed") {
-    if (!hasExactKeys(value, ["kind", "finalAssistantMessage"])) return false;
-    if (value.finalAssistantMessage === null) return true;
-    return (
-      isPlainObject(value.finalAssistantMessage) &&
-      hasExactKeys(value.finalAssistantMessage, ["id", "contentBlocks"]) &&
-      isBoundedString(value.finalAssistantMessage.id, 1_024) &&
-      isDenseJsonArray(value.finalAssistantMessage.contentBlocks, 1_024)
-    );
+    if (!hasExactKeys(value, ["kind", "finalAssistantMessage"])) return undefined;
+    if (value.finalAssistantMessage === null) return { kind: "completed", finalAssistantMessage: null };
+    if (
+      !isPlainObject(value.finalAssistantMessage) ||
+      !hasExactKeys(value.finalAssistantMessage, ["id", "contentBlocks"]) ||
+      !isBoundedString(value.finalAssistantMessage.id, 1_024)
+    ) {
+      return undefined;
+    }
+    const contentBlocks = snapshotMessageContentBlocks(value.finalAssistantMessage.contentBlocks);
+    return contentBlocks === undefined || !contentBlocks.some((block) => USER_VISIBLE_TEXT_PATTERN.test(block.text))
+      ? undefined
+      : {
+          kind: "completed",
+          finalAssistantMessage: { id: value.finalAssistantMessage.id, contentBlocks },
+        };
   }
-  if (value.kind === "canceled") return hasExactKeys(value, ["kind"]);
-  return (
-    (value.kind === "failed" || value.kind === "interrupted") &&
-    hasExactKeys(value, ["kind", "failureOrigin", "providerErrorCode", "errorSummary"]) &&
-    isFailureOrigin(value.failureOrigin) &&
-    (value.providerErrorCode === null || isBoundedString(value.providerErrorCode, 1_024)) &&
-    (value.errorSummary === null || isBoundedString(value.errorSummary, 4_096))
-  );
+  if (value.kind === "canceled") return hasExactKeys(value, ["kind"]) ? { kind: "canceled" } : undefined;
+  if (
+    (value.kind !== "failed" && value.kind !== "interrupted") ||
+    !hasExactKeys(value, ["kind", "failureOrigin", "providerErrorCode", "errorSummary"]) ||
+    !isFailureOrigin(value.failureOrigin) ||
+    (value.providerErrorCode !== null && !isBoundedString(value.providerErrorCode, 1_024)) ||
+    (value.errorSummary !== null && !isBoundedString(value.errorSummary, 4_096))
+  ) {
+    return undefined;
+  }
+  return {
+    kind: value.kind,
+    failureOrigin: value.failureOrigin,
+    providerErrorCode: value.providerErrorCode,
+    errorSummary: value.errorSummary,
+  };
 }
 
 function isChildTerminalResult(value: unknown): value is RunTerminalCommand["childResult"] {
@@ -5648,7 +5694,7 @@ function isPayloadFormat(value: unknown): value is "text" | "json" | "binary" {
   return value === "text" || value === "json" || value === "binary";
 }
 
-function isFailureOrigin(value: unknown): boolean {
+function isFailureOrigin(value: unknown): value is "provider" | "transport" | "process" | "application" | "unknown" {
   return ["provider", "transport", "process", "application", "unknown"].includes(value as string);
 }
 
@@ -5683,14 +5729,6 @@ function isDenseBoundedStringArray(value: unknown, maxItems: number, maxLength: 
   if (!Array.isArray(value) || value.length > maxItems) return false;
   for (let index = 0; index < value.length; index += 1) {
     if (!Object.hasOwn(value, index) || !isBoundedString(value[index], maxLength)) return false;
-  }
-  return true;
-}
-
-function isDenseJsonArray(value: unknown, maxItems: number): value is unknown[] {
-  if (!Array.isArray(value) || value.length > maxItems) return false;
-  for (let index = 0; index < value.length; index += 1) {
-    if (!Object.hasOwn(value, index) || !isJsonValue(value[index])) return false;
   }
   return true;
 }

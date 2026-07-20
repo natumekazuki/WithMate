@@ -607,6 +607,107 @@ repositoryTest("normal Run admission atomically creates Message, Run, Attempt, D
   });
 });
 
+repositoryTest("all Message write siblings reject non-text content blocks before mutation", () => {
+  withDatabase((database) => {
+    const invalidBlocks = [{ type: "tool", text: "must not be stored" }];
+    const admission = normalRunAdmissionCommand(
+      "018f1f4e-7f0a-7000-8000-000000000752",
+      "run-invalid-content",
+      "create",
+    );
+    const child = childStartCommand("018f1f4e-7f0a-7000-8000-000000000753", "invalid-content");
+    const input = runInputAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000754");
+    const terminal = runTerminalCommand();
+    const malformed = [
+      [
+        REPOSITORY_WRITE_OPERATIONS.runAdmit,
+        { ...admission, message: { ...admission.message, contentBlocks: invalidBlocks } },
+      ],
+      [
+        REPOSITORY_WRITE_OPERATIONS.childStart,
+        { ...child, message: { ...child.message, contentBlocks: invalidBlocks } },
+      ],
+      [
+        REPOSITORY_WRITE_OPERATIONS.runInputAdmit,
+        { ...input, message: { ...input.message, contentBlocks: invalidBlocks } },
+      ],
+      [
+        REPOSITORY_WRITE_OPERATIONS.runTerminal,
+        {
+          ...terminal,
+          outcome: {
+            kind: "completed",
+            finalAssistantMessage: { id: "message-invalid-final", contentBlocks: invalidBlocks },
+          },
+        },
+      ],
+    ] as const;
+
+    for (const [operation, command] of malformed) {
+      const result = operationFor(database, operation, () => 100)(command) as CommandResult;
+      assert.equal(!result.ok && result.error.code, "request_invalid");
+    }
+    assert.equal(count(database, "messages"), 0);
+  });
+});
+
+repositoryTest("Run terminal rejects a non-null final assistant Message without visible text before mutation", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    const messageCountBefore = count(database, "messages");
+
+    for (const contentBlocks of [
+      [],
+      [{ type: "text", text: "" }],
+      [{ type: "text", text: " \n\t" }],
+      [{ type: "text", text: "\u200B" }],
+      [{ type: "text", text: "\u0000" }],
+    ]) {
+      const command = runTerminalCommand();
+      const result = terminal({
+        ...command,
+        outcome: {
+          kind: "completed",
+          finalAssistantMessage: { id: "message-empty-final", contentBlocks },
+        },
+      }) as CommandResult;
+      assert.equal(!result.ok && result.error.code, "request_invalid");
+    }
+
+    assert.equal(count(database, "messages"), messageCountBefore);
+    assert.equal(count(database, "run_events"), 0);
+    assert.equal(
+      (database.prepare("SELECT phase FROM runs WHERE id = 'run-1'").get() as { phase: string }).phase,
+      "active",
+    );
+  });
+});
+
+repositoryTest("Run terminal completes without a final Message when the final assistant Message is null", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    const command = {
+      ...runTerminalCommand(),
+      outcome: { kind: "completed", finalAssistantMessage: null },
+    } as const;
+
+    const first = terminal(command) as CommandResult;
+    const replay = terminal(command) as CommandResult;
+
+    assert.equal(first.ok && first.value.finalAssistantMessageId, null);
+    assert.equal(replay.ok && replay.replayed, true);
+    assert.equal(count(database, "messages"), 1);
+    assert.deepEqual(
+      {
+        ...database.prepare("SELECT phase, final_assistant_message_id FROM runs WHERE id = 'run-1'").get(),
+      },
+      { phase: "completed", final_assistant_message_id: null },
+    );
+  });
+});
+
 repositoryTest("normal Run admission reuses only the selected active Binding", () => {
   withDatabase((database) => {
     const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);

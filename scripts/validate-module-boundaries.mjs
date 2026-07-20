@@ -88,6 +88,7 @@ for (const rule of rules) {
 }
 
 const applicationSessionOwner = path.join(sourceRoot, "main", "application-session-service.ts");
+const applicationSessionMessageOwner = path.join(sourceRoot, "main", "application-session-message-service.ts");
 const applicationRunOwner = path.join(sourceRoot, "main", "application-run-service.ts");
 const applicationRunOutputOwner = path.join(sourceRoot, "main", "application-run-output-service.ts");
 const repositoryWriteClient = path.join(sourceRoot, "main", "repository-write-client.ts");
@@ -95,6 +96,7 @@ const repositoryReadClient = path.join(sourceRoot, "main", "repository-read-clie
 const persistenceWorkerClient = path.join(sourceRoot, "main", "persistence-worker-client.ts");
 const publicMainBarrel = path.join(sourceRoot, "main", "index.ts");
 const publicApplicationModel = path.join(sourceRoot, "shared", "application-service-model.ts");
+const publicApplicationSessionMessageModel = path.join(sourceRoot, "shared", "application-session-message-model.ts");
 const publicApplicationRunModel = path.join(sourceRoot, "shared", "application-run-model.ts");
 const publicApplicationRunOutputModel = path.join(sourceRoot, "shared", "application-run-output-model.ts");
 const rawWriteFixture = path.join(root, "test", "fixtures", "module-boundaries", "raw-persistence-write.ts");
@@ -149,7 +151,10 @@ for (const file of listSourceFiles(sourceRoot)) {
   const source = fs.readFileSync(file, "utf8");
   const sourceFile = typeProgram.getSourceFile(file) ?? ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
   const allowsRepositoryReadIntegration =
-    file === applicationSessionOwner || file === applicationRunOwner || file === applicationRunOutputOwner;
+    file === applicationSessionOwner ||
+    file === applicationSessionMessageOwner ||
+    file === applicationRunOwner ||
+    file === applicationRunOutputOwner;
   const allowsRepositoryWriteIntegration = file === applicationSessionOwner;
   const inspect = (node) => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
@@ -304,7 +309,12 @@ for (const file of listSourceFiles(sourceRoot)) {
   }
 }
 
-for (const file of [applicationSessionOwner, applicationRunOwner, applicationRunOutputOwner]) {
+for (const file of [
+  applicationSessionOwner,
+  applicationSessionMessageOwner,
+  applicationRunOwner,
+  applicationRunOutputOwner,
+]) {
   const source = fs.readFileSync(file, "utf8");
   if (containsRawRepositoryOperationName(source)) {
     violations.push(`${path.relative(root, file)} exposes a raw persistence operation name`);
@@ -322,6 +332,7 @@ for (const file of [applicationSessionOwner, applicationRunOwner, applicationRun
     for (const exportedName of exportedNames) {
       if (
         exportedName !== "ApplicationSessionOperations" &&
+        exportedName !== "ApplicationSessionMessageOperations" &&
         exportedName !== "ApplicationRunOperations" &&
         exportedName !== "ApplicationRunOutputOperations"
       ) {
@@ -332,6 +343,7 @@ for (const file of [applicationSessionOwner, applicationRunOwner, applicationRun
     }
     for (const exported of findExportsDeclaredOutside(sourceFile, [
       publicApplicationModel,
+      publicApplicationSessionMessageModel,
       publicApplicationRunModel,
       publicApplicationRunOutputModel,
     ])) {

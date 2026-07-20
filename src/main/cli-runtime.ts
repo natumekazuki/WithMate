@@ -17,10 +17,16 @@ import type {
   ApplicationRunOutputAccessValidator,
   ApplicationRunOutputOperations,
 } from "../shared/application-run-output-model.js";
+import type {
+  ApplicationSessionMessageAccessValidationInput,
+  ApplicationSessionMessageAccessValidator,
+  ApplicationSessionMessageOperations,
+} from "../shared/application-session-message-model.js";
 import { resolveApplicationDataRoot, resolveWithMateDatabasePathFromRoot } from "./application-data-path.js";
 import { createApplicationRunOperations } from "./application-run-service.js";
 import { createApplicationRunOutputOperations } from "./application-run-output-service.js";
 import { createApplicationSessionOperations } from "./application-session-service.js";
+import { createApplicationSessionMessageOperations } from "./application-session-message-service.js";
 import { PersistenceWorkerClient } from "./persistence-worker-client.js";
 import { LocalSessionFilesCleanup } from "./session-files-cleanup.js";
 
@@ -34,6 +40,7 @@ export type CliRuntimeControl = Readonly<{ timeoutMs?: number; signal?: AbortSig
 
 export type CliRuntime = Readonly<{
   operations: ApplicationSessionOperations<LocalCliAuthorization>;
+  messageOperations: ApplicationSessionMessageOperations<LocalCliAuthorization>;
   runOperations: ApplicationRunOperations<LocalCliAuthorization>;
   runOutputOperations: ApplicationRunOutputOperations<LocalCliAuthorization>;
   authorization: LocalCliAuthorization;
@@ -60,6 +67,7 @@ export async function startCliRuntime(control: CliRuntimeControl = {}): Promise<
     const access = new LocalCliAccessValidator();
     return {
       operations: createApplicationSessionOperations(client, { access, sessionFiles, snapshotAuthorization }),
+      messageOperations: createApplicationSessionMessageOperations(client, { access, snapshotAuthorization }),
       runOperations: createApplicationRunOperations(client, { access, snapshotAuthorization }),
       runOutputOperations: createApplicationRunOutputOperations(client, { access, snapshotAuthorization }),
       authorization: localCliAuthorization,
@@ -105,7 +113,8 @@ class LocalCliAccessValidator
   implements
     ApplicationAccessValidator<LocalCliAuthorization>,
     ApplicationRunAccessValidator<LocalCliAuthorization>,
-    ApplicationRunOutputAccessValidator<LocalCliAuthorization>
+    ApplicationRunOutputAccessValidator<LocalCliAuthorization>,
+    ApplicationSessionMessageAccessValidator<LocalCliAuthorization>
 {
   async validateWorkspace(
     input: Extract<ApplicationAccessValidationInput<LocalCliAuthorization>, Readonly<{ operation: "create" }>>,
@@ -143,7 +152,8 @@ class LocalCliAccessValidator
     input:
       | ApplicationAccessValidationInput<LocalCliAuthorization>
       | ApplicationRunAccessValidationInput<LocalCliAuthorization>
-      | ApplicationRunOutputAccessValidationInput<LocalCliAuthorization>,
+      | ApplicationRunOutputAccessValidationInput<LocalCliAuthorization>
+      | ApplicationSessionMessageAccessValidationInput<LocalCliAuthorization>,
   ): Promise<ApplicationAccessDecision> {
     return isLocalCliAuthorization(input.context.authorization) ? { allowed: true } : authorizationInvalid();
   }

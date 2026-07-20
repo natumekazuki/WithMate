@@ -23,13 +23,21 @@ const RUN_OUTPUT_CATEGORIES = [
 
 export const REPOSITORY_PAGE_SQL = {
   messages: `
-    SELECT m.id, m.session_id, m.ordinal, m.role,
-           length(CAST(m.content_blocks_json AS BLOB)) AS content_byte_length,
-           CASE WHEN length(CAST(m.content_blocks_json AS BLOB)) <= ? THEN m.content_blocks_json END AS inline_content,
-           m.created_at, s.workspace_key
-    FROM messages m JOIN sessions s ON s.id = m.session_id
-    WHERE m.session_id = ? AND s.workspace_key = ? AND m.ordinal > ?
-    ORDER BY m.ordinal ASC LIMIT ?
+    SELECT CASE WHEN m.id IS NULL THEN 1 ELSE 0 END AS scope_only,
+           m.id, m.session_id, m.ordinal, m.role, m.content_byte_length, m.inline_content, m.created_at,
+           s.workspace_key
+    FROM sessions s
+    LEFT JOIN (
+      SELECT id, session_id, ordinal, role,
+             length(CAST(content_blocks_json AS BLOB)) AS content_byte_length,
+             CASE WHEN length(CAST(content_blocks_json AS BLOB)) <= ? THEN content_blocks_json END AS inline_content,
+             created_at
+      FROM messages
+      WHERE session_id = ? AND ordinal > ?
+      ORDER BY ordinal ASC LIMIT ?
+    ) m ON m.session_id = s.id
+    WHERE s.id = ? AND s.workspace_key = ?
+    ORDER BY m.ordinal ASC
   `,
   runEvents: `
     SELECT e.id, e.run_id, e.ordinal, e.event_code, e.subject_type, e.subject_id, e.summary, e.created_at
@@ -244,34 +252,37 @@ function sessionsPage(database: DatabaseSync, payload: Readonly<Record<string, u
   };
   const rows = database.prepare(query.sql).all(...query.parameters) as unknown as readonly SessionPageRow[];
   const page = splitPage(rows, limit);
-  const mappedPage = budgetPage(page, (row) => ({
-    id: row.id,
-    title: row.title,
-    workspaceKey: row.workspace_key,
-    workspacePath: row.workspace_path,
-    localRepositoryKey: row.local_repository_key,
-    repositoryName: row.repository_name,
-    defaultCharacterId: row.default_character_id,
-    lifecycleStatus: row.lifecycle_status,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    lastActivityAt: row.last_activity_at,
-    executionState: row.active_run_id !== null ? "running" : (row.latest_run_phase ?? "not_started"),
-    ...(row.active_run_id === null ? {} : { activeRunId: row.active_run_id }),
-    ...(row.latest_run_id === null ? {} : { latestRunId: row.latest_run_id }),
-    stateChangedAt:
-      row.active_run_id === null
-        ? (row.latest_run_terminal_at ?? row.created_at)
-        : (row.active_run_created_at ?? row.created_at),
-  }));
-  return {
-    items: mappedPage.items,
-    ...(mappedPage.hasMore
-      ? {
-          nextCursor: encodeCursor("sessions", scope, [mappedPage.lastRow!.last_activity_at, mappedPage.lastRow!.id]),
-        }
-      : {}),
-  };
+  return budgetPage(
+    page,
+    (row) => ({
+      id: row.id,
+      title: row.title,
+      workspaceKey: row.workspace_key,
+      workspacePath: row.workspace_path,
+      localRepositoryKey: row.local_repository_key,
+      repositoryName: row.repository_name,
+      defaultCharacterId: row.default_character_id,
+      lifecycleStatus: row.lifecycle_status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      lastActivityAt: row.last_activity_at,
+      executionState: row.active_run_id !== null ? "running" : (row.latest_run_phase ?? "not_started"),
+      ...(row.active_run_id === null ? {} : { activeRunId: row.active_run_id }),
+      ...(row.latest_run_id === null ? {} : { latestRunId: row.latest_run_id }),
+      stateChangedAt:
+        row.active_run_id === null
+          ? (row.latest_run_terminal_at ?? row.created_at)
+          : (row.active_run_created_at ?? row.created_at),
+    }),
+    (budgeted) => ({
+      items: budgeted.items,
+      ...(budgeted.hasMore && budgeted.lastRow !== undefined
+        ? {
+            nextCursor: encodeCursor("sessions", scope, [budgeted.lastRow.last_activity_at, budgeted.lastRow.id]),
+          }
+        : {}),
+    }),
+  );
 }
 
 function localRepositoriesPage(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
@@ -322,24 +333,27 @@ function localRepositoriesPage(database: DatabaseSync, payload: Readonly<Record<
       SESSION_METADATA_LIMITS.repositoryNamesPerItemMax,
     ) as unknown as readonly LocalRepositoryPageRow[];
   const page = splitPage(rows, limit);
-  const mappedPage = budgetPage(page, (row) => ({
-    localRepositoryKey: row.local_repository_key,
-    repositoryNames: decodeRepositoryNames(row.repository_names_json),
-    repositoryNameCount: row.repository_name_count,
-    sessionCount: row.session_count,
-    lastActivityAt: row.last_activity_at,
-  }));
-  return {
-    items: mappedPage.items,
-    ...(mappedPage.hasMore
-      ? {
-          nextCursor: encodeCursor("local_repositories", scope, [
-            mappedPage.lastRow!.last_activity_at,
-            mappedPage.lastRow!.local_repository_key,
-          ]),
-        }
-      : {}),
-  };
+  return budgetPage(
+    page,
+    (row) => ({
+      localRepositoryKey: row.local_repository_key,
+      repositoryNames: decodeRepositoryNames(row.repository_names_json),
+      repositoryNameCount: row.repository_name_count,
+      sessionCount: row.session_count,
+      lastActivityAt: row.last_activity_at,
+    }),
+    (budgeted) => ({
+      items: budgeted.items,
+      ...(budgeted.hasMore && budgeted.lastRow !== undefined
+        ? {
+            nextCursor: encodeCursor("local_repositories", scope, [
+              budgeted.lastRow.last_activity_at,
+              budgeted.lastRow.local_repository_key,
+            ]),
+          }
+        : {}),
+    }),
+  );
 }
 
 function sessionGet(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
@@ -397,16 +411,27 @@ function messagesPage(database: DatabaseSync, payload: Readonly<Record<string, u
   const limit = readLimit(payload.limit, REPOSITORY_READ_LIMITS.messages);
   const cursorScope = scopeDigest(scope);
   const afterOrdinal = decodeOrdinalCursor(payload.cursor, "messages", cursorScope);
-  const rows = database
+  const queryRows = database
     .prepare(REPOSITORY_PAGE_SQL.messages)
     .all(
       INLINE_MESSAGE_BYTES,
       scope.sessionId,
-      scope.workspaceKey,
       afterOrdinal,
       limit + 1,
-    ) as unknown as readonly MessageRow[];
-  assertScopeExists(database, scope.sessionId, scope.workspaceKey);
+      scope.sessionId,
+      scope.workspaceKey,
+    ) as unknown as readonly MessageQueryRow[];
+  if (queryRows.length === 0) throw notFound();
+  let rows: readonly MessageRow[];
+  if (queryRows[0]?.scope_only === 1) {
+    if (queryRows.length !== 1) throw new TypeError("Repository projection violates the persistence contract.");
+    rows = [];
+  } else {
+    if (queryRows.some((row) => row.scope_only !== 0)) {
+      throw new TypeError("Repository projection violates the persistence contract.");
+    }
+    rows = queryRows as unknown as readonly MessageRow[];
+  }
   const page = splitPage(rows, limit);
   return ordinalPage(scope, page, "messages", cursorScope, (row) => ({
     id: row.id,
@@ -460,23 +485,25 @@ function runEventsPage(database: DatabaseSync, payload: Readonly<Record<string, 
     .all(scope.runId, scope.sessionId, scope.workspaceKey, afterOrdinal, limit + 1) as unknown as readonly OrdinalRow[];
   assertRunScopeExists(database, scope);
   const page = splitPage(rows, limit);
-  const budgeted = budgetPage(page, (row) => ({
-    id: row.id,
-    runId: row.run_id,
-    ordinal: row.ordinal,
-    eventCode: row.event_code,
-    ...(row.subject_type === null ? {} : { subjectType: row.subject_type }),
-    ...(row.subject_id === null ? {} : { subjectId: row.subject_id }),
-    ...(row.summary === null ? {} : { summary: row.summary }),
-    createdAt: row.created_at,
-  }));
-  const continuationOrdinal = budgeted.lastRow?.ordinal ?? afterOrdinal;
-  return {
-    ...scope,
-    items: budgeted.items,
-    continuationCursor: encodeCursor("run_events", cursorScope, [continuationOrdinal]),
-    hasMore: budgeted.hasMore,
-  };
+  return budgetPage(
+    page,
+    (row) => ({
+      id: row.id,
+      runId: row.run_id,
+      ordinal: row.ordinal,
+      eventCode: row.event_code,
+      ...(row.subject_type === null ? {} : { subjectType: row.subject_type }),
+      ...(row.subject_id === null ? {} : { subjectId: row.subject_id }),
+      ...(row.summary === null ? {} : { summary: row.summary }),
+      createdAt: row.created_at,
+    }),
+    (budgeted) => ({
+      ...scope,
+      items: budgeted.items,
+      continuationCursor: encodeCursor("run_events", cursorScope, [budgeted.lastRow?.ordinal ?? afterOrdinal]),
+      hasMore: budgeted.hasMore,
+    }),
+  );
 }
 
 function runOutputCounts(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
@@ -555,27 +582,30 @@ function runInputDeliveriesPage(database: DatabaseSync, payload: Readonly<Record
     ) as unknown as readonly RunInputDeliveryRow[];
   assertRunScopeExists(database, scope);
   const page = splitPage(rows, limit);
-  const budgeted = budgetPage(page, (row) => ({
-    messageId: row.message_id,
-    runId: row.run_id,
-    attemptId: row.attempt_id,
-    bindingId: row.binding_id,
-    deliveryState: row.delivery_state,
-    createdAt: row.created_at,
-    dispatchingAt: row.dispatching_at,
-  }));
-  return {
-    ...scope,
-    items: budgeted.items,
-    ...(budgeted.hasMore && budgeted.lastRow !== undefined
-      ? {
-          nextCursor: encodeCursor("run_input_deliveries", cursorScope, [
-            budgeted.lastRow.created_at,
-            budgeted.lastRow.message_id,
-          ]),
-        }
-      : {}),
-  };
+  return budgetPage(
+    page,
+    (row) => ({
+      messageId: row.message_id,
+      runId: row.run_id,
+      attemptId: row.attempt_id,
+      bindingId: row.binding_id,
+      deliveryState: row.delivery_state,
+      createdAt: row.created_at,
+      dispatchingAt: row.dispatching_at,
+    }),
+    (budgeted) => ({
+      ...scope,
+      items: budgeted.items,
+      ...(budgeted.hasMore && budgeted.lastRow !== undefined
+        ? {
+            nextCursor: encodeCursor("run_input_deliveries", cursorScope, [
+              budgeted.lastRow.created_at,
+              budgeted.lastRow.message_id,
+            ]),
+          }
+        : {}),
+    }),
+  );
 }
 
 function runOutputsPage(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
@@ -898,15 +928,6 @@ function readRunScope(payload: Readonly<Record<string, unknown>>, keys: readonly
   return { ...scope, runId: requiredString(payload.runId, "runId") };
 }
 
-function assertScopeExists(database: DatabaseSync, sessionId: string, workspaceKey: string): void {
-  if (
-    database.prepare("SELECT 1 FROM sessions WHERE id = ? AND workspace_key = ?").get(sessionId, workspaceKey) ===
-    undefined
-  ) {
-    throw notFound();
-  }
-}
-
 function assertRunScopeExists(
   database: DatabaseSync,
   scope: Readonly<{ sessionId: string; runId: string; workspaceKey: string }>,
@@ -924,53 +945,99 @@ function assertRunScopeExists(
     throw notFound();
 }
 
-function ordinalPage<T extends OrdinalRow, R>(
+function ordinalPage<T extends OrdinalRow, R extends Readonly<Record<string, unknown>>>(
   scope: object,
   page: Readonly<{ items: readonly T[]; hasMore: boolean }>,
   kind: string,
   cursorScope: string,
   map: (row: T) => R,
 ): unknown {
-  const budgeted = budgetPage(page, map);
-  return {
+  return budgetPage(page, map, (budgeted) => ({
     ...scope,
     items: budgeted.items,
     ...(budgeted.hasMore && budgeted.lastRow !== undefined
       ? { nextCursor: encodeCursor(kind, cursorScope, [budgeted.lastRow.ordinal]) }
       : {}),
-  };
+  }));
 }
 
-function budgetPage<T extends Readonly<Record<string, unknown>>, R>(
-  page: Readonly<{ items: readonly T[]; hasMore: boolean }>,
-  map: (row: T) => R,
-): Readonly<{
-  items: readonly (R | Readonly<{ omitted: true; reason: "response_size_limit"; ordinal?: number }>)[];
+type PageOmission = Readonly<{ omitted: true; reason: "response_size_limit"; ordinal?: number }>;
+type BudgetedPage<T, R> = Readonly<{
+  items: readonly (R | PageOmission)[];
   hasMore: boolean;
   lastRow?: T;
-}> {
-  const items: (R | Readonly<{ omitted: true; reason: "response_size_limit"; ordinal?: number }>)[] = [];
-  let bytes = 0;
+}>;
+type PageProjection = Readonly<Record<string, unknown> & { items: readonly unknown[] }>;
+
+function budgetPage<
+  T extends Readonly<Record<string, unknown>>,
+  R extends Readonly<Record<string, unknown>>,
+  P extends PageProjection,
+>(
+  page: Readonly<{ items: readonly T[]; hasMore: boolean }>,
+  map: (row: T) => R,
+  project: (budgeted: BudgetedPage<T, R>) => P,
+): P {
+  const items: (R | PageOmission)[] = [];
+  let itemsJsonBytes = 0;
   let consumed = 0;
-  for (const row of page.items) {
+  for (let index = 0; index < page.items.length; index += 1) {
+    const row = page.items[index]!;
     const item = map(row);
-    const itemBytes = Buffer.byteLength(JSON.stringify(item));
-    if (itemBytes > MAX_PAGE_JSON_BYTES) {
-      const ordinal = typeof row.ordinal === "number" ? row.ordinal : undefined;
-      items.push({ omitted: true, reason: "response_size_limit", ...(ordinal === undefined ? {} : { ordinal }) });
-      consumed += 1;
+    const itemJsonBytes = jsonBytes(item);
+    const candidate = budgetedPage(page, [...items, item], index + 1);
+    if (pageJsonBytes(project, candidate, itemsJsonBytes + itemJsonBytes) <= MAX_PAGE_JSON_BYTES) {
+      items.push(item);
+      itemsJsonBytes += itemJsonBytes;
+      consumed = index + 1;
       continue;
     }
-    if (bytes + itemBytes > MAX_PAGE_JSON_BYTES) break;
-    items.push(item);
-    bytes += itemBytes;
-    consumed += 1;
+
+    const itemOnly = budgetedPage(page, [item], index + 1);
+    if (pageJsonBytes(project, itemOnly, itemJsonBytes) <= MAX_PAGE_JSON_BYTES) break;
+
+    const ordinal = typeof row.ordinal === "number" ? row.ordinal : undefined;
+    const omission: PageOmission = {
+      omitted: true,
+      reason: "response_size_limit",
+      ...(ordinal === undefined ? {} : { ordinal }),
+    };
+    const omissionJsonBytes = jsonBytes(omission);
+    const omittedCandidate = budgetedPage(page, [...items, omission], index + 1);
+    if (pageJsonBytes(project, omittedCandidate, itemsJsonBytes + omissionJsonBytes) > MAX_PAGE_JSON_BYTES) break;
+    items.push(omission);
+    itemsJsonBytes += omissionJsonBytes;
+    consumed = index + 1;
   }
+
+  const result = project(budgetedPage(page, items, consumed));
+  if (jsonBytes(result) > MAX_PAGE_JSON_BYTES) throw persistenceContractViolation();
+  return result;
+}
+
+function budgetedPage<T, R>(
+  page: Readonly<{ items: readonly T[]; hasMore: boolean }>,
+  items: readonly (R | PageOmission)[],
+  consumed: number,
+): BudgetedPage<T, R> {
   return {
     items,
     hasMore: page.hasMore || consumed < page.items.length,
     ...(consumed === 0 ? {} : { lastRow: page.items[consumed - 1] }),
   };
+}
+
+function pageJsonBytes<T, R, P extends PageProjection>(
+  project: (budgeted: BudgetedPage<T, R>) => P,
+  budgeted: BudgetedPage<T, R>,
+  itemsJsonBytes: number,
+): number {
+  const emptyItemsProjection = project({ ...budgeted, items: [] });
+  return jsonBytes(emptyItemsProjection) + itemsJsonBytes + Math.max(0, budgeted.items.length - 1);
+}
+
+function jsonBytes(value: Readonly<Record<string, unknown>>): number {
+  return Buffer.byteLength(JSON.stringify(value));
 }
 
 function splitPage<T>(rows: readonly T[], limit: number): Readonly<{ items: readonly T[]; hasMore: boolean }> {
@@ -1157,6 +1224,7 @@ type MessageRow = Readonly<{
   created_at: number;
   workspace_key: string;
 }>;
+type MessageQueryRow = Readonly<Record<string, unknown>> & Readonly<{ scope_only: number }>;
 type SessionPageRow = Readonly<{
   id: string;
   title: string;

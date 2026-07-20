@@ -1172,14 +1172,31 @@ test("all Repository chunk operations clamp envelope metadata and advance withou
 
   const messages: WorkerToMainMessage[] = [];
   const transfers: Array<readonly ArrayBuffer[]> = [];
+  const messageChunkStatements: string[] = [];
   const generationId = "018f1f4e-7f0a-7000-8000-000000000001";
-  const runtime = new PersistenceWorkerRuntime(generationId, database, ":memory:", (message, transferList) => {
+  const observedDatabase = new Proxy(database, {
+    get(target, property) {
+      if (property === "prepare") {
+        return (sql: string) => {
+          if (sql.includes("FROM messages m JOIN sessions s ON s.id = m.session_id")) {
+            messageChunkStatements.push(sql);
+          }
+          return target.prepare(sql);
+        };
+      }
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const runtime = new PersistenceWorkerRuntime(generationId, observedDatabase, ":memory:", (message, transferList) => {
     messages.push(message);
     transfers.push(transferList ?? []);
   });
+  messageChunkStatements.length = 0;
   let sequence = 0;
   const send = async (operation: string, payload: Readonly<Record<string, unknown>>) => {
     const index = messages.length;
+    const messageStatementIndex = messageChunkStatements.length;
     sequence += 1;
     runtime.handleMessage({
       protocolVersion: PERSISTENCE_PROTOCOL_VERSION,
@@ -1194,6 +1211,12 @@ test("all Repository chunk operations clamp envelope metadata and advance withou
     await waitFor(() => messages.length === index + 1);
     const response = messages[index];
     assert.ok(response);
+    if (operation === "repository.message.content-chunk") {
+      const statements = messageChunkStatements.slice(messageStatementIndex);
+      assert.equal(statements.length, 1);
+      assert.match(statements[0] ?? "", /substr\(CAST\(m\.content_blocks_json AS BLOB\), \? \+ 1, \?\)/);
+      assert.doesNotMatch(statements[0] ?? "", /SELECT\s+m\.content_blocks_json\s*,/);
+    }
     return { response, transferList: transfers[index] ?? [] };
   };
 
@@ -1271,6 +1294,21 @@ test("all Repository chunk operations clamp envelope metadata and advance withou
     overlong.response.kind === "response" && !overlong.response.ok && overlong.response.error.code,
     "payload_chunk_invalid",
   );
+  for (const scope of [
+    { sessionId: "missing-session", messageId, workspaceKey },
+    { sessionId, messageId: "missing-message", workspaceKey },
+    { sessionId, messageId, workspaceKey: "missing-workspace" },
+  ]) {
+    const missingMessage = await send("repository.message.content-chunk", {
+      ...scope,
+      offset: 0,
+      maxBytes: 1,
+    });
+    assert.equal(
+      missingMessage.response.kind === "response" && !missingMessage.response.ok && missingMessage.response.error.code,
+      "not_found",
+    );
+  }
   database.close();
 });
 
@@ -1339,7 +1377,7 @@ function productionRunAdmission(sessionId: string, runId: string, idempotencyKey
     attemptId: `attempt-${runId}`,
     bindingIntent: { kind: "create" as const, bindingId: `binding-${runId}`, persistenceMode: "persistent" as const },
     dispatch: { providerRequest: { prompt: "hello" }, providerIdempotencyKey: null },
-  };
+  } as const;
 }
 
 function productionChildStart(parentSessionId: string, parentRunId: string, idempotencyKey: string) {
@@ -1391,7 +1429,7 @@ function productionChildStart(parentSessionId: string, parentRunId: string, idem
       providerIdempotencyKey: null,
     },
     deliveryId: "delivery-worker-child",
-  };
+  } as const;
 }
 
 function isClientError(error: unknown, code: string, effect: string): boolean {

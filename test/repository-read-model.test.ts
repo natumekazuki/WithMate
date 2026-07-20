@@ -148,7 +148,7 @@ repositoryTest("timeline and output summary remain bounded without hydrating pay
     assert.equal(Object.hasOwn(messages.items[0] ?? {}, "contentBlocks"), false);
     assert.ok(messages.items.length < 6);
     assert.equal(typeof messages.nextCursor, "string");
-    assert.ok(Buffer.byteLength(JSON.stringify(messages)) < 256 * 1024);
+    assert.ok(Buffer.byteLength(JSON.stringify(messages)) <= 192 * 1024);
 
     const outputs = operationFor(
       database,
@@ -162,6 +162,99 @@ repositoryTest("timeline and output summary remain bounded without hydrating pay
     assert.equal(outputs.items.length, 200);
     assert.equal(typeof outputs.nextCursor, "string");
     assert.equal(JSON.stringify(outputs).includes("content"), false);
+  });
+});
+
+repositoryTest("Message page budgets its complete JSON body including scope and cursor", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    const content = JSON.stringify([{ type: "text", text: "x".repeat(65_290) }]);
+    assert.ok(Buffer.byteLength(content) <= 64 * 1024);
+    for (let ordinal = 1; ordinal <= 4; ordinal += 1) {
+      insertMessage(database, `message-${ordinal}`, "session-1", ordinal, content);
+    }
+    const messages = operationFor(database, "repository.messages.page");
+
+    const first = messages({ sessionId: "session-1", workspaceKey: "workspace", limit: 4 }) as PageResult;
+    assert.ok(first.items.length > 0 && first.items.length < 4);
+    assert.ok(Buffer.byteLength(JSON.stringify(first)) <= 192 * 1024);
+    assert.equal(typeof first.nextCursor, "string");
+
+    const second = messages({
+      sessionId: "session-1",
+      workspaceKey: "workspace",
+      cursor: first.nextCursor,
+      limit: 4,
+    }) as PageResult;
+    assert.ok(Buffer.byteLength(JSON.stringify(second)) <= 192 * 1024);
+    assert.deepEqual(
+      [...first.items, ...second.items].map((item) => item.id),
+      ["message-1", "message-2", "message-3", "message-4"],
+    );
+  });
+});
+
+repositoryTest("Message page keeps one SQL snapshot when its Session is deleted after the statement", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-empty", 1);
+    insertSession(database, "session-1", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    const emptyPage = operationFor(
+      database,
+      "repository.messages.page",
+    )({ sessionId: "session-empty", workspaceKey: "workspace" }) as PageResult;
+    assert.deepEqual(emptyPage.items, []);
+
+    const preparedSql: string[] = [];
+    let deleteAfterPageRead = true;
+    const observedDatabase = new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql: string) => {
+            preparedSql.push(sql);
+            const statement = target.prepare(sql);
+            if (sql !== REPOSITORY_PAGE_SQL.messages) return statement;
+            return new Proxy(statement, {
+              get(statementTarget, statementProperty) {
+                if (statementProperty === "all") {
+                  return (...parameters: Parameters<typeof statementTarget.all>) => {
+                    const rows = statementTarget.all(...parameters);
+                    if (deleteAfterPageRead) {
+                      deleteAfterPageRead = false;
+                      target.exec(`
+                        BEGIN IMMEDIATE;
+                        DELETE FROM messages WHERE session_id = 'session-1';
+                        DELETE FROM sessions WHERE id = 'session-1';
+                        COMMIT;
+                      `);
+                    }
+                    return rows;
+                  };
+                }
+                const value = Reflect.get(statementTarget, statementProperty, statementTarget) as unknown;
+                return typeof value === "function" ? value.bind(statementTarget) : value;
+              },
+            });
+          };
+        }
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const operation = operationFor(observedDatabase, "repository.messages.page");
+
+    const beforeDelete = operation({ sessionId: "session-1", workspaceKey: "workspace" }) as PageResult;
+    assert.deepEqual(
+      beforeDelete.items.map((item) => item.id),
+      ["message-1"],
+    );
+    assert.equal(preparedSql.length, 1);
+
+    assert.throws(
+      () => operation({ sessionId: "session-1", workspaceKey: "workspace" }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "not_found",
+    );
+    assert.equal(preparedSql.length, 2);
   });
 });
 
@@ -575,7 +668,7 @@ repositoryTest("session pages apply the byte budget and continue from the last i
     assert.doesNotThrow(() => sessions({ workspaceKey: "workspace", limit: 1, cursor: maximumIdPage.nextCursor }));
     const first = sessions({ workspaceKey: "workspace", limit: 100 }) as PageResult;
     assert.ok(first.items.length < 100);
-    assert.ok(Buffer.byteLength(JSON.stringify(first)) < 256 * 1024);
+    assert.ok(Buffer.byteLength(JSON.stringify(first)) <= 192 * 1024);
     assert.equal(typeof first.nextCursor, "string");
     const second = sessions({ workspaceKey: "workspace", limit: 100, cursor: first.nextCursor }) as PageResult;
     assert.ok(second.items.length > 0);
@@ -704,7 +797,7 @@ repositoryTest("representative ordinal queries use covering indexes and never sc
       database
         .prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_SESSION_PAGE_SQL.workspaceLifecycle}`)
         .all("workspace", "active", null, null, null, null, 10),
-      database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.messages}`).all(1024, "s", "w", 0, 10),
+      database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.messages}`).all(1024, "s", 0, 10, "s", "w"),
       database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.runEvents}`).all("r", "s", "w", 0, 10),
       database.prepare(`EXPLAIN QUERY PLAN ${REPOSITORY_PAGE_SQL.runOutputs}`).all("r", "s", "w", 0, 10),
       database
