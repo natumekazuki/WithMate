@@ -45,3 +45,12 @@ CP2はProvider非依存の永続control planeを担当し、Session操作、Mess
 Run開始や追加指示はProvider dispatch、live runtime、外部副作用との相関を必要とするため、Provider未接続のCP2 Gateへ含めない。childへの追加指示はDelegationのlatest Message / Runとdeliveryを同じorchestration contractで更新する必要があるため、CP5へまとめる。具体的なCLI operation名は各checkpointでpublic contractを確定するときに決める。
 
 CP6はCP3で成立した共通Run operationへCopilot Adapterを接続するため、CP3に依存する。Session Files cleanupとRun output export temporary fileのorphan sweep / crash recoveryは、運用hardeningを担当するCP8へ置く。
+
+## D-007: Run mutationを長寿命runtime hostへ集約する
+
+- date: 2026-07-20
+- status: accepted
+
+CLIやWindowから独立した長寿命WithMate runtime hostがPersistence Worker、Provider接続、live Run、draft、interactionを所有する。Operational CLIはlocal IPC clientとし、CLI connection終了をRun cancelまたはProvider disconnectへ変換しない。
+
+Codexはruntime hostが所有するstdio App Server childを使い、Codex managed daemonを初期依存にしない。public CLI operation名は`withmate run start`、`withmate run retry`、`withmate run send-input`、`withmate run cancel`とする。owner、IPC、recovery、alternatives、consequencesはADR 013を正本とする。

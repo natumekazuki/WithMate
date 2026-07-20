@@ -27,7 +27,8 @@ WithMate は完全に 0 ベースで作り直す。
 | `schema/sqlite/manifest-v1.json` | schema version、application ID、table / index / trigger集合の機械可読manifest |
 | `docs/investigations/codex-app-server/capability-matrix.md` | Codex App Server の capability と WithMate への対応方針 |
 | `docs/investigations/codex-app-server/validation-plan.md` | Codex App Server の検証計画 |
-| `docs/investigations/codex-app-server/validation-results.md` | Codex App Server の schema、基本通信、persistent Thread復旧の実測結果 |
+| `docs/investigations/codex-app-server/validation-results.md` | Codex App Serverのschema、基本通信、persistent Thread復旧、interrupt、steer、assistant phaseの実測結果 |
+| `docs/investigations/codex-app-server/runtime-contract-probe.mjs` | CAS-009 / 010 / 016とdaemon supportを隔離条件で再実測するsanitized probe |
 | `docs/investigations/github-copilot-acp/validation-plan.md` | GitHub Copilot ACP の別環境検証計画 |
 | `docs/investigations/github-copilot-acp/validation-results.md` | GitHub Copilot ACP の検証結果記録 |
 

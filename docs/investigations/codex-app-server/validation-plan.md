@@ -1,9 +1,10 @@
 # Codex App Server Validation Plan
 
 - 作成日: 2026-07-10
-- 対象 version: `codex-cli 0.144.1`
+- 最終更新: 2026-07-20
+- 対象 version: `codex-cli 0.144.6`
 - 関連設計: `docs/design/provider-integration.md`
-- 状態: 基本通信を実施済み / lifecycle 詳細は継続調査
+- 状態: CAS-001〜010、013、016を実施済み / CAS-017は現在環境でblocked
 
 ## 目的
 
@@ -31,15 +32,15 @@ Codex App Server を WithMate の Provider Adapter から利用するため、sc
 | CAS-006 | 正常完了 | item、Thread、Turn の terminal event を識別できる | 必須 |
 | CAS-007 | Thread 読取 | ephemeral / persistent の制約を識別できる | 必須 |
 | CAS-008 | persistent Thread 再開 | process 再起動後に会話を継続できる | 高 |
-| CAS-009 | Turn interrupt | user cancel と terminal status を対応付けられる | 高 |
-| CAS-010 | Turn steer | active Turn へ追加指示を送信できる | 高 |
+| CAS-009 | Turn interrupt | response、Thread notification、terminal statusの順序とuser cancel相関を確定できる | 高 |
+| CAS-010 | Turn steer | 受理、active Turn不在、`expectedTurnId`不一致、同一Turn履歴への反映を確定できる | 高 |
 | CAS-011 | command / file approval | server request へ allow / deny を返せる | 高 |
 | CAS-012 | permission / user input / elicitation | pending state と回答を相関できる | 高 |
 | CAS-013 | stdio App Server異常終了 | 未完了Runを復旧または`interrupted`判定できる | 高 |
 | CAS-014 | 複数 Thread の並行実行 | event を Thread / Turn / item ごとに相関できる | 中 |
 | CAS-015 | 未知 notification | client が停止せず診断記録できる | 中 |
-| CAS-016 | assistant phase 分類 | `commentary` / `final_answer` / `null` と Turn 成功完了から final Message / assistant detail を一意に分類できる | 必須 |
-| CAS-017 | daemonへのclient-only再接続 | App Server daemonを停止せずclientだけ切断し、active Turnの監視を再開できるか判定できる | 高 |
+| CAS-016 | assistant phase 分類 | `commentary` / `final_answer` / `null` とTurn成功完了からfinal Message / assistant detailを一意に分類できる | 必須 |
+| CAS-017 | daemonへのclient-only再接続 | App Server daemonを停止せずclientだけ切断し、active Turn、subscription、欠落event、外部副作用を判定できる。daemon lifecycle非対応環境では`blocked`とする | 高 |
 
 ## 基本通信の実行条件
 
@@ -67,6 +68,24 @@ CAS-008 / CAS-013 の復旧 probe は次の条件で実行する。
 
 ```text
 node docs/investigations/codex-app-server/recovery-probe.mjs
+```
+
+CAS-009 / CAS-010 / CAS-016 / CAS-017のruntime contract probeは次の条件で実行する。
+
+- `docs/investigations/codex-app-server/runtime-contract-probe.mjs`を使用する。
+- repository外の一時workspaceと、probe自身が起動したstdio App Serverだけを使用する。
+- `read-only` sandbox、`approvalPolicy=never`、tool / file / network accessを要求しない固定promptを使用する。
+- CAS-009は最初のassistant delta後に`turn/interrupt`を送り、responseとterminal notificationの受信順序を記録する。
+- CAS-010はactive Turnに対して不一致`expectedTurnId`、一致`expectedTurnId`、terminal後の3ケースを送り、persistent Thread履歴にsupplemental user Messageが1件だけ反映されたことを本文を出力せず確認する。
+- CAS-010の履歴確認にはpersistent Threadを使うため、repository外workspaceを削除してもsyntheticなThreadが設定済みCodex profileへ残る可能性がある。probeはThread IDや本文を出力せず、既存Threadを変更しない。
+- CAS-016は明示的なcommentaryとfinal answerを要求し、completed agentMessageのphaseだけを集計する。`null`が観測されなくても、stable schemaのnullable contractを削除しない。
+- CAS-017はdaemonのread-onlyなversion照会だけを許可し、既存daemonのinstall、start、stop、restart、設定変更を行わない。隔離不能またはplatform非対応なら`blocked`とする。
+- stdoutにはversion、sanitizedな順序、status、件数だけを出し、ID、本文、account情報、absolute path、raw payloadを出さない。
+
+実行 command:
+
+```text
+node docs/investigations/codex-app-server/runtime-contract-probe.mjs
 ```
 
 ## 完了条件
