@@ -201,10 +201,10 @@ timeline 取得は `session_id` と ordinal cursor を使い、offset pagination
 ### path referenceとSession Files
 
 - `File` / `Folder` / `Image` pickerは選択pathをcomposerへ`@path`として挿入する。Messageはuserが確定したtextだけを正本とし、file内容、hash、MIME、size、snapshot、解決済みabsolute path metadataを別保存しない。
-- Run admission前にMain processが`@path`を解決し、存在、file / directory種別、realpathを検証する。参照可能範囲はworkspace、`allowed_additional_directories_json`、`session-files/{sessionId}/`のいずれかのrealpath配下に限定し、symlink / junction経由の範囲外参照を拒否する。
+- Run admission前にruntime hostのApplication境界が`@path`を解決し、存在、file / directory種別、realpathを検証する。参照可能範囲はworkspace、`allowed_additional_directories_json`、`session-files/{sessionId}/`のいずれかのrealpath配下に限定し、symlink / junction経由の範囲外参照を拒否する。
 - workspace内のpicker結果はworkspace相対表現を優先する。workspace外pathはuserが明示許可したdirectory配下だけ受理し、Message textに含まれるabsolute pathはuser-authored contentとして保持できる。audit、diagnostic、error summaryへraw absolute pathを重複保存しない。
 - 通常のpath referenceはRun実行時のfile内容をProviderへ渡し、履歴用snapshotを作らない。同じMessageのretryもその時点でpathを再解決するため、元fileの変更・移動・削除により別内容またはvalidation errorになり得る。
-- `Attach Copy`とclipboard pasteだけ、Main processがWithMate管理の`session-files/{sessionId}/`へ排他的なfile名でcopy / writeし、その保存pathを`@path`として挿入する。copy / pasteはSession存在、lifecycle、IPC callerのWindowとSessionの対応、個数・byte上限を検証する。
+- `Attach Copy`とclipboard pasteだけ、runtime hostのApplication side-effect境界がWithMate管理の`session-files/{sessionId}/`へ排他的なfile名でcopy / writeし、その保存pathを`@path`として挿入する。copy / pasteはSession存在、lifecycle、IPC callerのWindowとSessionの対応、個数・byte上限を検証する。
 - folderはmanifestやsnapshotへ展開せずlive directory referenceとしてProviderへ渡す。Provider送信直前にもrealpathと許可範囲を再検証する。
 - Provider Adapterは確定Message textと解決済みpath referenceを実行時入力へ変換する。Copilotはfile / directory attachment、Codexは対応するimage path / additional directory等へ変換し、Provider固有形式をMessageへ保存しない。
 - Session subtree deleteは対象SessionごとのSession Files directoryも削除する。DB commit後の冪等削除と起動時orphan sweepを使用し、filesystem削除失敗を理由にDB rowを復元しない。
@@ -534,7 +534,7 @@ primary key 以外の index は初期不要とする。一覧検索や category 
 - terminal transaction時点で安全なsummaryだけ確定しdetail保存が残るItemは`payload_state='pending'`とする。後続のbounded best-effort transactionで`stored`へ進めるか、quota / disk pressureなら`omitted_size_limit`、write failure / crash repairなら`omitted_persistence`へ一方向に収束させる。terminal Runを巻き戻さない。
 - successful Run の final assistant Message は `messages` へ保存し、`final_answer` を RunOutputItem として重複保存しない。
 - failed / canceled / interrupted Run の final candidate は Message へ昇格させず、必要な場合は `assistant_detail` / `completion_state='partial'` として保存する。
-- output保存のpersistence failureでProviderのterminal outcomeを`failed`へ変更しない。Main processのlive persistence stateとresponse診断で別に公開する。
+- output保存のpersistence failureでProviderのterminal outcomeを`failed`へ変更しない。runtime hostのlive persistence stateとresponse診断で別に公開する。
 
 ## Run output 読み込み契約
 
@@ -782,29 +782,29 @@ root capacity使用数は、`session_relations.orchestration_root_session_id`配
 
 ### live persistence state
 
-- `idle` / `committing` / `retry_wait` / `failed` はMain processの保存処理状態としてメモリだけに保持し、`runs`には保存しない。
+- `idle` / `committing` / `retry_wait` / `failed`はruntime hostの保存処理状態としてメモリだけに保持し、`runs`には保存しない。
 - `committed`は対象transactionが成功した事実そのものであり、専用columnで重複表現しない。DB write failure中の`failed`も同じDBへ確実に書けないため、復旧判断の基準にしない。
 - live stateはboundedな`error_code`、`retryable`、`last_attempt_at`を持てる。保存再試行は同じ確定済みdomain transitionのcommitだけを行い、Providerを再実行しない。commit成功後はlive stateを破棄する。
 - CLI / APIは実行outcomeとlive persistence結果を同じresponse envelopeの別fieldで返せる。保存失敗時は`overallStatus='partial_success'`と`persistence.status='failed'`を返し、未永続のoutcomeを復旧可能とは表示しない。
-- Main process再起動後は保存失敗状態そのものを復元しない。DBに最後にcommitされたRun / Attempt / DispatchとProvider外部状態を照合し、terminal outcomeを証明できれば再commit、証明できなければ`interrupted`へ収束させる。
-- SQLite障害中にMain processも終了し、Providerからterminal outcomeを再取得できない場合、そのoutcomeを失う可能性を受容する。これを防ぐ要件が生じた場合は、`runs` columnではなくSQLiteとは別のdurable journalを設計する。
+- runtime host再起動後は保存失敗状態そのものを復元しない。DBに最後にcommitされたRun / Attempt / DispatchとProvider外部状態を照合し、terminal outcomeを証明できれば再commit、証明できなければ`interrupted`へ収束させる。
+- SQLite障害中にruntime hostも終了し、Providerからterminal outcomeを再取得できない場合、そのoutcomeを失う可能性を受容する。これを防ぐ要件が生じた場合は、`runs` columnではなくSQLiteとは別のdurable journalを設計する。
 
 ### live activity
 
-- `running` / `waiting_approval` / `waiting_input` / `waiting_child` はactive Runの表示・操作用live stateとしてMain processのApplication Serviceがメモリだけに保持し、`runs`には保存しない。
+- `running` / `waiting_approval` / `waiting_input` / `waiting_child`はactive Runの表示・操作用live stateとしてruntime hostのApplication Serviceがメモリだけに保持し、`runs`には保存しない。
 - `waiting_approval` / `waiting_input` は未解決live interaction、`waiting_child`は明示的なwait operationが存在するときだけ設定する。child Runが存在するだけで`waiting_child`を推測しない。
 - 複数状態が同時に成立する場合の代表表示は`waiting_input`、`waiting_approval`、`waiting_child`、`running`の順とする。DBのRun状態は`phase`だけを基準にする。
-- Session Windowはlive stateの所有者ではなく購読者とする。Windowを閉じてもMain process、Provider接続、Run、activity、draft、live interactionを破棄またはcancelしない。
-- Windowを開き直す場合はMain processからlive snapshotとRunEvent cursorを同時に取得し、そのcursor以降のevent購読を開始する。古いRenderer stateだけから表示を復元しない。
-- Main processまたはアプリ全体の再起動後はactivityをDBから推測しない。UIは一時的に再接続確認中と表示し、同じProvider実行と現在操作を証明できた場合だけlive activityを再構築する。証明できなければRunを`interrupted`へ収束させる。
+- Session WindowとCLIはlive stateの所有者ではなくruntime hostのclientとする。client connectionを閉じてもProvider接続、Run、activity、draft、live interactionを破棄またはcancelしない。
+- Windowを開き直す場合はruntime hostからlive snapshotとRunEvent cursorを同時に取得し、そのcursor以降のevent購読を開始する。古いRenderer stateだけから表示を復元しない。
+- runtime host再起動後はactivityをDBから推測しない。clientは一時的に再接続確認中と表示し、同じProvider実行と現在操作を証明できた場合だけlive activityを再構築する。証明できなければRunを`interrupted`へ収束させる。
 
 ### assistant draft
 
 - streaming 中の assistant draft は Application Service の live state としてメモリだけに保持し、専用 table や snapshot row を作らない。
 - draftはUTF-8 bytesのimmutable chunk列またはropeとしてappendし、deltaごとの全文string再生成を禁止する。1 chunkは最大64 KiB、1 Runの保持上限は4 MiB、app全体は32 MiBとする。
-- Main -> Renderer配信は50 msまたは64 KiBの早い方でdeltaをcoalesceし、sequence番号とackでbackpressureをかける。未ackが1 MiBを超えたWindowと非表示Windowには本文deltaを止め、byte数とtruncated状態だけを通知する。
+- runtime hostから表示clientへの配信は50 msまたは64 KiBの早い方でdeltaをcoalesceし、sequence番号とackでbackpressureをかける。未ackが1 MiBを超えたWindowと非表示Windowには本文deltaを止め、byte数とtruncated状態だけを通知する。
 - per-Runまたはapp budget到達後はUI previewの追記だけを停止して`preview_truncated=true`とし、Provider Run自体は継続する。final Message生成用のProvider側確定本文はAdapterのbounded finalization pathで受け取り、live preview bufferの欠落をそのまま正常本文として確定しない。
-- Renderer の再読み込みでは main process の live state から再表示できる。アプリ全体または Provider process の再起動後に draft を復元しない。
+- Rendererの再読み込みではruntime hostのlive stateから再表示できる。runtime hostまたはProvider processの再起動後にdraftを復元しない。
 - 正常完了した本文は final assistant Message、失敗・cancel・中断時に残す確定済み partial output は RunOutputItem として保存する。streaming delta 自体は保存しない。
 
 ### pending interaction
@@ -812,7 +812,7 @@ root capacity使用数は、`session_relations.orchestration_root_session_id`配
 - approval / user input / elicitation request の未解決状態は、実行中 Run と Provider 接続に結び付いた Application Service の live state としてメモリだけに保持し、専用 table を作らない。
 - live state は Provider request ID、Run / RunAttempt、interaction 種別、bounded な表示内容、回答候補、timeout、回答中状態を持てるが、SQLite へ保存しない。
 - 解決後の発生・回答・timeout は RunEvent に、承認対象や回答結果の bounded summary は必要に応じて RunOutputItem に保存する。Provider request / response の生 payload は保存しない。
-- Renderer の再読み込みでは main process の live state から再表示できる。アプリ全体または Provider process の再起動後は未解決 request を回答可能な状態へ復元せず、対応 Run を `interrupted` へ収束させる。
+- Rendererの再読み込みではruntime hostのlive stateから再表示できる。runtime hostまたはProvider processの再起動後は未解決requestを回答可能な状態へ復元せず、対応Runを`interrupted`へ収束させる。
 - 古い request ID への回答、別 Turn への回答、timeout 後の二重回答を防ぐため、DB record だけから approval / input response を再送しない。
 - process 再起動後の同一 Turn resume、未解決 request の再通知、同じ外部 request ID の未解決確認と安全な回答をruntimeで実証できた場合だけ、専用 tableへの昇格を再検討する。
 
@@ -833,12 +833,12 @@ root capacity使用数は、`session_relations.orchestration_root_session_id`配
 - exact retry が Message を複製せず、本文変更時は新しい Message を作る。
 - terminal Run を non-terminal へ戻せない。
 - assistant Message の作成と completed Run の参照更新が同じ transaction で成立する。
-- Session Windowを閉じてもMain processのRun、Provider接続、live activity、draft、live interactionが破棄されない。
+- Session WindowまたはCLI connectionを閉じてもruntime hostのRun、Provider接続、live activity、draft、live interactionが破棄されない。
 - Window再表示時にlive snapshotとRunEvent cursorを取得し、snapshot取得とevent購読の間の更新を欠落させない。
-- Main process再起動後にlive activityをDBやchild Runの存在だけから推測せず、Provider状態を証明できなければRunを`interrupted`へ収束させる。
+- runtime host再起動後にlive activityをDBやchild Runの存在だけから推測せず、Provider状態を証明できなければRunを`interrupted`へ収束させる。
 - SQLite write失敗時にProviderのterminal outcomeをfailedへ変更せず、live responseで`partial_success`とpersistence failureを別々に返す。
 - persistence retryが同じdomain transitionのcommitだけを再実行し、Provider requestを再送しない。
-- Main process再起動後は過去のlive persistence failureをDB columnから復元せず、最後にcommit済みのRun / Attempt / DispatchとProvider状態から収束させる。
+- runtime host再起動後は過去のlive persistence failureをDB columnから復元せず、最後にcommit済みのRun / Attempt / DispatchとProvider状態から収束させる。
 - Message timeline を ordinal cursor で取得し、欠番があっても順序が崩れない。
 - Session一覧が`(last_activity_at, id)`のkeyset cursorでpaginateされ、1 queryでexecution state / activeRunId / latestRunIdを返し、大量Sessionでも全件hydrateやN+1 queryを行わない。
 - 完了後の Session hydrate で final assistant Message だけを読み、assistant detail / tool / raw output payload を読み込まない。

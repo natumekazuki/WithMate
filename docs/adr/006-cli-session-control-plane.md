@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-18
+- Amended by: ADR 013のruntime host ownership
 
 ## Context
 

@@ -3,7 +3,7 @@
 - status: 質問なし
 - updated: 2026-07-20
 
-現在、CP3着手前に回答待ちとして作業を止める項目はない。Q-11はCP3開始時にProvider runtime、dispatch、recovery contractと同時に確定する。
+現在、CP3実装を止める回答待ちはない。Q-11は`docs/adr/013-runtime-host-and-run-mutation-control-plane.md`で確認済みである。
 
 ## Checkpoint到達時に判断する項目
 
@@ -19,7 +19,7 @@
 | Q-08 | Session Monitorを独立Windowとして残すか | CP7開始時 | CLI / Home / Sessionの観測導線を比較 |
 | Q-09 | SettingsをGUIとCLIのどちらへ置くか | CP7開始時 | 日常頻度と復旧可能性で機能別に判断 |
 | Q-10 | release対象OS、installer形式、署名 | CP8開始前 | packaging設計前に確認 |
-| Q-11 | Run mutation / supplemental inputのCLI operation名とprocess model | CP3開始時 | Provider runtime、dispatch、recovery contractと同時に確定 |
+| Q-11 | Run mutation / supplemental inputのCLI operation名とprocess model | CP3開始時 | 確認済み: 長寿命WithMate runtime host + local IPC。`withmate run start|retry|send-input|cancel`。判断理由はADR 013 |
 | Q-12 | child Sessionへのfollow-up / messageのCLI operation名 | CP5開始時 | Delegationのlatest Message / Runとdeliveryを原子的に更新するApplication contractと同時に確定 |
 
 ## Status運用

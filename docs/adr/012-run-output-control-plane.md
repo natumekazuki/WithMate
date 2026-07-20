@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-19
+- Amended by: ADR 013のruntime host ownership
 
 ## Context
 
@@ -19,7 +20,9 @@ Countsとitem pageは`run_output_items`だけを読み、payload tableをjoinし
 
 Export requestは、CLI userが明示したabsolute pathを表す`explicit_absolute_path` grantを受け取る。Applicationはvalidation、authorization、scope、availability、metadataの確定後にfilesystem副作用を開始する。Filesystem side-effect boundaryは、同じdirectoryにexclusiveなtemporary fileを作成し、payloadをoffset 0から逐次読み、各writeの完了を待つ。読んだ実byte数でoffsetを進めながらSHA-256とlengthを計算し、metadataと一致した場合だけflush後にpublishする。
 
-Destination directoryの解決とidentity検証を含むfilesystem処理は、終了可能なhelper processへ集約する。Hard timeoutまたはSIGINTでは、まずhelperへ中断を通知し、猶予時間内に終了しなければhelperを強制終了する。これにより、filesystem I/Oが応答しない場合も、CLI processのlifecycleを有限時間に保つ。
+Destination directoryの解決とidentity検証を含むfilesystem処理は、終了可能なhelper processへ集約する。Hard timeout、SIGINT、またはclient connection lossでは、runtime hostへcancelを伝播する。runtime hostはhelperへ中断を通知し、猶予時間内に終了しなければhelperを強制終了する。これにより、filesystem I/Oが応答しない場合も、client requestのlifecycleを有限時間に保つ。
+
+runtime hostへのownership移行はADR 013を正本とし、このbounded cancelをRun cancelへ流用しない。
 
 Publishはtemporary fileからdestinationへのhard linkを作るexclusive operationとし、既存file、symlink、junction、同時に成功した別exportを上書きしない。Temporary fileとdestinationのfilesystem identity、parent directoryのpathとidentityをpublish前後に検証する。検証可能な不一致ではpublishせず、publishの成否を確定できないtimeout、cancel、helper response lossでは結果を`unknown`として返す。
 
@@ -31,7 +34,7 @@ Public publication outcomeは次の3つに分ける。
 
 Raw destination path、temporary path、OS error、stored payload IDはpublic responseへ含めない。既存destinationを見つけたretryは`destination_exists`になり、前回の成功を推測しない。
 
-Supported threat modelは、同じcurrent OS userで動くlocal CLIとApplication processによる通常利用である。Destination directoryをexport中に任意の時点で置換できる敵対processまたはprincipalは対象外とする。Identity検証は通常の差し替えと曖昧なpublicationの検出に使うが、敵対的なpathname raceを完全に防ぐ保証にはしない。
+Supported threat modelは、同じcurrent OS userで動くlocal clientとruntime hostによる通常利用である。Destination directoryをexport中に任意の時点で置換できる敵対processまたはprincipalは対象外とする。Identity検証は通常の差し替えと曖昧なpublicationの検出に使うが、敵対的なpathname raceを完全に防ぐ保証にはしない。
 
 ## Alternatives
 
@@ -47,18 +50,19 @@ Supported threat modelは、同じcurrent OS userで動くlocal CLIとApplicatio
 - Run status、events、follow、Session hydrateはpayload本文を暗黙に読まず、large outputとbinaryをbounded readから分離できる。
 - Callerはavailability、format、actual bytes、EOF、publication outcomeを使って、payload stateとfailure timingを推測せずに扱える。
 - Exportはpayload sizeに比例するheap bufferを作らず、metadata不一致やwrite失敗ではdestinationを公開しない。
-- Export helperが中断へ応答しない場合も強制終了されるため、CLIのhard timeoutとSIGINTはfilesystem I/Oを含むexport lifecycle全体をboundedにできる。
+- Export helperが中断へ応答しない場合も強制終了されるため、clientのhard timeout、SIGINT、connection lossはfilesystem I/Oを含むexport lifecycle全体をboundedにできる。
 - Concurrent exportは1件だけがdestinationをpublishし、後続は既存destinationを変更しない。
 - Publish成否を確認できない場合は`unknown`になり、自動retryの前にdestination確認が必要になる。
 - 敵対processによるdestination directoryのpathname raceはsupported threat model外に残る。sharedまたはuntrusted directoryへのexportをsupported scopeへ追加する場合は、native handle相対operationを再検討する。
 - Process crashではsame-directory temporary fileが残る可能性がある。現時点では停止後に識別可能なtemporary fileを確認して手動回収し、自動sweepは別のlifecycle判断とする。
-- Run `start`、`retry`、active `cancel`、supplemental input、Provider runtime ownershipは未公開のままであり、CP2とCP3の後続sliceが必要である。
+- Run `start`、`retry`、active `cancel`、supplemental input、Provider runtime ownershipのpublic名とprocess modelはADR 013で確定したが、production実装はCP3の後続sliceとする。
 
 ## Related decisions
 
 - `docs/adr/003-application-service-operation-envelope.md`
 - `docs/adr/006-cli-session-control-plane.md`
 - `docs/adr/011-run-observation-control-plane.md`
+- `docs/adr/013-runtime-host-and-run-mutation-control-plane.md`
 - `docs/design/multi-agent-persistence.md`
 
 ## Contract anchors

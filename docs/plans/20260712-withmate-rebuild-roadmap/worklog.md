@@ -159,3 +159,18 @@
 - Node.js 24.18.0でruntime guard、format、lint、typecheck、全459 testとSQLite schema validator、buildを通した。build後のSession CLI、Run / Message / Session Run history CLI、compiled persistenceのprocess smokeもGreenで、SQLite sidecarとSession Files cleanup artifactが残らないことを確認した。
 - 既存accepted riskのCP2-CLI-R1からR3、CP2-RUN-R1、CP2-RUN-OUTPUT-R1からR2は、発生条件、影響、検知、復旧、再判断条件が引き続き妥当である。Gateではnetwork Workspace、path aliasのfile identity化、live activity port、adversarial directory、schema migration、temporary file orphan sweepをsupported scopeへ追加していない。新しいrisk-candidateと未実行のGate validationはない。
 - 既存ADR 003 / 006 / 011 / 012とD-006の責務、failure、checkpoint分離を変更していないため、新規ADRとdesign文書の更新は不要と判断した。CP2を`完了`とし、現在地をCP3着手前へ進めた。CP3は`未着手`のままで、Q-11は回答していない。
+
+## 2026-07-20: CP3 Codex runtime contract確定
+
+- `codex-cli 0.144.6`とNode.js 24.18.0を使用し、stable / experimental schemaをrepository外へ生成した。stable 267 file、experimental 337 fileで、`turn/steer`、`turn/interrupt`、agentMessage phaseはstable schemaに存在した。
+- 隔離した一時workspace、read-only sandbox、approval=neverで`runtime-contract-probe.mjs`を2回実行した。CAS-009は空interrupt response、Thread idle、`turn/completed(interrupted)`の順、CAS-010はTurn不一致とactive Turn不在の拒否、同一Turnへのsteer受理とuser Message履歴反映、CAS-016は`commentary` 1件と`final_answer` 1件を両回で確認した。
+- CAS-017はWindowsでCodex daemon lifecycleが非対応のため`blocked`とした。既存daemonのinstall、start、stop、restart、設定変更は行っていない。WebSocketは公式資料でexperimental / unsupportedのため代替transportとして採用していない。
+- ADR 013で、CLIやWindowから独立した長寿命WithMate runtime hostを1 current OS user / 1 application data rootのownerとした。runtime hostがPersistence Worker、stdio App Server child、live Run、draft、interactionを所有し、operational CLI / GUIはOS-local IPC clientとする。
+- public operation名を`withmate run start`、`withmate run retry`、`withmate run send-input`、`withmate run cancel`に確定した。`pending`だけを安全な自動送信候補とし、`dispatching` / `ambiguous`を自動再送せず、Provider履歴から欠落Message / RunEvent / draftを推測生成しない。
+- Q-11を確認済みとし、CP3を`進行中`へ更新した。このsliceはproduction source、schema、CLI commandを実装していない。次のproduction branchは`feat/cp03-runtime-host`とし、runtime host、single-owner起動、local IPC、既存operational CLI compositionの移行から開始する。
+
+### Accepted risks
+
+| ID | 発生条件と影響 | 検知と復旧 | 再判断条件 |
+| --- | --- | --- | --- |
+| CP3-RUNTIME-R1 | CAS-010の履歴反映を確認するためpersistent Threadを作成する。repository外workspaceの削除後も、syntheticなThreadが設定済みCodex profileへ残る可能性がある。既存Thread、repository data、secretは変更せず、Thread IDと本文を証跡へ出力しない。 | CodexのThread一覧で検知し、不要なら対象Threadをarchiveできる。 | 隔離したProvider stateで認証を安全に利用できる手段、または作成Threadを確実に削除できるstable APIが利用可能になった時点でprobeを更新する。 |
