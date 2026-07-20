@@ -51,8 +51,15 @@ if (
         retryDelay: 50,
       });
       sendAndExit({ type: "completed" }, 0);
-    } catch {
-      sendAndExit({ type: "filesystem_failed" }, 1);
+    } catch (error) {
+      const code =
+        error !== null &&
+        typeof error === "object" &&
+        "code" in error &&
+        typeof error.code === "string"
+          ? error.code
+          : "UNKNOWN";
+      sendAndExit({ type: "filesystem_failed", code }, 1);
     }
   });
 }
@@ -126,7 +133,12 @@ export async function removeSessionFilesFromAnchoredRoot(
       }
       if (type === "filesystem_failed") {
         responseReceived = true;
-        responseError = new Error("Session Files cleanup failed.");
+        const code = (message as Readonly<{ code?: unknown }>).code;
+        responseError = new Error(
+          typeof code === "string" && /^[A-Z0-9_]{1,64}$/.test(code)
+            ? `Session Files cleanup failed (${code}).`
+            : "Session Files cleanup failed.",
+        );
         return;
       }
       if (type === "completed") {

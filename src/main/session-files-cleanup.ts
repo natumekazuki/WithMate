@@ -21,13 +21,17 @@ export interface SessionFilesCleanupPort {
 }
 
 export class SessionFilesCleanupError extends Error {
-  constructor(readonly code: "invalid_session_id" | "unsafe_path" | "filesystem_failed") {
+  constructor(
+    readonly code: "invalid_session_id" | "unsafe_path" | "filesystem_failed",
+    options?: ErrorOptions,
+  ) {
     super(
       code === "invalid_session_id"
         ? "Session ID cannot identify a Session Files directory."
         : code === "unsafe_path"
           ? "Session Files cleanup path is unsafe."
           : "Session Files cleanup failed.",
+      options,
     );
   }
 }
@@ -146,7 +150,7 @@ export class LocalSessionFilesCleanup implements SessionFilesCleanupPort {
       );
     } catch (error) {
       if (error instanceof SessionFilesCleanupError) throw error;
-      throw new SessionFilesCleanupError("filesystem_failed");
+      throw new SessionFilesCleanupError("filesystem_failed", { cause: error });
     }
   }
 }
