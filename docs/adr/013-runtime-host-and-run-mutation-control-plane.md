@@ -86,6 +86,7 @@ public responseとdiagnosticはallowlist projectionとし、Provider固有の外
 - `docs/adr/006-cli-session-control-plane.md`
 - `docs/adr/011-run-observation-control-plane.md`
 - `docs/adr/012-run-output-control-plane.md`
+- `docs/adr/014-windows-provider-process-job-ownership.md`
 - `docs/design/session-run-message-contract.md`
 - `docs/design/multi-agent-persistence.md`
 - `docs/investigations/codex-app-server/runtime-contract-probe.mjs`
