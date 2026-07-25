@@ -257,7 +257,7 @@ export type CodexThreadSettings = {
 };
 
 function toCodexSdkThreadOptions(options: CodexThreadOptions): CodexSdkThreadOptions {
-  // Codex CLI 0.144.3 accepts max/ultra, while the TypeScript SDK union still ends at xhigh.
+  // Codex CLI accepts max/ultra, while the TypeScript SDK union still ends at xhigh.
   return {
     ...options,
     modelReasoningEffort: options.modelReasoningEffort as CodexSdkThreadOptions["modelReasoningEffort"],
