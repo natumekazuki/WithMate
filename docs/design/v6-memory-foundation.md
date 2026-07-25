@@ -845,10 +845,10 @@ search監査は件数・latency・strategy程度に抑え、private query全文�
 - current実装では、Settingsで解決できるprovider skill rootへ起動時と設定保存後に`withmate-memory`を同期する。provider skill root未設定時はskipする。
 - WithMateが管理する場合はmanaged marker / versionを持つ。current実装では`.withmate-managed-skill.json`を持つ`withmate-memory`だけをapp version単位で更新する。
 - user-created同名Skillを無断上書きしない。
-- packaged CLI pathまたはshimをSkillが利用できるようにする。current実装ではWindowsのproviderへ同期するmanaged Skillは自己完結した`SKILL.md`とmanaged markerだけを持ち、CLI実体はinstalled app側のpackaged resourceをPATH shim経由で呼ぶ。Windowsではinstall rootの`withmate-memory.cmd`に加え、user PATH既定の`Microsoft\WindowsApps\withmate-memory.cmd` aliasをinstallerが作成する。installerはuser `Path` registry値を直接編集しない。macOS / LinuxではSettings > Diagnosticsから`~/.local/bin/withmate-memory` shimをinstall / uninstallできる。`~/.local/bin`がapp processの`PATH`に含まれてshimがusableな場合、providerへ同期するmanaged Skillは`SKILL.md`とmanaged markerだけになる。
+- packaged CLI pathまたはshimをSkillが利用できるようにする。packaged CLI helperはbuild時に`scripts/withmate-memory.ts`から生成し、canonical CLIと別実装として保守しない。current実装ではWindowsのproviderへ同期するmanaged Skillは`SKILL.md`、`reference/`、managed markerを持ち、`bin/`は省略してinstalled app側のpackaged resourceをPATH shim経由で呼ぶ。Windowsではinstall rootの`withmate-memory.cmd`に加え、user PATH既定の`Microsoft\WindowsApps\withmate-memory.cmd` aliasをinstallerが作成する。installerはuser `Path` registry値を直接編集しない。macOS / LinuxではSettings > Diagnosticsから`~/.local/bin/withmate-memory` shimをinstall / uninstallできる。`~/.local/bin`がapp processの`PATH`に含まれてshimがusableな場合も、providerへ同期するmanaged Skillは`SKILL.md`、`reference/`、managed markerを持ち、`bin/`だけを省略する。
 - Skill updateとapp versionの互換範囲を定義する。
 - Skill本文はCLI command、JSON schema、error recovery、when-to-use / when-not-to-useを説明する。
-- CLIそのもののreferenceはsource bundleの`reference/`配下にも残す。Windowsまたはusable PATH shimがあるproviderへ配布される`SKILL.md`だけで基本のCLI利用、JSON shape、error handlingが完結する。macOS / Linuxでshim未導入または`PATH`外の場合は、source bundleの`reference/`と`bin/`を同期対象に含め、`node bin/withmate-memory.mjs` fallbackを維持する。
+- CLIそのもののreferenceはsource bundleの`reference/`配下に残し、すべてのmanaged Skillへ同期する。`SKILL.md`は基本のCLI利用と判断基準を持ち、完全なrequest / response shape、file operation、error recoveryは`reference/`で補う。macOS / Linuxでshim未導入または`PATH`外の場合は`bin/`も同期対象に含め、`node bin/withmate-memory.mjs` fallbackを維持する。
 - Skill本体はMemoryを使うタイミング、search / get / append / forget / tagsの判断基準、inactive entryの扱いを説明する。
 - Skill本文やreferenceにはruntime secret、runtime discovery file pathを記載しない。
 - Settings Diagnosticsは、必要なproviderのuser-level instruction fileへ手動で貼り付けるためのprovider instruction sampleを表示し、clipboard copyできる。

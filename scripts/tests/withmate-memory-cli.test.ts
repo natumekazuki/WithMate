@@ -168,7 +168,10 @@ describe("withmate-memory CLI", () => {
 
       assert.deepEqual(
         await discoverWithMateMemoryApi({
-          env: { WITHMATE_MEMORY_RUNTIME_DIR: tempDirectory },
+          env: {
+            WITHMATE_MEMORY_RUNTIME_DIR: tempDirectory,
+            WITHMATE_MEMORY_DISCOVERY_FILE: " ",
+          },
         }),
         { baseUrl: "http://127.0.0.1:4567" },
       );

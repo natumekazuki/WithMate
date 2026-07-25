@@ -337,9 +337,9 @@ export async function discoverWithMateMemoryApi(
     };
   }
 
+  const envDiscoveryFilePath = env.WITHMATE_MEMORY_DISCOVERY_FILE?.trim();
   const discoveryFilePath = options.discoveryFilePath
-    ?? env.WITHMATE_MEMORY_DISCOVERY_FILE?.trim()
-    ?? resolveDefaultWithMateMemoryDiscoveryFilePath(env);
+    ?? (envDiscoveryFilePath || resolveDefaultWithMateMemoryDiscoveryFilePath(env));
   const read = options.readFile ?? readFile;
 
   try {
@@ -472,10 +472,7 @@ export async function parseWithMateMemoryCliArgs(
     } else if (filePath !== null) {
       body = await parseJsonInput(await (deps.readFile ?? readFile)(filePath, "utf8"));
     } else if (stdinRequested) {
-      if (!deps.stdin) {
-        throw usageError("--stdin requires stdin.");
-      }
-      body = await parseJsonInput(await readStdin(deps.stdin));
+      body = await parseJsonInput(await readStdin(deps.stdin ?? process.stdin));
     } else if (hasShorthandOptions({ projectPath, projectId, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, limit })) {
       body = buildShorthandBody(command, { projectPath, projectId, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, limit });
     } else if (deps.stdin && !deps.stdin.isTTY) {

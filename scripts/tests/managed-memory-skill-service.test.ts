@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -17,6 +17,10 @@ import {
   WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
 } from "../../src/memory-v6/memory-discovery.js";
+import {
+  BUNDLED_MEMORY_CLI_FILE_NAME,
+  buildWithMateMemoryCli,
+} from "../build-withmate-memory-cli.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -51,8 +55,12 @@ async function pathExists(targetPath: string): Promise<boolean> {
   }
 }
 
+function normalizeLineEndings(value: string): string {
+  return value.replace(/\r\n/g, "\n");
+}
+
 describe("ManagedMemorySkillService", () => {
-  it("設定済み provider skill root に Skill.md と managed marker だけを install する", async () => {
+  it("設定済み provider skill root に Skill documentation と managed marker を install する", async () => {
     const bundlePath = await createBundle();
     const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
     try {
@@ -79,7 +87,7 @@ describe("ManagedMemorySkillService", () => {
       assert.equal(await readFile(path.join(skillPath, "SKILL.md"), "utf8"), await readFile(path.join(bundlePath, "SKILL.md"), "utf8"));
       assert.match(await readFile(path.join(skillPath, ".withmate-managed-skill.json"), "utf8"), /"managedBy": "WithMate"/);
       assert.equal(await pathExists(path.join(skillPath, "bin")), false);
-      assert.equal(await pathExists(path.join(skillPath, "reference")), false);
+      assert.equal(await readFile(path.join(skillPath, "reference", "cli.md"), "utf8"), "# CLI\n");
     } finally {
       await rm(bundlePath, { recursive: true, force: true });
       await rm(rootPath, { recursive: true, force: true });
@@ -175,6 +183,7 @@ describe("ManagedMemorySkillService", () => {
       assert.equal(result?.status, "updated");
       assert.equal(await pathExists(path.join(skillPath, "bin")), false);
       assert.equal(await readFile(path.join(skillPath, "SKILL.md"), "utf8"), await readFile(path.join(bundlePath, "SKILL.md"), "utf8"));
+      assert.equal(await readFile(path.join(skillPath, "reference", "cli.md"), "utf8"), "# CLI\n");
     } finally {
       await rm(bundlePath, { recursive: true, force: true });
       await rm(rootPath, { recursive: true, force: true });
@@ -211,6 +220,42 @@ describe("ManagedMemorySkillService", () => {
 
       assert.equal(result?.status, "updated");
       assert.equal(installedSkill, "updated bundle\n");
+    } finally {
+      await rm(bundlePath, { recursive: true, force: true });
+      await rm(rootPath, { recursive: true, force: true });
+    }
+  });
+
+  it("同じ app version でも reference 内容が変われば managed skill を更新する", async () => {
+    const bundlePath = await createBundle();
+    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
+    try {
+      const settings = createDefaultAppSettings();
+      settings.codingProviderSettings.codex = {
+        enabled: true,
+        apiKey: "",
+        skillRootPath: rootPath,
+        skillRelativePath: "skills",
+        instructionRelativePath: "",
+      };
+      const service = new ManagedMemorySkillService({
+        bundledSkillPath: bundlePath,
+        getAppSettings: () => settings,
+        getAppVersion: () => "5.0.0-test",
+        platform: "win32",
+      });
+
+      assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "installed");
+      await writeFile(path.join(bundlePath, "reference", "cli.md"), "# Updated CLI\n", "utf8");
+
+      const result = (await service.syncConfiguredProviderSkills())[0];
+      const installedReference = await readFile(
+        path.join(rootPath, "skills", WITHMATE_MEMORY_SKILL_NAME, "reference", "cli.md"),
+        "utf8",
+      );
+
+      assert.equal(result?.status, "updated");
+      assert.equal(installedReference, "# Updated CLI\n");
     } finally {
       await rm(bundlePath, { recursive: true, force: true });
       await rm(rootPath, { recursive: true, force: true });
@@ -305,7 +350,7 @@ describe("ManagedMemorySkillService", () => {
     }
   });
 
-  it("macOS でも PATH shim が利用可能なら Skill.md と managed marker だけを同期する", async () => {
+  it("macOS でも PATH shim が利用可能なら Skill documentation と managed marker を同期する", async () => {
     const bundlePath = await createBundle();
     const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
     try {
@@ -331,7 +376,7 @@ describe("ManagedMemorySkillService", () => {
       assert.equal(result?.status, "installed");
       assert.equal(await pathExists(path.join(skillPath, "SKILL.md")), true);
       assert.equal(await pathExists(path.join(skillPath, "bin", "withmate-memory.mjs")), false);
-      assert.equal(await pathExists(path.join(skillPath, "reference", "cli.md")), false);
+      assert.equal(await readFile(path.join(skillPath, "reference", "cli.md"), "utf8"), "# CLI\n");
     } finally {
       await rm(bundlePath, { recursive: true, force: true });
       await rm(rootPath, { recursive: true, force: true });
@@ -342,14 +387,29 @@ describe("ManagedMemorySkillService", () => {
 describe("withmate-memory bundled helper", () => {
   const helperPath = path.resolve("resources", "skills", WITHMATE_MEMORY_SKILL_NAME, "bin", "withmate-memory.mjs");
 
-  it("runtime が生成する既定 discovery path で status できる", async () => {
+  it("canonical CLI source から生成された current artifact である", async () => {
+    const outputDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-cli-build-"));
+    try {
+      await buildWithMateMemoryCli(outputDirectoryPath);
+      assert.equal(
+        normalizeLineEndings(await readFile(path.join(outputDirectoryPath, BUNDLED_MEMORY_CLI_FILE_NAME), "utf8")),
+        normalizeLineEndings(await readFile(helperPath, "utf8")),
+      );
+    } finally {
+      await rm(outputDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("runtime directory の discovery path で status できる", async () => {
     const tempRootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-runtime-root-"));
     const ownerSegment = typeof process.getuid === "function" ? `uid-${process.getuid()}` : "local-user";
     const runtimeDirectoryPath = path.join(tempRootPath, "withmate-memory", ownerSegment);
     const apiSecret = "test-secret";
     const runtimeInstanceId = "runtime-from-discovery";
+    const requestedPaths: string[] = [];
     const server = createServer((request, response) => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      requestedPaths.push(`${request.method ?? "UNKNOWN"} ${url.pathname}${url.search}`);
       if (request.method === "GET" && url.pathname === "/v1/status") {
         const nonce = url.searchParams.get("nonce") ?? "";
         response.setHeader("Content-Type", "application/json");
@@ -389,13 +449,12 @@ describe("withmate-memory bundled helper", () => {
       const { stdout } = await execFileAsync(process.execPath, [helperPath, "status"], {
         env: {
           ...process.env,
-          TMP: tempRootPath,
-          TEMP: tempRootPath,
-          TMPDIR: tempRootPath,
-          WITHMATE_MEMORY_RUNTIME_DIR: "",
+          WITHMATE_MEMORY_RUNTIME_DIR: runtimeDirectoryPath,
           WITHMATE_MEMORY_DISCOVERY_FILE: "",
           WITHMATE_MEMORY_API_URL: "",
         },
+      }).catch((error: unknown) => {
+        throw new Error(`Bundled helper requests: ${JSON.stringify(requestedPaths)}`, { cause: error });
       });
 
       assert.equal(JSON.parse(stdout).runtimeInstanceId, runtimeInstanceId);
@@ -451,9 +510,54 @@ describe("withmate-memory bundled helper", () => {
     });
 
     const schema = JSON.parse(stdout);
+    assert.deepEqual(schema.commands, [
+      "help",
+      "status",
+      "characters",
+      "file-usage",
+      "search",
+      "get-entry",
+      "get-file",
+      "export-files",
+      "list-tags",
+      "append",
+      "forget",
+      "schema",
+      "validate",
+    ]);
     assert.deepEqual(schema.requestBodyInputs, ["--json", "--file", "@file", "--stdin"]);
     assert(schema.entryKinds.includes("decision"));
     assert(schema.forgetReasons.includes("user_request"));
+  });
+
+  it("--stdin は standalone helper の process stdin から request body を読む", () => {
+    const request = JSON.stringify({
+      schemaVersion: "withmate-memory-v1",
+      targets: [
+        { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      ],
+      query: "release",
+      kinds: ["decision"],
+      limit: 20,
+      cursor: "cursor-a",
+    });
+    const stdout = execFileSync(process.execPath, [
+      helperPath,
+      "validate",
+      "--command",
+      "search",
+      "--stdin",
+    ], {
+      env: process.env,
+      input: request,
+      encoding: "utf8",
+    });
+
+    const response = JSON.parse(stdout);
+    assert.equal(response.valid, true);
+    assert.deepEqual(response.value.kinds, ["decision"]);
+    assert.equal(response.value.limit, 20);
+    assert.equal(response.value.cursor, "cursor-a");
   });
 
   it("validate は helper 単体で request を検証する", async () => {
@@ -612,6 +716,42 @@ describe("withmate-memory bundled helper", () => {
       canonicalValue: "release",
     }]);
     assert.deepEqual(response.value.supersedes, ["entry-a"]);
+  });
+
+  it("validate は helper 側でも protected object 付き append を受け付ける", async () => {
+    const filePath = path.resolve("artifact.bin");
+    const request = JSON.stringify({
+      schemaVersion: "withmate-memory-v1",
+      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      kind: "context",
+      title: "Artifact",
+      body: "Artifact context.",
+      preview: "Artifact preview.",
+      tags: [],
+      files: [{
+        path: filePath,
+        role: "artifact",
+        summary: "Generated artifact.",
+      }],
+    });
+    const { stdout } = await execFileAsync(process.execPath, [
+      helperPath,
+      "validate",
+      "--command",
+      "append",
+      "--json",
+      request,
+    ], {
+      env: process.env,
+    });
+
+    const response = JSON.parse(stdout);
+    assert.equal(response.valid, true);
+    assert.deepEqual(response.value.files, [{
+      path: filePath,
+      role: "artifact",
+      summary: "Generated artifact.",
+    }]);
   });
 
   it("read shorthand は helper でも request body を組み立てる", async () => {
