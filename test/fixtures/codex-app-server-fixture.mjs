@@ -5,6 +5,7 @@ const scenario = process.argv[2];
 const supportedScenarios = new Set([
   "framing",
   "normal",
+  "adapter",
   "early-exit",
   "malformed-handshake",
   "partial-handshake",
@@ -128,6 +129,40 @@ if (!supportedScenarios.has(scenario)) {
       case "normal":
       case "stderr":
         send({ id: message.id, result: message.params ?? null });
+        break;
+      case "adapter":
+        if (message.method === "model/list") {
+          send({
+            method: "future/modelCatalogObserved",
+            params: { threadId: "fixture-thread", turnId: "fixture-turn" },
+            emittedAtMs: Date.now(),
+          });
+          send({
+            id: message.id,
+            result: {
+              data: [
+                {
+                  id: "gpt-5.4",
+                  model: "gpt-5.4",
+                  upgrade: null,
+                  upgradeInfo: null,
+                  availabilityNux: null,
+                  displayName: "GPT-5.4",
+                  description: "Fixture model",
+                  hidden: false,
+                  supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced" }],
+                  defaultReasoningEffort: "medium",
+                  supportsPersonality: true,
+                  additionalSpeedTiers: [],
+                  serviceTiers: [],
+                  defaultServiceTier: null,
+                  isDefault: true,
+                },
+              ],
+              nextCursor: null,
+            },
+          });
+        }
         break;
       case "exit-after-initialized":
         break;

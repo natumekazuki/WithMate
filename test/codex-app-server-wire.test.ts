@@ -32,7 +32,7 @@ test("JSONL decoder accepts omitted jsonrpc and exact jsonrpc 2.0 envelopes", ()
       '{"jsonrpc":"2.0","id":"request-1","result":null}',
       '{"id":2,"error":{"code":-32600,"message":"invalid","data":{"reason":"test"}}}',
       '{"jsonrpc":"2.0","id":"server-1","method":"future/request","params":{"value":1},"trace":null}',
-      '{"method":"future/notification"}',
+      '{"method":"future/notification","emittedAtMs":1784722603886}',
     ].join("\n") + "\n",
   );
 
@@ -51,7 +51,7 @@ test("JSONL decoder accepts omitted jsonrpc and exact jsonrpc 2.0 envelopes", ()
       trace: null,
       jsonrpc: "2.0",
     },
-    { kind: "notification", method: "future/notification" },
+    { kind: "notification", method: "future/notification", emittedAtMs: 1784722603886 },
   ]);
 });
 
@@ -118,6 +118,9 @@ test("wire validation rejects ambiguous or unsupported outer envelopes", () => {
     '{"id":9007199254740992,"method":"server/request"}',
     '{"method":""}',
     '{"method":"future/event","extra":true}',
+    '{"method":"future/event","emittedAtMs":"1784722603886"}',
+    '{"method":"future/event","emittedAtMs":1.5}',
+    '{"method":"future/event","emittedAtMs":9007199254740992}',
     "[]",
   ];
 

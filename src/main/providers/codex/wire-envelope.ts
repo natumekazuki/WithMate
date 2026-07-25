@@ -38,6 +38,7 @@ export type CodexWireNotification = Readonly<{
   kind: "notification";
   method: string;
   params?: unknown;
+  emittedAtMs?: number;
   jsonrpc?: "2.0";
 }>;
 
@@ -114,7 +115,10 @@ function decodeServerRequest(value: Record<string, unknown>): CodexWireServerReq
 }
 
 function decodeNotification(value: Record<string, unknown>): CodexWireNotification {
-  if (!hasOnlyKeys(value, ["method", "params", "jsonrpc"])) {
+  if (
+    !hasOnlyKeys(value, ["method", "params", "emittedAtMs", "jsonrpc"]) ||
+    (hasOwn(value, "emittedAtMs") && !Number.isSafeInteger(value.emittedAtMs))
+  ) {
     throw invalidEnvelope();
   }
   return withJsonRpc(
@@ -122,6 +126,7 @@ function decodeNotification(value: Record<string, unknown>): CodexWireNotificati
       kind: "notification",
       method: value.method as string,
       ...(hasOwn(value, "params") ? { params: value.params } : {}),
+      ...(hasOwn(value, "emittedAtMs") ? { emittedAtMs: value.emittedAtMs as number } : {}),
     },
     value,
   );

@@ -18,3 +18,40 @@ export type {
 export { CODEX_TRANSPORT_LIMITS } from "./transport-limits.js";
 export type { CodexTransportLimits } from "./transport-limits.js";
 export type { CodexDiagnosticSnapshot } from "./diagnostics.js";
+export { CODEX_ADAPTER_LIMITS, CODEX_ADAPTER_SCHEMA_BASELINE } from "./codex-adapter-contract.js";
+export { CodexAdapter } from "./codex-adapter.js";
+export type {
+  CodexAdapterApprovalPolicy,
+  CodexAdapterDiagnostic,
+  CodexAdapterDiagnosticCode,
+  CodexAdapterEvent,
+  CodexAdapterInterruptAcknowledgement,
+  CodexAdapterLimits,
+  CodexAdapterModel,
+  CodexAdapterModelCatalog,
+  CodexAdapterMutationResult,
+  CodexAdapterOptions,
+  CodexAdapterOutput,
+  CodexAdapterOutputPayload,
+  CodexAdapterReadResult,
+  CodexAdapterReadThreadSnapshot,
+  CodexAdapterRequestOptions,
+  CodexAdapterSandboxMode,
+  CodexAdapterSandboxPolicy,
+  CodexAdapterServerRequestPort,
+  CodexAdapterSteerAcknowledgement,
+  CodexAdapterThreadSnapshot,
+  CodexAdapterThreadStatus,
+  CodexAdapterTokenUsageBreakdown,
+  CodexAdapterTransportEvent,
+  CodexAdapterTransportPort,
+  CodexAdapterTurnSnapshot,
+  CodexAdapterTurnStatus,
+  CodexInterruptTurnInput,
+  CodexListModelsInput,
+  CodexReadThreadInput,
+  CodexResumeThreadInput,
+  CodexStartThreadInput,
+  CodexStartTurnInput,
+  CodexSteerTurnInput,
+} from "./codex-adapter-contract.js";
