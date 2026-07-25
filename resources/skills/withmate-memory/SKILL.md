@@ -1,6 +1,6 @@
 ---
 name: withmate-memory
-description: Search, append, inspect, and forget WithMate V6 Memory through the installed WithMate Memory CLI when durable project context or cross-session Character continuity, including explicit relationship preferences, conversational distance, recurring topics, and memorable exchanges, could affect the task or conversation. After a command, test, build, tool, or environment failure, use it only when stored failure patterns, constraints, or workarounds could change the next action; do not trigger on a non-zero exit alone or for a deterministic correction supported by current evidence.
+description: Perform lightweight Memory reflection before every user-facing final response, and search, append, inspect, or forget WithMate V6 Memory through the installed CLI when concrete reusable project context or cross-session Character continuity is relevant. Reflection does not require CLI work when no candidate exists. After a command, test, build, tool, or environment failure, use stored Memory only when a known pattern, constraint, or workaround could change the next action.
 ---
 
 # WithMate Memory
@@ -19,9 +19,9 @@ Use Memory before making a durable project or character-sensitive decision when 
 
 Use Memory after an unexpected command, test, build, tool invocation, or environment check failure only when a known failure pattern, tooling trap, environment constraint, or workaround could affect the next action.
 
-A non-zero exit code alone is not a Memory trigger. Skip Memory search when current evidence fully explains the failure and determines a safe corrected action.
+A non-zero exit code alone is not a Memory trigger. Skip recall search when current evidence fully explains the failure and determines a safe corrected action.
 
-Do not search Memory on every turn. Skip it for trivial local edits or conversations where the current files and user message fully determine the answer.
+Do not run recall search on every turn. Skip recall for trivial local edits or conversations where the current files and user message fully determine the answer. The end-of-turn reflection below still applies to every user-facing turn.
 
 ## Principles
 
@@ -33,30 +33,63 @@ Do not search Memory on every turn. Skip it for trivial local edits or conversat
 - Keep unfinished state, unexecuted validation, and the next action in a handoff rather than Memory.
 - Search before relying on remembered project or Character decisions.
 - Use `get-entry` only for search hits whose exact body matters.
-- Append only future-useful decisions, constraints, conventions, preferences, context, or Character observations that will matter across sessions.
+- Append only decisions, constraints, conventions, preferences, context, or Character observations that could make later related work or conversation a little easier or more natural.
 - Correct or forget entries only when the user asks to remove, correct, or stop using remembered information.
 - Treat missing or unavailable Memory as non-blocking unless the user explicitly made Memory access the task.
+
+## Recall Search
+
+Use recall search only when stored context could affect the current task or make the current conversation naturally continue from a past one. Run it at the point the context is needed, with an explicit target. Do not turn end-of-turn reflection into routine recall.
+
+Treat routine search and read as background recall. Search results support the current task; they do not replace current repository sources of truth or the current user message. Inspect exact entry bodies only when the wording or rationale matters.
 
 ## Character Memory
 
 Treat Character Memory as an observation record for natural conversation continuity across sessions, not as a person profile or proof of facts.
 
-Save explicit relationship preferences, conversational distance, recurring topics, and memorable exchanges when they are likely to improve a future conversation. Preferred names, light inside jokes, interaction styles, and topics the user wants to continue are also candidates. The user does not need to say `remember` when the content is explicit, within the current conversation's scope, and clearly reusable across sessions.
+Treat explicit relationship preferences, conversational distance, preferred names, interaction styles, topics the user wants to continue, light inside jokes, shared episodes, and concrete reactions as candidates when they could make a later related conversation more natural.
 
-Do not save every conversation, temporary emotions, one-off acknowledgements, routine small talk, raw transcripts, or details with no likely future value. Keep explicit user statements separate from agent inference. Write observations as attributed context such as "The user said they prefer..." rather than converting them into unqualified facts.
+Do not require repeated mentions or an unusually memorable event. One explicit statement or one shared episode can be enough, and the user does not need to say `remember`, when the future conversational benefit is concrete and the content is within the current conversation's scope. Read-only requests and casual conversations can produce Character candidates under the same rule.
+
+Do not save every conversation, generic turn summaries, temporary emotions, one-off acknowledgements, routine small talk, raw transcripts, or details with no concrete future value. Keep explicit user statements separate from agent inference. Write observations as attributed context such as "The user said they prefer..." rather than converting them into unqualified facts.
 
 Do not infer romance, exclusivity, real-world relationships, attributes, or feelings from stored interactions. The current user message and current Character Definition take precedence over Memory. Never use Memory to overwrite or amend the Character Definition.
 
 Search Character Memory when the user asks about the past, or when a prior relationship preference, ongoing topic, or conversation episode could naturally improve the current response. Do not perform Character recall on every turn. If no relevant hit exists, do not invent one. If old Memory conflicts with the current user message, follow the current message and use the correction or forget flow when the user asks to change future behavior.
 
+## End-of-Turn Memory Reflection
+
+Before every user-facing final response, review the current turn and recent conversation for concrete Memory candidates. Reflection is required on every user-facing turn; Memory search and append are conditional.
+
+Apply these lenses independently:
+
+- **Project lens:** Look for repository-specific background, decisions, constraints, conventions, working preferences, reliable investigation results, workarounds, environment-specific context, or pointers to repository sources of truth that would make later work start, decisions, investigation, or explanation a little faster. Use a project target for repository-specific context and user-global only for provider-independent preferences or constraints.
+- **Character lens:** Look for relationship or conversational distance preferences, interaction style, preferred names, continuing topics, light inside jokes, shared episodes, or concrete reactions that would make a later related conversation a little more natural. Use character or character+project according to whether the context is project-specific.
+
+Keep repository-owned current state, expected behavior, contracts, and decision rationale in repository sources of truth. A project Memory entry may point to that source and preserve only useful non-source-of-truth context.
+
+If neither lens produces a concrete candidate, stop the reflection without searching or appending. Candidate absence is normal. Never append a generic summary of the turn.
+
+For each concrete candidate:
+
+1. Select its explicit project, user-global, character, or character+project target.
+2. Run an append preflight search against that target only to check for an existing duplicate or a possible correction.
+3. Inspect an exact hit only when needed to decide duplication, contradiction, correction, or supersession.
+4. Skip append when an existing active entry already expresses the candidate. If an active entry conflicts with the candidate, follow the current user message for this turn and do not append, change, supersede, or forget Memory unless the user explicitly requests a durable correction.
+5. Append only when the candidate passes Append Safety.
+
+Keep Project and Character candidates in separate entries when their targets differ. Candidates for the same target and one searchable topic may be combined into one concise entry.
+
+Recall search and append preflight search serve different purposes: recall informs the current task or response and remains optional; append preflight runs only after reflection finds a concrete candidate.
+
 ## Workflow
 
-1. Search first with an explicit target.
-2. Inspect only relevant hits with `get-entry` when exact wording or rationale matters.
-3. Use retrieved Memory as supporting context, not as a replacement for reading current repo files and source-of-truth docs.
-4. After a failure, diagnose it from current evidence first. Search Memory before retrying when the cause or safe next action remains uncertain, the same failure signature recurs, or the next attempt changes scope, subsystem, strategy, permissions, or environment assumptions. Skip search for a deterministic correction supported by current evidence.
-5. Append only future-useful facts, decisions, preferences, or attributed Character observations that pass Append Safety. Keep title and preview short, body precise, and tags reusable.
-6. If a failure reveals a reusable pattern or reliable workaround that is likely to matter in future sessions, append a concise Memory entry describing the failure signature, likely cause, and next-time guidance.
+1. Read current repository sources of truth and the current user message before relying on Memory.
+2. Use Recall Search with an explicit target only when stored context could affect the current task or conversation.
+3. After a failure, diagnose it from current evidence first. Search Memory before retrying when the cause or safe next action remains uncertain, the same failure signature recurs, or the next attempt changes scope, subsystem, strategy, permissions, or environment assumptions. Skip search for a deterministic correction supported by current evidence.
+4. Before the user-facing final response, perform End-of-Turn Memory Reflection.
+5. For each concrete candidate, run append preflight against its explicit target and append only if it is neither already represented nor in conflict with active Memory and passes Append Safety. Keep title and preview short, body precise, and tags reusable.
+6. If a failure reveals a reusable pattern or reliable workaround that is likely to matter in future sessions, treat it as a Project lens candidate with the failure signature, likely cause, and next-time guidance.
 7. Correct or forget entries when the user explicitly requests removal, correction, privacy cleanup, or no-longer-use semantics.
 8. If Memory is unavailable, continue the task unless Memory access itself is the requested task.
 
@@ -78,15 +111,16 @@ Prefer natural wording such as "Based on the previous decision..." or "For next 
 
 Before append, check:
 
-- Is this expected to matter in future sessions?
+- Would this make a later related task, decision, explanation, or conversation a little easier or more natural?
 - Is it a decision, constraint, convention, preference, reusable context, or explicit Character observation rather than transient progress?
-- If the user did not say `remember`, is the content nevertheless explicit, in scope, and clearly useful for future project work or conversation continuity?
+- If the user did not say `remember`, is the content nevertheless explicit, in scope, and concretely useful for future project work or conversation continuity?
 - Does the entry attribute what the user actually said and avoid converting an agent inference into a fact?
 - Does it avoid secrets, tokens, private paths, raw logs, large diffs, and speculative claims?
 - Is the target explicit and correct?
+- Does it avoid creating a second active entry that conflicts with existing Memory?
 - Would a future agent understand the entry from title, preview, body, and tags alone?
 
-Do not append all conversation by default. Require explicit user intent before saving an inference, saving content outside the current task or conversation scope, or changing an existing Memory entry.
+Do not append all conversation by default. Require explicit user intent before saving an inference, saving content outside the current task or conversation scope, changing an existing Memory entry, or appending a conflicting replacement.
 
 When correcting a previous entry, inspect the exact entry, then append a replacement with `supersedes` instead of creating ambiguous duplicates when possible. Use `forget` when the user explicitly requests removal rather than replacement. Keep the same semantic target unless the user is also correcting the scope.
 
@@ -98,12 +132,15 @@ Run the installed command with an explicit target:
 withmate-memory --help
 withmate-memory status
 withmate-memory characters
+withmate-memory file-usage --largest --limit 20
 withmate-memory schema
 withmate-memory validate --command append --stdin
 withmate-memory search --project <absolute-repo-path> --query "delivery cleanup" --tag delivery-cleanup
 withmate-memory search --project <absolute-repo-path> --tags topic:delivery-cleanup,topic:relaygraph
 withmate-memory search --file memory-search.json
 withmate-memory get-entry --file memory-get-entry.json
+withmate-memory get-file --project <absolute-repo-path> --object-id <object-id> --output <absolute-output-path>
+withmate-memory export-files --project <absolute-repo-path> --entry-id <entry-id> --output-dir <absolute-output-directory>
 withmate-memory list-tags --file memory-list-tags.json
 withmate-memory append --file memory-entry.json
 withmate-memory forget --file forget-request.json
@@ -114,6 +151,8 @@ Commands write one JSON object to stdout, except `--help`, `-h`, and `help`, whi
 For commands that require a request body, prefer `--stdin` or `--file <path>`. Inline `--json` is supported, but it is shell-sensitive. On Windows PowerShell or `.cmd` wrappers, double quotes inside JSON can be consumed before the CLI receives the argument. If `--json` fails with invalid JSON or a CLI usage error, pipe the request through `--stdin`, or write it to a temporary JSON file and retry with `--file`.
 
 If `withmate-memory` is not found and `bin/withmate-memory.mjs` exists in this skill directory, replace `withmate-memory` with `node bin/withmate-memory.mjs` in the commands above.
+
+Read [reference/cli.md](reference/cli.md) before attaching or exporting files, or when complete request and failure details matter.
 
 PowerShell example:
 
@@ -157,13 +196,18 @@ withmate-memory validate --command append --stdin
   "targets": [
     { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" }
   ],
-  "query": "approval mode"
+  "query": "approval mode",
+  "kinds": ["decision", "constraint"],
+  "limit": 20,
+  "cursor": "<nextCursor-from-prior-response>"
 }
 ```
 
 Search supports natural-language terms across title, preview, body, and tags. Hyphenated and spaced tag words such as `delivery-cleanup` and `delivery cleanup` are treated as related candidates. Shorthand `--tag <tag>` defaults to `topic:<tag>`, and `--tags` accepts comma-separated `<type>:<tag>` values.
 
 Search results may include `match` on each hit with matched fields and a short snippet. `match.fields` can report body matches, but snippets are limited to tags, title, and preview; use `get-entry` when the exact body matters. When no entries match, the response may include `relatedTags`.
+
+Omit `cursor` on the first request. If a response has `nextCursor` and the needed entry or append-preflight duplicate has not been resolved, repeat the same search options with that cursor before concluding that no relevant entry exists.
 
 For provider-independent user preferences, conventions, constraints, or other cross-project context, use an explicit user-global target:
 
@@ -209,9 +253,19 @@ For provider-independent user preferences, conventions, constraints, or other cr
   "body": "Durable details for future sessions.",
   "preview": "Short preview.",
   "tags": [{ "type": "topic", "value": "release" }],
+  "supersedes": ["optional-replaced-entry-id"],
+  "files": [
+    {
+      "path": "<absolute-readable-file-path>",
+      "role": "evidence",
+      "summary": "Why this file is retained."
+    }
+  ],
   "idempotencyKey": "optional-stable-key"
 }
 ```
+
+`supersedes` is an array of entry IDs. Use it only for an explicitly authorized correction. `files` is optional; each file needs an absolute path and non-empty summary. Valid roles are `evidence`, `source`, `snapshot`, `artifact`, `reference`, and `other`; `displayName` and `contentType` are optional.
 
 `forget`:
 
@@ -225,14 +279,44 @@ For provider-independent user preferences, conventions, constraints, or other cr
 }
 ```
 
+Choose a stable `idempotencyKey` before the first `append` or `forget` attempt. After a timeout or response loss, retry the unchanged request with the same key. Use a new key when the request body changes.
+
+### Protected Files
+
+`file-usage` is read-only and requires no target. Use `--largest --limit <n>` to include the largest active entry candidates. It returns aggregate metadata, not file paths or decrypted content.
+
+`get-file` exports one object to an explicit absolute output path:
+
+```json
+{
+  "schemaVersion": "withmate-memory-v1",
+  "target": { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" },
+  "objectId": "<object-id>",
+  "outputPath": "<absolute-output-path>"
+}
+```
+
+`export-files` exports every file attached to one entry into an explicit absolute directory:
+
+```json
+{
+  "schemaVersion": "withmate-memory-v1",
+  "target": { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" },
+  "entryId": "<entry-id>",
+  "outputDirectoryPath": "<absolute-output-directory>"
+}
+```
+
+Do not attach secrets or files outside the user's authorized scope. File append is atomic with entry creation: quota, import, or persistence failure must not be treated as a text-only success. Export verifies the explicit target and never overwrites an existing output file. `append`, `get-file`, and `export-files` may run for up to 300 seconds by default; do not assume a timeout means that a mutation had no effect.
+
 ### Exit Codes
 
 | Code | Meaning |
 | --- | --- |
 | `0` | Success |
-| `1` | Usage or validation error |
+| `1` | CLI usage or argument error |
 | `2` | WithMate Memory API is not running or could not be discovered |
-| `3` | Runtime API returned a non-success JSON response |
+| `3` | Local request validation failed, or the runtime API returned a non-success JSON response |
 | `4` | Transport failure |
 
 ## Target Selection

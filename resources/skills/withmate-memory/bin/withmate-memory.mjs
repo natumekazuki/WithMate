@@ -1,43 +1,815 @@
-#!/usr/bin/env node
+// Generated from scripts/withmate-memory.ts. Do not edit directly.
 import { createHmac, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-
-const schemaVersion = "withmate-memory-v1";
-const discoverySchemaVersion = "withmate-memory-discovery-v1";
-const discoveryFileName = "memory-v6-api.json";
-const apiSecretHeader = "x-withmate-memory-api-secret";
-const entryKinds = [
-  "decision",
-  "constraint",
-  "convention",
-  "context",
-  "deferred",
-  "preference",
-  "relationship",
-  "boundary",
-  "note",
+import { pathToFileURL } from "node:url";
+import { tmpdir } from "node:os";
+//#region src/memory-v6/memory-contract.ts
+var MEMORY_V6_SCHEMA_VERSION = "withmate-memory-v1";
+var MEMORY_ENTRY_KINDS = [
+	"decision",
+	"constraint",
+	"convention",
+	"context",
+	"deferred",
+	"preference",
+	"relationship",
+	"boundary",
+	"note"
 ];
-const forgetReasons = ["user_request", "incorrect", "outdated", "privacy", "other"];
-
-const exitCodes = {
-  ok: 0,
-  usage: 1,
-  notRunning: 2,
-  apiError: 3,
-  transportError: 4,
+var MEMORY_APPEND_FILE_ROLES = [
+	"evidence",
+	"source",
+	"snapshot",
+	"artifact",
+	"reference",
+	"other"
+];
+var MEMORY_FORGET_REASONS = [
+	"user_request",
+	"incorrect",
+	"outdated",
+	"privacy",
+	"other"
+];
+//#endregion
+//#region src/memory-v6/memory-discovery.ts
+var WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION = "withmate-memory-discovery-v1";
+var WITHMATE_MEMORY_DISCOVERY_FILE_NAME = "memory-v6-api.json";
+function isLoopbackHostname(hostname) {
+	const normalized = hostname.toLowerCase();
+	if (normalized === "localhost" || normalized === "::1" || normalized === "[::1]") return true;
+	const ipv4Parts = normalized.split(".");
+	return ipv4Parts.length === 4 && ipv4Parts[0] === "127" && ipv4Parts.every((part) => /^\d+$/.test(part) && Number(part) <= 255);
+}
+function normalizeWithMateMemoryApiBaseUrl(value) {
+	const trimmed = value.trim();
+	if (!trimmed) return null;
+	try {
+		const url = new URL(trimmed);
+		if (url.protocol !== "http:" || !isLoopbackHostname(url.hostname)) return null;
+		url.pathname = url.pathname.replace(/\/+$/, "");
+		url.search = "";
+		url.hash = "";
+		return url.toString().replace(/\/$/, "");
+	} catch {
+		return null;
+	}
+}
+function resolveDefaultWithMateMemoryRuntimeDirectory(env = process.env) {
+	const runtimeDirectoryPath = env.WITHMATE_MEMORY_RUNTIME_DIR?.trim();
+	if (runtimeDirectoryPath) return path.resolve(runtimeDirectoryPath);
+	const ownerSegment = typeof process.getuid === "function" ? `uid-${process.getuid()}` : "local-user";
+	return path.join(tmpdir(), "withmate-memory", ownerSegment);
+}
+function resolveDefaultWithMateMemoryDiscoveryFilePath(env = process.env) {
+	return path.join(resolveDefaultWithMateMemoryRuntimeDirectory(env), WITHMATE_MEMORY_DISCOVERY_FILE_NAME);
+}
+//#endregion
+//#region src/memory-v6/memory-response-contract.ts
+function createMemoryErrorResponse(error) {
+	return {
+		schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+		error
+	};
+}
+//#endregion
+//#region src/memory-v6/memory-validation.ts
+var MEMORY_ENTRY_KIND_SET = new Set(MEMORY_ENTRY_KINDS);
+var MEMORY_APPEND_FILE_ROLE_SET = new Set(MEMORY_APPEND_FILE_ROLES);
+var MEMORY_FORGET_REASON_SET = new Set(MEMORY_FORGET_REASONS);
+var SEARCH_REQUEST_KEYS = /* @__PURE__ */ new Set([
+	"schemaVersion",
+	"targets",
+	"query",
+	"kinds",
+	"tags",
+	"limit",
+	"cursor"
+]);
+var GET_ENTRY_REQUEST_KEYS = /* @__PURE__ */ new Set([
+	"schemaVersion",
+	"entryId",
+	"target"
+]);
+var GET_FILE_REQUEST_KEYS = /* @__PURE__ */ new Set([
+	"schemaVersion",
+	"target",
+	"objectId",
+	"outputPath"
+]);
+var EXPORT_FILES_REQUEST_KEYS = /* @__PURE__ */ new Set([
+	"schemaVersion",
+	"target",
+	"entryId",
+	"outputDirectoryPath"
+]);
+var LIST_TAGS_REQUEST_KEYS = /* @__PURE__ */ new Set(["schemaVersion", "targets"]);
+var APPEND_REQUEST_KEYS = /* @__PURE__ */ new Set([
+	"schemaVersion",
+	"target",
+	"kind",
+	"title",
+	"body",
+	"preview",
+	"tags",
+	"supersedes",
+	"files",
+	"sourceMessageId",
+	"idempotencyKey"
+]);
+var FORGET_REQUEST_KEYS = /* @__PURE__ */ new Set([
+	"schemaVersion",
+	"target",
+	"entryIds",
+	"reason",
+	"sourceMessageId",
+	"idempotencyKey"
+]);
+var PROJECT_TARGET_ID_KEYS = /* @__PURE__ */ new Set(["type", "id"]);
+var PROJECT_TARGET_PATH_KEYS = /* @__PURE__ */ new Set(["type", "path"]);
+var CHARACTER_TARGET_ID_KEYS = /* @__PURE__ */ new Set(["type", "id"]);
+var MEMORY_TAG_KEYS = /* @__PURE__ */ new Set(["type", "value"]);
+var APPEND_FILE_KEYS = /* @__PURE__ */ new Set([
+	"path",
+	"summary",
+	"role",
+	"displayName",
+	"contentType"
+]);
+var PROJECT_PROJECT_TARGET_KEYS = /* @__PURE__ */ new Set([
+	"owner",
+	"scope",
+	"project"
+]);
+var CHARACTER_CHARACTER_TARGET_KEYS = /* @__PURE__ */ new Set([
+	"owner",
+	"scope",
+	"character"
+]);
+var CHARACTER_PROJECT_TARGET_KEYS = /* @__PURE__ */ new Set([
+	"owner",
+	"scope",
+	"character",
+	"project"
+]);
+var USER_GLOBAL_TARGET_KEYS = /* @__PURE__ */ new Set(["owner", "scope"]);
+var MAX_SEARCH_QUERY_LENGTH = 500;
+var MAX_TITLE_LENGTH = 160;
+var MAX_PREVIEW_LENGTH = 280;
+var MAX_BODY_LENGTH = 8e3;
+var MAX_TAG_TYPE_LENGTH = 48;
+var MAX_TAG_VALUE_LENGTH = 96;
+var MAX_ID_LENGTH = 200;
+var MAX_CURSOR_LENGTH = 500;
+var MAX_LIMIT = 50;
+var MAX_TAGS = 20;
+var MAX_SUPERSEDES = 20;
+var MAX_APPEND_FILES = 10;
+var MAX_FILE_PATH_LENGTH = 1e3;
+var MAX_OBJECT_ID_LENGTH = 64;
+var MAX_FILE_SUMMARY_LENGTH = 500;
+var MAX_FILE_DISPLAY_NAME_LENGTH = 255;
+var MAX_FILE_CONTENT_TYPE_LENGTH = 120;
+var MAX_FORGET_ENTRY_IDS = 50;
+var MAX_TARGETS = 5;
+function error(code, message, field) {
+	return {
+		ok: false,
+		error: field ? {
+			code,
+			message,
+			field
+		} : {
+			code,
+			message
+		}
+	};
+}
+function isRecord(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function rejectUnknownKeys(value, allowedKeys, field) {
+	for (const key of Object.keys(value)) if (!allowedKeys.has(key)) return error("MEMORY_UNKNOWN_FIELD", `Unknown field: ${field}.${key}`, `${field}.${key}`);
+	return {
+		ok: true,
+		value: void 0
+	};
+}
+function hasUnpairedSurrogate(value) {
+	for (let index = 0; index < value.length; index += 1) {
+		const code = value.charCodeAt(index);
+		if (code >= 55296 && code <= 56319) {
+			const next = value.charCodeAt(index + 1);
+			if (!(next >= 56320 && next <= 57343)) return true;
+			index += 1;
+			continue;
+		}
+		if (code >= 56320 && code <= 57343) return true;
+	}
+	return false;
+}
+function canonicalizeMemoryTagPart(value) {
+	return value.normalize("NFC").toLowerCase();
+}
+function normalizeText(value, field, options) {
+	if (typeof value !== "string") {
+		if (options.required === false && value === void 0) return {
+			ok: true,
+			value: ""
+		};
+		return error("MEMORY_INVALID_FIELD", `${field} must be a string.`, field);
+	}
+	if (value.includes("\0")) return error("MEMORY_INVALID_FIELD", `${field} must not contain null bytes.`, field);
+	if (hasUnpairedSurrogate(value)) return error("MEMORY_INVALID_FIELD", `${field} must be well-formed Unicode.`, field);
+	const normalized = value.trim();
+	if (options.required !== false && normalized.length === 0) return error("MEMORY_INVALID_FIELD", `${field} must not be empty.`, field);
+	if (normalized.length > options.maxLength) return error("MEMORY_FIELD_TOO_LARGE", `${field} is too long.`, field);
+	return {
+		ok: true,
+		value: normalized
+	};
+}
+function normalizeAbsolutePath(value, field) {
+	const normalized = normalizeText(value, field, { maxLength: MAX_FILE_PATH_LENGTH });
+	if (!normalized.ok) return normalized;
+	if (!isAbsolutePathLike(normalized.value)) return error("MEMORY_INVALID_FIELD", `${field} must be an absolute path.`, field);
+	return normalized;
+}
+function isAbsolutePathLike(value) {
+	return value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value) || /^\\\\/.test(value);
+}
+function normalizeOptionalText(value, field, maxLength = MAX_ID_LENGTH) {
+	if (value === void 0) return {
+		ok: true,
+		value: void 0
+	};
+	const normalized = normalizeText(value, field, { maxLength });
+	if (!normalized.ok) return normalized;
+	return {
+		ok: true,
+		value: normalized.value
+	};
+}
+function validateSchemaVersion(value) {
+	if (value.schemaVersion !== "withmate-memory-v1") return error("MEMORY_INVALID_SCHEMA_VERSION", "Unsupported memory schemaVersion.", "schemaVersion");
+	return {
+		ok: true,
+		value: void 0
+	};
+}
+function normalizeStringArray(value, field, options) {
+	if (value === void 0) return {
+		ok: true,
+		value: void 0
+	};
+	if (!Array.isArray(value)) return error("MEMORY_INVALID_FIELD", `${field} must be an array.`, field);
+	if (value.length > options.maxItems) return error("MEMORY_FIELD_TOO_LARGE", `${field} has too many items.`, field);
+	const normalized = [];
+	const seen = /* @__PURE__ */ new Set();
+	for (let index = 0; index < value.length; index += 1) {
+		const item = normalizeText(value[index], `${field}[${index}]`, { maxLength: options.maxLength });
+		if (!item.ok) return item;
+		if (seen.has(item.value)) continue;
+		seen.add(item.value);
+		normalized.push(item.value);
+	}
+	return {
+		ok: true,
+		value: normalized
+	};
+}
+function validateMemoryKind(value, field) {
+	if (typeof value !== "string" || !MEMORY_ENTRY_KIND_SET.has(value)) return error("MEMORY_INVALID_FIELD", `${field} must be a valid memory kind.`, field);
+	return {
+		ok: true,
+		value
+	};
+}
+function validateAppendFileRole(value, field) {
+	if (value === void 0) return {
+		ok: true,
+		value: void 0
+	};
+	if (typeof value !== "string" || !MEMORY_APPEND_FILE_ROLE_SET.has(value)) return error("MEMORY_INVALID_FIELD", `${field} must be a valid file role.`, field);
+	return {
+		ok: true,
+		value
+	};
+}
+function normalizeAppendFiles(value) {
+	if (value === void 0) return {
+		ok: true,
+		value: void 0
+	};
+	if (!Array.isArray(value)) return error("MEMORY_INVALID_FIELD", "files must be an array.", "files");
+	if (value.length === 0) return {
+		ok: true,
+		value: void 0
+	};
+	if (value.length > MAX_APPEND_FILES) return error("MEMORY_FIELD_TOO_LARGE", `files supports at most ${MAX_APPEND_FILES} items.`, "files");
+	const normalized = [];
+	for (let index = 0; index < value.length; index += 1) {
+		const file = value[index];
+		const field = `files[${index}]`;
+		if (!isRecord(file)) return error("MEMORY_INVALID_FIELD", `${field} must be an object.`, field);
+		const unknownKeys = rejectUnknownKeys(file, APPEND_FILE_KEYS, field);
+		if (!unknownKeys.ok) return unknownKeys;
+		const filePath = normalizeAbsolutePath(file.path, `${field}.path`);
+		if (!filePath.ok) return filePath;
+		const summary = normalizeText(file.summary, `${field}.summary`, { maxLength: MAX_FILE_SUMMARY_LENGTH });
+		if (!summary.ok) return summary;
+		const role = validateAppendFileRole(file.role, `${field}.role`);
+		if (!role.ok) return role;
+		const displayName = normalizeOptionalText(file.displayName, `${field}.displayName`, MAX_FILE_DISPLAY_NAME_LENGTH);
+		if (!displayName.ok) return displayName;
+		const contentType = normalizeOptionalText(file.contentType, `${field}.contentType`, MAX_FILE_CONTENT_TYPE_LENGTH);
+		if (!contentType.ok) return contentType;
+		normalized.push({
+			path: filePath.value,
+			summary: summary.value,
+			...role.value !== void 0 ? { role: role.value } : {},
+			...displayName.value !== void 0 ? { displayName: displayName.value } : {},
+			...contentType.value !== void 0 ? { contentType: contentType.value } : {}
+		});
+	}
+	return {
+		ok: true,
+		value: normalized
+	};
+}
+function normalizeProjectTarget(value, field) {
+	if (!isRecord(value)) return error("MEMORY_INVALID_FIELD", `${field} must be an object.`, field);
+	if (value.type === "id") {
+		const unknownKeys = rejectUnknownKeys(value, PROJECT_TARGET_ID_KEYS, field);
+		if (!unknownKeys.ok) return unknownKeys;
+		const id = normalizeText(value.id, `${field}.id`, { maxLength: MAX_ID_LENGTH });
+		return id.ok ? {
+			ok: true,
+			value: {
+				type: "id",
+				id: id.value
+			}
+		} : id;
+	}
+	if (value.type === "path") {
+		const unknownKeys = rejectUnknownKeys(value, PROJECT_TARGET_PATH_KEYS, field);
+		if (!unknownKeys.ok) return unknownKeys;
+		const projectPath = normalizeText(value.path, `${field}.path`, { maxLength: 1e3 });
+		return projectPath.ok ? {
+			ok: true,
+			value: {
+				type: "path",
+				path: projectPath.value
+			}
+		} : projectPath;
+	}
+	return error("MEMORY_INVALID_FIELD", `${field}.type must be id or path.`, `${field}.type`);
+}
+function normalizeCharacterTarget(value, field) {
+	if (!isRecord(value)) return error("MEMORY_INVALID_FIELD", `${field} must be an object.`, field);
+	if (value.type === "id") {
+		const unknownKeys = rejectUnknownKeys(value, CHARACTER_TARGET_ID_KEYS, field);
+		if (!unknownKeys.ok) return unknownKeys;
+		const id = normalizeText(value.id, `${field}.id`, { maxLength: MAX_ID_LENGTH });
+		return id.ok ? {
+			ok: true,
+			value: {
+				type: "id",
+				id: id.value
+			}
+		} : id;
+	}
+	return error("MEMORY_INVALID_FIELD", `${field}.type must be id.`, `${field}.type`);
+}
+function normalizeMemoryTarget(value, field) {
+	if (!isRecord(value)) return error("MEMORY_INVALID_FIELD", `${field} must be an object.`, field);
+	if (value.owner === "user" && value.scope === "global") {
+		const unknownKeys = rejectUnknownKeys(value, USER_GLOBAL_TARGET_KEYS, field);
+		if (!unknownKeys.ok) return unknownKeys;
+		return {
+			ok: true,
+			value: {
+				owner: "user",
+				scope: "global"
+			}
+		};
+	}
+	if (value.owner === "project" && value.scope === "project") {
+		const unknownKeys = rejectUnknownKeys(value, PROJECT_PROJECT_TARGET_KEYS, field);
+		if (!unknownKeys.ok) return unknownKeys;
+		const project = normalizeProjectTarget(value.project, `${field}.project`);
+		return project.ok ? {
+			ok: true,
+			value: {
+				owner: "project",
+				scope: "project",
+				project: project.value
+			}
+		} : project;
+	}
+	if (value.owner === "character" && value.scope === "character") {
+		const unknownKeys = rejectUnknownKeys(value, CHARACTER_CHARACTER_TARGET_KEYS, field);
+		if (!unknownKeys.ok) return unknownKeys;
+		const character = normalizeCharacterTarget(value.character, `${field}.character`);
+		return character.ok ? {
+			ok: true,
+			value: {
+				owner: "character",
+				scope: "character",
+				character: character.value
+			}
+		} : character;
+	}
+	if (value.owner === "character" && value.scope === "project") {
+		const unknownKeys = rejectUnknownKeys(value, CHARACTER_PROJECT_TARGET_KEYS, field);
+		if (!unknownKeys.ok) return unknownKeys;
+		const character = normalizeCharacterTarget(value.character, `${field}.character`);
+		if (!character.ok) return character;
+		const project = normalizeProjectTarget(value.project, `${field}.project`);
+		return project.ok ? {
+			ok: true,
+			value: {
+				owner: "character",
+				scope: "project",
+				character: character.value,
+				project: project.value
+			}
+		} : project;
+	}
+	return error("MEMORY_INVALID_TARGET", "Unsupported memory owner / scope combination.", field);
+}
+function normalizeTargets(value) {
+	if (!Array.isArray(value) || value.length === 0) return error("MEMORY_TARGET_REQUIRED", "At least one memory target is required.", "targets");
+	if (value.length > MAX_TARGETS) return error("MEMORY_FIELD_TOO_LARGE", `targets supports at most ${MAX_TARGETS} items.`, "targets");
+	const normalized = [];
+	const seen = /* @__PURE__ */ new Set();
+	for (let index = 0; index < value.length; index += 1) {
+		const target = normalizeMemoryTarget(value[index], `targets[${index}]`);
+		if (!target.ok) return target;
+		const key = JSON.stringify(target.value);
+		if (seen.has(key)) return error("MEMORY_DUPLICATE_TARGET", "targets must not contain duplicates.", `targets[${index}]`);
+		seen.add(key);
+		normalized.push(target.value);
+	}
+	return {
+		ok: true,
+		value: normalized
+	};
+}
+function normalizeTags(value, field = "tags", options = {}) {
+	if (value === void 0) {
+		if (options.required) return error("MEMORY_INVALID_FIELD", `${field} is required.`, field);
+		return {
+			ok: true,
+			value: []
+		};
+	}
+	if (!Array.isArray(value)) return error("MEMORY_INVALID_FIELD", `${field} must be an array.`, field);
+	if (value.length > MAX_TAGS) return error("MEMORY_FIELD_TOO_LARGE", `${field} has too many items.`, field);
+	const normalized = [];
+	const seen = /* @__PURE__ */ new Set();
+	for (let index = 0; index < value.length; index += 1) {
+		const tag = value[index];
+		if (!isRecord(tag)) return error("MEMORY_INVALID_FIELD", `${field}[${index}] must be an object.`, `${field}[${index}]`);
+		const unknownKeys = rejectUnknownKeys(tag, MEMORY_TAG_KEYS, `${field}[${index}]`);
+		if (!unknownKeys.ok) return unknownKeys;
+		const type = normalizeText(tag.type, `${field}[${index}].type`, { maxLength: MAX_TAG_TYPE_LENGTH });
+		if (!type.ok) return type;
+		const tagValue = normalizeText(tag.value, `${field}[${index}].value`, { maxLength: MAX_TAG_VALUE_LENGTH });
+		if (!tagValue.ok) return tagValue;
+		const canonicalType = canonicalizeMemoryTagPart(type.value);
+		const canonicalValue = canonicalizeMemoryTagPart(tagValue.value);
+		const key = `${canonicalType}\0${canonicalValue}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		normalized.push({
+			type: type.value,
+			value: tagValue.value,
+			canonicalType,
+			canonicalValue
+		});
+	}
+	return {
+		ok: true,
+		value: normalized
+	};
+}
+function normalizeKinds(value) {
+	if (value === void 0) return {
+		ok: true,
+		value: void 0
+	};
+	if (!Array.isArray(value)) return error("MEMORY_INVALID_FIELD", "kinds must be an array.", "kinds");
+	if (value.length > MEMORY_ENTRY_KINDS.length) return error("MEMORY_FIELD_TOO_LARGE", "kinds has too many items.", "kinds");
+	const normalized = [];
+	const seen = /* @__PURE__ */ new Set();
+	for (let index = 0; index < value.length; index += 1) {
+		const kind = validateMemoryKind(value[index], `kinds[${index}]`);
+		if (!kind.ok) return kind;
+		if (seen.has(kind.value)) continue;
+		seen.add(kind.value);
+		normalized.push(kind.value);
+	}
+	return {
+		ok: true,
+		value: normalized.length > 0 ? normalized : void 0
+	};
+}
+function validateMemorySearchRequest(value) {
+	if (!isRecord(value)) return error("MEMORY_INVALID_REQUEST", "Search request must be an object.");
+	const unknownKeys = rejectUnknownKeys(value, SEARCH_REQUEST_KEYS, "request");
+	if (!unknownKeys.ok) return unknownKeys;
+	const schema = validateSchemaVersion(value);
+	if (!schema.ok) return schema;
+	const targets = normalizeTargets(value.targets);
+	if (!targets.ok) return targets;
+	const query = normalizeText(value.query, "query", { maxLength: MAX_SEARCH_QUERY_LENGTH });
+	if (!query.ok) return query;
+	const kinds = normalizeKinds(value.kinds);
+	if (!kinds.ok) return kinds;
+	const tags = normalizeTags(value.tags);
+	if (!tags.ok) return tags;
+	const cursor = normalizeOptionalText(value.cursor, "cursor", MAX_CURSOR_LENGTH);
+	if (!cursor.ok) return cursor;
+	let limit;
+	if (value.limit !== void 0) {
+		if (typeof value.limit !== "number" || !Number.isInteger(value.limit) || value.limit < 1 || value.limit > MAX_LIMIT) return error("MEMORY_INVALID_FIELD", `limit must be an integer from 1 to ${MAX_LIMIT}.`, "limit");
+		limit = value.limit;
+	}
+	return {
+		ok: true,
+		value: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			targets: targets.value,
+			query: query.value,
+			...kinds.value ? { kinds: kinds.value } : {},
+			...tags.value.length > 0 ? { tags: tags.value } : {},
+			...limit !== void 0 ? { limit } : {},
+			...cursor.value !== void 0 ? { cursor: cursor.value } : {}
+		}
+	};
+}
+function validateMemoryGetEntryRequest(value) {
+	if (!isRecord(value)) return error("MEMORY_INVALID_REQUEST", "Get entry request must be an object.");
+	const unknownKeys = rejectUnknownKeys(value, GET_ENTRY_REQUEST_KEYS, "request");
+	if (!unknownKeys.ok) return unknownKeys;
+	const schema = validateSchemaVersion(value);
+	if (!schema.ok) return schema;
+	const entryId = normalizeText(value.entryId, "entryId", { maxLength: MAX_ID_LENGTH });
+	if (!entryId.ok) return entryId;
+	const target = normalizeMemoryTarget(value.target, "target");
+	if (!target.ok) return target;
+	return {
+		ok: true,
+		value: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			entryId: entryId.value,
+			target: target.value
+		}
+	};
+}
+function validateMemoryGetFileRequest(value) {
+	if (!isRecord(value)) return error("MEMORY_INVALID_REQUEST", "Get file request must be an object.");
+	const unknownKeys = rejectUnknownKeys(value, GET_FILE_REQUEST_KEYS, "request");
+	if (!unknownKeys.ok) return unknownKeys;
+	const schema = validateSchemaVersion(value);
+	if (!schema.ok) return schema;
+	const target = normalizeMemoryTarget(value.target, "target");
+	if (!target.ok) return target;
+	const objectId = normalizeText(value.objectId, "objectId", { maxLength: MAX_OBJECT_ID_LENGTH });
+	if (!objectId.ok) return objectId;
+	const outputPath = normalizeAbsolutePath(value.outputPath, "outputPath");
+	if (!outputPath.ok) return outputPath;
+	return {
+		ok: true,
+		value: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			target: target.value,
+			objectId: objectId.value,
+			outputPath: outputPath.value
+		}
+	};
+}
+function validateMemoryExportFilesRequest(value) {
+	if (!isRecord(value)) return error("MEMORY_INVALID_REQUEST", "Export files request must be an object.");
+	const unknownKeys = rejectUnknownKeys(value, EXPORT_FILES_REQUEST_KEYS, "request");
+	if (!unknownKeys.ok) return unknownKeys;
+	const schema = validateSchemaVersion(value);
+	if (!schema.ok) return schema;
+	const target = normalizeMemoryTarget(value.target, "target");
+	if (!target.ok) return target;
+	const entryId = normalizeText(value.entryId, "entryId", { maxLength: MAX_ID_LENGTH });
+	if (!entryId.ok) return entryId;
+	const outputDirectoryPath = normalizeAbsolutePath(value.outputDirectoryPath, "outputDirectoryPath");
+	if (!outputDirectoryPath.ok) return outputDirectoryPath;
+	return {
+		ok: true,
+		value: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			target: target.value,
+			entryId: entryId.value,
+			outputDirectoryPath: outputDirectoryPath.value
+		}
+	};
+}
+function validateMemoryListTagsRequest(value) {
+	if (!isRecord(value)) return error("MEMORY_INVALID_REQUEST", "List tags request must be an object.");
+	const unknownKeys = rejectUnknownKeys(value, LIST_TAGS_REQUEST_KEYS, "request");
+	if (!unknownKeys.ok) return unknownKeys;
+	const schema = validateSchemaVersion(value);
+	if (!schema.ok) return schema;
+	const targets = normalizeTargets(value.targets);
+	if (!targets.ok) return targets;
+	return {
+		ok: true,
+		value: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			targets: targets.value
+		}
+	};
+}
+function validateMemoryAppendRequest(value) {
+	if (!isRecord(value)) return error("MEMORY_INVALID_REQUEST", "Append request must be an object.");
+	const unknownKeys = rejectUnknownKeys(value, APPEND_REQUEST_KEYS, "request");
+	if (!unknownKeys.ok) return unknownKeys;
+	const schema = validateSchemaVersion(value);
+	if (!schema.ok) return schema;
+	const target = normalizeMemoryTarget(value.target, "target");
+	if (!target.ok) return target;
+	const kind = validateMemoryKind(value.kind, "kind");
+	if (!kind.ok) return kind;
+	const title = normalizeText(value.title, "title", { maxLength: MAX_TITLE_LENGTH });
+	if (!title.ok) return title;
+	const body = normalizeText(value.body, "body", { maxLength: MAX_BODY_LENGTH });
+	if (!body.ok) return body;
+	const preview = normalizeText(value.preview, "preview", { maxLength: MAX_PREVIEW_LENGTH });
+	if (!preview.ok) return preview;
+	const tags = normalizeTags(value.tags, "tags", { required: true });
+	if (!tags.ok) return tags;
+	const supersedes = normalizeStringArray(value.supersedes, "supersedes", {
+		maxItems: MAX_SUPERSEDES,
+		maxLength: MAX_ID_LENGTH
+	});
+	if (!supersedes.ok) return supersedes;
+	const files = normalizeAppendFiles(value.files);
+	if (!files.ok) return files;
+	const sourceMessageId = normalizeOptionalText(value.sourceMessageId, "sourceMessageId");
+	if (!sourceMessageId.ok) return sourceMessageId;
+	const idempotencyKey = normalizeOptionalText(value.idempotencyKey, "idempotencyKey");
+	if (!idempotencyKey.ok) return idempotencyKey;
+	return {
+		ok: true,
+		value: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			target: target.value,
+			kind: kind.value,
+			title: title.value,
+			body: body.value,
+			preview: preview.value,
+			tags: tags.value,
+			...supersedes.value && supersedes.value.length > 0 ? { supersedes: supersedes.value } : {},
+			...files.value && files.value.length > 0 ? { files: files.value } : {},
+			...sourceMessageId.value !== void 0 ? { sourceMessageId: sourceMessageId.value } : {},
+			...idempotencyKey.value !== void 0 ? { idempotencyKey: idempotencyKey.value } : {}
+		}
+	};
+}
+function validateMemoryForgetRequest(value) {
+	if (!isRecord(value)) return error("MEMORY_INVALID_REQUEST", "Forget request must be an object.");
+	const unknownKeys = rejectUnknownKeys(value, FORGET_REQUEST_KEYS, "request");
+	if (!unknownKeys.ok) return unknownKeys;
+	const schema = validateSchemaVersion(value);
+	if (!schema.ok) return schema;
+	const target = normalizeMemoryTarget(value.target, "target");
+	if (!target.ok) return target;
+	const entryIds = normalizeStringArray(value.entryIds, "entryIds", {
+		maxItems: MAX_FORGET_ENTRY_IDS,
+		maxLength: MAX_ID_LENGTH
+	});
+	if (!entryIds.ok) return entryIds;
+	if (!entryIds.value || entryIds.value.length === 0) return error("MEMORY_INVALID_FIELD", "entryIds must not be empty.", "entryIds");
+	if (value.reason !== void 0 && (typeof value.reason !== "string" || !MEMORY_FORGET_REASON_SET.has(value.reason))) return error("MEMORY_INVALID_FIELD", "reason must be a valid forget reason.", "reason");
+	const sourceMessageId = normalizeOptionalText(value.sourceMessageId, "sourceMessageId");
+	if (!sourceMessageId.ok) return sourceMessageId;
+	const idempotencyKey = normalizeOptionalText(value.idempotencyKey, "idempotencyKey");
+	if (!idempotencyKey.ok) return idempotencyKey;
+	return {
+		ok: true,
+		value: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			target: target.value,
+			entryIds: entryIds.value,
+			...value.reason !== void 0 ? { reason: value.reason } : {},
+			...sourceMessageId.value !== void 0 ? { sourceMessageId: sourceMessageId.value } : {},
+			...idempotencyKey.value !== void 0 ? { idempotencyKey: idempotencyKey.value } : {}
+		}
+	};
+}
+//#endregion
+//#region scripts/withmate-memory.ts
+var WITHMATE_MEMORY_CLI_EXIT_CODES = {
+	ok: 0,
+	usage: 1,
+	notRunning: 2,
+	apiError: 3,
+	transportError: 4
 };
-
-const helpText = `Usage:
+var routeByCommand = {
+	status: {
+		method: "GET",
+		path: "/v1/status"
+	},
+	characters: {
+		method: "GET",
+		path: "/v1/characters"
+	},
+	file_usage: {
+		method: "GET",
+		path: "/v1/file_usage"
+	},
+	search: {
+		method: "POST",
+		path: "/v1/search"
+	},
+	get_entry: {
+		method: "POST",
+		path: "/v1/get_entry"
+	},
+	get_file: {
+		method: "POST",
+		path: "/v1/get_file"
+	},
+	export_files: {
+		method: "POST",
+		path: "/v1/export_files"
+	},
+	list_tags: {
+		method: "POST",
+		path: "/v1/list_tags"
+	},
+	append: {
+		method: "POST",
+		path: "/v1/append"
+	},
+	forget: {
+		method: "POST",
+		path: "/v1/forget"
+	}
+};
+function buildRoutePath(request) {
+	const route = routeByCommand[request.command];
+	if (request.command !== "file_usage" || !request.body || typeof request.body !== "object") return route.path;
+	const body = request.body;
+	const query = new URLSearchParams();
+	if (body.largest === true) query.set("largest", "1");
+	if (typeof body.limit === "number") query.set("limit", String(body.limit));
+	const queryString = query.toString();
+	return queryString ? `${route.path}?${queryString}` : route.path;
+}
+var DEFAULT_REQUEST_TIMEOUT_MS = 1e4;
+var DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS = 3e5;
+var WITHMATE_MEMORY_API_SECRET_HEADER = "x-withmate-memory-api-secret";
+var FILE_OPERATION_COMMANDS = /* @__PURE__ */ new Set([
+	"append",
+	"get_file",
+	"export_files"
+]);
+var commandAliases = /* @__PURE__ */ new Map([
+	["help", "help"],
+	["status", "status"],
+	["characters", "characters"],
+	["list-characters", "characters"],
+	["list_characters", "characters"],
+	["file-usage", "file_usage"],
+	["file_usage", "file_usage"],
+	["search", "search"],
+	["get-entry", "get_entry"],
+	["get_entry", "get_entry"],
+	["get-file", "get_file"],
+	["get_file", "get_file"],
+	["export-files", "export_files"],
+	["export_files", "export_files"],
+	["list-tags", "list_tags"],
+	["list_tags", "list_tags"],
+	["append", "append"],
+	["forget", "forget"],
+	["schema", "schema"],
+	["capabilities", "schema"],
+	["validate", "validate"]
+]);
+var WITHMATE_MEMORY_CLI_HELP = `Usage:
   withmate-memory <command> [options]
 
 Commands:
   help
   status
   characters
+  file-usage
   search
   get-entry
+  get-file
+  export-files
   list-tags
   append
   forget
@@ -57,6 +829,10 @@ Shorthand options:
   --tag <tag>
   --tags <tags>
   --entry-id <id>
+  --object-id <id>
+  --output <path>
+  --output-dir <path>
+  --largest
   --limit <n>
 
 Connection options:
@@ -64,1032 +840,586 @@ Connection options:
   --discovery-file <path>
 
 Validation:
-  validate --command <search|get-entry|list-tags|append|forget>
+  validate --command <search|get-entry|get-file|export-files|list-tags|append|forget>
 
 Examples:
   withmate-memory status
   withmate-memory characters
+  withmate-memory file-usage
+  withmate-memory file-usage --largest --limit 10
   withmate-memory search --project C:\\path\\to\\repo --query "release workflow"
+  withmate-memory get-file --project C:\\path\\to\\repo --object-id <id> --output C:\\path\\to\\file.bin
+  withmate-memory export-files --project C:\\path\\to\\repo --entry-id <id> --output-dir C:\\path\\to\\exports
   withmate-memory validate --command append --stdin
   withmate-memory schema
 `;
-
-const commands = new Map([
-  ["help", { name: "help", local: true, defaultBody: {} }],
-  ["status", { name: "status", method: "GET", path: "/v1/status", defaultBody: {} }],
-  ["characters", { name: "characters", method: "GET", path: "/v1/characters", defaultBody: {} }],
-  ["list-characters", { name: "characters", method: "GET", path: "/v1/characters", defaultBody: {} }],
-  ["list_characters", { name: "characters", method: "GET", path: "/v1/characters", defaultBody: {} }],
-  ["search", { name: "search", method: "POST", path: "/v1/search", defaultBody: {} }],
-  ["get-entry", { name: "get_entry", method: "POST", path: "/v1/get_entry", defaultBody: {} }],
-  ["get_entry", { name: "get_entry", method: "POST", path: "/v1/get_entry", defaultBody: {} }],
-  ["list-tags", { name: "list_tags", method: "POST", path: "/v1/list_tags", defaultBody: {} }],
-  ["list_tags", { name: "list_tags", method: "POST", path: "/v1/list_tags", defaultBody: {} }],
-  ["append", { name: "append", method: "POST", path: "/v1/append", defaultBody: {} }],
-  ["forget", { name: "forget", method: "POST", path: "/v1/forget", defaultBody: {} }],
-  ["schema", { name: "schema", local: true, defaultBody: {} }],
-  ["capabilities", { name: "schema", local: true, defaultBody: {} }],
-  ["validate", { name: "validate", local: true, defaultBody: {} }],
+var validatableCommands = /* @__PURE__ */ new Set([
+	"search",
+	"get_entry",
+	"get_file",
+	"export_files",
+	"list_tags",
+	"append",
+	"forget"
 ]);
-const validatableCommands = new Set(["search", "get_entry", "list_tags", "append", "forget"]);
-
-function memoryError(code, message) {
-  return { schemaVersion, error: { code, message } };
+function usageError(message) {
+	return createMemoryErrorResponse({
+		code: "WITHMATE_MEMORY_CLI_USAGE",
+		message
+	});
 }
-
-function usage(message) {
-  return memoryError("WITHMATE_MEMORY_CLI_USAGE", message);
+function notRunningError() {
+	return createMemoryErrorResponse({
+		code: "WITHMATE_NOT_RUNNING",
+		message: "WithMate Memory API is not running or could not be discovered."
+	});
 }
-
-function notRunning() {
-  return memoryError("WITHMATE_NOT_RUNNING", "WithMate Memory API is not running or could not be discovered.");
+function requestTimeoutError(command, timeoutMs) {
+	return createMemoryErrorResponse({
+		code: "WITHMATE_MEMORY_REQUEST_TIMEOUT",
+		message: `WithMate Memory API request timed out after ${timeoutMs}ms.`,
+		field: command
+	});
 }
-
-function normalizeLoopbackUrl(rawUrl) {
-  try {
-    const url = new URL(rawUrl);
-    if (url.protocol !== "http:") {
-      return null;
-    }
-    if (url.hostname !== "127.0.0.1" && url.hostname !== "::1" && url.hostname !== "localhost") {
-      return null;
-    }
-    url.pathname = url.pathname.replace(/\/+$/, "");
-    url.search = "";
-    url.hash = "";
-    return url.toString().replace(/\/$/, "");
-  } catch {
-    return null;
-  }
+function transportError(message) {
+	return createMemoryErrorResponse({
+		code: "WITHMATE_MEMORY_TRANSPORT_ERROR",
+		message
+	});
 }
-
-function defaultRuntimeDirectory() {
-  const ownerSegment = typeof process.getuid === "function" ? `uid-${process.getuid()}` : "local-user";
-  return path.join(os.tmpdir(), "withmate-memory", ownerSegment);
+function isAbortError(error) {
+	return error instanceof DOMException && error.name === "AbortError";
 }
-
-async function readDiscovery(options) {
-  if (options.apiUrl !== undefined) {
-    const baseUrl = normalizeLoopbackUrl(options.apiUrl);
-    if (!baseUrl) {
-      throw usage("--api-url must be a valid loopback HTTP URL.");
-    }
-    return {
-      baseUrl,
-      apiSecret: process.env.WITHMATE_MEMORY_API_SECRET?.trim() || undefined,
-      runtimeInstanceId: process.env.WITHMATE_MEMORY_RUNTIME_INSTANCE_ID?.trim() || undefined,
-    };
-  }
-
-  const envUrl = process.env.WITHMATE_MEMORY_API_URL?.trim();
-  if (envUrl) {
-    const baseUrl = normalizeLoopbackUrl(envUrl);
-    if (!baseUrl) {
-      throw usage("WITHMATE_MEMORY_API_URL must be a valid loopback HTTP URL.");
-    }
-    return {
-      baseUrl,
-      apiSecret: process.env.WITHMATE_MEMORY_API_SECRET?.trim() || undefined,
-      runtimeInstanceId: process.env.WITHMATE_MEMORY_RUNTIME_INSTANCE_ID?.trim() || undefined,
-    };
-  }
-
-  const discoveryPath = options.discoveryFilePath
-    || process.env.WITHMATE_MEMORY_DISCOVERY_FILE?.trim()
-    || path.join(process.env.WITHMATE_MEMORY_RUNTIME_DIR?.trim() || defaultRuntimeDirectory(), discoveryFileName);
-  try {
-    const document = JSON.parse(await readFile(discoveryPath, "utf8"));
-    if (document.schemaVersion !== discoverySchemaVersion || typeof document.baseUrl !== "string") {
-      return null;
-    }
-    const baseUrl = normalizeLoopbackUrl(document.baseUrl);
-    if (!baseUrl) {
-      return null;
-    }
-    return {
-      baseUrl,
-      apiSecret: typeof document.apiSecret === "string" ? document.apiSecret.trim() || undefined : undefined,
-      runtimeInstanceId: typeof document.runtimeInstanceId === "string" ? document.runtimeInstanceId.trim() || undefined : undefined,
-    };
-  } catch {
-    return null;
-  }
+function resolveRuntimeRequestTimeoutMs(command, deps = {}) {
+	if (deps.requestTimeoutMs !== void 0) return deps.requestTimeoutMs;
+	if (FILE_OPERATION_COMMANDS.has(command)) return deps.fileOperationRequestTimeoutMs ?? 3e5;
+	return DEFAULT_REQUEST_TIMEOUT_MS;
 }
-
-async function parseArgs(argv) {
-  const [rawCommand, ...rest] = argv;
-  if (!rawCommand || rawCommand === "--help" || rawCommand === "-h") {
-    return { route: { name: "help", local: true, defaultBody: {} }, body: {} };
-  }
-  const route = rawCommand ? commands.get(rawCommand) : undefined;
-  if (!route) {
-    throw usage("Usage: withmate-memory <help|status|characters|search|get-entry|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <absolute-path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
-  }
-  if (route.name === "help" || rest.includes("--help") || rest.includes("-h")) {
-    return { route: { name: "help", local: true, defaultBody: {} }, body: {} };
-  }
-
-  let jsonInput = null;
-  let filePath = null;
-  let stdinRequested = false;
-  let apiUrl;
-  let discoveryFilePath;
-  let validateCommand;
-  let projectPath;
-  let projectId;
-  let query;
-  const tagOptions = [];
-  let entryId;
-  let limit;
-  for (let index = 0; index < rest.length; index += 1) {
-    const arg = rest[index];
-    if (arg === "--json") {
-      jsonInput = requireOptionValue(rest, ++index, arg);
-    } else if (arg === "--file") {
-      filePath = requireOptionValue(rest, ++index, arg);
-    } else if (arg === "--stdin") {
-      stdinRequested = true;
-    } else if (arg.startsWith("@") && arg.length > 1) {
-      filePath = arg.slice(1);
-    } else if (arg === "--api-url") {
-      apiUrl = requireOptionValue(rest, ++index, arg);
-    } else if (arg === "--discovery-file") {
-      discoveryFilePath = requireOptionValue(rest, ++index, arg);
-    } else if (arg === "--command") {
-      validateCommand = normalizeValidatableCommand(requireOptionValue(rest, ++index, arg));
-      if (!validateCommand) {
-        throw usage(`--command must be one of: ${Array.from(validatableCommands).join(", ")}.`);
-      }
-    } else if (arg === "--project") {
-      projectPath = requireOptionValue(rest, ++index, arg);
-    } else if (arg === "--project-id") {
-      projectId = requireOptionValue(rest, ++index, arg);
-    } else if (arg === "--query") {
-      query = requireOptionValue(rest, ++index, arg);
-    } else if (arg === "--tag") {
-      tagOptions.push(requireOptionValue(rest, ++index, arg));
-    } else if (arg === "--tags") {
-      tagOptions.push(...parseTagsOption(requireOptionValue(rest, ++index, arg)));
-    } else if (arg === "--entry-id") {
-      entryId = requireOptionValue(rest, ++index, arg);
-    } else if (arg === "--limit") {
-      limit = parseLimit(requireOptionValue(rest, ++index, arg));
-    } else {
-      throw usage(`Unknown option: ${arg}`);
-    }
-  }
-  const bodyInputCount = [jsonInput !== null, filePath !== null, stdinRequested].filter(Boolean).length;
-  if (bodyInputCount > 1) {
-    throw usage("--json, --file, @file, and --stdin cannot be used together.");
-  }
-  if ([Boolean(projectPath), Boolean(projectId)].filter(Boolean).length > 1) {
-    throw usage("--project and --project-id cannot be used together.");
-  }
-  if (route.name === "validate" && !validateCommand) {
-    throw usage("validate requires --command <search|get-entry|list-tags|append|forget>.");
-  }
-
-  let body = route.defaultBody;
-  if (route.method === "POST" || route.name === "validate") {
-    if (jsonInput !== null) {
-      body = parseJson(jsonInput);
-    } else if (filePath !== null) {
-      body = parseJson(await readFile(filePath, "utf8"));
-    } else if (stdinRequested) {
-      body = parseJson(await readStdin(process.stdin));
-    } else if (hasShorthandOptions({ projectPath, projectId, query, tags: tagOptions, entryId, limit })) {
-      body = buildShorthandBody(route.name, { projectPath, projectId, query, tags: tagOptions, entryId, limit });
-    }
-  }
-  return { route, body, apiUrl, discoveryFilePath, validateCommand };
+function readEnvSecret(env) {
+	const value = env.WITHMATE_MEMORY_API_SECRET?.trim();
+	return value ? value : void 0;
 }
-
-function normalizeValidatableCommand(value) {
-  const command = commands.get(value)?.name;
-  return validatableCommands.has(command) ? command : undefined;
+function readEnvRuntimeInstanceId(env) {
+	const value = env.WITHMATE_MEMORY_RUNTIME_INSTANCE_ID?.trim();
+	return value ? value : void 0;
 }
-
-function parseLimit(value) {
-  const limit = Number(value);
-  if (!Number.isInteger(limit) || limit < 1) {
-    throw usage("--limit must be a positive integer.");
-  }
-  return limit;
-}
-
-function parseTagsOption(value) {
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function normalizeCliTagOptions(values) {
-  const tags = [];
-  const seen = new Set();
-  for (const rawValue of values) {
-    const trimmed = rawValue.trim();
-    if (!trimmed) {
-      continue;
-    }
-    const separatorIndex = trimmed.indexOf(":");
-    const type = separatorIndex > 0 ? trimmed.slice(0, separatorIndex).trim() : "topic";
-    const value = separatorIndex > 0 ? trimmed.slice(separatorIndex + 1).trim() : trimmed;
-    if (!type || !value) {
-      throw usage("--tag and --tags values must be <tag> or <type>:<tag>.");
-    }
-    const key = `${type.normalize("NFC").toLowerCase()}\0${value.normalize("NFC").toLowerCase()}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    tags.push({ type, value });
-  }
-  return tags;
-}
-
-function hasShorthandOptions(options) {
-  return Boolean(options.projectPath || options.projectId || options.query || (options.tags && options.tags.length > 0) || options.entryId || options.limit !== undefined);
-}
-
-function isAbsoluteCliPath(value) {
-  return path.isAbsolute(value) || path.win32.isAbsolute(value);
-}
-
-function normalizeCliProjectPath(value) {
-  if (!isAbsoluteCliPath(value)) {
-    throw usage("--project requires an absolute path.");
-  }
-  return path.win32.isAbsolute(value)
-    ? path.win32.normalize(value).replace(/\\/g, "/")
-    : path.resolve(value);
-}
-
-function buildProjectTarget(options) {
-  if (options.projectId) {
-    return { owner: "project", scope: "project", project: { type: "id", id: options.projectId } };
-  }
-  if (options.projectPath) {
-    return { owner: "project", scope: "project", project: { type: "path", path: normalizeCliProjectPath(options.projectPath) } };
-  }
-  return null;
-}
-
-function buildShorthandBody(command, options) {
-  const target = buildProjectTarget(options);
-  if (command === "search") {
-    if (!target) {
-      throw usage("search shorthand requires --project <absolute-path> or --project-id <id>.");
-    }
-    const tags = normalizeCliTagOptions(options.tags || []);
-    const query = options.query || tags.map((tag) => tag.value).join(" ");
-    if (!query) {
-      throw usage("search shorthand requires --query <text> or --tag <tag>.");
-    }
-    return {
-      schemaVersion,
-      targets: [target],
-      query,
-      ...(tags.length > 0 ? { tags } : {}),
-      ...(options.limit !== undefined ? { limit: options.limit } : {}),
-    };
-  }
-  if (command === "list_tags") {
-    if (!target) {
-      throw usage("list-tags shorthand requires --project <absolute-path> or --project-id <id>.");
-    }
-    return { schemaVersion, targets: [target] };
-  }
-  if (command === "get_entry") {
-    if (!options.entryId) {
-      throw usage("get-entry shorthand requires --entry-id <id>.");
-    }
-    if (!target) {
-      throw usage("get-entry shorthand requires --project <absolute-path> or --project-id <id>.");
-    }
-    return {
-      schemaVersion,
-      entryId: options.entryId,
-      target,
-    };
-  }
-  throw usage(`${command} does not support shorthand options. Use --json, --file, @file, or --stdin.`);
-}
-
 async function readStdin(stdin) {
-  const chunks = [];
-  for await (const chunk of stdin) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks).toString("utf8");
+	const chunks = [];
+	for await (const chunk of stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+	return Buffer.concat(chunks).toString("utf8");
 }
-
+async function parseJsonInput(input) {
+	const trimmed = input.trim();
+	if (!trimmed) return {};
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		throw usageError("Request JSON must be valid JSON. If shell quoting changed the JSON, retry with --file <path> or --stdin.");
+	}
+}
+function normalizeCommandName(value) {
+	return commandAliases.get(value);
+}
+function normalizeValidatableCommand(value) {
+	const command = normalizeCommandName(value);
+	if (command && validatableCommands.has(command)) return command;
+}
+async function discoverWithMateMemoryApi(options = {}) {
+	const env = options.env ?? process.env;
+	if (options.apiUrl !== void 0) {
+		const explicitUrl = normalizeWithMateMemoryApiBaseUrl(options.apiUrl);
+		if (!explicitUrl) throw usageError("--api-url must be a valid loopback HTTP URL.");
+		return {
+			baseUrl: explicitUrl,
+			...readEnvSecret(env) ? { apiSecret: readEnvSecret(env) } : {},
+			...readEnvRuntimeInstanceId(env) ? { runtimeInstanceId: readEnvRuntimeInstanceId(env) } : {}
+		};
+	}
+	const rawEnvUrl = env.WITHMATE_MEMORY_API_URL?.trim();
+	if (rawEnvUrl) {
+		const envUrl = normalizeWithMateMemoryApiBaseUrl(rawEnvUrl);
+		if (!envUrl) throw usageError("WITHMATE_MEMORY_API_URL must be a valid loopback HTTP URL.");
+		return {
+			baseUrl: envUrl,
+			...readEnvSecret(env) ? { apiSecret: readEnvSecret(env) } : {},
+			...readEnvRuntimeInstanceId(env) ? { runtimeInstanceId: readEnvRuntimeInstanceId(env) } : {}
+		};
+	}
+	const envDiscoveryFilePath = env.WITHMATE_MEMORY_DISCOVERY_FILE?.trim();
+	const discoveryFilePath = options.discoveryFilePath ?? (envDiscoveryFilePath || resolveDefaultWithMateMemoryDiscoveryFilePath(env));
+	const read = options.readFile ?? readFile;
+	try {
+		const document = JSON.parse(await read(discoveryFilePath, "utf8"));
+		if (document.schemaVersion !== "withmate-memory-discovery-v1" || typeof document.baseUrl !== "string") return null;
+		const baseUrl = normalizeWithMateMemoryApiBaseUrl(document.baseUrl);
+		if (!baseUrl) return null;
+		return {
+			baseUrl,
+			...typeof document.apiSecret === "string" && document.apiSecret.trim() ? { apiSecret: document.apiSecret.trim() } : {},
+			...typeof document.runtimeInstanceId === "string" && document.runtimeInstanceId.trim() ? { runtimeInstanceId: document.runtimeInstanceId.trim() } : {}
+		};
+	} catch {
+		return null;
+	}
+}
+async function parseWithMateMemoryCliArgs(args, deps = {}) {
+	const [rawCommand, ...rest] = args;
+	if (!rawCommand || rawCommand === "--help" || rawCommand === "-h") return {
+		command: "help",
+		body: {}
+	};
+	const command = rawCommand ? commandAliases.get(rawCommand) : void 0;
+	if (!command) throw usageError("Usage: withmate-memory <help|status|characters|file-usage|search|get-entry|get-file|export-files|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <absolute-path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--object-id <id>] [--output <path>] [--output-dir <path>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
+	if (command === "help" || rest.includes("--help") || rest.includes("-h")) return {
+		command: "help",
+		body: {}
+	};
+	let jsonInput = null;
+	let filePath = null;
+	let stdinRequested = false;
+	let apiUrl;
+	let discoveryFilePath;
+	let validateCommand;
+	let projectPath;
+	let projectId;
+	let query;
+	const tagOptions = [];
+	let entryId;
+	let objectId;
+	let outputPath;
+	let outputDirectoryPath;
+	let largest = false;
+	let limit;
+	for (let index = 0; index < rest.length; index += 1) {
+		const arg = rest[index];
+		if (arg === "--json") jsonInput = requireOptionValue(rest, ++index, arg);
+		else if (arg === "--file") filePath = requireOptionValue(rest, ++index, arg);
+		else if (arg === "--stdin") stdinRequested = true;
+		else if (arg.startsWith("@") && arg.length > 1) filePath = arg.slice(1);
+		else if (arg === "--api-url") apiUrl = requireOptionValue(rest, ++index, arg);
+		else if (arg === "--discovery-file") discoveryFilePath = requireOptionValue(rest, ++index, arg);
+		else if (arg === "--command") {
+			validateCommand = normalizeValidatableCommand(requireOptionValue(rest, ++index, arg));
+			if (!validateCommand) throw usageError(`--command must be one of: ${Array.from(validatableCommands).join(", ")}.`);
+		} else if (arg === "--project") projectPath = requireOptionValue(rest, ++index, arg);
+		else if (arg === "--project-id") projectId = requireOptionValue(rest, ++index, arg);
+		else if (arg === "--query") query = requireOptionValue(rest, ++index, arg);
+		else if (arg === "--tag") tagOptions.push(requireOptionValue(rest, ++index, arg));
+		else if (arg === "--tags") tagOptions.push(...parseTagsOption(requireOptionValue(rest, ++index, arg)));
+		else if (arg === "--entry-id") entryId = requireOptionValue(rest, ++index, arg);
+		else if (arg === "--object-id") objectId = requireOptionValue(rest, ++index, arg);
+		else if (arg === "--output") outputPath = requireOptionValue(rest, ++index, arg);
+		else if (arg === "--output-dir") outputDirectoryPath = requireOptionValue(rest, ++index, arg);
+		else if (arg === "--largest") largest = true;
+		else if (arg === "--limit") limit = parseLimitOption(requireOptionValue(rest, ++index, arg));
+		else throw usageError(`Unknown option: ${arg}`);
+	}
+	if ([
+		jsonInput !== null,
+		filePath !== null,
+		stdinRequested
+	].filter(Boolean).length > 1) throw usageError("--json, --file, @file, and --stdin cannot be used together.");
+	if ([Boolean(projectPath), Boolean(projectId)].filter(Boolean).length > 1) throw usageError("--project and --project-id cannot be used together.");
+	if (command === "validate" && !validateCommand) throw usageError("validate requires --command <search|get-entry|get-file|export-files|list-tags|append|forget>.");
+	let body = {};
+	if (command === "file_usage") {
+		if (jsonInput !== null || filePath !== null || stdinRequested) throw usageError("file-usage does not accept JSON body input. Use --largest and --limit.");
+		if (hasShorthandOptions({
+			projectPath,
+			projectId,
+			query,
+			tags: tagOptions,
+			entryId,
+			objectId,
+			outputPath,
+			outputDirectoryPath,
+			largest,
+			limit
+		})) body = buildShorthandBody(command, {
+			projectPath,
+			projectId,
+			query,
+			tags: tagOptions,
+			entryId,
+			objectId,
+			outputPath,
+			outputDirectoryPath,
+			largest,
+			limit
+		});
+	} else if (command !== "status" && command !== "characters" && command !== "schema") {
+		if (jsonInput !== null) body = await parseJsonInput(jsonInput);
+		else if (filePath !== null) body = await parseJsonInput(await (deps.readFile ?? readFile)(filePath, "utf8"));
+		else if (stdinRequested) body = await parseJsonInput(await readStdin(deps.stdin ?? process.stdin));
+		else if (hasShorthandOptions({
+			projectPath,
+			projectId,
+			query,
+			tags: tagOptions,
+			entryId,
+			objectId,
+			outputPath,
+			outputDirectoryPath,
+			largest,
+			limit
+		})) body = buildShorthandBody(command, {
+			projectPath,
+			projectId,
+			query,
+			tags: tagOptions,
+			entryId,
+			objectId,
+			outputPath,
+			outputDirectoryPath,
+			largest,
+			limit
+		});
+		else if (deps.stdin && !deps.stdin.isTTY) body = await parseJsonInput(await readStdin(deps.stdin));
+	}
+	return {
+		command,
+		body: normalizeProjectPathTargets(body),
+		...validateCommand ? { validateCommand } : {},
+		...apiUrl ? { apiUrl } : {},
+		...discoveryFilePath ? { discoveryFilePath } : {}
+	};
+}
+function parseLimitOption(value) {
+	const limit = Number(value);
+	if (!Number.isInteger(limit) || limit < 1) throw usageError("--limit must be a positive integer.");
+	return limit;
+}
+function parseTagsOption(value) {
+	return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+function normalizeCliTagOptions(values) {
+	const tags = [];
+	const seen = /* @__PURE__ */ new Set();
+	for (const rawValue of values) {
+		const trimmed = rawValue.trim();
+		if (!trimmed) continue;
+		const separatorIndex = trimmed.indexOf(":");
+		const type = separatorIndex > 0 ? trimmed.slice(0, separatorIndex).trim() : "topic";
+		const value = separatorIndex > 0 ? trimmed.slice(separatorIndex + 1).trim() : trimmed;
+		if (!type || !value) throw usageError("--tag and --tags values must be <tag> or <type>:<tag>.");
+		const key = `${type.normalize("NFC").toLowerCase()}\0${value.normalize("NFC").toLowerCase()}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		tags.push({
+			type,
+			value
+		});
+	}
+	return tags;
+}
+function hasShorthandOptions(options) {
+	return Boolean(options.projectPath || options.projectId || options.query || options.tags && options.tags.length > 0 || options.entryId || options.objectId || options.outputPath || options.outputDirectoryPath || options.largest || options.limit !== void 0);
+}
+function isAbsoluteCliPath(value) {
+	return path.isAbsolute(value) || path.win32.isAbsolute(value);
+}
+function normalizeCliProjectPath(value) {
+	if (!isAbsoluteCliPath(value)) throw usageError("--project requires an absolute path.");
+	return path.win32.isAbsolute(value) ? path.win32.normalize(value).replace(/\\/g, "/") : path.resolve(value);
+}
+function normalizeCliOutputPath(value) {
+	if (!isAbsoluteCliPath(value)) throw usageError("--output requires an absolute path.");
+	return path.win32.isAbsolute(value) ? path.win32.normalize(value) : path.resolve(value);
+}
+function normalizeCliOutputDirectoryPath(value) {
+	if (!isAbsoluteCliPath(value)) throw usageError("--output-dir requires an absolute path.");
+	return path.win32.isAbsolute(value) ? path.win32.normalize(value) : path.resolve(value);
+}
+function buildProjectTarget(options) {
+	if (options.projectId) return {
+		owner: "project",
+		scope: "project",
+		project: {
+			type: "id",
+			id: options.projectId
+		}
+	};
+	if (options.projectPath) return {
+		owner: "project",
+		scope: "project",
+		project: {
+			type: "path",
+			path: normalizeCliProjectPath(options.projectPath)
+		}
+	};
+	return null;
+}
+function buildShorthandBody(command, options) {
+	if (command === "validate") throw usageError("validate shorthand options are not supported. Use --json, --file, @file, or --stdin.");
+	const target = buildProjectTarget(options);
+	if (command === "file_usage") {
+		if (target || options.query || options.tags && options.tags.length > 0 || options.entryId || options.objectId || options.outputPath || options.outputDirectoryPath) throw usageError("file-usage shorthand only supports --largest and --limit.");
+		if (options.limit !== void 0 && !options.largest) throw usageError("file-usage --limit requires --largest.");
+		return {
+			...options.largest ? { largest: true } : {},
+			...options.limit !== void 0 ? { limit: options.limit } : {}
+		};
+	}
+	if (command === "search") {
+		if (!target) throw usageError("search shorthand requires --project <absolute-path> or --project-id <id>.");
+		const tags = normalizeCliTagOptions(options.tags ?? []);
+		const query = options.query ?? tags.map((tag) => tag.value).join(" ");
+		if (!query) throw usageError("search shorthand requires --query <text> or --tag <tag>.");
+		return {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			targets: [target],
+			query,
+			...tags.length > 0 ? { tags } : {},
+			...options.limit !== void 0 ? { limit: options.limit } : {}
+		};
+	}
+	if (command === "list_tags") {
+		if (!target) throw usageError("list-tags shorthand requires --project <absolute-path> or --project-id <id>.");
+		return {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			targets: [target]
+		};
+	}
+	if (command === "get_entry") {
+		if (!options.entryId) throw usageError("get-entry shorthand requires --entry-id <id>.");
+		if (!target) throw usageError("get-entry shorthand requires --project <absolute-path> or --project-id <id>.");
+		return {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			entryId: options.entryId,
+			target
+		};
+	}
+	if (command === "get_file") {
+		if (!options.objectId) throw usageError("get-file shorthand requires --object-id <id>.");
+		if (!options.outputPath) throw usageError("get-file shorthand requires --output <absolute-path>.");
+		if (!target) throw usageError("get-file shorthand requires --project <absolute-path> or --project-id <id>.");
+		return {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			target,
+			objectId: options.objectId,
+			outputPath: normalizeCliOutputPath(options.outputPath)
+		};
+	}
+	if (command === "export_files") {
+		if (!options.entryId) throw usageError("export-files shorthand requires --entry-id <id>.");
+		if (!options.outputDirectoryPath) throw usageError("export-files shorthand requires --output-dir <absolute-path>.");
+		if (!target) throw usageError("export-files shorthand requires --project <absolute-path> or --project-id <id>.");
+		return {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			target,
+			entryId: options.entryId,
+			outputDirectoryPath: normalizeCliOutputDirectoryPath(options.outputDirectoryPath)
+		};
+	}
+	throw usageError(`${command} does not support shorthand options. Use --json, --file, @file, or --stdin.`);
+}
 function normalizeProjectPathTargets(value) {
-  if (Array.isArray(value)) {
-    return value.map((item) => normalizeProjectPathTargets(item));
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-
-  const normalized = {};
-  for (const [key, item] of Object.entries(value)) {
-    normalized[key] = normalizeProjectPathTargets(item);
-  }
-
-  if (value.type === "path" && typeof value.path === "string") {
-    normalized.path = normalizeCliProjectPath(value.path);
-  }
-  return normalized;
+	if (Array.isArray(value)) return value.map((item) => normalizeProjectPathTargets(item));
+	if (!value || typeof value !== "object") return value;
+	const record = value;
+	const normalized = {};
+	for (const [key, item] of Object.entries(record)) normalized[key] = normalizeProjectPathTargets(item);
+	if (record.type === "path" && typeof record.path === "string") normalized.path = normalizeCliProjectPath(record.path);
+	return normalized;
 }
-
 function requireOptionValue(args, index, option) {
-  const value = args[index];
-  if (!value || value.startsWith("--")) {
-    throw usage(`${option} requires a value.`);
-  }
-  return value;
+	const value = args[index];
+	if (!value || value.startsWith("--")) throw usageError(`${option} requires a value.`);
+	return value;
 }
-
-function parseJson(raw) {
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return {};
-  }
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    throw usage("Request JSON must be valid JSON. If shell quoting changed the JSON, retry with --file <path> or --stdin.");
-  }
-}
-
 function buildSchemaResponse() {
-  return {
-    schemaVersion,
-    entryKinds,
-    forgetReasons,
-    commands: ["help", "status", "characters", "search", "get-entry", "list-tags", "append", "forget", "schema", "validate"],
-    requestBodyInputs: ["--json", "--file", "@file", "--stdin"],
-    targetSelectors: [
-      {
-        owner: "project",
-        scope: "project",
-        requiredFields: ["project"],
-        projectTypes: ["id", "path"],
-      },
-      {
-        owner: "character",
-        scope: "character",
-        requiredFields: ["character"],
-        characterTypes: ["id"],
-      },
-      {
-        owner: "character",
-        scope: "project",
-        requiredFields: ["character", "project"],
-        characterTypes: ["id"],
-        projectTypes: ["id", "path"],
-      },
-      {
-        owner: "user",
-        scope: "global",
-        requiredFields: [],
-      },
-    ],
-  };
+	return {
+		schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+		entryKinds: [...MEMORY_ENTRY_KINDS],
+		forgetReasons: [...MEMORY_FORGET_REASONS],
+		commands: [
+			"help",
+			"status",
+			"characters",
+			"file-usage",
+			"search",
+			"get-entry",
+			"get-file",
+			"export-files",
+			"list-tags",
+			"append",
+			"forget",
+			"schema",
+			"validate"
+		],
+		requestBodyInputs: [
+			"--json",
+			"--file",
+			"@file",
+			"--stdin"
+		],
+		targetSelectors: [
+			{
+				owner: "project",
+				scope: "project",
+				requiredFields: ["project"],
+				projectTypes: ["id", "path"]
+			},
+			{
+				owner: "character",
+				scope: "character",
+				requiredFields: ["character"],
+				characterTypes: ["id"]
+			},
+			{
+				owner: "character",
+				scope: "project",
+				requiredFields: ["character", "project"],
+				characterTypes: ["id"],
+				projectTypes: ["id", "path"]
+			},
+			{
+				owner: "user",
+				scope: "global",
+				requiredFields: []
+			}
+		]
+	};
 }
-
-const entryKindSet = new Set(entryKinds);
-const forgetReasonSet = new Set(forgetReasons);
-const searchRequestKeys = new Set(["schemaVersion", "targets", "query", "kinds", "tags", "limit", "cursor"]);
-const getEntryRequestKeys = new Set(["schemaVersion", "entryId", "target"]);
-const listTagsRequestKeys = new Set(["schemaVersion", "targets"]);
-const appendRequestKeys = new Set([
-  "schemaVersion",
-  "target",
-  "kind",
-  "title",
-  "body",
-  "preview",
-  "tags",
-  "supersedes",
-  "sourceMessageId",
-  "idempotencyKey",
-]);
-const forgetRequestKeys = new Set(["schemaVersion", "target", "entryIds", "reason", "sourceMessageId", "idempotencyKey"]);
-const projectTargetIdKeys = new Set(["type", "id"]);
-const projectTargetPathKeys = new Set(["type", "path"]);
-const characterTargetIdKeys = new Set(["type", "id"]);
-const memoryTagKeys = new Set(["type", "value"]);
-const projectProjectTargetKeys = new Set(["owner", "scope", "project"]);
-const characterCharacterTargetKeys = new Set(["owner", "scope", "character"]);
-const characterProjectTargetKeys = new Set(["owner", "scope", "character", "project"]);
-const userGlobalTargetKeys = new Set(["owner", "scope"]);
-
-const maxSearchQueryLength = 500;
-const maxTitleLength = 160;
-const maxPreviewLength = 280;
-const maxBodyLength = 8_000;
-const maxTagTypeLength = 48;
-const maxTagValueLength = 96;
-const maxIdLength = 200;
-const maxCursorLength = 500;
-const maxLimit = 50;
-const maxTags = 20;
-const maxSupersedes = 20;
-const maxForgetEntryIds = 50;
-const maxTargets = 5;
-
-function isRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function validateMemoryCliRequestBody(command, body) {
+	if (command === "search") return validateMemorySearchRequest(body);
+	if (command === "get_entry") return validateMemoryGetEntryRequest(body);
+	if (command === "get_file") return validateMemoryGetFileRequest(body);
+	if (command === "export_files") return validateMemoryExportFilesRequest(body);
+	if (command === "list_tags") return validateMemoryListTagsRequest(body);
+	if (command === "append") return validateMemoryAppendRequest(body);
+	return validateMemoryForgetRequest(body);
 }
-
-function validationError(code, message, field) {
-  return { ok: false, error: field ? { code, message, field } : { code, message } };
-}
-
-function rejectUnknownKeys(value, allowedKeys, field) {
-  for (const key of Object.keys(value)) {
-    if (!allowedKeys.has(key)) {
-      return validationError("MEMORY_UNKNOWN_FIELD", `Unknown field: ${field}.${key}`, `${field}.${key}`);
-    }
-  }
-  return { ok: true, value: undefined };
-}
-
-function hasUnpairedSurrogate(value) {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (!(next >= 0xdc00 && next <= 0xdfff)) {
-        return true;
-      }
-      index += 1;
-      continue;
-    }
-    if (code >= 0xdc00 && code <= 0xdfff) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function normalizeText(value, field, options) {
-  if (typeof value !== "string") {
-    if (options.required === false && value === undefined) {
-      return { ok: true, value: "" };
-    }
-    return validationError("MEMORY_INVALID_FIELD", `${field} must be a string.`, field);
-  }
-  if (value.includes("\0")) {
-    return validationError("MEMORY_INVALID_FIELD", `${field} must not contain null bytes.`, field);
-  }
-  if (hasUnpairedSurrogate(value)) {
-    return validationError("MEMORY_INVALID_FIELD", `${field} must be well-formed Unicode.`, field);
-  }
-  const normalized = value.trim();
-  if (options.required !== false && normalized.length === 0) {
-    return validationError("MEMORY_INVALID_FIELD", `${field} must not be empty.`, field);
-  }
-  if (normalized.length > options.maxLength) {
-    return validationError("MEMORY_FIELD_TOO_LARGE", `${field} is too long.`, field);
-  }
-  return { ok: true, value: normalized };
-}
-
-function normalizeOptionalText(value, field, maxLength = maxIdLength) {
-  if (value === undefined) {
-    return { ok: true, value: undefined };
-  }
-  return normalizeText(value, field, { maxLength });
-}
-
-function validateSchemaVersion(value) {
-  if (value.schemaVersion !== schemaVersion) {
-    return validationError("MEMORY_INVALID_SCHEMA_VERSION", "Unsupported memory schemaVersion.", "schemaVersion");
-  }
-  return { ok: true, value: undefined };
-}
-
-function normalizeStringArray(value, field, options) {
-  if (value === undefined) {
-    return { ok: true, value: undefined };
-  }
-  if (!Array.isArray(value)) {
-    return validationError("MEMORY_INVALID_FIELD", `${field} must be an array.`, field);
-  }
-  if (value.length > options.maxItems) {
-    return validationError("MEMORY_FIELD_TOO_LARGE", `${field} has too many items.`, field);
-  }
-  const normalized = [];
-  const seen = new Set();
-  for (let index = 0; index < value.length; index += 1) {
-    const item = normalizeText(value[index], `${field}[${index}]`, { maxLength: options.maxLength });
-    if (!item.ok) {
-      return item;
-    }
-    if (seen.has(item.value)) {
-      continue;
-    }
-    seen.add(item.value);
-    normalized.push(item.value);
-  }
-  return { ok: true, value: normalized };
-}
-
-function validateMemoryKind(value, field) {
-  if (typeof value !== "string" || !entryKindSet.has(value)) {
-    return validationError("MEMORY_INVALID_FIELD", `${field} must be a valid memory kind.`, field);
-  }
-  return { ok: true, value };
-}
-
-function normalizeProjectTarget(value, field) {
-  if (!isRecord(value)) {
-    return validationError("MEMORY_INVALID_FIELD", `${field} must be an object.`, field);
-  }
-  if (value.type === "id") {
-    const unknownKeys = rejectUnknownKeys(value, projectTargetIdKeys, field);
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    const id = normalizeText(value.id, `${field}.id`, { maxLength: maxIdLength });
-    return id.ok ? { ok: true, value: { type: "id", id: id.value } } : id;
-  }
-  if (value.type === "path") {
-    const unknownKeys = rejectUnknownKeys(value, projectTargetPathKeys, field);
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    const projectPath = normalizeText(value.path, `${field}.path`, { maxLength: 1_000 });
-    return projectPath.ok ? { ok: true, value: { type: "path", path: projectPath.value } } : projectPath;
-  }
-  return validationError("MEMORY_INVALID_FIELD", `${field}.type must be id or path.`, `${field}.type`);
-}
-
-function normalizeCharacterTarget(value, field) {
-  if (!isRecord(value)) {
-    return validationError("MEMORY_INVALID_FIELD", `${field} must be an object.`, field);
-  }
-  if (value.type === "id") {
-    const unknownKeys = rejectUnknownKeys(value, characterTargetIdKeys, field);
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    const id = normalizeText(value.id, `${field}.id`, { maxLength: maxIdLength });
-    return id.ok ? { ok: true, value: { type: "id", id: id.value } } : id;
-  }
-  return validationError("MEMORY_INVALID_FIELD", `${field}.type must be id.`, `${field}.type`);
-}
-
-function normalizeMemoryTarget(value, field) {
-  if (!isRecord(value)) {
-    return validationError("MEMORY_INVALID_FIELD", `${field} must be an object.`, field);
-  }
-  if (value.owner === "user" && value.scope === "global") {
-    const unknownKeys = rejectUnknownKeys(value, userGlobalTargetKeys, field);
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    return { ok: true, value: { owner: "user", scope: "global" } };
-  }
-  if (value.owner === "project" && value.scope === "project") {
-    const unknownKeys = rejectUnknownKeys(value, projectProjectTargetKeys, field);
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    const project = normalizeProjectTarget(value.project, `${field}.project`);
-    return project.ok ? { ok: true, value: { owner: "project", scope: "project", project: project.value } } : project;
-  }
-  if (value.owner === "character" && value.scope === "character") {
-    const unknownKeys = rejectUnknownKeys(value, characterCharacterTargetKeys, field);
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    const character = normalizeCharacterTarget(value.character, `${field}.character`);
-    return character.ok ? { ok: true, value: { owner: "character", scope: "character", character: character.value } } : character;
-  }
-  if (value.owner === "character" && value.scope === "project") {
-    const unknownKeys = rejectUnknownKeys(value, characterProjectTargetKeys, field);
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    const character = normalizeCharacterTarget(value.character, `${field}.character`);
-    if (!character.ok) {
-      return character;
-    }
-    const project = normalizeProjectTarget(value.project, `${field}.project`);
-    return project.ok
-      ? { ok: true, value: { owner: "character", scope: "project", character: character.value, project: project.value } }
-      : project;
-  }
-  return validationError("MEMORY_INVALID_TARGET", "Unsupported memory owner / scope combination.", field);
-}
-
-function normalizeTargets(value) {
-  if (!Array.isArray(value) || value.length === 0) {
-    return validationError("MEMORY_TARGET_REQUIRED", "At least one memory target is required.", "targets");
-  }
-  if (value.length > maxTargets) {
-    return validationError("MEMORY_FIELD_TOO_LARGE", `targets supports at most ${maxTargets} items.`, "targets");
-  }
-  const normalized = [];
-  const seen = new Set();
-  for (let index = 0; index < value.length; index += 1) {
-    const target = normalizeMemoryTarget(value[index], `targets[${index}]`);
-    if (!target.ok) {
-      return target;
-    }
-    const key = JSON.stringify(target.value);
-    if (seen.has(key)) {
-      return validationError("MEMORY_DUPLICATE_TARGET", "targets must not contain duplicates.", `targets[${index}]`);
-    }
-    seen.add(key);
-    normalized.push(target.value);
-  }
-  return { ok: true, value: normalized };
-}
-
-function normalizeTags(value, field = "tags", options = {}) {
-  if (value === undefined) {
-    if (options.required) {
-      return validationError("MEMORY_INVALID_FIELD", `${field} is required.`, field);
-    }
-    return { ok: true, value: [] };
-  }
-  if (!Array.isArray(value)) {
-    return validationError("MEMORY_INVALID_FIELD", `${field} must be an array.`, field);
-  }
-  if (value.length > maxTags) {
-    return validationError("MEMORY_FIELD_TOO_LARGE", `${field} has too many items.`, field);
-  }
-  const normalized = [];
-  const seen = new Set();
-  for (let index = 0; index < value.length; index += 1) {
-    const tag = value[index];
-    if (!isRecord(tag)) {
-      return validationError("MEMORY_INVALID_FIELD", `${field}[${index}] must be an object.`, `${field}[${index}]`);
-    }
-    const unknownKeys = rejectUnknownKeys(tag, memoryTagKeys, `${field}[${index}]`);
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    const type = normalizeText(tag.type, `${field}[${index}].type`, { maxLength: maxTagTypeLength });
-    if (!type.ok) {
-      return type;
-    }
-    const tagValue = normalizeText(tag.value, `${field}[${index}].value`, { maxLength: maxTagValueLength });
-    if (!tagValue.ok) {
-      return tagValue;
-    }
-    const canonicalType = type.value.normalize("NFC").toLowerCase();
-    const canonicalValue = tagValue.value.normalize("NFC").toLowerCase();
-    const key = `${canonicalType}\0${canonicalValue}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    normalized.push({ type: type.value, value: tagValue.value, canonicalType, canonicalValue });
-  }
-  return { ok: true, value: normalized };
-}
-
-function normalizeKinds(value) {
-  if (value === undefined) {
-    return { ok: true, value: undefined };
-  }
-  if (!Array.isArray(value)) {
-    return validationError("MEMORY_INVALID_FIELD", "kinds must be an array.", "kinds");
-  }
-  if (value.length > entryKinds.length) {
-    return validationError("MEMORY_FIELD_TOO_LARGE", "kinds has too many items.", "kinds");
-  }
-  const normalized = [];
-  const seen = new Set();
-  for (let index = 0; index < value.length; index += 1) {
-    const kind = validateMemoryKind(value[index], `kinds[${index}]`);
-    if (!kind.ok) {
-      return kind;
-    }
-    if (seen.has(kind.value)) {
-      continue;
-    }
-    seen.add(kind.value);
-    normalized.push(kind.value);
-  }
-  return { ok: true, value: normalized.length > 0 ? normalized : undefined };
-}
-
-function validateRequest(command, body) {
-  if (!isRecord(body)) {
-    const label = command === "get_entry" ? "Get entry"
-      : command === "list_tags" ? "List tags"
-        : command[0].toUpperCase() + command.slice(1);
-    return validationError("MEMORY_INVALID_REQUEST", `${label} request must be an object.`);
-  }
-  if (command === "search") {
-    const unknownKeys = rejectUnknownKeys(body, searchRequestKeys, "request");
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    const schema = validateSchemaVersion(body);
-    if (!schema.ok) {
-      return schema;
-    }
-    const targets = normalizeTargets(body.targets);
-    if (!targets.ok) {
-      return targets;
-    }
-    const query = normalizeText(body.query, "query", { maxLength: maxSearchQueryLength });
-    if (!query.ok) {
-      return query;
-    }
-    const kinds = normalizeKinds(body.kinds);
-    if (!kinds.ok) {
-      return kinds;
-    }
-    const tags = normalizeTags(body.tags);
-    if (!tags.ok) {
-      return tags;
-    }
-    const cursor = normalizeOptionalText(body.cursor, "cursor", maxCursorLength);
-    if (!cursor.ok) {
-      return cursor;
-    }
-    let limit;
-    if (body.limit !== undefined) {
-      if (typeof body.limit !== "number" || !Number.isInteger(body.limit) || body.limit < 1 || body.limit > maxLimit) {
-        return validationError("MEMORY_INVALID_FIELD", `limit must be an integer from 1 to ${maxLimit}.`, "limit");
-      }
-      limit = body.limit;
-    }
-    return {
-      ok: true,
-      value: {
-        schemaVersion,
-        targets: targets.value,
-        query: query.value,
-        ...(kinds.value ? { kinds: kinds.value } : {}),
-        ...(tags.value.length > 0 ? { tags: tags.value } : {}),
-        ...(limit !== undefined ? { limit } : {}),
-        ...(cursor.value !== undefined ? { cursor: cursor.value } : {}),
-      },
-    };
-  }
-  if (command === "get_entry") {
-    const unknownKeys = rejectUnknownKeys(body, getEntryRequestKeys, "request");
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    const schema = validateSchemaVersion(body);
-    if (!schema.ok) {
-      return schema;
-    }
-    const entryId = normalizeText(body.entryId, "entryId", { maxLength: maxIdLength });
-    if (!entryId.ok) {
-      return entryId;
-    }
-    const target = normalizeMemoryTarget(body.target, "target");
-    if (!target.ok) {
-      return target;
-    }
-    return {
-      ok: true,
-      value: {
-        schemaVersion,
-        entryId: entryId.value,
-        target: target.value,
-      },
-    };
-  }
-  if (command === "list_tags") {
-    const unknownKeys = rejectUnknownKeys(body, listTagsRequestKeys, "request");
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    const schema = validateSchemaVersion(body);
-    if (!schema.ok) {
-      return schema;
-    }
-    const targets = normalizeTargets(body.targets);
-    if (!targets.ok) {
-      return targets;
-    }
-    return { ok: true, value: { schemaVersion, targets: targets.value } };
-  }
-  if (command === "append") {
-    const unknownKeys = rejectUnknownKeys(body, appendRequestKeys, "request");
-    if (!unknownKeys.ok) {
-      return unknownKeys;
-    }
-    const schema = validateSchemaVersion(body);
-    if (!schema.ok) {
-      return schema;
-    }
-    const target = normalizeMemoryTarget(body.target, "target");
-    if (!target.ok) {
-      return target;
-    }
-    const kind = validateMemoryKind(body.kind, "kind");
-    if (!kind.ok) {
-      return kind;
-    }
-    const title = normalizeText(body.title, "title", { maxLength: maxTitleLength });
-    if (!title.ok) {
-      return title;
-    }
-    const requestBody = normalizeText(body.body, "body", { maxLength: maxBodyLength });
-    if (!requestBody.ok) {
-      return requestBody;
-    }
-    const preview = normalizeText(body.preview, "preview", { maxLength: maxPreviewLength });
-    if (!preview.ok) {
-      return preview;
-    }
-    const tags = normalizeTags(body.tags, "tags", { required: true });
-    if (!tags.ok) {
-      return tags;
-    }
-    const supersedes = normalizeStringArray(body.supersedes, "supersedes", { maxItems: maxSupersedes, maxLength: maxIdLength });
-    if (!supersedes.ok) {
-      return supersedes;
-    }
-    const sourceMessageId = normalizeOptionalText(body.sourceMessageId, "sourceMessageId");
-    if (!sourceMessageId.ok) {
-      return sourceMessageId;
-    }
-    const idempotencyKey = normalizeOptionalText(body.idempotencyKey, "idempotencyKey");
-    if (!idempotencyKey.ok) {
-      return idempotencyKey;
-    }
-    return {
-      ok: true,
-      value: {
-        schemaVersion,
-        target: target.value,
-        kind: kind.value,
-        title: title.value,
-        body: requestBody.value,
-        preview: preview.value,
-        tags: tags.value,
-        ...(supersedes.value && supersedes.value.length > 0 ? { supersedes: supersedes.value } : {}),
-        ...(sourceMessageId.value !== undefined ? { sourceMessageId: sourceMessageId.value } : {}),
-        ...(idempotencyKey.value !== undefined ? { idempotencyKey: idempotencyKey.value } : {}),
-      },
-    };
-  }
-  const unknownKeys = rejectUnknownKeys(body, forgetRequestKeys, "request");
-  if (!unknownKeys.ok) {
-    return unknownKeys;
-  }
-  const schema = validateSchemaVersion(body);
-  if (!schema.ok) {
-    return schema;
-  }
-  const target = normalizeMemoryTarget(body.target, "target");
-  if (!target.ok) {
-    return target;
-  }
-  const entryIds = normalizeStringArray(body.entryIds, "entryIds", { maxItems: maxForgetEntryIds, maxLength: maxIdLength });
-  if (!entryIds.ok) {
-    return entryIds;
-  }
-  if (!entryIds.value || entryIds.value.length === 0) {
-    return validationError("MEMORY_INVALID_FIELD", "entryIds must not be empty.", "entryIds");
-  }
-  if (body.reason !== undefined && (typeof body.reason !== "string" || !forgetReasonSet.has(body.reason))) {
-    return validationError("MEMORY_INVALID_FIELD", "reason must be a valid forget reason.", "reason");
-  }
-  const sourceMessageId = normalizeOptionalText(body.sourceMessageId, "sourceMessageId");
-  if (!sourceMessageId.ok) {
-    return sourceMessageId;
-  }
-  const idempotencyKey = normalizeOptionalText(body.idempotencyKey, "idempotencyKey");
-  if (!idempotencyKey.ok) {
-    return idempotencyKey;
-  }
-  return {
-    ok: true,
-    value: {
-      schemaVersion,
-      target: target.value,
-      entryIds: entryIds.value,
-      ...(body.reason !== undefined ? { reason: body.reason } : {}),
-      ...(sourceMessageId.value !== undefined ? { sourceMessageId: sourceMessageId.value } : {}),
-      ...(idempotencyKey.value !== undefined ? { idempotencyKey: idempotencyKey.value } : {}),
-    }
-  };
-}
-
 function buildValidateResponse(command, body) {
-  const result = validateRequest(command, body);
-  if (!result.ok) {
-    return { exitCode: exitCodes.apiError, response: { schemaVersion, error: result.error } };
-  }
-  return {
-    exitCode: exitCodes.ok,
-    response: { schemaVersion, valid: true, command, value: result.value },
-  };
+	const validation = validateMemoryCliRequestBody(command, body);
+	if (!validation.ok) return {
+		exitCode: WITHMATE_MEMORY_CLI_EXIT_CODES.apiError,
+		response: createMemoryErrorResponse(validation.error)
+	};
+	return {
+		exitCode: WITHMATE_MEMORY_CLI_EXIT_CODES.ok,
+		response: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			valid: true,
+			command,
+			value: validation.value
+		}
+	};
 }
-
 async function readJsonResponse(response) {
-  const text = await response.text();
-  if (!text.trim()) {
-    return {};
-  }
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw memoryError("WITHMATE_MEMORY_TRANSPORT_ERROR", "Memory API returned a non-JSON response.");
-  }
+	const text = await response.text();
+	if (!text.trim()) return {};
+	try {
+		return JSON.parse(text);
+	} catch {
+		throw transportError("Memory API returned a non-JSON response.");
+	}
 }
-
-async function verifyRuntime(connection, signal) {
-  if (!connection.apiSecret || !connection.runtimeInstanceId) {
-    return false;
-  }
-  const nonce = randomBytes(16).toString("base64url");
-  const response = await fetch(`${connection.baseUrl}/v1/status?nonce=${encodeURIComponent(nonce)}`, {
-    method: "GET",
-    redirect: "error",
-    signal,
-  });
-  if (!response.ok) {
-    return false;
-  }
-  const status = await readJsonResponse(response);
-  const expected = createHmac("sha256", connection.apiSecret).update(nonce, "utf8").digest("base64url");
-  return status.runtimeInstanceId === connection.runtimeInstanceId
-    && status.challenge?.nonce === nonce
-    && status.challenge?.hmacSha256 === expected;
+function createStatusChallenge(apiSecret, nonce) {
+	return createHmac("sha256", apiSecret).update(nonce, "utf8").digest("base64url");
 }
-
-async function main() {
-  try {
-    const request = await parseArgs(process.argv.slice(2));
-    if (request.route.name === "help") {
-      console.log(helpText.trimEnd());
-      return exitCodes.ok;
-    }
-    if (request.route.name === "schema") {
-      console.log(JSON.stringify(buildSchemaResponse()));
-      return exitCodes.ok;
-    }
-    if (request.route.name === "validate") {
-      const result = buildValidateResponse(request.validateCommand, normalizeProjectPathTargets(request.body));
-      console.log(JSON.stringify(result.response));
-      return result.exitCode;
-    }
-
-    const connection = await readDiscovery(request);
-    if (!connection) {
-      console.log(JSON.stringify(notRunning()));
-      return exitCodes.notRunning;
-    }
-
-    const abortController = new AbortController();
-    const timeout = setTimeout(() => abortController.abort(), 10_000);
-    try {
-      try {
-        if (!await verifyRuntime(connection, abortController.signal)) {
-          console.log(JSON.stringify(notRunning()));
-          return exitCodes.notRunning;
-        }
-        const headers = {};
-        if (request.route.method === "POST") {
-          headers["Content-Type"] = "application/json";
-        }
-        if (connection.apiSecret) {
-          headers[apiSecretHeader] = connection.apiSecret;
-        }
-        const response = await fetch(`${connection.baseUrl}${request.route.path}`, {
-          method: request.route.method,
-          headers,
-          body: request.route.method === "POST" ? JSON.stringify(normalizeProjectPathTargets(request.body)) : undefined,
-          redirect: "error",
-          signal: abortController.signal,
-        });
-        console.log(JSON.stringify(await readJsonResponse(response)));
-        return response.ok ? exitCodes.ok : exitCodes.apiError;
-      } catch (error) {
-        if (error && typeof error === "object" && "error" in error) {
-          throw error;
-        }
-        console.log(JSON.stringify(notRunning()));
-        return exitCodes.notRunning;
-      }
-    } finally {
-      clearTimeout(timeout);
-    }
-  } catch (error) {
-    if (error && typeof error === "object" && "error" in error) {
-      console.log(JSON.stringify(error));
-      return error.error?.code === "WITHMATE_MEMORY_CLI_USAGE" ? exitCodes.usage : exitCodes.transportError;
-    }
-    console.log(JSON.stringify(memoryError("WITHMATE_MEMORY_TRANSPORT_ERROR", error instanceof Error ? error.message : "Memory CLI request failed.")));
-    return exitCodes.transportError;
-  }
+function hasVerifiableRuntimeIdentity(connection) {
+	return Boolean(connection.apiSecret?.trim() && connection.runtimeInstanceId?.trim());
 }
-
-process.exitCode = await main();
+async function verifyRuntimeIdentity(connection, fetchImpl, signal) {
+	if (!hasVerifiableRuntimeIdentity(connection)) return false;
+	const nonce = randomBytes(16).toString("base64url");
+	const response = await fetchImpl(`${connection.baseUrl}/v1/status?nonce=${encodeURIComponent(nonce)}`, {
+		method: "GET",
+		redirect: "error",
+		signal
+	});
+	if (!response.ok) return false;
+	const status = await readJsonResponse(response);
+	return status.runtimeInstanceId === connection.runtimeInstanceId && status.challenge?.nonce === nonce && status.challenge.hmacSha256 === createStatusChallenge(connection.apiSecret, nonce);
+}
+async function runWithMateMemoryCli(args, deps = {}) {
+	const stdout = deps.stdout ?? process.stdout;
+	const stderr = deps.stderr ?? process.stderr;
+	const fetchImpl = deps.fetch ?? fetch;
+	try {
+		const request = await parseWithMateMemoryCliArgs(args, deps);
+		if (request.command === "help") {
+			stdout.write(WITHMATE_MEMORY_CLI_HELP);
+			return WITHMATE_MEMORY_CLI_EXIT_CODES.ok;
+		}
+		if (request.command === "schema") {
+			stdout.write(`${JSON.stringify(buildSchemaResponse())}\n`);
+			return WITHMATE_MEMORY_CLI_EXIT_CODES.ok;
+		}
+		if (request.command === "validate") {
+			const result = buildValidateResponse(request.validateCommand, request.body);
+			stdout.write(`${JSON.stringify(result.response)}\n`);
+			return result.exitCode;
+		}
+		const connection = await discoverWithMateMemoryApi({
+			env: deps.env,
+			apiUrl: request.apiUrl,
+			discoveryFilePath: request.discoveryFilePath,
+			readFile: deps.readFile
+		});
+		if (!connection) {
+			stdout.write(`${JSON.stringify(notRunningError())}\n`);
+			return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
+		}
+		try {
+			const verifyAbortController = new AbortController();
+			const verifyTimeout = setTimeout(() => verifyAbortController.abort(), deps.requestTimeoutMs ?? 1e4);
+			try {
+				if (!await verifyRuntimeIdentity(connection, fetchImpl, verifyAbortController.signal)) {
+					stdout.write(`${JSON.stringify(notRunningError())}\n`);
+					return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
+				}
+			} finally {
+				clearTimeout(verifyTimeout);
+			}
+		} catch (error) {
+			if (isMemoryErrorResponse(error)) throw error;
+			stdout.write(`${JSON.stringify(notRunningError())}\n`);
+			return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
+		}
+		const route = routeByCommand[request.command];
+		let response;
+		let responseJson;
+		const operationTimeoutMs = resolveRuntimeRequestTimeoutMs(request.command, deps);
+		const abortController = new AbortController();
+		const requestTimeout = setTimeout(() => abortController.abort(), operationTimeoutMs);
+		try {
+			const headers = {};
+			if (route.method === "POST") headers["Content-Type"] = "application/json";
+			if (connection.apiSecret) headers[WITHMATE_MEMORY_API_SECRET_HEADER] = connection.apiSecret;
+			response = await fetchImpl(`${connection.baseUrl}${buildRoutePath(request)}`, {
+				method: route.method,
+				headers: Object.keys(headers).length > 0 ? headers : void 0,
+				body: route.method === "POST" ? JSON.stringify(request.body) : void 0,
+				redirect: "error",
+				signal: abortController.signal
+			});
+			responseJson = await readJsonResponse(response);
+		} catch (error) {
+			if (isMemoryErrorResponse(error)) throw error;
+			if (isAbortError(error)) {
+				stdout.write(`${JSON.stringify(requestTimeoutError(request.command, operationTimeoutMs))}\n`);
+				return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
+			}
+			stdout.write(`${JSON.stringify(notRunningError())}\n`);
+			return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
+		} finally {
+			clearTimeout(requestTimeout);
+		}
+		stdout.write(`${JSON.stringify(responseJson)}\n`);
+		return response.ok ? WITHMATE_MEMORY_CLI_EXIT_CODES.ok : WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
+	} catch (error) {
+		const response = isMemoryErrorResponse(error) ? error : transportError(error instanceof Error ? error.message : "Memory CLI request failed.");
+		stdout.write(`${JSON.stringify(response)}\n`);
+		if (!isMemoryErrorResponse(error)) stderr.write("withmate-memory transport failed\n");
+		if (!isMemoryErrorResponse(error)) return WITHMATE_MEMORY_CLI_EXIT_CODES.transportError;
+		return error.error.code === "WITHMATE_MEMORY_CLI_USAGE" ? WITHMATE_MEMORY_CLI_EXIT_CODES.usage : WITHMATE_MEMORY_CLI_EXIT_CODES.transportError;
+	}
+}
+function isMemoryErrorResponse(value) {
+	return typeof value === "object" && value !== null && "error" in value;
+}
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) process.exitCode = await runWithMateMemoryCli(process.argv.slice(2));
+//#endregion
+export { DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS, WITHMATE_MEMORY_CLI_EXIT_CODES, WITHMATE_MEMORY_DISCOVERY_FILE_NAME, WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION, discoverWithMateMemoryApi, parseWithMateMemoryCliArgs, resolveRuntimeRequestTimeoutMs, runWithMateMemoryCli };

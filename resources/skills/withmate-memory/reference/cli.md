@@ -16,6 +16,12 @@ On Windows, the installer places `withmate-memory.cmd` in the WithMate install d
 
 When a managed skill includes `bin/withmate-memory.mjs` and no `withmate-memory` command is available on `PATH`, use `node bin/withmate-memory.mjs <command>` as a temporary fallback.
 
+## Contents
+
+- [Commands](#commands)
+- [Exit Codes](#exit-codes)
+- [Notes](#notes)
+
 ## Commands
 
 ### help
@@ -61,6 +67,15 @@ withmate-memory characters
 
 Returns active Character catalog entries so callers can choose an explicit Character ID. It does not return Character definition or notes body.
 
+### file-usage
+
+```bash
+withmate-memory file-usage
+withmate-memory file-usage --largest --limit 20
+```
+
+Returns WithMate-wide Protected Object quota and usage metadata. `--largest` includes the largest active Memory entry candidates and `--limit` bounds that list. It does not return source paths, object-store paths, keys, hashes, or decrypted content.
+
 ### search
 
 ```bash
@@ -77,12 +92,19 @@ Request shape:
   "targets": [
     { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" }
   ],
-  "query": "approval mode"
+  "query": "approval mode",
+  "kinds": ["decision", "constraint"],
+  "limit": 20,
+  "cursor": "<nextCursor-from-prior-response>"
 }
 ```
 
 Search returns active entry previews only. Use `get-entry` when the exact body matters.
 Search uses natural-language terms across title, preview, body, and tags. Hyphenated and spaced tag words such as `delivery-cleanup` and `delivery cleanup` are treated as related candidates. Shorthand `--tag <tag>` defaults to `topic:<tag>`, and `--tags` accepts comma-separated `<type>:<tag>` values. Search results may include matched fields and a short snippet; body matches may be reported in `match.fields`, but snippets are limited to tags, title, and preview. 0-result responses may include related tag candidates.
+
+The response contains results in `items[]` and may contain `relatedTags[]` and `nextCursor`. Each result uses `id` as its entry ID and may include attached-object metadata in `files[]`.
+
+`kinds`, `limit`, and `cursor` are optional. Omit `cursor` on the first page. When a response includes `nextCursor`, repeat the same target, query, kinds, tags, and limit with that cursor. Continue pagination when an exhaustive append-preflight or requested lookup has not found a conclusive match.
 
 For provider-independent user preferences, conventions, constraints, or other cross-project context, use an explicit user-global target:
 
@@ -113,6 +135,49 @@ Request shape:
 ```
 
 `get-entry` must include `target`, using a project target, character target, character-project target, or `{ "owner": "user", "scope": "global" }`.
+The response contains the full Memory in `entry`. Attached-object metadata, when present, is in `entry.files[]`; use each item's `objectId` with `get-file`.
+
+### get-file
+
+```bash
+withmate-memory get-file --project <absolute-repo-path> --object-id <object-id> --output <absolute-output-path>
+withmate-memory get-file --file memory-get-file.json
+```
+
+Request shape:
+
+```json
+{
+  "schemaVersion": "withmate-memory-v1",
+  "target": { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" },
+  "objectId": "<object-id>",
+  "outputPath": "<absolute-output-path>"
+}
+```
+
+Exports one attached object after target validation. The output path must be absolute, and an existing file is never overwritten.
+The response confirms `objectId`, `entryId`, `outputPath`, `bytesWritten`, `contentType`, and `displayName`.
+
+### export-files
+
+```bash
+withmate-memory export-files --project <absolute-repo-path> --entry-id <entry-id> --output-dir <absolute-output-directory>
+withmate-memory export-files --file memory-export-files.json
+```
+
+Request shape:
+
+```json
+{
+  "schemaVersion": "withmate-memory-v1",
+  "target": { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" },
+  "entryId": "<entry-id>",
+  "outputDirectoryPath": "<absolute-output-directory>"
+}
+```
+
+Creates the output directory when needed and exports all files attached to the entry with safe object-prefixed names. Existing output files are never overwritten.
+The response confirms `entryId`, `outputDirectoryPath`, `exportedCount`, and one result per object in `files[]`.
 
 ### list-tags
 
@@ -148,9 +213,23 @@ Input shape:
   "body": "Durable details for future sessions.",
   "preview": "Short preview.",
   "tags": [{ "type": "topic", "value": "release" }],
+  "supersedes": ["optional-replaced-entry-id"],
+  "files": [
+    {
+      "path": "<absolute-readable-file-path>",
+      "role": "evidence",
+      "summary": "Why this file is retained.",
+      "displayName": "optional-name.txt",
+      "contentType": "text/plain"
+    }
+  ],
   "idempotencyKey": "optional-stable-key"
 }
 ```
+
+`supersedes` is an array of entry IDs. `files` is optional. Each `files[]` item requires an absolute readable file path and a non-empty summary. `role` is optional and accepts `evidence`, `source`, `snapshot`, `artifact`, `reference`, or `other`; `displayName` and `contentType` are optional metadata.
+
+Do not attach secrets or files outside the user's authorized scope. Input paths are used for import and are not exposed in agent-facing Memory responses. File append is atomic with entry creation: quota, import, metadata, or idempotency failure must not be interpreted as a successful text-only append.
 
 ### forget
 
@@ -170,14 +249,16 @@ Input shape:
 }
 ```
 
+For `append` and `forget`, choose a stable idempotency key before the first attempt. If a timeout or response loss leaves the result ambiguous, retry the unchanged request with the same key. A changed request body requires a new key.
+
 ## Exit Codes
 
 | Code | Meaning |
 | --- | --- |
 | `0` | Success |
-| `1` | Usage or validation error |
+| `1` | CLI usage or argument error |
 | `2` | WithMate Memory API is not running or could not be discovered |
-| `3` | Runtime API returned a non-success JSON response |
+| `3` | Local request validation failed, or the runtime API returned a non-success JSON response |
 | `4` | Transport failure |
 
 ## Notes
@@ -189,5 +270,6 @@ Input shape:
 - Character targets use explicit IDs, for example `{ "owner": "character", "character": { "type": "id", "id": "<character-id>" }, "scope": "character" }`. If the ID is unknown, run `withmate-memory characters` first.
 - User-global Memory is visible across projects and providers. Store only user-level preferences, conventions, constraints, or other cross-project context there; do not store secrets, tokens, or project-specific private details.
 - Append is idempotent when an idempotency key is supplied.
+- `append`, `get-file`, and `export-files` use a longer 300-second operation timeout by default. A mutation timeout is ambiguous; do not assume it proves that no write occurred.
 - Forget hides entries from normal search and skill results.
 - Memory failures should not fail unrelated coding work.

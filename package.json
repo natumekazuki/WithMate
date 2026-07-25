@@ -1,6 +1,6 @@
 {
   "name": "withmate",
-  "version": "6.3.10",
+  "version": "6.3.11",
   "description": "キャラクターロールプレイ対応 coding agent デスクトップアプリ",
   "private": true,
   "main": "dist-electron/src-electron/main.js",
@@ -8,8 +8,9 @@
     "dev": "vite",
     "icon:generate": "node --import tsx scripts/generate-app-icon.ts",
     "stage:provider-binaries": "node --import tsx scripts/stage-provider-binaries.ts",
+    "build:memory-cli": "tsx scripts/build-withmate-memory-cli.ts",
     "build:renderer": "vite build",
-    "build:electron": "tsc -p tsconfig.electron.json",
+    "build:electron": "npm run build:memory-cli && tsc -p tsconfig.electron.json",
     "build": "npm run build:renderer && npm run build:electron",
     "electron:dev": "npm run build:electron && tsx scripts/run-electron-dev.ts",
     "electron:start": "npm run build && electron dist-electron/src-electron/main.js",

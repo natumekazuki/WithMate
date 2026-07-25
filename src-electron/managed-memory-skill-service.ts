@@ -80,7 +80,8 @@ export class ManagedMemorySkillService {
 
       await mkdir(resolvedSkillRootPath, { recursive: true });
 
-      const nextMarker = await this.buildMarker();
+      const syncSkillDocumentationOnly = await this.shouldSyncSkillMarkdownOnly();
+      const nextMarker = await this.buildMarker(syncSkillDocumentationOnly);
       if (marker && marker.bundleVersion === nextMarker.bundleVersion) {
         if (
           marker.bundleDigest === nextMarker.bundleDigest
@@ -100,13 +101,8 @@ export class ManagedMemorySkillService {
         `.${WITHMATE_MEMORY_SKILL_NAME}-${process.pid}-${Date.now()}.tmp`,
       );
       await rm(tempPath, { recursive: true, force: true });
-      if (await this.shouldSyncSkillMarkdownOnly()) {
-        await mkdir(tempPath, { recursive: true });
-        await writeFile(
-          path.join(tempPath, MANAGED_SKILL_FILE_NAME),
-          await readFile(path.join(this.deps.bundledSkillPath, MANAGED_SKILL_FILE_NAME), "utf8"),
-          "utf8",
-        );
+      if (syncSkillDocumentationOnly) {
+        await copyManagedSkillDocumentation(this.deps.bundledSkillPath, tempPath);
       } else {
         await cp(this.deps.bundledSkillPath, tempPath, { recursive: true });
       }
@@ -131,13 +127,13 @@ export class ManagedMemorySkillService {
     }
   }
 
-  private async buildMarker(): Promise<ManagedSkillMarker> {
+  private async buildMarker(syncSkillDocumentationOnly: boolean): Promise<ManagedSkillMarker> {
     return {
       markerVersion: MANAGED_MARKER_VERSION,
       managedBy: "WithMate",
       skillName: WITHMATE_MEMORY_SKILL_NAME,
       bundleVersion: this.deps.getAppVersion(),
-      bundleDigest: await this.shouldSyncSkillMarkdownOnly()
+      bundleDigest: syncSkillDocumentationOnly
         ? await digestManagedSkillSource(this.deps.bundledSkillPath)
         : await digestDirectory(this.deps.bundledSkillPath),
     };
@@ -192,11 +188,32 @@ export class ManagedMemorySkillService {
 
 async function digestManagedSkillSource(rootPath: string): Promise<string> {
   const hash = createHash("sha256");
-  hash.update(MANAGED_SKILL_FILE_NAME);
-  hash.update("\0");
-  hash.update(await readFile(path.join(rootPath, MANAGED_SKILL_FILE_NAME)));
-  hash.update("\0");
+  const sourcePaths = [
+    path.join(rootPath, MANAGED_SKILL_FILE_NAME),
+    ...await listFiles(path.join(rootPath, "reference")),
+  ];
+  for (const filePath of sourcePaths) {
+    const relativePath = path.relative(rootPath, filePath).replace(/\\/g, "/");
+    hash.update(relativePath);
+    hash.update("\0");
+    hash.update(await readFile(filePath));
+    hash.update("\0");
+  }
   return hash.digest("hex");
+}
+
+async function copyManagedSkillDocumentation(sourcePath: string, destinationPath: string): Promise<void> {
+  await mkdir(destinationPath, { recursive: true });
+  await writeFile(
+    path.join(destinationPath, MANAGED_SKILL_FILE_NAME),
+    await readFile(path.join(sourcePath, MANAGED_SKILL_FILE_NAME), "utf8"),
+    "utf8",
+  );
+  await cp(
+    path.join(sourcePath, "reference"),
+    path.join(destinationPath, "reference"),
+    { recursive: true },
+  );
 }
 
 async function digestDirectory(rootPath: string, excludedRelativePaths: ReadonlySet<string> = new Set()): Promise<string> {
