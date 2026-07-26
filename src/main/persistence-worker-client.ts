@@ -12,6 +12,7 @@ export type PersistenceWorkerClientState = "idle" | "starting" | "ready" | "clos
 
 export type PersistenceWorkerClientOptions = Readonly<{
   workerUrl?: URL;
+  createWorker?: (workerUrl: URL, options: WorkerOptions) => Worker;
   databasePath: string;
   legacyDatabasePaths: readonly string[];
   maxQueueDepth?: number;
@@ -45,6 +46,7 @@ type PendingRequest = {
 
 export class PersistenceWorkerClient {
   readonly generationId = randomUUID();
+  readonly fatalError: Promise<PersistenceClientError>;
   readonly #pending = new Map<string, PendingRequest>();
   #state: PersistenceWorkerClientState = "idle";
   #worker: Worker | undefined;
@@ -57,12 +59,18 @@ export class PersistenceWorkerClient {
   #shutdownRequestId: string | undefined;
   #exitPromise: Promise<number> | undefined;
   #resolveExit: ((exitCode: number) => void) | undefined;
+  #resolveFatalError!: (error: PersistenceClientError) => void;
+  #crashError: PersistenceClientError | undefined;
+  #reachedReady = false;
   #expectedExit = false;
   #nextRequestSequence = 1;
   readonly #workerUrl: URL;
 
   constructor(readonly options: PersistenceWorkerClientOptions) {
     this.#workerUrl = options.workerUrl ?? new URL("../persistence-worker/worker-entry.js", import.meta.url);
+    this.fatalError = new Promise<PersistenceClientError>((resolve) => {
+      this.#resolveFatalError = resolve;
+    });
   }
 
   get state(): PersistenceWorkerClientState {
@@ -86,13 +94,10 @@ export class PersistenceWorkerClient {
       this.#resolveStartup = resolve;
       this.#rejectStartup = reject;
     });
-    this.#exitPromise = new Promise<number>((resolve) => {
-      this.#resolveExit = resolve;
-    });
 
     let worker: Worker;
     try {
-      worker = new Worker(this.#workerUrl, {
+      worker = (this.options.createWorker ?? createNodeWorker)(this.#workerUrl, {
         ...this.options.workerOptions,
         workerData: {
           generationId: this.generationId,
@@ -104,19 +109,25 @@ export class PersistenceWorkerClient {
         },
       });
     } catch {
-      this.#failStartup(clientError("worker_start_failed", "Persistence worker could not be created.", false, "none"));
+      this.#state = "failed";
+      this.#rejectStartup?.(
+        clientError("worker_start_failed", "Persistence worker could not be created.", false, "none"),
+      );
       return this.#startPromise;
     }
     this.#worker = worker;
+    this.#exitPromise = new Promise<number>((resolve) => {
+      this.#resolveExit = resolve;
+    });
     worker.on("message", (message: unknown) => this.#handleMessage(message));
     worker.on("error", () => this.#handleCrash());
     worker.on("exit", (exitCode) => this.#handleExit(exitCode));
 
     const onAbort = () => {
       if (this.#state !== "starting") return;
-      this.#expectedExit = true;
-      this.#failStartup(clientError("request_canceled", "Persistence worker startup was canceled.", false, "none"));
-      void worker.terminate();
+      this.#failStartupAfterWorkerExit(
+        clientError("request_canceled", "Persistence worker startup was canceled.", false, "none"),
+      );
     };
     options.signal?.addEventListener("abort", onAbort, { once: true });
     if (options.signal?.aborted) onAbort();
@@ -125,9 +136,9 @@ export class PersistenceWorkerClient {
       if (this.#state !== "starting") {
         return;
       }
-      this.#expectedExit = true;
-      void worker.terminate();
-      this.#failStartup(clientError("worker_start_failed", "Persistence worker startup timed out.", true, "none"));
+      this.#failStartupAfterWorkerExit(
+        clientError("worker_start_failed", "Persistence worker startup timed out.", true, "none"),
+      );
     }, this.options.startupTimeoutMs ?? 10_000);
     this.#startPromise
       .finally(() => {
@@ -223,6 +234,11 @@ export class PersistenceWorkerClient {
     if (this.#state === "closed") {
       return Promise.resolve({ checkpoint: "completed" });
     }
+    if (this.#state === "failed" && this.#exitPromise !== undefined) {
+      return this.#exitPromise.then(() => {
+        throw clientError("worker_not_ready", "Persistence worker is not ready.", false, "none");
+      });
+    }
     if (this.#state !== "ready" || this.#worker === undefined || this.#exitPromise === undefined) {
       return Promise.reject(clientError("worker_not_ready", "Persistence worker is not ready.", false, "none"));
     }
@@ -304,12 +320,13 @@ export class PersistenceWorkerClient {
     switch (message.kind) {
       case "ready":
         if (this.#state === "starting") {
+          this.#reachedReady = true;
           this.#state = "ready";
           this.#resolveStartup?.();
         }
         return;
       case "startupFailed":
-        this.#failStartup(new PersistenceClientError(message.error));
+        this.#failStartupAfterWorkerExit(new PersistenceClientError(message.error));
         return;
       case "response": {
         const pending = this.#pending.get(message.requestId);
@@ -355,30 +372,49 @@ export class PersistenceWorkerClient {
     );
   }
 
-  #handleCrash(): void {
+  #handleCrash(): PersistenceClientError | undefined {
     if (this.#state === "closed" || this.#expectedExit) {
-      return;
+      return undefined;
     }
-    this.#state = "failed";
-    const error = clientError("worker_crashed", "Persistence worker crashed.", false, "none");
-    this.#rejectStartup?.(error);
-    this.#rejectClosed?.(error);
-    this.#rejectAll("worker_crashed", "Persistence worker crashed.");
+    const error = this.#crashError ?? clientError("worker_crashed", "Persistence worker crashed.", false, "none");
+    this.#crashError = error;
+    if (this.#state === "starting") {
+      this.#failStartupAfterWorkerExit(error);
+      return error;
+    }
+    if (this.#state !== "failed") {
+      this.#state = "failed";
+      this.#rejectStartup?.(error);
+      this.#rejectClosed?.(error);
+      this.#rejectAll("worker_crashed", "Persistence worker crashed.");
+    }
+    return error;
   }
 
   #handleExit(exitCode: number): void {
     this.#resolveExit?.(exitCode);
     if (!this.#expectedExit && this.#state !== "closed") {
-      this.#handleCrash();
+      const error = this.#handleCrash();
+      if (this.#reachedReady && error !== undefined) {
+        this.#resolveFatalError(error);
+      }
     }
   }
 
-  #failStartup(error: unknown): void {
+  #failStartupAfterWorkerExit(error: unknown): void {
     if (this.#state !== "starting") {
       return;
     }
     this.#state = "failed";
-    this.#rejectStartup?.(error);
+    this.#expectedExit = true;
+    const worker = this.#worker;
+    const exitPromise = this.#exitPromise;
+    if (worker === undefined || exitPromise === undefined) {
+      this.#rejectStartup?.(error);
+      return;
+    }
+    void worker.terminate().catch(() => undefined);
+    void exitPromise.then(() => this.#rejectStartup?.(error));
   }
 
   #rejectAll(code: "worker_crashed" | "worker_shutdown_forced", message: string): void {
@@ -399,6 +435,10 @@ function cleanupPending(pending: PendingRequest): void {
     clearTimeout(pending.timer);
   }
   pending.removeAbortListener?.();
+}
+
+function createNodeWorker(workerUrl: URL, options: WorkerOptions): Worker {
+  return new Worker(workerUrl, options);
 }
 
 function clientError(

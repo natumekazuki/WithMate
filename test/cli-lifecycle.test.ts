@@ -96,7 +96,7 @@ test("help and parse failures do not register signals or start runtime", async (
   assert.equal(registrations, 0);
 });
 
-test("Run operation completion writes one JSON object and performs one clean shutdown", async () => {
+test("Run operation completion writes one JSON object and closes one runtime client connection", async () => {
   let statusCalls = 0;
   let shutdowns = 0;
   const runOperations = unsupportedRunOperations();
@@ -135,7 +135,7 @@ test("Run operation completion writes one JSON object and performs one clean shu
   assert.equal(shutdowns, 1);
 });
 
-test("Run output completion writes one JSON object and performs one clean shutdown", async () => {
+test("Run output completion writes one JSON object and closes one runtime client connection", async () => {
   let outputCalls = 0;
   let shutdowns = 0;
   const runOutputOperations = unsupportedRunOutputOperations({
@@ -182,7 +182,7 @@ test("Run output completion writes one JSON object and performs one clean shutdo
   assert.equal(shutdowns, 1);
 });
 
-test("Session Message completion writes one JSON object and performs one clean shutdown", async () => {
+test("Session Message completion writes one JSON object and closes one runtime client connection", async () => {
   let messageCalls = 0;
   let shutdowns = 0;
   const messageOperations = unsupportedMessageOperations({
@@ -218,7 +218,7 @@ test("Session Message completion writes one JSON object and performs one clean s
   assert.equal(shutdowns, 1);
 });
 
-test("Session Run history completion writes one JSON object and performs one clean shutdown", async () => {
+test("Session Run history completion writes one JSON object and closes one runtime client connection", async () => {
   let runHistoryCalls = 0;
   let shutdowns = 0;
   const sessionRunOperations = unsupportedSessionRunOperations({
@@ -255,7 +255,7 @@ test("Session Run history completion writes one JSON object and performs one cle
   assert.equal(shutdowns, 1);
 });
 
-test("operation completion always performs one clean shutdown", async () => {
+test("operation completion always closes one runtime client connection", async () => {
   let shutdowns = 0;
   let removals = 0;
   const result = await runCliLifecycle(readArgv, {

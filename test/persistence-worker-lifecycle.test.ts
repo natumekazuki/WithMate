@@ -911,6 +911,7 @@ workerTest("worker crash rejects every in-flight write with unknown effect", asy
   const crash = client.request("test.crash", "maintenance", {});
   await assert.rejects(crash, (error: unknown) => isClientError(error, "worker_crashed", "unknown"));
   await assert.rejects(delayedWrite, (error: unknown) => isClientError(error, "worker_crashed", "unknown"));
+  assert.equal((await client.fatalError).persistenceError.code, "worker_crashed");
   assert.equal(client.state, "failed");
 });
 

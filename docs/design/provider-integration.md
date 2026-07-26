@@ -14,10 +14,10 @@ Codex と GitHub Copilot は SDK をアプリケーションへ直接組み込�
 
 新実装で対応する Provider は次の 2 つに限定する。
 
-| Provider | 接続先 | Transport | Protocol |
-| --- | --- | --- | --- |
-| Codex | `codex app-server` | runtime hostが所有するstdio JSONL | Codex App Server protocol |
-| GitHub Copilot | `copilot --acp --stdio` | stdio の NDJSON を第一候補とする | Agent Client Protocol (ACP) |
+| Provider       | 接続先                  | Transport                         | Protocol                    |
+| -------------- | ----------------------- | --------------------------------- | --------------------------- |
+| Codex          | `codex app-server`      | runtime hostが所有するstdio JSONL | Codex App Server protocol   |
+| GitHub Copilot | `copilot --acp --stdio` | stdio の NDJSON を第一候補とする  | Agent Client Protocol (ACP) |
 
 Cursor その他の Provider は今回の再実装対象に含めない。
 
@@ -186,7 +186,6 @@ operational CLIはruntime hostへlocal IPCで接続する。help、version、arg
 - Provider を変更する linked Session へ、どの context を引き継ぐか。
 - 将来 1 つの Session に複数 active Run を許可する場合、branch / merge contract をどう定義するか。
 - Provider 側 conversation history と WithMate message の欠落・重複をどう照合するか。
-- runtime host local IPCのversion negotiation、owner確認、stale endpoint、subscription backpressureの実装詳細。
 - Codex App Server と ACP で共通化できる approval / elicitation contract の範囲。
 - ACP で Session list、resume、steering、cancel、並行実行をどこまで利用できるか。
 - Copilot ACP で Provider model catalog を取得できない場合の fallback。

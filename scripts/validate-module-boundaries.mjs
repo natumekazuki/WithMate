@@ -98,6 +98,7 @@ const applicationRunOutputOwner = path.join(sourceRoot, "main", "application-run
 const repositoryWriteClient = path.join(sourceRoot, "main", "repository-write-client.ts");
 const repositoryReadClient = path.join(sourceRoot, "main", "repository-read-client.ts");
 const persistenceWorkerClient = path.join(sourceRoot, "main", "persistence-worker-client.ts");
+const cliRuntimeComposition = path.join(sourceRoot, "main", "cli-runtime.ts");
 const publicMainBarrel = path.join(sourceRoot, "main", "index.ts");
 const publicApplicationModel = path.join(sourceRoot, "shared", "application-service-model.ts");
 const publicApplicationSessionMessageModel = path.join(sourceRoot, "shared", "application-session-message-model.ts");
@@ -123,6 +124,8 @@ const repositoryBoundaryBypassesFixture = path.join(
   "repository-boundary-bypasses.ts",
 );
 const cliRepositoryBypassFixture = path.join(root, "test", "fixtures", "module-boundaries", "cli-repository-bypass.ts");
+const cliRuntimeTypeOnlyFixture = path.join(root, "test", "fixtures", "module-boundaries", "cli-runtime-type-only.ts");
+const cliRuntimeOneShotFixture = path.join(root, "test", "fixtures", "module-boundaries", "cli-runtime-one-shot.ts");
 const testConfig = ts.getParsedCommandLineOfConfigFile(path.join(root, "tsconfig.test.json"), {}, ts.sys);
 if (testConfig === undefined) {
   throw new Error("tsconfig.test.json could not be parsed for module-boundary validation.");
@@ -137,6 +140,8 @@ const typeProgram = ts.createProgram({
     nonliteralDynamicImportFixture,
     repositoryBoundaryBypassesFixture,
     cliRepositoryBypassFixture,
+    cliRuntimeTypeOnlyFixture,
+    cliRuntimeOneShotFixture,
   ],
   options: testConfig.options,
 });
@@ -265,7 +270,12 @@ for (const file of listSourceFiles(sourceRoot)) {
     }
     if (
       sourceRelativePath.startsWith(`main${path.sep}`) &&
-      isForbiddenRepositoryCapabilityReference(node, allowsRepositoryReadIntegration, allowsRepositoryWriteIntegration)
+      isForbiddenRepositoryCapabilityReference(
+        node,
+        allowsRepositoryReadIntegration,
+        allowsRepositoryWriteIntegration,
+      ) &&
+      !isPublicApplicationOperationReference(node)
     ) {
       violations.push(
         `${path.relative(root, file)} declares or accesses a Repository client capability outside the Application Service`,
@@ -286,6 +296,61 @@ for (const file of listSourceFiles(sourceRoot)) {
     ts.forEachChild(node, inspect);
   };
   inspect(sourceFile);
+}
+
+{
+  const sourceFile = typeProgram.getSourceFile(cliRuntimeComposition);
+  if (sourceFile === undefined) {
+    violations.push(`${path.relative(root, cliRuntimeComposition)} could not be inspected`);
+  } else {
+    const importsRuntimeHostClient = importsRuntimeHostClientComposition(sourceFile);
+    const acquiresOneShotRuntime = acquiresOneShotRuntimeApplication(sourceFile);
+    if (!importsRuntimeHostClient) {
+      violations.push(`${path.relative(root, cliRuntimeComposition)} does not use the runtime host client composition`);
+    }
+    if (acquiresOneShotRuntime) {
+      violations.push(`${path.relative(root, cliRuntimeComposition)} acquires the one-shot Runtime Application`);
+    }
+    if (!hasExactCliRuntimeValueImports(sourceFile)) {
+      violations.push(`${path.relative(root, cliRuntimeComposition)} imports a runtime value outside its composition`);
+    }
+  }
+}
+
+{
+  const typeOnlyFixture = typeProgram.getSourceFile(cliRuntimeTypeOnlyFixture);
+  if (
+    typeOnlyFixture === undefined ||
+    importsRuntimeHostClientComposition(typeOnlyFixture) ||
+    acquiresOneShotRuntimeApplication(typeOnlyFixture)
+  ) {
+    violations.push(
+      `${path.relative(root, cliRuntimeTypeOnlyFixture)} no longer exercises type-only CLI composition imports`,
+    );
+  }
+  const oneShotFixture = typeProgram.getSourceFile(cliRuntimeOneShotFixture);
+  if (oneShotFixture === undefined || !acquiresOneShotRuntimeApplication(oneShotFixture)) {
+    violations.push(
+      `${path.relative(root, cliRuntimeOneShotFixture)} no longer exercises the one-shot CLI composition rule`,
+    );
+  }
+  const directCompositionFixture = ts.createSourceFile(
+    "cli-runtime-direct-composition.fixture.ts",
+    [
+      'import { resolveApplicationDataRoot } from "./application-data-path.js";',
+      'import { PersistenceWorkerClient } from "./persistence-worker-client.js";',
+      'import { startRuntimeHostClient } from "./runtime-host/runtime-host-bootstrap.js";',
+    ].join("\n"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  if (
+    !importsRuntimeHostClientComposition(directCompositionFixture) ||
+    hasExactCliRuntimeValueImports(directCompositionFixture)
+  ) {
+    violations.push("synthetic CLI direct-composition fixture no longer exercises runtime value import bypasses");
+  }
 }
 
 {
@@ -461,6 +526,87 @@ function findExportsDeclaredOutside(sourceFile, allowedDeclarationFiles) {
   return forbidden;
 }
 
+function importsRuntimeHostClientComposition(sourceFile) {
+  return sourceFile.statements.some(
+    (statement) =>
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text.endsWith("/runtime-host/runtime-host-bootstrap.js") &&
+      statement.importClause?.isTypeOnly !== true &&
+      statement.importClause?.namedBindings !== undefined &&
+      ts.isNamedImports(statement.importClause.namedBindings) &&
+      statement.importClause.namedBindings.elements.some(
+        (element) =>
+          element.isTypeOnly !== true && (element.propertyName?.text ?? element.name.text) === "startRuntimeHostClient",
+      ),
+  );
+}
+
+function acquiresOneShotRuntimeApplication(sourceFile) {
+  return containsNode(
+    sourceFile,
+    (node) =>
+      (ts.isImportDeclaration(node) &&
+        ts.isStringLiteral(node.moduleSpecifier) &&
+        node.moduleSpecifier.text.endsWith("/runtime-application.js") &&
+        importDeclarationHasRuntimeValue(node)) ||
+      (ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+        node.arguments[0] !== undefined &&
+        ts.isStringLiteral(node.arguments[0]) &&
+        node.arguments[0].text.endsWith("/runtime-application.js")),
+  );
+}
+
+function hasExactCliRuntimeValueImports(sourceFile) {
+  const required = new Map([
+    ["./application-data-path.js", new Set(["resolveApplicationDataRoot"])],
+    ["./runtime-host/runtime-host-bootstrap.js", new Set(["startRuntimeHostClient"])],
+  ]);
+  const observed = new Map([...required].map(([moduleName]) => [moduleName, new Set()]));
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !importDeclarationHasRuntimeValue(statement)) continue;
+    if (!ts.isStringLiteral(statement.moduleSpecifier)) return false;
+    const moduleName = statement.moduleSpecifier.text;
+    const allowedNames = required.get(moduleName);
+    const bindings = statement.importClause?.namedBindings;
+    if (
+      allowedNames === undefined ||
+      statement.importClause?.name !== undefined ||
+      bindings === undefined ||
+      !ts.isNamedImports(bindings)
+    ) {
+      return false;
+    }
+    for (const element of bindings.elements) {
+      if (element.isTypeOnly) continue;
+      const importedName = element.propertyName?.text ?? element.name.text;
+      if (!allowedNames.has(importedName)) return false;
+      observed.get(moduleName)?.add(importedName);
+    }
+  }
+  if (
+    containsNode(
+      sourceFile,
+      (node) => ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword,
+    )
+  ) {
+    return false;
+  }
+  return [...required].every(([moduleName, names]) =>
+    [...names].every((name) => observed.get(moduleName)?.has(name) === true),
+  );
+}
+
+function importDeclarationHasRuntimeValue(declaration) {
+  const clause = declaration.importClause;
+  if (clause === undefined) return true;
+  if (clause.isTypeOnly) return false;
+  if (clause.name !== undefined) return true;
+  if (clause.namedBindings === undefined || ts.isNamespaceImport(clause.namedBindings)) return true;
+  return clause.namedBindings.elements.some((element) => element.isTypeOnly !== true);
+}
+
 function resolveAliasedSymbol(symbol) {
   const visited = new Set();
   let current = symbol;
@@ -583,6 +729,43 @@ function isForbiddenRepositoryCapabilityReference(node, allowsRead, allowsWrite)
     (!allowsRead && isNamedRepositoryCapabilityReference(node, repositoryReadCapabilityNames)) ||
     (!allowsWrite && isNamedRepositoryCapabilityReference(node, repositoryWriteCapabilityNames))
   );
+}
+
+function isPublicApplicationOperationReference(node) {
+  const target = ts.isPropertyAccessExpression(node)
+    ? node.name
+    : ts.isIdentifier(node) && ts.isPropertyAccessExpression(node.parent) && node.parent.name === node
+      ? node
+      : ts.isIdentifier(node) &&
+          (ts.isPropertyAssignment(node.parent) || ts.isMethodDeclaration(node.parent)) &&
+          node.parent.name === node
+        ? node
+        : undefined;
+  if (target === undefined) return false;
+  const publicApplicationModels = new Set([
+    publicApplicationModel,
+    publicApplicationSessionMessageModel,
+    publicApplicationSessionRunModel,
+    publicApplicationRunModel,
+    publicApplicationRunOutputModel,
+  ]);
+  const isPublicSymbol = (symbol) =>
+    symbol !== undefined &&
+    (symbol.getDeclarations() ?? []).some((declaration) =>
+      publicApplicationModels.has(path.normalize(declaration.getSourceFile().fileName)),
+    );
+  if (isPublicSymbol(typeChecker.getSymbolAtLocation(target))) return true;
+
+  const member = target.parent;
+  if (
+    (ts.isPropertyAssignment(member) || ts.isMethodDeclaration(member)) &&
+    member.name === target &&
+    ts.isObjectLiteralExpression(member.parent)
+  ) {
+    const contextualType = typeChecker.getContextualType(member.parent);
+    return isPublicSymbol(contextualType?.getProperty(target.text));
+  }
+  return false;
 }
 
 function isNamedRepositoryCapabilityReference(node, capabilityNames) {

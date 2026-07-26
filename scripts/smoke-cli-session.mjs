@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+import { cleanupControlledRuntimeHost, startControlledRuntimeHost } from "./runtime-host-smoke-support.mjs";
+
 const root = process.cwd();
 const entryPath = path.join(root, "dist", "cli", "entry.js");
 const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "withmate-cli-smoke-"));
@@ -30,6 +32,7 @@ fs.mkdirSync(secondWorkspacePath, { recursive: true });
 fs.mkdirSync(additionalDirectoryParent, { recursive: true });
 fs.writeFileSync(nestedRegularFile, "not a directory");
 
+let runtimeHost;
 try {
   const help = invoke(["--help"], environment);
   assert.equal(help.status, 0);
@@ -44,6 +47,8 @@ try {
   assert.equal(unconfirmedDelete.status, 20);
   assert.equal(parseJsonOutput(unconfirmedDelete).kind, "usage_failure");
   assert.equal(fs.existsSync(applicationDirectory), false, "help or parse failure started application persistence");
+
+  runtimeHost = await startControlledRuntimeHost(appDataRoot);
 
   const createArgs = [
     "session",
@@ -239,12 +244,15 @@ try {
   const missing = runJson(["session", "read", "--session-id", "missing-session"], environment, 22);
   assert.equal(missing.applicationResponse.error.code, "not_found");
 
+  const shutdown = await runtimeHost.stop();
+  assert.equal(shutdown.checkpoint, "completed");
+  runtimeHost = undefined;
   assert.equal(fs.existsSync(databasePath), true);
   for (const suffix of ["-wal", "-shm", "-journal"]) {
     assert.equal(
       fs.existsSync(`${databasePath}${suffix}`),
       false,
-      `SQLite sidecar remained after CLI shutdown: ${suffix}`,
+      `SQLite sidecar remained after graceful runtime host shutdown: ${suffix}`,
     );
   }
 
@@ -277,12 +285,15 @@ try {
       zeroChildRunCapacity: "verified",
       parseRuntimeIsolation: "verified",
       bootstrapFailure: "classified",
+      runtimeHostCheckpoint: "completed",
       sqliteSidecars: "none",
       sessionFilesCleanupArtifacts: "none",
     }),
   );
 } finally {
-  fs.rmSync(tempDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  await cleanupControlledRuntimeHost(runtimeHost, () =>
+    fs.rmSync(tempDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
+  );
 }
 
 function runJson(args, childEnvironment, expectedStatus) {
