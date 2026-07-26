@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { PersistenceWorkerClient } from "../dist/main/persistence-worker-client.js";
 import { RepositoryReadClient } from "../dist/main/repository-read-client.js";
 import { RepositoryWriteClient } from "../dist/main/repository-write-client.js";
+import { cleanupControlledRuntimeHost, startControlledRuntimeHost } from "./runtime-host-smoke-support.mjs";
 
 const root = process.cwd();
 const entryPath = path.join(root, "dist", "cli", "entry.js");
@@ -46,6 +47,7 @@ const timedOutExportPath = path.join(tempDirectory, "timed-out-output.bin");
 
 fs.mkdirSync(workspacePath, { recursive: true });
 
+let runtimeHost;
 try {
   const runHelp = invoke(["run", "--help"], environment);
   assert.equal(runHelp.status, 0);
@@ -63,6 +65,8 @@ try {
   assert.equal(invalidMessage.status, 20);
   assert.equal(parseJsonOutput(invalidMessage).kind, "usage_failure");
   assert.equal(fs.existsSync(path.dirname(databasePath)), false, "Run help or parse failure started persistence");
+
+  runtimeHost = await startControlledRuntimeHost(appDataRoot);
 
   const created = runJson(
     [
@@ -106,6 +110,9 @@ try {
     0,
   );
   const wrongScopeSessionId = wrongScopeCreated.applicationResponse.value.sessionId;
+  const initialShutdown = await runtimeHost.stop();
+  assert.equal(initialShutdown.checkpoint, "completed");
+  runtimeHost = undefined;
   const worker = new PersistenceWorkerClient({ databasePath, legacyDatabasePaths: [] });
   await worker.start();
   try {
@@ -349,6 +356,8 @@ try {
     const shutdown = await worker.shutdown();
     assert.equal(shutdown.checkpoint, "completed");
   }
+
+  runtimeHost = await startControlledRuntimeHost(appDataRoot);
 
   const firstRunPage = runJson(["session", "runs", "--session-id", sessionId, "--limit", "1"], environment, 0);
   assert.equal(firstRunPage.applicationResponse.value.items.length, 1);
@@ -701,8 +710,15 @@ try {
   const missing = runJson(["run", "status", "--session-id", sessionId, "--run-id", "missing-run"], environment, 22);
   assert.equal(missing.applicationResponse.error.code, "not_found");
 
+  const finalShutdown = await runtimeHost.stop();
+  assert.equal(finalShutdown.checkpoint, "completed");
+  runtimeHost = undefined;
   for (const suffix of ["-wal", "-shm", "-journal"]) {
-    assert.equal(fs.existsSync(`${databasePath}${suffix}`), false, `SQLite sidecar remained after Run CLI: ${suffix}`);
+    assert.equal(
+      fs.existsSync(`${databasePath}${suffix}`),
+      false,
+      `SQLite sidecar remained after graceful runtime host shutdown: ${suffix}`,
+    );
   }
 
   console.log(
@@ -727,11 +743,14 @@ try {
       sessionMessageControlPlane: "verified",
       sessionRunHistoryControlPlane: "verified",
       exportNoClobber: "verified",
+      runtimeHostCheckpoint: "completed",
       sqliteSidecars: "none",
     }),
   );
 } finally {
-  fs.rmSync(tempDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  await cleanupControlledRuntimeHost(runtimeHost, () =>
+    fs.rmSync(tempDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
+  );
 }
 
 function runJson(args, childEnvironment, expectedStatus) {
