@@ -63,6 +63,8 @@ npm run electron:start
 | MT-013 | New Session 起動 | Home の `New Session` を押す | launch dialog が開く |
 | MT-013A | New Session dialog keyboard | `New Session` dialog を開き、初期 focus、`Tab` / `Shift+Tab`、`Escape`、provider chip の矢印キーを試す | open 時に title input へ focus が入り、focus は dialog 内で循環する。`Escape` で閉じ、provider chip は矢印キーで切り替えられる |
 | MT-014 | New Session 作成 | title、workspace、provider、Character を選び `Start New Session` を押す | 選択した Character snapshot を使って Session Window が開き、Home の session 一覧に追加され、選んだ provider で session が作られ、approval 初期値は `安全寄り` になる。Character が 0 件の場合は neutral fallback を使う |
+| MT-014B | New Session SessionFolder | `New Session` で `SessionFolder` を選び、title、provider、Character を指定して `Start New Session` を押す | 選択時点では path の指定を求められない。開始後は WithMate の `session-files/{sessionId}` が作成され、その absolute path を workspace にした Session Window が開く |
+| MT-014C | SessionFolder workspace retention | `SessionFolder` で作成した Session の workspace にファイルを置き、その Session を削除する | Session record は削除されるが、workspace directory と中のファイルは残る |
 | MT-014A | New Session provider availability | `Coding Agent Providers` で一部 provider を無効化した後に `New Session` を開く | launch dialog の provider 候補には enabled provider だけが出る。0 件なら empty state が出て `Start New Session` は disabled のままになる |
 | MT-015 | Session 実行 | Session Window の textarea に入力して送信する | user message が追加され、pending と live activity が表示される |
 | MT-015A | Copilot basic turn | provider を `GitHub Copilot` にした session を作成し、text-only の prompt を 1 回送る | assistant response が返り、Session が `idle` へ戻る。添付なしなら Codex と同じ Session UI で 1 turn 完了できる |

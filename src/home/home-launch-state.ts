@@ -1,10 +1,15 @@
 import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "../approval-mode.js";
-import type { CreateSessionInput, SessionSummary } from "../app-state.js";
+import type { CreateSessionInput, CreateSessionRequest, SessionSummary } from "../app-state.js";
 import { DEFAULT_CHARACTER_THEME_COLORS, type CharacterThemeColors } from "../character-state.js";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import { DEFAULT_CODEX_SANDBOX_MODE, type CodexSandboxMode } from "../codex-sandbox-mode.js";
 import type { CreateCompanionSessionInput } from "../companion-state.js";
-import { inferWorkspaceFromPath, type LaunchWorkspace } from "./home-launch-projection.js";
+import {
+  inferWorkspaceFromPath,
+  isSessionFolderLaunchWorkspace,
+  resolveLaunchDirectoryWorkspace,
+  type LaunchWorkspaceSelection,
+} from "./home-launch-workspace.js";
 import {
   DEFAULT_MODEL_ID,
   DEFAULT_REASONING_EFFORT,
@@ -38,7 +43,7 @@ export type HomeLaunchDraft = {
   open: boolean;
   mode: "session" | "companion";
   title: string;
-  workspace: LaunchWorkspace | null;
+  workspace: LaunchWorkspaceSelection | null;
   providerId: string;
   characterSelectionMode: LaunchCharacterSelectionMode;
   characterId: string;
@@ -104,7 +109,8 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
   random?: () => number;
 }): CreateCompanionSessionInput | null {
   const normalizedTitle = draft.title.trim();
-  if (!normalizedTitle || !draft.workspace || !selectedProviderId) {
+  const workspace = resolveLaunchDirectoryWorkspace(draft.workspace);
+  if (!normalizedTitle || !workspace || !selectedProviderId) {
     return null;
   }
   const characterSnapshot = buildLaunchCharacterSnapshot(characterEntries, draft, sessions, random);
@@ -118,7 +124,7 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
 
   return {
     taskTitle: normalizedTitle,
-    workspacePath: draft.workspace.path,
+    workspacePath: workspace.path,
     provider: selectedProviderId,
     characterId: characterSnapshot.characterId,
     character: characterSnapshot.character,
@@ -149,6 +155,13 @@ export function setLaunchWorkspaceFromPath(draft: HomeLaunchDraft, selectedPath:
   return {
     ...draft,
     workspace: inferWorkspaceFromPath(selectedPath),
+  };
+}
+
+export function setLaunchWorkspaceToSessionFolder(draft: HomeLaunchDraft): HomeLaunchDraft {
+  return {
+    ...draft,
+    workspace: { kind: "session-folder" },
   };
 }
 
@@ -235,7 +248,7 @@ export function resolveLastUsedSessionSelection(
   };
 }
 
-export function buildCreateSessionInputFromLaunchDraft({
+export function buildCreateSessionRequestFromLaunchDraft({
   draft,
   mateProfile,
   selectedProviderId,
@@ -253,19 +266,25 @@ export function buildCreateSessionInputFromLaunchDraft({
   characterEntries?: readonly CharacterCatalogEntry[];
   sessions?: readonly CharacterUsageSessionSource[];
   random?: () => number;
-}): CreateSessionInput | null {
+}): CreateSessionRequest | null {
   const normalizedTitle = draft.title.trim();
   if (!normalizedTitle || !draft.workspace || !selectedProviderId) {
     return null;
   }
   const characterSnapshot = buildLaunchCharacterSnapshot(characterEntries, draft, sessions, random);
+  const workspace = isSessionFolderLaunchWorkspace(draft.workspace)
+    ? { kind: "session-folder" as const }
+    : {
+        kind: "directory" as const,
+        label: draft.workspace.label,
+        path: draft.workspace.path,
+        branch: draft.workspace.branch,
+      };
 
   return {
     provider: selectedProviderId,
     taskTitle: normalizedTitle,
-    workspaceLabel: draft.workspace.label,
-    workspacePath: draft.workspace.path,
-    branch: draft.workspace.branch,
+    workspace,
     characterId: characterSnapshot.characterId,
     character: characterSnapshot.character,
     characterIconPath: characterSnapshot.characterIconPath,

@@ -84,5 +84,12 @@ describe("home-launch-handlers", () => {
 
     handlers.onSelectLaunchCharacter("new-default");
     assert.equal(draft.characterSelectionMode, "specific");
+
+    handlers.onSelectSessionFolder();
+    assert.deepEqual(draft.workspace, { kind: "session-folder" });
+
+    handlers.onChangeMode("companion");
+    assert.equal(draft.mode, "companion");
+    assert.equal(draft.workspace, null);
   });
 });

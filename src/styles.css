@@ -1481,6 +1481,14 @@ button:disabled {
   justify-content: flex-end;
 }
 
+.home-page .workspace-picker-actions .browse-button.active {
+  background: rgba(111, 140, 255, 0.24);
+  color: #eef4ff;
+  box-shadow:
+    inset 0 0 0 1px rgba(143, 169, 255, 0.48),
+    0 8px 18px rgba(111, 140, 255, 0.14);
+}
+
 .panel-head,
 .session-card-head,
 .session-character-row,

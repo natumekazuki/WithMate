@@ -523,7 +523,8 @@ describe("HomeLaunchDialog", () => {
       open={true}
       mode={mode}
       title="demo"
-      workspace={null}
+      workspaceSelected={false}
+      sessionFolderSelected={false}
       launchWorkspacePathLabel="workspace"
       enabledLaunchProviders={[{ id: "codex", label: "Codex" }]}
       selectedLaunchProviderId="codex"
@@ -538,6 +539,7 @@ describe("HomeLaunchDialog", () => {
       onSelectMode={noOp}
       onChangeTitle={noOp}
       onBrowseWorkspace={noOp}
+      onSelectSessionFolder={noOp}
       onSelectProvider={noOp}
       onSelectCharacter={noOp}
       onSelectRandomCharacter={noOp}
@@ -555,6 +557,7 @@ describe("HomeLaunchDialog", () => {
     assert.ok(html.includes("ランダム"));
     assert.ok(html.indexOf("ランダム") < html.indexOf("Mia"));
     assert.ok(html.includes("最近使っていないCharacterを優先"));
+    assert.ok(html.indexOf("Browse") < html.indexOf("SessionFolder"));
   });
 
   it("random選択時は一覧先頭のランダムcardだけを選択状態にする", () => {
@@ -575,6 +578,7 @@ describe("HomeLaunchDialog", () => {
 
     assert.ok(html.includes("Character"));
     assert.ok(html.includes("Mia"));
+    assert.ok(!html.includes("SessionFolder"));
   });
 
   it("Character 0 件なら neutral fallback を表示する", () => {

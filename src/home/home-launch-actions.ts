@@ -3,18 +3,18 @@ import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../companion-state.js";
 import { createCompanionSessionSummary } from "../companion-state.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
-import type { CreateSessionInput, SessionSummary } from "../session-state.js";
+import type { CreateSessionRequest, SessionSummary } from "../session-state.js";
 import type { SessionSummariesLoadStatus } from "../session-summary-subscription.js";
 import { projectSessionSummary } from "../session-state.js";
 import {
   buildCreateCompanionSessionInputFromLaunchDraft,
-  buildCreateSessionInputFromLaunchDraft,
+  buildCreateSessionRequestFromLaunchDraft,
   resolveLastUsedSessionSelection,
   resolveLaunchValidationMessage,
   type HomeLaunchDraft,
 } from "./home-launch-state.js";
 
-export type HomeLaunchSessionCreator = (input: CreateSessionInput) => Promise<SessionSummary | null>;
+export type HomeLaunchSessionCreator = (input: CreateSessionRequest) => Promise<SessionSummary | null>;
 
 export type HomeLaunchCompanionSessionCreator = (input: CreateCompanionSessionInput) => Promise<CompanionSession | null>;
 
@@ -98,7 +98,7 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
       return;
     }
 
-    const sessionInput = buildCreateSessionInputFromLaunchDraft({
+    const sessionInput = buildCreateSessionRequestFromLaunchDraft({
       draft: input.draft,
       mateProfile: input.mateProfile,
       selectedProviderId: input.selectedProviderId,

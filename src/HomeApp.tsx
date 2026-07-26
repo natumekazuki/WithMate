@@ -608,6 +608,7 @@ export default function HomeApp() {
       onSelectMode: homeLaunchHandlers.onChangeMode,
       onChangeTitle: homeLaunchHandlers.onChangeTitle,
       onBrowseWorkspace: () => void homeLaunchHandlers.onBrowseWorkspace(),
+      onSelectSessionFolder: homeLaunchHandlers.onSelectSessionFolder,
       onSelectProvider: homeLaunchHandlers.onSelectLaunchProvider,
       onSelectCharacter: homeLaunchHandlers.onSelectLaunchCharacter,
       onSelectRandomCharacter: homeLaunchHandlers.onSelectRandomLaunchCharacter,

@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import { buildNewSession } from "../../src/app-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import {
+  areDirectoryPathsEquivalent,
   isPathWithinDirectory,
   normalizeAllowedAdditionalDirectories,
 } from "../../src-electron/additional-directories.js";
@@ -33,6 +34,17 @@ function createSession(workspacePath: string, allowedAdditionalDirectories: stri
 }
 
 describe("additional directories", () => {
+  it("Windows path は大文字小文字が異なっても同じ directory として比較する", () => {
+    assert.equal(
+      areDirectoryPathsEquivalent(
+        "C:\\Data\\WithMate\\session-files\\launch-1",
+        "c:\\data\\withmate\\session-files\\launch-1",
+        "win32",
+      ),
+      true,
+    );
+  });
+
   it("workspace 内 path を除外しつつ重複と入れ子を正規化できる", () => {
     const workspacePath = path.resolve("C:/repo");
     const normalized = normalizeAllowedAdditionalDirectories(workspacePath, [

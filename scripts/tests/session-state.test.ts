@@ -53,8 +53,9 @@ const CODEX_PROVIDER_CATALOG: ModelCatalogProvider = {
   ],
 };
 
-function createSession(provider: string) {
+function createSession(provider: string, id?: string) {
   return buildNewSession({
+    id,
     provider,
     taskTitle: `${provider} session`,
     workspaceLabel: "workspace",
@@ -72,8 +73,9 @@ function createSession(provider: string) {
 
 describe("session-state custom agent selection", () => {
   it("新規 session は V5 schema version で作成し、V4 以前は閲覧専用として扱う", () => {
-    const session = createSession("codex");
+    const session = createSession("codex", "launch-fixed");
 
+    assert.equal(session.id, "launch-fixed");
     assert.equal(CURRENT_SESSION_SCHEMA_VERSION, 5);
     assert.equal(session.sourceSchemaVersion, 5);
     assert.equal(isReadOnlySession(session), false);

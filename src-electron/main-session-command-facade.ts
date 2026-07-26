@@ -1,5 +1,5 @@
 import type { ProviderQuotaTelemetry, RunSessionTurnRequest } from "../src/runtime-state.js";
-import type { CreateSessionInput, Session } from "../src/session-state.js";
+import type { CreateSessionInput, CreateSessionRequest, Session, SessionSummary } from "../src/session-state.js";
 import {
   resolveDeleteSessionsLastActiveBeforeCutoff,
   type DeleteSessionsLastActiveBeforeRequest,
@@ -7,22 +7,78 @@ import {
 } from "../src/withmate-window-types.js";
 import type { SessionPersistenceService } from "./session-persistence-service.js";
 import type { SessionRuntimeService } from "./session-runtime-service.js";
+import { parseCreateSessionRequest } from "./create-session-request.js";
 
 type MainSessionCommandFacadeDeps = {
   getSession(sessionId: string): Session | null;
+  getSessions(): readonly Session[];
+  getStoredSessionSummaries(): Promise<readonly SessionSummary[]> | readonly SessionSummary[];
   getSessionPersistenceService(): SessionPersistenceService;
   getSessionRuntimeService(): SessionRuntimeService;
   getProviderQuotaTelemetry(providerId: string): ProviderQuotaTelemetry | null;
   isProviderQuotaTelemetryStale(telemetry: ProviderQuotaTelemetry | null): boolean;
   refreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
+  createSessionId(): string;
+  createSessionFilesDirectory(sessionId: string): Promise<string> | string;
+  isSessionFilesWorkspace(session: Pick<Session, "id" | "workspacePath">): boolean;
   cleanupSessionFilesDirectory?(sessionId: string): Promise<void>;
 };
+
+type MainOwnedCreateSessionInput = Omit<CreateSessionInput, "id">;
 
 export class MainSessionCommandFacade {
   constructor(private readonly deps: MainSessionCommandFacadeDeps) {}
 
-  async createSession(input: CreateSessionInput): Promise<Session> {
+  async createSession(input: MainOwnedCreateSessionInput): Promise<Session> {
+    return this.persistCreatedSession({
+      ...input,
+      id: this.issueSessionId(),
+    });
+  }
+
+  async createSessionFromRequest(input: CreateSessionRequest): Promise<Session> {
+    const { workspace, sessionInput } = parseCreateSessionRequest(input);
+    if (workspace?.kind === "directory") {
+      if (!workspace.label.trim() || !workspace.path.trim()) {
+        throw new Error("workspace の情報が不足しているよ。");
+      }
+      return this.persistCreatedSession({
+        ...sessionInput,
+        id: this.issueSessionId(),
+        workspaceLabel: workspace.label,
+        workspacePath: workspace.path,
+        branch: workspace.branch,
+      });
+    }
+    if (workspace?.kind !== "session-folder") {
+      throw new Error("workspace の作成方法を解釈できないよ。");
+    }
+
+    const sessionId = this.issueSessionId();
+    const workspacePath = await this.deps.createSessionFilesDirectory(sessionId);
+    if (!workspacePath.trim()) {
+      throw new Error("SessionFolder を作成できなかったよ。");
+    }
+
+    return this.persistCreatedSession({
+      ...sessionInput,
+      id: sessionId,
+      workspaceLabel: "SessionFolder",
+      workspacePath,
+      branch: "",
+    });
+  }
+
+  private async persistCreatedSession(input: CreateSessionInput & { id: string }): Promise<Session> {
     return this.deps.getSessionPersistenceService().createSession(input);
+  }
+
+  private issueSessionId(): string {
+    const sessionId = this.deps.createSessionId().trim();
+    if (!sessionId) {
+      throw new Error("Session ID を発行できなかったよ。");
+    }
+    return sessionId;
   }
 
   async updateSession(session: Session): Promise<Session> {
@@ -30,8 +86,10 @@ export class MainSessionCommandFacade {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    const sessionsById = new Map(this.deps.getSessions().map((session) => [session.id, session] as const));
     await this.cleanupDeletedSessions(
       await this.deps.getSessionPersistenceService().deleteSession(sessionId),
+      sessionsById,
     );
   }
 
@@ -39,8 +97,14 @@ export class MainSessionCommandFacade {
     request: DeleteSessionsLastActiveBeforeRequest | null | undefined,
   ): Promise<DeleteSessionsResult> {
     const cutoff = resolveDeleteSessionsLastActiveBeforeCutoff(request);
+    const sessionsById = new Map(
+      [
+        ...await this.deps.getStoredSessionSummaries(),
+        ...this.deps.getSessions(),
+      ].map((session) => [session.id, session] as const),
+    );
     const result = await this.deps.getSessionPersistenceService().deleteSessionsLastActiveBefore(cutoff);
-    await this.cleanupDeletedSessions(result);
+    await this.cleanupDeletedSessions(result, sessionsById);
     return result;
   }
 
@@ -60,8 +124,15 @@ export class MainSessionCommandFacade {
     return this.deps.getSessionRuntimeService().runSessionTurn(sessionId, request);
   }
 
-  private async cleanupDeletedSessions(result: DeleteSessionsResult): Promise<void> {
+  private async cleanupDeletedSessions(
+    result: DeleteSessionsResult,
+    sessionsById: ReadonlyMap<string, Pick<Session, "id" | "workspacePath">>,
+  ): Promise<void> {
     for (const sessionId of result.deletedSessionIds) {
+      const deletedSession = sessionsById.get(sessionId);
+      if (deletedSession && this.deps.isSessionFilesWorkspace(deletedSession)) {
+        continue;
+      }
       await this.deps.cleanupSessionFilesDirectory?.(sessionId);
     }
   }

@@ -5,7 +5,6 @@ import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-s
 import { ProviderLaunchField } from "../launch/provider-launch-picker.js";
 import { buildCharacterThemeStyle } from "../theme-utils.js";
 import { CharacterAvatar } from "../ui-utils.js";
-import type { LaunchWorkspace } from "./home-launch-projection.js";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import { DEFAULT_CHARACTER_THEME_COLORS } from "../character-state.js";
 
@@ -13,7 +12,8 @@ export type HomeLaunchDialogProps = {
   open: boolean;
   mode: "session" | "companion";
   title: string;
-  workspace: LaunchWorkspace | null;
+  workspaceSelected: boolean;
+  sessionFolderSelected: boolean;
   launchWorkspacePathLabel: string;
   enabledLaunchProviders: Array<{ id: string; label: string }>;
   selectedLaunchProviderId: string | null;
@@ -28,6 +28,7 @@ export type HomeLaunchDialogProps = {
   onSelectMode: (mode: "session" | "companion") => void;
   onChangeTitle: (value: string) => void;
   onBrowseWorkspace: () => void;
+  onSelectSessionFolder: () => void;
   onSelectProvider: (providerId: string) => void;
   onSelectCharacter: (characterId: string) => void;
   onSelectRandomCharacter: () => void;
@@ -38,7 +39,8 @@ export function HomeLaunchDialog({
   open,
   mode,
   title,
-  workspace,
+  workspaceSelected,
+  sessionFolderSelected,
   launchWorkspacePathLabel,
   enabledLaunchProviders,
   selectedLaunchProviderId,
@@ -53,6 +55,7 @@ export function HomeLaunchDialog({
   onSelectMode,
   onChangeTitle,
   onBrowseWorkspace,
+  onSelectSessionFolder,
   onSelectProvider,
   onSelectCharacter,
   onSelectRandomCharacter,
@@ -135,12 +138,22 @@ export function HomeLaunchDialog({
       </section>
 
       <section className="launch-section workspace-picker minimal">
-        <div className="section-head compact-actions">
+        <div className="section-head compact-actions workspace-picker-actions">
           <button className="browse-button" type="button" onClick={onBrowseWorkspace}>
             Browse
           </button>
+          {mode === "session" ? (
+            <button
+              className={`browse-button${sessionFolderSelected ? " active" : ""}`}
+              type="button"
+              aria-pressed={sessionFolderSelected}
+              onClick={onSelectSessionFolder}
+            >
+              SessionFolder
+            </button>
+          ) : null}
         </div>
-        <p className={`launch-path${workspace ? " selected" : ""}`}>{launchWorkspacePathLabel}</p>
+        <p className={`launch-path${workspaceSelected ? " selected" : ""}`}>{launchWorkspacePathLabel}</p>
       </section>
 
       <ProviderLaunchField

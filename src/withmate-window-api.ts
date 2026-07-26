@@ -10,7 +10,7 @@ import type {
   AppSettings,
   CharacterProfile,
   ComposerPreview,
-  CreateSessionInput,
+  CreateSessionRequest,
   DiscoveredCustomAgent,
   DiscoveredSkill,
   DiffPreviewPayload,
@@ -103,7 +103,7 @@ export type WithMateWindowSessionApi = {
   listSessionSummaries(): Promise<SessionSummary[]>;
   getSession(sessionId: string): Promise<Session | null>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null>;
-  createSession(input: CreateSessionInput): Promise<Session>;
+  createSession(input: CreateSessionRequest): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
   deleteSession(sessionId: string): Promise<void>;
   previewComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview>;

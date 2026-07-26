@@ -116,6 +116,37 @@ describe("home-launch-projection", () => {
     assert.equal(enabledOnlyCodex.canStartSession, true);
   });
 
+  it("SessionFolder 選択時は未確定 path の代わりに選択状態を投影する", () => {
+    const projection = buildHomeLaunchProjection({
+      launchProviderId: "codex",
+      launchTitle: "task",
+      launchWorkspace: { kind: "session-folder" },
+      characterEntries: createCharacters(),
+      appSettings: createDefaultAppSettings(),
+      modelCatalog: createCatalog(),
+    });
+
+    assert.equal(projection.launchWorkspacePathLabel, "SessionFolder");
+    assert.equal(projection.sessionFolderSelected, true);
+    assert.equal(projection.workspaceSelected, true);
+    assert.equal(projection.canStartSession, true);
+  });
+
+  it("Companion Mode では SessionFolder 選択を開始可能として投影しない", () => {
+    const projection = buildHomeLaunchProjection({
+      launchProviderId: "codex",
+      launchMode: "companion",
+      launchTitle: "task",
+      launchWorkspace: { kind: "session-folder" },
+      characterEntries: createCharacters(),
+      appSettings: createDefaultAppSettings(),
+      modelCatalog: createCatalog(),
+    });
+
+    assert.equal(projection.sessionFolderSelected, true);
+    assert.equal(projection.canStartSession, false);
+  });
+
   it("random character選択時は固定Characterを選択状態にしない", () => {
     const projection = buildHomeLaunchProjection({
       launchProviderId: "codex",

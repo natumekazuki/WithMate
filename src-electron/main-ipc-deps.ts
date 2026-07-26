@@ -59,7 +59,7 @@ import type {
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
-import type { CreateSessionInput, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
+import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
 import type {
   OpenPathOptions,
   DeleteSessionsLastActiveBeforeRequest,
@@ -226,7 +226,7 @@ export type MainIpcSessionRuntimeDepsArgs = {
   ): SessionBackgroundActivityState | null;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void;
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): void;
-  createSession(input: CreateSessionInput): Awaitable<Session>;
+  createSession(input: CreateSessionRequest): Awaitable<Session>;
   updateSession(session: Session): Awaitable<Session>;
   deleteSession(sessionId: string): Awaitable<void>;
   deleteSessionsLastActiveBefore(

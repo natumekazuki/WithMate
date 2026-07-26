@@ -1,6 +1,6 @@
 import type { CompanionSessionSummary } from "../companion-state.js";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
-import type { CreateSessionInput, SessionSummary } from "../session-state.js";
+import type { CreateSessionRequest, SessionSummary } from "../session-state.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { CreateCompanionSessionInput, CompanionSession } from "../companion-state.js";
 import type { ModelCatalogProvider } from "../model-catalog.js";
@@ -11,10 +11,12 @@ import {
   openLaunchDraft,
   resolveLaunchCharacterId,
   setLaunchWorkspaceFromPath,
+  setLaunchWorkspaceToSessionFolder,
   updateLaunchDraftForCharacterSelection,
   updateLaunchDraftForProviderSelection,
   updateLaunchDraftForRandomCharacterSelection,
 } from "./home-launch-state.js";
+import { isSessionFolderLaunchWorkspace } from "./home-launch-workspace.js";
 import { startHomeLaunch } from "./home-launch-actions.js";
 
 type HomeLaunchHandlersContext = {
@@ -34,7 +36,7 @@ type HomeLaunchHandlersContext = {
   pickWorkspaceDirectory: () => Promise<string | null> | string | null;
   openSessionWindow: (sessionId: string) => Promise<void>;
   openCompanionReviewWindow: (sessionId: string) => Promise<void>;
-  createSession: (input: CreateSessionInput) => Promise<SessionSummary | null>;
+  createSession: (input: CreateSessionRequest) => Promise<SessionSummary | null>;
   createCompanionSession: (input: CreateCompanionSessionInput) => Promise<CompanionSession | null>;
   upsertSessionSummary: (summary: SessionSummary) => void;
   upsertCompanionSessionSummary: (summary: CompanionSessionSummary) => void;
@@ -42,6 +44,7 @@ type HomeLaunchHandlersContext = {
 
 export type HomeLaunchHandlers = {
   onBrowseWorkspace: () => void;
+  onSelectSessionFolder: () => void;
   onOpenLaunchDialog: () => Promise<void>;
   onCloseLaunchDialog: () => void;
   onSelectLaunchProvider: (providerId: string) => void;
@@ -136,6 +139,10 @@ export function buildHomeLaunchHandlers({
 
   return {
     onBrowseWorkspace: () => void onBrowseWorkspace(),
+    onSelectSessionFolder: () => {
+      setLaunchFeedback("");
+      setLaunchDraft((current) => setLaunchWorkspaceToSessionFolder(current));
+    },
     onOpenLaunchDialog,
     onCloseLaunchDialog,
     onSelectLaunchProvider,
@@ -149,7 +156,13 @@ export function buildHomeLaunchHandlers({
     },
     onChangeMode: (mode) => {
       setLaunchFeedback("");
-      setLaunchDraft((current) => ({ ...current, mode }));
+      setLaunchDraft((current) => ({
+        ...current,
+        mode,
+        workspace: mode === "companion" && isSessionFolderLaunchWorkspace(current.workspace)
+          ? null
+          : current.workspace,
+      }));
     },
     onChangeTitle: (value) => {
       setLaunchFeedback("");

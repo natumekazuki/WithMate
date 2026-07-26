@@ -6,12 +6,13 @@ import {
   resolveLaunchCharacterId,
   type LaunchCharacterSelectionMode,
 } from "./home-launch-state.js";
+import {
+  isSessionFolderLaunchWorkspace,
+  type LaunchWorkspaceSelection,
+} from "./home-launch-workspace.js";
 
-export type LaunchWorkspace = {
-  label: string;
-  path: string;
-  branch: string;
-};
+export { inferWorkspaceFromPath } from "./home-launch-workspace.js";
+export type { LaunchWorkspace, LaunchWorkspaceSelection } from "./home-launch-workspace.js";
 
 export type HomeLaunchProjection = {
   enabledLaunchProviders: ModelCatalogProvider[];
@@ -21,20 +22,10 @@ export type HomeLaunchProjection = {
   randomCharacterSelected: boolean;
   charactersLoaded: boolean;
   launchWorkspacePathLabel: string;
+  sessionFolderSelected: boolean;
+  workspaceSelected: boolean;
   canStartSession: boolean;
 };
-
-export function inferWorkspaceFromPath(selectedPath: string): LaunchWorkspace {
-  const normalized = selectedPath.replace(/[\\/]+$/, "");
-  const segments = normalized.split(/[\\/]/).filter(Boolean);
-  const label = segments.at(-1) ?? normalized;
-
-  return {
-    label,
-    path: selectedPath,
-    branch: "",
-  };
-}
 
 export function buildHomeLaunchProjection({
   launchProviderId,
@@ -51,7 +42,7 @@ export function buildHomeLaunchProjection({
   launchProviderId: string;
   launchMode?: "session" | "companion";
   launchTitle: string;
-  launchWorkspace: LaunchWorkspace | null;
+  launchWorkspace: LaunchWorkspaceSelection | null;
   launchCharacterId?: string;
   launchCharacterSelectionMode?: LaunchCharacterSelectionMode;
   characterEntries?: readonly CharacterCatalogEntry[];
@@ -70,6 +61,7 @@ export function buildHomeLaunchProjection({
   const selectedCharacter = launchCharacterSelectionMode === "random"
     ? null
     : activeCharacterEntries.find((character) => character.id === selectedCharacterId) ?? null;
+  const sessionFolderSelected = isSessionFolderLaunchWorkspace(launchWorkspace);
 
   return {
     enabledLaunchProviders,
@@ -78,7 +70,16 @@ export function buildHomeLaunchProjection({
     selectedCharacter,
     randomCharacterSelected: launchCharacterSelectionMode === "random",
     charactersLoaded,
-    launchWorkspacePathLabel: launchWorkspace ? launchWorkspace.path : "workspace",
-    canStartSession: charactersLoaded && !!launchTitle.trim() && !!launchWorkspace && !!selectedLaunchProvider,
+    launchWorkspacePathLabel: sessionFolderSelected
+      ? "SessionFolder"
+      : launchWorkspace?.path ?? "workspace",
+    sessionFolderSelected,
+    workspaceSelected: !!launchWorkspace,
+    canStartSession:
+      charactersLoaded &&
+      !!launchTitle.trim() &&
+      !!launchWorkspace &&
+      !!selectedLaunchProvider &&
+      (launchMode !== "companion" || !sessionFolderSelected),
   };
 }

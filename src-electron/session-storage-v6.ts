@@ -20,6 +20,7 @@ import {
 import { deleteAuditEventsForSessionTargets } from "./audit-log-storage-v6.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+import { SessionIdCollisionError } from "./session-storage-errors.js";
 import type { DeleteSessionsLastActiveBeforeCutoff } from "../src/withmate-window-types.js";
 
 type SessionV6Row = {
@@ -206,6 +207,14 @@ export class SessionStorageV6 {
   }
 
   upsertSession(session: Session): Session {
+    return this.storeSession(session, "upsert");
+  }
+
+  insertSession(session: Session): Session {
+    return this.storeSession(session, "create");
+  }
+
+  private storeSession(session: Session, operation: "create" | "upsert"): Session {
     const normalized = normalizeSession(session);
     if (!normalized) {
       throw new Error("SessionStorageV6 に保存できない session 形式だよ。");
@@ -214,10 +223,10 @@ export class SessionStorageV6 {
     const startedAt = Date.now();
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      this.writeSession(normalized);
+      this.writeSession(normalized, operation);
       this.db.exec("COMMIT");
       const stored = this.getSession(normalized.id) ?? normalized;
-      logSessionRunStuckInvestigation("storage-v6.upsert-session.done", {
+      logSessionRunStuckInvestigation(`storage-v6.${operation}-session.done`, {
         sessionId: normalized.id,
         durationMs: Date.now() - startedAt,
         messageCount: normalized.messages.length,
@@ -229,7 +238,7 @@ export class SessionStorageV6 {
       return stored;
     } catch (error) {
       this.db.exec("ROLLBACK");
-      logSessionRunStuckInvestigation("storage-v6.upsert-session.failed", {
+      logSessionRunStuckInvestigation(`storage-v6.${operation}-session.failed`, {
         sessionId: normalized.id,
         durationMs: Date.now() - startedAt,
         messageCount: normalized.messages.length,
@@ -318,7 +327,7 @@ export class SessionStorageV6 {
     this.db.close();
   }
 
-  private writeSession(session: Session): void {
+  private writeSession(session: Session, operation: "create" | "upsert" = "upsert"): void {
     const startedAt = Date.now();
     const snapshot = session.characterRuntimeSnapshot;
     const runtimePolicy = {
@@ -332,7 +341,30 @@ export class SessionStorageV6 {
       characterIconPath: session.characterIconPath,
       characterThemeColors: session.characterThemeColors,
     };
-    this.db.prepare(`
+    const conflictClause = operation === "create"
+      ? "ON CONFLICT(id) DO NOTHING"
+      : `
+        ON CONFLICT(id) DO UPDATE SET
+          title = excluded.title,
+          state = excluded.state,
+          session_kind = excluded.session_kind,
+          provider_id = excluded.provider_id,
+          catalog_revision = excluded.catalog_revision,
+          model_id = excluded.model_id,
+          reasoning_effort = excluded.reasoning_effort,
+          custom_agent_name = excluded.custom_agent_name,
+          approval_mode = excluded.approval_mode,
+          codex_sandbox_mode = excluded.codex_sandbox_mode,
+          allowed_additional_directories_json = excluded.allowed_additional_directories_json,
+          runtime_policy_json = excluded.runtime_policy_json,
+          thread_id = excluded.thread_id,
+          character_id = excluded.character_id,
+          character_snapshot_json = excluded.character_snapshot_json,
+          workspace_path = excluded.workspace_path,
+          updated_at = excluded.updated_at,
+          last_active_at = excluded.last_active_at
+      `;
+    const result = this.db.prepare(`
       INSERT INTO sessions_v6 (
         id,
         title,
@@ -356,25 +388,7 @@ export class SessionStorageV6 {
         last_active_at
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        title = excluded.title,
-        state = excluded.state,
-        session_kind = excluded.session_kind,
-        provider_id = excluded.provider_id,
-        catalog_revision = excluded.catalog_revision,
-        model_id = excluded.model_id,
-        reasoning_effort = excluded.reasoning_effort,
-        custom_agent_name = excluded.custom_agent_name,
-        approval_mode = excluded.approval_mode,
-        codex_sandbox_mode = excluded.codex_sandbox_mode,
-        allowed_additional_directories_json = excluded.allowed_additional_directories_json,
-        runtime_policy_json = excluded.runtime_policy_json,
-        thread_id = excluded.thread_id,
-        character_id = excluded.character_id,
-        character_snapshot_json = excluded.character_snapshot_json,
-        workspace_path = excluded.workspace_path,
-        updated_at = excluded.updated_at,
-        last_active_at = excluded.last_active_at
+      ${conflictClause}
     `).run(
       session.id,
       session.taskTitle,
@@ -397,6 +411,9 @@ export class SessionStorageV6 {
       session.updatedAt,
       session.updatedAt,
     );
+    if (operation === "create" && Number(result.changes) === 0) {
+      throw new SessionIdCollisionError(session.id);
+    }
 
     const existingArtifactBodies = new Map(
       (this.db.prepare(`
