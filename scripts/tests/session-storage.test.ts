@@ -44,6 +44,31 @@ function createSession(taskTitle: string, workspaceLabel: string, characterId: s
 }
 
 describe("SessionStorage", () => {
+  it("insertSession は同一 ID create を拒否して既存 Session を保持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new SessionStorage(dbPath);
+      const original = createSession("first", "workspace-a", "char-a", "A");
+      storage.insertSession(original);
+
+      assert.throws(
+        () => storage.insertSession({
+          ...original,
+          taskTitle: "second",
+          workspacePath: "C:/workspace-b",
+        }),
+        /同じ ID の Session がすでに存在するよ。/,
+      );
+      assert.equal(storage.getSession(original.id)?.taskTitle, "first");
+      assert.equal(storage.getSession(original.id)?.workspacePath, original.workspacePath);
+      storage.close();
+    } finally {
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("replaceSessions で一覧をまとめて置き換えられる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");

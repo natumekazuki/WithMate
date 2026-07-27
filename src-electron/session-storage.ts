@@ -19,6 +19,7 @@ import {
 } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import type { DeleteSessionsLastActiveBeforeCutoff } from "../src/withmate-window-types.js";
+import { SessionIdCollisionError } from "./session-storage-errors.js";
 
 type SessionRow = {
   id: string;
@@ -141,7 +142,7 @@ const GET_SESSION_SQL = `
   WHERE id = ?
 `;
 
-const UPSERT_SESSION_SQL = `
+const INSERT_SESSION_SQL = `
   INSERT INTO sessions (
     id,
     task_title,
@@ -173,6 +174,15 @@ const UPSERT_SESSION_SQL = `
     stream_json,
     last_active_at
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
+
+const CREATE_SESSION_SQL = `
+  ${INSERT_SESSION_SQL}
+  ON CONFLICT(id) DO NOTHING
+`;
+
+const UPSERT_SESSION_SQL = `
+  ${INSERT_SESSION_SQL}
   ON CONFLICT(id) DO UPDATE SET
     task_title = excluded.task_title,
     status = excluded.status,
@@ -344,8 +354,12 @@ export class SessionStorage {
     this.ensureSchema();
   }
 
-  private writeSession(normalized: Session, lastActiveAt: number): void {
-    this.db.prepare(UPSERT_SESSION_SQL).run(
+  private writeSession(
+    normalized: Session,
+    lastActiveAt: number,
+    operation: "create" | "upsert",
+  ): void {
+    const result = this.db.prepare(operation === "create" ? CREATE_SESSION_SQL : UPSERT_SESSION_SQL).run(
       normalized.id,
       normalized.taskTitle,
       normalized.status,
@@ -376,6 +390,9 @@ export class SessionStorage {
       JSON.stringify(normalized.stream),
       lastActiveAt,
     );
+    if (operation === "create" && Number(result.changes) === 0) {
+      throw new SessionIdCollisionError(normalized.id);
+    }
   }
 
   private ensureSchema(): void {
@@ -467,7 +484,17 @@ export class SessionStorage {
       throw new Error("保存するセッション形式が不正だよ。");
     }
 
-    this.writeSession(normalized, Date.now());
+    this.writeSession(normalized, Date.now(), "upsert");
+    return cloneSessions([normalized])[0];
+  }
+
+  insertSession(session: Session): Session {
+    const normalized = normalizeSession(session);
+    if (!normalized) {
+      throw new Error("保存するセッション形式が不正だよ。");
+    }
+
+    this.writeSession(normalized, Date.now(), "create");
     return cloneSessions([normalized])[0];
   }
 
@@ -486,7 +513,7 @@ export class SessionStorage {
     try {
       this.db.exec("DELETE FROM sessions");
       normalizedSessions.forEach((session, index) => {
-        this.writeSession(session, baseLastActiveAt - index);
+        this.writeSession(session, baseLastActiveAt - index, "upsert");
       });
       this.deleteAuxiliarySessionsWithoutValidParents(normalizedSessions.map((session) => session.id));
       this.db.exec("COMMIT");

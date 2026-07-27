@@ -14,6 +14,8 @@ export {
 } from "./session-state.js";
 export type {
   CreateSessionInput,
+  CreateSessionRequest,
+  CreateSessionWorkspaceRequest,
   DiffPreviewPayload,
   Message,
   MessageArtifact,

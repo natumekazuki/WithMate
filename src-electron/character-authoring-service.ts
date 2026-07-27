@@ -23,7 +23,7 @@ const COPILOT_WORKSPACE_SKILL_ROOT = ".github/skills";
 
 type CharacterAuthoringServiceDeps = {
   bundledSkillPath: string;
-  createSession(input: CreateSessionInput): Promise<Session>;
+  createSession(input: Omit<CreateSessionInput, "id">): Promise<Session>;
   getCharacter(characterId: string): Promise<CharacterDetail | null> | CharacterDetail | null;
   getCharacterDirectory(characterId: string): string | null;
 };

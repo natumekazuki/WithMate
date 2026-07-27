@@ -432,7 +432,7 @@ current の first slice では、上の 4 点を `SessionRuntimeService` とし�
 - `home-launch-state`
   - 完了
   - launch dialog の open / close / reset ルール
-  - `CreateSessionInput` の組み立て
+  - `CreateSessionRequest` の組み立て
 - `home-character-projection`
   - 完了
   - Characters 右ペインの filtered list

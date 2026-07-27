@@ -22,6 +22,7 @@ import type {
   DeleteSessionsLastActiveBeforeCutoff,
   DeleteSessionsResult,
 } from "../src/withmate-window-types.js";
+import { SessionIdCollisionError } from "./session-storage-errors.js";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -39,7 +40,7 @@ export type SessionPersistenceServiceDeps = {
   getStoredSession?(sessionId: string): Awaitable<Session | null>;
   isSessionRunInFlight(sessionId: string): boolean;
   listRunningActiveAuxiliaryParentIds?(sessionIds: readonly string[]): Awaitable<ReadonlySet<string>>;
-  upsertStoredSession(session: Session): Awaitable<Session>;
+  upsertStoredSession(session: Session, operation: "create" | "upsert"): Awaitable<Session>;
   replaceStoredSessions(sessions: Session[]): Awaitable<void>;
   listStoredSessions(): Awaitable<Session[]>;
   listStoredSessionIdsLastActiveBefore?(cutoff: DeleteSessionsLastActiveBeforeCutoff): Awaitable<string[]>;
@@ -82,6 +83,17 @@ export class SessionPersistenceService {
   constructor(private readonly deps: SessionPersistenceServiceDeps) {}
 
   async createSession(input: CreateSessionInput): Promise<Session> {
+    const requestedSessionId = input.id?.trim() ?? "";
+    if (
+      requestedSessionId &&
+      (
+        this.deps.getSession(requestedSessionId) ||
+        await this.deps.getStoredSession?.(requestedSessionId)
+      )
+    ) {
+      throw new SessionIdCollisionError(requestedSessionId);
+    }
+
     const appSettings = this.deps.getAppSettings();
     const snapshot = this.deps.getModelCatalogSnapshot();
     const provider = this.resolveEnabledProviderCatalog(snapshot, appSettings, input.provider);
@@ -109,7 +121,7 @@ export class SessionPersistenceService {
         input.allowedAdditionalDirectories ?? [],
       ),
     });
-    return this.upsertSession(created);
+    return this.upsertSession(created, "create");
   }
 
   async updateSession(nextSession: Session): Promise<Session> {
@@ -234,7 +246,10 @@ export class SessionPersistenceService {
     };
   }
 
-  async upsertSession(nextSession: Session): Promise<Session> {
+  async upsertSession(
+    nextSession: Session,
+    operation: "create" | "upsert" = "upsert",
+  ): Promise<Session> {
     const startedAt = Date.now();
     const currentSession = this.deps.getSession(nextSession.id);
     if (currentSession) {
@@ -249,7 +264,7 @@ export class SessionPersistenceService {
         sessionToStore.workspacePath,
         sessionToStore.allowedAdditionalDirectories,
       ),
-    });
+    }, operation);
     const storeDurationMs = Date.now() - storeStartedAt;
     const cacheStartedAt = Date.now();
     this.syncStoredSession(stored);

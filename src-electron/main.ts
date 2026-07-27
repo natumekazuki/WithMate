@@ -68,6 +68,7 @@ import {
 import { CodexAdapter } from "./codex-adapter.js";
 import { CopilotAdapter } from "./copilot-adapter.js";
 import { resolveComposerPreview } from "./composer-attachments.js";
+import { areDirectoryPathsEquivalent } from "./additional-directories.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import {
   buildDirectoryOpenFallbackCommand,
@@ -99,6 +100,7 @@ import {
   appendSessionFilesDirectory,
   appendSessionFilesDirectoryForSessionId,
   copyFilesToSessionFiles as copyFilesToSessionFilesStorage,
+  createSessionFilesDirectory,
   deleteSessionFilesDirectory,
   resolveSessionFilesDirectory,
   saveSessionFile,
@@ -1428,7 +1430,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getSessionBackgroundActivity: (sessionId, kind) => getSessionBackgroundActivity(sessionId, kind),
                 resolveLiveApproval,
                 resolveLiveElicitation,
-                createSession: (input) => requireMainSessionCommandFacade().createSession(input),
+                createSession: (input) => requireMainSessionCommandFacade().createSessionFromRequest(input),
                 updateSession: (session) => requireMainSessionCommandFacade().updateSession(session),
                 deleteSession: (sessionId) => requireMainSessionCommandFacade().deleteSession(sessionId),
                 deleteSessionsLastActiveBefore: (request) =>
@@ -1485,6 +1487,7 @@ function requireSessionStorageForWrite(): SessionStorage {
 function isSessionStorageWritable(storage: SessionStorageRead): storage is SessionStorage {
   const candidate = storage as Partial<SessionStorage>;
   return (
+    typeof candidate.insertSession === "function" &&
     typeof candidate.upsertSession === "function" &&
     typeof candidate.replaceSessions === "function" &&
     typeof candidate.deleteSession === "function" &&
@@ -1577,11 +1580,21 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
   if (!mainSessionCommandFacade) {
     mainSessionCommandFacade = new MainSessionCommandFacade({
       getSession,
+      getSessions: () => sessions,
+      getStoredSessionSummaries: () => requireSessionStorage().listSessionSummaries(),
       getSessionPersistenceService: () => requireSessionPersistenceService(),
       getSessionRuntimeService: () => requireSessionRuntimeService(),
       getProviderQuotaTelemetry: (providerId) => getProviderQuotaTelemetry(providerId),
       isProviderQuotaTelemetryStale: (telemetry) => isProviderQuotaTelemetryStale(telemetry),
       refreshProviderQuotaTelemetry: (providerId) => refreshProviderQuotaTelemetry(providerId),
+      createSessionId: () => `launch-${crypto.randomUUID()}`,
+      createSessionFilesDirectory: (sessionId) =>
+        createSessionFilesDirectory(app.getPath("userData"), sessionId),
+      isSessionFilesWorkspace: (session) =>
+        areDirectoryPathsEquivalent(
+          session.workspacePath,
+          resolveSessionFilesDirectory(app.getPath("userData"), session.id),
+        ),
       cleanupSessionFilesDirectory,
     });
   }
@@ -2087,7 +2100,12 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       getStoredSession: (sessionId) => requireSessionStorage().getSession(sessionId),
       isSessionRunInFlight,
       listRunningActiveAuxiliaryParentIds: listRunningActiveAuxiliaryParentSessionIds,
-      upsertStoredSession: (session) => requireSessionStorageForWrite().upsertSession(session),
+      upsertStoredSession: (session, operation) => {
+        const storage = requireSessionStorageForWrite();
+        return operation === "create"
+          ? storage.insertSession(session)
+          : storage.upsertSession(session);
+      },
       replaceStoredSessions: async (nextSessions) => {
         await requireSessionStorageForWrite().replaceSessions(nextSessions);
       },

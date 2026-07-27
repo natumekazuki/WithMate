@@ -1,8 +1,17 @@
 import path from "node:path";
 
-function normalizeForComparison(targetPath: string): string {
-  const normalized = path.resolve(targetPath).replace(/[\\/]+$/, "");
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+function normalizeForComparison(targetPath: string, platform: NodeJS.Platform = process.platform): string {
+  const pathApi = platform === "win32" ? path.win32 : path;
+  const normalized = pathApi.resolve(targetPath).replace(/[\\/]+$/, "");
+  return platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+export function areDirectoryPathsEquivalent(
+  leftPath: string,
+  rightPath: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return normalizeForComparison(leftPath, platform) === normalizeForComparison(rightPath, platform);
 }
 
 export function normalizeDirectoryPath(targetPath: string): string {

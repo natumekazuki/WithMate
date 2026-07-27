@@ -8,7 +8,7 @@ import type { SessionSummary } from "../../src/app-state.js";
 import type { CharacterCatalogEntry } from "../../src/character/character-catalog.js";
 import {
   buildCreateCompanionSessionInputFromLaunchDraft,
-  buildCreateSessionInputFromLaunchDraft,
+  buildCreateSessionRequestFromLaunchDraft,
   closeLaunchDraft,
   createClosedLaunchDraft,
   openLaunchDraft,
@@ -17,6 +17,7 @@ import {
   resolveLaunchValidationMessage,
   selectWeightedRandomLaunchCharacterId,
   setLaunchWorkspaceFromPath,
+  setLaunchWorkspaceToSessionFolder,
   updateLaunchDraftForCharacterSelection,
   updateLaunchDraftForProviderSelection,
   updateLaunchDraftForRandomCharacterSelection,
@@ -297,8 +298,8 @@ describe("home-launch-state", () => {
     );
   });
 
-  it("launch draft から session input を組み立てる", () => {
-    const input = buildCreateSessionInputFromLaunchDraft({
+  it("launch draft から directory workspace の session request を組み立てる", () => {
+    const input = buildCreateSessionRequestFromLaunchDraft({
       draft: {
         ...createClosedLaunchDraft(),
         open: true,
@@ -336,9 +337,12 @@ describe("home-launch-state", () => {
     assert.deepEqual(input, {
       provider: "codex",
       taskTitle: "task",
-      workspaceLabel: "demo",
-      workspacePath: "F:/work/demo",
-      branch: "main",
+      workspace: {
+        kind: "directory",
+        label: "demo",
+        path: "F:/work/demo",
+        branch: "main",
+      },
       characterId: "mia",
       character: "Mia",
       characterIconPath: "icon.png",
@@ -354,7 +358,7 @@ describe("home-launch-state", () => {
   });
 
   it("Mate 未作成でも neutral character で session input を組み立てる", () => {
-    const input = buildCreateSessionInputFromLaunchDraft({
+    const input = buildCreateSessionRequestFromLaunchDraft({
       draft: {
         ...createClosedLaunchDraft(),
         open: true,
@@ -377,7 +381,7 @@ describe("home-launch-state", () => {
   });
 
   it("archived Character が draft に残っていても active Character で session input を組み立てる", () => {
-    const input = buildCreateSessionInputFromLaunchDraft({
+    const input = buildCreateSessionRequestFromLaunchDraft({
       draft: {
         ...createClosedLaunchDraft(),
         open: true,
@@ -528,7 +532,7 @@ describe("home-launch-state", () => {
   });
 
   it("launch 条件が欠けている時は session input を返さない", () => {
-    const input = buildCreateSessionInputFromLaunchDraft({
+    const input = buildCreateSessionRequestFromLaunchDraft({
       draft: createClosedLaunchDraft(),
       mateProfile: null,
       selectedProviderId: "codex",
@@ -536,5 +540,33 @@ describe("home-launch-state", () => {
     });
 
     assert.equal(input, null);
+  });
+
+  it("SessionFolder 選択は path を確定せず session request に保持する", () => {
+    const draft = {
+      ...setLaunchWorkspaceToSessionFolder(createClosedLaunchDraft()),
+      open: true,
+      title: "task",
+      providerId: "codex",
+    };
+
+    assert.equal(
+      resolveLaunchValidationMessage({
+        draft,
+        mateState: "active",
+        mateProfile: null,
+        selectedProviderId: "codex",
+      }),
+      "",
+    );
+    assert.deepEqual(
+      buildCreateSessionRequestFromLaunchDraft({
+        draft,
+        mateProfile: null,
+        selectedProviderId: "codex",
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      })?.workspace,
+      { kind: "session-folder" },
+    );
   });
 });

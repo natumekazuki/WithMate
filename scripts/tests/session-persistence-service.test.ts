@@ -86,6 +86,7 @@ describe("SessionPersistenceService", () => {
     const snapshot = createSnapshot();
     const characterRuntimeSnapshot = createCharacterRuntimeSnapshot();
     const snapshotCharacterIds: string[] = [];
+    const storeOperations: string[] = [];
     let persistedSession: Session | null = null;
 
     const service = new SessionPersistenceService({
@@ -101,7 +102,8 @@ describe("SessionPersistenceService", () => {
       isSessionRunInFlight() {
         return false;
       },
-      upsertStoredSession(session) {
+      upsertStoredSession(session, operation) {
+        storeOperations.push(operation);
         persistedSession = session;
         storedSessions.splice(0, storedSessions.length, session);
         return session;
@@ -172,6 +174,58 @@ describe("SessionPersistenceService", () => {
     assert.equal(storedSessions[0]?.characterRuntimeSnapshot, null);
     assert.deepEqual(syncedSessionIds, [created.id]);
     assert.deepEqual(broadcastedSessionIds, [[created.id]]);
+    assert.deepEqual(storeOperations, ["create"]);
+  });
+
+  it("createSession は指定 ID が既存 Session と衝突する場合に上書きしない", async () => {
+    const existing = createSession({
+      id: "existing-session",
+      status: "running",
+      runState: "running",
+      threadId: "thread-existing",
+    });
+    let upsertCount = 0;
+    const service = new SessionPersistenceService({
+      getSessions: () => [existing],
+      setSessions() {},
+      getSession: (sessionId) => sessionId === existing.id ? existing : null,
+      getStoredSession: () => existing,
+      isSessionRunInFlight: () => true,
+      upsertStoredSession(session) {
+        upsertCount += 1;
+        return session;
+      },
+      replaceStoredSessions() {},
+      listStoredSessions: () => [existing],
+      deleteStoredSession() {},
+      getAppSettings: () => normalizeAppSettings(),
+      getModelCatalogSnapshot: () => createSnapshot(),
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    await assert.rejects(
+      service.createSession({
+        id: existing.id,
+        taskTitle: "forged replacement",
+        workspaceLabel: "forged",
+        workspacePath: "C:/forged",
+        branch: "",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      }),
+      /同じ ID の Session がすでに存在するよ。/,
+    );
+    assert.equal(upsertCount, 0);
+    assert.equal(existing.threadId, "thread-existing");
+    assert.equal(existing.workspacePath, "C:/workspace");
   });
 
   it("createSession は input の CharacterRuntimeSnapshot を優先して保存する", async () => {

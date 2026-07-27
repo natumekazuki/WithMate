@@ -103,7 +103,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
     - text color = WCAG AA の contrast ratio を満たす dark / light 候補から自動決定
 - `New Session` dialog
   - session title 入力
-  - workspace picker
+  - Agent Mode の workspace は既存 directory を選ぶ `Browse` と、WithMate 管理下の directory を開始時に作る `SessionFolder` から選ぶ
   - enabled provider の選択
   - Character selector で default Character を初期選択する。Character が 0 件の場合は neutral fallback を使う
   - approval mode は provider-neutral 3 mode を前提にし、default は `safety`

@@ -57,7 +57,7 @@ export type SessionStorageRead = AwaitableStorageMethods<
 > & Pick<SessionStorage, "close">;
 export type SessionStorageWrite = AwaitableStorageMethods<
   SessionStorage,
-  "upsertSession" | "replaceSessions" | "deleteSession" | "deleteSessions" | "clearSessions"
+  "insertSession" | "upsertSession" | "replaceSessions" | "deleteSession" | "deleteSessions" | "clearSessions"
 > & SessionStorageRead;
 
 export type AuditLogStorageRead = AwaitableStorageMethods<

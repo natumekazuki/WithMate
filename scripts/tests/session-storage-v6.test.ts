@@ -155,6 +155,46 @@ function listSessionTurnSummaries(dbPath: string): string[] {
 }
 
 describe("SessionStorageV6", () => {
+  it("insertSession は別 connection からの同一 ID create を拒否して既存 Session を保持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let firstStorage: SessionStorageV6 | null = null;
+    let secondStorage: SessionStorageV6 | null = null;
+
+    try {
+      firstStorage = new SessionStorageV6(dbPath);
+      secondStorage = new SessionStorageV6(dbPath);
+      const original = buildNewSession({
+        id: "collision-session",
+        taskTitle: "first",
+        workspaceLabel: "workspace-a",
+        workspacePath: "C:/workspace-a",
+        branch: "main",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      });
+
+      firstStorage.insertSession(original);
+      assert.throws(
+        () => secondStorage?.insertSession({
+          ...original,
+          taskTitle: "second",
+          workspacePath: "C:/workspace-b",
+        }),
+        /同じ ID の Session がすでに存在するよ。/,
+      );
+      assert.equal(firstStorage.getSession(original.id)?.taskTitle, "first");
+      assert.equal(firstStorage.getSession(original.id)?.workspacePath, "C:/workspace-a");
+    } finally {
+      secondStorage?.close();
+      firstStorage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("既存の artifact_body なし schema は constructor で補完する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");

@@ -120,6 +120,7 @@ React モックでは次の形がよい。
   - workspace path
   - session title
   - browse ボタン
+  - SessionFolder ボタン
   - provider / character
   - start action
 
@@ -128,6 +129,7 @@ React モックでは次の形がよい。
 - 現在の Home UI では上部バーに `New Session` を置いている
 - `Launch Panel` 自体は modal dialog で維持できる
 - `Browse` は Electron 実行時に OS の directory picker を開く
+- Agent Mode の `SessionFolder` は path を事前確定せず、WithMate 管理下の SessionFolder を workspace にする選択として扱う
 - title は空文字で開き、入力必須
 - provider は launch dialog 内で chip 選択し、enabled provider が 0 件なら start できない
 - `Character` は card で切り替える
@@ -146,15 +148,14 @@ React モックでは次の形がよい。
 - session 作成直後の UI 表示も `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording に揃える
 - `provider` は session 作成時に明示保存する
 - `Start New Session` を押すと、入力した title を持つ新規 session record を作って `Session Window` を開く
+- Main Process は directory / SessionFolder のどちらでも Session ID を発行し、ID 衝突時に既存 record を上書きしない
+- `SessionFolder` 選択時は `session-files/{sessionId}` を新規 directory として作成してから、その path を `workspacePath` として session record を保存する
 - 最初の依頼は Launch Dialog ではなく `Session Window` のメインチャットから入力する
 
 ## Future Direction
 
-- 将来的にはアプリ設定で `workspace root directory` を持てるようにし、その配下へ UUID ディレクトリを自動作成して空 workspace から session を起動できるようにする
-- この方式は `既存ディレクトリを選ぶ` 導線とは別扱いにし、`New Session` dialog の別 action か `Settings` 由来の launch preset として扱う
+- SessionFolder の orphan cleanup が必要になった場合は、永続 Session から参照されない directory だけを対象にした maintenance として追加する
 
 ## Next Step
 
 - `Home Window` 内で `Recent Sessions` と視線競合しない配置に調整する
-- `Start New Session` 後に `Session Window` を開く lifecycle を実装設計へ落とす
-- 将来は OS directory dialog と empty workspace 自動生成を並立させる

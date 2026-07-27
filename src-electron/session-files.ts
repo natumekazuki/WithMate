@@ -31,6 +31,21 @@ export function resolveSessionFilesDirectory(userDataPath: string, sessionId: st
   return path.join(userDataPath, SESSION_FILES_ROOT, safePathSegment(sessionId));
 }
 
+export async function createSessionFilesDirectory(userDataPath: string, sessionId: string): Promise<string> {
+  const directoryPath = resolveSessionFilesDirectory(userDataPath, sessionId);
+  await mkdir(path.dirname(directoryPath), { recursive: true });
+  try {
+    await mkdir(directoryPath);
+  } catch (error) {
+    const code = error && typeof error === "object" ? (error as { code?: unknown }).code : null;
+    if (code === "EEXIST") {
+      throw new Error("同じ ID の SessionFolder がすでに存在するよ。");
+    }
+    throw error;
+  }
+  return directoryPath;
+}
+
 export function appendSessionFilesDirectory<TSession extends { id: string; allowedAdditionalDirectories: string[] }>(
   userDataPath: string,
   session: TSession,

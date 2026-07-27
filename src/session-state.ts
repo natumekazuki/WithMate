@@ -96,6 +96,7 @@ export type DiffPreviewPayload = {
 };
 
 export type CreateSessionInput = {
+  id?: string;
   provider?: string;
   catalogRevision?: number;
   taskTitle: string;
@@ -114,6 +115,24 @@ export type CreateSessionInput = {
   reasoningEffort?: ModelReasoningEffort;
   customAgentName?: string;
   allowedAdditionalDirectories?: string[];
+};
+
+export type CreateSessionWorkspaceRequest =
+  | {
+      kind: "directory";
+      label: string;
+      path: string;
+      branch: string;
+    }
+  | {
+      kind: "session-folder";
+    };
+
+export type CreateSessionRequest = Omit<
+  CreateSessionInput,
+  "id" | "workspaceLabel" | "workspacePath" | "branch"
+> & {
+  workspace: CreateSessionWorkspaceRequest;
 };
 
 export function normalizeSessionAccessMode(value: unknown, fallback: SessionAccessMode = "active"): SessionAccessMode {
@@ -419,7 +438,7 @@ export function summarizeMessageArtifact(artifact: MessageArtifact): MessageArti
 export function buildNewSession(input: CreateSessionInput): Session {
   const normalizedTaskTitle = input.taskTitle.trim() || `${input.workspaceLabel} で新規作業を開始する`;
   return {
-    id: `launch-${Date.now()}`,
+    id: input.id?.trim() || `launch-${Date.now()}`,
     taskTitle: normalizedTaskTitle,
     status: "idle",
     updatedAt: currentTimestampLabel(),

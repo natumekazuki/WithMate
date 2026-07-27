@@ -7,6 +7,7 @@ import { startHomeLaunch } from "../../src/home/home-launch-actions.js";
 import {
   createClosedLaunchDraft,
   setLaunchWorkspaceFromPath,
+  setLaunchWorkspaceToSessionFolder,
   type HomeLaunchDraft,
 } from "../../src/home/home-launch-state.js";
 import type { MateProfile } from "../../src/mate/mate-state.js";
@@ -231,6 +232,27 @@ describe("home-launch-actions", () => {
     assert.deepEqual(harness.startingStates, [true, false]);
     assert.equal(harness.closeCount, 1);
     assert.deepEqual(harness.sessionSummaries, ["session-1"]);
+    assert.deepEqual(harness.openedSessions, ["session-1"]);
+  });
+
+  it("SessionFolder 選択時は未確定 path の request で session を作成する", async () => {
+    let capturedWorkspace: unknown = null;
+    const harness = createStartHomeLaunchHarness({
+      draft: {
+        ...setLaunchWorkspaceToSessionFolder(createReadyDraft()),
+      },
+      createSession: async (input) => {
+        capturedWorkspace = input.workspace;
+        return createSessionSummary({
+          workspaceLabel: "SessionFolder",
+          workspacePath: "C:/WithMate/session-files/session-1",
+        });
+      },
+    });
+
+    await startHomeLaunch(harness.input);
+
+    assert.deepEqual(capturedWorkspace, { kind: "session-folder" });
     assert.deepEqual(harness.openedSessions, ["session-1"]);
   });
 

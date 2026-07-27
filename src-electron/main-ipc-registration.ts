@@ -67,7 +67,7 @@ import type {
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
-import type { CreateSessionInput, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
+import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
@@ -304,7 +304,7 @@ export type MainIpcRegistrationDeps = {
   ): SessionBackgroundActivityState | null;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void;
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): void;
-  createSession(input: CreateSessionInput): Awaitable<Session>;
+  createSession(input: CreateSessionRequest): Awaitable<Session>;
   createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
   getCompanionSession(sessionId: string): Awaitable<CompanionSession | null>;
   getCompanionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
@@ -1038,7 +1038,7 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
       deps.resolveLiveElicitation(sessionId, requestId, response);
     },
   );
-  ipcMain.handle(WITHMATE_CREATE_SESSION_CHANNEL, (_event, input: CreateSessionInput) => deps.createSession(input));
+  ipcMain.handle(WITHMATE_CREATE_SESSION_CHANNEL, (_event, input: CreateSessionRequest) => deps.createSession(input));
   ipcMain.handle(WITHMATE_UPDATE_SESSION_CHANNEL, (_event, session: Session) => deps.updateSession(session));
   ipcMain.handle(WITHMATE_DELETE_SESSION_CHANNEL, (event, sessionId: string) => {
     assertSessionDeleteSender(event, sessionId, deps);
