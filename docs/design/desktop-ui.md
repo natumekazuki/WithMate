@@ -201,7 +201,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - right pane の表示状態は app 共通設定へ保存し、初期値は非表示とする。新しく開く Agent / Companion Window は最後に選んだ状態を使う
   - 開いている Window の表示状態は renderer local state とし、別 Window での切り替えには追従させない
   - right pane は Action Dock の手前で切らず、下端まで縦に伸ばす
-  - narrow width では `message list + Action Dock -> splitter -> Latest Command` の縦 stack へ戻し、splitter の click 操作だけを維持する
+  - viewport が `1400px` 未満の narrow width では `message list + Action Dock -> splitter -> Latest Command` の縦 stack へ戻し、splitter の click 操作だけを維持する。`1400px` 以上では drag と click の両方を使う
   - current minimum は split-screen を考慮し、`900px` 台の window 幅でも縦 stack のまま到達性を維持する
   - Full HD では文字サイズそのものより density を先に調整し、Session 専用の gap / padding / chip / button 高さをやや詰める
   - user bubble は assistant avatar 分の左 gutter を持たず、row 幅いっぱいを使えるようにする

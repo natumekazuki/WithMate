@@ -13,7 +13,7 @@ const SESSION_CONTEXT_RAIL_DEFAULT_WIDTH = 420;
 const SESSION_CONTEXT_RAIL_MIN_WIDTH = 360;
 const SESSION_CONTEXT_RAIL_MAX_WIDTH = 620;
 const SESSION_CONVERSATION_MIN_WIDTH = 760;
-const SESSION_LAYOUT_BREAKPOINT = 1400;
+const SESSION_LAYOUT_VIEWPORT_BREAKPOINT = 1400;
 const SESSION_CONTEXT_RAIL_DRAG_THRESHOLD = 4;
 const SESSION_CONTEXT_RAIL_DRAG_CLICK_SUPPRESSION_MS = 100;
 
@@ -34,6 +34,10 @@ function clampContextRailWidth(requestedWidth: number, workbenchWidth: number): 
   );
 
   return Math.min(maxWidth, Math.max(SESSION_CONTEXT_RAIL_MIN_WIDTH, requestedWidth));
+}
+
+function isNarrowSessionLayoutViewport(): boolean {
+  return window.innerWidth < SESSION_LAYOUT_VIEWPORT_BREAKPOINT;
 }
 
 export type UseSessionMessageListFollowingArgs = {
@@ -213,7 +217,7 @@ export function useSessionContextRail({
       }
 
       const bounds = workbenchElement.getBoundingClientRect();
-      if (bounds.width < SESSION_LAYOUT_BREAKPOINT) {
+      if (isNarrowSessionLayoutViewport()) {
         return;
       }
 
@@ -269,7 +273,7 @@ export function useSessionContextRail({
       || !isContextRailVisible
       || event.button !== 0
       || !workbenchElement
-      || workbenchElement.getBoundingClientRect().width < SESSION_LAYOUT_BREAKPOINT
+      || isNarrowSessionLayoutViewport()
     ) {
       return;
     }

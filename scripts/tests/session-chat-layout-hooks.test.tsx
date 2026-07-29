@@ -109,7 +109,12 @@ test("useSessionContextRail は保存済み状態を一度だけ反映し、clic
     });
     assert.equal(visibility.textContent, "visible");
 
+    let viewportWidth = 1600;
     let workbenchWidth = 1600;
+    Object.defineProperty(dom.window, "innerWidth", {
+      configurable: true,
+      get: () => viewportWidth,
+    });
     workbench.getBoundingClientRect = () => ({
       x: 0,
       y: 0,
@@ -137,6 +142,7 @@ test("useSessionContextRail は保存済み状態を一度だけ反映し、clic
     });
     assert.equal(visibility.textContent, "visible");
 
+    viewportWidth = 1200;
     workbenchWidth = 1200;
     let narrowPointerDown!: MouseEvent;
     await act(async () => {
@@ -156,21 +162,23 @@ test("useSessionContextRail は保存済み状態を一度だけ反映し、clic
     await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
     assert.equal(visibility.textContent, "visible");
 
-    workbenchWidth = 1400;
+    viewportWidth = 1400;
+    workbenchWidth = 1376;
     let boundaryPointerDown!: MouseEvent;
     await act(async () => {
-      boundaryPointerDown = dispatchPointerEvent(dom, splitter, "pointerdown", 980);
+      boundaryPointerDown = dispatchPointerEvent(dom, splitter, "pointerdown", 956);
     });
     assert.equal(resizing.textContent, "resizing");
     assert.equal(boundaryPointerDown.defaultPrevented, true);
     assert.equal(dom.window.document.body.style.cursor, "col-resize");
     assert.equal(dom.window.document.body.style.userSelect, "none");
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 940));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 940));
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 916));
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 916));
     await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
     assert.equal(visibility.textContent, "visible");
     assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "460px");
 
+    viewportWidth = 1600;
     workbenchWidth = 1600;
     await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1180));
     assert.equal(resizing.textContent, "resizing");
