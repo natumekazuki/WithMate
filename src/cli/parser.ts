@@ -1,10 +1,13 @@
 import { normalizeHostAbsolutePath, WORKSPACE_PATH_MAX_LENGTH } from "../shared/workspace-path.js";
 import { isCanonicalUuid } from "../shared/persistence-runtime-protocol.js";
+import type { ApplicationRunSandboxSetting } from "../shared/application-run-model.js";
+import { RUN_MUTATION_INLINE_CONTENT_LIMITS, snapshotMessageContentBlocks } from "../shared/message-content.js";
 import {
   canonicalizeSessionQuery,
   canonicalizeSessionTitle,
   isLocalRepositoryKey,
 } from "../shared/session-metadata.js";
+import { parseStrictJson } from "../shared/strict-json.js";
 import {
   CLI_EXIT_CODES,
   CLI_RUN_LIMITS,
@@ -54,6 +57,8 @@ const sessionOperations = new Set<CliSessionOperation>([
   "delete",
 ]);
 const runOperations = new Set<CliRunOperation>([
+  "start",
+  "retry",
   "status",
   "events",
   "follow",
@@ -148,6 +153,10 @@ function parseSessionCommand(
 
 function parseRunCommand(identity: CliCommandIdentity<CliRunOperation>, argv: readonly string[]): CliParseResult {
   switch (identity.operation) {
+    case "start":
+      return parseRunStart(identity as CliCommandIdentity<"start">, argv);
+    case "retry":
+      return parseRunRetry(identity as CliCommandIdentity<"retry">, argv);
     case "status":
       return parseRunStatus(identity as CliCommandIdentity<"status">, argv);
     case "events":
@@ -165,6 +174,71 @@ function parseRunCommand(identity: CliCommandIdentity<CliRunOperation>, argv: re
     case "output-export":
       return parseRunOutputExport(identity as CliCommandIdentity<"output-export">, argv);
   }
+}
+
+function parseRunStart(identity: CliCommandIdentity<"start">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--idempotency-key": requiredOption(parseUuid),
+    "--content-blocks-json": requiredOption(parseContentBlocksJson),
+    "--model": requiredOption((value) => parseBoundedString(value, CLI_RUN_LIMITS.maxExecutionSettingLength)),
+    "--reasoning-effort": requiredOption((value) =>
+      parseBoundedString(value, CLI_RUN_LIMITS.maxExecutionSettingLength),
+    ),
+    "--sandbox-json": requiredOption(parseSandboxJson),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      idempotencyKey: parsed.values["--idempotency-key"] as string,
+      contentBlocks: parsed.values["--content-blocks-json"] as NonNullable<
+        ReturnType<typeof snapshotMessageContentBlocks>
+      >,
+      execution: {
+        model: parsed.values["--model"] as string,
+        reasoningEffort: parsed.values["--reasoning-effort"] as string,
+        sandbox: parsed.values["--sandbox-json"] as ApplicationRunSandboxSetting,
+      },
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
+function parseRunRetry(identity: CliCommandIdentity<"retry">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--retry-of-run-id": requiredOption(parseIdentifier),
+    "--idempotency-key": requiredOption(parseUuid),
+    "--model": option((value) => parseBoundedString(value, CLI_RUN_LIMITS.maxExecutionSettingLength)),
+    "--reasoning-effort": option((value) => parseBoundedString(value, CLI_RUN_LIMITS.maxExecutionSettingLength)),
+    "--sandbox-json": option(parseSandboxJson),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  const executionOverrides = {
+    ...(parsed.values["--model"] === undefined ? {} : { model: parsed.values["--model"] as string }),
+    ...(parsed.values["--reasoning-effort"] === undefined
+      ? {}
+      : { reasoningEffort: parsed.values["--reasoning-effort"] as string }),
+    ...(parsed.values["--sandbox-json"] === undefined
+      ? {}
+      : { sandbox: parsed.values["--sandbox-json"] as ApplicationRunSandboxSetting }),
+  };
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      retryOfRunId: parsed.values["--retry-of-run-id"] as string,
+      idempotencyKey: parsed.values["--idempotency-key"] as string,
+      ...(Object.keys(executionOverrides).length === 0 ? {} : { executionOverrides }),
+      ...optionalTimeout(parsed.values),
+    },
+  };
 }
 
 function parseRunStatus(identity: CliCommandIdentity<"status">, argv: readonly string[]): CliParseResult {
@@ -683,6 +757,41 @@ function flag(settings: Readonly<{ required?: boolean }> = {}): OptionDefinition
 
 function parseUuid(value: string): string | undefined {
   return isCanonicalUuid(value) ? value : undefined;
+}
+
+function parseContentBlocksJson(value: string) {
+  if (new TextEncoder().encode(value).byteLength > CLI_RUN_LIMITS.maxInlineContentJsonBytes) return undefined;
+  try {
+    return snapshotMessageContentBlocks(parseStrictJson(value), RUN_MUTATION_INLINE_CONTENT_LIMITS);
+  } catch {
+    return undefined;
+  }
+}
+
+function parseSandboxJson(value: string): ApplicationRunSandboxSetting | undefined {
+  if (new TextEncoder().encode(value).byteLength > CLI_RUN_LIMITS.maxInlineContentJsonBytes) return undefined;
+  try {
+    const sandbox = parseStrictJson(value);
+    if (typeof sandbox !== "object" || sandbox === null || Array.isArray(sandbox)) return undefined;
+    const keys = Object.keys(sandbox);
+    if (Reflect.ownKeys(sandbox).some((key) => typeof key !== "string" || !keys.includes(key))) return undefined;
+    const record = sandbox as Readonly<Record<string, unknown>>;
+    if (record.mode === "danger-full-access" && keys.length === 1 && keys[0] === "mode") {
+      return { mode: record.mode };
+    }
+    if (
+      (record.mode === "read-only" || record.mode === "workspace-write") &&
+      keys.length === 2 &&
+      keys.includes("mode") &&
+      keys.includes("networkAccess") &&
+      typeof record.networkAccess === "boolean"
+    ) {
+      return { mode: record.mode, networkAccess: record.networkAccess };
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeAbsolutePathValue(value: string): string | undefined {

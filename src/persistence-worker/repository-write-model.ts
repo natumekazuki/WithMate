@@ -7,13 +7,15 @@ import {
   ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS,
   normalizeAllowedAdditionalDirectories,
 } from "../shared/allowed-additional-directories.js";
-import { snapshotMessageContentBlocks } from "../shared/message-content.js";
+import { buildApplicationRunProviderRequest } from "../shared/application-run-execution.js";
+import { MESSAGE_CONTENT_LIMITS, snapshotMessageContentBlocks } from "../shared/message-content.js";
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
 import { MAX_SESSION_CONCURRENT_CHILD_RUNS, MAX_SESSION_TREE_SIZE } from "../shared/session-limits.js";
 import { isCanonicalSessionTitle, snapshotLocalRepositoryMetadata } from "../shared/session-metadata.js";
 import { resolveWorkspaceIdentity } from "../shared/workspace-path.js";
 import {
   REPOSITORY_WRITE_OPERATIONS,
+  RUN_WRITE_PAYLOAD_LIMITS,
   type ChildResultCollectCommand,
   type ChildResultCollectResult,
   type ChildStartCommand,
@@ -27,9 +29,7 @@ import {
   type RepositoryCommandResult,
   type RetryRunAdmissionCommand,
   type RetryRunAdmissionResult,
-  type RunAdmissionBindingIntent,
   type RunAdmissionDispatch,
-  type RunAdmissionDraft,
   type RunDispatchBeginCommand,
   type RunDispatchBeginResult,
   type RunDispatchResolutionCommand,
@@ -96,6 +96,7 @@ type WriteOptions = Readonly<{
   diskCapacity?: () => Readonly<{ availableBytes: number; totalBytes: number }>;
   payloadLimits?: Partial<typeof RUN_OUTPUT_PAYLOAD_LIMITS>;
   sessionIdAllocator?: SessionIdAllocator;
+  runAdmissionIdentityAllocator?: RunAdmissionIdentityAllocator;
 }> &
   Partial<RepositoryWriteCapacityOptions>;
 
@@ -111,6 +112,7 @@ export function createRepositoryWriteOperations(
   const payloadLimits = resolvePayloadLimits(options.payloadLimits);
   const diskCapacity = options.diskCapacity ?? createDiskCapacityProbe(options.databasePath);
   const sessionIdAllocator = options.sessionIdAllocator ?? allocateSessionId;
+  const runAdmissionIdentityAllocator = options.runAdmissionIdentityAllocator ?? allocateRunAdmissionIdentities;
   if (!Number.isSafeInteger(retentionMs) || retentionMs < 1) {
     throw new RangeError("idempotencyRetentionMs must be a positive safe integer.");
   }
@@ -195,7 +197,15 @@ export function createRepositoryWriteOperations(
           const prepared = prepareNormalRunAdmission(command);
           const now = readClock(clock);
           return executeWriteTransaction(database, () =>
-            admitNormalRun(database, prepared, now, retentionMs, maxConcurrentRuns, maxConcurrentRunsPerProvider),
+            admitNormalRun(
+              database,
+              prepared,
+              now,
+              retentionMs,
+              maxConcurrentRuns,
+              maxConcurrentRunsPerProvider,
+              runAdmissionIdentityAllocator,
+            ),
           );
         }),
       ),
@@ -207,7 +217,15 @@ export function createRepositoryWriteOperations(
           const prepared = prepareRetryRunAdmission(command);
           const now = readClock(clock);
           return executeWriteTransaction(database, () =>
-            admitRetryRun(database, prepared, now, retentionMs, maxConcurrentRuns, maxConcurrentRunsPerProvider),
+            admitRetryRun(
+              database,
+              prepared,
+              now,
+              retentionMs,
+              maxConcurrentRuns,
+              maxConcurrentRunsPerProvider,
+              runAdmissionIdentityAllocator,
+            ),
           );
         }),
       ),
@@ -1483,6 +1501,7 @@ function admitNormalRun(
   retentionMs: number,
   maxConcurrentRuns: number,
   maxConcurrentRunsPerProvider: number,
+  identityAllocator: RunAdmissionIdentityAllocator,
 ): RepositoryCommandResult<NormalRunAdmissionResult> {
   const command = prepared.command;
   const idempotency = checkIdempotency<NormalRunAdmissionResult>(
@@ -1492,16 +1511,17 @@ function admitNormalRun(
     prepared.fingerprint,
     command.sessionId,
     "run",
-    command.run.id,
+    undefined,
     now,
-    (value) => decodeRunAdmissionReplay(database, command, value),
+    (value, responseRefId) => decodeRunAdmissionReplay(database, command, value, responseRefId),
   );
   if (idempotency.kind !== "new") return idempotency.result;
 
   const session = database
     .prepare(
       `
-      SELECT provider_id, lifecycle_status, updated_at, last_activity_at
+      SELECT provider_id, lifecycle_status, workspace_path, allowed_additional_directories_json,
+        updated_at, last_activity_at
       FROM sessions WHERE id = ? AND workspace_key = ?
     `,
     )
@@ -1509,6 +1529,8 @@ function admitNormalRun(
     | Readonly<{
         provider_id: string;
         lifecycle_status: SessionLifecycleStatus;
+        workspace_path: string;
+        allowed_additional_directories_json: string;
         updated_at: number;
         last_activity_at: number;
       }>
@@ -1517,8 +1539,8 @@ function admitNormalRun(
   if (session.lifecycle_status !== "active") {
     return failure("lifecycle_conflict", "Run admission requires an active Session.");
   }
-  if (command.run.executionSnapshot.providerId !== session.provider_id) {
-    return failure("reference_invalid", "Run execution snapshot Provider does not match the Session.");
+  if (!isAdmissionSnapshotScoped(command.run.executionSnapshot, command.workspaceKey, session)) {
+    return failure("reference_invalid", "Run execution snapshot does not match the Session execution scope.");
   }
   if (hasNonTerminalRun(database, command.sessionId)) {
     return failure("session_busy", "Session already has a non-terminal Run.");
@@ -1530,11 +1552,20 @@ function admitNormalRun(
     maxConcurrentRunsPerProvider,
   );
   if (capacityExceeded !== undefined) return capacityFailure(capacityExceeded);
-  if (hasAdmissionIdentityConflict(database, command)) {
-    return failure("lifecycle_conflict", "Run admission identity already exists.");
+  const identities = identityAllocator(database, "run.admit", command.idempotencyKey);
+  if (
+    identities === undefined ||
+    !isRunAdmissionIdentities(identities) ||
+    hasAdmissionIdentityConflict(database, identities)
+  ) {
+    return failure("identity_exhausted", "Run admission identity space is exhausted.");
   }
-
-  const binding = resolveAdmissionBinding<NormalRunAdmissionResult>(database, command, session.provider_id);
+  const binding = resolveAdmissionBinding<NormalRunAdmissionResult>(
+    database,
+    command.sessionId,
+    session.provider_id,
+    identities.bindingId,
+  );
   if (!binding.ok) return binding.result;
   const messageOrdinal = nextOrdinal(database, "messages", "session_id", command.sessionId);
   const runOrdinal = nextOrdinal(database, "runs", "session_id", command.sessionId);
@@ -1546,27 +1577,29 @@ function admitNormalRun(
       VALUES (?, ?, ?, 'user', ?, ?)
     `,
     )
-    .run(command.message.id, command.sessionId, messageOrdinal, prepared.contentBlocksJson, now);
+    .run(identities.messageId, command.sessionId, messageOrdinal, prepared.contentBlocksJson, now);
   insertRunAdmissionRows(
     database,
     command,
-    command.message.id,
+    identities,
+    binding.value,
+    identities.messageId,
     null,
     runOrdinal,
     prepared.executionSnapshotJson,
     prepared.dispatchFingerprint,
-    binding.providerBindingId,
     session.provider_id,
     now,
   );
   advanceSessionActivity(database, command.sessionId, session.updated_at, session.last_activity_at, now);
   const value: NormalRunAdmissionResult = {
     sessionId: command.sessionId,
-    messageId: command.message.id,
-    runId: command.run.id,
-    attemptId: command.attemptId,
-    bindingId: command.bindingIntent.bindingId,
-    bindingState: command.bindingIntent.kind === "create" ? "creating" : "active",
+    messageId: identities.messageId,
+    runId: identities.runId,
+    attemptId: identities.attemptId,
+    bindingId: binding.value.bindingId,
+    runPhase: "queued",
+    bindingState: binding.value.bindingState,
     dispatchState: "pending",
     admittedAt: now,
   };
@@ -1577,7 +1610,7 @@ function admitNormalRun(
     "run.admit",
     prepared.fingerprint,
     "run",
-    command.run.id,
+    identities.runId,
     value,
     now,
     retentionMs,
@@ -1592,6 +1625,7 @@ function admitRetryRun(
   retentionMs: number,
   maxConcurrentRuns: number,
   maxConcurrentRunsPerProvider: number,
+  identityAllocator: RunAdmissionIdentityAllocator,
 ): RepositoryCommandResult<RetryRunAdmissionResult> {
   const command = prepared.command;
   const idempotency = checkIdempotency<RetryRunAdmissionResult>(
@@ -1601,16 +1635,17 @@ function admitRetryRun(
     prepared.fingerprint,
     command.sessionId,
     "run",
-    command.run.id,
+    undefined,
     now,
-    (value) => decodeRunAdmissionReplay(database, command, value),
+    (value, responseRefId) => decodeRunAdmissionReplay(database, command, value, responseRefId),
   );
   if (idempotency.kind !== "new") return idempotency.result;
 
   const session = database
     .prepare(
       `
-      SELECT provider_id, lifecycle_status, updated_at, last_activity_at
+      SELECT provider_id, lifecycle_status, workspace_path, allowed_additional_directories_json,
+        updated_at, last_activity_at
       FROM sessions WHERE id = ? AND workspace_key = ?
     `,
     )
@@ -1619,14 +1654,14 @@ function admitRetryRun(
   if (session.lifecycle_status !== "active") {
     return failure("lifecycle_conflict", "Run admission requires an active Session.");
   }
-  if (command.run.executionSnapshot.providerId !== session.provider_id) {
-    return failure("reference_invalid", "Run execution snapshot Provider does not match the Session.");
+  if (!isAdmissionSnapshotScoped(command.run.executionSnapshot, command.workspaceKey, session)) {
+    return failure("reference_invalid", "Run execution snapshot does not match the Session execution scope.");
   }
 
   const source = database
     .prepare(
       `
-      SELECT r.initiating_message_id, r.phase, m.role
+      SELECT r.initiating_message_id, r.phase, r.execution_snapshot_json, m.role, m.content_blocks_json
       FROM runs r
       JOIN messages m ON m.id = r.initiating_message_id AND m.session_id = r.session_id
       WHERE r.id = ? AND r.session_id = ?
@@ -1639,6 +1674,23 @@ function admitRetryRun(
   if (!isTerminalRunPhase(source.phase)) {
     return failure("lifecycle_conflict", "Retry source Run must be terminal.");
   }
+  const sourceExecutionSnapshot = snapshotStoredExecutionSnapshot(source.execution_snapshot_json);
+  if (
+    command.run.executionSnapshot.modelSelection === "inherited" &&
+    (sourceExecutionSnapshot === undefined || command.run.executionSnapshot.model !== sourceExecutionSnapshot.model)
+  ) {
+    return failure("request_invalid", "Inherited retry model does not match its source Run.");
+  }
+  const sourceContent = snapshotStoredMessageContent(source.content_blocks_json);
+  if (
+    sourceContent === undefined ||
+    !isAdmissionProviderRequest(sourceContent, command.run.executionSnapshot, command.dispatch.providerRequest)
+  ) {
+    return failure(
+      "request_invalid",
+      "Retry Provider request does not match its source content and execution snapshot.",
+    );
+  }
   if (hasNonTerminalRun(database, command.sessionId)) {
     return failure("session_busy", "Session already has a non-terminal Run.");
   }
@@ -1649,22 +1701,32 @@ function admitRetryRun(
     maxConcurrentRunsPerProvider,
   );
   if (capacityExceeded !== undefined) return capacityFailure(capacityExceeded);
-  if (hasRunAdmissionIdentityConflict(database, command.run.id, command.attemptId, command.bindingIntent)) {
-    return failure("lifecycle_conflict", "Run admission identity already exists.");
+  const identities = identityAllocator(database, "run.retry", command.idempotencyKey);
+  if (
+    identities === undefined ||
+    !isRunAdmissionIdentities(identities) ||
+    hasRunAdmissionIdentityConflict(database, identities)
+  ) {
+    return failure("identity_exhausted", "Run admission identity space is exhausted.");
   }
-
-  const binding = resolveAdmissionBinding<RetryRunAdmissionResult>(database, command, session.provider_id);
+  const binding = resolveAdmissionBinding<RetryRunAdmissionResult>(
+    database,
+    command.sessionId,
+    session.provider_id,
+    identities.bindingId,
+  );
   if (!binding.ok) return binding.result;
   const runOrdinal = nextOrdinal(database, "runs", "session_id", command.sessionId);
   insertRunAdmissionRows(
     database,
     command,
+    identities,
+    binding.value,
     source.initiating_message_id,
     command.retryOfRunId,
     runOrdinal,
     prepared.executionSnapshotJson,
     prepared.dispatchFingerprint,
-    binding.providerBindingId,
     session.provider_id,
     now,
   );
@@ -1673,11 +1735,12 @@ function admitRetryRun(
   const value: RetryRunAdmissionResult = {
     sessionId: command.sessionId,
     messageId: source.initiating_message_id,
-    runId: command.run.id,
+    runId: identities.runId,
     retryOfRunId: command.retryOfRunId,
-    attemptId: command.attemptId,
-    bindingId: command.bindingIntent.bindingId,
-    bindingState: command.bindingIntent.kind === "create" ? "creating" : "active",
+    attemptId: identities.attemptId,
+    bindingId: binding.value.bindingId,
+    runPhase: "queued",
+    bindingState: binding.value.bindingState,
     dispatchState: "pending",
     admittedAt: now,
   };
@@ -1688,12 +1751,69 @@ function admitRetryRun(
     "run.retry",
     prepared.fingerprint,
     "run",
-    command.run.id,
+    identities.runId,
     value,
     now,
     retentionMs,
   );
   return success(value, false);
+}
+
+function isAdmissionSnapshotScoped(
+  snapshot: NormalRunAdmissionCommand["run"]["executionSnapshot"],
+  workspaceKey: string,
+  session: Readonly<{
+    provider_id: string;
+    workspace_path: string;
+    allowed_additional_directories_json: string;
+  }>,
+): boolean {
+  const workspace = snapshot.workspace;
+  if (!Array.isArray(workspace.allowedAdditionalDirectories)) return false;
+  const directories = normalizeAllowedAdditionalDirectories(workspace.allowedAdditionalDirectories);
+  return (
+    snapshot.providerId === session.provider_id &&
+    workspace.key === workspaceKey &&
+    workspace.path === session.workspace_path &&
+    directories !== undefined &&
+    canonicalJsonString(directories) === session.allowed_additional_directories_json
+  );
+}
+
+function isAdmissionProviderRequest(
+  contentBlocks: NonNullable<ReturnType<typeof snapshotMessageContentBlocks>>,
+  snapshot: NormalRunAdmissionCommand["run"]["executionSnapshot"],
+  providerRequest: RunAdmissionDispatch["providerRequest"],
+): boolean {
+  try {
+    return (
+      canonicalJsonString(providerRequest) ===
+      canonicalJsonString(buildApplicationRunProviderRequest(contentBlocks, snapshot))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function snapshotStoredMessageContent(
+  contentBlocksJson: string,
+): NonNullable<ReturnType<typeof snapshotMessageContentBlocks>> | undefined {
+  try {
+    return snapshotMessageContentBlocks(JSON.parse(contentBlocksJson));
+  } catch {
+    return undefined;
+  }
+}
+
+function snapshotStoredExecutionSnapshot(
+  executionSnapshotJson: string,
+): NormalRunAdmissionCommand["run"]["executionSnapshot"] | undefined {
+  try {
+    const value: unknown = JSON.parse(executionSnapshotJson);
+    return isApplicationRunExecutionSnapshot(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function startChild(
@@ -1826,26 +1946,30 @@ function startChild(
     `,
     )
     .run(command.message.id, childSessionId, prepared.contentBlocksJson, now);
-  const admissionCommand: RunAdmissionCommand = {
+  const admissionCommand: RunAdmissionInsertCommand = {
     sessionId: childSessionId,
-    run: command.run,
-    attemptId: command.attemptId,
-    bindingIntent: {
-      kind: "create",
-      bindingId: command.binding.id,
-      persistenceMode: command.binding.persistenceMode,
-    },
     dispatch: command.dispatch,
   };
   insertRunAdmissionRows(
     database,
     admissionCommand,
+    {
+      messageId: command.message.id,
+      runId: command.run.id,
+      attemptId: command.attemptId,
+      bindingId: command.binding.id,
+    },
+    {
+      bindingId: command.binding.id,
+      bindingState: "creating",
+      providerBindingId: null,
+      persistenceMode: command.binding.persistenceMode,
+    },
     command.message.id,
     null,
     1,
     prepared.executionSnapshotJson,
     prepared.dispatchFingerprint,
-    null,
     command.childSession.providerId,
     now,
   );
@@ -1933,13 +2057,14 @@ function startChild(
 
 function insertRunAdmissionRows(
   database: DatabaseSync,
-  command: RunAdmissionCommand,
+  command: RunAdmissionInsertCommand,
+  identities: RunAdmissionIdentities,
+  binding: ResolvedAdmissionBinding,
   initiatingMessageId: string,
   retryOfRunId: string | null,
   runOrdinal: number,
   executionSnapshotJson: string,
   dispatchFingerprint: string,
-  providerBindingId: string | null,
   providerId: string,
   now: number,
 ): void {
@@ -1953,7 +2078,7 @@ function insertRunAdmissionRows(
     `,
     )
     .run(
-      command.run.id,
+      identities.runId,
       command.sessionId,
       runOrdinal,
       initiatingMessageId,
@@ -1970,8 +2095,8 @@ function insertRunAdmissionRows(
       ) VALUES (?, ?, 1, ?, 'initial', 'preparing', ?)
     `,
     )
-    .run(command.attemptId, command.run.id, providerBindingId, now);
-  if (command.bindingIntent.kind === "create") {
+    .run(identities.attemptId, identities.runId, binding.providerBindingId, now);
+  if (binding.bindingState === "creating") {
     const bindingOrdinal = nextOrdinal(database, "provider_bindings", "session_id", command.sessionId);
     database
       .prepare(
@@ -1983,12 +2108,12 @@ function insertRunAdmissionRows(
       `,
       )
       .run(
-        command.bindingIntent.bindingId,
+        binding.bindingId,
         command.sessionId,
         bindingOrdinal,
         providerId,
-        command.bindingIntent.persistenceMode,
-        command.attemptId,
+        binding.persistenceMode,
+        identities.attemptId,
         now,
       );
   }
@@ -2000,7 +2125,7 @@ function insertRunAdmissionRows(
       ) VALUES (?, 'pending', ?, ?, ?)
     `,
     )
-    .run(command.attemptId, dispatchFingerprint, command.dispatch.providerIdempotencyKey, now);
+    .run(identities.attemptId, dispatchFingerprint, command.dispatch.providerIdempotencyKey, now);
 }
 
 function advanceSessionActivity(
@@ -2499,15 +2624,39 @@ function appendRunOutput(
   const scope = database
     .prepare(
       `
-      SELECT r.phase, s.workspace_key FROM runs r
+      SELECT r.phase, s.workspace_key,
+             a.attempt_state, a.provider_binding_id, a.external_execution_id,
+             b.external_conversation_id, b.binding_state, d.dispatch_state
+      FROM runs r
       JOIN sessions s ON s.id = r.session_id
+      JOIN run_attempts a ON a.id = ? AND a.run_id = r.id
+      JOIN run_dispatches d ON d.run_attempt_id = a.id
+      JOIN provider_bindings b ON b.id = a.provider_binding_id
       WHERE r.id = ? AND r.session_id = ?
     `,
     )
-    .get(command.runId, command.sessionId) as { phase: string; workspace_key: string } | undefined;
-  if (scope === undefined) return failure("not_found", "Run was not found in the Session.");
+    .get(command.providerExecution.attemptId, command.runId, command.sessionId) as
+    | {
+        phase: string;
+        workspace_key: string;
+        attempt_state: string;
+        provider_binding_id: string;
+        external_execution_id: string;
+        external_conversation_id: string;
+        binding_state: string;
+        dispatch_state: string;
+      }
+    | undefined;
+  if (scope === undefined) return failure("not_found", "Run and Provider execution were not found in the Session.");
   if (scope.workspace_key !== command.workspaceKey)
     return failure("reference_invalid", "Workspace scope does not match.");
+  if (
+    scope.provider_binding_id !== command.providerExecution.bindingId ||
+    scope.external_conversation_id !== command.providerExecution.externalConversationId ||
+    scope.external_execution_id !== command.providerExecution.externalExecutionId
+  ) {
+    return failure("reference_invalid", "Provider execution correlation does not match the Run Attempt.");
+  }
 
   const existing = readOutputReplayRow(database, command.runId, command.item.id, command.item.providerItemId);
   if (existing !== undefined) {
@@ -2518,7 +2667,12 @@ function appendRunOutput(
   if (database.prepare("SELECT 1 FROM run_output_items WHERE id = ?").get(command.item.id) !== undefined) {
     return failure("reference_invalid", "Run output ID belongs to another Run.");
   }
-  if (!isWritableOutputPhase(scope.phase)) {
+  if (
+    !isWritableOutputPhase(scope.phase) ||
+    scope.attempt_state !== "active" ||
+    scope.binding_state !== "active" ||
+    scope.dispatch_state !== "accepted"
+  ) {
     return failure("lifecycle_conflict", "New Run output requires an active Run.");
   }
 
@@ -2633,9 +2787,9 @@ function terminalRun(
              r.error_summary, r.terminal_at, a.attempt_state, s.workspace_key,
              s.provider_id AS session_provider_id,
              s.updated_at AS session_updated_at, s.last_activity_at AS session_last_activity_at,
-             a.provider_binding_id, d.dispatch_state,
+             a.provider_binding_id, a.external_execution_id, d.dispatch_state,
              b.id AS binding_id, b.session_id AS binding_session_id, b.provider_id AS binding_provider_id,
-             b.persistence_mode, b.binding_state,
+             b.persistence_mode, b.binding_state, b.external_conversation_id,
              b.created_by_run_attempt_id, creator_r.session_id AS binding_creator_session_id,
              b.invalidation_reason
       FROM runs r
@@ -2669,9 +2823,22 @@ function terminalRun(
   if (row.persistence_mode === "ephemeral" && row.created_by_run_attempt_id !== command.attemptId) {
     return failure("reference_invalid", "Ephemeral Provider Binding does not belong to the Run Attempt.");
   }
+  const executionFailure = validateTerminalProviderExecution(command, row);
+  if (executionFailure !== undefined) return executionFailure;
   if (isTerminalRunPhase(row.phase)) return replayTerminalRun(database, prepared, row);
   if (!isNonTerminalRunPhase(row.phase)) return failure("lifecycle_conflict", "Run cannot transition to terminal.");
-  if ((command.outcome.kind === "completed" || command.outcome.kind === "failed") && row.attempt_state !== "active") {
+  const failedBeforeActivation =
+    command.outcome.kind === "failed" &&
+    row.attempt_state === "preparing" &&
+    (row.dispatch_state === "rejected" ||
+      (row.dispatch_state === "pending" &&
+        (command.preDispatchResolution.kind === "binding_creation_not_sent" ||
+          command.preDispatchResolution.kind === "dispatch_not_sent")));
+  if (
+    (command.outcome.kind === "completed" || command.outcome.kind === "failed") &&
+    row.attempt_state !== "active" &&
+    !failedBeforeActivation
+  ) {
     return failure("lifecycle_conflict", "Completed and failed outcomes require an active Attempt.");
   }
   if (
@@ -2765,7 +2932,10 @@ function terminalRun(
       runFailureFields.failureOrigin,
       runFailureFields.providerErrorCode,
       runFailureFields.errorSummary,
-      command.preDispatchResolution.kind === "binding_creation_ambiguous" ? 1 : 0,
+      command.preDispatchResolution.kind === "binding_creation_ambiguous" ||
+        command.preDispatchResolution.kind === "dispatch_ambiguous"
+        ? 1
+        : 0,
       now,
       now,
       now,
@@ -2820,6 +2990,34 @@ function terminalRun(
   );
 }
 
+function validateTerminalProviderExecution(
+  command: RunTerminalCommand,
+  row: TerminalGateRow,
+): RepositoryCommandResult<RunTerminalResult> | undefined {
+  const correlation = command.providerExecution;
+  const providerExecution =
+    row.dispatch_state === "accepted" && (row.attempt_state === "active" || isTerminalRunPhase(row.phase));
+  if (!providerExecution) {
+    if (isTerminalRunPhase(row.phase) && command.preDispatchResolution.kind !== "dispatch_ambiguous") {
+      return undefined;
+    }
+    return correlation === null
+      ? undefined
+      : failure("reference_invalid", "Pre-dispatch terminal transition cannot claim a Provider execution.");
+  }
+  if (
+    correlation === null ||
+    correlation.attemptId !== command.attemptId ||
+    correlation.bindingId !== row.provider_binding_id ||
+    correlation.bindingId !== row.binding_id ||
+    correlation.externalConversationId !== row.external_conversation_id ||
+    correlation.externalExecutionId !== row.external_execution_id
+  ) {
+    return failure("reference_invalid", "Provider execution correlation does not match the active Run Attempt.");
+  }
+  return undefined;
+}
+
 function validateTerminalPreparation(
   command: RunTerminalCommand,
   row: TerminalGateRow,
@@ -2835,8 +3033,28 @@ function validateTerminalPreparation(
     }
     return undefined;
   }
-  if (command.outcome.kind !== "canceled" && command.outcome.kind !== "interrupted") {
-    return failure("request_invalid", "Pre-dispatch resolution requires a canceled or interrupted outcome.");
+  if (resolution === "dispatch_ambiguous") {
+    if (command.outcome.kind !== "interrupted") {
+      return failure("request_invalid", "An ambiguous Dispatch may only converge to interrupted.");
+    }
+    return (row.phase === "starting" || row.phase === "canceling") &&
+      row.attempt_state === "preparing" &&
+      row.dispatch_state === "ambiguous" &&
+      row.binding_id !== null &&
+      row.binding_state === "active" &&
+      row.provider_binding_id === row.binding_id
+      ? undefined
+      : failure("lifecycle_conflict", "Ambiguous Dispatch state changed.");
+  }
+  if (resolution === "binding_creation_ambiguous" && command.outcome.kind !== "interrupted") {
+    return failure("request_invalid", "Ambiguous Binding creation may only converge to interrupted.");
+  }
+  if (
+    command.outcome.kind !== "failed" &&
+    command.outcome.kind !== "canceled" &&
+    command.outcome.kind !== "interrupted"
+  ) {
+    return failure("request_invalid", "Pre-dispatch resolution requires a failed, canceled, or interrupted outcome.");
   }
   if (row.attempt_state !== "preparing" || row.dispatch_state !== "pending" || row.binding_id === null) {
     return failure("lifecycle_conflict", "Pre-dispatch resolution state changed.");
@@ -3178,9 +3396,9 @@ function checkIdempotency<T>(
   fingerprint: string,
   expectedScopeSessionId: string,
   expectedRefType: "session" | "run" | "delivery",
-  expectedRefId: string,
+  expectedRefId: string | undefined,
   now: number,
-  decodeReplay?: (value: unknown) => T | undefined,
+  decodeReplay?: (value: unknown, responseRefId: string) => T | undefined,
 ): Readonly<{ kind: "new" }> | Readonly<{ kind: "replay" | "failure"; result: RepositoryCommandResult<T> }> {
   if (idempotencyKeyClaimKind(database, key) === "session_deletion") {
     return { kind: "failure", result: failure("idempotency_conflict", "Idempotency key was used differently.") };
@@ -3204,9 +3422,10 @@ function checkIdempotency<T>(
   if (
     row.response_kind !== "success" ||
     row.response_ref_type !== expectedRefType ||
-    row.response_ref_id !== expectedRefId ||
+    row.response_ref_id === null ||
+    (expectedRefId !== undefined && row.response_ref_id !== expectedRefId) ||
     row.response_envelope_json === null ||
-    !hasResponseReference(database, operation, expectedRefType, expectedRefId, expectedScopeSessionId)
+    !hasResponseReference(database, operation, expectedRefType, row.response_ref_id, expectedScopeSessionId)
   ) {
     return { kind: "failure", result: failure("reference_invalid", "Idempotent response reference is invalid.") };
   }
@@ -3216,7 +3435,7 @@ function checkIdempotency<T>(
   } catch {
     return { kind: "failure", result: failure("reference_invalid", "Idempotent response envelope is invalid.") };
   }
-  const replay = decodeReplay === undefined ? (parsed as T) : decodeReplay(parsed);
+  const replay = decodeReplay === undefined ? (parsed as T) : decodeReplay(parsed, row.response_ref_id);
   if (replay === undefined) {
     return { kind: "failure", result: failure("reference_invalid", "Idempotent response envelope is invalid.") };
   }
@@ -3225,6 +3444,19 @@ function checkIdempotency<T>(
 
 const SESSION_ID_SEQUENCE_LIMIT = 1n << 128n;
 const SESSION_ID_HEX_PATTERN = /^[0-9a-f]{32}$/;
+
+function allocateRunAdmissionIdentities(database: DatabaseSync): RunAdmissionIdentities | undefined {
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const identities: RunAdmissionIdentities = {
+      messageId: `message_${randomUUID()}`,
+      runId: `run_${randomUUID()}`,
+      attemptId: `attempt_${randomUUID()}`,
+      bindingId: `binding_${randomUUID()}`,
+    };
+    if (!hasAdmissionIdentityConflict(database, identities)) return identities;
+  }
+  return undefined;
+}
 
 function allocateSessionId(
   database: DatabaseSync,
@@ -3336,16 +3568,19 @@ function decodeRunAdmissionReplay(
   database: DatabaseSync,
   command: NormalRunAdmissionCommand,
   value: unknown,
+  responseRefId: string,
 ): NormalRunAdmissionResult | undefined;
 function decodeRunAdmissionReplay(
   database: DatabaseSync,
   command: RetryRunAdmissionCommand,
   value: unknown,
+  responseRefId: string,
 ): RetryRunAdmissionResult | undefined;
 function decodeRunAdmissionReplay(
   database: DatabaseSync,
   command: NormalRunAdmissionCommand | RetryRunAdmissionCommand,
   value: unknown,
+  responseRefId: string,
 ): NormalRunAdmissionResult | RetryRunAdmissionResult | undefined {
   const isRetry = "retryOfRunId" in command;
   const keys = [
@@ -3354,17 +3589,34 @@ function decodeRunAdmissionReplay(
     "runId",
     "attemptId",
     "bindingId",
+    "runPhase",
     "bindingState",
     "dispatchState",
     "admittedAt",
     ...(isRetry ? ["retryOfRunId"] : []),
   ];
   if (!isPlainObject(value) || !hasExactKeys(value, keys)) return undefined;
+  const messageId = value.messageId;
+  const runId = value.runId;
+  const attemptId = value.attemptId;
+  const bindingId = value.bindingId;
+  if (
+    value.sessionId !== command.sessionId ||
+    !isBoundedString(messageId, 1_024) ||
+    !isBoundedString(runId, 1_024) ||
+    runId !== responseRefId ||
+    !isBoundedString(attemptId, 1_024) ||
+    !isBoundedString(bindingId, 1_024)
+  ) {
+    return undefined;
+  }
   const row = database
     .prepare(
       `
-      SELECT r.initiating_message_id, r.retry_of_run_id, r.created_at,
-        a.id AS attempt_id, b.id AS binding_id, b.persistence_mode
+      SELECT r.initiating_message_id, r.retry_of_run_id, r.phase AS run_phase, r.created_at,
+        a.id AS attempt_id, a.provider_binding_id, b.id AS binding_id, b.created_by_run_attempt_id,
+        b.persistence_mode,
+        b.binding_state, d.dispatch_state
       FROM runs r
       JOIN sessions s ON s.id = r.session_id
       JOIN run_attempts a ON a.id = ? AND a.run_id = r.id
@@ -3379,40 +3631,43 @@ function decodeRunAdmissionReplay(
         AND (b.persistence_mode = 'persistent' OR b.created_by_run_attempt_id = a.id)
     `,
     )
-    .get(
-      command.attemptId,
-      command.bindingIntent.bindingId,
-      command.run.id,
-      command.sessionId,
-      command.workspaceKey,
-    ) as
+    .get(attemptId, bindingId, runId, command.sessionId, command.workspaceKey) as
     | Readonly<{
         initiating_message_id: string;
         retry_of_run_id: string | null;
+        run_phase: NonTerminalRunPhase | TerminalRunPhase;
         created_at: number;
         attempt_id: string;
+        provider_binding_id: string | null;
         binding_id: string;
+        created_by_run_attempt_id: string;
         persistence_mode: "persistent" | "ephemeral";
+        binding_state: "creating" | "active" | "invalidated" | "superseded";
+        dispatch_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
       }>
     | undefined;
   const retryOfRunId = isRetry ? command.retryOfRunId : null;
   if (
     row === undefined ||
     row.retry_of_run_id !== retryOfRunId ||
-    value.sessionId !== command.sessionId ||
-    value.messageId !== row.initiating_message_id ||
-    value.runId !== command.run.id ||
+    messageId !== row.initiating_message_id ||
     value.attemptId !== row.attempt_id ||
     value.bindingId !== row.binding_id ||
-    (command.bindingIntent.kind === "create" && row.persistence_mode !== command.bindingIntent.persistenceMode) ||
-    value.bindingState !== (command.bindingIntent.kind === "create" ? "creating" : "active") ||
+    row.persistence_mode !== "persistent" ||
+    value.runPhase !== "queued" ||
+    value.bindingState !== (row.created_by_run_attempt_id === row.attempt_id ? "creating" : "active") ||
     value.dispatchState !== "pending" ||
     value.admittedAt !== row.created_at ||
     (isRetry && value.retryOfRunId !== retryOfRunId)
   ) {
     return undefined;
   }
-  return value as unknown as NormalRunAdmissionResult | RetryRunAdmissionResult;
+  return {
+    ...(value as unknown as NormalRunAdmissionResult | RetryRunAdmissionResult),
+    runPhase: row.run_phase,
+    bindingState: row.binding_state,
+    dispatchState: row.dispatch_state,
+  };
 }
 
 function decodeChildStartReplay(
@@ -3602,9 +3857,17 @@ function prepareNormalRunAdmission(command: NormalRunAdmissionCommand): Prepared
   const executionSnapshotJson = canonicalJsonString(command.run.executionSnapshot);
   const providerRequestJson = canonicalJsonString(command.dispatch.providerRequest);
   if (
-    Buffer.byteLength(contentBlocksJson) > 4 * 1024 * 1024 ||
-    Buffer.byteLength(executionSnapshotJson) > 256 * 1024 ||
-    Buffer.byteLength(providerRequestJson) > 256 * 1024
+    providerRequestJson !==
+    canonicalJsonString(
+      buildApplicationRunProviderRequest(command.message.contentBlocks, command.run.executionSnapshot),
+    )
+  ) {
+    throw invalidCommand();
+  }
+  if (
+    Buffer.byteLength(contentBlocksJson) > MESSAGE_CONTENT_LIMITS.maxJsonBytes ||
+    Buffer.byteLength(executionSnapshotJson) > RUN_WRITE_PAYLOAD_LIMITS.executionSnapshotMaxJsonBytes ||
+    Buffer.byteLength(providerRequestJson) > RUN_WRITE_PAYLOAD_LIMITS.providerRequestMaxJsonBytes
   ) {
     throw invalidCommand();
   }
@@ -3618,17 +3881,8 @@ function prepareNormalRunAdmission(command: NormalRunAdmissionCommand): Prepared
       operation: "run.admit",
       sessionId: command.sessionId,
       workspaceKey: command.workspaceKey,
-      message: { id: command.message.id, contentBlocks: JSON.parse(contentBlocksJson) },
-      run: { id: command.run.id, executionSnapshot: JSON.parse(executionSnapshotJson) },
-      attemptId: command.attemptId,
-      bindingIntent:
-        command.bindingIntent.kind === "create"
-          ? {
-              kind: "create",
-              bindingId: command.bindingIntent.bindingId,
-              persistenceMode: command.bindingIntent.persistenceMode,
-            }
-          : { kind: "reuse", bindingId: command.bindingIntent.bindingId },
+      message: { contentBlocks: JSON.parse(contentBlocksJson) },
+      run: { executionSnapshot: JSON.parse(executionSnapshotJson) },
       dispatch: {
         requestFingerprint: dispatchFingerprint,
         providerIdempotencyKey: command.dispatch.providerIdempotencyKey,
@@ -3640,7 +3894,10 @@ function prepareNormalRunAdmission(command: NormalRunAdmissionCommand): Prepared
 function prepareRetryRunAdmission(command: RetryRunAdmissionCommand): PreparedRetryRunAdmission {
   const executionSnapshotJson = canonicalJsonString(command.run.executionSnapshot);
   const providerRequestJson = canonicalJsonString(command.dispatch.providerRequest);
-  if (Buffer.byteLength(executionSnapshotJson) > 256 * 1024 || Buffer.byteLength(providerRequestJson) > 256 * 1024) {
+  if (
+    Buffer.byteLength(executionSnapshotJson) > RUN_WRITE_PAYLOAD_LIMITS.executionSnapshotMaxJsonBytes ||
+    Buffer.byteLength(providerRequestJson) > RUN_WRITE_PAYLOAD_LIMITS.providerRequestMaxJsonBytes
+  ) {
     throw invalidCommand();
   }
   const dispatchFingerprint = fingerprintJson(providerRequestJson);
@@ -3653,16 +3910,7 @@ function prepareRetryRunAdmission(command: RetryRunAdmissionCommand): PreparedRe
       sessionId: command.sessionId,
       workspaceKey: command.workspaceKey,
       retryOfRunId: command.retryOfRunId,
-      run: { id: command.run.id, executionSnapshot: JSON.parse(executionSnapshotJson) },
-      attemptId: command.attemptId,
-      bindingIntent:
-        command.bindingIntent.kind === "create"
-          ? {
-              kind: "create",
-              bindingId: command.bindingIntent.bindingId,
-              persistenceMode: command.bindingIntent.persistenceMode,
-            }
-          : { kind: "reuse", bindingId: command.bindingIntent.bindingId },
+      run: { executionSnapshot: JSON.parse(executionSnapshotJson) },
       dispatch: {
         requestFingerprint: dispatchFingerprint,
         providerIdempotencyKey: command.dispatch.providerIdempotencyKey,
@@ -3682,9 +3930,9 @@ function prepareChildStart(command: ChildStartCommand): PreparedChildStart {
   const providerRequestJson = canonicalJsonString(command.dispatch.providerRequest);
   if (
     Buffer.byteLength(directoriesJson) > ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxJsonBytes ||
-    Buffer.byteLength(contentBlocksJson) > 4 * 1024 * 1024 ||
-    Buffer.byteLength(executionSnapshotJson) > 256 * 1024 ||
-    Buffer.byteLength(providerRequestJson) > 256 * 1024
+    Buffer.byteLength(contentBlocksJson) > MESSAGE_CONTENT_LIMITS.maxJsonBytes ||
+    Buffer.byteLength(executionSnapshotJson) > RUN_WRITE_PAYLOAD_LIMITS.executionSnapshotMaxJsonBytes ||
+    Buffer.byteLength(providerRequestJson) > RUN_WRITE_PAYLOAD_LIMITS.providerRequestMaxJsonBytes
   ) {
     throw invalidCommand();
   }
@@ -3724,13 +3972,15 @@ function prepareChildStart(command: ChildStartCommand): PreparedChildStart {
 
 function prepareRunDispatchBegin(command: RunDispatchBeginCommand): PreparedRunDispatchBegin {
   const providerRequestJson = canonicalJsonString(command.providerRequest);
-  if (Buffer.byteLength(providerRequestJson) > 256 * 1024) throw invalidCommand();
+  if (Buffer.byteLength(providerRequestJson) > RUN_WRITE_PAYLOAD_LIMITS.providerRequestMaxJsonBytes) {
+    throw invalidCommand();
+  }
   return { command, requestFingerprint: fingerprintJson(providerRequestJson) };
 }
 
 function prepareRunInputAdmission(command: RunInputAdmissionCommand): PreparedRunInputAdmission {
   const contentBlocksJson = canonicalJsonString(command.message.contentBlocks);
-  if (Buffer.byteLength(contentBlocksJson) > 4 * 1024 * 1024) throw invalidCommand();
+  if (Buffer.byteLength(contentBlocksJson) > MESSAGE_CONTENT_LIMITS.maxJsonBytes) throw invalidCommand();
   return {
     command,
     contentBlocksJson,
@@ -3927,29 +4177,17 @@ function decodeNormalRunAdmission(payload: Readonly<Record<string, unknown>>): D
     ? snapshotMessageContentBlocks(payload.message.contentBlocks)
     : undefined;
   if (
-    !hasExactKeys(payload, [
-      "sessionId",
-      "workspaceKey",
-      "idempotencyKey",
-      "message",
-      "run",
-      "attemptId",
-      "bindingIntent",
-      "dispatch",
-    ]) ||
+    !hasExactKeys(payload, ["sessionId", "workspaceKey", "idempotencyKey", "message", "run", "dispatch"]) ||
     !isBoundedString(payload.sessionId, 1_024) ||
     !isBoundedString(payload.workspaceKey, 1_024) ||
     !isCanonicalUuid(payload.idempotencyKey) ||
-    !isBoundedString(payload.attemptId, 1_024) ||
     !isPlainObject(payload.message) ||
-    !hasExactKeys(payload.message, ["id", "contentBlocks"]) ||
-    !isBoundedString(payload.message.id, 1_024) ||
+    !hasExactKeys(payload.message, ["contentBlocks"]) ||
     contentBlocks === undefined ||
     !isPlainObject(payload.run) ||
-    !hasExactKeys(payload.run, ["id", "executionSnapshot"]) ||
-    !isBoundedString(payload.run.id, 1_024) ||
-    !isRunExecutionSnapshot(payload.run.executionSnapshot) ||
-    !isBindingIntent(payload.bindingIntent) ||
+    !hasExactKeys(payload.run, ["executionSnapshot"]) ||
+    !isApplicationRunExecutionSnapshot(payload.run.executionSnapshot) ||
+    payload.run.executionSnapshot.modelSelection !== "explicit" ||
     !isPlainObject(payload.dispatch) ||
     !hasExactKeys(payload.dispatch, ["providerRequest", "providerIdempotencyKey"]) ||
     !isPlainObject(payload.dispatch.providerRequest) ||
@@ -3963,33 +4201,21 @@ function decodeNormalRunAdmission(payload: Readonly<Record<string, unknown>>): D
     ok: true,
     value: {
       ...(payload as unknown as NormalRunAdmissionCommand),
-      message: { id: payload.message.id as string, contentBlocks },
+      message: { contentBlocks },
     },
   };
 }
 
 function decodeRetryRunAdmission(payload: Readonly<Record<string, unknown>>): DecodeResult<RetryRunAdmissionCommand> {
   if (
-    !hasExactKeys(payload, [
-      "sessionId",
-      "workspaceKey",
-      "idempotencyKey",
-      "retryOfRunId",
-      "run",
-      "attemptId",
-      "bindingIntent",
-      "dispatch",
-    ]) ||
+    !hasExactKeys(payload, ["sessionId", "workspaceKey", "idempotencyKey", "retryOfRunId", "run", "dispatch"]) ||
     !isBoundedString(payload.sessionId, 1_024) ||
     !isBoundedString(payload.workspaceKey, 1_024) ||
     !isCanonicalUuid(payload.idempotencyKey) ||
     !isBoundedString(payload.retryOfRunId, 1_024) ||
-    !isBoundedString(payload.attemptId, 1_024) ||
     !isPlainObject(payload.run) ||
-    !hasExactKeys(payload.run, ["id", "executionSnapshot"]) ||
-    !isBoundedString(payload.run.id, 1_024) ||
-    !isRunExecutionSnapshot(payload.run.executionSnapshot) ||
-    !isBindingIntent(payload.bindingIntent) ||
+    !hasExactKeys(payload.run, ["executionSnapshot"]) ||
+    !isApplicationRunExecutionSnapshot(payload.run.executionSnapshot) ||
     !isPlainObject(payload.dispatch) ||
     !hasExactKeys(payload.dispatch, ["providerRequest", "providerIdempotencyKey"]) ||
     !isPlainObject(payload.dispatch.providerRequest) ||
@@ -4259,10 +4485,11 @@ function decodeRunInputResolution(payload: Readonly<Record<string, unknown>>): D
 
 function decodeRunOutputAppend(payload: Readonly<Record<string, unknown>>): DecodeResult<RunOutputAppendCommand> {
   if (
-    !hasExactKeys(payload, ["sessionId", "workspaceKey", "runId", "item"]) ||
+    !hasExactKeys(payload, ["sessionId", "workspaceKey", "runId", "providerExecution", "item"]) ||
     !isBoundedString(payload.sessionId, 1024) ||
     !isBoundedString(payload.workspaceKey, 1024) ||
     !isBoundedString(payload.runId, 1024) ||
+    !isRunProviderExecutionCorrelation(payload.providerExecution) ||
     !isRunOutputDraft(payload.item, false)
   ) {
     return decodeFailure();
@@ -4311,6 +4538,7 @@ function decodeRunTerminal(payload: Readonly<Record<string, unknown>>): DecodeRe
       "runId",
       "attemptId",
       "terminalEvent",
+      "providerExecution",
       "preDispatchResolution",
       "outcome",
       "outputs",
@@ -4324,6 +4552,7 @@ function decodeRunTerminal(payload: Readonly<Record<string, unknown>>): DecodeRe
     !hasExactKeys(payload.terminalEvent, ["id", "dedupeKey"]) ||
     !isBoundedString(payload.terminalEvent.id, 1024) ||
     !isBoundedString(payload.terminalEvent.dedupeKey, 1024) ||
+    !(payload.providerExecution === null || isRunProviderExecutionCorrelation(payload.providerExecution)) ||
     !isRunTerminalPreDispatchResolution(payload.preDispatchResolution) ||
     outcome === undefined ||
     !isDenseTerminalOutputs(payload.outputs) ||
@@ -4458,24 +4687,28 @@ function hasChildStartIdentityConflict(database: DatabaseSync, command: ChildSta
   );
 }
 
-function hasAdmissionIdentityConflict(database: DatabaseSync, command: NormalRunAdmissionCommand): boolean {
+function hasAdmissionIdentityConflict(database: DatabaseSync, identities: RunAdmissionIdentities): boolean {
   return (
-    database.prepare("SELECT 1 FROM messages WHERE id = ?").get(command.message.id) !== undefined ||
-    hasRunAdmissionIdentityConflict(database, command.run.id, command.attemptId, command.bindingIntent)
+    database.prepare("SELECT 1 FROM messages WHERE id = ?").get(identities.messageId) !== undefined ||
+    hasRunAdmissionIdentityConflict(database, identities)
   );
 }
 
-function hasRunAdmissionIdentityConflict(
-  database: DatabaseSync,
-  runId: string,
-  attemptId: string,
-  bindingIntent: RunAdmissionBindingIntent,
-): boolean {
+function isRunAdmissionIdentities(value: RunAdmissionIdentities): boolean {
   return (
-    database.prepare("SELECT 1 FROM runs WHERE id = ?").get(runId) !== undefined ||
-    database.prepare("SELECT 1 FROM run_attempts WHERE id = ?").get(attemptId) !== undefined ||
-    (bindingIntent.kind === "create" &&
-      database.prepare("SELECT 1 FROM provider_bindings WHERE id = ?").get(bindingIntent.bindingId) !== undefined)
+    isBoundedString(value.messageId, 1_024) &&
+    isBoundedString(value.runId, 1_024) &&
+    isBoundedString(value.attemptId, 1_024) &&
+    isBoundedString(value.bindingId, 1_024) &&
+    new Set([value.messageId, value.runId, value.attemptId, value.bindingId]).size === 4
+  );
+}
+
+function hasRunAdmissionIdentityConflict(database: DatabaseSync, identities: RunAdmissionIdentities): boolean {
+  return (
+    database.prepare("SELECT 1 FROM runs WHERE id = ?").get(identities.runId) !== undefined ||
+    database.prepare("SELECT 1 FROM run_attempts WHERE id = ?").get(identities.attemptId) !== undefined ||
+    database.prepare("SELECT 1 FROM provider_bindings WHERE id = ?").get(identities.bindingId) !== undefined
   );
 }
 
@@ -4854,8 +5087,9 @@ function dispatchResolutionValue(
 
 function resolveAdmissionBinding<T>(
   database: DatabaseSync,
-  command: RunAdmissionCommand,
+  sessionId: string,
   providerId: string,
+  bindingId: string,
 ): BindingResolution<T> {
   const openBindings = database
     .prepare(
@@ -4869,7 +5103,7 @@ function resolveAdmissionBinding<T>(
       WHERE b.session_id = ? AND b.binding_state IN ('creating', 'active')
     `,
     )
-    .all(command.sessionId) as unknown as readonly Readonly<{
+    .all(sessionId) as unknown as readonly Readonly<{
     id: string;
     provider_id: string;
     persistence_mode: "persistent" | "ephemeral";
@@ -4877,25 +5111,37 @@ function resolveAdmissionBinding<T>(
     creator_session_id: string | null;
     session_provider_id: string;
   }>[];
-  if (command.bindingIntent.kind === "create") {
-    if (openBindings.length !== 0) {
-      return { ok: false, result: failure("reference_invalid", "Session already has an open Provider binding.") };
-    }
-    return { ok: true, providerBindingId: null };
+  if (openBindings.length === 0) {
+    return {
+      ok: true,
+      value: {
+        bindingId,
+        bindingState: "creating",
+        providerBindingId: null,
+        persistenceMode: "persistent",
+      },
+    };
   }
   const binding = openBindings.length === 1 ? openBindings[0] : undefined;
   if (
     binding === undefined ||
-    binding.id !== command.bindingIntent.bindingId ||
     binding.provider_id !== providerId ||
     binding.provider_id !== binding.session_provider_id ||
-    binding.creator_session_id !== command.sessionId ||
+    binding.creator_session_id !== sessionId ||
     binding.persistence_mode !== "persistent" ||
     binding.binding_state !== "active"
   ) {
     return { ok: false, result: failure("reference_invalid", "Active Provider binding does not match.") };
   }
-  return { ok: true, providerBindingId: binding.id };
+  return {
+    ok: true,
+    value: {
+      bindingId: binding.id,
+      bindingState: "active",
+      providerBindingId: binding.id,
+      persistenceMode: "persistent",
+    },
+  };
 }
 
 function nextOrdinal(
@@ -5383,6 +5629,16 @@ function terminalPreparationReplayMatches(command: RunTerminalCommand, row: Term
           row.invalidation_reason === "ephemeral_run_terminal"))
     );
   }
+  if (resolution === "dispatch_ambiguous") {
+    return (
+      row.dispatch_state === "ambiguous" &&
+      row.provider_binding_id === row.binding_id &&
+      (row.persistence_mode === "persistent" ||
+        (row.persistence_mode === "ephemeral" &&
+          row.binding_state === "invalidated" &&
+          row.invalidation_reason === "ephemeral_run_terminal"))
+    );
+  }
   if (row.binding_state === "creating" || isUnresolvedTerminalDispatch(row.dispatch_state)) {
     return false;
   }
@@ -5628,7 +5884,8 @@ function isRunTerminalPreDispatchResolution(value: unknown): value is RunTermina
     (value.kind === "not_applicable" ||
       value.kind === "binding_creation_not_sent" ||
       value.kind === "binding_creation_ambiguous" ||
-      value.kind === "dispatch_not_sent")
+      value.kind === "dispatch_not_sent" ||
+      value.kind === "dispatch_ambiguous")
   );
 }
 
@@ -5677,6 +5934,19 @@ function isChildTerminalResult(value: unknown): value is RunTerminalCommand["chi
       hasExactKeys(value, ["workflowState", "resultSummary"]) &&
       (value.workflowState === "clarification_required" || value.workflowState === "closed") &&
       (value.resultSummary === null || isBoundedString(value.resultSummary, 1_024)))
+  );
+}
+
+function isRunProviderExecutionCorrelation(
+  value: unknown,
+): value is NonNullable<RunTerminalCommand["providerExecution"]> {
+  return (
+    isPlainObject(value) &&
+    hasExactKeys(value, ["attemptId", "bindingId", "externalConversationId", "externalExecutionId"]) &&
+    isBoundedString(value.attemptId, 1024) &&
+    isBoundedString(value.bindingId, 1024) &&
+    isBoundedString(value.externalConversationId, 1024) &&
+    isBoundedString(value.externalExecutionId, 1024)
   );
 }
 
@@ -5746,22 +6016,63 @@ function isJsonValue(value: unknown, depth = 0): boolean {
   return isPlainObject(value) && Object.values(value).every((item) => isJsonValue(item, depth + 1));
 }
 
-function isBindingIntent(value: unknown): value is NormalRunAdmissionCommand["bindingIntent"] {
-  if (!isPlainObject(value) || !isBoundedString(value.bindingId, 1_024)) return false;
-  if (value.kind === "reuse") return hasExactKeys(value, ["kind", "bindingId"]);
+function isApplicationRunExecutionSnapshot(
+  value: unknown,
+): value is NormalRunAdmissionCommand["run"]["executionSnapshot"] {
+  if (!isRunExecutionSnapshot(value) || value.character !== null) return false;
+  if (
+    !isPlainObject(value.reasoning) ||
+    !hasExactKeys(value.reasoning, ["effort"]) ||
+    !isBoundedString(value.reasoning.effort, 1_024) ||
+    !isPlainObject(value.approval) ||
+    !hasExactKeys(value.approval, ["policy"]) ||
+    value.approval.policy !== "never" ||
+    !isPlainObject(value.sandbox) ||
+    !isPlainObject(value.workspace) ||
+    !hasExactKeys(value.workspace, ["key", "path", "allowedAdditionalDirectories"]) ||
+    !isBoundedString(value.workspace.key, 1_024) ||
+    !isBoundedString(value.workspace.path, 32_768) ||
+    !isDenseBoundedStringArray(
+      value.workspace.allowedAdditionalDirectories,
+      ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxItems,
+      ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxPathLength,
+    )
+  ) {
+    return false;
+  }
+  const sandbox =
+    (hasExactKeys(value.sandbox, ["mode"]) && value.sandbox.mode === "danger-full-access") ||
+    (hasExactKeys(value.sandbox, ["mode", "networkAccess"]) &&
+      (value.sandbox.mode === "read-only" || value.sandbox.mode === "workspace-write") &&
+      typeof value.sandbox.networkAccess === "boolean");
+  if (!sandbox) return false;
+  const workspace = resolveWorkspaceIdentity(value.workspace.path);
+  const directories = normalizeAllowedAdditionalDirectories(value.workspace.allowedAdditionalDirectories);
   return (
-    value.kind === "create" &&
-    hasExactKeys(value, ["kind", "bindingId", "persistenceMode"]) &&
-    (value.persistenceMode === "persistent" || value.persistenceMode === "ephemeral")
+    workspace !== undefined &&
+    workspace.workspacePath === value.workspace.path &&
+    workspace.workspaceKey === value.workspace.key &&
+    directories !== undefined &&
+    canonicalJsonString(directories) === canonicalJsonString(value.workspace.allowedAdditionalDirectories)
   );
 }
 
 function isRunExecutionSnapshot(value: unknown): value is NormalRunAdmissionCommand["run"]["executionSnapshot"] {
   return (
     isPlainObject(value) &&
-    hasExactKeys(value, ["providerId", "model", "reasoning", "approval", "sandbox", "workspace", "character"]) &&
+    hasExactKeys(value, [
+      "providerId",
+      "model",
+      "modelSelection",
+      "reasoning",
+      "approval",
+      "sandbox",
+      "workspace",
+      "character",
+    ]) &&
     isBoundedString(value.providerId, 1_024) &&
     isBoundedString(value.model, 1_024) &&
+    (value.modelSelection === "explicit" || value.modelSelection === "inherited") &&
     isJsonValue(value.reasoning) &&
     isJsonValue(value.approval) &&
     isJsonValue(value.sandbox) &&
@@ -5839,12 +6150,26 @@ type SessionIdAllocator = (
   allocationNonce: string,
   allocationKey: string,
 ) => string | undefined;
-type RunAdmissionCommand = Readonly<{
-  sessionId: string;
-  run: RunAdmissionDraft;
+type RunAdmissionIdentities = Readonly<{
+  messageId: string;
+  runId: string;
   attemptId: string;
-  bindingIntent: RunAdmissionBindingIntent;
+  bindingId: string;
+}>;
+type RunAdmissionIdentityAllocator = (
+  database: DatabaseSync,
+  operation: "run.admit" | "run.retry",
+  idempotencyKey: string,
+) => RunAdmissionIdentities | undefined;
+type RunAdmissionInsertCommand = Readonly<{
+  sessionId: string;
   dispatch: RunAdmissionDispatch;
+}>;
+type ResolvedAdmissionBinding = Readonly<{
+  bindingId: string;
+  bindingState: "creating" | "active";
+  providerBindingId: string | null;
+  persistenceMode: "persistent" | "ephemeral";
 }>;
 type PreparedRunDispatchBegin = Readonly<{
   command: RunDispatchBeginCommand;
@@ -5911,12 +6236,14 @@ type TerminalGateRow = Readonly<{
   terminal_at: number | null;
   attempt_state: string;
   provider_binding_id: string | null;
+  external_execution_id: string | null;
   dispatch_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
   binding_id: string | null;
   binding_session_id: string | null;
   binding_provider_id: string | null;
   persistence_mode: "persistent" | "ephemeral" | null;
   binding_state: "creating" | "active" | "invalidated" | "superseded" | null;
+  external_conversation_id: string | null;
   created_by_run_attempt_id: string | null;
   binding_creator_session_id: string | null;
   invalidation_reason: string | null;
@@ -5966,20 +6293,23 @@ type ChildStartReplayRow = Readonly<{
   child_max_concurrent_child_runs: number;
 }>;
 type BindingResolution<T> =
-  | Readonly<{ ok: true; providerBindingId: string | null }>
-  | Readonly<{ ok: false; result: RepositoryCommandResult<T> }>;
+  Readonly<{ ok: true; value: ResolvedAdmissionBinding }> | Readonly<{ ok: false; result: RepositoryCommandResult<T> }>;
 type NonTerminalRunPhase = "queued" | "starting" | "active" | "canceling" | "finalizing";
 type TerminalRunPhase = "completed" | "failed" | "canceled" | "interrupted";
 type AdmissionSessionRow = Readonly<{
   provider_id: string;
   lifecycle_status: SessionLifecycleStatus;
+  workspace_path: string;
+  allowed_additional_directories_json: string;
   updated_at: number;
   last_activity_at: number;
 }>;
 type RetrySourceRow = Readonly<{
   initiating_message_id: string;
   phase: NonTerminalRunPhase | TerminalRunPhase;
+  execution_snapshot_json: string;
   role: "user" | "assistant";
+  content_blocks_json: string;
 }>;
 type BindingResolutionRow = Readonly<{
   binding_provider_id: string;

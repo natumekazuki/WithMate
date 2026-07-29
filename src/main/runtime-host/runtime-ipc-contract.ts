@@ -9,6 +9,7 @@ import {
 } from "../../shared/application-run-output-model.js";
 import { APPLICATION_SESSION_MESSAGE_LIMITS } from "../../shared/application-session-message-model.js";
 import { APPLICATION_SESSION_RUN_LIMITS } from "../../shared/application-session-run-model.js";
+import { RUN_MUTATION_INLINE_CONTENT_LIMITS, snapshotMessageContentBlocks } from "../../shared/message-content.js";
 import { isCanonicalUuid } from "../../shared/persistence-runtime-protocol.js";
 import { MAX_SESSION_CONCURRENT_CHILD_RUNS } from "../../shared/session-limits.js";
 import {
@@ -42,6 +43,8 @@ export const RUNTIME_IPC_OPERATIONS = [
   "session.messages",
   "session.message_content_chunk",
   "session.runs",
+  "run.start",
+  "run.retry",
   "run.status",
   "run.events",
   "run.follow",
@@ -252,6 +255,10 @@ export function snapshotRuntimeOperationPayload(
       return snapshotChunk(value, ["sessionId", "messageId"], APPLICATION_SESSION_MESSAGE_LIMITS.chunkMaxBytes);
     case "session.runs":
       return snapshotSessionPage(value, APPLICATION_SESSION_RUN_LIMITS.runsMaxItems);
+    case "run.start":
+      return snapshotRunStart(value);
+    case "run.retry":
+      return snapshotRunRetry(value);
     case "run.status":
     case "run.output_counts":
       return snapshotRunScope(value);
@@ -587,6 +594,87 @@ function snapshotRunScope(value: unknown): RuntimeIpcOperationPayload {
   const payload = exactPayload(value, ["sessionId", "runId"]);
   if (!isIdentifier(payload.sessionId) || !isIdentifier(payload.runId)) invalid();
   return { sessionId: payload.sessionId, runId: payload.runId };
+}
+
+function snapshotRunStart(value: unknown): RuntimeIpcOperationPayload {
+  const payload = exactPayload(value, ["sessionId", "idempotencyKey", "contentBlocks", "execution"]);
+  if (!isIdentifier(payload.sessionId) || !isCanonicalUuid(payload.idempotencyKey)) invalid();
+  const contentBlocks = snapshotMessageContentBlocks(payload.contentBlocks, RUN_MUTATION_INLINE_CONTENT_LIMITS);
+  if (contentBlocks === undefined) invalid();
+  return {
+    sessionId: payload.sessionId,
+    idempotencyKey: payload.idempotencyKey,
+    contentBlocks,
+    execution: snapshotRunExecutionSettings(payload.execution),
+  };
+}
+
+function snapshotRunRetry(value: unknown): RuntimeIpcOperationPayload {
+  const payload = optionalPayload(value, ["sessionId", "retryOfRunId", "idempotencyKey", "executionOverrides"]);
+  if (
+    !has(payload, "sessionId") ||
+    !has(payload, "retryOfRunId") ||
+    !has(payload, "idempotencyKey") ||
+    !isIdentifier(payload.sessionId) ||
+    !isIdentifier(payload.retryOfRunId) ||
+    !isCanonicalUuid(payload.idempotencyKey)
+  ) {
+    invalid();
+  }
+  const output: Record<string, unknown> = {
+    sessionId: payload.sessionId,
+    retryOfRunId: payload.retryOfRunId,
+    idempotencyKey: payload.idempotencyKey,
+  };
+  if (has(payload, "executionOverrides")) {
+    output.executionOverrides = snapshotRunExecutionOverrides(payload.executionOverrides);
+  }
+  return output;
+}
+
+function snapshotRunExecutionSettings(value: unknown): RuntimeIpcOperationPayload {
+  const execution = exactPayload(value, ["model", "reasoningEffort", "sandbox"]);
+  if (
+    !isBoundedString(execution.model, APPLICATION_RUN_LIMITS.maxExecutionSettingLength) ||
+    !isBoundedString(execution.reasoningEffort, APPLICATION_RUN_LIMITS.maxExecutionSettingLength)
+  ) {
+    invalid();
+  }
+  return {
+    model: execution.model,
+    reasoningEffort: execution.reasoningEffort,
+    sandbox: snapshotRunSandbox(execution.sandbox),
+  };
+}
+
+function snapshotRunExecutionOverrides(value: unknown): RuntimeIpcOperationPayload {
+  const overrides = optionalPayload(value, ["model", "reasoningEffort", "sandbox"]);
+  const output: Record<string, unknown> = {};
+  if (has(overrides, "model")) {
+    if (!isBoundedString(overrides.model, APPLICATION_RUN_LIMITS.maxExecutionSettingLength)) invalid();
+    output.model = overrides.model;
+  }
+  if (has(overrides, "reasoningEffort")) {
+    if (!isBoundedString(overrides.reasoningEffort, APPLICATION_RUN_LIMITS.maxExecutionSettingLength)) invalid();
+    output.reasoningEffort = overrides.reasoningEffort;
+  }
+  if (has(overrides, "sandbox")) output.sandbox = snapshotRunSandbox(overrides.sandbox);
+  return output;
+}
+
+function snapshotRunSandbox(value: unknown): RuntimeIpcOperationPayload {
+  const sandbox = optionalPayload(value, ["mode", "networkAccess"]);
+  if (!has(sandbox, "mode")) invalid();
+  if (sandbox.mode === "danger-full-access") {
+    requireExactKeys(sandbox, ["mode"]);
+    return { mode: sandbox.mode };
+  }
+  if (sandbox.mode === "read-only" || sandbox.mode === "workspace-write") {
+    requireExactKeys(sandbox, ["mode", "networkAccess"]);
+    if (typeof sandbox.networkAccess !== "boolean") invalid();
+    return { mode: sandbox.mode, networkAccess: sandbox.networkAccess };
+  }
+  invalid();
 }
 
 function snapshotRunEvents(value: unknown): RuntimeIpcOperationPayload {

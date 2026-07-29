@@ -417,16 +417,29 @@ async function waitForPromptSettlement<TValue>(operation: Promise<TValue>): Prom
 function applicationInterruptionFor(result: CliDispatchResult): "timeout" | "canceled" | undefined {
   if (result.output.kind !== "operation") return undefined;
   const response = result.output.applicationResponse;
-  if (response.overallStatus !== "failure" || response.error.kind !== "operation") return undefined;
-  const interruption =
-    response.error.code === "operation_timeout"
-      ? "timeout"
-      : response.error.code === "operation_canceled"
-        ? "canceled"
-        : undefined;
+  if (response.overallStatus !== "failure") return undefined;
+  const interruption = interruptionForApplicationError(response.error);
   return interruption !== undefined && result.exitCode === interruptionExitCode(interruption)
     ? interruption
     : undefined;
+}
+
+function interruptionForApplicationError(
+  error: Extract<CliAnyOperationOutput["applicationResponse"], Readonly<{ overallStatus: "failure" }>>["error"],
+): "timeout" | "canceled" | undefined {
+  if (error.kind === "operation") {
+    return error.code === "operation_timeout"
+      ? "timeout"
+      : error.code === "operation_canceled"
+        ? "canceled"
+        : undefined;
+  }
+  if (error.kind !== "persistence") return undefined;
+  return error.code === "persistence_timeout"
+    ? "timeout"
+    : error.code === "persistence_canceled"
+      ? "canceled"
+      : undefined;
 }
 
 class CliLifecycleInterruptionError extends Error {

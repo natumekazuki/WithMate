@@ -1,3 +1,5 @@
+import { APPLICATION_RUN_PAYLOAD_LIMITS } from "../../../shared/application-run-payload-limits.js";
+
 export type CodexTransportLimits = Readonly<{
   maxLineBytes: number;
   maxPendingRequests: number;
@@ -9,12 +11,12 @@ export type CodexTransportLimits = Readonly<{
 }>;
 
 export const CODEX_TRANSPORT_LIMITS: CodexTransportLimits = Object.freeze({
-  maxLineBytes: 1024 * 1024,
+  maxLineBytes: APPLICATION_RUN_PAYLOAD_LIMITS.codexWireMaxLineBytes,
   maxPendingRequests: 128,
   maxRetiredUnsentRequestIds: 4096,
   maxOutstandingServerRequestIdBytes: 256 * 1024,
   maxQueuedEvents: 128,
-  maxQueuedWriteBytes: 2 * 1024 * 1024,
+  maxQueuedWriteBytes: APPLICATION_RUN_PAYLOAD_LIMITS.codexWireMaxLineBytes * 2,
   maxStderrBytes: 64 * 1024,
 });
 

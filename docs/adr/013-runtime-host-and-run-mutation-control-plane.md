@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-20
-- Amends: ADR 002、ADR 006、ADR 011、ADR 012のApplication / CLI process ownership
+- Amends: ADR 002、ADR 006、ADR 011、ADR 012のApplication / CLI process ownership、ADR 005のambiguous Dispatch終端条件
 
 ## Context
 
@@ -32,7 +32,13 @@ Provider mutation前に、Workspace scope / Session / Run / active RunAttempt / 
 
 いずれかが不一致、欠落、または複数候補になる場合はProviderへ送信しない。connection generationはlive ownerの識別にだけ使う。
 
+durable admission後にRepository read、Binding resolution、Dispatch resolution、RunOutput、またはterminal commitの結果を確定できない場合、runtime hostはそのRun ownerとexact commandを保持し、Provider mutationとは分離したpersistence-only retryを自動継続する。Provider送信前のDispatch rejectionも、resolution commitを確認するまで同じ自動retryの対象とする。shutdownでも同じownerをflushする。transientなPersistence Worker失敗を理由にownerを捨てず、Runを`queued`またはnon-terminalのまま放置しない。Provider Threadの受理を確認した後は、connection generationを失ってもBindingのactive化を先に確定し、そのpersistent Bindingを維持したまま未送信Dispatchを`interrupted`へ収束させる。
+
+Provider event consumerが終了または失敗した場合は、そのconsumerを所有するProvider connectionのclose完了を確認してからgenerationとlive ownerを解放する。close結果が不明または失敗なら、Adapter、transport、process groupまたはnative process handleの同じownerを保持してcloseを再試行し、後続generationを開始しない。processまたはnative handleの取得が途中で失敗した場合も、partial cleanup ownerをtransportへ引き渡し、終了とhandle解放が成功するまで同じownerを再試行する。Provider startupがAdapter公開前に失敗した場合も、factoryがspawn済みtransportをcleanup ownerとして保持し、close成功前にsuccessor processを作らない。shutdown時の未解決closeはretryableなshutdown-pendingとしてruntime hostへ伝え、owner claimを保持したまま再駆動する。Thread作成・再開の送信結果が`ambiguous`な場合も、Adapter内のmutation ownerを抱えたgenerationを継続利用せず、Runを収束させてから同じclose完了条件でgenerationを退役させる。旧generationから遅延したeventやprocessが新しいownerと並存する状態を作らない。
+
 Codexの初期transportは、runtime hostが直接所有する`codex app-server --stdio`のJSONLとする。Codex managed daemon、WebSocket、Unix socket transportを必須にせず、Provider connectionをCLIまたはRendererへ公開しない。
+
+Codex executableはruntime hostの`WITHMATE_CODEX_EXECUTABLE`環境変数で指定する。値はabsolute pathのnative executableだけを受理し、PATH検索、npm shim、shell command、one-shot CLI fallbackを行わない。未設定、不正、非nativeの場合はdurable admission前のread操作へ影響させず、Provider runtimeをlazyに必要としたRunだけをpre-dispatch failureへ収束させる。private executable pathをpublic responseまたはdiagnosticへ投影しない。
 
 CLIと将来のGUIはruntime hostのclientとする。Operational CLIはOS-localなduplex streamへ接続し、version handshake、request ID、operation、bounded request / responseをnewline-delimited UTF-8 JSONで交換する。Windowsはnamed pipe、Unix系はUnix domain socketを使用し、TCP listenerを開かない。endpointはcurrent OS userとapplication data rootへscopeし、別userから接続できないfilesystem permissionまたはpipe ACLを要求する。wire fieldと上限は実装時のtype、validator、contract testを正本とし、CLIの`withmate-cli-v1`出力へ内部IPC fieldを流用しない。
 
@@ -46,20 +52,24 @@ GUI / Electron processの終了と再起動もruntime hostを停止せず、再�
 
 Provider-neutralなpublic CLI operation名を次で固定する。
 
-| CLI operation | Application上の意味 | Provider Adapter mapping |
-| --- | --- | --- |
-| `withmate run start` | initiating Messageと新規Runをdurable admissionする | `thread/start`が必要なら先に相関し、`turn/start`へdispatchする |
-| `withmate run retry` | `retryOfRunId`を持つ新規Runをdurable admissionする | 同じTurnを再送せず、新しいProvider executionを開始する |
-| `withmate run send-input` | active Runへsupplemental Message / deliveryをdurable admissionする | active Turn IDを`expectedTurnId`に指定して`turn/steer`する |
-| `withmate run cancel` | active Runを`canceling`へdurable transitionする | 相関するTurnへ`turn/interrupt`する |
+| CLI operation             | Application上の意味                                                | Provider Adapter mapping                                       |
+| ------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------- |
+| `withmate run start`      | initiating Messageと新規Runをdurable admissionする                 | `thread/start`が必要なら先に相関し、`turn/start`へdispatchする |
+| `withmate run retry`      | `retryOfRunId`を持つ新規Runをdurable admissionする                 | 同じTurnを再送せず、新しいProvider executionを開始する         |
+| `withmate run send-input` | active Runへsupplemental Message / deliveryをdurable admissionする | active Turn IDを`expectedTurnId`に指定して`turn/steer`する     |
+| `withmate run cancel`     | active Runを`canceling`へdurable transitionする                    | 相関するTurnへ`turn/interrupt`する                             |
 
-各writeはcaller supplied idempotency keyを受ける。start / retryはadmission済みRun、send-inputはdelivery、cancelはcancel requestへ同じkeyとfingerprintで収束する。CLI response loss後のexact retryは同じdomain identityと現在のdelivery / cancel outcomeを返し、新しいProvider requestを作らない。
+各writeはcaller supplied idempotency keyを受ける。start / retryのMessage、Run、Attempt、および新規作成するBindingのidentityは、admission transaction内でRepositoryが発行し、semantic fingerprintへ含めない。Repositoryはtransaction内のBinding状態から、唯一の再利用可能なpersistent Bindingを選ぶか、新しいcreating Bindingを発行する。callerはこれらのidentityやBinding選択を指定しない。
+
+start / retryはadmission済みRun、send-inputはdelivery、cancelはcancel requestへ同じkeyとfingerprintで収束する。CLI response loss後のexact retryは、保存済みresponse referenceとowner tupleを再検証して同じdomain identityと現在のdurable outcomeを返し、新しいdomain identityまたはProvider requestを作らない。
 
 `turn/interrupt`のresponseだけではRunをterminalにしない。user cancel requestと`turn/completed(interrupted)`を相関できた場合だけ`canceled`とし、相関不能なprocess / transport failureは`interrupted`とする。`turn/steer`の不一致またはactive Turn不在はrejected deliveryとし、後続Runへ暗黙転用しない。
 
 recoveryでは、durable `pending`かつProvider未送信を証明できるdispatch / deliveryだけを自動送信する。`dispatching`または`ambiguous`を`pending`へ戻さず、自動再送しない。runtime host crashまたはApp Server crash後はpersistent Threadを照合し、同じactive Turnと継続可能性を証明できる場合だけ監視を再開する。terminal、未送信、継続可能のいずれも証明できないRunは`interrupted`へ収束させ、Provider履歴から欠落Message、RunEvent、draftを推測生成しない。
 
-public responseとdiagnosticはallowlist projectionとし、Provider固有の外部Thread / Turn / item / request ID、raw payload、private path、secret、IPC endpoint credentialを公開しない。これらの外部IDはruntime hostとPersistence Workerの内部相関にだけ使用する。Provider-neutralな`providerId`はProvider選択とcapacity scopeのpublic fieldであり、この禁止対象ではない。
+`ambiguous` Dispatchを同じruntime connection generationで照合できる間はRunを`starting` / `canceling`に保ち、Sessionとcapacityを解放しない。generationを確定的に失い、同じ外部実行との相関を継続できなくなった場合は、Dispatchの`ambiguous`とexternal side effectの不確実性を保持したままRunを`interrupted`へ収束させる。terminal commit後にだけSessionとcapacityを解放し、元Dispatchを自動再送しない。この条件に限り、ADR 005の照合前terminal禁止を改める。
+
+public responseとdiagnosticはallowlist projectionとし、Provider固有の外部Thread / Turn / item / request ID、raw payload、private path、secret、IPC endpoint credentialを公開しない。これらの外部IDはruntime hostとPersistence Workerの内部相関にだけ使用する。Provider-neutralな`providerId`はSessionのProvider選択に必要なpublic fieldだが、Provider capacity errorではrequest scopeから対象を特定できるため公開detailsへ重複させない。Repository内部のcapacity detailsが持つ`providerId`はApplication境界で除外し、public detailsは`scope`、`current`、`limit`だけに限定する。
 
 ## Alternatives
 
@@ -68,10 +78,13 @@ public responseとdiagnosticはallowlist projectionとし、Provider固有の外
 - Codex managed daemonまたはcontrol socket proxyへCLIが直接接続する: Windowsでdaemon lifecycleを検証できず、利用可能なplatformでもWithMateのPersistence Worker、Provider-neutral operation、draft、interactionを所有しないため、初期control planeには採用しない。
 - App ServerのWebSocketをWithMate IPCとして使う: experimental / unsupportedなProvider transportをpublic control planeへ昇格させ、Codex固有protocolとWithMate Application contractが混ざるため採用しない。
 - operational CLIごとに現在のone-shot runtimeをfallbackする: runtime hostと別Persistence Workerが同じapplication dataを所有し、live stateとdispatch順序を分岐させるため採用しない。
+- executableをPATH検索またはnpm shim経由で解決する: current shellとinstallation layoutへ起動結果が依存し、shell非依存のprocess ownershipと設定の再現性を失うため採用しない。
 
 ## Consequences
 
 - CLI process終了後もRun、Provider接続、draft、interactionをruntime hostが継続でき、GUIも同じApplication contractへ接続できる。
+- start / retryのcallerは、Repositoryが所有するidentity allocatorやBinding選択と分離される。response loss後のexact retryでは、再生成した候補identityではなくcommit済みidentityを復元する。
+- Provider runtimeは明示されたnative executableからだけlazy起動される。環境移行や配布では`WITHMATE_CODEX_EXECUTABLE`を設定し、native artifactの存在と実行可能性を検証する必要がある。
 - CP3のproduction実装は、Run mutationより先にruntime host、single-owner起動、local IPC、version handshake、CLI compositionの移行を成立させる必要がある。
 - CP2のstatus / events / follow / outputを含むoperational CLIも、runtime host導入時に同じIPCへ移行する。migration完了後にone-shot Persistence Worker経路をfallbackとして残さない。
 - output exportのApplication / helper ownershipもruntime hostへ移すが、ADR 012のbounded cancel、no-clobber、publication outcome契約は維持する。

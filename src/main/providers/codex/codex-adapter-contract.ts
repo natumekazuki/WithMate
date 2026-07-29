@@ -1,4 +1,5 @@
 import type { TextContentBlock } from "../../../shared/message-content.js";
+import { APPLICATION_RUN_PAYLOAD_LIMITS } from "../../../shared/application-run-payload-limits.js";
 import type {
   CodexConnectionFailureCode,
   CodexRequestNotSentCode,
@@ -18,7 +19,7 @@ export const CODEX_ADAPTER_LIMITS = Object.freeze({
   maxItemTextBytes: 1 * 1_024 * 1_024,
   maxTurnTextBytes: 4 * 1_024 * 1_024,
   maxConnectionTextBytes: 32 * 1_024 * 1_024,
-  maxValidationAggregateBytes: 8 * 1_024 * 1_024,
+  maxValidationAggregateBytes: APPLICATION_RUN_PAYLOAD_LIMITS.providerRequestMaxJsonBytes,
   maxArrayItems: 4_096,
   maxObjectDepth: 32,
   maxObjectProperties: 256,
@@ -70,6 +71,7 @@ export interface CodexAdapterTransportPort {
 
 export type CodexAdapterApprovalPolicy = "never" | "untrusted" | "on-request";
 export type CodexAdapterSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
+export type CodexAdapterModelSelection = "explicit" | "inherited";
 
 export type CodexAdapterSandboxPolicy =
   | Readonly<{ mode: "read-only"; networkAccess: boolean }>
@@ -86,6 +88,7 @@ export type CodexListModelsInput = Readonly<{
 
 export type CodexStartThreadInput = Readonly<{
   model: string;
+  reasoningEffort?: string;
   workspacePath: string;
   approvalPolicy: CodexAdapterApprovalPolicy;
   sandboxMode: CodexAdapterSandboxMode;
@@ -95,6 +98,8 @@ export type CodexStartThreadInput = Readonly<{
 export type CodexResumeThreadInput = Readonly<{
   threadId: string;
   model?: string;
+  modelSelection?: CodexAdapterModelSelection;
+  reasoningEffort?: string;
   workspacePath?: string;
   approvalPolicy?: CodexAdapterApprovalPolicy;
   sandboxMode?: CodexAdapterSandboxMode;
@@ -112,6 +117,7 @@ export type CodexStartTurnInput = Readonly<{
   approvalPolicy?: CodexAdapterApprovalPolicy;
   sandboxPolicy?: CodexAdapterSandboxPolicy;
   model?: string;
+  modelSelection?: CodexAdapterModelSelection;
   reasoningEffort?: string;
   reasoningSummary?: "auto" | "concise" | "detailed" | "none";
 }>;
@@ -188,11 +194,17 @@ export type CodexAdapterReadThreadSnapshot = Readonly<{
 
 export type CodexAdapterNotSentCode = CodexRequestNotSentCode | "invalid_input" | "capability_unavailable";
 
+export type CodexAdapterConnectionFailureCode =
+  CodexConnectionFailureCode | "unsupported_server_request" | "adapter_resource_limit";
+
+export type CodexAdapterMutationNotSentCode =
+  CodexAdapterNotSentCode | CodexResponseUnknownCode | CodexAdapterConnectionFailureCode | "invalid_response";
+
 export type CodexAdapterAmbiguousCode = CodexResponseUnknownCode | "invalid_response";
 
 export type CodexAdapterMutationResult<T> =
   | Readonly<{ kind: "accepted"; effect: "present"; value: T }>
-  | Readonly<{ kind: "not_sent"; effect: "none"; code: CodexAdapterNotSentCode }>
+  | Readonly<{ kind: "not_sent"; effect: "none"; code: CodexAdapterMutationNotSentCode }>
   | Readonly<{ kind: "rejected"; effect: "none"; code: number }>
   | Readonly<{ kind: "ambiguous"; effect: "unknown"; code: CodexAdapterAmbiguousCode }>
   | Readonly<{
@@ -210,7 +222,7 @@ export type CodexAdapterReadResult<T> =
   | Readonly<{
       kind: "connection_failure";
       effect: "none";
-      code: CodexConnectionFailureCode;
+      code: CodexAdapterConnectionFailureCode;
     }>;
 
 export type CodexAdapterDiagnosticCode =
@@ -312,9 +324,10 @@ export type CodexAdapterEvent =
       status: "completed" | "failed" | "interrupted";
       finalAssistantMessage: Readonly<{ contentBlocks: readonly TextContentBlock[] }> | null;
       contentFailure: Readonly<{ code: "size_limit" | "invalid_content" }> | null;
+      resourceLimitExceeded?: true;
     }>
   | Readonly<{ kind: "diagnostic"; diagnostic: CodexAdapterDiagnostic }>
   | Readonly<{
       kind: "connection_failure";
-      code: CodexConnectionFailureCode | "unsupported_server_request" | "adapter_resource_limit";
+      code: CodexAdapterConnectionFailureCode;
     }>;

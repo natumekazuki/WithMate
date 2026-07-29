@@ -1,12 +1,16 @@
 import { ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS } from "../shared/allowed-additional-directories.js";
-import { APPLICATION_RUN_LIMITS } from "../shared/application-run-model.js";
+import {
+  APPLICATION_RUN_LIMITS,
+  type ApplicationRunExecutionOverrides,
+  type ApplicationRunExecutionSettings,
+} from "../shared/application-run-model.js";
 import {
   APPLICATION_RUN_OUTPUT_CATEGORIES,
   APPLICATION_RUN_OUTPUT_LIMITS,
 } from "../shared/application-run-output-model.js";
 import { APPLICATION_SESSION_MESSAGE_LIMITS } from "../shared/application-session-message-model.js";
 import { APPLICATION_SESSION_RUN_LIMITS } from "../shared/application-session-run-model.js";
-import type { TextContentBlock } from "../shared/message-content.js";
+import { RUN_MUTATION_INLINE_CONTENT_LIMITS, type TextContentBlock } from "../shared/message-content.js";
 import { SESSION_METADATA_LIMITS, type LocalRepositoryMetadata } from "../shared/session-metadata.js";
 
 export const CLI_SCHEMA_VERSION = "withmate-cli-v1" as const;
@@ -40,6 +44,7 @@ export const CLI_SESSION_LIMITS = {
 
 export const CLI_RUN_LIMITS = {
   maxSummaryLength: APPLICATION_RUN_LIMITS.maxSummaryLength,
+  maxExecutionSettingLength: APPLICATION_RUN_LIMITS.maxExecutionSettingLength,
   eventsDefaultItems: APPLICATION_RUN_LIMITS.eventsDefaultItems,
   eventsMaxItems: APPLICATION_RUN_LIMITS.eventsMaxItems,
   followDefaultWaitMs: APPLICATION_RUN_LIMITS.followDefaultWaitMs,
@@ -54,6 +59,8 @@ export const CLI_RUN_LIMITS = {
   chunkDefaultBytes: APPLICATION_RUN_OUTPUT_LIMITS.chunkDefaultBytes,
   chunkMaxBytes: APPLICATION_RUN_OUTPUT_LIMITS.chunkMaxBytes,
   maxDestinationPathLength: APPLICATION_RUN_OUTPUT_LIMITS.maxDestinationPathLength,
+  maxInlineContentBlocks: RUN_MUTATION_INLINE_CONTENT_LIMITS.maxBlocks,
+  maxInlineContentJsonBytes: RUN_MUTATION_INLINE_CONTENT_LIMITS.maxJsonBytes,
 } as const;
 
 export const CLI_RUN_OUTPUT_CATEGORIES = APPLICATION_RUN_OUTPUT_CATEGORIES;
@@ -88,7 +95,16 @@ export type CliSessionOperation =
   | "delete";
 
 export type CliRunOperation =
-  "status" | "events" | "follow" | "output-counts" | "outputs" | "output-preview" | "output-chunk" | "output-export";
+  | "start"
+  | "retry"
+  | "status"
+  | "events"
+  | "follow"
+  | "output-counts"
+  | "outputs"
+  | "output-preview"
+  | "output-chunk"
+  | "output-export";
 export type CliOperation = CliSessionOperation | CliRunOperation;
 
 export type CliCommandIdentity<TOperation extends CliOperation = CliOperation> = TOperation extends CliSessionOperation
@@ -198,6 +214,24 @@ export type CliSessionDeleteCommand = CliTimeoutOption &
     idempotencyKey: string;
   }>;
 
+export type CliRunStartCommand = CliTimeoutOption &
+  Readonly<{
+    identity: CliCommandIdentity<"start">;
+    sessionId: string;
+    idempotencyKey: string;
+    contentBlocks: readonly TextContentBlock[];
+    execution: ApplicationRunExecutionSettings;
+  }>;
+
+export type CliRunRetryCommand = CliTimeoutOption &
+  Readonly<{
+    identity: CliCommandIdentity<"retry">;
+    sessionId: string;
+    retryOfRunId: string;
+    idempotencyKey: string;
+    executionOverrides?: ApplicationRunExecutionOverrides;
+  }>;
+
 export type CliRunStatusCommand = CliTimeoutOption &
   Readonly<{
     identity: CliCommandIdentity<"status">;
@@ -266,6 +300,8 @@ export type CliValidatedSessionCommand =
   | CliSessionDeleteCommand;
 
 export type CliValidatedRunCommand =
+  | CliRunStartCommand
+  | CliRunRetryCommand
   | CliRunStatusCommand
   | CliRunEventsCommand
   | CliRunFollowCommand
@@ -360,7 +396,7 @@ export type CliApplicationError =
         | Readonly<{ scope: "root"; rootSessionId: string; current: number; limit: number }>
         | Readonly<{ scope: "session_tree"; rootSessionId: string; current: number; limit: number }>
         | Readonly<{ scope: "application"; current: number; limit: number }>
-        | Readonly<{ scope: "provider"; providerId: string; current: number; limit: number }>;
+        | Readonly<{ scope: "provider"; current: number; limit: number }>;
     }>
   | CliRunOutputPayloadUnavailableError
   | Readonly<{
@@ -863,6 +899,13 @@ export type CliRunFollowValue =
   | Readonly<{ reason: "terminal"; status: CliTerminalRunStatus; events: CliRunEventsValue }>
   | Readonly<{ reason: "deadline"; status: CliNonTerminalRunStatus; events: CliRunEventsValue }>;
 
+export type CliRunAdmissionValue = Readonly<{
+  sessionId: string;
+  runId: string;
+  retryOfRunId?: string;
+  phase: CliRunPhase;
+}>;
+
 export type CliRunOutputCategory = (typeof CLI_RUN_OUTPUT_CATEGORIES)[number];
 export type CliRunOutputRedaction = "not_required" | "applied" | "undetermined";
 
@@ -1066,19 +1109,21 @@ export type CliOperationOutput<TOperation extends CliSessionOperation = CliSessi
 }[TOperation];
 
 type CliRunOperationContract = {
-  status: CliRunStatusValue;
-  events: CliRunEventsValue;
-  follow: CliRunFollowValue;
-  "output-counts": CliRunOutputCountsValue;
-  outputs: CliRunOutputsValue;
-  "output-preview": CliRunOutputPreviewValue;
-  "output-chunk": CliRunOutputChunkValue;
-  "output-export": CliRunOutputExportValue;
+  start: Readonly<{ mode: "write"; value: CliRunAdmissionValue }>;
+  retry: Readonly<{ mode: "write"; value: CliRunAdmissionValue }>;
+  status: Readonly<{ mode: "read"; value: CliRunStatusValue }>;
+  events: Readonly<{ mode: "read"; value: CliRunEventsValue }>;
+  follow: Readonly<{ mode: "read"; value: CliRunFollowValue }>;
+  "output-counts": Readonly<{ mode: "read"; value: CliRunOutputCountsValue }>;
+  outputs: Readonly<{ mode: "read"; value: CliRunOutputsValue }>;
+  "output-preview": Readonly<{ mode: "read"; value: CliRunOutputPreviewValue }>;
+  "output-chunk": Readonly<{ mode: "read"; value: CliRunOutputChunkValue }>;
+  "output-export": Readonly<{ mode: "read"; value: CliRunOutputExportValue }>;
 };
 
 type CliRunOperationApplicationResponse<TOperation extends CliRunOperation> = TOperation extends "output-export"
   ? CliRunOutputExportResponse
-  : CliApplicationResponse<CliRunOperationContract[TOperation], "read">;
+  : CliApplicationResponse<CliRunOperationContract[TOperation]["value"], CliRunOperationContract[TOperation]["mode"]>;
 
 export type CliRunOperationOutput<TOperation extends CliRunOperation = CliRunOperation> = {
   [TCurrent in TOperation]: Readonly<{

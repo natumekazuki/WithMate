@@ -1,10 +1,15 @@
-import { exitCodeForCliApplicationResponse, projectCliReadApplicationResponse } from "./application-response.js";
+import {
+  exitCodeForCliApplicationResponse,
+  projectCliReadApplicationResponse,
+  projectCliWriteApplicationResponse,
+} from "./application-response.js";
 import {
   CLI_EXIT_CODES,
   CLI_RUN_LIMITS,
   CLI_SCHEMA_VERSION,
   CLI_SESSION_LIMITS,
   type CliExitCode,
+  type CliRunAdmissionValue,
   type CliRunEventsValue,
   type CliRunFollowValue,
   type CliRunOperation,
@@ -25,11 +30,14 @@ export function projectCliRunOperationOutput(
 ): CliRunOperationProjectionResult {
   if (isRunOutputCommand(command)) return projectCliRunOutputOperationOutput(command, applicationResponse);
   try {
-    const projected = projectCliReadApplicationResponse(
-      applicationResponse,
-      (value) => projectRunValue(command, value),
-      CLI_RUN_LIMITS.eventsMaxItems,
-    );
+    const projected =
+      isCommandFor(command, "start") || isCommandFor(command, "retry")
+        ? projectCliWriteApplicationResponse(applicationResponse, (value) => projectRunValue(command, value))
+        : projectCliReadApplicationResponse(
+            applicationResponse,
+            (value) => projectRunValue(command, value),
+            CLI_RUN_LIMITS.eventsMaxItems,
+          );
     validateRunResponse(command, projected);
     const output = {
       schemaVersion: CLI_SCHEMA_VERSION,
@@ -58,10 +66,40 @@ export function projectCliRunOperationOutput(
 }
 
 function projectRunValue(command: CliValidatedRunCommand, value: unknown): unknown {
+  if (isCommandFor(command, "start") || isCommandFor(command, "retry")) {
+    return projectAdmission(value, command);
+  }
   if (isCommandFor(command, "status")) return projectStatus(value, command.sessionId, command.runId);
   if (isCommandFor(command, "events")) return projectEvents(value, command.sessionId, command.runId, command.limit);
   if (isCommandFor(command, "follow")) return projectFollow(value, command.sessionId, command.runId, command.limit);
   malformed();
+}
+
+function projectAdmission(value: unknown, command: CliValidatedRunCommand): CliRunAdmissionValue {
+  const admission = exactRecord(
+    value,
+    isCommandFor(command, "retry") ? ["sessionId", "runId", "retryOfRunId", "phase"] : ["sessionId", "runId", "phase"],
+  );
+  const sessionId = boundedString(admission.sessionId);
+  const runId = boundedString(admission.runId);
+  const phase = enumValue(admission.phase, [
+    "queued",
+    "starting",
+    "active",
+    "canceling",
+    "finalizing",
+    "completed",
+    "failed",
+    "canceled",
+    "interrupted",
+  ]);
+  if (sessionId !== command.sessionId) malformed();
+  if (isCommandFor(command, "retry")) {
+    const retryOfRunId = boundedString(admission.retryOfRunId);
+    if (retryOfRunId !== command.retryOfRunId) malformed();
+    return { sessionId, runId, retryOfRunId, phase };
+  }
+  return { sessionId, runId, phase };
 }
 
 function projectStatus(value: unknown, expectedSessionId: string, expectedRunId: string): CliRunStatusValue {
@@ -222,9 +260,19 @@ function projectFollow(
 
 function validateRunResponse(
   command: CliValidatedRunCommand,
-  response: Readonly<{ overallStatus: string; value?: unknown; issues?: readonly unknown[] }>,
+  response: Readonly<{
+    overallStatus: string;
+    value?: unknown;
+    issues?: readonly unknown[];
+    persistence: unknown;
+  }>,
 ): void {
   if (response.overallStatus === "failure") return;
+  if (isCommandFor(command, "start") || isCommandFor(command, "retry")) {
+    const persistence = record(response.persistence);
+    if (persistence.replayed === false && record(response.value).phase !== "queued") malformed();
+    return;
+  }
   if (isCommandFor(command, "status")) {
     if (response.overallStatus === "partial_success") malformed();
     return;
@@ -285,6 +333,19 @@ function snapshotDenseArray(value: unknown, maxLength: number): readonly unknown
 function record(value: unknown): Readonly<Record<string, unknown>> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) malformed();
   return value as Readonly<Record<string, unknown>>;
+}
+
+function exactRecord(value: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> {
+  const candidate = record(value);
+  const ownKeys = Reflect.ownKeys(candidate);
+  if (
+    ownKeys.length !== keys.length ||
+    ownKeys.some((key) => typeof key !== "string" || !keys.includes(key)) ||
+    keys.some((key) => !Object.hasOwn(candidate, key))
+  ) {
+    malformed();
+  }
+  return candidate;
 }
 
 function boundedString(value: unknown, maxLength: number = CLI_SESSION_LIMITS.maxIdentifierLength): string {

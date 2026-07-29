@@ -1,4 +1,5 @@
 import type { LocalRepositoryMetadata, SessionMetadata } from "./session-metadata.js";
+import { APPLICATION_RUN_PAYLOAD_LIMITS } from "./application-run-payload-limits.js";
 import type { TextContentBlock } from "./message-content.js";
 
 export const REPOSITORY_WRITE_OPERATIONS = {
@@ -23,6 +24,11 @@ export const REPOSITORY_WRITE_OPERATIONS = {
   childResultCollect: "repository.child-result.collect",
 } as const;
 
+export const RUN_WRITE_PAYLOAD_LIMITS = {
+  executionSnapshotMaxJsonBytes: APPLICATION_RUN_PAYLOAD_LIMITS.executionSnapshotMaxJsonBytes,
+  providerRequestMaxJsonBytes: APPLICATION_RUN_PAYLOAD_LIMITS.providerRequestMaxJsonBytes,
+} as const;
+
 export type SessionLifecycleStatus = "active" | "archived" | "closed";
 
 export type RepositoryJsonValue =
@@ -31,6 +37,7 @@ export type RepositoryJsonValue =
 export type RunExecutionSnapshot = Readonly<{
   providerId: string;
   model: string;
+  modelSelection: "explicit" | "inherited";
   reasoning: RepositoryJsonValue;
   approval: RepositoryJsonValue;
   sandbox: RepositoryJsonValue;
@@ -77,14 +84,6 @@ export type SessionDeletionCleanupCompleteCommand = Readonly<{
 
 export type StartupRepairCommand = Readonly<Record<string, never>>;
 
-export type RunAdmissionBindingIntent =
-  | Readonly<{ kind: "reuse"; bindingId: string }>
-  | Readonly<{
-      kind: "create";
-      bindingId: string;
-      persistenceMode: "persistent" | "ephemeral";
-    }>;
-
 export type RunAdmissionDispatch = Readonly<{
   providerRequest: Readonly<{ [key: string]: RepositoryJsonValue }>;
   providerIdempotencyKey: string | null;
@@ -100,12 +99,9 @@ export type NormalRunAdmissionCommand = Readonly<{
   workspaceKey: string;
   idempotencyKey: string;
   message: Readonly<{
-    id: string;
     contentBlocks: readonly TextContentBlock[];
   }>;
-  run: RunAdmissionDraft;
-  attemptId: string;
-  bindingIntent: RunAdmissionBindingIntent;
+  run: Readonly<{ executionSnapshot: RunExecutionSnapshot }>;
   dispatch: RunAdmissionDispatch;
 }>;
 
@@ -114,9 +110,7 @@ export type RetryRunAdmissionCommand = Readonly<{
   workspaceKey: string;
   idempotencyKey: string;
   retryOfRunId: string;
-  run: RunAdmissionDraft;
-  attemptId: string;
-  bindingIntent: RunAdmissionBindingIntent;
+  run: Readonly<{ executionSnapshot: RunExecutionSnapshot }>;
   dispatch: RunAdmissionDispatch;
 }>;
 
@@ -264,10 +258,18 @@ export type RunOutputDraft = Readonly<{
   payload: RunOutputPayloadCommand;
 }>;
 
+export type RunProviderExecutionCorrelation = Readonly<{
+  attemptId: string;
+  bindingId: string;
+  externalConversationId: string;
+  externalExecutionId: string;
+}>;
+
 export type RunOutputAppendCommand = Readonly<{
   sessionId: string;
   workspaceKey: string;
   runId: string;
+  providerExecution: RunProviderExecutionCorrelation;
   item: RunOutputDraft;
 }>;
 
@@ -302,7 +304,8 @@ export type RunTerminalPreDispatchResolution =
   | Readonly<{ kind: "not_applicable" }>
   | Readonly<{ kind: "binding_creation_not_sent" }>
   | Readonly<{ kind: "binding_creation_ambiguous" }>
-  | Readonly<{ kind: "dispatch_not_sent" }>;
+  | Readonly<{ kind: "dispatch_not_sent" }>
+  | Readonly<{ kind: "dispatch_ambiguous" }>;
 
 export type RunTerminalCommand = Readonly<{
   sessionId: string;
@@ -313,6 +316,7 @@ export type RunTerminalCommand = Readonly<{
     id: string;
     dedupeKey: string;
   }>;
+  providerExecution: RunProviderExecutionCorrelation | null;
   preDispatchResolution: RunTerminalPreDispatchResolution;
   outcome: RunTerminalOutcome;
   outputs: readonly RunTerminalOutputDraft[];
@@ -449,8 +453,10 @@ export type NormalRunAdmissionResult = Readonly<{
   runId: string;
   attemptId: string;
   bindingId: string;
-  bindingState: "creating" | "active";
-  dispatchState: "pending";
+  runPhase:
+    "queued" | "starting" | "active" | "canceling" | "finalizing" | "completed" | "failed" | "canceled" | "interrupted";
+  bindingState: "creating" | "active" | "invalidated" | "superseded";
+  dispatchState: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
   admittedAt: number;
 }>;
 

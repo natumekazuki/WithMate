@@ -298,6 +298,8 @@ test("tombstone overflow preserves the accepted terminal before failing", () => 
   const overflow = lifecycle.acceptTurnTerminal("thread-1", "turn-overflow", "completed");
   assert.equal(overflow.fatal, true);
   assert.deepEqual(eventKinds(overflow), ["turn_terminal", "diagnostic", "connection_failure"]);
+  const overflowTerminal = overflow.events.find((event) => event.kind === "turn_terminal");
+  assert.equal(overflowTerminal?.resourceLimitExceeded, true);
   assert.deepEqual(lifecycle.snapshot(), {
     failed: true,
     trackedThreads: 1,

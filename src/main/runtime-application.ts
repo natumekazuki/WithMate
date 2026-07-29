@@ -29,13 +29,20 @@ import type {
   ApplicationSessionRunOperations,
 } from "../shared/application-session-run-model.js";
 import { resolveWithMateApplicationDirectory } from "./application-data-path.js";
+import { createApplicationRunDispatchService } from "./application-run-dispatch-service.js";
+import { createApplicationRunEventService } from "./application-run-event-service.js";
 import { createApplicationRunOperations } from "./application-run-service.js";
 import { createApplicationRunOutputOperations } from "./application-run-output-service.js";
+import {
+  ApplicationRunRuntimeShutdownPendingError,
+  createApplicationRunRuntimeService,
+} from "./application-run-runtime-service.js";
 import { createApplicationSessionOperations } from "./application-session-service.js";
 import { createApplicationSessionMessageOperations } from "./application-session-message-service.js";
 import { createApplicationSessionRunOperations } from "./application-session-run-service.js";
 import { PersistenceWorkerClient } from "./persistence-worker-client.js";
 import { LocalSessionFilesCleanup } from "./session-files-cleanup.js";
+import { CodexApplicationRunRuntimeFactory } from "./runtime-codex-provider.js";
 import type { RuntimeOwnerIdentity } from "./runtime-host/runtime-owner-identity.js";
 
 const localRuntimeAuthorization = Object.freeze({
@@ -62,6 +69,13 @@ export type OwnedRuntimeApplication = RuntimeApplication &
     fatalError: Promise<Error>;
   }>;
 
+export class RuntimeApplicationShutdownPendingError extends Error {
+  constructor(options: ErrorOptions = {}) {
+    super("Runtime Application persistence closure is still pending.", options);
+    this.name = "RuntimeApplicationShutdownPendingError";
+  }
+}
+
 export async function startRuntimeApplication(
   identity: RuntimeOwnerIdentity,
   control: RuntimeApplicationControl = {},
@@ -87,17 +101,44 @@ export async function startRuntimeApplication(
   try {
     await runControlled(sessionFiles.assertStorageOwner(), deadlineAt, control.signal);
     const access = new LocalRuntimeAccessValidator();
+    const runEvents = createApplicationRunEventService(client);
+    const runDispatch = createApplicationRunDispatchService(client, runEvents);
+    const runRuntime = createApplicationRunRuntimeService(client, new CodexApplicationRunRuntimeFactory(), {
+      dispatchReady: runDispatch,
+      events: runEvents,
+    });
     let shutdownPromise: Promise<Readonly<{ checkpoint: "completed" | "failed" }>> | undefined;
     return {
       operations: createApplicationSessionOperations(client, { access, sessionFiles, snapshotAuthorization }),
       messageOperations: createApplicationSessionMessageOperations(client, { access, snapshotAuthorization }),
       sessionRunOperations: createApplicationSessionRunOperations(client, { access, snapshotAuthorization }),
-      runOperations: createApplicationRunOperations(client, { access, snapshotAuthorization }),
+      runOperations: createApplicationRunOperations(client, {
+        access,
+        snapshotAuthorization,
+        handoff: runRuntime,
+        liveActivity: runEvents,
+      }),
       runOutputOperations: createApplicationRunOutputOperations(client, { access, snapshotAuthorization }),
       authorization: localRuntimeAuthorization,
       fatalError: client.fatalError,
       shutdown(shutdownControl = {}) {
-        shutdownPromise ??= client.shutdown(shutdownControl.timeoutMs ?? 10_000, shutdownControl.signal);
+        if (shutdownPromise === undefined) {
+          const attempt = (async () => {
+            try {
+              await runRuntime.shutdown();
+            } catch (error) {
+              if (error instanceof ApplicationRunRuntimeShutdownPendingError) {
+                throw new RuntimeApplicationShutdownPendingError({ cause: error });
+              }
+              throw error;
+            }
+            return client.shutdown(shutdownControl.timeoutMs ?? 10_000, shutdownControl.signal);
+          })().catch((error: unknown) => {
+            if (shutdownPromise === attempt) shutdownPromise = undefined;
+            throw error;
+          });
+          shutdownPromise = attempt;
+        }
         return shutdownPromise;
       },
     };

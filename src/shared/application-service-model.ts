@@ -178,7 +178,7 @@ export type ApplicationCapacityExceededDetails =
   | Readonly<{ scope: "root"; rootSessionId: string; current: number; limit: number }>
   | Readonly<{ scope: "session_tree"; rootSessionId: string; current: number; limit: number }>
   | Readonly<{ scope: "application"; current: number; limit: number }>
-  | Readonly<{ scope: "provider"; providerId: string; current: number; limit: number }>;
+  | Readonly<{ scope: "provider"; current: number; limit: number }>;
 
 export type ApplicationDomainError =
   | Readonly<{

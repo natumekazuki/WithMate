@@ -4,10 +4,12 @@ import type {
   ApplicationOperationResponse,
   ApplicationSessionOperationContext,
 } from "./application-service-model.js";
+import type { TextContentBlock } from "./message-content.js";
 import { REPOSITORY_READ_LIMITS } from "./repository-read-model.js";
 
 export const APPLICATION_RUN_LIMITS = {
   maxIdentifierLength: 1_024,
+  maxExecutionSettingLength: 1_024,
   maxCursorLength: 2_048,
   maxSummaryLength: 4_096,
   eventsDefaultItems: REPOSITORY_READ_LIMITS.events.default,
@@ -19,7 +21,24 @@ export const APPLICATION_RUN_LIMITS = {
   followMaxPollMs: 5_000,
 } as const;
 
-export type ApplicationRunOperation = "status" | "events" | "follow";
+export type ApplicationRunOperation = "start" | "retry" | "status" | "events" | "follow";
+
+export type ApplicationRunSandboxSetting =
+  | Readonly<{ mode: "read-only"; networkAccess: boolean }>
+  | Readonly<{ mode: "workspace-write"; networkAccess: boolean }>
+  | Readonly<{ mode: "danger-full-access" }>;
+
+export type ApplicationRunExecutionSettings = Readonly<{
+  model: string;
+  reasoningEffort: string;
+  sandbox: ApplicationRunSandboxSetting;
+}>;
+
+export type ApplicationRunExecutionOverrides = Readonly<{
+  model?: string;
+  reasoningEffort?: string;
+  sandbox?: ApplicationRunSandboxSetting;
+}>;
 
 export type ApplicationRunPhase =
   "queued" | "starting" | "active" | "canceling" | "finalizing" | "completed" | "failed" | "canceled" | "interrupted";
@@ -129,6 +148,29 @@ export type ApplicationRunStatusRequest<TAuthorizationContext> = Readonly<{
   runId: string;
 }>;
 
+export type ApplicationRunStartRequest<TAuthorizationContext> = Readonly<{
+  context: ApplicationSessionOperationContext<TAuthorizationContext>;
+  sessionId: string;
+  idempotencyKey: string;
+  contentBlocks: readonly TextContentBlock[];
+  execution: ApplicationRunExecutionSettings;
+}>;
+
+export type ApplicationRunRetryRequest<TAuthorizationContext> = Readonly<{
+  context: ApplicationSessionOperationContext<TAuthorizationContext>;
+  sessionId: string;
+  retryOfRunId: string;
+  idempotencyKey: string;
+  executionOverrides?: ApplicationRunExecutionOverrides;
+}>;
+
+export type ApplicationRunAdmissionResult = Readonly<{
+  sessionId: string;
+  runId: string;
+  retryOfRunId?: string;
+  phase: ApplicationRunPhase;
+}>;
+
 export type ApplicationRunEventsRequest<TAuthorizationContext> = ApplicationRunStatusRequest<TAuthorizationContext> &
   Readonly<{
     cursor?: string;
@@ -152,22 +194,50 @@ export type ApplicationRunFollowResult =
   | Readonly<{ reason: "terminal"; status: ApplicationTerminalRunStatus; events: ApplicationRunEventPage }>
   | Readonly<{ reason: "deadline"; status: ApplicationNonTerminalRunStatus; events: ApplicationRunEventPage }>;
 
-export type ApplicationRunAccessValidationInput<TAuthorizationContext> = Readonly<{
-  operation: ApplicationRunOperation;
-  access: "read";
-  context: ApplicationSessionOperationContext<TAuthorizationContext>;
-  target: Readonly<{
-    kind: "run";
-    sessionId: string;
-    runId: string;
-  }>;
-}>;
+export type ApplicationRunAccessValidationInput<TAuthorizationContext> =
+  | Readonly<{
+      operation: "start";
+      access: "write";
+      context: ApplicationSessionOperationContext<TAuthorizationContext>;
+      target: Readonly<{
+        kind: "session_run_start";
+        sessionId: string;
+      }>;
+    }>
+  | Readonly<{
+      operation: "retry";
+      access: "write";
+      context: ApplicationSessionOperationContext<TAuthorizationContext>;
+      target: Readonly<{
+        kind: "session_run_retry";
+        sessionId: string;
+        retryOfRunId: string;
+      }>;
+    }>
+  | Readonly<{
+      operation: "status" | "events" | "follow";
+      access: "read";
+      context: ApplicationSessionOperationContext<TAuthorizationContext>;
+      target: Readonly<{
+        kind: "run";
+        sessionId: string;
+        runId: string;
+      }>;
+    }>;
 
 export interface ApplicationRunAccessValidator<TAuthorizationContext> {
   authorize(input: ApplicationRunAccessValidationInput<TAuthorizationContext>): Promise<ApplicationAccessDecision>;
 }
 
 export interface ApplicationRunOperations<TAuthorizationContext> {
+  start(
+    request: ApplicationRunStartRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationRunAdmissionResult, "write">>;
+  retry(
+    request: ApplicationRunRetryRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationRunAdmissionResult, "write">>;
   status(
     request: ApplicationRunStatusRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,

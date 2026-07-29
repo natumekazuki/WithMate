@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import path from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -11,9 +12,15 @@ import {
   CODEX_TRANSPORT_LIMITS,
   type CodexAppServerTransportOptions,
 } from "../src/main/providers/codex/index.js";
+import { ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS } from "../src/shared/allowed-additional-directories.js";
+import { MESSAGE_CONTENT_LIMITS } from "../src/shared/message-content.js";
 import { CodexWireWriteError } from "../src/main/providers/codex/transport-error.js";
-import { CodexStdioWireWriter } from "../src/main/providers/codex/stdio-wire-writer.js";
+import { CodexStdioWireWriter, encodeCodexWireMessage } from "../src/main/providers/codex/stdio-wire-writer.js";
 import { observeEmitterErrors, replaceWithLateErrorGuard } from "../src/main/providers/codex/process-error-boundary.js";
+import {
+  OwnedCodexProcessAcquisitionError,
+  spawnOwnedCodexProcess,
+} from "../src/main/providers/codex/owned-process.js";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/codex-app-server-fixture.mjs", import.meta.url));
 const NODE_TIMER_MAX_MS = 2_147_483_647;
@@ -49,6 +56,49 @@ test("production transport validates clientInfo before process creation", () => 
       /initialization frame/u,
     );
   }
+});
+
+test("default wire and queue limits admit a maximum Message with the accepted writable-root budget", async () => {
+  const emptyJsonBytes = Buffer.byteLength(JSON.stringify([{ type: "text", text: "" }]), "utf8");
+  const exactText = "x".repeat(MESSAGE_CONTENT_LIMITS.maxJsonBytes - emptyJsonBytes);
+  const writableRoots = [process.cwd(), ...nearMaximumAdditionalDirectories()];
+  const message = {
+    id: 1,
+    method: "turn/start",
+    params: {
+      threadId: "thread-1",
+      input: [{ type: "text", text: exactText, text_elements: [] }],
+      cwd: process.cwd(),
+      approvalPolicy: "never",
+      sandboxPolicy: {
+        type: "workspaceWrite",
+        writableRoots,
+        networkAccess: false,
+        excludeTmpdirEnvVar: true,
+        excludeSlashTmp: true,
+      },
+    },
+  } as const;
+  const encoded = encodeCodexWireMessage(message, CODEX_TRANSPORT_LIMITS.maxLineBytes);
+  assert.ok(Buffer.isBuffer(encoded));
+  if (!Buffer.isBuffer(encoded)) return;
+  assert.ok(encoded.byteLength > 8 * 1024 * 1024);
+  assert.ok(encoded.byteLength <= CODEX_TRANSPORT_LIMITS.maxLineBytes + 1);
+  assert.ok(encoded.byteLength <= CODEX_TRANSPORT_LIMITS.maxQueuedWriteBytes);
+
+  let observedBytes = 0;
+  const stream = new Writable({
+    write(chunk: Buffer, _encoding, callback) {
+      observedBytes = chunk.byteLength;
+      callback();
+    },
+  });
+  const writer = new CodexStdioWireWriter(stream, () => assert.fail("write must not fail"));
+
+  await writer.write(message, () => undefined);
+
+  assert.equal(observedBytes, encoded.byteLength);
+  assert.equal(writer.queuedBytes, 0);
 });
 
 test("production transport rejects non-array, sparse, and non-string arguments before process creation", () => {
@@ -136,6 +186,113 @@ test("transport owns a real child through start, handshake, request, and idempot
   await firstClose;
   assert.equal(transport.state, "closed");
   await assert.rejects(transport.request("echo", {}), isFailure("request_not_sent", "not_ready"));
+});
+
+test("transport retains a process owner when release fails and retries the same owner", async (context) => {
+  let releaseAttempts = 0;
+  const transport = new CodexAppServerTransport(
+    {
+      executable: "node",
+      arguments: [fixturePath, "normal"],
+      clientInfo: { name: "withmate-test", version: "1.0.0" },
+      startupTimeoutMs: 1_000,
+      closeTimeoutMs: 500,
+    },
+    {
+      spawnOwnedProcess(options) {
+        const ownedProcess = spawnOwnedCodexProcess(options);
+        return {
+          ...ownedProcess,
+          release() {
+            releaseAttempts += 1;
+            if (releaseAttempts === 1) throw new Error("transient release failure");
+            ownedProcess.release();
+          },
+        };
+      },
+    },
+  );
+  context.after(() => transport.close().catch(() => undefined));
+  await transport.start();
+
+  await assert.rejects(transport.close(), isFailure("connection_failure", "close_failed"));
+  assert.equal(transport.state, "failed");
+  assert.equal(releaseAttempts, 1);
+
+  await transport.close();
+  assert.equal(transport.state, "closed");
+  assert.equal(releaseAttempts, 2);
+});
+
+test("transport retains a partial acquisition owner and retries its failed release", async () => {
+  let releaseAttempts = 0;
+  const transport = new CodexAppServerTransport(
+    {
+      executable: "unused",
+      clientInfo: { name: "withmate-test", version: "1.0.0" },
+    },
+    {
+      spawnOwnedProcess() {
+        throw new OwnedCodexProcessAcquisitionError({
+          terminate() {},
+          release() {
+            releaseAttempts += 1;
+            if (releaseAttempts === 1) throw new Error("transient partial-owner release failure");
+          },
+        });
+      },
+    },
+  );
+
+  await assert.rejects(transport.start(), isFailure("connection_failure", "close_failed"));
+  assert.equal(transport.state, "failed");
+  assert.equal(releaseAttempts, 1);
+
+  await transport.close();
+  assert.equal(transport.state, "closed");
+  assert.equal(releaseAttempts, 2);
+});
+
+test("Windows assignment failure preserves the partial Job owner through release retry", async (context) => {
+  let releaseAttempts = 0;
+  const transport = new CodexAppServerTransport(
+    {
+      executable: "unused",
+      clientInfo: { name: "withmate-test", version: "1.0.0" },
+      closeTimeoutMs: 500,
+    },
+    {
+      spawnOwnedProcess(options) {
+        return spawnOwnedCodexProcess(options, {
+          platform: "win32",
+          spawnProcess: spawn,
+          createJobObject() {
+            return {
+              assignProcess() {
+                throw new Error("injected assignment failure");
+              },
+              terminate() {
+                throw new Error("the unassigned child requires the direct-kill fallback");
+              },
+              close() {
+                releaseAttempts += 1;
+                if (releaseAttempts === 1) throw new Error("transient Job release failure");
+              },
+            };
+          },
+        });
+      },
+    },
+  );
+  context.after(() => transport.close().catch(() => undefined));
+
+  await assert.rejects(transport.start(), isFailure("connection_failure", "close_failed"));
+  assert.equal(transport.state, "failed");
+  assert.equal(releaseAttempts, 1);
+
+  await transport.close();
+  assert.equal(transport.state, "closed");
+  assert.equal(releaseAttempts, 2);
 });
 
 test("real process responses can arrive in reverse order", async () => {
@@ -559,6 +716,27 @@ test("close racing a response settles the request once and leaves no child owner
   assert.equal(transport.pendingRequestCount, 0);
   assert.equal(transport.state, "closed");
 });
+
+function nearMaximumAdditionalDirectories(): readonly string[] {
+  const targetLength = ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxPathLength - 32;
+  const directories = Array.from({ length: 128 }, (_value, index) => {
+    const prefix = path.join(path.parse(process.cwd()).root, `scope-${index.toString().padStart(3, "0")}-`);
+    return `${prefix}${"x".repeat(targetLength - prefix.length)}`;
+  });
+  let remaining =
+    ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxJsonBytes - Buffer.byteLength(JSON.stringify(directories), "utf8");
+  for (let index = 0; index < directories.length && remaining > 0; index += 1) {
+    const capacity = ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxPathLength - (directories[index] as string).length;
+    const appended = Math.min(capacity, remaining);
+    directories[index] = `${directories[index]}${"x".repeat(appended)}`;
+    remaining -= appended;
+  }
+  assert.equal(
+    Buffer.byteLength(JSON.stringify(directories), "utf8"),
+    ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxJsonBytes,
+  );
+  return Object.freeze(directories);
+}
 
 function createTransport(
   scenario: string,

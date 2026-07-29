@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 
 import { CODEX_ADAPTER_LIMITS } from "../src/main/providers/codex/index.js";
-import { resolveWorkspaceIdentity } from "../src/shared/workspace-path.js";
+import { ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS } from "../src/shared/allowed-additional-directories.js";
+import { MESSAGE_CONTENT_LIMITS } from "../src/shared/message-content.js";
+import { resolveWorkspaceIdentity, WORKSPACE_PATH_MAX_LENGTH } from "../src/shared/workspace-path.js";
 import {
   classifyCodexNotification,
   decodeModelListResponse,
@@ -42,6 +45,7 @@ test("adapter snapshots supported operation inputs into immutable exact values",
     snapshotResumeThreadInput({
       threadId: "thread-1",
       model: "gpt-5.4",
+      modelSelection: "inherited",
       workspacePath: process.cwd(),
       approvalPolicy: "never",
       sandboxMode: "read-only",
@@ -64,6 +68,7 @@ test("adapter snapshots supported operation inputs into immutable exact values",
       networkAccess: false,
     },
     model: "gpt-5.4",
+    modelSelection: "explicit",
     reasoningEffort: "medium",
     reasoningSummary: "concise",
   });
@@ -71,6 +76,7 @@ test("adapter snapshots supported operation inputs into immutable exact values",
   if (!startTurn.ok) assert.fail("expected a valid turn/start input");
   assert.equal(Object.isFrozen(startTurn.value.contentBlocks), true);
   assert.equal(Object.isFrozen(startTurn.value.contentBlocks[0]), true);
+  assert.equal(startTurn.value.modelSelection, "explicit");
 
   assert.equal(
     snapshotSteerTurnInput({
@@ -84,6 +90,87 @@ test("adapter snapshots supported operation inputs into immutable exact values",
     ok: true,
     value: { threadId: "thread-1", turnId: "turn-1" },
   });
+});
+
+test("thread start and resume accept canonical multibyte workspace paths through the shared character limit", () => {
+  const workspacePath = path.resolve(`workspace-${"あ".repeat(21_850)}`);
+  assert.ok(workspacePath.length <= WORKSPACE_PATH_MAX_LENGTH);
+  assert.ok(Buffer.byteLength(workspacePath, "utf8") > CODEX_ADAPTER_LIMITS.maxShortStringBytes);
+  assert.notEqual(resolveWorkspaceIdentity(workspacePath), undefined);
+
+  const start = snapshotStartThreadInput({
+    model: "gpt-5.4",
+    workspacePath,
+    approvalPolicy: "never",
+    sandboxMode: "workspace-write",
+    persistence: "persistent",
+  });
+  assert.equal(start.ok, true);
+  if (start.ok) assert.equal(start.value.workspacePath, workspacePath);
+
+  const resume = snapshotResumeThreadInput({
+    threadId: "thread-1",
+    workspacePath,
+    approvalPolicy: "never",
+    sandboxMode: "workspace-write",
+  });
+  assert.equal(resume.ok, true);
+  if (resume.ok) assert.equal(resume.value.workspacePath, workspacePath);
+});
+
+test("turn start and steer preserve the Message content byte and block ceilings", () => {
+  const emptyJsonBytes = Buffer.byteLength(JSON.stringify([{ type: "text", text: "" }]), "utf8");
+  const exactText = "x".repeat(MESSAGE_CONTENT_LIMITS.maxJsonBytes - emptyJsonBytes);
+  const exactBytes = [{ type: "text" as const, text: exactText }];
+  const exactBlocks = Array.from({ length: MESSAGE_CONTENT_LIMITS.maxBlocks }, () => ({
+    type: "text" as const,
+    text: "",
+  }));
+
+  for (const snapshot of [
+    (contentBlocks: typeof exactBytes) => snapshotStartTurnInput({ threadId: "thread-1", contentBlocks }),
+    (contentBlocks: typeof exactBytes) =>
+      snapshotSteerTurnInput({ threadId: "thread-1", expectedTurnId: "turn-1", contentBlocks }),
+  ]) {
+    assert.equal(snapshot(exactBytes).ok, true);
+    assert.equal(snapshot([{ type: "text", text: `${exactText}x` }]).ok, false);
+  }
+
+  assert.equal(snapshotStartTurnInput({ threadId: "thread-1", contentBlocks: exactBlocks }).ok, true);
+  assert.equal(
+    snapshotStartTurnInput({
+      threadId: "thread-1",
+      contentBlocks: [...exactBlocks, { type: "text", text: "" }],
+    }).ok,
+    false,
+  );
+});
+
+test("turn start accepts a maximum Message combined with the accepted writable-root budget", () => {
+  const emptyJsonBytes = Buffer.byteLength(JSON.stringify([{ type: "text", text: "" }]), "utf8");
+  const contentBlocks = [
+    {
+      type: "text" as const,
+      text: "x".repeat(MESSAGE_CONTENT_LIMITS.maxJsonBytes - emptyJsonBytes),
+    },
+  ];
+  const writableRoots = [process.cwd(), ...nearMaximumAdditionalDirectories()];
+  const input = {
+    threadId: "thread-1",
+    contentBlocks,
+    workspacePath: process.cwd(),
+    approvalPolicy: "never" as const,
+    sandboxPolicy: {
+      mode: "workspace-write" as const,
+      writableRoots,
+      networkAccess: false,
+    },
+    model: "gpt-5.4",
+    reasoningEffort: "medium",
+  };
+
+  assert.ok(Buffer.byteLength(JSON.stringify(input), "utf8") > 8 * 1024 * 1024);
+  assert.equal(snapshotStartTurnInput(input).ok, true);
 });
 
 test("adapter input validators reject accessors, sparse arrays, aliases, prototypes, and unknown fields", () => {
@@ -115,6 +202,9 @@ test("adapter input validators reject accessors, sparse arrays, aliases, prototy
   Object.assign(customPrototype, { threadId: "thread-1", turnId: "turn-1" });
   assert.deepEqual(snapshotInterruptTurnInput(customPrototype), { ok: false });
   assert.deepEqual(snapshotListModelsInput({ pageSize: 1, future: true }), { ok: false });
+  assert.deepEqual(snapshotResumeThreadInput({ threadId: "thread-1", model: "gpt-5.4", modelSelection: "future" }), {
+    ok: false,
+  });
 
   const hostile = new Proxy(
     {},
@@ -797,11 +887,17 @@ test("status mapping preserves idle versus terminal semantics", () => {
   assert.equal(toAdapterTurnStatus("interrupted"), "interrupted");
 });
 
-test("item and input text caps are enforced by UTF-8 byte length", () => {
+test("item and input text caps are enforced by their respective UTF-8 byte limits", () => {
+  const emptyJsonBytes = Buffer.byteLength(JSON.stringify([{ type: "text", text: "" }]), "utf8");
   assert.deepEqual(
     snapshotStartTurnInput({
       threadId: "thread-1",
-      contentBlocks: [{ type: "text", text: "あ".repeat(Math.ceil(CODEX_ADAPTER_LIMITS.maxItemTextBytes / 3) + 1) }],
+      contentBlocks: [
+        {
+          type: "text",
+          text: "x".repeat(MESSAGE_CONTENT_LIMITS.maxJsonBytes - emptyJsonBytes + 1),
+        },
+      ],
     }),
     { ok: false },
   );
@@ -836,6 +932,27 @@ function modelFixture(overrides: Readonly<Record<string, unknown>> = {}): Record
     isDefault: true,
     ...overrides,
   };
+}
+
+function nearMaximumAdditionalDirectories(): readonly string[] {
+  const targetLength = ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxPathLength - 32;
+  const directories = Array.from({ length: 128 }, (_value, index) => {
+    const prefix = path.join(path.parse(process.cwd()).root, `scope-${index.toString().padStart(3, "0")}-`);
+    return `${prefix}${"x".repeat(targetLength - prefix.length)}`;
+  });
+  let remaining =
+    ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxJsonBytes - Buffer.byteLength(JSON.stringify(directories), "utf8");
+  for (let index = 0; index < directories.length && remaining > 0; index += 1) {
+    const capacity = ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxPathLength - (directories[index] as string).length;
+    const appended = Math.min(capacity, remaining);
+    directories[index] = `${directories[index]}${"x".repeat(appended)}`;
+    remaining -= appended;
+  }
+  assert.equal(
+    Buffer.byteLength(JSON.stringify(directories), "utf8"),
+    ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS.maxJsonBytes,
+  );
+  return Object.freeze(directories);
 }
 
 function threadOperationFixture(overrides: Readonly<Record<string, unknown>> = {}): Record<string, unknown> {

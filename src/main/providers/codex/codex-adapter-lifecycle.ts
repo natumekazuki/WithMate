@@ -212,7 +212,12 @@ export class CodexAdapterLifecycle {
     thread.activeTurn = undefined;
     this.#activeTurnCount -= 1;
     if (this.#terminalTurnCount >= CODEX_ADAPTER_LIMITS.maxTerminalTurnTombstones) {
-      return this.#failResourceLimit([terminalEvent]);
+      return this.#failResourceLimit([
+        Object.freeze({
+          ...terminalEvent,
+          resourceLimitExceeded: true,
+        }),
+      ]);
     }
     this.#storeTerminal(threadId, turnId, status);
     return eventResult(terminalEvent);
@@ -228,6 +233,10 @@ export class CodexAdapterLifecycle {
 
   hasTerminalTurn(threadId: string, turnId: string): boolean {
     return this.#terminalTurns.get(threadId)?.has(turnId) ?? false;
+  }
+
+  terminalTurnStatus(threadId: string, turnId: string): TerminalStatus | undefined {
+    return this.#terminalTurns.get(threadId)?.get(turnId);
   }
 
   canStartTurn(threadId: string): boolean {

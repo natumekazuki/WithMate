@@ -1,6 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
-import { createWindowsJobObject } from "./windows-job-object.js";
+import {
+  createWindowsJobObject,
+  WindowsJobObjectAcquisitionError,
+  type WindowsJobObject,
+} from "./windows-job-object.js";
 
 const WINDOWS_SUPERVISOR_SOURCE = String.raw`
 const { spawn } = require("node:child_process");
@@ -38,6 +42,12 @@ export type CodexProcessLaunchOptions = Readonly<{
   env?: NodeJS.ProcessEnv;
 }>;
 
+export type OwnedCodexProcessDependencies = Readonly<{
+  platform?: NodeJS.Platform;
+  spawnProcess?: typeof spawn;
+  createJobObject?: typeof createWindowsJobObject;
+}>;
+
 export type OwnedCodexProcess = Readonly<{
   child: ChildProcessWithoutNullStreams;
   ready: Promise<void>;
@@ -45,12 +55,36 @@ export type OwnedCodexProcess = Readonly<{
   release: () => void;
 }>;
 
-export function spawnOwnedCodexProcess(options: CodexProcessLaunchOptions): OwnedCodexProcess {
-  return process.platform === "win32" ? spawnWindowsCodexProcess(options) : spawnPosixCodexProcess(options);
+export type OwnedCodexProcessCleanupOwner = Readonly<{
+  child?: ChildProcessWithoutNullStreams;
+  terminate: () => void;
+  release: () => void;
+}>;
+
+export class OwnedCodexProcessAcquisitionError extends Error {
+  readonly owner: OwnedCodexProcessCleanupOwner;
+
+  constructor(owner: OwnedCodexProcessCleanupOwner, options?: ErrorOptions) {
+    super("Codex process ownership was only partially acquired.", options);
+    this.name = "OwnedCodexProcessAcquisitionError";
+    this.owner = owner;
+  }
 }
 
-function spawnPosixCodexProcess(options: CodexProcessLaunchOptions): OwnedCodexProcess {
-  const child = spawn(options.executable, [...options.arguments], {
+export function spawnOwnedCodexProcess(
+  options: CodexProcessLaunchOptions,
+  dependencies: OwnedCodexProcessDependencies = {},
+): OwnedCodexProcess {
+  return (dependencies.platform ?? process.platform) === "win32"
+    ? spawnWindowsCodexProcess(options, dependencies)
+    : spawnPosixCodexProcess(options, dependencies);
+}
+
+function spawnPosixCodexProcess(
+  options: CodexProcessLaunchOptions,
+  dependencies: OwnedCodexProcessDependencies,
+): OwnedCodexProcess {
+  const child = (dependencies.spawnProcess ?? spawn)(options.executable, [...options.arguments], {
     cwd: options.cwd,
     env: options.env,
     shell: false,
@@ -66,11 +100,22 @@ function spawnPosixCodexProcess(options: CodexProcessLaunchOptions): OwnedCodexP
   };
 }
 
-function spawnWindowsCodexProcess(options: CodexProcessLaunchOptions): OwnedCodexProcess {
-  const job = createWindowsJobObject();
+function spawnWindowsCodexProcess(
+  options: CodexProcessLaunchOptions,
+  dependencies: OwnedCodexProcessDependencies,
+): OwnedCodexProcess {
+  let job: WindowsJobObject;
+  try {
+    job = (dependencies.createJobObject ?? createWindowsJobObject)();
+  } catch (error) {
+    if (error instanceof WindowsJobObjectAcquisitionError) {
+      throw new OwnedCodexProcessAcquisitionError(partialWindowsOwner(error.owner), { cause: error });
+    }
+    throw error;
+  }
   let child: ChildProcessWithoutNullStreams | undefined;
   try {
-    child = spawn(process.execPath, ["--eval", WINDOWS_SUPERVISOR_SOURCE], {
+    child = (dependencies.spawnProcess ?? spawn)(process.execPath, ["--eval", WINDOWS_SUPERVISOR_SOURCE], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
       shell: false,
       stdio: ["pipe", "pipe", "pipe", "ipc"],
@@ -79,16 +124,36 @@ function spawnWindowsCodexProcess(options: CodexProcessLaunchOptions): OwnedCode
     if (child.pid === undefined) throw new Error("Windows process supervisor has no identity.");
     job.assignProcess(child.pid);
   } catch (error) {
-    child?.once("error", () => undefined);
-    child?.kill("SIGKILL");
-    job.close();
-    throw error;
+    throw new OwnedCodexProcessAcquisitionError(partialWindowsOwner(job, child), { cause: error });
   }
 
   return {
     child,
     ready: launchCodexFromSupervisor(child, options),
     terminate: () => job.terminate(),
+    release: () => job.close(),
+  };
+}
+
+function partialWindowsOwner(
+  job: WindowsJobObject,
+  child?: ChildProcessWithoutNullStreams,
+): OwnedCodexProcessCleanupOwner {
+  return {
+    ...(child === undefined ? {} : { child }),
+    terminate() {
+      let terminationError: unknown;
+      try {
+        job.terminate();
+      } catch (error) {
+        terminationError = error;
+      }
+      if (child !== undefined) {
+        child.kill("SIGKILL");
+        return;
+      }
+      if (terminationError !== undefined) throw terminationError;
+    },
     release: () => job.close(),
   };
 }

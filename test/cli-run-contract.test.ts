@@ -11,6 +11,25 @@ import { helpText } from "../src/cli/help.js";
 import { parseCliArgv } from "../src/cli/parser.js";
 import { projectCliRunOperationOutput } from "../src/cli/run-output.js";
 
+const idempotencyKey = "018f1f4e-7f0a-7000-8000-000000000701";
+const startCommand = {
+  identity: { namespace: "run", operation: "start" },
+  sessionId: "session-1",
+  idempotencyKey,
+  contentBlocks: [{ type: "text", text: "hello" }],
+  execution: {
+    model: "gpt-test",
+    reasoningEffort: "medium",
+    sandbox: { mode: "workspace-write", networkAccess: false },
+  },
+} as const satisfies CliValidatedRunCommand;
+const retryCommand = {
+  identity: { namespace: "run", operation: "retry" },
+  sessionId: "session-1",
+  retryOfRunId: "run-source",
+  idempotencyKey,
+  executionOverrides: { reasoningEffort: "high" },
+} as const satisfies CliValidatedRunCommand;
 const statusCommand = {
   identity: { namespace: "run", operation: "status" },
   sessionId: "session-1",
@@ -55,8 +74,45 @@ test("Run help and validated commands are runtime-free parser results", () => {
     topic: { kind: "operation", command: { namespace: "run", operation: "events" } },
   });
   assert.match(helpText({ kind: "root" }), /withmate run --help/u);
-  assert.match(helpText({ kind: "run" }), /status[\s\S]*events[\s\S]*follow/u);
-  assert.doesNotMatch(helpText({ kind: "run" }), /\bstart\b|\bretry\b|\bcancel\b/u);
+  assert.match(helpText({ kind: "run" }), /start[\s\S]*retry[\s\S]*status[\s\S]*events[\s\S]*follow/u);
+  assert.doesNotMatch(helpText({ kind: "run" }), /\bcancel\b/u);
+  assert.match(helpText({ kind: "operation", command: startCommand.identity }), /content-blocks-json/u);
+  assert.match(helpText({ kind: "operation", command: retryCommand.identity }), /inherited from the source Run/u);
+
+  assert.deepEqual(
+    parseCliArgv([
+      "run",
+      "start",
+      "--session-id",
+      "session-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--content-blocks-json",
+      JSON.stringify(startCommand.contentBlocks),
+      "--model",
+      "gpt-test",
+      "--reasoning-effort",
+      "medium",
+      "--sandbox-json",
+      JSON.stringify(startCommand.execution.sandbox),
+    ]),
+    { kind: "command", command: startCommand },
+  );
+  assert.deepEqual(
+    parseCliArgv([
+      "run",
+      "retry",
+      "--session-id",
+      "session-1",
+      "--retry-of-run-id",
+      "run-source",
+      "--idempotency-key",
+      idempotencyKey,
+      "--reasoning-effort",
+      "high",
+    ]),
+    { kind: "command", command: retryCommand },
+  );
 
   assert.deepEqual(
     parseCliArgv(["run", "status", "--session-id", "session-1", "--run-id", "run-1", "--timeout-ms", "5000"]),
@@ -89,7 +145,7 @@ test("Run help and validated commands are runtime-free parser results", () => {
   );
 });
 
-test("Run parser rejects missing, duplicate, unknown, unbounded, and mutation inputs", () => {
+test("Run parser rejects missing, duplicate, unknown, unbounded, and invalid mutation inputs", () => {
   const cases = [
     ["run", "status", "--session-id", "session-1"],
     ["run", "status", "--session-id", "session-1", "--run-id", "run-1", "--run-id", "run-2"],
@@ -101,6 +157,66 @@ test("Run parser rejects missing, duplicate, unknown, unbounded, and mutation in
     ["run", "follow", "--session-id", "session-1", "--run-id", "run-1", "--poll-ms", "5001"],
     ["run", "start"],
     ["run", "retry"],
+    [
+      "run",
+      "start",
+      "--session-id",
+      "session-1",
+      "--idempotency-key",
+      "not-a-uuid",
+      "--content-blocks-json",
+      "[]",
+      "--model",
+      "gpt-test",
+      "--reasoning-effort",
+      "medium",
+      "--sandbox-json",
+      '{"mode":"danger-full-access"}',
+    ],
+    [
+      "run",
+      "retry",
+      "--session-id",
+      "session-1",
+      "--retry-of-run-id",
+      "run-source",
+      "--idempotency-key",
+      idempotencyKey,
+      "--content-blocks-json",
+      "[]",
+    ],
+    [
+      "run",
+      "start",
+      "--session-id",
+      "session-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--content-blocks-json",
+      '[{"type":"image","type":"text","text":"hello"}]',
+      "--model",
+      "gpt-test",
+      "--reasoning-effort",
+      "medium",
+      "--sandbox-json",
+      '{"mode":"danger-full-access"}',
+    ],
+    [
+      "run",
+      "start",
+      "--session-id",
+      "session-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--content-blocks-json",
+      '[{"type":"text","text":"hello"}]',
+      "--model",
+      "gpt-test",
+      "--reasoning-effort",
+      "medium",
+      "--sandbox-json",
+      '{"mode":"read-only","mode":"danger-full-access"}',
+    ],
     ["run", "cancel"],
   ] as const;
   for (const argv of cases) {
@@ -108,6 +224,125 @@ test("Run parser rejects missing, duplicate, unknown, unbounded, and mutation in
     assert.equal(parsed.kind, "usage_failure", argv.join(" "));
     if (parsed.kind === "usage_failure") assert.equal(parsed.exitCode, CLI_EXIT_CODES.usageInvalid);
   }
+});
+
+test("Run start accepts the exact inline JSON byte limit and rejects one byte beyond it", () => {
+  const emptyJsonBytes = Buffer.byteLength(JSON.stringify([{ type: "text", text: "" }]));
+  const exactText = "a".repeat(64 * 1024 - emptyJsonBytes);
+  const argv = (contentBlocksJson: string) => [
+    "run",
+    "start",
+    "--session-id",
+    "session-1",
+    "--idempotency-key",
+    idempotencyKey,
+    "--content-blocks-json",
+    contentBlocksJson,
+    "--model",
+    "gpt-test",
+    "--reasoning-effort",
+    "medium",
+    "--sandbox-json",
+    '{"mode":"danger-full-access"}',
+  ];
+  assert.equal(parseCliArgv(argv(JSON.stringify([{ type: "text", text: exactText }]))).kind, "command");
+  assert.equal(parseCliArgv(argv(JSON.stringify([{ type: "text", text: `${exactText}a` }]))).kind, "usage_failure");
+});
+
+test("Run mutation output exposes only durable public admission identity", () => {
+  const start = projectCliRunOperationOutput(startCommand, {
+    overallStatus: "success",
+    value: { sessionId: "session-1", runId: "run-new", phase: "queued" },
+    persistence: { status: "committed", effect: "none", replayed: false },
+  });
+  assert.equal(start.ok, true);
+  if (!start.ok) assert.fail("start projection failed");
+  assert.equal(start.exitCode, CLI_EXIT_CODES.success);
+  assert.deepEqual(start.output.applicationResponse, {
+    overallStatus: "success",
+    value: { sessionId: "session-1", runId: "run-new", phase: "queued" },
+    persistence: { status: "committed", effect: "none", replayed: false },
+  });
+  const phases = [
+    "queued",
+    "starting",
+    "active",
+    "canceling",
+    "finalizing",
+    "completed",
+    "failed",
+    "canceled",
+    "interrupted",
+  ] as const;
+  for (const command of [startCommand, retryCommand]) {
+    for (const phase of phases) {
+      const value = {
+        sessionId: "session-1",
+        runId: "run-replay",
+        ...(command.identity.operation === "retry" ? { retryOfRunId: "run-source" } : {}),
+        phase,
+      };
+      assert.equal(
+        projectCliRunOperationOutput(command, {
+          overallStatus: "success",
+          value,
+          persistence: { status: "committed", effect: "none", replayed: true },
+        }).ok,
+        true,
+      );
+      if (phase !== "queued") {
+        assert.equal(
+          projectCliRunOperationOutput(command, {
+            overallStatus: "success",
+            value,
+            persistence: { status: "committed", effect: "none", replayed: false },
+          }).ok,
+          false,
+        );
+      }
+    }
+  }
+
+  const leaked = projectCliRunOperationOutput(startCommand, {
+    overallStatus: "success",
+    value: {
+      sessionId: "session-1",
+      runId: "run-new",
+      phase: "queued",
+      attemptId: "attempt-private",
+    },
+    persistence: { status: "committed", effect: "none", replayed: false },
+  });
+  assert.equal(leaked.ok, false);
+  if (!leaked.ok) assert.equal(leaked.output.error.code, "malformed_application_response");
+
+  const capacity = projectCliRunOperationOutput(startCommand, {
+    overallStatus: "failure",
+    error: {
+      kind: "domain",
+      code: "capacity_exceeded",
+      message: "Provider capacity was reached.",
+      retryable: true,
+      details: { scope: "provider", current: 4, limit: 4 },
+    },
+    persistence: { status: "rejected", effect: "none" },
+  });
+  assert.equal(capacity.ok, true);
+  if (!capacity.ok) assert.fail("capacity projection failed");
+  assert.equal(JSON.stringify(capacity.output).includes("providerId"), false);
+
+  const capacityLeak = projectCliRunOperationOutput(startCommand, {
+    overallStatus: "failure",
+    error: {
+      kind: "domain",
+      code: "capacity_exceeded",
+      message: "Provider capacity was reached.",
+      retryable: true,
+      details: { scope: "provider", providerId: "provider-private", current: 4, limit: 4 },
+    },
+    persistence: { status: "rejected", effect: "none" },
+  });
+  assert.equal(capacityLeak.ok, false);
 });
 
 test("Run status output uses a phase-specific allowlist and preserves schema v1", () => {

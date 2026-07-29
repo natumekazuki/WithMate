@@ -854,7 +854,7 @@ test("token usage accepts a smaller latest request when cumulative totals advanc
   await adapter.close();
 });
 
-test("turn/start response is ambiguous when prior lifecycle state rejects or duplicates its projection", async () => {
+test("terminal-first turn/start converges while an active Turn still rejects duplicate send", async () => {
   const delayedTurn = deferred<unknown>();
   const terminalFirstTransport = new ControlledTransport([threadOperationFixture(), delayedTurn.promise]);
   const terminalFirstAdapter = createAdapter(terminalFirstTransport);
@@ -876,10 +876,24 @@ test("turn/start response is ambiguous when prior lifecycle state rejects or dup
     method: "turn/completed",
     params: { threadId: "thread-1", turn: turnFixture({ status: "completed" }) },
   });
-  assert.equal(diagnosticCode(await terminalFirstAdapter.nextEvent()), "out_of_order_event");
+  assert.deepEqual(await terminalFirstAdapter.nextEvent(), {
+    kind: "turn_started",
+    turn: { threadId: "thread-1", turnId: "turn-1", status: "in_progress" },
+  });
+  assert.deepEqual(await terminalFirstAdapter.nextEvent(), {
+    kind: "turn_terminal",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    status: "completed",
+    finalAssistantMessage: null,
+    contentFailure: null,
+  });
   delayedTurn.resolve({ turn: turnFixture() });
-  assert.deepEqual(await terminalFirstResult, { kind: "ambiguous", effect: "unknown", code: "invalid_response" });
-  assert.equal(diagnosticCode(await terminalFirstAdapter.nextEvent()), "out_of_order_event");
+  assert.deepEqual(await terminalFirstResult, {
+    kind: "accepted",
+    effect: "present",
+    value: { threadId: "thread-1", turnId: "turn-1", status: "completed" },
+  });
   await terminalFirstAdapter.close();
 
   const notificationFirstTurn = deferred<unknown>();
@@ -966,7 +980,7 @@ test("resume restores the current active Turn before admitting steer, interrupt,
   await adapter.close();
 });
 
-test("an observed turn/started makes a contradictory remote error ambiguous", async () => {
+test("an observed turn/started proves a contradictory remote error was accepted without retry", async () => {
   const turnResponse = deferred<unknown>();
   const transport = new ControlledTransport([threadOperationFixture(), turnResponse.promise]);
   const adapter = createAdapter(transport);
@@ -992,7 +1006,11 @@ test("an observed turn/started makes a contradictory remote error ambiguous", as
   assert.equal((await adapter.nextEvent()).kind, "turn_started");
   turnResponse.reject(new CodexTransportError({ kind: "remote_error", code: -32600 }));
 
-  assert.deepEqual(await pending, { kind: "ambiguous", effect: "unknown", code: "invalid_response" });
+  assert.deepEqual(await pending, {
+    kind: "accepted",
+    effect: "present",
+    value: { threadId: "thread-1", turnId: "turn-1", status: "in_progress" },
+  });
   assert.deepEqual(
     await adapter.startTurn({
       threadId: "thread-1",
@@ -1003,7 +1021,7 @@ test("an observed turn/started makes a contradictory remote error ambiguous", as
   await adapter.close();
 });
 
-test("any terminal-only observed Turn makes a contradictory remote error ambiguous", async () => {
+test("a terminal-only observed Turn proves acceptance and preserves the terminal without retry", async () => {
   for (const status of ["completed", "failed", "interrupted"] as const) {
     const turnResponse = deferred<unknown>();
     const transport = new ControlledTransport([threadOperationFixture(), turnResponse.promise]);
@@ -1030,10 +1048,29 @@ test("any terminal-only observed Turn makes a contradictory remote error ambiguo
         turn: turnFixture({ status }),
       },
     });
-    assert.equal(diagnosticCode(await adapter.nextEvent()), "out_of_order_event");
+    assert.deepEqual(await adapter.nextEvent(), {
+      kind: "turn_started",
+      turn: { threadId: "thread-1", turnId: "turn-1", status: "in_progress" },
+    });
+    assert.deepEqual(await adapter.nextEvent(), {
+      kind: "turn_terminal",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      status,
+      finalAssistantMessage: null,
+      contentFailure: null,
+    });
     turnResponse.reject(new CodexTransportError({ kind: "remote_error", code: -32600 }));
 
-    assert.deepEqual(await pending, { kind: "ambiguous", effect: "unknown", code: "invalid_response" }, status);
+    assert.deepEqual(
+      await pending,
+      {
+        kind: "accepted",
+        effect: "present",
+        value: { threadId: "thread-1", turnId: "turn-1", status },
+      },
+      status,
+    );
     assert.equal(transport.requests.filter((method) => method === "turn/start").length, 1);
     await adapter.close();
   }
@@ -1084,6 +1121,58 @@ test("a duplicate terminal from an earlier Turn is not side-effect evidence for 
     },
   });
   assert.equal(diagnosticCode(await adapter.nextEvent()), "duplicate_event");
+  turnResponse.reject(new CodexTransportError({ kind: "remote_error", code: -32600 }));
+
+  assert.deepEqual(await pending, { kind: "rejected", effect: "none", code: -32600 });
+  assert.equal(transport.requests.filter((method) => method === "turn/start").length, 2);
+  await adapter.close();
+});
+
+test("a delayed turn/started from an earlier terminal Turn is not evidence for a new turn/start", async () => {
+  const turnResponse = deferred<unknown>();
+  const transport = new ControlledTransport([
+    threadOperationFixture(),
+    { turn: turnFixture({ id: "turn-earlier" }) },
+    turnResponse.promise,
+  ]);
+  const adapter = createAdapter(transport);
+  await adapter.startThread({
+    model: "gpt-5.4",
+    workspacePath: process.cwd(),
+    approvalPolicy: "never",
+    sandboxMode: "read-only",
+    persistence: "persistent",
+  });
+  await adapter.nextEvent();
+  await adapter.startTurn({
+    threadId: "thread-1",
+    contentBlocks: [{ type: "text", text: "first" }],
+  });
+  await adapter.nextEvent();
+  transport.emit({
+    kind: "notification",
+    method: "turn/completed",
+    params: {
+      threadId: "thread-1",
+      turn: turnFixture({ id: "turn-earlier", status: "completed" }),
+    },
+  });
+  assert.equal((await adapter.nextEvent()).kind, "turn_terminal");
+
+  const pending = adapter.startTurn({
+    threadId: "thread-1",
+    contentBlocks: [{ type: "text", text: "second" }],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  transport.emit({
+    kind: "notification",
+    method: "turn/started",
+    params: {
+      threadId: "thread-1",
+      turn: turnFixture({ id: "turn-earlier" }),
+    },
+  });
+  assert.equal(diagnosticCode(await adapter.nextEvent()), "out_of_order_event");
   turnResponse.reject(new CodexTransportError({ kind: "remote_error", code: -32600 }));
 
   assert.deepEqual(await pending, { kind: "rejected", effect: "none", code: -32600 });
@@ -1209,7 +1298,18 @@ test("a delayed turn/started after terminal still conflicts with a different res
       turn: turnFixture({ id: "turn-notification", status: "completed" }),
     },
   });
-  assert.equal(diagnosticCode(await adapter.nextEvent()), "out_of_order_event");
+  assert.deepEqual(await adapter.nextEvent(), {
+    kind: "turn_started",
+    turn: { threadId: "thread-1", turnId: "turn-notification", status: "in_progress" },
+  });
+  assert.deepEqual(await adapter.nextEvent(), {
+    kind: "turn_terminal",
+    threadId: "thread-1",
+    turnId: "turn-notification",
+    status: "completed",
+    finalAssistantMessage: null,
+    contentFailure: null,
+  });
   transport.emit({
     kind: "notification",
     method: "turn/started",
@@ -1524,6 +1624,88 @@ test("an accepted Turn model override becomes the validation context for the nex
         input: [{ type: "text", text: "use inherited model", text_elements: [] }],
         approvalPolicy: "never",
         effort: "high",
+      },
+    ],
+  );
+  await adapter.close();
+});
+
+test("an inherited retry restores its source Run model after a later Turn changed the Thread model", async () => {
+  const transport = new ControlledTransport([
+    {
+      data: [
+        modelFixture(),
+        modelFixture({
+          id: "model-b",
+          model: "model-b",
+          displayName: "Model B",
+          supportedReasoningEfforts: [{ reasoningEffort: "high", description: "High" }],
+          defaultReasoningEffort: "high",
+          isDefault: false,
+        }),
+      ],
+      nextCursor: null,
+    },
+    threadOperationFixture(),
+    { turn: turnFixture({ id: "turn-b" }) },
+    { turn: turnFixture({ id: "turn-source-retry" }) },
+  ]);
+  const adapter = createAdapter(transport);
+  await adapter.startThread({
+    model: "gpt-5.4",
+    workspacePath: process.cwd(),
+    approvalPolicy: "never",
+    sandboxMode: "read-only",
+    persistence: "persistent",
+  });
+  await adapter.nextEvent();
+  assert.equal(
+    (
+      await adapter.startTurn({
+        threadId: "thread-1",
+        contentBlocks: [{ type: "text", text: "switch to B" }],
+        model: "model-b",
+        reasoningEffort: "high",
+      })
+    ).kind,
+    "accepted",
+  );
+  await adapter.nextEvent();
+  transport.emit({
+    kind: "notification",
+    method: "turn/completed",
+    params: { threadId: "thread-1", turn: turnFixture({ id: "turn-b", status: "completed" }) },
+  });
+  assert.equal((await adapter.nextEvent()).kind, "turn_terminal");
+
+  assert.equal(
+    (
+      await adapter.startTurn({
+        threadId: "thread-1",
+        contentBlocks: [{ type: "text", text: "retry source A" }],
+        model: "gpt-5.4",
+        modelSelection: "inherited",
+        reasoningEffort: "medium",
+      })
+    ).kind,
+    "accepted",
+  );
+  assert.deepEqual(
+    transport.requestDetails.filter((request) => request.method === "turn/start").map((request) => request.params),
+    [
+      {
+        threadId: "thread-1",
+        input: [{ type: "text", text: "switch to B", text_elements: [] }],
+        approvalPolicy: "never",
+        model: "model-b",
+        effort: "high",
+      },
+      {
+        threadId: "thread-1",
+        input: [{ type: "text", text: "retry source A", text_elements: [] }],
+        approvalPolicy: "never",
+        model: "gpt-5.4",
+        effort: "medium",
       },
     ],
   );
@@ -2527,11 +2709,13 @@ test("terminal overflow preserves every previously queued terminal outcome", asy
 
   const terminalIds: string[] = [];
   let seedTerminal: Extract<CodexAdapterEvent, { kind: "turn_terminal" }> | undefined;
+  let overflowTerminal: Extract<CodexAdapterEvent, { kind: "turn_terminal" }> | undefined;
   for (;;) {
     const event = await adapter.nextEvent();
     if (event.kind === "turn_terminal") {
       terminalIds.push(event.turnId);
       if (event.turnId === "turn-seed") seedTerminal = event;
+      if (event.turnId === "turn-overflow") overflowTerminal = event;
     }
     if (event.kind === "connection_failure") {
       assert.equal(event.code, "adapter_resource_limit");
@@ -2544,6 +2728,8 @@ test("terminal overflow preserves every previously queued terminal outcome", asy
   assert.deepEqual(seedTerminal?.finalAssistantMessage, {
     contentBlocks: [{ type: "text", text: "seed final" }],
   });
+  assert.equal(overflowTerminal?.resourceLimitExceeded, true);
+  assert.equal(overflowTerminal?.contentFailure, null);
 });
 
 test("queued output text accepts the exact connection cap and fails prospectively", async () => {
@@ -2597,7 +2783,7 @@ test("queued output text accepts the exact connection cap and fails prospectivel
   assert.equal(outputs, 32);
 });
 
-test("close is idempotent, clears queued ownership, and rejects a pending waiter", async () => {
+test("close is idempotent, releases live ownership, and rejects a pending waiter", async () => {
   const transport = new ControlledTransport([]);
   const adapter = createAdapter(transport);
   const pending = adapter.nextEvent();
@@ -2607,6 +2793,80 @@ test("close is idempotent, clears queued ownership, and rejects a pending waiter
   await assert.rejects(pending);
   await first;
   assert.equal(transport.closeCount, 1);
+  await assert.rejects(adapter.nextEvent());
+});
+
+test("close preserves a received terminal event until the consumer drains it", async () => {
+  const transport = new ControlledTransport([threadOperationFixture(), { turn: turnFixture() }]);
+  const adapter = createAdapter(transport);
+  await adapter.startThread({
+    model: "gpt-5.4",
+    workspacePath: process.cwd(),
+    approvalPolicy: "never",
+    sandboxMode: "read-only",
+    persistence: "persistent",
+  });
+  await adapter.nextEvent();
+  await adapter.startTurn({
+    threadId: "thread-1",
+    contentBlocks: [{ type: "text", text: "hello" }],
+  });
+  await adapter.nextEvent();
+
+  transport.emit({
+    kind: "notification",
+    method: "item/started",
+    params: {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      item: agentMessageFixture({ text: "" }),
+      startedAtMs: 1,
+    },
+  });
+  transport.emit({
+    kind: "notification",
+    method: "item/completed",
+    params: {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      item: agentMessageFixture(),
+      completedAtMs: 2,
+    },
+  });
+  transport.emit({
+    kind: "notification",
+    method: "turn/completed",
+    params: { threadId: "thread-1", turn: turnFixture({ status: "completed" }) },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  await adapter.close();
+
+  assert.deepEqual(await adapter.nextEvent(), {
+    kind: "turn_terminal",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    status: "completed",
+    finalAssistantMessage: {
+      contentBlocks: [{ type: "text", text: "final answer" }],
+    },
+    contentFailure: null,
+  });
+  await assert.rejects(adapter.nextEvent());
+});
+
+test("a failed close can retry the same transport owner until it succeeds", async () => {
+  const transport = new ControlledTransport([], true, 1);
+  const adapter = createAdapter(transport);
+  const pending = adapter.nextEvent();
+  const first = adapter.close();
+
+  await assert.rejects(pending);
+  await assert.rejects(first);
+  assert.equal(transport.closeCount, 1);
+
+  await adapter.close();
+  assert.equal(transport.closeCount, 2);
   await assert.rejects(adapter.nextEvent());
 });
 
@@ -2644,7 +2904,7 @@ test("close or failure during catalog loading cannot send a later mutation or pa
   assert.deepEqual(await startResult, {
     kind: "not_sent",
     effect: "none",
-    code: "capability_unavailable",
+    code: "protocol_failed",
   });
   assert.deepEqual(failingTransport.requests, ["model/list"]);
 });
@@ -2703,6 +2963,7 @@ class ControlledTransport implements CodexAdapterTransportPort {
   readonly requestDetails: Array<Readonly<{ method: string; params: unknown }>> = [];
   readonly #responses: Array<unknown | Promise<unknown>>;
   readonly #autoModelCatalog: boolean;
+  readonly #closeFailures: number;
   readonly #events: CodexAdapterTransportEvent[] = [];
   #waiter:
     | Readonly<{
@@ -2712,9 +2973,10 @@ class ControlledTransport implements CodexAdapterTransportPort {
     | undefined;
   closeCount = 0;
 
-  constructor(responses: readonly (unknown | Promise<unknown>)[], autoModelCatalog = true) {
+  constructor(responses: readonly (unknown | Promise<unknown>)[], autoModelCatalog = true, closeFailures = 0) {
     this.#responses = [...responses];
     this.#autoModelCatalog = autoModelCatalog;
+    this.#closeFailures = closeFailures;
   }
 
   request<TResult>(method: string, params?: unknown, _options?: CodexAdapterRequestOptions): Promise<TResult> {
@@ -2751,7 +3013,7 @@ class ControlledTransport implements CodexAdapterTransportPort {
     const waiter = this.#waiter;
     this.#waiter = undefined;
     waiter?.reject(new Error("transport closed"));
-    return Promise.resolve();
+    return this.closeCount <= this.#closeFailures ? Promise.reject(new Error("close_failed")) : Promise.resolve();
   }
 }
 

@@ -28,6 +28,8 @@ const WRITE_OPERATIONS = new Set<RuntimeIpcOperation>([
   "session.unarchive",
   "session.close",
   "session.delete",
+  "run.start",
+  "run.retry",
 ]);
 const IDENTIFIER_MAX_LENGTH = 1_024;
 const CURSOR_MAX_LENGTH = 2_048;
@@ -78,6 +80,7 @@ export function snapshotRuntimeApplicationResponse(
   const issues = overallStatus === "partial_success" ? snapshotIssues(response.issues) : undefined;
   if (issues !== undefined) validatePartialSuccessCombination(operation, persistence, issues);
   const operationValue = snapshotOperationValue(operation, payload, response.value);
+  validateRunAdmissionReplay(operation, operationValue, persistence);
   validateOutcomeCombination(operation, overallStatus, operationValue, issues);
   const snapshot = {
     overallStatus,
@@ -121,6 +124,9 @@ function snapshotOperationValue(
       return snapshotChunk(value, payload, ["sessionId", "messageId"]);
     case "session.runs":
       return snapshotSessionRunPage(value, payload);
+    case "run.start":
+    case "run.retry":
+      return snapshotRunAdmission(value, payload, operation);
     case "run.status":
       return snapshotRunStatus(value, payload);
     case "run.events":
@@ -588,6 +594,36 @@ function snapshotRunStatus(value: unknown, payload: RuntimeIpcOperationPayload):
   };
 }
 
+function snapshotRunAdmission(
+  value: unknown,
+  payload: RuntimeIpcOperationPayload,
+  operation: "run.start" | "run.retry",
+): unknown {
+  const admission =
+    operation === "run.retry"
+      ? exact(value, ["sessionId", "runId", "retryOfRunId", "phase"])
+      : exact(value, ["sessionId", "runId", "phase"]);
+  requireScope(admission, payload, ["sessionId"]);
+  enumeration(admission.phase, [
+    "queued",
+    "starting",
+    "active",
+    "canceling",
+    "finalizing",
+    "completed",
+    "failed",
+    "canceled",
+    "interrupted",
+  ]);
+  if (
+    !isBoundedString(admission.runId) ||
+    (operation === "run.retry" && admission.retryOfRunId !== payload.retryOfRunId)
+  ) {
+    malformed();
+  }
+  return admission;
+}
+
 function snapshotRunFailure(value: unknown): unknown {
   const failure = exact(value, ["origin"], ["summary"]);
   if (
@@ -849,6 +885,20 @@ function snapshotPersistence(value: unknown): Readonly<Record<string, unknown>> 
   return persistence;
 }
 
+function validateRunAdmissionReplay(
+  operation: RuntimeIpcOperation,
+  value: unknown,
+  persistence: Readonly<Record<string, unknown>>,
+): void {
+  if (
+    (operation === "run.start" || operation === "run.retry") &&
+    persistence.replayed === false &&
+    record(value, ["sessionId", "runId", "retryOfRunId", "phase"]).phase !== "queued"
+  ) {
+    malformed();
+  }
+}
+
 function snapshotIssues(value: unknown): readonly unknown[] {
   const issues = array(value);
   if (issues.length === 0) malformed();
@@ -983,8 +1033,8 @@ function snapshotErrorDetails(value: unknown): unknown {
     return capacity;
   }
   if (details.scope === "provider") {
-    const capacity = exact(details, ["scope", "providerId", "current", "limit"]);
-    validateCapacityDetails(capacity, "providerId");
+    const capacity = exact(details, ["scope", "current", "limit"]);
+    validateCapacityDetails(capacity);
     return capacity;
   }
   if (details.scope === "application") {
@@ -1017,6 +1067,9 @@ function validateOutcomeCombination(
   value: unknown,
   issues: readonly unknown[] | undefined,
 ): void {
+  if (overallStatus === "partial_success" && (operation === "run.start" || operation === "run.retry")) {
+    malformed();
+  }
   if (operation === "session.delete") {
     const deletion = record(value, ["sessionId", "cleanupToken", "deletedSessionCount", "localOnly", "cleanupStatus"]);
     if (

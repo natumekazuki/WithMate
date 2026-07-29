@@ -1,5 +1,9 @@
 export { CODEX_APP_SERVER_ARGUMENTS, CodexAppServerTransport } from "./app-server-transport.js";
-export type { CodexAppServerTransportOptions, CodexAppServerTransportState } from "./app-server-transport.js";
+export type {
+  CodexAppServerTransportDependencies,
+  CodexAppServerTransportOptions,
+  CodexAppServerTransportState,
+} from "./app-server-transport.js";
 export { CodexServerRequest } from "./protocol-session.js";
 export type {
   CodexClientInfo,
@@ -27,6 +31,7 @@ export type {
   CodexAdapterEvent,
   CodexAdapterInterruptAcknowledgement,
   CodexAdapterLimits,
+  CodexAdapterModelSelection,
   CodexAdapterModel,
   CodexAdapterModelCatalog,
   CodexAdapterMutationResult,

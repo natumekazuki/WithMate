@@ -26,7 +26,11 @@ import { snapshotRuntimeApplicationResponse } from "../src/main/runtime-host/run
 import { startRuntimeHost, type RuntimeHostDependencies } from "../src/main/runtime-host/runtime-host.js";
 import { dispatchRuntimeApplicationOperation } from "../src/main/runtime-host/runtime-application-dispatch.js";
 import { PersistenceClientError, PersistenceWorkerClient } from "../src/main/persistence-worker-client.js";
-import type { OwnedRuntimeApplication, RuntimeApplication } from "../src/main/runtime-application.js";
+import {
+  RuntimeApplicationShutdownPendingError,
+  type OwnedRuntimeApplication,
+  type RuntimeApplication,
+} from "../src/main/runtime-application.js";
 import { PERSISTENCE_PROTOCOL_VERSION } from "../src/shared/persistence-protocol.js";
 import {
   connectRuntimeEndpoint,
@@ -731,6 +735,60 @@ test("runtime host shutdown deadline retains ownership until the durable request
   await replacementClaim.release();
 });
 
+test("runtime host retains its claim while retryable persistence closure is unresolved", async (context) => {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-runtime-host-pending-closure-"));
+  context.after(() => rm(fixtureRoot, { recursive: true, force: true }));
+  const identity = await resolveRuntimeOwnerIdentity({ applicationDataRoot: fixtureRoot });
+  let releaseClosure!: () => void;
+  const closureGate = new Promise<void>((resolve) => {
+    releaseClosure = resolve;
+  });
+  let shutdownCalls = 0;
+  const application = fakeRuntimeApplication({}, async () => {
+    shutdownCalls += 1;
+    if (shutdownCalls <= 2) throw new RuntimeApplicationShutdownPendingError();
+    await closureGate;
+    return { checkpoint: "completed" };
+  });
+  const host = await startRuntimeHost({
+    applicationDataRoot: fixtureRoot,
+    dependencies: realEndpointDependencies(application),
+  });
+  context.after(() => host.close().catch(() => undefined));
+
+  const closing = host.close({ timeoutMs: 2_000 });
+  await waitFor(() => shutdownCalls === 3);
+  const overlappingClaim = await acquireRuntimeOwnerClaim(identity);
+  if (overlappingClaim.status === "acquired") await overlappingClaim.release();
+  assert.equal(overlappingClaim.status, "busy");
+
+  releaseClosure();
+  assert.deepEqual(await closing, { checkpoint: "completed" });
+  const replacementClaim = await acquireRuntimeOwnerClaimEventually(identity);
+  await replacementClaim.release();
+});
+
+test("runtime host releases its claim when retryable closure becomes a fatal shutdown failure", async (context) => {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-runtime-host-fatal-closure-"));
+  context.after(() => rm(fixtureRoot, { recursive: true, force: true }));
+  const identity = await resolveRuntimeOwnerIdentity({ applicationDataRoot: fixtureRoot });
+  let shutdownCalls = 0;
+  const application = fakeRuntimeApplication({}, async () => {
+    shutdownCalls += 1;
+    if (shutdownCalls === 1) throw new RuntimeApplicationShutdownPendingError();
+    throw new Error("Persistence Worker is unavailable.");
+  });
+  const host = await startRuntimeHost({
+    applicationDataRoot: fixtureRoot,
+    dependencies: realEndpointDependencies(application),
+  });
+
+  await assert.rejects(() => host.close({ timeoutMs: 2_000 }), /shutdown was incomplete/u);
+  assert.equal(shutdownCalls, 2);
+  const replacementClaim = await acquireRuntimeOwnerClaimEventually(identity);
+  await replacementClaim.release();
+});
+
 test("runtime host shutdown aborts stalled response delivery after the durable operation settles", async (context) => {
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-runtime-host-slow-response-"));
   context.after(() => rm(fixtureRoot, { recursive: true, force: true }));
@@ -1055,6 +1113,121 @@ test("runtime response projection rejects fields outside the operation-owned App
   );
 });
 
+test("runtime Run mutation response exposes only the durable admission identity", () => {
+  const idempotencyKey = randomUUID();
+  const startPayload = {
+    sessionId: "session-1",
+    idempotencyKey,
+    contentBlocks: [{ type: "text", text: "hello" }],
+    execution: {
+      model: "gpt-test",
+      reasoningEffort: "medium",
+      sandbox: { mode: "read-only", networkAccess: false },
+    },
+  };
+  const retryPayload = {
+    sessionId: "session-1",
+    retryOfRunId: "run-source",
+    idempotencyKey,
+  };
+  assert.equal(
+    JSON.stringify(
+      decodeRuntimeWireValue(
+        snapshotRuntimeApplicationResponse(
+          "run.start",
+          startPayload,
+          writeResponse({ sessionId: "session-1", runId: "run-new", phase: "queued" }),
+        ),
+      ),
+    ),
+    JSON.stringify(writeResponse({ sessionId: "session-1", runId: "run-new", phase: "queued" })),
+  );
+  const phases = [
+    "queued",
+    "starting",
+    "active",
+    "canceling",
+    "finalizing",
+    "completed",
+    "failed",
+    "canceled",
+    "interrupted",
+  ] as const;
+  for (const operation of ["run.start", "run.retry"] as const) {
+    for (const phase of phases) {
+      const payload = operation === "run.start" ? startPayload : retryPayload;
+      const value = {
+        sessionId: "session-1",
+        runId: "run-new",
+        ...(operation === "run.retry" ? { retryOfRunId: "run-source" } : {}),
+        phase,
+      };
+      assert.doesNotThrow(() => snapshotRuntimeApplicationResponse(operation, payload, writeResponse(value, true)));
+      if (phase !== "queued") {
+        assert.throws(
+          () => snapshotRuntimeApplicationResponse(operation, payload, writeResponse(value)),
+          /response is invalid/u,
+        );
+      }
+    }
+  }
+  assert.throws(
+    () =>
+      snapshotRuntimeApplicationResponse(
+        "run.start",
+        startPayload,
+        writeResponse({
+          sessionId: "session-1",
+          runId: "run-new",
+          phase: "queued",
+          attemptId: "attempt-private",
+        }),
+      ),
+    /response is invalid/u,
+  );
+  assert.throws(
+    () =>
+      snapshotRuntimeApplicationResponse(
+        "run.retry",
+        {
+          sessionId: "session-1",
+          retryOfRunId: "run-source",
+          idempotencyKey,
+        },
+        writeResponse({
+          sessionId: "session-1",
+          runId: "run-retry",
+          retryOfRunId: "run-other",
+          phase: "queued",
+        }),
+      ),
+    /response is invalid/u,
+  );
+  const publicProviderCapacity = {
+    overallStatus: "failure",
+    error: {
+      kind: "domain",
+      code: "capacity_exceeded",
+      message: "Provider capacity was reached.",
+      retryable: true,
+      details: { scope: "provider", current: 4, limit: 4 },
+    },
+    persistence: { status: "rejected", effect: "none" },
+  };
+  assert.doesNotThrow(() => snapshotRuntimeApplicationResponse("run.start", startPayload, publicProviderCapacity));
+  assert.throws(
+    () =>
+      snapshotRuntimeApplicationResponse("run.start", startPayload, {
+        ...publicProviderCapacity,
+        error: {
+          ...publicProviderCapacity.error,
+          details: { ...publicProviderCapacity.error.details, providerId: "provider-private" },
+        },
+      }),
+    /response is invalid/u,
+  );
+});
+
 test("runtime response projection correlates Session create by canonical Workspace identity", () => {
   const canonicalWorkspacePath = path.resolve(".");
   const equivalentWorkspacePath = `${canonicalWorkspacePath}${path.sep}workspace-alias${path.sep}..`;
@@ -1180,7 +1353,7 @@ test("runtime host starts the real Application composition only after its endpoi
   assert.deepEqual(await host.close(), { checkpoint: "completed" });
 });
 
-test("runtime dispatch owns the complete 21-operation allowlist and never spreads client authorization", async () => {
+test("runtime dispatch owns the complete 23-operation allowlist and never spreads client authorization", async () => {
   const calls: Array<Readonly<{ name: string; request: Readonly<Record<string, unknown>>; signal: AbortSignal }>> = [];
   const application = completeDispatchApplication(calls);
   const signal = new AbortController().signal;
@@ -1281,11 +1454,11 @@ function readResponse(value: unknown): Readonly<Record<string, unknown>> {
   };
 }
 
-function writeResponse(value: unknown): Readonly<Record<string, unknown>> {
+function writeResponse(value: unknown, replayed = false): Readonly<Record<string, unknown>> {
   return {
     overallStatus: "success",
     value,
-    persistence: { status: "committed", effect: "none", replayed: false },
+    persistence: { status: "committed", effect: "none", replayed },
   };
 }
 
@@ -1333,6 +1506,8 @@ function fakeRuntimeApplication(
     },
     sessionRunOperations: { runs: overrides.runs ?? fallback },
     runOperations: {
+      start: overrides.start ?? fallback,
+      retry: overrides.retry ?? fallback,
       status: overrides.status ?? fallback,
       events: overrides.events ?? fallback,
       follow: overrides.follow ?? fallback,
@@ -1373,6 +1548,8 @@ function completeDispatchApplication(
     messages: method("session.messages"),
     messageContentChunk: method("session.message_content_chunk"),
     runs: method("session.runs"),
+    start: method("run.start"),
+    retry: method("run.retry"),
     status: method("run.status"),
     events: method("run.events"),
     follow: method("run.follow"),
@@ -1408,6 +1585,22 @@ function operationPayloads(): Readonly<Record<RuntimeIpcOperation, RuntimeIpcOpe
     "session.messages": { sessionId: "session-1", limit: 1 },
     "session.message_content_chunk": { sessionId: "session-1", messageId: "message-1", offset: 0, maxBytes: 1 },
     "session.runs": { sessionId: "session-1", limit: 1 },
+    "run.start": {
+      sessionId: "session-1",
+      idempotencyKey,
+      contentBlocks: [{ type: "text", text: "hello" }],
+      execution: {
+        model: "gpt-test",
+        reasoningEffort: "medium",
+        sandbox: { mode: "workspace-write", networkAccess: false },
+      },
+    },
+    "run.retry": {
+      sessionId: "session-1",
+      retryOfRunId: "run-source",
+      idempotencyKey,
+      executionOverrides: { reasoningEffort: "high" },
+    },
     "run.status": { sessionId: "session-1", runId: "run-1" },
     "run.events": { sessionId: "session-1", runId: "run-1", limit: 1 },
     "run.follow": { sessionId: "session-1", runId: "run-1", limit: 1, waitMs: 1, pollMs: 25 },

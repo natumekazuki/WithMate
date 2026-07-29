@@ -166,7 +166,7 @@ test("runtime IPC failure codes admit only their defined execution and retry tup
   );
 });
 
-test("runtime IPC allowlist covers all 21 existing operational Application operations", () => {
+test("runtime IPC allowlist covers all 23 operational Application operations", () => {
   const idempotencyKey = randomUUID();
   const validPayloads = {
     "session.create": {
@@ -195,6 +195,24 @@ test("runtime IPC allowlist covers all 21 existing operational Application opera
       maxBytes: 256 * 1024,
     },
     "session.runs": { sessionId: "session_abc", limit: 25 },
+    "run.start": {
+      sessionId: "session_abc",
+      idempotencyKey,
+      contentBlocks: [{ type: "text", text: "hello" }],
+      execution: {
+        model: "gpt-test",
+        reasoningEffort: "medium",
+        sandbox: { mode: "workspace-write", networkAccess: false },
+      },
+    },
+    "run.retry": {
+      sessionId: "session_abc",
+      retryOfRunId: "run_source",
+      idempotencyKey,
+      executionOverrides: {
+        reasoningEffort: "high",
+      },
+    },
     "run.status": { sessionId: "session_abc", runId: "run_abc" },
     "run.events": { sessionId: "session_abc", runId: "run_abc", limit: 25 },
     "run.follow": { sessionId: "session_abc", runId: "run_abc", limit: 25, waitMs: 10_000, pollMs: 250 },
@@ -220,13 +238,53 @@ test("runtime IPC allowlist covers all 21 existing operational Application opera
       destination: "C:\\exports\\output.bin",
     },
   } satisfies Record<RuntimeIpcOperation, unknown>;
-  assert.equal(RUNTIME_IPC_OPERATIONS.length, 21);
+  assert.equal(RUNTIME_IPC_OPERATIONS.length, 23);
   for (const operation of RUNTIME_IPC_OPERATIONS) {
     const decoded = decodeRuntimeIpcEnvelope(runtimeRequest(operation, validPayloads[operation]));
     assert.equal(decoded.kind, "request");
     if (decoded.kind !== "request") throw new Error("Expected a runtime request.");
     assert.equal(decoded.operation, operation);
   }
+});
+
+test("run.start snapshots exact inline content and rejects one byte beyond the IPC content limit", () => {
+  const idempotencyKey = randomUUID();
+  const emptyJsonBytes = Buffer.byteLength(JSON.stringify([{ type: "text", text: "" }]));
+  const exactText = "a".repeat(64 * 1024 - emptyJsonBytes);
+  const payload = {
+    sessionId: "session_abc",
+    idempotencyKey,
+    contentBlocks: [{ type: "text", text: exactText }],
+    execution: {
+      model: "gpt-test",
+      reasoningEffort: "medium",
+      sandbox: { mode: "read-only", networkAccess: true },
+    },
+  };
+
+  assert.doesNotThrow(() => decodeRuntimeIpcEnvelope(runtimeRequest("run.start", payload)));
+  assert.throws(
+    () =>
+      decodeRuntimeIpcEnvelope(
+        runtimeRequest("run.start", {
+          ...payload,
+          contentBlocks: [{ type: "text", text: `${exactText}a` }],
+        }),
+      ),
+    protocolFailure("invalid_envelope"),
+  );
+  assert.throws(
+    () =>
+      decodeRuntimeIpcEnvelope(
+        runtimeRequest("run.retry", {
+          sessionId: "session_abc",
+          retryOfRunId: "run_source",
+          idempotencyKey,
+          executionOverrides: { providerId: "attacker" },
+        }),
+      ),
+    protocolFailure("invalid_envelope"),
+  );
 });
 
 test("runtime IPC operation payload arrays must be dense, bounded, and read once", () => {

@@ -51,6 +51,7 @@ Long-lived WithMate Runtime Host
 Provider process、Persistence Worker、live Run、assistant draft、pending interactionは、CLIやWindowから独立した長寿命WithMate runtime hostが所有する。runtime hostは1 current OS user / 1 application data rootにつき1つとし、operational CLIとGUIは同じApplication Serviceへclientとして接続する。
 
 - Codexはruntime hostが`codex app-server --stdio` childを直接所有する。Codex managed daemon、WebSocket、experimental APIを初期構成の必須依存にしない。
+- Codex executableは`WITHMATE_CODEX_EXECUTABLE`で指定したabsolute native executableだけを使う。PATH検索、npm shim、shell commandへfallbackせず、設定不備はProvider runtimeを必要としたRunのpre-dispatch failureとして扱う。選択理由はADR 013を正本とする。
 - CLIはWindows named pipeまたはUnix domain socketのOS-local IPCを使い、version handshake後にboundedなrequest / responseを交換する。TCP listenerやProvider protocolをpublic CLIへ公開しない。
 - CLI connection終了はRun cancel、runtime host shutdown、Provider disconnectへ変換しない。cancelは明示operationだけが行う。
 - runtime host不在時はsingle-owner起動を調停し、readyとprotocol versionを確認する。one-shot Persistence WorkerやProvider直接接続へfallbackしない。
@@ -106,6 +107,20 @@ Providerは実際の処理状態とProvider固有eventを所有する。WithMate
 - approval / elicitationのrequest本体はlive activityへ埋め込まず、request IDごとのlive interactionとしてruntime hostのメモリで管理する。
 
 状態遷移、terminal outcome、retry / recovery の契約は `docs/design/session-run-message-contract.md` で定める。Provider の terminal event、WithMate process の crash、persistence failure を同一の失敗として扱わない。
+
+runtime hostは、Provider mutation responseとAdapter eventをRunAttemptごとの直列処理へ合流させる。accepted Dispatchを永続化した後だけoutput、live activity、terminal eventを同じThread / TurnのRunへ適用する。mutation responseより先に、Adapterが同じpending mutationへ一意に相関したTurn開始またはterminal eventを観測した場合、その証拠をaccepted responseとしてEvent Serviceへ渡せる。responseまで受理有無が不明で、この証拠もない場合は自動再送せず、response後に届いた同一Thread / Turnのeventで新しい外部executionを一意に証明できた場合だけacceptedへ知識補正する。Dispatch resolutionの永続化結果が不明な間に届いた同じThread / Turnのeventはbounded bufferへ保持し、frozen resolution commandのexact confirmation後に同じAttempt queueで再生する。
+
+RunOutputへ変換するeventはThreadとTurnの完全一致を要求する。Turnを持たないProvider metadataやdiagnosticはgeneration-scopedの診断に留め、現在のactive Turnで相関を補完しない。Dispatch begin、Provider送信前のrejected resolution、output、Dispatch resolution、terminal commandの永続化結果が不明な場合は、identityとcommandを固定したpersistence-only ownerを保持する。runtime hostは同じcommandのexact retryを自動継続し、generation解放、後続Provider eventの無視、または同じpublic requestの再実行へ依存しない。Provider mutationは再送しない。Provider送信前のbeginでresponseを失った場合も、同じcommandの再実行またはread-backで`dispatching`を確認したownerは未送信としてpre-dispatch terminalへ収束させ、Providerへ送らない。
+
+accepted Dispatch resolutionはProvider executionを受理した証拠なので、永続化結果が不明な間もownerをgeneration解放で捨てない。terminal commandは、先行する未確認RunOutputを同じidentityとcommandで確定してから送る。これらのlive ownerはruntime全体で同じ128 Runの上限へ数え、Dispatch beginの未確認ownerだけで上限を迂回しない。上限到達時も既存owner自身のexact retryは新しい枠として数えず、別Runのhandoffだけを拒否する。
+
+Provider connectionのcloseは、Adapter、transport、process ownership、native handleの各層でin-flight dedupeと完了結果を分ける。失敗したPromiseや`closed`状態を成功結果としてcacheせず、同じownerを保持して後続closeで再駆動する。processまたはnative handleのpartial acquisitionもstructured cleanup ownerとしてtransportへ渡し、startup failure後のcloseで同じownerを回収する。startup後にschema不一致などでAdapterを公開できない場合も、factoryがtransport cleanupを所有し、cleanup成功前のsuccessor spawnを拒否する。shutdownでcloseが未解決ならruntime hostのsingle-owner claimを解放しない。
+
+runtime factoryは、設定不備とcapability不一致を決定的なstartup failure、processまたはtransportの開始失敗をinterruptionとして型付きで返す。Codex executableはcurrent OSの形式を検証し、WindowsではPE、LinuxではELF、macOSではthin / fat Mach-Oだけを設定値として受理する。wrong-OSまたは破損したartifactをprocess起動失敗へ持ち越さない。Applicationはstartup failureの種別をADR 005のpre-dispatch outcomeへ変換する。
+
+Adapterのcloseは新しいProvider eventの受信を止めるが、close開始前に正規化済みのevent queueを破棄しない。runtime hostはAdapterから取得したeventをEvent Serviceの受理完了までexact ownerとして保持し、受理失敗時は同じeventから再開する。Event ServiceもoperationのrejectだけではAttemptとfrozen commandを破棄しない。runtime hostはclose後も残queueをEvent Serviceへ受け渡し、drain完了後にだけgenerationを解放する。これにより、Provider terminal eventとfinal Messageの確定をprocess interruptionへ置き換えない。
+
+Adapterがredaction判定を完了していない本文は保存せず、RunOutputの`omitted_redaction`へ写像する。Provider terminal outcomeとassistant contentの検証失敗は別に扱い、content failureはbounded diagnostic outputとして記録しても、Providerが報告したcompleted / failed / interruptedを別outcomeへ置き換えない。
 
 ## Provider 共通境界
 
