@@ -127,6 +127,7 @@ import {
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
+  WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
@@ -183,6 +184,7 @@ import {
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
@@ -267,6 +269,7 @@ export type MainIpcRegistrationDeps = {
   listOpenSessionWindowIds(): string[];
   listOpenCompanionReviewWindowIds(): string[];
   listAuxiliarySessions?(parentSessionId: string): Awaitable<AuxiliarySessionSummary[]>;
+  listOpenActiveAuxiliarySessionSummaries?(): Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession?(parentSessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliarySession?(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
   createAuxiliarySession?(input: CreateAuxiliarySessionInput): Awaitable<AuxiliarySession>;
@@ -276,6 +279,7 @@ export type MainIpcRegistrationDeps = {
   cancelAuxiliarySessionRun?(auxiliarySessionId: string): Awaitable<void>;
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
+  updateSessionRightPaneVisibility(isVisible: boolean): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
@@ -413,6 +417,7 @@ type MainIpcSettingsDeps = Pick<
   | "isMemoryV6ReviewWindow"
   | "getAppSettings"
   | "updateAppSettings"
+  | "updateSessionRightPaneVisibility"
   | "getAppDatabaseDiagnostics"
   | "getMemoryV6Diagnostics"
   | "installMemoryV6CliShim"
@@ -432,6 +437,7 @@ type MainIpcAuxiliaryDeps = Pick<
   | "resolveSessionWindow"
   | "resolveCompanionReviewWindow"
   | "listAuxiliarySessions"
+  | "listOpenActiveAuxiliarySessionSummaries"
   | "getActiveAuxiliarySession"
   | "getAuxiliarySession"
   | "createAuxiliarySession"
@@ -443,6 +449,7 @@ type MainIpcAuxiliaryDeps = Pick<
 
 type MainIpcAuxiliaryDepsRequired = {
   listAuxiliarySessions: (parentSessionId: string) => Awaitable<AuxiliarySessionSummary[]>;
+  listOpenActiveAuxiliarySessionSummaries: () => Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession: (parentSessionId: string) => Awaitable<AuxiliarySession | null>;
   getAuxiliarySession: (auxiliarySessionId: string) => Awaitable<AuxiliarySession | null>;
   createAuxiliarySession: (input: CreateAuxiliarySessionInput) => Awaitable<AuxiliarySession>;
@@ -599,22 +606,57 @@ function assertSessionDeleteSender(
   throw new Error("Session delete IPC is only available from Home, Settings, or the target Session window.");
 }
 
-function assertAuxiliaryOwnerWindowSender(
+type AuxiliaryOwnerWindowKind = "session" | "companion-review";
+
+function resolveAuxiliaryOwnerWindowSender(
   event: IpcMainInvokeEvent,
   parentSessionId: string,
   deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveSessionWindow" | "resolveCompanionReviewWindow">,
-): void {
+): AuxiliaryOwnerWindowKind {
   const window = deps.resolveEventWindow(event);
   if (!window) {
     throw new Error("Auxiliary session IPC is only available from the target Session or Companion Review window.");
   }
   if (deps.resolveSessionWindow(parentSessionId) === window) {
-    return;
+    return "session";
   }
   if (deps.resolveCompanionReviewWindow(parentSessionId) === window) {
-    return;
+    return "companion-review";
   }
   throw new Error("Auxiliary session IPC is only available from the target Session or Companion Review window.");
+}
+
+function assertAuxiliaryOwnerWindowSender(
+  event: IpcMainInvokeEvent,
+  parentSessionId: string,
+  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveSessionWindow" | "resolveCompanionReviewWindow">,
+): void {
+  resolveAuxiliaryOwnerWindowSender(event, parentSessionId, deps);
+}
+
+function assertAuxiliaryCreateModeForOwner(
+  ownerWindowKind: AuxiliaryOwnerWindowKind,
+  input: CreateAuxiliarySessionInput,
+): void {
+  if (ownerWindowKind === "companion-review") {
+    if (input.runtimeSelection !== undefined && input.runtimeSelection !== "explicit") {
+      throw new Error("Companion Review Auxiliary creation only supports explicit runtime selection.");
+    }
+    return;
+  }
+
+  if (input.runtimeSelection !== "latest-session") {
+    throw new Error("Session window Auxiliary creation requires latest-session runtime selection.");
+  }
+  if (
+    Object.hasOwn(input, "model") ||
+    Object.hasOwn(input, "reasoningEffort") ||
+    Object.hasOwn(input, "approvalMode") ||
+    Object.hasOwn(input, "codexSandboxMode") ||
+    Object.hasOwn(input, "customAgentName")
+  ) {
+    throw new Error("Session window Auxiliary creation cannot specify runtime options directly.");
+  }
 }
 
 async function getAuxiliarySessionForMutation(
@@ -714,6 +756,7 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
   const getAuxiliaryDeps = (deps: MainIpcAuxiliaryDeps): MainIpcAuxiliaryDepsRequired => {
     if (
       !deps.listAuxiliarySessions ||
+      !deps.listOpenActiveAuxiliarySessionSummaries ||
       !deps.getActiveAuxiliarySession ||
       !deps.getAuxiliarySession ||
       !deps.createAuxiliarySession ||
@@ -723,14 +766,15 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
       !deps.cancelAuxiliarySessionRun
     ) {
       throw new Error(
-        "Auxiliary session IPC is not wired. listAuxiliarySessions, getActiveAuxiliarySession, getAuxiliarySession, "
-        + "createAuxiliarySession, updateAuxiliarySession, closeAuxiliarySession, runAuxiliarySessionTurn, "
-        + "and cancelAuxiliarySessionRun are required.",
+        "Auxiliary session IPC is not wired. listAuxiliarySessions, listOpenActiveAuxiliarySessionSummaries, "
+        + "getActiveAuxiliarySession, getAuxiliarySession, createAuxiliarySession, updateAuxiliarySession, "
+        + "closeAuxiliarySession, runAuxiliarySessionTurn, and cancelAuxiliarySessionRun are required.",
       );
     }
 
     return {
       listAuxiliarySessions: deps.listAuxiliarySessions,
+      listOpenActiveAuxiliarySessionSummaries: deps.listOpenActiveAuxiliarySessionSummaries,
       getActiveAuxiliarySession: deps.getActiveAuxiliarySession,
       getAuxiliarySession: deps.getAuxiliarySession,
       createAuxiliarySession: deps.createAuxiliarySession,
@@ -748,6 +792,9 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     }
     return auxiliaryDeps.listAuxiliarySessions(parentSessionId);
   });
+  ipcMain.handle(WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL, () =>
+    getAuxiliaryDeps(deps).listOpenActiveAuxiliarySessionSummaries(),
+  );
   ipcMain.handle(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL, (event, parentSessionId: string) => {
     const auxiliaryDeps = getAuxiliaryDeps(deps);
     if (!parentSessionId) {
@@ -766,7 +813,8 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     return session;
   });
   ipcMain.handle(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, (event, input: CreateAuxiliarySessionInput) => {
-    assertAuxiliaryOwnerWindowSender(event, input.parentSessionId, deps);
+    const ownerWindowKind = resolveAuxiliaryOwnerWindowSender(event, input.parentSessionId, deps);
+    assertAuxiliaryCreateModeForOwner(ownerWindowKind, input);
     return getAuxiliaryDeps(deps).createAuxiliarySession(input);
   });
   ipcMain.handle(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL, async (event, session: AuxiliarySession) => {
@@ -820,6 +868,12 @@ function registerCatalogHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCatal
 function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSettingsDeps): void {
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => deps.getAppSettings());
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => deps.updateAppSettings(settings));
+  ipcMain.handle(WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL, (_event, isVisible) => {
+    if (typeof isVisible !== "boolean") {
+      throw new TypeError("right pane の表示状態は boolean で指定してね。");
+    }
+    return deps.updateSessionRightPaneVisibility(isVisible);
+  });
   ipcMain.handle(WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL, () => deps.getAppDatabaseDiagnostics());
   ipcMain.handle(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL, () => deps.getMemoryV6Diagnostics());
   ipcMain.handle(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL, (event) => {

@@ -87,10 +87,27 @@ export type SessionRuntimeServiceDeps = {
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
   resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
   getMateState?: () => MateStorageState;
+  notifySessionTurnCompleted?: (session: Session) => Awaitable<void>;
   currentTimestampLabel?: () => string;
   providerCancelGraceMs?: number;
   auditEnrichmentGraceMs?: number;
 };
+
+function notifySessionTurnCompletedBestEffort(
+  notify: SessionRuntimeServiceDeps["notifySessionTurnCompleted"],
+  session: Session,
+): void {
+  if (!notify) {
+    return;
+  }
+
+  try {
+    void Promise.resolve(notify(session))
+      .catch((error) => console.warn("Session turn completion notification failed", error));
+  } catch (error) {
+    console.warn("Session turn completion notification failed", error);
+  }
+}
 
 async function waitForAuditEnrichment<T>(
   promise: Promise<T>,
@@ -1095,6 +1112,9 @@ export class SessionRuntimeService {
         storedStatus: storedCompletedSession.status,
       });
       activeRunningSession = storedCompletedSession;
+      if (!runAbortController.signal.aborted) {
+        notifySessionTurnCompletedBestEffort(this.deps.notifySessionTurnCompleted, storedCompletedSession);
+      }
 
       const completedAuditEntry = buildTerminalAuditEntry({
         baseEntry: runningAuditEntry,

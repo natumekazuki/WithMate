@@ -35,9 +35,11 @@ New Session ダイアログでは Character を固定選択できる。Character
 
 利用傾向を細かく制御できるが、schema、migration、更新経路が必要になる。既存データで目的を満たせる今回の範囲を超える。
 
-### 開始操作のたびに履歴を再取得する
+### Character の抽選時に履歴を再取得する
 
 最新状態を直接確認できるが、開始時の追加 I/O と失敗経路が増える。Home が購読している Session summary の取得成功状態を使えば、同じ要件を満たせる。
+
+provider ごとの実行設定は security boundary が異なるため、この判断の対象外とし、ADR 007 に従って Main Process が作成直前に最新一件を取得する。
 
 ## Consequences
 

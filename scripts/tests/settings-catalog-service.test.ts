@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, it } from "node:test";
 
 import type { Session } from "../../src/app-state.js";
@@ -6,7 +9,28 @@ import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 import type { CompanionSession } from "../../src/companion-state.js";
 import { createDefaultAppSettings, type AppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../../src/model-catalog.js";
-import { SettingsCatalogService } from "../../src-electron/settings-catalog-service.js";
+import { AppSettingsStorage } from "../../src-electron/app-settings-storage.js";
+import { SettingsCatalogService as SettingsCatalogServiceImpl } from "../../src-electron/settings-catalog-service.js";
+
+class SettingsCatalogService extends SettingsCatalogServiceImpl {
+  constructor(deps: ConstructorParameters<typeof SettingsCatalogServiceImpl>[0]) {
+    super({
+      runProviderRuntimeOperationExclusive: async (operation) => await operation(),
+      ...deps,
+    });
+  }
+}
+
+function createDeferred(): {
+  promise: Promise<void>;
+  resolve(): void;
+} {
+  let resolve = () => undefined;
+  const promise = new Promise<void>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
 
 function createSession(overrides?: Partial<Session>): Session {
   return {
@@ -193,6 +217,263 @@ describe("SettingsCatalogService", () => {
     );
   });
 
+  it("待機中の通常 settings 更新は並行して保存された right pane 表示状態を巻き戻さない", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-settings-catalog-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    const storage = new AppSettingsStorage(dbPath);
+    const auxiliarySessionsRequested = createDeferred();
+    const resumeAuxiliarySessions = createDeferred();
+
+    try {
+      const previousSettings = storage.getSettings();
+      const service = new SettingsCatalogService({
+        hasInFlightSessionRuns() {
+          return false;
+        },
+        isSessionRunInFlight() {
+          return false;
+        },
+        isRunningSession() {
+          return false;
+        },
+        listSessions() {
+          return [];
+        },
+        async listAuxiliarySessions() {
+          auxiliarySessionsRequested.resolve();
+          await resumeAuxiliarySessions.promise;
+          return [];
+        },
+        getAppSettings() {
+          return storage.getSettings();
+        },
+        updateAppSettings(settings) {
+          return storage.updateSettings(settings);
+        },
+        getModelCatalog() {
+          return createCatalogSnapshot();
+        },
+        ensureModelCatalogSeeded() {
+          return createCatalogSnapshot();
+        },
+        importModelCatalogDocument() {
+          return createCatalogSnapshot();
+        },
+        exportModelCatalogDocument() {
+          return { providers: createCatalogSnapshot().providers };
+        },
+        replaceAllSessions(nextSessions) {
+          return nextSessions;
+        },
+        replaceAuxiliarySessions(nextSessions) {
+          return nextSessions;
+        },
+        clearProviderQuotaTelemetry() {},
+        clearSessionContextTelemetry() {},
+        invalidateProviderSessionThread() {},
+        broadcastSessions() {},
+        broadcastAppSettings() {},
+        broadcastModelCatalog() {},
+      });
+
+      const updating = service.updateAppSettings({
+        ...previousSettings,
+        launchAtLoginEnabled: true,
+      });
+      await auxiliarySessionsRequested.promise;
+      storage.updateSessionRightPaneVisibility(true);
+      resumeAuxiliarySessions.resolve();
+
+      const updated = await updating;
+
+      assert.equal(updated.launchAtLoginEnabled, true);
+      assert.equal(updated.sessionRightPaneVisible, true);
+      assert.equal(storage.getSettings().sessionRightPaneVisible, true);
+    } finally {
+      storage.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("通常 settings 保存後の待機中に更新された right pane 表示状態を最新の projection へ反映する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-settings-catalog-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    const storage = new AppSettingsStorage(dbPath);
+    const sessionReplacementStarted = createDeferred();
+    const resumeSessionReplacement = createDeferred();
+    let broadcastSettings: AppSettings | null = null;
+
+    try {
+      const previousSettings = storage.getSettings();
+      const previousSessions = [createSession()];
+      const service = new SettingsCatalogService({
+        hasInFlightSessionRuns() {
+          return false;
+        },
+        isSessionRunInFlight() {
+          return false;
+        },
+        isRunningSession() {
+          return false;
+        },
+        listSessions() {
+          return previousSessions;
+        },
+        listAuxiliarySessions() {
+          return [];
+        },
+        getAppSettings() {
+          return storage.getSettings();
+        },
+        updateAppSettings(settings) {
+          return storage.updateSettings(settings);
+        },
+        getModelCatalog() {
+          return createCatalogSnapshot();
+        },
+        ensureModelCatalogSeeded() {
+          return createCatalogSnapshot();
+        },
+        importModelCatalogDocument() {
+          return createCatalogSnapshot();
+        },
+        exportModelCatalogDocument() {
+          return { providers: createCatalogSnapshot().providers };
+        },
+        async replaceAllSessions(nextSessions) {
+          sessionReplacementStarted.resolve();
+          await resumeSessionReplacement.promise;
+          return nextSessions;
+        },
+        replaceAuxiliarySessions(nextSessions) {
+          return nextSessions;
+        },
+        clearProviderQuotaTelemetry() {},
+        clearSessionContextTelemetry() {},
+        invalidateProviderSessionThread() {},
+        broadcastSessions() {},
+        broadcastAppSettings(settings) {
+          broadcastSettings = settings ?? storage.getSettings();
+        },
+        broadcastModelCatalog() {},
+      });
+
+      const updating = service.updateAppSettings({
+        ...previousSettings,
+        launchAtLoginEnabled: true,
+        codingProviderSettings: {
+          ...previousSettings.codingProviderSettings,
+          codex: {
+            ...previousSettings.codingProviderSettings.codex,
+            apiKey: "changed-key",
+          },
+        },
+      });
+      await sessionReplacementStarted.promise;
+      storage.updateSessionRightPaneVisibility(true);
+      resumeSessionReplacement.resolve();
+
+      const updated = await updating;
+
+      assert.equal(updated.launchAtLoginEnabled, true);
+      assert.equal(updated.sessionRightPaneVisible, true);
+      assert.ok(broadcastSettings);
+      assert.equal(broadcastSettings.sessionRightPaneVisible, true);
+      assert.equal(storage.getSettings().sessionRightPaneVisible, true);
+    } finally {
+      storage.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("通常 settings 更新の rollback は並行して保存された right pane 表示状態を巻き戻さない", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-settings-catalog-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    const storage = new AppSettingsStorage(dbPath);
+    const firstSessionReplacementStarted = createDeferred();
+    const rejectFirstSessionReplacement = createDeferred();
+    let replaceCallCount = 0;
+
+    try {
+      const previousSettings = storage.getSettings();
+      const previousSessions = [createSession()];
+      const service = new SettingsCatalogService({
+        hasInFlightSessionRuns() {
+          return false;
+        },
+        isSessionRunInFlight() {
+          return false;
+        },
+        isRunningSession() {
+          return false;
+        },
+        listSessions() {
+          return previousSessions;
+        },
+        listAuxiliarySessions() {
+          return [];
+        },
+        getAppSettings() {
+          return storage.getSettings();
+        },
+        updateAppSettings(settings) {
+          return storage.updateSettings(settings);
+        },
+        getModelCatalog() {
+          return createCatalogSnapshot();
+        },
+        ensureModelCatalogSeeded() {
+          return createCatalogSnapshot();
+        },
+        importModelCatalogDocument() {
+          return createCatalogSnapshot();
+        },
+        exportModelCatalogDocument() {
+          return { providers: createCatalogSnapshot().providers };
+        },
+        async replaceAllSessions(nextSessions) {
+          replaceCallCount += 1;
+          if (replaceCallCount === 1) {
+            firstSessionReplacementStarted.resolve();
+            await rejectFirstSessionReplacement.promise;
+            throw new Error("session replacement failed");
+          }
+          return nextSessions;
+        },
+        replaceAuxiliarySessions(nextSessions) {
+          return nextSessions;
+        },
+        clearProviderQuotaTelemetry() {},
+        clearSessionContextTelemetry() {},
+        invalidateProviderSessionThread() {},
+        broadcastSessions() {},
+        broadcastAppSettings() {},
+        broadcastModelCatalog() {},
+      });
+
+      const updating = service.updateAppSettings({
+        ...previousSettings,
+        codingProviderSettings: {
+          ...previousSettings.codingProviderSettings,
+          codex: {
+            ...previousSettings.codingProviderSettings.codex,
+            apiKey: "changed-key",
+          },
+        },
+      });
+      await firstSessionReplacementStarted.promise;
+      storage.updateSessionRightPaneVisibility(true);
+      rejectFirstSessionReplacement.resolve();
+
+      await assert.rejects(() => updating, /session replacement failed/);
+      assert.equal(replaceCallCount, 2);
+      assert.equal(storage.getSettings().sessionRightPaneVisible, true);
+    } finally {
+      storage.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("settings 更新時に API key 変更 provider の thread と telemetry を無効化する", async () => {
     const previousSettings = createDefaultAppSettings();
     const previousSessions = [createSession()];
@@ -219,7 +500,7 @@ describe("SettingsCatalogService", () => {
         return [];
       },
       getAppSettings() {
-        return previousSettings;
+        return savedSettings ?? previousSettings;
       },
       updateAppSettings(settings) {
         savedSettings = settings;

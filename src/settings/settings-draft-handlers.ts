@@ -9,6 +9,7 @@ import {
   handleChangeProviderEnabled,
   handleChangeProviderSkillRelativePath,
   handleChangeProviderSkillRootPath,
+  handleChangeSessionTurnNotificationEnabled,
   handleChangeUserMicrocopySlot,
 } from "./settings-draft-actions.js";
 
@@ -20,6 +21,7 @@ export type SettingsDraftHandlers = Pick<
   HomeSettingsContentBaseProps,
   | "onChangeAutoCollapseActionDockOnSend"
   | "onChangeLaunchAtLoginEnabled"
+  | "onChangeSessionTurnNotificationEnabled"
   | "onChangeMemoryFileQuotaMegabytes"
   | "onChangeUserMicrocopySlot"
   | "onChangeProviderEnabled"
@@ -37,6 +39,9 @@ export function buildSettingsDraftHandlers({
     },
     onChangeLaunchAtLoginEnabled: (enabled) => {
       handleChangeLaunchAtLoginEnabled({ enabled, setSettingsDraft });
+    },
+    onChangeSessionTurnNotificationEnabled: (enabled) => {
+      handleChangeSessionTurnNotificationEnabled({ enabled, setSettingsDraft });
     },
     onChangeMemoryFileQuotaMegabytes: (value) => {
       handleChangeMemoryFileQuotaMegabytes({ value, setSettingsDraft });

@@ -420,6 +420,7 @@ current 実装の key:
 | setting_key | Meaning |
 | --- | --- |
 | `auto_collapse_action_dock_on_send` | Session 送信後に Action Dock を自動で閉じるか |
+| `session_right_pane_visible` | 新しく開く Agent / Companion Window で right pane を表示するか |
 | `coding_provider_settings_json` | coding plane provider 設定 |
 | `memory_extraction_provider_settings_json` | memory extraction provider 設定 |
 | `character_reflection_provider_settings_json` | character reflection provider 設定 |

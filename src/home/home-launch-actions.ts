@@ -1,4 +1,3 @@
-import { DEFAULT_APPROVAL_MODE } from "../approval-mode.js";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../companion-state.js";
 import { createCompanionSessionSummary } from "../companion-state.js";
@@ -9,7 +8,6 @@ import { projectSessionSummary } from "../session-state.js";
 import {
   buildCreateCompanionSessionInputFromLaunchDraft,
   buildCreateSessionRequestFromLaunchDraft,
-  resolveLastUsedSessionSelection,
   resolveLaunchValidationMessage,
   type HomeLaunchDraft,
 } from "./home-launch-state.js";
@@ -69,7 +67,6 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
   input.setLaunchFeedback(requestedMode === "companion" ? "Companion を開始してるよ..." : "Session を開始してるよ...");
   input.setLaunchStarting(true);
 
-  const lastUsedSelection = resolveLastUsedSessionSelection(input.sessions, input.selectedProviderId);
   try {
     if (requestedMode === "companion") {
       const companionInput = buildCreateCompanionSessionInputFromLaunchDraft({
@@ -79,7 +76,6 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
         characterEntries: input.characterEntries,
         sessions: input.sessions,
         random: input.random,
-        lastUsedSelection,
       });
       if (!companionInput) {
         input.setLaunchFeedback("Companion の開始条件が揃ってないよ。");
@@ -102,11 +98,9 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
       draft: input.draft,
       mateProfile: input.mateProfile,
       selectedProviderId: input.selectedProviderId,
-      approvalMode: DEFAULT_APPROVAL_MODE,
       characterEntries: input.characterEntries,
       sessions: input.sessions,
       random: input.random,
-      lastUsedSelection,
     });
     if (!sessionInput) {
       input.setLaunchFeedback("Session の開始条件が揃ってないよ。");

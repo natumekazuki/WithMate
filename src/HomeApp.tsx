@@ -70,7 +70,10 @@ import { buildHomeMateSetupContentProps } from "./mate/home-mate-setup-props.js"
 import { buildMateStatusRefreshers } from "./mate/mate-status-refreshers.js";
 import { buildHomeMonitorContentProps } from "./home/home-monitor-content-props.js";
 import { renderHomeMonitorWindowIcon, renderHomeSearchIcon } from "./home/home-icons.js";
-import { createHomeActiveAuxiliarySessionRefresher } from "./home/home-active-auxiliary-refresh.js";
+import {
+  createHomeActiveAuxiliarySessionRefresher,
+  resolveHomeActiveAuxiliarySessionsState,
+} from "./home/home-active-auxiliary-refresh.js";
 
 type HomeRightPaneView = "monitor" | "characters";
 
@@ -310,19 +313,12 @@ export default function HomeApp() {
     }
 
     const refresher = createHomeActiveAuxiliarySessionRefresher({
-      getMonitorParentSessionIds: () => Array.from(new Set([
-        ...openSessionWindowIds,
-        ...openCompanionReviewWindowIds,
-      ])),
-      fetchActiveAuxiliarySessions: async (monitorParentSessionIds) => {
-        const sessionLists = await Promise.all(
-          monitorParentSessionIds.map((sessionId) => withmateApi.listAuxiliarySessions(sessionId)),
+      fetchActiveAuxiliarySessions: () => withmateApi.listOpenActiveAuxiliarySessionSummaries(),
+      setActiveAuxiliarySessions: (sessions) => {
+        setActiveAuxiliarySessions((current) =>
+          resolveHomeActiveAuxiliarySessionsState(current, sessions),
         );
-        return sessionLists
-          .flat()
-          .filter((session) => session.status === "active");
       },
-      setActiveAuxiliarySessions,
       onError: (error) => console.error(error),
     });
 
@@ -364,7 +360,7 @@ export default function HomeApp() {
   const launchProjection = useMemo(
     () => buildHomeLaunchProjection({
       launchProviderId: launchDraft.providerId,
-      launchMode: launchDraft.mode,
+      launchMode: "session",
       launchTitle: launchDraft.title,
       launchWorkspace: launchDraft.workspace,
       launchCharacterId: launchDraft.characterId,
@@ -605,14 +601,13 @@ export default function HomeApp() {
       launchFeedback,
       launchStarting,
       onClose: homeLaunchHandlers.onCloseLaunchDialog,
-      onSelectMode: homeLaunchHandlers.onChangeMode,
       onChangeTitle: homeLaunchHandlers.onChangeTitle,
       onBrowseWorkspace: () => void homeLaunchHandlers.onBrowseWorkspace(),
       onSelectSessionFolder: homeLaunchHandlers.onSelectSessionFolder,
       onSelectProvider: homeLaunchHandlers.onSelectLaunchProvider,
       onSelectCharacter: homeLaunchHandlers.onSelectLaunchCharacter,
       onSelectRandomCharacter: homeLaunchHandlers.onSelectRandomLaunchCharacter,
-      onStartSession: (mode) => void homeLaunchHandlers.onStartSession(mode),
+      onStartSession: () => void homeLaunchHandlers.onStartSession("session"),
     }),
   });
 

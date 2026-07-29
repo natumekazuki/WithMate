@@ -5,7 +5,21 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, crashReporter, dialog, ipcMain, Menu, safeStorage, screen, shell, Tray } from "electron";
+import {
+  app,
+  BrowserWindow,
+  crashReporter,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  Notification,
+  safeStorage,
+  screen,
+  shell,
+  Tray,
+  type NativeImage,
+} from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
 import { summarizeAuditLogDetailFragment } from "../src/audit-log-detail-metrics.js";
@@ -87,6 +101,7 @@ import { CompanionAuditLogStorageV3 } from "./companion-audit-log-storage-v3.js"
 import { CompanionStorage } from "./companion-storage.js";
 import { CompanionStorageV3 } from "./companion-storage-v3.js";
 import { SessionRuntimeService } from "./session-runtime-service.js";
+import { SessionTurnNotificationService } from "./session-turn-notification-service.js";
 import { SessionPersistenceService } from "./session-persistence-service.js";
 import { SessionWindowBridge } from "./session-window-bridge.js";
 import { SettingsCatalogService } from "./settings-catalog-service.js";
@@ -131,7 +146,9 @@ import { MainBroadcastFacade } from "./main-broadcast-facade.js";
 import { MainObservabilityFacade } from "./main-observability-facade.js";
 import { MainProviderFacade } from "./main-provider-facade.js";
 import { MainSessionCommandFacade } from "./main-session-command-facade.js";
+import { ProviderRuntimeOperationCoordinator } from "./provider-runtime-operation-coordinator.js";
 import { MainSessionPersistenceFacade } from "./main-session-persistence-facade.js";
+import { SessionLaunchSelectionService } from "./session-launch-selection-service.js";
 import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
 import {
@@ -267,6 +284,7 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock();
 ipcMain.handle(WITHMATE_GET_APP_BOOT_STATUS_CHANNEL, () => appBootStatus);
 const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
 let sessionRuntimeService: SessionRuntimeService | null = null;
+let sessionTurnNotificationService: SessionTurnNotificationService<NativeImage> | null = null;
 let auxiliarySessionService: AuxiliarySessionService | null = null;
 let auxiliarySessionRuntimeService: SessionRuntimeService | null = null;
 let sessionPersistenceService: SessionPersistenceService | null = null;
@@ -287,6 +305,8 @@ let mainObservabilityFacade: MainObservabilityFacade | null = null;
 let mainProviderFacade: MainProviderFacade | null = null;
 let mainSessionCommandFacade: MainSessionCommandFacade | null = null;
 let mainSessionPersistenceFacade: MainSessionPersistenceFacade | null = null;
+let sessionLaunchSelectionService: SessionLaunchSelectionService | null = null;
+const providerRuntimeOperationCoordinator = new ProviderRuntimeOperationCoordinator();
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
 let appTrayService: AppTrayService | null = null;
@@ -1280,6 +1300,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               settings: {
                 getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
+                updateSessionRightPaneVisibility,
                 getAppDatabaseDiagnostics,
                 getMemoryV6Diagnostics,
                 installMemoryV6CliShim,
@@ -1329,6 +1350,11 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               auxiliary: {
                 listAuxiliarySessions: (parentSessionId) =>
                   requireAuxiliarySessionService().listAuxiliarySessions(parentSessionId),
+                listOpenActiveAuxiliarySessionSummaries: () =>
+                  requireAuxiliarySessionService().listActiveAuxiliarySessionSummaries([
+                    ...listOpenSessionWindowIds(),
+                    ...listOpenCompanionReviewWindowIds(),
+                  ]),
                 getActiveAuxiliarySession: (parentSessionId) =>
                   requireAuxiliarySessionService().getActiveAuxiliarySession(parentSessionId),
                 getAuxiliarySession: (auxiliarySessionId) =>
@@ -1582,6 +1608,10 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       getSession,
       getSessions: () => sessions,
       getStoredSessionSummaries: () => requireSessionStorage().listSessionSummaries(),
+      resolveSessionLaunchSelection: (providerId) =>
+        requireSessionLaunchSelectionService().resolve(providerId),
+      runProviderRuntimeOperationExclusive: (operation) =>
+        providerRuntimeOperationCoordinator.runExclusive(operation),
       getSessionPersistenceService: () => requireSessionPersistenceService(),
       getSessionRuntimeService: () => requireSessionRuntimeService(),
       getProviderQuotaTelemetry: (providerId) => getProviderQuotaTelemetry(providerId),
@@ -1600,6 +1630,19 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
   }
 
   return mainSessionCommandFacade;
+}
+
+function requireSessionLaunchSelectionService(): SessionLaunchSelectionService {
+  if (!sessionLaunchSelectionService) {
+    sessionLaunchSelectionService = new SessionLaunchSelectionService({
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
+      getLatestSessionSummaryForProvider: (providerId) =>
+        requireSessionStorage().getLatestSessionSummaryForProvider(providerId),
+    });
+  }
+
+  return sessionLaunchSelectionService;
 }
 
 function requireMainSessionPersistenceFacade(): MainSessionPersistenceFacade {
@@ -1647,6 +1690,10 @@ function requireAuxiliarySessionService(): AuxiliarySessionService {
       getParentSession: getAuxiliaryParentSession,
       getStorage: () => requireAuxiliarySessionStorage(),
       getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
+      resolveSessionLaunchSelection: (providerId) =>
+        requireSessionLaunchSelectionService().resolve(providerId),
+      runProviderRuntimeOperationExclusive: (operation) =>
+        providerRuntimeOperationCoordinator.runExclusive(operation),
     });
   }
 
@@ -1700,6 +1747,10 @@ async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   applyLaunchAtLoginSetting(app, savedSettings.launchAtLoginEnabled);
   await syncManagedMemorySkillBestEffort();
   return savedSettings;
+}
+
+function updateSessionRightPaneVisibility(isVisible: boolean): AppSettings {
+  return requireAppSettingsStorage().updateSessionRightPaneVisibility(isVisible);
 }
 
 async function resetAppSettings(): Promise<AppSettings> {
@@ -1933,11 +1984,71 @@ function requireSessionRuntimeService(): SessionRuntimeService {
           requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response);
         }
       },
+      notifySessionTurnCompleted: (session) => {
+        requireSessionTurnNotificationService().notifyTurnCompleted(session);
+      },
       currentTimestampLabel,
     });
   }
 
   return sessionRuntimeService;
+}
+
+function requireSessionTurnNotificationService(): SessionTurnNotificationService<NativeImage> {
+  if (!sessionTurnNotificationService) {
+    sessionTurnNotificationService = new SessionTurnNotificationService({
+      platform: process.platform,
+      isNotificationSupported: () => Notification.isSupported(),
+      isNotificationEnabled: () => requireAppSettingsStorage().getSettings().sessionTurnNotificationEnabled,
+      isSessionWindowFocused: (sessionId) => {
+        const sessionWindow = requireSessionWindowBridge().getWindow(sessionId);
+        return Boolean(sessionWindow && !sessionWindow.isDestroyed() && sessionWindow.isFocused());
+      },
+      loadCharacterIcon: (iconPath) => {
+        if (!path.isAbsolute(iconPath)) {
+          return null;
+        }
+
+        const icon = nativeImage.createFromPath(iconPath);
+        return icon.isEmpty() ? null : icon;
+      },
+      createNotification: (options) => {
+        const notification = new Notification(options);
+        return {
+          show: () => notification.show(),
+          close: () => notification.close(),
+          onClick: (listener) => {
+            notification.on("click", listener);
+          },
+          onClose: (listener) => {
+            notification.on("close", listener);
+          },
+          onFailed: (listener) => {
+            notification.on("failed", (_event, error) => listener(error));
+          },
+        };
+      },
+      getSession: (sessionId) => requireSessionStorage().getSession(sessionId),
+      openSessionWindow: async (sessionId) => {
+        await openSessionWindow(sessionId);
+      },
+      openHomeWindow: async () => {
+        await createHomeWindow();
+      },
+      logWarning: (event, sessionId, error) => {
+        writeAppLog({
+          level: "warn",
+          kind: `session.turn-notification.${event}`,
+          process: "main",
+          message: "Session turn notification warning",
+          data: { sessionId },
+          ...(error === undefined ? {} : { error: appLogService.errorToLogError(error) }),
+        });
+      },
+    });
+  }
+
+  return sessionTurnNotificationService;
 }
 
 function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
@@ -2014,9 +2125,11 @@ function requireCompanionSessionService(): CompanionSessionService {
   if (!companionSessionService) {
     companionSessionService = new CompanionSessionService({
       appDataPath: app.getPath("userData"),
-      getAppSettings: () => requireAppSettingsStorage().getSettings(),
-      getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
-      storage: requireCompanionStorage(),
+      resolveSessionLaunchSelection: (providerId) =>
+        requireSessionLaunchSelectionService().resolve(providerId),
+      runProviderRuntimeOperationExclusive: (operation) =>
+        providerRuntimeOperationCoordinator.runExclusive(operation),
+      getStorage: () => requireCompanionStorage(),
       createCharacterRuntimeSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
     });
   }
@@ -2165,6 +2278,8 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
 function requireSettingsCatalogService(): SettingsCatalogService {
   if (!settingsCatalogService) {
     settingsCatalogService = new SettingsCatalogService({
+      runProviderRuntimeOperationExclusive: (operation) =>
+        providerRuntimeOperationCoordinator.runExclusive(operation),
       hasInFlightSessionRuns,
       isSessionRunInFlight,
       isRunningSession,
@@ -2430,6 +2545,7 @@ function closePersistentStores(): void {
   mainProviderFacade = null;
   mainSessionCommandFacade = null;
   mainSessionPersistenceFacade = null;
+  sessionLaunchSelectionService = null;
   mainWindowFacade = null;
   mainQueryService = null;
   mainInfrastructureRegistry?.reset();
@@ -2481,6 +2597,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   mainProviderFacade = null;
   mainSessionCommandFacade = null;
   mainSessionPersistenceFacade = null;
+  sessionLaunchSelectionService = null;
   mainWindowFacade = null;
   mainQueryService = null;
   mainInfrastructureRegistry?.reset();

@@ -30,6 +30,7 @@ import {
   WITHMATE_GET_MATE_STATE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
+  WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
@@ -40,6 +41,7 @@ import {
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL,
   WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
 } from "../../src/withmate-ipc-channels.js";
 
@@ -128,6 +130,7 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_APP_SETTINGS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
   assert.ok(handlers.has(WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
@@ -174,6 +177,30 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   for (const channel of removedChannels) {
     assert.equal(handlers.has(channel), false, `${channel} should not be registered`);
   }
+});
+
+test("right pane 表示設定 IPC は boolean だけを専用更新処理へ渡す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const visibilityUpdates: boolean[] = [];
+  const { deps } = createDeps({
+    updateSessionRightPaneVisibility: (isVisible: boolean) => {
+      visibilityUpdates.push(isVisible);
+      return { sessionRightPaneVisible: isVisible };
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL)?.({}, false),
+    { sessionRightPaneVisible: false },
+  );
+  await assert.rejects(
+    () =>
+      handlers.get(WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL)?.({}, "false") as Promise<unknown>,
+    /boolean/,
+  );
+  assert.deepEqual(visibilityUpdates, [false]);
 });
 
 test("registerMainIpcHandlers は Mate 未作成時でも session runtime IPC を block しない", async () => {
@@ -511,6 +538,7 @@ test("Auxiliary mutation/run IPC は対象 Session / Companion Review window か
   await handlers.get(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL)?.({}, {
     parentSessionId: "session-1",
     provider: "codex",
+    runtimeSelection: "latest-session",
   });
   await handlers.get(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL)?.({}, auxiliarySession);
   await handlers.get(WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL)?.({}, "aux-1");
@@ -528,6 +556,85 @@ test("Auxiliary mutation/run IPC は対象 Session / Companion Review window か
     "runAuxiliarySessionTurn",
     "getAuxiliarySession:aux-1",
     "cancelAuxiliarySessionRun",
+  ]);
+});
+
+test("Auxiliary create IPC は送信元 window と runtime selection mode を結び付ける", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  const companionReviewWindow = createWindowStub("http://localhost:5173/?mode=companion&sessionId=session-1");
+  const auxiliarySession = createAuxiliarySessionStub();
+  let eventWindow: unknown = sessionWindow;
+  const forwardedInputs: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
+    resolveCompanionReviewWindow: (sessionId: string) =>
+      sessionId === "session-1" ? companionReviewWindow : null,
+    createAuxiliarySession: async (input: unknown) => {
+      forwardedInputs.push(input);
+      return auxiliarySession;
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+  const createHandler = handlers.get(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL);
+
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "explicit",
+      approvalMode: "never",
+      codexSandboxMode: "danger-full-access",
+    }) as Promise<unknown>,
+    /requires latest-session runtime selection/,
+  );
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+      approvalMode: undefined,
+    }) as Promise<unknown>,
+    /cannot specify runtime options directly/,
+  );
+  await createHandler?.({}, {
+    parentSessionId: "session-1",
+    provider: "codex",
+    runtimeSelection: "latest-session",
+  });
+
+  eventWindow = companionReviewWindow;
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+    }) as Promise<unknown>,
+    /only supports explicit runtime selection/,
+  );
+  await createHandler?.({}, {
+    parentSessionId: "session-1",
+    provider: "codex",
+    runtimeSelection: "explicit",
+    approvalMode: "never",
+    codexSandboxMode: "danger-full-access",
+  });
+
+  assert.deepEqual(forwardedInputs, [
+    {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+    },
+    {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "explicit",
+      approvalMode: "never",
+      codexSandboxMode: "danger-full-access",
+    },
   ]);
 });
 
@@ -676,6 +783,32 @@ test("Auxiliary full read IPC は対象外 window から full read を返さず�
     /Auxiliary session IPC is only available/,
   );
   assert.deepEqual(fullReadCalls, []);
+});
+
+test("Home 用 Auxiliary summary IPC は main が確定した open parent scope の active summary だけを返す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const {
+    messages: _messages,
+    composerDraft: _composerDraft,
+    ...summary
+  } = createAuxiliarySessionStub();
+  const calls: string[] = [];
+  const { deps } = createDeps({
+    listOpenActiveAuxiliarySessionSummaries: async () => {
+      calls.push("listOpenActiveAuxiliarySessionSummaries");
+      return [summary];
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL)?.({}),
+    [summary],
+  );
+  assert.deepEqual(calls, ["listOpenActiveAuxiliarySessionSummaries"]);
+  assert.equal("messages" in summary, false);
+  assert.equal("composerDraft" in summary, false);
 });
 
 test("Auxiliary update IPC は payload parent と既存 parent の不一致を拒否する", async () => {

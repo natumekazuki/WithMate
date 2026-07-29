@@ -10,7 +10,12 @@ import {
   type Session,
   type SessionSummary,
 } from "../src/session-state.js";
+import { normalizeProviderId } from "../src/model-catalog.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+import {
+  registerSessionProviderIdNormalizer,
+  SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION,
+} from "./session-provider-id-sql.js";
 import type { DeleteSessionsLastActiveBeforeCutoff } from "../src/withmate-window-types.js";
 
 type SessionHeaderRow = {
@@ -197,6 +202,15 @@ const LIST_SESSION_SUMMARIES_SQL = `
     ${SESSION_HEADER_COLUMNS}
   FROM sessions
   ORDER BY last_active_at DESC, id DESC
+`;
+
+const GET_LATEST_SESSION_SUMMARY_FOR_PROVIDER_SQL = `
+  SELECT
+    ${SESSION_HEADER_COLUMNS}
+  FROM sessions
+  WHERE ${SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION}(provider) = ?
+  ORDER BY last_active_at DESC, id DESC
+  LIMIT 1
 `;
 
 const LIST_SESSION_IDS_LAST_ACTIVE_BEFORE_SQL = `
@@ -417,6 +431,7 @@ export class SessionStorageV2 {
 
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
+    registerSessionProviderIdNormalizer(this.db);
   }
 
   private withDb<T>(runner: (db: DatabaseSync) => T): T {
@@ -444,6 +459,22 @@ export class SessionStorageV2 {
       return cloneSessionSummaries(
         rows.map((row) => rowToSessionSummary(row)).filter((session): session is SessionSummary => session !== null),
       );
+    });
+  }
+
+  getLatestSessionSummaryForProvider(providerId: string): SessionSummary | null {
+    const normalizedProviderId = providerId.trim();
+    if (!normalizedProviderId) {
+      return null;
+    }
+    return this.withDb((db) => {
+      const row = db.prepare(GET_LATEST_SESSION_SUMMARY_FOR_PROVIDER_SQL)
+        .get(normalizeProviderId(normalizedProviderId)) as SessionHeaderRow | undefined;
+      if (!row) {
+        return null;
+      }
+      const summary = rowToSessionSummary(row, "throw");
+      return summary ? cloneSessionSummaries([summary])[0] : null;
     });
   }
 

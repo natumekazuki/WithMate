@@ -1,7 +1,43 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import { MainSessionCommandFacade } from "../../src-electron/main-session-command-facade.js";
+import {
+  ProviderRuntimeOperationCoordinator,
+  type RunProviderRuntimeOperationExclusive,
+} from "../../src-electron/provider-runtime-operation-coordinator.js";
+import type { SessionLaunchSelection } from "../../src-electron/session-launch-selection-service.js";
+import { SettingsCatalogService } from "../../src-electron/settings-catalog-service.js";
+
+const runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive =
+  async (operation) => await operation();
+
+function createDeferred<T = void>(): {
+  promise: Promise<T>;
+  resolve(value: T): void;
+} {
+  let resolve: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
+function createLaunchSelection(
+  overrides: Partial<SessionLaunchSelection> = {},
+): SessionLaunchSelection {
+  return {
+    provider: "codex",
+    catalogRevision: 3,
+    model: "gpt-5.6",
+    reasoningEffort: "high",
+    approvalMode: "untrusted",
+    codexSandboxMode: "workspace-write",
+    customAgentName: "",
+    ...overrides,
+  };
+}
 
 function createSessionRequest(workspace: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -25,6 +61,8 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
     getSession: () => null,
     getSessions: () => [{ id: "s-1", workspacePath: "C:/work/repo" } as never],
     getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () =>
       ({
         createSession(input) {
@@ -104,6 +142,17 @@ test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID 
     getSession: () => null,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async (providerId) => {
+      calls.push(`resolve:${providerId}`);
+      return createLaunchSelection({
+        model: "gpt-5.6-pro",
+        reasoningEffort: "xhigh",
+        approvalMode: "never",
+        codexSandboxMode: "danger-full-access",
+        customAgentName: "reviewer",
+      });
+    },
     getSessionPersistenceService: () =>
       ({
         createSession(input) {
@@ -130,6 +179,7 @@ test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID 
   await facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never);
 
   assert.deepEqual(calls, [
+    "resolve:codex",
     "issue-id",
     "mkdir:launch-managed",
     "persist:launch-managed",
@@ -141,6 +191,11 @@ test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID 
       workspacePath: persistedInput?.workspacePath,
       branch: persistedInput?.branch,
       workspace: persistedInput?.workspace,
+      model: persistedInput?.model,
+      reasoningEffort: persistedInput?.reasoningEffort,
+      approvalMode: persistedInput?.approvalMode,
+      codexSandboxMode: persistedInput?.codexSandboxMode,
+      customAgentName: persistedInput?.customAgentName,
     },
     {
       id: "launch-managed",
@@ -148,8 +203,95 @@ test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID 
       workspacePath: "C:/WithMate/session-files/launch-managed",
       branch: "",
       workspace: undefined,
+      model: "gpt-5.6-pro",
+      reasoningEffort: "xhigh",
+      approvalMode: "never",
+      codexSandboxMode: "danger-full-access",
+      customAgentName: "reviewer",
     },
   );
+});
+
+test("Session 作成中は Settings 更新を同じ runtime 選択境界の完了まで待機させる", async () => {
+  const coordinator = new ProviderRuntimeOperationCoordinator();
+  const runExclusive: RunProviderRuntimeOperationExclusive =
+    (operation) => coordinator.runExclusive(operation);
+  const folderEntered = createDeferred();
+  const releaseFolder = createDeferred();
+  const events: string[] = [];
+  let settings = createDefaultAppSettings();
+  const settingsService = new SettingsCatalogService({
+    runProviderRuntimeOperationExclusive: runExclusive,
+    getAppSettings: () => settings,
+    updateAppSettings: (nextSettings) => {
+      events.push("settings:update");
+      settings = nextSettings;
+      return settings;
+    },
+    listSessions: () => [],
+    listAuxiliarySessions: () => [],
+    applyAppSettingsSideEffects: () => undefined,
+    broadcastAppSettings: () => {
+      events.push("settings:broadcast");
+    },
+  } as never);
+  const facade = new MainSessionCommandFacade({
+    getSession: () => null,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive: runExclusive,
+    resolveSessionLaunchSelection: async () => {
+      events.push("selection:resolve");
+      return createLaunchSelection();
+    },
+    getSessionPersistenceService: () =>
+      ({
+        createSession(input) {
+          events.push("session:persist");
+          return input as never;
+        },
+      }) as never,
+    getSessionRuntimeService: () => ({} as never),
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-serialized",
+    createSessionFilesDirectory: async () => {
+      events.push("folder:start");
+      folderEntered.resolve();
+      await releaseFolder.promise;
+      events.push("folder:end");
+      return "C:/WithMate/session-files/launch-serialized";
+    },
+    isSessionFilesWorkspace: () => false,
+  });
+
+  const createPromise = facade.createSessionFromRequest(
+    createSessionRequest({ kind: "session-folder" }) as never,
+  );
+  await folderEntered.promise;
+  const settingsPromise = settingsService.updateAppSettings({
+    ...settings,
+    launchAtLoginEnabled: !settings.launchAtLoginEnabled,
+  });
+
+  await Promise.resolve();
+  assert.deepEqual(events, [
+    "selection:resolve",
+    "folder:start",
+  ]);
+
+  releaseFolder.resolve();
+  await Promise.all([createPromise, settingsPromise]);
+
+  assert.deepEqual(events, [
+    "selection:resolve",
+    "folder:start",
+    "folder:end",
+    "session:persist",
+    "settings:update",
+    "settings:broadcast",
+  ]);
 });
 
 test("MainSessionCommandFacade は Browse で選んだ directory をそのまま session に使う", async () => {
@@ -158,6 +300,8 @@ test("MainSessionCommandFacade は Browse で選んだ directory をそのまま
     getSession: () => null,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () =>
       ({
         createSession(input) {
@@ -207,6 +351,14 @@ test("MainSessionCommandFacade は IPC payload の余分な session ID と legac
     getSession: () => null,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection({
+      model: "gpt-5.6-pro",
+      reasoningEffort: "xhigh",
+      approvalMode: "on-request",
+      codexSandboxMode: "read-only",
+      customAgentName: "stored-agent",
+    }),
     getSessionPersistenceService: () =>
       ({
         createSession(input) {
@@ -237,6 +389,11 @@ test("MainSessionCommandFacade は IPC payload の余分な session ID と legac
     workspaceLabel: "forged",
     workspacePath: "C:/forged",
     branch: "forged",
+    model: "forged-model",
+    reasoningEffort: "low",
+    approvalMode: "never",
+    codexSandboxMode: "danger-full-access",
+    customAgentName: "forged-agent",
   };
 
   await facade.createSessionFromRequest(request as never);
@@ -247,14 +404,64 @@ test("MainSessionCommandFacade は IPC payload の余分な session ID と legac
       workspaceLabel: persistedInput?.workspaceLabel,
       workspacePath: persistedInput?.workspacePath,
       branch: persistedInput?.branch,
+      model: persistedInput?.model,
+      reasoningEffort: persistedInput?.reasoningEffort,
+      approvalMode: persistedInput?.approvalMode,
+      codexSandboxMode: persistedInput?.codexSandboxMode,
+      customAgentName: persistedInput?.customAgentName,
     },
     {
       id: "launch-directory",
       workspaceLabel: "repo",
       workspacePath: "C:/work/repo",
       branch: "main",
+      model: "gpt-5.6-pro",
+      reasoningEffort: "xhigh",
+      approvalMode: "on-request",
+      codexSandboxMode: "read-only",
+      customAgentName: "stored-agent",
     },
   );
+});
+
+test("MainSessionCommandFacade は起動設定の取得失敗時に ID 発行・SessionFolder 作成・永続化を行わない", async () => {
+  const calls: string[] = [];
+  const facade = new MainSessionCommandFacade({
+    getSession: () => null,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => {
+      calls.push("resolve");
+      throw new Error("latest selection read failed");
+    },
+    getSessionPersistenceService: () =>
+      ({
+        createSession() {
+          calls.push("persist");
+          throw new Error("should not persist");
+        },
+      }) as never,
+    getSessionRuntimeService: () => ({} as never),
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => {
+      calls.push("issue-id");
+      return "launch-managed";
+    },
+    createSessionFilesDirectory: () => {
+      calls.push("mkdir");
+      return "C:/WithMate/session-files/launch-managed";
+    },
+    isSessionFilesWorkspace: () => false,
+  });
+
+  await assert.rejects(
+    facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
+    /latest selection read failed/,
+  );
+  assert.deepEqual(calls, ["resolve"]);
 });
 
 test("MainSessionCommandFacade は SessionFolder 作成失敗時に session を永続化しない", async () => {
@@ -263,6 +470,8 @@ test("MainSessionCommandFacade は SessionFolder 作成失敗時に session を�
     getSession: () => null,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () =>
       ({
         createSession(input) {
@@ -294,6 +503,8 @@ test("MainSessionCommandFacade は session 永続化失敗後に作成済み Ses
     getSession: () => null,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () =>
       ({
         createSession() {
@@ -332,6 +543,8 @@ test("MainSessionCommandFacade は cutoff delete の削除済み session だけ 
     getSession: () => null,
     getSessions: () => [{ id: "s-old", workspacePath: "C:/work/repo" } as never],
     getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () =>
       ({
         deleteSessionsLastActiveBefore(cutoff) {
@@ -391,6 +604,8 @@ test("MainSessionCommandFacade は cached/uncached の SessionFolder を保持�
         workspacePath: "C:/work/uncached",
       } as never,
     ],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () =>
       ({
         deleteSessionsLastActiveBefore() {
@@ -431,6 +646,8 @@ test("MainSessionCommandFacade は実在しない cutoff delete 日付を拒否�
     getSession: () => null,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () =>
       ({
         deleteSessionsLastActiveBefore() {
@@ -467,6 +684,8 @@ test("MainSessionCommandFacade は stale な Copilot quota を非同期更新し
     getSession: () => ({ id: "s-1", provider: "copilot" }) as never,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () => ({} as never),
     getSessionRuntimeService: () =>
       ({
@@ -502,6 +721,8 @@ test("MainSessionCommandFacade は non-Copilot session では quota refresh を�
     getSession: () => ({ id: "s-1", provider: "codex" }) as never,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () => ({} as never),
     getSessionRuntimeService: () =>
       ({

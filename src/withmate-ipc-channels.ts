@@ -17,6 +17,8 @@ export const WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL = "withmate:import-model
 export const WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL = "withmate:export-model-catalog-file";
 export const WITHMATE_GET_DIFF_PREVIEW_CHANNEL = "withmate:get-diff-preview";
 export const WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL = "withmate:list-auxiliary-sessions";
+export const WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL =
+  "withmate:list-open-active-auxiliary-session-summaries";
 export const WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL = "withmate:get-active-auxiliary-session";
 export const WITHMATE_GET_AUXILIARY_SESSION_CHANNEL = "withmate:get-auxiliary-session";
 export const WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL = "withmate:create-auxiliary-session";
@@ -96,6 +98,8 @@ export const WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL = "withmate
 export const WITHMATE_GET_COMPANION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL = "withmate:get-companion-audit-log-operation-detail";
 export const WITHMATE_GET_APP_SETTINGS_CHANNEL = "withmate:get-app-settings";
 export const WITHMATE_UPDATE_APP_SETTINGS_CHANNEL = "withmate:update-app-settings";
+export const WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL =
+  "withmate:update-session-right-pane-visibility";
 export const WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL = "withmate:get-app-database-diagnostics";
 export const WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL = "withmate:get-memory-v6-diagnostics";
 export const WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL = "withmate:install-memory-v6-cli-shim";

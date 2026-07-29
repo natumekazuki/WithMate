@@ -111,7 +111,7 @@ export function buildHomeLaunchHandlers({
 
   const onSelectLaunchProvider = (providerId: string) => {
     setLaunchFeedback("");
-    setLaunchDraft((current) => updateLaunchDraftForProviderSelection(current, providerId, enabledLaunchProviders));
+    setLaunchDraft((current) => updateLaunchDraftForProviderSelection(current, providerId));
   };
 
   const onStartSession = async (requestedMode: HomeLaunchDraft["mode"] = launchDraft.mode) => {

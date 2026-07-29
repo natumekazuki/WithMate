@@ -11,11 +11,16 @@ import {
   type Session,
   type SessionSummary,
 } from "../src/session-state.js";
+import { normalizeProviderId } from "../src/model-catalog.js";
 import type { AuditLogOperation, ChangedFile, RunCheck } from "../src/runtime-state.js";
 import {
   parseCharacterRuntimeSnapshotJson,
   stringifyCharacterRuntimeSnapshot,
 } from "../src/character/character-runtime-snapshot.js";
+import {
+  registerSessionProviderIdNormalizer,
+  SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION,
+} from "./session-provider-id-sql.js";
 import { V3_SUMMARY_JSON_MAX_LENGTH, V3_TEXT_PREVIEW_MAX_LENGTH } from "./database-schema-v3.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import { type BlobRef, TextBlobStore } from "./text-blob-store.js";
@@ -266,6 +271,15 @@ const LIST_SESSION_SUMMARIES_SQL = `
     ${SESSION_SUMMARY_HEADER_COLUMNS}
   FROM sessions
   ORDER BY last_active_at DESC, id DESC
+`;
+
+const GET_LATEST_SESSION_SUMMARY_FOR_PROVIDER_SQL = `
+  SELECT
+    ${SESSION_SUMMARY_HEADER_COLUMNS}
+  FROM sessions
+  WHERE ${SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION}(provider) = ?
+  ORDER BY last_active_at DESC, id DESC
+  LIMIT 1
 `;
 
 const LIST_SESSION_IDS_LAST_ACTIVE_BEFORE_SQL = `
@@ -847,6 +861,7 @@ export class SessionStorageV3 {
 
   constructor(dbPath: string, blobRootPath: string) {
     this.db = openAppDatabase(dbPath);
+    registerSessionProviderIdNormalizer(this.db);
     this.blobStore = new TextBlobStore(blobRootPath);
     this.ensureSchema();
   }
@@ -895,6 +910,22 @@ export class SessionStorageV3 {
       return cloneSessionSummaries(
         rows.map((row) => rowToSessionSummary(row)).filter((session): session is SessionSummary => session !== null),
       );
+    });
+  }
+
+  async getLatestSessionSummaryForProvider(providerId: string): Promise<SessionSummary | null> {
+    const normalizedProviderId = providerId.trim();
+    if (!normalizedProviderId) {
+      return null;
+    }
+    return this.withDb((db) => {
+      const row = db.prepare(GET_LATEST_SESSION_SUMMARY_FOR_PROVIDER_SQL)
+        .get(normalizeProviderId(normalizedProviderId)) as SessionSummaryHeaderRow | undefined;
+      if (!row) {
+        return null;
+      }
+      const summary = rowToSessionSummary(row, "throw");
+      return summary ? cloneSessionSummaries([summary])[0] : null;
     });
   }
 

@@ -8,15 +8,6 @@ import {
   type CompanionSessionSummary,
   type CreateCompanionSessionInput,
 } from "../src/companion-state.js";
-import {
-  DEFAULT_PROVIDER_ID,
-  getProviderCatalog,
-  resolveModelSelection,
-  type ModelCatalogProvider,
-  type ModelCatalogSnapshot,
-} from "../src/model-catalog.js";
-import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
-import type { CompanionStorage } from "./companion-storage.js";
 import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
 import {
   buildCompanionGroupDisplayName,
@@ -26,12 +17,14 @@ import {
   resolveCompanionGitEligibility,
 } from "./companion-git.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
+import type { SessionLaunchSelection } from "./session-launch-selection-service.js";
+import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
 
 export type CompanionSessionServiceDeps = {
   appDataPath: string;
-  getAppSettings: () => AppSettings;
-  getModelCatalogSnapshot: () => ModelCatalogSnapshot;
-  storage: {
+  runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
+  resolveSessionLaunchSelection(providerId?: string | null): Promise<SessionLaunchSelection>;
+  getStorage(): {
     listSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
     listActiveSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
     ensureGroup(group: CompanionGroup): Awaitable<CompanionGroup>;
@@ -44,62 +37,31 @@ function safeId(id: string): string {
   return id.replace(/[^A-Za-z0-9_-]/g, "-");
 }
 
-function resolveEnabledProviderCatalog(
-  snapshot: ModelCatalogSnapshot,
-  appSettings: AppSettings,
-  requestedProviderId?: string | null,
-): ModelCatalogProvider {
-  const requestedProvider = requestedProviderId ? getProviderCatalog(snapshot.providers, requestedProviderId) : null;
-  if (requestedProvider && getProviderAppSettings(appSettings, requestedProvider.id).enabled) {
-    return requestedProvider;
-  }
-
-  const defaultProvider = snapshot.providers.find((provider) => provider.id === DEFAULT_PROVIDER_ID) ?? null;
-  if (defaultProvider && getProviderAppSettings(appSettings, defaultProvider.id).enabled) {
-    return defaultProvider;
-  }
-
-  const firstEnabledProvider = snapshot.providers.find((provider) =>
-    getProviderAppSettings(appSettings, provider.id).enabled
-  );
-  if (firstEnabledProvider) {
-    return firstEnabledProvider;
-  }
-
-  throw new Error("有効な provider が Settings に見つからないよ。");
-}
-
 export class CompanionSessionService {
   constructor(private readonly deps: CompanionSessionServiceDeps) {}
 
   async listSessionSummaries(): Promise<CompanionSessionSummary[]> {
-    return await this.deps.storage.listSessionSummaries();
+    return await this.deps.getStorage().listSessionSummaries();
   }
 
   async listActiveSessionSummaries(): Promise<CompanionSessionSummary[]> {
-    return await this.deps.storage.listActiveSessionSummaries();
+    return await this.deps.getStorage().listActiveSessionSummaries();
   }
 
   async createSession(input: CreateCompanionSessionInput): Promise<CompanionSession> {
+    return this.deps.runProviderRuntimeOperationExclusive(
+      () => this.createSessionExclusive(input),
+    );
+  }
+
+  private async createSessionExclusive(input: CreateCompanionSessionInput): Promise<CompanionSession> {
     const taskTitle = input.taskTitle.trim();
     if (!taskTitle) {
       throw new Error("Companion のタイトルを入力してね。");
     }
 
-    const appSettings = this.deps.getAppSettings();
-    const snapshot = this.deps.getModelCatalogSnapshot();
-    const provider = resolveEnabledProviderCatalog(snapshot, appSettings, input.provider);
-    const requestedModel = input.provider && input.provider !== provider.id
-      ? provider.defaultModelId
-      : input.model ?? provider.defaultModelId;
-    const requestedReasoningEffort = input.provider && input.provider !== provider.id
-      ? provider.defaultReasoningEffort
-      : input.reasoningEffort ?? provider.defaultReasoningEffort;
-    const selection = resolveModelSelection(
-      provider,
-      requestedModel,
-      requestedReasoningEffort,
-    );
+    const storage = this.deps.getStorage();
+    const launchSelection = await this.deps.resolveSessionLaunchSelection(input.provider);
 
     const eligibility = await resolveCompanionGitEligibility(input.workspacePath);
     if (!eligibility.ok) {
@@ -117,7 +79,7 @@ export class CompanionSessionService {
       createdAt: now,
       updatedAt: now,
     };
-    const storedGroup = await this.deps.storage.ensureGroup(group);
+    const storedGroup = await storage.ensureGroup(group);
     const worktreePath = path.join(
       this.deps.appDataPath,
       "cw",
@@ -154,13 +116,13 @@ export class CompanionSessionService {
       allowedAdditionalDirectories: [],
       runState: "idle",
       threadId: "",
-      provider: provider.id,
-      catalogRevision: snapshot.revision,
-      model: selection.resolvedModel,
-      reasoningEffort: selection.resolvedReasoningEffort,
-      customAgentName: input.customAgentName ?? "",
-      approvalMode: input.approvalMode,
-      codexSandboxMode: input.codexSandboxMode,
+      provider: launchSelection.provider,
+      catalogRevision: launchSelection.catalogRevision,
+      model: launchSelection.model,
+      reasoningEffort: launchSelection.reasoningEffort,
+      customAgentName: launchSelection.customAgentName,
+      approvalMode: launchSelection.approvalMode,
+      codexSandboxMode: launchSelection.codexSandboxMode,
       characterId: input.characterId,
       character: input.character,
       characterRoleMarkdown: input.characterRoleMarkdown,
@@ -174,7 +136,7 @@ export class CompanionSessionService {
     };
 
     try {
-      return await this.deps.storage.createSession(session);
+      return await storage.createSession(session);
     } catch (error) {
       await cleanupCompanionWorkspaceArtifacts(artifacts);
       throw error;

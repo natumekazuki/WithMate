@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -177,6 +178,7 @@ import {
   useSessionContextRail,
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
+import { persistSessionRightPaneVisibility } from "./session-right-pane-preference.js";
 import {
   applyOptimisticSessionRunUpdate,
   applyResolvedSessionRunUpdate,
@@ -449,6 +451,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
+  const [isAppSettingsLoaded, setIsAppSettingsLoaded] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [selectedModel, setSelectedModel] = useState("");
   const [selectedReasoningEffort, setSelectedReasoningEffort] = useState<ModelReasoningEffort>("high");
@@ -663,7 +666,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     return startAppSettingsSubscription({
       api: withmateApi,
       loadInitial: true,
-      applyAppSettings: setAppSettings,
+      applyAppSettings: (settings) => {
+        setAppSettings(settings);
+        setIsAppSettingsLoaded(true);
+      },
     });
   }, [withmateApi]);
 
@@ -1136,14 +1142,21 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     () => companionSessionAuditLogs.find((entry) => isTerminalAuditLogPhase(entry.phase)) ?? null,
     [companionSessionAuditLogs],
   );
+  const handleContextRailVisibilityChange = useCallback((isVisible: boolean) => {
+    void persistSessionRightPaneVisibility(withmateApi, isVisible);
+  }, [withmateApi]);
   const {
     sessionWorkbenchRef,
     sessionWorkbenchStyle,
+    isContextRailVisible,
     isContextRailResizing,
     handleStartContextRailResize,
+    handleToggleContextRailVisibility,
   } = useSessionContextRail({
     ownerKey: snapshot?.session.id ?? null,
     enabled: !isMergeView,
+    initialContextRailVisibility: isAppSettingsLoaded ? appSettings.sessionRightPaneVisible : null,
+    onContextRailVisibilityChange: handleContextRailVisibilityChange,
   });
   const companionMessageListScrollSignature = useMemo(
     () =>
@@ -1950,6 +1963,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         defaults: {
           model: selectedModel,
           reasoningEffort: selectedReasoningEffort,
+          approvalMode: selectedApprovalMode,
+          codexSandboxMode: selectedCodexSandboxMode,
           customAgentName: snapshot.session.customAgentName,
         },
       });
@@ -2994,6 +3009,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         actionDockCompactPreview,
         attachmentCount: composerPreview.attachments.length,
         isContextRailResizing,
+        isContextRailVisible,
         activeContextPaneTab,
         availableContextPaneTabs,
         contextPaneProjection,
@@ -3151,6 +3167,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           onSelectedSessionChange: (value) => handleChangeReasoningEffort(value as ModelReasoningEffort),
         }),
         onStartContextRailResize: handleStartContextRailResize,
+        onToggleContextRailVisibility: handleToggleContextRailVisibility,
         onCycleContextPaneTab: handleCycleContextPaneTab,
         onOpenCompanionReview: (sessionId) => void getWithMateApi()?.openCompanionReviewWindow(sessionId),
         onCloseDiff: () => setSelectedDiff(null),

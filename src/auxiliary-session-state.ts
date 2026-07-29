@@ -14,12 +14,16 @@ import {
 import { normalizeMessage, type Message } from "./session-state.js";
 
 export type AuxiliarySessionStatus = "active" | "closed";
+export type AuxiliaryRuntimeSelectionMode = "explicit" | "latest-session";
 
 export type CreateAuxiliarySessionInput = {
   parentSessionId: string;
   provider: string;
+  runtimeSelection?: AuxiliaryRuntimeSelectionMode;
   model?: string;
   reasoningEffort?: ModelReasoningEffort;
+  approvalMode?: ApprovalMode;
+  codexSandboxMode?: CodexSandboxMode;
   customAgentName?: string;
 };
 

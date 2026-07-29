@@ -1,7 +1,4 @@
-import { APPROVAL_MODE_VALUES, type ApprovalMode } from "../src/approval-mode.js";
-import { CODEX_SANDBOX_MODE_VALUES, type CodexSandboxMode } from "../src/codex-sandbox-mode.js";
 import { normalizeCharacterRuntimeSnapshot } from "../src/character/character-runtime-snapshot.js";
-import { MODEL_REASONING_EFFORTS, type ModelReasoningEffort } from "../src/model-catalog.js";
 import type {
   CreateSessionInput,
   CreateSessionWorkspaceRequest,
@@ -10,7 +7,15 @@ import type {
 
 type CreateSessionMetadataInput = Omit<
   CreateSessionInput,
-  "id" | "workspaceLabel" | "workspacePath" | "branch"
+  | "id"
+  | "workspaceLabel"
+  | "workspacePath"
+  | "branch"
+  | "approvalMode"
+  | "codexSandboxMode"
+  | "model"
+  | "reasoningEffort"
+  | "customAgentName"
 >;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -123,19 +128,6 @@ export function parseCreateSessionRequest(input: unknown): {
         sub: requireString(theme.sub, "characterThemeColors.sub"),
       },
       characterRuntimeSnapshot: runtimeSnapshot,
-      approvalMode: requireEnum<ApprovalMode>(request.approvalMode, "approvalMode", APPROVAL_MODE_VALUES),
-      codexSandboxMode: optionalEnum<CodexSandboxMode>(
-        request.codexSandboxMode,
-        "codexSandboxMode",
-        CODEX_SANDBOX_MODE_VALUES,
-      ),
-      model: optionalString(request.model, "model"),
-      reasoningEffort: optionalEnum<ModelReasoningEffort>(
-        request.reasoningEffort,
-        "reasoningEffort",
-        MODEL_REASONING_EFFORTS,
-      ),
-      customAgentName: optionalString(request.customAgentName, "customAgentName"),
       allowedAdditionalDirectories: optionalStringArray(
         request.allowedAdditionalDirectories,
         "allowedAdditionalDirectories",

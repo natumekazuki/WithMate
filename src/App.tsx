@@ -89,7 +89,6 @@ import {
   createAuxiliaryLaunchDialogCloseHandler,
   createAuxiliaryLaunchDialogOpenHandler,
   createAuxiliaryLaunchProviderSelectHandler,
-  resolveAuxiliaryLaunchSessionDefaults,
   resolveAuxiliaryLaunchStartProvider,
 } from "./chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
@@ -141,6 +140,7 @@ import {
   useSessionContextRail,
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
+import { persistSessionRightPaneVisibility } from "./session-right-pane-preference.js";
 import {
   applyOptimisticSessionRunUpdate,
   applyResolvedSessionRunUpdate,
@@ -153,7 +153,6 @@ import {
 import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
-import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   type AuxiliarySession,
@@ -236,7 +235,7 @@ import {
   createActiveAuxiliarySessionStartResultApplier,
   createAuxiliarySessionStartErrorHandler,
   finishAuxiliarySessionStartClosedLoadWithApi,
-  runAuxiliarySessionStartOperation,
+  runSessionWindowAuxiliarySessionStartOperation,
 } from "./auxiliary-session-start-operation.js";
 import {
   createAuxiliarySessionPendingLiveRunClearer,
@@ -450,6 +449,7 @@ export default function AgentSessionWindowApp() {
   });
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
+  const [isAppSettingsLoaded, setIsAppSettingsLoaded] = useState(false);
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [composerCaret, setComposerCaret] = useState(0);
@@ -564,6 +564,9 @@ export default function AgentSessionWindowApp() {
     [companionSessions, openCompanionReviewWindowIds],
   );
   const selectedSessionId = selectedSession?.id ?? null;
+  const handleContextRailVisibilityChange = useCallback((isVisible: boolean) => {
+    void persistSessionRightPaneVisibility(withmateApi, isVisible);
+  }, [withmateApi]);
   useEffect(() => {
     let active = true;
     const loadRevision = auxiliaryLoadRevisionRef.current + 1;
@@ -607,9 +610,15 @@ export default function AgentSessionWindowApp() {
   const {
     sessionWorkbenchRef,
     sessionWorkbenchStyle,
+    isContextRailVisible,
     isContextRailResizing,
     handleStartContextRailResize,
-  } = useSessionContextRail({ ownerKey: selectedSessionId });
+    handleToggleContextRailVisibility,
+  } = useSessionContextRail({
+    ownerKey: selectedSessionId,
+    initialContextRailVisibility: isAppSettingsLoaded ? appSettings.sessionRightPaneVisible : null,
+    onContextRailVisibilityChange: handleContextRailVisibilityChange,
+  });
   const activeRunSessionId = activeAuxiliarySession?.id ?? selectedSessionId;
   const selectedSessionLiveRun = useMemo(
     () => (activeRunSessionId !== null && liveRunState.ownerSessionId === activeRunSessionId ? liveRunState.state : null),
@@ -838,7 +847,10 @@ export default function AgentSessionWindowApp() {
     return startAppSettingsSubscription({
       api: withmateApi,
       loadInitial: true,
-      applyAppSettings: setAppSettings,
+      applyAppSettings: (settings) => {
+        setAppSettings(settings);
+        setIsAppSettingsLoaded(true);
+      },
     });
   }, [withmateApi]);
 
@@ -2326,17 +2338,9 @@ export default function AgentSessionWindowApp() {
     });
 
     try {
-      const launchSelectionSessions = await withmateApi.listSessionSummaries().catch(() => sessions);
-      const lastUsedSelection = resolveLastUsedSessionSelection(launchSelectionSessions, launchProviderId);
-      const launchDefaults = resolveAuxiliaryLaunchSessionDefaults({
-        providerId: launchProviderId,
-        defaultsProviderId: launchProviderId,
-        defaults: lastUsedSelection,
-      });
-      await runAuxiliarySessionStartOperation({
+      await runSessionWindowAuxiliarySessionStartOperation({
         parentSessionId,
         provider: launchProviderId,
-        defaults: launchDefaults,
         createAuxiliarySession: (request) => withmateApi.createAuxiliarySession(request),
         applyStartedSession: createActiveAuxiliarySessionStartResultApplier({
           mutationRevision: auxiliarySessionMutationRevisionRef,
@@ -3006,6 +3010,7 @@ export default function AgentSessionWindowApp() {
         attachmentCount: composerPreview.attachments.length,
         isActionDockExpanded,
         isContextRailResizing,
+        isContextRailVisible,
         latestCommandView,
         runningDetailsEntries,
         liveRunReasoningText,
@@ -3179,6 +3184,7 @@ export default function AgentSessionWindowApp() {
           onSelectedSessionChange: (value) => handleChangeReasoningEffort(value as Session["reasoningEffort"]),
         }),
         onStartContextRailResize: handleStartContextRailResize,
+        onToggleContextRailVisibility: handleToggleContextRailVisibility,
         onCycleContextPaneTab: handleCycleContextPaneTab,
         onOpenCompanionReview: (sessionId) => void withmateApi?.openCompanionReviewWindow(sessionId),
         onCloseDiff: () => setSelectedDiff(null),

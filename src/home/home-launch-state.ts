@@ -1,8 +1,6 @@
-import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "../approval-mode.js";
-import type { CreateSessionInput, CreateSessionRequest, SessionSummary } from "../app-state.js";
+import type { CreateSessionRequest, SessionSummary } from "../app-state.js";
 import { DEFAULT_CHARACTER_THEME_COLORS, type CharacterThemeColors } from "../character-state.js";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
-import { DEFAULT_CODEX_SANDBOX_MODE, type CodexSandboxMode } from "../codex-sandbox-mode.js";
 import type { CreateCompanionSessionInput } from "../companion-state.js";
 import {
   inferWorkspaceFromPath,
@@ -10,12 +8,6 @@ import {
   resolveLaunchDirectoryWorkspace,
   type LaunchWorkspaceSelection,
 } from "./home-launch-workspace.js";
-import {
-  DEFAULT_MODEL_ID,
-  DEFAULT_REASONING_EFFORT,
-  type ModelCatalogProvider,
-  type ModelReasoningEffort,
-} from "../model-catalog.js";
 import { LAUNCH_NO_PROVIDER_SELECTED_MESSAGE } from "../launch/launch-feedback.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 
@@ -30,11 +22,6 @@ type LaunchCharacterSnapshot = {
   characterThemeColors: CharacterThemeColors;
 };
 
-type LastUsedSessionSelectionSource = Pick<
-  SessionSummary,
-  "provider" | "model" | "reasoningEffort" | "customAgentName"
->;
-
 type CharacterUsageSessionSource = Pick<SessionSummary, "characterId" | "sessionKind">;
 
 export type LaunchCharacterSelectionMode = "specific" | "random";
@@ -47,10 +34,6 @@ export type HomeLaunchDraft = {
   providerId: string;
   characterSelectionMode: LaunchCharacterSelectionMode;
   characterId: string;
-  model: string;
-  reasoningEffort: ModelReasoningEffort;
-  approvalMode: ApprovalMode;
-  codexSandboxMode: CodexSandboxMode;
 };
 
 export function createClosedLaunchDraft(): HomeLaunchDraft {
@@ -62,10 +45,6 @@ export function createClosedLaunchDraft(): HomeLaunchDraft {
     providerId: "",
     characterSelectionMode: "specific",
     characterId: "",
-    model: DEFAULT_MODEL_ID,
-    reasoningEffort: DEFAULT_REASONING_EFFORT,
-    approvalMode: DEFAULT_APPROVAL_MODE,
-    codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
   };
 }
 
@@ -84,10 +63,6 @@ export function openLaunchDraft(
     providerId: defaultProviderId,
     characterSelectionMode: "specific",
     characterId: defaultCharacterId,
-    model: DEFAULT_MODEL_ID,
-    reasoningEffort: DEFAULT_REASONING_EFFORT,
-    approvalMode: draft.approvalMode,
-    codexSandboxMode: draft.codexSandboxMode,
   };
 }
 
@@ -95,7 +70,6 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
   draft,
   mateProfile,
   selectedProviderId,
-  lastUsedSelection,
   characterEntries = [],
   sessions = [],
   random = Math.random,
@@ -103,7 +77,6 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
   draft: HomeLaunchDraft;
   mateProfile: MateProfile | null;
   selectedProviderId: string | null;
-  lastUsedSelection?: Pick<CreateSessionInput, "model" | "reasoningEffort" | "customAgentName"> | null;
   characterEntries?: readonly CharacterCatalogEntry[];
   sessions?: readonly CharacterUsageSessionSource[];
   random?: () => number;
@@ -115,13 +88,6 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
   }
   const characterSnapshot = buildLaunchCharacterSnapshot(characterEntries, draft, sessions, random);
 
-  const companionModel = draft.mode === "companion"
-    ? lastUsedSelection?.model ?? draft.model
-    : draft.model || lastUsedSelection?.model;
-  const companionReasoningEffort = draft.mode === "companion"
-    ? lastUsedSelection?.reasoningEffort ?? draft.reasoningEffort
-    : draft.reasoningEffort || lastUsedSelection?.reasoningEffort;
-
   return {
     taskTitle: normalizedTitle,
     workspacePath: workspace.path,
@@ -131,11 +97,6 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
     characterRoleMarkdown: characterSnapshot.characterRoleMarkdown,
     characterIconPath: characterSnapshot.characterIconPath,
     characterThemeColors: characterSnapshot.characterThemeColors,
-    approvalMode: draft.approvalMode,
-    codexSandboxMode: draft.codexSandboxMode,
-    model: companionModel,
-    reasoningEffort: companionReasoningEffort,
-    customAgentName: lastUsedSelection?.customAgentName,
   };
 }
 
@@ -168,19 +129,10 @@ export function setLaunchWorkspaceToSessionFolder(draft: HomeLaunchDraft): HomeL
 export function updateLaunchDraftForProviderSelection(
   draft: HomeLaunchDraft,
   providerId: string,
-  enabledLaunchProviders: readonly ModelCatalogProvider[],
 ): HomeLaunchDraft {
-  const provider = enabledLaunchProviders.find((candidate) => candidate.id === providerId) ?? null;
-  const model =
-    provider?.models.find((candidate) => candidate.id === provider.defaultModelId) ??
-    provider?.models[0] ??
-    null;
-
   return {
     ...draft,
     providerId,
-    model: model?.id ?? draft.model,
-    reasoningEffort: model?.reasoningEfforts[0] ?? provider?.defaultReasoningEffort ?? draft.reasoningEffort,
   };
 }
 
@@ -227,33 +179,10 @@ export function resolveLaunchValidationMessage({
   return "";
 }
 
-export function resolveLastUsedSessionSelection(
-  sessions: readonly LastUsedSessionSelectionSource[],
-  providerId: string | null,
-): Pick<CreateSessionInput, "model" | "reasoningEffort" | "customAgentName"> | null {
-  const normalizedProviderId = providerId?.trim();
-  if (!normalizedProviderId) {
-    return null;
-  }
-
-  const matchedSession = sessions.find((session) => session.provider === normalizedProviderId) ?? null;
-  if (!matchedSession) {
-    return null;
-  }
-
-  return {
-    model: matchedSession.model,
-    reasoningEffort: matchedSession.reasoningEffort,
-    customAgentName: matchedSession.customAgentName,
-  };
-}
-
 export function buildCreateSessionRequestFromLaunchDraft({
   draft,
   mateProfile,
   selectedProviderId,
-  approvalMode,
-  lastUsedSelection,
   characterEntries = [],
   sessions = [],
   random = Math.random,
@@ -261,8 +190,6 @@ export function buildCreateSessionRequestFromLaunchDraft({
   draft: HomeLaunchDraft;
   mateProfile: MateProfile | null;
   selectedProviderId: string | null;
-  approvalMode: ApprovalMode;
-  lastUsedSelection?: Pick<CreateSessionInput, "model" | "reasoningEffort" | "customAgentName"> | null;
   characterEntries?: readonly CharacterCatalogEntry[];
   sessions?: readonly CharacterUsageSessionSource[];
   random?: () => number;
@@ -289,10 +216,6 @@ export function buildCreateSessionRequestFromLaunchDraft({
     character: characterSnapshot.character,
     characterIconPath: characterSnapshot.characterIconPath,
     characterThemeColors: characterSnapshot.characterThemeColors,
-    approvalMode,
-    model: lastUsedSelection?.model,
-    reasoningEffort: lastUsedSelection?.reasoningEffort,
-    customAgentName: lastUsedSelection?.customAgentName,
   };
 }
 

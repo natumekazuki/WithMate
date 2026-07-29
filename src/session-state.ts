@@ -130,7 +130,15 @@ export type CreateSessionWorkspaceRequest =
 
 export type CreateSessionRequest = Omit<
   CreateSessionInput,
-  "id" | "workspaceLabel" | "workspacePath" | "branch"
+  | "id"
+  | "workspaceLabel"
+  | "workspacePath"
+  | "branch"
+  | "approvalMode"
+  | "codexSandboxMode"
+  | "model"
+  | "reasoningEffort"
+  | "customAgentName"
 > & {
   workspace: CreateSessionWorkspaceRequest;
 };

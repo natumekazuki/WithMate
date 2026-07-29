@@ -11,6 +11,7 @@ import {
   finishAuxiliarySessionStartClosedLoad,
   finishAuxiliarySessionStartClosedLoadWithApi,
   runAuxiliarySessionStartOperation,
+  runSessionWindowAuxiliarySessionStartOperation,
 } from "../../src/auxiliary-session-start-operation.js";
 import type {
   AuxiliarySession,
@@ -62,6 +63,8 @@ describe("runAuxiliarySessionStartOperation", () => {
         defaults: {
           model: "gpt-5.4-mini",
           reasoningEffort: "high",
+          approvalMode: "never",
+          codexSandboxMode: "read-only",
           customAgentName: "reviewer",
         },
         createAuxiliarySession: async (request) => {
@@ -79,6 +82,8 @@ describe("runAuxiliarySessionStartOperation", () => {
       provider: "codex",
       model: "gpt-5.4-mini",
       reasoningEffort: "high",
+      approvalMode: "never",
+      codexSandboxMode: "read-only",
       customAgentName: "reviewer",
     }]);
     assert.deepEqual(applied, [session]);
@@ -104,6 +109,8 @@ describe("runAuxiliarySessionStartOperation", () => {
       provider: "copilot",
       model: undefined,
       reasoningEffort: undefined,
+      approvalMode: undefined,
+      codexSandboxMode: undefined,
       customAgentName: undefined,
     }]);
   });
@@ -125,6 +132,50 @@ describe("runAuxiliarySessionStartOperation", () => {
       }),
       error,
     );
+    assert.equal(applied, false);
+  });
+});
+
+describe("runSessionWindowAuxiliarySessionStartOperation", () => {
+  it("最新 Session 選択を Main に委譲して Auxiliary Session を作成する", async () => {
+    const requests: CreateAuxiliarySessionInput[] = [];
+    const session = makeAuxiliarySession();
+
+    await runSessionWindowAuxiliarySessionStartOperation({
+      parentSessionId: "parent-1",
+      provider: "codex",
+      createAuxiliarySession: async (request) => {
+        requests.push(request);
+        return session;
+      },
+      applyStartedSession: () => undefined,
+    });
+
+    assert.deepEqual(requests, [{
+      parentSessionId: "parent-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+    }]);
+  });
+
+  it("Main の選択・作成失敗時は active 反映せず例外を伝播する", async () => {
+    const error = new Error("latest selection read failed");
+    let applied = false;
+
+    await assert.rejects(
+      runSessionWindowAuxiliarySessionStartOperation({
+        parentSessionId: "parent-1",
+        provider: "codex",
+        createAuxiliarySession: async () => {
+          throw error;
+        },
+        applyStartedSession: () => {
+          applied = true;
+        },
+      }),
+      error,
+    );
+
     assert.equal(applied, false);
   });
 });

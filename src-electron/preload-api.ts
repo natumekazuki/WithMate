@@ -46,6 +46,7 @@ import {
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
+  WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
@@ -137,6 +138,7 @@ import {
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL,
   WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL,
@@ -351,6 +353,9 @@ function createAuxiliaryApi(ipcRenderer: IpcRendererLike): WithMateWindowAuxilia
     listAuxiliarySessions(parentSessionId) {
       return ipcRenderer.invoke(WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL, parentSessionId);
     },
+    listOpenActiveAuxiliarySessionSummaries() {
+      return ipcRenderer.invoke(WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL);
+    },
     getActiveAuxiliarySession(parentSessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL, parentSessionId);
     },
@@ -536,6 +541,9 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
     },
     updateAppSettings(settings) {
       return ipcRenderer.invoke(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, settings);
+    },
+    updateSessionRightPaneVisibility(isVisible) {
+      return ipcRenderer.invoke(WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL, isVisible);
     },
     getAppDatabaseDiagnostics() {
       return ipcRenderer.invoke(WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL);

@@ -977,7 +977,7 @@ test("SessionMessageColumn は pending 対象の Auxiliary group が window 外�
   );
 });
 
-test("SessionComposerExpanded は jump button を Hide の左に描画する", () => {
+test("SessionComposerExpanded は jump button を Hide の左に描画し、Send を設定グループの外へ配置する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionComposerExpanded, {
       retryBanner: null,
@@ -1051,9 +1051,16 @@ test("SessionComposerExpanded は jump button を Hide の左に描画する", (
   );
 
   assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Hide"));
-  const composerBoxHtml = html.match(/<div class="composer-box">(?<content>[\s\S]*?)<\/div><button class="session-send-button"/);
-  assert.ok(composerBoxHtml, "Send button は composer-box の外に描画する");
-  assert.doesNotMatch(composerBoxHtml.groups?.content ?? "", />Send<\/button>/);
+  const composerInputRowHtml = html.match(
+    /<div class="composer-input-row"><div class="composer-box">(?<content>[\s\S]*?)<\/div><\/div><div class="composer-control-row">/,
+  );
+  assert.ok(composerInputRowHtml, "composer input row は textarea の領域だけにする");
+  assert.doesNotMatch(composerInputRowHtml.groups?.content ?? "", />Send<\/button>/);
+  assert.match(
+    html,
+    /<div class="composer-control-row"><div class="composer-settings">[\s\S]*?<\/div><button class="session-send-button"/,
+    "Send button は設定グループと独立した兄弟要素にする",
+  );
 });
 
 test("SessionComposerExpanded は実行中の progress と Cancel を上部 toolbar に描画し、下段の送信ボタンを隠す", () => {

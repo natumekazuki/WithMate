@@ -1,5 +1,5 @@
 import type { ModelCatalogProvider } from "../model-catalog.js";
-import type { CreateAuxiliarySessionInput } from "../auxiliary-session-state.js";
+import type { AuxiliarySession, CreateAuxiliarySessionInput } from "../auxiliary-session-state.js";
 import { resolveSelectedLaunchProviderId } from "../launch/launch-provider-selection.js";
 import { LAUNCH_EMPTY_PROVIDER_MESSAGE, LAUNCH_NO_PROVIDER_SELECTED_MESSAGE } from "../launch/launch-feedback.js";
 
@@ -20,20 +20,30 @@ export function buildAuxiliaryLaunchProviderItems(
 }
 
 export type AuxiliaryLaunchSessionDefaults = Pick<
-  CreateAuxiliarySessionInput,
-  "model" | "reasoningEffort" | "customAgentName"
+  AuxiliarySession,
+  "model" | "reasoningEffort" | "approvalMode" | "codexSandboxMode" | "customAgentName"
 >;
 
 export function buildCreateAuxiliarySessionInput(input: {
   parentSessionId: string;
   provider: string;
-  defaults?: Partial<AuxiliaryLaunchSessionDefaults> | null;
+  runtimeSelection?: CreateAuxiliarySessionInput["runtimeSelection"];
+  defaults?: AuxiliaryLaunchSessionDefaults | null;
 }): CreateAuxiliarySessionInput {
+  if (input.runtimeSelection === "latest-session") {
+    return {
+      parentSessionId: input.parentSessionId,
+      provider: input.provider,
+      runtimeSelection: input.runtimeSelection,
+    };
+  }
   return {
     parentSessionId: input.parentSessionId,
     provider: input.provider,
     model: input.defaults?.model,
     reasoningEffort: input.defaults?.reasoningEffort,
+    approvalMode: input.defaults?.approvalMode,
+    codexSandboxMode: input.defaults?.codexSandboxMode,
     customAgentName: input.defaults?.customAgentName,
   };
 }
@@ -41,8 +51,8 @@ export function buildCreateAuxiliarySessionInput(input: {
 export function resolveAuxiliaryLaunchSessionDefaults(input: {
   providerId: string;
   defaultsProviderId: string | null | undefined;
-  defaults: Partial<AuxiliaryLaunchSessionDefaults> | null | undefined;
-}): Partial<AuxiliaryLaunchSessionDefaults> | null {
+  defaults: AuxiliaryLaunchSessionDefaults | null | undefined;
+}): AuxiliaryLaunchSessionDefaults | null {
   if (!input.defaults || input.providerId !== input.defaultsProviderId) {
     return null;
   }

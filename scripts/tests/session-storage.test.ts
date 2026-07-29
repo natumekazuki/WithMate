@@ -199,6 +199,55 @@ describe("SessionStorage", () => {
     }
   });
 
+  it("getLatestSessionSummaryForProvider は legacy provider 表記を正規化して最新一件だけを返す", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new SessionStorage(dbPath);
+      const olderCodex = storage.upsertSession({
+        ...createSession("older codex", "workspace-codex-old", "char-a", "A"),
+        provider: "codex",
+        model: "gpt-old",
+      });
+      const copilot = storage.upsertSession({
+        ...createSession("copilot", "workspace-copilot", "char-b", "B"),
+        provider: "copilot",
+        model: "copilot-model",
+      });
+      const latestCodex = storage.upsertSession({
+        ...createSession("latest codex", "workspace-codex-new", "char-c", "C"),
+        provider: "codex",
+        model: "gpt-latest",
+        reasoningEffort: "xhigh",
+        approvalMode: "never",
+        codexSandboxMode: "danger-full-access",
+        customAgentName: "reviewer",
+      });
+
+      const db = new DatabaseSync(dbPath);
+      db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(100, olderCodex.id);
+      db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(300, copilot.id);
+      db.prepare("UPDATE sessions SET provider = ?, last_active_at = ? WHERE id = ?")
+        .run("\t\nCodex\u00a0", 200, latestCodex.id);
+      db.close();
+
+      const latest = storage.getLatestSessionSummaryForProvider("codex");
+      assert.equal(latest?.id, latestCodex.id);
+      assert.equal(latest?.provider, "codex");
+      assert.equal(latest?.model, "gpt-latest");
+      assert.equal(latest?.reasoningEffort, "xhigh");
+      assert.equal(latest?.approvalMode, "never");
+      assert.equal(latest?.codexSandboxMode, "danger-full-access");
+      assert.equal(latest?.customAgentName, "reviewer");
+      assert.equal(storage.getLatestSessionSummaryForProvider("missing"), null);
+      assert.equal(storage.getLatestSessionSummaryForProvider("  "), null);
+      storage.close();
+    } finally {
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("character-authoring sessionKind を含む session を保存して読み戻せる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
