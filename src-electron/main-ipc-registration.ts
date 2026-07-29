@@ -127,6 +127,7 @@ import {
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
+  WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
@@ -268,6 +269,7 @@ export type MainIpcRegistrationDeps = {
   listOpenSessionWindowIds(): string[];
   listOpenCompanionReviewWindowIds(): string[];
   listAuxiliarySessions?(parentSessionId: string): Awaitable<AuxiliarySessionSummary[]>;
+  listOpenActiveAuxiliarySessionSummaries?(): Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession?(parentSessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliarySession?(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
   createAuxiliarySession?(input: CreateAuxiliarySessionInput): Awaitable<AuxiliarySession>;
@@ -435,6 +437,7 @@ type MainIpcAuxiliaryDeps = Pick<
   | "resolveSessionWindow"
   | "resolveCompanionReviewWindow"
   | "listAuxiliarySessions"
+  | "listOpenActiveAuxiliarySessionSummaries"
   | "getActiveAuxiliarySession"
   | "getAuxiliarySession"
   | "createAuxiliarySession"
@@ -446,6 +449,7 @@ type MainIpcAuxiliaryDeps = Pick<
 
 type MainIpcAuxiliaryDepsRequired = {
   listAuxiliarySessions: (parentSessionId: string) => Awaitable<AuxiliarySessionSummary[]>;
+  listOpenActiveAuxiliarySessionSummaries: () => Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession: (parentSessionId: string) => Awaitable<AuxiliarySession | null>;
   getAuxiliarySession: (auxiliarySessionId: string) => Awaitable<AuxiliarySession | null>;
   createAuxiliarySession: (input: CreateAuxiliarySessionInput) => Awaitable<AuxiliarySession>;
@@ -717,6 +721,7 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
   const getAuxiliaryDeps = (deps: MainIpcAuxiliaryDeps): MainIpcAuxiliaryDepsRequired => {
     if (
       !deps.listAuxiliarySessions ||
+      !deps.listOpenActiveAuxiliarySessionSummaries ||
       !deps.getActiveAuxiliarySession ||
       !deps.getAuxiliarySession ||
       !deps.createAuxiliarySession ||
@@ -726,14 +731,15 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
       !deps.cancelAuxiliarySessionRun
     ) {
       throw new Error(
-        "Auxiliary session IPC is not wired. listAuxiliarySessions, getActiveAuxiliarySession, getAuxiliarySession, "
-        + "createAuxiliarySession, updateAuxiliarySession, closeAuxiliarySession, runAuxiliarySessionTurn, "
-        + "and cancelAuxiliarySessionRun are required.",
+        "Auxiliary session IPC is not wired. listAuxiliarySessions, listOpenActiveAuxiliarySessionSummaries, "
+        + "getActiveAuxiliarySession, getAuxiliarySession, createAuxiliarySession, updateAuxiliarySession, "
+        + "closeAuxiliarySession, runAuxiliarySessionTurn, and cancelAuxiliarySessionRun are required.",
       );
     }
 
     return {
       listAuxiliarySessions: deps.listAuxiliarySessions,
+      listOpenActiveAuxiliarySessionSummaries: deps.listOpenActiveAuxiliarySessionSummaries,
       getActiveAuxiliarySession: deps.getActiveAuxiliarySession,
       getAuxiliarySession: deps.getAuxiliarySession,
       createAuxiliarySession: deps.createAuxiliarySession,
@@ -751,6 +757,9 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     }
     return auxiliaryDeps.listAuxiliarySessions(parentSessionId);
   });
+  ipcMain.handle(WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL, () =>
+    getAuxiliaryDeps(deps).listOpenActiveAuxiliarySessionSummaries(),
+  );
   ipcMain.handle(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL, (event, parentSessionId: string) => {
     const auxiliaryDeps = getAuxiliaryDeps(deps);
     if (!parentSessionId) {
