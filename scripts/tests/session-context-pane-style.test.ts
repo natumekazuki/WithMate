@@ -51,3 +51,24 @@ test("Artifact result details は長い path と本文を折り返せる", async
     /\.session-page \.artifact-operation-item pre\s*{[\s\S]*?white-space:\s*pre-wrap;[\s\S]*?}/,
   );
 });
+
+test("右ペイン非表示時は pane track を除き、splitter の再表示操作を残す", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.session-main-grid\.session-main-grid-right-pane-hidden\s*{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*12px;\s*}/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-right-pane-slot\[hidden\]\s*{\s*display:\s*none;\s*}/,
+  );
+  assert.match(
+    stylesSource,
+    /@media \(max-width:\s*1400px\)\s*{[\s\S]*?\.session-workbench-splitter\s*{[\s\S]*?display:\s*block;[\s\S]*?cursor:\s*pointer;[\s\S]*?}/,
+  );
+  assert.match(
+    stylesSource,
+    /@media \(max-width:\s*1400px\)\s*{[\s\S]*?\.session-workbench-splitter\.is-static\s*{\s*display:\s*none;\s*}/,
+  );
+});

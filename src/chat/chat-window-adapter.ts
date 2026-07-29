@@ -7,7 +7,12 @@ import {
   type Message,
   type MessageArtifact,
 } from "../app-state.js";
-import { type PointerEventHandler, type RefObject, type UIEventHandler } from "react";
+import {
+  type MouseEventHandler,
+  type PointerEventHandler,
+  type RefObject,
+  type UIEventHandler,
+} from "react";
 import type { SessionContextPaneProps } from "../session-components.js";
 import type { ChatWindowProps } from "./chat-window.js";
 
@@ -263,7 +268,9 @@ export type LiveSessionComposerDockPropsInput = Omit<
 
 export type LiveSessionSplitterProps = {
   isContextRailResizing: boolean;
+  isContextRailVisible: boolean;
   onStartContextRailResize?: PointerEventHandler<HTMLButtonElement>;
+  onToggleContextRailVisibility: MouseEventHandler<HTMLButtonElement>;
 };
 
 export type LiveSessionChatBodyPropsInput = {
@@ -420,10 +427,17 @@ export function buildLiveSessionCompactActionDockProps(
 
 export function buildLiveSessionSplitterProps(
   input: LiveSessionSplitterProps,
-): { isActive: boolean; onPointerDown?: PointerEventHandler<HTMLButtonElement> } {
+): {
+  isActive: boolean;
+  isRightPaneVisible: boolean;
+  onPointerDown?: PointerEventHandler<HTMLButtonElement>;
+  onToggleRightPane: MouseEventHandler<HTMLButtonElement>;
+} {
   return {
     isActive: input.isContextRailResizing,
-    onPointerDown: input.onStartContextRailResize,
+    isRightPaneVisible: input.isContextRailVisible,
+    onPointerDown: input.isContextRailVisible ? input.onStartContextRailResize : undefined,
+    onToggleRightPane: input.onToggleContextRailVisibility,
   };
 }
 

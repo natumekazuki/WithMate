@@ -233,6 +233,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:cancel-auxiliary-session-run",
     args: ["aux-1"],
   });
+  assert.deepEqual(await api.updateSessionRightPaneVisibility(false), {
+    channel: "withmate:update-session-right-pane-visibility",
+    args: [false],
+  });
 });
 
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
@@ -365,6 +369,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "forgetMemoryV6Entry",
     "uninstallMemoryV6CliShim",
     "updateAppSettings",
+    "updateSessionRightPaneVisibility",
     "updateAuxiliarySession",
     "updateCharacterDefinition",
     "updateCharacterMetadata",

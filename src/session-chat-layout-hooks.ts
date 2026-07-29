@@ -14,6 +14,8 @@ const SESSION_CONTEXT_RAIL_MIN_WIDTH = 360;
 const SESSION_CONTEXT_RAIL_MAX_WIDTH = 620;
 const SESSION_CONVERSATION_MIN_WIDTH = 760;
 const SESSION_LAYOUT_BREAKPOINT = 1400;
+const SESSION_CONTEXT_RAIL_DRAG_THRESHOLD = 4;
+const SESSION_CONTEXT_RAIL_DRAG_CLICK_SUPPRESSION_MS = 100;
 
 function scrollMessageListElementToBottom(messageListElement: HTMLDivElement): void {
   const bottomAnchor = messageListElement.querySelector<HTMLElement>(".message-list-bottom-anchor");
@@ -127,20 +129,48 @@ export function useSessionMessageListFollowing({
 export type UseSessionContextRailArgs = {
   ownerKey: string | null;
   enabled?: boolean;
+  initialContextRailVisibility?: boolean | null;
+  onContextRailVisibilityChange?: (isVisible: boolean) => void;
 };
 
 export function useSessionContextRail({
   ownerKey,
   enabled = true,
+  initialContextRailVisibility = null,
+  onContextRailVisibilityChange,
 }: UseSessionContextRailArgs) {
   const [contextRailWidth, setContextRailWidth] = useState(SESSION_CONTEXT_RAIL_DEFAULT_WIDTH);
+  const [isContextRailVisible, setIsContextRailVisible] = useState(initialContextRailVisibility ?? false);
   const [isContextRailResizing, setIsContextRailResizing] = useState(false);
   const sessionWorkbenchRef = useRef<HTMLDivElement | null>(null);
   const contextRailWidthRef = useRef(SESSION_CONTEXT_RAIL_DEFAULT_WIDTH);
+  const contextRailVisibleRef = useRef(initialContextRailVisibility ?? false);
+  const hasResolvedInitialVisibilityRef = useRef(initialContextRailVisibility !== null);
+  const hasInteractedWithVisibilityRef = useRef(false);
+  const contextRailPointerGestureRef = useRef({
+    pointerId: null as number | null,
+    startX: 0,
+    dragged: false,
+  });
+  const lastContextRailDragEndAtRef = useRef(0);
 
   useEffect(() => {
     contextRailWidthRef.current = contextRailWidth;
   }, [contextRailWidth]);
+
+  useEffect(() => {
+    if (initialContextRailVisibility === null || hasResolvedInitialVisibilityRef.current) {
+      return;
+    }
+
+    hasResolvedInitialVisibilityRef.current = true;
+    if (hasInteractedWithVisibilityRef.current) {
+      return;
+    }
+
+    contextRailVisibleRef.current = initialContextRailVisibility;
+    setIsContextRailVisible(initialContextRailVisibility);
+  }, [initialContextRailVisibility]);
 
   useLayoutEffect(() => {
     if (!enabled) {
@@ -167,19 +197,31 @@ export function useSessionContextRail({
   }, [enabled, ownerKey]);
 
   useEffect(() => {
-    if (!enabled || !isContextRailResizing) {
+    if (!enabled || !isContextRailVisible || !isContextRailResizing) {
       return;
     }
 
     const handlePointerMove = (event: PointerEvent) => {
+      const gesture = contextRailPointerGestureRef.current;
+      if (gesture.pointerId !== event.pointerId) {
+        return;
+      }
+
       const workbenchElement = sessionWorkbenchRef.current;
       if (!workbenchElement) {
         return;
       }
 
       const bounds = workbenchElement.getBoundingClientRect();
-      if (bounds.width < SESSION_LAYOUT_BREAKPOINT) {
+      if (bounds.width <= SESSION_LAYOUT_BREAKPOINT) {
         return;
+      }
+
+      if (!gesture.dragged) {
+        if (Math.abs(event.clientX - gesture.startX) < SESSION_CONTEXT_RAIL_DRAG_THRESHOLD) {
+          return;
+        }
+        gesture.dragged = true;
       }
 
       const requestedWidth = bounds.right - event.clientX;
@@ -188,7 +230,17 @@ export function useSessionContextRail({
       setContextRailWidth(nextWidth);
     };
 
-    const handlePointerEnd = () => {
+    const handlePointerEnd = (event: PointerEvent) => {
+      const gesture = contextRailPointerGestureRef.current;
+      if (gesture.pointerId !== event.pointerId) {
+        return;
+      }
+
+      if (gesture.dragged) {
+        lastContextRailDragEndAtRef.current = Date.now();
+      }
+      gesture.pointerId = null;
+      gesture.dragged = false;
       setIsContextRailResizing(false);
     };
 
@@ -208,16 +260,44 @@ export function useSessionContextRail({
       document.body.style.cursor = previousCursor;
       document.body.style.userSelect = previousUserSelect;
     };
-  }, [enabled, isContextRailResizing]);
+  }, [enabled, isContextRailResizing, isContextRailVisible]);
 
   const handleStartContextRailResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0) {
+    const workbenchElement = sessionWorkbenchRef.current;
+    if (
+      !enabled
+      || !isContextRailVisible
+      || event.button !== 0
+      || !workbenchElement
+      || workbenchElement.getBoundingClientRect().width <= SESSION_LAYOUT_BREAKPOINT
+    ) {
       return;
     }
 
     event.preventDefault();
+    contextRailPointerGestureRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      dragged: false,
+    };
     setIsContextRailResizing(true);
-  }, []);
+  }, [enabled, isContextRailVisible]);
+
+  const handleToggleContextRailVisibility = useCallback(() => {
+    if (
+      Date.now() - lastContextRailDragEndAtRef.current
+      < SESSION_CONTEXT_RAIL_DRAG_CLICK_SUPPRESSION_MS
+    ) {
+      return;
+    }
+
+    setIsContextRailResizing(false);
+    hasInteractedWithVisibilityRef.current = true;
+    const nextVisible = !contextRailVisibleRef.current;
+    contextRailVisibleRef.current = nextVisible;
+    setIsContextRailVisible(nextVisible);
+    onContextRailVisibilityChange?.(nextVisible);
+  }, [onContextRailVisibilityChange]);
 
   const sessionWorkbenchStyle = useMemo(
     () => ({
@@ -229,7 +309,9 @@ export function useSessionContextRail({
   return {
     sessionWorkbenchRef,
     sessionWorkbenchStyle,
+    isContextRailVisible,
     isContextRailResizing,
     handleStartContextRailResize,
+    handleToggleContextRailVisibility,
   };
 }

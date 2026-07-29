@@ -734,6 +734,8 @@ export function SessionHeaderHandle({ taskTitle, onClick }: SessionHeaderHandleP
   );
 }
 
+export const SESSION_RIGHT_PANE_ID = "session-right-pane";
+
 export type SessionChatScreenProps = {
   mode: ChatWindowModeKind;
   className?: string;
@@ -743,6 +745,7 @@ export type SessionChatScreenProps = {
   actionDock: ReactNode;
   rightPane: ReactNode;
   splitter: ReactNode;
+  isRightPaneVisible?: boolean;
   workbenchRef?: RefObject<HTMLDivElement | null>;
   workbenchStyle?: CSSProperties;
   modals?: ReactNode;
@@ -757,6 +760,7 @@ export function SessionChatScreen({
   actionDock,
   rightPane,
   splitter,
+  isRightPaneVisible = true,
   workbenchRef,
   workbenchStyle,
   modals,
@@ -768,14 +772,20 @@ export function SessionChatScreen({
       <section className="content-grid session-content-grid">
         <section className="chat-panel session-work-surface rise-3">
           <div className="session-workbench" ref={workbenchRef} style={workbenchStyle}>
-            <div className="session-main-grid">
+            <div className={`session-main-grid${isRightPaneVisible ? "" : " session-main-grid-right-pane-hidden"}`}>
               <div className="session-message-stack">
                 {messageColumn}
                 {actionDock}
               </div>
 
               {splitter}
-              {rightPane}
+              <div
+                id={SESSION_RIGHT_PANE_ID}
+                className="session-right-pane-slot"
+                hidden={!isRightPaneVisible}
+              >
+                {rightPane}
+              </div>
             </div>
           </div>
         </section>

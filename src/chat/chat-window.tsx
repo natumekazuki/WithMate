@@ -1,6 +1,14 @@
-import { memo, useMemo, useRef, type ComponentProps, type PointerEventHandler } from "react";
+import {
+  memo,
+  useMemo,
+  useRef,
+  type ComponentProps,
+  type MouseEventHandler,
+  type PointerEventHandler,
+} from "react";
 
 import {
+  SESSION_RIGHT_PANE_ID,
   SessionActionDockCompactRow,
   SessionChatScreen,
   SessionComposerExpanded,
@@ -42,7 +50,9 @@ export type ChatRightPaneShellProps = {
 
 export type ChatWorkbenchSplitterProps = {
   isActive?: boolean;
+  isRightPaneVisible?: boolean;
   onPointerDown?: PointerEventHandler<HTMLButtonElement>;
+  onToggleRightPane?: MouseEventHandler<HTMLButtonElement>;
   ariaLabel?: string;
   title?: string;
 };
@@ -137,22 +147,52 @@ export function ChatWindowStatusScreen({ message, className = "" }: ChatWindowSt
 
 export function ChatWorkbenchSplitter({
   isActive = false,
+  isRightPaneVisible = true,
   onPointerDown,
-  ariaLabel = "会話と command pane の幅を調整",
-  title = "左右の幅をドラッグで調整",
+  onToggleRightPane,
+  ariaLabel,
+  title,
 }: ChatWorkbenchSplitterProps) {
-  if (!onPointerDown) {
-    return <div className="session-workbench-splitter" aria-hidden="true" />;
+  if (!onPointerDown && !onToggleRightPane) {
+    return <div className="session-workbench-splitter is-static" aria-hidden="true" />;
   }
+
+  const resolvedAriaLabel = ariaLabel
+    ?? (
+      onToggleRightPane
+        ? (isRightPaneVisible ? "右ペインを非表示" : "右ペインを表示")
+        : "会話と command pane の幅を調整"
+    );
+  const resolvedTitle = title
+    ?? (
+      onToggleRightPane
+        ? (
+          isRightPaneVisible && onPointerDown
+            ? "クリックで右ペインを非表示、広い画面ではドラッグで幅を調整"
+            : "クリックで右ペインを表示"
+        )
+        : "左右の幅をドラッグで調整"
+    );
 
   return (
     <button
-      className={`session-workbench-splitter${isActive ? " is-active" : ""}`}
+      className={`session-workbench-splitter${isActive ? " is-active" : ""}${
+        isRightPaneVisible ? "" : " is-collapsed"
+      }`}
       type="button"
       onPointerDown={onPointerDown}
-      aria-label={ariaLabel}
-      title={title}
-    />
+      onClick={onToggleRightPane}
+      aria-label={resolvedAriaLabel}
+      aria-controls={onToggleRightPane ? SESSION_RIGHT_PANE_ID : undefined}
+      aria-expanded={onToggleRightPane ? isRightPaneVisible : undefined}
+      title={resolvedTitle}
+    >
+      {onToggleRightPane ? (
+        <span className="session-workbench-splitter-chevron" aria-hidden="true">
+          {isRightPaneVisible ? "›" : "‹"}
+        </span>
+      ) : null}
+    </button>
   );
 }
 
