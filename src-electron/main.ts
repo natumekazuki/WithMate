@@ -1329,6 +1329,11 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               auxiliary: {
                 listAuxiliarySessions: (parentSessionId) =>
                   requireAuxiliarySessionService().listAuxiliarySessions(parentSessionId),
+                listOpenActiveAuxiliarySessionSummaries: () =>
+                  requireAuxiliarySessionService().listActiveAuxiliarySessionSummaries([
+                    ...listOpenSessionWindowIds(),
+                    ...listOpenCompanionReviewWindowIds(),
+                  ]),
                 getActiveAuxiliarySession: (parentSessionId) =>
                   requireAuxiliarySessionService().getActiveAuxiliarySession(parentSessionId),
                 getAuxiliarySession: (auxiliarySessionId) =>

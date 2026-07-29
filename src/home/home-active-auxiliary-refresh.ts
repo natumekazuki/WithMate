@@ -1,8 +1,7 @@
 import type { AuxiliarySessionSummary } from "../auxiliary-session-state.js";
 
 export type HomeActiveAuxiliarySessionRefresherInput = {
-  getMonitorParentSessionIds: () => string[];
-  fetchActiveAuxiliarySessions: (parentSessionIds: string[]) => Promise<AuxiliarySessionSummary[]>;
+  fetchActiveAuxiliarySessions: () => Promise<AuxiliarySessionSummary[]>;
   setActiveAuxiliarySessions: (sessions: AuxiliarySessionSummary[]) => void;
   onError?: (error: unknown) => void;
 };
@@ -12,8 +11,14 @@ export type HomeActiveAuxiliarySessionRefresher = {
   dispose(): void;
 };
 
+export function resolveHomeActiveAuxiliarySessionsState(
+  current: AuxiliarySessionSummary[],
+  next: AuxiliarySessionSummary[],
+): AuxiliarySessionSummary[] {
+  return JSON.stringify(current) === JSON.stringify(next) ? current : next;
+}
+
 export function createHomeActiveAuxiliarySessionRefresher({
-  getMonitorParentSessionIds,
   fetchActiveAuxiliarySessions,
   setActiveAuxiliarySessions,
   onError,
@@ -21,6 +26,7 @@ export function createHomeActiveAuxiliarySessionRefresher({
   let active = true;
   let refreshInFlight = false;
   let refreshRequestedWhileInFlight = false;
+  let lastAppliedSessions: AuxiliarySessionSummary[] | null = null;
 
   const refresh = () => {
     if (!active) {
@@ -33,12 +39,18 @@ export function createHomeActiveAuxiliarySessionRefresher({
 
     refreshInFlight = true;
     refreshRequestedWhileInFlight = false;
-    const monitorParentSessionIds = getMonitorParentSessionIds();
-    void fetchActiveAuxiliarySessions(monitorParentSessionIds).then((sessions) => {
+    void fetchActiveAuxiliarySessions().then((sessions) => {
       if (!active) {
         return;
       }
+      if (
+        lastAppliedSessions
+        && resolveHomeActiveAuxiliarySessionsState(lastAppliedSessions, sessions) === lastAppliedSessions
+      ) {
+        return;
+      }
       setActiveAuxiliarySessions(sessions);
+      lastAppliedSessions = sessions;
     }).catch((error) => {
       if (!active) {
         return;

@@ -30,6 +30,7 @@ import {
   WITHMATE_GET_MATE_STATE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
+  WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
@@ -676,6 +677,32 @@ test("Auxiliary full read IPC は対象外 window から full read を返さず�
     /Auxiliary session IPC is only available/,
   );
   assert.deepEqual(fullReadCalls, []);
+});
+
+test("Home 用 Auxiliary summary IPC は main が確定した open parent scope の active summary だけを返す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const {
+    messages: _messages,
+    composerDraft: _composerDraft,
+    ...summary
+  } = createAuxiliarySessionStub();
+  const calls: string[] = [];
+  const { deps } = createDeps({
+    listOpenActiveAuxiliarySessionSummaries: async () => {
+      calls.push("listOpenActiveAuxiliarySessionSummaries");
+      return [summary];
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL)?.({}),
+    [summary],
+  );
+  assert.deepEqual(calls, ["listOpenActiveAuxiliarySessionSummaries"]);
+  assert.equal("messages" in summary, false);
+  assert.equal("composerDraft" in summary, false);
 });
 
 test("Auxiliary update IPC は payload parent と既存 parent の不一致を拒否する", async () => {

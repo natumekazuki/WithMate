@@ -137,6 +137,7 @@ export type WithMateWindowSessionApi = {
 
 export type WithMateWindowAuxiliaryApi = {
   listAuxiliarySessions(parentSessionId: string): Promise<AuxiliarySessionSummary[]>;
+  listOpenActiveAuxiliarySessionSummaries(): Promise<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession(parentSessionId: string): Promise<AuxiliarySession | null>;
   getAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession | null>;
   createAuxiliarySession(input: CreateAuxiliarySessionInput): Promise<AuxiliarySession>;

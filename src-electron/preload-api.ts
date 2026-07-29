@@ -46,6 +46,7 @@ import {
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
+  WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
@@ -350,6 +351,9 @@ function createAuxiliaryApi(ipcRenderer: IpcRendererLike): WithMateWindowAuxilia
   return {
     listAuxiliarySessions(parentSessionId) {
       return ipcRenderer.invoke(WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL, parentSessionId);
+    },
+    listOpenActiveAuxiliarySessionSummaries() {
+      return ipcRenderer.invoke(WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL);
     },
     getActiveAuxiliarySession(parentSessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL, parentSessionId);

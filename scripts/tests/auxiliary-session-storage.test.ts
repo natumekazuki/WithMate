@@ -7,6 +7,7 @@ import test from "node:test";
 
 import { buildNewSession } from "../../src/app-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import type { AuxiliarySession, AuxiliarySessionSummary } from "../../src/auxiliary-session-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { CompanionSession } from "../../src/companion-state.js";
 import {
@@ -88,6 +89,32 @@ function buildCompanionSession(overrides: Partial<CompanionSession> = {}): Compa
     createdAt: "2026-05-25T00:00:00.000Z",
     updatedAt: "2026-05-25T00:00:00.000Z",
     messages: [{ role: "user", text: "review this" }],
+    ...overrides,
+  };
+}
+
+function buildAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
+  return {
+    id: "auxiliary-session-1",
+    parentSessionId: "session-1",
+    status: "active",
+    runState: "idle",
+    title: "Auxiliary",
+    provider: "codex",
+    catalogRevision: 1,
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+    approvalMode: DEFAULT_APPROVAL_MODE,
+    codexSandboxMode: "danger-full-access",
+    customAgentName: "",
+    allowedAdditionalDirectories: [],
+    threadId: "",
+    composerDraft: "",
+    messages: [],
+    displayAfterMessageIndex: null,
+    createdAt: "2026-07-30T00:00:00.000Z",
+    updatedAt: "2026-07-30T00:00:00.000Z",
+    closedAt: "",
     ...overrides,
   };
 }
@@ -508,6 +535,60 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
     companionStorage?.close();
     auxiliaryStorage?.close();
     sessionStorage?.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+test("AuxiliarySessionStorage は指定した parent の active summary だけを返す", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-active-auxiliary-summary-"));
+  const dbPath = path.join(tempDirectory, "withmate.db");
+  let auxiliaryStorage: AuxiliarySessionStorage | null = null;
+
+  try {
+    auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+    auxiliaryStorage.upsertAuxiliarySession(buildAuxiliarySession({
+      id: "aux-active-session-1",
+      parentSessionId: "session-1",
+      messages: [{ role: "assistant", text: "full payload" }],
+    }));
+    auxiliaryStorage.upsertAuxiliarySession(buildAuxiliarySession({
+      id: "aux-closed-session-1",
+      parentSessionId: "session-1",
+      status: "closed",
+      messages: [{ role: "assistant", text: "closed-payload-sentinel" }],
+      closedAt: "2026-07-30T00:10:00.000Z",
+    }));
+    auxiliaryStorage.upsertAuxiliarySession(buildAuxiliarySession({
+      id: "aux-active-session-2",
+      parentSessionId: "session-2",
+    }));
+
+    const parsedPayloads: string[] = [];
+    const originalJsonParse = JSON.parse;
+    JSON.parse = ((text: string, reviver?: (this: unknown, key: string, value: unknown) => unknown) => {
+      parsedPayloads.push(text);
+      return originalJsonParse(text, reviver);
+    }) as typeof JSON.parse;
+    let summaries: AuxiliarySessionSummary[];
+    try {
+      summaries = auxiliaryStorage.listActiveAuxiliarySessionSummaries([
+        "session-1",
+        "session-1",
+        " ",
+        "unknown-session",
+      ]);
+    } finally {
+      JSON.parse = originalJsonParse;
+    }
+
+    assert.deepEqual(summaries.map((session) => session.id), ["aux-active-session-1"]);
+    assert.equal("messages" in summaries[0]!, false);
+    assert.equal("composerDraft" in summaries[0]!, false);
+    assert.equal(parsedPayloads.some((payload) => payload.includes("full payload")), true);
+    assert.equal(parsedPayloads.some((payload) => payload.includes("closed-payload-sentinel")), false);
+    assert.deepEqual(auxiliaryStorage.listActiveAuxiliarySessionSummaries([]), []);
+  } finally {
+    auxiliaryStorage?.close();
     await removeDirectoryWithRetry(tempDirectory);
   }
 });

@@ -207,6 +207,7 @@ export type MainIpcCompanionDepsArgs = {
 
 export type MainIpcAuxiliaryDepsArgs = {
   listAuxiliarySessions(parentSessionId: string): Awaitable<AuxiliarySessionSummary[]>;
+  listOpenActiveAuxiliarySessionSummaries(): Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession(parentSessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
   createAuxiliarySession(input: CreateAuxiliarySessionInput): Awaitable<AuxiliarySession>;
@@ -276,6 +277,7 @@ function createUnavailableAuxiliaryDeps(): MainIpcAuxiliaryDepsArgs {
 
   return {
     listAuxiliarySessions: () => [],
+    listOpenActiveAuxiliarySessionSummaries: () => [],
     getActiveAuxiliarySession: () => null,
     getAuxiliarySession: () => null,
     createAuxiliarySession: throwUnavailable,
@@ -386,6 +388,7 @@ export function createMainIpcRegistrationDeps(
     getDiffPreview: args.sessionQuery.getDiffPreview,
     previewComposerInput: args.sessionQuery.previewComposerInput,
     listAuxiliarySessions: auxiliary.listAuxiliarySessions,
+    listOpenActiveAuxiliarySessionSummaries: auxiliary.listOpenActiveAuxiliarySessionSummaries,
     getActiveAuxiliarySession: auxiliary.getActiveAuxiliarySession,
     getAuxiliarySession: auxiliary.getAuxiliarySession,
     createAuxiliarySession: auxiliary.createAuxiliarySession,
