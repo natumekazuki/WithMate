@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import {
@@ -11,6 +12,42 @@ import {
 import { AppSettingsStorage } from "../../src-electron/app-settings-storage.js";
 
 describe("AppSettingsStorage", () => {
+  it("Session turn notification setting の欠損値と不正値は既定の有効へ戻す", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new AppSettingsStorage(dbPath);
+      storage.close();
+
+      const invalidDatabase = new DatabaseSync(dbPath);
+      invalidDatabase
+        .prepare(`
+          UPDATE app_settings
+          SET setting_value = ?
+          WHERE setting_key = ?
+        `)
+        .run("invalid", "session_turn_notification_enabled");
+      invalidDatabase.close();
+
+      const invalidValueStorage = new AppSettingsStorage(dbPath);
+      assert.equal(invalidValueStorage.getSettings().sessionTurnNotificationEnabled, true);
+      invalidValueStorage.close();
+
+      const missingDatabase = new DatabaseSync(dbPath);
+      missingDatabase
+        .prepare("DELETE FROM app_settings WHERE setting_key = ?")
+        .run("session_turn_notification_enabled");
+      missingDatabase.close();
+
+      const missingValueStorage = new AppSettingsStorage(dbPath);
+      assert.equal(missingValueStorage.getSettings().sessionTurnNotificationEnabled, true);
+      missingValueStorage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("coding provider settings を canonical key で保存して再読込できる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -21,6 +58,7 @@ describe("AppSettingsStorage", () => {
         ...createDefaultAppSettings(),
         memoryGenerationEnabled: false,
         launchAtLoginEnabled: true,
+        sessionTurnNotificationEnabled: false,
         autoCollapseActionDockOnSend: false,
         memoryFileQuotaBytes: 2 * MEMORY_FILE_QUOTA_DEFAULT_BYTES,
         userMicrocopyCatalog: {
@@ -109,6 +147,7 @@ describe("AppSettingsStorage", () => {
         ...createDefaultAppSettings(),
         memoryGenerationEnabled: false,
         launchAtLoginEnabled: true,
+        sessionTurnNotificationEnabled: false,
         autoCollapseActionDockOnSend: false,
         userMicrocopyCatalog: {
           ...createDefaultAppSettings().userMicrocopyCatalog,

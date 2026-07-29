@@ -15,6 +15,7 @@ import {
 export type AppSettings = {
   memoryGenerationEnabled: boolean;
   launchAtLoginEnabled: boolean;
+  sessionTurnNotificationEnabled: boolean;
   autoCollapseActionDockOnSend: boolean;
   memoryFileQuotaBytes: number;
   userMicrocopyCatalog: MicrocopyCatalog;
@@ -92,6 +93,7 @@ export function createDefaultAppSettings(): AppSettings {
   return {
     memoryGenerationEnabled: true,
     launchAtLoginEnabled: false,
+    sessionTurnNotificationEnabled: true,
     autoCollapseActionDockOnSend: true,
     memoryFileQuotaBytes: MEMORY_FILE_QUOTA_DEFAULT_BYTES,
     userMicrocopyCatalog: createDefaultUserMicrocopyCatalog(),
@@ -310,6 +312,8 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       typeof candidate.memoryGenerationEnabled === "boolean" ? candidate.memoryGenerationEnabled : true,
     launchAtLoginEnabled:
       typeof candidate.launchAtLoginEnabled === "boolean" ? candidate.launchAtLoginEnabled : false,
+    sessionTurnNotificationEnabled:
+      typeof candidate.sessionTurnNotificationEnabled === "boolean" ? candidate.sessionTurnNotificationEnabled : true,
     autoCollapseActionDockOnSend:
       typeof candidate.autoCollapseActionDockOnSend === "boolean" ? candidate.autoCollapseActionDockOnSend : true,
     memoryFileQuotaBytes: normalizeMemoryFileQuotaBytes(candidate.memoryFileQuotaBytes),

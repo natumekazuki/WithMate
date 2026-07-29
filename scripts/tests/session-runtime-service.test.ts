@@ -202,6 +202,7 @@ describe("SessionRuntimeService", () => {
     };
     let composeSessionName = "";
     let runSessionName = "";
+    let notifiedSession: Session | null = null;
 
     const adapter: ProviderCodingAdapter = {
       composePrompt(input) {
@@ -278,6 +279,9 @@ describe("SessionRuntimeService", () => {
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
+      notifySessionTurnCompleted(completedSession) {
+        notifiedSession = completedSession;
+      },
       currentTimestampLabel,
     });
 
@@ -286,6 +290,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(composeSessionName, "Fresh");
     assert.equal(runSessionName, "Fresh");
     assert.equal(result.characterRuntimeSnapshot?.name, "Fresh");
+    assert.equal(notifiedSession, result);
   });
 
   it("resolveSessionCharacter 未提供でも provider turn まで進む", async () => {
@@ -1013,6 +1018,7 @@ describe("SessionRuntimeService", () => {
     const storedSessions: Session[] = [];
     const auditUpdates: UpdateAuditLogInput[] = [];
     let canceledSessionId: string | null = null;
+    let notificationCount = 0;
     const partialResult: RunSessionTurnResult = {
       threadId: null,
       assistantText: "",
@@ -1128,6 +1134,9 @@ describe("SessionRuntimeService", () => {
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
+      notifySessionTurnCompleted() {
+        notificationCount += 1;
+      },
       currentTimestampLabel,
     });
 
@@ -1169,6 +1178,7 @@ describe("SessionRuntimeService", () => {
       "2",
     );
     assert.equal(canceledSessionId, baseSession.id);
+    assert.equal(notificationCount, 0);
   });
 
   it("実行中の session は in-flight として見え、完了後に解放される", async () => {
@@ -1501,6 +1511,103 @@ describe("SessionRuntimeService", () => {
     ]);
   });
 
+  it("cancel 後に provider が grace 内で成功しても完了通知しない", async () => {
+    const session = createSession();
+    let resolveProvider: ((result: RunSessionTurnResult) => void) | null = null;
+    let notificationCount = 0;
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      runSessionTurn() {
+        return new Promise<RunSessionTurnResult>((resolve) => {
+          resolveProvider = resolve;
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession() {
+        return session;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      notifySessionTurnCompleted() {
+        notificationCount += 1;
+      },
+      currentTimestampLabel,
+      providerCancelGraceMs: 1_000,
+    });
+
+    const runPromise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (!resolveProvider) {
+      throw new Error("provider resolve が取得できていないよ。");
+    }
+
+    service.cancelRun(session.id);
+    resolveProvider(createPartialResult({ assistantText: "完了したよ。" }));
+    const result = await runPromise;
+
+    assert.equal(result.runState, "idle");
+    assert.equal(result.messages.at(-1)?.text, "完了したよ。");
+    assert.equal(notificationCount, 0);
+  });
+
   it("stale thread / session error で meaningful partial が無い時だけ thread reset 後に 1 回 retry する", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-stale" });
     const storedSessions: Session[] = [];
@@ -1508,6 +1615,7 @@ describe("SessionRuntimeService", () => {
     const auditUpdates: UpdateAuditLogInput[] = [];
     const seenThreadIds: string[] = [];
     let attempt = 0;
+    let notificationCount = 0;
 
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
@@ -1593,6 +1701,9 @@ describe("SessionRuntimeService", () => {
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
+      notifySessionTurnCompleted() {
+        notificationCount += 1;
+      },
       currentTimestampLabel,
     });
 
@@ -1609,6 +1720,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(auditUpdates.length, 3);
     assert.equal(auditUpdates[0]?.phase, "running");
     assert.equal(auditUpdates.at(-1)?.phase, "completed");
+    assert.equal(notificationCount, 1);
   });
 
   it("stale retry 後の running audit log は前回 progress の断片を引き継がない", async () => {
@@ -2561,6 +2673,7 @@ describe("SessionRuntimeService", () => {
     const session = createSession({ provider: "codex", threadId: "thread-stale" });
     const storedSessions: Session[] = [];
     const auditUpdates: UpdateAuditLogInput[] = [];
+    let notificationCount = 0;
 
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
@@ -2649,6 +2762,9 @@ describe("SessionRuntimeService", () => {
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
+      notifySessionTurnCompleted() {
+        notificationCount += 1;
+      },
       currentTimestampLabel,
     });
 
@@ -2662,6 +2778,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(auditUpdates.at(-1)?.assistantText, "途中まで進んだよ。");
     assert.deepEqual(auditUpdates.at(-1)?.operations, [{ type: "command_execution", summary: "npm test", details: "in_progress" }]);
     assert.deepEqual(auditUpdates.at(-1)?.usage, { inputTokens: 9, cachedInputTokens: 1, outputTokens: 3 });
+    assert.equal(notificationCount, 0);
   });
 
   it("usage_limit reason は audit log と assistant fallback で通常失敗文言にしない", async () => {
@@ -3327,8 +3444,10 @@ describe("SessionRuntimeService", () => {
     ]);
   });
 
-  it("Session turn 後に Mate Memory generation hook を持たない", async () => {
+  it("Session success を保存後に通知し、通知 failure は turn を失敗させない", async () => {
     const session = createSession();
+    let persistedCompletedSession: Session | null = null;
+    let notifiedSession: Session | null = null;
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
@@ -3357,6 +3476,9 @@ describe("SessionRuntimeService", () => {
         return sessionId === session.id ? session : null;
       },
       upsertSession(next) {
+        if (next.runState === "idle" && next.messages.at(-1)?.role === "assistant") {
+          persistedCompletedSession = next;
+        }
         return next;
       },
       async resolveComposerPreview() {
@@ -3402,6 +3524,10 @@ describe("SessionRuntimeService", () => {
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
+      notifySessionTurnCompleted(completedSession) {
+        notifiedSession = completedSession;
+        return Promise.reject(new Error("notification failed"));
+      },
       currentTimestampLabel,
     });
 
@@ -3409,5 +3535,7 @@ describe("SessionRuntimeService", () => {
 
     assert.equal(result.runState, "idle");
     assert.equal(result.messages.at(-1)?.text, "完了したよ。");
+    assert.equal(notifiedSession, persistedCompletedSession);
+    assert.equal(notifiedSession?.messages.at(-1)?.text, "完了したよ。");
   });
 });

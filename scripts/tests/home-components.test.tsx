@@ -75,6 +75,7 @@ describe("HomeSettingsContent", () => {
     deletingOldSessions: false,
     onChangeAutoCollapseActionDockOnSend: noOp,
     onChangeLaunchAtLoginEnabled: noOp,
+    onChangeSessionTurnNotificationEnabled: noOp,
     onChangeSessionCleanupCutoffDate: noOp,
     onChangeUserMicrocopySlot: noOp,
     onChangeProviderEnabled: noOp,
@@ -97,6 +98,12 @@ describe("HomeSettingsContent", () => {
   });
 
   const renderSettings = (params?: RenderSettingsParams) => renderToStaticMarkup(buildSettingsContent(params));
+
+  it("App settings に Windows の Session turn notification toggle を表示する", () => {
+    const html = renderSettings();
+
+    assert.ok(html.includes("Session のターン完了を Windows 通知で知らせる"));
+  });
 
   it("Mate Reset の危険操作は Settings に表示されない", () => {
     const html = renderSettings();
