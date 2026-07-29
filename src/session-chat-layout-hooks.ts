@@ -213,7 +213,7 @@ export function useSessionContextRail({
       }
 
       const bounds = workbenchElement.getBoundingClientRect();
-      if (bounds.width <= SESSION_LAYOUT_BREAKPOINT) {
+      if (bounds.width < SESSION_LAYOUT_BREAKPOINT) {
         return;
       }
 
@@ -269,7 +269,7 @@ export function useSessionContextRail({
       || !isContextRailVisible
       || event.button !== 0
       || !workbenchElement
-      || workbenchElement.getBoundingClientRect().width <= SESSION_LAYOUT_BREAKPOINT
+      || workbenchElement.getBoundingClientRect().width < SESSION_LAYOUT_BREAKPOINT
     ) {
       return;
     }

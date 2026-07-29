@@ -65,10 +65,10 @@ test("右ペイン非表示時は pane track を除き、splitter の再表示�
   );
   assert.match(
     stylesSource,
-    /@media \(max-width:\s*1400px\)\s*{[\s\S]*?\.session-workbench-splitter\s*{[\s\S]*?display:\s*block;[\s\S]*?cursor:\s*pointer;[\s\S]*?}/,
+    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-workbench-splitter\s*{[\s\S]*?display:\s*block;[\s\S]*?cursor:\s*pointer;[\s\S]*?}/,
   );
   assert.match(
     stylesSource,
-    /@media \(max-width:\s*1400px\)\s*{[\s\S]*?\.session-workbench-splitter\.is-static\s*{\s*display:\s*none;\s*}/,
+    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-workbench-splitter\.is-static\s*{\s*display:\s*none;\s*}/,
   );
 });

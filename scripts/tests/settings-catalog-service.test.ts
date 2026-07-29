@@ -286,6 +286,97 @@ describe("SettingsCatalogService", () => {
     }
   });
 
+  it("通常 settings 保存後の待機中に更新された right pane 表示状態を最新の projection へ反映する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-settings-catalog-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    const storage = new AppSettingsStorage(dbPath);
+    const sessionReplacementStarted = createDeferred();
+    const resumeSessionReplacement = createDeferred();
+    let broadcastSettings: AppSettings | null = null;
+
+    try {
+      const previousSettings = storage.getSettings();
+      const previousSessions = [createSession()];
+      const service = new SettingsCatalogService({
+        hasInFlightSessionRuns() {
+          return false;
+        },
+        isSessionRunInFlight() {
+          return false;
+        },
+        isRunningSession() {
+          return false;
+        },
+        listSessions() {
+          return previousSessions;
+        },
+        listAuxiliarySessions() {
+          return [];
+        },
+        getAppSettings() {
+          return storage.getSettings();
+        },
+        updateAppSettings(settings) {
+          return storage.updateSettings(settings);
+        },
+        getModelCatalog() {
+          return createCatalogSnapshot();
+        },
+        ensureModelCatalogSeeded() {
+          return createCatalogSnapshot();
+        },
+        importModelCatalogDocument() {
+          return createCatalogSnapshot();
+        },
+        exportModelCatalogDocument() {
+          return { providers: createCatalogSnapshot().providers };
+        },
+        async replaceAllSessions(nextSessions) {
+          sessionReplacementStarted.resolve();
+          await resumeSessionReplacement.promise;
+          return nextSessions;
+        },
+        replaceAuxiliarySessions(nextSessions) {
+          return nextSessions;
+        },
+        clearProviderQuotaTelemetry() {},
+        clearSessionContextTelemetry() {},
+        invalidateProviderSessionThread() {},
+        broadcastSessions() {},
+        broadcastAppSettings(settings) {
+          broadcastSettings = settings ?? storage.getSettings();
+        },
+        broadcastModelCatalog() {},
+      });
+
+      const updating = service.updateAppSettings({
+        ...previousSettings,
+        launchAtLoginEnabled: true,
+        codingProviderSettings: {
+          ...previousSettings.codingProviderSettings,
+          codex: {
+            ...previousSettings.codingProviderSettings.codex,
+            apiKey: "changed-key",
+          },
+        },
+      });
+      await sessionReplacementStarted.promise;
+      storage.updateSessionRightPaneVisibility(true);
+      resumeSessionReplacement.resolve();
+
+      const updated = await updating;
+
+      assert.equal(updated.launchAtLoginEnabled, true);
+      assert.equal(updated.sessionRightPaneVisible, true);
+      assert.ok(broadcastSettings);
+      assert.equal(broadcastSettings.sessionRightPaneVisible, true);
+      assert.equal(storage.getSettings().sessionRightPaneVisible, true);
+    } finally {
+      storage.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("通常 settings 更新の rollback は並行して保存された right pane 表示状態を巻き戻さない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-settings-catalog-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -400,7 +491,7 @@ describe("SettingsCatalogService", () => {
         return [];
       },
       getAppSettings() {
-        return previousSettings;
+        return savedSettings ?? previousSettings;
       },
       updateAppSettings(settings) {
         savedSettings = settings;

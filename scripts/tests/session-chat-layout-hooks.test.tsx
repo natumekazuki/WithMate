@@ -156,6 +156,21 @@ test("useSessionContextRail は保存済み状態を一度だけ反映し、clic
     await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
     assert.equal(visibility.textContent, "visible");
 
+    workbenchWidth = 1400;
+    let boundaryPointerDown!: MouseEvent;
+    await act(async () => {
+      boundaryPointerDown = dispatchPointerEvent(dom, splitter, "pointerdown", 980);
+    });
+    assert.equal(resizing.textContent, "resizing");
+    assert.equal(boundaryPointerDown.defaultPrevented, true);
+    assert.equal(dom.window.document.body.style.cursor, "col-resize");
+    assert.equal(dom.window.document.body.style.userSelect, "none");
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 940));
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 940));
+    await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+    assert.equal(visibility.textContent, "visible");
+    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "460px");
+
     workbenchWidth = 1600;
     await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1180));
     assert.equal(resizing.textContent, "resizing");

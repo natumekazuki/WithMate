@@ -9413,7 +9413,7 @@ button:disabled {
   }
 }
 
-@media (max-width: 1400px) {
+@media (max-width: 1399.98px) {
   .session-workbench {
     height: auto;
     overflow-y: auto;
