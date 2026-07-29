@@ -6,7 +6,16 @@ import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 import type { CompanionSession } from "../../src/companion-state.js";
 import { createDefaultAppSettings, type AppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../../src/model-catalog.js";
-import { SettingsCatalogService } from "../../src-electron/settings-catalog-service.js";
+import { SettingsCatalogService as SettingsCatalogServiceImpl } from "../../src-electron/settings-catalog-service.js";
+
+class SettingsCatalogService extends SettingsCatalogServiceImpl {
+  constructor(deps: ConstructorParameters<typeof SettingsCatalogServiceImpl>[0]) {
+    super({
+      runProviderRuntimeOperationExclusive: async (operation) => await operation(),
+      ...deps,
+    });
+  }
+}
 
 function createSession(overrides?: Partial<Session>): Session {
   return {

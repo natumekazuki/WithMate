@@ -1950,6 +1950,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         defaults: {
           model: selectedModel,
           reasoningEffort: selectedReasoningEffort,
+          approvalMode: selectedApprovalMode,
+          codexSandboxMode: selectedCodexSandboxMode,
           customAgentName: snapshot.session.customAgentName,
         },
       });

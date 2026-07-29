@@ -187,6 +187,75 @@ function readSessionBlobIds(db: DatabaseSync, sessionId: string): string[] {
 }
 
 describe("SessionStorageV3", () => {
+  it("getLatestSessionSummaryForProvider は legacy provider 表記を正規化して最新一件だけを返す", async () => {
+    await withTempV3Database(async ({ dbPath, blobRootPath }) => {
+      const storage = new SessionStorageV3(dbPath, blobRootPath);
+      try {
+        await storage.upsertSession({
+          ...createSession({
+            id: "codex-old",
+            taskTitle: "old",
+            workspaceLabel: "workspace-old",
+          }),
+          provider: "codex",
+          model: "gpt-old",
+        });
+        await storage.upsertSession({
+          ...createSession({
+            id: "copilot-newest",
+            taskTitle: "copilot",
+            workspaceLabel: "workspace-copilot",
+          }),
+          provider: "copilot",
+          model: "copilot-model",
+        });
+        await storage.upsertSession({
+          ...createSession({
+            id: "codex-before",
+            taskTitle: "before",
+            workspaceLabel: "workspace-before",
+          }),
+          provider: "codex",
+          model: "gpt-before",
+        });
+        await storage.upsertSession({
+          ...createSession({
+            id: "codex-latest",
+            taskTitle: "latest",
+            workspaceLabel: "workspace-latest",
+          }),
+          provider: "codex",
+          model: "gpt-latest",
+          reasoningEffort: "xhigh",
+          approvalMode: "never",
+          codexSandboxMode: "danger-full-access",
+          customAgentName: "reviewer",
+        });
+
+        const db = new DatabaseSync(dbPath);
+        db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(100, "codex-old");
+        db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(300, "copilot-newest");
+        db.prepare("UPDATE sessions SET provider = ?, last_active_at = ? WHERE id = ?")
+          .run("\tcodex\t", 200, "codex-before");
+        db.prepare("UPDATE sessions SET provider = ?, last_active_at = ? WHERE id = ?")
+          .run("\nCodex\u00a0", 200, "codex-latest");
+        db.close();
+
+        const latest = await storage.getLatestSessionSummaryForProvider("codex");
+        assert.equal(latest?.id, "codex-latest");
+        assert.equal(latest?.provider, "codex");
+        assert.equal(latest?.model, "gpt-latest");
+        assert.equal(latest?.reasoningEffort, "xhigh");
+        assert.equal(latest?.approvalMode, "never");
+        assert.equal(latest?.codexSandboxMode, "danger-full-access");
+        assert.equal(latest?.customAgentName, "reviewer");
+        assert.equal(await storage.getLatestSessionSummaryForProvider("missing"), null);
+      } finally {
+        storage.close();
+      }
+    });
+  });
+
   it("upsert -> list summaries -> get で message text と artifact を blob から復元する", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);

@@ -13,10 +13,15 @@ import {
   type Session,
   type SessionSummary,
 } from "../src/session-state.js";
+import { normalizeProviderId } from "../src/model-catalog.js";
 import {
   parseCharacterRuntimeSnapshotJson,
   stringifyCharacterRuntimeSnapshot,
 } from "../src/character/character-runtime-snapshot.js";
+import {
+  registerSessionProviderIdNormalizer,
+  SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION,
+} from "./session-provider-id-sql.js";
 import { deleteAuditEventsForSessionTargets } from "./audit-log-storage-v6.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
@@ -160,6 +165,7 @@ export class SessionStorageV6 {
 
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
+    registerSessionProviderIdNormalizer(this.db);
     ensureV6Schema(this.db);
     this.ensureSchema();
   }
@@ -180,6 +186,21 @@ export class SessionStorageV6 {
       ORDER BY last_active_at DESC, id DESC
     `).all() as SessionV6Row[];
     return cloneSessionSummaries(rows.map((row) => this.rowToSessionSummary(row)));
+  }
+
+  getLatestSessionSummaryForProvider(providerId: string): SessionSummary | null {
+    const normalizedProviderId = providerId.trim();
+    if (!normalizedProviderId) {
+      return null;
+    }
+    const row = this.db.prepare(`
+      SELECT *
+      FROM sessions_v6
+      WHERE ${SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION}(provider_id) = ?
+      ORDER BY last_active_at DESC, id DESC
+      LIMIT 1
+    `).get(normalizeProviderId(normalizedProviderId)) as SessionV6Row | undefined;
+    return row ? this.rowToSessionSummary(row) : null;
   }
 
   getSession(sessionId: string): Session | null {

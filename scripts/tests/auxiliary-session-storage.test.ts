@@ -6,18 +6,46 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import { buildNewSession } from "../../src/app-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "../../src/approval-mode.js";
+import {
+  DEFAULT_CODEX_SANDBOX_MODE,
+  type CodexSandboxMode,
+} from "../../src/codex-sandbox-mode.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { CompanionSession } from "../../src/companion-state.js";
 import {
   companionSessionToAuxiliaryParentSession,
   resolveAuxiliaryParentSession,
 } from "../../src-electron/auxiliary-parent-session.js";
-import { AuxiliarySessionService } from "../../src-electron/auxiliary-session-service.js";
+import { AuxiliarySessionService as AuxiliarySessionServiceImpl } from "../../src-electron/auxiliary-session-service.js";
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary-session-storage.js";
 import { CompanionStorage } from "../../src-electron/companion-storage.js";
 import { appendSessionFilesDirectoryForSessionId, resolveSessionFilesDirectory } from "../../src-electron/session-files.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";
+
+type AuxiliarySessionServiceDeps = ConstructorParameters<typeof AuxiliarySessionServiceImpl>[0];
+
+class AuxiliarySessionService extends AuxiliarySessionServiceImpl {
+  constructor(
+    deps: Omit<
+      AuxiliarySessionServiceDeps,
+      "runProviderRuntimeOperationExclusive" | "resolveSessionLaunchSelection"
+    > & Partial<
+      Pick<
+        AuxiliarySessionServiceDeps,
+        "runProviderRuntimeOperationExclusive" | "resolveSessionLaunchSelection"
+      >
+    >,
+  ) {
+    super({
+      runProviderRuntimeOperationExclusive: async (operation) => await operation(),
+      resolveSessionLaunchSelection: async () => {
+        throw new Error("latest-session resolver is not configured");
+      },
+      ...deps,
+    });
+  }
+}
 
 type SqliteColumnInfoRow = {
   name: string;
@@ -195,7 +223,7 @@ test("AuxiliarySessionStorage は created_at なしの旧 auxiliary_sessions を
   }
 });
 
-test("AuxiliarySessionService は親 session から実行 context を継承して active session を復元する", async () => {
+test("AuxiliarySessionService は親の作業 context と未指定 runtime option の既定値で active session を復元する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-session-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
   let sessionStorage: SessionStorage | null = null;
@@ -241,7 +269,8 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
     assert.equal(auxiliary.provider, parent.provider);
     assert.equal(auxiliary.model, parent.model);
     assert.equal(auxiliary.reasoningEffort, parent.reasoningEffort);
-    assert.equal(auxiliary.codexSandboxMode, "workspace-write-network");
+    assert.equal(auxiliary.approvalMode, DEFAULT_APPROVAL_MODE);
+    assert.equal(auxiliary.codexSandboxMode, DEFAULT_CODEX_SANDBOX_MODE);
     assert.deepEqual(auxiliary.allowedAdditionalDirectories, ["C:/shared"]);
     assert.equal(auxiliary.displayAfterMessageIndex, parent.messages.length - 1);
 
@@ -275,7 +304,7 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
       updatedAt: "2026-05-24T00:00:00.000Z",
     });
     assert.equal(persistedRuntime.composerDraft, "");
-    assert.equal(persistedRuntime.codexSandboxMode, "workspace-write-network");
+    assert.equal(persistedRuntime.codexSandboxMode, DEFAULT_CODEX_SANDBOX_MODE);
     const staleDraftUpdate = service.updateAuxiliarySession({
       ...updated,
       composerDraft: "review this diff",
@@ -512,7 +541,7 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
   }
 });
 
-test("AuxiliarySessionService は通常起動と同じ選択済み model context で active session を作成する", async () => {
+test("AuxiliarySessionService は通常起動と同じ選択済み runtime option context で active session を作成する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-model-selection-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
   let sessionStorage: SessionStorage | null = null;
@@ -553,12 +582,16 @@ test("AuxiliarySessionService は通常起動と同じ選択済み model context
       provider: parent.provider,
       model: "gpt-5.4-mini",
       reasoningEffort: "medium",
+      approvalMode: "never",
+      codexSandboxMode: "read-only",
       customAgentName: "last-used-agent",
     });
 
     assert.equal(auxiliary.provider, parent.provider);
     assert.equal(auxiliary.model, "gpt-5.4-mini");
     assert.equal(auxiliary.reasoningEffort, "medium");
+    assert.equal(auxiliary.approvalMode, "never");
+    assert.equal(auxiliary.codexSandboxMode, "read-only");
     assert.equal(auxiliary.customAgentName, "last-used-agent");
   } finally {
     auxiliaryStorage?.close();
@@ -567,8 +600,8 @@ test("AuxiliarySessionService は通常起動と同じ選択済み model context
   }
 });
 
-test("AuxiliarySessionService は指定 Provider の既定 model で active session を作成する", async () => {
-  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-provider-"));
+test("AuxiliarySessionService は latest-session 選択を Main の resolver から一組で取得する", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-latest-selection-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
   let sessionStorage: SessionStorage | null = null;
   let auxiliaryStorage: AuxiliarySessionStorage | null = null;
@@ -590,8 +623,237 @@ test("AuxiliarySessionService は指定 Provider の既定 model で active sess
       }),
       id: "session-main",
       provider: "codex",
+    };
+    sessionStorage.upsertSession(parent);
+    const resolvedProviderIds: Array<string | null | undefined> = [];
+    const service = new AuxiliarySessionService({
+      getParentSession: (parentSessionId) => sessionStorage?.getSession(parentSessionId) ?? null,
+      getStorage: () => auxiliaryStorage!,
+      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
+      resolveSessionLaunchSelection: async (providerId) => {
+        resolvedProviderIds.push(providerId);
+        return {
+          provider: "codex",
+          catalogRevision: 8,
+          model: "gpt-5.4-mini",
+          reasoningEffort: "medium",
+          approvalMode: "never",
+          codexSandboxMode: "read-only",
+          customAgentName: "latest-agent",
+        };
+      },
+    });
+
+    const auxiliary = await service.createAuxiliarySession({
+      parentSessionId: parent.id,
+      provider: "codex",
+      runtimeSelection: "latest-session",
+    });
+
+    assert.deepEqual(resolvedProviderIds, ["codex"]);
+    assert.deepEqual(
+      {
+        provider: auxiliary.provider,
+        catalogRevision: auxiliary.catalogRevision,
+        model: auxiliary.model,
+        reasoningEffort: auxiliary.reasoningEffort,
+        approvalMode: auxiliary.approvalMode,
+        codexSandboxMode: auxiliary.codexSandboxMode,
+        customAgentName: auxiliary.customAgentName,
+      },
+      {
+        provider: "codex",
+        catalogRevision: 8,
+        model: "gpt-5.4-mini",
+        reasoningEffort: "medium",
+        approvalMode: "never",
+        codexSandboxMode: "read-only",
+        customAgentName: "latest-agent",
+      },
+    );
+  } finally {
+    auxiliaryStorage?.close();
+    sessionStorage?.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+test("AuxiliarySessionService は latest-session の取得失敗と runtime option 混在を保存前に拒否する", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-latest-failure-"));
+  const dbPath = path.join(tempDirectory, "withmate.db");
+  let sessionStorage: SessionStorage | null = null;
+  let auxiliaryStorage: AuxiliarySessionStorage | null = null;
+
+  try {
+    sessionStorage = new SessionStorage(dbPath);
+    auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+    const parent = {
+      ...buildNewSession({
+        taskTitle: "main task",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "mate",
+        character: "Mate",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      }),
+      id: "session-main",
+      provider: "codex",
+    };
+    sessionStorage.upsertSession(parent);
+    const service = new AuxiliarySessionService({
+      getParentSession: (parentSessionId) => sessionStorage?.getSession(parentSessionId) ?? null,
+      getStorage: () => auxiliaryStorage!,
+      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
+      resolveSessionLaunchSelection: async () => {
+        throw new Error("latest selection conversion failed");
+      },
+    });
+
+    await assert.rejects(
+      service.createAuxiliarySession({
+        parentSessionId: parent.id,
+        provider: "codex",
+        runtimeSelection: "latest-session",
+      }),
+      /latest selection conversion failed/,
+    );
+    assert.deepEqual(service.listAuxiliarySessions(parent.id), []);
+
+    await assert.rejects(
+      service.createAuxiliarySession({
+        parentSessionId: parent.id,
+        provider: "codex",
+        runtimeSelection: "latest-session",
+        approvalMode: "never",
+      }),
+      /runtime option を直接指定できない/,
+    );
+    assert.deepEqual(service.listAuxiliarySessions(parent.id), []);
+  } finally {
+    auxiliaryStorage?.close();
+    sessionStorage?.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+test("AuxiliarySessionService は現行 enum 外の runtime option を拒否して保存しない", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-runtime-option-fallback-"));
+  const dbPath = path.join(tempDirectory, "withmate.db");
+  let sessionStorage: SessionStorage | null = null;
+  let auxiliaryStorage: AuxiliarySessionStorage | null = null;
+
+  try {
+    sessionStorage = new SessionStorage(dbPath);
+    auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+    const parentTemplate = {
+      ...buildNewSession({
+        taskTitle: "main task",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "mate",
+        character: "Mate",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: "on-request",
+        codexSandboxMode: "workspace-write-network",
+      }),
+      provider: "codex",
+    };
+    const activeModelCatalog = buildTestModelCatalogSnapshot(parentTemplate.catalogRevision);
+
+    const service = new AuxiliarySessionService({
+      getParentSession: (parentSessionId) => sessionStorage?.getSession(parentSessionId) ?? null,
+      getStorage: () => auxiliaryStorage!,
+      getModelCatalogSnapshot: () => activeModelCatalog,
+    });
+
+    const malformedInputs: Array<{
+      input: {
+        approvalMode?: ApprovalMode;
+        codexSandboxMode?: CodexSandboxMode;
+      };
+      expectedError: RegExp;
+    }> = [
+      {
+        input: {
+          approvalMode: "allow-all" as ApprovalMode,
+        },
+        expectedError: /approvalMode を解釈できない/,
+      },
+      {
+        input: {
+          approvalMode: " never " as ApprovalMode,
+        },
+        expectedError: /approvalMode を解釈できない/,
+      },
+      {
+        input: {
+          codexSandboxMode: " danger-full-access " as CodexSandboxMode,
+        },
+        expectedError: /codexSandboxMode を解釈できない/,
+      },
+      {
+        input: {
+          codexSandboxMode: 1 as unknown as CodexSandboxMode,
+        },
+        expectedError: /codexSandboxMode を解釈できない/,
+      },
+    ];
+
+    for (const [index, malformedInput] of malformedInputs.entries()) {
+      const parent = {
+        ...parentTemplate,
+        id: `session-main-${index}`,
+      };
+      sessionStorage.upsertSession(parent);
+
+      await assert.rejects(
+        service.createAuxiliarySession({
+          parentSessionId: parent.id,
+          provider: parent.provider,
+          ...malformedInput.input,
+        }),
+        malformedInput.expectedError,
+      );
+      assert.deepEqual(service.listAuxiliarySessions(parent.id), []);
+    }
+  } finally {
+    auxiliaryStorage?.close();
+    sessionStorage?.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+test("AuxiliarySessionService は選択値なしなら指定 Provider と同じ既定 runtime context で active session を作成する", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-provider-"));
+  const dbPath = path.join(tempDirectory, "withmate.db");
+  let sessionStorage: SessionStorage | null = null;
+  let auxiliaryStorage: AuxiliarySessionStorage | null = null;
+
+  try {
+    sessionStorage = new SessionStorage(dbPath);
+    auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+    const parent = {
+      ...buildNewSession({
+        taskTitle: "main task",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "mate",
+        character: "Mate",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: "never",
+      }),
+      id: "session-main",
+      provider: "codex",
       model: "gpt-5.4",
       reasoningEffort: "high" as const,
+      codexSandboxMode: "danger-full-access" as const,
     };
     sessionStorage.upsertSession(parent);
     const activeModelCatalog = buildTestModelCatalogSnapshot(parent.catalogRevision);
@@ -612,7 +874,9 @@ test("AuxiliarySessionService は指定 Provider の既定 model で active sess
     assert.equal(auxiliary.catalogRevision, activeModelCatalog.revision);
     assert.equal(auxiliary.model, "claude-sonnet-4.5");
     assert.equal(auxiliary.reasoningEffort, "medium");
-    assert.equal(auxiliary.approvalMode, parent.approvalMode);
+    assert.equal(auxiliary.approvalMode, DEFAULT_APPROVAL_MODE);
+    assert.equal(auxiliary.codexSandboxMode, DEFAULT_CODEX_SANDBOX_MODE);
+    assert.equal(auxiliary.customAgentName, "");
     assert.equal(auxiliary.displayAfterMessageIndex, parent.messages.length - 1);
   } finally {
     auxiliaryStorage?.close();
@@ -642,6 +906,8 @@ test("AuxiliarySessionService は Companion 由来の parent runtime session か
     const auxiliary = await service.createAuxiliarySession({
       parentSessionId: companion.id,
       provider: companion.provider,
+      approvalMode: companion.approvalMode,
+      codexSandboxMode: companion.codexSandboxMode,
     });
 
     assert.equal(auxiliary.parentSessionId, companion.id);

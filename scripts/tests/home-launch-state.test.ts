@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
-import { DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT, type ModelCatalogProvider } from "../../src/model-catalog.js";
-import type { SessionSummary } from "../../src/app-state.js";
 import type { CharacterCatalogEntry } from "../../src/character/character-catalog.js";
 import {
   buildCreateCompanionSessionInputFromLaunchDraft,
@@ -12,7 +8,6 @@ import {
   closeLaunchDraft,
   createClosedLaunchDraft,
   openLaunchDraft,
-  resolveLastUsedSessionSelection,
   resolveLaunchCharacterId,
   resolveLaunchValidationMessage,
   selectWeightedRandomLaunchCharacterId,
@@ -84,10 +79,6 @@ describe("home-launch-state", () => {
       providerId: "codex",
       characterSelectionMode: "specific",
       characterId: "mia",
-      model: DEFAULT_MODEL_ID,
-      reasoningEffort: DEFAULT_REASONING_EFFORT,
-      approvalMode: DEFAULT_APPROVAL_MODE,
-      codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
     });
 
     assert.deepEqual(closeLaunchDraft(opened), {
@@ -98,10 +89,6 @@ describe("home-launch-state", () => {
       providerId: "",
       characterSelectionMode: "specific",
       characterId: "",
-      model: DEFAULT_MODEL_ID,
-      reasoningEffort: DEFAULT_REASONING_EFFORT,
-      approvalMode: DEFAULT_APPROVAL_MODE,
-      codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
     });
   });
 
@@ -115,41 +102,10 @@ describe("home-launch-state", () => {
     });
   });
 
-  it("provider 選択時に launch draft の provider/model/reasoningEffort を更新する", () => {
-    const providers: ModelCatalogProvider[] = [
-      {
-        id: "codex",
-        label: "Codex",
-        defaultModelId: "gpt-5.4-mini",
-        defaultReasoningEffort: "medium",
-        models: [
-          {
-            id: "gpt-5.4-mini",
-            label: "GPT 5.4 mini",
-            reasoningEfforts: ["low", "medium"],
-          },
-        ],
-      },
-    ];
-    const draft = updateLaunchDraftForProviderSelection(createClosedLaunchDraft(), "codex", providers);
+  it("provider 選択時に launch draft の providerId を更新する", () => {
+    const draft = updateLaunchDraftForProviderSelection(createClosedLaunchDraft(), "codex");
 
     assert.equal(draft.providerId, "codex");
-    assert.equal(draft.model, "gpt-5.4-mini");
-    assert.equal(draft.reasoningEffort, "low");
-  });
-
-  it("存在しない provider 選択時は providerId だけ更新して model/reasoningEffort を維持する", () => {
-    const current = {
-      ...createClosedLaunchDraft(),
-      providerId: "codex",
-      model: "gpt-5.4-mini",
-      reasoningEffort: "medium" as const,
-    };
-    const draft = updateLaunchDraftForProviderSelection(current, "missing", []);
-
-    assert.equal(draft.providerId, "missing");
-    assert.equal(draft.model, "gpt-5.4-mini");
-    assert.equal(draft.reasoningEffort, "medium");
   });
 
   it("character 選択時に launch draft の characterId を更新する", () => {
@@ -316,7 +272,6 @@ describe("home-launch-state", () => {
         themeSub: "#ffffff",
       }),
       selectedProviderId: "codex",
-      approvalMode: DEFAULT_APPROVAL_MODE,
       characterEntries: [
         createCharacterEntry({
           id: "mia",
@@ -327,11 +282,6 @@ describe("home-launch-state", () => {
           isDefault: true,
         }),
       ],
-      lastUsedSelection: {
-        model: "gpt-5.4-mini",
-        reasoningEffort: "medium",
-        customAgentName: "reviewer",
-      },
     });
 
     assert.deepEqual(input, {
@@ -350,11 +300,12 @@ describe("home-launch-state", () => {
         main: "#000000",
         sub: "#ffffff",
       },
-      approvalMode: DEFAULT_APPROVAL_MODE,
-      model: "gpt-5.4-mini",
-      reasoningEffort: "medium",
-      customAgentName: "reviewer",
     });
+    assert.equal("approvalMode" in (input ?? {}), false);
+    assert.equal("codexSandboxMode" in (input ?? {}), false);
+    assert.equal("model" in (input ?? {}), false);
+    assert.equal("reasoningEffort" in (input ?? {}), false);
+    assert.equal("customAgentName" in (input ?? {}), false);
   });
 
   it("Mate 未作成でも neutral character で session input を組み立てる", () => {
@@ -368,7 +319,6 @@ describe("home-launch-state", () => {
       },
       mateProfile: null,
       selectedProviderId: "codex",
-      approvalMode: DEFAULT_APPROVAL_MODE,
     });
 
     assert.equal(input?.characterId, "withmate-neutral-character");
@@ -392,7 +342,6 @@ describe("home-launch-state", () => {
       },
       mateProfile: null,
       selectedProviderId: "codex",
-      approvalMode: DEFAULT_APPROVAL_MODE,
       characterEntries: [
         createCharacterEntry({ id: "mia", name: "Mia", state: "archived" }),
         createCharacterEntry({ id: "noa", name: "Noa", description: "active profile" }),
@@ -425,9 +374,11 @@ describe("home-launch-state", () => {
       main: "#6f8cff",
       sub: "#6fb8c7",
     });
+    assert.equal("approvalMode" in (input ?? {}), false);
+    assert.equal("codexSandboxMode" in (input ?? {}), false);
   });
 
-  it("Companion launch は provider の last-used model を優先する", () => {
+  it("Companion launch request は runtime option を renderer から送らない", () => {
     const input = buildCreateCompanionSessionInputFromLaunchDraft({
       draft: {
         ...createClosedLaunchDraft(),
@@ -453,16 +404,13 @@ describe("home-launch-state", () => {
           theme: { main: "#000000", sub: "#ffffff" },
         }),
       ],
-      lastUsedSelection: {
-        model: "gpt-5.4-mini",
-        reasoningEffort: "medium",
-        customAgentName: "reviewer",
-      },
     });
 
-    assert.equal(input?.model, "gpt-5.4-mini");
-    assert.equal(input?.reasoningEffort, "medium");
-    assert.equal(input?.customAgentName, "reviewer");
+    assert.equal("model" in (input ?? {}), false);
+    assert.equal("reasoningEffort" in (input ?? {}), false);
+    assert.equal("approvalMode" in (input ?? {}), false);
+    assert.equal("codexSandboxMode" in (input ?? {}), false);
+    assert.equal("customAgentName" in (input ?? {}), false);
   });
 
   it("active Character がない時だけ Companion input は neutral fallback を使う", () => {
@@ -487,56 +435,11 @@ describe("home-launch-state", () => {
     assert.equal(input?.character, "WithMate");
   });
 
-  it("selected provider の直近 session から last-used selection を引く", () => {
-    const sessions: Pick<SessionSummary, "provider" | "model" | "reasoningEffort" | "customAgentName">[] = [
-      {
-        provider: "copilot",
-        model: "gpt-4.1",
-        reasoningEffort: "high",
-        customAgentName: "planner",
-      },
-      {
-        provider: "codex",
-        model: "gpt-5.4-mini",
-        reasoningEffort: "medium",
-        customAgentName: "",
-      },
-    ];
-    const selection = resolveLastUsedSessionSelection(
-      sessions,
-      "codex",
-    );
-
-    assert.deepEqual(selection, {
-      model: "gpt-5.4-mini",
-      reasoningEffort: "medium",
-      customAgentName: "",
-    });
-  });
-
-  it("selected provider の既存 session が無ければ last-used selection を返さない", () => {
-    const sessions: Pick<SessionSummary, "provider" | "model" | "reasoningEffort" | "customAgentName">[] = [
-      {
-        provider: "copilot",
-        model: "gpt-4.1",
-        reasoningEffort: "high",
-        customAgentName: "planner",
-      },
-    ];
-    const selection = resolveLastUsedSessionSelection(
-      sessions,
-      "codex",
-    );
-
-    assert.equal(selection, null);
-  });
-
   it("launch 条件が欠けている時は session input を返さない", () => {
     const input = buildCreateSessionRequestFromLaunchDraft({
       draft: createClosedLaunchDraft(),
       mateProfile: null,
       selectedProviderId: "codex",
-      approvalMode: DEFAULT_APPROVAL_MODE,
     });
 
     assert.equal(input, null);
@@ -564,7 +467,6 @@ describe("home-launch-state", () => {
         draft,
         mateProfile: null,
         selectedProviderId: "codex",
-        approvalMode: DEFAULT_APPROVAL_MODE,
       })?.workspace,
       { kind: "session-folder" },
     );

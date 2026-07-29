@@ -42,12 +42,6 @@ export type CreateCompanionSessionInput = {
   taskTitle: string;
   workspacePath: string;
   provider: string;
-  catalogRevision?: number;
-  model?: string;
-  reasoningEffort?: ModelReasoningEffort;
-  customAgentName?: string;
-  approvalMode: ApprovalMode;
-  codexSandboxMode: CodexSandboxMode;
   characterId: string;
   character: string;
   characterRoleMarkdown: string;

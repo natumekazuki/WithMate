@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
 
 import { currentTimestampLabel } from "../src/time-state.js";
+import { APPROVAL_MODE_VALUES, DEFAULT_APPROVAL_MODE } from "../src/approval-mode.js";
 import type {
+  AuxiliaryRuntimeSelectionMode,
   AuxiliarySession,
   AuxiliarySessionSummary,
   CreateAuxiliarySessionInput,
 } from "../src/auxiliary-session-state.js";
+import {
+  CODEX_SANDBOX_MODE_VALUES,
+  DEFAULT_CODEX_SANDBOX_MODE,
+} from "../src/codex-sandbox-mode.js";
 import {
   coerceModelSelection,
   getModelCatalogItem,
@@ -15,8 +21,12 @@ import {
 } from "../src/model-catalog.js";
 import type { Session } from "../src/session-state.js";
 import type { Awaitable, AuxiliarySessionStorageAccess } from "./persistent-store-lifecycle-service.js";
+import type { SessionLaunchSelection } from "./session-launch-selection-service.js";
+import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
 
 type AuxiliarySessionServiceDeps = {
+  runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
+  resolveSessionLaunchSelection(providerId?: string | null): Promise<SessionLaunchSelection>;
   getParentSession(parentSessionId: string): Awaitable<Session | null>;
   getStorage(): AuxiliarySessionStorageAccess;
   getModelCatalogSnapshot?(): ModelCatalogSnapshot | null;
@@ -72,6 +82,45 @@ function resolveInitialModelSelection(input: CreateAuxiliarySessionInput, provid
   );
 }
 
+function resolveInitialRuntimeOption<T extends string>(
+  value: unknown,
+  allowedValues: readonly T[],
+  defaultValue: T,
+  fieldName: string,
+): T {
+  if (value === undefined) {
+    return defaultValue;
+  }
+
+  if (typeof value === "string" && allowedValues.includes(value as T)) {
+    return value as T;
+  }
+
+  throw new Error(`Auxiliary Session の ${fieldName} を解釈できないよ。`);
+}
+
+function resolveRuntimeSelectionMode(value: unknown): AuxiliaryRuntimeSelectionMode {
+  if (value === undefined || value === "explicit") {
+    return "explicit";
+  }
+  if (value === "latest-session") {
+    return value;
+  }
+  throw new Error("Auxiliary Session の runtimeSelection を解釈できないよ。");
+}
+
+function assertLatestSessionRuntimeFieldsAbsent(input: CreateAuxiliarySessionInput): void {
+  if (
+    input.model !== undefined ||
+    input.reasoningEffort !== undefined ||
+    input.approvalMode !== undefined ||
+    input.codexSandboxMode !== undefined ||
+    input.customAgentName !== undefined
+  ) {
+    throw new Error("latest-session 選択では runtime option を直接指定できないよ。");
+  }
+}
+
 export class AuxiliarySessionService {
   constructor(private readonly deps: AuxiliarySessionServiceDeps) {}
 
@@ -96,6 +145,33 @@ export class AuxiliarySessionService {
   }
 
   async createAuxiliarySession(input: CreateAuxiliarySessionInput): Promise<AuxiliarySession> {
+    return this.deps.runProviderRuntimeOperationExclusive(
+      () => this.createAuxiliarySessionExclusive(input),
+    );
+  }
+
+  private async createAuxiliarySessionExclusive(input: CreateAuxiliarySessionInput): Promise<AuxiliarySession> {
+    const runtimeSelectionMode = resolveRuntimeSelectionMode(input.runtimeSelection);
+    if (runtimeSelectionMode === "latest-session") {
+      assertLatestSessionRuntimeFieldsAbsent(input);
+    }
+    const explicitApprovalMode = runtimeSelectionMode === "explicit"
+      ? resolveInitialRuntimeOption(
+        input.approvalMode,
+        APPROVAL_MODE_VALUES,
+        DEFAULT_APPROVAL_MODE,
+        "approvalMode",
+      )
+      : null;
+    const explicitCodexSandboxMode = runtimeSelectionMode === "explicit"
+      ? resolveInitialRuntimeOption(
+        input.codexSandboxMode,
+        CODEX_SANDBOX_MODE_VALUES,
+        DEFAULT_CODEX_SANDBOX_MODE,
+        "codexSandboxMode",
+      )
+      : null;
+
     const parent = await this.deps.getParentSession(input.parentSessionId);
     if (!parent) {
       throw new Error("親セッションが見つからないよ。");
@@ -106,12 +182,13 @@ export class AuxiliarySessionService {
       return currentActive;
     }
 
-    const snapshot = this.deps.getModelCatalogSnapshot?.();
-    const providerCatalog = getProviderCatalog(snapshot?.providers ?? [], input.provider);
-    if (!snapshot || !providerCatalog || providerCatalog.id !== input.provider.trim()) {
-      throw new Error("Auxiliary Session の Provider が model catalog に存在しないよ。");
-    }
-    const modelSelection = resolveInitialModelSelection(input, providerCatalog);
+    const launchSelection = runtimeSelectionMode === "latest-session"
+      ? await this.deps.resolveSessionLaunchSelection(input.provider)
+      : this.resolveExplicitLaunchSelection(
+        input,
+        explicitApprovalMode ?? DEFAULT_APPROVAL_MODE,
+        explicitCodexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE,
+      );
 
     const now = currentTimestampLabel();
     return this.deps.getStorage().upsertAuxiliarySession({
@@ -120,13 +197,13 @@ export class AuxiliarySessionService {
       status: "active",
       runState: "idle",
       title: buildAuxiliaryTitle(parent),
-      provider: providerCatalog.id,
-      catalogRevision: snapshot.revision,
-      model: modelSelection.resolvedModel,
-      reasoningEffort: modelSelection.resolvedReasoningEffort,
-      approvalMode: parent.approvalMode,
-      codexSandboxMode: parent.codexSandboxMode,
-      customAgentName: input.customAgentName?.trim() ?? "",
+      provider: launchSelection.provider,
+      catalogRevision: launchSelection.catalogRevision,
+      model: launchSelection.model,
+      reasoningEffort: launchSelection.reasoningEffort,
+      approvalMode: launchSelection.approvalMode,
+      codexSandboxMode: launchSelection.codexSandboxMode,
+      customAgentName: launchSelection.customAgentName,
       allowedAdditionalDirectories: [...parent.allowedAdditionalDirectories],
       threadId: "",
       composerDraft: "",
@@ -136,6 +213,28 @@ export class AuxiliarySessionService {
       updatedAt: now,
       closedAt: "",
     });
+  }
+
+  private resolveExplicitLaunchSelection(
+    input: CreateAuxiliarySessionInput,
+    approvalMode: SessionLaunchSelection["approvalMode"],
+    codexSandboxMode: SessionLaunchSelection["codexSandboxMode"],
+  ): SessionLaunchSelection {
+    const snapshot = this.deps.getModelCatalogSnapshot?.();
+    const providerCatalog = getProviderCatalog(snapshot?.providers ?? [], input.provider);
+    if (!snapshot || !providerCatalog || providerCatalog.id !== input.provider.trim()) {
+      throw new Error("Auxiliary Session の Provider が model catalog に存在しないよ。");
+    }
+    const modelSelection = resolveInitialModelSelection(input, providerCatalog);
+    return {
+      provider: providerCatalog.id,
+      catalogRevision: snapshot.revision,
+      model: modelSelection.resolvedModel,
+      reasoningEffort: modelSelection.resolvedReasoningEffort,
+      approvalMode,
+      codexSandboxMode,
+      customAgentName: input.customAgentName?.trim() ?? "",
+    };
   }
 
   async getAuxiliaryRuntimeSession(auxiliarySessionId: string): Promise<Session | null> {
