@@ -30,6 +30,7 @@ export const SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE =
 export const SETTINGS_RELEASE_COMPATIBILITY_NOTE =
   "初回リリース前のため、設定 schema の後方互換性は考慮しない。";
 export const SETTINGS_LAUNCH_AT_LOGIN_LABEL = "PC 起動時に WithMate をバックグラウンドで起動する";
+export const SETTINGS_SESSION_TURN_NOTIFICATION_LABEL = "Session のターン完了を Windows 通知で知らせる";
 export const SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL = "送信後に Action Dock を自動で閉じる";
 export const SETTINGS_MEMORY_FILE_QUOTA_LABEL = "Memory file quota";
 export const SETTINGS_MEMORY_FILE_QUOTA_HELP =

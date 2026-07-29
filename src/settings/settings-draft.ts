@@ -32,6 +32,16 @@ export function updateAutoCollapseActionDockOnSend(
   };
 }
 
+export function updateSessionTurnNotificationEnabled(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return {
+    ...draft,
+    sessionTurnNotificationEnabled: enabled,
+  };
+}
+
 export function updateLaunchAtLoginEnabled(
   draft: AppSettings,
   enabled: boolean,
