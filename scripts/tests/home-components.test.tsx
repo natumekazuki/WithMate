@@ -514,14 +514,12 @@ describe("HomeLaunchDialog", () => {
   }];
 
   const renderHomeLaunchDialog = (
-    mode: "session" | "companion",
     options = characterOptions,
     charactersLoaded = true,
     randomCharacterSelected = false,
   ) => renderToStaticMarkup(
     <HomeLaunchDialog
       open={true}
-      mode={mode}
       title="demo"
       workspaceSelected={false}
       sessionFolderSelected={false}
@@ -536,7 +534,6 @@ describe("HomeLaunchDialog", () => {
       launchFeedback=""
       launchStarting={false}
       onClose={noOp}
-      onSelectMode={noOp}
       onChangeTitle={noOp}
       onBrowseWorkspace={noOp}
       onSelectSessionFolder={noOp}
@@ -547,8 +544,18 @@ describe("HomeLaunchDialog", () => {
     />,
   );
 
-  it("session mode でダイアログに Character selector が含まれる", () => {
-    const html = renderHomeLaunchDialog("session");
+  it("新規作成導線は Session 専用で Companion Mode を表示しない", () => {
+    const html = renderHomeLaunchDialog();
+
+    assert.ok(html.includes("Start New Session"));
+    assert.ok(!html.includes("Agent Mode"));
+    assert.ok(!html.includes("Companion Mode"));
+    assert.ok(!html.includes("Start Companion"));
+    assert.ok(html.includes("SessionFolder"));
+  });
+
+  it("ダイアログに Character selector が含まれる", () => {
+    const html = renderHomeLaunchDialog();
 
     assert.ok(html.includes("Character"));
     assert.ok(html.includes("Mia"));
@@ -561,7 +568,7 @@ describe("HomeLaunchDialog", () => {
   });
 
   it("random選択時は一覧先頭のランダムcardだけを選択状態にする", () => {
-    const html = renderHomeLaunchDialog("session", characterOptions, true, true);
+    const html = renderHomeLaunchDialog(characterOptions, true, true);
 
     assert.match(
       html,
@@ -573,23 +580,15 @@ describe("HomeLaunchDialog", () => {
     );
   });
 
-  it("companion mode でも Character selector が含まれる", () => {
-    const html = renderHomeLaunchDialog("companion");
-
-    assert.ok(html.includes("Character"));
-    assert.ok(html.includes("Mia"));
-    assert.ok(!html.includes("SessionFolder"));
-  });
-
   it("Character 0 件なら neutral fallback を表示する", () => {
-    const html = renderHomeLaunchDialog("session", []);
+    const html = renderHomeLaunchDialog([]);
 
     assert.ok(html.includes("WithMate"));
     assert.ok(html.includes("Neutral"));
   });
 
   it("Character catalog 読み込み前は neutral fallback を表示しない", () => {
-    const html = renderHomeLaunchDialog("session", [], false);
+    const html = renderHomeLaunchDialog([], false);
 
     assert.ok(html.includes("読み込み中"));
     assert.ok(html.includes("Character を読み込んでるよ..."));

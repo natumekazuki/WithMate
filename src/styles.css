@@ -528,7 +528,7 @@ button:disabled {
 .artifact-toggle,
 .diff-button,
 .diff-close,
-.composer-input-row > .session-send-button,
+.composer-control-row > .session-send-button,
 .session-action-dock-compact-actions button {
   border: 0;
   border-radius: 999px;
@@ -3713,6 +3713,7 @@ button:disabled {
 }
 
 .session-action-dock {
+  container: session-action-dock / inline-size;
   display: grid;
   gap: 10px;
   padding: 10px 12px 12px;
@@ -6186,9 +6187,7 @@ button:disabled {
 
 .composer-input-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .composer-box {
@@ -6197,10 +6196,6 @@ button:disabled {
   padding: 16px;
   border: 1px solid rgba(32, 36, 55, 0.08);
   background: var(--surface-strong);
-}
-
-.composer-input-row.running {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 .composer-box.running textarea {
@@ -6847,30 +6842,58 @@ button:disabled {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
 }
 
-.composer-input-row > .session-send-button {
+.composer-control-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+  margin-top: 12px;
+}
+
+.composer-control-row.running {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@container session-action-dock (max-width: 920px) {
+  .composer-settings > .composer-setting-field {
+    flex-basis: calc(50% - 7px);
+  }
+}
+
+@container session-action-dock (max-width: 850px) {
+  .composer-control-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .composer-control-row > .session-send-button {
+    width: 100%;
+  }
+}
+
+.composer-control-row > .session-send-button {
   align-self: end;
   padding: 12px 22px;
   background: rgba(255, 255, 255, 0.16);
   color: var(--ink);
 }
 
-.session-page .composer-input-row > .session-send-button {
+.session-page .composer-control-row > .session-send-button {
   padding: 10px 18px;
 }
 
-.session-page .composer-input-row > .session-send-button {
+.session-page .composer-control-row > .session-send-button {
   background: var(--character-main);
   color: var(--character-main-ink);
   box-shadow: 0 10px 22px color-mix(in srgb, var(--character-main) 28%, transparent);
 }
 
-.session-page .composer-input-row > .session-send-button.danger {
+.session-page .composer-control-row > .session-send-button.danger {
   background: color-mix(in srgb, #f87171 82%, var(--character-main));
   color: #fff5f5;
   box-shadow: 0 10px 22px rgba(248, 113, 113, 0.24);
 }
 
-.composer-input-row > .session-send-button.loading {
+.composer-control-row > .session-send-button.loading {
   min-width: 82px;
 }
 
@@ -6879,7 +6902,6 @@ button:disabled {
   flex-wrap: wrap;
   gap: 12px 14px;
   align-items: end;
-  margin-top: 12px;
   justify-content: start;
 }
 
@@ -9706,8 +9728,7 @@ button:disabled {
   .browse-button,
   .artifact-toggle,
   .diff-button,
-  .diff-close,
-  .composer-input-row > .session-send-button {
+  .diff-close {
     width: 100%;
   }
 
