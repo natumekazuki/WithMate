@@ -9,14 +9,13 @@ type HomeLaunchDialogPropsInput = {
   launchFeedback: string;
   launchStarting: boolean;
   onClose: () => void;
-  onSelectMode: (mode: HomeLaunchDraft["mode"]) => void;
   onChangeTitle: (value: string) => void;
   onBrowseWorkspace: () => void;
   onSelectSessionFolder: () => void;
   onSelectProvider: (providerId: string) => void;
   onSelectCharacter: (characterId: string) => void;
   onSelectRandomCharacter: () => void;
-  onStartSession: (mode: HomeLaunchDraft["mode"]) => void;
+  onStartSession: () => void;
 };
 
 export function buildHomeLaunchDialogProps({
@@ -26,7 +25,6 @@ export function buildHomeLaunchDialogProps({
   launchFeedback,
   launchStarting,
   onClose,
-  onSelectMode,
   onChangeTitle,
   onBrowseWorkspace,
   onSelectSessionFolder,
@@ -37,7 +35,6 @@ export function buildHomeLaunchDialogProps({
 }: HomeLaunchDialogPropsInput): HomeLaunchDialogProps {
   return {
     open: draft.open,
-    mode: draft.mode,
     title: draft.title,
     workspaceSelected: projection.workspaceSelected,
     sessionFolderSelected: projection.sessionFolderSelected,
@@ -52,7 +49,6 @@ export function buildHomeLaunchDialogProps({
     launchFeedback,
     launchStarting,
     onClose,
-    onSelectMode,
     onChangeTitle,
     onBrowseWorkspace,
     onSelectSessionFolder,

@@ -364,7 +364,7 @@ export default function HomeApp() {
   const launchProjection = useMemo(
     () => buildHomeLaunchProjection({
       launchProviderId: launchDraft.providerId,
-      launchMode: launchDraft.mode,
+      launchMode: "session",
       launchTitle: launchDraft.title,
       launchWorkspace: launchDraft.workspace,
       launchCharacterId: launchDraft.characterId,
@@ -605,14 +605,13 @@ export default function HomeApp() {
       launchFeedback,
       launchStarting,
       onClose: homeLaunchHandlers.onCloseLaunchDialog,
-      onSelectMode: homeLaunchHandlers.onChangeMode,
       onChangeTitle: homeLaunchHandlers.onChangeTitle,
       onBrowseWorkspace: () => void homeLaunchHandlers.onBrowseWorkspace(),
       onSelectSessionFolder: homeLaunchHandlers.onSelectSessionFolder,
       onSelectProvider: homeLaunchHandlers.onSelectLaunchProvider,
       onSelectCharacter: homeLaunchHandlers.onSelectLaunchCharacter,
       onSelectRandomCharacter: homeLaunchHandlers.onSelectRandomLaunchCharacter,
-      onStartSession: (mode) => void homeLaunchHandlers.onStartSession(mode),
+      onStartSession: () => void homeLaunchHandlers.onStartSession("session"),
     }),
   });
 

@@ -10,7 +10,6 @@ import { DEFAULT_CHARACTER_THEME_COLORS } from "../character-state.js";
 
 export type HomeLaunchDialogProps = {
   open: boolean;
-  mode: "session" | "companion";
   title: string;
   workspaceSelected: boolean;
   sessionFolderSelected: boolean;
@@ -25,19 +24,17 @@ export type HomeLaunchDialogProps = {
   launchFeedback: string;
   launchStarting: boolean;
   onClose: () => void;
-  onSelectMode: (mode: "session" | "companion") => void;
   onChangeTitle: (value: string) => void;
   onBrowseWorkspace: () => void;
   onSelectSessionFolder: () => void;
   onSelectProvider: (providerId: string) => void;
   onSelectCharacter: (characterId: string) => void;
   onSelectRandomCharacter: () => void;
-  onStartSession: (mode: "session" | "companion") => void;
+  onStartSession: () => void;
 };
 
 export function HomeLaunchDialog({
   open,
-  mode,
   title,
   workspaceSelected,
   sessionFolderSelected,
@@ -52,7 +49,6 @@ export function HomeLaunchDialog({
   launchFeedback,
   launchStarting,
   onClose,
-  onSelectMode,
   onChangeTitle,
   onBrowseWorkspace,
   onSelectSessionFolder,
@@ -80,47 +76,13 @@ export function HomeLaunchDialog({
       footer={
         <LaunchDialogFooter
           feedback={launchFeedback}
-          startButtonLabel={
-            launchStarting
-              ? "Starting..."
-              : mode === "companion"
-                  ? "Start Companion"
-                  : "Start New Session"
-          }
+          startButtonLabel={launchStarting ? "Starting..." : "Start New Session"}
           startButtonDisabled={!canStartSession || launchStarting}
           startButtonAriaDisabled={!canStartSession || launchStarting}
-          onStart={() => onStartSession(mode)}
+          onStart={onStartSession}
         />
       }
     >
-      <section className="launch-section minimal">
-        <div
-          className="choice-list launch-provider-list"
-          role="tablist"
-          aria-label="Session mode"
-          onKeyDown={(event) => {
-            focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
-          }}
-        >
-          {[
-            { value: "session" as const, label: "Agent Mode" },
-            { value: "companion" as const, label: "Companion Mode" },
-          ].map((option) => (
-            <button
-              key={option.value}
-              className={`choice-chip${mode === option.value ? " active" : ""}`}
-              type="button"
-              role="tab"
-              aria-selected={mode === option.value}
-              tabIndex={mode === option.value ? 0 : -1}
-              onClick={() => onSelectMode(option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </section>
-
       <section className="launch-section minimal">
         <div className="launch-field">
           <label className="launch-field-label" htmlFor="launch-session-title">
@@ -142,16 +104,14 @@ export function HomeLaunchDialog({
           <button className="browse-button" type="button" onClick={onBrowseWorkspace}>
             Browse
           </button>
-          {mode === "session" ? (
-            <button
-              className={`browse-button${sessionFolderSelected ? " active" : ""}`}
-              type="button"
-              aria-pressed={sessionFolderSelected}
-              onClick={onSelectSessionFolder}
-            >
-              SessionFolder
-            </button>
-          ) : null}
+          <button
+            className={`browse-button${sessionFolderSelected ? " active" : ""}`}
+            type="button"
+            aria-pressed={sessionFolderSelected}
+            onClick={onSelectSessionFolder}
+          >
+            SessionFolder
+          </button>
         </div>
         <p className={`launch-path${workspaceSelected ? " selected" : ""}`}>{launchWorkspacePathLabel}</p>
       </section>

@@ -24,11 +24,11 @@ npm run electron:start
 
 | ID | 領域 | 手順 | 期待結果 |
 | --- | --- | --- | --- |
-| V5C-001 | Character 0 件 fallback | Character catalog が 0 件の状態で Home を起動し、`New Session` と Companion 起動 dialog を開く | 起動導線は SingleMate / Mate 未作成 gate に戻らず、neutral fallback の Character 表示で session / companion を開始できる |
+| V5C-001 | Character 0 件 fallback | Character catalog が 0 件の状態で Home を起動し、`New Session` を開く | 起動導線は SingleMate / Mate 未作成 gate に戻らず、neutral fallback の Character 表示で session を開始できる |
 | V5C-002 | Character A / B 登録 | Home の `Characters` から `Create Character` を押し、Character Editor Window で Character A と Character B を作成して name / description / icon / theme / `character.md` を保存する | Home の Characters list に A / B が表示され、Editor Window を開き直しても metadata と `character.md` が保持される |
 | V5C-003 | Default Character | Character Editor Window で Character B を default に設定し、Home の `New Session` を開く | Character selector の初期選択が B になり、Character name / icon / theme preview が selector と作成後の session summary に反映される |
 | V5C-004 | New Session explicit selection | `New Session` で Character A を明示選択して session を作成する | 作成された Session Window と Home summary は Character A の name / icon / theme を表示し、B へ default を戻しても既存 session の表示は A のまま残る |
-| V5C-005 | Companion explicit selection | Companion 起動で Character A / B をそれぞれ選んで companion session を作成する | Companion session summary と Companion Review UI に選択した Character の name / icon / theme が反映される |
+| V5C-005 | Existing Companion compatibility | 既存の companion session を Home の履歴から開く | Companion session summary と Companion Review UI に保存済み Character の name / icon / theme が反映される |
 | V5C-006 | Snapshot boundary | Character A で session を作成した後、Character Editor Window で Character A の `character.md` を別内容へ変更し、既存 session で 1 turn 実行する | provider prompt は session 作成時点の saved snapshot を使い、現在の catalog 内容へ置き換わらない |
 | V5C-007 | Prompt boundary | `character.md` と `character-notes.md` の両方を持つ Character で 1 turn 実行し、Audit Log の `Logical Prompt` / `Transport Payload` を確認する | `character.md` snapshot は system 側に入る。`character-notes.md`、Memory / Growth history、provider instruction sync 由来の Character 書き込みは常設注入されない |
 | V5C-008 | Markdown fence boundary | `character.md` に triple backtick と quadruple backtick の code fence を含め、session を作成して 1 turn 実行する | Character Definition Snapshot section の外側 fence が壊れず、definition 全体が 1 つの markdown block として扱われる |
