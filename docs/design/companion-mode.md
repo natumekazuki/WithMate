@@ -78,15 +78,17 @@ UI では `apply` と `proposal` を避け、`merge`、`discard`、`changed file
 
 ## Launch Model
 
-Companion の起動導線は 3 種類とする。
+アプリ全体の再構築中は、Home の Session 起動画面に Companion の新規作成導線を表示しない。`New Session` は Agent session の作成に固定し、既存 Companion の履歴、Review UI、保存データ、runtime 実装は維持する。
 
-1. 既存 Session 起動画面の `Agent / Companion` toggle
+Companion の設計上の起動導線は次の 3 種類とする。
+
+1. 既存 Session 起動画面の `Agent / Companion` toggle（現行 UI では非表示）
 2. AgentMode の Session 画面 header の `Start Companion` / `Open in Companion` 相当ボタン
 3. CompanionList からの `New Companion`
 
 ### Session 起動画面
 
-既存 Session 起動画面に `Agent / Companion` toggle を追加する。
+現行 UI では `Agent / Companion` toggle を表示せず、Agent session の作成だけを受け付ける。Companion の新規作成を再び公開する場合は、次の既存設計を適用する。
 
 - `Agent` 選択時は既存 Agent session 起動を使う
 - `Companion` 選択時は Git repo root eligibility を確認する
