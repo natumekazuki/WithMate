@@ -8,6 +8,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
 const MEMORY_GENERATION_ENABLED_KEY = "memory_generation_enabled";
 const LAUNCH_AT_LOGIN_ENABLED_KEY = "launch_at_login_enabled";
 const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
+const SESSION_RIGHT_PANE_VISIBLE_KEY = "session_right_pane_visible";
 const MEMORY_FILE_QUOTA_BYTES_KEY = "memory_file_quota_bytes";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
@@ -55,6 +56,13 @@ export class AppSettingsStorage {
         String(DEFAULT_APP_SETTINGS.autoCollapseActionDockOnSend),
         updatedAt,
       );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(SESSION_RIGHT_PANE_VISIBLE_KEY, String(DEFAULT_APP_SETTINGS.sessionRightPaneVisible), updatedAt);
     this.db
       .prepare(`
         INSERT INTO app_settings (setting_key, setting_value, updated_at)
@@ -126,6 +134,10 @@ export class AppSettingsStorage {
         settings.autoCollapseActionDockOnSend = row.setting_value === "true";
         continue;
       }
+      if (row.setting_key === SESSION_RIGHT_PANE_VISIBLE_KEY) {
+        settings.sessionRightPaneVisible = row.setting_value === "true";
+        continue;
+      }
       if (row.setting_key === MEMORY_FILE_QUOTA_BYTES_KEY) {
         settings.memoryFileQuotaBytes = Number(row.setting_value);
         continue;
@@ -191,6 +203,7 @@ export class AppSettingsStorage {
     const normalized = normalizeAppSettings(nextSettings);
     const updatedAt = new Date().toISOString();
 
+    // Right pane visibility has its own write path so stale full-settings snapshots cannot overwrite it.
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       this.db
@@ -282,11 +295,25 @@ export class AppSettingsStorage {
           updatedAt,
         );
       this.db.exec("COMMIT");
-      return normalized;
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
     }
+
+    return this.getSettings();
+  }
+
+  updateSessionRightPaneVisibility(isVisible: boolean): AppSettings {
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO UPDATE SET
+          setting_value = excluded.setting_value,
+          updated_at = excluded.updated_at
+      `)
+      .run(SESSION_RIGHT_PANE_VISIBLE_KEY, String(isVisible), new Date().toISOString());
+    return this.getSettings();
   }
 
   resetSettings(): AppSettings {

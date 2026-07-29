@@ -140,6 +140,7 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     attachmentCount: 0,
     isActionDockExpanded: true,
     isContextRailResizing: false,
+    isContextRailVisible: true,
     latestCommandView: null,
     runningDetailsEntries: [],
     liveRunReasoningText: "",
@@ -228,6 +229,7 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     onChangeModel: noop,
     onChangeReasoningEffort: noop,
     onStartContextRailResize: noop,
+    onToggleContextRailVisibility: noop,
     onCycleContextPaneTab: noop,
     onOpenCompanionReview: noop,
     onCloseDiff: noop,
@@ -300,6 +302,22 @@ test("buildAgentSessionChatWindowProps は right pane props を共通 pane に�
   assert.equal(paneProps.onToggleHeaderExpanded, onToggleHeaderExpanded);
   assert.equal(paneProps.onCycleContextPaneTab, onCycleContextPaneTab);
   assert.equal(paneProps.onOpenCompanionReview, onOpenCompanionReview);
+});
+
+test("buildAgentSessionChatWindowProps は right pane visibility と toggle を共通 shell に渡す", () => {
+  const onToggleContextRailVisibility = () => {};
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    isContextRailVisible: false,
+    onToggleContextRailVisibility,
+  }));
+  const splitter = props.splitter as React.ReactElement<{
+    isRightPaneVisible: boolean;
+    onToggleRightPane: () => void;
+  }>;
+
+  assert.equal(props.isRightPaneVisible, false);
+  assert.equal(splitter.props.isRightPaneVisible, false);
+  assert.equal(splitter.props.onToggleRightPane, onToggleContextRailVisibility);
 });
 
 test("buildAgentSessionChatWindowProps は header action callbacks を維持する", () => {

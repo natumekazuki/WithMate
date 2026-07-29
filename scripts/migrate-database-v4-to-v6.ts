@@ -57,6 +57,7 @@ const MIGRATED_APP_SETTING_KEYS = new Set([
   "auto_collapse_action_dock_on_send",
   "coding_provider_settings_json",
   "launch_at_login_enabled",
+  "session_right_pane_visible",
   "user_microcopy_catalog_json",
 ]);
 const V4_TO_V6_RELEASE_DATA_MIGRATED_AT_KEY = "v4_to_v6_release_data_migrated_at";

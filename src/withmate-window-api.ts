@@ -196,6 +196,7 @@ export type WithMateWindowObservabilityApi = {
 export type WithMateWindowSettingsApi = {
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
+  updateSessionRightPaneVisibility(isVisible: boolean): Promise<AppSettings>;
   getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics>;
   getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;

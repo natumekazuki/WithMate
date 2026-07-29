@@ -126,6 +126,7 @@ export type MainIpcCatalogDepsArgs = {
 export type MainIpcSettingsDepsArgs = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
+  updateSessionRightPaneVisibility(isVisible: boolean): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
@@ -350,6 +351,7 @@ export function createMainIpcRegistrationDeps(
     exportModelCatalogToFile: args.catalog.exportModelCatalogToFile,
     getAppSettings: args.settings.getAppSettings,
     updateAppSettings: args.settings.updateAppSettings,
+    updateSessionRightPaneVisibility: args.settings.updateSessionRightPaneVisibility,
     getAppDatabaseDiagnostics: args.settings.getAppDatabaseDiagnostics,
     getMemoryV6Diagnostics: args.settings.getMemoryV6Diagnostics,
     installMemoryV6CliShim: args.settings.installMemoryV6CliShim,

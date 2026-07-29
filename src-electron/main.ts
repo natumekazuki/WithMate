@@ -1280,6 +1280,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               settings: {
                 getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
+                updateSessionRightPaneVisibility,
                 getAppDatabaseDiagnostics,
                 getMemoryV6Diagnostics,
                 installMemoryV6CliShim,
@@ -1700,6 +1701,10 @@ async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   applyLaunchAtLoginSetting(app, savedSettings.launchAtLoginEnabled);
   await syncManagedMemorySkillBestEffort();
   return savedSettings;
+}
+
+function updateSessionRightPaneVisibility(isVisible: boolean): AppSettings {
+  return requireAppSettingsStorage().updateSessionRightPaneVisibility(isVisible);
 }
 
 async function resetAppSettings(): Promise<AppSettings> {
