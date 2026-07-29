@@ -70,6 +70,8 @@ describe("auxiliary-launch-state", () => {
         defaults: {
           model: "gpt-5.4-mini",
           reasoningEffort: "high",
+          approvalMode: "never",
+          codexSandboxMode: "read-only",
           customAgentName: "planner",
         },
       }),
@@ -78,6 +80,8 @@ describe("auxiliary-launch-state", () => {
         provider: "codex",
         model: "gpt-5.4-mini",
         reasoningEffort: "high",
+        approvalMode: "never",
+        codexSandboxMode: "read-only",
         customAgentName: "planner",
       },
     );
@@ -95,6 +99,8 @@ describe("auxiliary-launch-state", () => {
         provider: "codex",
         model: undefined,
         reasoningEffort: undefined,
+        approvalMode: undefined,
+        codexSandboxMode: undefined,
         customAgentName: undefined,
       },
     );
@@ -104,6 +110,8 @@ describe("auxiliary-launch-state", () => {
     const defaults = {
       model: "gpt-5.4-mini",
       reasoningEffort: "high" as const,
+      approvalMode: "never" as const,
+      codexSandboxMode: "read-only" as const,
       customAgentName: "planner",
     };
 
@@ -130,6 +138,28 @@ describe("auxiliary-launch-state", () => {
         defaults: null,
       }),
       null,
+    );
+  });
+
+  it("latest-session 選択では runtime option を renderer から送らない", () => {
+    assert.deepEqual(
+      buildCreateAuxiliarySessionInput({
+        parentSessionId: "session-1",
+        provider: "codex",
+        runtimeSelection: "latest-session",
+        defaults: {
+          model: "forged-model",
+          reasoningEffort: "low",
+          approvalMode: "never",
+          codexSandboxMode: "danger-full-access",
+          customAgentName: "forged-agent",
+        },
+      }),
+      {
+        parentSessionId: "session-1",
+        provider: "codex",
+        runtimeSelection: "latest-session",
+      },
     );
   });
 

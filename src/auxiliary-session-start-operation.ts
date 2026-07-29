@@ -95,7 +95,7 @@ export function createActiveAuxiliarySessionStartResultApplier(input: {
 export async function runAuxiliarySessionStartOperation(input: {
   parentSessionId: string;
   provider: string;
-  defaults?: Partial<AuxiliaryLaunchSessionDefaults> | null;
+  defaults?: AuxiliaryLaunchSessionDefaults | null;
   createAuxiliarySession: (request: CreateAuxiliarySessionInput) => Promise<AuxiliarySession>;
   applyStartedSession: (session: AuxiliarySession) => void;
 }): Promise<AuxiliarySession> {
@@ -103,6 +103,21 @@ export async function runAuxiliarySessionStartOperation(input: {
     parentSessionId: input.parentSessionId,
     provider: input.provider,
     defaults: input.defaults,
+  }));
+  input.applyStartedSession(session);
+  return session;
+}
+
+export async function runSessionWindowAuxiliarySessionStartOperation(input: {
+  parentSessionId: string;
+  provider: string;
+  createAuxiliarySession: (request: CreateAuxiliarySessionInput) => Promise<AuxiliarySession>;
+  applyStartedSession: (session: AuxiliarySession) => void;
+}): Promise<AuxiliarySession> {
+  const session = await input.createAuxiliarySession(buildCreateAuxiliarySessionInput({
+    parentSessionId: input.parentSessionId,
+    provider: input.provider,
+    runtimeSelection: "latest-session",
   }));
   input.applyStartedSession(session);
   return session;

@@ -155,6 +155,66 @@ function listSessionTurnSummaries(dbPath: string): string[] {
 }
 
 describe("SessionStorageV6", () => {
+  it("getLatestSessionSummaryForProvider は legacy provider 表記を正規化して最新一件だけを返す", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const createSession = (
+        id: string,
+        provider: string,
+        model: string,
+      ) => buildNewSession({
+        id,
+        taskTitle: id,
+        workspaceLabel: id,
+        workspacePath: `C:/${id}`,
+        branch: "main",
+        provider,
+        model,
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      });
+      storage.insertSession(createSession("codex-old", "codex", "gpt-old"));
+      storage.insertSession(createSession("copilot-newest", "copilot", "copilot-model"));
+      storage.insertSession(createSession("codex-before", "codex", "gpt-before"));
+      storage.insertSession({
+        ...createSession("codex-latest", "codex", "gpt-latest"),
+        reasoningEffort: "xhigh",
+        approvalMode: "never",
+        codexSandboxMode: "danger-full-access",
+        customAgentName: "reviewer",
+      });
+
+      const db = new DatabaseSync(dbPath);
+      db.prepare("UPDATE sessions_v6 SET last_active_at = ? WHERE id = ?").run(100, "codex-old");
+      db.prepare("UPDATE sessions_v6 SET last_active_at = ? WHERE id = ?").run(300, "copilot-newest");
+      db.prepare("UPDATE sessions_v6 SET provider_id = ?, last_active_at = ? WHERE id = ?")
+        .run("\tcodex\t", 200, "codex-before");
+      db.prepare("UPDATE sessions_v6 SET provider_id = ?, last_active_at = ? WHERE id = ?")
+        .run("\nCodex\u00a0", 200, "codex-latest");
+      db.close();
+
+      const latest = storage.getLatestSessionSummaryForProvider("codex");
+      assert.equal(latest?.id, "codex-latest");
+      assert.equal(latest?.provider, "codex");
+      assert.equal(latest?.model, "gpt-latest");
+      assert.equal(latest?.reasoningEffort, "xhigh");
+      assert.equal(latest?.approvalMode, "never");
+      assert.equal(latest?.codexSandboxMode, "danger-full-access");
+      assert.equal(latest?.customAgentName, "reviewer");
+      assert.equal(storage.getLatestSessionSummaryForProvider("missing"), null);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("insertSession は別 connection からの同一 ID create を拒否して既存 Session を保持する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");

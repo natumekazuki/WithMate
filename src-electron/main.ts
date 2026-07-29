@@ -146,7 +146,9 @@ import { MainBroadcastFacade } from "./main-broadcast-facade.js";
 import { MainObservabilityFacade } from "./main-observability-facade.js";
 import { MainProviderFacade } from "./main-provider-facade.js";
 import { MainSessionCommandFacade } from "./main-session-command-facade.js";
+import { ProviderRuntimeOperationCoordinator } from "./provider-runtime-operation-coordinator.js";
 import { MainSessionPersistenceFacade } from "./main-session-persistence-facade.js";
+import { SessionLaunchSelectionService } from "./session-launch-selection-service.js";
 import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
 import {
@@ -303,6 +305,8 @@ let mainObservabilityFacade: MainObservabilityFacade | null = null;
 let mainProviderFacade: MainProviderFacade | null = null;
 let mainSessionCommandFacade: MainSessionCommandFacade | null = null;
 let mainSessionPersistenceFacade: MainSessionPersistenceFacade | null = null;
+let sessionLaunchSelectionService: SessionLaunchSelectionService | null = null;
+const providerRuntimeOperationCoordinator = new ProviderRuntimeOperationCoordinator();
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
 let appTrayService: AppTrayService | null = null;
@@ -1604,6 +1608,10 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       getSession,
       getSessions: () => sessions,
       getStoredSessionSummaries: () => requireSessionStorage().listSessionSummaries(),
+      resolveSessionLaunchSelection: (providerId) =>
+        requireSessionLaunchSelectionService().resolve(providerId),
+      runProviderRuntimeOperationExclusive: (operation) =>
+        providerRuntimeOperationCoordinator.runExclusive(operation),
       getSessionPersistenceService: () => requireSessionPersistenceService(),
       getSessionRuntimeService: () => requireSessionRuntimeService(),
       getProviderQuotaTelemetry: (providerId) => getProviderQuotaTelemetry(providerId),
@@ -1622,6 +1630,19 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
   }
 
   return mainSessionCommandFacade;
+}
+
+function requireSessionLaunchSelectionService(): SessionLaunchSelectionService {
+  if (!sessionLaunchSelectionService) {
+    sessionLaunchSelectionService = new SessionLaunchSelectionService({
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
+      getLatestSessionSummaryForProvider: (providerId) =>
+        requireSessionStorage().getLatestSessionSummaryForProvider(providerId),
+    });
+  }
+
+  return sessionLaunchSelectionService;
 }
 
 function requireMainSessionPersistenceFacade(): MainSessionPersistenceFacade {
@@ -1669,6 +1690,10 @@ function requireAuxiliarySessionService(): AuxiliarySessionService {
       getParentSession: getAuxiliaryParentSession,
       getStorage: () => requireAuxiliarySessionStorage(),
       getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
+      resolveSessionLaunchSelection: (providerId) =>
+        requireSessionLaunchSelectionService().resolve(providerId),
+      runProviderRuntimeOperationExclusive: (operation) =>
+        providerRuntimeOperationCoordinator.runExclusive(operation),
     });
   }
 
@@ -2100,9 +2125,11 @@ function requireCompanionSessionService(): CompanionSessionService {
   if (!companionSessionService) {
     companionSessionService = new CompanionSessionService({
       appDataPath: app.getPath("userData"),
-      getAppSettings: () => requireAppSettingsStorage().getSettings(),
-      getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
-      storage: requireCompanionStorage(),
+      resolveSessionLaunchSelection: (providerId) =>
+        requireSessionLaunchSelectionService().resolve(providerId),
+      runProviderRuntimeOperationExclusive: (operation) =>
+        providerRuntimeOperationCoordinator.runExclusive(operation),
+      getStorage: () => requireCompanionStorage(),
       createCharacterRuntimeSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
     });
   }
@@ -2251,6 +2278,8 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
 function requireSettingsCatalogService(): SettingsCatalogService {
   if (!settingsCatalogService) {
     settingsCatalogService = new SettingsCatalogService({
+      runProviderRuntimeOperationExclusive: (operation) =>
+        providerRuntimeOperationCoordinator.runExclusive(operation),
       hasInFlightSessionRuns,
       isSessionRunInFlight,
       isRunningSession,
@@ -2516,6 +2545,7 @@ function closePersistentStores(): void {
   mainProviderFacade = null;
   mainSessionCommandFacade = null;
   mainSessionPersistenceFacade = null;
+  sessionLaunchSelectionService = null;
   mainWindowFacade = null;
   mainQueryService = null;
   mainInfrastructureRegistry?.reset();
@@ -2567,6 +2597,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   mainProviderFacade = null;
   mainSessionCommandFacade = null;
   mainSessionPersistenceFacade = null;
+  sessionLaunchSelectionService = null;
   mainWindowFacade = null;
   mainQueryService = null;
   mainInfrastructureRegistry?.reset();

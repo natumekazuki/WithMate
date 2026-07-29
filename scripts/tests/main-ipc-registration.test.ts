@@ -538,6 +538,7 @@ test("Auxiliary mutation/run IPC は対象 Session / Companion Review window か
   await handlers.get(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL)?.({}, {
     parentSessionId: "session-1",
     provider: "codex",
+    runtimeSelection: "latest-session",
   });
   await handlers.get(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL)?.({}, auxiliarySession);
   await handlers.get(WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL)?.({}, "aux-1");
@@ -555,6 +556,85 @@ test("Auxiliary mutation/run IPC は対象 Session / Companion Review window か
     "runAuxiliarySessionTurn",
     "getAuxiliarySession:aux-1",
     "cancelAuxiliarySessionRun",
+  ]);
+});
+
+test("Auxiliary create IPC は送信元 window と runtime selection mode を結び付ける", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  const companionReviewWindow = createWindowStub("http://localhost:5173/?mode=companion&sessionId=session-1");
+  const auxiliarySession = createAuxiliarySessionStub();
+  let eventWindow: unknown = sessionWindow;
+  const forwardedInputs: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
+    resolveCompanionReviewWindow: (sessionId: string) =>
+      sessionId === "session-1" ? companionReviewWindow : null,
+    createAuxiliarySession: async (input: unknown) => {
+      forwardedInputs.push(input);
+      return auxiliarySession;
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+  const createHandler = handlers.get(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL);
+
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "explicit",
+      approvalMode: "never",
+      codexSandboxMode: "danger-full-access",
+    }) as Promise<unknown>,
+    /requires latest-session runtime selection/,
+  );
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+      approvalMode: undefined,
+    }) as Promise<unknown>,
+    /cannot specify runtime options directly/,
+  );
+  await createHandler?.({}, {
+    parentSessionId: "session-1",
+    provider: "codex",
+    runtimeSelection: "latest-session",
+  });
+
+  eventWindow = companionReviewWindow;
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+    }) as Promise<unknown>,
+    /only supports explicit runtime selection/,
+  );
+  await createHandler?.({}, {
+    parentSessionId: "session-1",
+    provider: "codex",
+    runtimeSelection: "explicit",
+    approvalMode: "never",
+    codexSandboxMode: "danger-full-access",
+  });
+
+  assert.deepEqual(forwardedInputs, [
+    {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+    },
+    {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "explicit",
+      approvalMode: "never",
+      codexSandboxMode: "danger-full-access",
+    },
   ]);
 });
 

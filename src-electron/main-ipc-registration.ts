@@ -606,22 +606,57 @@ function assertSessionDeleteSender(
   throw new Error("Session delete IPC is only available from Home, Settings, or the target Session window.");
 }
 
-function assertAuxiliaryOwnerWindowSender(
+type AuxiliaryOwnerWindowKind = "session" | "companion-review";
+
+function resolveAuxiliaryOwnerWindowSender(
   event: IpcMainInvokeEvent,
   parentSessionId: string,
   deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveSessionWindow" | "resolveCompanionReviewWindow">,
-): void {
+): AuxiliaryOwnerWindowKind {
   const window = deps.resolveEventWindow(event);
   if (!window) {
     throw new Error("Auxiliary session IPC is only available from the target Session or Companion Review window.");
   }
   if (deps.resolveSessionWindow(parentSessionId) === window) {
-    return;
+    return "session";
   }
   if (deps.resolveCompanionReviewWindow(parentSessionId) === window) {
-    return;
+    return "companion-review";
   }
   throw new Error("Auxiliary session IPC is only available from the target Session or Companion Review window.");
+}
+
+function assertAuxiliaryOwnerWindowSender(
+  event: IpcMainInvokeEvent,
+  parentSessionId: string,
+  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveSessionWindow" | "resolveCompanionReviewWindow">,
+): void {
+  resolveAuxiliaryOwnerWindowSender(event, parentSessionId, deps);
+}
+
+function assertAuxiliaryCreateModeForOwner(
+  ownerWindowKind: AuxiliaryOwnerWindowKind,
+  input: CreateAuxiliarySessionInput,
+): void {
+  if (ownerWindowKind === "companion-review") {
+    if (input.runtimeSelection !== undefined && input.runtimeSelection !== "explicit") {
+      throw new Error("Companion Review Auxiliary creation only supports explicit runtime selection.");
+    }
+    return;
+  }
+
+  if (input.runtimeSelection !== "latest-session") {
+    throw new Error("Session window Auxiliary creation requires latest-session runtime selection.");
+  }
+  if (
+    Object.hasOwn(input, "model") ||
+    Object.hasOwn(input, "reasoningEffort") ||
+    Object.hasOwn(input, "approvalMode") ||
+    Object.hasOwn(input, "codexSandboxMode") ||
+    Object.hasOwn(input, "customAgentName")
+  ) {
+    throw new Error("Session window Auxiliary creation cannot specify runtime options directly.");
+  }
 }
 
 async function getAuxiliarySessionForMutation(
@@ -778,7 +813,8 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     return session;
   });
   ipcMain.handle(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, (event, input: CreateAuxiliarySessionInput) => {
-    assertAuxiliaryOwnerWindowSender(event, input.parentSessionId, deps);
+    const ownerWindowKind = resolveAuxiliaryOwnerWindowSender(event, input.parentSessionId, deps);
+    assertAuxiliaryCreateModeForOwner(ownerWindowKind, input);
     return getAuxiliaryDeps(deps).createAuxiliarySession(input);
   });
   ipcMain.handle(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL, async (event, session: AuxiliarySession) => {

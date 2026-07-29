@@ -89,7 +89,6 @@ import {
   createAuxiliaryLaunchDialogCloseHandler,
   createAuxiliaryLaunchDialogOpenHandler,
   createAuxiliaryLaunchProviderSelectHandler,
-  resolveAuxiliaryLaunchSessionDefaults,
   resolveAuxiliaryLaunchStartProvider,
 } from "./chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
@@ -154,7 +153,6 @@ import {
 import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
-import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   type AuxiliarySession,
@@ -237,7 +235,7 @@ import {
   createActiveAuxiliarySessionStartResultApplier,
   createAuxiliarySessionStartErrorHandler,
   finishAuxiliarySessionStartClosedLoadWithApi,
-  runAuxiliarySessionStartOperation,
+  runSessionWindowAuxiliarySessionStartOperation,
 } from "./auxiliary-session-start-operation.js";
 import {
   createAuxiliarySessionPendingLiveRunClearer,
@@ -2340,17 +2338,9 @@ export default function AgentSessionWindowApp() {
     });
 
     try {
-      const launchSelectionSessions = await withmateApi.listSessionSummaries().catch(() => sessions);
-      const lastUsedSelection = resolveLastUsedSessionSelection(launchSelectionSessions, launchProviderId);
-      const launchDefaults = resolveAuxiliaryLaunchSessionDefaults({
-        providerId: launchProviderId,
-        defaultsProviderId: launchProviderId,
-        defaults: lastUsedSelection,
-      });
-      await runAuxiliarySessionStartOperation({
+      await runSessionWindowAuxiliarySessionStartOperation({
         parentSessionId,
         provider: launchProviderId,
-        defaults: launchDefaults,
         createAuxiliarySession: (request) => withmateApi.createAuxiliarySession(request),
         applyStartedSession: createActiveAuxiliarySessionStartResultApplier({
           mutationRevision: auxiliarySessionMutationRevisionRef,

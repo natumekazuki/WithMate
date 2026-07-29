@@ -27,8 +27,10 @@ import type {
 import type { AuxiliarySession } from "../src/auxiliary-session-state.js";
 import type { CompanionSession } from "../src/companion-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
+import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
 
 export type SettingsCatalogServiceDeps = {
+  runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
   hasInFlightSessionRuns(): boolean;
   isSessionRunInFlight(sessionId: string): boolean;
   isRunningSession(session: Session): boolean;
@@ -176,6 +178,12 @@ export class SettingsCatalogService {
   }
 
   async updateAppSettings(nextSettingsInput: AppSettings): Promise<AppSettings> {
+    return this.deps.runProviderRuntimeOperationExclusive(
+      () => this.updateAppSettingsExclusive(nextSettingsInput),
+    );
+  }
+
+  private async updateAppSettingsExclusive(nextSettingsInput: AppSettings): Promise<AppSettings> {
     const previousSettings = this.deps.getAppSettings();
     const nextSettings = normalizeAppSettings(nextSettingsInput);
     const providersWithApiKeyChange = getProvidersWithApiKeyChange(previousSettings, nextSettings);
@@ -290,6 +298,12 @@ export class SettingsCatalogService {
   }
 
   async importModelCatalogDocument(document: ModelCatalogDocument): Promise<ModelCatalogSnapshot> {
+    return this.deps.runProviderRuntimeOperationExclusive(
+      () => this.importModelCatalogDocumentExclusive(document),
+    );
+  }
+
+  private async importModelCatalogDocumentExclusive(document: ModelCatalogDocument): Promise<ModelCatalogSnapshot> {
     if (this.deps.hasInFlightSessionRuns()) {
       throw new Error("session 実行中は model catalog を読み込めないよ。");
     }
@@ -373,6 +387,14 @@ export class SettingsCatalogService {
   }
 
   async resetAppDatabase(request?: ResetAppDatabaseRequest | null): Promise<ResetAppDatabaseResult> {
+    return this.deps.runProviderRuntimeOperationExclusive(
+      () => this.resetAppDatabaseExclusive(request),
+    );
+  }
+
+  private async resetAppDatabaseExclusive(
+    request?: ResetAppDatabaseRequest | null,
+  ): Promise<ResetAppDatabaseResult> {
     const sessions = await this.deps.listSessions();
     if (this.deps.hasInFlightSessionRuns() || sessions.some((session) => this.deps.isRunningSession(session))) {
       throw new Error("実行中の session があるため、DB を初期化できないよ。完了またはキャンセル後に試してね。");

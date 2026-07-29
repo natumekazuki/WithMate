@@ -8,11 +8,15 @@ import {
 import type { SessionPersistenceService } from "./session-persistence-service.js";
 import type { SessionRuntimeService } from "./session-runtime-service.js";
 import { parseCreateSessionRequest } from "./create-session-request.js";
+import type { SessionLaunchSelection } from "./session-launch-selection-service.js";
+import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
 
 type MainSessionCommandFacadeDeps = {
   getSession(sessionId: string): Session | null;
   getSessions(): readonly Session[];
   getStoredSessionSummaries(): Promise<readonly SessionSummary[]> | readonly SessionSummary[];
+  runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
+  resolveSessionLaunchSelection(providerId?: string | null): Promise<SessionLaunchSelection>;
   getSessionPersistenceService(): SessionPersistenceService;
   getSessionRuntimeService(): SessionRuntimeService;
   getProviderQuotaTelemetry(providerId: string): ProviderQuotaTelemetry | null;
@@ -37,7 +41,18 @@ export class MainSessionCommandFacade {
   }
 
   async createSessionFromRequest(input: CreateSessionRequest): Promise<Session> {
-    const { workspace, sessionInput } = parseCreateSessionRequest(input);
+    return this.deps.runProviderRuntimeOperationExclusive(
+      () => this.createSessionFromRequestExclusive(input),
+    );
+  }
+
+  private async createSessionFromRequestExclusive(input: CreateSessionRequest): Promise<Session> {
+    const { workspace, sessionInput: requestSessionInput } = parseCreateSessionRequest(input);
+    const launchSelection = await this.deps.resolveSessionLaunchSelection(requestSessionInput.provider);
+    const sessionInput = {
+      ...requestSessionInput,
+      ...launchSelection,
+    };
     if (workspace?.kind === "directory") {
       if (!workspace.label.trim() || !workspace.path.trim()) {
         throw new Error("workspace の情報が不足しているよ。");

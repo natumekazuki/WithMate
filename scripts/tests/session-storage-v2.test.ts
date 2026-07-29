@@ -13,8 +13,15 @@ import { SessionStorageV2 } from "../../src-electron/session-storage-v2.js";
 type V2SessionHeaderInput = {
   id?: string;
   taskTitle?: string;
+  provider?: string;
+  approvalMode?: string;
+  codexSandboxMode?: string;
+  model?: string;
+  reasoningEffort?: string;
+  customAgentName?: string;
   allowedAdditionalDirectoriesJson?: string;
   messageCount?: number;
+  lastActiveAt?: number;
 };
 
 async function withTempV2Database<T>(fn: (dbPath: string) => T | Promise<T>): Promise<T> {
@@ -73,7 +80,7 @@ function insertSessionHeader(db: DatabaseSync, input: V2SessionHeaderInput = {})
     input.taskTitle ?? "Runtime task",
     "idle",
     "2026-04-27T00:00:00.000Z",
-    "codex",
+    input.provider ?? "codex",
     1,
     "workspace-a",
     "workspace-a",
@@ -85,16 +92,16 @@ function insertSessionHeader(db: DatabaseSync, input: V2SessionHeaderInput = {})
     "#6f8cff",
     "#6fb8c7",
     "idle",
-    "never",
-    "workspace-write",
-    "gpt-5.4-mini",
-    "medium",
-    "",
+    input.approvalMode ?? "never",
+    input.codexSandboxMode ?? "workspace-write",
+    input.model ?? "gpt-5.4-mini",
+    input.reasoningEffort ?? "medium",
+    input.customAgentName ?? "",
     input.allowedAdditionalDirectoriesJson ?? JSON.stringify(["shared/reference"]),
     "thread-1",
     input.messageCount ?? 0,
     0,
-    1,
+    input.lastActiveAt ?? 1,
   );
   return id;
 }
@@ -255,6 +262,59 @@ describe("SessionStorageV2", () => {
         assert.equal(summaries[0].taskTitle, "Task title");
         assert.deepEqual(summaries[0].allowedAdditionalDirectories, ["shared/reference"]);
         assert.equal(summaries[0].workspacePath, "workspace-a");
+      } finally {
+        storage.close();
+      }
+    });
+  });
+
+  it("getLatestSessionSummaryForProvider は legacy provider 表記を正規化して最新一件だけを返す", async () => {
+    await withTempV2Database((dbPath) => {
+      const db = new DatabaseSync(dbPath);
+      try {
+        insertSessionHeader(db, {
+          id: "codex-old",
+          provider: "codex",
+          model: "gpt-old",
+          lastActiveAt: 100,
+        });
+        insertSessionHeader(db, {
+          id: "copilot-newest",
+          provider: "copilot",
+          model: "copilot-model",
+          lastActiveAt: 300,
+        });
+        insertSessionHeader(db, {
+          id: "codex-before",
+          provider: "\tcodex\t",
+          model: "gpt-before",
+          lastActiveAt: 200,
+        });
+        insertSessionHeader(db, {
+          id: "codex-latest",
+          provider: "\nCodex\u00a0",
+          model: "gpt-latest",
+          reasoningEffort: "xhigh",
+          approvalMode: "never",
+          codexSandboxMode: "danger-full-access",
+          customAgentName: "reviewer",
+          lastActiveAt: 200,
+        });
+      } finally {
+        db.close();
+      }
+
+      const storage = new SessionStorageV2(dbPath);
+      try {
+        const latest = storage.getLatestSessionSummaryForProvider("codex");
+        assert.equal(latest?.id, "codex-latest");
+        assert.equal(latest?.provider, "codex");
+        assert.equal(latest?.model, "gpt-latest");
+        assert.equal(latest?.reasoningEffort, "xhigh");
+        assert.equal(latest?.approvalMode, "never");
+        assert.equal(latest?.codexSandboxMode, "danger-full-access");
+        assert.equal(latest?.customAgentName, "reviewer");
+        assert.equal(storage.getLatestSessionSummaryForProvider("missing"), null);
       } finally {
         storage.close();
       }

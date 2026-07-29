@@ -9,10 +9,15 @@ import {
   type Session,
   type SessionSummary,
 } from "../src/session-state.js";
+import { normalizeProviderId } from "../src/model-catalog.js";
 import {
   parseCharacterRuntimeSnapshotJson,
   stringifyCharacterRuntimeSnapshot,
 } from "../src/character/character-runtime-snapshot.js";
+import {
+  registerSessionProviderIdNormalizer,
+  SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION,
+} from "./session-provider-id-sql.js";
 import {
   CREATE_SESSIONS_TABLE_SQL,
   LEGACY_SESSION_COLUMN_DEFINITIONS,
@@ -133,6 +138,15 @@ const LIST_SESSION_SUMMARIES_SQL = `
     ${SESSION_SUMMARY_SELECT_COLUMNS}
   FROM sessions
   ORDER BY last_active_at DESC, id DESC
+`;
+
+const GET_LATEST_SESSION_SUMMARY_FOR_PROVIDER_SQL = `
+  SELECT
+    ${SESSION_SUMMARY_SELECT_COLUMNS}
+  FROM sessions
+  WHERE ${SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION}(provider) = ?
+  ORDER BY last_active_at DESC, id DESC
+  LIMIT 1
 `;
 
 const GET_SESSION_SQL = `
@@ -349,6 +363,7 @@ export class SessionStorage {
 
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
+    registerSessionProviderIdNormalizer(this.db);
 
     this.db.exec(CREATE_SESSIONS_TABLE_SQL);
     this.ensureSchema();
@@ -456,6 +471,20 @@ export class SessionStorage {
     return cloneSessionSummaries(
       rows.map((row) => rowToSessionSummary(row)).filter((session): session is SessionSummary => session !== null),
     );
+  }
+
+  getLatestSessionSummaryForProvider(providerId: string): SessionSummary | null {
+    const normalizedProviderId = providerId.trim();
+    if (!normalizedProviderId) {
+      return null;
+    }
+    const row = this.db.prepare(GET_LATEST_SESSION_SUMMARY_FOR_PROVIDER_SQL)
+      .get(normalizeProviderId(normalizedProviderId)) as SessionSummaryRow | undefined;
+    if (!row) {
+      return null;
+    }
+    const summary = rowToSessionSummary(row, "throw");
+    return summary ? cloneSessionSummaries([summary])[0] : null;
   }
 
   getSession(sessionId: string): Session | null {
