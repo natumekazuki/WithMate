@@ -7,6 +7,8 @@ export async function startControlledRuntimeHost(applicationDataRoot, timeoutMs 
   const child = fork(childEntry, [applicationDataRoot], {
     stdio: ["ignore", "ignore", "ignore", "ipc"],
     windowsHide: true,
+    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    ...(options.environment === undefined ? {} : { env: options.environment }),
   });
   try {
     const ready = await waitForChildMessage(child, timeoutMs);

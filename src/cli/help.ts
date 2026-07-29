@@ -4,14 +4,14 @@ const ROOT_HELP = `Usage: withmate <namespace> <operation> [options]
 
 Namespaces:
   session    Create, inspect, and change Session lifecycle state
-  run        Observe persisted Run state and events
+  run        Start, retry, and observe persisted Runs
 
 Global options:
   -h, --help       Show help without starting the application runtime
   -V, --version    Show the executable version without starting the application runtime
 
 Run 'withmate session --help' for Session operations.
-Run 'withmate run --help' for Run observation operations.
+Run 'withmate run --help' for Run operations.
 Operation results and failures are written as one withmate-cli-v1 JSON object to stdout.
 `;
 
@@ -39,6 +39,8 @@ Run 'withmate session <operation> --help' for operation options.
 const RUN_HELP = `Usage: withmate run <operation> [options]
 
 Operations:
+  start             Admit a new Run and its initiating user Message
+  retry             Admit a new Run that reuses a terminal source Run Message
   status            Read the persisted Run status
   events            Read a bounded RunEvent page
   follow            Wait for events, terminal closure, or a bounded deadline
@@ -48,7 +50,6 @@ Operations:
   output-chunk      Read a bounded text or JSON output chunk
   output-export     Export a stored output without overwriting a destination
 
-Run mutation is not available from this CLI.
 Run 'withmate run <operation> --help' for operation options.
 `;
 
@@ -183,6 +184,44 @@ Optional options:
 };
 
 const RUN_OPERATION_HELP: Readonly<Record<CliRunOperation, string>> = {
+  start: `Usage: withmate run start [options]
+
+Required options:
+  --session-id <session-id>
+  --idempotency-key <lowercase-uuid>
+  --content-blocks-json <json-array>    Maximum 4096 blocks and 65536 UTF-8 JSON bytes
+  --model <model>
+  --reasoning-effort <effort>
+  --sandbox-json <json-object>
+
+Sandbox JSON:
+  {"mode":"read-only","networkAccess":false}
+  {"mode":"workspace-write","networkAccess":false}
+  {"mode":"danger-full-access"}
+
+Optional options:
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
+  retry: `Usage: withmate run retry [options]
+
+Required options:
+  --session-id <session-id>
+  --retry-of-run-id <run-id>
+  --idempotency-key <lowercase-uuid>
+
+Optional execution overrides:
+  --model <model>
+  --reasoning-effort <effort>
+  --sandbox-json <json-object>
+
+Unspecified execution settings are inherited from the source Run.
+The source Message body cannot be changed by retry.
+
+Optional options:
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
   status: `Usage: withmate run status [options]
 
 Required options:

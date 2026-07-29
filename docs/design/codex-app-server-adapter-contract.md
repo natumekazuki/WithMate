@@ -24,6 +24,8 @@ App Server 固有の ID、status、item type を Application Service や GUI へ
 
 起動時に実際の Codex CLI version と交渉結果を Provider process / 接続環境の診断へ記録する。ProviderBinding や RunAttempt には混在させない。本書の version と異なる場合は、生成 schema と契約 test を実行せずに互換とみなさない。
 
+production runtimeは`initialize` responseの`userAgent`をexactな`codex-cli/<version>`として検証し、実装schema baselineと一致したversionだけをAdapterへ渡す。形式不一致またはversion不一致では接続を閉じ、`model/list`、Thread、Turn operationを送信しない。
+
 ## 接続と初期化
 
 ### process / transport
@@ -32,6 +34,8 @@ App Server 固有の ID、status、item type を Application Service や GUI へ
 - 初期 transport は stdio 上の 1 行 1 JSON message とする。
 - stdout は protocol 専用、stderr は bounded / redacted な診断用とする。
 - wire envelope は JSON-RPC 2.0 に近いが、実測で `jsonrpc` field が無い。一般的な JSON-RPC library を使う場合はこの形式を許容する。
+- `turn/start`と`turn/steer`のtext inputはMessageの共有契約であるUTF-8 JSON 4 MiB / 10,000 blockをAdapterでも維持する。`turn/start`はSessionが受理したworkspace pathとadditional directoriesも同時に運ぶため、Adapter aggregate、transport line、queued writeはMessage、directory scope、JSON escape、App Serverの`text_elements`とwire envelopeから共有定数で導出する。queued writeは最大frame 2件分を保持し、runtime IPC / CLIの64 KiB / 4,096 block上限とは混同しない。
+- Workspace pathは共有のcanonical host pathと32,768文字上限を使う。短い識別子向けのUTF-8 byte上限をWorkspace pathへ適用しない。
 - WebSocket、Codex managed daemon、experimental APIは初期実装の必須機能にしない。runtime hostとCLI / GUIのlocal IPCはApp Server transportと分離し、ADR 013に従う。
 
 ### handshake
@@ -98,7 +102,7 @@ Codex ID を WithMate の primary key にしない。Thread / Turn / item が取
 
 `thread/status/changed(active)` だけで Turn 開始成功を確定しない。Turn ID を相関できない間は同じThreadへ新しいTurnを送らず、current active tupleまたは`idle`の観測を待つ。`notLoaded`と`systemError`は新しいTurnの送信許可に使わない。
 
-`turn/started`を受理した後に対応するrequestが`remote_error`を返した場合、Provider side effectを未送信または拒否済みへ戻さない。`turn/started`より先に、未観測のTurn IDを持つ`turn/completed`を受理した場合も同じ副作用証拠として扱い、operationは`ambiguous`かつeffect unknownへ収束させる。以前のTurnですでに受理したterminalのduplicateは、新しい`turn/start`の副作用証拠にしない。notificationとresponseのTurn IDが一致しない場合は、notification側のTurnがすでにterminalでもcurrent Turnを選ばず、そのThreadへの新しいTurn mutationを再開しない。
+`turn/start`がpendingの間に、同じThreadで一意に相関できる`turn/started`または未観測のTurn IDを持つ`turn/completed`を受理した場合は、notificationをProvider受理の証拠とする。responseより先にnotificationを観測した場合や、その後に対応するrequestが`remote_error`を返した場合も、operationを同じTurnの`accepted`へ知識補正する。terminalが先行した場合は、同じTurnのstartedとterminalを順に上位へ通知する。以前のTurnですでに受理したterminalのduplicateは、新しい`turn/start`の副作用証拠にしない。notificationとresponseのTurn IDが一致しない場合は、notification側のTurnがすでにterminalでもcurrent Turnを選ばず、そのThreadへの新しいTurn mutationを再開しない。
 
 ### Run 完了
 
@@ -107,7 +111,7 @@ Codex ID を WithMate の primary key にしない。Thread / Turn / item が取
 - `completed` で final assistant candidate がある場合だけ final Message を作成する。空の final Message は作らない。
 - `failed` / `interrupted` の assistant output は partial / assistant detail として保持できるが、final Message へ昇格させない。
 - terminal 更新と final Message の論理確定は `docs/design/session-run-message-contract.md` の同一 domain transition 規則に従う。
-- event queueのresource超過では、受理済みの`turn_terminal`を後続eventのために削除しない。terminal outcomeを優先して非terminal eventを縮退し、connection failureへ収束させる。
+- event queueまたはRunOutput予約のresource超過では、受理済みの`turn_terminal`を後続eventのために削除しない。terminal outcomeを優先して非terminal eventを縮退し、成功Runにも`runtime_resource_limit`のterminal diagnosticを残す。resource超過を正常な全量保存として扱わない。
 
 ## item lifecycle と順序
 
@@ -214,6 +218,8 @@ RunOutputItem は item ごとの bounded summary と詳細 payload 参照を分�
 
 `thread/read`の履歴は照合補助であり、欠落したRunEventやMessageを推測で自動生成しない。切断前に受信済みの未確定assistant deltaがpersistent Turn履歴へ残らないことを確認している。streaming deltaを永続化しない共通方針に従い、crash時の未確定draft消失を許容し、復旧時にpartial outputを推測生成しない。
 
+明示的なAdapter closeはtransportからの新規受信を止めるが、close開始前にAdapter eventへ正規化済みのqueueを破棄しない。consumerはclose後もqueueを受け取り、`nextEvent()`がclosedを返すまでdrainする。`nextEvent()`で取得したeventはEvent Serviceの受理完了までconsumerが保持し、受理失敗時は同じeventを再試行して後続eventを先に処理しない。runtime hostはこのdrainとEvent Serviceへの受け渡しが完了してからgenerationを解放する。
+
 WindowsではCodex managed daemon lifecycleが非対応のため、CAS-017は`blocked`である。初期構成はdaemonへ再接続せず、WithMate runtime hostがstdio connectionを保持する。CLI disconnectはruntime hostへのlocal IPCだけを閉じ、App Server connection、live Run、draft、interactionを終了しない。runtime host crash時は前記のProvider照合規則へ進む。
 
 ## unknown / duplicate / out-of-order event
@@ -227,8 +233,10 @@ WindowsではCodex managed daemon lifecycleが非対応のため、CAS-017は`bl
 ## model / capability
 
 - `model/list` を cursor / limit で全 page 取得し、model ID、表示名、reasoning effort、入力 modality などを WithMate の capability model へ変換する。stable生成schemaで省略可能な`inputModalities`が欠落した場合は、schema既定値の`["text", "image"]`を適用する。
+- startまたはretryのoverrideで明示されたmodelとreasoning effortの組は、`thread/start`または`thread/resume`より前に同じ`model/list` snapshotで検証する。未対応の組はProvider Threadを作成・再開せず`invalid_input`として拒否する。
 - catalog は CLI version / account で変動するため、ハードコードしない。
 - hidden model は通常の選択肢に自動追加しない。
+- retryでmodel overrideを省略した場合は、source Runのexecution snapshotに保存したmodelを`inherited` provenance付きで受け取る。Adapterはそのmodelを`thread/resume`と`turn/start`へ指定し、同じThreadの後続Runがmodelを変更していてもsource Runの値へ戻す。継承値は新規選択ではないためhidden historyを許可し、`selectable`条件は要求しないが、catalog上の存在、入力modality、reasoning effortの組は検証する。明示overrideは従来どおり`selectable`を要求する。
 - `turn/start`のmodel overrideをresponseまたは一意に相関した`turn/started`で受理した後は、そのmodelをThreadのcurrent modelとして後続Turnのcapability検証に使う。notification先行で暫定相関した後に`request_not_sent`が未送信を証明した場合は元のcurrent modelへ戻し、受理を確認できないrequestだけでcurrent modelを変更しない。
 - `modelProvider/capabilities/read` は schema 確認のみ。version 差分を検証する。
 - orchestration API は Provider 名を Agent へ露出せず、WithMate の model / reasoning / feature 表現へ変換する。
@@ -247,6 +255,8 @@ close
 ```
 
 handshakeの`initialize` / `initialized`はtransportが所有し、Adapterから再送しない。`resumeThread`、`steerTurn`、`interruptTurn`は対象versionのruntime evidenceとcontract testをGateに利用可能とする。approval / input / elicitation response operationはこのAdapter scopeに含めず、後続のruntime検証が完了するまでcapabilityとして利用可能と公開しない。
+
+Thread作成・再開の送信結果が`ambiguous`な場合、Adapterはmutation reservationをconnection closeまで保持する。上位runtimeはそのgenerationを後続Thread mutationへ再利用せず、Provider processのclose完了を確認してからgeneration ownerを解放する。Adapterとtransportは同時closeだけをdedupeし、失敗したclose結果を永久cacheしない。processまたはnative handleの解放に失敗した場合は参照と未完了状態を保持し、同じownerを後続closeで再試行する。Windows Job Objectの設定、process割当て、一時process handle解放など、process startupのpartial acquisitionで失敗したownerもstructured errorを介してtransportへ引き渡す。Adapter公開前のstartup cleanupも同じ完了条件を使い、close失敗中に後続generationまたはsuccessor processを開始しない。
 
 ## 契約 test matrix
 

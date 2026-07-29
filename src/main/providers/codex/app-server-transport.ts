@@ -2,7 +2,11 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 import { CodexDiagnosticCollector, type CodexDiagnosticSnapshot } from "./diagnostics.js";
 import { CodexJsonlDecoder } from "./jsonl-decoder.js";
-import { spawnOwnedCodexProcess, type OwnedCodexProcess } from "./owned-process.js";
+import {
+  OwnedCodexProcessAcquisitionError,
+  spawnOwnedCodexProcess,
+  type OwnedCodexProcessCleanupOwner,
+} from "./owned-process.js";
 import { observeEmitterErrors, replaceWithLateErrorGuard } from "./process-error-boundary.js";
 import {
   CodexProtocolSession,
@@ -39,6 +43,10 @@ export type CodexAppServerTransportOptions = Readonly<{
   closeTimeoutMs?: number;
 }>;
 
+export type CodexAppServerTransportDependencies = Readonly<{
+  spawnOwnedProcess?: typeof spawnOwnedCodexProcess;
+}>;
+
 type ProcessExit = Readonly<{ code: number | null; signal: NodeJS.Signals | null }>;
 
 export class CodexAppServerTransport {
@@ -47,8 +55,9 @@ export class CodexAppServerTransport {
   readonly #startupTimeoutMs: number;
   readonly #closeTimeoutMs: number;
   readonly #diagnostics: CodexDiagnosticCollector;
+  readonly #spawnOwnedProcess: typeof spawnOwnedCodexProcess;
   #state: CodexAppServerTransportState = "idle";
-  #ownedProcess: OwnedCodexProcess | undefined;
+  #ownedProcess: OwnedCodexProcessCleanupOwner | undefined;
   #child: ChildProcessWithoutNullStreams | undefined;
   #writer: CodexStdioWireWriter | undefined;
   #decoder: CodexJsonlDecoder | undefined;
@@ -61,7 +70,7 @@ export class CodexAppServerTransport {
   #terminationPromise: Promise<CodexTransportError | undefined> | undefined;
   #terminalError: CodexTransportError | undefined;
 
-  constructor(options: CodexAppServerTransportOptions) {
+  constructor(options: CodexAppServerTransportOptions, dependencies: CodexAppServerTransportDependencies = {}) {
     const executable = options.executable;
     const configuredArguments = options.arguments;
     const configuredClientInfo = options.clientInfo;
@@ -80,6 +89,7 @@ export class CodexAppServerTransport {
     this.#startupTimeoutMs = validateDuration(configuredStartupTimeoutMs ?? 10_000, "startupTimeoutMs");
     this.#closeTimeoutMs = validateDuration(configuredCloseTimeoutMs ?? 5_000, "closeTimeoutMs");
     this.#diagnostics = new CodexDiagnosticCollector(this.#limits.maxStderrBytes);
+    this.#spawnOwnedProcess = dependencies.spawnOwnedProcess ?? spawnOwnedCodexProcess;
     this.options = Object.freeze({
       executable,
       arguments: arguments_,
@@ -137,16 +147,22 @@ export class CodexAppServerTransport {
   }
 
   close(): Promise<void> {
-    if (this.#closePromise !== undefined) return this.#closePromise;
-    this.#closePromise = this.#close();
-    return this.#closePromise;
+    if (this.#state === "closed") return Promise.resolve();
+    const existing = this.#closePromise;
+    if (existing !== undefined) return existing;
+    const attempt = this.#close();
+    this.#closePromise = attempt;
+    void attempt.catch(() => {
+      if (this.#closePromise === attempt) this.#closePromise = undefined;
+    });
+    return attempt;
   }
 
   async #start(signal: AbortSignal | undefined): Promise<CodexConnectionInfo> {
     const startupDeadline = Date.now() + this.#startupTimeoutMs;
     let spawnReady: Promise<void>;
     try {
-      const ownedProcess = spawnOwnedCodexProcess({
+      const ownedProcess = this.#spawnOwnedProcess({
         executable: this.options.executable,
         arguments: this.options.arguments ?? CODEX_APP_SERVER_ARGUMENTS,
         ...(this.options.cwd === undefined ? {} : { cwd: this.options.cwd }),
@@ -167,10 +183,11 @@ export class CodexAppServerTransport {
         },
       );
       this.#attachProcess(child);
-    } catch {
+    } catch (error) {
+      if (error instanceof OwnedCodexProcessAcquisitionError) this.#capturePartialOwner(error.owner);
       this.#state = "failed";
       this.#terminalError = connectionFailure("spawn_failed");
-      if (this.#child !== undefined) {
+      if (this.#ownedProcess !== undefined) {
         const terminationFailure = await this.#ensureTermination();
         if (terminationFailure !== undefined) throw terminationFailure;
       }
@@ -291,47 +308,60 @@ export class CodexAppServerTransport {
     void this.#ensureTermination();
   }
 
-  #ensureTermination(): Promise<CodexTransportError | undefined> {
-    this.#terminationPromise ??= (async () => {
+  async #ensureTermination(): Promise<CodexTransportError | undefined> {
+    const existing = this.#terminationPromise;
+    if (existing !== undefined) return existing;
+    const attempt = (async () => {
       try {
         await this.#terminateOwnedChild();
         this.#releaseOwnedProcess();
         return undefined;
       } catch {
-        try {
-          this.#releaseOwnedProcess();
-        } catch {
-          // The public failure remains bounded even when native handle release also fails.
-        }
         const failure = connectionFailure("close_failed");
         this.#terminalError = failure;
         return failure;
       }
     })();
-    return this.#terminationPromise;
+    this.#terminationPromise = attempt;
+    const failure = await attempt;
+    if (failure !== undefined && this.#terminationPromise === attempt) this.#terminationPromise = undefined;
+    return failure;
   }
 
   #releaseOwnedProcess(): void {
     const child = this.#child;
-    if (child === undefined) return;
     const ownedProcess = this.#ownedProcess;
+    if (ownedProcess === undefined) return;
+    ownedProcess?.release();
     this.#ownedProcess = undefined;
     this.#child = undefined;
     this.#writer = undefined;
     this.#decoder = undefined;
     this.#exitPromise = undefined;
-    child.stdin.destroy();
-    child.stdout.destroy();
-    child.stderr.destroy();
-    replaceWithLateErrorGuard(child.stdin);
-    replaceWithLateErrorGuard(child.stdout);
-    replaceWithLateErrorGuard(child.stderr);
-    replaceWithLateErrorGuard(child);
-    try {
-      ownedProcess?.release();
-    } finally {
-      this.#session?.releaseTransportResources();
+    if (child !== undefined) {
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
+      replaceWithLateErrorGuard(child.stdin);
+      replaceWithLateErrorGuard(child.stdout);
+      replaceWithLateErrorGuard(child.stderr);
+      replaceWithLateErrorGuard(child);
     }
+    this.#session?.releaseTransportResources();
+  }
+
+  #capturePartialOwner(owner: OwnedCodexProcessCleanupOwner): void {
+    this.#ownedProcess = owner;
+    const child = owner.child;
+    if (child === undefined) return;
+    this.#child = child;
+    this.#exitPromise = new Promise<ProcessExit>((resolve) => {
+      child.once("exit", (code, exitSignal) => resolve({ code, signal: exitSignal }));
+    });
+    observeEmitterErrors(child.stdin, () => undefined);
+    observeEmitterErrors(child.stdout, () => undefined);
+    observeEmitterErrors(child.stderr, () => undefined);
+    observeEmitterErrors(child, () => undefined);
   }
 
   async #close(): Promise<void> {
@@ -343,6 +373,7 @@ export class CodexAppServerTransport {
     if (this.#state === "failed") {
       const terminationFailure = await this.#ensureTermination();
       if (terminationFailure !== undefined) throw terminationFailure;
+      this.#state = "closed";
       return;
     }
 
@@ -383,7 +414,7 @@ export class CodexAppServerTransport {
     if (!(await settlesWithin(exitPromise, this.#closeTimeoutMs))) throw connectionFailure("close_failed");
   }
 
-  #terminateOwnedProcess(ownedProcess: OwnedCodexProcess): void {
+  #terminateOwnedProcess(ownedProcess: OwnedCodexProcessCleanupOwner): void {
     try {
       ownedProcess.terminate();
     } catch {

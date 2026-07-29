@@ -94,7 +94,11 @@ const applicationSessionOwner = path.join(sourceRoot, "main", "application-sessi
 const applicationSessionMessageOwner = path.join(sourceRoot, "main", "application-session-message-service.ts");
 const applicationSessionRunOwner = path.join(sourceRoot, "main", "application-session-run-service.ts");
 const applicationRunOwner = path.join(sourceRoot, "main", "application-run-service.ts");
+const applicationRunAdmissionOwner = path.join(sourceRoot, "main", "application-run-admission-service.ts");
+const applicationRunDispatchOwner = path.join(sourceRoot, "main", "application-run-dispatch-service.ts");
+const applicationRunEventOwner = path.join(sourceRoot, "main", "application-run-event-service.ts");
 const applicationRunOutputOwner = path.join(sourceRoot, "main", "application-run-output-service.ts");
+const applicationRunRuntimeOwner = path.join(sourceRoot, "main", "application-run-runtime-service.ts");
 const repositoryWriteClient = path.join(sourceRoot, "main", "repository-write-client.ts");
 const repositoryReadClient = path.join(sourceRoot, "main", "repository-read-client.ts");
 const persistenceWorkerClient = path.join(sourceRoot, "main", "persistence-worker-client.ts");
@@ -165,8 +169,17 @@ for (const file of listSourceFiles(sourceRoot)) {
     file === applicationSessionMessageOwner ||
     file === applicationSessionRunOwner ||
     file === applicationRunOwner ||
+    file === applicationRunAdmissionOwner ||
+    file === applicationRunDispatchOwner ||
+    file === applicationRunEventOwner ||
+    file === applicationRunRuntimeOwner ||
     file === applicationRunOutputOwner;
-  const allowsRepositoryWriteIntegration = file === applicationSessionOwner;
+  const allowsRepositoryWriteIntegration =
+    file === applicationSessionOwner ||
+    file === applicationRunAdmissionOwner ||
+    file === applicationRunDispatchOwner ||
+    file === applicationRunEventOwner ||
+    file === applicationRunRuntimeOwner;
   const inspect = (node) => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
       const moduleName = node.moduleSpecifier.text;

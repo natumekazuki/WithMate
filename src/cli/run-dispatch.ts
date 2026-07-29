@@ -42,7 +42,29 @@ export async function dispatchCliRunCommand<TAuthorizationContext>(
       ...(dependencies.signal === undefined ? {} : { signal: dependencies.signal }),
     };
     let response: unknown;
-    if (isCommandFor(command, "status")) {
+    if (isCommandFor(command, "start")) {
+      response = await dependencies.operations.start(
+        {
+          context,
+          sessionId: command.sessionId,
+          idempotencyKey: command.idempotencyKey,
+          contentBlocks: command.contentBlocks,
+          execution: command.execution,
+        },
+        options,
+      );
+    } else if (isCommandFor(command, "retry")) {
+      response = await dependencies.operations.retry(
+        {
+          context,
+          sessionId: command.sessionId,
+          retryOfRunId: command.retryOfRunId,
+          idempotencyKey: command.idempotencyKey,
+          ...(command.executionOverrides === undefined ? {} : { executionOverrides: command.executionOverrides }),
+        },
+        options,
+      );
+    } else if (isCommandFor(command, "status")) {
       response = await dependencies.operations.status(
         { context, sessionId: command.sessionId, runId: command.runId },
         options,

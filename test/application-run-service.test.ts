@@ -893,6 +893,16 @@ function reads(
 ): Reads {
   return {
     sessionGet: overrides.sessionGet ?? (async () => sessionProjection()),
+    sessionDirectoriesChunk: async ({ sessionId, offset }) =>
+      jsonChunk({ sessionId }, [], offset) as Awaited<ReturnType<Reads["sessionDirectoriesChunk"]>>,
+    messageContentChunk: async ({ sessionId, messageId, offset }) =>
+      jsonChunk({ sessionId, messageId }, [{ type: "text", text: "hello" }], offset) as Awaited<
+        ReturnType<Reads["messageContentChunk"]>
+      >,
+    runSnapshotChunk: async ({ sessionId, runId, offset }) =>
+      jsonChunk({ sessionId, runId }, repositoryExecutionSnapshot(), offset) as Awaited<
+        ReturnType<Reads["runSnapshotChunk"]>
+      >,
     runGet:
       overrides.runGet ??
       (async () => runProjection(overrides.run ?? repositoryRun("active")) as Awaited<ReturnType<Reads["runGet"]>>),
@@ -914,6 +924,7 @@ function sessionProjection(sessionId = "session-1") {
       repositoryName: null,
       allowedAdditionalDirectoriesByteLength: 2,
       allowedAdditionalDirectoriesState: "inline" as const,
+      allowedAdditionalDirectories: [],
       defaultCharacterId: "character-1",
       maxConcurrentChildRuns: 1,
       lifecycleStatus: "active" as const,
@@ -922,6 +933,34 @@ function sessionProjection(sessionId = "session-1") {
       lastActivityAt: 1,
     },
     execution: { state: "not_started" as const },
+  };
+}
+
+function repositoryExecutionSnapshot() {
+  return {
+    providerId: "codex",
+    model: "test-model",
+    reasoning: { effort: "medium" },
+    approval: { policy: "never" },
+    sandbox: { mode: "read-only", networkAccess: false },
+    workspace: {
+      key: "workspace-1",
+      path: "C:\\workspace",
+      allowedAdditionalDirectories: [],
+    },
+    character: null,
+  };
+}
+
+function jsonChunk(scope: Readonly<Record<string, string>>, value: unknown, offset: number) {
+  const encoded = new TextEncoder().encode(JSON.stringify(value));
+  const bytes = encoded.slice(offset);
+  return {
+    ...scope,
+    offset,
+    totalBytes: encoded.byteLength,
+    eof: true,
+    bytes: bytes.buffer,
   };
 }
 

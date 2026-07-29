@@ -53,10 +53,10 @@ Session
 
 Session は会話の利用可否を示す`lifecycleStatus`、Multi-Agent capacity設定、recent order用の`lastActivityAt` projectionを永続化する。表示名とローカルRepository snapshotの意味は`docs/adr/007-session-display-and-local-repository-metadata.md`を正本とする。最新の論理実行を示す状態はRunから導出し、Session rowへ重複保存しない。`lastActivityAt`はMessage追加、Run受理、Run terminal確定で単調増加させる並び順であり、実行状態の正本ではない。
 
-| Field | Value | 意味 |
-| --- | --- | --- |
-| `lifecycleStatus` | `active` / `archived` / `closed` | 会話を継続利用できるか。実行結果とは独立する |
-| `maxConcurrentChildRuns` | integer | このSessionがorchestration rootのときに子孫全体へ適用する同時実行上限。0は新規child Run開始を無効化する |
+| Field                    | Value                            | 意味                                                                                                    |
+| ------------------------ | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `lifecycleStatus`        | `active` / `archived` / `closed` | 会話を継続利用できるか。実行結果とは独立する                                                            |
+| `maxConcurrentChildRuns` | integer                          | このSessionがorchestration rootのときに子孫全体へ適用する同時実行上限。0は新規child Run開始を無効化する |
 
 `executionState`はAPI / UIの導出値とする。non-terminal Runがあれば`running`、なければordinal最大のRunのterminal phase、Runがなければ`not_started`とする。`activeRunId`はnon-terminal Run、`latestRunId`はordinal最大のRunから導出する。状態更新時刻が必要な場合は、`not_started`ではSessionの`createdAt`、`running`ではactive Runの`createdAt`、terminal状態ではlatest Runの`terminalAt`を返す。Home一覧は`(lastActivityAt DESC, sessionId DESC)`のkeyset paginationを使い、1回のset queryでこれらの導出値を返す。SessionごとのN+1 queryと全件hydrateを行わない。`waiting_approval`、`waiting_input`、`waiting_child`などの一時的な待機理由はSession / Runに保存せず、runtime hostのlive activityから表示する。
 
@@ -64,13 +64,13 @@ Session は会話の利用可否を示す`lifecycleStatus`、Multi-Agent capacit
 
 `lifecycleStatus` の遷移と write admission は次のとおりとする。
 
-| Current | Operation | Next | Admission / rejection |
-| --- | --- | --- | --- |
-| `active` | archive | `archived` | active Run がなければ許可する。active Run がある場合は `session_busy` として拒否し、先に完了または cancel させる |
-| `active` | close | `closed` | active Run がなければ許可する。active Run がある場合は `session_busy` として拒否する |
-| `archived` | unarchive | `active` | retention 対象が残り、Session targetのauthorizationと、存在する場合のProviderBinding整合を再検証できる場合だけ許可する。Workspaceの利用可否は次のRun admissionで再検証する |
-| `archived` | close | `closed` | 許可する |
-| `closed` | unarchive / reopen | - | terminal lifecycle として拒否する。継続が必要なら新しい Session を作る |
+| Current    | Operation          | Next       | Admission / rejection                                                                                                                                                      |
+| ---------- | ------------------ | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `active`   | archive            | `archived` | active Run がなければ許可する。active Run がある場合は `session_busy` として拒否し、先に完了または cancel させる                                                           |
+| `active`   | close              | `closed`   | active Run がなければ許可する。active Run がある場合は `session_busy` として拒否する                                                                                       |
+| `archived` | unarchive          | `active`   | retention 対象が残り、Session targetのauthorizationと、存在する場合のProviderBinding整合を再検証できる場合だけ許可する。Workspaceの利用可否は次のRun admissionで再検証する |
+| `archived` | close              | `closed`   | 許可する                                                                                                                                                                   |
+| `closed`   | unarchive / reopen | -          | terminal lifecycle として拒否する。継続が必要なら新しい Session を作る                                                                                                     |
 
 新しい Run、user Message、approval / user input 応答、supplemental input の write は `lifecycleStatus=active` の Session だけが受理できる。`archived` は参照専用、`closed` は参照と retention / delete policy に従う後処理だけを許可する。archive / close と Run 開始が競合した場合は、同じ Session の admission を直列化し、先に durable commit した操作だけを成立させる。unarchive 後の最初の Run は通常の Run admission と同じ validation gate を通り、過去のRun outcomeを実行許可の根拠にしない。
 
@@ -114,9 +114,9 @@ CLI / GUI の共通会話 timeline に表示する、WithMate が所有する会
 
 初期 role:
 
-| Role | 意味 |
-| --- | --- |
-| `user` | user が確定して送信した入力 |
+| Role        | 意味                                              |
+| ----------- | ------------------------------------------------- |
+| `user`      | user が確定して送信した入力                       |
 | `assistant` | Provider 実行から確定した user-visible な最終応答 |
 
 system prompt、developer instruction、Character prompt、tool / command event、approval、error notice は Message にしない。これらは Run execution snapshot、RunEvent、または Run outcome として扱う。
@@ -157,14 +157,14 @@ RunEvent に raw Provider payload、任意 payload JSON、出力本文、tool re
 
 Run 中の出力のうち、最終 Session timeline に必要ない内容は Message と物理的に分離した RunOutputItem として保存する。
 
-| category | 対象 | 通常表示 |
-| --- | --- | --- |
-| `assistant_detail` | 最終応答前の assistant commentary、progress、中間応答、reasoning summary | 読み込まない |
-| `operation` | command、tool、file change、artifact operation | 件数と bounded summary だけ |
-| `interaction` | approval、elicitation、user input request の trace | 読み込まない |
-| `telemetry` | usage、quota、context telemetry | 読み込まない |
-| `diagnostic` | Provider warning / error、transport / process 診断 | 必要な bounded warning だけ |
-| `provider_metadata` | 未分類の bounded / redacted Provider output | 読み込まない |
+| category            | 対象                                                                     | 通常表示                    |
+| ------------------- | ------------------------------------------------------------------------ | --------------------------- |
+| `assistant_detail`  | 最終応答前の assistant commentary、progress、中間応答、reasoning summary | 読み込まない                |
+| `operation`         | command、tool、file change、artifact operation                           | 件数と bounded summary だけ |
+| `interaction`       | approval、elicitation、user input request の trace                       | 読み込まない                |
+| `telemetry`         | usage、quota、context telemetry                                          | 読み込まない                |
+| `diagnostic`        | Provider warning / error、transport / process 診断                       | 必要な bounded warning だけ |
+| `provider_metadata` | 未分類の bounded / redacted Provider output                              | 読み込まない                |
 
 RunOutputItemはRun内の単調増加sequence、category、kind、4 KiB以下のbounded summary、payload stateを持つ。本文、stdout / stderr、tool payloadはsummary rowと同じJSONに埋め込まず、1件16 MiB・Run累計64 MiBを上限として専用payload rowのSQLite BLOBへ保存する。上限超過時は`omitted_size_limit`、redaction判定不能時は`omitted_redaction`としてpayloadを保存せず、元byte数と安全なbounded summaryだけを残す。RunOutput用object storageは使用しない。
 
@@ -211,6 +211,7 @@ streaming delta を連結した実行中の仮出力。Message ではない。
 - active Run の実行設定は snapshot とし、Session の後続設定変更で書き換えない。
 - terminal Run は再び active state へ戻さない。
 - retry は新しい Run として作り、`retryOfRunId` で元 Run を参照する。
+- execution snapshotはmodelがstartまたはretry requestで明示されたかを`modelSelection`へ記録する。retryでmodelを省略した場合は元Runのmodel値を継承し、その値と`inherited` provenanceをProvider Adapter境界まで渡す。Adapterは元Runのmodelを`thread/resume`と`turn/start`へ指定してcurrent Thread modelから復元するが、catalogの新規選択に必要な`selectable`条件は要求しない。
 - transport 内部の再試行は同じ Run の attempt とし、user Message と Run を重複作成しない。
 - user-visible な partial output、確定した command / file change、または未解決 approval がある場合、外部会話を捨てて無条件に内部再試行しない。
 - `completed` への遷移と、存在する場合の final assistant Message の論理確定は同じ domain transition で行う。
@@ -241,28 +242,30 @@ Run の寿命と、active Run が現在何を待っているかを 1 つの enum
 
 ### Run phase
 
-| Run phase | 意味 |
-| --- | --- |
-| `queued` | user Message と Run を受理したが Provider へ未送信 |
-| `starting` | Provider process、binding、外部会話、実行 request を準備中 |
-| `active` | Provider 実行中。具体的な動作や待機理由はlive activityとlive interactionで表す |
-| `canceling` | user cancel を受理し、Provider の terminal outcome を待機中 |
-| `finalizing` | Provider の正常完了を受信し、terminal outcome と最終出力を論理確定中 |
-| `completed` | Provider 実行が正常完了。final assistant Message がある場合は application state 上で確定済み |
-| `failed` | Provider または Application Service が実行失敗を確定した |
-| `canceled` | user cancel に対応する停止を確認した |
-| `interrupted` | process 終了、接続切断、app crash などで terminal outcome を確定できない |
+| Run phase     | 意味                                                                                         |
+| ------------- | -------------------------------------------------------------------------------------------- |
+| `queued`      | user Message と Run を受理したが Provider へ未送信                                           |
+| `starting`    | Provider process、binding、外部会話、実行 request を準備中                                   |
+| `active`      | Provider 実行中。具体的な動作や待機理由はlive activityとlive interactionで表す               |
+| `canceling`   | user cancel を受理し、Provider の terminal outcome を待機中                                  |
+| `finalizing`  | Provider の正常完了を受信し、terminal outcome と最終出力を論理確定中                         |
+| `completed`   | Provider 実行が正常完了。final assistant Message がある場合は application state 上で確定済み |
+| `failed`      | Provider または Application Service が実行失敗を確定した                                     |
+| `canceled`    | user cancel に対応する停止を確認した                                                         |
+| `interrupted` | process 終了、接続切断、app crash などで terminal outcome を確定できない                     |
 
 ### live activity
 
-| live activity | 意味 |
-| --- | --- |
-| `running` | 応答生成、reasoning、command / tool / file operation を実行中 |
-| `waiting_approval` | 1 件以上の approval request が未解決 |
-| `waiting_input` | 1 件以上の user input / elicitation request が未解決 |
-| `waiting_child` | Multi-Agent の子 Session に対する明示的な wait 操作中 |
+| live activity      | 意味                                                          |
+| ------------------ | ------------------------------------------------------------- |
+| `running`          | 応答生成、reasoning、command / tool / file operation を実行中 |
+| `waiting_approval` | 1 件以上の approval request が未解決                          |
+| `waiting_input`    | 1 件以上の user input / elicitation request が未解決          |
+| `waiting_child`    | Multi-Agent の子 Session に対する明示的な wait 操作中         |
 
 live activityは`phase=active`のときだけruntime hostのメモリに存在できる。複数種類のlive interactionまたは子待機が同時に存在する場合、それぞれのlive request / wait operationが実行中状態の基準であり、live activityはCLI / GUI用の代表表示にすぎない。代表表示の優先順位は`waiting_input`、`waiting_approval`、`waiting_child`、`running`とする。
+
+live activity snapshotは、active化を確定したRunのpersisted versionと組にする。status read時のRun versionと一致しないsnapshotは投影しない。terminal commitを確認した後は、対応するwaiter、buffer、live activityを破棄する。Dispatch resolution、RunOutput、またはterminal永続化の結果が不明な間は、Provider mutationを再送しないpersistence-only ownerとしてfrozen commandとlive ownershipを保持し、runtime hostが同じcommandのexact retryを自動継続する。generation解放やshutdownはこのownerを捨てる根拠にしない。DBに残る古いphaseや別Runのeventからlive activityを再構成しない。
 
 Session WindowとCLIはlive activityの所有者ではなくruntime hostのclientとする。client connectionを閉じてもSession runtimeとProvider接続を停止せず、再接続時はlive snapshotとRunEvent cursorを取得してからcursor以降のevent購読を開始する。runtime host再起動後はactivityをDBから推測せず、同じProvider実行と現在操作を証明できた場合だけ再構築する。証明できないRunは`interrupted`へ収束させる。
 
@@ -270,12 +273,12 @@ Session WindowとCLIはlive activityの所有者ではなくruntime hostのclien
 
 Run phase と Message の論理確定とは別に、永続化の進行状況を追跡する。
 
-| Durability state | 意味 |
-| --- | --- |
-| `pending` | application state 上で確定した変更が永続化待ち |
-| `committing` | Persistence Worker / actor が書き込み中 |
-| `committed` | 再起動後に復旧可能な状態まで永続化済み |
-| `failed` | 永続化に失敗し、再試行または user-visible な警告が必要 |
+| Durability state | 意味                                                   |
+| ---------------- | ------------------------------------------------------ |
+| `pending`        | application state 上で確定した変更が永続化待ち         |
+| `committing`     | Persistence Worker / actor が書き込み中                |
+| `committed`      | 再起動後に復旧可能な状態まで永続化済み                 |
+| `failed`         | 永続化に失敗し、再試行または user-visible な警告が必要 |
 
 Provider実行後に生成されたterminal outcome、assistant Message、RunEventなどの非admission writeでは、runtime host上の`phase=completed`と`persistence.status=failed`が同時に成立できる。live UI / CLIの実行完了表示はSQLite commitを待たないが、未永続の状態を復旧可能とは表示しない。CLI / APIは実行結果の`phase=completed`と、live保存結果の`persistence.status=failed`、診断情報、再試行可否を同じresponse envelopeの別fieldで返す。APIのapplication statusは`partial_success`とし、transport successのままoutcomeとpersistence warningを返す。CLIは専用の非0 exit code`durability_failed`と構造化出力の`overallStatus=partial_success`を返し、Providerの再実行ではなくpersistence retry / status確認へ誘導する。永続化失敗はProvider実行失敗と別の診断・再試行対象にする。
 
@@ -283,22 +286,24 @@ Provider実行後に生成されたterminal outcome、assistant Message、RunEve
 
 Provider dispatchの状態はlive persistence stateと分離し、Run attemptごとに追跡する。
 
-| Dispatch state | 意味 | 自動送信 |
-| --- | --- | --- |
-| `pending` | admission は committed、Provider 未送信を証明可能 | 許可 |
-| `dispatching` | 送信 intent は committed、Provider の受理は未確定 | 新規送信は禁止。照会または Provider idempotency で収束させる |
-| `accepted` | Provider の外部実行 ID と相関して受理済み | 禁止 |
-| `rejected` | Provider が未受理を明示 | 同じ attempt では禁止 |
-| `ambiguous` | 送信した可能性があるが受理を証明不能 | 自動再送は禁止 |
+| Dispatch state | 意味                                              | 自動送信                                                     |
+| -------------- | ------------------------------------------------- | ------------------------------------------------------------ |
+| `pending`      | admission は committed、Provider 未送信を証明可能 | 許可                                                         |
+| `dispatching`  | 送信 intent は committed、Provider の受理は未確定 | 新規送信は禁止。照会または Provider idempotency で収束させる |
+| `accepted`     | Provider の外部実行 ID と相関して受理済み         | 禁止                                                         |
+| `rejected`     | Provider が未受理を明示                           | 同じ attempt では禁止                                        |
+| `ambiguous`    | 送信した可能性があるが受理を証明不能              | 自動再送は禁止                                               |
 
-`pending -> dispatching` を durable commit してから送信する。`canceling`に入ったRunの`pending` Dispatchは初回送信せず、すでに`dispatching`の場合だけreplayまたはresolutionへ進める。transport 切断や process crash 後に受理を証明できなければ `ambiguous` とし、自動再送しない。Provider の native idempotency または状態照会で同じ外部実行へ一意に収束でき、Attemptがまだ`preparing`、Runが`starting` / `canceling`である間だけ、同じAttemptの`ambiguous`を`accepted`へ知識補正して再接続する。同じ idempotency key と同じ request fingerprint の再送は既存 Run と dispatch outcome を返し、異なる fingerprint は conflict とする。実行をやり直す場合は別 Run と `retryOfRunId` を明示し、元の start request を再 dispatch しない。
+`pending -> dispatching` を durable commit してから送信する。`canceling`に入ったRunの`pending` Dispatchは初回送信せず、すでに`dispatching`の場合だけreplayまたはresolutionへ進める。transport 切断や process crash 後に受理を証明できなければ `ambiguous` とし、自動再送しない。Provider の native idempotency または状態照会で同じ外部実行へ一意に収束でき、Attemptがまだ`preparing`、Runが`starting` / `canceling`である間だけ、同じAttemptの`ambiguous`を`accepted`へ知識補正して再接続する。connection generationを失い、同じ外部実行との相関を継続できない場合は、Dispatchの`ambiguous`と外部副作用の不確実性を保持したままRunを`interrupted`へ収束させ、Sessionとcapacityのownerを解放する。同じ idempotency key と同じ request fingerprint の再送は既存 Run と dispatch outcome を返し、異なる fingerprint は conflict とする。実行をやり直す場合は別 Run と `retryOfRunId` を明示し、元の start request を再 dispatch しない。
 
 ### phase 遷移
 
 ```text
 queued
 ├─> starting
-└─> canceled
+├─> canceled
+├─> failed
+└─> interrupted
 
 starting
 ├─> active
@@ -351,12 +356,12 @@ Provider 側会話の作成に失敗しても空の Session を保持するか�
 ### Run 開始
 
 1. idempotency key、Session、active Run、入力、実行設定を検証する。
-2. initiating user Message、`queued` Run、不変なRun execution snapshot、idempotency record、未dispatchのdispatch recordを1つのadmission transactionで受理する。active Bindingがなければ`creating` Binding intentも同じtransactionへ含める。
+2. Repositoryがinitiating user Message、Run、Attempt、および必要なBindingのidentityを発行し、`queued` Run、不変なRun execution snapshot、idempotency record、未dispatchのdispatch recordを1つのadmission transactionで受理する。唯一の再利用可能なactive persistent Bindingがなく、open Bindingもなければ`creating` Binding intentも同じtransactionへ含める。
 3. admission transaction の durable commit を待つ。失敗時は `admission_failed` を返し、Provider process の起動または request 送信へ進まない。
 4. Provider processを準備する。`creating` Bindingがあればdurable intentを確認して外部会話作成requestを1回だけ送り、成功時に外部会話ID、Bindingの`active`化、作成元AttemptのBinding参照を同じtransactionでcommitする。受理不明時は自動再送せず、一意照合不能ならRunを`interrupted`へ収束させる。
-5. active Binding確定後、durableなdispatch recordを条件付きで`dispatching`へ更新してからProvider実行requestを送り、外部実行IDを相関させる。再送時は同じidempotency / dispatch recordを参照し、二重dispatchを防ぐ。
+5. active Binding確定後、durableなdispatch recordを条件付きで`dispatching`へ更新してからProvider実行requestを送り、外部実行IDを相関させる。begin responseを失った場合は同じcommandの再実行またはread-backで状態を確定し、`dispatching`を確認してもProvider未送信のままRunを収束させる。再送時は同じidempotency / dispatch recordを参照し、二重dispatchを防ぐ。
 6. Providerの開始eventを受けて`active`へ遷移し、runtime hostのlive activityを`running`とする。
-7. event と assistant draft を順序付きで配信・記録する。
+7. event と assistant draft を順序付きで配信・記録する。outputの永続化結果が不明な場合はidentityとcommandを固定して再試行し、terminal transitionより先に確定する。
 8. 正常完了を受けたら `finalizing` へ遷移する。
 9. final assistant content がある場合は Message を作り、Run の `completed` と同じ domain transition で論理確定する。commit 後のSession実行状態は最新Runから`completed`と導出される。
 10. admission後に確定したRun、Message、RunEventの永続化をPersistence Worker / actorへ依頼し、runtime hostのlive persistence stateを独立して更新する。

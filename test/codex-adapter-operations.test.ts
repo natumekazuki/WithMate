@@ -106,32 +106,35 @@ test("mutations validate selectable model and reasoning tuples against the conne
     { kind: "not_sent", effect: "none", code: "invalid_input" },
   );
 
-  const unsupportedEffort = new FakeTransport([{ data: [modelFixture()], nextCursor: null }, threadOperationFixture()]);
-  const unsupportedEffortAdapter = createAdapter(unsupportedEffort);
-  assert.equal(
-    (
-      await unsupportedEffortAdapter.startThread({
-        model: "gpt-5.4",
-        workspacePath: process.cwd(),
-        approvalPolicy: "never",
-        sandboxMode: "read-only",
-        persistence: "persistent",
-      })
-    ).kind,
-    "accepted",
+  const unsupportedEffort = new FakeTransport([{ data: [modelFixture()], nextCursor: null }]);
+  assert.deepEqual(
+    await createAdapter(unsupportedEffort).startThread({
+      model: "gpt-5.4",
+      reasoningEffort: "unsupported",
+      workspacePath: process.cwd(),
+      approvalPolicy: "never",
+      sandboxMode: "read-only",
+      persistence: "persistent",
+    }),
+    { kind: "not_sent", effect: "none", code: "invalid_input" },
   );
   assert.deepEqual(
-    await unsupportedEffortAdapter.startTurn({
+    unsupportedEffort.requests.map((request) => request.method),
+    ["model/list"],
+  );
+
+  const unsupportedResumeEffort = new FakeTransport([{ data: [modelFixture()], nextCursor: null }]);
+  assert.deepEqual(
+    await createAdapter(unsupportedResumeEffort).resumeThread({
       threadId: "thread-1",
-      contentBlocks: [{ type: "text", text: "go" }],
       model: "gpt-5.4",
       reasoningEffort: "unsupported",
     }),
     { kind: "not_sent", effect: "none", code: "invalid_input" },
   );
   assert.deepEqual(
-    unsupportedEffort.requests.map((request) => request.method),
-    ["model/list", "thread/start"],
+    unsupportedResumeEffort.requests.map((request) => request.method),
+    ["model/list"],
   );
 
   const audioOnly = new FakeTransport([{ data: [modelFixture({ inputModalities: ["audio"] })], nextCursor: null }]);
@@ -164,6 +167,139 @@ test("mutations validate selectable model and reasoning tuples against the conne
     }),
     { kind: "ambiguous", effect: "unknown", code: "invalid_response" },
   );
+});
+
+test("cold model capability preflight preserves transport and Provider failure provenance", async () => {
+  const timeout = new FakeTransport([new CodexTransportError({ kind: "request_not_sent", code: "timeout" })], false);
+  assert.deepEqual(
+    await createAdapter(timeout).startThread({
+      model: "gpt-5.4",
+      workspacePath: process.cwd(),
+      approvalPolicy: "never",
+      sandboxMode: "read-only",
+      persistence: "persistent",
+    }),
+    { kind: "not_sent", effect: "none", code: "timeout" },
+  );
+  assert.deepEqual(
+    timeout.requests.map((request) => request.method),
+    ["model/list"],
+  );
+
+  const rejected = new FakeTransport([new CodexTransportError({ kind: "remote_error", code: 429 })], false);
+  assert.deepEqual(
+    await createAdapter(rejected).resumeThread({
+      threadId: "thread-1",
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+    }),
+    { kind: "rejected", effect: "none", code: 429 },
+  );
+  assert.deepEqual(
+    rejected.requests.map((request) => request.method),
+    ["model/list"],
+  );
+
+  const connectionLost = new FakeTransport(
+    [new CodexTransportError({ kind: "response_unknown", code: "connection_lost" })],
+    false,
+  );
+  assert.deepEqual(
+    await createAdapter(connectionLost).startThread({
+      model: "gpt-5.4",
+      workspacePath: process.cwd(),
+      approvalPolicy: "never",
+      sandboxMode: "read-only",
+      persistence: "persistent",
+    }),
+    { kind: "not_sent", effect: "none", code: "connection_lost" },
+  );
+});
+
+test("event-first connection failure preserves its cause for in-flight Thread and Turn mutations", async () => {
+  const threadModelCatalog = deferred<unknown>();
+  const threadTransportFailure = deferred<CodexAdapterTransportEvent>();
+  const threadTransport = new FakeTransport([threadModelCatalog.promise], false, threadTransportFailure.promise);
+  const threadAdapter = createAdapter(threadTransport);
+  const threadMutation = threadAdapter.startThread({
+    model: "gpt-5.4",
+    workspacePath: process.cwd(),
+    approvalPolicy: "never",
+    sandboxMode: "read-only",
+    persistence: "persistent",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(threadTransport.requests.at(-1)?.method, "model/list");
+  threadTransportFailure.reject(new CodexTransportError({ kind: "connection_failure", code: "process_exited" }));
+  await new Promise((resolve) => setImmediate(resolve));
+  threadModelCatalog.reject(new CodexTransportError({ kind: "request_not_sent", code: "write_rejected" }));
+  assert.deepEqual(await threadMutation, {
+    kind: "not_sent",
+    effect: "none",
+    code: "process_exited",
+  });
+  assert.deepEqual(await threadAdapter.nextEvent(), {
+    kind: "connection_failure",
+    code: "process_exited",
+  });
+
+  const turnTransportFailure = deferred<CodexAdapterTransportEvent>();
+  const turnTransport = new FakeTransport([threadOperationFixture()], true, turnTransportFailure.promise);
+  const turnAdapter = createAdapter(turnTransport);
+  await establishThread(turnAdapter);
+  turnTransportFailure.reject(new CodexTransportError({ kind: "connection_failure", code: "process_exited" }));
+  assert.deepEqual(
+    await turnAdapter.startTurn({
+      threadId: "thread-1",
+      model: "gpt-5.4",
+      contentBlocks: [{ type: "text", text: "start" }],
+    }),
+    { kind: "not_sent", effect: "none", code: "process_exited" },
+  );
+  assert.deepEqual(await turnAdapter.nextEvent(), {
+    kind: "connection_failure",
+    code: "process_exited",
+  });
+});
+
+test("event-first connection failure remains canonical when an in-flight Provider mutation settles not_sent", async () => {
+  const mutationResponse = deferred<unknown>();
+  const transportFailure = deferred<CodexAdapterTransportEvent>();
+  const transport = new FakeTransport(
+    [{ data: [modelFixture()], nextCursor: null }, mutationResponse.promise],
+    false,
+    transportFailure.promise,
+  );
+  const adapter = createAdapter(transport);
+  assert.equal((await adapter.listModels()).kind, "accepted");
+
+  const mutation = adapter.startThread({
+    model: "gpt-5.4",
+    workspacePath: process.cwd(),
+    approvalPolicy: "never",
+    sandboxMode: "read-only",
+    persistence: "persistent",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(transport.requests.at(-1)?.method, "thread/start");
+
+  transportFailure.resolve({
+    kind: "serverRequest",
+    request: { method: "future/request", params: { ignored: true } },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  mutationResponse.reject(new CodexTransportError({ kind: "request_not_sent", code: "write_rejected" }));
+
+  assert.deepEqual(await mutation, {
+    kind: "not_sent",
+    effect: "none",
+    code: "unsupported_server_request",
+  });
+  assert.equal((await adapter.nextEvent()).kind, "diagnostic");
+  assert.deepEqual(await adapter.nextEvent(), {
+    kind: "connection_failure",
+    code: "unsupported_server_request",
+  });
 });
 
 test("listModels enforces the page cap before issuing an extra request", async () => {
@@ -296,6 +432,76 @@ test("resumeThread validates the effective model tuple without treating hidden h
       })
     ).kind,
     "accepted",
+  );
+});
+
+test("an inherited source model may restore hidden history without becoming an explicit selection", async () => {
+  const inheritedTransport = new FakeTransport([
+    {
+      data: [modelFixture({ id: "source-model", model: "source-model", hidden: true })],
+      nextCursor: null,
+    },
+    threadOperationFixture({ model: "source-model" }),
+    { turn: turnFixture() },
+  ]);
+  const inheritedAdapter = createAdapter(inheritedTransport);
+  assert.equal(
+    (
+      await inheritedAdapter.resumeThread({
+        threadId: "thread-1",
+        model: "source-model",
+        modelSelection: "inherited",
+        reasoningEffort: "medium",
+      })
+    ).kind,
+    "accepted",
+  );
+  assert.equal(
+    (
+      await inheritedAdapter.startTurn({
+        threadId: "thread-1",
+        contentBlocks: [{ type: "text", text: "retry the source Run" }],
+        model: "source-model",
+        modelSelection: "inherited",
+        reasoningEffort: "medium",
+      })
+    ).kind,
+    "accepted",
+  );
+  assert.deepEqual(
+    inheritedTransport.requests
+      .filter((request) => request.method === "thread/resume" || request.method === "turn/start")
+      .map((request) => request.params),
+    [
+      {
+        threadId: "thread-1",
+        model: "source-model",
+        approvalPolicy: "never",
+      },
+      {
+        threadId: "thread-1",
+        input: [{ type: "text", text: "retry the source Run", text_elements: [] }],
+        approvalPolicy: "never",
+        model: "source-model",
+        effort: "medium",
+      },
+    ],
+  );
+
+  const explicitTransport = new FakeTransport([
+    {
+      data: [modelFixture({ id: "source-model", model: "source-model", hidden: true })],
+      nextCursor: null,
+    },
+  ]);
+  assert.deepEqual(
+    await createAdapter(explicitTransport).resumeThread({
+      threadId: "thread-1",
+      model: "source-model",
+      modelSelection: "explicit",
+      reasoningEffort: "medium",
+    }),
+    { kind: "not_sent", effect: "none", code: "invalid_input" },
   );
 });
 
@@ -735,7 +941,7 @@ test("a known connection failure closes the Adapter before any sibling operation
       expectedTurnId: "turn-1",
       contentBlocks: [{ type: "text", text: "do not send" }],
     }),
-    { kind: "not_sent", effect: "none", code: "capability_unavailable" },
+    { kind: "not_sent", effect: "none", code: "process_exited" },
   );
   assert.equal(transport.requests.length, 4);
   assert.deepEqual(await adapter.nextEvent(), { kind: "connection_failure", code: "process_exited" });
@@ -928,12 +1134,18 @@ function createAdapter(transport: CodexAdapterTransportPort): CodexAdapter {
   return new CodexAdapter(transport, { cliVersion: "0.145.0" });
 }
 
-function deferred<T>(): Readonly<{ promise: Promise<T>; resolve: (value: T) => void }> {
+function deferred<T>(): Readonly<{
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+}> {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((promiseResolve) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
     resolve = promiseResolve;
+    reject = promiseReject;
   });
-  return Object.freeze({ promise, resolve });
+  return Object.freeze({ promise, resolve, reject });
 }
 
 async function establishThread(adapter: CodexAdapter): Promise<void> {
@@ -962,13 +1174,17 @@ class FakeTransport implements CodexAdapterTransportPort {
   readonly requests: Array<Readonly<{ method: string; params: unknown; options: CodexAdapterRequestOptions }>> = [];
   readonly #responses: unknown[];
 
-  constructor(responses: readonly unknown[]) {
+  constructor(
+    responses: readonly unknown[],
+    readonly autoModelCatalog = true,
+    readonly eventResult?: Promise<CodexAdapterTransportEvent>,
+  ) {
     this.#responses = [...responses];
   }
 
   request<TResult>(method: string, params?: unknown, options: CodexAdapterRequestOptions = {}): Promise<TResult> {
     this.requests.push(Object.freeze({ method, params, options }));
-    if (method === "model/list" && !isModelPage(this.#responses[0])) {
+    if (this.autoModelCatalog && method === "model/list" && !isModelPage(this.#responses[0])) {
       return Promise.resolve({ data: [modelFixture()], nextCursor: null } as TResult);
     }
     if (this.#responses.length === 0) return Promise.reject(new Error("missing fake response"));
@@ -977,7 +1193,7 @@ class FakeTransport implements CodexAdapterTransportPort {
   }
 
   nextEvent(): Promise<CodexAdapterTransportEvent> {
-    return new Promise(() => undefined);
+    return this.eventResult ?? new Promise(() => undefined);
   }
 
   close(): Promise<void> {

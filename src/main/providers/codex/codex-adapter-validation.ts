@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 
+import { MESSAGE_CONTENT_LIMITS, snapshotMessageContentBlocks } from "../../../shared/message-content.js";
 import { resolveWorkspaceIdentity, type WorkspaceIdentity } from "../../../shared/workspace-path.js";
 import {
   CODEX_ADAPTER_LIMITS,
   type CodexAdapterOptions,
   type CodexAdapterRequestOptions,
   type CodexAdapterApprovalPolicy,
+  type CodexAdapterModelSelection,
   type CodexAdapterModel,
   type CodexAdapterSandboxMode,
   type CodexAdapterSandboxPolicy,
@@ -223,18 +225,20 @@ export function snapshotStartThreadInput(value: unknown): CodexValidationResult<
     const record = exactRecord(
       value,
       ["model", "workspacePath", "approvalPolicy", "sandboxMode", "persistence"],
-      [],
+      ["reasoningEffort"],
       context,
       0,
     );
     if (record === undefined) return undefined;
     const model = shortNonEmptyString(record.model, context);
+    const reasoningEffort = optional(record, "reasoningEffort", (candidate) => shortNonEmptyString(candidate, context));
     const workspacePath = workspacePathString(record.workspacePath, context);
     const approvalPolicy = approvalPolicyValue(record.approvalPolicy);
     const sandboxMode = sandboxModeValue(record.sandboxMode);
     const persistence = record.persistence;
     if (
       model === undefined ||
+      reasoningEffort === INVALID ||
       workspacePath === undefined ||
       approvalPolicy === undefined ||
       sandboxMode === undefined ||
@@ -242,7 +246,14 @@ export function snapshotStartThreadInput(value: unknown): CodexValidationResult<
     ) {
       return undefined;
     }
-    return Object.freeze({ model, workspacePath, approvalPolicy, sandboxMode, persistence });
+    return Object.freeze({
+      model,
+      ...(reasoningEffort === ABSENT ? {} : { reasoningEffort }),
+      workspacePath,
+      approvalPolicy,
+      sandboxMode,
+      persistence,
+    });
   });
 }
 
@@ -252,19 +263,23 @@ export function snapshotResumeThreadInput(value: unknown): CodexValidationResult
     const record = exactRecord(
       value,
       ["threadId"],
-      ["model", "workspacePath", "approvalPolicy", "sandboxMode"],
+      ["model", "modelSelection", "reasoningEffort", "workspacePath", "approvalPolicy", "sandboxMode"],
       context,
       0,
     );
     if (record === undefined) return undefined;
     const threadId = identifier(record.threadId, context);
     const model = optional(record, "model", (candidate) => shortNonEmptyString(candidate, context));
+    const modelSelection = optional(record, "modelSelection", modelSelectionValue);
+    const reasoningEffort = optional(record, "reasoningEffort", (candidate) => shortNonEmptyString(candidate, context));
     const workspacePath = optional(record, "workspacePath", (candidate) => workspacePathString(candidate, context));
     const approvalPolicy = optional(record, "approvalPolicy", approvalPolicyValue);
     const sandboxMode = optional(record, "sandboxMode", sandboxModeValue);
     if (
       threadId === undefined ||
       model === INVALID ||
+      modelSelection === INVALID ||
+      reasoningEffort === INVALID ||
       workspacePath === INVALID ||
       approvalPolicy === INVALID ||
       sandboxMode === INVALID
@@ -274,6 +289,8 @@ export function snapshotResumeThreadInput(value: unknown): CodexValidationResult
     return Object.freeze({
       threadId,
       ...(model === ABSENT ? {} : { model }),
+      ...(modelSelection === ABSENT ? {} : { modelSelection }),
+      ...(reasoningEffort === ABSENT ? {} : { reasoningEffort }),
       ...(workspacePath === ABSENT ? {} : { workspacePath }),
       ...(approvalPolicy === ABSENT ? {} : { approvalPolicy }),
       ...(sandboxMode === ABSENT ? {} : { sandboxMode }),
@@ -295,11 +312,19 @@ export function snapshotReadThreadInput(value: unknown): CodexValidationResult<C
 
 export function snapshotStartTurnInput(value: unknown): CodexValidationResult<CodexStartTurnInput> {
   return validate(() => {
-    const context = createContext(CODEX_ADAPTER_LIMITS.maxTurnTextBytes);
+    const context = createContext();
     const record = exactRecord(
       value,
       ["threadId", "contentBlocks"],
-      ["workspacePath", "approvalPolicy", "sandboxPolicy", "model", "reasoningEffort", "reasoningSummary"],
+      [
+        "workspacePath",
+        "approvalPolicy",
+        "sandboxPolicy",
+        "model",
+        "modelSelection",
+        "reasoningEffort",
+        "reasoningSummary",
+      ],
       context,
       0,
     );
@@ -310,6 +335,7 @@ export function snapshotStartTurnInput(value: unknown): CodexValidationResult<Co
     const approvalPolicy = optional(record, "approvalPolicy", approvalPolicyValue);
     const sandboxPolicy = optional(record, "sandboxPolicy", (candidate) => decodeSandboxPolicy(candidate, context, 1));
     const model = optional(record, "model", (candidate) => shortNonEmptyString(candidate, context));
+    const modelSelection = optional(record, "modelSelection", modelSelectionValue);
     const reasoningEffort = optional(record, "reasoningEffort", (candidate) => shortNonEmptyString(candidate, context));
     const reasoningSummary = optional(record, "reasoningSummary", (candidate) =>
       typeof candidate === "string" && REASONING_SUMMARIES.has(candidate)
@@ -324,6 +350,7 @@ export function snapshotStartTurnInput(value: unknown): CodexValidationResult<Co
       approvalPolicy === INVALID ||
       sandboxPolicy === INVALID ||
       model === INVALID ||
+      modelSelection === INVALID ||
       reasoningEffort === INVALID ||
       reasoningSummary === INVALID
     ) {
@@ -336,6 +363,7 @@ export function snapshotStartTurnInput(value: unknown): CodexValidationResult<Co
       ...(approvalPolicy === ABSENT ? {} : { approvalPolicy }),
       ...(sandboxPolicy === ABSENT ? {} : { sandboxPolicy }),
       ...(model === ABSENT ? {} : { model }),
+      ...(modelSelection === ABSENT ? {} : { modelSelection }),
       ...(reasoningEffort === ABSENT ? {} : { reasoningEffort }),
       ...(reasoningSummary === ABSENT ? {} : { reasoningSummary }),
     });
@@ -344,7 +372,7 @@ export function snapshotStartTurnInput(value: unknown): CodexValidationResult<Co
 
 export function snapshotSteerTurnInput(value: unknown): CodexValidationResult<CodexSteerTurnInput> {
   return validate(() => {
-    const context = createContext(CODEX_ADAPTER_LIMITS.maxTurnTextBytes);
+    const context = createContext();
     const record = exactRecord(value, ["threadId", "expectedTurnId", "contentBlocks"], [], context, 0);
     if (record === undefined) return undefined;
     const threadId = identifier(record.threadId, context);
@@ -1966,19 +1994,17 @@ function textContentBlocks(
   context: ValidationContext,
   depth: number,
 ): readonly Readonly<{ type: "text"; text: string }>[] | undefined {
-  const entries = denseArray(value, CODEX_ADAPTER_LIMITS.maxArrayItems, context, depth);
+  const entries = denseArray(value, MESSAGE_CONTENT_LIMITS.maxBlocks, context, depth);
   if (entries === undefined) return undefined;
   const blocks: Readonly<{ type: "text"; text: string }>[] = [];
   for (const entry of entries) {
     const record = exactRecord(entry, ["type", "text"], [], context, depth + 1);
     const text =
-      record === undefined
-        ? undefined
-        : boundedString(record.text, context, CODEX_ADAPTER_LIMITS.maxItemTextBytes, true);
+      record === undefined ? undefined : boundedString(record.text, context, MESSAGE_CONTENT_LIMITS.maxJsonBytes, true);
     if (record === undefined || record.type !== "text" || text === undefined) return undefined;
     blocks.push(Object.freeze({ type: "text", text }));
   }
-  return Object.freeze(blocks);
+  return snapshotMessageContentBlocks(Object.freeze(blocks));
 }
 
 function decodeStringArray(
@@ -2286,12 +2312,16 @@ function workspacePathString(value: unknown, context: ValidationContext): string
 }
 
 function workspaceIdentity(value: unknown, context: ValidationContext): WorkspaceIdentity | undefined {
-  const raw = boundedString(value, context, CODEX_ADAPTER_LIMITS.maxShortStringBytes, false);
-  return raw === undefined ? undefined : resolveWorkspaceIdentity(raw);
+  if (typeof value !== "string" || !consumeJsonString(value, context)) return undefined;
+  return resolveWorkspaceIdentity(value);
 }
 
 function approvalPolicyValue(value: unknown): CodexAdapterApprovalPolicy | undefined {
   return typeof value === "string" && APPROVAL_POLICIES.has(value) ? (value as CodexAdapterApprovalPolicy) : undefined;
+}
+
+function modelSelectionValue(value: unknown): CodexAdapterModelSelection | undefined {
+  return value === "explicit" || value === "inherited" ? value : undefined;
 }
 
 function sandboxModeValue(value: unknown): CodexAdapterSandboxMode | undefined {

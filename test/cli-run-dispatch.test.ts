@@ -12,6 +12,81 @@ type OutputOperations = ApplicationRunOutputOperations<Authorization>;
 const authorization: Authorization = { transport: "test" };
 const outputOperations = runOutputOperations();
 
+test("Run start and retry dispatch only caller-owned mutation fields", async () => {
+  const calls: unknown[] = [];
+  const operations = runOperations({
+    start: async (request, options) => {
+      calls.push(["start", request, options]);
+      return writeSuccess({ sessionId: request.sessionId, runId: "run-new", phase: "queued" as const });
+    },
+    retry: async (request, options) => {
+      calls.push(["retry", request, options]);
+      return writeSuccess({
+        sessionId: request.sessionId,
+        runId: "run-retry",
+        retryOfRunId: request.retryOfRunId,
+        phase: "queued" as const,
+      });
+    },
+  });
+  const idempotencyKey = "018f1f4e-7f0a-7000-8000-000000000701";
+  const start = await dispatchCliRunCommand(
+    {
+      identity: { namespace: "run", operation: "start" },
+      sessionId: "session-1",
+      idempotencyKey,
+      contentBlocks: [{ type: "text", text: "hello" }],
+      execution: {
+        model: "gpt-test",
+        reasoningEffort: "medium",
+        sandbox: { mode: "workspace-write", networkAccess: false },
+      },
+    },
+    { operations, outputOperations, authorization },
+  );
+  const retry = await dispatchCliRunCommand(
+    {
+      identity: { namespace: "run", operation: "retry" },
+      sessionId: "session-1",
+      retryOfRunId: "run-source",
+      idempotencyKey,
+      executionOverrides: { reasoningEffort: "high" },
+    },
+    { operations, outputOperations, authorization },
+  );
+
+  assert.equal(start.ok, true);
+  assert.equal(retry.ok, true);
+  assert.deepEqual(calls, [
+    [
+      "start",
+      {
+        context: { authorization },
+        sessionId: "session-1",
+        idempotencyKey,
+        contentBlocks: [{ type: "text", text: "hello" }],
+        execution: {
+          model: "gpt-test",
+          reasoningEffort: "medium",
+          sandbox: { mode: "workspace-write", networkAccess: false },
+        },
+      },
+      {},
+    ],
+    [
+      "retry",
+      {
+        context: { authorization },
+        sessionId: "session-1",
+        retryOfRunId: "run-source",
+        idempotencyKey,
+        executionOverrides: { reasoningEffort: "high" },
+      },
+      {},
+    ],
+  ]);
+});
+
 test("Run status and events dispatch only validated Application requests", async () => {
   const calls: unknown[] = [];
   const operations = runOperations({
@@ -267,6 +342,8 @@ function runOperations(overrides: Partial<Operations>): Operations {
     throw new Error("unexpected operation");
   };
   return {
+    start: overrides.start ?? unsupported,
+    retry: overrides.retry ?? unsupported,
     status: overrides.status ?? unsupported,
     events: overrides.events ?? unsupported,
     follow: overrides.follow ?? unsupported,
@@ -288,6 +365,14 @@ function runOutputOperations(overrides: Partial<OutputOperations> = {}): OutputO
 
 function success<TValue>(value: TValue) {
   return { overallStatus: "success", value, persistence: { status: "read", effect: "none" } } as const;
+}
+
+function writeSuccess<TValue>(value: TValue) {
+  return {
+    overallStatus: "success",
+    value,
+    persistence: { status: "committed", effect: "none", replayed: false },
+  } as const;
 }
 
 function activeStatus() {

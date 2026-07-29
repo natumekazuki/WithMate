@@ -15,6 +15,7 @@ import { RuntimeIpcJsonlDecoder } from "./runtime-ipc-jsonl.js";
 import { dispatchRuntimeApplicationOperation } from "./runtime-application-dispatch.js";
 import { snapshotRuntimeApplicationResponse } from "./runtime-application-response.js";
 import {
+  RuntimeApplicationShutdownPendingError,
   startRuntimeApplication,
   type OwnedRuntimeApplication,
   type RuntimeApplicationControl,
@@ -419,10 +420,17 @@ function createStartedRuntimeHost(
     await acceptTask;
     await Promise.allSettled([...activeRequests].map((active) => active.applicationSettled));
     let shutdownResult: RuntimeHostShutdownResult = { checkpoint: "failed" };
-    try {
-      shutdownResult = await application.shutdown();
-    } catch (error) {
-      errors.push(error);
+    while (true) {
+      try {
+        shutdownResult = await application.shutdown();
+        break;
+      } catch (error) {
+        if (!(error instanceof RuntimeApplicationShutdownPendingError)) {
+          errors.push(error);
+          break;
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      }
     }
     try {
       await listener.close();

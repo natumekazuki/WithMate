@@ -787,6 +787,7 @@ root capacity使用数は、`session_relations.orchestration_root_session_id`配
 - live stateはboundedな`error_code`、`retryable`、`last_attempt_at`を持てる。保存再試行は同じ確定済みdomain transitionのcommitだけを行い、Providerを再実行しない。commit成功後はlive stateを破棄する。
 - CLI / APIは実行outcomeとlive persistence結果を同じresponse envelopeの別fieldで返せる。保存失敗時は`overallStatus='partial_success'`と`persistence.status='failed'`を返し、未永続のoutcomeを復旧可能とは表示しない。
 - runtime host再起動後は保存失敗状態そのものを復元しない。DBに最後にcommitされたRun / Attempt / DispatchとProvider外部状態を照合し、terminal outcomeを証明できれば再commit、証明できなければ`interrupted`へ収束させる。
+- 同じPersistence Workerでexact retryできる一時的なunknown outcomeの間だけruntime host owner claimを保持する。Workerがfatal終了して同じclientでは再試行不能になった場合は、dead clientへの再試行でclaimを永久保持せずhostを終了し、次のhost起動時にdurable stateからstartup reconciliationする。
 - SQLite障害中にruntime hostも終了し、Providerからterminal outcomeを再取得できない場合、そのoutcomeを失う可能性を受容する。これを防ぐ要件が生じた場合は、`runs` columnではなくSQLiteとは別のdurable journalを設計する。
 
 ### live activity

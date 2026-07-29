@@ -3,7 +3,11 @@ import test from "node:test";
 
 import * as publicApi from "../src/main/index.js";
 import type { ApplicationRunOperations } from "../src/main/index.js";
-import type { ApplicationRunFollowResult, ApplicationRunStatus } from "../src/shared/application-run-model.js";
+import type {
+  ApplicationRunAdmissionResult,
+  ApplicationRunFollowResult,
+  ApplicationRunStatus,
+} from "../src/shared/application-run-model.js";
 
 type Authorization = Readonly<{ principalId: string }>;
 type Equal<TLeft, TRight> = (<T>() => T extends TLeft ? 1 : 2) extends <T>() => T extends TRight ? 1 : 2 ? true : false;
@@ -11,6 +15,28 @@ type Assert<TValue extends true> = TValue;
 
 type StatusRequest = Parameters<ApplicationRunOperations<Authorization>["status"]>[0];
 type StatusValue = Awaited<ReturnType<ApplicationRunOperations<Authorization>["status"]>>;
+type StartRequest = Parameters<ApplicationRunOperations<Authorization>["start"]>[0];
+type RetryRequest = Parameters<ApplicationRunOperations<Authorization>["retry"]>[0];
+type StartValue = Awaited<ReturnType<ApplicationRunOperations<Authorization>["start"]>>;
+type _StartOwnsOnlyPublicInputs = Assert<
+  Equal<keyof StartRequest, "context" | "sessionId" | "idempotencyKey" | "contentBlocks" | "execution">
+>;
+type _RetryOwnsOnlyPublicInputs = Assert<
+  Equal<keyof RetryRequest, "context" | "sessionId" | "retryOfRunId" | "idempotencyKey" | "executionOverrides">
+>;
+type _StartCannotSupplyScopeOrInternalIdentity = Assert<
+  Equal<
+    Extract<
+      keyof StartRequest,
+      "providerId" | "workspaceKey" | "workspacePath" | "attemptId" | "bindingId" | "threadId" | "turnId"
+    >,
+    never
+  >
+>;
+type _AdmissionResultCannotExposeInternalIdentity = Assert<
+  Equal<keyof ApplicationRunAdmissionResult, "sessionId" | "runId" | "retryOfRunId" | "phase">
+>;
+type _StartUsesWriteEnvelope = Assert<Equal<StartValue["overallStatus"], "success" | "partial_success" | "failure">>;
 type _StatusRequestOwnsRunScope = Assert<
   Equal<Pick<StatusRequest, "sessionId" | "runId">, Readonly<{ sessionId: string; runId: string }>>
 >;
@@ -41,6 +67,11 @@ test("public Run API is type-only and keeps phase-specific status contracts", ()
   const compileTimeAssertions = null as
     | _StatusRequestOwnsRunScope
     | _StatusResponseUsesApplicationEnvelope
+    | _StartOwnsOnlyPublicInputs
+    | _RetryOwnsOnlyPublicInputs
+    | _StartCannotSupplyScopeOrInternalIdentity
+    | _AdmissionResultCannotExposeInternalIdentity
+    | _StartUsesWriteEnvelope
     | _ActiveAllowsLiveActivity
     | _CompletedRequiresTerminalTime
     | _DeadlineCannotCarryTerminalStatus

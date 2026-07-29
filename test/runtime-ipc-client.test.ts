@@ -81,8 +81,11 @@ test("runtime IPC client correlates concurrent responses that complete out of or
 test("runtime IPC client cancels client-scoped waits, never cancels durable writes, and ignores late responses", async (context) => {
   let followSignal: AbortSignal | undefined;
   let writeSignal: AbortSignal | undefined;
+  let startSignal: AbortSignal | undefined;
   let writeCalls = 0;
+  let startCalls = 0;
   const durable = deferred<unknown>();
+  const durableStart = deferred<unknown>();
   const fixture = await createHostFixture(context, {
     follow: async (_request, options) => {
       followSignal = options?.signal;
@@ -92,6 +95,11 @@ test("runtime IPC client cancels client-scoped waits, never cancels durable writ
       writeCalls += 1;
       writeSignal = options?.signal;
       return await durable.promise;
+    },
+    start: async (_request, options) => {
+      startCalls += 1;
+      startSignal = options?.signal;
+      return await durableStart.promise;
     },
     list: async () => readResponse({ items: [] }),
   });
@@ -121,9 +129,32 @@ test("runtime IPC client cancels client-scoped waits, never cancels durable writ
   durable.resolve(writeResponse({ sessionId: "session-1", title: "Renamed", updatedAt: 2 }));
   await new Promise((resolve) => setImmediate(resolve));
 
+  await assert.rejects(
+    client.request(
+      "run.start",
+      {
+        sessionId: "session-1",
+        idempotencyKey: randomUUID(),
+        contentBlocks: [{ type: "text", text: "hello" }],
+        execution: {
+          model: "gpt-test",
+          reasoningEffort: "medium",
+          sandbox: { mode: "read-only", networkAccess: false },
+        },
+      },
+      { timeoutMs: 25 },
+    ),
+    (error: unknown) => error instanceof RuntimeIpcClientError && error.code === "request_timeout",
+  );
+  assert.equal(startCalls, 1);
+  assert.equal(startSignal?.aborted, false);
+  durableStart.resolve(writeResponse({ sessionId: "session-1", runId: "run-new", phase: "queued" }));
+  await new Promise((resolve) => setImmediate(resolve));
+
   const read = await client.request("session.list", { limit: 1 });
   assertJsonEqual(read, readResponse({ items: [] }));
   assert.equal(writeCalls, 1);
+  assert.equal(startCalls, 1);
 });
 
 test("a queued request timeout remains not-started and a connection loss settles the sent sibling", async (context) => {
@@ -182,6 +213,7 @@ test("runtime Application client preserves exact retry and export reconciliation
   const client = {
     async request(operation: RuntimeIpcOperation) {
       switch (operation) {
+        case "run.start":
         case "session.archive":
           throw new RuntimeIpcClientError("connection_closed", "unknown", false);
         case "session.unarchive":
@@ -208,6 +240,23 @@ test("runtime Application client preserves exact retry and export reconciliation
   } as unknown as RuntimeIpcClient;
   const runtime = createRuntimeApplicationClient(client);
   const context = { authorization: LOCAL_AUTHORIZATION };
+
+  const start = await runtime.runOperations.start({
+    context,
+    sessionId: "session-1",
+    idempotencyKey,
+    contentBlocks: [{ type: "text", text: "hello" }],
+    execution: {
+      model: "gpt-test",
+      reasoningEffort: "medium",
+      sandbox: { mode: "read-only", networkAccess: false },
+    },
+  });
+  assert.deepEqual(start.persistence, {
+    status: "failed",
+    effect: "unknown",
+    reconciliation: "exact_request_required",
+  });
 
   const archive = await runtime.operations.archive({
     context,
@@ -305,7 +354,7 @@ test("runtime Application client preserves exact retry and export reconciliation
   });
 });
 
-test("runtime Application client owns the complete 21-operation proxy allowlist without forwarding authorization", async () => {
+test("runtime Application client owns the complete 23-operation proxy allowlist without forwarding authorization", async () => {
   const calls: Array<Readonly<{ operation: RuntimeIpcOperation; payload: RuntimeIpcOperationPayload }>> = [];
   let closeCalls = 0;
   const client = {
@@ -354,6 +403,24 @@ test("runtime Application client owns the complete 21-operation proxy allowlist 
     maxBytes: 1,
   });
   await runtime.sessionRunOperations.runs({ context, sessionId: "session-1", limit: 1 });
+  await runtime.runOperations.start({
+    context,
+    sessionId: "session-1",
+    idempotencyKey,
+    contentBlocks: [{ type: "text", text: "hello" }],
+    execution: {
+      model: "gpt-test",
+      reasoningEffort: "medium",
+      sandbox: { mode: "workspace-write", networkAccess: false },
+    },
+  });
+  await runtime.runOperations.retry({
+    context,
+    sessionId: "session-1",
+    retryOfRunId: "run-source",
+    idempotencyKey,
+    executionOverrides: { reasoningEffort: "high" },
+  });
   await runtime.runOperations.status({ context, sessionId: "session-1", runId: "run-1" });
   await runtime.runOperations.events({ context, sessionId: "session-1", runId: "run-1", limit: 1 });
   await runtime.runOperations.follow({
@@ -645,6 +712,8 @@ function fakeRuntimeApplication(overrides: Readonly<Record<string, FakeMethod>>)
     },
     sessionRunOperations: { runs: overrides.runs ?? fallback },
     runOperations: {
+      start: overrides.start ?? fallback,
+      retry: overrides.retry ?? fallback,
       status: overrides.status ?? fallback,
       events: overrides.events ?? fallback,
       follow: overrides.follow ?? fallback,

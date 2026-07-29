@@ -7,18 +7,94 @@ const PROCESS_SET_QUOTA = 0x0100;
 
 type NativeHandle = bigint | null;
 
+type WindowsJobApi = Readonly<{
+  createJobObject: (securityAttributes: null, name: null) => NativeHandle;
+  setInformationJobObject: (
+    jobHandle: Exclude<NativeHandle, null>,
+    informationClass: number,
+    limits: ReturnType<typeof jobLimits>,
+    limitsSize: number,
+  ) => number;
+  openProcess: (desiredAccess: number, inheritHandle: number, pid: number) => NativeHandle;
+  assignProcessToJobObject: (
+    jobHandle: Exclude<NativeHandle, null>,
+    processHandle: Exclude<NativeHandle, null>,
+  ) => number;
+  terminateJobObject: (jobHandle: Exclude<NativeHandle, null>, exitCode: number) => number;
+  closeHandle: (handle: Exclude<NativeHandle, null>) => number;
+  jobLimitsSize: number;
+}>;
+
+export type WindowsJobObjectDependencies = Readonly<{
+  platform?: NodeJS.Platform;
+  api?: WindowsJobApi;
+}>;
+
 export interface WindowsJobObject {
   assignProcess(pid: number): void;
   terminate(): void;
   close(): void;
 }
 
-export function createWindowsJobObject(): WindowsJobObject {
-  if (process.platform !== "win32") throw new Error("Windows process ownership is unavailable.");
+export class WindowsJobObjectAcquisitionError extends Error {
+  readonly owner: WindowsJobObject;
 
-  const native = loadWindowsJobApi();
+  constructor(owner: WindowsJobObject, options?: ErrorOptions) {
+    super("Windows process ownership was only partially acquired.", options);
+    this.name = "WindowsJobObjectAcquisitionError";
+    this.owner = owner;
+  }
+}
+
+export function createWindowsJobObject(dependencies: WindowsJobObjectDependencies = {}): WindowsJobObject {
+  if ((dependencies.platform ?? process.platform) !== "win32") {
+    throw new Error("Windows process ownership is unavailable.");
+  }
+
+  const native = dependencies.api ?? loadWindowsJobApi();
   const jobHandle = native.createJobObject(null, null);
   if (jobHandle === null || jobHandle === 0n) throw new Error("Windows process ownership could not be created.");
+
+  let closed = false;
+  const pendingProcessHandles = new Set<Exclude<NativeHandle, null>>();
+  const owner: WindowsJobObject = {
+    assignProcess(pid) {
+      if (closed) throw new Error("Windows process ownership is closed.");
+      const processHandle = native.openProcess(PROCESS_TERMINATE | PROCESS_SET_QUOTA, 0, pid);
+      if (processHandle === null || processHandle === 0n) {
+        throw new Error("Windows process ownership could not open its process.");
+      }
+      let assignmentError: Error | undefined;
+      if (!native.assignProcessToJobObject(jobHandle, processHandle)) {
+        assignmentError = new Error("Windows process ownership could not assign its process.");
+      }
+      if (!native.closeHandle(processHandle)) {
+        pendingProcessHandles.add(processHandle);
+        const releaseError = new Error("Windows process handle ownership could not be released.");
+        throw assignmentError === undefined
+          ? releaseError
+          : new AggregateError([assignmentError, releaseError], "Windows process ownership assignment failed.");
+      }
+      if (assignmentError !== undefined) throw assignmentError;
+    },
+    terminate() {
+      if (closed) return;
+      if (!native.terminateJobObject(jobHandle, 1)) {
+        throw new Error("Windows process ownership could not terminate its processes.");
+      }
+    },
+    close() {
+      if (closed) return;
+      for (const processHandle of [...pendingProcessHandles]) {
+        if (!native.closeHandle(processHandle)) {
+          throw new Error("Windows process handle ownership could not be released.");
+        }
+        pendingProcessHandles.delete(processHandle);
+      }
+      if (!native.closeHandle(jobHandle)) throw new Error("Windows process ownership could not be released.");
+      closed = true;
+    },
+  };
 
   try {
     if (
@@ -32,43 +108,15 @@ export function createWindowsJobObject(): WindowsJobObject {
       throw new Error("Windows process ownership could not be configured.");
     }
   } catch (error) {
-    native.closeHandle(jobHandle);
-    throw error;
+    throw new WindowsJobObjectAcquisitionError(owner, { cause: error });
   }
 
-  let closed = false;
-  return {
-    assignProcess(pid) {
-      if (closed) throw new Error("Windows process ownership is closed.");
-      const processHandle = native.openProcess(PROCESS_TERMINATE | PROCESS_SET_QUOTA, 0, pid);
-      if (processHandle === null || processHandle === 0n) {
-        throw new Error("Windows process ownership could not open its process.");
-      }
-      try {
-        if (!native.assignProcessToJobObject(jobHandle, processHandle)) {
-          throw new Error("Windows process ownership could not assign its process.");
-        }
-      } finally {
-        native.closeHandle(processHandle);
-      }
-    },
-    terminate() {
-      if (closed) return;
-      if (!native.terminateJobObject(jobHandle, 1)) {
-        throw new Error("Windows process ownership could not terminate its processes.");
-      }
-    },
-    close() {
-      if (closed) return;
-      closed = true;
-      if (!native.closeHandle(jobHandle)) throw new Error("Windows process ownership could not be released.");
-    },
-  };
+  return owner;
 }
 
-let cachedWindowsJobApi: ReturnType<typeof createWindowsJobApi> | undefined;
+let cachedWindowsJobApi: WindowsJobApi | undefined;
 
-function loadWindowsJobApi() {
+function loadWindowsJobApi(): WindowsJobApi {
   cachedWindowsJobApi ??= createWindowsJobApi();
   return cachedWindowsJobApi;
 }

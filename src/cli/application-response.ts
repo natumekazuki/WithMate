@@ -131,6 +131,29 @@ export function projectCliReadApplicationResponse<TValue>(
   return projectCliScopedReadApplicationResponse(value, projectValue, maxIssues, BASE_DOMAIN_CODES);
 }
 
+export function projectCliWriteApplicationResponse<TValue>(
+  value: unknown,
+  projectValue: (value: unknown) => TValue,
+): CliApplicationResponse<TValue, "write"> {
+  const response = exactRecord(value, ["overallStatus", "value", "error", "persistence"]);
+  if (response.overallStatus === "success") {
+    requireAbsent(response, ["error"]);
+    const persistence = projectPersistenceStatus(response.persistence);
+    if (persistence.status !== "committed") malformed();
+    return {
+      overallStatus: "success",
+      value: projectValue(response.value),
+      persistence,
+    };
+  }
+  if (response.overallStatus !== "failure") malformed();
+  requireAbsent(response, ["value"]);
+  const error = projectApplicationError(response.error, BASE_DOMAIN_CODES);
+  const persistence = projectPersistenceStatus(response.persistence);
+  if (!failureCombinationIsValid("write", false, error, persistence)) malformed();
+  return { overallStatus: "failure", error, persistence } as CliApplicationResponse<TValue, "write">;
+}
+
 export function projectCliRunOutputReadApplicationResponse<TValue>(
   value: unknown,
   projectValue: (value: unknown) => TValue,
@@ -243,7 +266,9 @@ function runOutputExportFailureCombinationIsValid(
   );
 }
 
-export function exitCodeForCliApplicationResponse(response: CliApplicationResponse<unknown, "read">): CliExitCode {
+export function exitCodeForCliApplicationResponse(
+  response: CliApplicationResponse<unknown, "read" | "write">,
+): CliExitCode {
   return exitCodeForApplicationResponse(response);
 }
 
@@ -1009,15 +1034,31 @@ function projectCapacityDetails(
   value: unknown,
 ): Extract<CliApplicationError, Readonly<{ code: "capacity_exceeded" }>>["details"] {
   const details = record(value);
-  const current = nonNegativeInteger(details.current);
-  const limit = nonNegativeInteger(details.limit);
   if (details.scope === "root" || details.scope === "session_tree") {
-    return { scope: details.scope, rootSessionId: boundedString(details.rootSessionId), current, limit };
+    const capacity = exactRecord(value, ["scope", "rootSessionId", "current", "limit"]);
+    return {
+      scope: details.scope,
+      rootSessionId: boundedString(capacity.rootSessionId),
+      current: nonNegativeInteger(capacity.current),
+      limit: nonNegativeInteger(capacity.limit),
+    };
   }
   if (details.scope === "provider") {
-    return { scope: "provider", providerId: boundedString(details.providerId), current, limit };
+    const capacity = exactRecord(value, ["scope", "current", "limit"]);
+    return {
+      scope: "provider",
+      current: nonNegativeInteger(capacity.current),
+      limit: nonNegativeInteger(capacity.limit),
+    };
   }
-  if (details.scope === "application") return { scope: "application", current, limit };
+  if (details.scope === "application") {
+    const capacity = exactRecord(value, ["scope", "current", "limit"]);
+    return {
+      scope: "application",
+      current: nonNegativeInteger(capacity.current),
+      limit: nonNegativeInteger(capacity.limit),
+    };
+  }
   malformed();
 }
 

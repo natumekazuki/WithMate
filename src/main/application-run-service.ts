@@ -10,6 +10,9 @@ import type {
   ApplicationRunOperations,
   ApplicationRunOperation,
   ApplicationRunPhase,
+  ApplicationRunRetryRequest,
+  ApplicationRunStartRequest,
+  ApplicationRunAdmissionResult,
   ApplicationRunStatus,
   ApplicationRunStatusRequest,
 } from "../shared/application-run-model.js";
@@ -21,12 +24,21 @@ import type {
 } from "../shared/application-service-model.js";
 import type { PersistenceError } from "../shared/persistence-protocol.js";
 import type { RunEventPage } from "../shared/repository-read-model.js";
+import {
+  ApplicationRunAdmissionService,
+  createRepositoryApplicationRunAdmissionPort,
+  defaultApplicationRunAdmissionPort,
+  defaultApplicationRunWorkHandoffPort,
+  type ApplicationRunAdmissionPort,
+  type ApplicationRunAdmissionReadPort,
+  type ApplicationRunWorkHandoffPort,
+} from "./application-run-admission-service.js";
 import { projectPersistedRun } from "./application-run-projection.js";
 import { PersistenceClientError } from "./persistence-worker-client.js";
 import type { PersistenceWorkerClient } from "./persistence-worker-client.js";
 import { RepositoryReadClient } from "./repository-read-client.js";
 
-type RunReadPort = Pick<RepositoryReadClient, "sessionGet" | "runGet" | "runEventsPage">;
+type RunReadPort = ApplicationRunAdmissionReadPort & Pick<RepositoryReadClient, "runEventsPage">;
 
 type ApplicationRunFailureResponse = Extract<
   ApplicationOperationResponse<never, "read">,
@@ -94,6 +106,8 @@ export type ApplicationRunServiceOptions<TAuthorizationContext> = Readonly<{
   reads: RunReadPort;
   access: ApplicationRunAccessValidator<TAuthorizationContext>;
   snapshotAuthorization(value: unknown): TAuthorizationContext;
+  admission?: ApplicationRunAdmissionPort;
+  handoff?: ApplicationRunWorkHandoffPort;
   liveActivity?: ApplicationRunLiveActivityPort;
   clock?: ApplicationRunClock;
   sleeper?: ApplicationRunSleeper;
@@ -136,13 +150,18 @@ export function createApplicationRunOperations<TAuthorizationContext>(
   worker: PersistenceWorkerClient,
   options: Omit<ApplicationRunServiceOptions<TAuthorizationContext>, "reads">,
 ): ApplicationRunOperations<TAuthorizationContext> {
-  return new ApplicationRunService({ reads: new RepositoryReadClient(worker), ...options });
+  return new ApplicationRunService({
+    reads: new RepositoryReadClient(worker),
+    ...options,
+    admission: options.admission ?? createRepositoryApplicationRunAdmissionPort(worker),
+  });
 }
 
 export class ApplicationRunService<TAuthorizationContext> implements ApplicationRunOperations<TAuthorizationContext> {
   readonly #reads: RunReadPort;
   readonly #access: ApplicationRunAccessValidator<TAuthorizationContext>;
   readonly #snapshotAuthorization: (value: unknown) => TAuthorizationContext;
+  readonly #admissionService: ApplicationRunAdmissionService<TAuthorizationContext>;
   readonly #liveActivity: ApplicationRunLiveActivityPort;
   readonly #clock: ApplicationRunClock;
   readonly #sleeper: ApplicationRunSleeper;
@@ -151,9 +170,30 @@ export class ApplicationRunService<TAuthorizationContext> implements Application
     this.#reads = options.reads;
     this.#access = options.access;
     this.#snapshotAuthorization = options.snapshotAuthorization;
+    this.#admissionService = new ApplicationRunAdmissionService({
+      reads: options.reads,
+      admission: options.admission ?? defaultApplicationRunAdmissionPort(),
+      handoff: options.handoff ?? defaultApplicationRunWorkHandoffPort(),
+      access: options.access,
+      snapshotAuthorization: options.snapshotAuthorization,
+    });
     this.#liveActivity = options.liveActivity ?? defaultLiveActivity;
     this.#clock = options.clock ?? monotonicClock;
     this.#sleeper = options.sleeper ?? defaultSleeper;
+  }
+
+  start(
+    request: ApplicationRunStartRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationRunAdmissionResult, "write">> {
+    return this.#admissionService.start(request, options);
+  }
+
+  retry(
+    request: ApplicationRunRetryRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationRunAdmissionResult, "write">> {
+    return this.#admissionService.retry(request, options);
   }
 
   async status(
@@ -252,7 +292,7 @@ export class ApplicationRunService<TAuthorizationContext> implements Application
   }
 
   async #authorizeAndResolveScope(
-    operation: ApplicationRunOperation,
+    operation: Extract<ApplicationRunOperation, "status" | "events" | "follow">,
     input: ApplicationRunStatusRequest<TAuthorizationContext>,
     control: OperationControl,
   ): Promise<OperationResolution<RunScope>> {
