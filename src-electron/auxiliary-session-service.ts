@@ -132,6 +132,10 @@ export class AuxiliarySessionService {
     return this.deps.getStorage().listAllAuxiliarySessions();
   }
 
+  listActiveAuxiliarySessionSummaries(parentSessionIds: readonly string[]): AuxiliarySessionSummary[] {
+    return this.deps.getStorage().listActiveAuxiliarySessionSummaries(parentSessionIds);
+  }
+
   getActiveAuxiliarySession(parentSessionId: string): AuxiliarySession | null {
     return this.deps.getStorage().getActiveAuxiliarySession(parentSessionId);
   }

@@ -14,6 +14,10 @@ type AuxiliarySessionRow = {
   payload_json: string;
 };
 
+type ScopedAuxiliarySessionRow = AuxiliarySessionRow & {
+  parent_session_id: string;
+};
+
 type TableInfoRow = {
   name: string;
 };
@@ -77,6 +81,39 @@ export class AuxiliarySessionStorage {
         .map((row) => parseAuxiliarySessionRow(row))
         .filter((session): session is AuxiliarySession => session !== null)
         .map(projectAuxiliarySessionSummary);
+    });
+  }
+
+  listActiveAuxiliarySessionSummaries(parentSessionIds: readonly string[]): AuxiliarySessionSummary[] {
+    const normalizedParentSessionIds = Array.from(new Set(
+      parentSessionIds
+        .map((parentSessionId) => parentSessionId.trim())
+        .filter(Boolean),
+    ));
+    if (normalizedParentSessionIds.length === 0) {
+      return [];
+    }
+
+    return this.withDb((db) => {
+      const placeholders = normalizedParentSessionIds.map(() => "?").join(", ");
+      const rows = db.prepare(`
+        SELECT parent_session_id, created_at, updated_at, payload_json
+        FROM auxiliary_sessions
+        WHERE status = 'active'
+          AND parent_session_id IN (${placeholders})
+        ORDER BY updated_at DESC, id DESC
+      `).all(...normalizedParentSessionIds) as ScopedAuxiliarySessionRow[];
+      return rows.flatMap((row) => {
+        const session = parseAuxiliarySessionRow(row);
+        if (
+          !session
+          || session.status !== "active"
+          || session.parentSessionId !== row.parent_session_id
+        ) {
+          return [];
+        }
+        return [projectAuxiliarySessionSummary(session)];
+      });
     });
   }
 

@@ -83,6 +83,7 @@ export type ProjectMemoryStorageAccess = ProjectMemoryStorage | ProjectMemorySto
 export type AuxiliarySessionStorageAccess = {
   listAllAuxiliarySessions(): AuxiliarySession[];
   listAuxiliarySessions(parentSessionId: string): AuxiliarySessionSummary[];
+  listActiveAuxiliarySessionSummaries(parentSessionIds: readonly string[]): AuxiliarySessionSummary[];
   listRunningActiveAuxiliarySessions(): AuxiliarySessionSummary[];
   getActiveAuxiliarySession(parentSessionId: string): AuxiliarySession | null;
   getAuxiliarySession(auxiliarySessionId: string): AuxiliarySession | null;
@@ -345,6 +346,10 @@ class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
   }
 
   listAuxiliarySessions(): AuxiliarySessionSummary[] {
+    return [];
+  }
+
+  listActiveAuxiliarySessionSummaries(): AuxiliarySessionSummary[] {
     return [];
   }
 
