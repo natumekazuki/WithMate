@@ -30,7 +30,7 @@ WithMate では、`Recent Sessions` が 2 の `resume` 側を担う。
 - 現在選択中の Character、またはランダム選択の確認
 - Provider の確認
 - 新規セッション開始
-- model / depth / approval / sandbox / custom agent は launch dialog には出さない。Main Process が選択中 provider の直近 Session 一件から解決し、Settings / model catalog の変更と直列化して永続化する。継承と失敗時の方針は ADR 006 を参照する
+- model / depth / approval / sandbox / custom agent は launch dialog には出さない。Main Process が選択中 provider の直近 Session 一件から解決し、Settings / model catalog の変更と直列化して永続化する。継承と失敗時の方針は ADR 007 を参照する
 
 ### 担わないもの
 
@@ -140,7 +140,7 @@ React モックでは次の形がよい。
   - background = character `main`
   - left accent bar = character `sub`
   - foreground = background から自動コントラスト決定
-- model / depth / approval / sandbox / custom agent は launch dialog には出さず、Main Process が選択中 provider の直近 Session 一件から解決する。Home の履歴キャッシュは実行設定の正本にせず、選択から永続化までは Settings / model catalog の変更と直列化する。詳細は ADR 006 を参照する
+- model / depth / approval / sandbox / custom agent は launch dialog には出さず、Main Process が選択中 provider の直近 Session 一件から解決する。Home の履歴キャッシュは実行設定の正本にせず、選択から永続化までは Settings / model catalog の変更と直列化する。詳細は ADR 007 を参照する
 - session 作成直後の UI 表示も `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording に揃える
 - `provider` は session 作成時に明示保存する
 - `Start New Session` を押すと、入力した title を持つ新規 session record を作って `Session Window` を開く

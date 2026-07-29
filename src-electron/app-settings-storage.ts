@@ -7,7 +7,9 @@ import { openAppDatabase } from "./sqlite-connection.js";
 const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
 const MEMORY_GENERATION_ENABLED_KEY = "memory_generation_enabled";
 const LAUNCH_AT_LOGIN_ENABLED_KEY = "launch_at_login_enabled";
+const SESSION_TURN_NOTIFICATION_ENABLED_KEY = "session_turn_notification_enabled";
 const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
+const SESSION_RIGHT_PANE_VISIBLE_KEY = "session_right_pane_visible";
 const MEMORY_FILE_QUOTA_BYTES_KEY = "memory_file_quota_bytes";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
@@ -51,10 +53,28 @@ export class AppSettingsStorage {
         ON CONFLICT(setting_key) DO NOTHING
       `)
       .run(
+        SESSION_TURN_NOTIFICATION_ENABLED_KEY,
+        String(DEFAULT_APP_SETTINGS.sessionTurnNotificationEnabled),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
         AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY,
         String(DEFAULT_APP_SETTINGS.autoCollapseActionDockOnSend),
         updatedAt,
       );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(SESSION_RIGHT_PANE_VISIBLE_KEY, String(DEFAULT_APP_SETTINGS.sessionRightPaneVisible), updatedAt);
     this.db
       .prepare(`
         INSERT INTO app_settings (setting_key, setting_value, updated_at)
@@ -122,8 +142,18 @@ export class AppSettingsStorage {
         settings.launchAtLoginEnabled = row.setting_value === "true";
         continue;
       }
+      if (row.setting_key === SESSION_TURN_NOTIFICATION_ENABLED_KEY) {
+        if (row.setting_value === "true" || row.setting_value === "false") {
+          settings.sessionTurnNotificationEnabled = row.setting_value === "true";
+        }
+        continue;
+      }
       if (row.setting_key === AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY) {
         settings.autoCollapseActionDockOnSend = row.setting_value === "true";
+        continue;
+      }
+      if (row.setting_key === SESSION_RIGHT_PANE_VISIBLE_KEY) {
+        settings.sessionRightPaneVisible = row.setting_value === "true";
         continue;
       }
       if (row.setting_key === MEMORY_FILE_QUOTA_BYTES_KEY) {
@@ -191,6 +221,7 @@ export class AppSettingsStorage {
     const normalized = normalizeAppSettings(nextSettings);
     const updatedAt = new Date().toISOString();
 
+    // Right pane visibility has its own write path so stale full-settings snapshots cannot overwrite it.
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       this.db
@@ -211,6 +242,19 @@ export class AppSettingsStorage {
             updated_at = excluded.updated_at
         `)
         .run(LAUNCH_AT_LOGIN_ENABLED_KEY, String(normalized.launchAtLoginEnabled), updatedAt);
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          SESSION_TURN_NOTIFICATION_ENABLED_KEY,
+          String(normalized.sessionTurnNotificationEnabled),
+          updatedAt,
+        );
       this.db
         .prepare(`
           INSERT INTO app_settings (setting_key, setting_value, updated_at)
@@ -282,11 +326,25 @@ export class AppSettingsStorage {
           updatedAt,
         );
       this.db.exec("COMMIT");
-      return normalized;
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
     }
+
+    return this.getSettings();
+  }
+
+  updateSessionRightPaneVisibility(isVisible: boolean): AppSettings {
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO UPDATE SET
+          setting_value = excluded.setting_value,
+          updated_at = excluded.updated_at
+      `)
+      .run(SESSION_RIGHT_PANE_VISIBLE_KEY, String(isVisible), new Date().toISOString());
+    return this.getSettings();
   }
 
   resetSettings(): AppSettings {

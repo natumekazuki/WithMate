@@ -22,6 +22,7 @@ describe("provider-settings-state", () => {
     assert.equal(DEFAULT_BACKGROUND_TIMEOUT_SECONDS, 180);
     assert.equal(settings.memoryExtractionProviderSettings.codex.timeoutSeconds, 180);
     assert.equal(settings.autoCollapseActionDockOnSend, true);
+    assert.equal(settings.sessionTurnNotificationEnabled, true);
     assert.equal(settings.memoryFileQuotaBytes, MEMORY_FILE_QUOTA_DEFAULT_BYTES);
   });
 
@@ -101,6 +102,12 @@ describe("provider-settings-state", () => {
     assert.equal(createDefaultAppSettings().launchAtLoginEnabled, false);
     assert.equal(normalizeAppSettings({ launchAtLoginEnabled: true }).launchAtLoginEnabled, true);
     assert.equal(normalizeAppSettings({ launchAtLoginEnabled: "true" }).launchAtLoginEnabled, false);
+  });
+
+  it("Session turn notification は default true で boolean を保持する", () => {
+    assert.equal(createDefaultAppSettings().sessionTurnNotificationEnabled, true);
+    assert.equal(normalizeAppSettings({ sessionTurnNotificationEnabled: false }).sessionTurnNotificationEnabled, false);
+    assert.equal(normalizeAppSettings({ sessionTurnNotificationEnabled: "false" }).sessionTurnNotificationEnabled, true);
   });
 
   it("memory file quota は normalize で min/max に clamp する", () => {

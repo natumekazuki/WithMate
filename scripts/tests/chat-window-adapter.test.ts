@@ -793,13 +793,18 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
 
 test("buildLiveSessionSplitterProps は context rail resize state を反映する", () => {
   const onPointerDown = () => {};
+  const onToggle = () => {};
   const splitterProps = buildLiveSessionSplitterProps({
     isContextRailResizing: true,
+    isContextRailVisible: true,
     onStartContextRailResize: onPointerDown,
+    onToggleContextRailVisibility: onToggle,
   });
 
   assert.equal(splitterProps.isActive, true);
+  assert.equal(splitterProps.isRightPaneVisible, true);
   assert.equal(splitterProps.onPointerDown, onPointerDown);
+  assert.equal(splitterProps.onToggleRightPane, onToggle);
 });
 
 test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む shell を組み立てる", () => {
@@ -880,8 +885,11 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
     compactActionDockProps,
     splitterProps: {
       isActive: false,
+      isRightPaneVisible: true,
       onPointerDown: noop,
+      onToggleRightPane: noop,
     },
+    isRightPaneVisible: true,
     rightPaneProps,
     modals: React.createElement("div"),
   });
@@ -897,8 +905,11 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
     compactActionDockProps,
     splitterProps: {
       isActive: false,
+      isRightPaneVisible: true,
       onPointerDown: noop,
+      onToggleRightPane: noop,
     },
+    isRightPaneVisible: true,
     rightPaneProps,
     modals: React.createElement("div"),
     isAuxiliaryMode: true,
@@ -1031,7 +1042,9 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
     },
     splitter: {
       isContextRailResizing: true,
+      isContextRailVisible: true,
       onStartContextRailResize: onPointerDown,
+      onToggleContextRailVisibility: noop,
     },
   });
 
@@ -1041,6 +1054,7 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
   assert.equal(bodyProps.composerProps.showAdditionalDirectoryControls, true);
   assert.equal(bodyProps.compactActionDockProps.onSendOrCancel, onSendOrCancel);
   assert.equal(bodyProps.splitterProps.isActive, true);
+  assert.equal(bodyProps.splitterProps.isRightPaneVisible, true);
   assert.equal(bodyProps.splitterProps.onPointerDown, onPointerDown);
 });
 

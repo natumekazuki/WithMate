@@ -734,6 +734,8 @@ export function SessionHeaderHandle({ taskTitle, onClick }: SessionHeaderHandleP
   );
 }
 
+export const SESSION_RIGHT_PANE_ID = "session-right-pane";
+
 export type SessionChatScreenProps = {
   mode: ChatWindowModeKind;
   className?: string;
@@ -743,6 +745,7 @@ export type SessionChatScreenProps = {
   actionDock: ReactNode;
   rightPane: ReactNode;
   splitter: ReactNode;
+  isRightPaneVisible?: boolean;
   workbenchRef?: RefObject<HTMLDivElement | null>;
   workbenchStyle?: CSSProperties;
   modals?: ReactNode;
@@ -757,6 +760,7 @@ export function SessionChatScreen({
   actionDock,
   rightPane,
   splitter,
+  isRightPaneVisible = true,
   workbenchRef,
   workbenchStyle,
   modals,
@@ -768,14 +772,20 @@ export function SessionChatScreen({
       <section className="content-grid session-content-grid">
         <section className="chat-panel session-work-surface rise-3">
           <div className="session-workbench" ref={workbenchRef} style={workbenchStyle}>
-            <div className="session-main-grid">
+            <div className={`session-main-grid${isRightPaneVisible ? "" : " session-main-grid-right-pane-hidden"}`}>
               <div className="session-message-stack">
                 {messageColumn}
                 {actionDock}
               </div>
 
               {splitter}
-              {rightPane}
+              <div
+                id={SESSION_RIGHT_PANE_ID}
+                className="session-right-pane-slot"
+                hidden={!isRightPaneVisible}
+              >
+                {rightPane}
+              </div>
             </div>
           </div>
         </section>
@@ -3269,7 +3279,7 @@ export function SessionComposerExpanded({
         </div>
       ) : null}
 
-      <div className={`composer-input-row${isRunning ? " running" : ""}`}>
+      <div className="composer-input-row">
         <div className={`composer-box${isRunning ? " running" : ""}${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
           <textarea
             ref={composerTextareaRef}
@@ -3302,6 +3312,84 @@ export function SessionComposerExpanded({
             </div>
           ) : null}
         </div>
+      </div>
+
+      <div className={`composer-control-row${isRunning ? " running" : ""}`}>
+        <div className="composer-settings">
+          {showExecutionModeControls ? (
+            <>
+              <div className="composer-setting-field composer-setting-approval">
+                <span>Approval</span>
+                <select
+                  value={selectedApprovalMode}
+                  onChange={(event) => onChangeApprovalMode(event.target.value as ApprovalMode)}
+                  disabled={isRunning || composerBlocked}
+                  aria-label="Approval"
+                >
+                  {approvalOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {sandboxOptions.length > 0 ? (
+                <div className="composer-setting-field composer-setting-sandbox">
+                  <span>Sandbox</span>
+                  <select
+                    value={selectedCodexSandboxMode}
+                    onChange={(event) => onChangeCodexSandboxMode(event.target.value as CodexSandboxMode)}
+                    disabled={isRunning || composerBlocked}
+                    aria-label="Sandbox"
+                  >
+                    {sandboxOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+
+          <div className="composer-setting-field composer-setting-model">
+            <span>Model</span>
+            <select
+              value={selectedModel}
+              onChange={(event) => onChangeModel(event.target.value)}
+              disabled={isRunning || composerBlocked}
+            >
+              {modelOptions.length > 0 ? (
+                modelOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))
+              ) : (
+                <option value={selectedModel}>{selectedModelFallbackLabel}</option>
+              )}
+            </select>
+          </div>
+
+          <div className="composer-setting-field composer-setting-depth">
+            <span>Depth</span>
+            <select
+              value={selectedReasoningEffort}
+              onChange={(event) => onChangeReasoningEffort(event.target.value)}
+              disabled={isRunning || composerBlocked}
+              aria-label="推論の深さ"
+            >
+              {reasoningOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
         {isRunning ? null : (
           <button
             className="session-send-button"
@@ -3313,81 +3401,6 @@ export function SessionComposerExpanded({
             Send
           </button>
         )}
-      </div>
-
-      <div className="composer-settings">
-        {showExecutionModeControls ? (
-          <>
-            <div className="composer-setting-field composer-setting-approval">
-              <span>Approval</span>
-              <select
-                value={selectedApprovalMode}
-                onChange={(event) => onChangeApprovalMode(event.target.value as ApprovalMode)}
-                disabled={isRunning || composerBlocked}
-                aria-label="Approval"
-              >
-                {approvalOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {sandboxOptions.length > 0 ? (
-              <div className="composer-setting-field composer-setting-sandbox">
-                <span>Sandbox</span>
-                <select
-                  value={selectedCodexSandboxMode}
-                  onChange={(event) => onChangeCodexSandboxMode(event.target.value as CodexSandboxMode)}
-                  disabled={isRunning || composerBlocked}
-                  aria-label="Sandbox"
-                >
-                  {sandboxOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : null}
-          </>
-        ) : null}
-
-        <div className="composer-setting-field composer-setting-model">
-          <span>Model</span>
-          <select
-            value={selectedModel}
-            onChange={(event) => onChangeModel(event.target.value)}
-            disabled={isRunning || composerBlocked}
-          >
-            {modelOptions.length > 0 ? (
-              modelOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))
-            ) : (
-              <option value={selectedModel}>{selectedModelFallbackLabel}</option>
-            )}
-          </select>
-        </div>
-
-        <div className="composer-setting-field composer-setting-depth">
-          <span>Depth</span>
-          <select
-            value={selectedReasoningEffort}
-            onChange={(event) => onChangeReasoningEffort(event.target.value)}
-            disabled={isRunning || composerBlocked}
-            aria-label="推論の深さ"
-          >
-            {reasoningOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
       </div>
     </div>
   );

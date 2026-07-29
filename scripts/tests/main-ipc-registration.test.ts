@@ -40,6 +40,7 @@ import {
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL,
   WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
 } from "../../src/withmate-ipc-channels.js";
 
@@ -128,6 +129,7 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_APP_SETTINGS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
   assert.ok(handlers.has(WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
@@ -174,6 +176,30 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   for (const channel of removedChannels) {
     assert.equal(handlers.has(channel), false, `${channel} should not be registered`);
   }
+});
+
+test("right pane 表示設定 IPC は boolean だけを専用更新処理へ渡す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const visibilityUpdates: boolean[] = [];
+  const { deps } = createDeps({
+    updateSessionRightPaneVisibility: (isVisible: boolean) => {
+      visibilityUpdates.push(isVisible);
+      return { sessionRightPaneVisible: isVisible };
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL)?.({}, false),
+    { sessionRightPaneVisible: false },
+  );
+  await assert.rejects(
+    () =>
+      handlers.get(WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL)?.({}, "false") as Promise<unknown>,
+    /boolean/,
+  );
+  assert.deepEqual(visibilityUpdates, [false]);
 });
 
 test("registerMainIpcHandlers は Mate 未作成時でも session runtime IPC を block しない", async () => {

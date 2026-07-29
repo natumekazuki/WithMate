@@ -24,11 +24,11 @@ npm run electron:start
 
 | ID | 領域 | 手順 | 期待結果 |
 | --- | --- | --- | --- |
-| V5C-001 | Character 0 件 fallback | Character catalog が 0 件の状態で Home を起動し、`New Session` と Companion 起動 dialog を開く | 起動導線は SingleMate / Mate 未作成 gate に戻らず、neutral fallback の Character 表示で session / companion を開始できる |
+| V5C-001 | Character 0 件 fallback | Character catalog が 0 件の状態で Home を起動し、`New Session` を開く | 起動導線は SingleMate / Mate 未作成 gate に戻らず、neutral fallback の Character 表示で session を開始できる |
 | V5C-002 | Character A / B 登録 | Home の `Characters` から `Create Character` を押し、Character Editor Window で Character A と Character B を作成して name / description / icon / theme / `character.md` を保存する | Home の Characters list に A / B が表示され、Editor Window を開き直しても metadata と `character.md` が保持される |
 | V5C-003 | Default Character | Character Editor Window で Character B を default に設定し、Home の `New Session` を開く | Character selector の初期選択が B になり、Character name / icon / theme preview が selector と作成後の session summary に反映される |
 | V5C-004 | New Session explicit selection | `New Session` で Character A を明示選択して session を作成する | 作成された Session Window と Home summary は Character A の name / icon / theme を表示し、B へ default を戻しても既存 session の表示は A のまま残る |
-| V5C-005 | Companion explicit selection | Companion 起動で Character A / B をそれぞれ選んで companion session を作成する | Companion session summary と Companion Review UI に選択した Character の name / icon / theme が反映される |
+| V5C-005 | Existing Companion compatibility | 既存の companion session を Home の履歴から開く | Companion session summary と Companion Review UI に保存済み Character の name / icon / theme が反映される |
 | V5C-006 | Snapshot boundary | Character A で session を作成した後、Character Editor Window で Character A の `character.md` を別内容へ変更し、既存 session で 1 turn 実行する | provider prompt は session 作成時点の saved snapshot を使い、現在の catalog 内容へ置き換わらない |
 | V5C-007 | Prompt boundary | `character.md` と `character-notes.md` の両方を持つ Character で 1 turn 実行し、Audit Log の `Logical Prompt` / `Transport Payload` を確認する | `character.md` snapshot は system 側に入る。`character-notes.md`、Memory / Growth history、provider instruction sync 由来の Character 書き込みは常設注入されない |
 | V5C-008 | Markdown fence boundary | `character.md` に triple backtick と quadruple backtick の code fence を含め、session を作成して 1 turn 実行する | Character Definition Snapshot section の外側 fence が壊れず、definition 全体が 1 つの markdown block として扱われる |
@@ -103,8 +103,11 @@ npm run electron:start
 | MT-023AA | Theme contrast guard | 極端に明るい / 暗い Character `main` 色をそれぞれ設定し、Home card、Character Editor title、Session title、Diff titlebar を確認する | 前景色は WCAG AA 基準の contrast ratio を満たす dark / light 側へ自動で切り替わり、背景に埋もれない |
 | MT-023A | Session wide layout baseline | `1920x1080` 前後の幅で Session Window を開く | 通常 state では左が最上端から `message list + Action Dock`、右が `title handle + Latest Command` の 2 分割で表示され、right pane は下端まで伸びる |
 | MT-023B | Session splitter resize | wide desktop 状態で左右境界をドラッグする | message list 面と `Latest Command` pane の幅が追従し、極端に寄せても chat の最小可読幅と右 pane の最小幅を下回らない |
-| MT-023C | Session action dock baseline | Session Window を開き、textarea / attachment / skill / approval / model / depth / `Send` の位置関係を見る | これらは message list と同じ左列幅の `Action Dock` にまとまり、expanded 時だけ full editor と設定群が表示される。`File / Folder / Image` は attachment group、`Skill` は別ボタンとして区別される |
-| MT-023C1 | Session narrow layout reachability | 幅 `1400px` 前後まで狭めた Session Window を開く | `message list + Action Dock` の塊の下に right pane が縦 stack で残り、`Latest Command` と provider に応じた `Tasks` / `Context` へ到達できる。狭幅でも right pane が失われない |
+| MT-023B1 | Session right pane toggle / persistence | Agent と Companion の Session Window を開き、一方の splitter をクリックして right pane を非表示にした後、新しい Agent / Companion Session をそれぞれ開く | 操作した Window だけが直ちに非表示となり、すでに開いている他の Window は変化しない。新しく開いた Agent / Companion Window は最後に選んだ非表示状態で始まり、splitter のクリックで再表示できる |
+| MT-023B2 | Session splitter breakpoint | Session Window の viewport を `1399px`、`1400px` の順に変更し、splitter をクリックおよびドラッグする | `1399px` では縦 stack と click 切り替えだけになり、drag cursor や選択抑止は出ない。`1400px` では横分割になり、drag と click の両方が使える |
+| MT-023B3 | Session right pane / Settings draft isolation | Settings Window で API key または設定値を未保存のまま編集し、別の Session Window で right pane を切り替える | Settings Window の未保存内容が変化せず、保存操作を続行できる |
+| MT-023C | Session action dock baseline | Session Window を開き、textarea / attachment / skill / approval / model / depth / `Send` の位置関係を見る。続けて設定群が折り返す幅と最小幅まで Window を狭める | これらは message list と同じ左列幅の `Action Dock` にまとまり、expanded 時だけ full editor と設定群が表示される。textarea は Send に幅を取られず横幅いっぱいに表示される。`Send` は設定群の枠外で下端が揃い、中幅では approval / model / depth が設定群内で先に折り返し、最小幅では設定群の下へ移る。`File / Folder / Image` は attachment group、`Skill` は別ボタンとして区別される |
+| MT-023C1 | Session narrow layout reachability | viewport を `1400px` 未満まで狭めた Session Window を開く | `message list + Action Dock` の塊の下に right pane が縦 stack で残り、`Latest Command` と provider に応じた `Tasks` / `Context` へ到達できる。狭幅でも right pane が失われない |
 | MT-023C2 | Session minimum width guardrail | Session Window を最小幅近くまで縮める | `message list + Action Dock` と right pane の縦 stack が維持され、scroll すれば両方へ到達できる。最小幅でも window が不自然に固定されない |
 | MT-023D | Session header collapsed state | Session Window を開いて right pane 上端を見る | 通常 state では right pane 上部に title だけの handle が表示され、左列の `message list + Action Dock` は window 最上端から始まる |
 | MT-023D1 | Session header expanded state | collapsed handle を押して header を展開する | header が左端まで伸びた full-width strip として表示され、`Rename / Audit Log / Terminal / Delete` が常時見える。`Close` と `More` は出ない |

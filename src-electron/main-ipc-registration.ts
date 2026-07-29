@@ -183,6 +183,7 @@ import {
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
@@ -276,6 +277,7 @@ export type MainIpcRegistrationDeps = {
   cancelAuxiliarySessionRun?(auxiliarySessionId: string): Awaitable<void>;
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
+  updateSessionRightPaneVisibility(isVisible: boolean): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
@@ -413,6 +415,7 @@ type MainIpcSettingsDeps = Pick<
   | "isMemoryV6ReviewWindow"
   | "getAppSettings"
   | "updateAppSettings"
+  | "updateSessionRightPaneVisibility"
   | "getAppDatabaseDiagnostics"
   | "getMemoryV6Diagnostics"
   | "installMemoryV6CliShim"
@@ -856,6 +859,12 @@ function registerCatalogHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCatal
 function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSettingsDeps): void {
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => deps.getAppSettings());
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => deps.updateAppSettings(settings));
+  ipcMain.handle(WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL, (_event, isVisible) => {
+    if (typeof isVisible !== "boolean") {
+      throw new TypeError("right pane の表示状態は boolean で指定してね。");
+    }
+    return deps.updateSessionRightPaneVisibility(isVisible);
+  });
   ipcMain.handle(WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL, () => deps.getAppDatabaseDiagnostics());
   ipcMain.handle(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL, () => deps.getMemoryV6Diagnostics());
   ipcMain.handle(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL, (event) => {

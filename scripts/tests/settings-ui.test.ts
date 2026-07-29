@@ -12,6 +12,7 @@ import {
   SETTINGS_RELEASE_COMPATIBILITY_NOTE,
   SETTINGS_RESET_DATABASE_HELP,
   SETTINGS_RESET_DATABASE_LABEL,
+  SETTINGS_SESSION_TURN_NOTIFICATION_LABEL,
   buildResetDatabaseConfirmMessage,
   buildResetDatabaseSuccessMessage,
 } from "../../src/settings/settings-ui.js";
@@ -41,6 +42,10 @@ describe("Settings UI constants", () => {
     assert.equal(SETTINGS_MEMORY_FILE_QUOTA_LABEL, "Memory file quota");
     assert.match(SETTINGS_MEMORY_FILE_QUOTA_HELP, /Protected Object/);
     assert.match(SETTINGS_MEMORY_FILE_QUOTA_HELP, /file append/);
+  });
+
+  it("Session turn notification は Windows 通知だと分かる", () => {
+    assert.equal(SETTINGS_SESSION_TURN_NOTIFICATION_LABEL, "Session のターン完了を Windows 通知で知らせる");
   });
 
   it("Home Window は Settings overlay の余裕を確保する既定サイズを使う", () => {

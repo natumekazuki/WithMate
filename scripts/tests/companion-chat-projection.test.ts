@@ -147,6 +147,7 @@ function createProjectionInput(
     actionDockCompactPreview: "実行中",
     attachmentCount: 0,
     isContextRailResizing: false,
+    isContextRailVisible: true,
     activeContextPaneTab: "latest-command",
     availableContextPaneTabs: ["latest-command"],
     contextPaneProjection: {
@@ -236,6 +237,7 @@ function createProjectionInput(
     onChangeModel: noop,
     onChangeReasoningEffort: noop,
     onStartContextRailResize: noop,
+    onToggleContextRailVisibility: noop,
     onCycleContextPaneTab: noop,
     onOpenCompanionReview: noop,
     onCloseDiff: noop,
@@ -410,6 +412,22 @@ test("buildCompanionChatWindowProps は Companion right pane props を共通 pan
   assert.equal(paneProps.onToggleHeaderExpanded, onToggleContextPaneHeaderExpanded);
   assert.equal(paneProps.onCycleContextPaneTab, onCycleContextPaneTab);
   assert.equal(paneProps.onOpenCompanionReview, onOpenCompanionReview);
+});
+
+test("buildCompanionChatWindowProps は right pane visibility と toggle を共通 shell に渡す", () => {
+  const onToggleContextRailVisibility = () => {};
+  const props = buildCompanionChatWindowProps(createProjectionInput({
+    isContextRailVisible: false,
+    onToggleContextRailVisibility,
+  }));
+  const splitter = props.splitter as React.ReactElement<{
+    isRightPaneVisible: boolean;
+    onToggleRightPane: () => void;
+  }>;
+
+  assert.equal(props.isRightPaneVisible, false);
+  assert.equal(splitter.props.isRightPaneVisible, false);
+  assert.equal(splitter.props.onToggleRightPane, onToggleContextRailVisibility);
 });
 
 test("buildCompanionChatWindowProps は header action callbacks と Merge disabled state を維持する", () => {

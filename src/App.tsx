@@ -140,6 +140,7 @@ import {
   useSessionContextRail,
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
+import { persistSessionRightPaneVisibility } from "./session-right-pane-preference.js";
 import {
   applyOptimisticSessionRunUpdate,
   applyResolvedSessionRunUpdate,
@@ -448,6 +449,7 @@ export default function AgentSessionWindowApp() {
   });
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
+  const [isAppSettingsLoaded, setIsAppSettingsLoaded] = useState(false);
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [composerCaret, setComposerCaret] = useState(0);
@@ -562,6 +564,9 @@ export default function AgentSessionWindowApp() {
     [companionSessions, openCompanionReviewWindowIds],
   );
   const selectedSessionId = selectedSession?.id ?? null;
+  const handleContextRailVisibilityChange = useCallback((isVisible: boolean) => {
+    void persistSessionRightPaneVisibility(withmateApi, isVisible);
+  }, [withmateApi]);
   useEffect(() => {
     let active = true;
     const loadRevision = auxiliaryLoadRevisionRef.current + 1;
@@ -605,9 +610,15 @@ export default function AgentSessionWindowApp() {
   const {
     sessionWorkbenchRef,
     sessionWorkbenchStyle,
+    isContextRailVisible,
     isContextRailResizing,
     handleStartContextRailResize,
-  } = useSessionContextRail({ ownerKey: selectedSessionId });
+    handleToggleContextRailVisibility,
+  } = useSessionContextRail({
+    ownerKey: selectedSessionId,
+    initialContextRailVisibility: isAppSettingsLoaded ? appSettings.sessionRightPaneVisible : null,
+    onContextRailVisibilityChange: handleContextRailVisibilityChange,
+  });
   const activeRunSessionId = activeAuxiliarySession?.id ?? selectedSessionId;
   const selectedSessionLiveRun = useMemo(
     () => (activeRunSessionId !== null && liveRunState.ownerSessionId === activeRunSessionId ? liveRunState.state : null),
@@ -836,7 +847,10 @@ export default function AgentSessionWindowApp() {
     return startAppSettingsSubscription({
       api: withmateApi,
       loadInitial: true,
-      applyAppSettings: setAppSettings,
+      applyAppSettings: (settings) => {
+        setAppSettings(settings);
+        setIsAppSettingsLoaded(true);
+      },
     });
   }, [withmateApi]);
 
@@ -2996,6 +3010,7 @@ export default function AgentSessionWindowApp() {
         attachmentCount: composerPreview.attachments.length,
         isActionDockExpanded,
         isContextRailResizing,
+        isContextRailVisible,
         latestCommandView,
         runningDetailsEntries,
         liveRunReasoningText,
@@ -3169,6 +3184,7 @@ export default function AgentSessionWindowApp() {
           onSelectedSessionChange: (value) => handleChangeReasoningEffort(value as Session["reasoningEffort"]),
         }),
         onStartContextRailResize: handleStartContextRailResize,
+        onToggleContextRailVisibility: handleToggleContextRailVisibility,
         onCycleContextPaneTab: handleCycleContextPaneTab,
         onOpenCompanionReview: (sessionId) => void withmateApi?.openCompanionReviewWindow(sessionId),
         onCloseDiff: () => setSelectedDiff(null),

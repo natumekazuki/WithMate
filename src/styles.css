@@ -528,7 +528,7 @@ button:disabled {
 .artifact-toggle,
 .diff-button,
 .diff-close,
-.composer-input-row > .session-send-button,
+.composer-control-row > .session-send-button,
 .session-action-dock-compact-actions button {
   border: 0;
   border-radius: 999px;
@@ -3666,6 +3666,22 @@ button:disabled {
   height: 100%;
 }
 
+.session-main-grid.session-main-grid-right-pane-hidden {
+  grid-template-columns: minmax(0, 1fr) 12px;
+}
+
+.session-right-pane-slot {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.session-right-pane-slot[hidden] {
+  display: none;
+}
+
 .session-message-stack {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
@@ -3697,6 +3713,7 @@ button:disabled {
 }
 
 .session-action-dock {
+  container: session-action-dock / inline-size;
   display: grid;
   gap: 10px;
   padding: 10px 12px 12px;
@@ -3883,6 +3900,10 @@ button:disabled {
   cursor: col-resize;
 }
 
+.session-workbench-splitter.is-collapsed {
+  cursor: pointer;
+}
+
 .session-workbench-splitter::before {
   content: "";
   position: absolute;
@@ -3893,8 +3914,35 @@ button:disabled {
 }
 
 .session-workbench-splitter:hover::before,
-.session-workbench-splitter.is-active::before {
+.session-workbench-splitter.is-active::before,
+.session-workbench-splitter:focus-visible::before {
   background: color-mix(in srgb, var(--character-main) 34%, rgba(203, 213, 225, 0.24));
+}
+
+.session-workbench-splitter-chevron {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 28px;
+  border: 1px solid rgba(203, 213, 225, 0.18);
+  border-radius: 999px;
+  background: rgba(12, 17, 25, 0.96);
+  color: var(--ink);
+  font-size: 1rem;
+  line-height: 1;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.session-workbench-splitter:hover .session-workbench-splitter-chevron,
+.session-workbench-splitter:focus-visible .session-workbench-splitter-chevron,
+.session-workbench-splitter.is-active .session-workbench-splitter-chevron {
+  border-color: color-mix(in srgb, var(--character-main) 40%, rgba(203, 213, 225, 0.24));
+  background: color-mix(in srgb, var(--character-sub-soft) 18%, rgba(12, 17, 25, 0.98));
 }
 
 .command-monitor-shell {
@@ -6139,9 +6187,7 @@ button:disabled {
 
 .composer-input-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .composer-box {
@@ -6150,10 +6196,6 @@ button:disabled {
   padding: 16px;
   border: 1px solid rgba(32, 36, 55, 0.08);
   background: var(--surface-strong);
-}
-
-.composer-input-row.running {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 .composer-box.running textarea {
@@ -6800,30 +6842,58 @@ button:disabled {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
 }
 
-.composer-input-row > .session-send-button {
+.composer-control-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+  margin-top: 12px;
+}
+
+.composer-control-row.running {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@container session-action-dock (max-width: 920px) {
+  .composer-settings > .composer-setting-field {
+    flex-basis: calc(50% - 7px);
+  }
+}
+
+@container session-action-dock (max-width: 850px) {
+  .composer-control-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .composer-control-row > .session-send-button {
+    width: 100%;
+  }
+}
+
+.composer-control-row > .session-send-button {
   align-self: end;
   padding: 12px 22px;
   background: rgba(255, 255, 255, 0.16);
   color: var(--ink);
 }
 
-.session-page .composer-input-row > .session-send-button {
+.session-page .composer-control-row > .session-send-button {
   padding: 10px 18px;
 }
 
-.session-page .composer-input-row > .session-send-button {
+.session-page .composer-control-row > .session-send-button {
   background: var(--character-main);
   color: var(--character-main-ink);
   box-shadow: 0 10px 22px color-mix(in srgb, var(--character-main) 28%, transparent);
 }
 
-.session-page .composer-input-row > .session-send-button.danger {
+.session-page .composer-control-row > .session-send-button.danger {
   background: color-mix(in srgb, #f87171 82%, var(--character-main));
   color: #fff5f5;
   box-shadow: 0 10px 22px rgba(248, 113, 113, 0.24);
 }
 
-.composer-input-row > .session-send-button.loading {
+.composer-control-row > .session-send-button.loading {
   min-width: 82px;
 }
 
@@ -6832,7 +6902,6 @@ button:disabled {
   flex-wrap: wrap;
   gap: 12px 14px;
   align-items: end;
-  margin-top: 12px;
   justify-content: start;
 }
 
@@ -9344,7 +9413,7 @@ button:disabled {
   }
 }
 
-@media (max-width: 1400px) {
+@media (max-width: 1399.98px) {
   .session-workbench {
     height: auto;
     overflow-y: auto;
@@ -9354,7 +9423,12 @@ button:disabled {
 
   .session-main-grid {
     grid-template-columns: minmax(0, 1fr);
+    row-gap: 8px;
     height: auto;
+  }
+
+  .session-main-grid.session-main-grid-right-pane-hidden {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .session-message-stack {
@@ -9362,7 +9436,22 @@ button:disabled {
   }
 
   .session-workbench-splitter {
+    display: block;
+    width: 100%;
+    min-height: 16px;
+    cursor: pointer;
+  }
+
+  .session-workbench-splitter.is-static {
     display: none;
+  }
+
+  .session-workbench-splitter::before {
+    inset: 6px 8px;
+  }
+
+  .session-workbench-splitter-chevron {
+    transform: translate(-50%, -50%) rotate(90deg);
   }
 
   .session-context-pane {
@@ -9639,8 +9728,7 @@ button:disabled {
   .browse-button,
   .artifact-toggle,
   .diff-button,
-  .diff-close,
-  .composer-input-row > .session-send-button {
+  .diff-close {
     width: 100%;
   }
 

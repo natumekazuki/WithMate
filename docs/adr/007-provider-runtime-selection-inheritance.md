@@ -1,4 +1,4 @@
-# 006 Provider Runtime Selection Inheritance
+# 007 Provider Runtime Selection Inheritance
 
 - 状態: Accepted
 - 日付: 2026-07-30

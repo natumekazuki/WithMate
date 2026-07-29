@@ -39,7 +39,7 @@ New Session ダイアログでは Character を固定選択できる。Character
 
 最新状態を直接確認できるが、開始時の追加 I/O と失敗経路が増える。Home が購読している Session summary の取得成功状態を使えば、同じ要件を満たせる。
 
-provider ごとの実行設定は security boundary が異なるため、この判断の対象外とし、ADR 006 に従って Main Process が作成直前に最新一件を取得する。
+provider ごとの実行設定は security boundary が異なるため、この判断の対象外とし、ADR 007 に従って Main Process が作成直前に最新一件を取得する。
 
 ## Consequences
 

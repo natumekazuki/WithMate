@@ -17,7 +17,7 @@ SessionFolder の path は Session ID に依存する。renderer で仮 path や
 - Main Process は launch request を許可済み field から再構築し、renderer 由来の Session ID や旧 workspace field を永続化へ渡さない
 - Main Process は directory / SessionFolder / 内部 create の Session ID を同じ UUID ベースの発行境界で所有する
 - Session の新規永続化は update 用 upsert と分け、ID の一意制約を使う insert-only operation で原子的に衝突を拒否する
-- `Start New Session` 時は request 検証と ADR 006 の起動設定解決を完了してから、Main Process が次の順序で処理する
+- `Start New Session` 時は request 検証と ADR 007 の起動設定解決を完了してから、Main Process が次の順序で処理する
   1. Session ID を発行する
   2. `session-files/{sessionId}` を新規 directory として排他的に作成する
   3. 作成した absolute path を `workspacePath`、`SessionFolder` を `workspaceLabel` として Session を永続化する

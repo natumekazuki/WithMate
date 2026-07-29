@@ -144,7 +144,7 @@ Auxiliary Session は「同じ作業場にいる別会話」として扱う。
 - parent Session で AddDirectory 済みの追加ディレクトリ。
 - session files directory。
 - provider の選択。
-- model / reasoning effort / approval mode / sandbox mode / custom agent の初期値。Session Window から開始する場合は、renderer から選択 provider と最新値を使う意図だけを送り、Main Process が認証済みの window 種別を確認して通常 Session storage の provider 別最新一件を直接取得する。Session Window からの explicit selection と runtime option の直接指定は拒否する。取得または検証に失敗した場合は作成を中止し、renderer の Session summary 一覧へ fallback しない。Companion から同じ provider で開始する場合は、現在の Companion の選択値を使う。approval mode / sandbox mode が未指定なら安全側の既定値を使い、値が存在する場合は現行 enum との完全一致を要求して不正値を拒否する。詳細は ADR 006 を参照する。
+- model / reasoning effort / approval mode / sandbox mode / custom agent の初期値。Session Window から開始する場合は、renderer から選択 provider と最新値を使う意図だけを送り、Main Process が認証済みの window 種別を確認して通常 Session storage の provider 別最新一件を直接取得する。Session Window からの explicit selection と runtime option の直接指定は拒否する。取得または検証に失敗した場合は作成を中止し、renderer の Session summary 一覧へ fallback しない。Companion から同じ provider で開始する場合は、現在の Companion の選択値を使う。approval mode / sandbox mode が未指定なら安全側の既定値を使い、値が存在する場合は現行 enum との完全一致を要求して不正値を拒否する。詳細は ADR 007 を参照する。
 - provider instruction / `AGENTS.md` などの runtime context。
 - path attachment の許可境界。
 - app settings と表示設定。

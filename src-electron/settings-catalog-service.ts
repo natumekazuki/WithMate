@@ -274,8 +274,9 @@ export class SettingsCatalogService {
         const sessionProvider = previousAuxiliarySessions.find((session) => session.id === sessionId)?.provider ?? null;
         this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
       }
-      this.deps.broadcastAppSettings(savedSettings);
-      return savedSettings;
+      const currentSettings = this.deps.getAppSettings();
+      this.deps.broadcastAppSettings(currentSettings);
+      return currentSettings;
     } catch (error) {
       if (!savedSettings) {
         throw error;

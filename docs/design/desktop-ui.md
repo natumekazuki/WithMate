@@ -106,7 +106,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - Agent Mode の workspace は既存 directory を選ぶ `Browse` と、WithMate 管理下の directory を開始時に作る `SessionFolder` から選ぶ
   - enabled provider の選択
   - Character selector で default Character を初期選択する。Character が 0 件の場合は neutral fallback を使う
-  - model / depth / approval / sandbox / custom agent は dialog には出さず、Main Process が作成直前に選択中 provider の直近 Session 一件から解決する。詳細は ADR 006 を参照する
+  - model / depth / approval / sandbox / custom agent は dialog には出さず、Main Process が作成直前に選択中 provider の直近 Session 一件から解決する。詳細は ADR 007 を参照する
   - open 時は dialog 内の最初の主要入力へ focus し、`Escape` で閉じる
   - `Tab` / `Shift+Tab` で dialog 外へ focus を逃がさない
   - provider の single-select chip は矢印キーで選択を移動できる
@@ -195,9 +195,12 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - title handle を押した時だけ、header が左端まで伸びた full-width strip として出る
   - 中央左: `message list + Action Dock`
   - 中央右: `Latest Command`
-  - 左右の境界は draggable splitter で調整できる
+  - 左右の境界は splitter の drag で調整し、click で right pane の表示 / 非表示を切り替える
+  - right pane を隠した時も splitter は再表示 affordance として残し、pane の内容と調整済みの幅を保持する
+  - right pane の表示状態は app 共通設定へ保存し、初期値は非表示とする。新しく開く Agent / Companion Window は最後に選んだ状態を使う
+  - 開いている Window の表示状態は renderer local state とし、別 Window での切り替えには追従させない
   - right pane は Action Dock の手前で切らず、下端まで縦に伸ばす
-  - narrow width では `message list + Action Dock -> Latest Command` の縦 stack へ戻す
+  - viewport が `1400px` 未満の narrow width では `message list + Action Dock -> splitter -> Latest Command` の縦 stack へ戻し、splitter の click 操作だけを維持する。`1400px` 以上では drag と click の両方を使う
   - current minimum は split-screen を考慮し、`900px` 台の window 幅でも縦 stack のまま到達性を維持する
   - Full HD では文字サイズそのものより density を先に調整し、Session 専用の gap / padding / chip / button 高さをやや詰める
   - user bubble は assistant avatar 分の左 gutter を持たず、row 幅いっぱいを使えるようにする
