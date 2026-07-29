@@ -1,0 +1,64 @@
+# 006 Windows Session Turn Notifications
+
+- 状態: Accepted
+- 日付: 2026-07-29
+
+## Context
+
+Session のターン完了まで時間がかかる場合、ユーザーは WithMate 以外のアプリで作業を続ける。対象の Session Window が前面にないと、完了に気づくために WithMate を定期的に確認する必要がある。
+
+通知には Windows のネイティブ通知、アプリ内表示、独自の Windows toast XML が候補になる。通知はターン本体の成功を損なわない補助的な外部副作用として扱う必要がある。また、Session には Character icon があるが、画像形式やファイル状態によって Windows 通知へ利用できない場合がある。
+
+## Decision
+
+- 対応対象は Windows の通常 Session と Character 作成 Session とし、Companion と Auxiliary Session、macOS、Linux は対象外とする。
+- Electron の `Notification` API を使い、Windows の既定の通知音と表示時間に従う。独自 toast XML は生成しない。
+- 通知設定は既定で有効とし、App Settings から無効化できる。
+- provider の成功結果を含む Session が永続化された直後を通知契機とする。失敗、キャンセル、setup failure では通知しない。
+- 対象 Session Window 自体が focus 中の場合だけ通知を抑止する。対象 Window が表示中でも、別アプリまたは別の WithMate Window が focus 中なら通知する。
+- 通知の title は `WithMate`、body は `「Session名」のターンが完了しました` とする。
+- Character icon は `nativeImage` で読み込める場合だけ通知へ渡す。未設定、相対 path、欠損、不正、非対応形式の場合は icon を省略し、Windows が選ぶアプリアイコンへフォールバックする。
+- Session ID から安定した Windows notification ID を生成する。同一 Session の未処理通知がある場合は閉じ、プロセス再起動をまたぐ場合も Windows の Tag と Group によって新しい完了通知へ置き換える。
+- Electron の通知 instance が click を受け取れる間は、クリック時点で対象 Session が存在すれば Session Window を開き、削除済みまたは読み込み・表示に失敗した場合は Home Window を開く。
+- WithMate のプロセス終了後、または通知 instance が破棄された後に Action Center から通知をクリックした場合、Windows によるアプリ起動は許容するが、対象 Session への復帰は保証しない。
+- 通知可否の判定、icon 読み込み、通知生成、表示、click 処理の失敗は記録するが、ターン結果を失敗へ変更せず、通知の再試行もしない。
+
+実装の正本は `src-electron/session-turn-notification-service.ts` と `src-electron/session-runtime-service.ts`、設定の正本は `src/provider-settings-state.ts` と `src-electron/app-settings-storage.ts` に置く。観測可能な契約は `scripts/tests/session-turn-notification-service.test.ts`、`scripts/tests/session-runtime-service.test.ts`、設定関連 test に置く。
+
+## Alternatives
+
+### アプリ内通知だけを使う
+
+別アプリを使用中の完了通知という目的を満たさないため採用しない。
+
+### Windows toast XML を直接生成する
+
+通知の識別子や表示、プロセス再起動後の activation target を制御できるが、Windows 固有の XML、activation、画像形式への追加対応が必要になる。プロセス終了後に Action Center の過去通知から対象 Session へ戻る利用場面は限定的であり、今回の範囲では Electron 標準 API の保守性を優先する。
+
+### Character icon を通知前に対応形式へ変換する
+
+より多くの画像を表示できるが、変換処理、cache、cleanup、失敗経路が増える。icon は補助情報であり、通知本体を優先するため採用しない。
+
+### WithMate のいずれかの Window が focus 中なら通知しない
+
+別の Session や Settings を操作中に、対象 Session の完了を見落とす可能性があるため採用しない。
+
+### Audit Log の詳細更新後に通知する
+
+補助的な enrichment の遅延や timeout が通知を妨げるため採用しない。Session の成功状態が永続化された時点で通知する。
+
+## Consequences
+
+### Positive
+
+- 別アプリで作業している間も Session の完了へ気づける。
+- 対象 Session を見ている時の重複通知を避けつつ、別の WithMate Window を操作中の完了は通知できる。
+- 通知または icon の失敗が provider の成功結果や Session 永続化へ影響しない。
+- Electron 標準 API の範囲に限定し、Windows 固有実装を小さく保てる。
+
+### Negative
+
+- Windows の通知設定、集中モード、Electron の対応状況によって通知が表示されない場合がある。
+- icon を読み込めない場合は Character icon ではなくアプリアイコンになる。
+- プロセス終了後、または通知 instance の破棄後に過去通知をクリックしても、元の Session へ直接復帰できない場合がある。
+- macOS、Linux、Companion、Auxiliary Session には同じ通知機能がない。

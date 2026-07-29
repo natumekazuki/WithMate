@@ -74,6 +74,11 @@ function createV4FixtureDatabase(dbPath: string): void {
       "true",
       "2026-06-28T00:00:00.000Z",
     );
+    db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
+      "session_right_pane_visible",
+      "true",
+      "2026-06-28T00:00:00.000Z",
+    );
     db.prepare("INSERT INTO model_catalog_revisions (revision, source, imported_at, is_active) VALUES (?, ?, ?, ?)").run(
       12,
       "fixture",
@@ -158,7 +163,7 @@ describe("migrate-database-v4-to-v6", () => {
 
       const report = createMigrationDryRunReport(fixture.v4Path);
 
-      assert.equal(report.plannedV6Counts.appSettings, 3);
+      assert.equal(report.plannedV6Counts.appSettings, 4);
       assert.equal(report.plannedV6Counts.modelCatalogModels, 1);
       assert.equal(report.plannedV6Counts.characters, 1);
       assert.equal(report.v4Counts.skippedAppSettings, 1);
@@ -180,12 +185,13 @@ describe("migrate-database-v4-to-v6", () => {
         targetDatabaseFile: fixture.v6Path,
       });
 
-      assert.equal(report.migratedV6Counts.appSettings, 3);
+      assert.equal(report.migratedV6Counts.appSettings, 4);
       assert.equal(report.migratedV6Counts.modelCatalogRevisions, 1);
       assert.equal(report.migratedV6Counts.characters, 1);
       assert.equal(isValidV6Database(fixture.v6Path), true);
-      assert.equal(readCount(fixture.v6Path, "app_settings"), 4);
+      assert.equal(readCount(fixture.v6Path, "app_settings"), 5);
       assert.equal(readAppSetting(fixture.v6Path, "launch_at_login_enabled"), "true");
+      assert.equal(readAppSetting(fixture.v6Path, "session_right_pane_visible"), "true");
       assert.equal(hasV4ToV6ReleaseDataMigrationMarker(fixture.v6Path), true);
       assert.equal(readCount(fixture.v6Path, "model_catalog_models"), 1);
       assert.equal(readCount(fixture.v6Path, "characters"), 1);
@@ -217,7 +223,8 @@ describe("migrate-database-v4-to-v6", () => {
         targetDatabaseFile: fixture.v6Path,
       });
 
-      assert.equal(readCount(fixture.v6Path, "app_settings"), 4);
+      assert.equal(readCount(fixture.v6Path, "app_settings"), 5);
+      assert.equal(readAppSetting(fixture.v6Path, "session_right_pane_visible"), "true");
       assert.equal(readCount(fixture.v6Path, "characters"), 1);
     } finally {
       fixture.cleanup();

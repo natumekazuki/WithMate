@@ -90,6 +90,7 @@ export type AgentSessionChatProjectionInput = {
   attachmentCount: number;
   isActionDockExpanded: boolean;
   isContextRailResizing: boolean;
+  isContextRailVisible: boolean;
   latestCommandView: SessionContextPaneProps["latestCommandView"];
   runningDetailsEntries: SessionContextPaneProps["runningDetailsEntries"];
   liveRunReasoningText: SessionContextPaneProps["liveRunReasoningText"];
@@ -175,6 +176,7 @@ export type AgentSessionChatProjectionInput = {
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
   onChangeReasoningEffort: SessionComposerExpandedProps["onChangeReasoningEffort"];
   onStartContextRailResize: PointerEventHandler<HTMLButtonElement>;
+  onToggleContextRailVisibility: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onOpenCompanionReview: (sessionId: string) => void;
   onCloseDiff: () => void;
@@ -338,7 +340,9 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     compactActionDock: composerDockProps.compactActionDock,
     splitter: {
       isContextRailResizing: input.isContextRailResizing,
+      isContextRailVisible: input.isContextRailVisible,
       onStartContextRailResize: input.onStartContextRailResize,
+      onToggleContextRailVisibility: input.onToggleContextRailVisibility,
     },
   });
   const rightPaneProps = buildLiveSessionCommonContextPaneProps({
@@ -379,6 +383,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     composerProps: chatBodyProps.composerProps,
     compactActionDockProps: chatBodyProps.compactActionDockProps,
     splitterProps: chatBodyProps.splitterProps,
+    isRightPaneVisible: input.isContextRailVisible,
     rightPaneProps,
     modals: <ChatSessionModals {...input} />,
     isAuxiliaryMode: input.isAuxiliaryMode,

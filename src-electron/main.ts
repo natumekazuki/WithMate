@@ -5,7 +5,21 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, crashReporter, dialog, ipcMain, Menu, safeStorage, screen, shell, Tray } from "electron";
+import {
+  app,
+  BrowserWindow,
+  crashReporter,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  Notification,
+  safeStorage,
+  screen,
+  shell,
+  Tray,
+  type NativeImage,
+} from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
 import { summarizeAuditLogDetailFragment } from "../src/audit-log-detail-metrics.js";
@@ -87,6 +101,7 @@ import { CompanionAuditLogStorageV3 } from "./companion-audit-log-storage-v3.js"
 import { CompanionStorage } from "./companion-storage.js";
 import { CompanionStorageV3 } from "./companion-storage-v3.js";
 import { SessionRuntimeService } from "./session-runtime-service.js";
+import { SessionTurnNotificationService } from "./session-turn-notification-service.js";
 import { SessionPersistenceService } from "./session-persistence-service.js";
 import { SessionWindowBridge } from "./session-window-bridge.js";
 import { SettingsCatalogService } from "./settings-catalog-service.js";
@@ -267,6 +282,7 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock();
 ipcMain.handle(WITHMATE_GET_APP_BOOT_STATUS_CHANNEL, () => appBootStatus);
 const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
 let sessionRuntimeService: SessionRuntimeService | null = null;
+let sessionTurnNotificationService: SessionTurnNotificationService<NativeImage> | null = null;
 let auxiliarySessionService: AuxiliarySessionService | null = null;
 let auxiliarySessionRuntimeService: SessionRuntimeService | null = null;
 let sessionPersistenceService: SessionPersistenceService | null = null;
@@ -1280,6 +1296,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               settings: {
                 getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
+                updateSessionRightPaneVisibility,
                 getAppDatabaseDiagnostics,
                 getMemoryV6Diagnostics,
                 installMemoryV6CliShim,
@@ -1707,6 +1724,10 @@ async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   return savedSettings;
 }
 
+function updateSessionRightPaneVisibility(isVisible: boolean): AppSettings {
+  return requireAppSettingsStorage().updateSessionRightPaneVisibility(isVisible);
+}
+
 async function resetAppSettings(): Promise<AppSettings> {
   const settings = requireAppSettingsStorage().resetSettings();
   applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled);
@@ -1938,11 +1959,71 @@ function requireSessionRuntimeService(): SessionRuntimeService {
           requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response);
         }
       },
+      notifySessionTurnCompleted: (session) => {
+        requireSessionTurnNotificationService().notifyTurnCompleted(session);
+      },
       currentTimestampLabel,
     });
   }
 
   return sessionRuntimeService;
+}
+
+function requireSessionTurnNotificationService(): SessionTurnNotificationService<NativeImage> {
+  if (!sessionTurnNotificationService) {
+    sessionTurnNotificationService = new SessionTurnNotificationService({
+      platform: process.platform,
+      isNotificationSupported: () => Notification.isSupported(),
+      isNotificationEnabled: () => requireAppSettingsStorage().getSettings().sessionTurnNotificationEnabled,
+      isSessionWindowFocused: (sessionId) => {
+        const sessionWindow = requireSessionWindowBridge().getWindow(sessionId);
+        return Boolean(sessionWindow && !sessionWindow.isDestroyed() && sessionWindow.isFocused());
+      },
+      loadCharacterIcon: (iconPath) => {
+        if (!path.isAbsolute(iconPath)) {
+          return null;
+        }
+
+        const icon = nativeImage.createFromPath(iconPath);
+        return icon.isEmpty() ? null : icon;
+      },
+      createNotification: (options) => {
+        const notification = new Notification(options);
+        return {
+          show: () => notification.show(),
+          close: () => notification.close(),
+          onClick: (listener) => {
+            notification.on("click", listener);
+          },
+          onClose: (listener) => {
+            notification.on("close", listener);
+          },
+          onFailed: (listener) => {
+            notification.on("failed", (_event, error) => listener(error));
+          },
+        };
+      },
+      getSession: (sessionId) => requireSessionStorage().getSession(sessionId),
+      openSessionWindow: async (sessionId) => {
+        await openSessionWindow(sessionId);
+      },
+      openHomeWindow: async () => {
+        await createHomeWindow();
+      },
+      logWarning: (event, sessionId, error) => {
+        writeAppLog({
+          level: "warn",
+          kind: `session.turn-notification.${event}`,
+          process: "main",
+          message: "Session turn notification warning",
+          data: { sessionId },
+          ...(error === undefined ? {} : { error: appLogService.errorToLogError(error) }),
+        });
+      },
+    });
+  }
+
+  return sessionTurnNotificationService;
 }
 
 function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {

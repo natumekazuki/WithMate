@@ -100,6 +100,7 @@ export type CompanionChatProjectionInput = {
   actionDockCompactPreview: string;
   attachmentCount: number;
   isContextRailResizing: boolean;
+  isContextRailVisible: boolean;
   activeContextPaneTab: ContextPaneTabKey;
   availableContextPaneTabs: ContextPaneTabKey[];
   contextPaneProjection: SessionContextPaneProps["contextPaneProjection"];
@@ -185,6 +186,7 @@ export type CompanionChatProjectionInput = {
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
   onChangeReasoningEffort: SessionComposerExpandedProps["onChangeReasoningEffort"];
   onStartContextRailResize: PointerEventHandler<HTMLButtonElement>;
+  onToggleContextRailVisibility: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onOpenCompanionReview: (sessionId: string) => void;
   onCloseDiff: () => void;
@@ -353,7 +355,9 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     compactActionDock: composerDockProps.compactActionDock,
     splitter: {
       isContextRailResizing: input.isContextRailResizing,
+      isContextRailVisible: input.isContextRailVisible,
       onStartContextRailResize: input.onStartContextRailResize,
+      onToggleContextRailVisibility: input.onToggleContextRailVisibility,
     },
   });
   const rightPaneProps = buildLiveSessionCommonContextPaneProps({
@@ -394,6 +398,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     composerProps: chatBodyProps.composerProps,
     compactActionDockProps: chatBodyProps.compactActionDockProps,
     splitterProps: chatBodyProps.splitterProps,
+    isRightPaneVisible: input.isContextRailVisible,
     rightPaneProps,
     modals: (
       <ChatSessionModals {...input}>

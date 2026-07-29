@@ -19,6 +19,7 @@ type LiveSessionWindowShellPropsInput = {
   composerProps: ChatWindowProps["composerProps"];
   compactActionDockProps: ChatWindowProps["compactActionDockProps"];
   splitterProps: ComponentProps<typeof ChatWorkbenchSplitter>;
+  isRightPaneVisible: boolean;
   rightPaneProps: SessionContextPaneProps;
   modals: ChatWindowProps["modals"];
   baseClassName?: string;
@@ -44,6 +45,7 @@ export function buildLiveSessionWindowShellProps(
     composerProps: input.composerProps,
     compactActionDockProps: input.compactActionDockProps,
     splitter: <ChatWorkbenchSplitter {...input.splitterProps} />,
+    isRightPaneVisible: input.isRightPaneVisible,
     rightPane: (
       <SessionPaneErrorBoundary>
         <SessionContextPane {...input.rightPaneProps} />

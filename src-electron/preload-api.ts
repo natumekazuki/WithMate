@@ -138,6 +138,7 @@ import {
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL,
   WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL,
@@ -540,6 +541,9 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
     },
     updateAppSettings(settings) {
       return ipcRenderer.invoke(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, settings);
+    },
+    updateSessionRightPaneVisibility(isVisible) {
+      return ipcRenderer.invoke(WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL, isVisible);
     },
     getAppDatabaseDiagnostics() {
       return ipcRenderer.invoke(WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL);
