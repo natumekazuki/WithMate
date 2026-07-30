@@ -1,7 +1,117 @@
 import { createHash } from "node:crypto";
+import { gfmFromMarkdown } from "mdast-util-gfm";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { mathFromMarkdown } from "mdast-util-math";
+import { gfm } from "micromark-extension-gfm";
+import { math } from "micromark-extension-math";
 
 import type { Session } from "../src/session-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
+
+const RESPONSE_PREVIEW_MAX_GRAPHEMES = 40;
+const RESPONSE_PREVIEW_MAX_SOURCE_CODE_UNITS = 2_048;
+const RESPONSE_PREVIEW_SENTENCE_ENDINGS = new Set(["。", "！", "？", "!", "?"]);
+const MARKDOWN_BLOCK_NODE_TYPES = new Set([
+  "root",
+  "blockquote",
+  "list",
+  "listItem",
+  "table",
+  "tableRow",
+]);
+const MARKDOWN_HIDDEN_NODE_TYPES = new Set([
+  "definition",
+  "footnoteDefinition",
+  "html",
+  "inlineMath",
+  "math",
+]);
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+type MarkdownNode = {
+  type: string;
+  value?: string;
+  alt?: string | null;
+  lang?: string | null;
+  children?: MarkdownNode[];
+};
+
+function projectMarkdownVisibleText(node: MarkdownNode): string {
+  if (MARKDOWN_HIDDEN_NODE_TYPES.has(node.type)) {
+    return "";
+  }
+  if (node.type === "text" || node.type === "inlineCode") {
+    return node.value ?? "";
+  }
+  if (node.type === "code") {
+    return node.lang?.trim().toLowerCase() === "mermaid"
+      ? ""
+      : node.value ?? "";
+  }
+  if (node.type === "image" || node.type === "imageReference") {
+    return "";
+  }
+  if (node.type === "break") {
+    return " ";
+  }
+
+  const childText = (node.children ?? [])
+    .map(projectMarkdownVisibleText)
+    .filter(Boolean);
+  return childText.join(MARKDOWN_BLOCK_NODE_TYPES.has(node.type) ? " " : "");
+}
+
+function toNotificationPlainText(value: string): string {
+  const syntaxTree = fromMarkdown(value, {
+    extensions: [gfm(), math({ singleDollarTextMath: false })],
+    mdastExtensions: [gfmFromMarkdown(), mathFromMarkdown()],
+  });
+  return projectMarkdownVisibleText(syntaxTree as MarkdownNode)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitGraphemes(value: string): string[] {
+  return Array.from(graphemeSegmenter.segment(value), ({ segment }) => segment);
+}
+
+function buildResponsePreview(session: Session): string | null {
+  let assistantText = "";
+  for (let index = session.messages.length - 1; index >= 0; index -= 1) {
+    const message = session.messages[index];
+    if (message?.role === "assistant") {
+      assistantText = message.text;
+      break;
+    }
+  }
+
+  if (assistantText.length > RESPONSE_PREVIEW_MAX_SOURCE_CODE_UNITS) {
+    return null;
+  }
+
+  const plainText = toNotificationPlainText(assistantText);
+  if (!plainText) {
+    return null;
+  }
+
+  const graphemes = splitGraphemes(plainText);
+  if (graphemes.length <= RESPONSE_PREVIEW_MAX_GRAPHEMES) {
+    return plainText;
+  }
+
+  const candidate = graphemes.slice(0, RESPONSE_PREVIEW_MAX_GRAPHEMES);
+  let sentenceEndIndex = -1;
+  for (let index = 0; index < candidate.length; index += 1) {
+    if (RESPONSE_PREVIEW_SENTENCE_ENDINGS.has(candidate[index] ?? "")) {
+      sentenceEndIndex = index;
+    }
+  }
+
+  const truncated = sentenceEndIndex >= 0
+    ? candidate.slice(0, sentenceEndIndex + 1)
+    : candidate;
+  return `${truncated.join("").trimEnd()}…`;
+}
 
 export type SessionTurnNotificationOptions<TIcon> = {
   id: string;
@@ -11,11 +121,16 @@ export type SessionTurnNotificationOptions<TIcon> = {
   icon?: TIcon;
 };
 
+export type SessionTurnNotificationCloseReason =
+  | "userCanceled"
+  | "applicationHidden"
+  | "timedOut";
+
 export type SessionTurnNotificationHandle = {
   show(): void;
   close(): void;
   onClick(listener: () => void): void;
-  onClose(listener: () => void): void;
+  onClose(listener: (reason?: SessionTurnNotificationCloseReason) => void): void;
   onFailed(listener: (error: unknown) => void): void;
 };
 
@@ -23,6 +138,7 @@ export type SessionTurnNotificationServiceDeps<TIcon> = {
   platform: NodeJS.Platform;
   isNotificationSupported(): boolean;
   isNotificationEnabled(): boolean;
+  isResponsePreviewEnabled(): boolean;
   isSessionWindowFocused(sessionId: string): boolean;
   loadCharacterIcon(iconPath: string): TIcon | null;
   createNotification(options: SessionTurnNotificationOptions<TIcon>): SessionTurnNotificationHandle;
@@ -34,57 +150,67 @@ export type SessionTurnNotificationServiceDeps<TIcon> = {
 
 export class SessionTurnNotificationService<TIcon> {
   private static readonly notificationGroupId = "WithMateSessions";
-  private readonly activeNotifications = new Map<string, SessionTurnNotificationHandle>();
+  private readonly trackedNotifications = new Map<string, SessionTurnNotificationHandle>();
 
   constructor(private readonly deps: SessionTurnNotificationServiceDeps<TIcon>) {}
 
   notifyTurnCompleted(session: Session): boolean {
-    if (!this.isEligible(session.id)) {
+    const sessionId = session.id;
+    if (!this.isEligible(sessionId)) {
       return false;
     }
 
+    const content = this.buildNotificationContent(session);
     const options: SessionTurnNotificationOptions<TIcon> = {
-      id: this.buildNotificationId(session.id),
+      id: this.buildNotificationId(sessionId),
       groupId: SessionTurnNotificationService.notificationGroupId,
-      title: "WithMate",
-      body: `「${session.taskTitle.trim() || "Session"}」のターンが完了しました`,
+      ...content,
     };
     const icon = this.loadCharacterIcon(session);
     if (icon !== null) {
       options.icon = icon;
     }
 
-    this.closePreviousNotification(session.id);
+    this.closePreviousNotification(sessionId);
 
     let notification: SessionTurnNotificationHandle;
     try {
       notification = this.deps.createNotification(options);
     } catch (error) {
-      this.deps.logWarning("create-failed", session.id, error);
+      this.deps.logWarning("create-failed", sessionId, error);
       return false;
     }
 
-    notification.onClick(() => {
-      this.clearIfCurrent(session.id, notification);
-      void this.openNotificationTarget(session.id);
-    });
-    notification.onClose(() => {
-      this.clearIfCurrent(session.id, notification);
-    });
-    notification.onFailed((error) => {
-      this.clearIfCurrent(session.id, notification);
-      this.deps.logWarning("delivery-failed", session.id, error);
-    });
-    this.activeNotifications.set(session.id, notification);
+    this.trackNotification(sessionId, notification);
 
     try {
       notification.show();
       return true;
     } catch (error) {
-      this.clearIfCurrent(session.id, notification);
-      this.deps.logWarning("show-failed", session.id, error);
+      this.clearIfCurrent(sessionId, notification);
+      this.deps.logWarning("show-failed", sessionId, error);
       return false;
     }
+  }
+
+  private trackNotification(
+    sessionId: string,
+    notification: SessionTurnNotificationHandle,
+  ): void {
+    notification.onClick(() => {
+      this.clearIfCurrent(sessionId, notification);
+      void this.openNotificationTarget(sessionId);
+    });
+    notification.onClose((reason) => {
+      if (reason === "userCanceled" || reason === "applicationHidden") {
+        this.clearIfCurrent(sessionId, notification);
+      }
+    });
+    notification.onFailed((error) => {
+      this.clearIfCurrent(sessionId, notification);
+      this.deps.logWarning("delivery-failed", sessionId, error);
+    });
+    this.trackedNotifications.set(sessionId, notification);
   }
 
   private isEligible(sessionId: string): boolean {
@@ -96,6 +222,39 @@ export class SessionTurnNotificationService<TIcon> {
     } catch (error) {
       this.deps.logWarning("eligibility-check-failed", sessionId, error);
       return false;
+    }
+  }
+
+  dismissSessionNotification(sessionId: string): void {
+    this.closeTrackedNotification(sessionId, "dismiss-close-failed");
+  }
+
+  private buildNotificationContent(session: Session): Pick<SessionTurnNotificationOptions<TIcon>, "title" | "body"> {
+    const genericContent = {
+      title: "WithMate",
+      body: `「${session.taskTitle.trim() || "Session"}」のターンが完了しました`,
+    };
+    try {
+      if (!this.deps.isResponsePreviewEnabled()) {
+        return genericContent;
+      }
+    } catch (error) {
+      this.deps.logWarning("preview-setting-check-failed", session.id, error);
+      return genericContent;
+    }
+
+    try {
+      const preview = buildResponsePreview(session);
+      if (!preview) {
+        return genericContent;
+      }
+      return {
+        title: session.taskTitle.trim() || "Session",
+        body: preview,
+      };
+    } catch (error) {
+      this.deps.logWarning("preview-build-failed", session.id, error);
+      return genericContent;
     }
   }
 
@@ -118,22 +277,26 @@ export class SessionTurnNotificationService<TIcon> {
   }
 
   private closePreviousNotification(sessionId: string): void {
-    const previousNotification = this.activeNotifications.get(sessionId);
+    this.closeTrackedNotification(sessionId, "replace-close-failed");
+  }
+
+  private closeTrackedNotification(sessionId: string, failureEvent: string): void {
+    const previousNotification = this.trackedNotifications.get(sessionId);
     if (!previousNotification) {
       return;
     }
 
-    this.activeNotifications.delete(sessionId);
+    this.trackedNotifications.delete(sessionId);
     try {
       previousNotification.close();
     } catch (error) {
-      this.deps.logWarning("replace-close-failed", sessionId, error);
+      this.deps.logWarning(failureEvent, sessionId, error);
     }
   }
 
   private clearIfCurrent(sessionId: string, notification: SessionTurnNotificationHandle): void {
-    if (this.activeNotifications.get(sessionId) === notification) {
-      this.activeNotifications.delete(sessionId);
+    if (this.trackedNotifications.get(sessionId) === notification) {
+      this.trackedNotifications.delete(sessionId);
     }
   }
 

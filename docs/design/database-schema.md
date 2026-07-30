@@ -415,17 +415,8 @@ app 共通設定の key-value table。
 | `setting_value` | `TEXT` | 設定値 |
 | `updated_at` | `TEXT` | 更新時刻 |
 
-current 実装の key:
-
-| setting_key | Meaning |
-| --- | --- |
-| `auto_collapse_action_dock_on_send` | Session 送信後に Action Dock を自動で閉じるか |
-| `session_right_pane_visible` | 新しく開く Agent / Companion Window で right pane を表示するか |
-| `coding_provider_settings_json` | coding plane provider 設定 |
-| `memory_extraction_provider_settings_json` | memory extraction provider 設定 |
-| `character_reflection_provider_settings_json` | character reflection provider 設定 |
-| `mate_memory_generation_settings_json` | Mate Memory Generation provider 設定 |
-| `character_reflection_trigger_settings_json` | character reflection trigger 設定 |
+current key と永続化処理は `src-electron/app-settings-storage.ts`、型・既定値・正規化は
+`src/provider-settings-state.ts` を正本とする。この文書では key の網羅的な一覧を複製しない。
 
 補足:
 

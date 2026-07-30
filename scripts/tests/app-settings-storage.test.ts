@@ -48,6 +48,42 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  it("Session turn notification response preview setting の欠損値と不正値は既定の無効へ戻す", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new AppSettingsStorage(dbPath);
+      storage.close();
+
+      const invalidDatabase = new DatabaseSync(dbPath);
+      invalidDatabase
+        .prepare(`
+          UPDATE app_settings
+          SET setting_value = ?
+          WHERE setting_key = ?
+        `)
+        .run("invalid", "session_turn_notification_response_preview_enabled");
+      invalidDatabase.close();
+
+      const invalidValueStorage = new AppSettingsStorage(dbPath);
+      assert.equal(invalidValueStorage.getSettings().sessionTurnNotificationResponsePreviewEnabled, false);
+      invalidValueStorage.close();
+
+      const missingDatabase = new DatabaseSync(dbPath);
+      missingDatabase
+        .prepare("DELETE FROM app_settings WHERE setting_key = ?")
+        .run("session_turn_notification_response_preview_enabled");
+      missingDatabase.close();
+
+      const missingValueStorage = new AppSettingsStorage(dbPath);
+      assert.equal(missingValueStorage.getSettings().sessionTurnNotificationResponsePreviewEnabled, false);
+      missingValueStorage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("coding provider settings を canonical key で保存して再読込できる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -60,6 +96,7 @@ describe("AppSettingsStorage", () => {
         memoryGenerationEnabled: false,
         launchAtLoginEnabled: true,
         sessionTurnNotificationEnabled: false,
+        sessionTurnNotificationResponsePreviewEnabled: true,
         autoCollapseActionDockOnSend: false,
         sessionRightPaneVisible: true,
         memoryFileQuotaBytes: 2 * MEMORY_FILE_QUOTA_DEFAULT_BYTES,
@@ -205,6 +242,7 @@ describe("AppSettingsStorage", () => {
         memoryGenerationEnabled: false,
         launchAtLoginEnabled: true,
         sessionTurnNotificationEnabled: false,
+        sessionTurnNotificationResponsePreviewEnabled: true,
         autoCollapseActionDockOnSend: false,
         sessionRightPaneVisible: true,
         userMicrocopyCatalog: {

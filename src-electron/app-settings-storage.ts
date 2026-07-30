@@ -8,6 +8,8 @@ const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
 const MEMORY_GENERATION_ENABLED_KEY = "memory_generation_enabled";
 const LAUNCH_AT_LOGIN_ENABLED_KEY = "launch_at_login_enabled";
 const SESSION_TURN_NOTIFICATION_ENABLED_KEY = "session_turn_notification_enabled";
+const SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY =
+  "session_turn_notification_response_preview_enabled";
 const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
 const SESSION_RIGHT_PANE_VISIBLE_KEY = "session_right_pane_visible";
 const MEMORY_FILE_QUOTA_BYTES_KEY = "memory_file_quota_bytes";
@@ -55,6 +57,17 @@ export class AppSettingsStorage {
       .run(
         SESSION_TURN_NOTIFICATION_ENABLED_KEY,
         String(DEFAULT_APP_SETTINGS.sessionTurnNotificationEnabled),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY,
+        String(DEFAULT_APP_SETTINGS.sessionTurnNotificationResponsePreviewEnabled),
         updatedAt,
       );
     this.db
@@ -145,6 +158,12 @@ export class AppSettingsStorage {
       if (row.setting_key === SESSION_TURN_NOTIFICATION_ENABLED_KEY) {
         if (row.setting_value === "true" || row.setting_value === "false") {
           settings.sessionTurnNotificationEnabled = row.setting_value === "true";
+        }
+        continue;
+      }
+      if (row.setting_key === SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY) {
+        if (row.setting_value === "true" || row.setting_value === "false") {
+          settings.sessionTurnNotificationResponsePreviewEnabled = row.setting_value === "true";
         }
         continue;
       }
@@ -253,6 +272,19 @@ export class AppSettingsStorage {
         .run(
           SESSION_TURN_NOTIFICATION_ENABLED_KEY,
           String(normalized.sessionTurnNotificationEnabled),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY,
+          String(normalized.sessionTurnNotificationResponsePreviewEnabled),
           updatedAt,
         );
       this.db
