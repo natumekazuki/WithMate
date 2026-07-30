@@ -20,11 +20,13 @@ import type {
 import type {
   CodexAdapterEvent,
   CodexAdapterMutationResult,
+  CodexAdapterSteerAcknowledgement,
   CodexAdapterThreadSnapshot,
   CodexAdapterTurnSnapshot,
   CodexResumeThreadInput,
   CodexStartThreadInput,
   CodexStartTurnInput,
+  CodexSteerTurnInput,
 } from "./providers/codex/index.js";
 import { decodeApplicationRunExecutionSnapshot } from "./application-run-admission-service.js";
 import type {
@@ -62,6 +64,10 @@ export interface ApplicationRunProviderAdapterPort {
     input: CodexStartTurnInput,
     options?: ApplicationOperationOptions,
   ): Promise<CodexAdapterMutationResult<CodexAdapterTurnSnapshot>>;
+  steerTurn?(
+    input: CodexSteerTurnInput,
+    options?: ApplicationOperationOptions,
+  ): Promise<CodexAdapterMutationResult<CodexAdapterSteerAcknowledgement>>;
   nextEvent(): Promise<CodexAdapterEvent>;
   close(): Promise<void>;
 }
@@ -78,6 +84,16 @@ export interface ApplicationRunProviderRuntimeFactory {
   closePending?(): Promise<void>;
 }
 
+export type ApplicationRunBindingOwnership =
+  | Readonly<{
+      persistenceMode: "persistent";
+      ephemeralOwnerToken: null;
+    }>
+  | Readonly<{
+      persistenceMode: "ephemeral";
+      ephemeralOwnerToken: string;
+    }>;
+
 export type ApplicationRunPreparedDispatch = Readonly<{
   admission: ApplicationRunAdmissionRecord;
   workspaceKey: string;
@@ -86,7 +102,8 @@ export type ApplicationRunPreparedDispatch = Readonly<{
   generationId: string;
   executionSnapshot: RunExecutionSnapshot;
   contentBlocks: readonly TextContentBlock[];
-}>;
+}> &
+  ApplicationRunBindingOwnership;
 
 export type ApplicationRunDispatchFailure = Readonly<{
   preDispatchResolution: "not_applicable" | "dispatch_not_sent";
@@ -166,7 +183,8 @@ type BindingOwner = Readonly<{
   bindingId: string;
   threadId: string;
   generationId: string;
-}>;
+}> &
+  ApplicationRunBindingOwnership;
 
 type RuntimeExecutionContext = Readonly<{
   admission: ApplicationRunAdmissionRecord;
@@ -636,16 +654,32 @@ export class ApplicationRunRuntimeService implements ApplicationRunWorkHandoffPo
       return;
     }
     try {
+      const prepared =
+        binding.persistenceMode === "persistent"
+          ? Object.freeze({
+              admission: context.admission,
+              workspaceKey: context.session.workspaceKey,
+              providerId: context.session.providerId,
+              threadId: binding.threadId,
+              generationId: binding.generationId,
+              persistenceMode: "persistent" as const,
+              ephemeralOwnerToken: null,
+              executionSnapshot: context.snapshot,
+              contentBlocks: context.contentBlocks,
+            })
+          : Object.freeze({
+              admission: context.admission,
+              workspaceKey: context.session.workspaceKey,
+              providerId: context.session.providerId,
+              threadId: binding.threadId,
+              generationId: binding.generationId,
+              persistenceMode: "ephemeral" as const,
+              ephemeralOwnerToken: binding.ephemeralOwnerToken,
+              executionSnapshot: context.snapshot,
+              contentBlocks: context.contentBlocks,
+            });
       await this.#dispatchReady.ready(
-        Object.freeze({
-          admission: context.admission,
-          workspaceKey: context.session.workspaceKey,
-          providerId: context.session.providerId,
-          threadId: binding.threadId,
-          generationId: binding.generationId,
-          executionSnapshot: context.snapshot,
-          contentBlocks: context.contentBlocks,
-        }),
+        prepared,
         Object.freeze({
           adapter: runtime.runtime.adapter,
           signal: this.#lifecycleAbort.signal,
@@ -684,6 +718,8 @@ export class ApplicationRunRuntimeService implements ApplicationRunWorkHandoffPo
       bindingId: context.admission.bindingId,
       threadId,
       generationId: runtime.generationId,
+      persistenceMode: "persistent",
+      ephemeralOwnerToken: null,
     });
     this.#bindings.set(binding.bindingId, binding);
     return binding;

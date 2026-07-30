@@ -6,6 +6,7 @@ import type { ApplicationRunOperations } from "../src/main/index.js";
 import type {
   ApplicationRunAdmissionResult,
   ApplicationRunFollowResult,
+  ApplicationRunSendInputResult,
   ApplicationRunStatus,
 } from "../src/shared/application-run-model.js";
 
@@ -17,12 +18,37 @@ type StatusRequest = Parameters<ApplicationRunOperations<Authorization>["status"
 type StatusValue = Awaited<ReturnType<ApplicationRunOperations<Authorization>["status"]>>;
 type StartRequest = Parameters<ApplicationRunOperations<Authorization>["start"]>[0];
 type RetryRequest = Parameters<ApplicationRunOperations<Authorization>["retry"]>[0];
+type SendInputRequest = Parameters<ApplicationRunOperations<Authorization>["sendInput"]>[0];
 type StartValue = Awaited<ReturnType<ApplicationRunOperations<Authorization>["start"]>>;
 type _StartOwnsOnlyPublicInputs = Assert<
   Equal<keyof StartRequest, "context" | "sessionId" | "idempotencyKey" | "contentBlocks" | "execution">
 >;
 type _RetryOwnsOnlyPublicInputs = Assert<
   Equal<keyof RetryRequest, "context" | "sessionId" | "retryOfRunId" | "idempotencyKey" | "executionOverrides">
+>;
+type _SendInputOwnsOnlyPublicInputs = Assert<
+  Equal<keyof SendInputRequest, "context" | "sessionId" | "runId" | "idempotencyKey" | "contentBlocks">
+>;
+type _SendInputCannotSupplyInternalIdentity = Assert<
+  Equal<
+    Extract<
+      keyof SendInputRequest,
+      "messageId" | "attemptId" | "bindingId" | "providerId" | "threadId" | "turnId" | "generationId" | "ownerToken"
+    >,
+    never
+  >
+>;
+type _PendingInputUsesOptionalNeverResolution = Assert<
+  Equal<
+    keyof Extract<ApplicationRunSendInputResult, Readonly<{ deliveryState: "pending" }>>,
+    "sessionId" | "runId" | "messageId" | "deliveryState" | "resolutionCode"
+  >
+>;
+type _RejectedInputUsesBoundedResolution = Assert<
+  Equal<
+    Extract<ApplicationRunSendInputResult, Readonly<{ deliveryState: "rejected" }>>["resolutionCode"],
+    "provider_rejected" | "delivery_not_sent"
+  >
 >;
 type _StartCannotSupplyScopeOrInternalIdentity = Assert<
   Equal<
@@ -69,6 +95,10 @@ test("public Run API is type-only and keeps phase-specific status contracts", ()
     | _StatusResponseUsesApplicationEnvelope
     | _StartOwnsOnlyPublicInputs
     | _RetryOwnsOnlyPublicInputs
+    | _SendInputOwnsOnlyPublicInputs
+    | _SendInputCannotSupplyInternalIdentity
+    | _PendingInputUsesOptionalNeverResolution
+    | _RejectedInputUsesBoundedResolution
     | _StartCannotSupplyScopeOrInternalIdentity
     | _AdmissionResultCannotExposeInternalIdentity
     | _StartUsesWriteEnvelope

@@ -63,6 +63,8 @@ test("runtime owner is lazy, deduplicates simultaneous handoff, and readies the 
     providerId: "codex",
     threadId: "thread-1",
     generationId: "codex-1",
+    persistenceMode: "persistent",
+    ephemeralOwnerToken: null,
     executionSnapshot: executionSnapshot(),
     contentBlocks: contentBlocks(),
   });

@@ -65,6 +65,18 @@ const runRetryArgv = [
   "--idempotency-key",
   "018f1f4e-7f0a-7000-8000-000000000005",
 ] as const;
+const runSendInputArgv = [
+  "run",
+  "send-input",
+  "--session-id",
+  "session-1",
+  "--run-id",
+  "run-1",
+  "--idempotency-key",
+  "018f1f4e-7f0a-7000-8000-000000000006",
+  "--content-blocks-json",
+  '[{"type":"text","text":"continue"}]',
+] as const;
 
 test("help and parse failures do not register signals or start runtime", async () => {
   let starts = 0;
@@ -243,6 +255,48 @@ test("Run start completion returns durable admission without waiting for termina
     sessionId: "session-1",
     runId: "run-new",
     phase: "queued",
+  });
+});
+
+test("Run input completion returns the durable admission snapshot and closes the runtime", async () => {
+  let inputCalls = 0;
+  let shutdowns = 0;
+  const runOperations = unsupportedRunOperations({
+    sendInput: async (request) => {
+      inputCalls += 1;
+      return {
+        overallStatus: "success",
+        value: {
+          sessionId: request.sessionId,
+          runId: request.runId,
+          messageId: "message-1",
+          deliveryState: "pending",
+        },
+        persistence: { status: "committed", effect: "none", replayed: false },
+      };
+    },
+  });
+  const result = await runCliLifecycle(runSendInputArgv, {
+    version: CLI_VERSION,
+    startRuntime: async () =>
+      runtime(
+        successfulOperations(),
+        async () => {
+          shutdowns += 1;
+          return { checkpoint: "completed" };
+        },
+        runOperations,
+      ),
+  });
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.exitCode, CLI_EXIT_CODES.success);
+  assert.equal(inputCalls, 1);
+  assert.equal(shutdowns, 1);
+  assert.deepEqual((output.applicationResponse as Readonly<Record<string, unknown>>).value, {
+    sessionId: "session-1",
+    runId: "run-1",
+    messageId: "message-1",
+    deliveryState: "pending",
   });
 });
 
@@ -1130,6 +1184,7 @@ function unsupportedRunOperations(overrides: Partial<RunOperations> = {}): RunOp
   return {
     start: overrides.start ?? unsupported,
     retry: overrides.retry ?? unsupported,
+    sendInput: overrides.sendInput ?? unsupported,
     status: overrides.status ?? unsupported,
     events: overrides.events ?? unsupported,
     follow: overrides.follow ?? unsupported,

@@ -997,6 +997,37 @@ test("provider capacity failure preserves the public limit without exposing Prov
   assert.equal(JSON.stringify(response).includes("provider-private"), false);
 });
 
+test("Run admission rejects a supplemental-input capacity scope", async () => {
+  const service = createService({
+    admission: {
+      async admit() {
+        return {
+          ok: false,
+          error: {
+            code: "capacity_exceeded",
+            message: "Unexpected Run input capacity.",
+            retryable: true,
+            details: {
+              scope: "run",
+              runId: "run-private",
+              current: 64,
+              limit: 64,
+            },
+          },
+          replayed: false,
+        };
+      },
+    },
+  });
+
+  const response = await service.start(startRequest());
+
+  assert.equal(response.overallStatus, "failure");
+  if (response.overallStatus !== "failure") assert.fail("expected a projection failure");
+  assert.equal(response.error.kind, "application");
+  assert.equal(JSON.stringify(response).includes("run-private"), false);
+});
+
 function createService(
   overrides: Partial<ApplicationRunServiceOptions<Authorization>> = {},
 ): ApplicationRunService<Authorization> {

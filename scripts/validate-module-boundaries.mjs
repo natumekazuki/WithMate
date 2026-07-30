@@ -97,6 +97,7 @@ const applicationRunOwner = path.join(sourceRoot, "main", "application-run-servi
 const applicationRunAdmissionOwner = path.join(sourceRoot, "main", "application-run-admission-service.ts");
 const applicationRunDispatchOwner = path.join(sourceRoot, "main", "application-run-dispatch-service.ts");
 const applicationRunEventOwner = path.join(sourceRoot, "main", "application-run-event-service.ts");
+const applicationRunInputOwner = path.join(sourceRoot, "main", "application-run-input-service.ts");
 const applicationRunOutputOwner = path.join(sourceRoot, "main", "application-run-output-service.ts");
 const applicationRunRuntimeOwner = path.join(sourceRoot, "main", "application-run-runtime-service.ts");
 const repositoryWriteClient = path.join(sourceRoot, "main", "repository-write-client.ts");
@@ -172,6 +173,7 @@ for (const file of listSourceFiles(sourceRoot)) {
     file === applicationRunAdmissionOwner ||
     file === applicationRunDispatchOwner ||
     file === applicationRunEventOwner ||
+    file === applicationRunInputOwner ||
     file === applicationRunRuntimeOwner ||
     file === applicationRunOutputOwner;
   const allowsRepositoryWriteIntegration =
@@ -179,6 +181,7 @@ for (const file of listSourceFiles(sourceRoot)) {
     file === applicationRunAdmissionOwner ||
     file === applicationRunDispatchOwner ||
     file === applicationRunEventOwner ||
+    file === applicationRunInputOwner ||
     file === applicationRunRuntimeOwner;
   const inspect = (node) => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {

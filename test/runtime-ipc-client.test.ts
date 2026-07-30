@@ -421,6 +421,13 @@ test("runtime Application client owns the complete 23-operation proxy allowlist 
     idempotencyKey,
     executionOverrides: { reasoningEffort: "high" },
   });
+  await runtime.runOperations.sendInput({
+    context,
+    sessionId: "session-1",
+    runId: "run-1",
+    idempotencyKey,
+    contentBlocks: [{ type: "text", text: "continue" }],
+  });
   await runtime.runOperations.status({ context, sessionId: "session-1", runId: "run-1" });
   await runtime.runOperations.events({ context, sessionId: "session-1", runId: "run-1", limit: 1 });
   await runtime.runOperations.follow({

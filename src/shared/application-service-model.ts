@@ -177,6 +177,7 @@ export type ApplicationRunOutputPayloadFormatDetails = Readonly<{
 export type ApplicationCapacityExceededDetails =
   | Readonly<{ scope: "root"; rootSessionId: string; current: number; limit: number }>
   | Readonly<{ scope: "session_tree"; rootSessionId: string; current: number; limit: number }>
+  | Readonly<{ scope: "run"; runId: string; current: number; limit: number }>
   | Readonly<{ scope: "application"; current: number; limit: number }>
   | Readonly<{ scope: "provider"; current: number; limit: number }>;
 
@@ -262,6 +263,12 @@ export type ApplicationPersistenceStatus =
   | ApplicationRejectedPersistenceStatus
   | ApplicationFailedPersistenceStatus;
 
+export function isApplicationDomainFailurePersistenceStatus(
+  value: unknown,
+): value is ApplicationNotAttemptedPersistenceStatus["status"] | ApplicationRejectedPersistenceStatus["status"] {
+  return value === "not_attempted" || value === "rejected";
+}
+
 export type ApplicationOperationOptions = Readonly<{
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -330,7 +337,7 @@ type ApplicationPrePersistenceFailureResponse = Readonly<{
 type ApplicationDomainFailureResponse = Readonly<{
   overallStatus: "failure";
   error: ApplicationDomainError;
-  persistence: ApplicationRejectedPersistenceStatus;
+  persistence: ApplicationNotAttemptedPersistenceStatus | ApplicationRejectedPersistenceStatus;
 }>;
 
 type ApplicationPersistenceFailureEffect<TMode extends ApplicationOperationMode> = TMode extends "read"

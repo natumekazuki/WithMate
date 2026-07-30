@@ -12,6 +12,7 @@ import type {
 import type {
   ApplicationRunDispatchControl,
   ApplicationRunDispatchFailure,
+  ApplicationRunBindingOwnership,
   ApplicationRunPreparedDispatch,
 } from "../src/main/application-run-runtime-service.js";
 import { PersistenceClientError } from "../src/main/persistence-worker-client.js";
@@ -74,6 +75,46 @@ test("Dispatch commits before Provider send, registers one owner, and waits for 
       reasoningEffort: "high",
     },
   ]);
+});
+
+test("an ephemeral Binding owner token is preserved across Dispatch begin and pre-send resolution", async () => {
+  const begins: RunDispatchBeginCommand[] = [];
+  const resolutions: RunDispatchResolutionCommand[] = [];
+  let currentChecks = 0;
+  const service = new ApplicationRunDispatchService({
+    writes: dispatchWrites({
+      begin(command) {
+        begins.push(command);
+        return beginSuccess(command, true);
+      },
+      resolve(command) {
+        resolutions.push(command);
+        return resolutionSuccess(command);
+      },
+    }),
+    attempts: attemptPort().port,
+  });
+  const fixture = dispatchControl({
+    current() {
+      currentChecks += 1;
+      return currentChecks === 1;
+    },
+    startTurn: () => acceptedTurn("turn-1"),
+  });
+
+  await service.ready(
+    preparedDispatch({
+      ownership: {
+        persistenceMode: "ephemeral",
+        ephemeralOwnerToken: EPHEMERAL_OWNER_TOKEN,
+      },
+    }),
+    fixture.control,
+  );
+
+  assert.equal(begins[0]?.ephemeralOwnerToken, EPHEMERAL_OWNER_TOKEN);
+  assert.equal(resolutions[0]?.ephemeralOwnerToken, EPHEMERAL_OWNER_TOKEN);
+  assert.deepEqual(resolutions[0]?.outcome, { kind: "rejected" });
 });
 
 test("an inherited retry sends its source Run model with inherited provenance", async () => {
@@ -549,11 +590,16 @@ function preparedDispatch(
     bindingId?: string;
     threadId?: string;
     modelSelection?: "explicit" | "inherited";
+    ownership?: ApplicationRunBindingOwnership;
   }> = {},
 ): ApplicationRunPreparedDispatch {
   const sessionId = overrides.sessionId ?? "session-1";
   const runId = overrides.runId ?? "run-1";
-  return {
+  const ownership = overrides.ownership ?? {
+    persistenceMode: "persistent" as const,
+    ephemeralOwnerToken: null,
+  };
+  const dispatch: Omit<ApplicationRunPreparedDispatch, "persistenceMode" | "ephemeralOwnerToken"> = {
     admission: {
       sessionId,
       messageId: `message-${runId}`,
@@ -585,7 +631,16 @@ function preparedDispatch(
     },
     contentBlocks: [{ type: "text", text: "hello" }],
   };
+  return ownership.persistenceMode === "persistent"
+    ? { ...dispatch, persistenceMode: "persistent", ephemeralOwnerToken: null }
+    : {
+        ...dispatch,
+        persistenceMode: "ephemeral",
+        ephemeralOwnerToken: ownership.ephemeralOwnerToken,
+      };
 }
+
+const EPHEMERAL_OWNER_TOKEN = "018f1f4e-7f0a-7000-8000-000000000901";
 
 function beginSuccess(
   command: RunDispatchBeginCommand,

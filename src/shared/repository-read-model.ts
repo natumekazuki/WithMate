@@ -1,6 +1,7 @@
 import { MAX_PERSISTENCE_RESPONSE_BYTES } from "./persistence-protocol.js";
 import type { LocalRepositoryMetadata } from "./session-metadata.js";
-import type { RunOutputCategory } from "./repository-write-model.js";
+import type { RepositoryCommandError, RunInputAdmissionResult, RunOutputCategory } from "./repository-write-model.js";
+import type { TextContentBlock } from "./message-content.js";
 
 export const REPOSITORY_READ_OPERATIONS = {
   sessionsPage: "repository.sessions.page",
@@ -18,6 +19,7 @@ export const REPOSITORY_READ_OPERATIONS = {
   runOutputGet: "repository.run.output.get",
   runOutputPayloadMetadata: "repository.run.output.payload-metadata",
   runInputDeliveriesPage: "repository.run.input-deliveries.page",
+  runInputReplayProbe: "repository.run.input-replay.probe",
   payloadChunk: "payload.read_chunk",
   childResultsPage: "repository.child-results.page",
   sessionDeletionStatusGet: "repository.session-deletion.status.get",
@@ -201,6 +203,18 @@ export type RunInputDeliveryRecoveryItem = Readonly<{
   createdAt: number;
   dispatchingAt: number | null;
 }>;
+
+export type RunInputReplayProbeRequest = Readonly<{
+  sessionId: string;
+  runId: string;
+  idempotencyKey: string;
+  contentBlocks: readonly TextContentBlock[];
+}>;
+
+export type RunInputReplayProbeResult =
+  | Readonly<{ kind: "absent" }>
+  | Readonly<{ kind: "replay"; value: RunInputAdmissionResult }>
+  | Readonly<{ kind: "failure"; error: RepositoryCommandError }>;
 
 export type ChildResultListItem = Readonly<{
   id: string;

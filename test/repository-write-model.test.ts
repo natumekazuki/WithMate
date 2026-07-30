@@ -9,6 +9,7 @@ import {
   createRepositoryWriteOperations,
   RUN_OUTPUT_SQLITE_WRITE_MARGIN_BYTES,
 } from "../src/persistence-worker/repository-write-model.js";
+import { createRepositoryReadOperations } from "../src/persistence-worker/repository-read-model.js";
 import { PersistenceWorkerRuntime } from "../src/persistence-worker/worker-runtime.js";
 import {
   ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS,
@@ -892,10 +893,7 @@ repositoryTest("all Message write siblings reject non-text content blocks before
         REPOSITORY_WRITE_OPERATIONS.childStart,
         { ...child, message: { ...child.message, contentBlocks: invalidBlocks } },
       ],
-      [
-        REPOSITORY_WRITE_OPERATIONS.runInputAdmit,
-        { ...input, message: { ...input.message, contentBlocks: invalidBlocks } },
-      ],
+      [REPOSITORY_WRITE_OPERATIONS.runInputAdmit, { ...input, contentBlocks: invalidBlocks }],
       [
         REPOSITORY_WRITE_OPERATIONS.runTerminal,
         {
@@ -2421,6 +2419,7 @@ repositoryTest("generation loss invalidates an ambiguous ephemeral Binding and p
       clock: () => now,
       sessionIdAllocator: testSessionIdAllocator,
       runAdmissionIdentityAllocator: testRunAdmissionIdentityAllocator,
+      runInputMessageIdAllocator: testRunInputMessageIdAllocator,
     });
     const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
       const operation = operations.get(name);
@@ -2686,6 +2685,7 @@ repositoryTest("ephemeral Binding ownership permits dispatch only in the activat
       clock: () => now,
       sessionIdAllocator: testSessionIdAllocator,
       runAdmissionIdentityAllocator: testRunAdmissionIdentityAllocator,
+      runInputMessageIdAllocator: testRunInputMessageIdAllocator,
     });
     const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
       const operation = operations.get(name);
@@ -2894,15 +2894,27 @@ repositoryTest(
       const admitInput = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInputAdmit, () => 600);
       const command = runInputAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000169");
       const first = admitInput(command) as CommandResult;
-      const replay = admitInput(command) as CommandResult;
+      const replay = admitInput({
+        ...command,
+        contentBlocks: command.contentBlocks.map((block) => ({ ...block })),
+      }) as CommandResult;
+      const volatileOwnerReplay = admitInput({
+        ...command,
+        attemptId: "attempt-current-owner-changed",
+      }) as CommandResult;
       const conflict = admitInput({
         ...command,
-        message: { ...command.message, contentBlocks: [{ type: "text", text: "different" }] },
+        contentBlocks: [{ type: "text", text: "different" }],
       }) as CommandResult;
+      const callerIdentity = admitInput({ ...command, messageId: "caller-message" }) as CommandResult;
 
       assert.equal(first.ok && !first.replayed && first.value.deliveryState, "pending");
       assert.equal(replay.ok && replay.replayed, true);
+      assert.equal(volatileOwnerReplay.ok && volatileOwnerReplay.replayed, true);
+      assert.equal(first.ok && replay.ok && first.value.messageId === replay.value.messageId, true);
+      assert.equal(first.ok && first.value.messageOrdinal, 2);
       assert.equal(!conflict.ok && conflict.error.code, "idempotency_conflict");
+      assert.equal(!callerIdentity.ok && callerIdentity.error.code, "request_invalid");
       const state = database
         .prepare(
           `
@@ -2915,7 +2927,7 @@ repositoryTest(
         WHERE m.id = ?
       `,
         )
-        .get(command.idempotencyKey, command.message.id) as Record<string, unknown>;
+        .get(command.idempotencyKey, "message-input-1") as Record<string, unknown>;
       assert.deepEqual(
         { ...state },
         {
@@ -2951,6 +2963,79 @@ repositoryTest(
     });
   },
 );
+
+repositoryTest("supplemental input replay rejects divergent response references and envelopes", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const admitInput = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInputAdmit, () => 600);
+    const firstCommand = runInputAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000182");
+    const secondCommand = runInputAdmissionCommand(
+      "018f1f4e-7f0a-7000-8000-000000000183",
+      null,
+      "message-input-2",
+      "second",
+    );
+    assert.equal((admitInput(firstCommand) as CommandResult).ok, true);
+    assert.equal((admitInput(secondCommand) as CommandResult).ok, true);
+
+    database
+      .prepare(
+        `
+        UPDATE idempotency_records
+        SET response_envelope_json = json_set(response_envelope_json, '$.messageId', 'message-input-2')
+        WHERE idempotency_key = ?
+      `,
+      )
+      .run(firstCommand.idempotencyKey);
+    const divergentEnvelope = admitInput(firstCommand) as CommandResult;
+    assert.equal(!divergentEnvelope.ok && divergentEnvelope.error.code, "reference_invalid");
+
+    database.exec(`
+      INSERT INTO messages (id, session_id, ordinal, role, content_blocks_json, created_at)
+      VALUES
+        ('message-run-2', 'session-1', 4, 'user', '[]', 601),
+        ('message-input-run-2', 'session-1', 5, 'user', '[]', 602);
+      INSERT INTO runs (
+        id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+        external_side_effect_state, created_at, started_at, terminal_at, updated_at, version
+      ) VALUES (
+        'run-2', 'session-1', 2, 'message-run-2', 'completed', '{}',
+        'present', 601, 601, 603, 603, 0
+      );
+      INSERT INTO run_attempts (
+        id, run_id, ordinal, provider_binding_id, attempt_reason, attempt_state,
+        external_execution_id, created_at, started_at, terminal_at
+      ) VALUES (
+        'attempt-run-2', 'run-2', 1, 'binding-run-1', 'initial', 'succeeded',
+        'execution-run-2', 601, 601, 603
+      );
+      INSERT INTO run_dispatches (
+        run_attempt_id, dispatch_state, request_fingerprint, created_at, dispatching_at, resolved_at
+      ) VALUES (
+        'attempt-run-2', 'accepted',
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        601, 601, 601
+      );
+      INSERT INTO run_input_deliveries (
+        message_id, run_id, run_attempt_id, delivery_state, created_at, dispatching_at, resolved_at
+      ) VALUES (
+        'message-input-run-2', 'run-2', 'attempt-run-2', 'accepted', 602, 602, 602
+      );
+    `);
+    database
+      .prepare(
+        `
+        UPDATE idempotency_records
+        SET response_ref_id = 'message-input-run-2',
+            response_envelope_json = json_set(response_envelope_json, '$.messageId', 'message-input-run-2')
+        WHERE idempotency_key = ?
+      `,
+      )
+      .run(firstCommand.idempotencyKey);
+    const crossRunReference = admitInput(firstCommand) as CommandResult;
+    assert.equal(!crossRunReference.ok && crossRunReference.error.code, "reference_invalid");
+  });
+});
 
 repositoryTest("supplemental input admission rejects stale Gate state and rolls back injected Delivery failure", () => {
   withDatabase((database) => {
@@ -3007,15 +3092,199 @@ repositoryTest("supplemental input admission directly enforces idempotency expir
 
     now = 700;
     const longLived = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInputAdmit, () => now, 1_000);
-    const missingCommand = {
-      ...runInputAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000180"),
-      message: { id: "message-input-2", contentBlocks: [{ type: "text", text: "again" }] },
-    };
+    const missingCommand = runInputAdmissionCommand(
+      "018f1f4e-7f0a-7000-8000-000000000180",
+      null,
+      "message-input-2",
+      "again",
+    );
     assert.equal((longLived(missingCommand) as CommandResult).ok, true);
     database.exec("PRAGMA foreign_keys = OFF;");
     database.prepare("DELETE FROM run_input_deliveries WHERE message_id = 'message-input-2'").run();
     const missing = longLived(missingCommand) as CommandResult;
     assert.equal(!missing.ok && missing.error.code, "reference_invalid");
+  });
+});
+
+repositoryTest("supplemental input replay probe mirrors idempotency and reference failures without mutation", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    let now = 600;
+    const command = runInputAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000184");
+    const admitInput = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInputAdmit, () => now, 1);
+    const probe = () => {
+      const operation = createRepositoryReadOperations(database, { clock: () => now }).get(
+        "repository.run.input-replay.probe",
+      );
+      assert.ok(operation);
+      return operation;
+    };
+    const payload = {
+      sessionId: command.sessionId,
+      runId: command.runId,
+      idempotencyKey: command.idempotencyKey,
+      contentBlocks: command.contentBlocks,
+    };
+    assert.deepEqual(probe().execute(payload).result, { kind: "absent" });
+    assert.equal((admitInput(command) as CommandResult).ok, true);
+    assert.equal((probe().execute(payload).result as Readonly<Record<string, unknown>>).kind, "replay");
+    const conflict = probe().execute({
+      ...payload,
+      contentBlocks: [{ type: "text", text: "different" }],
+    }).result as Readonly<{ kind: string; error: Readonly<Record<string, unknown>> }>;
+    assert.equal(conflict.kind, "failure");
+    assert.equal(conflict.error.code, "idempotency_conflict");
+    now = 601;
+    const expired = probe().execute(payload).result as Readonly<{
+      kind: string;
+      error: Readonly<Record<string, unknown>>;
+    }>;
+    assert.equal(expired.kind, "failure");
+    assert.equal(expired.error.code, "idempotency_expired");
+    assert.equal(
+      (
+        database
+          .prepare("SELECT record_state FROM idempotency_records WHERE idempotency_key = ?")
+          .get(command.idempotencyKey) as Readonly<Record<string, unknown>>
+      ).record_state,
+      "completed",
+    );
+  });
+});
+
+repositoryTest("supplemental input begin preserves Message ordinal across a lost handoff recovery gap", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const admitInput = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInputAdmit, () => 600);
+    const beginInput = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInputBegin, () => 700);
+    const resolveInput = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInputResolve, () => 800);
+    const first = runInputAdmissionCommand(
+      "018f1f4e-7f0a-7000-8000-000000000185",
+      null,
+      "message-input-order-1",
+      "first",
+    );
+    const second = runInputAdmissionCommand(
+      "018f1f4e-7f0a-7000-8000-000000000186",
+      null,
+      "message-input-order-2",
+      "second",
+    );
+    assert.equal((admitInput(first) as CommandResult).ok, true);
+    assert.equal((admitInput(second) as CommandResult).ok, true);
+
+    const secondBeforeFirst = beginInput({
+      ...runInputBeginCommand(),
+      messageId: "message-input-order-2",
+    }) as CommandResult;
+    assert.equal(!secondBeforeFirst.ok && secondBeforeFirst.error.code, "lifecycle_conflict");
+    assert.equal(
+      !secondBeforeFirst.ok && (secondBeforeFirst.error as Readonly<{ retryable?: unknown }>).retryable,
+      true,
+    );
+
+    const firstBegin = beginInput({
+      ...runInputBeginCommand(),
+      messageId: "message-input-order-1",
+    }) as CommandResult;
+    assert.equal(firstBegin.ok && firstBegin.value.sendAllowed, true);
+    assert.equal(
+      (
+        resolveInput({
+          ...runInputResolutionCommand("accepted"),
+          messageId: "message-input-order-1",
+        }) as CommandResult
+      ).ok,
+      true,
+    );
+    const secondBegin = beginInput({
+      ...runInputBeginCommand(),
+      messageId: "message-input-order-2",
+    }) as CommandResult;
+    assert.equal(secondBegin.ok && secondBegin.value.sendAllowed, true);
+  });
+});
+
+repositoryTest("durable pending supplemental inputs consume the per-Attempt capacity until resolution", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const admitInput = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInputAdmit, () => 600);
+    const beginInput = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInputBegin, () => 700);
+    const resolveInput = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInputResolve, () => 800);
+    const commands = Array.from({ length: 65 }, (_value, index) =>
+      runInputAdmissionCommand(
+        `018f1f4e-7f0a-7000-8000-${String(600 + index).padStart(12, "0")}`,
+        null,
+        `message-input-capacity-${index + 1}`,
+        `input ${index + 1}`,
+      ),
+    );
+    for (const command of commands.slice(0, 64)) {
+      assert.equal((admitInput(command) as CommandResult).ok, true);
+    }
+    const full = admitInput(commands[64]!) as CommandResult;
+    assert.equal(!full.ok && full.error.code, "capacity_exceeded");
+    if (full.ok || full.error.code !== "capacity_exceeded") assert.fail("capacity details are unavailable");
+    assert.deepEqual(full.error.details, {
+      scope: "run",
+      runId: "run-1",
+      current: 64,
+      limit: 64,
+    });
+    const replay = admitInput(commands[0]!) as CommandResult;
+    assert.equal(replay.ok && replay.replayed, true);
+
+    assert.equal(
+      (
+        beginInput({
+          ...runInputBeginCommand(),
+          messageId: "message-input-capacity-1",
+        }) as CommandResult
+      ).ok,
+      true,
+    );
+    assert.equal(
+      (
+        resolveInput({
+          ...runInputResolutionCommand("accepted"),
+          messageId: "message-input-capacity-1",
+        }) as CommandResult
+      ).ok,
+      true,
+    );
+    assert.equal((admitInput(commands[64]!) as CommandResult).ok, true);
+  });
+});
+
+repositoryTest("durable pending supplemental inputs share one application capacity", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const operation = createRepositoryWriteOperations(database, {
+      clock: () => 600,
+      runInputMessageIdAllocator: testRunInputMessageIdAllocator,
+      maxTrackedInputs: 2,
+    }).get(REPOSITORY_WRITE_OPERATIONS.runInputAdmit);
+    assert.ok(operation);
+    const admitInput = (payload: Readonly<Record<string, unknown>>) =>
+      operation.execute(payload).result as CommandResult;
+    const commands = [0, 1, 2].map((index) =>
+      runInputAdmissionCommand(
+        `018f1f4e-7f0a-7000-8000-${String(700 + index).padStart(12, "0")}`,
+        null,
+        `message-input-application-capacity-${index + 1}`,
+        `input ${index + 1}`,
+      ),
+    );
+    assert.equal(admitInput(commands[0]!).ok, true);
+    assert.equal(admitInput(commands[1]!).ok, true);
+    const full = admitInput(commands[2]!);
+    assert.equal(!full.ok && full.error.code, "capacity_exceeded");
+    if (full.ok || full.error.code !== "capacity_exceeded") assert.fail("capacity details are unavailable");
+    assert.deepEqual(full.error.details, {
+      scope: "application",
+      current: 2,
+      limit: 2,
+    });
   });
 });
 
@@ -3039,7 +3308,7 @@ for (const outcome of ["accepted", "rejected", "ambiguous"] as const) {
         runInputAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000172"),
       ) as CommandResult;
       assert.equal(inFlightAdmissionReplay.ok && inFlightAdmissionReplay.replayed, true);
-      assert.equal(inFlightAdmissionReplay.ok && inFlightAdmissionReplay.value.deliveryState, "pending");
+      assert.equal(inFlightAdmissionReplay.ok && inFlightAdmissionReplay.value.deliveryState, "dispatching");
 
       database
         .prepare("UPDATE runs SET phase = 'completed', terminal_at = 750, updated_at = 750 WHERE id = 'run-1'")
@@ -3061,6 +3330,18 @@ for (const outcome of ["accepted", "rejected", "ambiguous"] as const) {
       ) as CommandResult;
       assert.equal(admissionReplay.ok && admissionReplay.replayed, true);
       assert.equal(admissionReplay.ok && admissionReplay.value.deliveryState, outcome);
+      const replayProbe = createRepositoryReadOperations(database, { clock: () => 800 }).get(
+        "repository.run.input-replay.probe",
+      );
+      assert.ok(replayProbe);
+      const probed = replayProbe.execute({
+        sessionId: "session-1",
+        runId: "run-1",
+        idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000172",
+        contentBlocks: [{ type: "text", text: "more" }],
+      }).result as Readonly<Record<string, unknown>>;
+      assert.equal(probed.kind, "replay");
+      assert.equal((probed.value as Readonly<Record<string, unknown>>).deliveryState, outcome);
       const row = database
         .prepare("SELECT delivery_state, resolution_code, dispatching_at, resolved_at FROM run_input_deliveries")
         .get() as Record<string, unknown>;
@@ -3085,6 +3366,7 @@ repositoryTest("ephemeral supplemental input cannot begin after Worker ownership
       clock: () => now,
       sessionIdAllocator: testSessionIdAllocator,
       runAdmissionIdentityAllocator: testRunAdmissionIdentityAllocator,
+      runInputMessageIdAllocator: testRunInputMessageIdAllocator,
     });
     const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
       const operation = operations.get(name);
@@ -3135,10 +3417,14 @@ repositoryTest("ephemeral supplemental input cannot begin after Worker ownership
     const restartedBegin = restarted.get(REPOSITORY_WRITE_OPERATIONS.runInputBegin);
     const restartedResolve = restarted.get(REPOSITORY_WRITE_OPERATIONS.runInputResolve);
     assert.ok(restartedAdmit && restartedBegin && restartedResolve);
-    const undeliverable = restartedAdmit.execute({
-      ...runInputAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000181", ownerToken),
-      message: { id: "message-input-after-restart", contentBlocks: [{ type: "text", text: "later" }] },
-    }).result as CommandResult;
+    const undeliverable = restartedAdmit.execute(
+      runInputAdmissionCommand(
+        "018f1f4e-7f0a-7000-8000-000000000181",
+        ownerToken,
+        "message-input-after-restart",
+        "later",
+      ),
+    ).result as CommandResult;
     assert.equal(!undeliverable.ok && undeliverable.error.code, "reference_invalid");
     assert.equal(database.prepare("SELECT 1 FROM messages WHERE id = 'message-input-after-restart'").get(), undefined);
     const rejected = restartedBegin.execute(runInputBeginCommand(ownerToken)).result as CommandResult;
@@ -3856,6 +4142,7 @@ repositoryTest("Run terminal converges unresolved supplemental input before inva
         clock: () => now,
         sessionIdAllocator: testSessionIdAllocator,
         runAdmissionIdentityAllocator: testRunAdmissionIdentityAllocator,
+        runInputMessageIdAllocator: testRunInputMessageIdAllocator,
       });
       const execute = (name: string, payload: Readonly<Record<string, unknown>>) => {
         const operation = operations.get(name);
@@ -5805,6 +6092,7 @@ const testRunAdmissionIdentities = new Map<
   string,
   Readonly<{ messageId: string; runId: string; attemptId: string; bindingId: string }>
 >();
+const testRunInputMessageIds = new Map<string, string>();
 
 function testSessionIdAllocator(_database: DatabaseSync, _allocationNonce: string, allocationKey: string) {
   return testSessionIds.get(allocationKey);
@@ -5816,6 +6104,10 @@ function testRunAdmissionIdentityAllocator(
   idempotencyKey: string,
 ) {
   return testRunAdmissionIdentities.get(idempotencyKey);
+}
+
+function testRunInputMessageIdAllocator(_database: DatabaseSync, idempotencyKey: string) {
+  return testRunInputMessageIds.get(idempotencyKey);
 }
 
 function makeBindingEphemeral(database: DatabaseSync, bindingId: string = "binding-run-1"): void {
@@ -5837,6 +6129,7 @@ function operationFor(
     idempotencyRetentionMs,
     sessionIdAllocator: testSessionIdAllocator,
     runAdmissionIdentityAllocator: testRunAdmissionIdentityAllocator,
+    runInputMessageIdAllocator: testRunInputMessageIdAllocator,
     ...capacity,
   }).get(name);
   assert.ok(operation);
@@ -6290,7 +6583,13 @@ function dispatchResolutionCommand(
   };
 }
 
-function runInputAdmissionCommand(idempotencyKey: string, ephemeralOwnerToken: string | null = null) {
+function runInputAdmissionCommand(
+  idempotencyKey: string,
+  ephemeralOwnerToken: string | null = null,
+  messageId: string = "message-input-1",
+  text: string = "more",
+) {
+  testRunInputMessageIds.set(idempotencyKey, messageId);
   return {
     sessionId: "session-1",
     workspaceKey: TEST_WORKSPACE.workspaceKey,
@@ -6298,7 +6597,7 @@ function runInputAdmissionCommand(idempotencyKey: string, ephemeralOwnerToken: s
     runId: "run-1",
     attemptId: "attempt-run-1",
     ephemeralOwnerToken,
-    message: { id: "message-input-1", contentBlocks: [{ type: "text", text: "more" }] },
+    contentBlocks: [{ type: "text", text }],
   };
 }
 

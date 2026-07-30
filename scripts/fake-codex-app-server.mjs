@@ -5,10 +5,17 @@ import readline from "node:readline";
 const logPath = requiredEnvironment("WITHMATE_FAKE_CODEX_LOG");
 const crashMarker = requiredEnvironment("WITHMATE_FAKE_CODEX_CRASH_MARKER");
 const userAgentPath = requiredEnvironment("WITHMATE_FAKE_CODEX_USER_AGENT_FILE");
+const holdMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_HOLD_MARKER");
+const steerHoldMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_STEER_HOLD_MARKER");
+const steerReleaseFile = optionalEnvironment("WITHMATE_FAKE_CODEX_STEER_RELEASE_FILE");
+const steerRejectMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_STEER_REJECT_MARKER");
+const steerCrashMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_STEER_CRASH_MARKER");
+const steerTerminalMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_STEER_TERMINAL_MARKER");
 const model = "gpt-5.4";
 let threadSequence = 0;
 let turnSequence = 0;
 let closing = false;
+const activeTurns = new Map();
 
 log("process.started", { pid: process.pid });
 
@@ -93,6 +100,9 @@ async function handleMessage(message) {
     case "turn/start":
       await handleTurnStart(message);
       return;
+    case "turn/steer":
+      await handleTurnSteer(message);
+      return;
     default:
       write({ id: message.id, error: { code: -32601, message: "Method not found" } });
   }
@@ -132,6 +142,7 @@ async function handleTurnStart(message) {
   turnSequence += 1;
   const turnId = `fake-turn-${process.pid}-${turnSequence}`;
   const inProgressTurn = turn(turnId, "inProgress", []);
+  activeTurns.set(threadId, { turnId, prompt });
   log("turn.started", { threadId, turnId, prompt });
   respond(message.id, { turn: inProgressTurn });
 
@@ -139,6 +150,12 @@ async function handleTurnStart(message) {
     notify("turn/started", { threadId, turn: inProgressTurn });
     log("process.crashing", { threadId, turnId });
     setImmediate(() => process.exit(17));
+    return;
+  }
+
+  if (holdMarker !== undefined && prompt.includes(holdMarker)) {
+    notify("turn/started", { threadId, turn: inProgressTurn });
+    log("turn.held", { threadId, turnId, prompt });
     return;
   }
 
@@ -154,8 +171,53 @@ async function handleTurnStart(message) {
     notify("item/started", { threadId, turnId, item, startedAtMs: Date.now() });
     notify("item/completed", { threadId, turnId, item, completedAtMs: Date.now() });
     notify("turn/completed", { threadId, turn: turn(turnId, "completed", [item]) });
+    activeTurns.delete(threadId);
     log("turn.completed", { threadId, turnId, prompt });
   });
+}
+
+async function handleTurnSteer(message) {
+  const params = record(message.params);
+  const threadId = requiredString(params.threadId);
+  const expectedTurnId = requiredString(params.expectedTurnId);
+  requiredString(params.clientUserMessageId);
+  const prompt = extractPrompt(params.input);
+  const active = activeTurns.get(threadId);
+  log("turn.steered", { threadId, turnId: expectedTurnId, prompt });
+  if (active === undefined || active.turnId !== expectedTurnId) {
+    write({ id: message.id, error: { code: -32_002, message: "Active Turn mismatch" } });
+    return;
+  }
+  if (steerRejectMarker !== undefined && prompt.includes(steerRejectMarker)) {
+    write({ id: message.id, error: { code: -32_000, message: "Steer rejected" } });
+    return;
+  }
+  if (steerCrashMarker !== undefined && prompt.includes(steerCrashMarker)) {
+    log("process.crashing", { threadId, turnId: expectedTurnId });
+    setImmediate(() => process.exit(17));
+    return;
+  }
+  if (steerHoldMarker !== undefined && prompt.includes(steerHoldMarker)) {
+    if (steerReleaseFile === undefined) throw new Error("A steer release file is required.");
+    log("turn.steer_waiting", { threadId, turnId: expectedTurnId, prompt });
+    await waitForFile(steerReleaseFile, 15_000);
+    log("turn.steer_released", { threadId, turnId: expectedTurnId, prompt });
+  }
+  if (steerTerminalMarker !== undefined && prompt.includes(steerTerminalMarker)) {
+    const item = {
+      type: "agentMessage",
+      id: `fake-item-${process.pid}-${turnSequence}-terminal`,
+      text: `reply:${prompt}`,
+      phase: "final_answer",
+      memoryCitation: null,
+    };
+    notify("turn/completed", { threadId, turn: turn(expectedTurnId, "completed", [item]) });
+    activeTurns.delete(threadId);
+    log("turn.completed", { threadId, turnId: expectedTurnId, prompt });
+    respond(message.id, { turnId: expectedTurnId });
+    return;
+  }
+  respond(message.id, { turnId: expectedTurnId });
 }
 
 function threadOperation(threadId, cwd, requestedModel, sandboxMode, ephemeral) {
@@ -269,4 +331,18 @@ function requiredEnvironment(name) {
   const value = process.env[name];
   if (typeof value !== "string" || value.length === 0) throw new Error(`${name} is required.`);
   return value;
+}
+
+function optionalEnvironment(name) {
+  const value = process.env[name];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+async function waitForFile(filePath, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(filePath)) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting to release the fake steer response.");
 }

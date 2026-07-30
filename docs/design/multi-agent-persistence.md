@@ -434,6 +434,7 @@ CLI / UI の follow は `(run_id, ordinal > cursor)` の keyset pagination で�
 - `resolution_code` は 1 から 64 文字の定義済み code に限定する。Provider の生 error、response payload、本文、絶対 path、secret は保存しない。
 - `INDEX run_input_deliveries_run_state_idx (run_id, delivery_state, created_at)`
 - `INDEX run_input_deliveries_attempt_state_idx (run_attempt_id, delivery_state)`
+- `INDEX run_input_deliveries_unresolved_state_idx (delivery_state) WHERE delivery_state IN ('pending', 'dispatching')`
 
 ### 配送と復旧
 

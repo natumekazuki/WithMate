@@ -1221,11 +1221,185 @@ test("runtime Run mutation response exposes only the durable admission identity"
         ...publicProviderCapacity,
         error: {
           ...publicProviderCapacity.error,
+          details: { scope: "run", runId: "run-private", current: 64, limit: 64 },
+        },
+      }),
+    /response is invalid/u,
+  );
+  assert.throws(
+    () =>
+      snapshotRuntimeApplicationResponse("run.start", startPayload, {
+        ...publicProviderCapacity,
+        error: {
+          ...publicProviderCapacity.error,
           details: { ...publicProviderCapacity.error.details, providerId: "provider-private" },
         },
       }),
     /response is invalid/u,
   );
+});
+
+test("runtime Run input response exposes only the public delivery contract", () => {
+  const payload = {
+    sessionId: "session-1",
+    runId: "run-1",
+    idempotencyKey: randomUUID(),
+    contentBlocks: [{ type: "text", text: "continue" }],
+  };
+  const states = [
+    { deliveryState: "pending" },
+    { deliveryState: "accepted" },
+    { deliveryState: "rejected", resolutionCode: "provider_rejected" },
+    { deliveryState: "rejected", resolutionCode: "delivery_not_sent" },
+    { deliveryState: "ambiguous", resolutionCode: "transport_unknown" },
+    { deliveryState: "ambiguous", resolutionCode: "process_unknown" },
+    { deliveryState: "aborted", resolutionCode: "run_terminal_not_sent" },
+  ] as const;
+  for (const state of states) {
+    const value = { sessionId: "session-1", runId: "run-1", messageId: "message-1", ...state };
+    assert.equal(
+      JSON.stringify(
+        decodeRuntimeWireValue(snapshotRuntimeApplicationResponse("run.send_input", payload, writeResponse(value))),
+      ),
+      JSON.stringify(writeResponse(value)),
+    );
+  }
+  for (const value of [
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      messageId: "message-1",
+      deliveryState: "pending",
+      resolutionCode: "process_unknown",
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      messageId: "message-1",
+      deliveryState: "rejected",
+      resolutionCode: "raw_provider_error",
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      messageId: "message-1",
+      deliveryState: "accepted",
+      attemptId: "attempt-private",
+    },
+    {
+      sessionId: "session-other",
+      runId: "run-1",
+      messageId: "message-1",
+      deliveryState: "accepted",
+    },
+  ]) {
+    assert.throws(
+      () => snapshotRuntimeApplicationResponse("run.send_input", payload, writeResponse(value)),
+      /response is invalid/u,
+    );
+  }
+  assert.doesNotThrow(() =>
+    snapshotRuntimeApplicationResponse("run.send_input", payload, {
+      overallStatus: "failure",
+      error: {
+        kind: "domain",
+        code: "capacity_exceeded",
+        message: "Run input capacity was reached.",
+        retryable: true,
+        details: { scope: "run", runId: "run-1", current: 64, limit: 64 },
+      },
+      persistence: { status: "rejected", effect: "none" },
+    }),
+  );
+  for (const error of [
+    {
+      kind: "domain",
+      code: "lifecycle_conflict",
+      message: "The active Run is not owned by this runtime.",
+      retryable: true,
+    },
+    {
+      kind: "domain",
+      code: "capacity_exceeded",
+      message: "Run input capacity was reached.",
+      retryable: true,
+      details: { scope: "run", runId: "run-1", current: 1, limit: 1 },
+    },
+  ] as const) {
+    assert.doesNotThrow(() =>
+      snapshotRuntimeApplicationResponse("run.send_input", payload, {
+        overallStatus: "failure",
+        error,
+        persistence: { status: "not_attempted", effect: "none" },
+      }),
+    );
+  }
+  assert.throws(
+    () =>
+      snapshotRuntimeApplicationResponse("run.send_input", payload, {
+        overallStatus: "failure",
+        error: {
+          kind: "domain",
+          code: "capacity_exceeded",
+          message: "Run input capacity was reached.",
+          retryable: true,
+          details: { scope: "run", runId: "run-private", current: 64, limit: 64 },
+        },
+        persistence: { status: "rejected", effect: "none" },
+      }),
+    /response is invalid/u,
+  );
+  for (const code of ["cursor_invalid", "destination_invalid"] as const) {
+    assert.throws(
+      () =>
+        snapshotRuntimeApplicationResponse("run.send_input", payload, {
+          overallStatus: "failure",
+          error: {
+            kind: "domain",
+            code,
+            message: "This domain failure is not owned by Run input.",
+            retryable: false,
+          },
+          persistence: { status: "not_attempted", effect: "none" },
+        }),
+      /response is invalid/u,
+    );
+  }
+});
+
+test("runtime output export rejects domain failures before persistence is attempted", () => {
+  const payload = {
+    sessionId: "session-1",
+    runId: "run-1",
+    outputItemId: "output-1",
+    destination: path.resolve("output.bin"),
+  };
+  for (const error of [
+    {
+      kind: "domain",
+      code: "not_found",
+      message: "Run output was not found.",
+      retryable: false,
+    },
+    {
+      kind: "domain",
+      code: "payload_unavailable",
+      message: "Run output payload is unavailable.",
+      retryable: false,
+      details: { reason: "no_payload" },
+    },
+  ] as const) {
+    assert.throws(
+      () =>
+        snapshotRuntimeApplicationResponse("run.output_export", payload, {
+          overallStatus: "failure",
+          error,
+          publication: { status: "not_published", temporaryCleanup: "complete" },
+          persistence: { status: "not_attempted", effect: "none" },
+        }),
+      /response is invalid/u,
+    );
+  }
 });
 
 test("runtime response projection correlates Session create by canonical Workspace identity", () => {
@@ -1353,7 +1527,7 @@ test("runtime host starts the real Application composition only after its endpoi
   assert.deepEqual(await host.close(), { checkpoint: "completed" });
 });
 
-test("runtime dispatch owns the complete 23-operation allowlist and never spreads client authorization", async () => {
+test("runtime dispatch owns the complete 24-operation allowlist and never spreads client authorization", async () => {
   const calls: Array<Readonly<{ name: string; request: Readonly<Record<string, unknown>>; signal: AbortSignal }>> = [];
   const application = completeDispatchApplication(calls);
   const signal = new AbortController().signal;
@@ -1508,6 +1682,7 @@ function fakeRuntimeApplication(
     runOperations: {
       start: overrides.start ?? fallback,
       retry: overrides.retry ?? fallback,
+      sendInput: overrides.sendInput ?? fallback,
       status: overrides.status ?? fallback,
       events: overrides.events ?? fallback,
       follow: overrides.follow ?? fallback,
@@ -1550,6 +1725,7 @@ function completeDispatchApplication(
     runs: method("session.runs"),
     start: method("run.start"),
     retry: method("run.retry"),
+    sendInput: method("run.send_input"),
     status: method("run.status"),
     events: method("run.events"),
     follow: method("run.follow"),
@@ -1600,6 +1776,12 @@ function operationPayloads(): Readonly<Record<RuntimeIpcOperation, RuntimeIpcOpe
       retryOfRunId: "run-source",
       idempotencyKey,
       executionOverrides: { reasoningEffort: "high" },
+    },
+    "run.send_input": {
+      sessionId: "session-1",
+      runId: "run-1",
+      idempotencyKey,
+      contentBlocks: [{ type: "text", text: "continue" }],
     },
     "run.status": { sessionId: "session-1", runId: "run-1" },
     "run.events": { sessionId: "session-1", runId: "run-1", limit: 1 },

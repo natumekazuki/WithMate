@@ -12,6 +12,8 @@ import {
   type RunEventPage,
   type RunHistoryListItem,
   type RunInputDeliveryRecoveryItem,
+  type RunInputReplayProbeRequest,
+  type RunInputReplayProbeResult,
   type RunOutputListItem,
   type RunOutputItemDetail,
   type RunOutputPayloadChunkRequest,
@@ -166,6 +168,10 @@ export class RepositoryReadClient {
     Page<RunInputDeliveryRecoveryItem> & Readonly<{ sessionId: string; runId: string; workspaceKey: string }>
   > {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.runInputDeliveriesPage, "read", input, options);
+  }
+
+  runInputReplayProbe(input: RunInputReplayProbeRequest, options?: RequestOptions): Promise<RunInputReplayProbeResult> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.runInputReplayProbe, "read", input, options);
   }
 
   payloadChunk(input: RunOutputPayloadChunkRequest, options?: RequestOptions): Promise<RunOutputPayloadChunkResult> {

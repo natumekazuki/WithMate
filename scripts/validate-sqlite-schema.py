@@ -167,6 +167,19 @@ def validate_connection(
     assert actual_schema_definition_sha256 == manifest["schemaDefinitionSha256"]
     assert unique_constraint_autoindexes == []
 
+    run_input_capacity_plan = connection.execute(
+        """
+        EXPLAIN QUERY PLAN
+        SELECT COUNT(*)
+        FROM run_input_deliveries
+        WHERE delivery_state IN ('pending', 'dispatching')
+        """
+    ).fetchall()
+    assert any(
+        "run_input_deliveries_unresolved_state_idx" in str(row[3])
+        for row in run_input_capacity_plan
+    ), run_input_capacity_plan
+
     connection.execute("CREATE INDEX schema_drift_probe_idx ON sessions(created_at)")
     assert schema_definition_sha256(connection) != manifest["schemaDefinitionSha256"]
     connection.execute("DROP INDEX schema_drift_probe_idx")
@@ -499,6 +512,7 @@ def validate_connection(
         "canonicalUuidAcceptanceCheck": "ok",
         "appWideIdempotencyNamespaceCheck": "ok",
         "sessionTreeAggregateLimitCheck": "ok",
+        "runInputCapacityQueryPlanCheck": "ok",
         "storedPayloadAtomicityCheck": "ok",
         "deferredForeignKeyCycleCheck": "ok",
     }

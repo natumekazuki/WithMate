@@ -1000,19 +1000,10 @@ function domainFailureFromRepository(error: RepositoryCommandError): WriteFailur
 function projectCapacityExceededDetails(
   details: Extract<RepositoryCommandError, Readonly<{ code: "capacity_exceeded" }>>["details"],
 ): ApplicationCapacityExceededDetails {
-  switch (details.scope) {
-    case "root":
-    case "session_tree":
-      return {
-        scope: details.scope,
-        rootSessionId: details.rootSessionId,
-        current: details.current,
-        limit: details.limit,
-      };
-    case "application":
-    case "provider":
-      return { scope: details.scope, current: details.current, limit: details.limit };
+  if (details.scope === "application" || details.scope === "provider") {
+    return { scope: details.scope, current: details.current, limit: details.limit };
   }
+  throw new TypeError("Run admission capacity scope is invalid.");
 }
 
 function domainFailure(

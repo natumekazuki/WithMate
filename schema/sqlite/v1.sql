@@ -451,6 +451,9 @@ CREATE INDEX run_input_deliveries_run_state_idx
   ON run_input_deliveries(run_id, delivery_state, created_at);
 CREATE INDEX run_input_deliveries_attempt_state_idx
   ON run_input_deliveries(run_attempt_id, delivery_state);
+CREATE INDEX run_input_deliveries_unresolved_state_idx
+  ON run_input_deliveries(delivery_state)
+  WHERE delivery_state IN ('pending', 'dispatching');
 
 CREATE TABLE run_output_items (
   id TEXT PRIMARY KEY CHECK (length(id) > 0),

@@ -64,6 +64,17 @@ export async function dispatchCliRunCommand<TAuthorizationContext>(
         },
         options,
       );
+    } else if (isCommandFor(command, "send-input")) {
+      response = await dependencies.operations.sendInput(
+        {
+          context,
+          sessionId: command.sessionId,
+          runId: command.runId,
+          idempotencyKey: command.idempotencyKey,
+          contentBlocks: command.contentBlocks,
+        },
+        options,
+      );
     } else if (isCommandFor(command, "status")) {
       response = await dependencies.operations.status(
         { context, sessionId: command.sessionId, runId: command.runId },
