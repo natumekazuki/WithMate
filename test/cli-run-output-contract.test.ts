@@ -377,6 +377,30 @@ test("export projects publication timing without destination paths or OS errors"
     persistence: { status: "rejected", effect: "none" },
   });
   assert.equal(destinationExistsBeforeRead.ok, false);
+
+  for (const error of [
+    {
+      kind: "domain",
+      code: "not_found",
+      message: "Run output was not found.",
+      retryable: false,
+    },
+    {
+      kind: "domain",
+      code: "payload_unavailable",
+      message: "Run output payload is unavailable.",
+      retryable: false,
+      details: { reason: "no_payload" },
+    },
+  ] as const) {
+    const domainBeforeRead = projectCliRunOperationOutput(exportCommand, {
+      overallStatus: "failure",
+      error,
+      publication: { status: "not_published", temporaryCleanup: "complete" },
+      persistence: { status: "not_attempted", effect: "none" },
+    });
+    assert.equal(domainBeforeRead.ok, false);
+  }
 });
 
 test("payload availability and binary chunk failures retain bounded typed details", () => {

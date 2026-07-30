@@ -12,7 +12,7 @@ type OutputOperations = ApplicationRunOutputOperations<Authorization>;
 const authorization: Authorization = { transport: "test" };
 const outputOperations = runOutputOperations();
 
-test("Run start and retry dispatch only caller-owned mutation fields", async () => {
+test("Run mutations dispatch only caller-owned fields", async () => {
   const calls: unknown[] = [];
   const operations = runOperations({
     start: async (request, options) => {
@@ -26,6 +26,15 @@ test("Run start and retry dispatch only caller-owned mutation fields", async () 
         runId: "run-retry",
         retryOfRunId: request.retryOfRunId,
         phase: "queued" as const,
+      });
+    },
+    sendInput: async (request, options) => {
+      calls.push(["send-input", request, options]);
+      return writeSuccess({
+        sessionId: request.sessionId,
+        runId: request.runId,
+        messageId: "message-1",
+        deliveryState: "pending" as const,
       });
     },
   });
@@ -54,9 +63,21 @@ test("Run start and retry dispatch only caller-owned mutation fields", async () 
     },
     { operations, outputOperations, authorization },
   );
+  const sendInput = await dispatchCliRunCommand(
+    {
+      identity: { namespace: "run", operation: "send-input" },
+      sessionId: "session-1",
+      runId: "run-1",
+      idempotencyKey,
+      contentBlocks: [{ type: "text", text: "continue" }],
+      timeoutMs: 500,
+    },
+    { operations, outputOperations, authorization },
+  );
 
   assert.equal(start.ok, true);
   assert.equal(retry.ok, true);
+  assert.equal(sendInput.ok, true);
   assert.deepEqual(calls, [
     [
       "start",
@@ -83,6 +104,17 @@ test("Run start and retry dispatch only caller-owned mutation fields", async () 
         executionOverrides: { reasoningEffort: "high" },
       },
       {},
+    ],
+    [
+      "send-input",
+      {
+        context: { authorization },
+        sessionId: "session-1",
+        runId: "run-1",
+        idempotencyKey,
+        contentBlocks: [{ type: "text", text: "continue" }],
+      },
+      { timeoutMs: 500 },
     ],
   ]);
 });
@@ -344,6 +376,7 @@ function runOperations(overrides: Partial<Operations>): Operations {
   return {
     start: overrides.start ?? unsupported,
     retry: overrides.retry ?? unsupported,
+    sendInput: overrides.sendInput ?? unsupported,
     status: overrides.status ?? unsupported,
     events: overrides.events ?? unsupported,
     follow: overrides.follow ?? unsupported,

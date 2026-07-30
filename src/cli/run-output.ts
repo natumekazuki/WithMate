@@ -12,12 +12,14 @@ import {
   type CliRunAdmissionValue,
   type CliRunEventsValue,
   type CliRunFollowValue,
+  type CliRunInputValue,
   type CliRunOperation,
   type CliRunOperationOutput,
   type CliRunStatusValue,
   type CliRuntimeFailureOutput,
   type CliValidatedRunCommand,
 } from "./contract.js";
+import { isApplicationRunSendInputDomainErrorCode } from "../shared/application-run-model.js";
 import { isRunOutputCommand, projectCliRunOutputOperationOutput } from "./run-output-payload.js";
 
 export type CliRunOperationProjectionResult =
@@ -31,7 +33,7 @@ export function projectCliRunOperationOutput(
   if (isRunOutputCommand(command)) return projectCliRunOutputOperationOutput(command, applicationResponse);
   try {
     const projected =
-      isCommandFor(command, "start") || isCommandFor(command, "retry")
+      isCommandFor(command, "start") || isCommandFor(command, "retry") || isCommandFor(command, "send-input")
         ? projectCliWriteApplicationResponse(applicationResponse, (value) => projectRunValue(command, value))
         : projectCliReadApplicationResponse(
             applicationResponse,
@@ -69,10 +71,55 @@ function projectRunValue(command: CliValidatedRunCommand, value: unknown): unkno
   if (isCommandFor(command, "start") || isCommandFor(command, "retry")) {
     return projectAdmission(value, command);
   }
+  if (isCommandFor(command, "send-input")) return projectInput(value, command.sessionId, command.runId);
   if (isCommandFor(command, "status")) return projectStatus(value, command.sessionId, command.runId);
   if (isCommandFor(command, "events")) return projectEvents(value, command.sessionId, command.runId, command.limit);
   if (isCommandFor(command, "follow")) return projectFollow(value, command.sessionId, command.runId, command.limit);
   malformed();
+}
+
+function projectInput(value: unknown, expectedSessionId: string, expectedRunId: string): CliRunInputValue {
+  let input = record(value);
+  const deliveryState = enumValue(input.deliveryState, [
+    "pending",
+    "accepted",
+    "rejected",
+    "ambiguous",
+    "aborted",
+  ] as const);
+  input = exactRecord(
+    input,
+    deliveryState === "pending" || deliveryState === "accepted"
+      ? ["sessionId", "runId", "messageId", "deliveryState"]
+      : ["sessionId", "runId", "messageId", "deliveryState", "resolutionCode"],
+  );
+  const sessionId = boundedString(input.sessionId);
+  const runId = boundedString(input.runId);
+  const messageId = boundedString(input.messageId);
+  if (sessionId !== expectedSessionId || runId !== expectedRunId) malformed();
+  if (deliveryState === "pending" || deliveryState === "accepted") {
+    return { sessionId, runId, messageId, deliveryState };
+  }
+  if (deliveryState === "rejected") {
+    return {
+      sessionId,
+      runId,
+      messageId,
+      deliveryState,
+      resolutionCode: enumValue(input.resolutionCode, ["provider_rejected", "delivery_not_sent"] as const),
+    };
+  }
+  if (deliveryState === "ambiguous") {
+    return {
+      sessionId,
+      runId,
+      messageId,
+      deliveryState,
+      resolutionCode: enumValue(input.resolutionCode, ["transport_unknown", "process_unknown"] as const),
+    };
+  }
+  if (input.resolutionCode !== "run_terminal_not_sent") malformed();
+  return { sessionId, runId, messageId, deliveryState, resolutionCode: "run_terminal_not_sent" };
 }
 
 function projectAdmission(value: unknown, command: CliValidatedRunCommand): CliRunAdmissionValue {
@@ -264,13 +311,28 @@ function validateRunResponse(
     overallStatus: string;
     value?: unknown;
     issues?: readonly unknown[];
+    error?: unknown;
     persistence: unknown;
   }>,
 ): void {
-  if (response.overallStatus === "failure") return;
+  if (response.overallStatus === "failure") {
+    if (
+      isCommandFor(command, "send-input") &&
+      record(response.error).kind === "domain" &&
+      !isApplicationRunSendInputDomainErrorCode(record(response.error).code)
+    ) {
+      malformed();
+    }
+    validateRunCapacityError(command, response.error);
+    return;
+  }
   if (isCommandFor(command, "start") || isCommandFor(command, "retry")) {
     const persistence = record(response.persistence);
     if (persistence.replayed === false && record(response.value).phase !== "queued") malformed();
+    return;
+  }
+  if (isCommandFor(command, "send-input")) {
+    if (response.overallStatus === "partial_success") malformed();
     return;
   }
   if (isCommandFor(command, "status")) {
@@ -301,6 +363,21 @@ function validateRunResponse(
   );
   if (value.reason === "deadline" && response.overallStatus === "partial_success") malformed();
   if (value.reason === "events" && items.length === 0 && response.overallStatus !== "partial_success") malformed();
+}
+
+function validateRunCapacityError(command: CliValidatedRunCommand, value: unknown): void {
+  const error = record(value);
+  if (error.kind !== "domain" || error.code !== "capacity_exceeded") return;
+  const details = record(error.details);
+  if (isCommandFor(command, "start") || isCommandFor(command, "retry")) {
+    if (details.scope !== "application" && details.scope !== "provider") malformed();
+    return;
+  }
+  if (isCommandFor(command, "send-input")) {
+    if (details.scope === "application") return;
+    if (details.scope === "run" && details.runId === command.runId) return;
+  }
+  malformed();
 }
 
 function validateCursorProgress(inputCursor: string | undefined, nextCursor: string, consumedCount: number): void {

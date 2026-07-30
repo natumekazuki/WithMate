@@ -140,7 +140,7 @@ export class ApplicationRunDispatchService implements ApplicationRunDispatchRead
       attemptId: dispatch.admission.attemptId,
       bindingId: dispatch.admission.bindingId,
       providerRequest,
-      ephemeralOwnerToken: null,
+      ephemeralOwnerToken: dispatch.ephemeralOwnerToken,
     };
     const begun = await this.#begin(dispatch, beginCommand);
     if (begun.kind === "unresolved") {
@@ -346,7 +346,7 @@ export class ApplicationRunDispatchService implements ApplicationRunDispatchRead
       runId: dispatch.admission.runId,
       attemptId: dispatch.admission.attemptId,
       bindingId: dispatch.admission.bindingId,
-      ephemeralOwnerToken: null,
+      ephemeralOwnerToken: dispatch.ephemeralOwnerToken,
       outcome,
     };
     const result = await writeResolutionWithExactRetry(this.#writes, command);

@@ -1,5 +1,6 @@
 import type {
   ApplicationAccessDecision,
+  ApplicationDomainErrorCode,
   ApplicationOperationOptions,
   ApplicationOperationResponse,
   ApplicationSessionOperationContext,
@@ -12,6 +13,8 @@ export const APPLICATION_RUN_LIMITS = {
   maxExecutionSettingLength: 1_024,
   maxCursorLength: 2_048,
   maxSummaryLength: 4_096,
+  maxPendingInputsPerAttempt: 64,
+  maxTrackedInputs: 128,
   eventsDefaultItems: REPOSITORY_READ_LIMITS.events.default,
   eventsMaxItems: REPOSITORY_READ_LIMITS.events.max,
   followDefaultWaitMs: 10_000,
@@ -21,7 +24,31 @@ export const APPLICATION_RUN_LIMITS = {
   followMaxPollMs: 5_000,
 } as const;
 
-export type ApplicationRunOperation = "start" | "retry" | "status" | "events" | "follow";
+export const APPLICATION_RUN_SEND_INPUT_DOMAIN_ERROR_CODES = [
+  "request_invalid",
+  "not_found",
+  "reference_invalid",
+  "lifecycle_conflict",
+  "session_busy",
+  "capacity_exceeded",
+  "insufficient_disk_space",
+  "idempotency_conflict",
+  "idempotency_in_progress",
+  "idempotency_expired",
+  "identity_exhausted",
+] as const satisfies readonly ApplicationDomainErrorCode[];
+
+export type ApplicationRunSendInputDomainErrorCode = (typeof APPLICATION_RUN_SEND_INPUT_DOMAIN_ERROR_CODES)[number];
+
+export function isApplicationRunSendInputDomainErrorCode(
+  value: unknown,
+): value is ApplicationRunSendInputDomainErrorCode {
+  return (
+    typeof value === "string" && (APPLICATION_RUN_SEND_INPUT_DOMAIN_ERROR_CODES as readonly string[]).includes(value)
+  );
+}
+
+export type ApplicationRunOperation = "start" | "retry" | "send-input" | "status" | "events" | "follow";
 
 export type ApplicationRunSandboxSetting =
   | Readonly<{ mode: "read-only"; networkAccess: boolean }>
@@ -164,6 +191,51 @@ export type ApplicationRunRetryRequest<TAuthorizationContext> = Readonly<{
   executionOverrides?: ApplicationRunExecutionOverrides;
 }>;
 
+export type ApplicationRunSendInputRequest<TAuthorizationContext> = Readonly<{
+  context: ApplicationSessionOperationContext<TAuthorizationContext>;
+  sessionId: string;
+  runId: string;
+  idempotencyKey: string;
+  contentBlocks: readonly TextContentBlock[];
+}>;
+
+export type ApplicationRunSendInputResult =
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      messageId: string;
+      deliveryState: "pending";
+      resolutionCode?: never;
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      messageId: string;
+      deliveryState: "accepted";
+      resolutionCode?: never;
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      messageId: string;
+      deliveryState: "rejected";
+      resolutionCode: "provider_rejected" | "delivery_not_sent";
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      messageId: string;
+      deliveryState: "ambiguous";
+      resolutionCode: "transport_unknown" | "process_unknown";
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      messageId: string;
+      deliveryState: "aborted";
+      resolutionCode: "run_terminal_not_sent";
+    }>;
+
 export type ApplicationRunAdmissionResult = Readonly<{
   sessionId: string;
   runId: string;
@@ -215,6 +287,16 @@ export type ApplicationRunAccessValidationInput<TAuthorizationContext> =
       }>;
     }>
   | Readonly<{
+      operation: "send-input";
+      access: "write";
+      context: ApplicationSessionOperationContext<TAuthorizationContext>;
+      target: Readonly<{
+        kind: "run_input";
+        sessionId: string;
+        runId: string;
+      }>;
+    }>
+  | Readonly<{
       operation: "status" | "events" | "follow";
       access: "read";
       context: ApplicationSessionOperationContext<TAuthorizationContext>;
@@ -238,6 +320,10 @@ export interface ApplicationRunOperations<TAuthorizationContext> {
     request: ApplicationRunRetryRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationRunAdmissionResult, "write">>;
+  sendInput(
+    request: ApplicationRunSendInputRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationRunSendInputResult, "write">>;
   status(
     request: ApplicationRunStatusRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,

@@ -4,10 +4,13 @@ import { DatabaseSync } from "node:sqlite";
 import {
   REPOSITORY_READ_LIMITS,
   REPOSITORY_READ_OPERATIONS,
+  type RunInputReplayProbeResult,
   type RunOutputListItem,
 } from "../shared/repository-read-model.js";
+import type { RepositoryCommandErrorCode, RunInputAdmissionResult } from "../shared/repository-write-model.js";
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
 import { isLocalRepositoryKey, SESSION_METADATA_LIMITS, sessionSearchKey } from "../shared/session-metadata.js";
+import { prepareRunInputIdempotency } from "./run-input-idempotency.js";
 
 const INLINE_MESSAGE_BYTES = 64 * 1024;
 const MAX_PAGE_JSON_BYTES = 192 * 1024;
@@ -185,7 +188,11 @@ export class RepositoryReadError extends Error {
   }
 }
 
-export function createRepositoryReadOperations(database: DatabaseSync): ReadonlyMap<string, RepositoryReadOperation> {
+export function createRepositoryReadOperations(
+  database: DatabaseSync,
+  options: Readonly<{ clock?: () => number }> = {},
+): ReadonlyMap<string, RepositoryReadOperation> {
+  const clock = options.clock ?? Date.now;
   database.function(SESSION_SEARCH_SQL_FUNCTION, { deterministic: true }, (value) =>
     typeof value === "string" ? sessionSearchKey(value) : null,
   );
@@ -212,6 +219,10 @@ export function createRepositoryReadOperations(database: DatabaseSync): Readonly
       read((payload) => ({ result: runInputDeliveriesPage(database, payload) })),
     ],
     [
+      REPOSITORY_READ_OPERATIONS.runInputReplayProbe,
+      read((payload) => ({ result: runInputReplayProbe(database, payload, clock) })),
+    ],
+    [
       REPOSITORY_READ_OPERATIONS.runOutputPayloadMetadata,
       read((payload) => ({ result: runOutputPayloadMetadata(database, payload) })),
     ],
@@ -226,6 +237,187 @@ export function createRepositoryReadOperations(database: DatabaseSync): Readonly
     ],
     [REPOSITORY_READ_OPERATIONS.recoveryGet, read((payload) => ({ result: recoveryGet(database, payload) }))],
   ]);
+}
+
+function runInputReplayProbe(
+  database: DatabaseSync,
+  payload: Readonly<Record<string, unknown>>,
+  clock: () => number,
+): RunInputReplayProbeResult {
+  assertExactKeys(payload, ["sessionId", "runId", "idempotencyKey", "contentBlocks"]);
+  const sessionId = requiredString(payload.sessionId, "sessionId");
+  const runId = requiredString(payload.runId, "runId");
+  if (!isCanonicalUuid(payload.idempotencyKey)) throw invalidRequest("idempotencyKey");
+  const scope = database
+    .prepare(
+      `
+      SELECT s.workspace_key
+      FROM sessions s
+      JOIN runs r ON r.session_id = s.id
+      WHERE s.id = ? AND r.id = ?
+    `,
+    )
+    .get(sessionId, runId) as Readonly<{ workspace_key: string }> | undefined;
+  const claim = database
+    .prepare("SELECT claim_kind FROM idempotency_key_claims WHERE idempotency_key = ?")
+    .get(payload.idempotencyKey) as Readonly<{ claim_kind: "standard" | "session_deletion" }> | undefined;
+  const row = database
+    .prepare(
+      `
+      SELECT scope_session_id, operation, request_fingerprint, record_state,
+        response_kind, response_ref_type, response_ref_id, response_envelope_json, expires_at
+      FROM idempotency_records
+      WHERE idempotency_key = ?
+    `,
+    )
+    .get(payload.idempotencyKey) as RunInputIdempotencyRow | undefined;
+  if (row === undefined) {
+    return claim === undefined ? { kind: "absent" } : replayFailure("idempotency_conflict");
+  }
+  const prepared =
+    scope === undefined
+      ? undefined
+      : prepareRunInputIdempotency({
+          sessionId,
+          runId,
+          workspaceKey: scope.workspace_key,
+          contentBlocks: payload.contentBlocks,
+        });
+  if (
+    prepared === undefined ||
+    row.scope_session_id !== sessionId ||
+    row.operation !== "run.input.admit" ||
+    row.request_fingerprint !== prepared.fingerprint
+  ) {
+    return replayFailure("idempotency_conflict");
+  }
+  if (row.record_state === "in_progress") return replayFailure("idempotency_in_progress");
+  const now = clock();
+  if (!Number.isSafeInteger(now) || now < 0) throw persistenceContractViolation();
+  if (row.record_state === "expired" || row.expires_at === null || row.expires_at <= now) {
+    return replayFailure("idempotency_expired");
+  }
+  if (
+    row.response_kind !== "success" ||
+    row.response_ref_type !== "delivery" ||
+    row.response_ref_id === null ||
+    row.response_envelope_json === null
+  ) {
+    return replayFailure("reference_invalid");
+  }
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(row.response_envelope_json);
+  } catch {
+    return replayFailure("reference_invalid");
+  }
+  if (!validRunInputReplayEnvelope(envelope, row.response_ref_id, sessionId, runId)) {
+    return replayFailure("reference_invalid");
+  }
+  const current = readRunInputReplayResult(database, row.response_ref_id, sessionId, runId);
+  return current === undefined ? replayFailure("reference_invalid") : { kind: "replay", value: current };
+}
+
+function replayFailure(
+  code: Extract<
+    RepositoryCommandErrorCode,
+    "idempotency_conflict" | "idempotency_in_progress" | "idempotency_expired" | "reference_invalid"
+  >,
+): Extract<RunInputReplayProbeResult, Readonly<{ kind: "failure" }>> {
+  const retryable = code === "idempotency_in_progress";
+  const message =
+    code === "idempotency_conflict"
+      ? "Idempotency key was used differently."
+      : code === "idempotency_in_progress"
+        ? "Idempotent command is in progress."
+        : code === "idempotency_expired"
+          ? "Idempotency key has expired."
+          : "Idempotent Run input response is invalid.";
+  return { kind: "failure", error: { code, message, retryable } };
+}
+
+function validRunInputReplayEnvelope(value: unknown, messageId: string, sessionId: string, runId: string): boolean {
+  if (!isPlainObject(value)) return false;
+  const keys = [
+    "sessionId",
+    "runId",
+    "attemptId",
+    "messageId",
+    "messageOrdinal",
+    "bindingId",
+    "deliveryState",
+    "resolutionCode",
+    "admittedAt",
+    "dispatchingAt",
+    "resolvedAt",
+  ];
+  return (
+    Object.keys(value).length === keys.length &&
+    keys.every((key) => Object.hasOwn(value, key)) &&
+    value.sessionId === sessionId &&
+    value.runId === runId &&
+    value.messageId === messageId &&
+    typeof value.attemptId === "string" &&
+    value.attemptId.length > 0 &&
+    value.attemptId.length <= 1_024 &&
+    Number.isSafeInteger(value.messageOrdinal) &&
+    (value.messageOrdinal as number) > 0 &&
+    typeof value.bindingId === "string" &&
+    value.bindingId.length > 0 &&
+    value.bindingId.length <= 1_024 &&
+    value.deliveryState === "pending" &&
+    value.resolutionCode === null &&
+    Number.isSafeInteger(value.admittedAt) &&
+    value.dispatchingAt === null &&
+    value.resolvedAt === null
+  );
+}
+
+function readRunInputReplayResult(
+  database: DatabaseSync,
+  messageId: string,
+  sessionId: string,
+  runId: string,
+): RunInputAdmissionResult | undefined {
+  const row = database
+    .prepare(
+      `
+      SELECT i.message_id, m.ordinal AS message_ordinal, i.run_id, i.run_attempt_id,
+        i.delivery_state, i.resolution_code, i.created_at, i.dispatching_at, i.resolved_at,
+        b.id AS provider_binding_id
+      FROM run_input_deliveries i
+      JOIN messages m ON m.id = i.message_id AND m.session_id = ?
+      JOIN run_attempts a ON a.id = i.run_attempt_id AND a.run_id = i.run_id
+      JOIN runs r ON r.id = i.run_id AND r.session_id = m.session_id
+      JOIN sessions s ON s.id = r.session_id
+      JOIN provider_bindings b ON b.id = a.provider_binding_id
+        AND b.session_id = r.session_id AND b.provider_id = s.provider_id
+        AND EXISTS (
+          SELECT 1
+          FROM run_attempts creator_a
+          JOIN runs creator_r ON creator_r.id = creator_a.run_id
+          WHERE creator_a.id = b.created_by_run_attempt_id
+            AND creator_r.session_id = r.session_id
+        )
+        AND (b.persistence_mode = 'persistent' OR b.created_by_run_attempt_id = a.id)
+      WHERE i.message_id = ? AND i.run_id = ?
+    `,
+    )
+    .get(sessionId, messageId, runId) as RunInputReplayRow | undefined;
+  if (row === undefined || row.provider_binding_id === null) return undefined;
+  return {
+    sessionId,
+    runId: row.run_id,
+    attemptId: row.run_attempt_id,
+    messageId: row.message_id,
+    messageOrdinal: row.message_ordinal,
+    bindingId: row.provider_binding_id,
+    deliveryState: row.delivery_state,
+    resolutionCode: row.resolution_code,
+    admittedAt: row.created_at,
+    dispatchingAt: row.dispatching_at,
+    resolvedAt: row.resolved_at,
+  };
 }
 
 function sessionsPage(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
@@ -1254,6 +1446,29 @@ function isNonNegativeInteger(value: unknown): value is number {
 }
 
 type OrdinalRow = Readonly<Record<string, unknown> & { ordinal: number }>;
+type RunInputIdempotencyRow = Readonly<{
+  scope_session_id: string;
+  operation: string;
+  request_fingerprint: string;
+  record_state: "in_progress" | "completed" | "expired";
+  response_kind: "success" | "error" | null;
+  response_ref_type: "run" | "session" | "delivery" | "interaction" | "none" | null;
+  response_ref_id: string | null;
+  response_envelope_json: string | null;
+  expires_at: number | null;
+}>;
+type RunInputReplayRow = Readonly<{
+  message_id: string;
+  message_ordinal: number;
+  run_id: string;
+  run_attempt_id: string;
+  provider_binding_id: string | null;
+  delivery_state: RunInputAdmissionResult["deliveryState"];
+  resolution_code: RunInputAdmissionResult["resolutionCode"];
+  created_at: number;
+  dispatching_at: number | null;
+  resolved_at: number | null;
+}>;
 type RunOutputItemRow = Readonly<{
   id: string;
   run_id: string;

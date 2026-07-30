@@ -193,10 +193,7 @@ export type RunInputAdmissionCommand = Readonly<{
   runId: string;
   attemptId: string;
   ephemeralOwnerToken: string | null;
-  message: Readonly<{
-    id: string;
-    contentBlocks: readonly TextContentBlock[];
-  }>;
+  contentBlocks: readonly TextContentBlock[];
 }>;
 
 export type RunInputBeginCommand = Readonly<{
@@ -210,7 +207,7 @@ export type RunInputBeginCommand = Readonly<{
 }>;
 
 export type RunInputResolutionCode =
-  "provider_rejected" | "transport_unknown" | "process_unknown" | "run_terminal_not_sent";
+  "provider_rejected" | "delivery_not_sent" | "transport_unknown" | "process_unknown" | "run_terminal_not_sent";
 
 export type RunInputResolutionCommand = Readonly<{
   sessionId: string;
@@ -222,7 +219,7 @@ export type RunInputResolutionCommand = Readonly<{
   ephemeralOwnerToken: string | null;
   outcome:
     | Readonly<{ kind: "accepted" }>
-    | Readonly<{ kind: "rejected"; resolutionCode: "provider_rejected" }>
+    | Readonly<{ kind: "rejected"; resolutionCode: "provider_rejected" | "delivery_not_sent" }>
     | Readonly<{ kind: "ambiguous"; resolutionCode: "transport_unknown" | "process_unknown" }>;
 }>;
 
@@ -367,6 +364,7 @@ export type RepositoryCommandErrorCode =
 export type RepositoryCapacityExceededDetails =
   | Readonly<{ scope: "root"; rootSessionId: string; current: number; limit: number }>
   | Readonly<{ scope: "session_tree"; rootSessionId: string; current: number; limit: number }>
+  | Readonly<{ scope: "run"; runId: string; current: number; limit: number }>
   | Readonly<{ scope: "application"; current: number; limit: number }>
   | Readonly<{ scope: "provider"; providerId: string; current: number; limit: number }>;
 
@@ -519,8 +517,9 @@ export type RunInputAdmissionResult = Readonly<{
   runId: string;
   attemptId: string;
   messageId: string;
+  messageOrdinal: number;
   bindingId: string;
-  deliveryState: "pending" | "accepted" | "rejected" | "ambiguous" | "aborted";
+  deliveryState: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
   resolutionCode: RunInputResolutionCode | null;
   admittedAt: number;
   dispatchingAt: number | null;

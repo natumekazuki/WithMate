@@ -8,6 +8,7 @@ import {
   normalizeAllowedAdditionalDirectories,
 } from "../shared/allowed-additional-directories.js";
 import { buildApplicationRunProviderRequest } from "../shared/application-run-execution.js";
+import { APPLICATION_RUN_LIMITS } from "../shared/application-run-model.js";
 import { MESSAGE_CONTENT_LIMITS, snapshotMessageContentBlocks } from "../shared/message-content.js";
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
 import { MAX_SESSION_CONCURRENT_CHILD_RUNS, MAX_SESSION_TREE_SIZE } from "../shared/session-limits.js";
@@ -65,6 +66,7 @@ import {
   type SessionUpdateTitleResult,
 } from "../shared/repository-write-model.js";
 import { executeWriteTransaction } from "./request-executor.js";
+import { prepareRunInputIdempotency } from "./run-input-idempotency.js";
 
 export const DEFAULT_IDEMPOTENCY_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 export const RUN_OUTPUT_PAYLOAD_LIMITS = {
@@ -97,6 +99,9 @@ type WriteOptions = Readonly<{
   payloadLimits?: Partial<typeof RUN_OUTPUT_PAYLOAD_LIMITS>;
   sessionIdAllocator?: SessionIdAllocator;
   runAdmissionIdentityAllocator?: RunAdmissionIdentityAllocator;
+  runInputMessageIdAllocator?: RunInputMessageIdAllocator;
+  maxPendingInputsPerAttempt?: number;
+  maxTrackedInputs?: number;
 }> &
   Partial<RepositoryWriteCapacityOptions>;
 
@@ -108,11 +113,15 @@ export function createRepositoryWriteOperations(
   const retentionMs = options.idempotencyRetentionMs ?? DEFAULT_IDEMPOTENCY_RETENTION_MS;
   const maxConcurrentRuns = options.maxConcurrentRuns ?? 4;
   const maxConcurrentRunsPerProvider = options.maxConcurrentRunsPerProvider ?? 4;
+  const maxPendingInputsPerAttempt =
+    options.maxPendingInputsPerAttempt ?? APPLICATION_RUN_LIMITS.maxPendingInputsPerAttempt;
+  const maxTrackedInputs = options.maxTrackedInputs ?? APPLICATION_RUN_LIMITS.maxTrackedInputs;
   const ephemeralBindingOwners = new Map<string, string>();
   const payloadLimits = resolvePayloadLimits(options.payloadLimits);
   const diskCapacity = options.diskCapacity ?? createDiskCapacityProbe(options.databasePath);
   const sessionIdAllocator = options.sessionIdAllocator ?? allocateSessionId;
   const runAdmissionIdentityAllocator = options.runAdmissionIdentityAllocator ?? allocateRunAdmissionIdentities;
+  const runInputMessageIdAllocator = options.runInputMessageIdAllocator ?? allocateRunInputMessageId;
   if (!Number.isSafeInteger(retentionMs) || retentionMs < 1) {
     throw new RangeError("idempotencyRetentionMs must be a positive safe integer.");
   }
@@ -120,7 +129,11 @@ export function createRepositoryWriteOperations(
     !Number.isSafeInteger(maxConcurrentRuns) ||
     maxConcurrentRuns < 1 ||
     !Number.isSafeInteger(maxConcurrentRunsPerProvider) ||
-    maxConcurrentRunsPerProvider < 1
+    maxConcurrentRunsPerProvider < 1 ||
+    !Number.isSafeInteger(maxPendingInputsPerAttempt) ||
+    maxPendingInputsPerAttempt < 1 ||
+    !Number.isSafeInteger(maxTrackedInputs) ||
+    maxTrackedInputs < 1
   ) {
     throw new RangeError("Run capacity limits must be positive safe integers.");
   }
@@ -298,7 +311,16 @@ export function createRepositoryWriteOperations(
           const prepared = prepareRunInputAdmission(command);
           const now = readClock(clock);
           return executeWriteTransaction(database, () =>
-            admitRunInput(database, prepared, now, retentionMs, ephemeralBindingOwners),
+            admitRunInput(
+              database,
+              prepared,
+              now,
+              retentionMs,
+              ephemeralBindingOwners,
+              runInputMessageIdAllocator,
+              maxPendingInputsPerAttempt,
+              maxTrackedInputs,
+            ),
           );
         }),
       ),
@@ -2410,6 +2432,9 @@ function admitRunInput(
   now: number,
   retentionMs: number,
   ephemeralBindingOwners: ReadonlyMap<string, string>,
+  messageIdAllocator: RunInputMessageIdAllocator,
+  maxPendingInputsPerAttempt: number,
+  maxTrackedInputs: number,
 ): RepositoryCommandResult<RunInputAdmissionResult> {
   const command = prepared.command;
   const idempotency = checkIdempotency<RunInputAdmissionResult>(
@@ -2419,12 +2444,18 @@ function admitRunInput(
     prepared.fingerprint,
     command.sessionId,
     "delivery",
-    command.message.id,
+    undefined,
     now,
+    (value, responseRefId) => decodeRunInputAdmissionReplay(value, responseRefId, command.sessionId, command.runId),
   );
   if (idempotency.kind !== "new") {
     if (idempotency.kind === "replay" && idempotency.result.ok) {
-      const current = readRunInputAdmissionResult(database, command.message.id, command.sessionId);
+      const current = readRunInputAdmissionResult(
+        database,
+        idempotency.result.value.messageId,
+        command.sessionId,
+        command.runId,
+      );
       return current === undefined
         ? failure("reference_invalid", "Idempotent Run input Delivery is invalid.")
         : success(current, true);
@@ -2474,10 +2505,26 @@ function admitRunInput(
   ) {
     return failure("lifecycle_conflict", "Run input admission Gate is not satisfied.");
   }
-  if (
-    database.prepare("SELECT 1 FROM messages WHERE id = ?").get(command.message.id) !== undefined ||
-    database.prepare("SELECT 1 FROM run_input_deliveries WHERE message_id = ?").get(command.message.id) !== undefined
-  ) {
+  const trackedInputs = countUnresolvedRunInputs(database);
+  if (trackedInputs >= maxTrackedInputs) {
+    return capacityFailure({
+      scope: "application",
+      current: trackedInputs,
+      limit: maxTrackedInputs,
+    });
+  }
+  const pendingInputs = countUnresolvedRunInputs(database, command.attemptId);
+  if (pendingInputs >= maxPendingInputsPerAttempt) {
+    return capacityFailure({
+      scope: "run",
+      runId: command.runId,
+      current: pendingInputs,
+      limit: maxPendingInputsPerAttempt,
+    });
+  }
+  const messageId = messageIdAllocator(database, command.idempotencyKey);
+  if (messageId === undefined) return failure("identity_exhausted", "Run input identity allocation is exhausted.");
+  if (!isBoundedString(messageId, 1_024) || runInputMessageIdentityExists(database, messageId)) {
     return failure("lifecycle_conflict", "Run input identity already exists.");
   }
 
@@ -2489,7 +2536,7 @@ function admitRunInput(
       VALUES (?, ?, ?, 'user', ?, ?)
     `,
     )
-    .run(command.message.id, command.sessionId, ordinal, prepared.contentBlocksJson, now);
+    .run(messageId, command.sessionId, ordinal, prepared.contentBlocksJson, now);
   database
     .prepare(
       `
@@ -2498,14 +2545,15 @@ function admitRunInput(
       ) VALUES (?, ?, ?, 'pending', ?)
     `,
     )
-    .run(command.message.id, command.runId, command.attemptId, now);
+    .run(messageId, command.runId, command.attemptId, now);
   advanceSessionActivity(database, command.sessionId, gate.updated_at, gate.last_activity_at, now);
 
   const value: RunInputAdmissionResult = {
     sessionId: command.sessionId,
     runId: command.runId,
     attemptId: command.attemptId,
-    messageId: command.message.id,
+    messageId,
+    messageOrdinal: ordinal,
     bindingId: gate.provider_binding_id,
     deliveryState: "pending",
     resolutionCode: null,
@@ -2520,7 +2568,7 @@ function admitRunInput(
     "run.input.admit",
     prepared.fingerprint,
     "delivery",
-    command.message.id,
+    messageId,
     value,
     now,
     retentionMs,
@@ -2559,6 +2607,9 @@ function beginRunInput(
     row.delivery_state !== "pending"
   ) {
     return failure("lifecycle_conflict", "Run input begin Gate is not satisfied.");
+  }
+  if (hasEarlierUnresolvedRunInput(database, command.attemptId, row.message_ordinal)) {
+    return failure("lifecycle_conflict", "An earlier Run input Delivery must resolve first.", true);
   }
   const update = database
     .prepare(
@@ -3458,6 +3509,14 @@ function allocateRunAdmissionIdentities(database: DatabaseSync): RunAdmissionIde
   return undefined;
 }
 
+function allocateRunInputMessageId(database: DatabaseSync): string | undefined {
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const messageId = `message_${randomUUID()}`;
+    if (!runInputMessageIdentityExists(database, messageId)) return messageId;
+  }
+  return undefined;
+}
+
 function allocateSessionId(
   database: DatabaseSync,
   allocationNonce: string,
@@ -3979,19 +4038,12 @@ function prepareRunDispatchBegin(command: RunDispatchBeginCommand): PreparedRunD
 }
 
 function prepareRunInputAdmission(command: RunInputAdmissionCommand): PreparedRunInputAdmission {
-  const contentBlocksJson = canonicalJsonString(command.message.contentBlocks);
-  if (Buffer.byteLength(contentBlocksJson) > MESSAGE_CONTENT_LIMITS.maxJsonBytes) throw invalidCommand();
+  const prepared = prepareRunInputIdempotency(command);
+  if (prepared === undefined) throw invalidCommand();
   return {
     command,
-    contentBlocksJson,
-    fingerprint: fingerprint({
-      operation: "run.input.admit",
-      sessionId: command.sessionId,
-      workspaceKey: command.workspaceKey,
-      runId: command.runId,
-      attemptId: command.attemptId,
-      message: { id: command.message.id, contentBlocks: JSON.parse(contentBlocksJson) },
-    }),
+    contentBlocksJson: prepared.contentBlocksJson,
+    fingerprint: prepared.fingerprint,
   };
 }
 
@@ -4394,9 +4446,7 @@ function decodeRunDispatchResolution(
 }
 
 function decodeRunInputAdmission(payload: Readonly<Record<string, unknown>>): DecodeResult<RunInputAdmissionCommand> {
-  const contentBlocks = isPlainObject(payload.message)
-    ? snapshotMessageContentBlocks(payload.message.contentBlocks)
-    : undefined;
+  const contentBlocks = snapshotMessageContentBlocks(payload.contentBlocks);
   if (
     !hasExactKeys(payload, [
       "sessionId",
@@ -4405,7 +4455,7 @@ function decodeRunInputAdmission(payload: Readonly<Record<string, unknown>>): De
       "runId",
       "attemptId",
       "ephemeralOwnerToken",
-      "message",
+      "contentBlocks",
     ]) ||
     !isBoundedString(payload.sessionId, 1_024) ||
     !isBoundedString(payload.workspaceKey, 1_024) ||
@@ -4413,9 +4463,6 @@ function decodeRunInputAdmission(payload: Readonly<Record<string, unknown>>): De
     !isBoundedString(payload.runId, 1_024) ||
     !isBoundedString(payload.attemptId, 1_024) ||
     (payload.ephemeralOwnerToken !== null && !isCanonicalUuid(payload.ephemeralOwnerToken)) ||
-    !isPlainObject(payload.message) ||
-    !hasExactKeys(payload.message, ["id", "contentBlocks"]) ||
-    !isBoundedString(payload.message.id, 1_024) ||
     contentBlocks === undefined
   ) {
     return decodeFailure();
@@ -4424,7 +4471,7 @@ function decodeRunInputAdmission(payload: Readonly<Record<string, unknown>>): De
     ok: true,
     value: {
       ...(payload as unknown as RunInputAdmissionCommand),
-      message: { id: payload.message.id as string, contentBlocks },
+      contentBlocks,
     },
   };
 }
@@ -4473,7 +4520,9 @@ function decodeRunInputResolution(payload: Readonly<Record<string, unknown>>): D
     (outcome.kind !== "rejected" && outcome.kind !== "ambiguous") ||
     !hasExactKeys(outcome, ["kind", "resolutionCode"]) ||
     !isRunInputResolutionCode(outcome.resolutionCode) ||
-    (outcome.kind === "rejected" && outcome.resolutionCode !== "provider_rejected") ||
+    (outcome.kind === "rejected" &&
+      outcome.resolutionCode !== "provider_rejected" &&
+      outcome.resolutionCode !== "delivery_not_sent") ||
     (outcome.kind === "ambiguous" &&
       outcome.resolutionCode !== "transport_unknown" &&
       outcome.resolutionCode !== "process_unknown")
@@ -4694,6 +4743,13 @@ function hasAdmissionIdentityConflict(database: DatabaseSync, identities: RunAdm
   );
 }
 
+function runInputMessageIdentityExists(database: DatabaseSync, messageId: string): boolean {
+  return (
+    database.prepare("SELECT 1 FROM messages WHERE id = ?").get(messageId) !== undefined ||
+    database.prepare("SELECT 1 FROM run_input_deliveries WHERE message_id = ?").get(messageId) !== undefined
+  );
+}
+
 function isRunAdmissionIdentities(value: RunAdmissionIdentities): boolean {
   return (
     isBoundedString(value.messageId, 1_024) &&
@@ -4830,7 +4886,7 @@ function readRunInputTransitionRow(database: DatabaseSync, command: RunInputScop
   return database
     .prepare(
       `
-      SELECT s.lifecycle_status, r.phase AS run_phase,
+      SELECT s.lifecycle_status, r.phase AS run_phase, m.ordinal AS message_ordinal,
         a.provider_binding_id, a.attempt_state,
         b.persistence_mode, b.binding_state, b.external_conversation_id,
         d.dispatch_state,
@@ -4867,11 +4923,12 @@ function readRunInputAdmissionResult(
   database: DatabaseSync,
   messageId: string,
   sessionId: string,
+  runId: string,
 ): RunInputAdmissionResult | undefined {
   const row = database
     .prepare(
       `
-      SELECT i.message_id, i.run_id, i.run_attempt_id, i.delivery_state,
+      SELECT i.message_id, m.ordinal AS message_ordinal, i.run_id, i.run_attempt_id, i.delivery_state,
         i.resolution_code, i.created_at, i.dispatching_at, i.resolved_at,
         b.id AS provider_binding_id
       FROM run_input_deliveries i
@@ -4889,23 +4946,63 @@ function readRunInputAdmissionResult(
             AND creator_r.session_id = r.session_id
         )
         AND (b.persistence_mode = 'persistent' OR b.created_by_run_attempt_id = a.id)
-      WHERE i.message_id = ?
+      WHERE i.message_id = ? AND i.run_id = ?
     `,
     )
-    .get(sessionId, messageId) as RunInputOutcomeRow | undefined;
+    .get(sessionId, messageId, runId) as RunInputOutcomeRow | undefined;
   if (row === undefined || row.provider_binding_id === null) return undefined;
   return {
     sessionId,
     runId: row.run_id,
     attemptId: row.run_attempt_id,
     messageId: row.message_id,
+    messageOrdinal: row.message_ordinal,
     bindingId: row.provider_binding_id,
-    deliveryState: row.delivery_state === "dispatching" ? "pending" : row.delivery_state,
+    deliveryState: row.delivery_state,
     resolutionCode: row.resolution_code,
     admittedAt: row.created_at,
     dispatchingAt: row.dispatching_at,
     resolvedAt: row.resolved_at,
   };
+}
+
+function decodeRunInputAdmissionReplay(
+  value: unknown,
+  responseRefId: string,
+  expectedSessionId: string,
+  expectedRunId: string,
+): RunInputAdmissionResult | undefined {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "sessionId",
+      "runId",
+      "attemptId",
+      "messageId",
+      "messageOrdinal",
+      "bindingId",
+      "deliveryState",
+      "resolutionCode",
+      "admittedAt",
+      "dispatchingAt",
+      "resolvedAt",
+    ]) ||
+    value.sessionId !== expectedSessionId ||
+    value.runId !== expectedRunId ||
+    value.messageId !== responseRefId ||
+    !isBoundedString(value.attemptId, 1_024) ||
+    !Number.isSafeInteger(value.messageOrdinal) ||
+    (value.messageOrdinal as number) < 1 ||
+    !isBoundedString(value.bindingId, 1_024) ||
+    value.deliveryState !== "pending" ||
+    value.resolutionCode !== null ||
+    !Number.isSafeInteger(value.admittedAt) ||
+    value.dispatchingAt !== null ||
+    value.resolvedAt !== null
+  ) {
+    return undefined;
+  }
+  return value as RunInputAdmissionResult;
 }
 
 function validateDispatchOwnership<T>(
@@ -5154,6 +5251,49 @@ function nextOrdinal(
     .prepare(`SELECT COALESCE(MAX(ordinal), 0) + 1 AS ordinal FROM ${table} WHERE ${column} = ?`)
     .get(id) as { ordinal: number };
   return row.ordinal;
+}
+
+function countUnresolvedRunInputs(database: DatabaseSync, attemptId?: string): number {
+  const row =
+    attemptId === undefined
+      ? (database
+          .prepare(
+            `
+            SELECT COUNT(*) AS count
+            FROM run_input_deliveries
+            WHERE delivery_state IN ('pending', 'dispatching')
+          `,
+          )
+          .get() as Readonly<{ count: number }>)
+      : (database
+          .prepare(
+            `
+            SELECT COUNT(*) AS count
+            FROM run_input_deliveries
+            WHERE run_attempt_id = ? AND delivery_state IN ('pending', 'dispatching')
+          `,
+          )
+          .get(attemptId) as Readonly<{ count: number }>);
+  if (!Number.isSafeInteger(row.count) || row.count < 0) throw new RangeError("Run input count is invalid.");
+  return row.count;
+}
+
+function hasEarlierUnresolvedRunInput(database: DatabaseSync, attemptId: string, messageOrdinal: number): boolean {
+  return (
+    database
+      .prepare(
+        `
+        SELECT 1
+        FROM run_input_deliveries i
+        JOIN messages m ON m.id = i.message_id
+        WHERE i.run_attempt_id = ?
+          AND i.delivery_state IN ('pending', 'dispatching')
+          AND m.ordinal < ?
+        LIMIT 1
+      `,
+      )
+      .get(attemptId, messageOrdinal) !== undefined
+  );
 }
 
 function hasResponseReference(
@@ -5784,9 +5924,11 @@ function capacityFailure<T>(details: RepositoryCapacityExceededDetails): Reposit
       ? "Child Run capacity is exhausted."
       : details.scope === "session_tree"
         ? "Session tree capacity is exhausted."
-        : details.scope === "application"
-          ? "Application Run capacity is exhausted."
-          : "Provider Run capacity is exhausted.";
+        : details.scope === "run"
+          ? "Run input capacity is exhausted."
+          : details.scope === "application"
+            ? "Application Run capacity is exhausted."
+            : "Provider Run capacity is exhausted.";
   return { ok: false, error: { code: "capacity_exceeded", message, retryable: true, details }, replayed: false };
 }
 
@@ -5989,6 +6131,7 @@ function hasRunInputScope(value: Readonly<Record<string, unknown>>): boolean {
 function isRunInputResolutionCode(value: unknown): value is RunInputResolutionCode {
   return (
     value === "provider_rejected" ||
+    value === "delivery_not_sent" ||
     value === "transport_unknown" ||
     value === "process_unknown" ||
     value === "run_terminal_not_sent"
@@ -6161,6 +6304,7 @@ type RunAdmissionIdentityAllocator = (
   operation: "run.admit" | "run.retry",
   idempotencyKey: string,
 ) => RunAdmissionIdentities | undefined;
+type RunInputMessageIdAllocator = (database: DatabaseSync, idempotencyKey: string) => string | undefined;
 type RunAdmissionInsertCommand = Readonly<{
   sessionId: string;
   dispatch: RunAdmissionDispatch;
@@ -6366,6 +6510,7 @@ type RunInputTransitionRow = BindingOwnershipRow &
   Readonly<{
     lifecycle_status: SessionLifecycleStatus;
     run_phase: NonTerminalRunPhase | TerminalRunPhase;
+    message_ordinal: number;
     provider_binding_id: string | null;
     attempt_state: "preparing" | "active" | "succeeded" | "failed" | "interrupted";
     dispatch_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
@@ -6376,6 +6521,7 @@ type RunInputTransitionRow = BindingOwnershipRow &
   }>;
 type RunInputOutcomeRow = Readonly<{
   message_id: string;
+  message_ordinal: number;
   run_id: string;
   run_attempt_id: string;
   provider_binding_id: string | null;

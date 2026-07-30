@@ -11,6 +11,8 @@ import type {
   ApplicationRunOperation,
   ApplicationRunPhase,
   ApplicationRunRetryRequest,
+  ApplicationRunSendInputRequest,
+  ApplicationRunSendInputResult,
   ApplicationRunStartRequest,
   ApplicationRunAdmissionResult,
   ApplicationRunStatus,
@@ -34,6 +36,16 @@ import {
   type ApplicationRunWorkHandoffPort,
 } from "./application-run-admission-service.js";
 import { projectPersistedRun } from "./application-run-projection.js";
+import {
+  ApplicationRunInputService,
+  createRepositoryApplicationRunInputAdmissionPort,
+  createRepositoryApplicationRunInputReplayPort,
+  defaultApplicationRunInputAdmissionPort,
+  defaultApplicationRunInputOwnerPort,
+  type ApplicationRunInputAdmissionPort,
+  type ApplicationRunInputOwnerPort,
+  type ApplicationRunInputReplayPort,
+} from "./application-run-input-service.js";
 import { PersistenceClientError } from "./persistence-worker-client.js";
 import type { PersistenceWorkerClient } from "./persistence-worker-client.js";
 import { RepositoryReadClient } from "./repository-read-client.js";
@@ -108,6 +120,9 @@ export type ApplicationRunServiceOptions<TAuthorizationContext> = Readonly<{
   snapshotAuthorization(value: unknown): TAuthorizationContext;
   admission?: ApplicationRunAdmissionPort;
   handoff?: ApplicationRunWorkHandoffPort;
+  inputAdmission?: ApplicationRunInputAdmissionPort;
+  inputOwner?: ApplicationRunInputOwnerPort;
+  inputReplay?: ApplicationRunInputReplayPort;
   liveActivity?: ApplicationRunLiveActivityPort;
   clock?: ApplicationRunClock;
   sleeper?: ApplicationRunSleeper;
@@ -154,6 +169,8 @@ export function createApplicationRunOperations<TAuthorizationContext>(
     reads: new RepositoryReadClient(worker),
     ...options,
     admission: options.admission ?? createRepositoryApplicationRunAdmissionPort(worker),
+    inputAdmission: options.inputAdmission ?? createRepositoryApplicationRunInputAdmissionPort(worker),
+    inputReplay: options.inputReplay ?? createRepositoryApplicationRunInputReplayPort(worker),
   });
 }
 
@@ -162,6 +179,7 @@ export class ApplicationRunService<TAuthorizationContext> implements Application
   readonly #access: ApplicationRunAccessValidator<TAuthorizationContext>;
   readonly #snapshotAuthorization: (value: unknown) => TAuthorizationContext;
   readonly #admissionService: ApplicationRunAdmissionService<TAuthorizationContext>;
+  readonly #inputService: ApplicationRunInputService<TAuthorizationContext>;
   readonly #liveActivity: ApplicationRunLiveActivityPort;
   readonly #clock: ApplicationRunClock;
   readonly #sleeper: ApplicationRunSleeper;
@@ -176,6 +194,13 @@ export class ApplicationRunService<TAuthorizationContext> implements Application
       handoff: options.handoff ?? defaultApplicationRunWorkHandoffPort(),
       access: options.access,
       snapshotAuthorization: options.snapshotAuthorization,
+    });
+    this.#inputService = new ApplicationRunInputService({
+      access: options.access,
+      snapshotAuthorization: options.snapshotAuthorization,
+      admission: options.inputAdmission ?? defaultApplicationRunInputAdmissionPort(),
+      owner: options.inputOwner ?? defaultApplicationRunInputOwnerPort(),
+      ...(options.inputReplay === undefined ? {} : { replay: options.inputReplay }),
     });
     this.#liveActivity = options.liveActivity ?? defaultLiveActivity;
     this.#clock = options.clock ?? monotonicClock;
@@ -194,6 +219,13 @@ export class ApplicationRunService<TAuthorizationContext> implements Application
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationRunAdmissionResult, "write">> {
     return this.#admissionService.retry(request, options);
+  }
+
+  sendInput(
+    request: ApplicationRunSendInputRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationRunSendInputResult, "write">> {
+    return this.#inputService.sendInput(request, options);
   }
 
   async status(

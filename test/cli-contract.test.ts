@@ -1342,6 +1342,96 @@ test("malformed Application fulfillment is never projected as success", () => {
   }
 });
 
+test("persistence projection rejects status fields reserved for another discriminator", () => {
+  const candidates = [
+    {
+      command: commands.archive,
+      response: {
+        overallStatus: "failure",
+        error: {
+          kind: "request",
+          code: "request_invalid",
+          message: "invalid",
+          retryable: false,
+        },
+        persistence: { status: "not_attempted", effect: "none", replayed: true },
+      },
+    },
+    {
+      command: commands.read,
+      response: {
+        overallStatus: "success",
+        value: readValue("session-1"),
+        persistence: { status: "read", effect: "none", reconciliation: "exact_request_required" },
+      },
+    },
+    {
+      command: commands.archive,
+      response: {
+        overallStatus: "failure",
+        error: {
+          kind: "domain",
+          code: "lifecycle_conflict",
+          message: "conflict",
+          retryable: true,
+        },
+        persistence: { status: "rejected", effect: "none", replayed: false },
+      },
+    },
+    {
+      command: commands.archive,
+      response: {
+        overallStatus: "success",
+        value: { sessionId: "session-1", lifecycleStatus: "archived", updatedAt: 2 },
+        persistence: {
+          status: "committed",
+          effect: "none",
+          replayed: false,
+          reconciliation: "exact_request_required",
+        },
+      },
+    },
+    {
+      command: commands.archive,
+      response: {
+        overallStatus: "failure",
+        error: {
+          kind: "persistence",
+          code: "persistence_unavailable",
+          message: "down",
+          retryable: true,
+          effect: "none",
+        },
+        persistence: { status: "failed", effect: "none", replayed: false },
+      },
+    },
+    {
+      command: commands.archive,
+      response: {
+        overallStatus: "failure",
+        error: {
+          kind: "persistence",
+          code: "persistence_timeout",
+          message: "timeout",
+          retryable: true,
+          effect: "unknown",
+        },
+        persistence: {
+          status: "failed",
+          effect: "unknown",
+          replayed: false,
+          reconciliation: "exact_request_required",
+        },
+      },
+    },
+  ] as const;
+  for (const candidate of candidates) {
+    const result = projectCliOperationOutput(candidate.command, candidate.response);
+    assert.equal(result.ok, false);
+    assert.equal(!result.ok && result.output.error.code, "malformed_application_response");
+  }
+});
+
 test("structured serialization emits exactly one newline-terminated JSON object", () => {
   const result = parseCliArgv(["unknown"]);
   assert.equal(result.kind, "usage_failure");

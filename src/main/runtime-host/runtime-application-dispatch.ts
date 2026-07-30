@@ -150,6 +150,17 @@ export async function dispatchRuntimeApplicationOperation(
         },
         options,
       );
+    case "run.send_input":
+      return await application.runOperations.sendInput(
+        {
+          context,
+          sessionId: stringField(payload, "sessionId"),
+          runId: stringField(payload, "runId"),
+          idempotencyKey: stringField(payload, "idempotencyKey"),
+          contentBlocks: textContentBlocksField(payload, "contentBlocks"),
+        },
+        options,
+      );
     case "run.status":
     case "run.output_counts": {
       const request = {

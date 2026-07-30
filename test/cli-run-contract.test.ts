@@ -30,6 +30,13 @@ const retryCommand = {
   idempotencyKey,
   executionOverrides: { reasoningEffort: "high" },
 } as const satisfies CliValidatedRunCommand;
+const sendInputCommand = {
+  identity: { namespace: "run", operation: "send-input" },
+  sessionId: "session-1",
+  runId: "run-1",
+  idempotencyKey,
+  contentBlocks: [{ type: "text", text: "continue" }],
+} as const satisfies CliValidatedRunCommand;
 const statusCommand = {
   identity: { namespace: "run", operation: "status" },
   sessionId: "session-1",
@@ -74,10 +81,14 @@ test("Run help and validated commands are runtime-free parser results", () => {
     topic: { kind: "operation", command: { namespace: "run", operation: "events" } },
   });
   assert.match(helpText({ kind: "root" }), /withmate run --help/u);
-  assert.match(helpText({ kind: "run" }), /start[\s\S]*retry[\s\S]*status[\s\S]*events[\s\S]*follow/u);
+  assert.match(helpText({ kind: "run" }), /start[\s\S]*retry[\s\S]*send-input[\s\S]*status[\s\S]*events[\s\S]*follow/u);
   assert.doesNotMatch(helpText({ kind: "run" }), /\bcancel\b/u);
   assert.match(helpText({ kind: "operation", command: startCommand.identity }), /content-blocks-json/u);
   assert.match(helpText({ kind: "operation", command: retryCommand.identity }), /inherited from the source Run/u);
+  const inputHelp = helpText({ kind: "operation", command: sendInputCommand.identity });
+  assert.match(inputHelp, /same idempotency key returns its current durable outcome/u);
+  assert.match(inputHelp, /does not cancel an admitted delivery/u);
+  assert.match(inputHelp, /new idempotency key can duplicate/u);
 
   assert.deepEqual(
     parseCliArgv([
@@ -112,6 +123,21 @@ test("Run help and validated commands are runtime-free parser results", () => {
       "high",
     ]),
     { kind: "command", command: retryCommand },
+  );
+  assert.deepEqual(
+    parseCliArgv([
+      "run",
+      "send-input",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--content-blocks-json",
+      JSON.stringify(sendInputCommand.contentBlocks),
+    ]),
+    { kind: "command", command: sendInputCommand },
   );
 
   assert.deepEqual(
@@ -157,6 +183,21 @@ test("Run parser rejects missing, duplicate, unknown, unbounded, and invalid mut
     ["run", "follow", "--session-id", "session-1", "--run-id", "run-1", "--poll-ms", "5001"],
     ["run", "start"],
     ["run", "retry"],
+    ["run", "send-input"],
+    [
+      "run",
+      "send-input",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--content-blocks-json",
+      "[]",
+      "--model",
+      "not-owned-by-input",
+    ],
     [
       "run",
       "start",
@@ -226,7 +267,7 @@ test("Run parser rejects missing, duplicate, unknown, unbounded, and invalid mut
   }
 });
 
-test("Run start accepts the exact inline JSON byte limit and rejects one byte beyond it", () => {
+test("Run content mutations accept the exact inline JSON byte limit and reject one byte beyond it", () => {
   const emptyJsonBytes = Buffer.byteLength(JSON.stringify([{ type: "text", text: "" }]));
   const exactText = "a".repeat(64 * 1024 - emptyJsonBytes);
   const argv = (contentBlocksJson: string) => [
@@ -247,6 +288,23 @@ test("Run start accepts the exact inline JSON byte limit and rejects one byte be
   ];
   assert.equal(parseCliArgv(argv(JSON.stringify([{ type: "text", text: exactText }]))).kind, "command");
   assert.equal(parseCliArgv(argv(JSON.stringify([{ type: "text", text: `${exactText}a` }]))).kind, "usage_failure");
+  const inputArgv = (contentBlocksJson: string) => [
+    "run",
+    "send-input",
+    "--session-id",
+    "session-1",
+    "--run-id",
+    "run-1",
+    "--idempotency-key",
+    idempotencyKey,
+    "--content-blocks-json",
+    contentBlocksJson,
+  ];
+  assert.equal(parseCliArgv(inputArgv(JSON.stringify([{ type: "text", text: exactText }]))).kind, "command");
+  assert.equal(
+    parseCliArgv(inputArgv(JSON.stringify([{ type: "text", text: `${exactText}a` }]))).kind,
+    "usage_failure",
+  );
 });
 
 test("Run mutation output exposes only durable public admission identity", () => {
@@ -343,6 +401,189 @@ test("Run mutation output exposes only durable public admission identity", () =>
     persistence: { status: "rejected", effect: "none" },
   });
   assert.equal(capacityLeak.ok, false);
+});
+
+test("Run input output preserves delivery states and rejects non-public fields", () => {
+  const states = [
+    { deliveryState: "pending" },
+    { deliveryState: "accepted" },
+    { deliveryState: "rejected", resolutionCode: "provider_rejected" },
+    { deliveryState: "rejected", resolutionCode: "delivery_not_sent" },
+    { deliveryState: "ambiguous", resolutionCode: "transport_unknown" },
+    { deliveryState: "ambiguous", resolutionCode: "process_unknown" },
+    { deliveryState: "aborted", resolutionCode: "run_terminal_not_sent" },
+  ] as const;
+  for (const state of states) {
+    const projected = projectCliRunOperationOutput(sendInputCommand, {
+      overallStatus: "success",
+      value: {
+        sessionId: "session-1",
+        runId: "run-1",
+        messageId: "message-1",
+        ...state,
+      },
+      persistence: { status: "committed", effect: "none", replayed: true },
+    });
+    assert.equal(projected.ok, true);
+    if (!projected.ok) assert.fail("Run input projection failed");
+    const applicationResponse = projected.output.applicationResponse;
+    if (applicationResponse.overallStatus !== "success") assert.fail("Expected a successful Run input response.");
+    assert.deepEqual(applicationResponse.value, {
+      sessionId: "session-1",
+      runId: "run-1",
+      messageId: "message-1",
+      ...state,
+    });
+  }
+  for (const privateFields of [{ attemptId: "attempt-private" }, { providerError: "provider-private" }]) {
+    assert.equal(
+      projectCliRunOperationOutput(sendInputCommand, {
+        overallStatus: "success",
+        value: {
+          sessionId: "session-1",
+          runId: "run-1",
+          messageId: "message-1",
+          deliveryState: "accepted",
+          ...privateFields,
+        },
+        persistence: { status: "committed", effect: "none", replayed: true },
+      }).ok,
+      false,
+    );
+  }
+  for (const value of [
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      messageId: "message-1",
+      deliveryState: "pending",
+      resolutionCode: "process_unknown",
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      messageId: "message-1",
+      deliveryState: "rejected",
+      resolutionCode: "raw_provider_error",
+    },
+    {
+      sessionId: "session-other",
+      runId: "run-1",
+      messageId: "message-1",
+      deliveryState: "accepted",
+    },
+  ]) {
+    assert.equal(
+      projectCliRunOperationOutput(sendInputCommand, {
+        overallStatus: "success",
+        value,
+        persistence: { status: "committed", effect: "none", replayed: true },
+      }).ok,
+      false,
+    );
+  }
+  const capacity = projectCliRunOperationOutput(sendInputCommand, {
+    overallStatus: "failure",
+    error: {
+      kind: "domain",
+      code: "capacity_exceeded",
+      message: "Run input capacity was reached.",
+      retryable: true,
+      details: { scope: "run", runId: "run-1", current: 64, limit: 64 },
+    },
+    persistence: { status: "rejected", effect: "none" },
+  });
+  assert.equal(capacity.ok, true);
+  for (const error of [
+    {
+      kind: "domain",
+      code: "lifecycle_conflict",
+      message: "The active Run is not owned by this runtime.",
+      retryable: true,
+    },
+    {
+      kind: "domain",
+      code: "capacity_exceeded",
+      message: "Run input capacity was reached.",
+      retryable: true,
+      details: { scope: "run", runId: "run-1", current: 1, limit: 1 },
+    },
+  ] as const) {
+    const projected = projectCliRunOperationOutput(sendInputCommand, {
+      overallStatus: "failure",
+      error,
+      persistence: { status: "not_attempted", effect: "none" },
+    });
+    assert.equal(projected.ok, true);
+    if (!projected.ok) assert.fail("preflight domain failure projection failed");
+    assert.deepEqual(projected.output.applicationResponse, {
+      overallStatus: "failure",
+      error,
+      persistence: { status: "not_attempted", effect: "none" },
+    });
+  }
+  assert.equal(
+    projectCliRunOperationOutput(sendInputCommand, {
+      overallStatus: "failure",
+      error: {
+        kind: "domain",
+        code: "capacity_exceeded",
+        message: "Run input capacity was reached.",
+        retryable: true,
+        details: { scope: "run", runId: "run-private", current: 64, limit: 64 },
+      },
+      persistence: { status: "rejected", effect: "none" },
+    }).ok,
+    false,
+  );
+  assert.equal(
+    projectCliRunOperationOutput(startCommand, {
+      overallStatus: "failure",
+      error: {
+        kind: "domain",
+        code: "capacity_exceeded",
+        message: "Unexpected Run input capacity.",
+        retryable: true,
+        details: { scope: "run", runId: "run-private", current: 64, limit: 64 },
+      },
+      persistence: { status: "rejected", effect: "none" },
+    }).ok,
+    false,
+  );
+  for (const code of ["cursor_invalid", "destination_invalid"] as const) {
+    assert.equal(
+      projectCliRunOperationOutput(sendInputCommand, {
+        overallStatus: "failure",
+        error: {
+          kind: "domain",
+          code,
+          message: "This domain failure is not owned by Run input.",
+          retryable: false,
+        },
+        persistence: { status: "not_attempted", effect: "none" },
+      }).ok,
+      false,
+    );
+  }
+  for (const persistence of [
+    { status: "not_attempted", effect: "none" },
+    { status: "rejected", effect: "none" },
+  ] as const) {
+    assert.equal(
+      projectCliRunOperationOutput(sendInputCommand, {
+        overallStatus: "failure",
+        error: {
+          kind: "domain",
+          code: "lifecycle_conflict",
+          message: "The active Run is not owned by this runtime.",
+          retryable: true,
+          details: { internalOwner: "hidden" },
+        },
+        persistence,
+      }).ok,
+      false,
+    );
+  }
 });
 
 test("Run status output uses a phase-specific allowlist and preserves schema v1", () => {

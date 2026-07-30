@@ -27,6 +27,7 @@ const DURABLE_WRITE_OPERATIONS = new Set<RuntimeIpcOperation>([
   "session.delete",
   "run.start",
   "run.retry",
+  "run.send_input",
 ]);
 
 type RuntimeTransportFailure = Readonly<{
@@ -179,6 +180,17 @@ export function createRuntimeApplicationClient(client: RuntimeIpcClient): Runtim
           retryOfRunId: request.retryOfRunId,
           idempotencyKey: request.idempotencyKey,
           ...(request.executionOverrides === undefined ? {} : { executionOverrides: request.executionOverrides }),
+        },
+        control,
+      ),
+    sendInput: (request, control) =>
+      invoke(
+        "run.send_input",
+        {
+          sessionId: request.sessionId,
+          runId: request.runId,
+          idempotencyKey: request.idempotencyKey,
+          contentBlocks: request.contentBlocks,
         },
         control,
       ),

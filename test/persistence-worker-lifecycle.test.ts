@@ -481,28 +481,22 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       ).ok,
       true,
     );
-    assert.equal(
-      (
-        await repository.admitRunInput({
-          sessionId: scope.sessionId,
-          workspaceKey: scope.workspaceKey,
-          idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000326",
-          runId: scope.runId,
-          attemptId: scope.attemptId,
-          ephemeralOwnerToken: null,
-          message: {
-            id: "message-worker-input-dispatching",
-            contentBlocks: [{ type: "text", text: "continue" }],
-          },
-        })
-      ).ok,
-      true,
-    );
+    const inputAdmission = await repository.admitRunInput({
+      sessionId: scope.sessionId,
+      workspaceKey: scope.workspaceKey,
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000326",
+      runId: scope.runId,
+      attemptId: scope.attemptId,
+      ephemeralOwnerToken: null,
+      contentBlocks: [{ type: "text", text: "continue" }],
+    });
+    assert.equal(inputAdmission.ok, true);
+    if (!inputAdmission.ok) assert.fail("Run input admission failed");
     assert.equal(
       (
         await repository.beginRunInput({
           ...scope,
-          messageId: "message-worker-input-dispatching",
+          messageId: inputAdmission.value.messageId,
           ephemeralOwnerToken: null,
         })
       ).ok,

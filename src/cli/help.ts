@@ -41,6 +41,7 @@ const RUN_HELP = `Usage: withmate run <operation> [options]
 Operations:
   start             Admit a new Run and its initiating user Message
   retry             Admit a new Run that reuses a terminal source Run Message
+  send-input        Admit and deliver a supplemental user Message to a live Run
   status            Read the persisted Run status
   events            Read a bounded RunEvent page
   follow            Wait for events, terminal closure, or a bounded deadline
@@ -217,6 +218,24 @@ Optional execution overrides:
 
 Unspecified execution settings are inherited from the source Run.
 The source Message body cannot be changed by retry.
+
+Optional options:
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
+  "send-input": `Usage: withmate run send-input [options]
+
+Required options:
+  --session-id <session-id>
+  --run-id <run-id>
+  --idempotency-key <lowercase-uuid>
+  --content-blocks-json <json-array>    Maximum 4096 blocks and 65536 UTF-8 JSON bytes
+
+The first successful admission can return deliveryState "pending".
+Retrying the exact request with the same idempotency key returns its current durable outcome.
+A pending outcome can change after this command returns.
+After an ambiguous outcome, sending with a new idempotency key can duplicate the Provider effect.
+The optional timeout only bounds this CLI request; it does not cancel an admitted delivery.
 
 Optional options:
   --timeout-ms <1..2147483647>

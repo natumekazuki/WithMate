@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 
-import type { ApplicationRunLiveActivity } from "../shared/application-run-model.js";
+import { APPLICATION_RUN_LIMITS, type ApplicationRunLiveActivity } from "../shared/application-run-model.js";
 import type {
   RepositoryCommandResult,
   RunDispatchResolutionCommand,
   RunDispatchResolutionResult,
+  RunInputBeginCommand,
+  RunInputResolutionCommand,
   RunOutputAppendCommand,
   RunOutputDraft,
   RunOutputPayloadCommand,
@@ -19,6 +21,12 @@ import type {
   CodexAdapterOutput,
   CodexAdapterTurnSnapshot,
 } from "./providers/codex/index.js";
+import type {
+  ApplicationRunInputHandoffRecord,
+  ApplicationRunInputOwnerPort,
+  ApplicationRunInputOwnerReservation,
+  ApplicationRunInputPreflightResult,
+} from "./application-run-input-service.js";
 import type {
   ApplicationRunDispatchControl,
   ApplicationRunPreparedDispatch,
@@ -37,6 +45,8 @@ export const APPLICATION_RUN_EVENT_LIMITS = Object.freeze({
   maxTrackedAttempts: 128,
   maxBufferedEventsPerAttempt: 64,
   maxPersistedOutputsPerAttempt: 4_096,
+  maxPendingInputsPerAttempt: APPLICATION_RUN_LIMITS.maxPendingInputsPerAttempt,
+  maxTrackedInputs: APPLICATION_RUN_LIMITS.maxTrackedInputs,
   persistenceRetryDelayMs: 25,
   maxSummaryBytes: 4_096,
   maxOutputKindCharacters: 64,
@@ -68,7 +78,7 @@ export type ApplicationRunEventReadPort = Pick<RepositoryReadClient, "runGet" | 
 
 export type ApplicationRunEventWritePort = Pick<
   RepositoryWriteClient,
-  "resolveRunDispatch" | "appendRunOutput" | "completeRun"
+  "resolveRunDispatch" | "beginRunInput" | "resolveRunInput" | "appendRunOutput" | "completeRun"
 >;
 
 export type ApplicationRunEventServiceOptions = Readonly<{
@@ -78,6 +88,8 @@ export type ApplicationRunEventServiceOptions = Readonly<{
     maxTrackedAttempts?: number;
     maxBufferedEventsPerAttempt?: number;
     maxPersistedOutputsPerAttempt?: number;
+    maxPendingInputsPerAttempt?: number;
+    maxTrackedInputs?: number;
   }>;
 }>;
 
@@ -89,6 +101,32 @@ export function createApplicationRunEventService(worker: PersistenceWorkerClient
 }
 
 type AttemptPhase = "sending" | "ambiguous" | "accepted" | "closed";
+
+type InputWorkStatus =
+  | "waiting"
+  | "reserved"
+  | "handed_off"
+  | "ordering_blocked"
+  | "beginning"
+  | "resolving"
+  | "persistence_blocked"
+  | "settled"
+  | "released";
+
+type InputResolutionConfirmation = "confirmed" | "retry" | "blocked";
+
+type InputWork = {
+  readonly reservation: ApplicationRunInputOwnerReservation;
+  readonly state: AttemptState;
+  status: InputWorkStatus;
+  preflightResolve: ((result: ApplicationRunInputPreflightResult) => void) | null;
+  record: ApplicationRunInputHandoffRecord | null;
+  beginCommand: RunInputBeginCommand | null;
+  resolutionCommand: RunInputResolutionCommand | null;
+  providerCalled: boolean;
+  abortSignal: AbortSignal | null;
+  abortListener: (() => void) | null;
+};
 
 type AttemptState = {
   readonly dispatch: ApplicationRunPreparedDispatch;
@@ -110,6 +148,8 @@ type AttemptState = {
   releaseReason: ApplicationRunGenerationReleaseReason | null;
   startTurnResult: ApplicationRunStartTurnResult | null;
   startTurnFailure: ApplicationRunProviderMutationFailure | null;
+  inputQueue: InputWork[];
+  inputDrainScheduled: boolean;
   chain: Promise<void>;
 };
 
@@ -118,16 +158,21 @@ export class ApplicationRunEventService
     ApplicationRunAttemptEventPort,
     ApplicationRunProviderEventPort,
     ApplicationRunProviderGenerationPort,
-    ApplicationRunLiveActivityPort
+    ApplicationRunLiveActivityPort,
+    ApplicationRunInputOwnerPort
 {
   readonly #reads: ApplicationRunEventReadPort;
   readonly #writes: ApplicationRunEventWritePort;
   readonly #maxTrackedAttempts: number;
   readonly #maxBufferedEventsPerAttempt: number;
   readonly #maxPersistedOutputsPerAttempt: number;
+  readonly #maxPendingInputsPerAttempt: number;
+  readonly #maxTrackedInputs: number;
   readonly #attemptsByRun = new Map<string, AttemptState>();
   readonly #attemptsByOwner = new Map<string, AttemptState>();
   readonly #persistenceRetryTasks = new Map<AttemptState, Promise<void>>();
+  readonly #inputReservations = new Map<object, InputWork>();
+  readonly #inputsByMessage = new Map<string, InputWork>();
 
   constructor(options: ApplicationRunEventServiceOptions) {
     this.#reads = options.reads;
@@ -140,6 +185,12 @@ export class ApplicationRunEventService
     );
     this.#maxPersistedOutputsPerAttempt = positiveLimit(
       options.limits?.maxPersistedOutputsPerAttempt ?? APPLICATION_RUN_EVENT_LIMITS.maxPersistedOutputsPerAttempt,
+    );
+    this.#maxPendingInputsPerAttempt = positiveLimit(
+      options.limits?.maxPendingInputsPerAttempt ?? APPLICATION_RUN_EVENT_LIMITS.maxPendingInputsPerAttempt,
+    );
+    this.#maxTrackedInputs = positiveLimit(
+      options.limits?.maxTrackedInputs ?? APPLICATION_RUN_EVENT_LIMITS.maxTrackedInputs,
     );
   }
 
@@ -174,6 +225,8 @@ export class ApplicationRunEventService
       releaseReason: null,
       startTurnResult: null,
       startTurnFailure: null,
+      inputQueue: [],
+      inputDrainScheduled: false,
       chain: Promise.resolve(),
     };
     this.#attemptsByRun.set(dispatch.admission.runId, state);
@@ -183,6 +236,141 @@ export class ApplicationRunEventService
         this.#enqueue(state, () => this.#settleStartTurn(state, result)),
       done,
     });
+  }
+
+  preflight(
+    input: Readonly<{ sessionId: string; runId: string }>,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ): Promise<ApplicationRunInputPreflightResult> {
+    const state = this.#attemptsByRun.get(input.runId);
+    if (state === undefined || state.dispatch.admission.sessionId !== input.sessionId) {
+      return Promise.resolve(inputPreflightFailure("not_found"));
+    }
+    return this.#enqueue(state, async () => {
+      const steerTurn = state.control.adapter.steerTurn;
+      if (
+        options?.signal?.aborted === true ||
+        !this.#isInputDeliveryOpen(state) ||
+        state.turnId === null ||
+        state.control.signal.aborted ||
+        !safeIsCurrent(state.control) ||
+        typeof steerTurn !== "function"
+      ) {
+        return { settlement: Promise.resolve(inputPreflightFailure("lifecycle_conflict")) };
+      }
+      if (state.inputQueue.length >= this.#maxPendingInputsPerAttempt) {
+        return {
+          settlement: Promise.resolve({
+            ok: false,
+            error: {
+              code: "capacity_exceeded",
+              message: "The active Run has reached its supplemental input capacity.",
+              retryable: true,
+              details: {
+                scope: "run",
+                runId: input.runId,
+                current: state.inputQueue.length,
+                limit: this.#maxPendingInputsPerAttempt,
+              },
+            },
+          } satisfies ApplicationRunInputPreflightResult),
+        };
+      }
+      if (this.#inputReservations.size >= this.#maxTrackedInputs) {
+        return {
+          settlement: Promise.resolve({
+            ok: false,
+            error: {
+              code: "capacity_exceeded",
+              message: "The runtime has reached its supplemental input capacity.",
+              retryable: true,
+              details: {
+                scope: "application",
+                current: this.#inputReservations.size,
+                limit: this.#maxTrackedInputs,
+              },
+            },
+          } satisfies ApplicationRunInputPreflightResult),
+        };
+      }
+      const token = Object.freeze({});
+      const reservation = Object.freeze({
+        token,
+        sessionId: state.dispatch.admission.sessionId,
+        runId: state.dispatch.admission.runId,
+        workspaceKey: state.dispatch.workspaceKey,
+        providerId: state.dispatch.providerId,
+        attemptId: state.dispatch.admission.attemptId,
+        bindingId: state.dispatch.admission.bindingId,
+        persistenceMode: state.dispatch.persistenceMode,
+        ephemeralOwnerToken: state.dispatch.ephemeralOwnerToken,
+        generationId: state.dispatch.generationId,
+        conversationId: state.dispatch.threadId,
+        executionId: state.turnId as string,
+      });
+      let resolvePreflight!: (result: ApplicationRunInputPreflightResult) => void;
+      const settlement = new Promise<ApplicationRunInputPreflightResult>((resolve) => {
+        resolvePreflight = resolve;
+      });
+      const admissionPending = state.inputQueue.some(
+        (candidate) => candidate.status === "waiting" || candidate.status === "reserved",
+      );
+      const work: InputWork = {
+        reservation,
+        state,
+        status: admissionPending ? "waiting" : "reserved",
+        preflightResolve: resolvePreflight,
+        record: null,
+        beginCommand: null,
+        resolutionCommand: null,
+        providerCalled: false,
+        abortSignal: options?.signal ?? null,
+        abortListener: null,
+      };
+      if (options?.signal !== undefined) {
+        work.abortListener = () => this.#releaseInputReservation(work);
+        options.signal.addEventListener("abort", work.abortListener, { once: true });
+      }
+      state.inputQueue.push(work);
+      this.#inputReservations.set(token, work);
+      if (!admissionPending) {
+        this.#resolveInputPreflight(work, { ok: true, value: reservation });
+      }
+      return { settlement };
+    }).then(({ settlement }) => settlement);
+  }
+
+  handoff(record: ApplicationRunInputHandoffRecord): void {
+    const work = this.#inputReservations.get(record.reservation.token);
+    if (
+      work === undefined ||
+      work.status !== "reserved" ||
+      work.reservation !== record.reservation ||
+      !inputHandoffMatchesReservation(record, work.reservation)
+    ) {
+      return;
+    }
+    const existing = this.#inputsByMessage.get(record.messageId);
+    if (existing !== undefined && existing !== work) {
+      this.#releaseInputReservation(work);
+      return;
+    }
+    this.#detachInputAbort(work);
+    work.record = Object.freeze({
+      ...record,
+      contentBlocks: Object.freeze([...record.contentBlocks]),
+    });
+    work.status = "handed_off";
+    this.#inputsByMessage.set(record.messageId, work);
+    this.#sortInputQueue(work.state);
+    this.#activateNextInputReservation(work.state);
+    this.#scheduleInputDrain(work.state);
+  }
+
+  release(reservation: ApplicationRunInputOwnerReservation): void {
+    const work = this.#inputReservations.get(reservation.token);
+    if (work === undefined || work.reservation !== reservation || work.status !== "reserved") return;
+    this.#releaseInputReservation(work);
   }
 
   accept(generationId: string, event: CodexAdapterEvent): Promise<void> {
@@ -210,7 +398,12 @@ export class ApplicationRunEventService
   }
 
   async #retryPersistence(state: AttemptState): Promise<void> {
+    if (!(await this.#retryInputPersistence(state))) return;
     if (!(await this.#retryPendingResolution(state))) return;
+    if (state.releaseReason !== null) {
+      await this.#releaseAttempt(state, state.releaseReason);
+      return;
+    }
     if (state.phase === "sending" && state.startTurnResult !== null) {
       await this.#settleStartTurn(state, state.startTurnResult);
       return;
@@ -221,6 +414,7 @@ export class ApplicationRunEventService
     }
     if (state.phase === "accepted") {
       await this.#confirmOutputsInOrder(state);
+      this.#scheduleInputDrain(state);
     }
   }
 
@@ -258,11 +452,316 @@ export class ApplicationRunEventService
     });
   }
 
-  #enqueue(state: AttemptState, operation: () => Promise<void>): Promise<void> {
+  #enqueue<T>(state: AttemptState, operation: () => Promise<T>): Promise<T> {
     const next = state.chain.then(operation, operation);
     // A rejected caller retains the Attempt and every frozen command for exact replay.
-    state.chain = next.catch(() => undefined);
+    state.chain = next.then(
+      () => undefined,
+      () => undefined,
+    );
     return next;
+  }
+
+  async #drainInputQueue(state: AttemptState): Promise<void> {
+    while (state.inputQueue[0]?.status === "released" || state.inputQueue[0]?.status === "settled") {
+      state.inputQueue.shift();
+    }
+    if (!this.#isInputDeliveryOpen(state)) return;
+    const work = state.inputQueue[0];
+    if (
+      work === undefined ||
+      work.status === "waiting" ||
+      work.status === "reserved" ||
+      work.status === "beginning" ||
+      work.status === "resolving" ||
+      work.status === "persistence_blocked"
+    ) {
+      return;
+    }
+    if (state.phase === "closed") {
+      this.#releaseInputReservation(work);
+      return;
+    }
+    await this.#beginAndDeliverInput(work);
+  }
+
+  #scheduleInputDrain(state: AttemptState): void {
+    if (state.phase === "closed" || state.inputDrainScheduled || !this.#hasInputReadyToDrain(state)) {
+      return;
+    }
+    state.inputDrainScheduled = true;
+    const drain = this.#enqueue(state, () => this.#drainInputQueue(state));
+    void drain
+      .finally(() => {
+        state.inputDrainScheduled = false;
+        if (state.phase !== "closed" && this.#hasInputReadyToDrain(state)) {
+          this.#scheduleInputDrain(state);
+        }
+      })
+      .catch(() => undefined);
+  }
+
+  #hasInputReadyToDrain(state: AttemptState): boolean {
+    if (!this.#isInputDeliveryOpen(state)) return false;
+    for (const work of state.inputQueue) {
+      if (work.status === "released" || work.status === "settled") continue;
+      return work.status === "handed_off";
+    }
+    return false;
+  }
+
+  async #beginAndDeliverInput(work: InputWork): Promise<void> {
+    const { state, record, reservation } = work;
+    if (record === null || work.providerCalled || work.resolutionCommand !== null) return;
+    const command =
+      work.beginCommand ??
+      Object.freeze({
+        sessionId: record.sessionId,
+        workspaceKey: reservation.workspaceKey,
+        runId: record.runId,
+        attemptId: record.attemptId,
+        messageId: record.messageId,
+        bindingId: record.bindingId,
+        ephemeralOwnerToken: reservation.ephemeralOwnerToken,
+      });
+    work.beginCommand = command;
+    work.status = "beginning";
+    const begin = await writeExact(() => this.#writes.beginRunInput(command));
+    if (begin === undefined) {
+      this.#schedulePersistenceRetry(state);
+      return;
+    }
+    if (!begin.ok) {
+      if (begin.error.code === "lifecycle_conflict" && begin.error.retryable) {
+        work.status = "ordering_blocked";
+        return;
+      }
+      if (begin.error.retryable) {
+        this.#schedulePersistenceRetry(state);
+        return;
+      }
+      // A deterministic Gate failure does not prove that the durable Delivery is terminal.
+      work.status = "persistence_blocked";
+      return;
+    }
+    if (
+      begin.value.sessionId !== command.sessionId ||
+      begin.value.runId !== command.runId ||
+      begin.value.attemptId !== command.attemptId ||
+      begin.value.messageId !== command.messageId ||
+      begin.value.bindingId !== command.bindingId ||
+      begin.value.deliveryState !== "dispatching"
+    ) {
+      await this.#resolveInput(work, { kind: "ambiguous", resolutionCode: "process_unknown" });
+      return;
+    }
+    if (begin.replayed || !begin.value.sendAllowed) {
+      await this.#resolveInput(work, { kind: "ambiguous", resolutionCode: "process_unknown" });
+      return;
+    }
+    if (!this.#isCurrentInputOwner(work)) {
+      await this.#resolveInput(work, { kind: "rejected", resolutionCode: "delivery_not_sent" });
+      return;
+    }
+    const steerTurn = state.control.adapter.steerTurn;
+    if (steerTurn === undefined) {
+      await this.#resolveInput(work, { kind: "rejected", resolutionCode: "delivery_not_sent" });
+      return;
+    }
+    work.providerCalled = true;
+    let outcome: RunInputResolutionCommand["outcome"];
+    try {
+      const result = await state.control.adapter.steerTurn!(
+        {
+          threadId: reservation.conversationId,
+          expectedTurnId: reservation.executionId,
+          contentBlocks: record.contentBlocks,
+        },
+        { signal: state.control.signal },
+      );
+      outcome = inputResolutionOutcome(result, reservation);
+    } catch {
+      outcome = { kind: "ambiguous", resolutionCode: "process_unknown" };
+    }
+    await this.#resolveInput(work, outcome);
+  }
+
+  async #resolveInput(work: InputWork, outcome: RunInputResolutionCommand["outcome"]): Promise<void> {
+    const record = work.record;
+    if (record === null) return;
+    const command =
+      work.resolutionCommand ??
+      Object.freeze({
+        sessionId: record.sessionId,
+        workspaceKey: work.reservation.workspaceKey,
+        runId: record.runId,
+        attemptId: record.attemptId,
+        messageId: record.messageId,
+        bindingId: record.bindingId,
+        ephemeralOwnerToken: work.reservation.ephemeralOwnerToken,
+        outcome: Object.freeze(outcome),
+      });
+    if (canonicalJsonString(command.outcome) !== canonicalJsonString(outcome)) return;
+    work.resolutionCommand = command;
+    work.status = "resolving";
+    const confirmation = await this.#confirmInputResolution(command);
+    if (confirmation === "confirmed") {
+      this.#settleInput(work);
+      return;
+    }
+    if (confirmation === "retry") {
+      this.#schedulePersistenceRetry(work.state);
+      return;
+    }
+    // The Run terminal transaction owns aggregate convergence for a non-terminal write rejection.
+    work.status = "persistence_blocked";
+  }
+
+  async #retryInputPersistence(state: AttemptState): Promise<boolean> {
+    const work = state.inputQueue.find(
+      (candidate) => candidate.status === "beginning" || candidate.status === "resolving",
+    );
+    if (work === undefined) return true;
+    if (work.status === "beginning") {
+      await this.#beginAndDeliverInput(work);
+      return work.status !== "beginning" && work.status !== "resolving";
+    }
+    const command = work.resolutionCommand;
+    if (command === null) return false;
+    const confirmation = await this.#confirmInputResolution(command);
+    if (confirmation === "retry") return false;
+    if (confirmation === "blocked") {
+      work.status = "persistence_blocked";
+      return true;
+    }
+    this.#settleInput(work);
+    this.#scheduleInputDrain(state);
+    return true;
+  }
+
+  async #confirmInputResolution(command: RunInputResolutionCommand): Promise<InputResolutionConfirmation> {
+    const result = await writeExact(() => this.#writes.resolveRunInput(command));
+    if (result === undefined) return "retry";
+    if (!result.ok) return result.error.retryable ? "retry" : "blocked";
+    return result.value.sessionId === command.sessionId &&
+      result.value.runId === command.runId &&
+      result.value.attemptId === command.attemptId &&
+      result.value.messageId === command.messageId &&
+      result.value.bindingId === command.bindingId &&
+      result.value.deliveryState === command.outcome.kind &&
+      result.value.resolutionCode === (command.outcome.kind === "accepted" ? null : command.outcome.resolutionCode)
+      ? "confirmed"
+      : "retry";
+  }
+
+  #isCurrentInputOwner(work: InputWork): boolean {
+    const { reservation, state } = work;
+    return (
+      this.#isInputDeliveryOpen(state) &&
+      state.turnId === reservation.executionId &&
+      state.dispatch.admission.sessionId === reservation.sessionId &&
+      state.dispatch.admission.runId === reservation.runId &&
+      state.dispatch.admission.attemptId === reservation.attemptId &&
+      state.dispatch.admission.bindingId === reservation.bindingId &&
+      state.dispatch.workspaceKey === reservation.workspaceKey &&
+      state.dispatch.providerId === reservation.providerId &&
+      state.dispatch.generationId === reservation.generationId &&
+      state.dispatch.threadId === reservation.conversationId &&
+      !state.control.signal.aborted &&
+      typeof state.control.adapter.steerTurn === "function" &&
+      safeIsCurrent(state.control)
+    );
+  }
+
+  #isInputDeliveryOpen(state: AttemptState): boolean {
+    return state.phase === "accepted" && state.terminalCommand === null && state.releaseReason === null;
+  }
+
+  #releaseInputReservation(work: InputWork, activateNext = true): void {
+    if (
+      work.status === "released" ||
+      work.status === "settled" ||
+      work.status === "beginning" ||
+      work.status === "resolving" ||
+      work.providerCalled
+    ) {
+      return;
+    }
+    work.status = "released";
+    this.#resolveInputPreflight(work, inputPreflightFailure("lifecycle_conflict"));
+    this.#detachInputAbort(work);
+    this.#inputReservations.delete(work.reservation.token);
+    this.#removeInputFromQueue(work);
+    if (work.record !== null && this.#inputsByMessage.get(work.record.messageId) === work) {
+      this.#inputsByMessage.delete(work.record.messageId);
+    }
+    if (activateNext) this.#activateNextInputReservation(work.state);
+    if (work.state.phase !== "closed") {
+      this.#scheduleInputDrain(work.state);
+    }
+  }
+
+  #activateNextInputReservation(state: AttemptState): void {
+    if (state.phase === "closed" || state.inputQueue.some((work) => work.status === "reserved")) return;
+    while (true) {
+      const next = state.inputQueue.find((work) => work.status === "waiting");
+      if (next === undefined) return;
+      if (!this.#isCurrentInputOwner(next)) {
+        this.#releaseInputReservation(next, false);
+        continue;
+      }
+      next.status = "reserved";
+      this.#resolveInputPreflight(next, { ok: true, value: next.reservation });
+      return;
+    }
+  }
+
+  #resolveInputPreflight(work: InputWork, result: ApplicationRunInputPreflightResult): void {
+    const resolve = work.preflightResolve;
+    if (resolve === null) return;
+    work.preflightResolve = null;
+    resolve(result);
+  }
+
+  #removeInputFromQueue(work: InputWork): void {
+    const index = work.state.inputQueue.indexOf(work);
+    if (index >= 0) work.state.inputQueue.splice(index, 1);
+  }
+
+  #sortInputQueue(state: AttemptState): void {
+    state.inputQueue.sort((left, right) => {
+      const leftOrdinal = left.record?.messageOrdinal;
+      const rightOrdinal = right.record?.messageOrdinal;
+      if (leftOrdinal === undefined) return rightOrdinal === undefined ? 0 : 1;
+      if (rightOrdinal === undefined) return -1;
+      return leftOrdinal - rightOrdinal;
+    });
+  }
+
+  #settleInput(work: InputWork): void {
+    const settledOrdinal = work.record?.messageOrdinal;
+    work.status = "settled";
+    this.#detachInputAbort(work);
+    this.#inputReservations.delete(work.reservation.token);
+    this.#removeInputFromQueue(work);
+    if (work.record !== null && this.#inputsByMessage.get(work.record.messageId) === work) {
+      this.#inputsByMessage.delete(work.record.messageId);
+    }
+    if (settledOrdinal === undefined) return;
+    const next = work.state.inputQueue.find(
+      (candidate) => candidate.status !== "released" && candidate.status !== "settled",
+    );
+    if (next?.status === "ordering_blocked" && next.record !== null && next.record.messageOrdinal > settledOrdinal) {
+      next.status = "handed_off";
+    }
+  }
+
+  #detachInputAbort(work: InputWork): void {
+    if (work.abortSignal !== null && work.abortListener !== null) {
+      work.abortSignal.removeEventListener("abort", work.abortListener);
+    }
+    work.abortSignal = null;
+    work.abortListener = null;
   }
 
   async #settleStartTurn(state: AttemptState, result: ApplicationRunStartTurnResult): Promise<void> {
@@ -354,16 +853,16 @@ export class ApplicationRunEventService
   }
 
   async #releaseAttempt(state: AttemptState, reason: ApplicationRunGenerationReleaseReason): Promise<boolean> {
+    state.releaseReason ??= reason;
+    if (!(await this.#retryInputPersistence(state))) return false;
     if (!(await this.#retryPendingResolution(state))) return false;
     if (state.phase === "sending") {
-      state.releaseReason ??= reason;
       if (state.startTurnResult === null) return true;
       await this.#settleStartTurn(state, state.startTurnResult);
       const phase = state.phase as AttemptPhase;
       return phase === "closed" || phase === "ambiguous";
     }
     if (state.phase === "accepted") {
-      state.releaseReason ??= reason;
       const terminalized = await this.#terminalize(state, {
         kind: "interrupted",
         failureOrigin: state.releaseReason.kind === "shutdown" ? "application" : "transport",
@@ -377,7 +876,6 @@ export class ApplicationRunEventService
       return terminalized;
     }
     if (state.phase === "ambiguous") {
-      state.releaseReason ??= reason;
       const terminalized = await this.#terminalize(state, {
         kind: "interrupted",
         failureOrigin: state.releaseReason.kind === "shutdown" ? "application" : "transport",
@@ -640,6 +1138,10 @@ export class ApplicationRunEventService
         childResult: null,
       } satisfies RunTerminalCommand);
     state.terminalCommand = command;
+    if (!(await this.#retryInputPersistence(state))) {
+      this.#schedulePersistenceRetry(state);
+      return false;
+    }
     if (!(await this.#confirmOutputsInOrder(state))) {
       this.#schedulePersistenceRetry(state);
       return false;
@@ -673,7 +1175,7 @@ export class ApplicationRunEventService
       runId: state.dispatch.admission.runId,
       attemptId: state.dispatch.admission.attemptId,
       bindingId: state.dispatch.admission.bindingId,
-      ephemeralOwnerToken: null,
+      ephemeralOwnerToken: state.dispatch.ephemeralOwnerToken,
       outcome,
     };
     const command = state.pendingResolution ?? nextCommand;
@@ -849,6 +1351,17 @@ export class ApplicationRunEventService
     state.terminalCommand = null;
     state.releaseReason = null;
     state.startTurnResult = null;
+    state.inputDrainScheduled = false;
+    for (const work of state.inputQueue) {
+      this.#resolveInputPreflight(work, inputPreflightFailure("lifecycle_conflict"));
+      this.#detachInputAbort(work);
+      this.#inputReservations.delete(work.reservation.token);
+      if (work.record !== null && this.#inputsByMessage.get(work.record.messageId) === work) {
+        this.#inputsByMessage.delete(work.record.messageId);
+      }
+      work.status = "settled";
+    }
+    state.inputQueue = [];
     if (this.#attemptsByRun.get(state.dispatch.admission.runId) === state) {
       this.#attemptsByRun.delete(state.dispatch.admission.runId);
     }
@@ -859,6 +1372,7 @@ export class ApplicationRunEventService
 
 function hasPendingPersistence(state: AttemptState): boolean {
   if (state.pendingResolution !== null || state.terminalCommand !== null) return true;
+  if (state.inputQueue.some((work) => work.status === "beginning" || work.status === "resolving")) return true;
   for (const output of state.outputCommands.values()) {
     if (!output.confirmed) return true;
   }
@@ -1042,6 +1556,70 @@ function safeSummary(value: string): string {
   return Buffer.byteLength(value, "utf8") <= APPLICATION_RUN_EVENT_LIMITS.maxSummaryBytes
     ? value
     : "Provider output summary exceeded the persistence limit.";
+}
+
+function inputPreflightFailure(code: "not_found" | "lifecycle_conflict"): ApplicationRunInputPreflightResult {
+  return {
+    ok: false,
+    error:
+      code === "not_found"
+        ? {
+            code,
+            message: "The active Run is not owned by this runtime.",
+            retryable: false,
+          }
+        : {
+            code,
+            message: "Supplemental input is not available for the active Run.",
+            retryable: true,
+          },
+  };
+}
+
+function inputHandoffMatchesReservation(
+  record: ApplicationRunInputHandoffRecord,
+  reservation: ApplicationRunInputOwnerReservation,
+): boolean {
+  return (
+    record.sessionId === reservation.sessionId &&
+    record.runId === reservation.runId &&
+    record.attemptId === reservation.attemptId &&
+    record.bindingId === reservation.bindingId &&
+    typeof record.messageId === "string" &&
+    record.messageId.length > 0 &&
+    record.messageId.length <= 1_024 &&
+    Number.isSafeInteger(record.messageOrdinal) &&
+    record.messageOrdinal > 0 &&
+    Number.isSafeInteger(record.admittedAt)
+  );
+}
+
+function safeIsCurrent(control: ApplicationRunDispatchControl): boolean {
+  try {
+    return control.isCurrent();
+  } catch {
+    return false;
+  }
+}
+
+function inputResolutionOutcome(
+  result: CodexAdapterMutationResult<Readonly<{ threadId: string; turnId: string }>>,
+  reservation: ApplicationRunInputOwnerReservation,
+): RunInputResolutionCommand["outcome"] {
+  switch (result.kind) {
+    case "accepted":
+      return result.value.threadId === reservation.conversationId && result.value.turnId === reservation.executionId
+        ? { kind: "accepted" }
+        : { kind: "ambiguous", resolutionCode: "transport_unknown" };
+    case "rejected":
+      return { kind: "rejected", resolutionCode: "provider_rejected" };
+    case "not_sent":
+      return { kind: "rejected", resolutionCode: "delivery_not_sent" };
+    case "ambiguous":
+      return { kind: "ambiguous", resolutionCode: "transport_unknown" };
+    case "connection_failure":
+      return { kind: "ambiguous", resolutionCode: "process_unknown" };
+  }
 }
 
 async function writeExact<TValue>(

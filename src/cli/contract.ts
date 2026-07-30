@@ -97,6 +97,7 @@ export type CliSessionOperation =
 export type CliRunOperation =
   | "start"
   | "retry"
+  | "send-input"
   | "status"
   | "events"
   | "follow"
@@ -232,6 +233,15 @@ export type CliRunRetryCommand = CliTimeoutOption &
     executionOverrides?: ApplicationRunExecutionOverrides;
   }>;
 
+export type CliRunSendInputCommand = CliTimeoutOption &
+  Readonly<{
+    identity: CliCommandIdentity<"send-input">;
+    sessionId: string;
+    runId: string;
+    idempotencyKey: string;
+    contentBlocks: readonly TextContentBlock[];
+  }>;
+
 export type CliRunStatusCommand = CliTimeoutOption &
   Readonly<{
     identity: CliCommandIdentity<"status">;
@@ -302,6 +312,7 @@ export type CliValidatedSessionCommand =
 export type CliValidatedRunCommand =
   | CliRunStartCommand
   | CliRunRetryCommand
+  | CliRunSendInputCommand
   | CliRunStatusCommand
   | CliRunEventsCommand
   | CliRunFollowCommand
@@ -395,6 +406,7 @@ export type CliApplicationError =
       details:
         | Readonly<{ scope: "root"; rootSessionId: string; current: number; limit: number }>
         | Readonly<{ scope: "session_tree"; rootSessionId: string; current: number; limit: number }>
+        | Readonly<{ scope: "run"; runId: string; current: number; limit: number }>
         | Readonly<{ scope: "application"; current: number; limit: number }>
         | Readonly<{ scope: "provider"; current: number; limit: number }>;
     }>
@@ -906,6 +918,43 @@ export type CliRunAdmissionValue = Readonly<{
   phase: CliRunPhase;
 }>;
 
+export type CliRunInputValue =
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      messageId: string;
+      deliveryState: "pending";
+      resolutionCode?: never;
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      messageId: string;
+      deliveryState: "accepted";
+      resolutionCode?: never;
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      messageId: string;
+      deliveryState: "rejected";
+      resolutionCode: "provider_rejected" | "delivery_not_sent";
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      messageId: string;
+      deliveryState: "ambiguous";
+      resolutionCode: "transport_unknown" | "process_unknown";
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      messageId: string;
+      deliveryState: "aborted";
+      resolutionCode: "run_terminal_not_sent";
+    }>;
+
 export type CliRunOutputCategory = (typeof CLI_RUN_OUTPUT_CATEGORIES)[number];
 export type CliRunOutputRedaction = "not_required" | "applied" | "undetermined";
 
@@ -1111,6 +1160,7 @@ export type CliOperationOutput<TOperation extends CliSessionOperation = CliSessi
 type CliRunOperationContract = {
   start: Readonly<{ mode: "write"; value: CliRunAdmissionValue }>;
   retry: Readonly<{ mode: "write"; value: CliRunAdmissionValue }>;
+  "send-input": Readonly<{ mode: "write"; value: CliRunInputValue }>;
   status: Readonly<{ mode: "read"; value: CliRunStatusValue }>;
   events: Readonly<{ mode: "read"; value: CliRunEventsValue }>;
   follow: Readonly<{ mode: "read"; value: CliRunFollowValue }>;

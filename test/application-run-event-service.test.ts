@@ -8,12 +8,16 @@ import {
 } from "../src/main/application-run-event-service.js";
 import { ApplicationRunDispatchService } from "../src/main/application-run-dispatch-service.js";
 import type {
+  ApplicationRunBindingOwnership,
   ApplicationRunDispatchControl,
   ApplicationRunPreparedDispatch,
+  ApplicationRunProviderAdapterPort,
 } from "../src/main/application-run-runtime-service.js";
 import { PersistenceClientError } from "../src/main/persistence-worker-client.js";
 import type {
   RunDispatchResolutionCommand,
+  RunInputBeginCommand,
+  RunInputResolutionCommand,
   RunOutputAppendCommand,
   RunTerminalCommand,
 } from "../src/shared/repository-write-model.js";
@@ -787,6 +791,644 @@ test("Dispatch registration keeps runtime work owned until the Provider terminal
   assert.equal(fixture.terminals.length, 1);
 });
 
+test("supplemental input sends once only after a fresh durable begin and persists the accepted outcome", async () => {
+  const fixture = eventFixture();
+  await activateInputOwner(fixture);
+  const reservation = await reserveInput(fixture);
+
+  fixture.service.handoff(inputHandoff(reservation, "input-message-1", 2));
+  await waitFor(() => fixture.inputResolutions.length === 1);
+
+  assert.equal(fixture.inputBegins.length, 1);
+  assert.equal(fixture.steerInputs.length, 1);
+  assert.deepEqual(fixture.steerInputs[0], {
+    threadId: "thread-1",
+    expectedTurnId: "turn-1",
+    contentBlocks: [{ type: "text", text: "follow up" }],
+  });
+  assert.deepEqual(fixture.inputResolutions[0]?.outcome, { kind: "accepted" });
+});
+
+test("supplemental input preserves an ephemeral Binding owner token through every Repository Gate", async () => {
+  const fixture = eventFixture();
+  await activateInputOwner(
+    fixture,
+    dispatch({
+      persistenceMode: "ephemeral",
+      ephemeralOwnerToken: EPHEMERAL_OWNER_TOKEN,
+    }),
+  );
+  const reservation = await reserveInput(fixture);
+
+  assert.equal(fixture.resolutions[0]?.ephemeralOwnerToken, EPHEMERAL_OWNER_TOKEN);
+  assert.equal(reservation.persistenceMode, "ephemeral");
+  assert.equal(reservation.ephemeralOwnerToken, EPHEMERAL_OWNER_TOKEN);
+
+  fixture.service.handoff(inputHandoff(reservation, "input-message-ephemeral", 2));
+  await waitFor(() => fixture.inputResolutions.length === 1);
+
+  assert.equal(fixture.inputBegins[0]?.ephemeralOwnerToken, EPHEMERAL_OWNER_TOKEN);
+  assert.equal(fixture.inputResolutions[0]?.ephemeralOwnerToken, EPHEMERAL_OWNER_TOKEN);
+  assert.equal(fixture.steerInputs.length, 1);
+});
+
+test("a replayed earlier ordinal unblocks a retryable later input without losing its live delivery owner", async () => {
+  const fixture = eventFixture({
+    async inputBeginOperation(command, call) {
+      if (command.messageId === "input-message-later" && call === 1) {
+        return {
+          ok: false,
+          error: {
+            code: "lifecycle_conflict",
+            message: "An earlier supplemental input is unresolved.",
+            retryable: true,
+          },
+          replayed: false,
+        };
+      }
+      return {
+        ok: true,
+        replayed: false,
+        value: {
+          sessionId: command.sessionId,
+          runId: command.runId,
+          attemptId: command.attemptId,
+          messageId: command.messageId,
+          bindingId: command.bindingId,
+          deliveryState: "dispatching",
+          dispatchingAt: 15,
+          sendAllowed: true,
+        },
+      };
+    },
+  });
+  await activateInputOwner(fixture);
+
+  const later = await reserveInput(fixture);
+  fixture.service.handoff(inputHandoff(later, "input-message-later", 3, "later"));
+  await waitFor(() => fixture.inputBegins.length === 1);
+
+  const earlierReplay = await reserveInput(fixture);
+  fixture.service.handoff(inputHandoff(earlierReplay, "input-message-earlier", 2, "earlier"));
+  await waitFor(() => fixture.steerInputs.length === 2);
+
+  assert.deepEqual(
+    fixture.inputBegins.map((command) => command.messageId),
+    ["input-message-later", "input-message-earlier", "input-message-later"],
+  );
+  assert.deepEqual(
+    fixture.steerInputs.map((input) => input.contentBlocks),
+    [[{ type: "text", text: "earlier" }], [{ type: "text", text: "later" }]],
+  );
+  assert.deepEqual(
+    fixture.inputResolutions.map((command) => command.messageId),
+    ["input-message-earlier", "input-message-later"],
+  );
+});
+
+test("begin replay never sends and converges the dispatching Delivery to ambiguous", async () => {
+  for (const options of [{ inputBeginAlreadyCommitted: true }, { inputBeginReplayWithSendAllowed: true }]) {
+    const fixture = eventFixture(options);
+    await activateInputOwner(fixture);
+    const reservation = await reserveInput(fixture);
+
+    fixture.service.handoff(inputHandoff(reservation, "input-message-1", 2));
+    await waitFor(() => fixture.inputResolutions.length === 1);
+
+    assert.equal(fixture.steerInputs.length, 0);
+    assert.deepEqual(fixture.inputResolutions[0]?.outcome, {
+      kind: "ambiguous",
+      resolutionCode: "process_unknown",
+    });
+  }
+});
+
+test("duplicate pending handoff is deduplicated while the frozen resolution retries without another Provider call", async () => {
+  const fixture = eventFixture({ inputResolutionUnknownCount: 6 });
+  await activateInputOwner(fixture);
+  const first = await reserveInput(fixture);
+  fixture.service.handoff(inputHandoff(first, "input-message-1", 2));
+  await waitFor(() => fixture.inputResolutions.length >= 2);
+
+  const replay = await reserveInput(fixture);
+  fixture.service.handoff(inputHandoff(replay, "input-message-1", 2));
+  await waitFor(() => fixture.inputResolutions.length === 7);
+
+  assert.equal(fixture.steerInputs.length, 1);
+  assert.ok(
+    fixture.inputResolutions.every(
+      (command) => JSON.stringify(command) === JSON.stringify(fixture.inputResolutions[0]),
+    ),
+  );
+});
+
+test("supplemental input maps bounded Provider outcomes without retaining raw Provider codes", async () => {
+  const cases = [
+    {
+      result: { kind: "rejected", effect: "none", code: -32_000 } as const,
+      expected: { kind: "rejected", resolutionCode: "provider_rejected" } as const,
+    },
+    {
+      result: { kind: "not_sent", effect: "none", code: "capability_unavailable" } as const,
+      expected: { kind: "rejected", resolutionCode: "delivery_not_sent" } as const,
+    },
+    {
+      result: { kind: "ambiguous", effect: "unknown", code: "connection_lost" } as const,
+      expected: { kind: "ambiguous", resolutionCode: "transport_unknown" } as const,
+    },
+    {
+      result: { kind: "connection_failure", effect: "unknown", code: "process_exited" } as const,
+      expected: { kind: "ambiguous", resolutionCode: "process_unknown" } as const,
+    },
+  ];
+  for (const [index, entry] of cases.entries()) {
+    const fixture = eventFixture({ steerResult: entry.result });
+    await activateInputOwner(fixture);
+    const reservation = await reserveInput(fixture);
+    fixture.service.handoff(inputHandoff(reservation, `input-message-${index}`, index + 2));
+    await waitFor(() => fixture.inputResolutions.length === 1);
+
+    assert.deepEqual(fixture.inputResolutions[0]?.outcome, entry.expected);
+    assert.equal(JSON.stringify(fixture.inputResolutions).includes(String(entry.result.code)), false);
+  }
+});
+
+test("stale owner, waiting promotion, reservation abort, and capacity bounds never transfer input", async () => {
+  let current = true;
+  const fixture = eventFixture({
+    isCurrent: () => current,
+    limits: { maxPendingInputsPerAttempt: 1, maxTrackedInputs: 1 },
+  });
+  await activateInputOwner(fixture);
+  const reservation = await reserveInput(fixture);
+  const full = await fixture.service.preflight({ sessionId: "session-1", runId: "run-1" });
+  assert.equal(full.ok, false);
+  assert.equal(!full.ok && full.error.code, "capacity_exceeded");
+
+  fixture.service.release(reservation);
+  const abort = new AbortController();
+  const released = await reserveInput(fixture, abort.signal);
+  abort.abort();
+  const next = await reserveInput(fixture);
+  fixture.service.release(next);
+
+  const stale = await reserveInput(fixture);
+  current = false;
+  fixture.service.handoff(inputHandoff(stale, "input-message-stale", 2));
+  await waitFor(() => fixture.inputResolutions.length === 1);
+
+  assert.equal(released.token === next.token, false);
+  assert.equal(fixture.inputBegins.length, 1);
+  assert.equal(fixture.steerInputs.length, 0);
+  assert.deepEqual(fixture.inputResolutions[0]?.outcome, {
+    kind: "rejected",
+    resolutionCode: "delivery_not_sent",
+  });
+  current = true;
+  const afterStale = await reserveInput(fixture);
+  fixture.service.release(afterStale);
+
+  let promotionCurrent = true;
+  const promotion = eventFixture({
+    isCurrent: () => promotionCurrent,
+    limits: { maxPendingInputsPerAttempt: 2, maxTrackedInputs: 2 },
+  });
+  await activateInputOwner(promotion);
+  const promotionFirst = await reserveInput(promotion);
+  const promotionWaiting = promotion.service.preflight({ sessionId: "session-1", runId: "run-1" });
+  await new Promise((resolve) => setImmediate(resolve));
+  promotionCurrent = false;
+  promotion.service.release(promotionFirst);
+  const stalePromotion = await promotionWaiting;
+  assert.equal(stalePromotion.ok, false);
+  assert.equal(!stalePromotion.ok && stalePromotion.error.code, "lifecycle_conflict");
+  assert.equal(promotion.inputBegins.length, 0);
+  assert.equal(promotion.steerInputs.length, 0);
+
+  promotionCurrent = true;
+  const promotionRecovered = await reserveInput(promotion);
+  promotion.service.release(promotionRecovered);
+});
+
+test("terminal ordering before handoff or after an unresolved send never creates a second external effect", async () => {
+  const beforeHandoff = eventFixture();
+  const beforeHandle = beforeHandoff.service.register(dispatch(), beforeHandoff.control);
+  assert.ok(beforeHandle);
+  await beforeHandle.settleStartTurn(acceptedTurn("turn-1"));
+  const reserved = await reserveInput(beforeHandoff);
+  const waiting = beforeHandoff.service.preflight({ sessionId: "session-1", runId: "run-1" });
+  await new Promise((resolve) => setImmediate(resolve));
+  await beforeHandoff.service.accept("codex-1", terminalEvent());
+  await beforeHandle.done;
+  const waitingAfterTerminal = await waiting;
+  assert.equal(waitingAfterTerminal.ok, false);
+  assert.equal(!waitingAfterTerminal.ok && waitingAfterTerminal.error.code, "lifecycle_conflict");
+  beforeHandoff.service.handoff(inputHandoff(reserved, "input-message-before", 2));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(beforeHandoff.inputBegins.length, 0);
+  assert.equal(beforeHandoff.steerInputs.length, 0);
+
+  let settleSteer!: (value: Awaited<ReturnType<NonNullable<ApplicationRunProviderAdapterPort["steerTurn"]>>>) => void;
+  const afterBegin = eventFixture({
+    inputResolutionUnknownCount: 100,
+    steerOperation: () =>
+      new Promise((resolve) => {
+        settleSteer = resolve;
+      }),
+  });
+  const afterHandle = afterBegin.service.register(dispatch(), afterBegin.control);
+  assert.ok(afterHandle);
+  await afterHandle.settleStartTurn(acceptedTurn("turn-1"));
+  const afterReservation = await reserveInput(afterBegin);
+  afterBegin.service.handoff(inputHandoff(afterReservation, "input-message-after", 2));
+  await waitFor(() => afterBegin.steerInputs.length === 1);
+  const terminal = afterBegin.service.accept("codex-1", terminalEvent());
+  settleSteer({
+    kind: "accepted",
+    effect: "present",
+    value: { threadId: "thread-1", turnId: "turn-1" },
+  });
+  await terminal;
+  await afterHandle.done;
+  const resolutionAttempts = afterBegin.inputResolutions.length;
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  assert.equal(afterBegin.steerInputs.length, 1);
+  assert.equal(afterBegin.inputResolutions.length, resolutionAttempts);
+  assert.ok(
+    afterBegin.inputResolutions.every(
+      (command) => JSON.stringify(command) === JSON.stringify(afterBegin.inputResolutions[0]),
+    ),
+  );
+
+  let releaseLeading!: (
+    value: Awaited<ReturnType<NonNullable<ApplicationRunProviderAdapterPort["steerTurn"]>>>,
+  ) => void;
+  let queuedSteerCalls = 0;
+  const queuedTerminal = eventFixture({
+    terminalUnknownCount: 2,
+    steerOperation: (input) => {
+      queuedSteerCalls += 1;
+      if (queuedSteerCalls === 1) {
+        return new Promise((resolve) => {
+          releaseLeading = resolve;
+        });
+      }
+      return Promise.resolve({
+        kind: "accepted",
+        effect: "present",
+        value: { threadId: input.threadId, turnId: input.expectedTurnId },
+      });
+    },
+  });
+  const queuedHandle = queuedTerminal.service.register(dispatch(), queuedTerminal.control);
+  assert.ok(queuedHandle);
+  await queuedHandle.settleStartTurn(acceptedTurn("turn-1"));
+  const leading = await reserveInput(queuedTerminal);
+  const followingReservation = reserveInput(queuedTerminal);
+  await new Promise((resolve) => setImmediate(resolve));
+  queuedTerminal.service.handoff(inputHandoff(leading, "input-message-leading", 2, "leading"));
+  const following = await followingReservation;
+  queuedTerminal.service.handoff(inputHandoff(following, "input-message-following", 3, "following"));
+  await waitFor(() => queuedTerminal.steerInputs.length === 1);
+  const queuedTerminalEvent = queuedTerminal.service.accept("codex-1", terminalEvent());
+  releaseLeading({
+    kind: "accepted",
+    effect: "present",
+    value: { threadId: "thread-1", turnId: "turn-1" },
+  });
+  await queuedTerminalEvent;
+  const afterTerminalPreflight = await queuedTerminal.service.preflight({
+    sessionId: "session-1",
+    runId: "run-1",
+  });
+  assert.equal(afterTerminalPreflight.ok, false);
+  assert.equal(!afterTerminalPreflight.ok && afterTerminalPreflight.error.code, "lifecycle_conflict");
+  await queuedHandle.done;
+
+  assert.deepEqual(
+    queuedTerminal.inputBegins.map((command) => command.messageId),
+    ["input-message-leading"],
+  );
+  assert.equal(queuedTerminal.steerInputs.length, 1);
+  assert.equal(queuedTerminal.terminals.length, 3);
+  assert.ok(
+    queuedTerminal.terminals.every(
+      (command) => JSON.stringify(command) === JSON.stringify(queuedTerminal.terminals[0]),
+    ),
+  );
+});
+
+test("terminal convergence preserves an accepted input after its resolution response is lost", async () => {
+  let terminal!: Promise<void>;
+  let fixture!: ReturnType<typeof eventFixture>;
+  fixture = eventFixture({
+    inputResolutionOperation(command, call) {
+      if (call === 1) {
+        terminal = fixture.service.accept("codex-1", terminalEvent());
+      }
+      if (call <= 2) {
+        throw unknownPersistenceFailure();
+      }
+      return Promise.resolve(
+        success({
+          sessionId: command.sessionId,
+          runId: command.runId,
+          attemptId: command.attemptId,
+          messageId: command.messageId,
+          bindingId: command.bindingId,
+          deliveryState: command.outcome.kind,
+          resolutionCode: command.outcome.kind === "accepted" ? null : command.outcome.resolutionCode,
+          resolvedAt: 16,
+        }),
+      );
+    },
+  });
+  const handle = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(handle);
+  await handle.settleStartTurn(acceptedTurn("turn-1"));
+  const reservation = await reserveInput(fixture);
+  fixture.service.handoff(inputHandoff(reservation, "input-message-accepted-before-terminal", 2));
+
+  await terminal;
+  await handle.done;
+
+  assert.equal(fixture.steerInputs.length, 1);
+  assert.equal(fixture.terminals.length, 1);
+  assert.equal(fixture.inputDeliveryStates.get("input-message-accepted-before-terminal"), "accepted");
+  assert.ok(
+    fixture.inputResolutions.every(
+      (command) => JSON.stringify(command) === JSON.stringify(fixture.inputResolutions[0]),
+    ),
+  );
+});
+
+test("terminal convergence persists a not-sent resolution created by a retried begin", async () => {
+  let terminal!: Promise<void>;
+  let fixture!: ReturnType<typeof eventFixture>;
+  fixture = eventFixture({
+    inputBeginOperation(command, call) {
+      fixture.inputDeliveryStates.set(command.messageId, "dispatching");
+      if (call === 1) {
+        terminal = fixture.service.accept("codex-1", terminalEvent());
+      }
+      if (call <= 2) {
+        throw unknownPersistenceFailure();
+      }
+      return Promise.resolve({
+        ok: true,
+        replayed: false,
+        value: {
+          sessionId: command.sessionId,
+          runId: command.runId,
+          attemptId: command.attemptId,
+          messageId: command.messageId,
+          bindingId: command.bindingId,
+          deliveryState: "dispatching",
+          dispatchingAt: 15,
+          sendAllowed: true,
+        },
+      });
+    },
+    inputResolutionOperation(command, call) {
+      if (call <= 2) {
+        throw unknownPersistenceFailure();
+      }
+      return Promise.resolve(
+        success({
+          sessionId: command.sessionId,
+          runId: command.runId,
+          attemptId: command.attemptId,
+          messageId: command.messageId,
+          bindingId: command.bindingId,
+          deliveryState: command.outcome.kind,
+          resolutionCode: command.outcome.kind === "accepted" ? null : command.outcome.resolutionCode,
+          resolvedAt: 16,
+        }),
+      );
+    },
+  });
+  const handle = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(handle);
+  await handle.settleStartTurn(acceptedTurn("turn-1"));
+  const reservation = await reserveInput(fixture);
+  fixture.service.handoff(inputHandoff(reservation, "input-message-retried-begin-before-terminal", 2));
+
+  await waitFor(() => fixture.inputBegins.length >= 1);
+  await terminal;
+  await handle.done;
+
+  assert.equal(fixture.steerInputs.length, 0);
+  assert.equal(fixture.terminals.length, 1);
+  assert.equal(fixture.inputDeliveryStates.get("input-message-retried-begin-before-terminal"), "rejected");
+  assert.ok(
+    fixture.inputResolutions.every(
+      (command) =>
+        command.outcome.kind === "rejected" &&
+        command.outcome.resolutionCode === "delivery_not_sent" &&
+        JSON.stringify(command) === JSON.stringify(fixture.inputResolutions[0]),
+    ),
+  );
+});
+
+test("parallel supplemental inputs serialize admission before Message ordinals and release their bounded slots", async () => {
+  let releaseFirst!: (value: Awaited<ReturnType<NonNullable<ApplicationRunProviderAdapterPort["steerTurn"]>>>) => void;
+  let steerCalls = 0;
+  const fixture = eventFixture({
+    steerOperation: (input) => {
+      steerCalls += 1;
+      if (steerCalls === 1) {
+        return new Promise((resolve) => {
+          releaseFirst = resolve;
+        });
+      }
+      return Promise.resolve({
+        kind: "accepted",
+        effect: "present",
+        value: { threadId: input.threadId, turnId: input.expectedTurnId },
+      });
+    },
+    limits: { maxPendingInputsPerAttempt: 2 },
+  });
+  await activateInputOwner(fixture);
+  const first = await reserveInput(fixture);
+  const waitingAbort = new AbortController();
+  const abortedReservation = fixture.service.preflight(
+    { sessionId: "session-1", runId: "run-1" },
+    { signal: waitingAbort.signal },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  waitingAbort.abort();
+  const aborted = await abortedReservation;
+  assert.equal(aborted.ok, false);
+  assert.equal(!aborted.ok && aborted.error.code, "lifecycle_conflict");
+
+  let secondReady = false;
+  const secondReservation = reserveInput(fixture).then((reservation) => {
+    secondReady = true;
+    return reservation;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(secondReady, false);
+
+  fixture.service.handoff(inputHandoff(first, "input-message-1", 2, "first"));
+  const second = await secondReservation;
+  fixture.service.handoff(inputHandoff(second, "input-message-2", 3, "second"));
+  await waitFor(() => fixture.steerInputs.length === 1);
+  assert.equal(fixture.steerInputs[0]?.contentBlocks[0]?.text, "first");
+  releaseFirst({
+    kind: "accepted",
+    effect: "present",
+    value: { threadId: "thread-1", turnId: "turn-1" },
+  });
+  await waitFor(() => fixture.steerInputs.length === 2);
+  assert.equal(fixture.steerInputs[1]?.contentBlocks[0]?.text, "second");
+
+  const availableAgain = await reserveInput(fixture);
+  fixture.service.release(availableAgain);
+});
+
+test("a settled supplemental input releases a single pending slot for the next preflight", async () => {
+  const fixture = eventFixture({
+    limits: { maxPendingInputsPerAttempt: 1 },
+  });
+  await activateInputOwner(fixture);
+  const first = await reserveInput(fixture);
+  fixture.service.handoff(inputHandoff(first, "input-message-1", 2, "first"));
+  await waitFor(() => fixture.inputResolutions.length === 1);
+
+  const second = await reserveInput(fixture);
+  fixture.service.release(second);
+});
+
+test("a non-terminal input resolution failure retains its pending slot until the Attempt closes", async () => {
+  const fixture = eventFixture({
+    inputResolutionOperation: () =>
+      Promise.resolve({
+        ok: false,
+        error: {
+          code: "lifecycle_conflict",
+          message: "Run input resolution state changed.",
+          retryable: false,
+        },
+        replayed: false,
+      }),
+    limits: { maxPendingInputsPerAttempt: 1 },
+  });
+  const handle = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(handle);
+  await handle.settleStartTurn(acceptedTurn("turn-1"));
+  const reservation = await reserveInput(fixture);
+  fixture.service.handoff(inputHandoff(reservation, "input-message-blocked", 2));
+  await waitFor(() => fixture.inputResolutions.length === 1);
+
+  const full = await fixture.service.preflight({ sessionId: "session-1", runId: "run-1" });
+  assert.equal(full.ok, false);
+  assert.equal(!full.ok && full.error.code, "capacity_exceeded");
+  if (full.ok || full.error.code !== "capacity_exceeded") throw new Error("input capacity was not preserved");
+  assert.equal(full.error.details.current, 1);
+
+  await fixture.service.accept("codex-1", terminalEvent());
+  await handle.done;
+  assert.equal(fixture.terminals.length, 1);
+});
+
+test("a stale owner detected after durable begin resolves not-sent without calling Provider", async () => {
+  let current = true;
+  const fixture = eventFixture({
+    isCurrent: () => current,
+    afterInputBegin: () => {
+      current = false;
+    },
+  });
+  await activateInputOwner(fixture);
+  const reservation = await reserveInput(fixture);
+  fixture.service.handoff(inputHandoff(reservation, "input-message-stale-after-begin", 2));
+  await waitFor(() => fixture.inputResolutions.length === 1);
+
+  assert.equal(fixture.inputBegins.length, 1);
+  assert.equal(fixture.steerInputs.length, 0);
+  assert.deepEqual(fixture.inputResolutions[0]?.outcome, {
+    kind: "rejected",
+    resolutionCode: "delivery_not_sent",
+  });
+});
+
+test("generation release retains a frozen input resolution until persistence closure succeeds", async () => {
+  const fixture = eventFixture({ inputResolutionUnknownCount: 4 });
+  const handle = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(handle);
+  await handle.settleStartTurn(acceptedTurn("turn-1"));
+  const reservation = await reserveInput(fixture);
+  fixture.service.handoff(inputHandoff(reservation, "input-message-shutdown", 2));
+  await waitFor(() => fixture.inputResolutions.length === 2);
+
+  await assert.rejects(
+    fixture.service.releaseGeneration("codex-1", { kind: "shutdown" }),
+    /persistence outcome is still unknown/u,
+  );
+  await waitFor(() => fixture.inputResolutions.length === 5);
+  assert.equal(fixture.steerInputs.length, 1);
+  assert.ok(
+    fixture.inputResolutions.every(
+      (command) => JSON.stringify(command) === JSON.stringify(fixture.inputResolutions[0]),
+    ),
+  );
+
+  await waitFor(() => fixture.terminals.length === 1);
+  await handle.done;
+  assert.equal(fixture.terminals.length, 1);
+});
+
+async function activateInputOwner(
+  fixture: ReturnType<typeof eventFixture>,
+  preparedDispatch = dispatch(),
+): Promise<void> {
+  const handle = fixture.service.register(preparedDispatch, fixture.control);
+  assert.ok(handle);
+  await handle.settleStartTurn(acceptedTurn("turn-1"));
+}
+
+async function reserveInput(fixture: ReturnType<typeof eventFixture>, signal?: AbortSignal) {
+  const result = await fixture.service.preflight(
+    { sessionId: "session-1", runId: "run-1" },
+    signal === undefined ? undefined : { signal },
+  );
+  assert.equal(result.ok, true);
+  if (!result.ok) throw new Error("input reservation failed");
+  return result.value;
+}
+
+function inputHandoff(
+  reservation: Awaited<ReturnType<typeof reserveInput>>,
+  messageId: string,
+  messageOrdinal: number,
+  text = "follow up",
+) {
+  return {
+    reservation,
+    sessionId: reservation.sessionId,
+    runId: reservation.runId,
+    attemptId: reservation.attemptId,
+    messageId,
+    messageOrdinal,
+    bindingId: reservation.bindingId,
+    admittedAt: 10,
+    contentBlocks: [{ type: "text", text }] as const,
+  };
+}
+
+function terminalEvent() {
+  return {
+    kind: "turn_terminal",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    status: "completed",
+    finalAssistantMessage: null,
+    contentFailure: null,
+  } as const;
+}
+
 function eventFixture(
   options: Readonly<{
     resolutionUnknownOnce?: boolean;
@@ -800,21 +1442,46 @@ function eventFixture(
     terminalUnknownCount?: number;
     recoveryUnavailableCount?: number;
     terminalizeRejectOnce?: boolean;
+    inputBeginAlreadyCommitted?: boolean;
+    inputBeginReplayWithSendAllowed?: boolean;
+    inputBeginUnknownCount?: number;
+    inputBeginOperation?: (
+      command: RunInputBeginCommand,
+      call: number,
+    ) => ReturnType<ApplicationRunEventWritePort["beginRunInput"]>;
+    inputResolutionUnknownCount?: number;
+    inputResolutionOperation?: (
+      command: RunInputResolutionCommand,
+      call: number,
+    ) => ReturnType<ApplicationRunEventWritePort["resolveRunInput"]>;
+    steerResult?: Awaited<ReturnType<NonNullable<ApplicationRunProviderAdapterPort["steerTurn"]>>>;
+    steerOperation?: NonNullable<ApplicationRunProviderAdapterPort["steerTurn"]>;
+    isCurrent?: () => boolean;
+    afterInputBegin?: () => void;
     limits?: Readonly<{
       maxTrackedAttempts?: number;
       maxBufferedEventsPerAttempt?: number;
       maxPersistedOutputsPerAttempt?: number;
+      maxPendingInputsPerAttempt?: number;
+      maxTrackedInputs?: number;
     }>;
   }> = {},
 ) {
   const resolutions: RunDispatchResolutionCommand[] = [];
   const outputs: RunOutputAppendCommand[] = [];
+  const inputBegins: RunInputBeginCommand[] = [];
+  const inputResolutions: RunInputResolutionCommand[] = [];
+  const inputDeliveryStates = new Map<string, "dispatching" | RunInputResolutionCommand["outcome"]["kind"]>();
   const terminals: RunTerminalCommand[] = [];
   const terminalized: Parameters<ApplicationRunDispatchControl["terminalize"]>[0][] = [];
   let terminalCalls = 0;
   let terminalizeCalls = 0;
   let outputCalls = 0;
   let resolutionCalls = 0;
+  let inputBeginCalls = 0;
+  const committedInputMessages = new Set<string>();
+  let inputResolutionCalls = 0;
+  const steerInputs: Parameters<NonNullable<ApplicationRunProviderAdapterPort["steerTurn"]>>[0][] = [];
   const resolutionCallsByOutcome: Record<RunDispatchResolutionCommand["outcome"]["kind"], number> = {
     accepted: 0,
     rejected: 0,
@@ -896,9 +1563,62 @@ function eventFixture(
         createdAt: 20,
       });
     },
+    async beginRunInput(command) {
+      inputBegins.push(command);
+      inputBeginCalls += 1;
+      if (options.inputBeginOperation !== undefined) {
+        return options.inputBeginOperation(command, inputBeginCalls);
+      }
+      if (inputBeginCalls <= (options.inputBeginUnknownCount ?? 0)) {
+        committedInputMessages.add(command.messageId);
+        throw unknownPersistenceFailure();
+      }
+      const sendAllowed = options.inputBeginAlreadyCommitted !== true && !committedInputMessages.has(command.messageId);
+      committedInputMessages.add(command.messageId);
+      inputDeliveryStates.set(command.messageId, "dispatching");
+      options.afterInputBegin?.();
+      return {
+        ok: true,
+        replayed: options.inputBeginReplayWithSendAllowed === true || !sendAllowed,
+        value: {
+          sessionId: command.sessionId,
+          runId: command.runId,
+          attemptId: command.attemptId,
+          messageId: command.messageId,
+          bindingId: command.bindingId,
+          deliveryState: "dispatching" as const,
+          dispatchingAt: 15,
+          sendAllowed: options.inputBeginReplayWithSendAllowed === true || sendAllowed,
+        },
+      } as const;
+    },
+    async resolveRunInput(command) {
+      inputResolutions.push(command);
+      inputResolutionCalls += 1;
+      if (options.inputResolutionOperation !== undefined) {
+        const result = await options.inputResolutionOperation(command, inputResolutionCalls);
+        if (result.ok) inputDeliveryStates.set(command.messageId, command.outcome.kind);
+        return result;
+      }
+      if (inputResolutionCalls <= (options.inputResolutionUnknownCount ?? 0)) throw unknownPersistenceFailure();
+      inputDeliveryStates.set(command.messageId, command.outcome.kind);
+      return success({
+        sessionId: command.sessionId,
+        runId: command.runId,
+        attemptId: command.attemptId,
+        messageId: command.messageId,
+        bindingId: command.bindingId,
+        deliveryState: command.outcome.kind,
+        resolutionCode: command.outcome.kind === "accepted" ? null : command.outcome.resolutionCode,
+        resolvedAt: 16,
+      });
+    },
     async completeRun(command) {
       terminals.push(command);
       terminalCalls += 1;
+      for (const [messageId, state] of inputDeliveryStates) {
+        if (state === "dispatching") inputDeliveryStates.set(messageId, "ambiguous");
+      }
       if (
         (options.terminalUnknownOnce === true && terminalCalls === 1) ||
         terminalCalls <= (options.terminalUnknownCount ?? 0)
@@ -924,9 +1644,21 @@ function eventFixture(
     ...(options.limits === undefined ? {} : { limits: options.limits }),
   });
   const control: ApplicationRunDispatchControl = {
-    adapter: {} as never,
+    adapter: {
+      async steerTurn(input) {
+        steerInputs.push(input);
+        if (options.steerOperation !== undefined) return options.steerOperation(input);
+        return (
+          options.steerResult ?? {
+            kind: "accepted",
+            effect: "present",
+            value: { threadId: input.threadId, turnId: input.expectedTurnId },
+          }
+        );
+      },
+    } as ApplicationRunProviderAdapterPort,
     signal: new AbortController().signal,
-    isCurrent: () => true,
+    isCurrent: options.isCurrent ?? (() => true),
     async terminalize(failure) {
       terminalizeCalls += 1;
       terminalized.push(failure);
@@ -936,7 +1668,19 @@ function eventFixture(
       return true;
     },
   };
-  return { service, control, writes, resolutions, outputs, terminals, terminalized };
+  return {
+    service,
+    control,
+    writes,
+    resolutions,
+    inputBegins,
+    inputResolutions,
+    inputDeliveryStates,
+    steerInputs,
+    outputs,
+    terminals,
+    terminalized,
+  };
 }
 
 async function isSettled(promise: Promise<void>): Promise<boolean> {
@@ -951,8 +1695,10 @@ async function waitFor(condition: () => boolean, timeoutMs = 2_000): Promise<voi
   }
 }
 
-function dispatch(): ApplicationRunPreparedDispatch {
-  return {
+function dispatch(
+  ownership: ApplicationRunBindingOwnership = { persistenceMode: "persistent", ephemeralOwnerToken: null },
+): ApplicationRunPreparedDispatch {
+  const prepared: Omit<ApplicationRunPreparedDispatch, "persistenceMode" | "ephemeralOwnerToken"> = {
     admission: {
       sessionId: "session-1",
       runId: "run-1",
@@ -984,7 +1730,16 @@ function dispatch(): ApplicationRunPreparedDispatch {
     },
     contentBlocks: [{ type: "text", text: "hello" }],
   };
+  return ownership.persistenceMode === "persistent"
+    ? { ...prepared, persistenceMode: "persistent", ephemeralOwnerToken: null }
+    : {
+        ...prepared,
+        persistenceMode: "ephemeral",
+        ephemeralOwnerToken: ownership.ephemeralOwnerToken,
+      };
 }
+
+const EPHEMERAL_OWNER_TOKEN = "018f1f4e-7f0a-7000-8000-000000000901";
 
 function acceptedTurn(turnId: string) {
   return {

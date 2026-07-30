@@ -1,10 +1,14 @@
-import { APPLICATION_RUN_LIMITS } from "../../shared/application-run-model.js";
+import {
+  APPLICATION_RUN_LIMITS,
+  isApplicationRunSendInputDomainErrorCode,
+} from "../../shared/application-run-model.js";
 import {
   APPLICATION_RUN_OUTPUT_CATEGORIES,
   APPLICATION_RUN_OUTPUT_LIMITS,
 } from "../../shared/application-run-output-model.js";
 import { APPLICATION_SESSION_MESSAGE_LIMITS } from "../../shared/application-session-message-model.js";
 import { APPLICATION_SESSION_RUN_LIMITS } from "../../shared/application-session-run-model.js";
+import { isApplicationDomainFailurePersistenceStatus } from "../../shared/application-service-model.js";
 import { snapshotMessageContentBlocks } from "../../shared/message-content.js";
 import { MAX_SESSION_CONCURRENT_CHILD_RUNS, MAX_SESSION_TREE_SIZE } from "../../shared/session-limits.js";
 import {
@@ -30,6 +34,7 @@ const WRITE_OPERATIONS = new Set<RuntimeIpcOperation>([
   "session.delete",
   "run.start",
   "run.retry",
+  "run.send_input",
 ]);
 const IDENTIFIER_MAX_LENGTH = 1_024;
 const CURSOR_MAX_LENGTH = 2_048;
@@ -45,7 +50,7 @@ export function snapshotRuntimeApplicationResponse(
   const exportOperation = operation === "run.output_export";
   if (overallStatus === "failure") {
     requireKeys(response, ["overallStatus", "error", "persistence", ...(exportOperation ? ["publication"] : [])]);
-    const error = snapshotError(response.error);
+    const error = snapshotError(response.error, operation, payload);
     const publication = exportOperation ? snapshotPublication(response.publication) : undefined;
     const persistence = snapshotPersistence(response.persistence);
     validateFailureCombination(operation, error, persistence, publication);
@@ -127,6 +132,8 @@ function snapshotOperationValue(
     case "run.start":
     case "run.retry":
       return snapshotRunAdmission(value, payload, operation);
+    case "run.send_input":
+      return snapshotRunInput(value, payload);
     case "run.status":
       return snapshotRunStatus(value, payload);
     case "run.events":
@@ -624,6 +631,29 @@ function snapshotRunAdmission(
   return admission;
 }
 
+function snapshotRunInput(value: unknown, payload: RuntimeIpcOperationPayload): unknown {
+  const input = exact(value, ["sessionId", "runId", "messageId", "deliveryState"], ["resolutionCode"]);
+  requireScope(input, payload, ["sessionId", "runId"]);
+  if (!isBoundedString(input.messageId)) malformed();
+  const deliveryState = enumeration(input.deliveryState, [
+    "pending",
+    "accepted",
+    "rejected",
+    "ambiguous",
+    "aborted",
+  ] as const);
+  if (deliveryState === "pending" || deliveryState === "accepted") {
+    if (input.resolutionCode !== undefined) malformed();
+  } else if (deliveryState === "rejected") {
+    enumeration(input.resolutionCode, ["provider_rejected", "delivery_not_sent"] as const);
+  } else if (deliveryState === "ambiguous") {
+    enumeration(input.resolutionCode, ["transport_unknown", "process_unknown"] as const);
+  } else if (input.resolutionCode !== "run_terminal_not_sent") {
+    malformed();
+  }
+  return input;
+}
+
 function snapshotRunFailure(value: unknown): unknown {
   const failure = exact(value, ["origin"], ["summary"]);
   if (
@@ -945,7 +975,11 @@ function snapshotIssues(value: unknown): readonly unknown[] {
   });
 }
 
-function snapshotError(value: unknown): Readonly<Record<string, unknown>> {
+function snapshotError(
+  value: unknown,
+  operation?: RuntimeIpcOperation,
+  payload?: RuntimeIpcOperationPayload,
+): Readonly<Record<string, unknown>> {
   const error = record(value, ["kind", "code", "message", "retryable", "effect", "details"]);
   if (!isBoundedString(error.message, ERROR_MESSAGE_MAX_LENGTH) || typeof error.retryable !== "boolean") {
     malformed();
@@ -972,7 +1006,7 @@ function snapshotError(value: unknown): Readonly<Record<string, unknown>> {
   if (error.kind === "domain" && error.details !== undefined) {
     const domain: Readonly<Record<string, unknown>> = {
       ...exact(error, ["kind", "code", "message", "retryable", "details"]),
-      details: snapshotErrorDetails(error.details),
+      details: snapshotErrorDetails(error.details, operation, payload),
     };
     if (
       (domain.code === "capacity_exceeded" && domain.retryable === true) ||
@@ -1002,10 +1036,15 @@ function snapshotError(value: unknown): Readonly<Record<string, unknown>> {
   malformed();
 }
 
-function snapshotErrorDetails(value: unknown): unknown {
+function snapshotErrorDetails(
+  value: unknown,
+  operation?: RuntimeIpcOperation,
+  payload?: RuntimeIpcOperationPayload,
+): unknown {
   const details = record(value, [
     "scope",
     "rootSessionId",
+    "runId",
     "current",
     "limit",
     "providerId",
@@ -1030,19 +1069,47 @@ function snapshotErrorDetails(value: unknown): unknown {
   if (details.scope === "root" || details.scope === "session_tree") {
     const capacity = exact(details, ["scope", "rootSessionId", "current", "limit"]);
     validateCapacityDetails(capacity, "rootSessionId");
+    validateCapacityOperation(operation, payload, capacity);
+    return capacity;
+  }
+  if (details.scope === "run") {
+    const capacity = exact(details, ["scope", "runId", "current", "limit"]);
+    validateCapacityDetails(capacity, "runId");
+    validateCapacityOperation(operation, payload, capacity);
     return capacity;
   }
   if (details.scope === "provider") {
     const capacity = exact(details, ["scope", "current", "limit"]);
     validateCapacityDetails(capacity);
+    validateCapacityOperation(operation, payload, capacity);
     return capacity;
   }
   if (details.scope === "application") {
     const capacity = exact(details, ["scope", "current", "limit"]);
     validateCapacityDetails(capacity);
+    validateCapacityOperation(operation, payload, capacity);
     return capacity;
   }
   malformed();
+}
+
+function validateCapacityOperation(
+  operation: RuntimeIpcOperation | undefined,
+  payload: RuntimeIpcOperationPayload | undefined,
+  details: Readonly<Record<string, unknown>>,
+): void {
+  if (operation === undefined) return;
+  if (details.scope === "run") {
+    if (operation !== "run.send_input" || payload === undefined || details.runId !== payload.runId) {
+      malformed();
+    }
+    return;
+  }
+  if (operation === "run.start" || operation === "run.retry") {
+    if (details.scope !== "application" && details.scope !== "provider") malformed();
+    return;
+  }
+  if (operation === "run.send_input" && details.scope !== "application") malformed();
 }
 
 function snapshotPublication(value: unknown): Readonly<Record<string, unknown>> {
@@ -1067,7 +1134,10 @@ function validateOutcomeCombination(
   value: unknown,
   issues: readonly unknown[] | undefined,
 ): void {
-  if (overallStatus === "partial_success" && (operation === "run.start" || operation === "run.retry")) {
+  if (
+    overallStatus === "partial_success" &&
+    (operation === "run.start" || operation === "run.retry" || operation === "run.send_input")
+  ) {
     malformed();
   }
   if (operation === "session.delete") {
@@ -1202,6 +1272,7 @@ function validateFailureCombination(
 ): void {
   if (operation === "run.output_export") {
     if (publication === undefined || publication.status === "published") malformed();
+    if (persistence.status === "not_attempted" && error.kind === "domain") malformed();
     if (persistence.status === "read") {
       if (
         error.kind === "operation" ||
@@ -1218,11 +1289,19 @@ function validateFailureCombination(
   } else if (publication !== undefined) {
     malformed();
   }
+  if (
+    operation === "run.send_input" &&
+    error.kind === "domain" &&
+    !isApplicationRunSendInputDomainErrorCode(error.code)
+  ) {
+    malformed();
+  }
 
   switch (persistence.status) {
     case "not_attempted":
       if (
-        !["request", "access", "operation", "application"].includes(error.kind as string) ||
+        (!["request", "access", "operation", "application"].includes(error.kind as string) &&
+          !(error.kind === "domain" && isApplicationDomainFailurePersistenceStatus(persistence.status))) ||
         (publication !== undefined &&
           (publication.status !== "not_published" || publication.temporaryCleanup !== "complete"))
       ) {
@@ -1230,7 +1309,7 @@ function validateFailureCombination(
       }
       return;
     case "rejected":
-      if (error.kind !== "domain") malformed();
+      if (error.kind !== "domain" || !isApplicationDomainFailurePersistenceStatus(persistence.status)) malformed();
       if (publication !== undefined) {
         if (error.code === "payload_unavailable") {
           if (publication.status !== "not_published" || publication.temporaryCleanup !== "complete") malformed();

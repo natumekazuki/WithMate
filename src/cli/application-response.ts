@@ -8,6 +8,7 @@ import {
 } from "../shared/session-metadata.js";
 import { MAX_SESSION_TREE_SIZE } from "../shared/session-limits.js";
 import { APPLICATION_SESSION_MESSAGE_LIMITS } from "../shared/application-session-message-model.js";
+import { isApplicationDomainFailurePersistenceStatus } from "../shared/application-service-model.js";
 import { snapshotMessageContentBlocks } from "../shared/message-content.js";
 import {
   CLI_EXIT_CODES,
@@ -241,7 +242,9 @@ function runOutputExportFailureCombinationIsValid(
   if (publication.status === "published") return false;
   const definitelyUnpublished = publication.status === "not_published" && publication.temporaryCleanup === "complete";
   if (persistence.status === "not_attempted") {
-    return definitelyUnpublished && failureCombinationIsValid("read", false, error, persistence);
+    return (
+      error.kind !== "domain" && definitelyUnpublished && failureCombinationIsValid("read", false, error, persistence)
+    );
   }
   if (persistence.status === "rejected") {
     if (error.kind !== "domain") return false;
@@ -870,14 +873,20 @@ function projectPersistenceStatus(value: unknown): CliPersistenceStatus {
     case "not_attempted":
     case "read":
     case "rejected":
+      requireAbsent(persistence, ["replayed", "reconciliation"]);
       if (persistence.effect !== "none") malformed();
       return { status: persistence.status, effect: "none" };
     case "committed":
+      requireAbsent(persistence, ["reconciliation"]);
       if (persistence.effect !== "none" || typeof persistence.replayed !== "boolean") malformed();
       return { status: "committed", effect: "none", replayed: persistence.replayed };
     case "failed":
-      if (persistence.effect === "none") return { status: "failed", effect: "none" };
+      if (persistence.effect === "none") {
+        requireAbsent(persistence, ["replayed", "reconciliation"]);
+        return { status: "failed", effect: "none" };
+      }
       if (persistence.effect === "unknown" && persistence.reconciliation === "exact_request_required") {
+        requireAbsent(persistence, ["replayed"]);
         return { status: "failed", effect: "unknown", reconciliation: "exact_request_required" };
       }
       malformed();
@@ -1011,6 +1020,7 @@ function projectDomainError(
       details: { format: "binary", supportedAction: "export" },
     };
   }
+  if (Object.hasOwn(error, "details")) malformed();
   const code = enumValue(error.code, [
     "request_invalid",
     "cursor_invalid",
@@ -1039,6 +1049,15 @@ function projectCapacityDetails(
     return {
       scope: details.scope,
       rootSessionId: boundedString(capacity.rootSessionId),
+      current: nonNegativeInteger(capacity.current),
+      limit: nonNegativeInteger(capacity.limit),
+    };
+  }
+  if (details.scope === "run") {
+    const capacity = exactRecord(value, ["scope", "runId", "current", "limit"]);
+    return {
+      scope: "run",
+      runId: boundedString(capacity.runId),
       current: nonNegativeInteger(capacity.current),
       limit: nonNegativeInteger(capacity.limit),
     };
@@ -1219,7 +1238,7 @@ function failureCombinationIsValid(
     case "operation":
       return persistence.status === "not_attempted";
     case "domain":
-      return persistence.status === "rejected";
+      return isApplicationDomainFailurePersistenceStatus(persistence.status);
     case "persistence":
       return (
         persistence.status === "failed" &&

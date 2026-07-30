@@ -59,6 +59,7 @@ const sessionOperations = new Set<CliSessionOperation>([
 const runOperations = new Set<CliRunOperation>([
   "start",
   "retry",
+  "send-input",
   "status",
   "events",
   "follow",
@@ -157,6 +158,8 @@ function parseRunCommand(identity: CliCommandIdentity<CliRunOperation>, argv: re
       return parseRunStart(identity as CliCommandIdentity<"start">, argv);
     case "retry":
       return parseRunRetry(identity as CliCommandIdentity<"retry">, argv);
+    case "send-input":
+      return parseRunSendInput(identity as CliCommandIdentity<"send-input">, argv);
     case "status":
       return parseRunStatus(identity as CliCommandIdentity<"status">, argv);
     case "events":
@@ -203,6 +206,30 @@ function parseRunStart(identity: CliCommandIdentity<"start">, argv: readonly str
         reasoningEffort: parsed.values["--reasoning-effort"] as string,
         sandbox: parsed.values["--sandbox-json"] as ApplicationRunSandboxSetting,
       },
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
+function parseRunSendInput(identity: CliCommandIdentity<"send-input">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--run-id": requiredOption(parseIdentifier),
+    "--idempotency-key": requiredOption(parseUuid),
+    "--content-blocks-json": requiredOption(parseContentBlocksJson),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      runId: parsed.values["--run-id"] as string,
+      idempotencyKey: parsed.values["--idempotency-key"] as string,
+      contentBlocks: parsed.values["--content-blocks-json"] as NonNullable<
+        ReturnType<typeof snapshotMessageContentBlocks>
+      >,
       ...optionalTimeout(parsed.values),
     },
   };

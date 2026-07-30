@@ -166,7 +166,7 @@ test("runtime IPC failure codes admit only their defined execution and retry tup
   );
 });
 
-test("runtime IPC allowlist covers all 23 operational Application operations", () => {
+test("runtime IPC allowlist covers all 24 operational Application operations", () => {
   const idempotencyKey = randomUUID();
   const validPayloads = {
     "session.create": {
@@ -213,6 +213,12 @@ test("runtime IPC allowlist covers all 23 operational Application operations", (
         reasoningEffort: "high",
       },
     },
+    "run.send_input": {
+      sessionId: "session_abc",
+      runId: "run_abc",
+      idempotencyKey,
+      contentBlocks: [{ type: "text", text: "continue" }],
+    },
     "run.status": { sessionId: "session_abc", runId: "run_abc" },
     "run.events": { sessionId: "session_abc", runId: "run_abc", limit: 25 },
     "run.follow": { sessionId: "session_abc", runId: "run_abc", limit: 25, waitMs: 10_000, pollMs: 250 },
@@ -238,7 +244,7 @@ test("runtime IPC allowlist covers all 23 operational Application operations", (
       destination: "C:\\exports\\output.bin",
     },
   } satisfies Record<RuntimeIpcOperation, unknown>;
-  assert.equal(RUNTIME_IPC_OPERATIONS.length, 23);
+  assert.equal(RUNTIME_IPC_OPERATIONS.length, 24);
   for (const operation of RUNTIME_IPC_OPERATIONS) {
     const decoded = decodeRuntimeIpcEnvelope(runtimeRequest(operation, validPayloads[operation]));
     assert.equal(decoded.kind, "request");
@@ -247,7 +253,7 @@ test("runtime IPC allowlist covers all 23 operational Application operations", (
   }
 });
 
-test("run.start snapshots exact inline content and rejects one byte beyond the IPC content limit", () => {
+test("Run content mutations snapshot exact inline content and reject one byte beyond the IPC content limit", () => {
   const idempotencyKey = randomUUID();
   const emptyJsonBytes = Buffer.byteLength(JSON.stringify([{ type: "text", text: "" }]));
   const exactText = "a".repeat(64 * 1024 - emptyJsonBytes);
@@ -263,6 +269,28 @@ test("run.start snapshots exact inline content and rejects one byte beyond the I
   };
 
   assert.doesNotThrow(() => decodeRuntimeIpcEnvelope(runtimeRequest("run.start", payload)));
+  assert.doesNotThrow(() =>
+    decodeRuntimeIpcEnvelope(
+      runtimeRequest("run.send_input", {
+        sessionId: "session_abc",
+        runId: "run_abc",
+        idempotencyKey,
+        contentBlocks: payload.contentBlocks,
+      }),
+    ),
+  );
+  assert.throws(
+    () =>
+      decodeRuntimeIpcEnvelope(
+        runtimeRequest("run.send_input", {
+          sessionId: "session_abc",
+          runId: "run_abc",
+          idempotencyKey,
+          contentBlocks: [{ type: "text", text: `${exactText}a` }],
+        }),
+      ),
+    protocolFailure("invalid_envelope"),
+  );
   assert.throws(
     () =>
       decodeRuntimeIpcEnvelope(
