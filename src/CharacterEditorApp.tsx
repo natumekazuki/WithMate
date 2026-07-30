@@ -9,6 +9,7 @@ import {
   createCharacterEditorDraftFromDetail,
   createNewCharacterEditorDraft,
   formatCharacterEditorError,
+  getCharacterIconDraftValidationMessage,
   isCharacterEditorDraftDirty,
   replaceCharacterDefinitionDraft,
   resolveCharacterDefinitionMetadata,
@@ -95,6 +96,10 @@ export default function CharacterEditorApp() {
   const confirmedCloseRef = useRef(false);
 
   const validation = useMemo(() => buildCharacterEditorValidationSummary(draft), [draft]);
+  const iconValidationMessage = useMemo(
+    () => getCharacterIconDraftValidationMessage(draft.iconFilePath, persistedDetail?.iconFilePath),
+    [draft.iconFilePath, persistedDetail?.iconFilePath],
+  );
   const dirty = isCharacterEditorDraftDirty(draft, persistedDetail);
   const archived = draft.state === "archived";
   const enabledAuthoringProviders = useMemo(
@@ -262,6 +267,11 @@ export default function CharacterEditorApp() {
       setFeedback("Archived Character は保存できません。");
       return;
     }
+    if (iconValidationMessage) {
+      setFeedback(iconValidationMessage);
+      setSelectedTab("profile");
+      return;
+    }
     if (validation.blockingIssues.length > 0) {
       setFeedback("validation issue を解消してから保存してください。");
       setSelectedTab(validation.definitionIssues.length > 0 ? "definition" : "notes");
@@ -403,7 +413,6 @@ export default function CharacterEditorApp() {
         description: draft.description,
         definitionMarkdown: draft.definitionMarkdown,
         notesMarkdown: draft.notesMarkdown,
-        iconFilePath: draft.iconFilePath,
         theme: draft.theme,
         userInstruction: "",
         provider: selectedAuthoringProvider.id,
@@ -460,7 +469,7 @@ export default function CharacterEditorApp() {
       return;
     }
     const api = getWithMateApi();
-    const selected = await api?.pickImageFile(draft.iconFilePath || null);
+    const selected = await api?.pickImageFile(draft.iconFilePath || null, "character-icon");
     if (selected) {
       updateDraft({ iconFilePath: selected });
       setSelectedTab("profile");

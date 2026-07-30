@@ -12,6 +12,20 @@ export type OpenPathOptions = {
   baseDirectory?: string | null;
 };
 
+export const IMAGE_FILE_PICKER_PURPOSES = ["general", "character-icon"] as const;
+
+export type ImageFilePickerPurpose = (typeof IMAGE_FILE_PICKER_PURPOSES)[number];
+
+export function parseImageFilePickerPurpose(value: unknown): ImageFilePickerPurpose {
+  if (value === undefined || value === null) {
+    return "general";
+  }
+  if (value === "general" || value === "character-icon") {
+    return value;
+  }
+  throw new Error("画像選択の用途が不正です。");
+}
+
 export const ALL_RESET_APP_DATABASE_TARGETS = [
   "sessions",
   "auditLogs",

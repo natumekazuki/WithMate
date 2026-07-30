@@ -22,7 +22,7 @@ describe("CharacterAuthoringService", () => {
         id: "char-muse",
         name: "Muse",
         description: "作業を一緒に進める相手",
-        iconFilePath: "",
+        iconFilePath: "C:\\Characters\\Muse\\legacy.webp",
         theme: DEFAULT_CHARACTER_THEME,
         state: "active",
         isDefault: false,
@@ -47,7 +47,8 @@ describe("CharacterAuthoringService", () => {
         description: "作業を一緒に進める相手",
         definitionMarkdown: "",
         notesMarkdown: "",
-      });
+        iconFilePath: "C:\\Drafts\\unsupported.webp",
+      } as Parameters<CharacterAuthoringService["startSession"]>[0] & { iconFilePath: string });
 
       assert.equal(result.session.sessionKind, "character-authoring");
       assert.equal(createdInputs[0]?.sessionKind, "character-authoring");
@@ -57,6 +58,7 @@ describe("CharacterAuthoringService", () => {
       assert.equal(createdInputs[0]?.provider, "codex");
       assert.equal(createdInputs[0]?.model, undefined);
       assert.equal(createdInputs[0]?.reasoningEffort, undefined);
+      assert.equal(createdInputs[0]?.characterIconPath, "C:\\Characters\\Muse\\legacy.webp");
       assert.equal(result.workspacePath, path.join(tempDirectory, "characters", "char-muse"));
 
       const rootEntries = await readdir(result.workspacePath);
@@ -200,6 +202,34 @@ describe("CharacterAuthoringService", () => {
       }),
       /保存済み Character/,
     );
+  });
+
+  it("保存済み Character が見つからない場合は workspace と session を作らない", async () => {
+    let workspaceResolutionCount = 0;
+    let sessionCreationCount = 0;
+    const service = new CharacterAuthoringService({
+      bundledSkillPath: path.resolve("resources", "skills", CHARACTER_AUTHORING_SKILL_NAME),
+      getCharacter: () => null,
+      getCharacterDirectory: () => {
+        workspaceResolutionCount += 1;
+        return "C:/unexpected";
+      },
+      async createSession(input) {
+        sessionCreationCount += 1;
+        return buildNewSession(input);
+      },
+    });
+
+    await assert.rejects(
+      () => service.startSession({
+        mode: "improve",
+        characterId: "missing-character",
+        name: "Missing",
+      }),
+      /保存済み Character/,
+    );
+    assert.equal(workspaceResolutionCount, 0);
+    assert.equal(sessionCreationCount, 0);
   });
 
   it("authoring 補助ファイルと Skill directory は次回起動時に作り直す", async () => {

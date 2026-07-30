@@ -35,6 +35,7 @@ import {
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
+  WITHMATE_PICK_IMAGE_FILE_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
@@ -177,6 +178,39 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   for (const channel of removedChannels) {
     assert.equal(handlers.has(channel), false, `${channel} should not be registered`);
   }
+});
+
+test("pick-image-file IPC は Character icon purpose を伝播し、不正な purpose を拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const calls: Array<{ initialPath: string | null; purpose: string }> = [];
+  const { deps } = createDeps({
+    pickImageFile: async (_targetWindow: unknown, initialPath: string | null, purpose: string) => {
+      calls.push({ initialPath, purpose });
+      return "C:/icons/a.png";
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+  const handler = handlers.get(WITHMATE_PICK_IMAGE_FILE_CHANNEL);
+  assert.ok(handler);
+
+  assert.equal(
+    await handler({}, "C:/icons/current.webp", "character-icon"),
+    "C:/icons/a.png",
+  );
+  assert.deepEqual(calls, [{
+    initialPath: "C:/icons/current.webp",
+    purpose: "character-icon",
+  }]);
+  assert.equal(await handler({}, null), "C:/icons/a.png");
+  assert.deepEqual(calls[1], {
+    initialPath: null,
+    purpose: "general",
+  });
+  await assert.rejects(
+    async () => handler({}, null, "unsupported-purpose"),
+    /画像選択の用途が不正です/,
+  );
 });
 
 test("right pane 表示設定 IPC は boolean だけを専用更新処理へ渡す", async () => {

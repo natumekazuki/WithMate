@@ -1,7 +1,7 @@
 # Character Storage
 
 - 作成日: 2026-03-12
-- 更新日: 2026-06-15
+- 更新日: 2026-07-30
 - 対象: V5 Core の Character catalog / storage / snapshot 境界
 
 ## Goal
@@ -62,8 +62,9 @@ Character icon は保存時に Main Process が app data 配下へ materialize �
 - 外部絶対 path が指定された場合、`characters/<character-id>/icon.<ext>` へコピーする。
 - DB の `icon_file_path` は managed icon では `characters/<character-id>/icon.<ext>` の app data 相対 path を保存する。
 - API / renderer へ返す `iconFilePath` は `userData` 基準の表示可能な path に materialize する。
-- 相対 path は `userData` 基準として扱う。`data:` / `file://` などの scheme path はコピーせず、そのまま返す。
-- managed icon の許可拡張子は `png`, `jpg`, `jpeg`, `gif`, `webp`, `bmp`, `svg` とし、絶対 path から取り込む場合は regular file かつ 10 MiB 以下であることを Main Process 側で検証する。
+- 相対 path は `userData` 基準として扱う。新規作成と icon 差し替えでは scheme path を受け付けない。
+- 新規作成と icon 差し替えで受け付ける拡張子は `png`, `jpg`, `jpeg` とする。絶対 path から取り込む場合は regular file かつ 10 MiB 以下であることを Main Process 側で検証する。
+- 既存の非対応 icon は変換または削除しない。同じ icon 参照を維持した metadata 更新は許可し、Windows filesystem path は drive path と UNC path を対象に directory separator と大文字小文字の表記差を除いて比較する。scheme path と POSIX path は文字列一致のみを同一参照として扱う。別の非対応 icon への差し替えは拒否する。
 - managed icon を別拡張子へ置換した場合は、旧 `icon.<ext>` を best-effort で削除する。削除失敗は保存成功を妨げない。
 
 ## SQLite Metadata
@@ -104,6 +105,7 @@ Character icon は保存時に Main Process が app data 配下へ materialize �
 - Character 一覧、Editor preview、session / companion snapshot の avatar 表示に使う代表画像。
 - Renderer は filesystem を直接解決せず、storage service が materialize した `iconFilePath` を受け取る。
 - 外部絶対 path の取り込みは保存時にコピーし、保存後の正本は app data 配下の managed icon とする。
+- 新しく取り込む icon は PNG、JPG、JPEG に限定する。既存の非対応 icon は同じ参照を維持する限り継続して使用できる。
 
 ## Service API
 
