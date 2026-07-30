@@ -12,7 +12,8 @@ test("WindowDialogService は directory / file / image picker の選択結果を
       if ((options as { title?: string }).title === "作業ディレクトリを選択") {
         return { canceled: false, filePaths: ["C:/workspace"] };
       }
-      if ((options as { title?: string }).title === "画像を選択") {
+      const title = (options as { title?: string }).title;
+      if (title?.includes("icon") || title === "画像を選択") {
         return { canceled: false, filePaths: ["C:/images/a.png"] };
       }
       if ((options as { properties?: string[] }).properties?.includes("multiSelections")) {
@@ -41,18 +42,27 @@ test("WindowDialogService は directory / file / image picker の選択結果を
   const file = await service.pickFile(undefined, "C:/seed.txt");
   const files = await service.pickFiles(undefined, "C:/seed.txt");
   const image = await service.pickImageFile();
+  const characterIcon = await service.pickImageFile(undefined, undefined, "character-icon");
 
   assert.equal(directory, "C:/workspace");
   assert.equal(file, "C:/file.txt");
   assert.deepEqual(files, ["C:/file-a.txt", "C:/file-b.txt"]);
   assert.equal(image, "C:/images/a.png");
+  assert.equal(characterIcon, "C:/images/a.png");
   assert.deepEqual(calls.map((entry) => (entry.options as { title?: string }).title), [
     "作業ディレクトリを選択",
     "ファイルを選択",
     "ファイルを選択",
     "画像を選択",
+    "Character icon を選択",
   ]);
   assert.deepEqual((calls[2]?.options as { properties?: string[] }).properties, ["openFile", "multiSelections"]);
+  assert.deepEqual((calls[3]?.options as { filters?: unknown }).filters, [
+    { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"] },
+  ]);
+  assert.deepEqual((calls[4]?.options as { filters?: unknown }).filters, [
+    { name: "PNG / JPEG", extensions: ["png", "jpg", "jpeg"] },
+  ]);
 });
 
 test("WindowDialogService は model catalog import/export を file I/O と接続する", async () => {

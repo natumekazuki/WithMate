@@ -61,6 +61,7 @@ import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
 import type {
+  ImageFilePickerPurpose,
   OpenPathOptions,
   DeleteSessionsLastActiveBeforeRequest,
   DeleteSessionsResult,
@@ -101,7 +102,11 @@ export type MainIpcWindowDepsArgs = {
   pickSessionFiles(targetWindow: MaybeWindow, sessionId: string): Promise<string[]>;
   pickSessionFolder(targetWindow: MaybeWindow, sessionId: string): Promise<string | null>;
   pickSessionImageFile(targetWindow: MaybeWindow, sessionId: string): Promise<string | null>;
-  pickImageFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
+  pickImageFile(
+    targetWindow: MaybeWindow,
+    initialPath: string | null,
+    purpose: ImageFilePickerPurpose,
+  ): Promise<string | null>;
   copyFilesToSessionFiles(sessionId: string, sourcePaths: string[]): Promise<string[]>;
   savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string>;
   openSessionFilesDirectory(sessionId: string): Promise<void>;

@@ -200,6 +200,14 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:pick-session-image-file",
     args: ["session-1"],
   });
+  assert.deepEqual(await api.pickImageFile("C:/icons/current.webp", "character-icon"), {
+    channel: "withmate:pick-image-file",
+    args: ["C:/icons/current.webp", "character-icon"],
+  });
+  assert.deepEqual(await api.pickImageFile(), {
+    channel: "withmate:pick-image-file",
+    args: [null, "general"],
+  });
   const pastedBuffer = new ArrayBuffer(3);
   assert.deepEqual(await api.savePastedSessionFile({
     sessionId: "session-1",

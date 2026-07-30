@@ -11,6 +11,10 @@ import {
   validateCharacterNotesMarkdown,
   type CharacterDefinitionValidationIssue,
 } from "../character/character-definition.js";
+import {
+  areCharacterIconPathReferencesEquivalent,
+  validateCharacterIconRegistrationPath,
+} from "../character/character-icon.js";
 
 export type CharacterEditorTab = "profile" | "definition" | "notes" | "preview";
 
@@ -191,6 +195,21 @@ export function shouldBlockCharacterEditorBeforeUnload(args: {
   confirmedClose: boolean;
 }): boolean {
   return args.dirty && !args.saving && !args.confirmedClose;
+}
+
+export function getCharacterIconDraftValidationMessage(
+  draftIconFilePath: string,
+  persistedIconFilePath: string | null | undefined,
+): string | null {
+  if (
+    persistedIconFilePath !== null
+    && persistedIconFilePath !== undefined
+    && areCharacterIconPathReferencesEquivalent(draftIconFilePath, persistedIconFilePath)
+  ) {
+    return null;
+  }
+
+  return validateCharacterIconRegistrationPath(draftIconFilePath);
 }
 
 export function normalizeThemeColorDraft(value: string, fallback: string): string {
