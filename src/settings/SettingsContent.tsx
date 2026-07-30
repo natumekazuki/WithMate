@@ -31,6 +31,7 @@ import {
   SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL,
   SETTINGS_PROVIDER_ROOT_DIRECTORY_PLACEHOLDER,
   SETTINGS_SESSION_TURN_NOTIFICATION_LABEL,
+  SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL,
 } from "./settings-ui.js";
 
 export type HomeSettingsContentProps = {
@@ -46,6 +47,7 @@ export type HomeSettingsContentProps = {
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeLaunchAtLoginEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationEnabled: (enabled: boolean) => void;
+  onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled: boolean) => void;
   onChangeMemoryFileQuotaMegabytes: (value: string) => void;
   onChangeSessionCleanupCutoffDate: (value: string) => void;
   onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => void;
@@ -105,6 +107,7 @@ export function HomeSettingsContent({
   onChangeAutoCollapseActionDockOnSend,
   onChangeLaunchAtLoginEnabled,
   onChangeSessionTurnNotificationEnabled,
+  onChangeSessionTurnNotificationResponsePreviewEnabled,
   onChangeMemoryFileQuotaMegabytes,
   onChangeSessionCleanupCutoffDate,
   onChangeUserMicrocopySlot,
@@ -151,6 +154,18 @@ export function HomeSettingsContent({
                   type="checkbox"
                   checked={settingsDraft.sessionTurnNotificationEnabled}
                   onChange={(event) => onChangeSessionTurnNotificationEnabled(event.target.checked)}
+                />
+              </label>
+              <label className="settings-provider-toggle-row settings-section-toggle">
+                <span className="settings-provider-name">
+                  {SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL}
+                </span>
+                <input
+                  type="checkbox"
+                  disabled={!settingsDraft.sessionTurnNotificationEnabled}
+                  checked={settingsDraft.sessionTurnNotificationResponsePreviewEnabled}
+                  onChange={(event) =>
+                    onChangeSessionTurnNotificationResponsePreviewEnabled(event.target.checked)}
                 />
               </label>
               <label className="settings-provider-toggle-row settings-section-toggle">

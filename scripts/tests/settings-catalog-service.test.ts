@@ -952,9 +952,18 @@ describe("SettingsCatalogService", () => {
     assert.deepEqual(service.exportModelCatalogDocument(1), document);
   });
 
-  it("partial reset は target ごとの clear/reset と broadcast を実行する", async () => {
-    const sessions = [createSession()];
+  it("session の partial/full reset は永続化成功後に全通知を閉じる", async () => {
+    let sessions = [
+      { ...createSession(), id: "session-partial-1" },
+      { ...createSession(), id: "session-partial-2" },
+    ];
     const calls: string[] = [];
+    const firstReplacementStarted = createDeferred();
+    const rejectFirstReplacement = createDeferred();
+    const firstRecreateStarted = createDeferred();
+    const rejectFirstRecreate = createDeferred();
+    let replaceCallCount = 0;
+    let recreateCallCount = 0;
     const service = new SettingsCatalogService({
       hasInFlightSessionRuns() {
         return false;
@@ -989,8 +998,15 @@ describe("SettingsCatalogService", () => {
       exportModelCatalogDocument() {
         return { providers: createCatalogSnapshot(1).providers };
       },
-      replaceAllSessions(nextSessions) {
+      async replaceAllSessions(nextSessions) {
+        replaceCallCount += 1;
         calls.push(`replace:${nextSessions.length}`);
+        if (replaceCallCount === 1) {
+          firstReplacementStarted.resolve();
+          await rejectFirstReplacement.promise;
+          throw new Error("replace sessions failed");
+        }
+        sessions = nextSessions;
         return nextSessions;
       },
       replaceAuxiliarySessions(nextSessions) {
@@ -1041,8 +1057,18 @@ describe("SettingsCatalogService", () => {
       closeResetTargetWindows() {
         calls.push("closeResetWindows");
       },
+      dismissSessionTurnNotification(sessionId) {
+        calls.push(`dismissNotification:${sessionId}`);
+      },
       async recreateDatabaseFile() {
+        recreateCallCount += 1;
         calls.push("recreateDb");
+        if (recreateCallCount === 1) {
+          firstRecreateStarted.resolve();
+          await rejectFirstRecreate.promise;
+          throw new Error("recreate database failed");
+        }
+        sessions = [];
         return createCatalogSnapshot(3);
       },
       broadcastSessions() {
@@ -1056,6 +1082,20 @@ describe("SettingsCatalogService", () => {
       },
     });
 
+    const failedPartialReset = service.resetAppDatabase({
+      targets: ["sessions", "appSettings", "projectMemory"],
+    });
+    await firstReplacementStarted.promise;
+    assert.equal(calls.some((call) => call.startsWith("dismissNotification:")), false);
+    rejectFirstReplacement.resolve();
+    await assert.rejects(failedPartialReset, /replace sessions failed/);
+    assert.deepEqual(calls, [
+      "closeResetWindows",
+      "clearAudit",
+      "replace:0",
+    ]);
+
+    calls.length = 0;
     const result = await service.resetAppDatabase({
       targets: ["sessions", "appSettings", "projectMemory"],
     });
@@ -1065,12 +1105,52 @@ describe("SettingsCatalogService", () => {
       "closeResetWindows",
       "clearAudit",
       "replace:0",
+      "dismissNotification:session-partial-1",
+      "dismissNotification:session-partial-2",
       "resetRuntime",
       "clearAllActivity",
       "invalidateAllThreads",
       "resetAppSettings",
       "clearAllQuota",
       "clearProject",
+      "broadcastSessions",
+      "broadcastSettings",
+      "broadcastCatalog",
+    ]);
+
+    calls.length = 0;
+    sessions = [
+      { ...createSession(), id: "session-full-1" },
+      { ...createSession(), id: "session-full-2" },
+    ];
+
+    const failedFullReset = service.resetAppDatabase();
+    await firstRecreateStarted.promise;
+    assert.equal(calls.some((call) => call.startsWith("dismissNotification:")), false);
+    rejectFirstRecreate.resolve();
+    await assert.rejects(failedFullReset, /recreate database failed/);
+    assert.deepEqual(calls, [
+      "closeResetWindows",
+      "recreateDb",
+    ]);
+
+    calls.length = 0;
+    const fullResult = await service.resetAppDatabase();
+
+    assert.deepEqual(fullResult.resetTargets, [
+      "sessions",
+      "auditLogs",
+      "appSettings",
+      "modelCatalog",
+      "projectMemory",
+    ]);
+    assert.deepEqual(calls, [
+      "closeResetWindows",
+      "recreateDb",
+      "dismissNotification:session-full-1",
+      "dismissNotification:session-full-2",
+      "clearAllQuota",
+      "clearAllContext",
       "broadcastSessions",
       "broadcastSettings",
       "broadcastCatalog",

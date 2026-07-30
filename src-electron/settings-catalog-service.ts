@@ -68,6 +68,7 @@ export type SettingsCatalogServiceDeps = {
   clearAllSessionBackgroundActivities(): void;
   invalidateAllProviderSessionThreads(): void;
   closeResetTargetWindows(): void;
+  dismissSessionTurnNotification(sessionId: string): void;
   recreateDatabaseFile(): Promise<ModelCatalogSnapshot>;
   applyAppSettingsSideEffects?: (settings: AppSettings) => void;
   broadcastSessions(sessionIds?: Iterable<string>): void;
@@ -415,6 +416,7 @@ export class SettingsCatalogService {
 
     if (areAllResetAppDatabaseTargetsSelected(resetTargets)) {
       modelCatalog = await this.deps.recreateDatabaseFile();
+      this.dismissSessionTurnNotifications(previousSessionIds);
       this.deps.clearAllProviderQuotaTelemetry();
       this.deps.clearAllSessionContextTelemetry();
       appSettings = this.deps.getAppSettings();
@@ -426,6 +428,7 @@ export class SettingsCatalogService {
       }
       if (appliedTargets.has("sessions")) {
         await this.deps.replaceAllSessions([], { broadcast: false });
+        this.dismissSessionTurnNotifications(previousSessionIds);
         this.deps.resetSessionRuntime();
         this.deps.clearAllSessionBackgroundActivities();
         this.deps.invalidateAllProviderSessionThreads();
@@ -495,5 +498,11 @@ export class SettingsCatalogService {
       appSettings,
       modelCatalog,
     };
+  }
+
+  private dismissSessionTurnNotifications(sessionIds: readonly string[]): void {
+    for (const sessionId of sessionIds) {
+      this.deps.dismissSessionTurnNotification(sessionId);
+    }
   }
 }

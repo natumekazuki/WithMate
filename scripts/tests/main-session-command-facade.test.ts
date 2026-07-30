@@ -55,9 +55,25 @@ function createSessionRequest(workspace: Record<string, unknown>): Record<string
   };
 }
 
+type MainSessionCommandFacadeTestDeps =
+  Omit<ConstructorParameters<typeof MainSessionCommandFacade>[0], "dismissSessionTurnNotification">
+  & Partial<Pick<
+    ConstructorParameters<typeof MainSessionCommandFacade>[0],
+    "dismissSessionTurnNotification"
+  >>;
+
+function createMainSessionCommandFacade(
+  deps: MainSessionCommandFacadeTestDeps,
+): MainSessionCommandFacade {
+  return new MainSessionCommandFacade({
+    dismissSessionTurnNotification: () => undefined,
+    ...deps,
+  });
+}
+
 test("MainSessionCommandFacade は create/update/delete/cancel を各 service に委譲する", async () => {
   const calls: string[] = [];
-  const facade = new MainSessionCommandFacade({
+  const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [{ id: "s-1", workspacePath: "C:/work/repo" } as never],
     getStoredSessionSummaries: () => [],
@@ -103,6 +119,9 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
     createSessionId: () => "launch-test",
     createSessionFilesDirectory: () => "C:/session-files/launch-test",
     isSessionFilesWorkspace: () => false,
+    dismissSessionTurnNotification(sessionId) {
+      calls.push(`dismiss-notification:${sessionId}`);
+    },
     async cleanupSessionFilesDirectory(sessionId) {
       calls.push(`cleanup-files:${sessionId}`);
     },
@@ -130,15 +149,47 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
     "create:launch-test",
     "update:s-1",
     "delete:s-1",
+    "dismiss-notification:s-1",
     "cleanup-files:s-1",
     "cancel:s-1",
   ]);
 });
 
+test("MainSessionCommandFacade は Session 削除失敗時に通知を撤去しない", async () => {
+  const calls: string[] = [];
+  const facade = createMainSessionCommandFacade({
+    getSession: () => null,
+    getSessions: () => [{ id: "s-1", workspacePath: "C:/work/repo" } as never],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () =>
+      ({
+        deleteSession(sessionId) {
+          calls.push(`delete:${sessionId}`);
+          throw new Error("delete failed");
+        },
+      }) as never,
+    getSessionRuntimeService: () => ({} as never),
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-test",
+    createSessionFilesDirectory: () => "C:/session-files/launch-test",
+    isSessionFilesWorkspace: () => false,
+    dismissSessionTurnNotification(sessionId) {
+      calls.push(`dismiss-notification:${sessionId}`);
+    },
+  });
+
+  await assert.rejects(facade.deleteSession("s-1"), /delete failed/);
+  assert.deepEqual(calls, ["delete:s-1"]);
+});
+
 test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID の session を永続化する", async () => {
   const calls: string[] = [];
   let persistedInput: Record<string, unknown> | null = null;
-  const facade = new MainSessionCommandFacade({
+  const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
@@ -235,7 +286,7 @@ test("Session 作成中は Settings 更新を同じ runtime 選択境界の完�
       events.push("settings:broadcast");
     },
   } as never);
-  const facade = new MainSessionCommandFacade({
+  const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
@@ -296,7 +347,7 @@ test("Session 作成中は Settings 更新を同じ runtime 選択境界の完�
 
 test("MainSessionCommandFacade は Browse で選んだ directory をそのまま session に使う", async () => {
   let persistedInput: Record<string, unknown> | null = null;
-  const facade = new MainSessionCommandFacade({
+  const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
@@ -347,7 +398,7 @@ test("MainSessionCommandFacade は Browse で選んだ directory をそのまま
 
 test("MainSessionCommandFacade は IPC payload の余分な session ID と legacy workspace fields を無視する", async () => {
   let persistedInput: Record<string, unknown> | null = null;
-  const facade = new MainSessionCommandFacade({
+  const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
@@ -426,7 +477,7 @@ test("MainSessionCommandFacade は IPC payload の余分な session ID と legac
 
 test("MainSessionCommandFacade は起動設定の取得失敗時に ID 発行・SessionFolder 作成・永続化を行わない", async () => {
   const calls: string[] = [];
-  const facade = new MainSessionCommandFacade({
+  const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
@@ -466,7 +517,7 @@ test("MainSessionCommandFacade は起動設定の取得失敗時に ID 発行・
 
 test("MainSessionCommandFacade は SessionFolder 作成失敗時に session を永続化しない", async () => {
   let persistCount = 0;
-  const facade = new MainSessionCommandFacade({
+  const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
@@ -499,7 +550,7 @@ test("MainSessionCommandFacade は SessionFolder 作成失敗時に session を�
 
 test("MainSessionCommandFacade は session 永続化失敗後に作成済み SessionFolder を削除しない", async () => {
   const calls: string[] = [];
-  const facade = new MainSessionCommandFacade({
+  const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
@@ -539,7 +590,7 @@ test("MainSessionCommandFacade は session 永続化失敗後に作成済み Ses
 
 test("MainSessionCommandFacade は cutoff delete の削除済み session だけ cleanup する", async () => {
   const calls: string[] = [];
-  const facade = new MainSessionCommandFacade({
+  const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [{ id: "s-old", workspacePath: "C:/work/repo" } as never],
     getStoredSessionSummaries: () => [],
@@ -564,6 +615,9 @@ test("MainSessionCommandFacade は cutoff delete の削除済み session だけ 
     createSessionId: () => "launch-test",
     createSessionFilesDirectory: () => "C:/session-files/launch-test",
     isSessionFilesWorkspace: () => false,
+    dismissSessionTurnNotification(sessionId) {
+      calls.push(`dismiss-notification:${sessionId}`);
+    },
     async cleanupSessionFilesDirectory(sessionId) {
       calls.push(`cleanup-files:${sessionId}`);
     },
@@ -575,11 +629,13 @@ test("MainSessionCommandFacade は cutoff delete の削除済み session だけ 
   assert.deepEqual(result.skippedRunningSessionIds, ["s-running"]);
   assert.deepEqual(calls, [
     "delete-before:2026-07-01",
+    "dismiss-notification:s-old",
     "cleanup-files:s-old",
   ]);
 });
 
 test("MainSessionCommandFacade は cached/uncached の SessionFolder を保持し directory workspace だけ cleanup する", async () => {
+  const dismissedSessionIds: string[] = [];
   const cleanedSessionIds: string[] = [];
   const cachedManagedSession = {
     id: "s-cached-managed",
@@ -589,7 +645,7 @@ test("MainSessionCommandFacade は cached/uncached の SessionFolder を保持�
     id: "s-cached-directory",
     workspacePath: "C:/work/cached",
   } as never;
-  const facade = new MainSessionCommandFacade({
+  const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [cachedManagedSession, cachedDirectorySession],
     getStoredSessionSummaries: () => [
@@ -627,6 +683,9 @@ test("MainSessionCommandFacade は cached/uncached の SessionFolder を保持�
     createSessionId: () => "launch-test",
     createSessionFilesDirectory: () => "C:/session-files/launch-test",
     isSessionFilesWorkspace: (session) => session.id.endsWith("-managed"),
+    dismissSessionTurnNotification(sessionId) {
+      dismissedSessionIds.push(sessionId);
+    },
     async cleanupSessionFilesDirectory(sessionId) {
       cleanedSessionIds.push(sessionId);
     },
@@ -634,15 +693,78 @@ test("MainSessionCommandFacade は cached/uncached の SessionFolder を保持�
 
   await facade.deleteSessionsLastActiveBefore({ cutoffDate: "2026-07-01" });
 
+  assert.deepEqual(dismissedSessionIds, [
+    "s-cached-managed",
+    "s-cached-directory",
+    "s-uncached-managed",
+    "s-uncached-directory",
+  ]);
   assert.deepEqual(cleanedSessionIds, [
     "s-cached-directory",
     "s-uncached-directory",
   ]);
 });
 
+test("MainSessionCommandFacade は directory cleanup が失敗しても削除済み Session の通知をすべて先に閉じる", async () => {
+  const calls: string[] = [];
+  const facade = createMainSessionCommandFacade({
+    getSession: () => null,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [
+      {
+        id: "s-first",
+        workspacePath: "C:/work/first",
+      } as never,
+      {
+        id: "s-second",
+        workspacePath: "C:/work/second",
+      } as never,
+    ],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () =>
+      ({
+        deleteSessionsLastActiveBefore() {
+          calls.push("delete-before");
+          return {
+            deletedSessionIds: ["s-first", "s-second"],
+            skippedRunningSessionIds: [],
+          };
+        },
+      }) as never,
+    getSessionRuntimeService: () => ({} as never),
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-test",
+    createSessionFilesDirectory: () => "C:/session-files/launch-test",
+    isSessionFilesWorkspace: () => false,
+    dismissSessionTurnNotification(sessionId) {
+      calls.push(`dismiss-notification:${sessionId}`);
+    },
+    async cleanupSessionFilesDirectory(sessionId) {
+      calls.push(`cleanup-files:${sessionId}`);
+      if (sessionId === "s-first") {
+        throw new Error("cleanup failed");
+      }
+    },
+  });
+
+  await assert.rejects(
+    facade.deleteSessionsLastActiveBefore({ cutoffDate: "2026-07-01" }),
+    /cleanup failed/,
+  );
+  assert.deepEqual(calls, [
+    "delete-before",
+    "dismiss-notification:s-first",
+    "dismiss-notification:s-second",
+    "cleanup-files:s-first",
+  ]);
+});
+
 test("MainSessionCommandFacade は実在しない cutoff delete 日付を拒否する", async () => {
   const calls: string[] = [];
-  const facade = new MainSessionCommandFacade({
+  const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
@@ -680,7 +802,7 @@ test("MainSessionCommandFacade は実在しない cutoff delete 日付を拒否�
 test("MainSessionCommandFacade は stale な Copilot quota を非同期更新して run を委譲する", async () => {
   const calls: string[] = [];
   let refreshedProviderId: string | null = null;
-  const facade = new MainSessionCommandFacade({
+  const facade = createMainSessionCommandFacade({
     getSession: () => ({ id: "s-1", provider: "copilot" }) as never,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
@@ -717,7 +839,7 @@ test("MainSessionCommandFacade は stale な Copilot quota を非同期更新し
 
 test("MainSessionCommandFacade は non-Copilot session では quota refresh を行わない", async () => {
   let refreshed = false;
-  const facade = new MainSessionCommandFacade({
+  const facade = createMainSessionCommandFacade({
     getSession: () => ({ id: "s-1", provider: "codex" }) as never,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],

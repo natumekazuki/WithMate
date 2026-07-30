@@ -16,6 +16,7 @@ export type AppSettings = {
   memoryGenerationEnabled: boolean;
   launchAtLoginEnabled: boolean;
   sessionTurnNotificationEnabled: boolean;
+  sessionTurnNotificationResponsePreviewEnabled: boolean;
   autoCollapseActionDockOnSend: boolean;
   sessionRightPaneVisible: boolean;
   memoryFileQuotaBytes: number;
@@ -95,6 +96,7 @@ export function createDefaultAppSettings(): AppSettings {
     memoryGenerationEnabled: true,
     launchAtLoginEnabled: false,
     sessionTurnNotificationEnabled: true,
+    sessionTurnNotificationResponsePreviewEnabled: false,
     autoCollapseActionDockOnSend: true,
     sessionRightPaneVisible: false,
     memoryFileQuotaBytes: MEMORY_FILE_QUOTA_DEFAULT_BYTES,
@@ -316,6 +318,10 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       typeof candidate.launchAtLoginEnabled === "boolean" ? candidate.launchAtLoginEnabled : false,
     sessionTurnNotificationEnabled:
       typeof candidate.sessionTurnNotificationEnabled === "boolean" ? candidate.sessionTurnNotificationEnabled : true,
+    sessionTurnNotificationResponsePreviewEnabled:
+      typeof candidate.sessionTurnNotificationResponsePreviewEnabled === "boolean"
+        ? candidate.sessionTurnNotificationResponsePreviewEnabled
+        : false,
     autoCollapseActionDockOnSend:
       typeof candidate.autoCollapseActionDockOnSend === "boolean" ? candidate.autoCollapseActionDockOnSend : true,
     sessionRightPaneVisible:

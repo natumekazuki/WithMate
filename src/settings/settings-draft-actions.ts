@@ -22,6 +22,7 @@ import {
   updateMemoryFileQuotaMegabytesDraft,
   updateMemoryGenerationEnabled,
   updateSessionTurnNotificationEnabled,
+  updateSessionTurnNotificationResponsePreviewEnabled,
   updateUserMicrocopySlotDraft,
 } from "./settings-draft.js";
 
@@ -91,6 +92,13 @@ export function handleChangeSessionTurnNotificationEnabled(input: SettingsDraftA
   enabled: boolean;
 }): void {
   input.setSettingsDraft((current) => updateSessionTurnNotificationEnabled(current, input.enabled));
+}
+
+export function handleChangeSessionTurnNotificationResponsePreviewEnabled(input: SettingsDraftActionInput & {
+  enabled: boolean;
+}): void {
+  input.setSettingsDraft((current) =>
+    updateSessionTurnNotificationResponsePreviewEnabled(current, input.enabled));
 }
 
 export function handleChangeMemoryFileQuotaMegabytes(input: SettingsDraftActionInput & {
