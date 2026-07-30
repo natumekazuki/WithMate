@@ -612,8 +612,12 @@ function createPickerApi(ipcRenderer: IpcRendererLike): WithMateWindowPickerApi 
     pickSessionImageFile(sessionId) {
       return ipcRenderer.invoke(WITHMATE_PICK_SESSION_IMAGE_FILE_CHANNEL, sessionId);
     },
-    pickImageFile(initialPath) {
-      return ipcRenderer.invoke(WITHMATE_PICK_IMAGE_FILE_CHANNEL, initialPath ?? null);
+    pickImageFile(initialPath, purpose) {
+      return ipcRenderer.invoke(
+        WITHMATE_PICK_IMAGE_FILE_CHANNEL,
+        initialPath ?? null,
+        purpose ?? "general",
+      );
     },
     copyFilesToSessionFiles(sessionId, sourcePaths) {
       return ipcRenderer.invoke(WITHMATE_COPY_FILES_TO_SESSION_FILES_CHANNEL, sessionId, sourcePaths);

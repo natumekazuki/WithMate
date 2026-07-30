@@ -83,6 +83,9 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
   const previousWithMate = (globalThis.window as typeof window | undefined)?.withmate;
   const startInputs: StartCharacterAuthoringSessionInput[] = [];
   const metadataUpdates: Array<{ name: string; description: string }> = [];
+  const iconPickerCalls: Array<{ initialPath: string | null; purpose: string | undefined }> = [];
+  let selectedIconPath: string | null = "C:\\icons\\muse.webp";
+  let definitionUpdateCount = 0;
 
   Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
   Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
@@ -147,6 +150,7 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
     },
     async updateCharacterDefinition(input) {
       assert.equal(input.characterId, "char-1");
+      definitionUpdateCount += 1;
       currentCharacter = {
         ...currentCharacter,
         definitionMarkdown: input.definitionMarkdown,
@@ -169,6 +173,13 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
       };
       return currentCharacter;
     },
+    async pickImageFile(initialPath, purpose) {
+      iconPickerCalls.push({
+        initialPath: initialPath ?? null,
+        purpose,
+      });
+      return selectedIconPath;
+    },
   } as Partial<WithMateWindowApi> as WithMateWindowApi;
 
   try {
@@ -179,6 +190,34 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
     await act(async () => {
       await Promise.resolve();
     });
+    await act(async () => {
+      findButtonByText(rootElement, "Import Image")
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    assert.deepEqual(iconPickerCalls, [{
+      initialPath: null,
+      purpose: "character-icon",
+    }]);
+
+    await act(async () => {
+      findButtonByText(rootElement, "Save")
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    assert.equal(definitionUpdateCount, 0);
+    assert.equal(metadataUpdates.length, 0);
+    assert.match(
+      rootElement.textContent ?? "",
+      /Character icon は png \/ jpg \/ jpeg の画像ファイルを指定してね。/,
+    );
+    selectedIconPath = "C:\\icons\\muse.png";
+    await act(async () => {
+      findButtonByText(rootElement, "Import Image")
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
     const button = findButtonByText(rootElement, "Improve with Agent");
     assert.equal(button.disabled, false);
 
@@ -207,6 +246,7 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
     assert.equal(startInputs[0]?.provider, "copilot");
     assert.equal(startInputs[0]?.model, undefined);
     assert.equal(startInputs[0]?.reasoningEffort, undefined);
+    assert.equal(Object.hasOwn(startInputs[0] ?? {}, "iconFilePath"), false);
 
     currentCharacter = {
       ...currentCharacter,

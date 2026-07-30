@@ -1,10 +1,14 @@
 import type { BrowserWindow, OpenDialogOptions, OpenDialogReturnValue, SaveDialogOptions, SaveDialogReturnValue } from "electron";
 
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
+import type { ImageFilePickerPurpose } from "../src/withmate-window-types.js";
 
 const MODEL_CATALOG_JSON_FILTER = [{ name: "JSON", extensions: ["json"] }];
 const IMAGE_FILE_FILTER = [
   { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"] },
+];
+const CHARACTER_ICON_FILE_FILTER = [
+  { name: "PNG / JPEG", extensions: ["png", "jpg", "jpeg"] },
 ];
 
 export type WindowDialogServiceDeps = {
@@ -65,11 +69,16 @@ export class WindowDialogService {
     return [...result.filePaths];
   }
 
-  async pickImageFile(targetWindow?: BrowserWindow | null, initialPath?: string | null): Promise<string | null> {
+  async pickImageFile(
+    targetWindow?: BrowserWindow | null,
+    initialPath?: string | null,
+    purpose: ImageFilePickerPurpose = "general",
+  ): Promise<string | null> {
+    const characterIcon = purpose === "character-icon";
     const result = await this.deps.showOpenDialog(targetWindow ?? undefined, {
       properties: ["openFile"],
-      title: "画像を選択",
-      filters: [...IMAGE_FILE_FILTER],
+      title: characterIcon ? "Character icon を選択" : "画像を選択",
+      filters: [...(characterIcon ? CHARACTER_ICON_FILE_FILTER : IMAGE_FILE_FILTER)],
       ...buildDefaultPathOption(initialPath),
     });
     if (result.canceled || result.filePaths.length === 0) {

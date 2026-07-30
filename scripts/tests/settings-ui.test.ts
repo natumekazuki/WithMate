@@ -13,6 +13,7 @@ import {
   SETTINGS_RESET_DATABASE_HELP,
   SETTINGS_RESET_DATABASE_LABEL,
   SETTINGS_SESSION_TURN_NOTIFICATION_LABEL,
+  SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL,
   buildResetDatabaseConfirmMessage,
   buildResetDatabaseSuccessMessage,
 } from "../../src/settings/settings-ui.js";
@@ -46,6 +47,10 @@ describe("Settings UI constants", () => {
 
   it("Session turn notification は Windows 通知だと分かる", () => {
     assert.equal(SETTINGS_SESSION_TURN_NOTIFICATION_LABEL, "Session のターン完了を Windows 通知で知らせる");
+    assert.equal(
+      SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL,
+      "Windows 通知に返答の冒頭を表示する",
+    );
   });
 
   it("Home Window は Settings overlay の余裕を確保する既定サイズを使う", () => {

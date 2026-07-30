@@ -186,24 +186,138 @@ describe("CharacterStorage", () => {
     }
   });
 
-  it("createCharacter は画像ではない絶対 icon path と大きすぎる icon を拒否する", async () => {
+  it("updateCharacterMetadata は managed icon の相対 path alias で同じファイルを削除しない", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: CharacterStorage | null = null;
+
+    try {
+      storage = new CharacterStorage(dbPath, userDataPath);
+      const mia = storage.createCharacter({ name: "Mia", definitionMarkdown: validDefinition("Mia") });
+      const sourceIconPath = path.join(path.dirname(userDataPath), "source-icon.png");
+      const sourceIconContent = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x03]);
+      await writeFile(sourceIconPath, sourceIconContent);
+
+      storage.updateCharacterMetadata({
+        characterId: mia.id,
+        iconFilePath: sourceIconPath,
+      });
+      const managedIconPath = path.join(userDataPath, "characters", mia.id, "icon.png");
+
+      const updated = storage.updateCharacterMetadata({
+        characterId: mia.id,
+        iconFilePath: process.platform === "win32"
+          ? `CHARACTERS/${mia.id.toUpperCase()}/./ICON.PNG`
+          : `characters/${mia.id}/./icon.png`,
+      });
+
+      await access(updated.iconFilePath);
+      assert.equal((await readFile(managedIconPath)).equals(sourceIconContent), true);
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("updateCharacterMetadata は iconFilePath の未指定・解除・不正な runtime 型を区別する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: CharacterStorage | null = null;
+
+    try {
+      storage = new CharacterStorage(dbPath, userDataPath);
+      const mia = storage.createCharacter({ name: "Mia", definitionMarkdown: validDefinition("Mia") });
+      const sourceIconPath = path.join(path.dirname(userDataPath), "source-icon.png");
+      const sourceIconContent = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x04]);
+      await writeFile(sourceIconPath, sourceIconContent);
+      const before = storage.updateCharacterMetadata({
+        characterId: mia.id,
+        iconFilePath: sourceIconPath,
+      });
+      const unchanged = storage.updateCharacterMetadata({
+        characterId: mia.id,
+        name: "Mia Prime",
+        iconFilePath: undefined,
+      });
+      assert.equal(unchanged.iconFilePath, before.iconFilePath);
+      assert.equal((await readFile(before.iconFilePath)).equals(sourceIconContent), true);
+
+      assert.throws(
+        () => storage.updateCharacterMetadata({
+          characterId: mia.id,
+          name: "Mutated",
+          iconFilePath: null as unknown as string,
+        }),
+        /Character icon path は文字列/,
+      );
+
+      const after = storage.getCharacter(mia.id);
+      assert.equal(after?.name, "Mia Prime");
+      assert.equal(after?.iconFilePath, before.iconFilePath);
+      assert.equal((await readFile(before.iconFilePath)).equals(sourceIconContent), true);
+
+      const cleared = storage.updateCharacterMetadata({
+        characterId: mia.id,
+        iconFilePath: "",
+      });
+      assert.equal(cleared.iconFilePath, "");
+      await assert.rejects(access(before.iconFilePath));
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("createCharacter は PNG / JPEG 以外、画像ではない path、大きすぎる icon を拒否する", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: CharacterStorage | null = null;
 
     try {
       storage = new CharacterStorage(dbPath, userDataPath);
       const textPath = path.join(path.dirname(userDataPath), "not-image.txt");
+      const gifPath = path.join(path.dirname(userDataPath), "legacy-icon.gif");
       const largePngPath = path.join(path.dirname(userDataPath), "large-icon.png");
       await writeFile(textPath, "not an image", "utf8");
+      await writeFile(gifPath, Buffer.from("GIF89a", "ascii"));
       await writeFile(largePngPath, Buffer.alloc((10 * 1024 * 1024) + 1));
 
+      assert.throws(
+        () => storage.createCharacter({
+          name: "Invalid Runtime Icon",
+          iconFilePath: null as unknown as string,
+          definitionMarkdown: validDefinition("Invalid Runtime Icon"),
+        }),
+        /Character icon path は文字列/,
+      );
       assert.throws(
         () => storage.createCharacter({
           name: "Text Icon",
           iconFilePath: textPath,
           definitionMarkdown: validDefinition("Text Icon"),
         }),
-        /png \/ jpg \/ jpeg \/ gif \/ webp \/ bmp \/ svg/,
+        /png \/ jpg \/ jpeg/,
+      );
+      assert.throws(
+        () => storage.createCharacter({
+          name: "GIF Icon",
+          iconFilePath: gifPath,
+          definitionMarkdown: validDefinition("GIF Icon"),
+        }),
+        /png \/ jpg \/ jpeg/,
+      );
+      assert.throws(
+        () => storage.createCharacter({
+          name: "Relative WebP Icon",
+          iconFilePath: "assets/icon.webp",
+          definitionMarkdown: validDefinition("Relative WebP Icon"),
+        }),
+        /png \/ jpg \/ jpeg/,
+      );
+      assert.throws(
+        () => storage.createCharacter({
+          name: "File URL Icon",
+          iconFilePath: "file:///C:/icons/icon.png",
+          definitionMarkdown: validDefinition("File URL Icon"),
+        }),
+        /local file path/,
       );
       assert.throws(
         () => storage.createCharacter({
@@ -213,6 +327,101 @@ describe("CharacterStorage", () => {
         }),
         /10 MiB/,
       );
+      assert.equal(storage.listCharacters({ includeArchived: true }).length, 0);
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("updateCharacterMetadata は既存の非対応 icon を未変更で保持できるが、新しい非対応 icon への差し替えは拒否する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: CharacterStorage | null = null;
+
+    try {
+      storage = new CharacterStorage(dbPath, userDataPath);
+      const mia = storage.createCharacter({ name: "Mia", definitionMarkdown: validDefinition("Mia") });
+      const legacyIconPath = path.join(userDataPath, "characters", mia.id, "icon.webp");
+      await writeFile(legacyIconPath, Buffer.from("legacy webp"));
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare("UPDATE characters SET icon_file_path = ? WHERE id = ?")
+          .run(`characters/${mia.id}/icon.webp`, mia.id);
+      } finally {
+        db.close();
+      }
+
+      const differentlyFormattedWindowsPath = legacyIconPath
+        .replaceAll("\\", "/")
+        .replace(/^([A-Z]):/, (_match, drive: string) => `${drive.toLowerCase()}:`)
+        .replace("/characters/", "/CHARACTERS/")
+        .replace("/icon.webp", "/ICON.WEBP");
+      const updated = storage.updateCharacterMetadata({
+        characterId: mia.id,
+        name: "Mia Prime",
+        iconFilePath: process.platform === "win32"
+          ? differentlyFormattedWindowsPath
+          : legacyIconPath,
+      });
+
+      assert.equal(updated.name, "Mia Prime");
+      assert.equal(updated.iconFilePath, legacyIconPath);
+      assert.equal((await readFile(legacyIconPath, "utf8")), "legacy webp");
+
+      const replacementPath = path.join(path.dirname(userDataPath), "replacement.gif");
+      await writeFile(replacementPath, Buffer.from("GIF89a", "ascii"));
+      assert.throws(
+        () => storage.updateCharacterMetadata({
+          characterId: mia.id,
+          iconFilePath: replacementPath,
+        }),
+        /png \/ jpg \/ jpeg/,
+      );
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("既存 icon の同一参照判定は scheme と POSIX path を Windows path として正規化しない", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: CharacterStorage | null = null;
+
+    try {
+      storage = new CharacterStorage(dbPath, userDataPath);
+      const mia = storage.createCharacter({ name: "Mia", definitionMarkdown: validDefinition("Mia") });
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare("UPDATE characters SET icon_file_path = ? WHERE id = ?")
+          .run("data:image/webp;base64,AAAA", mia.id);
+        assert.equal(
+          storage.updateCharacterMetadata({
+            characterId: mia.id,
+            iconFilePath: "data:image/webp;base64,AAAA",
+          }).iconFilePath,
+          "data:image/webp;base64,AAAA",
+        );
+        assert.throws(
+          () => storage.updateCharacterMetadata({
+            characterId: mia.id,
+            iconFilePath: "DATA:image/webp;base64,AAAA",
+          }),
+          /local file path/,
+        );
+
+        db.prepare("UPDATE characters SET icon_file_path = ? WHERE id = ?")
+          .run("/legacy/muse/icon.webp", mia.id);
+        assert.throws(
+          () => storage.updateCharacterMetadata({
+            characterId: mia.id,
+            iconFilePath: "/legacy/muse\\icon.webp",
+          }),
+          /png \/ jpg \/ jpeg/,
+        );
+      } finally {
+        db.close();
+      }
     } finally {
       storage?.close();
       await cleanup();

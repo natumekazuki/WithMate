@@ -44,7 +44,12 @@ export class CharacterAuthoringService {
       throw new Error("Authoring session は保存済み Character でのみ開始できます。先に Character を保存してください。");
     }
 
-    const seed = await this.resolveSeed(input);
+    const character = await this.deps.getCharacter(characterId);
+    if (!character) {
+      throw new Error("Authoring session は保存済み Character でのみ開始できます。先に Character を保存してください。");
+    }
+
+    const seed = await this.resolveSeed(input, character);
     const runId = this.createRunId(seed.name);
     const workspacePath = this.deps.getCharacterDirectory(characterId);
     if (!workspacePath) {
@@ -62,7 +67,7 @@ export class CharacterAuthoringService {
       sessionKind: "character-authoring",
       characterId,
       character: seed.name,
-      characterIconPath: input.iconFilePath ?? "",
+      characterIconPath: character.iconFilePath,
       characterThemeColors: {
         main: input.theme?.main ?? DEFAULT_CHARACTER_THEME.main,
         sub: input.theme?.sub ?? DEFAULT_CHARACTER_THEME.sub,
@@ -83,16 +88,18 @@ export class CharacterAuthoringService {
     };
   }
 
-  private async resolveSeed(input: StartCharacterAuthoringSessionInput): Promise<AuthoringSeed> {
-    const character = input.characterId ? await this.deps.getCharacter(input.characterId) : null;
-    const name = this.normalizeName(input.name || character?.name || "New Character");
-    const description = (input.description ?? character?.description ?? "").trim();
+  private async resolveSeed(
+    input: StartCharacterAuthoringSessionInput,
+    character: CharacterDetail,
+  ): Promise<AuthoringSeed> {
+    const name = this.normalizeName(input.name || character.name || "New Character");
+    const description = (input.description ?? character.description).trim();
     return {
       name,
       description,
       definitionMarkdown: input.definitionMarkdown?.trim()
         ? input.definitionMarkdown
-        : character?.definitionMarkdown?.trim()
+        : character.definitionMarkdown.trim()
           ? character.definitionMarkdown
           : await this.readTemplate("character.md", {
               character_name: name,
@@ -100,7 +107,7 @@ export class CharacterAuthoringService {
             }),
       notesMarkdown: input.notesMarkdown?.trim()
         ? input.notesMarkdown
-        : character?.notesMarkdown?.trim()
+        : character.notesMarkdown.trim()
           ? character.notesMarkdown
           : await this.readTemplate("character-notes.md"),
     };

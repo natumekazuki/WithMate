@@ -8,6 +8,7 @@ import {
   buildCreateCharacterInputFromDraft,
   createCharacterEditorDraftFromDetail,
   createNewCharacterEditorDraft,
+  getCharacterIconDraftValidationMessage,
   isCharacterEditorDraftDirty,
   replaceCharacterDefinitionDraft,
   shouldBlockCharacterEditorBeforeUnload,
@@ -116,6 +117,68 @@ describe("Character editor state", () => {
     assert.equal(shouldBlockCharacterEditorBeforeUnload({ dirty: true, saving: true, confirmedClose: false }), false);
     assert.equal(shouldBlockCharacterEditorBeforeUnload({ dirty: false, saving: false, confirmedClose: false }), false);
     assert.equal(shouldBlockCharacterEditorBeforeUnload({ dirty: true, saving: false, confirmedClose: true }), false);
+  });
+
+  it("新規・置換 icon は PNG/JPEG の local path に制限し、既存 icon はそのまま許可する", () => {
+    assert.equal(getCharacterIconDraftValidationMessage("", null), null);
+    assert.equal(getCharacterIconDraftValidationMessage("C:\\icons\\muse.PNG", null), null);
+    assert.equal(getCharacterIconDraftValidationMessage("/icons/muse.jpg", null), null);
+    assert.equal(getCharacterIconDraftValidationMessage("icons/muse.jpeg", null), null);
+    assert.equal(
+      getCharacterIconDraftValidationMessage("file:///icons/muse.png", null),
+      "Character icon は local file path で指定してね。",
+    );
+    assert.equal(
+      getCharacterIconDraftValidationMessage("/icons/muse.webp", null),
+      "Character icon は png / jpg / jpeg の画像ファイルを指定してね。",
+    );
+    assert.equal(
+      getCharacterIconDraftValidationMessage("  /legacy/muse.webp  ", "/legacy/muse.webp"),
+      null,
+    );
+    assert.equal(
+      getCharacterIconDraftValidationMessage(
+        "c:/characters/muse/ICON.webp",
+        "C:\\Characters\\Muse\\icon.webp",
+      ),
+      null,
+    );
+    assert.equal(
+      getCharacterIconDraftValidationMessage(
+        "//server/share/icon.webp",
+        "//Server/Share/icon.webp",
+      ),
+      null,
+    );
+    assert.equal(
+      getCharacterIconDraftValidationMessage("/legacy/Muse.webp", "/legacy/muse.webp"),
+      "Character icon は png / jpg / jpeg の画像ファイルを指定してね。",
+    );
+    assert.equal(
+      getCharacterIconDraftValidationMessage(
+        "DATA:image/webp;base64,AAAA",
+        "data:image/webp;base64,AAAA",
+      ),
+      "Character icon は local file path で指定してね。",
+    );
+    assert.equal(
+      getCharacterIconDraftValidationMessage(
+        "data:image\\webp;base64,AAAA",
+        "data:image/webp;base64,AAAA",
+      ),
+      "Character icon は local file path で指定してね。",
+    );
+    assert.equal(
+      getCharacterIconDraftValidationMessage(
+        "/legacy/muse\\icon.webp",
+        "/legacy/muse/icon.webp",
+      ),
+      "Character icon は png / jpg / jpeg の画像ファイルを指定してね。",
+    );
+    assert.equal(
+      getCharacterIconDraftValidationMessage("/legacy/other.gif", "/legacy/muse.webp"),
+      "Character icon は png / jpg / jpeg の画像ファイルを指定してね。",
+    );
   });
 
   it("create payload は default fallback を潰す setDefault false を渡さない", () => {

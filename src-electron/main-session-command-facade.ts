@@ -25,6 +25,7 @@ type MainSessionCommandFacadeDeps = {
   createSessionId(): string;
   createSessionFilesDirectory(sessionId: string): Promise<string> | string;
   isSessionFilesWorkspace(session: Pick<Session, "id" | "workspacePath">): boolean;
+  dismissSessionTurnNotification(sessionId: string): void;
   cleanupSessionFilesDirectory?(sessionId: string): Promise<void>;
 };
 
@@ -143,6 +144,10 @@ export class MainSessionCommandFacade {
     result: DeleteSessionsResult,
     sessionsById: ReadonlyMap<string, Pick<Session, "id" | "workspacePath">>,
   ): Promise<void> {
+    for (const sessionId of result.deletedSessionIds) {
+      this.deps.dismissSessionTurnNotification(sessionId);
+    }
+
     for (const sessionId of result.deletedSessionIds) {
       const deletedSession = sessionsById.get(sessionId);
       if (deletedSession && this.deps.isSessionFilesWorkspace(deletedSession)) {

@@ -1276,8 +1276,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 pickSessionFiles,
                 pickSessionFolder,
                 pickSessionImageFile,
-                pickImageFile: (targetWindow, initialPath) =>
-                  requireWindowDialogService().pickImageFile(targetWindow, initialPath),
+                pickImageFile: (targetWindow, initialPath, purpose) =>
+                  requireWindowDialogService().pickImageFile(targetWindow, initialPath, purpose),
                 copyFilesToSessionFiles,
                 savePastedSessionFile,
                 openSessionFilesDirectory,
@@ -1625,6 +1625,8 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
           session.workspacePath,
           resolveSessionFilesDirectory(app.getPath("userData"), session.id),
         ),
+      dismissSessionTurnNotification: (sessionId) =>
+        requireSessionTurnNotificationService().dismissSessionNotification(sessionId),
       cleanupSessionFilesDirectory,
     });
   }
@@ -2000,6 +2002,8 @@ function requireSessionTurnNotificationService(): SessionTurnNotificationService
       platform: process.platform,
       isNotificationSupported: () => Notification.isSupported(),
       isNotificationEnabled: () => requireAppSettingsStorage().getSettings().sessionTurnNotificationEnabled,
+      isResponsePreviewEnabled: () =>
+        requireAppSettingsStorage().getSettings().sessionTurnNotificationResponsePreviewEnabled,
       isSessionWindowFocused: (sessionId) => {
         const sessionWindow = requireSessionWindowBridge().getWindow(sessionId);
         return Boolean(sessionWindow && !sessionWindow.isDestroyed() && sessionWindow.isFocused());
@@ -2021,7 +2025,7 @@ function requireSessionTurnNotificationService(): SessionTurnNotificationService
             notification.on("click", listener);
           },
           onClose: (listener) => {
-            notification.on("close", listener);
+            notification.on("close", (details) => listener(details.reason));
           },
           onFailed: (listener) => {
             notification.on("failed", (_event, error) => listener(error));
@@ -2320,6 +2324,8 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       clearAllSessionBackgroundActivities,
       invalidateAllProviderSessionThreads,
       closeResetTargetWindows,
+      dismissSessionTurnNotification: (sessionId) =>
+        requireSessionTurnNotificationService().dismissSessionNotification(sessionId),
       recreateDatabaseFile,
       applyAppSettingsSideEffects: (settings) => {
         applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled);

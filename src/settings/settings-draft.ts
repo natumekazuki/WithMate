@@ -42,6 +42,16 @@ export function updateSessionTurnNotificationEnabled(
   };
 }
 
+export function updateSessionTurnNotificationResponsePreviewEnabled(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return {
+    ...draft,
+    sessionTurnNotificationResponsePreviewEnabled: enabled,
+  };
+}
+
 export function updateLaunchAtLoginEnabled(
   draft: AppSettings,
   enabled: boolean,

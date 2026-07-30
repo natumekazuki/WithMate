@@ -46,6 +46,7 @@ import type {
   CreateAuxiliarySessionInput,
 } from "./auxiliary-session-state.js";
 import type {
+  ImageFilePickerPurpose,
   OpenPathOptions,
   DeleteSessionsLastActiveBeforeRequest,
   DeleteSessionsResult,
@@ -213,7 +214,10 @@ export type WithMateWindowPickerApi = {
   pickSessionFiles(sessionId: string): Promise<string[]>;
   pickSessionFolder(sessionId: string): Promise<string | null>;
   pickSessionImageFile(sessionId: string): Promise<string | null>;
-  pickImageFile(initialPath?: string | null): Promise<string | null>;
+  pickImageFile(
+    initialPath?: string | null,
+    purpose?: ImageFilePickerPurpose,
+  ): Promise<string | null>;
   copyFilesToSessionFiles(sessionId: string, sourcePaths: string[]): Promise<string[]>;
   savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string>;
   openSessionFilesDirectory(sessionId: string): Promise<void>;

@@ -76,6 +76,7 @@ describe("HomeSettingsContent", () => {
     onChangeAutoCollapseActionDockOnSend: noOp,
     onChangeLaunchAtLoginEnabled: noOp,
     onChangeSessionTurnNotificationEnabled: noOp,
+    onChangeSessionTurnNotificationResponsePreviewEnabled: noOp,
     onChangeSessionCleanupCutoffDate: noOp,
     onChangeUserMicrocopySlot: noOp,
     onChangeProviderEnabled: noOp,
@@ -103,6 +104,35 @@ describe("HomeSettingsContent", () => {
     const html = renderSettings();
 
     assert.ok(html.includes("Session のターン完了を Windows 通知で知らせる"));
+    assert.ok(html.includes("Windows 通知に返答の冒頭を表示する"));
+  });
+
+  it("返答 preview toggle は Session turn notification が無効な間だけ操作できない", () => {
+    const disabledHtml = renderSettings({
+      settingsDraft: {
+        ...settingsDraft,
+        sessionTurnNotificationEnabled: false,
+        sessionTurnNotificationResponsePreviewEnabled: true,
+      },
+    });
+    const enabledHtml = renderSettings({
+      settingsDraft: {
+        ...settingsDraft,
+        sessionTurnNotificationEnabled: true,
+        sessionTurnNotificationResponsePreviewEnabled: true,
+      },
+    });
+    const findPreviewToggle = (html: string) => {
+      const document = new JSDOM(html).window.document;
+      const label = Array.from(document.querySelectorAll("label"))
+        .find((candidate) => candidate.textContent?.includes("Windows 通知に返答の冒頭を表示する"));
+      return label?.querySelector("input");
+    };
+
+    assert.equal(findPreviewToggle(disabledHtml)?.disabled, true);
+    assert.equal(findPreviewToggle(disabledHtml)?.checked, true);
+    assert.equal(findPreviewToggle(enabledHtml)?.disabled, false);
+    assert.equal(findPreviewToggle(enabledHtml)?.checked, true);
   });
 
   it("Mate Reset の危険操作は Settings に表示されない", () => {

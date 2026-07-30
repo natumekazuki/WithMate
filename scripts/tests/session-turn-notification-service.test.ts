@@ -5,6 +5,7 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { buildNewSession, type Session } from "../../src/session-state.js";
 import {
   SessionTurnNotificationService,
+  type SessionTurnNotificationCloseReason,
   type SessionTurnNotificationHandle,
   type SessionTurnNotificationOptions,
   type SessionTurnNotificationServiceDeps,
@@ -15,8 +16,9 @@ type FakeIcon = { path: string };
 class FakeNotification implements SessionTurnNotificationHandle {
   shown = false;
   closed = false;
+  closeError: unknown = null;
   private clickListener: (() => void) | null = null;
-  private closeListener: (() => void) | null = null;
+  private closeListener: ((reason?: SessionTurnNotificationCloseReason) => void) | null = null;
   private failedListener: ((error: unknown) => void) | null = null;
 
   show(): void {
@@ -24,15 +26,18 @@ class FakeNotification implements SessionTurnNotificationHandle {
   }
 
   close(): void {
+    if (this.closeError) {
+      throw this.closeError;
+    }
     this.closed = true;
-    this.closeListener?.();
+    this.closeListener?.("applicationHidden");
   }
 
   onClick(listener: () => void): void {
     this.clickListener = listener;
   }
 
-  onClose(listener: () => void): void {
+  onClose(listener: (reason?: SessionTurnNotificationCloseReason) => void): void {
     this.closeListener = listener;
   }
 
@@ -49,7 +54,7 @@ class FakeNotification implements SessionTurnNotificationHandle {
   }
 
   timeout(): void {
-    this.closeListener?.();
+    this.closeListener?.("timedOut");
   }
 }
 
@@ -81,6 +86,7 @@ function createHarness(overrides?: Partial<SessionTurnNotificationServiceDeps<Fa
     platform: "win32",
     isNotificationSupported: () => true,
     isNotificationEnabled: () => true,
+    isResponsePreviewEnabled: () => false,
     isSessionWindowFocused: () => false,
     loadCharacterIcon: (iconPath) => ({ path: iconPath }),
     createNotification: (nextOptions) => {
@@ -122,8 +128,11 @@ async function flushAsyncListeners(): Promise<void> {
 describe("SessionTurnNotificationService", () => {
   it("Windows で設定が有効かつ対象 Session Window が非 focus ならキャラアイコン付きで通知する", () => {
     const harness = createHarness();
+    const session = createSession({
+      messages: [{ role: "assistant", text: "opt-in していないので通知へ出さない返答" }],
+    });
 
-    assert.equal(harness.service.notifyTurnCompleted(harness.session), true);
+    assert.equal(harness.service.notifyTurnCompleted(session), true);
 
     assert.equal(harness.notifications[0]?.shown, true);
     assert.deepEqual(harness.options[0], {
@@ -136,11 +145,232 @@ describe("SessionTurnNotificationService", () => {
     assert.match(harness.options[0]?.id ?? "", /^[0-9a-f]{64}$/);
   });
 
+  it("返答 preview が有効なら最後の assistant 本文を平文化して Session 名と表示する", () => {
+    const harness = createHarness({
+      isResponsePreviewEnabled: () => true,
+    });
+    const session = createSession({
+      messages: [
+        { role: "assistant", text: "以前の返答" },
+        { role: "user", text: "続けて" },
+        {
+          role: "assistant",
+          text: "  うん、**40文字**でいける。\n[Session](https://example.com) を開いてね。  ",
+        },
+      ],
+    });
+
+    assert.equal(harness.service.notifyTurnCompleted(session), true);
+    assert.deepEqual(harness.options[0], {
+      id: harness.options[0]?.id,
+      groupId: "WithMateSessions",
+      title: "通知テスト",
+      body: "うん、40文字でいける。 Session を開いてね。",
+      icon: { path: "C:/characters/a.png" },
+    });
+  });
+
+  it("返答 preview は Renderer の GFM 表示境界を保つ", () => {
+    const harness = createHarness({
+      isResponsePreviewEnabled: () => true,
+    });
+    const session = createSession({
+      messages: [{
+        role: "assistant",
+        text: [
+          "| A**B**C | pre[link](https://example.com)post |",
+          "| - | - |",
+          "| A`~~literal~~`B | pre![ALT](https://example.com/image.png)post |",
+        ].join("\n"),
+      }],
+    });
+
+    assert.equal(harness.service.notifyTurnCompleted(session), true);
+    assert.equal(
+      harness.options[0]?.body,
+      "ABC prelinkpost A~~literal~~B prepost",
+    );
+  });
+
+  it("返答 preview は40文字以内の最後の文末を優先し、後続があれば省略記号を付ける", () => {
+    const harness = createHarness({
+      isResponsePreviewEnabled: () => true,
+    });
+    const session = createSession({
+      messages: [{
+        role: "assistant",
+        text: "うん、まだ多い。通知なら40文字上限にする。これは通知に出さないほどとても長く続く説明文なので省略します。さらに続きます。",
+      }],
+    });
+
+    assert.equal(harness.service.notifyTurnCompleted(session), true);
+    assert.equal(harness.options[0]?.body, "うん、まだ多い。通知なら40文字上限にする。…");
+  });
+
+  it("返答 preview は文末がなくても絵文字を分断せず40文字で切る", () => {
+    const harness = createHarness({
+      isResponsePreviewEnabled: () => true,
+    });
+    const familyEmoji = "👨‍👩‍👧‍👦";
+    const session = createSession({
+      messages: [{
+        role: "assistant",
+        text: `${"あ".repeat(39)}${familyEmoji}後続`,
+      }],
+    });
+
+    assert.equal(harness.service.notifyTurnCompleted(session), true);
+    assert.equal(harness.options[0]?.body, `${"あ".repeat(39)}${familyEmoji}…`);
+  });
+
+  it("返答 preview が空、または設定確認に失敗した場合は完了文へ安全に戻す", () => {
+    const emptyHarness = createHarness({
+      isResponsePreviewEnabled: () => true,
+    });
+    const emptySession = createSession({
+      messages: [{ role: "assistant", text: " ** ** " }],
+    });
+
+    assert.equal(emptyHarness.service.notifyTurnCompleted(emptySession), true);
+    assert.equal(emptyHarness.options[0]?.title, "WithMate");
+    assert.equal(emptyHarness.options[0]?.body, "「通知テスト」のターンが完了しました");
+
+    const settingFailureHarness = createHarness({
+      isResponsePreviewEnabled() {
+        throw new Error("preview setting read failed");
+      },
+    });
+    const responseSession = createSession({
+      messages: [{ role: "assistant", text: "通知へ出せる本文" }],
+    });
+
+    assert.equal(settingFailureHarness.service.notifyTurnCompleted(responseSession), true);
+    assert.equal(settingFailureHarness.options[0]?.title, "WithMate");
+    assert.equal(settingFailureHarness.options[0]?.body, "「通知テスト」のターンが完了しました");
+    assert.equal(settingFailureHarness.warnings[0]?.event, "preview-setting-check-failed");
+  });
+
+  it("返答 preview は表示されない Markdown metadata を通知せず完了文へ戻す", () => {
+    const secret = "SECRET-TOKEN";
+    const cases = [
+      `[](https://private.example/reset?token=${secret})`,
+      `[ref]: https://private.example/reset?token=${secret}`,
+      `[^1]: ${secret} footnote`,
+      `$$ x % ${secret} $$`,
+      ["$$", `x % ${secret}`, "$$"].join("\n"),
+      ["```mermaid", "graph LR", `A[${secret}]`, "```"].join("\n"),
+      ["```Mermaid", "graph LR", `A[${secret}]`, "```"].join("\n"),
+      "#",
+      `<!-- ${secret} -->`,
+      `<div data-token="${secret}"></div>`,
+    ];
+
+    for (const text of cases) {
+      const harness = createHarness({
+        isResponsePreviewEnabled: () => true,
+      });
+      const session = createSession({
+        messages: [{ role: "assistant", text }],
+      });
+
+      assert.equal(harness.service.notifyTurnCompleted(session), true);
+      assert.equal(harness.options[0]?.title, "WithMate");
+      assert.equal(harness.options[0]?.body, "「通知テスト」のターンが完了しました");
+      assert.equal(harness.options[0]?.body.includes(secret), false);
+    }
+
+    const footnoteHarness = createHarness({
+      isResponsePreviewEnabled: () => true,
+    });
+    const footnoteSession = createSession({
+      messages: [{
+        role: "assistant",
+        text: `表示本文[^1]\n\n[^1]: ${secret} footnote`,
+      }],
+    });
+
+    assert.equal(footnoteHarness.service.notifyTurnCompleted(footnoteSession), true);
+    assert.equal(footnoteHarness.options[0]?.title, "通知テスト");
+    assert.equal(footnoteHarness.options[0]?.body, "表示本文");
+    assert.equal(footnoteHarness.options[0]?.body.includes(secret), false);
+
+    const mixedHarness = createHarness({
+      isResponsePreviewEnabled: () => true,
+    });
+    const mixedSession = createSession({
+      messages: [{
+        role: "assistant",
+        text: [
+          "表示本文",
+          "",
+          `$$ x % ${secret} $$`,
+          "",
+          "```mermaid",
+          "graph LR",
+          `A[${secret}]`,
+          "```",
+        ].join("\n"),
+      }],
+    });
+
+    assert.equal(mixedHarness.service.notifyTurnCompleted(mixedSession), true);
+    assert.equal(mixedHarness.options[0]?.title, "通知テスト");
+    assert.equal(mixedHarness.options[0]?.body, "表示本文");
+    assert.equal(mixedHarness.options[0]?.body.includes(secret), false);
+  });
+
+  it("返答 preview は通常の code block だけを表示対象として保持する", () => {
+    const harness = createHarness({
+      isResponsePreviewEnabled: () => true,
+    });
+    const session = createSession({
+      messages: [{
+        role: "assistant",
+        text: ["before $x$ after", "", "```ts", "const value = 1;", "```"].join("\n"),
+      }],
+    });
+
+    assert.equal(harness.service.notifyTurnCompleted(session), true);
+    assert.equal(harness.options[0]?.body, "before $x$ after const value = 1;");
+  });
+
+  it("返答 preview は2048 code unitsを超える本文を解析せず完了文へ戻す", () => {
+    const withinLimitHarness = createHarness({
+      isResponsePreviewEnabled: () => true,
+    });
+    const prefix = "表示できる。";
+    const withinLimitSession = createSession({
+      messages: [{
+        role: "assistant",
+        text: `${prefix}${"あ".repeat(2_048 - prefix.length)}`,
+      }],
+    });
+
+    assert.equal(withinLimitHarness.service.notifyTurnCompleted(withinLimitSession), true);
+    assert.equal(withinLimitHarness.options[0]?.title, "通知テスト");
+    assert.equal(withinLimitHarness.options[0]?.body, `${prefix}…`);
+
+    const overLimitHarness = createHarness({
+      isResponsePreviewEnabled: () => true,
+    });
+    const overLimitSession = createSession({
+      messages: [{
+        role: "assistant",
+        text: "[".repeat(2_049),
+      }],
+    });
+
+    assert.equal(overLimitHarness.service.notifyTurnCompleted(overLimitSession), true);
+    assert.equal(overLimitHarness.options[0]?.title, "WithMate");
+    assert.equal(overLimitHarness.options[0]?.body, "「通知テスト」のターンが完了しました");
+  });
+
   it("Windows 以外、非対応、設定無効、対象 Session Window focus 中は通知しない", () => {
     const cases: Array<Partial<SessionTurnNotificationServiceDeps<FakeIcon>>> = [
       { platform: "darwin" },
       { isNotificationSupported: () => false },
       { isNotificationEnabled: () => false },
+      { isNotificationEnabled: () => false, isResponsePreviewEnabled: () => true },
       { isSessionWindowFocused: () => true },
     ];
 
@@ -175,9 +405,31 @@ describe("SessionTurnNotificationService", () => {
     harness.notifications[0]?.timeout();
     harness.service.notifyTurnCompleted(harness.session);
 
-    assert.equal(harness.notifications[0]?.closed, false);
+    assert.equal(harness.notifications[0]?.closed, true);
     assert.equal(harness.options[0]?.id, harness.options[1]?.id);
     assert.equal(harness.options[0]?.groupId, harness.options[1]?.groupId);
+  });
+
+  it("system timeout 後に Session を削除すると Action Center の通知を閉じる", () => {
+    const harness = createHarness();
+
+    harness.service.notifyTurnCompleted(harness.session);
+    harness.notifications[0]?.timeout();
+    harness.service.dismissSessionNotification(harness.session.id);
+
+    assert.equal(harness.notifications[0]?.closed, true);
+  });
+
+  it("Session 削除時の通知撤去失敗は記録し、削除処理の呼び出し元へ投げない", () => {
+    const harness = createHarness();
+
+    harness.service.notifyTurnCompleted(harness.session);
+    const notification = harness.notifications[0];
+    assert.ok(notification);
+    notification.closeError = new Error("close failed");
+
+    assert.doesNotThrow(() => harness.service.dismissSessionNotification(harness.session.id));
+    assert.equal(harness.warnings[0]?.event, "dismiss-close-failed");
   });
 
   it("キャラアイコンを読み込めなくても通知本体を表示し、show failure は呼び出し元へ投げない", () => {

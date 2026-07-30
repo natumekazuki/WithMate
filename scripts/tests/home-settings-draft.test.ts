@@ -31,6 +31,7 @@ import {
   updateMemoryFileQuotaMegabytesDraft,
   updateMemoryGenerationEnabled,
   updateSessionTurnNotificationEnabled,
+  updateSessionTurnNotificationResponsePreviewEnabled,
   updateMateMemoryGenerationTriggerIntervalMinutesDraft,
   updateMateMemoryGenerationPriorityProviderDraft,
   updateMateMemoryGenerationPriorityModelDraft,
@@ -58,6 +59,7 @@ import {
   handleChangeProviderSkillRelativePath as handleChangeProviderSkillRelativePathAction,
   handleChangeProviderSkillRootPath as handleChangeProviderSkillRootPathAction,
   handleChangeSessionTurnNotificationEnabled as handleChangeSessionTurnNotificationEnabledAction,
+  handleChangeSessionTurnNotificationResponsePreviewEnabled as handleChangeSessionTurnNotificationResponsePreviewEnabledAction,
   handleChangeUserMicrocopySlot as handleChangeUserMicrocopySlotAction,
   handleAddMateMemoryGenerationPriority as handleAddMateMemoryGenerationPriorityAction,
   handleRemoveMateMemoryGenerationPriority as handleRemoveMateMemoryGenerationPriorityAction,
@@ -283,6 +285,14 @@ describe("home-settings-draft", () => {
     assert.equal(next.sessionTurnNotificationEnabled, false);
   });
 
+  it("Session turn notification response preview を toggle できる", () => {
+    const draft = createDefaultAppSettings();
+
+    const next = updateSessionTurnNotificationResponsePreviewEnabled(draft, true);
+
+    assert.equal(next.sessionTurnNotificationResponsePreviewEnabled, true);
+  });
+
   it("memory file quota は MB 入力から bytes の draft に変換する", () => {
     const draft = createDefaultAppSettings();
 
@@ -396,6 +406,10 @@ describe("home-settings-draft", () => {
       enabled: false,
       setSettingsDraft: state.setSettingsDraft,
     });
+    handleChangeSessionTurnNotificationResponsePreviewEnabledAction({
+      enabled: true,
+      setSettingsDraft: state.setSettingsDraft,
+    });
     handleChangeMemoryFileQuotaMegabytesAction({
       value: "2048",
       setSettingsDraft: state.setSettingsDraft,
@@ -409,6 +423,7 @@ describe("home-settings-draft", () => {
     assert.equal(state.draft.memoryGenerationEnabled, false);
     assert.equal(state.draft.autoCollapseActionDockOnSend, false);
     assert.equal(state.draft.sessionTurnNotificationEnabled, false);
+    assert.equal(state.draft.sessionTurnNotificationResponsePreviewEnabled, true);
     assert.equal(state.draft.memoryFileQuotaBytes, 2 * MEMORY_FILE_QUOTA_DEFAULT_BYTES);
     assert.equal(state.draft.userMicrocopyCatalog["dock.status.responding"], "応答生成中\n");
   });
