@@ -99,6 +99,7 @@ V5 Core 必須条件:
 - V5 Core の storage metadata は `docs/design/character-storage.md` で扱う。
 - `character-notes.md` と `icon.<ext>` は optional asset として扱う。
 - 取り込み後の managed icon file は `characters/<character-id>/icon.<ext>` に保存される。`character.md` 内の asset 参照例は authoring 時の推奨構造であり、metadata の `iconFilePath` 正本は storage service が管理する。
+- 新しく登録または差し替える icon の対応形式と既存 icon の互換性方針は `docs/adr/008-character-icon-notification-compatible-formats.md` と `docs/design/character-storage.md` に従う。
 - update workspace 用の `AGENTS.md`、instruction file、skill は V5 Core に含めない。
 
 ## `character.md` Recommended Structure

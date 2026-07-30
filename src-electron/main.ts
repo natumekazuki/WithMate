@@ -1276,8 +1276,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 pickSessionFiles,
                 pickSessionFolder,
                 pickSessionImageFile,
-                pickImageFile: (targetWindow, initialPath) =>
-                  requireWindowDialogService().pickImageFile(targetWindow, initialPath),
+                pickImageFile: (targetWindow, initialPath, purpose) =>
+                  requireWindowDialogService().pickImageFile(targetWindow, initialPath, purpose),
                 copyFilesToSessionFiles,
                 savePastedSessionFile,
                 openSessionFilesDirectory,

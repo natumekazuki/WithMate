@@ -22,6 +22,11 @@ import {
   type UpdateCharacterMetadataInput,
 } from "../src/character/character-catalog.js";
 import {
+  areCharacterIconPathReferencesEquivalent,
+  hasCharacterIconPathScheme,
+  validateCharacterIconRegistrationPath,
+} from "../src/character/character-icon.js";
+import {
   APP_DATABASE_V4_FILENAME,
   assertV4SchemaInitializationAllowed,
 } from "./database-schema-v4.js";
@@ -32,7 +37,6 @@ const CHARACTER_DEFINITION_FILE = "character.md";
 const CHARACTER_NOTES_FILE = "character-notes.md";
 const CHARACTER_ICON_FILE_BASE = "icon";
 const CHARACTER_ICON_MAX_BYTE_SIZE = 10 * 1024 * 1024;
-const CHARACTER_ICON_ALLOWED_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"]);
 const CHARACTER_ID_MAX_LENGTH = 80;
 
 const CREATE_CHARACTER_TABLE_SQL = `
@@ -106,22 +110,14 @@ function normalizeDescription(value: unknown, fallback = ""): string {
   return value.trim().replace(/\s+/g, " ");
 }
 
-function normalizeOptionalPath(value: unknown, fallback = ""): string {
-  if (value === undefined || value === null) {
+function normalizeCharacterIconPathInput(value: unknown, fallback = ""): string {
+  if (value === undefined) {
     return fallback;
   }
   if (typeof value !== "string") {
-    return fallback;
+    throw new Error("Character icon path は文字列で指定してね。");
   }
   return value.trim();
-}
-
-function hasPathScheme(value: string): boolean {
-  if (/^[a-zA-Z]:[\\/]/.test(value)) {
-    return false;
-  }
-
-  return /^[a-z][a-z0-9+.-]*:/i.test(value);
 }
 
 function normalizeDbRelativePath(value: string): string {
@@ -130,17 +126,17 @@ function normalizeDbRelativePath(value: string): string {
 
 function materializeCharacterIconFilePath(userDataPath: string, filePath: string): string {
   const trimmed = filePath.trim();
-  if (!trimmed || path.isAbsolute(trimmed) || hasPathScheme(trimmed)) {
+  if (!trimmed || path.isAbsolute(trimmed) || hasCharacterIconPathScheme(trimmed)) {
     return trimmed;
   }
 
-  return path.join(userDataPath, normalizeDbRelativePath(trimmed));
+  return path.join(userDataPath, trimmed);
 }
 
 function safeIconExtension(sourcePath: string): string {
   const extension = path.extname(sourcePath).toLowerCase();
-  if (!CHARACTER_ICON_ALLOWED_EXTENSIONS.has(extension)) {
-    throw new Error("Character icon は png / jpg / jpeg / gif / webp / bmp / svg の画像ファイルを指定してね。");
+  if (!path.isAbsolute(sourcePath)) {
+    return extension;
   }
 
   const stats = statSync(sourcePath);
@@ -274,23 +270,24 @@ export class CharacterStorage {
   }
 
   private getManagedIconAbsolutePath(characterId: string, iconFilePath: string): string | null {
-    const trimmed = normalizeDbRelativePath(iconFilePath.trim());
-    if (!trimmed || path.isAbsolute(trimmed) || hasPathScheme(trimmed)) {
+    const rawPath = iconFilePath.trim();
+    const trimmed = process.platform === "win32"
+      ? normalizeDbRelativePath(rawPath)
+      : rawPath;
+    if (!trimmed || path.isAbsolute(trimmed) || hasCharacterIconPathScheme(trimmed)) {
       return null;
     }
 
-    const prefix = `${CHARACTER_ROOT_DIRECTORY}/${characterId}/`;
-    if (!trimmed.startsWith(prefix)) {
-      return null;
-    }
-
-    const basename = path.basename(trimmed);
-    if (!/^icon\.[a-z0-9]+$/.test(basename)) {
+    const resolvedIconPath = path.resolve(this.userDataPath, trimmed);
+    const basename = path.basename(resolvedIconPath);
+    const comparableBasename = process.platform === "win32"
+      ? basename.toLowerCase()
+      : basename;
+    if (!/^icon\.[a-z0-9]+$/.test(comparableBasename)) {
       return null;
     }
 
     const characterDirectoryPath = path.resolve(this.characterDirectory(characterId));
-    const resolvedIconPath = path.resolve(this.userDataPath, trimmed);
     const relativePath = path.relative(characterDirectoryPath, resolvedIconPath);
     if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
       return null;
@@ -300,12 +297,27 @@ export class CharacterStorage {
   }
 
   private cleanupReplacedManagedIcon(characterId: string, previousIconFilePath: string, nextIconFilePath: string): void {
-    if (normalizeDbRelativePath(previousIconFilePath) === normalizeDbRelativePath(nextIconFilePath)) {
+    if (areCharacterIconPathReferencesEquivalent(
+      previousIconFilePath,
+      nextIconFilePath,
+      { fileSystemStyle: process.platform === "win32" ? "windows" : "posix" },
+    )) {
       return;
     }
 
     const previousIconAbsolutePath = this.getManagedIconAbsolutePath(characterId, previousIconFilePath);
     if (!previousIconAbsolutePath) {
+      return;
+    }
+    const nextIconAbsolutePath = this.getManagedIconAbsolutePath(characterId, nextIconFilePath);
+    if (
+      nextIconAbsolutePath
+      && areCharacterIconPathReferencesEquivalent(
+        previousIconAbsolutePath,
+        nextIconAbsolutePath,
+        { fileSystemStyle: process.platform === "win32" ? "windows" : "posix" },
+      )
+    ) {
       return;
     }
 
@@ -320,13 +332,60 @@ export class CharacterStorage {
     }
   }
 
-  private copyIconFromSourcePath(characterId: string, sourceIconFilePath: string): string {
-    if (!path.isAbsolute(sourceIconFilePath) || hasPathScheme(sourceIconFilePath)) {
-      return sourceIconFilePath;
+  private isCurrentIconReference(
+    currentIconFilePath: string,
+    sourceIconFilePath: string,
+    managedRelativePath: string | null,
+  ): boolean {
+    if (!currentIconFilePath) {
+      return false;
+    }
+
+    const comparisonOptions = {
+      fileSystemStyle: process.platform === "win32" ? "windows" : "posix",
+    } as const;
+    return areCharacterIconPathReferencesEquivalent(
+      sourceIconFilePath,
+      currentIconFilePath,
+      comparisonOptions,
+    )
+      || (
+        managedRelativePath !== null
+        && areCharacterIconPathReferencesEquivalent(
+          managedRelativePath,
+          currentIconFilePath,
+          comparisonOptions,
+        )
+      )
+      || areCharacterIconPathReferencesEquivalent(
+        sourceIconFilePath,
+        this.materializeIconFilePath(currentIconFilePath),
+        comparisonOptions,
+      );
+  }
+
+  private copyIconFromSourcePath(
+    characterId: string,
+    sourceIconFilePath: string,
+    currentIconFilePath = "",
+  ): string {
+    if (!sourceIconFilePath) {
+      return "";
+    }
+
+    const managedRelativePath = this.maybeGetManagedIconRelativePath(characterId, sourceIconFilePath);
+    if (this.isCurrentIconReference(currentIconFilePath, sourceIconFilePath, managedRelativePath)) {
+      return currentIconFilePath;
+    }
+    const registrationPathError = validateCharacterIconRegistrationPath(sourceIconFilePath);
+    if (registrationPathError) {
+      throw new Error(registrationPathError);
     }
 
     const extension = safeIconExtension(sourceIconFilePath);
-    const managedRelativePath = this.maybeGetManagedIconRelativePath(characterId, sourceIconFilePath);
+    if (!path.isAbsolute(sourceIconFilePath)) {
+      return sourceIconFilePath;
+    }
     if (managedRelativePath) {
       return managedRelativePath;
     }
@@ -450,7 +509,7 @@ export class CharacterStorage {
     const description = normalizeDescription(input.description);
     const theme = normalizeTheme(input.theme);
     const characterId = this.createUniqueCharacterId(name);
-    const sourceIconFilePath = normalizeOptionalPath(input.iconFilePath);
+    const sourceIconFilePath = normalizeCharacterIconPathInput(input.iconFilePath);
     const createdAt = nowIso();
     const definitionMarkdown = input.definitionMarkdown ?? buildDefaultDefinitionMarkdown(name, description);
     const notesMarkdown = input.notesMarkdown ?? buildDefaultNotesMarkdown(name);
@@ -509,7 +568,11 @@ export class CharacterStorage {
       : normalizeDescription(input.description);
     const iconFilePath = input.iconFilePath === undefined
       ? currentRow.icon_file_path
-      : this.copyIconFromSourcePath(input.characterId, normalizeOptionalPath(input.iconFilePath));
+      : this.copyIconFromSourcePath(
+          input.characterId,
+          normalizeCharacterIconPathInput(input.iconFilePath),
+          currentRow.icon_file_path,
+        );
     const theme = normalizeTheme(input.theme, current.theme);
     const updatedAt = nowIso();
 

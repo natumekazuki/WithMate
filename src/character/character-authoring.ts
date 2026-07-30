@@ -13,7 +13,6 @@ export type StartCharacterAuthoringSessionInput = {
   description?: string;
   definitionMarkdown?: string;
   notesMarkdown?: string;
-  iconFilePath?: string;
   theme?: Partial<CharacterTheme>;
   userInstruction?: string;
   provider?: string;

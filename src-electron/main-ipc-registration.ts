@@ -190,12 +190,14 @@ import {
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
 } from "../src/withmate-ipc-channels.js";
-import type {
-  OpenPathOptions,
-  DeleteSessionsLastActiveBeforeRequest,
-  DeleteSessionsResult,
-  ResetAppDatabaseRequest,
-  SavePastedSessionFileRequest,
+import {
+  parseImageFilePickerPurpose,
+  type ImageFilePickerPurpose,
+  type OpenPathOptions,
+  type DeleteSessionsLastActiveBeforeRequest,
+  type DeleteSessionsResult,
+  type ResetAppDatabaseRequest,
+  type SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
@@ -352,7 +354,11 @@ export type MainIpcRegistrationDeps = {
   pickSessionFiles(targetWindow: MaybeWindow, sessionId: string): Promise<string[]>;
   pickSessionFolder(targetWindow: MaybeWindow, sessionId: string): Promise<string | null>;
   pickSessionImageFile(targetWindow: MaybeWindow, sessionId: string): Promise<string | null>;
-  pickImageFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
+  pickImageFile(
+    targetWindow: MaybeWindow,
+    initialPath: string | null,
+    purpose: ImageFilePickerPurpose,
+  ): Promise<string | null>;
   copyFilesToSessionFiles(sessionId: string, sourcePaths: string[]): Promise<string[]>;
   savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string>;
   openSessionFilesDirectory(sessionId: string): Promise<void>;
@@ -719,8 +725,16 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   ipcMain.handle(WITHMATE_PICK_SESSION_IMAGE_FILE_CHANNEL, async (event, sessionId: string) =>
     deps.pickSessionImageFile(resolveTargetWindow(event, deps), sessionId),
   );
-  ipcMain.handle(WITHMATE_PICK_IMAGE_FILE_CHANNEL, async (event, initialPath: string | null) =>
-    deps.pickImageFile(resolveTargetWindow(event, deps), initialPath),
+  ipcMain.handle(WITHMATE_PICK_IMAGE_FILE_CHANNEL, async (
+    event,
+    initialPath: string | null,
+    rawPurpose: unknown,
+  ) =>
+    deps.pickImageFile(
+      resolveTargetWindow(event, deps),
+      initialPath,
+      parseImageFilePickerPurpose(rawPurpose),
+    ),
   );
   ipcMain.handle(
     WITHMATE_COPY_FILES_TO_SESSION_FILES_CHANNEL,
