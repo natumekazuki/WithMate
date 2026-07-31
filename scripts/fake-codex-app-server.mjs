@@ -11,6 +11,8 @@ const steerReleaseFile = optionalEnvironment("WITHMATE_FAKE_CODEX_STEER_RELEASE_
 const steerRejectMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_STEER_REJECT_MARKER");
 const steerCrashMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_STEER_CRASH_MARKER");
 const steerTerminalMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_STEER_TERMINAL_MARKER");
+const interruptReleaseFile = optionalEnvironment("WITHMATE_FAKE_CODEX_INTERRUPT_RELEASE_FILE");
+const interruptNaturalCompletionMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_INTERRUPT_NATURAL_COMPLETION_MARKER");
 const model = "gpt-5.4";
 let threadSequence = 0;
 let turnSequence = 0;
@@ -102,6 +104,9 @@ async function handleMessage(message) {
       return;
     case "turn/steer":
       await handleTurnSteer(message);
+      return;
+    case "turn/interrupt":
+      await handleTurnInterrupt(message);
       return;
     default:
       write({ id: message.id, error: { code: -32601, message: "Method not found" } });
@@ -218,6 +223,45 @@ async function handleTurnSteer(message) {
     return;
   }
   respond(message.id, { turnId: expectedTurnId });
+}
+
+async function handleTurnInterrupt(message) {
+  const params = record(message.params);
+  const threadId = requiredString(params.threadId);
+  const turnId = requiredString(params.turnId);
+  const active = activeTurns.get(threadId);
+  log("turn.interrupt_requested", { threadId, turnId });
+  if (active === undefined || active.turnId !== turnId) {
+    write({ id: message.id, error: { code: -32_002, message: "Active Turn mismatch" } });
+    return;
+  }
+
+  respond(message.id, {});
+  if (interruptReleaseFile !== undefined) {
+    log("turn.interrupt_waiting", { threadId, turnId });
+    await waitForFile(interruptReleaseFile, 15_000);
+    log("turn.interrupt_released", { threadId, turnId });
+  }
+
+  if (interruptNaturalCompletionMarker !== undefined && active.prompt.includes(interruptNaturalCompletionMarker)) {
+    const item = {
+      type: "agentMessage",
+      id: `fake-item-${process.pid}-${turnSequence}-cancel-race`,
+      text: `reply:${active.prompt}`,
+      phase: "final_answer",
+      memoryCitation: null,
+    };
+    notify("item/started", { threadId, turnId, item, startedAtMs: Date.now() });
+    notify("item/completed", { threadId, turnId, item, completedAtMs: Date.now() });
+    notify("turn/completed", { threadId, turn: turn(turnId, "completed", [item]) });
+    activeTurns.delete(threadId);
+    log("turn.completed", { threadId, turnId, prompt: active.prompt });
+    return;
+  }
+
+  notify("turn/completed", { threadId, turn: turn(turnId, "interrupted", []) });
+  activeTurns.delete(threadId);
+  log("turn.interrupted", { threadId, turnId, prompt: active.prompt });
 }
 
 function threadOperation(threadId, cwd, requestedModel, sandboxMode, ephemeral) {
@@ -344,5 +388,5 @@ async function waitForFile(filePath, timeoutMs) {
     if (fs.existsSync(filePath)) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error("Timed out waiting to release the fake steer response.");
+  throw new Error("Timed out waiting to release the fake Turn mutation.");
 }

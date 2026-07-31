@@ -166,7 +166,7 @@ test("runtime IPC failure codes admit only their defined execution and retry tup
   );
 });
 
-test("runtime IPC allowlist covers all 24 operational Application operations", () => {
+test("runtime IPC allowlist covers all 25 operational Application operations", () => {
   const idempotencyKey = randomUUID();
   const validPayloads = {
     "session.create": {
@@ -219,6 +219,7 @@ test("runtime IPC allowlist covers all 24 operational Application operations", (
       idempotencyKey,
       contentBlocks: [{ type: "text", text: "continue" }],
     },
+    "run.cancel": { sessionId: "session_abc", runId: "run_abc", idempotencyKey },
     "run.status": { sessionId: "session_abc", runId: "run_abc" },
     "run.events": { sessionId: "session_abc", runId: "run_abc", limit: 25 },
     "run.follow": { sessionId: "session_abc", runId: "run_abc", limit: 25, waitMs: 10_000, pollMs: 250 },
@@ -244,7 +245,7 @@ test("runtime IPC allowlist covers all 24 operational Application operations", (
       destination: "C:\\exports\\output.bin",
     },
   } satisfies Record<RuntimeIpcOperation, unknown>;
-  assert.equal(RUNTIME_IPC_OPERATIONS.length, 24);
+  assert.equal(RUNTIME_IPC_OPERATIONS.length, 25);
   for (const operation of RUNTIME_IPC_OPERATIONS) {
     const decoded = decodeRuntimeIpcEnvelope(runtimeRequest(operation, validPayloads[operation]));
     assert.equal(decoded.kind, "request");

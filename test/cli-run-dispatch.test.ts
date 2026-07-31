@@ -37,6 +37,18 @@ test("Run mutations dispatch only caller-owned fields", async () => {
         deliveryState: "pending" as const,
       });
     },
+    cancel: async (request, options) => {
+      calls.push(["cancel", request, options]);
+      return writeSuccess({
+        sessionId: request.sessionId,
+        runId: request.runId,
+        phase: "canceling" as const,
+        liveActivity: null,
+        createdAt: 1,
+        updatedAt: 2,
+        cancellation: { requestedAt: 2 },
+      });
+    },
   });
   const idempotencyKey = "018f1f4e-7f0a-7000-8000-000000000701";
   const start = await dispatchCliRunCommand(
@@ -74,10 +86,21 @@ test("Run mutations dispatch only caller-owned fields", async () => {
     },
     { operations, outputOperations, authorization },
   );
+  const cancel = await dispatchCliRunCommand(
+    {
+      identity: { namespace: "run", operation: "cancel" },
+      sessionId: "session-1",
+      runId: "run-1",
+      idempotencyKey,
+      timeoutMs: 750,
+    },
+    { operations, outputOperations, authorization },
+  );
 
   assert.equal(start.ok, true);
   assert.equal(retry.ok, true);
   assert.equal(sendInput.ok, true);
+  assert.equal(cancel.ok, true);
   assert.deepEqual(calls, [
     [
       "start",
@@ -115,6 +138,16 @@ test("Run mutations dispatch only caller-owned fields", async () => {
         contentBlocks: [{ type: "text", text: "continue" }],
       },
       { timeoutMs: 500 },
+    ],
+    [
+      "cancel",
+      {
+        context: { authorization },
+        sessionId: "session-1",
+        runId: "run-1",
+        idempotencyKey,
+      },
+      { timeoutMs: 750 },
     ],
   ]);
 });
@@ -377,6 +410,7 @@ function runOperations(overrides: Partial<Operations>): Operations {
     start: overrides.start ?? unsupported,
     retry: overrides.retry ?? unsupported,
     sendInput: overrides.sendInput ?? unsupported,
+    cancel: overrides.cancel ?? unsupported,
     status: overrides.status ?? unsupported,
     events: overrides.events ?? unsupported,
     follow: overrides.follow ?? unsupported,

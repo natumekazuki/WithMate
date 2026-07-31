@@ -607,6 +607,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
         externalExecutionId: "execution-worker-integration",
       },
       preDispatchResolution: { kind: "not_applicable" },
+      cancelCorrelation: { kind: "none" },
       outcome: {
         kind: "completed",
         finalAssistantMessage: {
@@ -681,6 +682,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
         externalExecutionId: "execution-worker-child",
       },
       preDispatchResolution: { kind: "not_applicable" },
+      cancelCorrelation: { kind: "none" },
       outcome: {
         kind: "completed",
         finalAssistantMessage: {

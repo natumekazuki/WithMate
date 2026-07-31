@@ -17,10 +17,17 @@ import type {
 } from "../shared/repository-write-model.js";
 import type {
   CodexAdapterEvent,
+  CodexAdapterInterruptAcknowledgement,
   CodexAdapterMutationResult,
   CodexAdapterOutput,
   CodexAdapterTurnSnapshot,
 } from "./providers/codex/index.js";
+import type {
+  ApplicationRunCancelHandoffRecord,
+  ApplicationRunCancelOwnerPort,
+  ApplicationRunCancelOwnerReservation,
+  ApplicationRunCancelPreflightResult,
+} from "./application-run-cancel-service.js";
 import type {
   ApplicationRunInputHandoffRecord,
   ApplicationRunInputOwnerPort,
@@ -115,6 +122,23 @@ type InputWorkStatus =
 
 type InputResolutionConfirmation = "confirmed" | "retry" | "blocked";
 
+type CancelWorkStatus = "reserved" | "handed_off" | "calling" | "settled" | "released";
+
+type CancelDisposition = CodexAdapterMutationResult<CodexAdapterInterruptAcknowledgement>;
+
+type CancelWork = {
+  readonly reservation: ApplicationRunCancelOwnerReservation;
+  readonly state: AttemptState;
+  readonly reservationSettlement: Promise<void>;
+  readonly resolveReservationSettlement: () => void;
+  status: CancelWorkStatus;
+  record: ApplicationRunCancelHandoffRecord | null;
+  disposition: CancelDisposition | null;
+  settlementHandle: ReturnType<typeof setImmediate> | null;
+  abortSignal: AbortSignal | null;
+  abortListener: (() => void) | null;
+};
+
 type InputWork = {
   readonly reservation: ApplicationRunInputOwnerReservation;
   readonly state: AttemptState;
@@ -148,6 +172,7 @@ type AttemptState = {
   releaseReason: ApplicationRunGenerationReleaseReason | null;
   startTurnResult: ApplicationRunStartTurnResult | null;
   startTurnFailure: ApplicationRunProviderMutationFailure | null;
+  cancelWork: CancelWork | null;
   inputQueue: InputWork[];
   inputDrainScheduled: boolean;
   chain: Promise<void>;
@@ -171,8 +196,10 @@ export class ApplicationRunEventService
   readonly #attemptsByRun = new Map<string, AttemptState>();
   readonly #attemptsByOwner = new Map<string, AttemptState>();
   readonly #persistenceRetryTasks = new Map<AttemptState, Promise<void>>();
+  readonly #cancelReservations = new Map<object, CancelWork>();
   readonly #inputReservations = new Map<object, InputWork>();
   readonly #inputsByMessage = new Map<string, InputWork>();
+  readonly cancelOwner: ApplicationRunCancelOwnerPort;
 
   constructor(options: ApplicationRunEventServiceOptions) {
     this.#reads = options.reads;
@@ -192,6 +219,11 @@ export class ApplicationRunEventService
     this.#maxTrackedInputs = positiveLimit(
       options.limits?.maxTrackedInputs ?? APPLICATION_RUN_EVENT_LIMITS.maxTrackedInputs,
     );
+    this.cancelOwner = Object.freeze<ApplicationRunCancelOwnerPort>({
+      preflight: (input, operationOptions) => this.#preflightCancel(input, operationOptions),
+      handoff: (record) => this.#handoffCancel(record),
+      release: (reservation) => this.#releaseCancel(reservation),
+    });
   }
 
   register(
@@ -225,6 +257,7 @@ export class ApplicationRunEventService
       releaseReason: null,
       startTurnResult: null,
       startTurnFailure: null,
+      cancelWork: null,
       inputQueue: [],
       inputDrainScheduled: false,
       chain: Promise.resolve(),
@@ -236,6 +269,88 @@ export class ApplicationRunEventService
         this.#enqueue(state, () => this.#settleStartTurn(state, result)),
       done,
     });
+  }
+
+  #preflightCancel(
+    input: Readonly<{ sessionId: string; runId: string }>,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ): Promise<ApplicationRunCancelPreflightResult> {
+    const state = this.#attemptsByRun.get(input.runId);
+    if (state === undefined || state.dispatch.admission.sessionId !== input.sessionId) {
+      return Promise.resolve(cancelPreflightFailure("not_found"));
+    }
+    return this.#enqueue(state, async () => {
+      if (options?.signal?.aborted === true || state.cancelWork !== null || !this.#isCancelOwnerCurrent(state)) {
+        return cancelPreflightFailure("lifecycle_conflict");
+      }
+      const token = Object.freeze({});
+      const reservation = Object.freeze({
+        token,
+        sessionId: state.dispatch.admission.sessionId,
+        runId: state.dispatch.admission.runId,
+        workspaceKey: state.dispatch.workspaceKey,
+        providerId: state.dispatch.providerId,
+        attemptId: state.dispatch.admission.attemptId,
+        bindingId: state.dispatch.admission.bindingId,
+        persistenceMode: state.dispatch.persistenceMode,
+        ephemeralOwnerToken: state.dispatch.ephemeralOwnerToken,
+        generationId: state.dispatch.generationId,
+        conversationId: state.dispatch.threadId,
+        executionId: state.turnId as string,
+      });
+      let resolveReservationSettlement!: () => void;
+      const reservationSettlement = new Promise<void>((resolve) => {
+        resolveReservationSettlement = resolve;
+      });
+      const work: CancelWork = {
+        reservation,
+        state,
+        reservationSettlement,
+        resolveReservationSettlement,
+        status: "reserved",
+        record: null,
+        disposition: null,
+        settlementHandle: null,
+        abortSignal: options?.signal ?? null,
+        abortListener: null,
+      };
+      if (options?.signal !== undefined) {
+        work.abortListener = () => this.#releaseCancelWork(work);
+        options.signal.addEventListener("abort", work.abortListener, { once: true });
+      }
+      state.cancelWork = work;
+      this.#cancelReservations.set(token, work);
+      return {
+        ok: true,
+        value: { kind: "active_execution", reservation },
+      };
+    });
+  }
+
+  #handoffCancel(record: ApplicationRunCancelHandoffRecord): void {
+    const work = this.#cancelReservations.get(record.reservation.token);
+    if (
+      work === undefined ||
+      work.status !== "reserved" ||
+      work.reservation !== record.reservation ||
+      !cancelHandoffMatchesReservation(record, work.reservation)
+    ) {
+      return;
+    }
+    this.#detachCancelAbort(work);
+    work.record = Object.freeze({ ...record });
+    work.status = "handed_off";
+    work.resolveReservationSettlement();
+    for (const input of [...work.state.inputQueue]) {
+      this.#releaseInputReservation(input, false);
+    }
+    void this.#enqueue(work.state, () => this.#interruptCancelWork(work)).catch(() => undefined);
+  }
+
+  #releaseCancel(reservation: ApplicationRunCancelOwnerReservation): void {
+    const work = this.#cancelReservations.get(reservation.token);
+    if (work === undefined || work.reservation !== reservation || work.status !== "reserved") return;
+    this.#releaseCancelWork(work);
   }
 
   preflight(
@@ -462,6 +577,117 @@ export class ApplicationRunEventService
     return next;
   }
 
+  async #interruptCancelWork(work: CancelWork): Promise<void> {
+    if (work.status !== "handed_off" || work.record === null) return;
+    if (!this.#isCancelWorkCurrent(work)) {
+      work.disposition = { kind: "not_sent", effect: "none", code: "capability_unavailable" };
+      work.status = "settled";
+      this.#scheduleCancelDispositionSettlement(work);
+      return;
+    }
+    if (work.state.control.adapter.interruptTurn === undefined) {
+      work.disposition = { kind: "not_sent", effect: "none", code: "capability_unavailable" };
+      work.status = "settled";
+      this.#scheduleCancelDispositionSettlement(work);
+      return;
+    }
+    work.status = "calling";
+    let result: CancelDisposition;
+    try {
+      result = await work.state.control.adapter.interruptTurn(
+        {
+          threadId: work.reservation.conversationId,
+          turnId: work.reservation.executionId,
+        },
+        { signal: work.state.control.signal },
+      );
+    } catch {
+      result = { kind: "ambiguous", effect: "unknown", code: "invalid_response" };
+    }
+    work.disposition = normalizeCancelDisposition(result, work.reservation);
+    work.status = "settled";
+    if (work.disposition.kind !== "accepted") {
+      this.#scheduleCancelDispositionSettlement(work);
+    }
+  }
+
+  #scheduleCancelDispositionSettlement(work: CancelWork): void {
+    if (work.settlementHandle !== null || work.state.phase === "closed") return;
+    work.settlementHandle = setImmediate(() => {
+      work.settlementHandle = null;
+      void this.#enqueue(work.state, () => this.#settleCancelDisposition(work)).catch(() => undefined);
+    });
+  }
+
+  async #settleCancelDisposition(work: CancelWork): Promise<void> {
+    const disposition = work.disposition;
+    if (
+      disposition === null ||
+      disposition.kind === "accepted" ||
+      work.state.cancelWork !== work ||
+      work.state.phase !== "accepted" ||
+      work.state.terminalCommand !== null
+    ) {
+      return;
+    }
+    await this.#terminalize(work.state, {
+      kind: "interrupted",
+      failureOrigin: cancelDispositionFailureOrigin(disposition),
+      providerErrorCode: null,
+      errorSummary: "Provider cancellation did not confirm a terminal outcome.",
+    });
+  }
+
+  #isCancelWorkCurrent(work: CancelWork): boolean {
+    const { reservation, state } = work;
+    return (
+      state.cancelWork === work &&
+      work.record !== null &&
+      work.record.reservation === reservation &&
+      this.#isCancelOwnerCurrent(state) &&
+      state.turnId === reservation.executionId &&
+      state.dispatch.admission.sessionId === reservation.sessionId &&
+      state.dispatch.admission.runId === reservation.runId &&
+      state.dispatch.admission.attemptId === reservation.attemptId &&
+      state.dispatch.admission.bindingId === reservation.bindingId &&
+      state.dispatch.workspaceKey === reservation.workspaceKey &&
+      state.dispatch.providerId === reservation.providerId &&
+      state.dispatch.persistenceMode === reservation.persistenceMode &&
+      state.dispatch.ephemeralOwnerToken === reservation.ephemeralOwnerToken &&
+      state.dispatch.generationId === reservation.generationId &&
+      state.dispatch.threadId === reservation.conversationId
+    );
+  }
+
+  #isCancelOwnerCurrent(state: AttemptState): boolean {
+    return (
+      state.phase === "accepted" &&
+      state.turnId !== null &&
+      state.terminalCommand === null &&
+      state.releaseReason === null &&
+      !state.control.signal.aborted &&
+      typeof state.control.adapter.interruptTurn === "function" &&
+      safeIsCurrent(state.control)
+    );
+  }
+
+  #releaseCancelWork(work: CancelWork): void {
+    if (work.status !== "reserved") return;
+    work.status = "released";
+    this.#detachCancelAbort(work);
+    this.#cancelReservations.delete(work.reservation.token);
+    if (work.state.cancelWork === work) work.state.cancelWork = null;
+    work.resolveReservationSettlement();
+  }
+
+  #detachCancelAbort(work: CancelWork): void {
+    if (work.abortSignal !== null && work.abortListener !== null) {
+      work.abortSignal.removeEventListener("abort", work.abortListener);
+    }
+    work.abortSignal = null;
+    work.abortListener = null;
+  }
+
   async #drainInputQueue(state: AttemptState): Promise<void> {
     while (state.inputQueue[0]?.status === "released" || state.inputQueue[0]?.status === "settled") {
       state.inputQueue.shift();
@@ -674,7 +900,12 @@ export class ApplicationRunEventService
   }
 
   #isInputDeliveryOpen(state: AttemptState): boolean {
-    return state.phase === "accepted" && state.terminalCommand === null && state.releaseReason === null;
+    return (
+      state.phase === "accepted" &&
+      state.terminalCommand === null &&
+      state.releaseReason === null &&
+      (state.cancelWork === null || state.cancelWork.status === "reserved" || state.cancelWork.status === "released")
+    );
   }
 
   #releaseInputReservation(work: InputWork, activateNext = true): void {
@@ -1093,22 +1324,100 @@ export class ApplicationRunEventService
       );
       return;
     }
+    const cancelCorrelation =
+      event.status === "interrupted" ? await this.#terminalCancelCorrelation(state) : ({ kind: "none" } as const);
     await this.#terminalize(
       state,
-      {
-        kind: event.status,
-        failureOrigin: "provider",
-        providerErrorCode: null,
-        errorSummary: event.status === "failed" ? "Provider execution failed." : "Provider execution was interrupted.",
-      },
+      cancelCorrelation.kind === "admitted_user_cancel"
+        ? { kind: "canceled" }
+        : {
+            kind: event.status,
+            failureOrigin: "provider",
+            providerErrorCode: null,
+            errorSummary:
+              event.status === "failed" ? "Provider execution failed." : "Provider execution was interrupted.",
+          },
       contentFailureOutput,
+      cancelCorrelation,
     );
+  }
+
+  async #terminalCancelCorrelation(state: AttemptState): Promise<RunTerminalCommand["cancelCorrelation"]> {
+    const work = state.cancelWork;
+    if (work === null) return await this.#readDurableCancelCorrelation(state);
+    if (work.status === "reserved") await work.reservationSettlement;
+    const record = work.record;
+    if (
+      record === null ||
+      state.phase !== "accepted" ||
+      state.turnId === null ||
+      state.turnId !== work.reservation.executionId ||
+      !cancelHandoffMatchesReservation(record, work.reservation) ||
+      state.dispatch.admission.sessionId !== work.reservation.sessionId ||
+      state.dispatch.admission.runId !== work.reservation.runId ||
+      state.dispatch.admission.attemptId !== work.reservation.attemptId ||
+      state.dispatch.admission.bindingId !== work.reservation.bindingId ||
+      state.dispatch.workspaceKey !== work.reservation.workspaceKey ||
+      state.dispatch.providerId !== work.reservation.providerId ||
+      state.dispatch.persistenceMode !== work.reservation.persistenceMode ||
+      state.dispatch.ephemeralOwnerToken !== work.reservation.ephemeralOwnerToken ||
+      state.dispatch.generationId !== work.reservation.generationId ||
+      state.dispatch.threadId !== work.reservation.conversationId
+    ) {
+      return await this.#readDurableCancelCorrelation(state, work.reservation);
+    }
+    return {
+      kind: "admitted_user_cancel",
+      cancelRequestedAt: record.cancelRequestedAt,
+    };
+  }
+
+  async #readDurableCancelCorrelation(
+    state: AttemptState,
+    reservation?: ApplicationRunCancelOwnerReservation,
+  ): Promise<RunTerminalCommand["cancelCorrelation"]> {
+    if (
+      state.phase !== "accepted" ||
+      state.turnId === null ||
+      (reservation !== undefined && !cancelReservationMatchesState(reservation, state))
+    ) {
+      return { kind: "none" };
+    }
+    const sessionId = state.dispatch.admission.sessionId;
+    const workspaceKey = state.dispatch.workspaceKey;
+    const runId = state.dispatch.admission.runId;
+    try {
+      const projection = await this.#reads.runGet({
+        sessionId,
+        workspaceKey,
+        runId,
+      });
+      const requestedAt = projection.run.cancelRequestedAt;
+      if (
+        projection.sessionId !== sessionId ||
+        projection.workspaceKey !== workspaceKey ||
+        projection.run.id !== runId ||
+        projection.run.sessionId !== sessionId ||
+        projection.run.phase !== "canceling" ||
+        typeof requestedAt !== "number" ||
+        !Number.isSafeInteger(requestedAt) ||
+        requestedAt < 0 ||
+        projection.run.cancelAcknowledgedAt !== undefined ||
+        projection.run.terminalAt !== undefined
+      ) {
+        return { kind: "none" };
+      }
+      return { kind: "admitted_user_cancel", cancelRequestedAt: requestedAt };
+    } catch {
+      return { kind: "none" };
+    }
   }
 
   async #terminalize(
     state: AttemptState,
     outcome: RunTerminalCommand["outcome"],
     outputs: readonly RunTerminalOutputDraft[] = [],
+    cancelCorrelation: RunTerminalCommand["cancelCorrelation"] = { kind: "none" },
   ): Promise<boolean> {
     const acceptedExecution = state.phase === "accepted" && state.turnId !== null;
     const ambiguousExecution = state.phase === "ambiguous" && outcome.kind === "interrupted";
@@ -1133,6 +1442,7 @@ export class ApplicationRunEventService
         },
         providerExecution: acceptedExecution ? executionCorrelation(state) : null,
         preDispatchResolution: acceptedExecution ? { kind: "not_applicable" } : { kind: "dispatch_ambiguous" },
+        cancelCorrelation,
         outcome,
         outputs: terminalOutputs,
         childResult: null,
@@ -1152,6 +1462,7 @@ export class ApplicationRunEventService
       result.value.sessionId === command.sessionId &&
       result.value.runId === command.runId &&
       result.value.attemptId === command.attemptId &&
+      result.value.phase === command.outcome.kind &&
       result.value.terminalEventId === command.terminalEvent.id
     ) {
       this.#close(state);
@@ -1351,6 +1662,19 @@ export class ApplicationRunEventService
     state.terminalCommand = null;
     state.releaseReason = null;
     state.startTurnResult = null;
+    if (state.cancelWork !== null) {
+      if (state.cancelWork.settlementHandle !== null) {
+        clearImmediate(state.cancelWork.settlementHandle);
+        state.cancelWork.settlementHandle = null;
+      }
+      this.#detachCancelAbort(state.cancelWork);
+      this.#cancelReservations.delete(state.cancelWork.reservation.token);
+      state.cancelWork.resolveReservationSettlement();
+      state.cancelWork.status = "settled";
+      state.cancelWork.record = null;
+      state.cancelWork.disposition = null;
+      state.cancelWork = null;
+    }
     state.inputDrainScheduled = false;
     for (const work of state.inputQueue) {
       this.#resolveInputPreflight(work, inputPreflightFailure("lifecycle_conflict"));
@@ -1592,6 +1916,97 @@ function inputHandoffMatchesReservation(
     record.messageOrdinal > 0 &&
     Number.isSafeInteger(record.admittedAt)
   );
+}
+
+function cancelHandoffMatchesReservation(
+  record: ApplicationRunCancelHandoffRecord,
+  reservation: ApplicationRunCancelOwnerReservation,
+): boolean {
+  return (
+    record.reservation === reservation &&
+    record.sessionId === reservation.sessionId &&
+    record.runId === reservation.runId &&
+    typeof record.idempotencyKey === "string" &&
+    record.idempotencyKey.length > 0 &&
+    record.idempotencyKey.length <= 1_024 &&
+    Number.isSafeInteger(record.cancelRequestedAt) &&
+    record.cancelRequestedAt >= 0
+  );
+}
+
+function cancelReservationMatchesState(
+  reservation: ApplicationRunCancelOwnerReservation,
+  state: AttemptState,
+): boolean {
+  return (
+    state.phase === "accepted" &&
+    state.turnId === reservation.executionId &&
+    state.dispatch.admission.sessionId === reservation.sessionId &&
+    state.dispatch.admission.runId === reservation.runId &&
+    state.dispatch.admission.attemptId === reservation.attemptId &&
+    state.dispatch.admission.bindingId === reservation.bindingId &&
+    state.dispatch.workspaceKey === reservation.workspaceKey &&
+    state.dispatch.providerId === reservation.providerId &&
+    state.dispatch.persistenceMode === reservation.persistenceMode &&
+    state.dispatch.ephemeralOwnerToken === reservation.ephemeralOwnerToken &&
+    state.dispatch.generationId === reservation.generationId &&
+    state.dispatch.threadId === reservation.conversationId
+  );
+}
+
+function normalizeCancelDisposition(
+  result: CancelDisposition,
+  reservation: ApplicationRunCancelOwnerReservation,
+): CancelDisposition {
+  switch (result.kind) {
+    case "accepted":
+      return result.value.threadId === reservation.conversationId &&
+        result.value.turnId === reservation.executionId &&
+        result.value.terminal === false
+        ? Object.freeze({
+            kind: "accepted",
+            effect: "present",
+            value: Object.freeze({
+              threadId: reservation.conversationId,
+              turnId: reservation.executionId,
+              terminal: false,
+            }),
+          })
+        : Object.freeze({ kind: "ambiguous", effect: "unknown", code: "invalid_response" });
+    case "not_sent":
+      return Object.freeze({ kind: "not_sent", effect: "none", code: result.code });
+    case "rejected":
+      return Object.freeze({ kind: "rejected", effect: "none", code: result.code });
+    case "ambiguous":
+      return Object.freeze({ kind: "ambiguous", effect: "unknown", code: result.code });
+    case "connection_failure":
+      return Object.freeze({ kind: "connection_failure", effect: "unknown", code: result.code });
+  }
+}
+
+function cancelDispositionFailureOrigin(
+  disposition: Exclude<CancelDisposition, Readonly<{ kind: "accepted" }>>,
+): "provider" | "transport" | "application" {
+  switch (disposition.kind) {
+    case "rejected":
+      return "provider";
+    case "ambiguous":
+    case "connection_failure":
+      return "transport";
+    case "not_sent":
+      return "application";
+  }
+}
+
+function cancelPreflightFailure(code: "not_found" | "lifecycle_conflict"): ApplicationRunCancelPreflightResult {
+  return {
+    ok: false,
+    error: {
+      code,
+      message: code === "not_found" ? "The active Run owner was not found." : "The active Run cannot be canceled.",
+      retryable: false,
+    },
+  };
 }
 
 function safeIsCurrent(control: ApplicationRunDispatchControl): boolean {

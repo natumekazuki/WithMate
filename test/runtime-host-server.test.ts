@@ -594,7 +594,7 @@ test("runtime host bounds in-flight work per connection and aborts abandoned rea
   await waitFor(() => abortedReads === 32);
 });
 
-test("runtime host propagates client cancel to export but not disconnect to durable writes", async (context) => {
+test("runtime host propagates client cancel to export but not disconnect to Run cancel work", async (context) => {
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-runtime-host-cancel-"));
   context.after(() => rm(fixtureRoot, { recursive: true, force: true }));
   let exportSignal: AbortSignal | undefined;
@@ -605,7 +605,7 @@ test("runtime host propagates client cancel to export but not disconnect to dura
       exportSignal = options?.signal;
       return await rejectWhenAborted(options?.signal);
     },
-    updateTitle: async (_request, options) => {
+    cancel: async (_request, options) => {
       writeSignal = options?.signal;
       return await new Promise((resolve) => {
         completeWrite = resolve;
@@ -668,10 +668,10 @@ test("runtime host propagates client cancel to export but not disconnect to dura
   await writeConnection.write(
     Buffer.from(
       encodeRuntimeIpcEnvelope(
-        runtimeRequest(host.generationId, writeClientId, 1, "session.update_title", {
+        runtimeRequest(host.generationId, writeClientId, 1, "run.cancel", {
           sessionId: "session-1",
+          runId: "run-1",
           idempotencyKey: randomUUID(),
-          title: "Renamed",
         }),
       ),
     ),
@@ -680,7 +680,17 @@ test("runtime host propagates client cancel to export but not disconnect to dura
   await writeConnection.close();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(writeSignal?.aborted, false);
-  completeWrite?.(writeResponse({ sessionId: "session-1", title: "Renamed", updatedAt: 2 }));
+  completeWrite?.(
+    writeResponse({
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "canceling",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 2,
+      cancellation: { requestedAt: 2 },
+    }),
+  );
   await host.close();
 });
 
@@ -1113,6 +1123,62 @@ test("runtime response projection rejects fields outside the operation-owned App
   );
 });
 
+test("runtime Session Run history preserves phase-valid cancellation facts", () => {
+  const payload = { sessionId: "session-1", limit: 5 };
+  const base = {
+    runId: "run-1",
+    ordinal: 1,
+    initiatingMessageId: "message-1",
+    createdAt: 1,
+    startedAt: 2,
+    updatedAt: 5,
+  };
+  const terminal = { ...base, terminalAt: 5, cancellation: { requestedAt: 3 } };
+
+  for (const item of [
+    { ...base, phase: "canceling", cancellation: { requestedAt: 3 } },
+    { ...terminal, phase: "completed", finalAssistantMessageId: "message-final" },
+    { ...terminal, phase: "failed", failure: { origin: "provider" } },
+    { ...terminal, phase: "interrupted", failure: { origin: "transport" } },
+    {
+      ...terminal,
+      phase: "canceled",
+      cancellation: { requestedAt: 3, acknowledgedAt: 4 },
+    },
+  ] as const) {
+    assert.doesNotThrow(() =>
+      snapshotRuntimeApplicationResponse(
+        "session.runs",
+        payload,
+        readResponse({ sessionId: "session-1", items: [item] }),
+      ),
+    );
+  }
+
+  for (const item of [
+    { ...base, phase: "canceling" },
+    { ...terminal, phase: "completed", cancellation: { requestedAt: 3, acknowledgedAt: 4 } },
+    { ...terminal, phase: "failed", failure: { origin: "provider" }, cancellation: { requestedAt: 6 } },
+    {
+      ...terminal,
+      phase: "interrupted",
+      failure: { origin: "transport" },
+      cancellation: { requestedAt: 3, acknowledgedAt: 4 },
+    },
+    { ...terminal, phase: "canceled", cancellation: { requestedAt: 3 } },
+  ] as const) {
+    assert.throws(
+      () =>
+        snapshotRuntimeApplicationResponse(
+          "session.runs",
+          payload,
+          readResponse({ sessionId: "session-1", items: [item] }),
+        ),
+      /response is invalid/u,
+    );
+  }
+});
+
 test("runtime Run mutation response exposes only the durable admission identity", () => {
   const idempotencyKey = randomUUID();
   const startPayload = {
@@ -1527,7 +1593,7 @@ test("runtime host starts the real Application composition only after its endpoi
   assert.deepEqual(await host.close(), { checkpoint: "completed" });
 });
 
-test("runtime dispatch owns the complete 24-operation allowlist and never spreads client authorization", async () => {
+test("runtime dispatch owns the complete 25-operation allowlist and never spreads client authorization", async () => {
   const calls: Array<Readonly<{ name: string; request: Readonly<Record<string, unknown>>; signal: AbortSignal }>> = [];
   const application = completeDispatchApplication(calls);
   const signal = new AbortController().signal;
@@ -1683,6 +1749,7 @@ function fakeRuntimeApplication(
       start: overrides.start ?? fallback,
       retry: overrides.retry ?? fallback,
       sendInput: overrides.sendInput ?? fallback,
+      cancel: overrides.cancel ?? fallback,
       status: overrides.status ?? fallback,
       events: overrides.events ?? fallback,
       follow: overrides.follow ?? fallback,
@@ -1726,6 +1793,7 @@ function completeDispatchApplication(
     start: method("run.start"),
     retry: method("run.retry"),
     sendInput: method("run.send_input"),
+    cancel: method("run.cancel"),
     status: method("run.status"),
     events: method("run.events"),
     follow: method("run.follow"),
@@ -1783,6 +1851,7 @@ function operationPayloads(): Readonly<Record<RuntimeIpcOperation, RuntimeIpcOpe
       idempotencyKey,
       contentBlocks: [{ type: "text", text: "continue" }],
     },
+    "run.cancel": { sessionId: "session-1", runId: "run-1", idempotencyKey },
     "run.status": { sessionId: "session-1", runId: "run-1" },
     "run.events": { sessionId: "session-1", runId: "run-1", limit: 1 },
     "run.follow": { sessionId: "session-1", runId: "run-1", limit: 1, waitMs: 1, pollMs: 25 },

@@ -201,6 +201,65 @@ def validate_connection(
     )
     connection.commit()
 
+    expect_integrity_error(
+        connection,
+        "UPDATE runs SET phase = 'active', cancel_requested_at = 2 WHERE id = 'run-a'",
+        (),
+    )
+    expect_integrity_error(
+        connection,
+        "UPDATE runs SET phase = 'canceling' WHERE id = 'run-a'",
+        (),
+    )
+    connection.execute(
+        "UPDATE runs SET phase = 'canceling', cancel_requested_at = 2 WHERE id = 'run-a'"
+    )
+    connection.commit()
+    expect_integrity_error(
+        connection,
+        """
+        UPDATE runs SET phase = 'canceled', cancel_acknowledged_at = NULL, terminal_at = 4
+        WHERE id = 'run-a'
+        """,
+        (),
+    )
+    expect_integrity_error(
+        connection,
+        """
+        UPDATE runs SET phase = 'completed', cancel_acknowledged_at = 3, terminal_at = 4
+        WHERE id = 'run-a'
+        """,
+        (),
+    )
+    expect_integrity_error(
+        connection,
+        "UPDATE runs SET cancel_acknowledged_at = 1 WHERE id = 'run-a'",
+        (),
+    )
+    expect_integrity_error(
+        connection,
+        """
+        UPDATE runs SET phase = 'canceled', cancel_acknowledged_at = 5, terminal_at = 4
+        WHERE id = 'run-a'
+        """,
+        (),
+    )
+    connection.execute(
+        """
+        UPDATE runs SET phase = 'completed', cancel_acknowledged_at = NULL, terminal_at = 4
+        WHERE id = 'run-a'
+        """
+    )
+    connection.commit()
+    connection.execute(
+        """
+        UPDATE runs SET phase = 'queued', cancel_requested_at = NULL,
+          cancel_acknowledged_at = NULL, terminal_at = NULL
+        WHERE id = 'run-a'
+        """
+    )
+    connection.commit()
+
     connection.execute("UPDATE sessions SET max_concurrent_child_runs = 1024 WHERE id = 'session-a'")
     connection.commit()
     assert connection.execute(
@@ -508,7 +567,7 @@ def validate_connection(
         "duplicateUniqueAutoindexCheck": "ok",
         "foreignKeyCheck": "ok",
         "quickCheck": quick_check,
-        "constraintRejectionChecks": 19,
+        "constraintRejectionChecks": 25,
         "canonicalUuidAcceptanceCheck": "ok",
         "appWideIdempotencyNamespaceCheck": "ok",
         "sessionTreeAggregateLimitCheck": "ok",

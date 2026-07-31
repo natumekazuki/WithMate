@@ -1,6 +1,8 @@
 import type {
   ApplicationRunAccessValidationInput,
   ApplicationRunAccessValidator,
+  ApplicationRunCancelRequest,
+  ApplicationRunCancelResult,
   ApplicationRunEvent,
   ApplicationRunEventPage,
   ApplicationRunEventsRequest,
@@ -35,6 +37,16 @@ import {
   type ApplicationRunAdmissionReadPort,
   type ApplicationRunWorkHandoffPort,
 } from "./application-run-admission-service.js";
+import {
+  ApplicationRunCancelService,
+  createRepositoryApplicationRunCancelAdmissionPort,
+  createRepositoryApplicationRunCancelReplayPort,
+  defaultApplicationRunCancelAdmissionPort,
+  defaultApplicationRunCancelOwnerPort,
+  type ApplicationRunCancelAdmissionPort,
+  type ApplicationRunCancelOwnerPort,
+  type ApplicationRunCancelReplayPort,
+} from "./application-run-cancel-service.js";
 import { projectPersistedRun } from "./application-run-projection.js";
 import {
   ApplicationRunInputService,
@@ -123,6 +135,9 @@ export type ApplicationRunServiceOptions<TAuthorizationContext> = Readonly<{
   inputAdmission?: ApplicationRunInputAdmissionPort;
   inputOwner?: ApplicationRunInputOwnerPort;
   inputReplay?: ApplicationRunInputReplayPort;
+  cancelAdmission?: ApplicationRunCancelAdmissionPort;
+  cancelOwner?: ApplicationRunCancelOwnerPort;
+  cancelReplay?: ApplicationRunCancelReplayPort;
   liveActivity?: ApplicationRunLiveActivityPort;
   clock?: ApplicationRunClock;
   sleeper?: ApplicationRunSleeper;
@@ -171,6 +186,8 @@ export function createApplicationRunOperations<TAuthorizationContext>(
     admission: options.admission ?? createRepositoryApplicationRunAdmissionPort(worker),
     inputAdmission: options.inputAdmission ?? createRepositoryApplicationRunInputAdmissionPort(worker),
     inputReplay: options.inputReplay ?? createRepositoryApplicationRunInputReplayPort(worker),
+    cancelAdmission: options.cancelAdmission ?? createRepositoryApplicationRunCancelAdmissionPort(worker),
+    cancelReplay: options.cancelReplay ?? createRepositoryApplicationRunCancelReplayPort(worker),
   });
 }
 
@@ -180,6 +197,7 @@ export class ApplicationRunService<TAuthorizationContext> implements Application
   readonly #snapshotAuthorization: (value: unknown) => TAuthorizationContext;
   readonly #admissionService: ApplicationRunAdmissionService<TAuthorizationContext>;
   readonly #inputService: ApplicationRunInputService<TAuthorizationContext>;
+  readonly #cancelService: ApplicationRunCancelService<TAuthorizationContext>;
   readonly #liveActivity: ApplicationRunLiveActivityPort;
   readonly #clock: ApplicationRunClock;
   readonly #sleeper: ApplicationRunSleeper;
@@ -201,6 +219,14 @@ export class ApplicationRunService<TAuthorizationContext> implements Application
       admission: options.inputAdmission ?? defaultApplicationRunInputAdmissionPort(),
       owner: options.inputOwner ?? defaultApplicationRunInputOwnerPort(),
       ...(options.inputReplay === undefined ? {} : { replay: options.inputReplay }),
+    });
+    this.#cancelService = new ApplicationRunCancelService({
+      reads: options.reads,
+      access: options.access,
+      snapshotAuthorization: options.snapshotAuthorization,
+      admission: options.cancelAdmission ?? defaultApplicationRunCancelAdmissionPort(),
+      owner: options.cancelOwner ?? defaultApplicationRunCancelOwnerPort(),
+      ...(options.cancelReplay === undefined ? {} : { replay: options.cancelReplay }),
     });
     this.#liveActivity = options.liveActivity ?? defaultLiveActivity;
     this.#clock = options.clock ?? monotonicClock;
@@ -226,6 +252,13 @@ export class ApplicationRunService<TAuthorizationContext> implements Application
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationRunSendInputResult, "write">> {
     return this.#inputService.sendInput(request, options);
+  }
+
+  cancel(
+    request: ApplicationRunCancelRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationRunCancelResult, "write">> {
+    return this.#cancelService.cancel(request, options);
   }
 
   async status(
@@ -691,11 +724,17 @@ function projectRunStatus(
         ...base,
         phase: persisted.phase,
         liveActivity: null,
-        ...(persisted.cancellation === undefined ? {} : { cancellation: persisted.cancellation }),
+        cancellation: persisted.cancellation,
       };
       break;
     case "completed":
-      status = { ...base, phase: persisted.phase, liveActivity: null, terminalAt: persisted.terminalAt };
+      status = {
+        ...base,
+        phase: persisted.phase,
+        liveActivity: null,
+        terminalAt: persisted.terminalAt,
+        ...(persisted.cancellation === undefined ? {} : { cancellation: persisted.cancellation }),
+      };
       break;
     case "failed":
     case "interrupted":

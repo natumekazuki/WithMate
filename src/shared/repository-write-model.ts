@@ -18,6 +18,7 @@ export const REPOSITORY_WRITE_OPERATIONS = {
   runInputAdmit: "repository.run.input.admit",
   runInputBegin: "repository.run.input.begin",
   runInputResolve: "repository.run.input.resolve",
+  runCancelAdmit: "repository.run.cancel.admit",
   runOutputAppend: "repository.run.output.append",
   runOutputResolvePending: "repository.run.output.resolve-pending",
   runTerminal: "repository.run.terminal",
@@ -223,6 +224,25 @@ export type RunInputResolutionCommand = Readonly<{
     | Readonly<{ kind: "ambiguous"; resolutionCode: "transport_unknown" | "process_unknown" }>;
 }>;
 
+export type RunCancelAdmissionOwner =
+  | Readonly<{ kind: "terminal_only" }>
+  | Readonly<{
+      kind: "active_execution";
+      attemptId: string;
+      bindingId: string;
+      ephemeralOwnerToken: string | null;
+      externalConversationId: string;
+      externalExecutionId: string;
+    }>;
+
+export type RunCancelAdmissionCommand = Readonly<{
+  sessionId: string;
+  workspaceKey: string;
+  idempotencyKey: string;
+  runId: string;
+  owner: RunCancelAdmissionOwner;
+}>;
+
 export type RunOutputCategory =
   "assistant_detail" | "operation" | "interaction" | "telemetry" | "diagnostic" | "provider_metadata";
 
@@ -304,6 +324,13 @@ export type RunTerminalPreDispatchResolution =
   | Readonly<{ kind: "dispatch_not_sent" }>
   | Readonly<{ kind: "dispatch_ambiguous" }>;
 
+export type RunTerminalCancelCorrelation =
+  | Readonly<{ kind: "none" }>
+  | Readonly<{
+      kind: "admitted_user_cancel";
+      cancelRequestedAt: number;
+    }>;
+
 export type RunTerminalCommand = Readonly<{
   sessionId: string;
   workspaceKey: string;
@@ -315,6 +342,7 @@ export type RunTerminalCommand = Readonly<{
   }>;
   providerExecution: RunProviderExecutionCorrelation | null;
   preDispatchResolution: RunTerminalPreDispatchResolution;
+  cancelCorrelation: RunTerminalCancelCorrelation;
   outcome: RunTerminalOutcome;
   outputs: readonly RunTerminalOutputDraft[];
   childResult: Readonly<{
@@ -547,6 +575,40 @@ export type RunInputResolutionResult = Readonly<{
   resolutionCode: RunInputResolutionCode | null;
   resolvedAt: number;
 }>;
+
+export type RunCancelAdmissionResult =
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      phase: "canceling";
+      cancelRequestedAt: number;
+      cancelAcknowledgedAt: null;
+      terminalAt: null;
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      phase: "completed" | "failed" | "interrupted";
+      cancelRequestedAt: number | null;
+      cancelAcknowledgedAt: null;
+      terminalAt: number;
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      phase: "canceled";
+      cancelRequestedAt: null;
+      cancelAcknowledgedAt: null;
+      terminalAt: number;
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      phase: "canceled";
+      cancelRequestedAt: number;
+      cancelAcknowledgedAt: number;
+      terminalAt: number;
+    }>;
 
 export type RunOutputAppendResult = Readonly<{
   sessionId: string;

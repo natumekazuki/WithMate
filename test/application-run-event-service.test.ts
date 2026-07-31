@@ -1380,6 +1380,350 @@ test("generation release retains a frozen input resolution until persistence clo
   assert.equal(fixture.terminals.length, 1);
 });
 
+test("a fresh durable cancel handoff invokes the current Provider receiver at most once", async () => {
+  const callerAbort = new AbortController();
+  const fixture = eventFixture({ receiverSensitiveInterrupt: true });
+  const handle = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(handle);
+  await handle.settleStartTurn(acceptedTurn("turn-1"));
+
+  const reservation = await reserveCancel(fixture, callerAbort.signal);
+  const record = cancelHandoff(reservation);
+  fixture.service.cancelOwner.handoff(record);
+  callerAbort.abort();
+  fixture.service.cancelOwner.handoff(record);
+  await waitFor(() => fixture.interruptInputs.length === 1);
+
+  assert.deepEqual(fixture.interruptInputs, [{ threadId: "thread-1", turnId: "turn-1" }]);
+  assert.equal(fixture.interruptSignals[0], fixture.control.signal);
+  assert.equal(fixture.interruptSignals[0]?.aborted, false);
+  assert.equal(fixture.terminals.length, 0);
+  assert.equal(fixture.terminalized.length, 0);
+  assert.equal((await fixture.service.read({ sessionId: "session-1", runId: "run-1" }))?.activity, "running");
+
+  const duplicate = await fixture.service.cancelOwner.preflight({
+    sessionId: "session-1",
+    runId: "run-1",
+  });
+  assert.equal(duplicate.ok, false);
+  assert.equal(!duplicate.ok && duplicate.error.code, "lifecycle_conflict");
+
+  await fixture.service.accept("codex-1", terminalEvent());
+  await handle.done;
+  assert.equal(fixture.terminals[0]?.outcome.kind, "completed");
+  assert.deepEqual(fixture.terminals[0]?.cancelCorrelation, { kind: "none" });
+});
+
+test("released, stale, terminal, and retired cancel owners never call Provider", async () => {
+  let current = true;
+  const fixture = eventFixture({ isCurrent: () => current });
+  const handle = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(handle);
+  await handle.settleStartTurn(acceptedTurn("turn-1"));
+
+  const callerAbort = new AbortController();
+  const aborted = await reserveCancel(fixture, callerAbort.signal);
+  callerAbort.abort();
+  fixture.service.cancelOwner.handoff(cancelHandoff(aborted));
+
+  const released = await reserveCancel(fixture);
+  fixture.service.cancelOwner.release(released);
+
+  const stale = await reserveCancel(fixture);
+  current = false;
+  fixture.service.cancelOwner.handoff(cancelHandoff(stale));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fixture.interruptInputs.length, 0);
+
+  current = true;
+  await fixture.service.accept("codex-1", terminalEvent());
+  await handle.done;
+  fixture.service.cancelOwner.handoff(cancelHandoff(stale));
+  assert.equal(fixture.interruptInputs.length, 0);
+  assert.equal(fixture.terminals[0]?.outcome.kind, "completed");
+
+  const retired = eventFixture();
+  const retiredHandle = retired.service.register(dispatch(), retired.control);
+  assert.ok(retiredHandle);
+  await retiredHandle.settleStartTurn(acceptedTurn("turn-1"));
+  const retiredReservation = await reserveCancel(retired);
+  await retired.service.releaseGeneration("codex-1", { kind: "shutdown" });
+  await retiredHandle.done;
+  retired.service.cancelOwner.handoff(cancelHandoff(retiredReservation));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(retired.interruptInputs.length, 0);
+});
+
+test("a non-accepted interrupt disposition converges to interrupted without retrying Provider", async () => {
+  for (const interruptResult of [
+    { kind: "not_sent", effect: "none", code: "capability_unavailable" },
+    { kind: "rejected", effect: "none", code: -32_000 },
+    { kind: "ambiguous", effect: "unknown", code: "timeout" },
+    { kind: "connection_failure", effect: "unknown", code: "process_exited" },
+  ] as const) {
+    const fixture = eventFixture({ interruptResult });
+    const handle = fixture.service.register(dispatch(), fixture.control);
+    assert.ok(handle);
+    await handle.settleStartTurn(acceptedTurn("turn-1"));
+    const reservation = await reserveCancel(fixture);
+    fixture.service.cancelOwner.handoff(cancelHandoff(reservation));
+    await waitFor(() => fixture.interruptInputs.length === 1);
+    await handle.done;
+
+    assert.equal(fixture.interruptInputs.length, 1);
+    assert.equal(fixture.terminals.length, 1);
+    assert.equal(fixture.terminals[0]?.outcome.kind, "interrupted");
+    assert.deepEqual(fixture.terminals[0]?.cancelCorrelation, { kind: "none" });
+    assert.equal(fixture.terminalized.length, 0);
+
+    await fixture.service.accept("codex-1", terminalEvent());
+    assert.equal(fixture.terminals.length, 1);
+  }
+});
+
+test("a matching interrupted terminal acknowledges the admitted user cancel", async () => {
+  const fixture = eventFixture();
+  const handle = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(handle);
+  await handle.settleStartTurn(acceptedTurn("turn-1"));
+  const reservation = await reserveCancel(fixture);
+  fixture.service.cancelOwner.handoff(cancelHandoff(reservation));
+  await waitFor(() => fixture.interruptInputs.length === 1);
+
+  await fixture.service.accept("codex-1", terminalEvent("interrupted"));
+  await handle.done;
+
+  assert.equal(fixture.terminals.length, 1);
+  assert.deepEqual(fixture.terminals[0]?.outcome, { kind: "canceled" });
+  assert.deepEqual(fixture.terminals[0]?.cancelCorrelation, {
+    kind: "admitted_user_cancel",
+    cancelRequestedAt: 10,
+  });
+});
+
+test("an interrupted terminal waits for durable cancel handoff before choosing its outcome", async () => {
+  const fixture = eventFixture();
+  const handle = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(handle);
+  await handle.settleStartTurn(acceptedTurn("turn-1"));
+  const reservation = await reserveCancel(fixture);
+
+  const terminal = fixture.service.accept("codex-1", terminalEvent("interrupted"));
+  assert.equal(await isSettled(terminal), false);
+
+  fixture.service.cancelOwner.handoff(cancelHandoff(reservation));
+  await terminal;
+  await handle.done;
+
+  assert.equal(fixture.interruptInputs.length, 0);
+  assert.deepEqual(fixture.terminals[0]?.outcome, { kind: "canceled" });
+  assert.deepEqual(fixture.terminals[0]?.cancelCorrelation, {
+    kind: "admitted_user_cancel",
+    cancelRequestedAt: 10,
+  });
+});
+
+test("an interrupted terminal recovers durable cancel correlation after admission response loss", async () => {
+  const fixture = eventFixture({
+    persistedRunCancel: { phase: "canceling", requestedAt: 11 },
+  });
+  const handle = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(handle);
+  await handle.settleStartTurn(acceptedTurn("turn-1"));
+  const reservation = await reserveCancel(fixture);
+
+  const terminal = fixture.service.accept("codex-1", terminalEvent("interrupted"));
+  assert.equal(await isSettled(terminal), false);
+
+  fixture.service.cancelOwner.release(reservation);
+  await terminal;
+  await handle.done;
+
+  assert.equal(fixture.interruptInputs.length, 0);
+  assert.deepEqual(fixture.terminals[0]?.outcome, { kind: "canceled" });
+  assert.deepEqual(fixture.terminals[0]?.cancelCorrelation, {
+    kind: "admitted_user_cancel",
+    cancelRequestedAt: 11,
+  });
+});
+
+test("an interrupted terminal recovers durable cancel correlation after the lost admission releases its owner", async () => {
+  const fixture = eventFixture({
+    persistedRunCancel: { phase: "canceling", requestedAt: 12 },
+  });
+  const handle = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(handle);
+  await handle.settleStartTurn(acceptedTurn("turn-1"));
+  const reservation = await reserveCancel(fixture);
+
+  fixture.service.cancelOwner.release(reservation);
+  await fixture.service.accept("codex-1", terminalEvent("interrupted"));
+  await handle.done;
+
+  assert.equal(fixture.interruptInputs.length, 0);
+  assert.deepEqual(fixture.terminals[0]?.outcome, { kind: "canceled" });
+  assert.deepEqual(fixture.terminals[0]?.cancelCorrelation, {
+    kind: "admitted_user_cancel",
+    cancelRequestedAt: 12,
+  });
+});
+
+test("an interrupted terminal remains uncorrelated when cancel admission did not commit", async () => {
+  const fixture = eventFixture();
+  const handle = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(handle);
+  await handle.settleStartTurn(acceptedTurn("turn-1"));
+  const reservation = await reserveCancel(fixture);
+
+  const terminal = fixture.service.accept("codex-1", terminalEvent("interrupted"));
+  assert.equal(await isSettled(terminal), false);
+
+  fixture.service.cancelOwner.release(reservation);
+  await terminal;
+  await handle.done;
+
+  assert.deepEqual(fixture.terminals[0]?.outcome, {
+    kind: "interrupted",
+    failureOrigin: "provider",
+    providerErrorCode: null,
+    errorSummary: "Provider execution was interrupted.",
+  });
+  assert.deepEqual(fixture.terminals[0]?.cancelCorrelation, { kind: "none" });
+});
+
+test("a matching canceled terminal retries only its frozen correlation after response loss", async () => {
+  const fixture = eventFixture({ terminalUnknownCount: 2 });
+  const handle = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(handle);
+  await handle.settleStartTurn(acceptedTurn("turn-1"));
+  const reservation = await reserveCancel(fixture);
+  fixture.service.cancelOwner.handoff(cancelHandoff(reservation));
+  await waitFor(() => fixture.interruptInputs.length === 1);
+
+  await fixture.service.accept("codex-1", terminalEvent("interrupted"));
+  await handle.done;
+
+  assert.equal(fixture.terminals.length, 3);
+  assert.ok(
+    fixture.terminals.every(
+      (command) =>
+        command.outcome.kind === "canceled" &&
+        command.cancelCorrelation.kind === "admitted_user_cancel" &&
+        JSON.stringify(command) === JSON.stringify(fixture.terminals[0]),
+    ),
+  );
+  assert.equal(fixture.interruptInputs.length, 1);
+});
+
+test("cancel terminal waits for a frozen output persistence retry before acknowledging", async () => {
+  const fixture = eventFixture({ outputUnknownCount: 2 });
+  const handle = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(handle);
+  await handle.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept("codex-1", itemOutput("item-before-cancel", "persist me", "reasoning"));
+  const reservation = await reserveCancel(fixture);
+  fixture.service.cancelOwner.handoff(cancelHandoff(reservation));
+  await waitFor(() => fixture.interruptInputs.length === 1);
+
+  await fixture.service.accept("codex-1", terminalEvent("interrupted"));
+  await handle.done;
+
+  assert.equal(fixture.outputs.length, 3);
+  assert.ok(fixture.outputs.every((command) => JSON.stringify(command) === JSON.stringify(fixture.outputs[0])));
+  assert.equal(fixture.terminals.length, 1);
+  assert.equal(fixture.terminals[0]?.outcome.kind, "canceled");
+});
+
+test("wrong-Turn and old-generation interruption evidence cannot acknowledge a user cancel", async () => {
+  const fixture = eventFixture();
+  const handle = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(handle);
+  await handle.settleStartTurn(acceptedTurn("turn-1"));
+  const reservation = await reserveCancel(fixture);
+  fixture.service.cancelOwner.handoff(cancelHandoff(reservation));
+  await waitFor(() => fixture.interruptInputs.length === 1);
+
+  await fixture.service.accept("codex-old", terminalEvent("interrupted"));
+  await fixture.service.accept("codex-1", {
+    ...terminalEvent("interrupted"),
+    turnId: "turn-other",
+  });
+  await fixture.service.releaseGeneration("codex-1", { kind: "shutdown" });
+  await handle.done;
+
+  assert.equal(fixture.terminals.length, 1);
+  assert.equal(fixture.terminals[0]?.outcome.kind, "interrupted");
+  assert.deepEqual(fixture.terminals[0]?.cancelCorrelation, { kind: "none" });
+});
+
+test("queued actual terminal evidence wins over a later non-accepted interrupt response", async () => {
+  for (const scenario of [
+    {
+      status: "interrupted",
+      interruptResult: { kind: "rejected", effect: "none", code: -32_000 },
+      expected: "canceled",
+    },
+    {
+      status: "completed",
+      interruptResult: { kind: "ambiguous", effect: "unknown", code: "timeout" },
+      expected: "completed",
+    },
+    {
+      status: "failed",
+      interruptResult: { kind: "not_sent", effect: "none", code: "capability_unavailable" },
+      expected: "failed",
+    },
+  ] as const) {
+    let settleInterrupt!: (
+      value: Awaited<ReturnType<NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>>>,
+    ) => void;
+    const fixture = eventFixture({
+      interruptOperation: () =>
+        new Promise((resolve) => {
+          settleInterrupt = resolve;
+        }),
+    });
+    const handle = fixture.service.register(dispatch(), fixture.control);
+    assert.ok(handle);
+    await handle.settleStartTurn(acceptedTurn("turn-1"));
+    const reservation = await reserveCancel(fixture);
+    fixture.service.cancelOwner.handoff(cancelHandoff(reservation));
+    await waitFor(() => fixture.interruptInputs.length === 1);
+
+    const terminal = fixture.service.accept("codex-1", terminalEvent(scenario.status));
+    settleInterrupt(scenario.interruptResult);
+    await terminal;
+    await handle.done;
+
+    assert.equal(fixture.interruptInputs.length, 1);
+    assert.equal(fixture.terminals.length, 1);
+    assert.equal(fixture.terminals[0]?.outcome.kind, scenario.expected);
+    assert.deepEqual(
+      fixture.terminals[0]?.cancelCorrelation,
+      scenario.expected === "canceled" ? { kind: "admitted_user_cancel", cancelRequestedAt: 10 } : { kind: "none" },
+    );
+  }
+});
+
+test("cancel handoff releases a reserved supplemental input before either Provider mutation", async () => {
+  const fixture = eventFixture();
+  const handle = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(handle);
+  await handle.settleStartTurn(acceptedTurn("turn-1"));
+  const input = await reserveInput(fixture);
+  const cancel = await reserveCancel(fixture);
+
+  fixture.service.cancelOwner.handoff(cancelHandoff(cancel));
+  fixture.service.handoff(inputHandoff(input, "input-message-after-cancel", 2));
+  await waitFor(() => fixture.interruptInputs.length === 1);
+  await fixture.service.accept("codex-1", terminalEvent("interrupted"));
+  await handle.done;
+
+  assert.equal(fixture.inputBegins.length, 0);
+  assert.equal(fixture.steerInputs.length, 0);
+  assert.equal(fixture.terminals[0]?.outcome.kind, "canceled");
+});
+
 async function activateInputOwner(
   fixture: ReturnType<typeof eventFixture>,
   preparedDispatch = dispatch(),
@@ -1387,6 +1731,26 @@ async function activateInputOwner(
   const handle = fixture.service.register(preparedDispatch, fixture.control);
   assert.ok(handle);
   await handle.settleStartTurn(acceptedTurn("turn-1"));
+}
+
+async function reserveCancel(fixture: ReturnType<typeof eventFixture>, signal?: AbortSignal) {
+  const result = await fixture.service.cancelOwner.preflight(
+    { sessionId: "session-1", runId: "run-1" },
+    signal === undefined ? undefined : { signal },
+  );
+  assert.equal(result.ok, true);
+  if (!result.ok || result.value.kind !== "active_execution") throw new Error("cancel reservation failed");
+  return result.value.reservation;
+}
+
+function cancelHandoff(reservation: Awaited<ReturnType<typeof reserveCancel>>) {
+  return {
+    reservation,
+    sessionId: reservation.sessionId,
+    runId: reservation.runId,
+    idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000902",
+    cancelRequestedAt: 10,
+  };
 }
 
 async function reserveInput(fixture: ReturnType<typeof eventFixture>, signal?: AbortSignal) {
@@ -1418,12 +1782,12 @@ function inputHandoff(
   };
 }
 
-function terminalEvent() {
+function terminalEvent(status: "completed" | "failed" | "interrupted" = "completed") {
   return {
     kind: "turn_terminal",
     threadId: "thread-1",
     turnId: "turn-1",
-    status: "completed",
+    status,
     finalAssistantMessage: null,
     contentFailure: null,
   } as const;
@@ -1456,8 +1820,12 @@ function eventFixture(
     ) => ReturnType<ApplicationRunEventWritePort["resolveRunInput"]>;
     steerResult?: Awaited<ReturnType<NonNullable<ApplicationRunProviderAdapterPort["steerTurn"]>>>;
     steerOperation?: NonNullable<ApplicationRunProviderAdapterPort["steerTurn"]>;
+    interruptResult?: Awaited<ReturnType<NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>>>;
+    interruptOperation?: NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>;
+    receiverSensitiveInterrupt?: boolean;
     isCurrent?: () => boolean;
     afterInputBegin?: () => void;
+    persistedRunCancel?: Readonly<{ phase: "active" } | { phase: "canceling"; requestedAt: number }>;
     limits?: Readonly<{
       maxTrackedAttempts?: number;
       maxBufferedEventsPerAttempt?: number;
@@ -1482,6 +1850,8 @@ function eventFixture(
   const committedInputMessages = new Set<string>();
   let inputResolutionCalls = 0;
   const steerInputs: Parameters<NonNullable<ApplicationRunProviderAdapterPort["steerTurn"]>>[0][] = [];
+  const interruptInputs: Parameters<NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>>[0][] = [];
+  const interruptSignals: (AbortSignal | undefined)[] = [];
   const resolutionCallsByOutcome: Record<RunDispatchResolutionCommand["outcome"]["kind"], number> = {
     accepted: 0,
     rejected: 0,
@@ -1514,13 +1884,15 @@ function eventFixture(
       };
     },
     async runGet(input) {
+      const cancel = options.persistedRunCancel ?? { phase: "active" as const };
       return {
         sessionId: input.sessionId,
         workspaceKey: input.workspaceKey,
         run: {
           id: input.runId,
           sessionId: input.sessionId,
-          phase: "active",
+          phase: cancel.phase,
+          ...(cancel.phase === "canceling" ? { cancelRequestedAt: cancel.requestedAt } : {}),
           version: 7,
         },
       } as never;
@@ -1656,6 +2028,23 @@ function eventFixture(
           }
         );
       },
+      async interruptTurn(input, operationOptions) {
+        if (options.receiverSensitiveInterrupt === true && this !== control.adapter) {
+          throw new TypeError("Provider Adapter receiver was lost.");
+        }
+        interruptInputs.push(input);
+        interruptSignals.push(operationOptions?.signal);
+        if (options.interruptOperation !== undefined) {
+          return options.interruptOperation(input, operationOptions);
+        }
+        return (
+          options.interruptResult ?? {
+            kind: "accepted",
+            effect: "present",
+            value: { threadId: input.threadId, turnId: input.turnId, terminal: false },
+          }
+        );
+      },
     } as ApplicationRunProviderAdapterPort,
     signal: new AbortController().signal,
     isCurrent: options.isCurrent ?? (() => true),
@@ -1677,6 +2066,8 @@ function eventFixture(
     inputResolutions,
     inputDeliveryStates,
     steerInputs,
+    interruptInputs,
+    interruptSignals,
     outputs,
     terminals,
     terminalized,

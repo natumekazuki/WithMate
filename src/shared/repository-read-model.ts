@@ -1,6 +1,11 @@
 import { MAX_PERSISTENCE_RESPONSE_BYTES } from "./persistence-protocol.js";
 import type { LocalRepositoryMetadata } from "./session-metadata.js";
-import type { RepositoryCommandError, RunInputAdmissionResult, RunOutputCategory } from "./repository-write-model.js";
+import type {
+  RepositoryCommandError,
+  RunCancelAdmissionResult,
+  RunInputAdmissionResult,
+  RunOutputCategory,
+} from "./repository-write-model.js";
 import type { TextContentBlock } from "./message-content.js";
 
 export const REPOSITORY_READ_OPERATIONS = {
@@ -20,6 +25,7 @@ export const REPOSITORY_READ_OPERATIONS = {
   runOutputPayloadMetadata: "repository.run.output.payload-metadata",
   runInputDeliveriesPage: "repository.run.input-deliveries.page",
   runInputReplayProbe: "repository.run.input-replay.probe",
+  runCancelReplayProbe: "repository.run.cancel-replay.probe",
   payloadChunk: "payload.read_chunk",
   childResultsPage: "repository.child-results.page",
   sessionDeletionStatusGet: "repository.session-deletion.status.get",
@@ -214,6 +220,17 @@ export type RunInputReplayProbeRequest = Readonly<{
 export type RunInputReplayProbeResult =
   | Readonly<{ kind: "absent" }>
   | Readonly<{ kind: "replay"; value: RunInputAdmissionResult }>
+  | Readonly<{ kind: "failure"; error: RepositoryCommandError }>;
+
+export type RunCancelReplayProbeRequest = Readonly<{
+  sessionId: string;
+  runId: string;
+  idempotencyKey: string;
+}>;
+
+export type RunCancelReplayProbeResult =
+  | Readonly<{ kind: "absent" }>
+  | Readonly<{ kind: "replay"; value: RunCancelAdmissionResult }>
   | Readonly<{ kind: "failure"; error: RepositoryCommandError }>;
 
 export type ChildResultListItem = Readonly<{

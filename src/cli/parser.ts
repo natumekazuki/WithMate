@@ -60,6 +60,7 @@ const runOperations = new Set<CliRunOperation>([
   "start",
   "retry",
   "send-input",
+  "cancel",
   "status",
   "events",
   "follow",
@@ -160,6 +161,8 @@ function parseRunCommand(identity: CliCommandIdentity<CliRunOperation>, argv: re
       return parseRunRetry(identity as CliCommandIdentity<"retry">, argv);
     case "send-input":
       return parseRunSendInput(identity as CliCommandIdentity<"send-input">, argv);
+    case "cancel":
+      return parseRunCancel(identity as CliCommandIdentity<"cancel">, argv);
     case "status":
       return parseRunStatus(identity as CliCommandIdentity<"status">, argv);
     case "events":
@@ -230,6 +233,26 @@ function parseRunSendInput(identity: CliCommandIdentity<"send-input">, argv: rea
       contentBlocks: parsed.values["--content-blocks-json"] as NonNullable<
         ReturnType<typeof snapshotMessageContentBlocks>
       >,
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
+function parseRunCancel(identity: CliCommandIdentity<"cancel">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--run-id": requiredOption(parseIdentifier),
+    "--idempotency-key": requiredOption(parseUuid),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      runId: parsed.values["--run-id"] as string,
+      idempotencyKey: parsed.values["--idempotency-key"] as string,
       ...optionalTimeout(parsed.values),
     },
   };

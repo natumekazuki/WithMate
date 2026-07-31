@@ -75,6 +75,16 @@ export async function dispatchCliRunCommand<TAuthorizationContext>(
         },
         options,
       );
+    } else if (isCommandFor(command, "cancel")) {
+      response = await dependencies.operations.cancel(
+        {
+          context,
+          sessionId: command.sessionId,
+          runId: command.runId,
+          idempotencyKey: command.idempotencyKey,
+        },
+        options,
+      );
     } else if (isCommandFor(command, "status")) {
       response = await dependencies.operations.status(
         { context, sessionId: command.sessionId, runId: command.runId },

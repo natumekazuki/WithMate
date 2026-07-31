@@ -161,6 +161,16 @@ export async function dispatchRuntimeApplicationOperation(
         },
         options,
       );
+    case "run.cancel":
+      return await application.runOperations.cancel(
+        {
+          context,
+          sessionId: stringField(payload, "sessionId"),
+          runId: stringField(payload, "runId"),
+          idempotencyKey: stringField(payload, "idempotencyKey"),
+        },
+        options,
+      );
     case "run.status":
     case "run.output_counts": {
       const request = {

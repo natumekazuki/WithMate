@@ -46,6 +46,7 @@ export const RUNTIME_IPC_OPERATIONS = [
   "run.start",
   "run.retry",
   "run.send_input",
+  "run.cancel",
   "run.status",
   "run.events",
   "run.follow",
@@ -262,6 +263,8 @@ export function snapshotRuntimeOperationPayload(
       return snapshotRunRetry(value);
     case "run.send_input":
       return snapshotRunSendInput(value);
+    case "run.cancel":
+      return snapshotRunCancel(value);
     case "run.status":
     case "run.output_counts":
       return snapshotRunScope(value);
@@ -647,6 +650,18 @@ function snapshotRunSendInput(value: unknown): RuntimeIpcOperationPayload {
     runId: payload.runId,
     idempotencyKey: payload.idempotencyKey,
     contentBlocks,
+  };
+}
+
+function snapshotRunCancel(value: unknown): RuntimeIpcOperationPayload {
+  const payload = exactPayload(value, ["sessionId", "runId", "idempotencyKey"]);
+  if (!isIdentifier(payload.sessionId) || !isIdentifier(payload.runId) || !isCanonicalUuid(payload.idempotencyKey)) {
+    invalid();
+  }
+  return {
+    sessionId: payload.sessionId,
+    runId: payload.runId,
+    idempotencyKey: payload.idempotencyKey,
   };
 }
 

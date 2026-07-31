@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -1368,8 +1369,82 @@ repositoryTest("recovery projections hide an ephemeral Binding created by anothe
   });
 });
 
-function operationFor(database: DatabaseSync, name: string) {
-  const operation = createRepositoryReadOperations(database).get(name);
+repositoryTest("run.cancel replay probe returns the current durable Run outcome with strict expiry", () => {
+  withDatabase((database) => {
+    insertSession(database, "session-1", 1);
+    insertMessage(database, "message-1", "session-1", 1, "[]");
+    insertRun(database, "run-1", "session-1", "message-1", "completed", 30);
+    database.prepare("UPDATE runs SET cancel_requested_at = 10 WHERE id = 'run-1'").run();
+    const key = "018f1f4e-7f0a-7000-8000-000000000905";
+    const fingerprint = createHash("sha256")
+      .update(
+        JSON.stringify({
+          operation: "run.cancel.admit",
+          sessionId: "session-1",
+          workspaceKey: "workspace",
+          runId: "run-1",
+        }),
+      )
+      .digest("hex");
+    database
+      .prepare(
+        `
+        INSERT INTO idempotency_records (
+          idempotency_key, scope_session_id, operation, request_fingerprint, record_state,
+          response_kind, response_ref_type, response_ref_id, response_envelope_json,
+          created_at, completed_at, expires_at
+        ) VALUES (?, 'session-1', 'run.cancel.admit', ?, 'completed',
+          'success', 'run', 'run-1', ?, 1, 2, 100)
+      `,
+      )
+      .run(
+        key,
+        fingerprint,
+        JSON.stringify({
+          sessionId: "session-1",
+          runId: "run-1",
+          phase: "canceling",
+          cancelRequestedAt: 10,
+          cancelAcknowledgedAt: null,
+          terminalAt: null,
+        }),
+      );
+
+    const probe = operationFor(database, "repository.run.cancel-replay.probe", () => 50);
+    assert.deepEqual(probe({ sessionId: "session-1", runId: "run-1", idempotencyKey: key }), {
+      kind: "replay",
+      value: {
+        sessionId: "session-1",
+        runId: "run-1",
+        phase: "completed",
+        cancelRequestedAt: 10,
+        cancelAcknowledgedAt: null,
+        terminalAt: 30,
+      },
+    });
+    assert.deepEqual(
+      probe({
+        sessionId: "session-1",
+        runId: "run-1",
+        idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000906",
+      }),
+      { kind: "absent" },
+    );
+    const expired = operationFor(database, "repository.run.cancel-replay.probe", () => 100);
+    assert.equal(
+      (
+        expired({ sessionId: "session-1", runId: "run-1", idempotencyKey: key }) as {
+          kind: string;
+          error: { code: string };
+        }
+      ).error.code,
+      "idempotency_expired",
+    );
+  });
+});
+
+function operationFor(database: DatabaseSync, name: string, clock: () => number = Date.now) {
+  const operation = createRepositoryReadOperations(database, { clock }).get(name);
   assert.ok(operation);
   return (payload: Readonly<Record<string, unknown>>) => operation.execute(payload).result;
 }

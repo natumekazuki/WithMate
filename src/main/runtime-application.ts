@@ -117,6 +117,7 @@ export async function startRuntimeApplication(
         snapshotAuthorization,
         handoff: runRuntime,
         inputOwner: runEvents,
+        cancelOwner: runEvents.cancelOwner,
         liveActivity: runEvents,
       }),
       runOutputOperations: createApplicationRunOutputOperations(client, { access, snapshotAuthorization }),
