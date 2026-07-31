@@ -98,6 +98,7 @@ export type CliRunOperation =
   | "start"
   | "retry"
   | "send-input"
+  | "cancel"
   | "status"
   | "events"
   | "follow"
@@ -242,6 +243,14 @@ export type CliRunSendInputCommand = CliTimeoutOption &
     contentBlocks: readonly TextContentBlock[];
   }>;
 
+export type CliRunCancelCommand = CliTimeoutOption &
+  Readonly<{
+    identity: CliCommandIdentity<"cancel">;
+    sessionId: string;
+    runId: string;
+    idempotencyKey: string;
+  }>;
+
 export type CliRunStatusCommand = CliTimeoutOption &
   Readonly<{
     identity: CliCommandIdentity<"status">;
@@ -313,6 +322,7 @@ export type CliValidatedRunCommand =
   | CliRunStartCommand
   | CliRunRetryCommand
   | CliRunSendInputCommand
+  | CliRunCancelCommand
   | CliRunStatusCommand
   | CliRunEventsCommand
   | CliRunFollowCommand
@@ -752,10 +762,17 @@ export type CliRunFailureSummary = Readonly<{
   summary?: string;
 }>;
 
-export type CliRunCancellationSummary = Readonly<{
+export type CliRunCancellationRequestSummary = Readonly<{
   requestedAt: number;
-  acknowledgedAt?: number;
+  acknowledgedAt?: never;
 }>;
+
+export type CliRunCancellationAcknowledgementSummary = Readonly<{
+  requestedAt: number;
+  acknowledgedAt: number;
+}>;
+
+export type CliRunCancellationSummary = CliRunCancellationRequestSummary | CliRunCancellationAcknowledgementSummary;
 
 type CliSessionRunItemBase = Readonly<{
   runId: string;
@@ -783,14 +800,14 @@ export type CliSessionRunItem =
         finalAssistantMessageId?: never;
         terminalAt?: never;
         failure?: never;
-        cancellation?: CliRunCancellationSummary;
+        cancellation: CliRunCancellationRequestSummary;
       }>)
   | (CliSessionRunItemBase &
       Readonly<{
         phase: "completed";
         terminalAt: number;
         failure?: never;
-        cancellation?: never;
+        cancellation?: CliRunCancellationRequestSummary;
       }>)
   | (CliSessionRunItemBase &
       Readonly<{
@@ -798,7 +815,7 @@ export type CliSessionRunItem =
         finalAssistantMessageId?: never;
         terminalAt: number;
         failure: CliRunFailureSummary;
-        cancellation?: CliRunCancellationSummary;
+        cancellation?: CliRunCancellationRequestSummary;
       }>)
   | (CliSessionRunItemBase &
       Readonly<{
@@ -806,7 +823,7 @@ export type CliSessionRunItem =
         finalAssistantMessageId?: never;
         terminalAt: number;
         failure?: never;
-        cancellation?: CliRunCancellationSummary;
+        cancellation?: CliRunCancellationAcknowledgementSummary;
       }>);
 
 export type CliSessionRunsValue = Readonly<{
@@ -846,7 +863,7 @@ type CliRunCancelingStatus = CliRunStatusBase &
   Readonly<{
     phase: "canceling";
     liveActivity: null;
-    cancellation?: CliRunCancellationSummary;
+    cancellation: CliRunCancellationRequestSummary;
     failure?: never;
     terminalAt?: never;
   }>;
@@ -857,7 +874,7 @@ type CliRunCompletedStatus = CliRunStatusBase &
     liveActivity: null;
     terminalAt: number;
     failure?: never;
-    cancellation?: never;
+    cancellation?: CliRunCancellationRequestSummary;
   }>;
 
 type CliRunFailedStatus = CliRunStatusBase &
@@ -866,7 +883,7 @@ type CliRunFailedStatus = CliRunStatusBase &
     liveActivity: null;
     terminalAt: number;
     failure: CliRunFailureSummary;
-    cancellation?: CliRunCancellationSummary;
+    cancellation?: CliRunCancellationRequestSummary;
   }>;
 
 type CliRunCanceledStatus = CliRunStatusBase &
@@ -874,7 +891,7 @@ type CliRunCanceledStatus = CliRunStatusBase &
     phase: "canceled";
     liveActivity: null;
     terminalAt: number;
-    cancellation?: CliRunCancellationSummary;
+    cancellation?: CliRunCancellationAcknowledgementSummary;
     failure?: never;
   }>;
 
@@ -885,6 +902,11 @@ export type CliRunStatusValue =
   | CliRunCompletedStatus
   | CliRunFailedStatus
   | CliRunCanceledStatus;
+
+export type CliRunCancelValue = Extract<
+  CliRunStatusValue,
+  Readonly<{ phase: "canceling" | "completed" | "failed" | "canceled" | "interrupted" }>
+>;
 
 export type CliRunEvent = Readonly<{
   ordinal: number;
@@ -1161,6 +1183,7 @@ type CliRunOperationContract = {
   start: Readonly<{ mode: "write"; value: CliRunAdmissionValue }>;
   retry: Readonly<{ mode: "write"; value: CliRunAdmissionValue }>;
   "send-input": Readonly<{ mode: "write"; value: CliRunInputValue }>;
+  cancel: Readonly<{ mode: "write"; value: CliRunCancelValue }>;
   status: Readonly<{ mode: "read"; value: CliRunStatusValue }>;
   events: Readonly<{ mode: "read"; value: CliRunEventsValue }>;
   follow: Readonly<{ mode: "read"; value: CliRunFollowValue }>;

@@ -42,6 +42,8 @@ import {
   type RunInputResolutionCode,
   type RunInputResolutionCommand,
   type RunInputResolutionResult,
+  type RunCancelAdmissionCommand,
+  type RunCancelAdmissionResult,
   type RunOutputAppendCommand,
   type RunOutputAppendResult,
   type RunOutputDraft,
@@ -66,6 +68,7 @@ import {
   type SessionUpdateTitleResult,
 } from "../shared/repository-write-model.js";
 import { executeWriteTransaction } from "./request-executor.js";
+import { prepareRunCancelIdempotency, projectRunCancelAdmissionResult } from "./run-cancel-idempotency.js";
 import { prepareRunInputIdempotency } from "./run-input-idempotency.js";
 
 export const DEFAULT_IDEMPOTENCY_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -341,6 +344,18 @@ export function createRepositoryWriteOperations(
           const now = readClock(clock);
           return executeWriteTransaction(database, () =>
             resolveRunInput(database, command, now, ephemeralBindingOwners),
+          );
+        }),
+      ),
+    ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.runCancelAdmit,
+      write((payload) =>
+        runDecoded(decodeRunCancelAdmission(payload), (command) => {
+          const prepared = prepareRunCancelIdempotency(command);
+          const now = readClock(clock);
+          return executeWriteTransaction(database, () =>
+            admitRunCancel(database, command, prepared.fingerprint, now, retentionMs, ephemeralBindingOwners),
           );
         }),
       ),
@@ -2576,6 +2591,139 @@ function admitRunInput(
   return success(value, false);
 }
 
+function admitRunCancel(
+  database: DatabaseSync,
+  command: RunCancelAdmissionCommand,
+  fingerprint: string,
+  now: number,
+  retentionMs: number,
+  ephemeralBindingOwners: ReadonlyMap<string, string>,
+): RepositoryCommandResult<RunCancelAdmissionResult> {
+  const idempotency = checkIdempotency<RunCancelAdmissionResult>(
+    database,
+    command.idempotencyKey,
+    "run.cancel.admit",
+    fingerprint,
+    command.sessionId,
+    "run",
+    command.runId,
+    now,
+    (value, responseRefId) => decodeRunCancelAdmissionReplay(value, responseRefId, command.sessionId),
+  );
+  if (idempotency.kind !== "new") {
+    if (idempotency.kind === "replay" && idempotency.result.ok) {
+      const current = readRunCancelAdmissionResult(database, command.sessionId, command.runId);
+      return current === undefined
+        ? failure("reference_invalid", "Idempotent Run cancel response is invalid.")
+        : success(current, true);
+    }
+    return idempotency.result;
+  }
+
+  const run = readRunCancelScope(database, command.sessionId, command.workspaceKey, command.runId);
+  if (run === undefined) return failure("not_found", "Run cancel target was not found.");
+  if (isTerminalRunPhase(run.phase)) {
+    const current = runCancelAdmissionValue(command.sessionId, command.runId, run);
+    if (current === undefined) return failure("reference_invalid", "Run cancellation state is invalid.");
+    completeIdempotency(
+      database,
+      command.idempotencyKey,
+      command.sessionId,
+      "run.cancel.admit",
+      fingerprint,
+      "run",
+      command.runId,
+      current,
+      now,
+      retentionMs,
+    );
+    return success(current, false);
+  }
+  if (run.phase !== "active" || command.owner.kind !== "active_execution") {
+    return failure("lifecycle_conflict", "Run cancel admission Gate is not satisfied.");
+  }
+
+  const owner = database
+    .prepare(
+      `
+      SELECT a.id AS attempt_id, a.attempt_state, a.provider_binding_id, a.external_execution_id,
+        b.persistence_mode, b.binding_state, b.external_conversation_id,
+        d.dispatch_state
+      FROM sessions s
+      JOIN runs r ON r.session_id = s.id AND r.id = ?
+      JOIN run_attempts a ON a.run_id = r.id AND a.id = ?
+      JOIN provider_bindings b ON b.id = a.provider_binding_id
+        AND b.session_id = s.id AND b.provider_id = s.provider_id
+        AND EXISTS (
+          SELECT 1
+          FROM run_attempts creator_a
+          JOIN runs creator_r ON creator_r.id = creator_a.run_id
+          WHERE creator_a.id = b.created_by_run_attempt_id
+            AND creator_r.session_id = s.id
+        )
+        AND (b.persistence_mode = 'persistent' OR b.created_by_run_attempt_id = a.id)
+      JOIN run_dispatches d ON d.run_attempt_id = a.id
+      WHERE s.id = ? AND s.workspace_key = ? AND s.lifecycle_status = 'active'
+    `,
+    )
+    .get(command.runId, command.owner.attemptId, command.sessionId, command.workspaceKey) as
+    RunCancelOwnerRow | undefined;
+  if (
+    owner === undefined ||
+    owner.attempt_state !== "active" ||
+    owner.provider_binding_id !== command.owner.bindingId ||
+    owner.binding_state !== "active" ||
+    owner.dispatch_state !== "accepted" ||
+    owner.external_conversation_id !== command.owner.externalConversationId ||
+    owner.external_execution_id !== command.owner.externalExecutionId
+  ) {
+    return failure("lifecycle_conflict", "Run cancel live execution ownership is unavailable.");
+  }
+  const ownershipFailure = validateDispatchOwnership<RunCancelAdmissionResult>(
+    command.owner.bindingId,
+    command.owner.ephemeralOwnerToken,
+    owner,
+    ephemeralBindingOwners,
+  );
+  if (ownershipFailure !== undefined) return ownershipFailure;
+
+  const update = database
+    .prepare(
+      `
+      UPDATE runs
+      SET phase = 'canceling', cancel_requested_at = ?, cancel_acknowledged_at = NULL,
+        updated_at = MAX(updated_at, ?), version = version + 1
+      WHERE id = ? AND session_id = ? AND phase = 'active'
+        AND cancel_requested_at IS NULL AND cancel_acknowledged_at IS NULL AND terminal_at IS NULL
+    `,
+    )
+    .run(now, now, command.runId, command.sessionId);
+  if (update.changes !== 1) return failure("lifecycle_conflict", "Run cancel admission conflicted.");
+  advanceSessionActivity(database, command.sessionId, run.session_updated_at, run.last_activity_at, now);
+
+  const value: RunCancelAdmissionResult = {
+    sessionId: command.sessionId,
+    runId: command.runId,
+    phase: "canceling",
+    cancelRequestedAt: now,
+    cancelAcknowledgedAt: null,
+    terminalAt: null,
+  };
+  completeIdempotency(
+    database,
+    command.idempotencyKey,
+    command.sessionId,
+    "run.cancel.admit",
+    fingerprint,
+    "run",
+    command.runId,
+    value,
+    now,
+    retentionMs,
+  );
+  return success(value, false);
+}
+
 function beginRunInput(
   database: DatabaseSync,
   command: RunInputBeginCommand,
@@ -2835,7 +2983,8 @@ function terminalRun(
     .prepare(
       `
       SELECT r.phase, r.final_assistant_message_id, r.failure_origin, r.provider_error_code,
-             r.error_summary, r.terminal_at, a.attempt_state, s.workspace_key,
+             r.error_summary, r.cancel_requested_at, r.cancel_acknowledged_at, r.terminal_at,
+             a.attempt_state, s.workspace_key,
              s.provider_id AS session_provider_id,
              s.updated_at AS session_updated_at, s.last_activity_at AS session_last_activity_at,
              a.provider_binding_id, a.external_execution_id, d.dispatch_state,
@@ -2876,6 +3025,8 @@ function terminalRun(
   }
   const executionFailure = validateTerminalProviderExecution(command, row);
   if (executionFailure !== undefined) return executionFailure;
+  const cancelCorrelationFailure = validateTerminalCancelCorrelation(command, row);
+  if (cancelCorrelationFailure !== undefined) return cancelCorrelationFailure;
   if (isTerminalRunPhase(row.phase)) return replayTerminalRun(database, prepared, row);
   if (!isNonTerminalRunPhase(row.phase)) return failure("lifecycle_conflict", "Run cannot transition to terminal.");
   const failedBeforeActivation =
@@ -2972,6 +3123,9 @@ function terminalRun(
         external_side_effect_state = CASE WHEN ? = 1 THEN
           CASE WHEN external_side_effect_state = 'present' THEN 'present' ELSE 'unknown' END
           ELSE external_side_effect_state END,
+        cancel_acknowledged_at = CASE
+          WHEN ? = 'admitted_user_cancel' AND cancel_requested_at = ? THEN ?
+          ELSE cancel_acknowledged_at END,
         terminal_event_received_at = ?,
         terminal_at = ?, updated_at = ?, version = version + 1
       WHERE id = ? AND session_id = ? AND phase IN ('queued','starting','active','canceling','finalizing')
@@ -2987,6 +3141,9 @@ function terminalRun(
         command.preDispatchResolution.kind === "dispatch_ambiguous"
         ? 1
         : 0,
+      command.cancelCorrelation.kind,
+      command.cancelCorrelation.kind === "admitted_user_cancel" ? command.cancelCorrelation.cancelRequestedAt : null,
+      now,
       now,
       now,
       now,
@@ -3065,6 +3222,34 @@ function validateTerminalProviderExecution(
     correlation.externalExecutionId !== row.external_execution_id
   ) {
     return failure("reference_invalid", "Provider execution correlation does not match the active Run Attempt.");
+  }
+  return undefined;
+}
+
+function validateTerminalCancelCorrelation(
+  command: RunTerminalCommand,
+  row: TerminalGateRow,
+): RepositoryCommandResult<RunTerminalResult> | undefined {
+  const correlation = command.cancelCorrelation;
+  if (correlation.kind === "none") {
+    return command.outcome.kind === "canceled" && row.cancel_requested_at !== null
+      ? failure("request_invalid", "A user-canceled outcome requires durable cancel correlation.")
+      : undefined;
+  }
+  if (
+    command.outcome.kind !== "canceled" ||
+    command.preDispatchResolution.kind !== "not_applicable" ||
+    command.providerExecution === null
+  ) {
+    return failure("request_invalid", "Durable cancel correlation requires an active Provider cancellation.");
+  }
+  if (
+    (row.phase !== "canceling" && row.phase !== "canceled") ||
+    row.cancel_requested_at !== correlation.cancelRequestedAt ||
+    (row.phase === "canceling" && row.cancel_acknowledged_at !== null) ||
+    (row.phase === "canceled" && row.cancel_acknowledged_at === null)
+  ) {
+    return failure("lifecycle_conflict", "Durable cancel correlation does not match the Run cancellation state.");
   }
   return undefined;
 }
@@ -4476,6 +4661,41 @@ function decodeRunInputAdmission(payload: Readonly<Record<string, unknown>>): De
   };
 }
 
+function decodeRunCancelAdmission(payload: Readonly<Record<string, unknown>>): DecodeResult<RunCancelAdmissionCommand> {
+  if (
+    !hasExactKeys(payload, ["sessionId", "workspaceKey", "idempotencyKey", "runId", "owner"]) ||
+    !isBoundedString(payload.sessionId, 1_024) ||
+    !isBoundedString(payload.workspaceKey, 1_024) ||
+    !isCanonicalUuid(payload.idempotencyKey) ||
+    !isBoundedString(payload.runId, 1_024) ||
+    !isPlainObject(payload.owner)
+  ) {
+    return decodeFailure();
+  }
+  const owner = payload.owner;
+  if (owner.kind === "terminal_only") {
+    if (!hasExactKeys(owner, ["kind"])) return decodeFailure();
+  } else if (
+    owner.kind !== "active_execution" ||
+    !hasExactKeys(owner, [
+      "kind",
+      "attemptId",
+      "bindingId",
+      "ephemeralOwnerToken",
+      "externalConversationId",
+      "externalExecutionId",
+    ]) ||
+    !isBoundedString(owner.attemptId, 1_024) ||
+    !isBoundedString(owner.bindingId, 1_024) ||
+    (owner.ephemeralOwnerToken !== null && !isCanonicalUuid(owner.ephemeralOwnerToken)) ||
+    !isBoundedString(owner.externalConversationId, 4_096) ||
+    !isBoundedString(owner.externalExecutionId, 4_096)
+  ) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as RunCancelAdmissionCommand };
+}
+
 function decodeRunInputBegin(payload: Readonly<Record<string, unknown>>): DecodeResult<RunInputBeginCommand> {
   if (
     !hasExactKeys(payload, [
@@ -4589,6 +4809,7 @@ function decodeRunTerminal(payload: Readonly<Record<string, unknown>>): DecodeRe
       "terminalEvent",
       "providerExecution",
       "preDispatchResolution",
+      "cancelCorrelation",
       "outcome",
       "outputs",
       "childResult",
@@ -4603,6 +4824,7 @@ function decodeRunTerminal(payload: Readonly<Record<string, unknown>>): DecodeRe
     !isBoundedString(payload.terminalEvent.dedupeKey, 1024) ||
     !(payload.providerExecution === null || isRunProviderExecutionCorrelation(payload.providerExecution)) ||
     !isRunTerminalPreDispatchResolution(payload.preDispatchResolution) ||
+    !isRunTerminalCancelCorrelation(payload.cancelCorrelation) ||
     outcome === undefined ||
     !isDenseTerminalOutputs(payload.outputs) ||
     !isChildTerminalResult(payload.childResult)
@@ -4964,6 +5186,85 @@ function readRunInputAdmissionResult(
     dispatchingAt: row.dispatching_at,
     resolvedAt: row.resolved_at,
   };
+}
+
+function readRunCancelScope(
+  database: DatabaseSync,
+  sessionId: string,
+  workspaceKey: string,
+  runId: string,
+): RunCancelScopeRow | undefined {
+  return database
+    .prepare(
+      `
+      SELECT s.updated_at AS session_updated_at, s.last_activity_at,
+        r.phase, r.cancel_requested_at, r.cancel_acknowledged_at, r.terminal_at
+      FROM sessions s
+      JOIN runs r ON r.session_id = s.id
+      WHERE s.id = ? AND s.workspace_key = ? AND r.id = ?
+    `,
+    )
+    .get(sessionId, workspaceKey, runId) as RunCancelScopeRow | undefined;
+}
+
+function readRunCancelAdmissionResult(
+  database: DatabaseSync,
+  sessionId: string,
+  runId: string,
+): RunCancelAdmissionResult | undefined {
+  const row = database
+    .prepare(
+      `
+      SELECT s.updated_at AS session_updated_at, s.last_activity_at,
+        r.phase, r.cancel_requested_at, r.cancel_acknowledged_at, r.terminal_at
+      FROM sessions s
+      JOIN runs r ON r.session_id = s.id
+      WHERE s.id = ? AND r.id = ?
+    `,
+    )
+    .get(sessionId, runId) as RunCancelScopeRow | undefined;
+  return row === undefined ? undefined : runCancelAdmissionValue(sessionId, runId, row);
+}
+
+function runCancelAdmissionValue(
+  sessionId: string,
+  runId: string,
+  row: RunCancelScopeRow,
+): RunCancelAdmissionResult | undefined {
+  return projectRunCancelAdmissionResult({
+    sessionId,
+    runId,
+    phase: row.phase,
+    cancelRequestedAt: row.cancel_requested_at,
+    cancelAcknowledgedAt: row.cancel_acknowledged_at,
+    terminalAt: row.terminal_at,
+  });
+}
+
+function decodeRunCancelAdmissionReplay(
+  value: unknown,
+  responseRefId: string,
+  expectedSessionId: string,
+): RunCancelAdmissionResult | undefined {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, ["sessionId", "runId", "phase", "cancelRequestedAt", "cancelAcknowledgedAt", "terminalAt"]) ||
+    value.sessionId !== expectedSessionId ||
+    value.runId !== responseRefId ||
+    typeof value.phase !== "string"
+  ) {
+    return undefined;
+  }
+  const row: RunCancelScopeRow = {
+    session_updated_at: 0,
+    last_activity_at: 0,
+    phase: value.phase as RunCancelScopeRow["phase"],
+    cancel_requested_at: value.cancelRequestedAt as number | null,
+    cancel_acknowledged_at: value.cancelAcknowledgedAt as number | null,
+    terminal_at: value.terminalAt as number | null,
+  };
+  const decoded = runCancelAdmissionValue(expectedSessionId, responseRefId, row);
+  return decoded === undefined ? undefined : (value as unknown as RunCancelAdmissionResult);
 }
 
 function decodeRunInputAdmissionReplay(
@@ -6031,6 +6332,16 @@ function isRunTerminalPreDispatchResolution(value: unknown): value is RunTermina
   );
 }
 
+function isRunTerminalCancelCorrelation(value: unknown): value is RunTerminalCommand["cancelCorrelation"] {
+  if (!isPlainObject(value)) return false;
+  if (value.kind === "none") return hasExactKeys(value, ["kind"]);
+  return (
+    value.kind === "admitted_user_cancel" &&
+    hasExactKeys(value, ["kind", "cancelRequestedAt"]) &&
+    isNonNegativeSafeInteger(value.cancelRequestedAt)
+  );
+}
+
 function snapshotRunTerminalOutcome(value: unknown): RunTerminalCommand["outcome"] | undefined {
   if (!isPlainObject(value) || typeof value.kind !== "string") return undefined;
   if (value.kind === "completed") {
@@ -6377,6 +6688,8 @@ type TerminalGateRow = Readonly<{
   failure_origin: string | null;
   provider_error_code: string | null;
   error_summary: string | null;
+  cancel_requested_at: number | null;
+  cancel_acknowledged_at: number | null;
   terminal_at: number | null;
   attempt_state: string;
   provider_binding_id: string | null;
@@ -6531,6 +6844,22 @@ type RunInputOutcomeRow = Readonly<{
   dispatching_at: number | null;
   resolved_at: number | null;
 }>;
+type RunCancelScopeRow = Readonly<{
+  session_updated_at: number;
+  last_activity_at: number;
+  phase: NonTerminalRunPhase | TerminalRunPhase;
+  cancel_requested_at: number | null;
+  cancel_acknowledged_at: number | null;
+  terminal_at: number | null;
+}>;
+type RunCancelOwnerRow = BindingOwnershipRow &
+  Readonly<{
+    attempt_id: string;
+    attempt_state: "preparing" | "active" | "succeeded" | "failed" | "interrupted";
+    provider_binding_id: string;
+    dispatch_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
+    external_execution_id: string | null;
+  }>;
 type IdempotencyRow = Readonly<{
   scope_session_id: string;
   operation: string;

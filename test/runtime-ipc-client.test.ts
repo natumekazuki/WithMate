@@ -82,10 +82,13 @@ test("runtime IPC client cancels client-scoped waits, never cancels durable writ
   let followSignal: AbortSignal | undefined;
   let writeSignal: AbortSignal | undefined;
   let startSignal: AbortSignal | undefined;
+  let cancelSignal: AbortSignal | undefined;
   let writeCalls = 0;
   let startCalls = 0;
+  let cancelCalls = 0;
   const durable = deferred<unknown>();
   const durableStart = deferred<unknown>();
+  const durableCancel = deferred<unknown>();
   const fixture = await createHostFixture(context, {
     follow: async (_request, options) => {
       followSignal = options?.signal;
@@ -100,6 +103,11 @@ test("runtime IPC client cancels client-scoped waits, never cancels durable writ
       startCalls += 1;
       startSignal = options?.signal;
       return await durableStart.promise;
+    },
+    cancel: async (_request, options) => {
+      cancelCalls += 1;
+      cancelSignal = options?.signal;
+      return await durableCancel.promise;
     },
     list: async () => readResponse({ items: [] }),
   });
@@ -151,10 +159,34 @@ test("runtime IPC client cancels client-scoped waits, never cancels durable writ
   durableStart.resolve(writeResponse({ sessionId: "session-1", runId: "run-new", phase: "queued" }));
   await new Promise((resolve) => setImmediate(resolve));
 
+  await assert.rejects(
+    client.request(
+      "run.cancel",
+      { sessionId: "session-1", runId: "run-1", idempotencyKey: randomUUID() },
+      { timeoutMs: 25 },
+    ),
+    (error: unknown) => error instanceof RuntimeIpcClientError && error.code === "request_timeout",
+  );
+  assert.equal(cancelCalls, 1);
+  assert.equal(cancelSignal?.aborted, false);
+  durableCancel.resolve(
+    writeResponse({
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "canceling",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 2,
+      cancellation: { requestedAt: 2 },
+    }),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
   const read = await client.request("session.list", { limit: 1 });
   assertJsonEqual(read, readResponse({ items: [] }));
   assert.equal(writeCalls, 1);
   assert.equal(startCalls, 1);
+  assert.equal(cancelCalls, 1);
 });
 
 test("a queued request timeout remains not-started and a connection loss settles the sent sibling", async (context) => {
@@ -354,7 +386,7 @@ test("runtime Application client preserves exact retry and export reconciliation
   });
 });
 
-test("runtime Application client owns the complete 23-operation proxy allowlist without forwarding authorization", async () => {
+test("runtime Application client owns the complete 24-operation proxy allowlist without forwarding authorization", async () => {
   const calls: Array<Readonly<{ operation: RuntimeIpcOperation; payload: RuntimeIpcOperationPayload }>> = [];
   let closeCalls = 0;
   const client = {
@@ -427,6 +459,12 @@ test("runtime Application client owns the complete 23-operation proxy allowlist 
     runId: "run-1",
     idempotencyKey,
     contentBlocks: [{ type: "text", text: "continue" }],
+  });
+  await runtime.runOperations.cancel({
+    context,
+    sessionId: "session-1",
+    runId: "run-1",
+    idempotencyKey,
   });
   await runtime.runOperations.status({ context, sessionId: "session-1", runId: "run-1" });
   await runtime.runOperations.events({ context, sessionId: "session-1", runId: "run-1", limit: 1 });
@@ -721,6 +759,8 @@ function fakeRuntimeApplication(overrides: Readonly<Record<string, FakeMethod>>)
     runOperations: {
       start: overrides.start ?? fallback,
       retry: overrides.retry ?? fallback,
+      sendInput: overrides.sendInput ?? fallback,
+      cancel: overrides.cancel ?? fallback,
       status: overrides.status ?? fallback,
       events: overrides.events ?? fallback,
       follow: overrides.follow ?? fallback,

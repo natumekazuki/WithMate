@@ -35,6 +35,7 @@ import {
   type CliValidatedCommand,
   type CliValidatedSessionCommand,
 } from "./contract.js";
+import { snapshotCliRunAcknowledgedCancellation, snapshotCliRunRequestCancellation } from "./run-cancellation.js";
 
 export type CliOperationProjectionResult =
   | Readonly<{ ok: true; output: CliOperationOutput; exitCode: CliExitCode }>
@@ -730,39 +731,58 @@ function projectRunsValue(value: unknown, command: CommandFor<"runs">, allowOmis
       case "finalizing":
         requireAbsent(item, ["finalAssistantMessageId", "failure", "cancellation", "terminalAt"]);
         return { ...base, phase };
-      case "canceling":
+      case "canceling": {
         requireAbsent(item, ["finalAssistantMessageId", "failure", "terminalAt"]);
+        if (item.cancellation === undefined) malformed();
         return {
           ...base,
           phase,
-          ...(item.cancellation === undefined ? {} : { cancellation: projectRunCancellation(item.cancellation) }),
+          cancellation: snapshotCliRunRequestCancellation(item.cancellation),
         };
-      case "completed":
-        requireAbsent(item, ["failure", "cancellation"]);
+      }
+      case "completed": {
+        requireAbsent(item, ["failure"]);
+        const terminalAt = nonNegativeInteger(item.terminalAt);
+        const cancellation =
+          item.cancellation === undefined
+            ? undefined
+            : snapshotCliRunRequestCancellation(item.cancellation, terminalAt);
         return {
           ...base,
           phase,
           ...(finalAssistantMessageId === undefined ? {} : { finalAssistantMessageId }),
-          terminalAt: nonNegativeInteger(item.terminalAt),
+          terminalAt,
+          ...(cancellation === undefined ? {} : { cancellation }),
         };
+      }
       case "failed":
-      case "interrupted":
+      case "interrupted": {
         requireAbsent(item, ["finalAssistantMessageId"]);
+        const terminalAt = nonNegativeInteger(item.terminalAt);
+        const cancellation =
+          item.cancellation === undefined
+            ? undefined
+            : snapshotCliRunRequestCancellation(item.cancellation, terminalAt);
         return {
           ...base,
           phase,
-          terminalAt: nonNegativeInteger(item.terminalAt),
+          terminalAt,
           failure: projectRunFailure(item.failure),
-          ...(item.cancellation === undefined ? {} : { cancellation: projectRunCancellation(item.cancellation) }),
+          ...(cancellation === undefined ? {} : { cancellation }),
         };
-      case "canceled":
+      }
+      case "canceled": {
         requireAbsent(item, ["finalAssistantMessageId", "failure"]);
+        const terminalAt = nonNegativeInteger(item.terminalAt);
         return {
           ...base,
           phase,
-          terminalAt: nonNegativeInteger(item.terminalAt),
-          ...(item.cancellation === undefined ? {} : { cancellation: projectRunCancellation(item.cancellation) }),
+          terminalAt,
+          ...(item.cancellation === undefined
+            ? {}
+            : { cancellation: snapshotCliRunAcknowledgedCancellation(item.cancellation, terminalAt) }),
         };
+      }
     }
   });
   return { sessionId, items, ...(nextCursor === undefined ? {} : { nextCursor }) };
@@ -782,16 +802,6 @@ function projectRunFailure(value: unknown) {
     ...(failure.summary === undefined
       ? {}
       : { summary: boundedString(failure.summary, CLI_SESSION_RUN_LIMITS.maxSummaryLength) }),
-  };
-}
-
-function projectRunCancellation(value: unknown) {
-  const cancellation = exactRecord(value, ["requestedAt", "acknowledgedAt"]);
-  return {
-    requestedAt: nonNegativeInteger(cancellation.requestedAt),
-    ...(cancellation.acknowledgedAt === undefined
-      ? {}
-      : { acknowledgedAt: nonNegativeInteger(cancellation.acknowledgedAt) }),
   };
 }
 

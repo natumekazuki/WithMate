@@ -229,6 +229,7 @@ try {
       terminalEvent: { id: "event-run-smoke-terminal", dedupeKey: "run-smoke-terminal" },
       providerExecution,
       preDispatchResolution: { kind: "not_applicable" },
+      cancelCorrelation: { kind: "none" },
       outcome: {
         kind: "completed",
         finalAssistantMessage: { id: assistantMessageId, contentBlocks: assistantMessageBlocks },
@@ -296,6 +297,7 @@ try {
       },
       providerExecution: interruptedProviderExecution,
       preDispatchResolution: { kind: "not_applicable" },
+      cancelCorrelation: { kind: "none" },
       outcome: {
         kind: "interrupted",
         failureOrigin: "transport",
@@ -362,6 +364,7 @@ try {
       terminalEvent: { id: "event-run-smoke-no-final-terminal", dedupeKey: "run-smoke-no-final-terminal" },
       providerExecution: noFinalProviderExecution,
       preDispatchResolution: { kind: "not_applicable" },
+      cancelCorrelation: { kind: "none" },
       outcome: { kind: "completed", finalAssistantMessage: null },
       outputs: [],
       childResult: null,

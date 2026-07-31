@@ -5,6 +5,7 @@ import * as publicApi from "../src/main/index.js";
 import type { ApplicationRunOperations } from "../src/main/index.js";
 import type {
   ApplicationRunAdmissionResult,
+  ApplicationRunCancelResult,
   ApplicationRunFollowResult,
   ApplicationRunSendInputResult,
   ApplicationRunStatus,
@@ -19,6 +20,7 @@ type StatusValue = Awaited<ReturnType<ApplicationRunOperations<Authorization>["s
 type StartRequest = Parameters<ApplicationRunOperations<Authorization>["start"]>[0];
 type RetryRequest = Parameters<ApplicationRunOperations<Authorization>["retry"]>[0];
 type SendInputRequest = Parameters<ApplicationRunOperations<Authorization>["sendInput"]>[0];
+type CancelRequest = Parameters<ApplicationRunOperations<Authorization>["cancel"]>[0];
 type StartValue = Awaited<ReturnType<ApplicationRunOperations<Authorization>["start"]>>;
 type _StartOwnsOnlyPublicInputs = Assert<
   Equal<keyof StartRequest, "context" | "sessionId" | "idempotencyKey" | "contentBlocks" | "execution">
@@ -36,6 +38,33 @@ type _SendInputCannotSupplyInternalIdentity = Assert<
       "messageId" | "attemptId" | "bindingId" | "providerId" | "threadId" | "turnId" | "generationId" | "ownerToken"
     >,
     never
+  >
+>;
+type _CancelOwnsOnlyPublicInputs = Assert<
+  Equal<keyof CancelRequest, "context" | "sessionId" | "runId" | "idempotencyKey">
+>;
+type _CancelCannotSupplyInternalIdentity = Assert<
+  Equal<
+    Extract<
+      keyof CancelRequest,
+      "attemptId" | "bindingId" | "providerId" | "threadId" | "turnId" | "generationId" | "ownerToken"
+    >,
+    never
+  >
+>;
+type _CancelResultUsesStatusPhases = Assert<
+  Equal<ApplicationRunCancelResult["phase"], "canceling" | "completed" | "failed" | "canceled" | "interrupted">
+>;
+type _CancelingRequiresRequestTimestamp = Assert<
+  Equal<
+    Extract<ApplicationRunCancelResult, Readonly<{ phase: "canceling" }>>["cancellation"],
+    Readonly<{ requestedAt: number; acknowledgedAt?: never }>
+  >
+>;
+type _CanceledAcknowledgmentIsPaired = Assert<
+  Equal<
+    NonNullable<Extract<ApplicationRunCancelResult, Readonly<{ phase: "canceled" }>>["cancellation"]>,
+    Readonly<{ requestedAt: number; acknowledgedAt: number }>
   >
 >;
 type _PendingInputUsesOptionalNeverResolution = Assert<
@@ -97,6 +126,11 @@ test("public Run API is type-only and keeps phase-specific status contracts", ()
     | _RetryOwnsOnlyPublicInputs
     | _SendInputOwnsOnlyPublicInputs
     | _SendInputCannotSupplyInternalIdentity
+    | _CancelOwnsOnlyPublicInputs
+    | _CancelCannotSupplyInternalIdentity
+    | _CancelResultUsesStatusPhases
+    | _CancelingRequiresRequestTimestamp
+    | _CanceledAcknowledgmentIsPaired
     | _PendingInputUsesOptionalNeverResolution
     | _RejectedInputUsesBoundedResolution
     | _StartCannotSupplyScopeOrInternalIdentity

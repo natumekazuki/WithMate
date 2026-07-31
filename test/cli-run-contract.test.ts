@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   CLI_EXIT_CODES,
   CLI_SCHEMA_VERSION,
+  type CliRunCancelValue,
   type CliRunStatusValue,
+  type CliSessionRunItem,
   type CliValidatedRunCommand,
 } from "../src/cli/contract.js";
 import { helpText } from "../src/cli/help.js";
@@ -36,6 +38,12 @@ const sendInputCommand = {
   runId: "run-1",
   idempotencyKey,
   contentBlocks: [{ type: "text", text: "continue" }],
+} as const satisfies CliValidatedRunCommand;
+const cancelCommand = {
+  identity: { namespace: "run", operation: "cancel" },
+  sessionId: "session-1",
+  runId: "run-1",
+  idempotencyKey,
 } as const satisfies CliValidatedRunCommand;
 const statusCommand = {
   identity: { namespace: "run", operation: "status" },
@@ -74,6 +82,43 @@ const cliOwnedStatusContract: CliRunStatusValue = {
 };
 void cliOwnedStatusContract;
 
+// @ts-expect-error canceled Run status cannot expose a request without its acknowledgement
+const invalidCanceledStatusCancellation: CliRunStatusValue = {
+  sessionId: "session-1",
+  runId: "run-1",
+  phase: "canceled",
+  liveActivity: null,
+  createdAt: 1,
+  updatedAt: 2,
+  terminalAt: 2,
+  cancellation: { requestedAt: 1 },
+};
+// @ts-expect-error canceled Run history cannot expose a request without its acknowledgement
+const invalidCanceledHistoryCancellation: CliSessionRunItem = {
+  runId: "run-1",
+  ordinal: 1,
+  initiatingMessageId: "message-1",
+  phase: "canceled",
+  createdAt: 1,
+  updatedAt: 2,
+  terminalAt: 2,
+  cancellation: { requestedAt: 1 },
+};
+// @ts-expect-error canceled Run cancel result cannot expose a request without its acknowledgement
+const invalidCanceledCancelResult: CliRunCancelValue = {
+  sessionId: "session-1",
+  runId: "run-1",
+  phase: "canceled",
+  liveActivity: null,
+  createdAt: 1,
+  updatedAt: 2,
+  terminalAt: 2,
+  cancellation: { requestedAt: 1 },
+};
+void invalidCanceledStatusCancellation;
+void invalidCanceledHistoryCancellation;
+void invalidCanceledCancelResult;
+
 test("Run help and validated commands are runtime-free parser results", () => {
   assert.deepEqual(parseCliArgv(["run"]), { kind: "help", topic: { kind: "run" } });
   assert.deepEqual(parseCliArgv(["run", "events", "--help"]), {
@@ -81,14 +126,20 @@ test("Run help and validated commands are runtime-free parser results", () => {
     topic: { kind: "operation", command: { namespace: "run", operation: "events" } },
   });
   assert.match(helpText({ kind: "root" }), /withmate run --help/u);
-  assert.match(helpText({ kind: "run" }), /start[\s\S]*retry[\s\S]*send-input[\s\S]*status[\s\S]*events[\s\S]*follow/u);
-  assert.doesNotMatch(helpText({ kind: "run" }), /\bcancel\b/u);
+  assert.match(
+    helpText({ kind: "run" }),
+    /start[\s\S]*retry[\s\S]*send-input[\s\S]*cancel[\s\S]*status[\s\S]*events[\s\S]*follow/u,
+  );
   assert.match(helpText({ kind: "operation", command: startCommand.identity }), /content-blocks-json/u);
   assert.match(helpText({ kind: "operation", command: retryCommand.identity }), /inherited from the source Run/u);
   const inputHelp = helpText({ kind: "operation", command: sendInputCommand.identity });
   assert.match(inputHelp, /same idempotency key returns its current durable outcome/u);
   assert.match(inputHelp, /does not cancel an admitted delivery/u);
   assert.match(inputHelp, /new idempotency key can duplicate/u);
+  const cancelHelp = helpText({ kind: "operation", command: cancelCommand.identity });
+  assert.match(cancelHelp, /same idempotency key returns its current durable outcome/u);
+  assert.match(cancelHelp, /terminal target is a successful no-op/u);
+  assert.match(cancelHelp, /SIGINT[\s\S]*neither undo a durable/u);
 
   assert.deepEqual(
     parseCliArgv([
@@ -139,6 +190,21 @@ test("Run help and validated commands are runtime-free parser results", () => {
     ]),
     { kind: "command", command: sendInputCommand },
   );
+  assert.deepEqual(
+    parseCliArgv([
+      "run",
+      "cancel",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--timeout-ms",
+      "5000",
+    ]),
+    { kind: "command", command: { ...cancelCommand, timeoutMs: 5000 } },
+  );
 
   assert.deepEqual(
     parseCliArgv(["run", "status", "--session-id", "session-1", "--run-id", "run-1", "--timeout-ms", "5000"]),
@@ -184,6 +250,32 @@ test("Run parser rejects missing, duplicate, unknown, unbounded, and invalid mut
     ["run", "start"],
     ["run", "retry"],
     ["run", "send-input"],
+    ["run", "cancel"],
+    ["run", "cancel", "--session-id", "session-1", "--run-id", "run-1", "--idempotency-key", "not-a-uuid"],
+    [
+      "run",
+      "cancel",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--content-blocks-json",
+      "[]",
+    ],
+    [
+      "run",
+      "cancel",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--run-id",
+      "run-2",
+      "--idempotency-key",
+      idempotencyKey,
+    ],
     [
       "run",
       "send-input",
@@ -258,7 +350,6 @@ test("Run parser rejects missing, duplicate, unknown, unbounded, and invalid mut
       "--sandbox-json",
       '{"mode":"read-only","mode":"danger-full-access"}',
     ],
-    ["run", "cancel"],
   ] as const;
   for (const argv of cases) {
     const parsed = parseCliArgv(argv);
@@ -586,7 +677,182 @@ test("Run input output preserves delivery states and rejects non-public fields",
   }
 });
 
-test("Run status output uses a phase-specific allowlist and preserves schema v1", () => {
+test("Run cancel output accepts only durable canceling or terminal timestamp tuples", () => {
+  const outcomes = [
+    {
+      phase: "canceling",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 2,
+      cancellation: { requestedAt: 2 },
+    },
+    {
+      phase: "completed",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 3,
+      terminalAt: 3,
+      cancellation: { requestedAt: 2 },
+    },
+    {
+      phase: "failed",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 3,
+      terminalAt: 3,
+      failure: { origin: "provider" },
+      cancellation: { requestedAt: 2 },
+    },
+    {
+      phase: "interrupted",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 3,
+      terminalAt: 3,
+      failure: { origin: "transport" },
+      cancellation: { requestedAt: 2 },
+    },
+    {
+      phase: "canceled",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 3,
+      terminalAt: 3,
+      cancellation: { requestedAt: 2, acknowledgedAt: 3 },
+    },
+    {
+      phase: "canceled",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 3,
+      terminalAt: 3,
+    },
+  ] as const;
+  for (const [index, outcome] of outcomes.entries()) {
+    const projected = projectCliRunOperationOutput(cancelCommand, {
+      overallStatus: "success",
+      value: { sessionId: "session-1", runId: "run-1", ...outcome },
+      persistence: { status: "committed", effect: "none", replayed: index !== 0 },
+    });
+    assert.equal(projected.ok, true, outcome.phase);
+  }
+
+  const invalidValues = [
+    activeStatus(),
+    { ...activeStatus(), phase: "queued" },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "canceling",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 2,
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "canceling",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 2,
+      cancellation: { requestedAt: 2, acknowledgedAt: 2 },
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "completed",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 3,
+      terminalAt: 3,
+      cancellation: { requestedAt: 2, acknowledgedAt: 3 },
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "canceled",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 3,
+      terminalAt: 3,
+      cancellation: { requestedAt: 2 },
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "canceled",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 3,
+      terminalAt: 3,
+      cancellation: { requestedAt: 3, acknowledgedAt: 2 },
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "canceled",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 4,
+      terminalAt: 3,
+      cancellation: { requestedAt: 2, acknowledgedAt: 4 },
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "canceling",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 2,
+      cancellation: { requestedAt: 2, ownerToken: "private" },
+    },
+    {
+      sessionId: "session-2",
+      runId: "run-1",
+      phase: "canceling",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 2,
+      cancellation: { requestedAt: 2 },
+    },
+  ];
+  for (const value of invalidValues) {
+    assert.equal(
+      projectCliRunOperationOutput(cancelCommand, {
+        overallStatus: "success",
+        value,
+        persistence: { status: "committed", effect: "none", replayed: false },
+      }).ok,
+      false,
+    );
+  }
+
+  assert.equal(
+    projectCliRunOperationOutput(cancelCommand, {
+      overallStatus: "failure",
+      error: {
+        kind: "domain",
+        code: "lifecycle_conflict",
+        message: "Run cannot be canceled.",
+        retryable: false,
+      },
+      persistence: { status: "rejected", effect: "none" },
+    }).ok,
+    true,
+  );
+  for (const code of ["capacity_exceeded", "cursor_invalid"] as const) {
+    assert.equal(
+      projectCliRunOperationOutput(cancelCommand, {
+        overallStatus: "failure",
+        error: { kind: "domain", code, message: "not a cancel error", retryable: false },
+        persistence: { status: "rejected", effect: "none" },
+      }).ok,
+      false,
+    );
+  }
+});
+
+test("Run status output uses a strict phase allowlist and preserves schema v1", () => {
   const summary = "x".repeat(4_096);
   const projected = projectCliRunOperationOutput(statusCommand, {
     overallStatus: "success",
@@ -599,11 +865,9 @@ test("Run status output uses a phase-specific allowlist and preserves schema v1"
       startedAt: 2,
       updatedAt: 3,
       terminalAt: 3,
-      failure: { origin: "provider", summary, providerErrorCode: "hidden" },
-      executionSnapshot: "hidden",
-      version: 4,
+      failure: { origin: "provider", summary },
     },
-    persistence: { status: "read", effect: "none", workerId: "hidden" },
+    persistence: { status: "read", effect: "none" },
   });
   assert.equal(projected.ok, true);
   if (!projected.ok) assert.fail("expected projected output");
@@ -624,6 +888,29 @@ test("Run status output uses a phase-specific allowlist and preserves schema v1"
     },
     persistence: { status: "read", effect: "none" },
   });
+
+  for (const value of [
+    { ...activeStatus(), executionSnapshot: "hidden" },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "failed",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 2,
+      terminalAt: 2,
+      failure: { origin: "provider", providerErrorCode: "hidden" },
+    },
+  ]) {
+    assert.equal(
+      projectCliRunOperationOutput(statusCommand, {
+        overallStatus: "success",
+        value,
+        persistence: { status: "read", effect: "none" },
+      }).ok,
+      false,
+    );
+  }
 });
 
 test("Run event output preserves omissions, opaque continuation, order, and unknown kinds", () => {

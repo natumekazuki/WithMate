@@ -294,3 +294,17 @@
 - Node.js 24.18.0で全904 testとSQLite schema validator、runtime guard、format、module boundary / lint、typecheck、build、diff checkを通した。runtime host、Session CLI、Run観測CLI、Run start / retry、Run supplemental input、compiled persistenceの各process smokeもGreenである。
 - 既存ADR 013とSession / Run / Message、Provider、Persistenceの各designが判断理由と非局所制約を所有している。直接影響するschema v1 manifestとPersistence designを更新し、新しいADRとaccepted riskは追加していない。
 - CP3にはactive cancelとruntime host再起動時のRun全体の復旧が残る。approval / elicitation response、child Session follow-up、GUIは今回のscope外である。
+
+## 2026-07-30: CP3 active Run cancel
+
+- Provider-neutralな`ApplicationRunOperations.cancel`、runtime IPCの`run.cancel`、CLIの`withmate run cancel`を追加した。callerはSession、Run、idempotency keyだけを指定し、Attempt、Binding、Provider、external Thread / Turn、runtime generationはruntime hostが解決する。
+- Repositoryはcurrent owner tupleを再検証し、fresh active cancelの`canceling`遷移、request timestamp、Run response referenceを持つidempotency recordを同じtransactionで保存する。terminal Runへのfresh cancelはRunを変更せずreferenceだけを保存し、same-key exact replayはRunの現在のdurable outcomeを返す。
+- runtime hostはdurable admission後だけ同じTurnへ`interruptTurn`を最大1回送る。request successはterminalと扱わず、同じRun / Attempt / Binding / execution / generationへ相関した`turn/completed(interrupted)`だけを`canceled`とacknowledged timestampへ写像する。natural completed / failedと相関不能なinterruptedは実際のoutcomeを維持する。
+- cancel request後のterminal outcomeにもrequest factを保持できるよう、Application projection、CLI projection、schema v1のphase / timestamp invariantを揃えた。正式release前のversion 1更新でありmigrationは追加していない。以前のschema hashで作成した開発DBは自動削除せず、必要な場合は明示的に再作成する。
+- client timeout、SIGINT、IPC disconnectはserver-side cancel workを中止しない。cancel admission後は新しいsupplemental inputを送らず、既に開始したinput resolution、RunOutput、terminal commandのdurable closureを同じAttempt chainで完了してからgenerationを解放する。
+- isolated fake Codex processを使う`smoke:cli-run-cancel`を追加した。別CLI processからのfresh `canceling`、interrupt 1回、same-key replay、matching interrupted後の`canceled`、request / acknowledgement / terminalの時刻順、terminal no-op、natural completion race、client-only disconnect後の継続を確認する。production profile、既存DB、実Codex executableは使用しない。
+- process smokeで、Event Serviceがclass methodのreceiverを失ってCodex Adapterのinterruptを送れない問題と、terminal Runのlive owner退役後にfresh no-op cancelを`not_found`へ誤分類する問題を再現した。Adapter methodはreceiver付きで呼び、live owner不在時はdurable Runがterminalであることを再読できた場合だけterminal-only admissionへ進める回帰contractを追加した。
+- 独立reviewで、cancel admissionのcommit後にresponseを失い、live reservationを解放してからmatching `interrupted`が届く順序では、durable cancelとの相関を失う問題を確認した。Event Serviceはcurrent Attemptと一致するterminal通知について永続Runを再照合し、same-key replay前でも`canceled`へ収束する回帰contractを追加した。
+- Node.js 24.18.0でactive cancelのtargeted Application / Event Service 63 test、全938 testとSQLite schema validator、runtime guard、format、module boundary / lint、typecheck、build、diff checkを通した。runtime host、Session CLI、Run観測CLI、Run start / retry、Run supplemental input、Run cancel、compiled persistenceの各process smokeもGreenである。
+- 既存ADR 013とSession / Run / Message、Provider、Persistenceの各designがowner、phase、recoveryの判断理由を所有している。accepted designを変更していないため新しいADRとaccepted riskは追加していない。
+- CP3にはruntime host再起動時のRun全体の復旧が残る。approval / elicitation response、child Session / Delegation cancel、force kill、GUIは今回のscope外である。

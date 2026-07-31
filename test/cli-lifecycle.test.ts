@@ -77,6 +77,16 @@ const runSendInputArgv = [
   "--content-blocks-json",
   '[{"type":"text","text":"continue"}]',
 ] as const;
+const runCancelArgv = [
+  "run",
+  "cancel",
+  "--session-id",
+  "session-1",
+  "--run-id",
+  "run-1",
+  "--idempotency-key",
+  "018f1f4e-7f0a-7000-8000-000000000007",
+] as const;
 
 test("help and parse failures do not register signals or start runtime", async () => {
   let starts = 0;
@@ -297,6 +307,54 @@ test("Run input completion returns the durable admission snapshot and closes the
     runId: "run-1",
     messageId: "message-1",
     deliveryState: "pending",
+  });
+});
+
+test("Run cancel completion returns durable canceling without waiting for terminal closure", async () => {
+  let cancelCalls = 0;
+  let shutdowns = 0;
+  const runOperations = unsupportedRunOperations({
+    cancel: async (request) => {
+      cancelCalls += 1;
+      return {
+        overallStatus: "success",
+        value: {
+          sessionId: request.sessionId,
+          runId: request.runId,
+          phase: "canceling",
+          liveActivity: null,
+          createdAt: 1,
+          updatedAt: 2,
+          cancellation: { requestedAt: 2 },
+        },
+        persistence: { status: "committed", effect: "none", replayed: false },
+      };
+    },
+  });
+  const result = await runCliLifecycle(runCancelArgv, {
+    version: CLI_VERSION,
+    startRuntime: async () =>
+      runtime(
+        successfulOperations(),
+        async () => {
+          shutdowns += 1;
+          return { checkpoint: "completed" };
+        },
+        runOperations,
+      ),
+  });
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.exitCode, CLI_EXIT_CODES.success);
+  assert.equal(cancelCalls, 1);
+  assert.equal(shutdowns, 1);
+  assert.deepEqual((output.applicationResponse as Readonly<Record<string, unknown>>).value, {
+    sessionId: "session-1",
+    runId: "run-1",
+    phase: "canceling",
+    liveActivity: null,
+    createdAt: 1,
+    updatedAt: 2,
+    cancellation: { requestedAt: 2 },
   });
 });
 
@@ -719,8 +777,8 @@ test("SIGINT bounds a non-cooperative Application operation and still starts shu
   assert.equal(interrupt, undefined);
 });
 
-test("SIGINT preserves unknown durable-write effect for Run start and retry", async () => {
-  for (const operation of ["start", "retry"] as const) {
+test("SIGINT preserves unknown durable-write effect for Run start, retry, and cancel", async () => {
+  for (const operation of ["start", "retry", "cancel"] as const) {
     let interrupt: (() => void) | undefined;
     let shutdowns = 0;
     const handler = async (_request: unknown, options?: Readonly<{ signal?: AbortSignal }>) =>
@@ -733,9 +791,12 @@ test("SIGINT preserves unknown durable-write effect for Run start and retry", as
     const runOperations =
       operation === "start"
         ? unsupportedRunOperations({ start: handler })
-        : unsupportedRunOperations({ retry: handler });
+        : operation === "retry"
+          ? unsupportedRunOperations({ retry: handler })
+          : unsupportedRunOperations({ cancel: handler });
 
-    const result = await runCliLifecycle(operation === "start" ? runStartArgv : runRetryArgv, {
+    const argv = operation === "start" ? runStartArgv : operation === "retry" ? runRetryArgv : runCancelArgv;
+    const result = await runCliLifecycle(argv, {
       version: CLI_VERSION,
       registerInterrupt: (abort) => {
         interrupt = abort;
@@ -1185,6 +1246,7 @@ function unsupportedRunOperations(overrides: Partial<RunOperations> = {}): RunOp
     start: overrides.start ?? unsupported,
     retry: overrides.retry ?? unsupported,
     sendInput: overrides.sendInput ?? unsupported,
+    cancel: overrides.cancel ?? unsupported,
     status: overrides.status ?? unsupported,
     events: overrides.events ?? unsupported,
     follow: overrides.follow ?? unsupported,

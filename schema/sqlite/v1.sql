@@ -106,6 +106,30 @@ CREATE TABLE runs (
   CHECK ((phase IN ('completed', 'failed', 'canceled', 'interrupted')) = (terminal_at IS NOT NULL)),
   CHECK (final_assistant_message_id IS NULL OR phase = 'completed'),
   CHECK (phase NOT IN ('failed', 'interrupted') OR failure_origin IS NOT NULL),
+  CHECK (cancel_requested_at IS NULL OR cancel_requested_at >= 0),
+  CHECK (cancel_acknowledged_at IS NULL OR (
+    cancel_requested_at IS NOT NULL AND cancel_acknowledged_at >= cancel_requested_at
+  )),
+  CHECK (cancel_requested_at IS NULL OR terminal_at IS NULL OR cancel_requested_at <= terminal_at),
+  CHECK (cancel_acknowledged_at IS NULL OR (
+    terminal_at IS NOT NULL AND cancel_acknowledged_at <= terminal_at
+  )),
+  CHECK (
+    (phase IN ('queued', 'starting', 'active', 'finalizing')
+      AND cancel_requested_at IS NULL AND cancel_acknowledged_at IS NULL)
+    OR
+    (phase = 'canceling'
+      AND cancel_requested_at IS NOT NULL AND cancel_acknowledged_at IS NULL)
+    OR
+    (phase IN ('completed', 'failed', 'interrupted')
+      AND cancel_acknowledged_at IS NULL)
+    OR
+    (phase = 'canceled' AND (
+      (cancel_requested_at IS NULL AND cancel_acknowledged_at IS NULL)
+      OR
+      (cancel_requested_at IS NOT NULL AND cancel_acknowledged_at IS NOT NULL)
+    ))
+  ),
   FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE RESTRICT,
   FOREIGN KEY (initiating_message_id, session_id)
     REFERENCES messages(id, session_id) ON DELETE RESTRICT,

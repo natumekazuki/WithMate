@@ -19,10 +19,12 @@ import type {
 } from "../shared/repository-write-model.js";
 import type {
   CodexAdapterEvent,
+  CodexAdapterInterruptAcknowledgement,
   CodexAdapterMutationResult,
   CodexAdapterSteerAcknowledgement,
   CodexAdapterThreadSnapshot,
   CodexAdapterTurnSnapshot,
+  CodexInterruptTurnInput,
   CodexResumeThreadInput,
   CodexStartThreadInput,
   CodexStartTurnInput,
@@ -68,6 +70,10 @@ export interface ApplicationRunProviderAdapterPort {
     input: CodexSteerTurnInput,
     options?: ApplicationOperationOptions,
   ): Promise<CodexAdapterMutationResult<CodexAdapterSteerAcknowledgement>>;
+  interruptTurn?(
+    input: CodexInterruptTurnInput,
+    options?: ApplicationOperationOptions,
+  ): Promise<CodexAdapterMutationResult<CodexAdapterInterruptAcknowledgement>>;
   nextEvent(): Promise<CodexAdapterEvent>;
   close(): Promise<void>;
 }
@@ -1078,6 +1084,7 @@ export class ApplicationRunRuntimeService implements ApplicationRunWorkHandoffPo
         terminalEvent: identity,
         providerExecution: null,
         preDispatchResolution: { kind: preDispatchResolution },
+        cancelCorrelation: { kind: "none" },
         outcome: {
           kind: outcomeKind,
           failureOrigin,

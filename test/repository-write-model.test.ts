@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -2199,6 +2199,242 @@ repositoryTest("accepted Dispatch resolution atomically activates Attempt and Ru
       bindingReplayAfterCompletion.ok && bindingReplayAfterCompletion.value.externalConversationId,
       "external-1",
     );
+  });
+});
+
+repositoryTest("run.cancel admits one active execution and exact replay returns the current durable outcome", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const cancel = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runCancelAdmit, () => 600);
+    const command = runCancelAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000901");
+
+    const first = cancel(command) as CommandResult;
+    const replay = cancel(command) as CommandResult;
+    const differentKey = cancel(runCancelAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000902")) as CommandResult;
+
+    assert.deepEqual(first, {
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        runId: "run-1",
+        phase: "canceling",
+        cancelRequestedAt: 600,
+        cancelAcknowledgedAt: null,
+        terminalAt: null,
+      },
+      replayed: false,
+    });
+    assert.deepEqual(replay, { ...first, replayed: true });
+    assert.equal(!differentKey.ok && differentKey.error.code, "lifecycle_conflict");
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            "SELECT phase, cancel_requested_at, cancel_acknowledged_at, updated_at, version FROM runs WHERE id = 'run-1'",
+          )
+          .get(),
+      },
+      {
+        phase: "canceling",
+        cancel_requested_at: 600,
+        cancel_acknowledged_at: null,
+        updated_at: 600,
+        version: 4,
+      },
+    );
+
+    database
+      .prepare("UPDATE run_attempts SET attempt_state = 'succeeded', terminal_at = 700 WHERE id = 'attempt-run-1'")
+      .run();
+    database
+      .prepare("UPDATE runs SET phase = 'completed', terminal_at = 700, updated_at = 700 WHERE id = 'run-1'")
+      .run();
+    const terminalReplay = cancel(command) as CommandResult;
+    assert.deepEqual(terminalReplay, {
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        runId: "run-1",
+        phase: "completed",
+        cancelRequestedAt: 600,
+        cancelAcknowledgedAt: null,
+        terminalAt: 700,
+      },
+      replayed: true,
+    });
+  });
+});
+
+repositoryTest("run.terminal acknowledges a committed cancel when it converges to canceled", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const cancel = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runCancelAdmit, () => 600);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+    const cancelCommand = runCancelAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000907");
+
+    assert.equal((cancel(cancelCommand) as CommandResult).ok, true);
+    const baseTerminal = {
+      ...runTerminalCommand(),
+      outcome: { kind: "canceled" } as const,
+      outputs: [],
+    };
+    const missingCorrelation = terminal(baseTerminal) as CommandResult;
+    const staleCorrelation = terminal({
+      ...baseTerminal,
+      cancelCorrelation: { kind: "admitted_user_cancel", cancelRequestedAt: 599 },
+    }) as CommandResult;
+    const correlatedCommand = {
+      ...baseTerminal,
+      cancelCorrelation: { kind: "admitted_user_cancel", cancelRequestedAt: 600 },
+    } as const;
+    const terminalResult = terminal(correlatedCommand) as CommandResult;
+    const terminalReplay = terminal(correlatedCommand) as CommandResult;
+    const replayWithoutCorrelation = terminal(baseTerminal) as CommandResult;
+    const replay = cancel(cancelCommand) as CommandResult;
+
+    assert.equal(!missingCorrelation.ok && missingCorrelation.error.code, "request_invalid");
+    assert.equal(!staleCorrelation.ok && staleCorrelation.error.code, "lifecycle_conflict");
+    assert.equal(terminalResult.ok && !terminalResult.replayed && terminalResult.value.phase, "canceled");
+    assert.equal(terminalReplay.ok && terminalReplay.replayed, true);
+    assert.equal(!replayWithoutCorrelation.ok && replayWithoutCorrelation.error.code, "request_invalid");
+    assert.deepEqual(replay, {
+      ok: true,
+      value: {
+        sessionId: "session-1",
+        runId: "run-1",
+        phase: "canceled",
+        cancelRequestedAt: 600,
+        cancelAcknowledgedAt: 700,
+        terminalAt: 700,
+      },
+      replayed: true,
+    });
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            "SELECT phase, cancel_requested_at, cancel_acknowledged_at, terminal_at FROM runs WHERE id = 'run-1'",
+          )
+          .get(),
+      },
+      {
+        phase: "canceled",
+        cancel_requested_at: 600,
+        cancel_acknowledged_at: 700,
+        terminal_at: 700,
+      },
+    );
+  });
+});
+
+repositoryTest(
+  "natural and uncorrelated terminal outcomes preserve the cancel request without acknowledging it",
+  () => {
+    for (const phase of ["completed", "failed", "interrupted"] as const) {
+      withDatabase((database) => {
+        activatePersistentRun(database);
+        const cancel = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runCancelAdmit, () => 600);
+        const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 700);
+        const cancelCommand = runCancelAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000908");
+        const command =
+          phase === "completed"
+            ? runTerminalCommand()
+            : {
+                ...runTerminalCommand(),
+                outcome: {
+                  kind: phase,
+                  failureOrigin: "provider",
+                  providerErrorCode: null,
+                  errorSummary:
+                    phase === "failed" ? "Provider execution failed." : "Provider execution was interrupted.",
+                } as const,
+              };
+
+        assert.equal((cancel(cancelCommand) as CommandResult).ok, true);
+        const result = terminal(command) as CommandResult;
+
+        assert.equal(result.ok && result.value.phase, phase);
+        assert.deepEqual(
+          {
+            ...database
+              .prepare(
+                "SELECT phase, cancel_requested_at, cancel_acknowledged_at, terminal_at FROM runs WHERE id = 'run-1'",
+              )
+              .get(),
+          },
+          {
+            phase,
+            cancel_requested_at: 600,
+            cancel_acknowledged_at: null,
+            terminal_at: 700,
+          },
+        );
+      });
+    }
+  },
+);
+
+repositoryTest("run.cancel terminal no-op commits only its idempotency reference", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    database
+      .prepare("UPDATE run_attempts SET attempt_state = 'succeeded', terminal_at = 600 WHERE id = 'attempt-run-1'")
+      .run();
+    database
+      .prepare("UPDATE runs SET phase = 'completed', terminal_at = 600, updated_at = 600 WHERE id = 'run-1'")
+      .run();
+    const before = database.prepare("SELECT version, updated_at FROM runs WHERE id = 'run-1'").get();
+    const cancel = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runCancelAdmit, () => 700);
+    const command = {
+      ...runCancelAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000903"),
+      owner: { kind: "terminal_only" },
+    } as const;
+
+    const first = cancel(command) as CommandResult;
+    const replay = cancel(command) as CommandResult;
+
+    assert.equal(first.ok && !first.replayed && first.value.phase, "completed");
+    assert.deepEqual(replay, { ...first, replayed: true });
+    assert.deepEqual(database.prepare("SELECT version, updated_at FROM runs WHERE id = 'run-1'").get(), before);
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            `
+            SELECT operation, response_ref_type, response_ref_id
+            FROM idempotency_records WHERE idempotency_key = ?
+          `,
+          )
+          .get(command.idempotencyKey),
+      },
+      { operation: "run.cancel.admit", response_ref_type: "run", response_ref_id: "run-1" },
+    );
+  });
+});
+
+repositoryTest("run.cancel rejects unsupported phases and mismatched live ownership", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const cancel = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runCancelAdmit, () => 600);
+    const base = runCancelAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000904");
+    for (const [phase, requestedAt] of [
+      ["queued", null],
+      ["starting", null],
+      ["canceling", 550],
+      ["finalizing", null],
+    ] as const) {
+      database
+        .prepare("UPDATE runs SET phase = ?, cancel_requested_at = ?, cancel_acknowledged_at = NULL WHERE id = 'run-1'")
+        .run(phase, requestedAt);
+      const result = cancel({ ...base, idempotencyKey: randomUUID() }) as CommandResult;
+      assert.equal(!result.ok && result.error.code, "lifecycle_conflict", phase);
+    }
+    database.prepare("UPDATE runs SET phase = 'active', cancel_requested_at = NULL WHERE id = 'run-1'").run();
+    const mismatch = cancel({
+      ...base,
+      owner: { ...base.owner, externalExecutionId: "execution-other" },
+    }) as CommandResult;
+    assert.equal(!mismatch.ok && mismatch.error.code, "lifecycle_conflict");
   });
 });
 
@@ -4614,6 +4850,7 @@ repositoryTest("pre-dispatch child terminal publishes its Delivery while resolvi
       },
       providerExecution: null,
       preDispatchResolution: { kind: "binding_creation_ambiguous" },
+      cancelCorrelation: { kind: "none" },
       outcome: {
         kind: "interrupted",
         failureOrigin: "transport",
@@ -5335,7 +5572,7 @@ repositoryTest("startup repair ignores cross-scope Provider Bindings in mutation
         true,
       );
       database.prepare("UPDATE provider_bindings SET session_id = 'session-2' WHERE id = 'binding-run-1'").run();
-      database.prepare("UPDATE runs SET phase = 'canceling' WHERE id = 'run-1'").run();
+      database.prepare("UPDATE runs SET phase = 'canceling', cancel_requested_at = 600 WHERE id = 'run-1'").run();
 
       now = 300;
       const result = execute(REPOSITORY_WRITE_OPERATIONS.startupRepair, {});
@@ -6341,6 +6578,7 @@ function prepareDeletableChild(database: DatabaseSync) {
           externalExecutionId: "child-execution-delete",
         },
         preDispatchResolution: { kind: "not_applicable" },
+        cancelCorrelation: { kind: "none" },
         outcome: {
           kind: "completed",
           finalAssistantMessage: {
@@ -6601,6 +6839,23 @@ function runInputAdmissionCommand(
   };
 }
 
+function runCancelAdmissionCommand(idempotencyKey: string) {
+  return {
+    sessionId: "session-1",
+    workspaceKey: TEST_WORKSPACE.workspaceKey,
+    idempotencyKey,
+    runId: "run-1",
+    owner: {
+      kind: "active_execution",
+      attemptId: "attempt-run-1",
+      bindingId: "binding-run-1",
+      ephemeralOwnerToken: null,
+      externalConversationId: "external-1",
+      externalExecutionId: "execution-1",
+    },
+  } as const;
+}
+
 function runInputBeginCommand(ephemeralOwnerToken: string | null = null) {
   return {
     sessionId: "session-1",
@@ -6674,6 +6929,7 @@ function runTerminalCommand() {
       externalExecutionId: "execution-1",
     },
     preDispatchResolution: { kind: "not_applicable" },
+    cancelCorrelation: { kind: "none" },
     outcome: {
       kind: "completed",
       finalAssistantMessage: {
@@ -6717,6 +6973,7 @@ function preparingRunTerminalCommand(
     terminalEvent: { id: "terminal-event-pre-dispatch", dedupeKey: "provider-terminal-pre-dispatch" },
     providerExecution: null,
     preDispatchResolution: { kind: resolutionKind },
+    cancelCorrelation: { kind: "none" },
     outcome:
       outcomeKind === "canceled"
         ? ({ kind: "canceled" } as const)
@@ -6748,6 +7005,7 @@ function childTerminalCommand() {
       externalExecutionId: "child-execution",
     },
     preDispatchResolution: { kind: "not_applicable" },
+    cancelCorrelation: { kind: "none" },
     outcome: {
       kind: "completed",
       finalAssistantMessage: {

@@ -22,6 +22,8 @@ import {
   type RunInputBeginResult,
   type RunInputResolutionCommand,
   type RunInputResolutionResult,
+  type RunCancelAdmissionCommand,
+  type RunCancelAdmissionResult,
   type RunOutputAppendCommand,
   type RunOutputAppendResult,
   type RunOutputResolvePendingCommand,
@@ -152,6 +154,13 @@ export class RepositoryWriteClient {
     options?: RequestOptions,
   ): Promise<RepositoryCommandResult<RunInputResolutionResult>> {
     return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runInputResolve, "write", command, options);
+  }
+
+  admitRunCancel(
+    command: RunCancelAdmissionCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<RunCancelAdmissionResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runCancelAdmit, "write", command, options);
   }
 
   appendRunOutput(

@@ -12,6 +12,8 @@ import {
   type RunEventPage,
   type RunHistoryListItem,
   type RunInputDeliveryRecoveryItem,
+  type RunCancelReplayProbeRequest,
+  type RunCancelReplayProbeResult,
   type RunInputReplayProbeRequest,
   type RunInputReplayProbeResult,
   type RunOutputListItem,
@@ -172,6 +174,13 @@ export class RepositoryReadClient {
 
   runInputReplayProbe(input: RunInputReplayProbeRequest, options?: RequestOptions): Promise<RunInputReplayProbeResult> {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.runInputReplayProbe, "read", input, options);
+  }
+
+  runCancelReplayProbe(
+    input: RunCancelReplayProbeRequest,
+    options?: RequestOptions,
+  ): Promise<RunCancelReplayProbeResult> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.runCancelReplayProbe, "read", input, options);
   }
 
   payloadChunk(input: RunOutputPayloadChunkRequest, options?: RequestOptions): Promise<RunOutputPayloadChunkResult> {

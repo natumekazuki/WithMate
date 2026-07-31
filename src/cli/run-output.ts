@@ -10,6 +10,7 @@ import {
   CLI_SESSION_LIMITS,
   type CliExitCode,
   type CliRunAdmissionValue,
+  type CliRunCancelValue,
   type CliRunEventsValue,
   type CliRunFollowValue,
   type CliRunInputValue,
@@ -19,7 +20,11 @@ import {
   type CliRuntimeFailureOutput,
   type CliValidatedRunCommand,
 } from "./contract.js";
-import { isApplicationRunSendInputDomainErrorCode } from "../shared/application-run-model.js";
+import {
+  isApplicationRunCancelDomainErrorCode,
+  isApplicationRunSendInputDomainErrorCode,
+} from "../shared/application-run-model.js";
+import { snapshotCliRunAcknowledgedCancellation, snapshotCliRunRequestCancellation } from "./run-cancellation.js";
 import { isRunOutputCommand, projectCliRunOutputOperationOutput } from "./run-output-payload.js";
 
 export type CliRunOperationProjectionResult =
@@ -33,7 +38,10 @@ export function projectCliRunOperationOutput(
   if (isRunOutputCommand(command)) return projectCliRunOutputOperationOutput(command, applicationResponse);
   try {
     const projected =
-      isCommandFor(command, "start") || isCommandFor(command, "retry") || isCommandFor(command, "send-input")
+      isCommandFor(command, "start") ||
+      isCommandFor(command, "retry") ||
+      isCommandFor(command, "send-input") ||
+      isCommandFor(command, "cancel")
         ? projectCliWriteApplicationResponse(applicationResponse, (value) => projectRunValue(command, value))
         : projectCliReadApplicationResponse(
             applicationResponse,
@@ -72,6 +80,11 @@ function projectRunValue(command: CliValidatedRunCommand, value: unknown): unkno
     return projectAdmission(value, command);
   }
   if (isCommandFor(command, "send-input")) return projectInput(value, command.sessionId, command.runId);
+  if (isCommandFor(command, "cancel")) {
+    const status = projectStatus(value, command.sessionId, command.runId);
+    if (!["canceling", "completed", "failed", "canceled", "interrupted"].includes(status.phase)) malformed();
+    return status as CliRunCancelValue;
+  }
   if (isCommandFor(command, "status")) return projectStatus(value, command.sessionId, command.runId);
   if (isCommandFor(command, "events")) return projectEvents(value, command.sessionId, command.runId, command.limit);
   if (isCommandFor(command, "follow")) return projectFollow(value, command.sessionId, command.runId, command.limit);
@@ -150,7 +163,19 @@ function projectAdmission(value: unknown, command: CliValidatedRunCommand): CliR
 }
 
 function projectStatus(value: unknown, expectedSessionId: string, expectedRunId: string): CliRunStatusValue {
-  const status = record(value);
+  const status = allowedRecord(value, [
+    "sessionId",
+    "runId",
+    "retryOfRunId",
+    "phase",
+    "liveActivity",
+    "createdAt",
+    "startedAt",
+    "updatedAt",
+    "terminalAt",
+    "failure",
+    "cancellation",
+  ]);
   const sessionId = boundedString(status.sessionId);
   const runId = boundedString(status.runId);
   if (sessionId !== expectedSessionId || runId !== expectedRunId) malformed();
@@ -187,45 +212,56 @@ function projectStatus(value: unknown, expectedSessionId: string, expectedRunId:
       requireAbsent(status, ["failure", "cancellation", "terminalAt"]);
       return { ...base, phase, liveActivity };
     }
-    case "canceling":
+    case "canceling": {
       if (status.liveActivity !== null) malformed();
       requireAbsent(status, ["failure", "terminalAt"]);
+      if (status.cancellation === undefined) malformed();
       return {
         ...base,
         phase,
         liveActivity: null,
-        ...(status.cancellation === undefined ? {} : { cancellation: projectCancellation(status.cancellation) }),
+        cancellation: snapshotCliRunRequestCancellation(status.cancellation),
       };
+    }
     case "completed":
       if (status.liveActivity !== null) malformed();
-      requireAbsent(status, ["failure", "cancellation"]);
-      return { ...base, phase, liveActivity: null, terminalAt: nonNegativeInteger(status.terminalAt) };
+      requireAbsent(status, ["failure"]);
+      return terminalStatusWithRequestOnlyCancellation(base, status, phase);
     case "failed":
-    case "interrupted":
+    case "interrupted": {
       if (status.liveActivity !== null) malformed();
+      const failedTerminalAt = nonNegativeInteger(status.terminalAt);
+      const failedCancellation = optionalRequestOnlyCancellation(status.cancellation, failedTerminalAt);
       return {
         ...base,
         phase,
         liveActivity: null,
-        terminalAt: nonNegativeInteger(status.terminalAt),
+        terminalAt: failedTerminalAt,
         failure: projectFailure(status.failure),
-        ...(status.cancellation === undefined ? {} : { cancellation: projectCancellation(status.cancellation) }),
+        ...(failedCancellation === undefined ? {} : { cancellation: failedCancellation }),
       };
-    case "canceled":
+    }
+    case "canceled": {
       if (status.liveActivity !== null) malformed();
       requireAbsent(status, ["failure"]);
+      const terminalAt = nonNegativeInteger(status.terminalAt);
+      if (status.cancellation === undefined) {
+        return { ...base, phase, liveActivity: null, terminalAt };
+      }
+      const cancellation = snapshotCliRunAcknowledgedCancellation(status.cancellation, terminalAt);
       return {
         ...base,
         phase,
         liveActivity: null,
-        terminalAt: nonNegativeInteger(status.terminalAt),
-        ...(status.cancellation === undefined ? {} : { cancellation: projectCancellation(status.cancellation) }),
+        terminalAt,
+        cancellation,
       };
+    }
   }
 }
 
 function projectFailure(value: unknown) {
-  const failure = record(value);
+  const failure = allowedRecord(value, ["origin", "summary"]);
   return {
     origin: enumValue(failure.origin, [
       "provider",
@@ -241,14 +277,35 @@ function projectFailure(value: unknown) {
   };
 }
 
-function projectCancellation(value: unknown) {
-  const cancellation = record(value);
+function terminalStatusWithRequestOnlyCancellation(
+  base: Readonly<{
+    sessionId: string;
+    runId: string;
+    retryOfRunId?: string;
+    createdAt: number;
+    startedAt?: number;
+    updatedAt: number;
+  }>,
+  status: Readonly<Record<string, unknown>>,
+  phase: "completed",
+): CliRunStatusValue {
+  const terminalAt = nonNegativeInteger(status.terminalAt);
+  const cancellation = optionalRequestOnlyCancellation(status.cancellation, terminalAt);
   return {
-    requestedAt: nonNegativeInteger(cancellation.requestedAt),
-    ...(cancellation.acknowledgedAt === undefined
-      ? {}
-      : { acknowledgedAt: nonNegativeInteger(cancellation.acknowledgedAt) }),
-  };
+    ...base,
+    phase,
+    liveActivity: null,
+    terminalAt,
+    ...(cancellation === undefined ? {} : { cancellation }),
+  } as CliRunStatusValue;
+}
+
+function optionalRequestOnlyCancellation(
+  value: unknown,
+  terminalAt: number,
+): Readonly<{ requestedAt: number; acknowledgedAt?: never }> | undefined {
+  if (value === undefined) return undefined;
+  return snapshotCliRunRequestCancellation(value, terminalAt);
 }
 
 function projectEvents(
@@ -323,6 +380,13 @@ function validateRunResponse(
     ) {
       malformed();
     }
+    if (
+      isCommandFor(command, "cancel") &&
+      record(response.error).kind === "domain" &&
+      !isApplicationRunCancelDomainErrorCode(record(response.error).code)
+    ) {
+      malformed();
+    }
     validateRunCapacityError(command, response.error);
     return;
   }
@@ -332,6 +396,10 @@ function validateRunResponse(
     return;
   }
   if (isCommandFor(command, "send-input")) {
+    if (response.overallStatus === "partial_success") malformed();
+    return;
+  }
+  if (isCommandFor(command, "cancel")) {
     if (response.overallStatus === "partial_success") malformed();
     return;
   }
@@ -391,7 +459,7 @@ function requireNullLiveOnly(status: Readonly<Record<string, unknown>>): void {
 }
 
 function requireAbsent(value: Readonly<Record<string, unknown>>, keys: readonly string[]): void {
-  if (keys.some((key) => value[key] !== undefined)) malformed();
+  if (keys.some((key) => Object.hasOwn(value, key))) malformed();
 }
 
 function snapshotDenseArray(value: unknown, maxLength: number): readonly unknown[] {
@@ -409,7 +477,16 @@ function snapshotDenseArray(value: unknown, maxLength: number): readonly unknown
 
 function record(value: unknown): Readonly<Record<string, unknown>> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) malformed();
-  return value as Readonly<Record<string, unknown>>;
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  if (prototype !== Object.prototype && prototype !== null) malformed();
+  const entries: [string, unknown][] = [];
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") malformed();
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) malformed();
+    entries.push([key, descriptor.value]);
+  }
+  return Object.fromEntries(entries);
 }
 
 function exactRecord(value: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> {
@@ -422,6 +499,12 @@ function exactRecord(value: unknown, keys: readonly string[]): Readonly<Record<s
   ) {
     malformed();
   }
+  return candidate;
+}
+
+function allowedRecord(value: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> {
+  const candidate = record(value);
+  if (Object.keys(candidate).some((key) => !keys.includes(key))) malformed();
   return candidate;
 }
 

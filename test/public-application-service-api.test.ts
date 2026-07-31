@@ -114,15 +114,20 @@ const invalidFailedRunHistoryItem: ApplicationSessionRunItem = {
   phase: "failed",
   terminalAt: 2,
 };
-// @ts-expect-error completed Run history items cannot expose cancellation state
-const invalidCompletedRunHistoryItem: ApplicationSessionRunItem = {
+const completedAfterCancelRunHistoryItem: ApplicationSessionRunItem = {
   ...runHistoryItemBase,
   phase: "completed",
   terminalAt: 2,
   cancellation: { requestedAt: 1 },
 };
+// @ts-expect-error completed Run history items cannot expose a cancel acknowledgment
+const invalidCompletedRunHistoryItem: ApplicationSessionRunItem = {
+  ...completedAfterCancelRunHistoryItem,
+  cancellation: { requestedAt: 1, acknowledgedAt: 2 },
+};
 void invalidActiveRunHistoryItem;
 void invalidFailedRunHistoryItem;
+void completedAfterCancelRunHistoryItem;
 void invalidCompletedRunHistoryItem;
 
 const listItemBase = {

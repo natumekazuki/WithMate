@@ -42,6 +42,7 @@ Operations:
   start             Admit a new Run and its initiating user Message
   retry             Admit a new Run that reuses a terminal source Run Message
   send-input        Admit and deliver a supplemental user Message to a live Run
+  cancel            Request cancellation of an active Run
   status            Read the persisted Run status
   events            Read a bounded RunEvent page
   follow            Wait for events, terminal closure, or a bounded deadline
@@ -236,6 +237,24 @@ Retrying the exact request with the same idempotency key returns its current dur
 A pending outcome can change after this command returns.
 After an ambiguous outcome, sending with a new idempotency key can duplicate the Provider effect.
 The optional timeout only bounds this CLI request; it does not cancel an admitted delivery.
+
+Optional options:
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
+  cancel: `Usage: withmate run cancel [options]
+
+Required options:
+  --session-id <session-id>
+  --run-id <run-id>
+  --idempotency-key <lowercase-uuid>
+
+The first successful active-Run admission can return phase "canceling".
+Retrying the exact request with the same idempotency key returns its current durable outcome.
+A terminal target is a successful no-op and does not interrupt the Provider.
+Provider interrupt acceptance is not terminal; use status, events, or follow to observe terminal closure.
+The optional timeout, SIGINT, and client disconnect only bound this request. They neither undo a durable
+cancellation admission nor implicitly cancel server work.
 
 Optional options:
   --timeout-ms <1..2147483647>

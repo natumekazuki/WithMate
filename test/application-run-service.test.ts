@@ -62,26 +62,52 @@ test("Run status accepts canceled persistence without cancel timestamps and expo
 
   const withCancellation = createService({
     reads: reads({
-      run: { ...repositoryRun("canceled"), cancelRequestedAt: 20, cancelAcknowledgedAt: 21 },
+      run: { ...repositoryRun("canceled"), cancelRequestedAt: 5, cancelAcknowledgedAt: 6 },
     }),
   });
   const present = await withCancellation.status(request());
   assert.equal(present.overallStatus, "success");
   if (present.overallStatus === "success") {
     assert.deepEqual("cancellation" in present.value ? present.value.cancellation : undefined, {
-      requestedAt: 20,
-      acknowledgedAt: 21,
+      requestedAt: 5,
+      acknowledgedAt: 6,
     });
   }
 });
 
-test("Run status shares the history cancellation invariant for phases that cannot expose cancellation", async () => {
-  for (const phase of ["queued", "starting", "active", "finalizing", "completed"] as const) {
+test("Run status exposes request-only cancellation on natural completion and rejects impossible phase pairs", async () => {
+  const completed = createService({
+    reads: reads({ run: { ...repositoryRun("completed"), cancelRequestedAt: 2 } }),
+  });
+  const response = await completed.status(request());
+  assert.equal(response.overallStatus, "success");
+  if (response.overallStatus === "success") {
+    assert.equal(response.value.phase, "completed");
+    assert.deepEqual(response.value.cancellation, { requestedAt: 2 });
+  }
+
+  for (const phase of ["queued", "starting", "active", "finalizing"] as const) {
     const service = createService({
       reads: reads({ run: { ...repositoryRun(phase), cancelRequestedAt: 2 } }),
     });
     assert.deepEqual(await service.status(request()), internalReadFailure());
   }
+  for (const phase of ["completed", "failed", "interrupted"] as const) {
+    const service = createService({
+      reads: reads({
+        run: {
+          ...repositoryRun(phase),
+          cancelRequestedAt: 2,
+          cancelAcknowledgedAt: 3,
+        },
+      }),
+    });
+    assert.deepEqual(await service.status(request()), internalReadFailure());
+  }
+  const canceledWithoutAcknowledgment = createService({
+    reads: reads({ run: { ...repositoryRun("canceled"), cancelRequestedAt: 2 } }),
+  });
+  assert.deepEqual(await canceledWithoutAcknowledgment.status(request()), internalReadFailure());
 });
 
 test("Run status accepts the full persisted failure summary bound", async () => {
@@ -979,6 +1005,7 @@ function repositoryRun(phase: ApplicationRunPhase): Readonly<Record<string, unkn
     externalSideEffectState: "present",
     providerErrorCode: failure ? "provider-private-code" : undefined,
     ...(failure ? { failureOrigin: "provider", errorSummary: "redacted failure" } : {}),
+    ...(phase === "canceling" ? { cancelRequestedAt: 2 } : {}),
     createdAt: 1,
     ...(phase === "queued" ? {} : { startedAt: 2 }),
     ...(terminal ? { terminalAt: 10 } : {}),

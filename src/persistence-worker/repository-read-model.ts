@@ -4,12 +4,18 @@ import { DatabaseSync } from "node:sqlite";
 import {
   REPOSITORY_READ_LIMITS,
   REPOSITORY_READ_OPERATIONS,
+  type RunCancelReplayProbeResult,
   type RunInputReplayProbeResult,
   type RunOutputListItem,
 } from "../shared/repository-read-model.js";
-import type { RepositoryCommandErrorCode, RunInputAdmissionResult } from "../shared/repository-write-model.js";
+import type {
+  RepositoryCommandErrorCode,
+  RunCancelAdmissionResult,
+  RunInputAdmissionResult,
+} from "../shared/repository-write-model.js";
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
 import { isLocalRepositoryKey, SESSION_METADATA_LIMITS, sessionSearchKey } from "../shared/session-metadata.js";
+import { prepareRunCancelIdempotency, projectRunCancelAdmissionResult } from "./run-cancel-idempotency.js";
 import { prepareRunInputIdempotency } from "./run-input-idempotency.js";
 
 const INLINE_MESSAGE_BYTES = 64 * 1024;
@@ -223,6 +229,10 @@ export function createRepositoryReadOperations(
       read((payload) => ({ result: runInputReplayProbe(database, payload, clock) })),
     ],
     [
+      REPOSITORY_READ_OPERATIONS.runCancelReplayProbe,
+      read((payload) => ({ result: runCancelReplayProbe(database, payload, clock) })),
+    ],
+    [
       REPOSITORY_READ_OPERATIONS.runOutputPayloadMetadata,
       read((payload) => ({ result: runOutputPayloadMetadata(database, payload) })),
     ],
@@ -237,6 +247,80 @@ export function createRepositoryReadOperations(
     ],
     [REPOSITORY_READ_OPERATIONS.recoveryGet, read((payload) => ({ result: recoveryGet(database, payload) }))],
   ]);
+}
+
+function runCancelReplayProbe(
+  database: DatabaseSync,
+  payload: Readonly<Record<string, unknown>>,
+  clock: () => number,
+): RunCancelReplayProbeResult {
+  assertExactKeys(payload, ["sessionId", "runId", "idempotencyKey"]);
+  const sessionId = requiredString(payload.sessionId, "sessionId");
+  const runId = requiredString(payload.runId, "runId");
+  if (!isCanonicalUuid(payload.idempotencyKey)) throw invalidRequest("idempotencyKey");
+  const scope = database
+    .prepare(
+      `
+      SELECT s.workspace_key
+      FROM sessions s
+      JOIN runs r ON r.session_id = s.id
+      WHERE s.id = ? AND r.id = ?
+    `,
+    )
+    .get(sessionId, runId) as Readonly<{ workspace_key: string }> | undefined;
+  const claim = database
+    .prepare("SELECT claim_kind FROM idempotency_key_claims WHERE idempotency_key = ?")
+    .get(payload.idempotencyKey) as Readonly<{ claim_kind: "standard" | "session_deletion" }> | undefined;
+  const row = database
+    .prepare(
+      `
+      SELECT scope_session_id, operation, request_fingerprint, record_state,
+        response_kind, response_ref_type, response_ref_id, response_envelope_json, expires_at
+      FROM idempotency_records
+      WHERE idempotency_key = ?
+    `,
+    )
+    .get(payload.idempotencyKey) as RunInputIdempotencyRow | undefined;
+  if (row === undefined) {
+    return claim === undefined ? { kind: "absent" } : replayFailure("idempotency_conflict", "Run cancel");
+  }
+  const prepared =
+    scope === undefined
+      ? undefined
+      : prepareRunCancelIdempotency({ sessionId, runId, workspaceKey: scope.workspace_key });
+  if (
+    prepared === undefined ||
+    row.scope_session_id !== sessionId ||
+    row.operation !== "run.cancel.admit" ||
+    row.request_fingerprint !== prepared.fingerprint
+  ) {
+    return replayFailure("idempotency_conflict", "Run cancel");
+  }
+  if (row.record_state === "in_progress") return replayFailure("idempotency_in_progress", "Run cancel");
+  const now = clock();
+  if (!Number.isSafeInteger(now) || now < 0) throw persistenceContractViolation();
+  if (row.record_state === "expired" || row.expires_at === null || row.expires_at <= now) {
+    return replayFailure("idempotency_expired", "Run cancel");
+  }
+  if (
+    row.response_kind !== "success" ||
+    row.response_ref_type !== "run" ||
+    row.response_ref_id !== runId ||
+    row.response_envelope_json === null
+  ) {
+    return replayFailure("reference_invalid", "Run cancel");
+  }
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(row.response_envelope_json);
+  } catch {
+    return replayFailure("reference_invalid", "Run cancel");
+  }
+  if (!validRunCancelReplayEnvelope(envelope, sessionId, runId)) {
+    return replayFailure("reference_invalid", "Run cancel");
+  }
+  const current = readRunCancelReplayResult(database, sessionId, runId);
+  return current === undefined ? replayFailure("reference_invalid", "Run cancel") : { kind: "replay", value: current };
 }
 
 function runInputReplayProbe(
@@ -272,7 +356,7 @@ function runInputReplayProbe(
     )
     .get(payload.idempotencyKey) as RunInputIdempotencyRow | undefined;
   if (row === undefined) {
-    return claim === undefined ? { kind: "absent" } : replayFailure("idempotency_conflict");
+    return claim === undefined ? { kind: "absent" } : replayFailure("idempotency_conflict", "Run input");
   }
   const prepared =
     scope === undefined
@@ -289,13 +373,13 @@ function runInputReplayProbe(
     row.operation !== "run.input.admit" ||
     row.request_fingerprint !== prepared.fingerprint
   ) {
-    return replayFailure("idempotency_conflict");
+    return replayFailure("idempotency_conflict", "Run input");
   }
-  if (row.record_state === "in_progress") return replayFailure("idempotency_in_progress");
+  if (row.record_state === "in_progress") return replayFailure("idempotency_in_progress", "Run input");
   const now = clock();
   if (!Number.isSafeInteger(now) || now < 0) throw persistenceContractViolation();
   if (row.record_state === "expired" || row.expires_at === null || row.expires_at <= now) {
-    return replayFailure("idempotency_expired");
+    return replayFailure("idempotency_expired", "Run input");
   }
   if (
     row.response_kind !== "success" ||
@@ -303,19 +387,19 @@ function runInputReplayProbe(
     row.response_ref_id === null ||
     row.response_envelope_json === null
   ) {
-    return replayFailure("reference_invalid");
+    return replayFailure("reference_invalid", "Run input");
   }
   let envelope: unknown;
   try {
     envelope = JSON.parse(row.response_envelope_json);
   } catch {
-    return replayFailure("reference_invalid");
+    return replayFailure("reference_invalid", "Run input");
   }
   if (!validRunInputReplayEnvelope(envelope, row.response_ref_id, sessionId, runId)) {
-    return replayFailure("reference_invalid");
+    return replayFailure("reference_invalid", "Run input");
   }
   const current = readRunInputReplayResult(database, row.response_ref_id, sessionId, runId);
-  return current === undefined ? replayFailure("reference_invalid") : { kind: "replay", value: current };
+  return current === undefined ? replayFailure("reference_invalid", "Run input") : { kind: "replay", value: current };
 }
 
 function replayFailure(
@@ -323,7 +407,8 @@ function replayFailure(
     RepositoryCommandErrorCode,
     "idempotency_conflict" | "idempotency_in_progress" | "idempotency_expired" | "reference_invalid"
   >,
-): Extract<RunInputReplayProbeResult, Readonly<{ kind: "failure" }>> {
+  subject: "Run input" | "Run cancel",
+): Extract<RunInputReplayProbeResult | RunCancelReplayProbeResult, Readonly<{ kind: "failure" }>> {
   const retryable = code === "idempotency_in_progress";
   const message =
     code === "idempotency_conflict"
@@ -332,8 +417,55 @@ function replayFailure(
         ? "Idempotent command is in progress."
         : code === "idempotency_expired"
           ? "Idempotency key has expired."
-          : "Idempotent Run input response is invalid.";
+          : `Idempotent ${subject} response is invalid.`;
   return { kind: "failure", error: { code, message, retryable } };
+}
+
+function validRunCancelReplayEnvelope(value: unknown, sessionId: string, runId: string): boolean {
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, ["sessionId", "runId", "phase", "cancelRequestedAt", "cancelAcknowledgedAt", "terminalAt"]) ||
+    value.sessionId !== sessionId ||
+    value.runId !== runId
+  ) {
+    return false;
+  }
+  return (
+    projectRunCancelAdmissionResult({
+      sessionId,
+      runId,
+      phase: value.phase,
+      cancelRequestedAt: value.cancelRequestedAt,
+      cancelAcknowledgedAt: value.cancelAcknowledgedAt,
+      terminalAt: value.terminalAt,
+    }) !== undefined
+  );
+}
+
+function readRunCancelReplayResult(
+  database: DatabaseSync,
+  sessionId: string,
+  runId: string,
+): RunCancelAdmissionResult | undefined {
+  const row = database
+    .prepare(
+      `
+      SELECT r.phase, r.cancel_requested_at, r.cancel_acknowledged_at, r.terminal_at
+      FROM runs r
+      JOIN sessions s ON s.id = r.session_id
+      WHERE s.id = ? AND r.id = ?
+    `,
+    )
+    .get(sessionId, runId) as RunCancelReplayRow | undefined;
+  if (row === undefined) return undefined;
+  return projectRunCancelAdmissionResult({
+    sessionId,
+    runId,
+    phase: row.phase,
+    cancelRequestedAt: row.cancel_requested_at,
+    cancelAcknowledgedAt: row.cancel_acknowledged_at,
+    terminalAt: row.terminal_at,
+  });
 }
 
 function validRunInputReplayEnvelope(value: unknown, messageId: string, sessionId: string, runId: string): boolean {
@@ -1397,6 +1529,11 @@ function assertExactKeys(payload: Readonly<Record<string, unknown>>, allowed: re
   if (Object.keys(payload).some((key) => !allowed.includes(key))) throw invalidRequest("payload");
 }
 
+function hasExactKeys(value: Readonly<Record<string, unknown>>, expected: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expected.length && expected.every((key) => Object.hasOwn(value, key));
+}
+
 function snakeToCamel(row: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
   return Object.fromEntries(
     Object.entries(row)
@@ -1468,6 +1605,12 @@ type RunInputReplayRow = Readonly<{
   created_at: number;
   dispatching_at: number | null;
   resolved_at: number | null;
+}>;
+type RunCancelReplayRow = Readonly<{
+  phase: string;
+  cancel_requested_at: number | null;
+  cancel_acknowledged_at: number | null;
+  terminal_at: number | null;
 }>;
 type RunOutputItemRow = Readonly<{
   id: string;

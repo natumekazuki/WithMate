@@ -48,7 +48,23 @@ export function isApplicationRunSendInputDomainErrorCode(
   );
 }
 
-export type ApplicationRunOperation = "start" | "retry" | "send-input" | "status" | "events" | "follow";
+export const APPLICATION_RUN_CANCEL_DOMAIN_ERROR_CODES = [
+  "request_invalid",
+  "not_found",
+  "reference_invalid",
+  "lifecycle_conflict",
+  "idempotency_conflict",
+  "idempotency_in_progress",
+  "idempotency_expired",
+] as const satisfies readonly ApplicationDomainErrorCode[];
+
+export type ApplicationRunCancelDomainErrorCode = (typeof APPLICATION_RUN_CANCEL_DOMAIN_ERROR_CODES)[number];
+
+export function isApplicationRunCancelDomainErrorCode(value: unknown): value is ApplicationRunCancelDomainErrorCode {
+  return typeof value === "string" && (APPLICATION_RUN_CANCEL_DOMAIN_ERROR_CODES as readonly string[]).includes(value);
+}
+
+export type ApplicationRunOperation = "start" | "retry" | "send-input" | "cancel" | "status" | "events" | "follow";
 
 export type ApplicationRunSandboxSetting =
   | Readonly<{ mode: "read-only"; networkAccess: boolean }>
@@ -77,10 +93,18 @@ export type ApplicationRunFailureSummary = Readonly<{
   summary?: string;
 }>;
 
-export type ApplicationRunCancellationSummary = Readonly<{
+export type ApplicationRunCancellationRequestSummary = Readonly<{
   requestedAt: number;
-  acknowledgedAt?: number;
+  acknowledgedAt?: never;
 }>;
+
+export type ApplicationRunCancellationAcknowledgementSummary = Readonly<{
+  requestedAt: number;
+  acknowledgedAt: number;
+}>;
+
+export type ApplicationRunCancellationSummary =
+  ApplicationRunCancellationRequestSummary | ApplicationRunCancellationAcknowledgementSummary;
 
 type ApplicationRunStatusBase = Readonly<{
   sessionId: string;
@@ -113,7 +137,7 @@ type ApplicationRunCancelingStatus = ApplicationRunStatusBase &
   Readonly<{
     phase: "canceling";
     liveActivity: null;
-    cancellation?: ApplicationRunCancellationSummary;
+    cancellation: ApplicationRunCancellationRequestSummary;
     failure?: never;
     terminalAt?: never;
   }>;
@@ -124,7 +148,7 @@ type ApplicationRunCompletedStatus = ApplicationRunStatusBase &
     liveActivity: null;
     terminalAt: number;
     failure?: never;
-    cancellation?: never;
+    cancellation?: ApplicationRunCancellationRequestSummary;
   }>;
 
 type ApplicationRunFailedStatus = ApplicationRunStatusBase &
@@ -133,7 +157,7 @@ type ApplicationRunFailedStatus = ApplicationRunStatusBase &
     liveActivity: null;
     terminalAt: number;
     failure: ApplicationRunFailureSummary;
-    cancellation?: ApplicationRunCancellationSummary;
+    cancellation?: ApplicationRunCancellationRequestSummary;
   }>;
 
 type ApplicationRunCanceledStatus = ApplicationRunStatusBase &
@@ -141,7 +165,7 @@ type ApplicationRunCanceledStatus = ApplicationRunStatusBase &
     phase: "canceled";
     liveActivity: null;
     terminalAt: number;
-    cancellation?: ApplicationRunCancellationSummary;
+    cancellation?: ApplicationRunCancellationAcknowledgementSummary;
     failure?: never;
   }>;
 
@@ -152,6 +176,11 @@ export type ApplicationRunStatus =
   | ApplicationRunCompletedStatus
   | ApplicationRunFailedStatus
   | ApplicationRunCanceledStatus;
+
+export type ApplicationRunCancelResult = Extract<
+  ApplicationRunStatus,
+  Readonly<{ phase: "canceling" | "completed" | "failed" | "canceled" | "interrupted" }>
+>;
 
 export type ApplicationRunEventKind = "run_terminal" | "child_result_collected" | "unknown";
 
@@ -197,6 +226,13 @@ export type ApplicationRunSendInputRequest<TAuthorizationContext> = Readonly<{
   runId: string;
   idempotencyKey: string;
   contentBlocks: readonly TextContentBlock[];
+}>;
+
+export type ApplicationRunCancelRequest<TAuthorizationContext> = Readonly<{
+  context: ApplicationSessionOperationContext<TAuthorizationContext>;
+  sessionId: string;
+  runId: string;
+  idempotencyKey: string;
 }>;
 
 export type ApplicationRunSendInputResult =
@@ -297,6 +333,16 @@ export type ApplicationRunAccessValidationInput<TAuthorizationContext> =
       }>;
     }>
   | Readonly<{
+      operation: "cancel";
+      access: "write";
+      context: ApplicationSessionOperationContext<TAuthorizationContext>;
+      target: Readonly<{
+        kind: "run_cancel";
+        sessionId: string;
+        runId: string;
+      }>;
+    }>
+  | Readonly<{
       operation: "status" | "events" | "follow";
       access: "read";
       context: ApplicationSessionOperationContext<TAuthorizationContext>;
@@ -324,6 +370,10 @@ export interface ApplicationRunOperations<TAuthorizationContext> {
     request: ApplicationRunSendInputRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationRunSendInputResult, "write">>;
+  cancel(
+    request: ApplicationRunCancelRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationRunCancelResult, "write">>;
   status(
     request: ApplicationRunStatusRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,

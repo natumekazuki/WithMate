@@ -1,5 +1,6 @@
 import {
   APPLICATION_RUN_LIMITS,
+  isApplicationRunCancelDomainErrorCode,
   isApplicationRunSendInputDomainErrorCode,
 } from "../../shared/application-run-model.js";
 import {
@@ -35,6 +36,7 @@ const WRITE_OPERATIONS = new Set<RuntimeIpcOperation>([
   "run.start",
   "run.retry",
   "run.send_input",
+  "run.cancel",
 ]);
 const IDENTIFIER_MAX_LENGTH = 1_024;
 const CURSOR_MAX_LENGTH = 2_048;
@@ -134,6 +136,8 @@ function snapshotOperationValue(
       return snapshotRunAdmission(value, payload, operation);
     case "run.send_input":
       return snapshotRunInput(value, payload);
+    case "run.cancel":
+      return snapshotRunCancel(value, payload);
     case "run.status":
       return snapshotRunStatus(value, payload);
     case "run.events":
@@ -503,22 +507,32 @@ function snapshotSessionRunItem(value: unknown): unknown {
       malformed();
     }
   } else if (phase === "canceling") {
-    if (item.terminalAt !== undefined || failure !== undefined || item.finalAssistantMessageId !== undefined) {
+    if (
+      item.terminalAt !== undefined ||
+      failure !== undefined ||
+      cancellation === undefined ||
+      record(cancellation, ["requestedAt", "acknowledgedAt"]).acknowledgedAt !== undefined ||
+      item.finalAssistantMessageId !== undefined
+    ) {
       malformed();
     }
   } else if (phase === "completed") {
-    if (!isNonNegativeInteger(item.terminalAt) || failure !== undefined || cancellation !== undefined) {
+    if (!isNonNegativeInteger(item.terminalAt) || failure !== undefined) {
       malformed();
     }
+    validateTerminalCancellation(item.terminalAt, cancellation, false);
   } else if (phase === "failed" || phase === "interrupted") {
     if (!isNonNegativeInteger(item.terminalAt) || failure === undefined || item.finalAssistantMessageId !== undefined) {
       malformed();
     }
+    validateTerminalCancellation(item.terminalAt, cancellation, false);
   } else if (
     phase === "canceled" &&
     (!isNonNegativeInteger(item.terminalAt) || failure !== undefined || item.finalAssistantMessageId !== undefined)
   ) {
     malformed();
+  } else if (phase === "canceled") {
+    validateTerminalCancellation(item.terminalAt, cancellation, true);
   }
   return {
     ...item,
@@ -574,31 +588,52 @@ function snapshotRunStatus(value: unknown, payload: RuntimeIpcOperationPayload):
       malformed();
     }
   } else if (phase === "canceling") {
-    if (status.liveActivity !== null || status.terminalAt !== undefined || failure !== undefined) malformed();
-  } else if (phase === "completed") {
     if (
       status.liveActivity !== null ||
-      !isNonNegativeInteger(status.terminalAt) ||
+      status.terminalAt !== undefined ||
       failure !== undefined ||
-      cancellation !== undefined
+      cancellation === undefined ||
+      record(cancellation, ["requestedAt", "acknowledgedAt"]).acknowledgedAt !== undefined
     ) {
       malformed();
     }
+  } else if (phase === "completed") {
+    if (status.liveActivity !== null || !isNonNegativeInteger(status.terminalAt) || failure !== undefined) {
+      malformed();
+    }
+    validateTerminalCancellation(status.terminalAt, cancellation, false);
   } else if (phase === "failed" || phase === "interrupted") {
     if (status.liveActivity !== null || !isNonNegativeInteger(status.terminalAt) || failure === undefined) {
       malformed();
     }
+    validateTerminalCancellation(status.terminalAt, cancellation, false);
   } else if (
     phase === "canceled" &&
     (status.liveActivity !== null || !isNonNegativeInteger(status.terminalAt) || failure !== undefined)
   ) {
     malformed();
+  } else if (phase === "canceled") {
+    validateTerminalCancellation(status.terminalAt, cancellation, true);
   }
   return {
     ...status,
     ...(failure === undefined ? {} : { failure }),
     ...(cancellation === undefined ? {} : { cancellation }),
   };
+}
+
+function snapshotRunCancel(value: unknown, payload: RuntimeIpcOperationPayload): unknown {
+  const status = snapshotRunStatus(value, payload) as Readonly<Record<string, unknown>>;
+  if (
+    status.phase !== "canceling" &&
+    status.phase !== "completed" &&
+    status.phase !== "failed" &&
+    status.phase !== "canceled" &&
+    status.phase !== "interrupted"
+  ) {
+    malformed();
+  }
+  return status;
 }
 
 function snapshotRunAdmission(
@@ -676,6 +711,20 @@ function snapshotRunCancellation(value: unknown): unknown {
     malformed();
   }
   return cancellation;
+}
+
+function validateTerminalCancellation(terminalAt: unknown, cancellation: unknown, acknowledged: boolean): void {
+  if (cancellation === undefined) return;
+  const cancellationRecord = record(cancellation, ["requestedAt", "acknowledgedAt"]);
+  if ((cancellationRecord.requestedAt as number) > (terminalAt as number)) malformed();
+  if (
+    acknowledged
+      ? cancellationRecord.acknowledgedAt === undefined ||
+        (cancellationRecord.acknowledgedAt as number) > (terminalAt as number)
+      : cancellationRecord.acknowledgedAt !== undefined
+  ) {
+    malformed();
+  }
 }
 
 function snapshotRunEventPage(value: unknown, payload: RuntimeIpcOperationPayload): unknown {
@@ -1136,7 +1185,10 @@ function validateOutcomeCombination(
 ): void {
   if (
     overallStatus === "partial_success" &&
-    (operation === "run.start" || operation === "run.retry" || operation === "run.send_input")
+    (operation === "run.start" ||
+      operation === "run.retry" ||
+      operation === "run.send_input" ||
+      operation === "run.cancel")
   ) {
     malformed();
   }
@@ -1294,6 +1346,9 @@ function validateFailureCombination(
     error.kind === "domain" &&
     !isApplicationRunSendInputDomainErrorCode(error.code)
   ) {
+    malformed();
+  }
+  if (operation === "run.cancel" && error.kind === "domain" && !isApplicationRunCancelDomainErrorCode(error.code)) {
     malformed();
   }
 
