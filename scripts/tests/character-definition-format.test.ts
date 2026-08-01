@@ -191,6 +191,6 @@ name: Mia
       "utf8",
     );
 
-    assert.equal(skillTemplate, buildDefaultCharacterNotes());
+    assert.equal(skillTemplate.replace(/\r\n?/g, "\n"), buildDefaultCharacterNotes());
   });
 });
