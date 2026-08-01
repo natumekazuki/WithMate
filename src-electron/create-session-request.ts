@@ -1,3 +1,7 @@
+import {
+  isUnknownCharacterOwnerId,
+  normalizeCharacterOwnerId,
+} from "../src/character/character-owner.js";
 import { normalizeCharacterRuntimeSnapshot } from "../src/character/character-runtime-snapshot.js";
 import type {
   CreateSessionInput,
@@ -92,6 +96,14 @@ export function parseCreateSessionRequest(input: unknown): {
   if (request.characterRuntimeSnapshot !== undefined && request.characterRuntimeSnapshot !== null && !runtimeSnapshot) {
     throw new Error("characterRuntimeSnapshot の形式が正しくないよ。");
   }
+  const characterId = normalizeCharacterOwnerId(requireString(request.characterId, "characterId"));
+  if (!characterId || isUnknownCharacterOwnerId(characterId)) {
+    throw new Error("characterId が空だよ。");
+  }
+  const normalizedRuntimeSnapshot = runtimeSnapshot;
+  if (normalizedRuntimeSnapshot && normalizedRuntimeSnapshot.characterId !== characterId) {
+    throw new Error("characterRuntimeSnapshot.characterId が characterId と一致しないよ。");
+  }
 
   const workspaceInput = requireRecord(request.workspace, "workspace");
   const workspaceKind = requireString(workspaceInput.kind, "workspace.kind");
@@ -120,14 +132,14 @@ export function parseCreateSessionRequest(input: unknown): {
         "sessionKind",
         ["default", "character-authoring"],
       ),
-      characterId: requireString(request.characterId, "characterId"),
+      characterId,
       character: requireString(request.character, "character"),
       characterIconPath: requireString(request.characterIconPath, "characterIconPath"),
       characterThemeColors: {
         main: requireString(theme.main, "characterThemeColors.main"),
         sub: requireString(theme.sub, "characterThemeColors.sub"),
       },
-      characterRuntimeSnapshot: runtimeSnapshot,
+      characterRuntimeSnapshot: normalizedRuntimeSnapshot,
       allowedAdditionalDirectories: optionalStringArray(
         request.allowedAdditionalDirectories,
         "allowedAdditionalDirectories",

@@ -5,34 +5,130 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import { DEFAULT_CHARACTER_THEME } from "../../src/character/character-catalog.js";
+import {
+  DEFAULT_CHARACTER_THEME,
+  type CharacterDetail,
+} from "../../src/character/character-catalog.js";
 import { buildNewSession, type CreateSessionInput } from "../../src/session-state.js";
 import {
   CharacterAuthoringService,
   CHARACTER_AUTHORING_SKILL_NAME,
+  resolveCharacterAuthoringRuntimeSessionForTurn,
 } from "../../src-electron/character-authoring-service.js";
+import { ProviderRuntimeOperationCoordinator } from "../../src-electron/provider-runtime-operation-coordinator.js";
+
+const resolveSelectedProvider = (providerId: string): string => providerId;
+const bundledSkillPath = path.resolve("resources", "skills", CHARACTER_AUTHORING_SKILL_NAME);
+const defaultDefinition = "# Existing character\n";
+const defaultNotes = "# Existing notes\n";
+
+async function runProviderOperationExclusive<T>(operation: () => T | Promise<T>): Promise<T> {
+  return operation();
+}
+
+function buildCharacter(overrides: Partial<CharacterDetail> = {}): CharacterDetail {
+  return {
+    id: "char-muse",
+    name: "Muse",
+    description: "既存説明",
+    iconFilePath: "",
+    theme: DEFAULT_CHARACTER_THEME,
+    state: "active",
+    isDefault: false,
+    createdAt: "2026-06-16T00:00:00.000Z",
+    updatedAt: "2026-06-16T00:00:00.000Z",
+    archivedAt: null,
+    definitionMarkdown: defaultDefinition,
+    notesMarkdown: defaultNotes,
+    ...overrides,
+  };
+}
+
+type CharacterAuthoringServiceDeps = ConstructorParameters<typeof CharacterAuthoringService>[0];
+
+function createService(
+  overrides: Partial<CharacterAuthoringServiceDeps> = {},
+): CharacterAuthoringService {
+  return new CharacterAuthoringService({
+    bundledSkillPath,
+    resolveProvider: resolveSelectedProvider,
+    runProviderRuntimeOperationExclusive: runProviderOperationExclusive,
+    getCharacter: () => buildCharacter(),
+    getCharacterDirectory: () => "C:/characters/char-muse",
+    async createSession(input) {
+      return buildNewSession(input);
+    },
+    ...overrides,
+  });
+}
+
+async function createWorkspace(
+  definition = defaultDefinition,
+  notes: string | null = defaultNotes,
+): Promise<{ tempDirectory: string; workspacePath: string }> {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-character-authoring-"));
+  const workspacePath = path.join(tempDirectory, "characters", "char-muse");
+  await mkdir(workspacePath, { recursive: true });
+  await writeFile(path.join(workspacePath, "character.md"), definition, "utf8");
+  if (notes !== null) {
+    await writeFile(path.join(workspacePath, "character-notes.md"), notes, "utf8");
+  }
+  return { tempDirectory, workspacePath };
+}
 
 describe("CharacterAuthoringService", () => {
-  it("workspace に固定 Skill と authoring 成果物を作成し character-authoring session を作る", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-character-authoring-"));
-    const createdInputs: CreateSessionInput[] = [];
-    const service = new CharacterAuthoringService({
-      bundledSkillPath: path.resolve("resources", "skills", CHARACTER_AUTHORING_SKILL_NAME),
-      getCharacter: () => ({
-        id: "char-muse",
+  it("最新定義から snapshot を作れない turn は古い runtime snapshot を破棄する", () => {
+    const session = buildNewSession({
+      taskTitle: "Muse authoring",
+      workspaceLabel: "Muse authoring",
+      workspacePath: "C:/characters/muse",
+      branch: "main",
+      sessionKind: "character-authoring",
+      characterId: "muse",
+      character: "Muse",
+      characterIconPath: "",
+      characterThemeColors: DEFAULT_CHARACTER_THEME,
+      characterRuntimeSnapshot: {
+        characterId: "muse",
         name: "Muse",
+        description: "",
+        iconFilePath: "",
+        theme: DEFAULT_CHARACTER_THEME,
+        definitionMarkdown: "# Character\nOld",
+        definitionSha256: "old-sha256",
+        definitionByteSize: 15,
+        snapshotAt: "2026-08-01T00:00:00.000Z",
+      },
+      approvalMode: DEFAULT_APPROVAL_MODE,
+    });
+
+    const resolved = resolveCharacterAuthoringRuntimeSessionForTurn(session, () => null);
+
+    assert.equal(resolved.characterId, "muse");
+    assert.equal(resolved.characterRuntimeSnapshot, null);
+  });
+
+  it("workspace に固定 Skill と authoring 成果物を作成し character-authoring session を作る", async () => {
+    const existingDefinition = `---
+schema: withmate-character-v5
+name: "Muse"
+description: "作業を一緒に進める相手"
+---
+
+# Existing Character
+`;
+    const existingNotes = "# Existing Notes\n";
+    const { tempDirectory, workspacePath } = await createWorkspace(existingDefinition, existingNotes);
+    const createdInputs: CreateSessionInput[] = [];
+    const service = createService({
+      getCharacter: () => buildCharacter({
         description: "作業を一緒に進める相手",
         iconFilePath: "C:\\Characters\\Muse\\legacy.webp",
-        theme: DEFAULT_CHARACTER_THEME,
-        state: "active",
-        isDefault: false,
-        createdAt: "2026-06-16T00:00:00.000Z",
-        updatedAt: "2026-06-16T00:00:00.000Z",
-        archivedAt: null,
-        definitionMarkdown: "",
-        notesMarkdown: "",
+        theme: { main: "#112233", sub: "#445566" },
+        definitionMarkdown: existingDefinition,
+        notesMarkdown: existingNotes,
       }),
-      getCharacterDirectory: (characterId) => path.join(tempDirectory, "characters", characterId),
+      getCharacterDirectory: () => workspacePath,
       async createSession(input) {
         createdInputs.push(input);
         return buildNewSession(input);
@@ -43,23 +139,19 @@ describe("CharacterAuthoringService", () => {
       const result = await service.startSession({
         mode: "improve",
         characterId: "char-muse",
-        name: "Muse",
-        description: "作業を一緒に進める相手",
-        definitionMarkdown: "",
-        notesMarkdown: "",
-        iconFilePath: "C:\\Drafts\\unsupported.webp",
-      } as Parameters<CharacterAuthoringService["startSession"]>[0] & { iconFilePath: string });
+        provider: "codex",
+      });
 
       assert.equal(result.session.sessionKind, "character-authoring");
       assert.equal(createdInputs[0]?.sessionKind, "character-authoring");
       assert.equal(createdInputs[0]?.approvalMode, DEFAULT_APPROVAL_MODE);
-      assert.deepEqual(createdInputs[0]?.characterThemeColors, DEFAULT_CHARACTER_THEME);
+      assert.deepEqual(createdInputs[0]?.characterThemeColors, { main: "#112233", sub: "#445566" });
       assert.equal(createdInputs[0]?.allowedAdditionalDirectories?.length, 0);
       assert.equal(createdInputs[0]?.provider, "codex");
       assert.equal(createdInputs[0]?.model, undefined);
       assert.equal(createdInputs[0]?.reasoningEffort, undefined);
       assert.equal(createdInputs[0]?.characterIconPath, "C:\\Characters\\Muse\\legacy.webp");
-      assert.equal(result.workspacePath, path.join(tempDirectory, "characters", "char-muse"));
+      assert.equal(result.workspacePath, workspacePath);
 
       const rootEntries = await readdir(result.workspacePath);
       assert.deepEqual(rootEntries.sort(), [
@@ -76,61 +168,74 @@ describe("CharacterAuthoringService", () => {
         "utf8",
       );
       assert.match(skillMarkdown, /name: withmate-character-authoring/);
+      assert.match(skillMarkdown, /references\/improve-existing-character\.md/);
+      const copiedSkillRoot = path.join(
+        result.workspacePath,
+        ".agents",
+        "skills",
+        CHARACTER_AUTHORING_SKILL_NAME,
+      );
+      assert.match(
+        await readFile(path.join(copiedSkillRoot, "references", "character-format.md"), "utf8"),
+        /8,000文字以内/,
+      );
+      assert.match(
+        await readFile(path.join(copiedSkillRoot, "references", "source-and-rights-policy.md"), "utf8"),
+        /コミュニティsource/,
+      );
+      assert.match(
+        await readFile(path.join(copiedSkillRoot, "references", "review-checklist.md"), "utf8"),
+        /Relationship smoke test/,
+      );
 
       const characterMarkdown = await readFile(path.join(result.workspacePath, "character.md"), "utf8");
-      assert.match(characterMarkdown, /name: "Muse"/);
-      assert.match(characterMarkdown, /description: "作業を一緒に進める相手"/);
+      assert.equal(characterMarkdown, existingDefinition);
 
       const notesMarkdown = await readFile(path.join(result.workspacePath, "character-notes.md"), "utf8");
-      assert.match(notesMarkdown, /## Revision Log/);
-      assert.match(notesMarkdown, /## Do Not Reintroduce/);
+      assert.equal(notesMarkdown, existingNotes);
 
       const agentsMarkdown = await readFile(path.join(result.workspacePath, "AGENTS.md"), "utf8");
       assert.match(agentsMarkdown, new RegExp(`必ず ${CHARACTER_AUTHORING_SKILL_NAME} Skill を使う。`));
+      assert.match(agentsMarkdown, /必要な場合の character-notes\.md/);
+      assert.doesNotMatch(agentsMarkdown, /character\.md \/ character-notes\.md を(?:改善|作成)する/);
       assert.doesNotMatch(agentsMarkdown, /Grow From Conversations/);
+
+      const authoringPrompt = await readFile(path.join(result.workspacePath, "AUTHORING_PROMPT.md"), "utf8");
+      assert.match(authoringPrompt, /source 調査.*mode 判定に従う/);
+      assert.match(authoringPrompt, /必要な場合の `character-notes\.md`/);
+      assert.doesNotMatch(authoringPrompt, /検索不要.*調査/);
 
       const inputJson = await readFile(path.join(result.workspacePath, "input.json"), "utf8");
       assert.match(inputJson, /"skill": "withmate-character-authoring"/);
       assert.match(inputJson, /"skillPath": ".agents\/skills\/withmate-character-authoring"/);
+      assert.doesNotMatch(inputJson, /userInstruction/);
       assert.doesNotMatch(inputJson, /[A-Z]:\\\\/);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
 
-  it("improve mode では既存 Character の本文を seed にする", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-character-authoring-"));
-    const service = new CharacterAuthoringService({
-      bundledSkillPath: path.resolve("resources", "skills", CHARACTER_AUTHORING_SKILL_NAME),
-      getCharacterDirectory: (characterId) => path.join(tempDirectory, "characters", characterId),
-      getCharacter: () => ({
-        id: "char-muse",
-        name: "Muse",
-        description: "既存説明",
-        iconFilePath: "",
-        theme: DEFAULT_CHARACTER_THEME,
-        state: "active",
-        isDefault: false,
-        createdAt: "2026-06-16T00:00:00.000Z",
-        updatedAt: "2026-06-16T00:00:00.000Z",
-        archivedAt: null,
-        definitionMarkdown: "# Existing character",
-        notesMarkdown: "# Existing notes",
+  it("improve mode の開始時に既存 Character files を書き換えない", async () => {
+    const existingDefinition = "# Existing character\r\n";
+    const existingNotes = "# Existing notes\r\n";
+    const { tempDirectory, workspacePath } = await createWorkspace(existingDefinition, existingNotes);
+    const service = createService({
+      getCharacterDirectory: () => workspacePath,
+      getCharacter: () => buildCharacter({
+        definitionMarkdown: existingDefinition,
+        notesMarkdown: existingNotes,
       }),
-      async createSession(input) {
-        return buildNewSession(input);
-      },
     });
 
     try {
       const result = await service.startSession({
         mode: "improve",
         characterId: "char-muse",
-        name: "",
+        provider: "codex",
       });
 
-      assert.equal(await readFile(path.join(result.workspacePath, "character.md"), "utf8"), "# Existing character");
-      assert.equal(await readFile(path.join(result.workspacePath, "character-notes.md"), "utf8"), "# Existing notes");
+      assert.equal(await readFile(path.join(result.workspacePath, "character.md"), "utf8"), existingDefinition);
+      assert.equal(await readFile(path.join(result.workspacePath, "character-notes.md"), "utf8"), existingNotes);
       assert.equal(result.session.characterId, "char-muse");
       assert.equal(result.workspacePath, path.join(tempDirectory, "characters", "char-muse"));
     } finally {
@@ -138,26 +243,42 @@ describe("CharacterAuthoringService", () => {
     }
   });
 
+  it("optional な character-notes.md がなくても起動し、Skill が authoring 時の初期化手順を持つ", async () => {
+    const { tempDirectory, workspacePath } = await createWorkspace(defaultDefinition, null);
+    const service = createService({
+      getCharacterDirectory: () => workspacePath,
+      getCharacter: () => buildCharacter({ notesMarkdown: "" }),
+    });
+
+    try {
+      const result = await service.startSession({
+        mode: "improve",
+        characterId: "char-muse",
+        provider: "codex",
+      });
+
+      await assert.rejects(
+        () => readFile(path.join(workspacePath, "character-notes.md"), "utf8"),
+        (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+      );
+      const skillMarkdown = await readFile(
+        path.join(result.workspacePath, ".agents", "skills", CHARACTER_AUTHORING_SKILL_NAME, "SKILL.md"),
+        "utf8",
+      );
+      assert.match(skillMarkdown, /## Targeted Update Workflow/);
+      assert.match(skillMarkdown, /## Full Authoring Workflow/);
+      assert.match(skillMarkdown, /character-notes\.md` は optional/);
+      assert.match(skillMarkdown, /templates\/character-notes\.md/);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("provider 指定時も model / depth は session 側の既定値解決に任せる", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-character-authoring-"));
+    const { tempDirectory, workspacePath } = await createWorkspace();
     const createdInputs: CreateSessionInput[] = [];
-    const service = new CharacterAuthoringService({
-      bundledSkillPath: path.resolve("resources", "skills", CHARACTER_AUTHORING_SKILL_NAME),
-      getCharacter: () => ({
-        id: "char-muse",
-        name: "Muse",
-        description: "",
-        iconFilePath: "",
-        theme: DEFAULT_CHARACTER_THEME,
-        state: "active",
-        isDefault: false,
-        createdAt: "2026-06-16T00:00:00.000Z",
-        updatedAt: "2026-06-16T00:00:00.000Z",
-        archivedAt: null,
-        definitionMarkdown: "# Existing character",
-        notesMarkdown: "# Existing notes",
-      }),
-      getCharacterDirectory: (characterId) => path.join(tempDirectory, "characters", characterId),
+    const service = createService({
+      getCharacterDirectory: () => workspacePath,
       async createSession(input) {
         createdInputs.push(input);
         return buildNewSession(input);
@@ -168,8 +289,7 @@ describe("CharacterAuthoringService", () => {
       const result = await service.startSession({
         mode: "improve",
         characterId: "char-muse",
-        name: "Muse",
-        provider: "copilot",
+        provider: " copilot ",
       });
 
       assert.equal(createdInputs[0]?.provider, "copilot");
@@ -185,20 +305,159 @@ describe("CharacterAuthoringService", () => {
     }
   });
 
-  it("characterId 未確定の authoring session は開始しない", async () => {
-    const service = new CharacterAuthoringService({
-      bundledSkillPath: path.resolve("resources", "skills", CHARACTER_AUTHORING_SKILL_NAME),
-      getCharacter: () => null,
-      getCharacterDirectory: () => null,
+  it("provider 確定から workspace 準備と Session 保存まで Settings 更新と直列化する", async () => {
+    const { tempDirectory, workspacePath } = await createWorkspace(defaultDefinition, null);
+    const coordinator = new ProviderRuntimeOperationCoordinator();
+    let providerEnabled = true;
+    const service = createService({
+      resolveProvider(providerId) {
+        if (!providerEnabled) {
+          throw new Error("選択した Character authoring provider は Settings で無効になっているよ。");
+        }
+        return providerId;
+      },
+      runProviderRuntimeOperationExclusive: (operation) => coordinator.runExclusive(operation),
+      getCharacter: () => buildCharacter({ notesMarkdown: "" }),
+      getCharacterDirectory: () => workspacePath,
       async createSession(input) {
+        if (!providerEnabled) {
+          throw new Error("選択した Character authoring provider は Settings で無効になっているよ。");
+        }
+        return buildNewSession(input);
+      },
+    });
+
+    try {
+      const authoringPromise = service.startSession({
+        mode: "improve",
+        characterId: "char-muse",
+        provider: "codex",
+      });
+      const settingsUpdatePromise = coordinator.runExclusive(() => {
+        providerEnabled = false;
+      });
+
+      const result = await authoringPromise;
+      await settingsUpdatePromise;
+
+      assert.equal(result.session.provider, "codex");
+      assert.equal(providerEnabled, false);
+      assert.match(await readFile(path.join(workspacePath, "AGENTS.md"), "utf8"), /Character Authoring Workspace/);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("provider 未指定の authoring session は workspace mutation 前に拒否する", async () => {
+    let characterResolutionCount = 0;
+    let sessionCreationCount = 0;
+    const service = createService({
+      getCharacter: () => {
+        characterResolutionCount += 1;
+        return null;
+      },
+      getCharacterDirectory: () => "C:/unexpected",
+      async createSession(input) {
+        sessionCreationCount += 1;
+        return buildNewSession(input);
+      },
+    });
+    const input = {
+      mode: "improve",
+      characterId: "char-muse",
+      provider: undefined,
+    } as unknown as Parameters<CharacterAuthoringService["startSession"]>[0];
+
+    await assert.rejects(() => service.startSession(input), /provider/);
+    assert.equal(characterResolutionCount, 0);
+    assert.equal(sessionCreationCount, 0);
+  });
+
+  it("未知の authoring mode は workspace mutation 前に拒否する", async () => {
+    let characterResolutionCount = 0;
+    let sessionCreationCount = 0;
+    const service = createService({
+      getCharacter: () => {
+        characterResolutionCount += 1;
+        return null;
+      },
+      getCharacterDirectory: () => "C:/unexpected",
+      async createSession(input) {
+        sessionCreationCount += 1;
         return buildNewSession(input);
       },
     });
 
     await assert.rejects(
       () => service.startSession({
+        mode: "unknown",
+        characterId: "char-muse",
+        provider: "codex",
+      } as unknown as Parameters<CharacterAuthoringService["startSession"]>[0]),
+      /mode/,
+    );
+    assert.equal(characterResolutionCount, 0);
+    assert.equal(sessionCreationCount, 0);
+  });
+
+  it("無効または不明な provider の authoring session は workspace mutation 前に拒否する", async () => {
+    const { tempDirectory, workspacePath } = await createWorkspace(defaultDefinition, null);
+    let sessionCreationCount = 0;
+    const service = createService({
+      resolveProvider(providerId) {
+        if (providerId === "unknown-provider") {
+          throw new Error("選択した Character authoring provider が model catalog に見つからないよ。");
+        }
+        throw new Error("選択した Character authoring provider は Settings で無効になっているよ。");
+      },
+      getCharacterDirectory: () => workspacePath,
+      async createSession() {
+        sessionCreationCount += 1;
+        throw new Error("選択した Character authoring provider は Settings で無効になっているよ。");
+      },
+    });
+
+    try {
+      for (const [provider, expectedError] of [
+        ["copilot", /provider.*無効/],
+        ["unknown-provider", /provider.*model catalog/],
+      ] as const) {
+        await assert.rejects(
+          () => service.startSession({
+            mode: "improve",
+            characterId: "char-muse",
+            provider,
+          }),
+          expectedError,
+        );
+      }
+      assert.equal(sessionCreationCount, 0);
+      await assert.rejects(
+        () => readFile(path.join(workspacePath, "AGENTS.md"), "utf8"),
+        (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+      );
+      await assert.rejects(
+        () => readFile(
+          path.join(workspacePath, ".github", "skills", CHARACTER_AUTHORING_SKILL_NAME, "SKILL.md"),
+          "utf8",
+        ),
+        (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+      );
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("characterId 未確定の authoring session は開始しない", async () => {
+    const service = createService({
+      getCharacter: () => null,
+      getCharacterDirectory: () => null,
+    });
+
+    await assert.rejects(
+      () => service.startSession({
         mode: "create",
-        name: "Muse",
+        provider: "codex",
       }),
       /保存済み Character/,
     );
@@ -207,8 +466,7 @@ describe("CharacterAuthoringService", () => {
   it("保存済み Character が見つからない場合は workspace と session を作らない", async () => {
     let workspaceResolutionCount = 0;
     let sessionCreationCount = 0;
-    const service = new CharacterAuthoringService({
-      bundledSkillPath: path.resolve("resources", "skills", CHARACTER_AUTHORING_SKILL_NAME),
+    const service = createService({
       getCharacter: () => null,
       getCharacterDirectory: () => {
         workspaceResolutionCount += 1;
@@ -224,7 +482,7 @@ describe("CharacterAuthoringService", () => {
       () => service.startSession({
         mode: "improve",
         characterId: "missing-character",
-        name: "Missing",
+        provider: "codex",
       }),
       /保存済み Character/,
     );
@@ -233,35 +491,16 @@ describe("CharacterAuthoringService", () => {
   });
 
   it("authoring 補助ファイルと Skill directory は次回起動時に作り直す", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-character-authoring-"));
-    const workspacePath = path.join(tempDirectory, "characters", "char-muse");
-    const service = new CharacterAuthoringService({
-      bundledSkillPath: path.resolve("resources", "skills", CHARACTER_AUTHORING_SKILL_NAME),
-      getCharacter: () => ({
-        id: "char-muse",
-        name: "Muse",
-        description: "既存説明",
-        iconFilePath: "",
-        theme: DEFAULT_CHARACTER_THEME,
-        state: "active",
-        isDefault: false,
-        createdAt: "2026-06-16T00:00:00.000Z",
-        updatedAt: "2026-06-16T00:00:00.000Z",
-        archivedAt: null,
-        definitionMarkdown: "# Existing character",
-        notesMarkdown: "# Existing notes",
-      }),
+    const { tempDirectory, workspacePath } = await createWorkspace();
+    const service = createService({
       getCharacterDirectory: () => workspacePath,
-      async createSession(input) {
-        return buildNewSession(input);
-      },
     });
 
     try {
       await service.startSession({
         mode: "improve",
         characterId: "char-muse",
-        name: "Muse",
+        provider: "codex",
       });
 
       await writeFile(path.join(workspacePath, "AGENTS.md"), "stale agents", "utf8");
@@ -280,7 +519,7 @@ describe("CharacterAuthoringService", () => {
       await service.startSession({
         mode: "improve",
         characterId: "char-muse",
-        name: "Muse",
+        provider: "codex",
       });
 
       assert.match(await readFile(path.join(workspacePath, "AGENTS.md"), "utf8"), /Character Authoring Workspace/);

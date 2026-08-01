@@ -3,6 +3,10 @@ import { describe, it } from "node:test";
 
 import { DEFAULT_CHARACTER_THEME, type CharacterDetail } from "../../src/character/character-catalog.js";
 import {
+  CHARACTER_DEFINITION_MAX_CHARACTERS,
+  countCharacterDefinitionCharacters,
+} from "../../src/character/character-definition.js";
+import {
   buildDefaultCharacterDefinition,
   buildCharacterEditorValidationSummary,
   buildCreateCharacterInputFromDraft,
@@ -22,14 +26,22 @@ describe("Character editor state", () => {
     assert.equal(draft.mode, "create");
     assert.equal(draft.name, "Mia");
     assert.match(draft.definitionMarkdown, /schema: withmate-character-v5/);
-    assert.match(draft.definitionMarkdown, /name: Mia/);
+    assert.match(draft.definitionMarkdown, /name: "Mia"/);
+    assert.match(draft.definitionMarkdown, /# Character Definition/);
     assert.match(draft.definitionMarkdown, /## Experience Goal/);
     assert.match(draft.definitionMarkdown, /## Work \/ Response Separation/);
+    assert.match(draft.definitionMarkdown, /## Character Priority/);
     assert.match(draft.definitionMarkdown, /## Minimal Reliability/);
+    assert.match(draft.definitionMarkdown, /### 普通の作業依頼/);
+    assert.match(draft.definitionMarkdown, /### 意見が合わない時/);
     assert.match(draft.definitionMarkdown, /ユーザーへ説明する言葉、相槌、励まし、ツッコミ、距離感、温度に反映する。/);
     assert.doesNotMatch(draft.definitionMarkdown, /## Coding Agent Behavior/);
     assert.doesNotMatch(draft.definitionMarkdown, /## Knowledge Policy/);
-    assert.match(buildDefaultCharacterDefinition("   "), /name: New Character/);
+    assert.doesNotMatch(draft.definitionMarkdown, /## Runtime Notes/);
+    assert.ok(countCharacterDefinitionCharacters(draft.definitionMarkdown) <= CHARACTER_DEFINITION_MAX_CHARACTERS);
+    assert.match(buildDefaultCharacterDefinition("   "), /name: "New Character"/);
+    assert.match(draft.notesMarkdown, /## Relationship Evidence Mapping/);
+    assert.doesNotMatch(draft.notesMarkdown, /New Character/);
   });
 
   it("未編集の新規 character.md だけ name 変更に追従する", () => {
@@ -37,16 +49,17 @@ describe("Character editor state", () => {
     const renamed = updateCharacterEditorDraft(draft, { name: "Mia" });
 
     assert.equal(renamed.name, "Mia");
-    assert.match(renamed.definitionMarkdown, /name: Mia/);
-    assert.match(renamed.definitionMarkdown, /Mia と話している感覚/);
+    assert.match(renamed.definitionMarkdown, /name: "Mia"/);
+    assert.match(renamed.definitionMarkdown, /Miaと気心の知れた相手/);
     assert.match(renamed.definitionMarkdown, /可能な限りMiaとして話す/);
+    assert.doesNotMatch(renamed.notesMarkdown, /New Character/);
 
     const edited = updateCharacterEditorDraft(
       { ...draft, definitionMarkdown: `${draft.definitionMarkdown}\n## Custom\n` },
       { name: "Noa" },
     );
     assert.equal(edited.name, "Noa");
-    assert.match(edited.definitionMarkdown, /name: New Character/);
+    assert.match(edited.definitionMarkdown, /name: "New Character"/);
     assert.match(edited.definitionMarkdown, /## Custom/);
   });
 
@@ -110,6 +123,41 @@ describe("Character editor state", () => {
     assert.equal(draft.name, "Frontmatter Mia");
     assert.equal(draft.description, "frontmatter description");
     assert.equal(isCharacterEditorDraftDirty(draft, detail), true);
+  });
+
+  it("上限超過の persisted character.md は catalog metadata を保ち Improve の dirty gate を開ける", () => {
+    const definitionMarkdown = [
+      "---",
+      "schema: withmate-character-v5",
+      "name: \"Muse\"",
+      "description: \"stored description\"",
+      "---",
+      "",
+      "# Profile",
+      "あ".repeat(CHARACTER_DEFINITION_MAX_CHARACTERS),
+    ].join("\n");
+    const detail: CharacterDetail = {
+      id: "muse",
+      name: "Muse",
+      description: "stored description",
+      iconFilePath: "",
+      theme: { ...DEFAULT_CHARACTER_THEME },
+      state: "active",
+      isDefault: false,
+      createdAt: "2026-06-14T00:00:00.000Z",
+      updatedAt: "2026-06-14T00:00:00.000Z",
+      archivedAt: null,
+      definitionMarkdown,
+      notesMarkdown: "",
+    };
+
+    assert.ok(countCharacterDefinitionCharacters(definitionMarkdown) > CHARACTER_DEFINITION_MAX_CHARACTERS);
+
+    const draft = createCharacterEditorDraftFromDetail(detail);
+
+    assert.equal(draft.name, detail.name);
+    assert.equal(draft.description, detail.description);
+    assert.equal(isCharacterEditorDraftDirty(draft, detail), false);
   });
 
   it("close 確認済みの beforeunload は dirty draft でもブロックしない", () => {
@@ -190,7 +238,7 @@ describe("Character editor state", () => {
       iconFilePath: "",
       theme: { ...DEFAULT_CHARACTER_THEME },
       definitionMarkdown: draft.definitionMarkdown,
-      notesMarkdown: "# Character Notes\n",
+      notesMarkdown: draft.notesMarkdown,
     });
     assert.equal(buildCreateCharacterInputFromDraft({ ...draft, isDefault: true }).setDefault, true);
   });

@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import type { CompanionGroup, CompanionMergeRun, CompanionSession } from "../../src/companion-state.js";
+import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../../src/model-catalog.js";
@@ -70,9 +71,28 @@ function createSession(groupId: string, overrides: Partial<CompanionSession> = {
       main: "#6f8cff",
       sub: "#6fb8c7",
     },
+    characterRuntimeSnapshot: null,
     createdAt: "2026-04-26 10:01",
     updatedAt: "2026-04-26 10:01",
     messages: [],
+    ...overrides,
+  };
+}
+
+function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnapshot>): CharacterRuntimeSnapshot {
+  return {
+    characterId: "char-1",
+    name: "Mia",
+    description: "保存済み Character",
+    iconFilePath: "icon.png",
+    theme: {
+      main: "#6f8cff",
+      sub: "#6fb8c7",
+    },
+    definitionMarkdown: "# Character\nCompanion runtime snapshot",
+    definitionSha256: "sha256-companion",
+    definitionByteSize: 49,
+    snapshotAt: "2026-06-14T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -317,6 +337,44 @@ describe("CompanionStorage", () => {
       assert.equal(synced.baseSnapshotCommit, "synced-base");
       assert.deepEqual(synced.selectedPaths, ["README.md"]);
       assert.deepEqual(synced.changedFiles, [{ path: "README.md", kind: "edit" }]);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("汎用 updateSession は Character owner / runtime snapshot の差し替えを拒否する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: CompanionStorage | null = null;
+
+    try {
+      storage = new CompanionStorage(dbPath);
+      const group = storage.ensureGroup(createGroup());
+      const characterRuntimeSnapshot = createCharacterRuntimeSnapshot();
+      const session = storage.createSession(createSession(group.id, { characterRuntimeSnapshot }));
+      const invalidUpdates = [
+        {
+          ...session,
+          characterId: "char-2",
+          characterRuntimeSnapshot: createCharacterRuntimeSnapshot({ characterId: "char-2" }),
+        },
+        {
+          ...session,
+          characterRuntimeSnapshot: null,
+        },
+      ];
+
+      for (const invalidUpdate of invalidUpdates) {
+        assert.throws(
+          () => storage?.updateSession(invalidUpdate),
+          /Character owner \/ runtime snapshot は更新できない/,
+        );
+      }
+
+      const persisted = storage.getSession(session.id);
+      assert.equal(persisted?.characterId, session.characterId);
+      assert.deepEqual(persisted?.characterRuntimeSnapshot, characterRuntimeSnapshot);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

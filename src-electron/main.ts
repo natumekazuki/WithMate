@@ -78,6 +78,7 @@ import { CharacterStorage } from "./character-storage.js";
 import {
   CharacterAuthoringService,
   CHARACTER_AUTHORING_SKILL_NAME,
+  resolveCharacterAuthoringRuntimeSessionForTurn,
 } from "./character-authoring-service.js";
 import { CodexAdapter } from "./codex-adapter.js";
 import { CopilotAdapter } from "./copilot-adapter.js";
@@ -1792,6 +1793,10 @@ function requireCharacterAuthoringService(): CharacterAuthoringService {
       createSession: (input) => requireMainSessionCommandFacade().createSession(input),
       getCharacter: (characterId) => requireCharacterService().getCharacter(characterId),
       getCharacterDirectory: (characterId) => requireCharacterService().getCharacterDirectory(characterId),
+      resolveProvider: (providerId) =>
+        requireSessionPersistenceService().resolveCharacterAuthoringProvider(providerId),
+      runProviderRuntimeOperationExclusive: (operation) =>
+        providerRuntimeOperationCoordinator.runExclusive(operation),
     });
   }
 
@@ -1925,24 +1930,10 @@ function requireSessionRuntimeService(): SessionRuntimeService {
     sessionRuntimeService = new SessionRuntimeService({
       getSession: getRuntimeSession,
       upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSession(session),
-      resolveRuntimeSessionForTurn: (session) => {
-        if (session.sessionKind !== "character-authoring") {
-          return session;
-        }
-
-        const snapshot = requireCharacterService().createRuntimeSnapshot(session.characterId);
-        if (!snapshot) {
-          return session;
-        }
-
-        return {
-          ...session,
-          character: snapshot.name,
-          characterIconPath: snapshot.iconFilePath,
-          characterThemeColors: snapshot.theme,
-          characterRuntimeSnapshot: snapshot,
-        };
-      },
+      resolveRuntimeSessionForTurn: (session) => resolveCharacterAuthoringRuntimeSessionForTurn(
+        session,
+        (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
+      ),
       resolveComposerPreview,
       resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),

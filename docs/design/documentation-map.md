@@ -45,6 +45,7 @@ Character catalog、definition format、snapshot、prompt boundary、release gat
 | `v5-character-transition.md` | V4 SingleMate から V5 Character-first への移行方針、scope、non-goals、completion criteria の入口 |
 | `character-definition-format.md` | V5 Core の `character.md` / `character-notes.md` format 正本 |
 | `character-storage.md` | V5 Core の Character catalog / storage / snapshot 境界の正本 |
+| `character-authoring-growth.md` | Character directory、通常 Session composer、app 管理 Skill を使う post-Core authoring workflow の現行設計 |
 | `v5-character-core-release-gate.md` | V5 Core の automated checks、manual checklist、release note、known risks を固定する release gate 正本 |
 | `v5-character-preview-release.md` | V5 Character Core preview release note、verification checklist、known risks の正本 |
 
@@ -80,7 +81,6 @@ V6で採用するDB再設計、Skill-first Memory access、contract、storage �
 | `provider-usage-telemetry.md` | Copilot quota / context telemetry の詳細 |
 | `distribution-packaging.md` | installer / app bundle の packaging 方針 |
 | `refactor-roadmap.md` | current リファクタの進行管理 |
-| `character-authoring-growth.md` | V5 Character Core 後の `character.md` / `character-notes.md` 作成・改善支援の次スコープ設計 |
 
 ### B-legacy. Removed Character Documents
 
@@ -88,8 +88,8 @@ SingleMate 化に伴い、次の文書は current runtime の正本・supporting
 
 | Doc | Legacy Scope |
 | --- | --- |
-| `character-management-ui.md` | 削除済み Character Editor の UI 詳細 |
-| `character-update-workspace.md` | 削除済み character 更新 workspace と memory extract helper |
+| `character-management-ui.md` | 旧 Character 管理 UI の superseded pointer。現行 Editor と authoring workflow への参照だけを残す |
+| `character-update-workspace.md` | 旧 `character-update` workflow の superseded pointer。ADR 010 と現行 authoring 設計を参照する |
 | `character-memory-storage.md` | 削除済み Character Memory と reflection cycle |
 
 ### B2. Future Design / Migration Candidate

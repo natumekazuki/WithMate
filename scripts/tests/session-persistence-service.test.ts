@@ -144,6 +144,16 @@ describe("SessionPersistenceService", () => {
       },
     });
 
+    assert.equal(service.resolveCharacterAuthoringProvider("codex"), "codex");
+    assert.throws(
+      () => service.resolveCharacterAuthoringProvider("unknown-provider"),
+      /provider.*model catalog/,
+    );
+    assert.throws(
+      () => service.resolveCharacterAuthoringProvider("copilot"),
+      /provider.*無効/,
+    );
+
     const created = await service.createSession({
       taskTitle: "New Session",
       workspaceLabel: "workspace",
@@ -174,6 +184,46 @@ describe("SessionPersistenceService", () => {
     assert.equal(storedSessions[0]?.characterRuntimeSnapshot, null);
     assert.deepEqual(syncedSessionIds, [created.id]);
     assert.deepEqual(broadcastedSessionIds, [[created.id]]);
+    assert.deepEqual(storeOperations, ["create"]);
+
+    await assert.rejects(
+      () => service.createSession({
+        taskTitle: "Character authoring",
+        workspaceLabel: "character authoring",
+        workspacePath: "C:/characters/char-a",
+        branch: "main",
+        sessionKind: "character-authoring",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+        provider: "copilot",
+        customAgentName: "",
+        allowedAdditionalDirectories: [],
+      }),
+      /provider.*無効/,
+    );
+    assert.deepEqual(storeOperations, ["create"]);
+
+    await assert.rejects(
+      () => service.createSession({
+        taskTitle: "Character authoring",
+        workspaceLabel: "character authoring",
+        workspacePath: "C:/characters/char-a",
+        branch: "main",
+        sessionKind: "character-authoring",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+        provider: "unknown-provider",
+        customAgentName: "",
+        allowedAdditionalDirectories: [],
+      }),
+      /provider.*model catalog/,
+    );
     assert.deepEqual(storeOperations, ["create"]);
   });
 
@@ -501,6 +551,80 @@ describe("SessionPersistenceService", () => {
       () => service.updateSession({ ...storedSessions[0], taskTitle: "blocked" }),
       /実行中のセッションは更新できない/,
     );
+  });
+
+  it("updateSession は保存済み Character owner / runtime snapshot の差し替えを永続化前に拒否する", async () => {
+    const characterRuntimeSnapshot = createCharacterRuntimeSnapshot();
+    const storedSession = createSession({ characterRuntimeSnapshot });
+    const cachedSession = createSession({
+      id: storedSession.id,
+      characterRuntimeSnapshot: null,
+    });
+    const invalidUpdates = [
+      {
+        ...storedSession,
+        characterId: "char-b",
+        characterRuntimeSnapshot: createCharacterRuntimeSnapshot({
+          characterId: "char-b",
+          name: "B",
+        }),
+      },
+      {
+        ...storedSession,
+        characterRuntimeSnapshot: null,
+      },
+    ];
+
+    for (const invalidUpdate of invalidUpdates) {
+      let upsertCallCount = 0;
+      const cachedSessions: Session[] = [cachedSession];
+      const service = new SessionPersistenceService({
+        getSessions() {
+          return cachedSessions;
+        },
+        setSessions(nextSessions) {
+          cachedSessions.splice(0, cachedSessions.length, ...nextSessions);
+        },
+        getSession(sessionId) {
+          return sessionId === cachedSession.id ? cachedSession : null;
+        },
+        getStoredSession(sessionId) {
+          return sessionId === storedSession.id ? storedSession : null;
+        },
+        isSessionRunInFlight() {
+          return false;
+        },
+        upsertStoredSession(session) {
+          upsertCallCount += 1;
+          return session;
+        },
+        replaceStoredSessions() {},
+        listStoredSessions() {
+          return [storedSession];
+        },
+        deleteStoredSession() {},
+        getAppSettings() {
+          return normalizeAppSettings({});
+        },
+        getModelCatalogSnapshot() {
+          return createSnapshot();
+        },
+        syncSessionDependencies() {},
+        clearSessionContextTelemetry() {},
+        clearSessionBackgroundActivities() {},
+        clearCharacterReflectionCheckpoint() {},
+        clearInFlightCharacterReflection() {},
+        invalidateProviderSessionThread() {},
+        closeSessionWindow() {},
+        broadcastSessions() {},
+      });
+
+      await assert.rejects(
+        () => service.updateSession(invalidUpdate),
+        /Character owner \/ runtime snapshot は更新できない/,
+      );
+      assert.equal(upsertCallCount, 0);
+    }
   });
 
   it("updateSession は model / reasoning 変更時に threadId を維持する", async () => {
