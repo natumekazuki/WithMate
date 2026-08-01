@@ -263,6 +263,152 @@ test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID 
   );
 });
 
+test("MainSessionCommandFacade は空の Character ID を SessionFolder 作成前に拒否する", async () => {
+  const calls: string[] = [];
+  const facade = createMainSessionCommandFacade({
+    getSession: () => null,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => {
+      calls.push("resolve-selection");
+      return createLaunchSelection();
+    },
+    getSessionPersistenceService: () =>
+      ({
+        createSession() {
+          calls.push("persist");
+          throw new Error("unexpected persistence");
+        },
+      }) as never,
+    getSessionRuntimeService: () => ({} as never),
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => {
+      calls.push("issue-id");
+      return "launch-empty-character";
+    },
+    createSessionFilesDirectory: () => {
+      calls.push("create-folder");
+      return "C:/WithMate/session-files/launch-empty-character";
+    },
+    isSessionFilesWorkspace: () => false,
+  });
+
+  for (const workspace of [
+    { kind: "session-folder" },
+    { kind: "directory", label: "repo", path: "C:/repo", branch: "main" },
+  ]) {
+    for (const characterId of ["", " \t\n "]) {
+      const request = createSessionRequest(workspace);
+      request.characterId = characterId;
+      request.characterRuntimeSnapshot = null;
+
+      await assert.rejects(
+        facade.createSessionFromRequest(request as never),
+        /characterId.*空/,
+      );
+    }
+  }
+  assert.deepEqual(calls, []);
+});
+
+test("MainSessionCommandFacade は Character owner ID と snapshot owner ID を trim 後の値で保存する", async () => {
+  let persistedInput: Record<string, unknown> | null = null;
+  const facade = createMainSessionCommandFacade({
+    getSession: () => null,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () =>
+      ({
+        createSession(input) {
+          persistedInput = input as unknown as Record<string, unknown>;
+          return input as never;
+        },
+      }) as never,
+    getSessionRuntimeService: () => ({} as never),
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-normalized-owner",
+    createSessionFilesDirectory: () => "C:/WithMate/session-files/launch-normalized-owner",
+    isSessionFilesWorkspace: () => false,
+  });
+  const request = createSessionRequest({ kind: "session-folder" });
+  request.characterId = " character-1 ";
+  request.characterRuntimeSnapshot = {
+    characterId: "\tcharacter-1\n",
+    name: "Character",
+    description: "",
+    iconFilePath: "",
+    theme: { main: "#112233", sub: "#445566" },
+    definitionMarkdown: "# Character\nCharacter",
+    definitionSha256: "character-sha256",
+    definitionByteSize: 21,
+    snapshotAt: "2026-08-01T00:00:00.000Z",
+  };
+
+  await facade.createSessionFromRequest(request as never);
+
+  assert.equal(persistedInput?.characterId, "character-1");
+  assert.equal(
+    (persistedInput?.characterRuntimeSnapshot as { characterId?: unknown } | undefined)?.characterId,
+    "character-1",
+  );
+});
+
+test("MainSessionCommandFacade は Character ID と runtime snapshot owner の不一致を副作用前に拒否する", async () => {
+  const calls: string[] = [];
+  const facade = createMainSessionCommandFacade({
+    getSession: () => null,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => {
+      calls.push("resolve-selection");
+      return createLaunchSelection();
+    },
+    getSessionPersistenceService: () =>
+      ({
+        createSession() {
+          calls.push("persist");
+          throw new Error("unexpected persistence");
+        },
+      }) as never,
+    getSessionRuntimeService: () => ({} as never),
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-mismatch",
+    createSessionFilesDirectory: () => {
+      calls.push("create-folder");
+      return "C:/WithMate/session-files/launch-mismatch";
+    },
+    isSessionFilesWorkspace: () => false,
+  });
+  const request = createSessionRequest({ kind: "session-folder" });
+  request.characterRuntimeSnapshot = {
+    characterId: "other-character",
+    name: "Other",
+    description: "",
+    iconFilePath: "",
+    theme: { main: "#112233", sub: "#445566" },
+    definitionMarkdown: "# Character\nOther",
+    definitionSha256: "other-sha256",
+    definitionByteSize: 17,
+    snapshotAt: "2026-08-01T00:00:00.000Z",
+  };
+
+  await assert.rejects(
+    facade.createSessionFromRequest(request as never),
+    /characterId と一致しない/,
+  );
+  assert.deepEqual(calls, []);
+});
+
 test("Session 作成中は Settings 更新を同じ runtime 選択境界の完了まで待機させる", async () => {
   const coordinator = new ProviderRuntimeOperationCoordinator();
   const runExclusive: RunProviderRuntimeOperationExclusive =

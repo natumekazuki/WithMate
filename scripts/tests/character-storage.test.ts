@@ -6,7 +6,11 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { CharacterStorage } from "../../src-electron/character-storage.js";
-import { CHARACTER_DEFINITION_SCHEMA } from "../../src/character/character-definition.js";
+import { UNKNOWN_CHARACTER_OWNER_ID } from "../../src/character/character-owner.js";
+import {
+  CHARACTER_DEFINITION_MAX_CHARACTERS,
+  CHARACTER_DEFINITION_SCHEMA,
+} from "../../src/character/character-definition.js";
 
 function validDefinition(name: string): string {
   return `---
@@ -471,7 +475,7 @@ describe("CharacterStorage", () => {
     }
   });
 
-  it("invalid character.md を拒否し runtime snapshot を作成する", async () => {
+  it("invalid または 8,000 文字超過の character.md を保存・runtime snapshot で拒否する", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: CharacterStorage | null = null;
 
@@ -489,6 +493,16 @@ describe("CharacterStorage", () => {
       );
       await assert.rejects(access(path.join(userDataPath, "characters", "broken")));
 
+      const oversizedDefinition = `${validDefinition("Too Long")}${"あ".repeat(CHARACTER_DEFINITION_MAX_CHARACTERS)}`;
+      assert.throws(
+        () => storage.createCharacter({
+          name: "Too Long",
+          definitionMarkdown: oversizedDefinition,
+        }),
+        /size_limit_exceeded/,
+      );
+      await assert.rejects(access(path.join(userDataPath, "characters", "too-long")));
+
       const mia = storage.createCharacter({ name: "Mia", definitionMarkdown: validDefinition("Mia") });
       const snapshot = storage.createRuntimeSnapshot(mia.id);
 
@@ -496,6 +510,59 @@ describe("CharacterStorage", () => {
       assert.equal(snapshot?.name, "Mia");
       assert.match(snapshot?.definitionSha256 ?? "", /^[0-9a-f]{64}$/);
       assert.equal(snapshot?.definitionByteSize, Buffer.byteLength(validDefinition("Mia"), "utf8"));
+
+      assert.throws(
+        () => storage.updateCharacterDefinition({
+          characterId: mia.id,
+          definitionMarkdown: oversizedDefinition,
+        }),
+        /size_limit_exceeded/,
+      );
+      assert.equal(storage.getCharacter(mia.id)?.definitionMarkdown, validDefinition("Mia"));
+
+      await writeFile(
+        path.join(userDataPath, "characters", mia.id, "character.md"),
+        oversizedDefinition,
+        "utf8",
+      );
+      assert.equal(storage.createRuntimeSnapshot(mia.id), null);
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("予約 owner ID は生成 Character ID と衝突せず runtime snapshot を解決しない", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: CharacterStorage | null = null;
+
+    try {
+      storage = new CharacterStorage(dbPath, userDataPath);
+      const formerlyColliding = storage.createCharacter({
+        name: "Unknown Character",
+        definitionMarkdown: validDefinition("Unknown Character"),
+      });
+
+      assert.equal(formerlyColliding.id, "unknown-character");
+      assert.notEqual(formerlyColliding.id, UNKNOWN_CHARACTER_OWNER_ID);
+      assert.equal(storage.createRuntimeSnapshot(formerlyColliding.id)?.characterId, formerlyColliding.id);
+      assert.equal(storage.createRuntimeSnapshot(UNKNOWN_CHARACTER_OWNER_ID), null);
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("character.md が欠落した Character は runtime snapshot なしとして扱う", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: CharacterStorage | null = null;
+
+    try {
+      storage = new CharacterStorage(dbPath, userDataPath);
+      const mia = storage.createCharacter({ name: "Mia", definitionMarkdown: validDefinition("Mia") });
+      await rm(path.join(userDataPath, "characters", mia.id, "character.md"));
+
+      assert.equal(storage.createRuntimeSnapshot(mia.id), null);
     } finally {
       storage?.close();
       await cleanup();

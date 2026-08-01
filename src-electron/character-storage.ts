@@ -5,10 +5,14 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
 import {
-  CHARACTER_DEFINITION_SCHEMA,
   parseCharacterDefinitionMarkdown,
   validateCharacterNotesMarkdown,
 } from "../src/character/character-definition.js";
+import {
+  buildDefaultCharacterDefinition,
+  buildDefaultCharacterNotes,
+} from "../src/character/character-definition-template.js";
+import { isUnknownCharacterOwnerId } from "../src/character/character-owner.js";
 import {
   DEFAULT_CHARACTER_THEME,
   type CharacterCatalogEntry,
@@ -178,38 +182,6 @@ function slugifyCharacterId(name: string): string {
     .slice(0, CHARACTER_ID_MAX_LENGTH);
 
   return normalized || "character";
-}
-
-function buildDefaultDefinitionMarkdown(name: string, description: string): string {
-  return `---
-schema: ${CHARACTER_DEFINITION_SCHEMA}
-name: "${name.replaceAll("\"", "\\\"")}"
-description: "${description.replaceAll("\"", "\\\"")}"
----
-
-# Character Runtime Definition
-
-## Identity
-- ${name}
-`;
-}
-
-function buildDefaultNotesMarkdown(name: string): string {
-  return `# Character Notes
-
-## Evidence / Sources
-
-## Interpretation Notes
-
-## Rejected Ideas
-
-## Revision Notes
-- Created initial V5 Core character entry for ${name}.
-
-## Future Improvements
-
-## Long Knowledge
-`;
 }
 
 export class CharacterStorage {
@@ -511,8 +483,8 @@ export class CharacterStorage {
     const characterId = this.createUniqueCharacterId(name);
     const sourceIconFilePath = normalizeCharacterIconPathInput(input.iconFilePath);
     const createdAt = nowIso();
-    const definitionMarkdown = input.definitionMarkdown ?? buildDefaultDefinitionMarkdown(name, description);
-    const notesMarkdown = input.notesMarkdown ?? buildDefaultNotesMarkdown(name);
+    const definitionMarkdown = input.definitionMarkdown ?? buildDefaultCharacterDefinition(name, description);
+    const notesMarkdown = input.notesMarkdown ?? buildDefaultCharacterNotes();
     const shouldSetDefault = input.setDefault ?? this.listCharacters().length === 0;
 
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
@@ -696,8 +668,22 @@ export class CharacterStorage {
   }
 
   createRuntimeSnapshot(characterId: string): CharacterRuntimeSnapshot | null {
-    const detail = this.getCharacter(characterId);
+    if (isUnknownCharacterOwnerId(characterId)) {
+      return null;
+    }
+    let detail: CharacterDetail | null;
+    try {
+      detail = this.getCharacter(characterId);
+    } catch (error) {
+      if ((error as { code?: unknown } | null)?.code === "ENOENT") {
+        return null;
+      }
+      throw error;
+    }
     if (!detail || detail.state !== "active") {
+      return null;
+    }
+    if (!parseCharacterDefinitionMarkdown(detail.definitionMarkdown).ok) {
       return null;
     }
 

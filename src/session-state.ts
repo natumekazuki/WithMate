@@ -7,7 +7,11 @@ import {
 import { normalizeCharacterThemeColors, type CharacterThemeColors } from "./character-state.js";
 import type { CharacterRuntimeSnapshot } from "./character/character-catalog.js";
 import {
-  cloneNullableCharacterRuntimeSnapshot,
+  isUnknownCharacterOwnerId,
+  recoverStoredCharacterOwnerId,
+  requireCharacterOwnerId,
+} from "./character/character-owner.js";
+import {
   normalizeCharacterRuntimeSnapshot,
 } from "./character/character-runtime-snapshot.js";
 import {
@@ -304,6 +308,7 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
 
   const candidate = value as Partial<Session>;
   const characterName = typeof candidate.character === "string" && candidate.character.trim() ? candidate.character : "キャラクター";
+  const characterId = recoverStoredCharacterOwnerId(candidate.characterId);
 
   return {
     id: typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : `legacy-${Date.now()}`,
@@ -340,12 +345,7 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
       candidate.sourceSchemaVersion > 0
         ? candidate.sourceSchemaVersion
         : CURRENT_SESSION_SCHEMA_VERSION - 1,
-    characterId:
-      typeof candidate.characterId === "string" && candidate.characterId.trim()
-        ? candidate.characterId
-        : typeof candidate.character === "string" && candidate.character.trim()
-          ? candidate.character.trim()
-          : "unknown-character",
+    characterId,
     character: characterName,
     characterIconPath:
       typeof candidate.characterIconPath === "string" && candidate.characterIconPath.trim()
@@ -369,8 +369,9 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
           .map((directory) => directory.trim())
           .filter((directory) => directory.length > 0) ?? []
       : [],
-    threadId:
-      typeof candidate.threadId === "string"
+    threadId: isUnknownCharacterOwnerId(characterId)
+      ? ""
+      : typeof candidate.threadId === "string"
         ? candidate.threadId
         : typeof (candidate as { threadLabel?: string }).threadLabel === "string"
           ? (candidate as { threadLabel?: string }).threadLabel ?? ""
@@ -398,11 +399,17 @@ export function normalizeSession(value: unknown): Session | null {
   }
 
   const candidate = value as Partial<Session>;
+  const storedSnapshot = (candidate as { characterRuntimeSnapshot?: unknown }).characterRuntimeSnapshot;
+  const normalizedSnapshot = normalizeCharacterRuntimeSnapshot(storedSnapshot);
+  const rejectedStoredSnapshot = storedSnapshot !== undefined
+    && storedSnapshot !== null
+    && (!normalizedSnapshot || normalizedSnapshot.characterId !== summary.characterId);
+  const characterRuntimeSnapshot = rejectedStoredSnapshot ? null : normalizedSnapshot;
+
   return {
     ...summary,
-    characterRuntimeSnapshot: normalizeCharacterRuntimeSnapshot(
-      (candidate as { characterRuntimeSnapshot?: unknown }).characterRuntimeSnapshot,
-    ),
+    threadId: rejectedStoredSnapshot ? "" : summary.threadId,
+    characterRuntimeSnapshot,
     messages: Array.isArray(candidate.messages)
       ? candidate.messages
           .map((message) => normalizeMessage(message))
@@ -445,6 +452,16 @@ export function summarizeMessageArtifact(artifact: MessageArtifact): MessageArti
 
 export function buildNewSession(input: CreateSessionInput): Session {
   const normalizedTaskTitle = input.taskTitle.trim() || `${input.workspaceLabel} で新規作業を開始する`;
+  const characterId = requireCharacterOwnerId(input.characterId);
+  const characterRuntimeSnapshot = input.characterRuntimeSnapshot == null
+    ? null
+    : normalizeCharacterRuntimeSnapshot(input.characterRuntimeSnapshot);
+  if (input.characterRuntimeSnapshot != null && !characterRuntimeSnapshot) {
+    throw new Error("characterRuntimeSnapshot の形式が正しくないよ。");
+  }
+  if (characterRuntimeSnapshot && characterRuntimeSnapshot.characterId !== characterId) {
+    throw new Error("characterRuntimeSnapshot.characterId が characterId と一致しないよ。");
+  }
   return {
     id: input.id?.trim() || `launch-${Date.now()}`,
     taskTitle: normalizedTaskTitle,
@@ -461,11 +478,11 @@ export function buildNewSession(input: CreateSessionInput): Session {
     sessionKind: input.sessionKind ?? "default",
     accessMode: "active",
     sourceSchemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
-    characterId: input.characterId,
+    characterId,
     character: input.character,
     characterIconPath: input.characterIconPath,
     characterThemeColors: normalizeCharacterThemeColors(input.characterThemeColors),
-    characterRuntimeSnapshot: cloneNullableCharacterRuntimeSnapshot(input.characterRuntimeSnapshot),
+    characterRuntimeSnapshot,
     runState: "idle",
     approvalMode: normalizeApprovalMode(input.approvalMode, DEFAULT_APPROVAL_MODE),
     codexSandboxMode: normalizeCodexSandboxMode(input.codexSandboxMode, DEFAULT_CODEX_SANDBOX_MODE),

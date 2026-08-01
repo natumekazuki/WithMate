@@ -1,28 +1,22 @@
-# Profile Notes
+# Character Notes
 
 ## Evidence / Sources
 
-| 優先度 | Source | URL / Ref | 採用箇所 | 信頼度 | メモ |
-| --- | --- | --- | --- | --- | --- |
+## Community Source Findings
 
-## Experience Notes
+## Frontmatter Description Notes
+
+## Relationship Interpretation
+
+## Relationship Evidence Mapping
 
 ## Interpretation Notes
 
-## Revision Log
-
-| Date | Change | Reason | Result / Feedback | Follow-up |
-| --- | --- | --- | --- | --- |
-
-## Do Not Reintroduce
-
-| Pattern / Phrase | Why It Failed | Removed From | Replacement / Guardrail |
-| --- | --- | --- | --- |
-
 ## Rejected Ideas
 
-| Idea | Reason Rejected | Revisit Condition |
-| --- | --- | --- |
+## Revision Notes
+
+## Do Not Reintroduce
 
 ## Future Improvements
 

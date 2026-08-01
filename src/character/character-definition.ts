@@ -1,6 +1,6 @@
 export const CHARACTER_DEFINITION_SCHEMA = "withmate-character-v5";
 
-export const CHARACTER_DEFINITION_MAX_BYTES = 128 * 1024;
+export const CHARACTER_DEFINITION_MAX_CHARACTERS = 8_000;
 
 export const CHARACTER_NOTES_MAX_BYTES = 256 * 1024;
 
@@ -60,12 +60,33 @@ function getUtf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
+export function countCharacterDefinitionCharacters(markdown: string): number {
+  return Array.from(markdown.replace(/\r\n?|\n/g, "\n")).length;
+}
+
+function unescapeDoubleQuotedFrontmatterValue(value: string): string {
+  let result = "";
+
+  for (let index = 0; index < value.length; index += 1) {
+    const current = value[index] ?? "";
+    const next = value[index + 1];
+    if (current === "\\" && (next === "\\" || next === "\"")) {
+      result += next;
+      index += 1;
+      continue;
+    }
+    result += current;
+  }
+
+  return result;
+}
+
 function parseFrontmatterValue(rawValue: string): string {
   const trimmed = rawValue.trim();
-  if (
-    (trimmed.startsWith("\"") && trimmed.endsWith("\""))
-    || (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
+  if (trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
+    return unescapeDoubleQuotedFrontmatterValue(trimmed.slice(1, -1)).trim();
+  }
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
     return trimmed.slice(1, -1).trim();
   }
   return trimmed;
@@ -193,10 +214,10 @@ export function validateCharacterDefinitionMarkdown(markdown: string): Character
     });
   }
 
-  if (getUtf8ByteLength(markdown) > CHARACTER_DEFINITION_MAX_BYTES) {
+  if (countCharacterDefinitionCharacters(markdown) > CHARACTER_DEFINITION_MAX_CHARACTERS) {
     issues.push({
       code: "size_limit_exceeded",
-      message: `\`character.md\` must be ${CHARACTER_DEFINITION_MAX_BYTES} bytes or less.`,
+      message: `\`character.md\` must be ${CHARACTER_DEFINITION_MAX_CHARACTERS.toLocaleString("en-US")} characters or less after LF line-ending normalization.`,
     });
   }
 

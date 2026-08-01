@@ -1,8 +1,5 @@
-# 状態
+# 結果
 
-- 未着手
-
-# 結果メモ
-
-- current task は `Character Editor` における `UpdateSession` 一覧の仕様整理のみを対象にする
-- 実装は follow-up task として分ける
+- Status: Superseded
+- 実装: なし
+- 置換先: `docs/adr/010-character-authoring-project-contract.md`
