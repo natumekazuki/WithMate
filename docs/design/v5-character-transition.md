@@ -109,12 +109,12 @@ V5 初期 non-goals:
 - V4 Mate Profile から V5 Character への丁寧な自動 migration
 - YacchoGPT プロンプト本文の複製や、特定キャラクターへの依存
 - Character 定義の自動生成
-- GPT-5.5 Pro 等を使う Character authoring workflow の WithMate 内組み込み
+- GPT-5.5 Pro 等を使う Character authoring workflow の WithMate 内組み込み（V5 Core 時点。post-Core の採用判断は ADR 010）
 - Character Editor の詳細 authoring UX
 - V3 Character Editor / Character Update Workspace の復活
 - Character validator / Knowledge retrieval
 
-V5 Core の最低限編集画面は、Home 起点の Character Editor Window で、作成済みの `character.md` を WithMate に登録、修正、保存するための raw editor と metadata editor に限る。Settings Window には Character raw editor を置かない。section 単位の詳細 Editor、validator、revision / diff / rollback、Character Update Workspace、Character 定義自動生成は Core 完了後の個別 Issue で扱う。
+V5 Core の最低限編集画面は、Home 起点の Character Editor Window で、作成済みの `character.md` を WithMate に登録、修正、保存するための raw editor と metadata editor に限る。Settings Window には Character raw editor を置かない。post-Core では ADR 010 により `character-authoring` workflow を採用したが、section 単位の詳細 Editor、validator、revision / diff / rollback、Character 定義自動生成は引き続き別 scope とする。旧 Character Update Workspace は復活させない。
 
 ## Phase 4 Preconditions From Pre-V5 Cleanup
 
@@ -308,7 +308,7 @@ V5の`character.md`には、体験目標、存在感、ユーザーとの距離�
 2. V4 deferred scope を Issue コメントまたは Notion メモに残す。
 3. `docs/design/character-definition-format.md` を V5 Core の `character.md` / `character-notes.md` format に縮小更新する。
 4. `docs/design/character-storage.md` を SQLite metadata + file body + session snapshot の境界に合わせて更新する。
-5. `docs/design/character-update-workspace.md` は Core の正本に戻さず、V5 Core 後の詳細 Editor / update workspace 候補として扱う。
+5. post-Core authoring は ADR 010 で判断し、`docs/design/character-update-workspace.md` の旧方式は採用しない。
 6. V5 Character storage / prompt composer / session snapshot の設計を必要に応じて別文書で切る。
 7. Memory / Auxiliary / Browser Preview / Multi-agent は Character 化の初期実装が安定するまで扱わない。
 
@@ -320,7 +320,7 @@ Phase 4 完了時点では、旧 Character docs は実装仕様の正本にし�
 | --- | --- |
 | `docs/design/character-definition-format.md` | Phase 4 では future candidate として保持した。V5 Core Branch 2 以降は `character.md` / `character-notes.md` format 正本として採用する。 |
 | `docs/design/character-storage.md` | Phase 4 では future candidate として保持した。V5 Core Branch 3 以降は Character catalog / storage / snapshot 境界の正本として採用する。 |
-| `docs/design/character-update-workspace.md` | Character update workspace の future candidate として保持する。V5 初期の session 起動 gate 解除には接続しない。 |
+| `docs/design/character-update-workspace.md` | Phase 4 時点の future candidate。post-Core では ADR 010 により superseded。 |
 
 Phase 4 の実装上の正本は、Home / session 起動を Mate 未作成 gate から外し、V5 Character 未実装時は neutral character snapshot で起動できるようにすることに限る。
 
@@ -331,7 +331,7 @@ V5 Core 開始後は、次の扱いに切り替える。
 | `docs/design/v5-character-transition.md` | V5 Core scope / non-goals / completion criteria の入口。 |
 | `docs/design/character-definition-format.md` | V5 Core 用に縮小更新して、`character.md` runtime definition と `character-notes.md` non-runtime notes の format 正本にする。 |
 | `docs/design/character-storage.md` | V5 Core 用に更新して、catalog metadata、file body、default selection、session snapshot の storage 正本にする。 |
-| `docs/design/character-update-workspace.md` | V5 Core では正本にしない。詳細 Editor / update workspace の deferred candidate として保持する。 |
+| `docs/design/character-update-workspace.md` | V5 Core では正本にしない。post-Core では ADR 010 の `character-authoring` workflow を採用し、旧方式は superseded。 |
 
 ## V5 Core Branch Plan
 

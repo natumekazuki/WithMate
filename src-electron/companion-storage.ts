@@ -17,6 +17,7 @@ import {
 import type { ChangedFile, DiffRow } from "../src/runtime-state.js";
 import type { Message, MessageArtifact } from "../src/session-state.js";
 import {
+  hasSameCharacterRuntimeIdentity,
   parseCharacterRuntimeSnapshotJson,
   stringifyCharacterRuntimeSnapshot,
 } from "../src/character/character-runtime-snapshot.js";
@@ -696,6 +697,11 @@ export class CompanionStorage {
   }
 
   updateSession(session: CompanionSession): CompanionSession {
+    const currentSession = this.getSession(session.id);
+    if (currentSession && !hasSameCharacterRuntimeIdentity(currentSession, session)) {
+      throw new Error("Companion Session の Character owner / runtime snapshot は更新できないよ。");
+    }
+
     this.db.prepare(`
       UPDATE companion_sessions SET
         task_title = ?,

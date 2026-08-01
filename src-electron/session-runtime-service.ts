@@ -734,7 +734,19 @@ export class SessionRuntimeService {
     if (!storedSession) {
       throw new Error("対象セッションが見つからないよ。");
     }
-    const session = await Promise.resolve(this.deps.resolveRuntimeSessionForTurn?.(storedSession) ?? storedSession);
+    const resolvedSession = await Promise.resolve(
+      this.deps.resolveRuntimeSessionForTurn?.(storedSession) ?? storedSession,
+    );
+    const shouldResetCharacterAuthoringThread = storedSession.sessionKind === "character-authoring"
+      && storedSession.characterRuntimeSnapshot !== null
+      && resolvedSession.characterRuntimeSnapshot === null;
+    let session = shouldResetCharacterAuthoringThread
+      ? { ...resolvedSession, threadId: "" }
+      : resolvedSession;
+    if (shouldResetCharacterAuthoringThread) {
+      session = await this.deps.upsertSession(session);
+      this.deps.invalidateProviderSessionThread(storedSession.provider, storedSession.id);
+    }
     throwIfRunCanceled(runAbortController.signal);
     logSessionRunStuckInvestigation("runtime.start", {
       sessionId,

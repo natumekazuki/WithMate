@@ -302,8 +302,8 @@ export default function CharacterEditorApp() {
       const definitionMetadata = resolveCharacterDefinitionMetadata(draft.definitionMarkdown);
       const updated = await api.updateCharacterMetadata({
         characterId: draft.characterId,
-        name: definitionMetadata.name || draft.name,
-        description: definitionMetadata.description,
+        name: definitionMetadata?.name || draft.name,
+        description: definitionMetadata?.description ?? draft.description,
         iconFilePath: draft.iconFilePath,
         theme: draft.theme,
       });
@@ -397,6 +397,10 @@ export default function CharacterEditorApp() {
       setFeedback("先に Character を保存してから authoring session を開始してください。");
       return;
     }
+    if (dirty) {
+      setFeedback("先に変更を保存してから authoring session を開始してください。");
+      return;
+    }
     if (!selectedAuthoringProvider) {
       setFeedback("Settings で有効な provider を選択してから authoring session を開始してください。");
       setAuthoringLaunchOpen(true);
@@ -409,12 +413,6 @@ export default function CharacterEditorApp() {
       const result = await api.startCharacterAuthoringSession({
         mode: "improve",
         characterId: draft.characterId,
-        name: draft.name,
-        description: draft.description,
-        definitionMarkdown: draft.definitionMarkdown,
-        notesMarkdown: draft.notesMarkdown,
-        theme: draft.theme,
-        userInstruction: "",
         provider: selectedAuthoringProvider.id,
       });
       authoringRefreshPendingRef.current = true;
@@ -439,6 +437,10 @@ export default function CharacterEditorApp() {
     }
     if (!draft.characterId) {
       setFeedback("先に Character を保存してから authoring session を開始してください。");
+      return;
+    }
+    if (dirty) {
+      setFeedback("先に変更を保存してから authoring session を開始してください。");
       return;
     }
 

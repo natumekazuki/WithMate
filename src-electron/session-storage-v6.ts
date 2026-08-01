@@ -19,6 +19,11 @@ import {
   stringifyCharacterRuntimeSnapshot,
 } from "../src/character/character-runtime-snapshot.js";
 import {
+  isUnknownCharacterOwnerId,
+  normalizeCharacterOwnerId,
+  recoverStoredCharacterOwnerId,
+} from "../src/character/character-owner.js";
+import {
   registerSessionProviderIdNormalizer,
   SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION,
 } from "./session-provider-id-sql.js";
@@ -65,6 +70,13 @@ type SessionIdRow = {
   id: string;
 };
 
+type DecodedSessionV6RuntimeState = {
+  runtimePolicy: Record<string, unknown>;
+  characterId: string;
+  snapshot: ReturnType<typeof parseCharacterRuntimeSnapshotJson>;
+  threadId: string;
+};
+
 const AUXILIARY_SESSIONS_TABLE_NAME = "auxiliary_sessions";
 const COMPANION_SESSIONS_TABLE_NAME = "companion_sessions";
 
@@ -100,6 +112,43 @@ function parseJsonArray(value: string): unknown[] {
   } catch {
     return [];
   }
+}
+
+function decodeSessionV6RuntimeState(row: SessionV6Row): DecodedSessionV6RuntimeState {
+  const runtimePolicy = parseJsonObject(row.runtime_policy_json);
+  const runtimeCharacterId = normalizeCharacterOwnerId(runtimePolicy.characterId);
+  const storedCharacterId = normalizeCharacterOwnerId(row.character_id) ?? runtimeCharacterId;
+  const characterId = recoverStoredCharacterOwnerId(storedCharacterId);
+  const unresolvedOwner = isUnknownCharacterOwnerId(characterId);
+  const parsedSnapshot = row.character_snapshot_json
+    ? parseCharacterRuntimeSnapshotJson(row.character_snapshot_json)
+    : null;
+  const snapshot = !unresolvedOwner && parsedSnapshot
+    && parsedSnapshot.characterId === characterId
+    ? parsedSnapshot
+    : null;
+  const rejectedStoredSnapshot = row.character_snapshot_json !== null && snapshot === null;
+
+  return {
+    runtimePolicy,
+    characterId,
+    snapshot,
+    threadId: unresolvedOwner || rejectedStoredSnapshot ? "" : row.thread_id,
+  };
+}
+
+function normalizeSessionForStorage(session: Session): Session {
+  const ownerId = normalizeCharacterOwnerId(session.characterId);
+  const snapshotOwnerId = normalizeCharacterOwnerId(session.characterRuntimeSnapshot?.characterId);
+  if (session.characterRuntimeSnapshot && (!ownerId || snapshotOwnerId !== ownerId)) {
+    throw new Error("SessionStorageV6 に保存できない session 形式だよ。");
+  }
+
+  const normalized = normalizeSession(session);
+  if (!normalized) {
+    throw new Error("SessionStorageV6 に保存できない session 形式だよ。");
+  }
+  return normalized;
 }
 
 function encodeMessage(message: Message): string {
@@ -236,10 +285,7 @@ export class SessionStorageV6 {
   }
 
   private storeSession(session: Session, operation: "create" | "upsert"): Session {
-    const normalized = normalizeSession(session);
-    if (!normalized) {
-      throw new Error("SessionStorageV6 に保存できない session 形式だよ。");
-    }
+    const normalized = normalizeSessionForStorage(session);
 
     const startedAt = Date.now();
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
@@ -272,13 +318,7 @@ export class SessionStorageV6 {
   }
 
   replaceSessions(nextSessions: Session[]): Session[] {
-    const normalizedSessions = nextSessions.map((session) => {
-      const normalized = normalizeSession(session);
-      if (!normalized) {
-        throw new Error("SessionStorageV6 に保存できない session 形式だよ。");
-      }
-      return normalized;
-    });
+    const normalizedSessions = nextSessions.map((session) => normalizeSessionForStorage(session));
 
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
@@ -358,6 +398,7 @@ export class SessionStorageV6 {
       branch: session.branch,
       accessMode: session.accessMode,
       sourceSchemaVersion: session.sourceSchemaVersion,
+      characterId: session.characterId,
       characterName: session.character,
       characterIconPath: session.characterIconPath,
       characterThemeColors: session.characterThemeColors,
@@ -482,9 +523,11 @@ export class SessionStorageV6 {
     }
   }
 
-  private rowToSessionSummary(row: SessionV6Row): SessionSummary {
-    const runtimePolicy = parseJsonObject(row.runtime_policy_json);
-    const snapshot = row.character_snapshot_json ? parseCharacterRuntimeSnapshotJson(row.character_snapshot_json) : null;
+  private rowToSessionSummary(
+    row: SessionV6Row,
+    decoded = decodeSessionV6RuntimeState(row),
+  ): SessionSummary {
+    const { runtimePolicy, snapshot } = decoded;
     const summary = normalizeSessionSummary({
       id: row.id,
       taskTitle: row.title,
@@ -498,7 +541,7 @@ export class SessionStorageV6 {
       sessionKind: row.session_kind,
       accessMode: runtimePolicy.accessMode,
       sourceSchemaVersion: runtimePolicy.sourceSchemaVersion ?? CURRENT_SESSION_SCHEMA_VERSION,
-      characterId: snapshot?.characterId ?? row.character_id ?? "",
+      characterId: decoded.characterId,
       character: snapshot?.name ?? runtimePolicy.characterName,
       characterIconPath: snapshot?.iconFilePath ?? runtimePolicy.characterIconPath,
       characterThemeColors: snapshot?.theme ?? runtimePolicy.characterThemeColors,
@@ -509,7 +552,7 @@ export class SessionStorageV6 {
       reasoningEffort: row.reasoning_effort,
       customAgentName: row.custom_agent_name,
       allowedAdditionalDirectories: parseJsonArray(row.allowed_additional_directories_json),
-      threadId: row.thread_id,
+      threadId: decoded.threadId,
     });
     if (!summary) {
       throw new Error(`V6 session row を summary に変換できないよ: ${row.id}`);
@@ -518,7 +561,8 @@ export class SessionStorageV6 {
   }
 
   private rowToSession(row: SessionV6Row): Session {
-    const summary = this.rowToSessionSummary(row);
+    const decoded = decodeSessionV6RuntimeState(row);
+    const summary = this.rowToSessionSummary(row, decoded);
     const messageRows = this.db.prepare(`
       SELECT role, body
       FROM session_messages_v6
@@ -527,9 +571,7 @@ export class SessionStorageV6 {
     `).all(row.id) as MessageV6Row[];
     const session = normalizeSession({
       ...summary,
-      characterRuntimeSnapshot: row.character_snapshot_json
-        ? parseCharacterRuntimeSnapshotJson(row.character_snapshot_json)
-        : null,
+      characterRuntimeSnapshot: decoded.snapshot,
       messages: messageRows.map((messageRow) => decodeMessage(messageRow)).filter((message): message is Message => message !== null),
       stream: [],
     });

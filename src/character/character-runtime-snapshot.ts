@@ -2,6 +2,10 @@ import {
   cloneCharacterRuntimeSnapshot,
   type CharacterRuntimeSnapshot,
 } from "./character-catalog.js";
+import {
+  isUnknownCharacterOwnerId,
+  normalizeCharacterOwnerId,
+} from "./character-owner.js";
 import { stripCharacterDefinitionFrontmatter } from "./character-definition.js";
 import { DEFAULT_CHARACTER_THEME_COLORS } from "../character-state.js";
 
@@ -11,8 +15,10 @@ export function normalizeCharacterRuntimeSnapshot(value: unknown): CharacterRunt
   }
 
   const candidate = value as Partial<CharacterRuntimeSnapshot>;
+  const characterId = normalizeCharacterOwnerId(candidate.characterId);
   if (
-    typeof candidate.characterId !== "string" ||
+    !characterId ||
+    isUnknownCharacterOwnerId(characterId) ||
     typeof candidate.name !== "string" ||
     typeof candidate.definitionMarkdown !== "string"
   ) {
@@ -20,7 +26,7 @@ export function normalizeCharacterRuntimeSnapshot(value: unknown): CharacterRunt
   }
 
   return {
-    characterId: candidate.characterId,
+    characterId,
     name: candidate.name,
     description: typeof candidate.description === "string" ? candidate.description : "",
     iconFilePath: typeof candidate.iconFilePath === "string" ? candidate.iconFilePath : "",
@@ -40,6 +46,49 @@ export function cloneNullableCharacterRuntimeSnapshot(
 ): CharacterRuntimeSnapshot | null {
   return snapshot ? cloneCharacterRuntimeSnapshot(snapshot) : null;
 }
+
+export function areCharacterRuntimeSnapshotsEqual(
+  left: CharacterRuntimeSnapshot | null | undefined,
+  right: CharacterRuntimeSnapshot | null | undefined,
+): boolean {
+  if (left == null || right == null) {
+    return left == null && right == null;
+  }
+
+  const normalizedLeft = normalizeCharacterRuntimeSnapshot(left);
+  const normalizedRight = normalizeCharacterRuntimeSnapshot(right);
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+
+  return (
+    normalizedLeft.characterId === normalizedRight.characterId &&
+    normalizedLeft.name === normalizedRight.name &&
+    normalizedLeft.description === normalizedRight.description &&
+    normalizedLeft.iconFilePath === normalizedRight.iconFilePath &&
+    normalizedLeft.theme.main === normalizedRight.theme.main &&
+    normalizedLeft.theme.sub === normalizedRight.theme.sub &&
+    normalizedLeft.definitionMarkdown === normalizedRight.definitionMarkdown &&
+    normalizedLeft.definitionSha256 === normalizedRight.definitionSha256 &&
+    normalizedLeft.definitionByteSize === normalizedRight.definitionByteSize &&
+    normalizedLeft.snapshotAt === normalizedRight.snapshotAt
+  );
+}
+
+export function hasSameCharacterRuntimeIdentity(
+  left: Pick<CharacterRuntimeSnapshotOwner, "characterId" | "characterRuntimeSnapshot">,
+  right: Pick<CharacterRuntimeSnapshotOwner, "characterId" | "characterRuntimeSnapshot">,
+): boolean {
+  return (
+    left.characterId === right.characterId &&
+    areCharacterRuntimeSnapshotsEqual(left.characterRuntimeSnapshot, right.characterRuntimeSnapshot)
+  );
+}
+
+type CharacterRuntimeSnapshotOwner = {
+  characterId: string;
+  characterRuntimeSnapshot?: CharacterRuntimeSnapshot | null;
+};
 
 export function parseCharacterRuntimeSnapshotJson(value: string | null | undefined): CharacterRuntimeSnapshot | null {
   const normalized = value?.trim() ?? "";

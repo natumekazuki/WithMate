@@ -1,16 +1,22 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
 import {
-  CHARACTER_DEFINITION_MAX_BYTES,
+  CHARACTER_DEFINITION_MAX_CHARACTERS,
   CHARACTER_DEFINITION_SCHEMA,
   CHARACTER_NOTES_MAX_BYTES,
   collectCharacterDefinitionPathReferences,
+  countCharacterDefinitionCharacters,
   isSafeCharacterRelativePath,
   parseCharacterDefinitionMarkdown,
   validateCharacterDefinitionMarkdown,
   validateCharacterNotesMarkdown,
 } from "../../src/character/character-definition.js";
+import {
+  buildDefaultCharacterDefinition,
+  buildDefaultCharacterNotes,
+} from "../../src/character/character-definition-template.js";
 
 const validCharacterMarkdown = `---
 schema: ${CHARACTER_DEFINITION_SCHEMA}
@@ -52,6 +58,34 @@ describe("character-definition-format", () => {
     assert.match(result.value.body, /# Character Runtime Definition/);
   });
 
+  it("生成した quoted frontmatter の backslash と double quote を round-trip する", () => {
+    const name = "Muse \"C:\\Sound\"";
+    const description = "音楽は C:\\Music、呼び名は \"Muse\"。";
+    const result = parseCharacterDefinitionMarkdown(buildDefaultCharacterDefinition(name, description));
+
+    assert.equal(result.ok, true);
+    if (!result.ok) {
+      return;
+    }
+
+    assert.equal(result.value.frontmatter.name, name);
+    assert.equal(result.value.frontmatter.description, description);
+  });
+
+  it("手書き quoted frontmatter の未知の backslash sequence は保持する", () => {
+    const result = parseCharacterDefinitionMarkdown(validCharacterMarkdown.replace(
+      'name: "Mia"',
+      'name: "C:\\Muse"',
+    ));
+
+    assert.equal(result.ok, true);
+    if (!result.ok) {
+      return;
+    }
+
+    assert.equal(result.value.frontmatter.name, "C:\\Muse");
+  });
+
   it("frontmatter schema と name を必須にする", () => {
     const markdown = `---
 schema: legacy-character
@@ -79,18 +113,30 @@ name: Mia
     assert.deepEqual(issueCodes(markdown), ["empty_body"]);
   });
 
-  it("null byte と size limit を検出する", () => {
+  it("null byte と LF 正規化後の 8,000 文字上限を検出する", () => {
     assert.deepEqual(issueCodes(`${validCharacterMarkdown}\0`), ["null_byte"]);
 
-    const largeMarkdown = `---
+    const prefix = `---
 schema: ${CHARACTER_DEFINITION_SCHEMA}
 name: Mia
 ---
 
-${"a".repeat(CHARACTER_DEFINITION_MAX_BYTES)}
 `;
+    const exactLimitMarkdown = `${prefix}${"あ".repeat(
+      CHARACTER_DEFINITION_MAX_CHARACTERS - countCharacterDefinitionCharacters(prefix),
+    )}`;
 
-    assert.deepEqual(issueCodes(largeMarkdown), ["size_limit_exceeded"]);
+    assert.equal(countCharacterDefinitionCharacters(exactLimitMarkdown), CHARACTER_DEFINITION_MAX_CHARACTERS);
+    assert.deepEqual(issueCodes(exactLimitMarkdown), []);
+    assert.deepEqual(issueCodes(`${exactLimitMarkdown}a`), ["size_limit_exceeded"]);
+    assert.equal(
+      countCharacterDefinitionCharacters(exactLimitMarkdown.replaceAll("\n", "\r\n")),
+      CHARACTER_DEFINITION_MAX_CHARACTERS,
+    );
+    assert.equal(
+      countCharacterDefinitionCharacters(exactLimitMarkdown.replaceAll("\n", "\r")),
+      CHARACTER_DEFINITION_MAX_CHARACTERS,
+    );
   });
 
   it("path reference を収集し、unsafe な相対 path を拒否する", () => {
@@ -137,5 +183,14 @@ name: Mia
       validateCharacterNotesMarkdown("a".repeat(CHARACTER_NOTES_MAX_BYTES + 1)).map((issue) => issue.code),
       ["size_limit_exceeded"],
     );
+  });
+
+  it("app と authoring Skill が同じ character-notes template を使う", async () => {
+    const skillTemplate = await readFile(
+      new URL("../../resources/skills/withmate-character-authoring/templates/character-notes.md", import.meta.url),
+      "utf8",
+    );
+
+    assert.equal(skillTemplate, buildDefaultCharacterNotes());
   });
 });

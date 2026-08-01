@@ -353,6 +353,46 @@ describe("CompanionStorageV3", () => {
     }
   });
 
+  it("汎用 updateSession は Character owner / runtime snapshot の差し替えを拒否する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-v3-"));
+    const dbPath = path.join(tempDirectory, "withmate-v3.db");
+    const blobPath = path.join(tempDirectory, "blobs");
+    let storage: CompanionStorageV3 | null = null;
+
+    try {
+      createV3Database(dbPath);
+      storage = new CompanionStorageV3(dbPath, blobPath);
+      const group = await storage.ensureGroup(createGroup());
+      const characterRuntimeSnapshot = createCharacterRuntimeSnapshot();
+      const session = await storage.createSession(createSession(group.id, { characterRuntimeSnapshot }));
+      const invalidUpdates = [
+        {
+          ...session,
+          characterId: "char-2",
+          characterRuntimeSnapshot: createCharacterRuntimeSnapshot({ characterId: "char-2" }),
+        },
+        {
+          ...session,
+          characterRuntimeSnapshot: null,
+        },
+      ];
+
+      for (const invalidUpdate of invalidUpdates) {
+        await assert.rejects(
+          () => storage?.updateSession(invalidUpdate),
+          /Character owner \/ runtime snapshot は更新できない/,
+        );
+      }
+
+      const persisted = await storage.getSession(session.id);
+      assert.equal(persisted?.characterId, session.characterId);
+      assert.deepEqual(persisted?.characterRuntimeSnapshot, characterRuntimeSnapshot);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("update / delete で未参照になった companion blob を cleanup する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-v3-"));
     const dbPath = path.join(tempDirectory, "withmate-v3.db");
