@@ -52,6 +52,15 @@ function runGitForTest(
   });
 }
 
+async function runWithReferencedEventLoopHandle<T>(operation: () => Promise<T>): Promise<T> {
+  const eventLoopHandle = setInterval(() => undefined, 1_000);
+  try {
+    return await operation();
+  } finally {
+    clearInterval(eventLoopHandle);
+  }
+}
+
 async function initializeRepository(repositoryPath: string): Promise<void> {
   await mkdir(repositoryPath, { recursive: true });
   assert.equal((await runGitForTest(repositoryPath, ["init", "--quiet"])).exitCode, 0);
@@ -754,7 +763,7 @@ test("WorkspaceGitChangesService はoperation deadline後にchild settlementを�
       },
     });
     const startedAt = Date.now();
-    const result = await service.listChanges("session-1");
+    const result = await runWithReferencedEventLoopHandle(() => service.listChanges("session-1"));
 
     assert.equal(result.status, "failed");
     if (result.status === "failed") {
@@ -800,7 +809,7 @@ test("WorkspaceGitChangesService はtimeout後のcleanup failureを優先して�
         return runGitForTest(workingDirectoryPath, args, options);
       },
     });
-    const result = await service.listChanges("session-1");
+    const result = await runWithReferencedEventLoopHandle(() => service.listChanges("session-1"));
 
     assert.equal(result.status, "failed");
     if (result.status === "failed") {
