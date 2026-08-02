@@ -77,11 +77,148 @@ test("listModels rejects duplicate IDs and cursor cycles without overwriting or 
   });
 });
 
+test("capability preflight validates selection provenance, reasoning, and modality without Provider mutations", async () => {
+  const transport = new FakeTransport([
+    {
+      data: [modelFixture({ id: "history-model", model: "history-model", hidden: true })],
+      nextCursor: null,
+    },
+  ]);
+  const adapter = createAdapter(transport);
+
+  assert.deepEqual(
+    await adapter.preflightCapability({
+      model: "history-model",
+      modelSelection: "explicit",
+      reasoningEffort: "medium",
+      requiredModality: "text",
+    }),
+    { kind: "unsupported", effect: "none" },
+  );
+  assert.deepEqual(
+    await adapter.preflightCapability({
+      model: "history-model",
+      modelSelection: "inherited",
+      reasoningEffort: "medium",
+      requiredModality: "text",
+    }),
+    { kind: "supported", effect: "none" },
+  );
+  assert.deepEqual(
+    await adapter.preflightCapability({
+      model: "history-model",
+      modelSelection: "inherited",
+      reasoningEffort: "unsupported",
+      requiredModality: "text",
+    }),
+    { kind: "unsupported", effect: "none" },
+  );
+  assert.deepEqual(
+    await adapter.preflightCapability({
+      model: "history-model",
+      modelSelection: "inherited",
+      reasoningEffort: "medium",
+      requiredModality: "audio",
+    }),
+    { kind: "unsupported", effect: "none" },
+  );
+  assert.deepEqual(
+    transport.requests.map((request) => request.method),
+    ["model/list"],
+  );
+});
+
+test("capability preflight reports catalog transport failure as unavailable without mutations", async () => {
+  const transport = new FakeTransport([new CodexTransportError({ kind: "request_not_sent", code: "timeout" })], false);
+  const adapter = createAdapter(transport);
+
+  assert.deepEqual(
+    await adapter.preflightCapability({
+      model: "gpt-5.4",
+      modelSelection: "explicit",
+      reasoningEffort: "medium",
+      requiredModality: "text",
+    }),
+    {
+      kind: "unavailable",
+      effect: "none",
+      failure: { kind: "not_sent", effect: "none", code: "timeout" },
+    },
+  );
+  assert.deepEqual(
+    transport.requests.map((request) => request.method),
+    ["model/list"],
+  );
+});
+
+test("a cold shared capability catalog is not canceled with its first caller", async () => {
+  const catalog = deferred<unknown>();
+  const transport = new FakeTransport([catalog.promise], false);
+  const adapter = createAdapter(transport);
+  const firstAbort = new AbortController();
+  const capability = {
+    model: "gpt-5.4",
+    modelSelection: "explicit" as const,
+    reasoningEffort: "medium",
+    requiredModality: "text" as const,
+  };
+
+  const first = adapter.preflightCapability(capability, { signal: firstAbort.signal });
+  const sibling = adapter.preflightCapability(capability);
+  firstAbort.abort();
+  catalog.resolve({ data: [modelFixture()], nextCursor: null });
+
+  assert.deepEqual(await first, { kind: "supported", effect: "none" });
+  assert.deepEqual(await sibling, { kind: "supported", effect: "none" });
+  assert.deepEqual(transport.requests, [
+    { method: "model/list", params: { limit: 100, includeHidden: true }, options: {} },
+  ]);
+});
+
+test("capability preflight rejects accessor and proxy inputs before catalog access", async () => {
+  let modelReads = 0;
+  const accessor = {
+    modelSelection: "explicit",
+    reasoningEffort: "medium",
+    requiredModality: "text",
+  } as Record<string, unknown>;
+  Object.defineProperty(accessor, "model", {
+    enumerable: true,
+    get() {
+      modelReads += 1;
+      return "gpt-5.4";
+    },
+  });
+  const transport = new FakeTransport([]);
+  const adapter = createAdapter(transport);
+
+  assert.deepEqual(await adapter.preflightCapability(accessor as never), {
+    kind: "unsupported",
+    effect: "none",
+  });
+  assert.deepEqual(
+    await adapter.preflightCapability(
+      new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error("hostile");
+          },
+        },
+      ) as never,
+    ),
+    { kind: "unsupported", effect: "none" },
+  );
+  assert.equal(modelReads, 0);
+  assert.equal(transport.requests.length, 0);
+});
+
 test("mutations validate selectable model and reasoning tuples against the connection catalog", async () => {
   const unknownModel = new FakeTransport([{ data: [modelFixture()], nextCursor: null }]);
   assert.deepEqual(
     await createAdapter(unknownModel).startThread({
       model: "not-in-catalog",
+      modelSelection: "explicit",
       workspacePath: process.cwd(),
       approvalPolicy: "never",
       sandboxMode: "read-only",
@@ -98,6 +235,7 @@ test("mutations validate selectable model and reasoning tuples against the conne
   assert.deepEqual(
     await createAdapter(hiddenModel).startThread({
       model: "gpt-5.4",
+      modelSelection: "explicit",
       workspacePath: process.cwd(),
       approvalPolicy: "never",
       sandboxMode: "read-only",
@@ -106,10 +244,44 @@ test("mutations validate selectable model and reasoning tuples against the conne
     { kind: "not_sent", effect: "none", code: "invalid_input" },
   );
 
+  const inheritedHiddenModel = new FakeTransport([
+    { data: [modelFixture({ hidden: true })], nextCursor: null },
+    threadOperationFixture(),
+  ]);
+  assert.equal(
+    (
+      await createAdapter(inheritedHiddenModel).startThread({
+        model: "gpt-5.4",
+        modelSelection: "inherited",
+        reasoningEffort: "medium",
+        workspacePath: process.cwd(),
+        approvalPolicy: "never",
+        sandboxMode: "read-only",
+        persistence: "persistent",
+      })
+    ).kind,
+    "accepted",
+  );
+  assert.deepEqual(inheritedHiddenModel.requests, [
+    { method: "model/list", params: { limit: 100, includeHidden: true }, options: {} },
+    {
+      method: "thread/start",
+      params: {
+        model: "gpt-5.4",
+        cwd: process.cwd(),
+        approvalPolicy: "never",
+        sandbox: "read-only",
+        ephemeral: false,
+      },
+      options: {},
+    },
+  ]);
+
   const unsupportedEffort = new FakeTransport([{ data: [modelFixture()], nextCursor: null }]);
   assert.deepEqual(
     await createAdapter(unsupportedEffort).startThread({
       model: "gpt-5.4",
+      modelSelection: "explicit",
       reasoningEffort: "unsupported",
       workspacePath: process.cwd(),
       approvalPolicy: "never",
@@ -120,6 +292,24 @@ test("mutations validate selectable model and reasoning tuples against the conne
   );
   assert.deepEqual(
     unsupportedEffort.requests.map((request) => request.method),
+    ["model/list"],
+  );
+
+  const inheritedUnsupportedEffort = new FakeTransport([{ data: [modelFixture({ hidden: true })], nextCursor: null }]);
+  assert.deepEqual(
+    await createAdapter(inheritedUnsupportedEffort).startThread({
+      model: "gpt-5.4",
+      modelSelection: "inherited",
+      reasoningEffort: "unsupported",
+      workspacePath: process.cwd(),
+      approvalPolicy: "never",
+      sandboxMode: "read-only",
+      persistence: "persistent",
+    }),
+    { kind: "not_sent", effect: "none", code: "invalid_input" },
+  );
+  assert.deepEqual(
+    inheritedUnsupportedEffort.requests.map((request) => request.method),
     ["model/list"],
   );
 
@@ -141,6 +331,7 @@ test("mutations validate selectable model and reasoning tuples against the conne
   assert.deepEqual(
     await createAdapter(audioOnly).startThread({
       model: "gpt-5.4",
+      modelSelection: "explicit",
       workspacePath: process.cwd(),
       approvalPolicy: "never",
       sandboxMode: "read-only",
@@ -153,6 +344,25 @@ test("mutations validate selectable model and reasoning tuples against the conne
     ["model/list"],
   );
 
+  const inheritedAudioOnly = new FakeTransport([
+    { data: [modelFixture({ hidden: true, inputModalities: ["audio"] })], nextCursor: null },
+  ]);
+  assert.deepEqual(
+    await createAdapter(inheritedAudioOnly).startThread({
+      model: "gpt-5.4",
+      modelSelection: "inherited",
+      workspacePath: process.cwd(),
+      approvalPolicy: "never",
+      sandboxMode: "read-only",
+      persistence: "persistent",
+    }),
+    { kind: "not_sent", effect: "none", code: "invalid_input" },
+  );
+  assert.deepEqual(
+    inheritedAudioOnly.requests.map((request) => request.method),
+    ["model/list"],
+  );
+
   const unsupportedResponseEffort = new FakeTransport([
     { data: [modelFixture()], nextCursor: null },
     threadOperationFixture({ reasoningEffort: "ultra" }),
@@ -160,6 +370,7 @@ test("mutations validate selectable model and reasoning tuples against the conne
   assert.deepEqual(
     await createAdapter(unsupportedResponseEffort).startThread({
       model: "gpt-5.4",
+      modelSelection: "explicit",
       workspacePath: process.cwd(),
       approvalPolicy: "never",
       sandboxMode: "read-only",
@@ -174,6 +385,7 @@ test("cold model capability preflight preserves transport and Provider failure p
   assert.deepEqual(
     await createAdapter(timeout).startThread({
       model: "gpt-5.4",
+      modelSelection: "explicit",
       workspacePath: process.cwd(),
       approvalPolicy: "never",
       sandboxMode: "read-only",
@@ -207,6 +419,7 @@ test("cold model capability preflight preserves transport and Provider failure p
   assert.deepEqual(
     await createAdapter(connectionLost).startThread({
       model: "gpt-5.4",
+      modelSelection: "explicit",
       workspacePath: process.cwd(),
       approvalPolicy: "never",
       sandboxMode: "read-only",
@@ -223,6 +436,7 @@ test("event-first connection failure preserves its cause for in-flight Thread an
   const threadAdapter = createAdapter(threadTransport);
   const threadMutation = threadAdapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -262,7 +476,7 @@ test("event-first connection failure preserves its cause for in-flight Thread an
   });
 });
 
-test("event-first connection failure remains canonical when an in-flight Provider mutation settles not_sent", async () => {
+test("event-first protocol failure remains canonical when an in-flight Provider mutation settles not_sent", async () => {
   const mutationResponse = deferred<unknown>();
   const transportFailure = deferred<CodexAdapterTransportEvent>();
   const transport = new FakeTransport(
@@ -275,6 +489,7 @@ test("event-first connection failure remains canonical when an in-flight Provide
 
   const mutation = adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -285,7 +500,12 @@ test("event-first connection failure remains canonical when an in-flight Provide
 
   transportFailure.resolve({
     kind: "serverRequest",
-    request: { method: "future/request", params: { ignored: true } },
+    request: {
+      identity: Object.freeze({}) as never,
+      method: "future/request",
+      params: { ignored: true },
+      respond: async () => undefined,
+    },
   });
   await new Promise((resolve) => setImmediate(resolve));
   mutationResponse.reject(new CodexTransportError({ kind: "request_not_sent", code: "write_rejected" }));
@@ -293,12 +513,12 @@ test("event-first connection failure remains canonical when an in-flight Provide
   assert.deepEqual(await mutation, {
     kind: "not_sent",
     effect: "none",
-    code: "unsupported_server_request",
+    code: "protocol_failed",
   });
   assert.equal((await adapter.nextEvent()).kind, "diagnostic");
   assert.deepEqual(await adapter.nextEvent(), {
     kind: "connection_failure",
-    code: "unsupported_server_request",
+    code: "protocol_failed",
   });
 });
 
@@ -346,6 +566,7 @@ test("thread operations validate inputs, send approval never, and preserve bound
   const startTransport = new FakeTransport([threadOperationFixture({ thread: threadFixture({ ephemeral: true }) })]);
   const startResult = await createAdapter(startTransport).startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -537,13 +758,13 @@ test("thread mutations reject mismatched effective model, cwd, approval, and san
     { sandbox: { type: "dangerFullAccess" } },
     { thread: threadFixture({ ephemeral: true }) },
     { thread: threadFixture({ cwd: path.join(process.cwd(), "other-workspace") }) },
-    { thread: threadFixture({ cliVersion: "0.144.6" }) },
   ];
   for (const mismatch of mismatches) {
     const transport = new FakeTransport([threadOperationFixture(mismatch)]);
     assert.deepEqual(
       await createAdapter(transport).startThread({
         model: "gpt-5.4",
+        modelSelection: "explicit",
         workspacePath: process.cwd(),
         approvalPolicy: "never",
         sandboxMode: "read-only",
@@ -553,6 +774,21 @@ test("thread mutations reject mismatched effective model, cwd, approval, and san
     );
     assert.equal(transport.requests.length, 2);
   }
+
+  const versionDriftTransport = new FakeTransport([
+    { data: [modelFixture()], nextCursor: null },
+    threadOperationFixture({ thread: threadFixture({ cliVersion: "0.144.6" }) }),
+  ]);
+  const versionDrift = await createAdapter(versionDriftTransport).startThread({
+    model: "gpt-5.4",
+    modelSelection: "explicit",
+    workspacePath: process.cwd(),
+    approvalPolicy: "never",
+    sandboxMode: "read-only",
+    persistence: "persistent",
+  });
+  assert.equal(versionDrift.kind, "accepted");
+  if (versionDrift.kind === "accepted") assert.equal(versionDrift.value.cliVersion, "0.144.6");
 
   const resumeTransport = new FakeTransport([
     threadOperationFixture({ sandbox: { type: "readOnly", networkAccess: false } }),
@@ -585,6 +821,7 @@ test(
       (
         await createAdapter(transport).startThread({
           model: "gpt-5.4",
+          modelSelection: "explicit",
           workspacePath,
           approvalPolicy: "never",
           sandboxMode: "read-only",
@@ -624,6 +861,7 @@ test("turn/start is not dispatched from not_loaded or system_error Thread states
       (
         await adapter.startThread({
           model: "gpt-5.4",
+          modelSelection: "explicit",
           workspacePath: process.cwd(),
           approvalPolicy: "never",
           sandboxMode: "read-only",
@@ -657,6 +895,7 @@ test("turn operations build stable 0.145 params and keep interrupt acknowledgeme
     (
       await startAdapter.startThread({
         model: "gpt-5.4",
+        modelSelection: "explicit",
         workspacePath: process.cwd(),
         approvalPolicy: "never",
         sandboxMode: "read-only",
@@ -806,6 +1045,7 @@ test("operation identity and response shape mismatches preserve mutation ambigui
   assert.deepEqual(
     await createAdapter(duplicateMutationHistory).startThread({
       model: "gpt-5.4",
+      modelSelection: "explicit",
       workspacePath: process.cwd(),
       approvalPolicy: "never",
       sandboxMode: "read-only",
@@ -815,27 +1055,47 @@ test("operation identity and response shape mismatches preserve mutation ambigui
   );
 });
 
-test("unsupported approval and CLI versions fail before any provider send", async () => {
-  const approvalTransport = new FakeTransport([]);
-  assert.deepEqual(
-    await createAdapter(approvalTransport).startThread({
-      model: "gpt-5.4",
-      workspacePath: process.cwd(),
-      approvalPolicy: "on-request",
-      sandboxMode: "read-only",
-      persistence: "persistent",
-    }),
-    { kind: "not_sent", effect: "none", code: "capability_unavailable" },
+test("supported approval policies and newer observed CLI versions are sent to the Provider", async () => {
+  const approvalTransport = new FakeTransport([
+    { data: [modelFixture()], nextCursor: null },
+    threadOperationFixture({ approvalPolicy: "on-request" }),
+  ]);
+  assert.equal(
+    (
+      await createAdapter(approvalTransport).startThread({
+        model: "gpt-5.4",
+        modelSelection: "explicit",
+        workspacePath: process.cwd(),
+        approvalPolicy: "on-request",
+        sandboxMode: "read-only",
+        persistence: "persistent",
+      })
+    ).kind,
+    "accepted",
   );
-  assert.equal(approvalTransport.requests.length, 0);
+  assert.deepEqual(
+    approvalTransport.requests.map((request) => [request.method, request.params]),
+    [
+      ["model/list", { limit: 100, includeHidden: true }],
+      [
+        "thread/start",
+        {
+          model: "gpt-5.4",
+          cwd: process.cwd(),
+          approvalPolicy: "on-request",
+          sandbox: "read-only",
+          ephemeral: false,
+        },
+      ],
+    ],
+  );
 
-  const versionTransport = new FakeTransport([]);
-  assert.deepEqual(await new CodexAdapter(versionTransport, { cliVersion: "0.146.0" }).listModels(), {
-    kind: "not_sent",
-    effect: "none",
-    code: "capability_unavailable",
-  });
-  assert.equal(versionTransport.requests.length, 0);
+  const versionTransport = new FakeTransport([{ data: [modelFixture()], nextCursor: null }]);
+  assert.equal((await new CodexAdapter(versionTransport, { cliVersion: "0.146.0" }).listModels()).kind, "accepted");
+  assert.deepEqual(
+    versionTransport.requests.map((request) => request.method),
+    ["model/list"],
+  );
 
   let getterReads = 0;
   const invalidInput = {
@@ -845,13 +1105,14 @@ test("unsupported approval and CLI versions fail before any provider send", asyn
       return true;
     },
   };
-  assert.deepEqual(await createAdapter(versionTransport).readThread(invalidInput as never), {
+  const invalidTransport = new FakeTransport([]);
+  assert.deepEqual(await createAdapter(invalidTransport).readThread(invalidInput as never), {
     kind: "not_sent",
     effect: "none",
     code: "invalid_input",
   });
   assert.equal(getterReads, 0);
-  assert.equal(versionTransport.requests.length, 0);
+  assert.equal(invalidTransport.requests.length, 0);
 });
 
 test("transport failures retain send certainty and never trigger an Adapter retry", async () => {
@@ -957,6 +1218,7 @@ test("Thread mutation reservations reject aggregate overflow before provider sen
   const starts = pendingResponses.map(() =>
     concurrentAdapter.startThread({
       model: "gpt-5.4",
+      modelSelection: "explicit",
       workspacePath: process.cwd(),
       approvalPolicy: "never",
       sandboxMode: "read-only",
@@ -967,6 +1229,7 @@ test("Thread mutation reservations reject aggregate overflow before provider sen
   assert.deepEqual(
     await concurrentAdapter.startThread({
       model: "gpt-5.4",
+      modelSelection: "explicit",
       workspacePath: process.cwd(),
       approvalPolicy: "never",
       sandboxMode: "read-only",
@@ -1000,6 +1263,7 @@ test("Thread mutation reservations reject aggregate overflow before provider sen
       (
         await ambiguousAdapter.startThread({
           model: "gpt-5.4",
+          modelSelection: "explicit",
           workspacePath: process.cwd(),
           approvalPolicy: "never",
           sandboxMode: "read-only",
@@ -1012,6 +1276,7 @@ test("Thread mutation reservations reject aggregate overflow before provider sen
   assert.deepEqual(
     await ambiguousAdapter.startThread({
       model: "gpt-5.4",
+      modelSelection: "explicit",
       workspacePath: process.cwd(),
       approvalPolicy: "never",
       sandboxMode: "read-only",
@@ -1033,6 +1298,7 @@ test("Thread mutation reservations reject aggregate overflow before provider sen
   const reusableAdapter = createAdapter(reusableTransport);
   const startInput = {
     model: "gpt-5.4",
+    modelSelection: "explicit" as const,
     workspacePath: process.cwd(),
     approvalPolicy: "never" as const,
     sandboxMode: "read-only" as const,
@@ -1063,6 +1329,7 @@ test("ambiguous turn starts retain only a bounded per-Thread reconciliation cont
       (
         await adapter.startThread({
           model: "gpt-5.4",
+          modelSelection: "explicit",
           workspacePath: process.cwd(),
           approvalPolicy: "never",
           sandboxMode: "read-only",
@@ -1151,6 +1418,7 @@ function deferred<T>(): Readonly<{
 async function establishThread(adapter: CodexAdapter): Promise<void> {
   const result = await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1190,6 +1458,10 @@ class FakeTransport implements CodexAdapterTransportPort {
     if (this.#responses.length === 0) return Promise.reject(new Error("missing fake response"));
     const response = this.#responses.shift();
     return response instanceof Error ? Promise.reject(response) : Promise.resolve(response as TResult);
+  }
+
+  observeServerRequestResolution(): Readonly<{ kind: "invalid" }> {
+    return Object.freeze({ kind: "invalid" });
   }
 
   nextEvent(): Promise<CodexAdapterTransportEvent> {

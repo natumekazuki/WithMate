@@ -79,9 +79,6 @@ export function decodeCodexWireEnvelope(value: unknown): CodexWireEnvelope {
     throw invalidEnvelope();
   }
   if (hasResult) {
-    if (!hasOnlyKeys(value, ["id", "result", "jsonrpc"])) {
-      throw invalidEnvelope();
-    }
     return withJsonRpc(
       {
         kind: "response",
@@ -95,11 +92,8 @@ export function decodeCodexWireEnvelope(value: unknown): CodexWireEnvelope {
 }
 
 function decodeServerRequest(value: Record<string, unknown>): CodexWireServerRequest {
-  if (
-    !isRequestId(value.id) ||
-    !hasOnlyKeys(value, ["id", "method", "params", "trace", "jsonrpc"]) ||
-    (hasOwn(value, "trace") && !isTraceContext(value.trace))
-  ) {
+  const trace = hasOwn(value, "trace") ? decodeTraceContext(value.trace) : undefined;
+  if (!isRequestId(value.id) || (hasOwn(value, "trace") && trace === undefined)) {
     throw invalidEnvelope();
   }
   return withJsonRpc(
@@ -108,17 +102,14 @@ function decodeServerRequest(value: Record<string, unknown>): CodexWireServerReq
       id: value.id,
       method: value.method as string,
       ...(hasOwn(value, "params") ? { params: value.params } : {}),
-      ...(hasOwn(value, "trace") ? { trace: value.trace as CodexW3cTraceContext | null } : {}),
+      ...(hasOwn(value, "trace") ? { trace: trace as CodexW3cTraceContext | null } : {}),
     },
     value,
   );
 }
 
 function decodeNotification(value: Record<string, unknown>): CodexWireNotification {
-  if (
-    !hasOnlyKeys(value, ["method", "params", "emittedAtMs", "jsonrpc"]) ||
-    (hasOwn(value, "emittedAtMs") && !Number.isSafeInteger(value.emittedAtMs))
-  ) {
+  if (hasOwn(value, "emittedAtMs") && !Number.isSafeInteger(value.emittedAtMs)) {
     throw invalidEnvelope();
   }
   return withJsonRpc(
@@ -133,15 +124,11 @@ function decodeNotification(value: Record<string, unknown>): CodexWireNotificati
 }
 
 function decodeErrorResponse(value: Record<string, unknown>): CodexWireErrorResponse {
-  if (!hasOnlyKeys(value, ["id", "error", "jsonrpc"]) || !isPlainObject(value.error)) {
+  if (!isPlainObject(value.error)) {
     throw invalidEnvelope();
   }
   const error = value.error;
-  if (
-    !hasOnlyKeys(error, ["code", "message", "data"]) ||
-    !Number.isSafeInteger(error.code) ||
-    typeof error.message !== "string"
-  ) {
+  if (!Number.isSafeInteger(error.code) || typeof error.message !== "string") {
     throw invalidEnvelope();
   }
   return withJsonRpc(
@@ -170,10 +157,16 @@ function isRequestId(value: unknown): value is CodexRequestId {
   return typeof value === "string" || (typeof value === "number" && Number.isSafeInteger(value));
 }
 
-function isTraceContext(value: unknown): value is CodexW3cTraceContext | null {
-  if (value === null) return true;
-  if (!isPlainObject(value) || !hasOnlyKeys(value, ["traceparent", "tracestate"])) return false;
-  return isOptionalNullableString(value, "traceparent") && isOptionalNullableString(value, "tracestate");
+function decodeTraceContext(value: unknown): CodexW3cTraceContext | null | undefined {
+  if (value === null) return null;
+  if (!isPlainObject(value)) return undefined;
+  if (!isOptionalNullableString(value, "traceparent") || !isOptionalNullableString(value, "tracestate")) {
+    return undefined;
+  }
+  return {
+    ...(hasOwn(value, "traceparent") ? { traceparent: value.traceparent as string | null } : {}),
+    ...(hasOwn(value, "tracestate") ? { tracestate: value.tracestate as string | null } : {}),
+  };
 }
 
 function isOptionalNullableString(value: Record<string, unknown>, key: string): boolean {
@@ -184,11 +177,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null) return false;
   const prototype = Object.getPrototypeOf(value) as unknown;
   return prototype === Object.prototype || prototype === null;
-}
-
-function hasOnlyKeys(value: Record<string, unknown>, allowedKeys: readonly string[]): boolean {
-  const allowed = new Set(allowedKeys);
-  return Object.keys(value).every((key) => allowed.has(key));
 }
 
 function hasOwn(value: Record<string, unknown>, key: string): boolean {

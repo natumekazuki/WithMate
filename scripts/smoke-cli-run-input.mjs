@@ -227,17 +227,26 @@ function startHeldRun(sessionId, idempotencyKey, prompt) {
       idempotencyKey,
       "--content-blocks-json",
       JSON.stringify([{ type: "text", text: prompt }]),
-      "--model",
-      "gpt-5.4",
-      "--reasoning-effort",
-      "medium",
-      "--sandbox-json",
-      sandboxJson,
+      "--provider-settings-json",
+      providerSettingsJson(sandboxJson),
     ],
     0,
   ).applicationResponse.value;
   assert.equal(admission.phase, "queued");
   return admission.runId;
+}
+
+function providerSettingsJson(sandboxJson) {
+  return JSON.stringify({
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    settings: {
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      approvalPolicy: "never",
+      sandbox: JSON.parse(sandboxJson),
+    },
+  });
 }
 
 function sendInput(sessionId, runId, idempotencyKey, prompt) {

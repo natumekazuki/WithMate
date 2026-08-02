@@ -2,16 +2,15 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 
-import type {
-  ApplicationRunExecutionSettings,
-  ApplicationRunStartRequest,
-} from "../src/shared/application-run-model.js";
+import type { ApplicationRunStartRequest } from "../src/shared/application-run-model.js";
 import { APPLICATION_RUN_PAYLOAD_LIMITS } from "../src/shared/application-run-payload-limits.js";
 import { ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS } from "../src/shared/allowed-additional-directories.js";
 import {
   type ApplicationRunAdmissionCommand,
   type ApplicationRunAdmissionPort,
   type ApplicationRunAdmissionRecord,
+  type ApplicationRunAdmissionReplayPort,
+  type ApplicationRunProviderCapabilityPreflightPort,
   RepositoryApplicationRunAdmissionPort,
 } from "../src/main/application-run-admission-service.js";
 import { ApplicationRunService, type ApplicationRunServiceOptions } from "../src/main/application-run-service.js";
@@ -28,11 +27,16 @@ const idempotencyKey = "018f1f4e-7f0a-7000-8000-000000000701";
 const defaultWorkspace = resolveWorkspaceIdentity(path.resolve("workspace"))!;
 const otherWorkspace = resolveWorkspaceIdentity(path.resolve("other-workspace"))!;
 const sharedDirectory = path.resolve("shared");
-const execution: ApplicationRunExecutionSettings = {
-  model: "gpt-test",
-  reasoningEffort: "medium",
-  sandbox: { mode: "workspace-write", networkAccess: false },
-};
+const providerSettings = {
+  providerId: "codex",
+  definitionVersion: "codex-provider-v1",
+  settings: {
+    model: "gpt-test",
+    reasoningEffort: "medium",
+    approvalPolicy: "never",
+    sandbox: { mode: "workspace-write", networkAccess: false },
+  },
+} as const;
 
 test("start authorizes a write target, derives private scope from Session, and projects only public Run identity", async () => {
   const authorized: unknown[] = [];
@@ -68,11 +72,9 @@ test("start authorizes a write target, derives private scope from Session, and p
     contentBlocks: [{ type: "text", text: "hello" }],
     executionSnapshot: {
       providerId: "codex",
-      model: "gpt-test",
+      definitionVersion: "codex-provider-v1",
       modelSelection: "explicit",
-      reasoning: { effort: "medium" },
-      approval: { policy: "never" },
-      sandbox: { mode: "workspace-write", networkAccess: false },
+      settings: providerSettings.settings,
       workspace: {
         key: defaultWorkspace.workspaceKey,
         path: defaultWorkspace.workspacePath,
@@ -81,16 +83,21 @@ test("start authorizes a write target, derives private scope from Session, and p
       character: null,
     },
     providerRequest: {
+      providerId: "codex",
+      definitionVersion: "codex-provider-v1",
       contentBlocks: [{ type: "text", text: "hello" }],
-      model: "gpt-test",
-      reasoningEffort: "medium",
-      approvalPolicy: "never",
-      sandboxPolicy: {
-        mode: "workspace-write",
-        networkAccess: false,
-        writableRoots: [defaultWorkspace.workspacePath, sharedDirectory],
+      startTurn: {
+        model: "gpt-test",
+        modelSelection: "explicit",
+        reasoningEffort: "medium",
+        approvalPolicy: "never",
+        sandboxPolicy: {
+          mode: "workspace-write",
+          networkAccess: false,
+          writableRoots: [defaultWorkspace.workspacePath, sharedDirectory],
+        },
+        workspacePath: defaultWorkspace.workspacePath,
       },
-      workspacePath: defaultWorkspace.workspacePath,
     },
   });
   assert.equal(response.overallStatus, "success");
@@ -157,7 +164,7 @@ test("Repository admission adapter omits caller-owned identities and provider-na
   ]);
 });
 
-test("retry reuses the source Message, inherits the full snapshot, and overrides only specified settings", async () => {
+test("retry reuses the source Message and accepts only a complete Provider settings override", async () => {
   const admitted: ApplicationRunAdmissionCommand[] = [];
   const chunkRequests: unknown[] = [];
   const sourceContent = [{ type: "text", text: "source body" }] as const;
@@ -178,7 +185,10 @@ test("retry reuses the source Message, inherits the full snapshot, and overrides
     sessionId: "session-1",
     retryOfRunId: "run-source",
     idempotencyKey,
-    executionOverrides: { reasoningEffort: "high" },
+    providerSettingsOverride: {
+      ...providerSettings,
+      settings: { ...providerSettings.settings, model: "gpt-source", reasoningEffort: "high" },
+    },
   });
 
   assert.equal(response.overallStatus, "success");
@@ -191,12 +201,11 @@ test("retry reuses the source Message, inherits the full snapshot, and overrides
   assert.equal(command.retryOfRunId, "run-source");
   assert.deepEqual(command.executionSnapshot, {
     ...repositoryExecutionSnapshot(),
-    modelSelection: "inherited",
-    reasoning: { effort: "high" },
+    settings: { ...providerSettings.settings, model: "gpt-source", reasoningEffort: "high" },
   });
   assert.deepEqual(command.providerRequest.contentBlocks, sourceContent);
-  assert.equal(command.providerRequest.model, "gpt-source");
-  assert.equal(command.providerRequest.reasoningEffort, "high");
+  assert.equal((command.providerRequest.startTurn as { model: string }).model, "gpt-source");
+  assert.equal((command.providerRequest.startTurn as { reasoningEffort: string }).reasoningEffort, "high");
   if (response.overallStatus === "success") {
     assert.deepEqual(response.value, {
       sessionId: "session-1",
@@ -207,8 +216,151 @@ test("retry reuses the source Message, inherits the full snapshot, and overrides
   }
 });
 
+test("retry without an override preserves the source settings with inherited model provenance", async () => {
+  const admitted: ApplicationRunAdmissionCommand[] = [];
+  const service = createService({
+    admission: admissionPort(admitted, { retryOfRunId: "run-source" }),
+  });
+
+  const response = await service.retry(retryRequest());
+
+  assert.equal(response.overallStatus, "success");
+  assert.equal(admitted.length, 1);
+  assert.equal(admitted[0]?.executionSnapshot.modelSelection, "inherited");
+  assert.equal(
+    (admitted[0]?.providerRequest.startTurn as Readonly<{ modelSelection?: string }>).modelSelection,
+    "inherited",
+  );
+});
+
+test("unsupported and unavailable Provider capability reject before durable admission", async (context) => {
+  for (const [kind, retryable] of [
+    ["unsupported", false],
+    ["unavailable", true],
+  ] as const) {
+    await context.test(kind, async () => {
+      let admissions = 0;
+      let probes = 0;
+      const service = createService({
+        admission: {
+          async admit() {
+            admissions += 1;
+            return admissionSuccess();
+          },
+        },
+        admissionReplay: replayPort(() => {
+          probes += 1;
+          return { kind: "absent" };
+        }),
+        providerCapabilityPreflight: preflightPort(kind),
+      });
+
+      const response = await service.start(startRequest());
+
+      assert.equal(response.overallStatus, "failure");
+      if (response.overallStatus !== "failure") return;
+      assert.equal(response.error.kind, "domain");
+      assert.equal(response.error.code, "provider_capability_unavailable");
+      assert.equal(response.error.retryable, retryable);
+      assert.deepEqual(response.persistence, { status: "not_attempted", effect: "none" });
+      assert.equal(admissions, 0);
+      assert.equal(probes, 2);
+    });
+  }
+});
+
+test("exact replay skips Provider capability preflight and preserves pending handoff", async () => {
+  let preflights = 0;
+  let admissions = 0;
+  const handedOff: ApplicationRunAdmissionRecord[] = [];
+  const replay = admissionSuccess({}, { bindingState: "active" }).value;
+  const service = createService({
+    admission: {
+      async admit() {
+        admissions += 1;
+        return admissionSuccess();
+      },
+    },
+    admissionReplay: replayPort(() => ({ kind: "replay", value: replay })),
+    providerCapabilityPreflight: {
+      async preflight() {
+        preflights += 1;
+        return { kind: "unavailable" };
+      },
+    },
+    handoff: { handoff: (record) => handedOff.push(record) },
+  });
+
+  const response = await service.start(startRequest());
+
+  assert.equal(response.overallStatus, "success");
+  if (response.overallStatus === "success") {
+    assert.deepEqual(response.persistence, { status: "committed", effect: "none", replayed: true });
+  }
+  assert.equal(preflights, 0);
+  assert.equal(admissions, 0);
+  assert.equal(handedOff.length, 1);
+});
+
+test("a replay committed during failed capability preflight wins the second probe race", async () => {
+  let probes = 0;
+  let admissions = 0;
+  const replay = admissionSuccess({}, { bindingState: "active" }).value;
+  const service = createService({
+    admission: {
+      async admit() {
+        admissions += 1;
+        return admissionSuccess();
+      },
+    },
+    admissionReplay: replayPort(() => (++probes === 1 ? { kind: "absent" } : { kind: "replay", value: replay })),
+    providerCapabilityPreflight: preflightPort("unsupported"),
+  });
+
+  const response = await service.start(startRequest());
+
+  assert.equal(response.overallStatus, "success");
+  assert.equal(probes, 2);
+  assert.equal(admissions, 0);
+});
+
+test("replay conflict and expiry reject without Provider preflight or durable admission", async (context) => {
+  for (const code of ["idempotency_conflict", "idempotency_expired"] as const) {
+    await context.test(code, async () => {
+      let preflights = 0;
+      let admissions = 0;
+      const service = createService({
+        admission: {
+          async admit() {
+            admissions += 1;
+            return admissionSuccess();
+          },
+        },
+        admissionReplay: replayPort(() => ({
+          kind: "failure",
+          error: { code, message: code, retryable: false },
+        })),
+        providerCapabilityPreflight: {
+          async preflight() {
+            preflights += 1;
+            return { kind: "supported" };
+          },
+        },
+      });
+
+      const response = await service.start(startRequest());
+
+      assert.equal(response.overallStatus, "failure");
+      if (response.overallStatus === "failure") assert.equal(response.error.code, code);
+      assert.equal(preflights, 0);
+      assert.equal(admissions, 0);
+    });
+  }
+});
+
 test("start and retry reject caller-controlled scope, unknown fields, accessors, sparse content, and Proxy input", async () => {
   let admissions = 0;
+  let providerGetterReads = 0;
   const service = createService({
     admission: {
       async admit() {
@@ -235,6 +387,19 @@ test("start and retry reject caller-controlled scope, unknown fields, accessors,
   proxiedBlockRequest.contentBlocks = [new Proxy({ type: "text", text: "hello" }, {})];
   const proxiedArrayRequest = startRequest() as unknown as { contentBlocks: unknown[] };
   proxiedArrayRequest.contentBlocks = new Proxy([{ type: "text", text: "hello" }], {});
+  const providerAccessorRequest = startRequest() as unknown as {
+    providerSettings: Readonly<Record<string, unknown>>;
+  };
+  providerAccessorRequest.providerSettings = {
+    ...providerSettings,
+    settings: {
+      ...providerSettings.settings,
+      get model(): string {
+        providerGetterReads += 1;
+        return providerSettings.settings.model;
+      },
+    },
+  };
 
   for (const request of [
     withWorkspace,
@@ -245,6 +410,7 @@ test("start and retry reject caller-controlled scope, unknown fields, accessors,
     transparentProxy,
     proxiedBlockRequest,
     proxiedArrayRequest,
+    providerAccessorRequest,
   ]) {
     assert.deepEqual(await service.start(request as ApplicationRunStartRequest<Authorization>), requestFailure());
   }
@@ -254,13 +420,24 @@ test("start and retry reject caller-controlled scope, unknown fields, accessors,
       sessionId: "session-1",
       retryOfRunId: "run-source",
       idempotencyKey,
-      executionOverrides: {
-        sandbox: { mode: "workspace-write", networkAccess: false },
-        workspacePath: "C:\\bad",
+      providerSettingsOverride: {
+        ...providerSettings,
+        settings: { ...providerSettings.settings, workspacePath: "C:\\bad" },
       } as never,
     }),
     requestFailure(),
   );
+  assert.deepEqual(
+    await service.retry({
+      context: { authorization },
+      sessionId: "session-1",
+      retryOfRunId: "run-source",
+      idempotencyKey,
+      providerSettingsOverride: providerAccessorRequest.providerSettings as never,
+    }),
+    requestFailure(),
+  );
+  assert.equal(providerGetterReads, 0);
   assert.equal(admissions, 0);
 });
 
@@ -747,15 +924,14 @@ test("retry rejects non-terminal and stale execution scope without creating a ne
   assert.equal(admissions, 0);
 });
 
-test("retry records whether the model was inherited or explicitly overridden", async () => {
+test("retry inherits the exact source envelope or replaces it with a complete same-provider envelope", async () => {
   const inherited: ApplicationRunAdmissionCommand[] = [];
   const inheritedService = createService({
     admission: admissionPort(inherited, { retryOfRunId: "run-source" }),
   });
   const inheritedResponse = await inheritedService.retry(retryRequest());
   assert.equal(inheritedResponse.overallStatus, "success");
-  assert.equal(inherited[0]?.executionSnapshot.model, "gpt-source");
-  assert.equal(inherited[0]?.executionSnapshot.modelSelection, "inherited");
+  assert.deepEqual(inherited[0]?.executionSnapshot.settings, repositoryExecutionSnapshot().settings);
 
   const overridden: ApplicationRunAdmissionCommand[] = [];
   const overriddenService = createService({
@@ -763,11 +939,13 @@ test("retry records whether the model was inherited or explicitly overridden", a
   });
   const overriddenResponse = await overriddenService.retry({
     ...retryRequest(),
-    executionOverrides: { model: "gpt-override" },
+    providerSettingsOverride: {
+      ...providerSettings,
+      settings: { ...providerSettings.settings, model: "gpt-override" },
+    },
   });
   assert.equal(overriddenResponse.overallStatus, "success");
-  assert.equal(overridden[0]?.executionSnapshot.model, "gpt-override");
-  assert.equal(overridden[0]?.executionSnapshot.modelSelection, "explicit");
+  assert.equal(overridden[0]?.executionSnapshot.settings.model, "gpt-override");
 });
 
 test("start and retry preserve a canonical Session workspace path beyond the identifier length", async () => {
@@ -799,7 +977,10 @@ test("start and retry preserve a canonical Session workspace path beyond the ide
     assert.equal(response.overallStatus, "success");
     assert.equal(admitted.length, 1);
     assert.equal(admitted[0]?.executionSnapshot.workspace.path, longWorkspacePath);
-    assert.equal(admitted[0]?.providerRequest.workspacePath, longWorkspacePath);
+    assert.equal(
+      (admitted[0]?.providerRequest.startTurn as { workspacePath?: string })?.workspacePath,
+      longWorkspacePath,
+    );
   }
 });
 
@@ -811,7 +992,7 @@ test("start and retry preserve the combined maximum Message and accepted Session
   ];
   const sourceSnapshot = {
     ...repositoryExecutionSnapshot(),
-    sandbox: execution.sandbox,
+    settings: providerSettings.settings,
     workspace: {
       key: defaultWorkspace.workspaceKey,
       path: defaultWorkspace.workspacePath,
@@ -1034,6 +1215,10 @@ function createService(
   return new ApplicationRunService({
     reads: overrides.reads ?? reads(),
     admission: overrides.admission ?? admissionPort([]),
+    ...(overrides.admissionReplay === undefined ? {} : { admissionReplay: overrides.admissionReplay }),
+    ...(overrides.providerCapabilityPreflight === undefined
+      ? {}
+      : { providerCapabilityPreflight: overrides.providerCapabilityPreflight }),
     handoff: overrides.handoff ?? { handoff() {} },
     access:
       overrides.access ??
@@ -1055,13 +1240,35 @@ function createService(
   });
 }
 
+function replayPort(
+  probe: (
+    ...args: Parameters<ApplicationRunAdmissionReplayPort["probe"]>
+  ) => Awaited<ReturnType<ApplicationRunAdmissionReplayPort["probe"]>>,
+): ApplicationRunAdmissionReplayPort {
+  return {
+    async probe(...args) {
+      return probe(...args);
+    },
+  };
+}
+
+function preflightPort(
+  kind: "supported" | "unsupported" | "unavailable",
+): ApplicationRunProviderCapabilityPreflightPort {
+  return {
+    async preflight() {
+      return { kind };
+    },
+  };
+}
+
 function startRequest(): ApplicationRunStartRequest<Authorization> {
   return {
     context: { authorization },
     sessionId: "session-1",
     idempotencyKey,
     contentBlocks: [{ type: "text", text: "hello" }],
-    execution,
+    providerSettings,
   };
 }
 
@@ -1228,11 +1435,14 @@ function repositoryExecutionSnapshot(
 ) {
   return {
     providerId: "codex",
-    model: "gpt-source",
+    definitionVersion: "codex-provider-v1",
     modelSelection: "explicit" as const,
-    reasoning: { effort: "medium" },
-    approval: { policy: "never" },
-    sandbox: { mode: "read-only", networkAccess: false },
+    settings: {
+      model: "gpt-source",
+      reasoningEffort: "medium",
+      approvalPolicy: "never",
+      sandbox: { mode: "read-only", networkAccess: false },
+    },
     workspace: {
       key: workspaceKey,
       path: workspacePath,

@@ -1,8 +1,10 @@
+import { RUNTIME_IPC_SHARED_LIMITS } from "../../shared/application-run-interaction-limits.js";
+
 export const RUNTIME_IPC_PROTOCOL_VERSION = "withmate-runtime-ipc-v1" as const;
 export const RUNTIME_IPC_PROTOCOL_FAMILY = "withmate-runtime-ipc" as const;
 
 export const RUNTIME_IPC_LIMITS = Object.freeze({
-  maxLineBytes: 512 * 1024,
+  maxLineBytes: RUNTIME_IPC_SHARED_LIMITS.maxLineBytes,
   maxBufferedBytes: 1024 * 1024,
   maxBinaryBytes: 256 * 1024,
   maxStringBytes: 384 * 1024,

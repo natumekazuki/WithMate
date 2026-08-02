@@ -134,6 +134,7 @@ export type ApplicationDomainErrorCode =
   | "not_found"
   | "reference_invalid"
   | "lifecycle_conflict"
+  | "provider_capability_unavailable"
   | "session_busy"
   | "capacity_exceeded"
   | "insufficient_disk_space"

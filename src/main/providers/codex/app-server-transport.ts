@@ -15,6 +15,7 @@ import {
   type CodexConnectionInfo,
   type CodexProtocolEvent,
   type CodexRequestOptions,
+  type CodexServerRequestResolution,
 } from "./protocol-session.js";
 import { CodexStdioWireWriter, encodeCodexWireMessage } from "./stdio-wire-writer.js";
 import { MAX_NODE_TIMER_DELAY_MS, isValidNodeTimerDelay } from "./timer-duration.js";
@@ -28,7 +29,14 @@ import {
 } from "./transport-error.js";
 import { CODEX_TRANSPORT_LIMITS, validateCodexTransportLimits, type CodexTransportLimits } from "./transport-limits.js";
 
-export const CODEX_APP_SERVER_ARGUMENTS = Object.freeze(["app-server", "--stdio"] as const);
+export const CODEX_APP_SERVER_ARGUMENTS = Object.freeze([
+  "app-server",
+  "--stdio",
+  "-c",
+  "features.request_permissions_tool=true",
+  "-c",
+  "features.default_mode_request_user_input=true",
+] as const);
 
 export type CodexAppServerTransportState = "idle" | "starting" | "ready" | "closing" | "closed" | "failed";
 
@@ -141,6 +149,10 @@ export class CodexAppServerTransport {
     return this.#session.request<TResult>(method, params, options);
   }
 
+  observeServerRequestResolution(requestId: unknown): CodexServerRequestResolution {
+    return this.#session?.observeServerRequestResolution(requestId) ?? Object.freeze({ kind: "invalid" });
+  }
+
   nextEvent(): Promise<CodexProtocolEvent> {
     if (this.#session === undefined) return Promise.reject(requestNotSent("not_ready"));
     return this.#session.nextEvent();
@@ -208,6 +220,7 @@ export class CodexAppServerTransport {
     } catch (error) {
       if (this.#state !== "closing" && this.#state !== "closed") this.#state = "failed";
       await this.#ensureTermination();
+      this.#session?.discardQueuedEvents();
       throw this.#terminalError ?? normalizeStartError(error);
     }
   }
@@ -247,7 +260,7 @@ export class CodexAppServerTransport {
     child.stdout.on("data", (chunk: Buffer) => {
       if (this.#state === "closing" || this.#state === "closed" || this.#state === "failed") return;
       try {
-        decoder.push(chunk, (envelope) => session.accept(envelope));
+        decoder.push(chunk, (envelope, lineBytes) => session.accept(envelope, lineBytes));
         if (session.state === "failed") this.#handleFailure("protocol_failed");
       } catch {
         this.#handleFailure("protocol_failed");
@@ -373,6 +386,7 @@ export class CodexAppServerTransport {
     if (this.#state === "failed") {
       const terminationFailure = await this.#ensureTermination();
       if (terminationFailure !== undefined) throw terminationFailure;
+      this.#session?.discardQueuedEvents();
       this.#state = "closed";
       return;
     }

@@ -17,6 +17,8 @@ import type { ApplicationRunAttemptEventPort, ApplicationRunStartTurnResult } fr
 import { PersistenceClientError, type PersistenceWorkerClient } from "./persistence-worker-client.js";
 import { RepositoryReadClient } from "./repository-read-client.js";
 import { RepositoryWriteClient } from "./repository-write-client.js";
+import type { ProviderDefinitionRegistry } from "./providers/provider-definition.js";
+import { defaultProviderDefinitionRegistry } from "./providers/provider-registry.js";
 
 export type ApplicationRunDispatchWritePort = Pick<RepositoryWriteClient, "beginRunDispatch" | "resolveRunDispatch">;
 export type ApplicationRunDispatchReadPort = Pick<RepositoryReadClient, "recoveryGet">;
@@ -25,6 +27,7 @@ export type ApplicationRunDispatchServiceOptions = Readonly<{
   writes: ApplicationRunDispatchWritePort;
   reads?: ApplicationRunDispatchReadPort;
   attempts: ApplicationRunAttemptEventPort;
+  providers?: ProviderDefinitionRegistry;
   maxOwnedRuns?: number;
 }>;
 
@@ -83,6 +86,7 @@ export class ApplicationRunDispatchService implements ApplicationRunDispatchRead
   readonly #writes: ApplicationRunDispatchWritePort;
   readonly #reads: ApplicationRunDispatchReadPort | undefined;
   readonly #attempts: ApplicationRunAttemptEventPort;
+  readonly #providers: ProviderDefinitionRegistry;
   readonly #pendingActions = new Map<string, PendingDispatchAction>();
   readonly #retryAttempts = new Map<string, Promise<boolean>>();
   readonly #retryTasks = new Map<string, Promise<void>>();
@@ -93,6 +97,7 @@ export class ApplicationRunDispatchService implements ApplicationRunDispatchRead
     this.#writes = options.writes;
     this.#reads = options.reads;
     this.#attempts = options.attempts;
+    this.#providers = options.providers ?? defaultProviderDefinitionRegistry;
     this.#maxOwnedRuns = positiveLimit(options.maxOwnedRuns ?? APPLICATION_RUN_DISPATCH_LIMITS.maxOwnedRuns);
   }
 
@@ -132,7 +137,7 @@ export class ApplicationRunDispatchService implements ApplicationRunDispatchRead
       return;
     }
 
-    const providerRequest = buildProviderRequest(dispatch.contentBlocks, dispatch.executionSnapshot);
+    const providerRequest = buildProviderRequest(dispatch.contentBlocks, dispatch.executionSnapshot, this.#providers);
     const beginCommand: RunDispatchBeginCommand = {
       sessionId: dispatch.admission.sessionId,
       workspaceKey: dispatch.workspaceKey,
@@ -178,7 +183,7 @@ export class ApplicationRunDispatchService implements ApplicationRunDispatchRead
     dispatch: ApplicationRunPreparedDispatch,
     control: ApplicationRunDispatchControl,
   ): Promise<void> {
-    const providerRequest = buildProviderRequest(dispatch.contentBlocks, dispatch.executionSnapshot);
+    const compiled = this.#providers.compileSnapshot(dispatch.executionSnapshot);
     if (!control.isCurrent()) {
       await this.#rejectAndTerminalize(dispatch, control, {
         outcomeKind: "interrupted",
@@ -205,13 +210,8 @@ export class ApplicationRunDispatchService implements ApplicationRunDispatchRead
       result = await control.adapter.startTurn(
         {
           threadId: dispatch.threadId,
-          contentBlocks: providerRequest.contentBlocks,
-          workspacePath: providerRequest.workspacePath,
-          approvalPolicy: "never",
-          sandboxPolicy: providerRequest.sandboxPolicy,
-          model: providerRequest.model,
-          modelSelection: dispatch.executionSnapshot.modelSelection,
-          reasoningEffort: providerRequest.reasoningEffort,
+          contentBlocks: dispatch.contentBlocks,
+          ...compiled.startTurn,
         },
         { signal: control.signal },
       );

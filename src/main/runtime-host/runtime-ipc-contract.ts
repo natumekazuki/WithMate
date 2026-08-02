@@ -4,6 +4,10 @@ import { createHash } from "node:crypto";
 import { ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS } from "../../shared/allowed-additional-directories.js";
 import { APPLICATION_RUN_LIMITS } from "../../shared/application-run-model.js";
 import {
+  APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS,
+  applicationRunInteractionWireItemBytes,
+} from "../../shared/application-run-interaction-limits.js";
+import {
   APPLICATION_RUN_OUTPUT_CATEGORIES,
   APPLICATION_RUN_OUTPUT_LIMITS,
 } from "../../shared/application-run-output-model.js";
@@ -12,6 +16,7 @@ import { APPLICATION_SESSION_RUN_LIMITS } from "../../shared/application-session
 import { RUN_MUTATION_INLINE_CONTENT_LIMITS, snapshotMessageContentBlocks } from "../../shared/message-content.js";
 import { isCanonicalUuid } from "../../shared/persistence-runtime-protocol.js";
 import { MAX_SESSION_CONCURRENT_CHILD_RUNS } from "../../shared/session-limits.js";
+import { defaultProviderDefinitionRegistry } from "../providers/provider-registry.js";
 import {
   SESSION_METADATA_LIMITS,
   canonicalizeSessionQuery,
@@ -25,7 +30,12 @@ import {
   RuntimeIpcProtocolError,
   runtimeProtocolFailure,
 } from "./runtime-ipc-common.js";
-import { snapshotRuntimeWireValue, type RuntimeWireValue } from "./runtime-ipc-value.js";
+import {
+  decodeRuntimeWireValue,
+  encodeRuntimeWireValue,
+  snapshotRuntimeWireValue,
+  type RuntimeWireValue,
+} from "./runtime-ipc-value.js";
 
 export { RUNTIME_IPC_LIMITS, RUNTIME_IPC_PROTOCOL_FAMILY, RUNTIME_IPC_PROTOCOL_VERSION, RuntimeIpcProtocolError };
 
@@ -47,7 +57,9 @@ export const RUNTIME_IPC_OPERATIONS = [
   "run.retry",
   "run.send_input",
   "run.cancel",
+  "run.respond_interaction",
   "run.status",
+  "run.interactions",
   "run.events",
   "run.follow",
   "run.output_counts",
@@ -69,6 +81,7 @@ export const RUNTIME_IPC_CLIENT_SCOPED_OPERATIONS = new Set<RuntimeIpcOperation>
   "session.message_content_chunk",
   "session.runs",
   "run.status",
+  "run.interactions",
   "run.events",
   "run.follow",
   "run.output_counts",
@@ -265,7 +278,10 @@ export function snapshotRuntimeOperationPayload(
       return snapshotRunSendInput(value);
     case "run.cancel":
       return snapshotRunCancel(value);
+    case "run.respond_interaction":
+      return snapshotRunRespondInteraction(value);
     case "run.status":
+    case "run.interactions":
     case "run.output_counts":
       return snapshotRunScope(value);
     case "run.events":
@@ -603,7 +619,7 @@ function snapshotRunScope(value: unknown): RuntimeIpcOperationPayload {
 }
 
 function snapshotRunStart(value: unknown): RuntimeIpcOperationPayload {
-  const payload = exactPayload(value, ["sessionId", "idempotencyKey", "contentBlocks", "execution"]);
+  const payload = exactPayload(value, ["sessionId", "idempotencyKey", "contentBlocks", "providerSettings"]);
   if (!isIdentifier(payload.sessionId) || !isCanonicalUuid(payload.idempotencyKey)) invalid();
   const contentBlocks = snapshotMessageContentBlocks(payload.contentBlocks, RUN_MUTATION_INLINE_CONTENT_LIMITS);
   if (contentBlocks === undefined) invalid();
@@ -611,12 +627,12 @@ function snapshotRunStart(value: unknown): RuntimeIpcOperationPayload {
     sessionId: payload.sessionId,
     idempotencyKey: payload.idempotencyKey,
     contentBlocks,
-    execution: snapshotRunExecutionSettings(payload.execution),
+    providerSettings: snapshotProviderSettings(payload.providerSettings),
   };
 }
 
 function snapshotRunRetry(value: unknown): RuntimeIpcOperationPayload {
-  const payload = optionalPayload(value, ["sessionId", "retryOfRunId", "idempotencyKey", "executionOverrides"]);
+  const payload = optionalPayload(value, ["sessionId", "retryOfRunId", "idempotencyKey", "providerSettingsOverride"]);
   if (
     !has(payload, "sessionId") ||
     !has(payload, "retryOfRunId") ||
@@ -632,8 +648,8 @@ function snapshotRunRetry(value: unknown): RuntimeIpcOperationPayload {
     retryOfRunId: payload.retryOfRunId,
     idempotencyKey: payload.idempotencyKey,
   };
-  if (has(payload, "executionOverrides")) {
-    output.executionOverrides = snapshotRunExecutionOverrides(payload.executionOverrides);
+  if (has(payload, "providerSettingsOverride")) {
+    output.providerSettingsOverride = snapshotProviderSettings(payload.providerSettingsOverride);
   }
   return output;
 }
@@ -665,49 +681,47 @@ function snapshotRunCancel(value: unknown): RuntimeIpcOperationPayload {
   };
 }
 
-function snapshotRunExecutionSettings(value: unknown): RuntimeIpcOperationPayload {
-  const execution = exactPayload(value, ["model", "reasoningEffort", "sandbox"]);
-  if (
-    !isBoundedString(execution.model, APPLICATION_RUN_LIMITS.maxExecutionSettingLength) ||
-    !isBoundedString(execution.reasoningEffort, APPLICATION_RUN_LIMITS.maxExecutionSettingLength)
-  ) {
+function snapshotRunRespondInteraction(value: unknown): RuntimeIpcOperationPayload {
+  const payload = exactPayload(value, ["sessionId", "runId", "idempotencyKey", "response"]);
+  if (!isIdentifier(payload.sessionId) || !isIdentifier(payload.runId) || !isCanonicalUuid(payload.idempotencyKey)) {
     invalid();
   }
   return {
-    model: execution.model,
-    reasoningEffort: execution.reasoningEffort,
-    sandbox: snapshotRunSandbox(execution.sandbox),
+    sessionId: payload.sessionId,
+    runId: payload.runId,
+    idempotencyKey: payload.idempotencyKey,
+    response: snapshotInteractionResponse(payload.response),
   };
 }
 
-function snapshotRunExecutionOverrides(value: unknown): RuntimeIpcOperationPayload {
-  const overrides = optionalPayload(value, ["model", "reasoningEffort", "sandbox"]);
-  const output: Record<string, unknown> = {};
-  if (has(overrides, "model")) {
-    if (!isBoundedString(overrides.model, APPLICATION_RUN_LIMITS.maxExecutionSettingLength)) invalid();
-    output.model = overrides.model;
+function snapshotInteractionResponse(value: unknown): RuntimeIpcOperationPayload {
+  let snapshot: unknown;
+  try {
+    snapshot = decodeRuntimeWireValue(encodeRuntimeWireValue(value));
+  } catch {
+    invalid();
   }
-  if (has(overrides, "reasoningEffort")) {
-    if (!isBoundedString(overrides.reasoningEffort, APPLICATION_RUN_LIMITS.maxExecutionSettingLength)) invalid();
-    output.reasoningEffort = overrides.reasoningEffort;
+  const response = exactPayload(snapshot, ["interactionId", "kind", "payload"]);
+  if (!isIdentifier(response.interactionId) || !isIdentifier(response.kind)) invalid();
+  try {
+    if (
+      applicationRunInteractionWireItemBytes(response) >
+      APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS.maxCollectionWireBytes
+    ) {
+      invalid();
+    }
+  } catch {
+    invalid();
   }
-  if (has(overrides, "sandbox")) output.sandbox = snapshotRunSandbox(overrides.sandbox);
-  return output;
+  return response;
 }
 
-function snapshotRunSandbox(value: unknown): RuntimeIpcOperationPayload {
-  const sandbox = optionalPayload(value, ["mode", "networkAccess"]);
-  if (!has(sandbox, "mode")) invalid();
-  if (sandbox.mode === "danger-full-access") {
-    requireExactKeys(sandbox, ["mode"]);
-    return { mode: sandbox.mode };
+function snapshotProviderSettings(value: unknown): RuntimeIpcOperationPayload {
+  try {
+    return defaultProviderDefinitionRegistry.canonicalizeEnvelope(value);
+  } catch {
+    invalid();
   }
-  if (sandbox.mode === "read-only" || sandbox.mode === "workspace-write") {
-    requireExactKeys(sandbox, ["mode", "networkAccess"]);
-    if (typeof sandbox.networkAccess !== "boolean") invalid();
-    return { mode: sandbox.mode, networkAccess: sandbox.networkAccess };
-  }
-  invalid();
 }
 
 function snapshotRunEvents(value: unknown): RuntimeIpcOperationPayload {

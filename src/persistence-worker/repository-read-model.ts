@@ -4,8 +4,11 @@ import { DatabaseSync } from "node:sqlite";
 import {
   REPOSITORY_READ_LIMITS,
   REPOSITORY_READ_OPERATIONS,
+  type RunAdmissionReplayProbeResult,
   type RunCancelReplayProbeResult,
   type RunInputReplayProbeResult,
+  type RunInteractionResponseReplayProbeRequest,
+  type RunInteractionResponseReplayProbeResult,
   type RunOutputListItem,
 } from "../shared/repository-read-model.js";
 import type {
@@ -16,7 +19,14 @@ import type {
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
 import { isLocalRepositoryKey, SESSION_METADATA_LIMITS, sessionSearchKey } from "../shared/session-metadata.js";
 import { prepareRunCancelIdempotency, projectRunCancelAdmissionResult } from "./run-cancel-idempotency.js";
+import {
+  decodeRunAdmissionProbeCommand,
+  decodeRunAdmissionReplay,
+  prepareNormalRunAdmissionIdempotency,
+  prepareRetryRunAdmissionIdempotency,
+} from "./run-admission-idempotency.js";
 import { prepareRunInputIdempotency } from "./run-input-idempotency.js";
+import { probeRunInteractionResponseReplay } from "./run-interaction-response.js";
 
 const INLINE_MESSAGE_BYTES = 64 * 1024;
 const MAX_PAGE_JSON_BYTES = 192 * 1024;
@@ -225,8 +235,16 @@ export function createRepositoryReadOperations(
       read((payload) => ({ result: runInputDeliveriesPage(database, payload) })),
     ],
     [
+      REPOSITORY_READ_OPERATIONS.runAdmissionReplayProbe,
+      read((payload) => ({ result: runAdmissionReplayProbe(database, payload, clock) })),
+    ],
+    [
       REPOSITORY_READ_OPERATIONS.runInputReplayProbe,
       read((payload) => ({ result: runInputReplayProbe(database, payload, clock) })),
+    ],
+    [
+      REPOSITORY_READ_OPERATIONS.runInteractionResponseReplayProbe,
+      read((payload) => ({ result: runInteractionResponseReplayProbe(database, payload, clock) })),
     ],
     [
       REPOSITORY_READ_OPERATIONS.runCancelReplayProbe,
@@ -247,6 +265,119 @@ export function createRepositoryReadOperations(
     ],
     [REPOSITORY_READ_OPERATIONS.recoveryGet, read((payload) => ({ result: recoveryGet(database, payload) }))],
   ]);
+}
+
+function runAdmissionReplayProbe(
+  database: DatabaseSync,
+  payload: Readonly<Record<string, unknown>>,
+  clock: () => number,
+): RunAdmissionReplayProbeResult {
+  const command = decodeRunAdmissionProbeCommand(payload);
+  if (command === undefined) throw invalidRequest("runAdmissionReplay");
+  const operation = "retryOfRunId" in command ? "run.retry" : "run.admit";
+  const prepared =
+    "retryOfRunId" in command
+      ? prepareRetryRunAdmissionIdempotency(command)
+      : prepareNormalRunAdmissionIdempotency(command);
+  if (prepared === undefined) throw invalidRequest("runAdmissionReplay");
+  const claim = database
+    .prepare("SELECT claim_kind FROM idempotency_key_claims WHERE idempotency_key = ?")
+    .get(command.idempotencyKey) as Readonly<{ claim_kind: "standard" | "session_deletion" }> | undefined;
+  const row = database
+    .prepare(
+      `
+      SELECT scope_session_id, operation, request_fingerprint, record_state,
+        response_kind, response_ref_type, response_ref_id, response_envelope_json, expires_at
+      FROM idempotency_records
+      WHERE idempotency_key = ?
+    `,
+    )
+    .get(command.idempotencyKey) as RunInputIdempotencyRow | undefined;
+  if (row === undefined) {
+    return claim === undefined ? { kind: "absent" } : runAdmissionReplayFailure("idempotency_conflict");
+  }
+  if (
+    row.scope_session_id !== command.sessionId ||
+    row.operation !== operation ||
+    row.request_fingerprint !== prepared.fingerprint
+  ) {
+    return runAdmissionReplayFailure("idempotency_conflict");
+  }
+  if (row.record_state === "in_progress") return runAdmissionReplayFailure("idempotency_in_progress");
+  const now = clock();
+  if (!Number.isSafeInteger(now) || now < 0) throw persistenceContractViolation();
+  if (row.record_state === "expired" || row.expires_at === null || row.expires_at <= now) {
+    return runAdmissionReplayFailure("idempotency_expired");
+  }
+  if (
+    row.response_kind !== "success" ||
+    row.response_ref_type !== "run" ||
+    row.response_ref_id === null ||
+    row.response_envelope_json === null
+  ) {
+    return runAdmissionReplayFailure("reference_invalid");
+  }
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(row.response_envelope_json);
+  } catch {
+    return runAdmissionReplayFailure("reference_invalid");
+  }
+  const current = decodeRunAdmissionReplay(database, command, envelope, row.response_ref_id);
+  return current === undefined ? runAdmissionReplayFailure("reference_invalid") : { kind: "replay", value: current };
+}
+
+function runAdmissionReplayFailure(
+  code: "idempotency_conflict" | "idempotency_in_progress" | "idempotency_expired" | "reference_invalid",
+): Extract<RunAdmissionReplayProbeResult, Readonly<{ kind: "failure" }>> {
+  return {
+    kind: "failure",
+    error: {
+      code,
+      message:
+        code === "idempotency_conflict"
+          ? "Idempotency key was used differently."
+          : code === "idempotency_in_progress"
+            ? "Idempotent command is in progress."
+            : code === "idempotency_expired"
+              ? "Idempotency key has expired."
+              : "Idempotent Run admission response is invalid.",
+      retryable: code === "idempotency_in_progress",
+    },
+  };
+}
+
+function runInteractionResponseReplayProbe(
+  database: DatabaseSync,
+  payload: Readonly<Record<string, unknown>>,
+  clock: () => number,
+): RunInteractionResponseReplayProbeResult {
+  assertExactKeys(payload, [
+    "sessionId",
+    "runId",
+    "idempotencyKey",
+    "interactionKind",
+    "interactionId",
+    "canonicalResponseJson",
+  ]);
+  if (
+    !isCanonicalUuid(payload.idempotencyKey) ||
+    !isInteractionProbeString(payload.sessionId, 1_024) ||
+    !isInteractionProbeString(payload.runId, 1_024) ||
+    !isInteractionProbeString(payload.interactionKind, 1_024) ||
+    !isInteractionProbeString(payload.interactionId, 1_024) ||
+    typeof payload.canonicalResponseJson !== "string" ||
+    Buffer.byteLength(payload.canonicalResponseJson) > 64 * 1024
+  ) {
+    throw invalidRequest("interactionResponseReplay");
+  }
+  const now = clock();
+  if (!Number.isSafeInteger(now) || now < 0) throw persistenceContractViolation();
+  return probeRunInteractionResponseReplay(database, payload as RunInteractionResponseReplayProbeRequest, now);
+}
+
+function isInteractionProbeString(value: unknown, maxLength: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= maxLength;
 }
 
 function runCancelReplayProbe(

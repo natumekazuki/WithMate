@@ -54,6 +54,10 @@ export type CodexValidatedItem =
       id: string;
       itemType: "commandExecution" | "fileChange" | "mcpToolCall" | "dynamicToolCall";
       status: string;
+      fileChanges?: readonly Readonly<{
+        path: string;
+        kind: "add" | "update" | "delete" | "move";
+      }>[];
     }>
   | Readonly<{ classification: "userMessage"; id: string; clientId?: string | null }>
   | Readonly<{
@@ -121,6 +125,21 @@ export type CodexValidatedNotification =
       turnId: string;
       tokenUsage: CodexValidatedTokenUsage;
     }>
+  | Readonly<{
+      method: "item/fileChange/patchUpdated";
+      threadId: string;
+      turnId: string;
+      itemId: string;
+      changes: readonly Readonly<{
+        path: string;
+        kind: "add" | "update" | "delete" | "move";
+      }>[];
+    }>
+  | Readonly<{
+      method: "serverRequest/resolved";
+      threadId: string;
+      requestId: string | number;
+    }>
   | Readonly<{ method: "warning"; threadId: string | null; message: string }>
   | Readonly<{
       method: "error";
@@ -159,6 +178,7 @@ type ValidationContext = {
   seen: WeakSet<object>;
   aggregateBytes: number;
   maxAggregateBytes: number;
+  allowUnknownProperties: boolean;
 };
 
 const INPUT_MODALITIES = new Set(["text", "image", "audio"]);
@@ -224,13 +244,14 @@ export function snapshotStartThreadInput(value: unknown): CodexValidationResult<
     const context = createContext();
     const record = exactRecord(
       value,
-      ["model", "workspacePath", "approvalPolicy", "sandboxMode", "persistence"],
+      ["model", "modelSelection", "workspacePath", "approvalPolicy", "sandboxMode", "persistence"],
       ["reasoningEffort"],
       context,
       0,
     );
     if (record === undefined) return undefined;
     const model = shortNonEmptyString(record.model, context);
+    const modelSelection = modelSelectionValue(record.modelSelection);
     const reasoningEffort = optional(record, "reasoningEffort", (candidate) => shortNonEmptyString(candidate, context));
     const workspacePath = workspacePathString(record.workspacePath, context);
     const approvalPolicy = approvalPolicyValue(record.approvalPolicy);
@@ -238,6 +259,7 @@ export function snapshotStartThreadInput(value: unknown): CodexValidationResult<
     const persistence = record.persistence;
     if (
       model === undefined ||
+      modelSelection === undefined ||
       reasoningEffort === INVALID ||
       workspacePath === undefined ||
       approvalPolicy === undefined ||
@@ -248,6 +270,7 @@ export function snapshotStartThreadInput(value: unknown): CodexValidationResult<
     }
     return Object.freeze({
       model,
+      modelSelection,
       ...(reasoningEffort === ABSENT ? {} : { reasoningEffort }),
       workspacePath,
       approvalPolicy,
@@ -403,7 +426,7 @@ export function decodeModelListResponse(value: unknown): CodexValidationResult<C
     const wireContext = createContext(CODEX_ADAPTER_LIMITS.maxModelCatalogBytes);
     const snapshot = snapshotJsonValue(value, wireContext, 0);
     if (snapshot === INVALID) return undefined;
-    const context = createContext();
+    const context = createProtocolContext();
     const record = exactRecord(snapshot, ["data"], ["nextCursor"], context, 0);
     if (record === undefined) return undefined;
     const entries = denseArray(record.data, CODEX_ADAPTER_LIMITS.maxModelPageItems, context, 1);
@@ -441,8 +464,10 @@ export function decodeThreadReadResponse(
   value: unknown,
 ): CodexValidationResult<Readonly<{ thread: CodexValidatedThread }>> {
   return validate(() => {
-    const context = createContext();
-    const record = exactRecord(value, ["thread"], [], context, 0);
+    const snapshot = snapshotProtocolValue(value);
+    if (snapshot === undefined) return undefined;
+    const context = createProtocolContext();
+    const record = exactRecord(snapshot, ["thread"], [], context, 0);
     const thread = record === undefined ? undefined : decodeThread(record.thread, context, 1);
     return thread === undefined ? undefined : Object.freeze({ thread });
   });
@@ -450,8 +475,10 @@ export function decodeThreadReadResponse(
 
 export function decodeTurnStartResponse(value: unknown): CodexValidationResult<Readonly<{ turn: CodexValidatedTurn }>> {
   return validate(() => {
-    const context = createContext();
-    const record = exactRecord(value, ["turn"], [], context, 0);
+    const snapshot = snapshotProtocolValue(value);
+    if (snapshot === undefined) return undefined;
+    const context = createProtocolContext();
+    const record = exactRecord(snapshot, ["turn"], [], context, 0);
     const turn = record === undefined ? undefined : decodeTurn(record.turn, context, 1);
     return turn === undefined ? undefined : Object.freeze({ turn });
   });
@@ -459,8 +486,10 @@ export function decodeTurnStartResponse(value: unknown): CodexValidationResult<R
 
 export function decodeTurnSteerResponse(value: unknown): CodexValidationResult<Readonly<{ turnId: string }>> {
   return validate(() => {
-    const context = createContext();
-    const record = exactRecord(value, ["turnId"], [], context, 0);
+    const snapshot = snapshotProtocolValue(value);
+    if (snapshot === undefined) return undefined;
+    const context = createProtocolContext();
+    const record = exactRecord(snapshot, ["turnId"], [], context, 0);
     const turnId = record === undefined ? undefined : identifier(record.turnId, context);
     return turnId === undefined ? undefined : Object.freeze({ turnId });
   });
@@ -468,25 +497,31 @@ export function decodeTurnSteerResponse(value: unknown): CodexValidationResult<R
 
 export function decodeTurnInterruptResponse(value: unknown): CodexValidationResult<Readonly<Record<string, never>>> {
   return validate(() => {
-    const context = createContext();
-    const record = exactRecord(value, [], [], context, 0);
+    const snapshot = snapshotProtocolValue(value);
+    if (snapshot === undefined) return undefined;
+    const context = createProtocolContext();
+    const record = exactRecord(snapshot, [], [], context, 0);
     return record === undefined ? undefined : Object.freeze({});
   });
 }
 
 export function classifyCodexNotification(method: unknown, params: unknown): CodexNotificationClassification {
   try {
-    const context = createContext();
-    const methodSnapshot = methodString(method, context);
+    const methodContext = createContext();
+    const methodSnapshot = methodString(method, methodContext);
     if (methodSnapshot === undefined) return Object.freeze({ kind: "unknown_invalid" });
-    const notification = decodeKnownNotification(methodSnapshot, params, context);
+    const wireContext = createContext();
+    const paramsSnapshot = params === undefined ? undefined : snapshotJsonValue(params, wireContext, 0);
+    if (paramsSnapshot === INVALID) {
+      return KNOWN_NOTIFICATION_METHODS.has(methodSnapshot)
+        ? Object.freeze({ kind: "known_invalid", method: methodSnapshot })
+        : Object.freeze({ kind: "unknown_invalid" });
+    }
+    const notification = decodeKnownNotification(methodSnapshot, paramsSnapshot, createProtocolContext());
     if (notification !== undefined) return Object.freeze({ kind: "known", notification });
     if (KNOWN_NOTIFICATION_METHODS.has(methodSnapshot)) {
       return Object.freeze({ kind: "known_invalid", method: methodSnapshot });
     }
-    const unknownContext = createContext();
-    const paramsSnapshot = params === undefined ? undefined : snapshotJsonValue(params, unknownContext, 0);
-    if (paramsSnapshot === INVALID) return Object.freeze({ kind: "unknown_invalid" });
     const correlation = boundedUnknownCorrelation(paramsSnapshot);
     const fingerprint = fingerprintUnknownNotification(methodSnapshot, paramsSnapshot);
     return Object.freeze({ kind: "unknown_valid", method: methodSnapshot, correlation, fingerprint });
@@ -548,6 +583,8 @@ const KNOWN_NOTIFICATION_METHODS = new Set([
   "item/completed",
   "item/agentMessage/delta",
   "thread/tokenUsage/updated",
+  "item/fileChange/patchUpdated",
+  "serverRequest/resolved",
   "warning",
   "error",
 ]);
@@ -624,6 +661,26 @@ function decodeKnownNotification(
         ? undefined
         : Object.freeze({ method, threadId, turnId, tokenUsage });
     }
+    case "item/fileChange/patchUpdated": {
+      const record = exactRecord(params, ["threadId", "turnId", "itemId", "changes"], [], context, 0);
+      if (record === undefined) return undefined;
+      const threadId = identifier(record.threadId, context);
+      const turnId = identifier(record.turnId, context);
+      const itemId = identifier(record.itemId, context);
+      const changes = decodeFileChanges(record.changes, context, 1);
+      return threadId === undefined || turnId === undefined || itemId === undefined || changes === undefined
+        ? undefined
+        : Object.freeze({ method, threadId, turnId, itemId, changes });
+    }
+    case "serverRequest/resolved": {
+      const record = exactRecord(params, ["requestId", "threadId"], [], context, 0);
+      if (record === undefined) return undefined;
+      const threadId = identifier(record.threadId, context);
+      const requestId = requestIdValue(record.requestId, context);
+      return threadId === undefined || requestId === undefined
+        ? undefined
+        : Object.freeze({ method, threadId, requestId });
+    }
     case "warning": {
       const record = exactRecord(params, ["message"], ["threadId"], context, 0);
       if (record === undefined) return undefined;
@@ -668,9 +725,11 @@ function itemStatusMatchesLifecycle(method: "item/started" | "item/completed", i
 
 function decodeThreadOperationResponse(value: unknown): CodexValidationResult<CodexValidatedThreadOperationResponse> {
   return validate(() => {
-    const context = createContext();
+    const snapshot = snapshotProtocolValue(value);
+    if (snapshot === undefined) return undefined;
+    const context = createProtocolContext();
     const record = exactRecord(
-      value,
+      snapshot,
       ["thread", "model", "modelProvider", "cwd", "approvalPolicy", "approvalsReviewer", "sandbox"],
       ["serviceTier", "instructionSources", "reasoningEffort"],
       context,
@@ -986,7 +1045,7 @@ function decodeThreadItem(value: unknown, context: ValidationContext, depth: num
   if (probe === undefined || typeof probe.type !== "string") return undefined;
   switch (probe.type) {
     case "agentMessage": {
-      const record = exactRecordFromInspected(probe, ["type", "id", "text"], ["phase", "memoryCitation"]);
+      const record = threadItemRecordFromInspected(probe, ["type", "id", "text"], ["phase", "memoryCitation"]);
       if (record === undefined) return undefined;
       const id = identifier(record.id, context);
       const text = boundedString(record.text, context, CODEX_ADAPTER_LIMITS.maxItemTextBytes, true);
@@ -1002,14 +1061,14 @@ function decodeThreadItem(value: unknown, context: ValidationContext, depth: num
       return Object.freeze({ classification: "agentMessage", id, text, phase });
     }
     case "plan": {
-      const record = exactRecordFromInspected(probe, ["type", "id", "text"]);
+      const record = threadItemRecordFromInspected(probe, ["type", "id", "text"]);
       if (record === undefined) return undefined;
       const id = identifier(record.id, context);
       const text = boundedString(record.text, context, CODEX_ADAPTER_LIMITS.maxItemTextBytes, true);
       return id === undefined || text === undefined ? undefined : Object.freeze({ classification: "plan", id, text });
     }
     case "reasoning": {
-      const record = exactRecordFromInspected(probe, ["type", "id"], ["summary", "content"]);
+      const record = threadItemRecordFromInspected(probe, ["type", "id"], ["summary", "content"]);
       if (record === undefined) return undefined;
       const id = identifier(record.id, context);
       const summary = Object.hasOwn(record, "summary")
@@ -1023,7 +1082,7 @@ function decodeThreadItem(value: unknown, context: ValidationContext, depth: num
         : Object.freeze({ classification: "reasoning", id, summary, content });
     }
     case "commandExecution": {
-      const record = exactRecordFromInspected(
+      const record = threadItemRecordFromInspected(
         probe,
         ["type", "id", "command", "cwd", "status", "commandActions"],
         ["processId", "source", "aggregatedOutput", "exitCode", "durationMs"],
@@ -1056,23 +1115,30 @@ function decodeThreadItem(value: unknown, context: ValidationContext, depth: num
       return Object.freeze({ classification: "operation", id, itemType: "commandExecution", status: record.status });
     }
     case "fileChange": {
-      const record = exactRecordFromInspected(probe, ["type", "id", "changes", "status"]);
+      const record = threadItemRecordFromInspected(probe, ["type", "id", "changes", "status"]);
       if (record === undefined) return undefined;
       const id = identifier(record.id, context);
+      const fileChanges = decodeFileChanges(record.changes, context, depth + 1);
       if (
         id === undefined ||
         (record.status !== "inProgress" &&
           record.status !== "completed" &&
           record.status !== "failed" &&
           record.status !== "declined") ||
-        !validateFileChanges(record.changes, context, depth + 1)
+        fileChanges === undefined
       ) {
         return undefined;
       }
-      return Object.freeze({ classification: "operation", id, itemType: "fileChange", status: record.status });
+      return Object.freeze({
+        classification: "operation",
+        id,
+        itemType: "fileChange",
+        status: record.status,
+        fileChanges,
+      });
     }
     case "mcpToolCall": {
-      const record = exactRecordFromInspected(
+      const record = threadItemRecordFromInspected(
         probe,
         ["type", "id", "server", "tool", "status", "arguments"],
         ["appContext", "pluginId", "result", "error", "durationMs", "mcpAppResourceUri"],
@@ -1098,7 +1164,7 @@ function decodeThreadItem(value: unknown, context: ValidationContext, depth: num
       return Object.freeze({ classification: "operation", id, itemType: "mcpToolCall", status: record.status });
     }
     case "dynamicToolCall": {
-      const record = exactRecordFromInspected(
+      const record = threadItemRecordFromInspected(
         probe,
         ["type", "id", "tool", "arguments", "status"],
         ["contentItems", "success", "durationMs", "namespace"],
@@ -1122,7 +1188,7 @@ function decodeThreadItem(value: unknown, context: ValidationContext, depth: num
       return Object.freeze({ classification: "operation", id, itemType: "dynamicToolCall", status: record.status });
     }
     case "userMessage": {
-      const record = exactRecordFromInspected(probe, ["type", "id", "content"], ["clientId"]);
+      const record = threadItemRecordFromInspected(probe, ["type", "id", "content"], ["clientId"]);
       if (record === undefined) return undefined;
       const id = identifier(record.id, context);
       let clientId: string | null | typeof ABSENT = ABSENT;
@@ -1145,7 +1211,7 @@ function decodeThreadItem(value: unknown, context: ValidationContext, depth: num
       });
     }
     case "hookPrompt": {
-      const record = exactRecordFromInspected(probe, ["type", "id", "fragments"]);
+      const record = threadItemRecordFromInspected(probe, ["type", "id", "fragments"]);
       const id = record === undefined ? undefined : identifier(record.id, context);
       return record === undefined ||
         id === undefined ||
@@ -1154,7 +1220,7 @@ function decodeThreadItem(value: unknown, context: ValidationContext, depth: num
         : Object.freeze({ classification: "unsupported", id, itemType: "hookPrompt" });
     }
     case "collabAgentToolCall": {
-      const record = exactRecordFromInspected(
+      const record = threadItemRecordFromInspected(
         probe,
         ["type", "id", "tool", "status", "senderThreadId", "receiverThreadIds", "agentsStates"],
         ["prompt", "model", "reasoningEffort"],
@@ -1182,7 +1248,7 @@ function decodeThreadItem(value: unknown, context: ValidationContext, depth: num
       });
     }
     case "subAgentActivity": {
-      const record = exactRecordFromInspected(probe, ["type", "id", "kind", "agentThreadId", "agentPath"]);
+      const record = threadItemRecordFromInspected(probe, ["type", "id", "kind", "agentThreadId", "agentPath"]);
       const id = record === undefined ? undefined : identifier(record.id, context);
       if (
         record === undefined ||
@@ -1196,7 +1262,7 @@ function decodeThreadItem(value: unknown, context: ValidationContext, depth: num
       return Object.freeze({ classification: "unsupported", id, itemType: "subAgentActivity" });
     }
     case "webSearch": {
-      const record = exactRecordFromInspected(probe, ["type", "id", "query"], ["action", "results"]);
+      const record = threadItemRecordFromInspected(probe, ["type", "id", "query"], ["action", "results"]);
       const id = record === undefined ? undefined : identifier(record.id, context);
       if (
         record === undefined ||
@@ -1210,7 +1276,7 @@ function decodeThreadItem(value: unknown, context: ValidationContext, depth: num
       return Object.freeze({ classification: "unsupported", id, itemType: "webSearch" });
     }
     case "imageView": {
-      const record = exactRecordFromInspected(probe, ["type", "id", "path"]);
+      const record = threadItemRecordFromInspected(probe, ["type", "id", "path"]);
       const id = record === undefined ? undefined : identifier(record.id, context);
       return record === undefined ||
         id === undefined ||
@@ -1219,14 +1285,14 @@ function decodeThreadItem(value: unknown, context: ValidationContext, depth: num
         : Object.freeze({ classification: "unsupported", id, itemType: "imageView" });
     }
     case "sleep": {
-      const record = exactRecordFromInspected(probe, ["type", "id", "durationMs"]);
+      const record = threadItemRecordFromInspected(probe, ["type", "id", "durationMs"]);
       const id = record === undefined ? undefined : identifier(record.id, context);
       return record === undefined || id === undefined || nonNegativeSafeInteger(record.durationMs) === undefined
         ? undefined
         : Object.freeze({ classification: "unsupported", id, itemType: "sleep" });
     }
     case "imageGeneration": {
-      const record = exactRecordFromInspected(
+      const record = threadItemRecordFromInspected(
         probe,
         ["type", "id", "status", "result"],
         ["revisedPrompt", "savedPath"],
@@ -1249,7 +1315,7 @@ function decodeThreadItem(value: unknown, context: ValidationContext, depth: num
     }
     case "enteredReviewMode":
     case "exitedReviewMode": {
-      const record = exactRecordFromInspected(probe, ["type", "id", "review"]);
+      const record = threadItemRecordFromInspected(probe, ["type", "id", "review"]);
       const id = record === undefined ? undefined : identifier(record.id, context);
       return record === undefined ||
         id === undefined ||
@@ -1258,7 +1324,7 @@ function decodeThreadItem(value: unknown, context: ValidationContext, depth: num
         : Object.freeze({ classification: "unsupported", id, itemType: probe.type });
     }
     case "contextCompaction": {
-      const record = exactRecordFromInspected(probe, ["type", "id"]);
+      const record = threadItemRecordFromInspected(probe, ["type", "id"]);
       const id = record === undefined ? undefined : identifier(record.id, context);
       return record === undefined || id === undefined
         ? undefined
@@ -1350,16 +1416,28 @@ function decodeEffectiveSandboxMode(
   if (probe === undefined || typeof probe.type !== "string") return undefined;
   switch (probe.type) {
     case "dangerFullAccess":
-      return exactRecordFromInspected(probe, ["type"]) === undefined ? undefined : "danger-full-access";
+      return knownVariantRecordFromInspected(probe, ["type"], [], EFFECTIVE_SANDBOX_KNOWN_FIELDS) === undefined
+        ? undefined
+        : "danger-full-access";
     case "readOnly": {
-      const record = exactRecordFromInspected(probe, ["type"], ["networkAccess"]);
+      const record = knownVariantRecordFromInspected(
+        probe,
+        ["type"],
+        ["networkAccess"],
+        EFFECTIVE_SANDBOX_KNOWN_FIELDS,
+      );
       return record !== undefined &&
         (!Object.hasOwn(record, "networkAccess") || typeof record.networkAccess === "boolean")
         ? "read-only"
         : undefined;
     }
     case "externalSandbox": {
-      const record = exactRecordFromInspected(probe, ["type"], ["networkAccess"]);
+      const record = knownVariantRecordFromInspected(
+        probe,
+        ["type"],
+        ["networkAccess"],
+        EFFECTIVE_SANDBOX_KNOWN_FIELDS,
+      );
       return record !== undefined &&
         (!Object.hasOwn(record, "networkAccess") ||
           record.networkAccess === "restricted" ||
@@ -1368,10 +1446,11 @@ function decodeEffectiveSandboxMode(
         : undefined;
     }
     case "workspaceWrite": {
-      const record = exactRecordFromInspected(
+      const record = knownVariantRecordFromInspected(
         probe,
         ["type"],
         ["writableRoots", "networkAccess", "excludeTmpdirEnvVar", "excludeSlashTmp"],
+        EFFECTIVE_SANDBOX_KNOWN_FIELDS,
       );
       return record !== undefined &&
         optionalValid(record, "writableRoots", (candidate) =>
@@ -1421,7 +1500,12 @@ function validateCommandActions(value: unknown, context: ValidationContext, dept
     let record: Record<string, unknown> | undefined;
     switch (probe.type) {
       case "read":
-        record = exactRecordFromInspected(probe, ["type", "command", "name", "path"]);
+        record = knownVariantRecordFromInspected(
+          probe,
+          ["type", "command", "name", "path"],
+          [],
+          COMMAND_ACTION_KNOWN_FIELDS,
+        );
         if (
           record === undefined ||
           boundedString(record.name, context, CODEX_ADAPTER_LIMITS.maxShortStringBytes, false) === undefined ||
@@ -1431,7 +1515,7 @@ function validateCommandActions(value: unknown, context: ValidationContext, dept
         }
         break;
       case "listFiles":
-        record = exactRecordFromInspected(probe, ["type", "command"], ["path"]);
+        record = knownVariantRecordFromInspected(probe, ["type", "command"], ["path"], COMMAND_ACTION_KNOWN_FIELDS);
         if (
           record === undefined ||
           !optionalValid(record, "path", (candidate) =>
@@ -1442,7 +1526,12 @@ function validateCommandActions(value: unknown, context: ValidationContext, dept
         }
         break;
       case "search":
-        record = exactRecordFromInspected(probe, ["type", "command"], ["query", "path"]);
+        record = knownVariantRecordFromInspected(
+          probe,
+          ["type", "command"],
+          ["query", "path"],
+          COMMAND_ACTION_KNOWN_FIELDS,
+        );
         if (
           record === undefined ||
           !optionalValid(record, "query", (candidate) =>
@@ -1456,7 +1545,7 @@ function validateCommandActions(value: unknown, context: ValidationContext, dept
         }
         break;
       case "unknown":
-        record = exactRecordFromInspected(probe, ["type", "command"]);
+        record = knownVariantRecordFromInspected(probe, ["type", "command"], [], COMMAND_ACTION_KNOWN_FIELDS);
         if (record === undefined) return false;
         break;
       default:
@@ -1519,7 +1608,7 @@ function validateDynamicContentItems(value: unknown, context: ValidationContext,
     if (probe === undefined || typeof probe.type !== "string") return false;
     const valueKey = probe.type === "inputText" ? "text" : probe.type === "inputImage" ? "imageUrl" : "audioUrl";
     if (probe.type !== "inputText" && probe.type !== "inputImage" && probe.type !== "inputAudio") return false;
-    const record = exactRecordFromInspected(probe, ["type", valueKey]);
+    const record = knownVariantRecordFromInspected(probe, ["type", valueKey], [], DYNAMIC_CONTENT_KNOWN_FIELDS);
     if (
       record === undefined ||
       boundedString(record[valueKey], context, CODEX_ADAPTER_LIMITS.maxItemTextBytes, true) === undefined
@@ -1569,7 +1658,12 @@ function validateWebSearchAction(value: unknown, context: ValidationContext, dep
   if (probe === undefined || typeof probe.type !== "string") return false;
   switch (probe.type) {
     case "search": {
-      const record = exactRecordFromInspected(probe, ["type"], ["query", "queries"]);
+      const record = knownVariantRecordFromInspected(
+        probe,
+        ["type"],
+        ["query", "queries"],
+        WEB_SEARCH_ACTION_KNOWN_FIELDS,
+      );
       return (
         record !== undefined &&
         optionalValid(record, "query", (candidate) =>
@@ -1579,7 +1673,7 @@ function validateWebSearchAction(value: unknown, context: ValidationContext, dep
       );
     }
     case "openPage": {
-      const record = exactRecordFromInspected(probe, ["type"], ["url"]);
+      const record = knownVariantRecordFromInspected(probe, ["type"], ["url"], WEB_SEARCH_ACTION_KNOWN_FIELDS);
       return (
         record !== undefined &&
         optionalValid(record, "url", (candidate) =>
@@ -1588,7 +1682,12 @@ function validateWebSearchAction(value: unknown, context: ValidationContext, dep
       );
     }
     case "findInPage": {
-      const record = exactRecordFromInspected(probe, ["type"], ["url", "pattern"]);
+      const record = knownVariantRecordFromInspected(
+        probe,
+        ["type"],
+        ["url", "pattern"],
+        WEB_SEARCH_ACTION_KNOWN_FIELDS,
+      );
       return (
         record !== undefined &&
         optionalValid(record, "url", (candidate) =>
@@ -1600,7 +1699,7 @@ function validateWebSearchAction(value: unknown, context: ValidationContext, dep
       );
     }
     case "other":
-      return exactRecordFromInspected(probe, ["type"]) !== undefined;
+      return knownVariantRecordFromInspected(probe, ["type"], [], WEB_SEARCH_ACTION_KNOWN_FIELDS) !== undefined;
     default:
       return false;
   }
@@ -1774,13 +1873,13 @@ function validateCodexErrorInfo(value: unknown, context: ValidationContext, dept
     "responseTooManyFailedAttempts",
   ]) {
     if (!Object.hasOwn(probe, key)) continue;
-    const outer = exactRecordFromInspected(probe, [key]);
+    const outer = closedRecordFromInspected(probe, [key]);
     if (outer === undefined) return false;
     const detail = exactRecord(outer[key], [], ["httpStatusCode"], context, depth + 1);
     return detail !== undefined && optionalValid(detail, "httpStatusCode", nullableSafeInteger);
   }
   if (!Object.hasOwn(probe, "activeTurnNotSteerable")) return false;
-  const outer = exactRecordFromInspected(probe, ["activeTurnNotSteerable"]);
+  const outer = closedRecordFromInspected(probe, ["activeTurnNotSteerable"]);
   const detail =
     outer === undefined ? undefined : exactRecord(outer.activeTurnNotSteerable, ["turnKind"], [], context, depth + 1);
   return detail !== undefined && (detail.turnKind === "review" || detail.turnKind === "compact");
@@ -1793,11 +1892,11 @@ function validateSessionSource(value: unknown, context: ValidationContext, depth
   const probe = inspectRecord(value, context, depth);
   if (probe === undefined) return false;
   if (Object.hasOwn(probe, "custom")) {
-    const record = exactRecordFromInspected(probe, ["custom"]);
+    const record = closedRecordFromInspected(probe, ["custom"]);
     return record !== undefined && shortNonEmptyString(record.custom, context) !== undefined;
   }
   if (!Object.hasOwn(probe, "subAgent")) return false;
-  const outer = exactRecordFromInspected(probe, ["subAgent"]);
+  const outer = closedRecordFromInspected(probe, ["subAgent"]);
   return outer !== undefined && validateSubAgentSource(outer.subAgent, context, depth + 1);
 }
 
@@ -1806,11 +1905,11 @@ function validateSubAgentSource(value: unknown, context: ValidationContext, dept
   const probe = inspectRecord(value, context, depth);
   if (probe === undefined) return false;
   if (Object.hasOwn(probe, "other")) {
-    const record = exactRecordFromInspected(probe, ["other"]);
+    const record = closedRecordFromInspected(probe, ["other"]);
     return record !== undefined && shortNonEmptyString(record.other, context) !== undefined;
   }
   if (!Object.hasOwn(probe, "thread_spawn")) return false;
-  const outer = exactRecordFromInspected(probe, ["thread_spawn"]);
+  const outer = closedRecordFromInspected(probe, ["thread_spawn"]);
   if (outer === undefined) return false;
   const record = exactRecord(
     outer.thread_spawn,
@@ -1842,37 +1941,56 @@ function validateGitInfo(value: unknown, context: ValidationContext, depth: numb
   );
 }
 
-function validateFileChanges(value: unknown, context: ValidationContext, depth: number): boolean {
+function decodeFileChanges(
+  value: unknown,
+  context: ValidationContext,
+  depth: number,
+): readonly Readonly<{ path: string; kind: "add" | "update" | "delete" | "move" }>[] | undefined {
   const changes = denseArray(value, CODEX_ADAPTER_LIMITS.maxArrayItems, context, depth);
-  if (changes === undefined) return false;
+  if (changes === undefined) return undefined;
+  const output: Readonly<{ path: string; kind: "add" | "update" | "delete" | "move" }>[] = [];
   for (const change of changes) {
     const record = exactRecord(change, ["path", "kind", "diff"], [], context, depth + 1);
+    const path =
+      record === undefined
+        ? undefined
+        : boundedString(record.path, context, CODEX_ADAPTER_LIMITS.maxShortStringBytes, false);
+    const kind = record === undefined ? undefined : decodePatchKind(record.kind, context, depth + 2);
     if (
       record === undefined ||
-      boundedString(record.path, context, CODEX_ADAPTER_LIMITS.maxShortStringBytes, false) === undefined ||
+      path === undefined ||
       boundedString(record.diff, context, CODEX_ADAPTER_LIMITS.maxItemTextBytes, true) === undefined ||
-      !validatePatchKind(record.kind, context, depth + 2)
+      kind === undefined
     ) {
-      return false;
+      return undefined;
     }
+    output.push(Object.freeze({ path, kind }));
   }
-  return true;
+  return Object.freeze(output);
 }
 
-function validatePatchKind(value: unknown, context: ValidationContext, depth: number): boolean {
+function decodePatchKind(
+  value: unknown,
+  context: ValidationContext,
+  depth: number,
+): "add" | "update" | "delete" | "move" | undefined {
   const probe = inspectRecord(value, context, depth);
-  if (probe === undefined || typeof probe.type !== "string") return false;
+  if (probe === undefined || typeof probe.type !== "string") return undefined;
   if (probe.type === "add" || probe.type === "delete") {
-    return exactRecordFromInspected(probe, ["type"]) !== undefined;
+    return knownVariantRecordFromInspected(probe, ["type"], [], PATCH_KIND_KNOWN_FIELDS) === undefined
+      ? undefined
+      : probe.type;
   }
-  if (probe.type !== "update") return false;
-  const record = exactRecordFromInspected(probe, ["type"], ["move_path"]);
-  return (
-    record !== undefined &&
-    optionalValid(record, "move_path", (candidate) =>
+  if (probe.type !== "update") return undefined;
+  const record = knownVariantRecordFromInspected(probe, ["type"], ["move_path"], PATCH_KIND_KNOWN_FIELDS);
+  if (
+    record === undefined ||
+    !optionalValid(record, "move_path", (candidate) =>
       nullableBoundedString(candidate, context, CODEX_ADAPTER_LIMITS.maxShortStringBytes),
     )
-  );
+  )
+    return undefined;
+  return Object.hasOwn(record, "move_path") && record.move_path !== null ? "move" : "update";
 }
 
 function validateUserInputs(value: unknown, context: ValidationContext, depth: number): boolean {
@@ -1883,7 +2001,12 @@ function validateUserInputs(value: unknown, context: ValidationContext, depth: n
     if (probe === undefined || typeof probe.type !== "string") return false;
     switch (probe.type) {
       case "text": {
-        const record = exactRecordFromInspected(probe, ["type", "text"], ["text_elements"]);
+        const record = knownVariantRecordFromInspected(
+          probe,
+          ["type", "text"],
+          ["text_elements"],
+          USER_INPUT_KNOWN_FIELDS,
+        );
         const text =
           record === undefined
             ? undefined
@@ -1899,7 +2022,7 @@ function validateUserInputs(value: unknown, context: ValidationContext, depth: n
         break;
       }
       case "image": {
-        const record = exactRecordFromInspected(probe, ["type", "url"], ["detail"]);
+        const record = knownVariantRecordFromInspected(probe, ["type", "url"], ["detail"], USER_INPUT_KNOWN_FIELDS);
         if (
           record === undefined ||
           boundedString(record.url, context, CODEX_ADAPTER_LIMITS.maxShortStringBytes, false) === undefined ||
@@ -1915,7 +2038,7 @@ function validateUserInputs(value: unknown, context: ValidationContext, depth: n
         break;
       }
       case "localImage": {
-        const record = exactRecordFromInspected(probe, ["type", "path"], ["detail"]);
+        const record = knownVariantRecordFromInspected(probe, ["type", "path"], ["detail"], USER_INPUT_KNOWN_FIELDS);
         if (
           record === undefined ||
           boundedString(record.path, context, CODEX_ADAPTER_LIMITS.maxShortStringBytes, false) === undefined ||
@@ -1931,7 +2054,7 @@ function validateUserInputs(value: unknown, context: ValidationContext, depth: n
         break;
       }
       case "audio": {
-        const record = exactRecordFromInspected(probe, ["type", "url"]);
+        const record = knownVariantRecordFromInspected(probe, ["type", "url"], [], USER_INPUT_KNOWN_FIELDS);
         if (
           record === undefined ||
           boundedString(record.url, context, CODEX_ADAPTER_LIMITS.maxShortStringBytes, false) === undefined
@@ -1941,7 +2064,7 @@ function validateUserInputs(value: unknown, context: ValidationContext, depth: n
         break;
       }
       case "localAudio": {
-        const record = exactRecordFromInspected(probe, ["type", "path"]);
+        const record = knownVariantRecordFromInspected(probe, ["type", "path"], [], USER_INPUT_KNOWN_FIELDS);
         if (
           record === undefined ||
           boundedString(record.path, context, CODEX_ADAPTER_LIMITS.maxShortStringBytes, false) === undefined
@@ -1952,7 +2075,7 @@ function validateUserInputs(value: unknown, context: ValidationContext, depth: n
       }
       case "skill":
       case "mention": {
-        const record = exactRecordFromInspected(probe, ["type", "name", "path"]);
+        const record = knownVariantRecordFromInspected(probe, ["type", "name", "path"], [], USER_INPUT_KNOWN_FIELDS);
         if (
           record === undefined ||
           shortNonEmptyString(record.name, context) === undefined ||
@@ -2122,8 +2245,21 @@ function optionalValid(
   return !Object.hasOwn(record, key) || validateValue(record[key]);
 }
 
-function createContext(maxAggregateBytes = CODEX_ADAPTER_LIMITS.maxValidationAggregateBytes): ValidationContext {
-  return { seen: new WeakSet(), aggregateBytes: 0, maxAggregateBytes };
+function createContext(
+  maxAggregateBytes = CODEX_ADAPTER_LIMITS.maxValidationAggregateBytes,
+  allowUnknownProperties = false,
+): ValidationContext {
+  return { seen: new WeakSet(), aggregateBytes: 0, maxAggregateBytes, allowUnknownProperties };
+}
+
+function createProtocolContext(): ValidationContext {
+  return createContext(CODEX_ADAPTER_LIMITS.maxValidationAggregateBytes, true);
+}
+
+function snapshotProtocolValue(value: unknown): unknown | undefined {
+  const context = createContext();
+  const snapshot = snapshotJsonValue(value, context, 0);
+  return snapshot === INVALID ? undefined : snapshot;
 }
 
 function validate<T>(operation: () => T | undefined): CodexValidationResult<T> {
@@ -2143,7 +2279,17 @@ function exactRecord(
   depth: number,
 ): Record<string, unknown> | undefined {
   const inspected = inspectRecord(value, context, depth);
-  return inspected === undefined ? undefined : exactRecordFromInspected(inspected, requiredKeys, optionalKeys);
+  if (inspected === undefined) return undefined;
+  return context.allowUnknownProperties
+    ? requiredRecordFromInspected(inspected, requiredKeys)
+    : closedRecordFromInspected(inspected, requiredKeys, optionalKeys);
+}
+
+function requiredRecordFromInspected(
+  record: Record<string, unknown>,
+  requiredKeys: readonly string[],
+): Record<string, unknown> | undefined {
+  return requiredKeys.some((key) => !Object.hasOwn(record, key)) ? undefined : record;
 }
 
 function inspectRecord(value: unknown, context: ValidationContext, depth: number): Record<string, unknown> | undefined {
@@ -2172,6 +2318,100 @@ function inspectRecord(value: unknown, context: ValidationContext, depth: number
 }
 
 function exactRecordFromInspected(
+  record: Record<string, unknown>,
+  requiredKeys: readonly string[],
+  _optionalKeys: readonly string[] = [],
+): Record<string, unknown> | undefined {
+  return requiredRecordFromInspected(record, requiredKeys);
+}
+
+const THREAD_ITEM_KNOWN_FIELDS = new Set([
+  "type",
+  "id",
+  "text",
+  "phase",
+  "memoryCitation",
+  "summary",
+  "content",
+  "command",
+  "cwd",
+  "status",
+  "commandActions",
+  "processId",
+  "source",
+  "aggregatedOutput",
+  "exitCode",
+  "durationMs",
+  "changes",
+  "server",
+  "tool",
+  "arguments",
+  "appContext",
+  "pluginId",
+  "result",
+  "error",
+  "mcpAppResourceUri",
+  "contentItems",
+  "success",
+  "namespace",
+  "clientId",
+  "fragments",
+  "senderThreadId",
+  "receiverThreadIds",
+  "agentsStates",
+  "prompt",
+  "model",
+  "reasoningEffort",
+  "kind",
+  "agentThreadId",
+  "agentPath",
+  "query",
+  "action",
+  "results",
+  "path",
+  "revisedPrompt",
+  "savedPath",
+  "review",
+]);
+
+const PATCH_KIND_KNOWN_FIELDS = new Set(["type", "move_path"]);
+
+const EFFECTIVE_SANDBOX_KNOWN_FIELDS = new Set([
+  "type",
+  "writableRoots",
+  "networkAccess",
+  "excludeTmpdirEnvVar",
+  "excludeSlashTmp",
+]);
+
+const COMMAND_ACTION_KNOWN_FIELDS = new Set(["type", "command", "name", "path", "query"]);
+
+const DYNAMIC_CONTENT_KNOWN_FIELDS = new Set(["type", "text", "imageUrl", "audioUrl"]);
+
+const WEB_SEARCH_ACTION_KNOWN_FIELDS = new Set(["type", "query", "queries", "url", "pattern"]);
+
+const USER_INPUT_KNOWN_FIELDS = new Set(["type", "text", "text_elements", "url", "path", "detail", "name"]);
+
+function threadItemRecordFromInspected(
+  record: Record<string, unknown>,
+  requiredKeys: readonly string[],
+  optionalKeys: readonly string[] = [],
+): Record<string, unknown> | undefined {
+  return knownVariantRecordFromInspected(record, requiredKeys, optionalKeys, THREAD_ITEM_KNOWN_FIELDS);
+}
+
+function knownVariantRecordFromInspected(
+  record: Record<string, unknown>,
+  requiredKeys: readonly string[],
+  optionalKeys: readonly string[],
+  knownFields: ReadonlySet<string>,
+): Record<string, unknown> | undefined {
+  const allowed = new Set([...requiredKeys, ...optionalKeys]);
+  if (Object.keys(record).some((key) => knownFields.has(key) && !allowed.has(key))) return undefined;
+  return requiredRecordFromInspected(record, requiredKeys);
+}
+
+function closedRecordFromInspected(
   record: Record<string, unknown>,
   requiredKeys: readonly string[],
   optionalKeys: readonly string[] = [],
@@ -2269,6 +2509,11 @@ function identifier(value: unknown, context: ValidationContext): string | undefi
     return undefined;
   }
   return boundedString(value, context, CODEX_ADAPTER_LIMITS.maxIdentifierBytes, false);
+}
+
+function requestIdValue(value: unknown, context: ValidationContext): string | number | undefined {
+  if (typeof value === "number") return Number.isSafeInteger(value) ? value : undefined;
+  return identifier(value, context);
 }
 
 function nullableIdentifier(value: unknown, context: ValidationContext): boolean {

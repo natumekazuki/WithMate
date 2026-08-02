@@ -2,8 +2,8 @@
 
 - 作成日: 2026-07-11
 - 対象: WithMate 新実装の Codex App Server Adapter
-- 状態: 設計の基準（CP3 runtime contract確定済み、interaction詳細は一部未検証）
-- 実装schema baseline: `codex-cli 0.145.0` stable（runtime実測は`0.144.6`、persistent Thread復旧の既存実測は`0.144.1`）
+- 状態: 設計の基準（CAS-001〜CAS-016完了。interactionの主要経路・競合・stdio切断・最大同時active数10を実測済み。CAS-017はWindowsでblocked）
+- 生成schema baseline: `codex-cli 0.145.0` stable（interaction runtimeは`0.145.0`と`0.146.0`、既存runtime contractは`0.144.6`、persistent Thread復旧の既存実測は`0.144.1`）
 - 関連設計: `docs/design/provider-integration.md`, `docs/design/session-run-message-contract.md`, `docs/design/multi-agent-persistence.md`
 - 検証資料: `docs/investigations/codex-app-server/capability-matrix.md`, `docs/investigations/codex-app-server/validation-plan.md`, `docs/investigations/codex-app-server/validation-results.md`
 
@@ -22,9 +22,9 @@ App Server 固有の ID、status、item type を Application Service や GUI へ
 | 暫定変換    | WithMate の不変条件を保つための Adapter 方針                | runtime 検証後に確定または修正する          |
 | 対象外      | experimental schema だけの機能または初期 scope 外           | 必須依存にしない                            |
 
-起動時に実際の Codex CLI version と交渉結果を Provider process / 接続環境の診断へ記録する。ProviderBinding や RunAttempt には混在させない。本書の version と異なる場合は、生成 schema と契約 test を実行せずに互換とみなさない。
+起動時に実際の Codex CLI identity と交渉結果を Provider process / 接続環境の診断へ記録する。ProviderBinding や RunAttempt、Provider definition versionには混在させない。生成schemaのversionはDecoderと契約testを更新するためのevidenceであり、production runtimeのadmission gateにはしない。
 
-production runtimeは`initialize` responseの`userAgent`をexactな`codex-cli/<version>`として検証し、実装schema baselineと一致したversionだけをAdapterへ渡す。形式不一致またはversion不一致では接続を閉じ、`model/list`、Thread、Turn operationを送信しない。
+production runtimeは`initialize` responseの`userAgent`をboundedな接続診断として記録し、CLI releaseのallowlistまたはSemVer rangeでは拒否しない。実際のstable protocol response、notification、server requestをAdapterのDecoderへ通し、未知の加算fieldはcanonical projectionから除外する。必須field欠落、既知field不正、既知variant競合、resource limit違反、未知request methodは、operation errorまたはconnection failureとして診断可能かつ単調な終端へ収束させる。WithMate public settings、interaction snapshot、responseのexact validationは緩めない。
 
 ## 接続と初期化
 
@@ -45,6 +45,7 @@ production runtimeは`initialize` responseの`userAgent`をexactな`codex-cli/<v
 3. `initialized` notification を送る。
 4. 初期化完了前に Thread / Turn operation を送らない。
 5. CLI version、protocol / capability、初期化時の feature 情報を記録する。
+6. `modelProvider/capabilities/read`とhiddenを含む`model/list`全pageを読み、Provider definitionが要求するmodel / reasoning tupleとfeature capabilityを検証してからThread / Turn operationを許可する。
 
 initialize 失敗は Provider 接続失敗であり、WithMate Session や受理前の Run を Provider 実行失敗として作成しない。受理済み Run の dispatch 中に失敗した場合は Run attempt / dispatch 契約で別に収束させる。
 
@@ -126,13 +127,13 @@ Codex ID を WithMate の primary key にしない。Thread / Turn / item が取
 
 ## assistant message 分類
 
-`codex-cli 0.145.0`のstable生成schemaでagentMessage itemの`phase`は省略可能で、既定値は`null`である。明示値は`commentary` / `final_answer` / `null`を許可し、field欠落と明示された`null`をphase unknownとして扱う。`0.144.6`の隔離probeを2回実行し、各回で`commentary` 1件、`final_answer` 1件、`null` 0件を観測した。
+`codex-cli 0.145.0`のstable生成schemaでagentMessage itemの`phase`は省略可能で、既定値は`null`である。明示値は`commentary` / `final_answer` / `null`を許可し、field欠落と明示された`null`をphase unknownとして扱う。`gpt-5.6-luna` / `high`の隔離probeを3 Turn実行し、各Turnで`commentary` 1件、`final_answer` 1件、`null` 0件を観測した。既存の`0.144.6` probe 2回でも同じ構成だった。
 
-| App Server item                     | WithMate 変換                               | 状態                                                              |
-| ----------------------------------- | ------------------------------------------- | ----------------------------------------------------------------- |
-| `agentMessage.phase='commentary'`   | RunOutputItem `category='assistant_detail'` | runtime実測済み                                                   |
-| `agentMessage.phase='final_answer'` | final assistant candidate                   | runtime実測済み。Turn成功完了までMessageとして確定しない          |
-| `agentMessage.phase=null`           | phase unknown item                          | stable schema確認。runtimeでは未観測。受信時点でfinalと断定しない |
+| App Server item                     | WithMate 変換                               | 状態                                                                        |
+| ----------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------- |
+| `agentMessage.phase='commentary'`   | RunOutputItem `category='assistant_detail'` | runtime実測済み                                                             |
+| `agentMessage.phase='final_answer'` | final assistant candidate                   | runtime実測済み。Turn成功完了までMessageとして確定しない                    |
+| `agentMessage.phase=null`           | phase unknown item                          | stable schema確認。Lunaを含むruntimeでは未観測。受信時点でfinalと断定しない |
 
 ### final Message の確定
 
@@ -173,20 +174,29 @@ RunOutputItem は item ごとの bounded summary と詳細 payload 参照を分�
 
 ## approval / elicitation / user input
 
-| Server request                          | WithMate 変換                                 |
-| --------------------------------------- | --------------------------------------------- |
-| `item/commandExecution/requestApproval` | pending approval                              |
-| `item/fileChange/requestApproval`       | pending approval                              |
-| `item/permissions/requestApproval`      | permission 種別を保った pending approval      |
-| `item/tool/requestUserInput`            | pending user input                            |
-| `mcpServer/elicitation/request`         | Provider payload を保った pending elicitation |
-| `serverRequest/resolved`                | 対象 request の解決確認                       |
+| Server request                          | Discriminator                                 | WithMate 変換                                     |
+| --------------------------------------- | --------------------------------------------- | ------------------------------------------------- |
+| `item/commandExecution/requestApproval` | method                                        | pending command approval                          |
+| `item/fileChange/requestApproval`       | method                                        | pending file change approval                      |
+| `item/permissions/requestApproval`      | method                                        | permission 種別を保った pending approval          |
+| `item/tool/requestUserInput`            | method                                        | pending user input                                |
+| `mcpServer/elicitation/request`         | metadataの`codex_approval_kind=mcp_tool_call` | pending MCP tool approval                         |
+| `mcpServer/elicitation/request`         | `codex_approval_kind`なし、`mode=form`        | schema種別を保った pending MCP server elicitation |
+| `serverRequest/resolved`                | request ID                                    | 対象 request の解決確認                           |
 
-- server request ID を live interaction の外部相関 ID とし、実行中の Application Service メモリだけに保持する。
+- server request IDとProvider item IDはAdapter内部の外部相関IDとして保持し、public interaction IDにはWithMate発行のopaque IDを使う。public snapshotとresponseへProvider IDを公開しない。
 - request bodyと回答をlive activityへ埋め込まない。live activityは`waiting_approval` / `waiting_input`の代表表示だけとし、DBへ保存しない。
-- 回答 operation は idempotency key を受け、解決済み request への二重回答を送らない。
+- public操作は`run interactions` / `run respond-interaction`とし、Provider固有method名を公開しない。snapshotとresponseのclosed union、Provider definition version、exact validationはADR 015を正本とする。
+- Codex初期definitionのliteral kindと静的なpublic shapeは`schema/providers/codex/interaction-v1.schema.json`を正本とする。未知の`codex_approval_kind`、discriminatorなしの非form mode、未検証のform field種別はunavailableとして回答対象へ投影しない。
+- safety-relevantなcommand、path、change集合、permission、question、option、form schemaをpublic上限内へ完全に投影できないrequestはunavailableとし、切り詰めた表示から回答を許可しない。command内のworkspace absolute pathは完全に識別できる場合だけ`<workspace>`起点へ置換し、外部absolute path、UNC、device path、file URI、home-relative path、parent traversal、または曖昧なpath表現が残るrequestはunavailableとする。file changeの表示pathはslash区切りのworkspace相対pathへ安全に正規化できる場合だけ回答可能とし、absolute、drive-qualified、parent-relative、未知change kindはunavailableとする。user inputのquestion ID / option label、MCP formのfield IDはsnapshot内で一意でなければならない。
+- MCP server formは、同じTurnのMCP tool approvalに対する`serverRequest/resolved`より後のrequestだけを次段として受け入れる。先行formはdeclineしてTurnをinterruptし、正常な二段階round tripとして継続しない。
+- user input responseはcurrent snapshotの全questionへ回答を1件ずつ持つ。current option label、またはProviderの`isOther`から投影した`allowOther=true`の場合だけ2,048 code point以下の自由入力を許可する。`isSecret=true`はsecure入力経路を実装して実測するまでunavailableとする。MCP form responseはacceptだけが`values`を持ち、field集合、requiredness、snapshot固有の`maxLength`へexact validationする。required fieldがなければ空の`values`を許可する。decline / cancelは値を持たず、Adapterは`content: null`へ変換する。
+- 回答 operation は idempotency key を受け、解決済み request への二重回答を送らない。response admissionとRun cancelは同じper-Run mutation ownerで直列化し、write開始後の切断は`ambiguous`として再送しない。
 - 解決後の事実はRunEvent、必要なbounded summaryはRunOutputItemに保存する。runtime hostまたはApp Server processの再起動後は、保存済み履歴だけから未解決requestを回答可能な状態へ復元しない。
-- allow / deny / timeout / duplicate response / process 切断の runtime 順序は未検証。本書の state mapping は契約 test 完了後に確定する。
+- `codex-cli 0.145.0`ではcommand / file approvalのaccept / decline、turn scopeのpermission approval、feature有効時の`request_user_input`を実測した。MCPはdirect callとephemeral Threadのmodel Turnで完全round tripを実測した。model Turnではtool approvalへ空contentのplain acceptを返し、永続choiceを選ばず、その解決後に届くserver formへ別responseを返した。両requestの`serverRequest/resolved`、fixture response、MCP item terminal、Turn terminalを確認した。permissionとuser inputはrequestのThread / Turn / item ID、resolved、Turn terminalを確認したが、生成bindingに専用`ThreadItem` variantはないためitem terminalを要求しない。MCP interaction requestはThread / Turn IDを持つ一方でitem IDを持たず、後続のMCP item lifecycleより前にも届くため、request ownerとitem lifecycleを別に相関する。
+- 今回実測したserver elicitationは`mode=form`だけである。`mode=url`と将来variantはProvider definitionへ公開せず、対応時にkind固有schema、response、terminal条件を追加のruntime evidenceで確定する。
+- bounded client wait後のpending、stdio切断、responseとcancelの両順序、同一process上の10 active Runを実測した。競合はresponse先行4回、interrupt先行4回でresolved 1件、interrupted terminal 1件、副作用0件へ収束した。10並行TurnはexactなThread / Turn tupleごとに`turn/started`とterminalが各1件で、10区間すべてがterminal前に開始済みとなる最大同時active数10を示し、相関混線なく完了した。ただし、これは支持下限であってprocessの絶対上限ではない。stdio切断ではresponse送信後またはresolved後でもterminal eventを失い、副作用の不存在を一般化できない。`serverRequest/resolved`はrequest lifecycleの解決であり、単独でTurn、tool round trip、command副作用の完了を示さない。
+- resolved後に同じresponseを再送したlive probeでは、追加error、追加resolved、追加item terminal、追加Turn terminal、副作用を観測しなかった。ただしduplicate response自体への独立ACKはprotocolにないため、受理か拒否かは断定しない。Application contract testではresponse admissionとcancel admissionを同じper-Run mutation ownerで直列化し、resolved後の再送を防ぎ、`write_attempted`後にterminal certaintyを失った場合は`ambiguous`へ収束させる。Provider側timeoutと切断後の副作用照合もApp Server eventだけでは確定しない境界として扱う。
 
 ## steer / interrupt
 
@@ -225,20 +235,21 @@ WindowsではCodex managed daemon lifecycleが非対応のため、CAS-017は`bl
 ## unknown / duplicate / out-of-order event
 
 - 未知 notification / item type で client loop を停止しない。
-- 未知 event はProvider、method / item type、Thread / Turn / item ID、bounded summary、redaction有無だけを`provider_metadata`出力と軽量診断に残す。両方の相関tupleを一致させ、runtime hostが対象Runを推測しなくても保存先を選べるようにする。
-- raw payload が必要な場合は secret、token、account 情報、絶対 path、巨大本文を除去し、RunOutputItem `provider_metadata` の遅延読み込み payload にする。
+- 未知eventのraw Thread / Turn / item IDはAdapter内部のowner照合とdedupeにだけ保持し、runtime hostが保存先を選んだ後はpublicまたは永続化する`provider_metadata` / diagnostic payloadへ含めない。public projectionはWithMate Run / Output identity、allowlist化したcategory、件数、bounded summary、redaction有無だけを残す。owner tupleが完全一致しないeventは現在のRunへ補完しない。
+- 診断へ追加情報が必要な場合もraw payload自体は保存せず、allowlist化したcategory、件数、bounded summary、redaction有無だけをRunOutputItem `provider_metadata`の遅延読み込みpayloadにする。
 - duplicate / out-of-order event で Run phase、Message、live interaction を重複更新しない。
 - terminal Run に届いた未知 event で Run を non-terminal へ戻さない。
+- synthetic client self-testでは未知notificationをbounded / sanitizedな`other`診断へ変換した後も既知terminal eventの処理を継続し、public diagnostic projectionへraw method / payloadを含めないことを確認した。受信時の内部bufferからraw wire messageが直ちに消去されることまでは、このself-testの検証対象にしていない。
 
 ## model / capability
 
 - `model/list` を cursor / limit で全 page 取得し、model ID、表示名、reasoning effort、入力 modality などを WithMate の capability model へ変換する。stable生成schemaで省略可能な`inputModalities`が欠落した場合は、schema既定値の`["text", "image"]`を適用する。
-- startまたはretryのoverrideで明示されたmodelとreasoning effortの組は、`thread/start`または`thread/resume`より前に同じ`model/list` snapshotで検証する。未対応の組はProvider Threadを作成・再開せず`invalid_input`として拒否する。
+- freshなstartまたはretry commandは、durable admissionより前にread-only capability preflightを行い、同じruntime generationの`model/list` snapshotでmodel、reasoning effort、text input modalityを検証する。明示されたmodelは`selectable`も要求する。未対応の組はProvider Thread、Turn、durable Runを作成せず`provider_capability_unavailable`として拒否する。catalog / transportを取得できない場合はretryable、決定的なtuple不一致はnon-retryableとする。exact durable replayはcurrent catalog driftやruntime停止に依存させずpreflightを省略する。Thread / Turn mutation時にも同じ検証を残す。
 - catalog は CLI version / account で変動するため、ハードコードしない。
 - hidden model は通常の選択肢に自動追加しない。
-- retryでmodel overrideを省略した場合は、source Runのexecution snapshotに保存したmodelを`inherited` provenance付きで受け取る。Adapterはそのmodelを`thread/resume`と`turn/start`へ指定し、同じThreadの後続Runがmodelを変更していてもsource Runの値へ戻す。継承値は新規選択ではないためhidden historyを許可し、`selectable`条件は要求しないが、catalog上の存在、入力modality、reasoning effortの組は検証する。明示overrideは従来どおり`selectable`を要求する。
+- retryでmodel overrideを省略した場合は、source Runのexecution snapshotに保存したmodelを`inherited` provenance付きで受け取る。AdapterはBindingを新規作成する場合の`thread/start`を含め、そのmodelを`thread/start`、`thread/resume`、`turn/start`へ指定し、同じThreadの後続Runがmodelを変更していてもsource Runの値へ戻す。継承値は新規選択ではないためhidden historyを許可し、`selectable`条件は要求しないが、catalog上の存在、入力modality、reasoning effortの組は検証する。明示overrideは従来どおり`selectable`を要求する。`modelSelection`はAdapter内部の検証provenanceであり、Codex App Serverのwire payloadへ送らない。
 - `turn/start`のmodel overrideをresponseまたは一意に相関した`turn/started`で受理した後は、そのmodelをThreadのcurrent modelとして後続Turnのcapability検証に使う。notification先行で暫定相関した後に`request_not_sent`が未送信を証明した場合は元のcurrent modelへ戻し、受理を確認できないrequestだけでcurrent modelを変更しない。
-- `modelProvider/capabilities/read` は schema 確認のみ。version 差分を検証する。
+- `codex-cli 0.145.0`では`modelProvider/capabilities/read`の`imageGeneration`、`namespaceTools`、`webSearch`がすべて`true`だった。通常一覧7件、`includeHidden=true`の完全一覧8件、hidden 1件を確認し、`gpt-5.6-luna`はhiddenではなく、default effortが`medium`、supported effortが`low` / `medium` / `high` / `xhigh` / `max`だった。これらは起動時snapshotとして検証し、将来versionへ固定値として一般化しない。
 - orchestration API は Provider 名を Agent へ露出せず、WithMate の model / reasoning / feature 表現へ変換する。
 
 ## 初期実装で必要な Adapter operation
@@ -251,10 +262,11 @@ readThread
 startTurn
 steerTurn
 interruptTurn
+respondInteraction
 close
 ```
 
-handshakeの`initialize` / `initialized`はtransportが所有し、Adapterから再送しない。`resumeThread`、`steerTurn`、`interruptTurn`は対象versionのruntime evidenceとcontract testをGateに利用可能とする。approval / input / elicitation response operationはこのAdapter scopeに含めず、後続のruntime検証が完了するまでcapabilityとして利用可能と公開しない。
+handshakeの`initialize` / `initialized`はtransportが所有し、Adapterから再送しない。`resumeThread`、`steerTurn`、`interruptTurn`、`respondInteraction`は対象versionのruntime evidenceとcontract testをGateに利用可能とする。`respondInteraction`はCodex definition versionが所有するclosed unionを受け、method名だけでresponse shapeを選ばない。runtime evidenceのないkindはcapabilityとして公開しない。
 
 Thread作成・再開の送信結果が`ambiguous`な場合、Adapterはmutation reservationをconnection closeまで保持する。上位runtimeはそのgenerationを後続Thread mutationへ再利用せず、Provider processのclose完了を確認してからgeneration ownerを解放する。Adapterとtransportは同時closeだけをdedupeし、失敗したclose結果を永久cacheしない。processまたはnative handleの解放に失敗した場合は参照と未完了状態を保持し、同じownerを後続closeで再試行する。Windows Job Objectの設定、process割当て、一時process handle解放など、process startupのpartial acquisitionで失敗したownerもstructured errorを介してtransportへ引き渡す。Adapter公開前のstartup cleanupも同じ完了条件を使い、close失敗中に後続generationまたはsuccessor processを開始しない。
 
@@ -280,7 +292,7 @@ Thread作成・再開の送信結果が`ambiguous`な場合、Adapterはmutation
 ### interaction / lifecycle
 
 - approval allow / deny / timeout / duplicate answer
-- user input / MCP elicitation 回答
+- user input / MCP tool approval / MCP server elicitation 回答とkind不一致の拒否
 - steer の `expectedTurnId` 一致 / 不一致
 - interrupt と natural completion の競合
 - App Server crash / client crash / stdin close
@@ -289,17 +301,20 @@ Thread作成・再開の送信結果が`ambiguous`な場合、Adapterはmutation
 
 ## 未検証事項と実装 Gate
 
-| 項目                                | 現在                                            | Gate                                                            |
-| ----------------------------------- | ----------------------------------------------- | --------------------------------------------------------------- |
-| persistent Thread resume / read     | completed Turnとstdio process異常終了を実測済み | runtime host crashのprocess testで照合と`interrupted`収束を確認 |
-| `agentMessage.phase`のruntime一貫性 | explicit commentary / finalを実測済み           | final Message mapperの契約test                                  |
-| `phase=null` fallback               | stable schema確認、runtime未観測                | 1件 / 複数unknown itemのmapper契約test                          |
-| interrupt                           | responseからterminalまで実測済み                | durable cancelとの相関と競合のcontract test                     |
-| steer                               | 一致 / 不一致 / terminal後と履歴を実測済み      | notification先行時のaccepted / ambiguous deliveryをruntime実測  |
-| active Thread resumeのitem再配信    | current active tupleの復元をcontract test済み   | 既存itemの再配信有無と重複排除をruntime実測                     |
-| approval / input / elicitation      | schema 確認のみ                                 | timeout、duplicate、切断を検証                                  |
-| 複数 Thread 並行実行                | 未実施                                          | event 相関と process 上限を検証                                 |
-| unknown notification                | 未実施                                          | Adapter client の契約 test を実施                               |
+| 項目                                | 現在                                                           | Gate                                                                            |
+| ----------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| persistent Thread resume / read     | completed Turnとstdio process異常終了を実測済み                | runtime host crashのprocess testで照合と`interrupted`収束を確認                 |
+| `agentMessage.phase`のruntime一貫性 | Luna 3 Turnでexplicit commentary / finalを実測済み             | final Message mapperの契約test                                                  |
+| `phase=null` fallback               | stable schema確認、Lunaを含むruntimeでは未観測                 | 1件 / 複数unknown itemのmapper契約test                                          |
+| interrupt                           | responseからterminalまで実測済み                               | durable cancelとの相関と競合のcontract test                                     |
+| steer                               | 一致 / 不一致 / terminal後と履歴を実測済み                     | notification先行時のaccepted / ambiguous deliveryをruntime実測                  |
+| active Thread resumeのitem再配信    | current active tupleの復元をcontract test済み                  | 既存itemの再配信有無と重複排除をruntime実測                                     |
+| command / file approval             | accept / decline、bounded wait、duplicate、stdio切断を実測済み | timeout、duplicate ACK、切断後の副作用はclient側の保守的収束を実装Gateにする    |
+| permission / user input             | turn scope / feature、method別terminalを実測済み               | Provider timeoutをclient deadlineとして実装する                                 |
+| MCP elicitation direct call         | `0.145.0`で完全round trip実測済み                              | regression probeを維持                                                          |
+| MCP elicitation model Turn          | tool approvalとserver formの二段round trip実測済み             | discriminator、永続grantなし、全terminalのregression probeを維持                |
+| 複数 Thread 並行実行                | Lunaで最大同時active数10とevent / owner分離を実測済み          | 10を支持下限とし、host所有の上限、backpressure、resource limitを実装Gateにする  |
+| unknown notification                | synthetic client self-test済み                                 | production Adapter clientの契約testとして同じfail-open / sanitize契約を固定する |
 
 未検証機能は、実装時に黙って使うのではなく capability unavailable または明示的な制限として公開する。
 

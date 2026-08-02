@@ -13,11 +13,17 @@ const steerCrashMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_STEER_CRASH_MA
 const steerTerminalMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_STEER_TERMINAL_MARKER");
 const interruptReleaseFile = optionalEnvironment("WITHMATE_FAKE_CODEX_INTERRUPT_RELEASE_FILE");
 const interruptNaturalCompletionMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_INTERRUPT_NATURAL_COMPLETION_MARKER");
+const interactionMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_INTERACTION_MARKER");
+const interactionResolvedFirstMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_INTERACTION_RESOLVED_FIRST_MARKER");
+const interactionResolveFile = optionalEnvironment("WITHMATE_FAKE_CODEX_INTERACTION_RESOLVE_FILE");
+const safeLog = optionalEnvironment("WITHMATE_FAKE_CODEX_SAFE_LOG") === "1";
 const model = "gpt-5.4";
 let threadSequence = 0;
 let turnSequence = 0;
 let closing = false;
 const activeTurns = new Map();
+const threads = new Map();
+const pendingInteractions = new Map();
 
 log("process.started", { pid: process.pid });
 
@@ -50,6 +56,10 @@ lines.on("close", () => {
 async function handleMessage(message) {
   if (message === null || typeof message !== "object" || Array.isArray(message)) {
     throw new Error("Invalid request.");
+  }
+  if (Object.hasOwn(message, "id") && !Object.hasOwn(message, "method")) {
+    handleServerResponse(message);
+    return;
   }
   if (message.method === "initialized" && !Object.hasOwn(message, "id")) {
     log("protocol.ready", {});
@@ -117,15 +127,19 @@ async function handleThreadStart(message) {
   const params = record(message.params);
   threadSequence += 1;
   const threadId = `fake-thread-${process.pid}-${threadSequence}`;
+  const cwd = requiredString(params.cwd);
+  const approvalPolicy = approvalPolicyValue(params.approvalPolicy);
+  threads.set(threadId, { cwd, approvalPolicy });
   log("thread.started", { threadId });
   respond(
     message.id,
     threadOperation(
       threadId,
-      requiredString(params.cwd),
+      cwd,
       requiredString(params.model),
       requiredString(params.sandbox),
       params.ephemeral === true,
+      approvalPolicy,
     ),
   );
 }
@@ -136,8 +150,10 @@ async function handleThreadResume(message) {
   const cwd = requiredString(params.cwd);
   const requestedModel = typeof params.model === "string" ? params.model : model;
   const sandbox = typeof params.sandbox === "string" ? params.sandbox : "read-only";
+  const approvalPolicy = approvalPolicyValue(params.approvalPolicy);
+  threads.set(threadId, { cwd, approvalPolicy });
   log("thread.resumed", { threadId });
-  respond(message.id, threadOperation(threadId, cwd, requestedModel, sandbox, false));
+  respond(message.id, threadOperation(threadId, cwd, requestedModel, sandbox, false, approvalPolicy));
 }
 
 async function handleTurnStart(message) {
@@ -161,6 +177,40 @@ async function handleTurnStart(message) {
   if (holdMarker !== undefined && prompt.includes(holdMarker)) {
     notify("turn/started", { threadId, turn: inProgressTurn });
     log("turn.held", { threadId, turnId, prompt });
+    return;
+  }
+
+  if (interactionMarker !== undefined && prompt.includes(interactionMarker)) {
+    const thread = threads.get(threadId);
+    if (thread === undefined || thread.approvalPolicy === "never") {
+      throw new Error("An interactive Turn requires a non-never approval policy.");
+    }
+    const requestId = `fake-approval-${process.pid}-${turnSequence}`;
+    const resolvedFirst =
+      interactionResolvedFirstMarker !== undefined && prompt.includes(interactionResolvedFirstMarker);
+    pendingInteractions.set(requestKey(requestId), { requestId, threadId, turnId, resolvedFirst });
+    setImmediate(() => {
+      notify("turn/started", { threadId, turn: inProgressTurn });
+      write({
+        id: requestId,
+        method: "item/commandExecution/requestApproval",
+        params: {
+          threadId,
+          turnId,
+          itemId: `fake-command-${turnSequence}`,
+          startedAtMs: Date.now(),
+          command: "node --version",
+          cwd: thread.cwd,
+        },
+      });
+      log("interaction.requested", {
+        kind: "command_approval",
+        order: resolvedFirst ? "resolved_first" : "response_first",
+      });
+      if (resolvedFirst) {
+        void resolveInteractionFirst(threadId, requestId);
+      }
+    });
     return;
   }
 
@@ -255,16 +305,49 @@ async function handleTurnInterrupt(message) {
     notify("item/completed", { threadId, turnId, item, completedAtMs: Date.now() });
     notify("turn/completed", { threadId, turn: turn(turnId, "completed", [item]) });
     activeTurns.delete(threadId);
+    releaseTurnInteractions(threadId, turnId);
     log("turn.completed", { threadId, turnId, prompt: active.prompt });
     return;
   }
 
   notify("turn/completed", { threadId, turn: turn(turnId, "interrupted", []) });
   activeTurns.delete(threadId);
+  releaseTurnInteractions(threadId, turnId);
   log("turn.interrupted", { threadId, turnId, prompt: active.prompt });
 }
 
-function threadOperation(threadId, cwd, requestedModel, sandboxMode, ephemeral) {
+function handleServerResponse(message) {
+  const pending = pendingInteractions.get(requestKey(message.id));
+  if (pending === undefined) throw new Error("Unknown server response.");
+  const result = record(message.result);
+  const decision = result.decision;
+  if (decision !== "accept" && decision !== "decline" && decision !== "cancel") {
+    throw new Error("Invalid command approval response.");
+  }
+  pendingInteractions.delete(requestKey(message.id));
+  log("interaction.response", { kind: "command_approval", decision });
+  if (!pending.resolvedFirst) {
+    notify("serverRequest/resolved", { threadId: pending.threadId, requestId: pending.requestId });
+    log("interaction.resolved", { kind: "command_approval", order: "response_first" });
+  }
+}
+
+async function resolveInteractionFirst(threadId, requestId) {
+  if (interactionResolveFile === undefined) throw new Error("An interaction resolution release file is required.");
+  await waitForFile(interactionResolveFile, 15_000);
+  const key = requestKey(requestId);
+  if (!pendingInteractions.has(key)) return;
+  notify("serverRequest/resolved", { threadId, requestId });
+  log("interaction.resolved", { kind: "command_approval", order: "resolved_first" });
+}
+
+function releaseTurnInteractions(threadId, turnId) {
+  for (const [key, pending] of pendingInteractions) {
+    if (pending.threadId === threadId && pending.turnId === turnId) pendingInteractions.delete(key);
+  }
+}
+
+function threadOperation(threadId, cwd, requestedModel, sandboxMode, ephemeral, approvalPolicy) {
   return {
     thread: {
       id: threadId,
@@ -294,7 +377,7 @@ function threadOperation(threadId, cwd, requestedModel, sandboxMode, ephemeral) 
     serviceTier: null,
     cwd,
     instructionSources: [],
-    approvalPolicy: "never",
+    approvalPolicy,
     approvalsReviewer: "user",
     sandbox: sandbox(sandboxMode),
     reasoningEffort: "medium",
@@ -356,7 +439,16 @@ function write(value) {
 }
 
 function log(event, fields) {
-  fs.appendFileSync(logPath, `${JSON.stringify({ event, ...fields })}\n`, "utf8");
+  const entry = safeLog
+    ? {
+        event,
+        ...(typeof fields.method === "string" ? { method: fields.method } : {}),
+        ...(typeof fields.kind === "string" ? { kind: fields.kind } : {}),
+        ...(typeof fields.decision === "string" ? { decision: fields.decision } : {}),
+        ...(typeof fields.order === "string" ? { order: fields.order } : {}),
+      }
+    : { event, ...fields };
+  fs.appendFileSync(logPath, `${JSON.stringify(entry)}\n`, "utf8");
 }
 
 function record(value) {
@@ -369,6 +461,18 @@ function record(value) {
 function requiredString(value) {
   if (typeof value !== "string" || value.length === 0) throw new Error("Expected a string.");
   return value;
+}
+
+function approvalPolicyValue(value) {
+  if (value === "never" || value === "untrusted" || value === "on-request") return value;
+  throw new Error("Unsupported approval policy.");
+}
+
+function requestKey(value) {
+  if ((typeof value !== "string" && typeof value !== "number") || String(value).length === 0) {
+    throw new Error("Invalid request id.");
+  }
+  return `${typeof value}:${String(value)}`;
 }
 
 function requiredEnvironment(name) {

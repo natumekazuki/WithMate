@@ -7,6 +7,8 @@ import type {
   ApplicationRunAdmissionResult,
   ApplicationRunCancelResult,
   ApplicationRunFollowResult,
+  ApplicationRunInteractionsResult,
+  ApplicationRunRespondInteractionResult,
   ApplicationRunSendInputResult,
   ApplicationRunStatus,
 } from "../src/shared/application-run-model.js";
@@ -21,12 +23,14 @@ type StartRequest = Parameters<ApplicationRunOperations<Authorization>["start"]>
 type RetryRequest = Parameters<ApplicationRunOperations<Authorization>["retry"]>[0];
 type SendInputRequest = Parameters<ApplicationRunOperations<Authorization>["sendInput"]>[0];
 type CancelRequest = Parameters<ApplicationRunOperations<Authorization>["cancel"]>[0];
+type InteractionsRequest = Parameters<ApplicationRunOperations<Authorization>["interactions"]>[0];
+type RespondInteractionRequest = Parameters<ApplicationRunOperations<Authorization>["respondInteraction"]>[0];
 type StartValue = Awaited<ReturnType<ApplicationRunOperations<Authorization>["start"]>>;
 type _StartOwnsOnlyPublicInputs = Assert<
-  Equal<keyof StartRequest, "context" | "sessionId" | "idempotencyKey" | "contentBlocks" | "execution">
+  Equal<keyof StartRequest, "context" | "sessionId" | "idempotencyKey" | "contentBlocks" | "providerSettings">
 >;
 type _RetryOwnsOnlyPublicInputs = Assert<
-  Equal<keyof RetryRequest, "context" | "sessionId" | "retryOfRunId" | "idempotencyKey" | "executionOverrides">
+  Equal<keyof RetryRequest, "context" | "sessionId" | "retryOfRunId" | "idempotencyKey" | "providerSettingsOverride">
 >;
 type _SendInputOwnsOnlyPublicInputs = Assert<
   Equal<keyof SendInputRequest, "context" | "sessionId" | "runId" | "idempotencyKey" | "contentBlocks">
@@ -48,6 +52,61 @@ type _CancelCannotSupplyInternalIdentity = Assert<
     Extract<
       keyof CancelRequest,
       "attemptId" | "bindingId" | "providerId" | "threadId" | "turnId" | "generationId" | "ownerToken"
+    >,
+    never
+  >
+>;
+type _InteractionsOwnOnlyPublicReadScope = Assert<Equal<keyof InteractionsRequest, "context" | "sessionId" | "runId">>;
+type _RespondInteractionOwnsOnlyPublicInputs = Assert<
+  Equal<keyof RespondInteractionRequest, "context" | "sessionId" | "runId" | "idempotencyKey" | "response">
+>;
+type _RespondInteractionResultOwnsOnlyPublicProjection = Assert<
+  Equal<
+    keyof ApplicationRunRespondInteractionResult,
+    | "sessionId"
+    | "runId"
+    | "interactionId"
+    | "admittedAt"
+    | "effectCertainty"
+    | "writeAttemptedAt"
+    | "settledAt"
+    | "resolutionCode"
+  >
+>;
+type _RespondInteractionCannotExposePrivateCorrelation = Assert<
+  Equal<
+    Extract<
+      keyof ApplicationRunRespondInteractionResult,
+      | "responseRefId"
+      | "providerId"
+      | "definitionVersion"
+      | "interactionKind"
+      | "semanticAction"
+      | "attemptId"
+      | "bindingId"
+      | "threadId"
+      | "turnId"
+    >,
+    never
+  >
+>;
+type _InteractionResultOwnsOnlyPublicProjection = Assert<
+  Equal<keyof ApplicationRunInteractionsResult, "sessionId" | "runId" | "runVersion" | "interactions">
+>;
+type _InteractionCannotExposePrivateCorrelation = Assert<
+  Equal<
+    Extract<
+      keyof ApplicationRunInteractionsResult["interactions"][number],
+      | "handle"
+      | "connectionGeneration"
+      | "threadId"
+      | "turnId"
+      | "itemId"
+      | "attemptId"
+      | "bindingId"
+      | "workspaceKey"
+      | "workspacePath"
+      | "rawPayload"
     >,
     never
   >
@@ -128,6 +187,12 @@ test("public Run API is type-only and keeps phase-specific status contracts", ()
     | _SendInputCannotSupplyInternalIdentity
     | _CancelOwnsOnlyPublicInputs
     | _CancelCannotSupplyInternalIdentity
+    | _InteractionsOwnOnlyPublicReadScope
+    | _RespondInteractionOwnsOnlyPublicInputs
+    | _RespondInteractionResultOwnsOnlyPublicProjection
+    | _RespondInteractionCannotExposePrivateCorrelation
+    | _InteractionResultOwnsOnlyPublicProjection
+    | _InteractionCannotExposePrivateCorrelation
     | _CancelResultUsesStatusPhases
     | _CancelingRequiresRequestTimestamp
     | _CanceledAcknowledgmentIsPaired

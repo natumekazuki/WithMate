@@ -18,6 +18,9 @@ export const REPOSITORY_WRITE_OPERATIONS = {
   runInputAdmit: "repository.run.input.admit",
   runInputBegin: "repository.run.input.begin",
   runInputResolve: "repository.run.input.resolve",
+  runInteractionResponseAdmit: "repository.run.interaction-response.admit",
+  runInteractionResponseMarkWriteAttempt: "repository.run.interaction-response.mark-write-attempt",
+  runInteractionResponseSettle: "repository.run.interaction-response.settle",
   runCancelAdmit: "repository.run.cancel.admit",
   runOutputAppend: "repository.run.output.append",
   runOutputResolvePending: "repository.run.output.resolve-pending",
@@ -37,11 +40,9 @@ export type RepositoryJsonValue =
 
 export type RunExecutionSnapshot = Readonly<{
   providerId: string;
-  model: string;
+  definitionVersion: string;
   modelSelection: "explicit" | "inherited";
-  reasoning: RepositoryJsonValue;
-  approval: RepositoryJsonValue;
-  sandbox: RepositoryJsonValue;
+  settings: Readonly<{ [key: string]: RepositoryJsonValue }>;
   workspace: Readonly<{ [key: string]: RepositoryJsonValue }>;
   character: Readonly<{ [key: string]: RepositoryJsonValue }> | null;
 }>;
@@ -222,6 +223,60 @@ export type RunInputResolutionCommand = Readonly<{
     | Readonly<{ kind: "accepted" }>
     | Readonly<{ kind: "rejected"; resolutionCode: "provider_rejected" | "delivery_not_sent" }>
     | Readonly<{ kind: "ambiguous"; resolutionCode: "transport_unknown" | "process_unknown" }>;
+}>;
+
+export type RunInteractionSemanticAction = "accept" | "decline" | "cancel" | "answer" | "submit";
+
+export type RunInteractionResponseAdmissionCommand = Readonly<{
+  sessionId: string;
+  workspaceKey: string;
+  idempotencyKey: string;
+  runId: string;
+  attemptId: string;
+  bindingId: string;
+  ephemeralOwnerToken: string | null;
+  externalConversationId: string;
+  externalExecutionId: string;
+  providerId: string;
+  definitionVersion: string;
+  interactionKind: string;
+  interactionId: string;
+  semanticAction: RunInteractionSemanticAction;
+  canonicalResponseJson: string;
+}>;
+
+export type RunInteractionResponseMarkWriteAttemptCommand = Readonly<{
+  responseRefId: string;
+  sessionId: string;
+  workspaceKey: string;
+  runId: string;
+  interactionId: string;
+}>;
+
+export type RunInteractionResponseResolutionCode =
+  | "provider_resolved"
+  | "transport_unknown"
+  | "process_unknown"
+  | "transport_not_sent"
+  | "owner_lost_before_write"
+  | "adapter_rejected";
+
+export type RunInteractionResponseSettlementCommand = Readonly<{
+  responseRefId: string;
+  sessionId: string;
+  workspaceKey: string;
+  runId: string;
+  interactionId: string;
+  outcome:
+    | Readonly<{ effectCertainty: "resolved"; resolutionCode: "provider_resolved" }>
+    | Readonly<{
+        effectCertainty: "ambiguous";
+        resolutionCode: "transport_unknown" | "process_unknown";
+      }>
+    | Readonly<{
+        effectCertainty: "not_sent";
+        resolutionCode: "transport_not_sent" | "owner_lost_before_write" | "adapter_rejected";
+      }>;
 }>;
 
 export type RunCancelAdmissionOwner =
@@ -457,6 +512,7 @@ export type StartupRepairResult = Readonly<{
     invalidatedBindings: number;
     abortedDispatches: number;
     settledInputDeliveries: number;
+    settledInteractionResponses: number;
     availableChildResults: number;
     repairedDelegations: number;
     storedOutputPayloads: number;
@@ -469,6 +525,7 @@ export type StartupRepairResult = Readonly<{
     ephemeralResumeBlockedRuns: number;
     diagnosticRuns: number;
     diagnosticIdempotencyRecords: number;
+    diagnosticInteractionResponses: number;
     diagnosticChildResults: number;
   }>;
 }>;
@@ -575,6 +632,62 @@ export type RunInputResolutionResult = Readonly<{
   resolutionCode: RunInputResolutionCode | null;
   resolvedAt: number;
 }>;
+
+type RunInteractionResponseResultBase = Readonly<{
+  responseRefId: string;
+  sessionId: string;
+  runId: string;
+  interactionId: string;
+  providerId: string;
+  definitionVersion: string;
+  interactionKind: string;
+  semanticAction: RunInteractionSemanticAction;
+  admittedAt: number;
+}>;
+
+export type RunInteractionResponseResult =
+  | (RunInteractionResponseResultBase &
+      Readonly<{
+        effectCertainty: "admitted";
+        writeAttemptedAt: null;
+        settledAt: null;
+        resolutionCode: null;
+      }>)
+  | (RunInteractionResponseResultBase &
+      Readonly<{
+        effectCertainty: "write_attempted";
+        writeAttemptedAt: number;
+        settledAt: null;
+        resolutionCode: null;
+      }>)
+  | (RunInteractionResponseResultBase &
+      Readonly<{
+        effectCertainty: "resolved";
+        writeAttemptedAt: number;
+        settledAt: number;
+        resolutionCode: "provider_resolved";
+      }>)
+  | (RunInteractionResponseResultBase &
+      Readonly<{
+        effectCertainty: "ambiguous";
+        writeAttemptedAt: number;
+        settledAt: number;
+        resolutionCode: "transport_unknown" | "process_unknown";
+      }>)
+  | (RunInteractionResponseResultBase &
+      Readonly<{
+        effectCertainty: "not_sent";
+        writeAttemptedAt: null;
+        settledAt: number;
+        resolutionCode: "owner_lost_before_write" | "adapter_rejected";
+      }>)
+  | (RunInteractionResponseResultBase &
+      Readonly<{
+        effectCertainty: "not_sent";
+        writeAttemptedAt: number;
+        settledAt: number;
+        resolutionCode: "transport_not_sent" | "adapter_rejected";
+      }>);
 
 export type RunCancelAdmissionResult =
   | Readonly<{

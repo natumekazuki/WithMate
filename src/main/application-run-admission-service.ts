@@ -11,18 +11,13 @@ import {
   APPLICATION_RUN_LIMITS,
   type ApplicationRunAccessValidator,
   type ApplicationRunAdmissionResult,
-  type ApplicationRunExecutionOverrides,
-  type ApplicationRunExecutionSettings,
   type ApplicationRunPhase,
+  type ApplicationRunProviderSettings,
   type ApplicationRunRetryRequest,
-  type ApplicationRunSandboxSetting,
   type ApplicationRunStartRequest,
 } from "../shared/application-run-model.js";
 import { APPLICATION_RUN_PAYLOAD_LIMITS } from "../shared/application-run-payload-limits.js";
-import {
-  buildApplicationRunProviderRequest,
-  type ApplicationRunProviderRequest,
-} from "../shared/application-run-execution.js";
+import type { ApplicationRunProviderRequest } from "../shared/application-run-execution.js";
 import {
   ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS,
   normalizeAllowedAdditionalDirectories,
@@ -35,6 +30,7 @@ import {
 import { resolveWorkspaceIdentity } from "../shared/workspace-path.js";
 import type { PersistenceError } from "../shared/persistence-protocol.js";
 import { isCanonicalUuid } from "../shared/persistence-runtime-protocol.js";
+import type { RunAdmissionReplayProbeRequest, RunAdmissionReplayProbeResult } from "../shared/repository-read-model.js";
 import type {
   RepositoryCommandError,
   RepositoryCommandResult,
@@ -42,8 +38,10 @@ import type {
   RunExecutionSnapshot,
 } from "../shared/repository-write-model.js";
 import { PersistenceClientError, type PersistenceWorkerClient } from "./persistence-worker-client.js";
-import type { RepositoryReadClient } from "./repository-read-client.js";
+import { RepositoryReadClient } from "./repository-read-client.js";
 import { RepositoryWriteClient } from "./repository-write-client.js";
+import { providerRequestJson, type ProviderDefinitionRegistry } from "./providers/provider-definition.js";
+import { defaultProviderDefinitionRegistry } from "./providers/provider-registry.js";
 
 export type ApplicationRunAdmissionReadPort = Pick<
   RepositoryReadClient,
@@ -97,12 +95,32 @@ export interface ApplicationRunWorkHandoffPort {
   handoff(record: ApplicationRunAdmissionRecord): void;
 }
 
+export interface ApplicationRunAdmissionReplayPort {
+  probe(
+    command: RunAdmissionReplayProbeRequest,
+    options?: ApplicationOperationOptions,
+  ): Promise<RunAdmissionReplayProbeResult>;
+}
+
+export type ApplicationRunProviderCapabilityPreflightResult =
+  Readonly<{ kind: "supported" }> | Readonly<{ kind: "unsupported" }> | Readonly<{ kind: "unavailable" }>;
+
+export interface ApplicationRunProviderCapabilityPreflightPort {
+  preflight(
+    snapshot: RunExecutionSnapshot,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationRunProviderCapabilityPreflightResult>;
+}
+
 export type ApplicationRunAdmissionServiceOptions<TAuthorizationContext> = Readonly<{
   reads: ApplicationRunAdmissionReadPort;
   admission: ApplicationRunAdmissionPort;
+  replay?: ApplicationRunAdmissionReplayPort;
+  preflight?: ApplicationRunProviderCapabilityPreflightPort;
   handoff: ApplicationRunWorkHandoffPort;
   access: ApplicationRunAccessValidator<TAuthorizationContext>;
   snapshotAuthorization(value: unknown): TAuthorizationContext;
+  providers?: ProviderDefinitionRegistry;
 }>;
 
 type WriteResponse = ApplicationOperationResponse<ApplicationRunAdmissionResult, "write">;
@@ -119,6 +137,8 @@ type ControlledSettlement<TValue> =
   | Readonly<{ status: "fulfilled"; value: TValue }>
   | Readonly<{ status: "rejected"; error: unknown }>
   | Readonly<{ status: "interrupted"; interruption: OperationInterruption; started: boolean }>;
+
+type ReplayCheck = Readonly<{ kind: "absent" }> | Readonly<{ kind: "response"; response: WriteResponse }>;
 
 type SessionAdmissionContext = Readonly<{
   sessionId: string;
@@ -140,6 +160,18 @@ type RetrySourceContext = Readonly<{
 const unavailableAdmission: ApplicationRunAdmissionPort = {
   async admit() {
     throw new Error("Run admission is unavailable.");
+  },
+};
+
+const unavailableReplay: ApplicationRunAdmissionReplayPort = {
+  async probe() {
+    return { kind: "absent" };
+  },
+};
+
+const defaultCapabilityPreflight: ApplicationRunProviderCapabilityPreflightPort = {
+  async preflight() {
+    return { kind: "supported" };
   },
 };
 
@@ -168,34 +200,38 @@ export class RepositoryApplicationRunAdmissionPort implements ApplicationRunAdmi
     command: ApplicationRunAdmissionCommand,
     options?: ApplicationOperationOptions,
   ): Promise<RepositoryCommandResult<ApplicationRunAdmissionRecord>> {
-    const dispatch = {
-      providerRequest: command.providerRequest,
-      providerIdempotencyKey: null,
-    } as const;
+    const repositoryCommand = repositoryRunAdmissionCommand(command);
     return command.operation === "start"
       ? this.#writes.admitNormalRun(
-          {
-            sessionId: command.sessionId,
-            workspaceKey: command.workspaceKey,
-            idempotencyKey: command.idempotencyKey,
-            message: { contentBlocks: command.contentBlocks },
-            run: { executionSnapshot: command.executionSnapshot },
-            dispatch,
-          },
+          repositoryCommand as Extract<RunAdmissionReplayProbeRequest, { message: unknown }>,
           options,
         )
       : this.#writes.admitRetryRun(
-          {
-            sessionId: command.sessionId,
-            workspaceKey: command.workspaceKey,
-            idempotencyKey: command.idempotencyKey,
-            retryOfRunId: command.retryOfRunId,
-            run: { executionSnapshot: command.executionSnapshot },
-            dispatch,
-          },
+          repositoryCommand as Extract<RunAdmissionReplayProbeRequest, { retryOfRunId: unknown }>,
           options,
         );
   }
+}
+
+export class RepositoryApplicationRunAdmissionReplayPort implements ApplicationRunAdmissionReplayPort {
+  readonly #reads: RepositoryReadClient;
+
+  constructor(reads: RepositoryReadClient) {
+    this.#reads = reads;
+  }
+
+  probe(
+    command: RunAdmissionReplayProbeRequest,
+    options?: ApplicationOperationOptions,
+  ): Promise<RunAdmissionReplayProbeResult> {
+    return this.#reads.runAdmissionReplayProbe(command, options);
+  }
+}
+
+export function createRepositoryApplicationRunAdmissionReplayPort(
+  worker: PersistenceWorkerClient,
+): ApplicationRunAdmissionReplayPort {
+  return new RepositoryApplicationRunAdmissionReplayPort(new RepositoryReadClient(worker));
 }
 
 export function createRepositoryApplicationRunAdmissionPort(
@@ -204,19 +240,49 @@ export function createRepositoryApplicationRunAdmissionPort(
   return new RepositoryApplicationRunAdmissionPort(new RepositoryWriteClient(worker));
 }
 
+function repositoryRunAdmissionCommand(command: ApplicationRunAdmissionCommand): RunAdmissionReplayProbeRequest {
+  const dispatch = {
+    providerRequest: command.providerRequest,
+    providerIdempotencyKey: null,
+  } as const;
+  return command.operation === "start"
+    ? {
+        sessionId: command.sessionId,
+        workspaceKey: command.workspaceKey,
+        idempotencyKey: command.idempotencyKey,
+        message: { contentBlocks: command.contentBlocks },
+        run: { executionSnapshot: command.executionSnapshot },
+        dispatch,
+      }
+    : {
+        sessionId: command.sessionId,
+        workspaceKey: command.workspaceKey,
+        idempotencyKey: command.idempotencyKey,
+        retryOfRunId: command.retryOfRunId,
+        run: { executionSnapshot: command.executionSnapshot },
+        dispatch,
+      };
+}
+
 export class ApplicationRunAdmissionService<TAuthorizationContext> {
   readonly #reads: ApplicationRunAdmissionReadPort;
   readonly #admission: ApplicationRunAdmissionPort;
+  readonly #replay: ApplicationRunAdmissionReplayPort;
+  readonly #preflight: ApplicationRunProviderCapabilityPreflightPort;
   readonly #handoff: ApplicationRunWorkHandoffPort;
   readonly #access: ApplicationRunAccessValidator<TAuthorizationContext>;
   readonly #snapshotAuthorization: (value: unknown) => TAuthorizationContext;
+  readonly #providers: ProviderDefinitionRegistry;
 
   constructor(options: ApplicationRunAdmissionServiceOptions<TAuthorizationContext>) {
     this.#reads = options.reads;
     this.#admission = options.admission;
+    this.#replay = options.replay ?? unavailableReplay;
+    this.#preflight = options.preflight ?? defaultCapabilityPreflight;
     this.#handoff = options.handoff;
     this.#access = options.access;
     this.#snapshotAuthorization = options.snapshotAuthorization;
+    this.#providers = options.providers ?? defaultProviderDefinitionRegistry;
   }
 
   async start(
@@ -237,7 +303,14 @@ export class ApplicationRunAdmissionService<TAuthorizationContext> {
     if (denied !== undefined) return denied;
     const session = await this.#readSession(input.sessionId, control);
     if (!session.ok) return session.response;
-    const executionSnapshot = buildStartExecutionSnapshot(session.value, input.execution);
+    let executionSnapshot: RunExecutionSnapshot;
+    let providerRequest: ApplicationRunProviderRequest;
+    try {
+      executionSnapshot = buildStartExecutionSnapshot(session.value, input.providerSettings, this.#providers);
+      providerRequest = buildProviderRequest(input.contentBlocks, executionSnapshot, this.#providers);
+    } catch {
+      return requestFailure();
+    }
     const command: ApplicationRunAdmissionCommand = {
       operation: "start",
       sessionId: session.value.sessionId,
@@ -245,9 +318,9 @@ export class ApplicationRunAdmissionService<TAuthorizationContext> {
       idempotencyKey: input.idempotencyKey,
       contentBlocks: input.contentBlocks,
       executionSnapshot,
-      providerRequest: buildProviderRequest(input.contentBlocks, executionSnapshot),
+      providerRequest,
     };
-    return this.#admit(command, control);
+    return this.#replayPreflightAndAdmit(command, control);
   }
 
   async retry(
@@ -270,13 +343,28 @@ export class ApplicationRunAdmissionService<TAuthorizationContext> {
     if (!session.ok) return session.response;
     const source = await this.#readRetrySource(session.value, input.retryOfRunId, control);
     if (!source.ok) return source.response;
+    let providerSettingsOverride: ApplicationRunProviderSettings | undefined;
+    try {
+      providerSettingsOverride =
+        input.providerSettingsOverride === undefined
+          ? undefined
+          : this.#providers.canonicalizeEnvelope(input.providerSettingsOverride);
+      if (providerSettingsOverride !== undefined && providerSettingsOverride.providerId !== session.value.providerId) {
+        return requestFailure();
+      }
+    } catch {
+      return requestFailure();
+    }
     let executionSnapshot: RunExecutionSnapshot;
+    let providerRequest: ApplicationRunProviderRequest;
     try {
       executionSnapshot = buildRetryExecutionSnapshot(
         session.value,
         source.value.executionSnapshot,
-        input.executionOverrides,
+        providerSettingsOverride,
+        this.#providers,
       );
+      providerRequest = buildProviderRequest(source.value.contentBlocks, executionSnapshot, this.#providers);
     } catch {
       return domainFailure(
         "reference_invalid",
@@ -292,9 +380,9 @@ export class ApplicationRunAdmissionService<TAuthorizationContext> {
       retryOfRunId: input.retryOfRunId,
       contentBlocks: source.value.contentBlocks,
       executionSnapshot,
-      providerRequest: buildProviderRequest(source.value.contentBlocks, executionSnapshot),
+      providerRequest,
     };
-    return this.#admit(command, control);
+    return this.#replayPreflightAndAdmit(command, control);
   }
 
   async #authorizeStart(
@@ -566,6 +654,82 @@ export class ApplicationRunAdmissionService<TAuthorizationContext> {
     return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(combined)) as unknown;
   }
 
+  async #replayPreflightAndAdmit(
+    command: ApplicationRunAdmissionCommand,
+    control: OperationControl,
+  ): Promise<WriteResponse> {
+    const initialReplay = await this.#probeReplay(command, control);
+    if (initialReplay.kind === "response") return initialReplay.response;
+
+    const preflightAbort = new AbortController();
+    const preflight = await runControlled(
+      control,
+      () => this.#preflight.preflight(command.executionSnapshot, { signal: preflightAbort.signal }),
+      () => preflightAbort.abort(),
+    );
+    if (preflight.status === "interrupted") return operationFailureFor(preflight.interruption);
+
+    let preflightKind: "supported" | "unsupported" | "unavailable";
+    if (preflight.status === "rejected") {
+      preflightKind = "unavailable";
+    } else {
+      const kind = projectionRecord(preflight.value).kind;
+      if (kind !== "supported" && kind !== "unsupported" && kind !== "unavailable") {
+        preflightKind = "unavailable";
+      } else {
+        preflightKind = kind;
+      }
+    }
+    if (preflightKind === "supported") return this.#admit(command, control);
+
+    const replayAfterFailure = await this.#probeReplay(command, control);
+    if (replayAfterFailure.kind === "response") return replayAfterFailure.response;
+    return providerCapabilityFailure(preflightKind === "unavailable");
+  }
+
+  async #probeReplay(command: ApplicationRunAdmissionCommand, control: OperationControl): Promise<ReplayCheck> {
+    const repositoryAbort = new AbortController();
+    const settlement = await runControlled(
+      control,
+      () => this.#replay.probe(repositoryRunAdmissionCommand(command), { signal: repositoryAbort.signal }),
+      () => repositoryAbort.abort(),
+    );
+    if (settlement.status === "interrupted") {
+      return {
+        kind: "response",
+        response: settlement.started
+          ? persistenceInterruptionFailure(settlement.interruption, "none")
+          : operationFailureFor(settlement.interruption),
+      };
+    }
+    if (settlement.status === "rejected") {
+      return {
+        kind: "response",
+        response:
+          settlement.error instanceof PersistenceClientError
+            ? persistenceFailure(settlement.error.persistenceError, "none")
+            : persistenceApplicationFailure("none"),
+      };
+    }
+    try {
+      const result = settlement.value;
+      if (result.kind === "absent") return { kind: "absent" };
+      if (result.kind === "failure") {
+        return { kind: "response", response: domainFailureFromRepository(result.error) };
+      }
+      if (result.kind !== "replay") throw new TypeError("Run replay projection is invalid.");
+      return {
+        kind: "response",
+        response: this.#completeAdmission(
+          { ok: true, value: result.value, replayed: true } as RepositoryCommandResult<ApplicationRunAdmissionRecord>,
+          command,
+        ),
+      };
+    } catch {
+      return { kind: "response", response: persistenceApplicationFailure("none") };
+    }
+  }
+
   async #admit(command: ApplicationRunAdmissionCommand, control: OperationControl): Promise<WriteResponse> {
     const interruption = getOperationInterruption(control);
     if (interruption !== undefined) return operationFailureFor(interruption);
@@ -583,53 +747,60 @@ export class ApplicationRunAdmissionService<TAuthorizationContext> {
     }
     if (settlement.status === "rejected") return mapWriteFailure(settlement.error);
     try {
-      const result = settlement.value;
-      if (!result.ok) return domainFailureFromRepository(result.error);
-      if (typeof result.replayed !== "boolean") {
-        throw new TypeError("Run admission replay state is invalid.");
-      }
-      const record = projectAdmissionRecord(result.value, command);
-      if (!result.replayed && record.runPhase !== "queued") {
-        throw new TypeError("A fresh Run admission must remain queued.");
-      }
-      if (
-        isSafePendingDispatchPhase(record.runPhase) &&
-        record.dispatchState === "pending" &&
-        (record.bindingState === "active" || (record.bindingState === "creating" && !result.replayed))
-      ) {
-        try {
-          this.#handoff.handoff(record);
-        } catch {
-          // Admission is already durable. A failed in-memory handoff leaves the Run as a safe pending recovery candidate.
-        }
-      }
-      return {
-        overallStatus: "success",
-        value: {
-          sessionId: record.sessionId,
-          runId: record.runId,
-          ...(record.retryOfRunId === undefined ? {} : { retryOfRunId: record.retryOfRunId }),
-          phase: record.runPhase,
-        },
-        persistence: { status: "committed", effect: "none", replayed: result.replayed },
-      };
+      return this.#completeAdmission(settlement.value, command);
     } catch (error) {
       return persistenceApplicationFailure("unknown");
     }
+  }
+
+  #completeAdmission(
+    result: RepositoryCommandResult<ApplicationRunAdmissionRecord>,
+    command: ApplicationRunAdmissionCommand,
+  ): WriteResponse {
+    if (!result.ok) return domainFailureFromRepository(result.error);
+    if (typeof result.replayed !== "boolean") throw new TypeError("Run admission replay state is invalid.");
+    const record = projectAdmissionRecord(result.value, command);
+    if (!result.replayed && record.runPhase !== "queued") {
+      throw new TypeError("A fresh Run admission must remain queued.");
+    }
+    if (
+      isSafePendingDispatchPhase(record.runPhase) &&
+      record.dispatchState === "pending" &&
+      (record.bindingState === "active" || (record.bindingState === "creating" && !result.replayed))
+    ) {
+      try {
+        this.#handoff.handoff(record);
+      } catch {
+        // Admission is already durable. A failed in-memory handoff leaves the Run as a safe pending recovery candidate.
+      }
+    }
+    return {
+      overallStatus: "success",
+      value: {
+        sessionId: record.sessionId,
+        runId: record.runId,
+        ...(record.retryOfRunId === undefined ? {} : { retryOfRunId: record.retryOfRunId }),
+        phase: record.runPhase,
+      },
+      persistence: { status: "committed", effect: "none", replayed: result.replayed },
+    };
   }
 }
 
 export function buildStartExecutionSnapshot(
   session: SessionAdmissionContext,
-  execution: ApplicationRunExecutionSettings,
+  providerSettings: ApplicationRunProviderSettings,
+  providers: ProviderDefinitionRegistry = defaultProviderDefinitionRegistry,
 ): RunExecutionSnapshot {
+  const canonical = providers.canonicalizeEnvelope(providerSettings);
+  if (canonical.providerId !== session.providerId) {
+    throw new TypeError("Provider settings do not match the Session Provider.");
+  }
   return Object.freeze({
-    providerId: session.providerId,
-    model: execution.model,
+    providerId: canonical.providerId,
+    definitionVersion: canonical.definitionVersion,
     modelSelection: "explicit",
-    reasoning: Object.freeze({ effort: execution.reasoningEffort }),
-    approval: Object.freeze({ policy: "never" }),
-    sandbox: freezeSandbox(execution.sandbox),
+    settings: canonical.settings,
     workspace: Object.freeze({
       key: session.workspaceKey,
       path: session.workspacePath,
@@ -642,9 +813,10 @@ export function buildStartExecutionSnapshot(
 export function buildRetryExecutionSnapshot(
   session: SessionAdmissionContext,
   source: RunExecutionSnapshot,
-  overrides: ApplicationRunExecutionOverrides | undefined,
+  providerSettingsOverride: ApplicationRunProviderSettings | undefined,
+  providers: ProviderDefinitionRegistry = defaultProviderDefinitionRegistry,
 ): RunExecutionSnapshot {
-  const decoded = decodeApplicationRunExecutionSnapshot(source);
+  const decoded = decodeApplicationRunExecutionSnapshot(source, providers);
   const sourceWorkspace = projectionRecord(decoded.workspace);
   if (
     decoded.providerId !== session.providerId ||
@@ -653,23 +825,26 @@ export function buildRetryExecutionSnapshot(
   ) {
     throw new TypeError("Retry execution snapshot scope is stale.");
   }
-  const reasoning = projectionRecord(decoded.reasoning);
-  const sourceSandbox = decodeSandbox(decoded.sandbox);
+  const selected =
+    providerSettingsOverride === undefined
+      ? Object.freeze({
+          providerId: decoded.providerId,
+          definitionVersion: decoded.definitionVersion,
+          settings: decoded.settings,
+        })
+      : providers.canonicalizeEnvelope(providerSettingsOverride);
   return Object.freeze({
-    ...buildStartExecutionSnapshot(session, {
-      model: overrides?.model ?? decoded.model,
-      reasoningEffort: overrides?.reasoningEffort ?? boundedString(readDataProperty(reasoning, "effort")),
-      sandbox: overrides?.sandbox ?? sourceSandbox,
-    }),
-    modelSelection: overrides?.model === undefined ? "inherited" : "explicit",
+    ...buildStartExecutionSnapshot(session, selected, providers),
+    modelSelection: providerSettingsOverride === undefined ? "inherited" : "explicit",
   });
 }
 
 export function buildProviderRequest(
   contentBlocks: readonly TextContentBlock[],
   executionSnapshot: RunExecutionSnapshot,
+  providers: ProviderDefinitionRegistry = defaultProviderDefinitionRegistry,
 ): ApplicationRunProviderRequest {
-  return buildApplicationRunProviderRequest(contentBlocks, executionSnapshot);
+  return providerRequestJson(contentBlocks, providers.compileSnapshot(executionSnapshot));
 }
 
 function decodeStartRequest<TAuthorizationContext>(
@@ -677,7 +852,7 @@ function decodeStartRequest<TAuthorizationContext>(
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): ApplicationRunStartRequest<TAuthorizationContext> {
   assertProxyFree(value);
-  const request = exactRecord(value, ["context", "sessionId", "idempotencyKey", "contentBlocks", "execution"]);
+  const request = exactRecord(value, ["context", "sessionId", "idempotencyKey", "contentBlocks", "providerSettings"]);
   const contentBlocks = snapshotMessageContentBlocks(readDataProperty(request, "contentBlocks"));
   if (contentBlocks === undefined) throw new TypeError("Message content is invalid.");
   return {
@@ -685,7 +860,7 @@ function decodeStartRequest<TAuthorizationContext>(
     sessionId: boundedString(readDataProperty(request, "sessionId")),
     idempotencyKey: canonicalIdempotencyKey(readDataProperty(request, "idempotencyKey")),
     contentBlocks,
-    execution: decodeExecutionSettings(readDataProperty(request, "execution")),
+    providerSettings: decodeProviderSettingsEnvelope(readDataProperty(request, "providerSettings")),
   };
 }
 
@@ -694,14 +869,20 @@ function decodeRetryRequest<TAuthorizationContext>(
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
 ): ApplicationRunRetryRequest<TAuthorizationContext> {
   assertProxyFree(value);
-  const request = exactRecord(value, ["context", "sessionId", "retryOfRunId", "idempotencyKey", "executionOverrides"]);
-  const overridesValue = readOptionalDataProperty(request, "executionOverrides");
+  const request = exactRecord(value, [
+    "context",
+    "sessionId",
+    "retryOfRunId",
+    "idempotencyKey",
+    "providerSettingsOverride",
+  ]);
+  const overrideValue = readOptionalDataProperty(request, "providerSettingsOverride");
   return {
     context: decodeContext(readDataProperty(request, "context"), snapshotAuthorization),
     sessionId: boundedString(readDataProperty(request, "sessionId")),
     retryOfRunId: boundedString(readDataProperty(request, "retryOfRunId")),
     idempotencyKey: canonicalIdempotencyKey(readDataProperty(request, "idempotencyKey")),
-    ...(overridesValue === undefined ? {} : { executionOverrides: decodeExecutionOverrides(overridesValue) }),
+    ...(overrideValue === undefined ? {} : { providerSettingsOverride: decodeProviderSettingsEnvelope(overrideValue) }),
   };
 }
 
@@ -713,61 +894,58 @@ function decodeContext<TAuthorizationContext>(
   return { authorization: snapshotAuthorization(readDataProperty(context, "authorization")) } as const;
 }
 
-function decodeExecutionSettings(value: unknown): ApplicationRunExecutionSettings {
-  const execution = exactRecord(value, ["model", "reasoningEffort", "sandbox"]);
+function decodeProviderSettingsEnvelope(value: unknown): ApplicationRunProviderSettings {
+  const envelope = exactRecord(value, ["providerId", "definitionVersion", "settings"]);
   return {
-    model: executionString(readDataProperty(execution, "model")),
-    reasoningEffort: executionString(readDataProperty(execution, "reasoningEffort")),
-    sandbox: decodeSandbox(readDataProperty(execution, "sandbox")),
+    providerId: boundedString(readDataProperty(envelope, "providerId")),
+    definitionVersion: boundedString(readDataProperty(envelope, "definitionVersion")),
+    settings: projectionRecord(readDataProperty(envelope, "settings")) as ApplicationRunProviderSettings["settings"],
   };
 }
 
-function decodeExecutionOverrides(value: unknown): ApplicationRunExecutionOverrides {
-  const overrides = exactRecord(value, ["model", "reasoningEffort", "sandbox"]);
-  const model = readOptionalDataProperty(overrides, "model");
-  const reasoningEffort = readOptionalDataProperty(overrides, "reasoningEffort");
-  const sandbox = readOptionalDataProperty(overrides, "sandbox");
-  return {
-    ...(model === undefined ? {} : { model: executionString(model) }),
-    ...(reasoningEffort === undefined ? {} : { reasoningEffort: executionString(reasoningEffort) }),
-    ...(sandbox === undefined ? {} : { sandbox: decodeSandbox(sandbox) }),
-  };
-}
-
-export function decodeApplicationRunExecutionSnapshot(value: unknown): RunExecutionSnapshot {
+export function decodeApplicationRunExecutionSnapshot(
+  value: unknown,
+  providers: ProviderDefinitionRegistry | null = defaultProviderDefinitionRegistry,
+): RunExecutionSnapshot {
   const snapshot = exactRecord(value, [
     "providerId",
-    "model",
+    "definitionVersion",
     "modelSelection",
-    "reasoning",
-    "approval",
-    "sandbox",
+    "settings",
     "workspace",
     "character",
   ]);
-  const reasoning = exactRecord(readDataProperty(snapshot, "reasoning"), ["effort"]);
-  const approval = exactRecord(readDataProperty(snapshot, "approval"), ["policy"]);
   const workspace = exactRecord(readDataProperty(snapshot, "workspace"), [
     "key",
     "path",
     "allowedAdditionalDirectories",
   ]);
-  if (readDataProperty(approval, "policy") !== "never" || readDataProperty(snapshot, "character") !== null) {
+  if (readDataProperty(snapshot, "character") !== null) {
     throw new TypeError("Execution snapshot policy is invalid.");
   }
   const modelSelection = readDataProperty(snapshot, "modelSelection");
   if (modelSelection !== "explicit" && modelSelection !== "inherited") {
     throw new TypeError("Execution snapshot model selection is invalid.");
   }
+  const envelope =
+    providers === null
+      ? Object.freeze({
+          providerId: boundedString(readDataProperty(snapshot, "providerId")),
+          definitionVersion: boundedString(readDataProperty(snapshot, "definitionVersion")),
+          settings: snapshotJsonObject(readDataProperty(snapshot, "settings")),
+        })
+      : providers.canonicalizeEnvelope({
+          providerId: readDataProperty(snapshot, "providerId"),
+          definitionVersion: readDataProperty(snapshot, "definitionVersion"),
+          settings: readDataProperty(snapshot, "settings"),
+        });
   const workspaceKey = boundedString(readDataProperty(workspace, "key"));
   const resolvedWorkspace = workspaceIdentity(readDataProperty(workspace, "path"), workspaceKey);
   return Object.freeze({
-    providerId: boundedString(readDataProperty(snapshot, "providerId")),
-    model: executionString(readDataProperty(snapshot, "model")),
+    providerId: envelope.providerId,
+    definitionVersion: envelope.definitionVersion,
     modelSelection,
-    reasoning: Object.freeze({ effort: executionString(readDataProperty(reasoning, "effort")) }),
-    approval: Object.freeze({ policy: "never" }),
-    sandbox: freezeSandbox(decodeSandbox(readDataProperty(snapshot, "sandbox"))),
+    settings: envelope.settings,
     workspace: Object.freeze({
       key: resolvedWorkspace.workspaceKey,
       path: resolvedWorkspace.workspacePath,
@@ -779,21 +957,38 @@ export function decodeApplicationRunExecutionSnapshot(value: unknown): RunExecut
   });
 }
 
-function decodeSandbox(value: unknown): ApplicationRunSandboxSetting {
-  const sandbox = exactRecord(value, ["mode", "networkAccess"]);
-  const mode = readDataProperty(sandbox, "mode");
-  const networkAccess = readOptionalDataProperty(sandbox, "networkAccess");
-  if (mode === "danger-full-access" && networkAccess === undefined) return { mode };
-  if ((mode === "read-only" || mode === "workspace-write") && typeof networkAccess === "boolean") {
-    return { mode, networkAccess };
+function snapshotJsonObject(value: unknown, depth = 0): Readonly<{ [key: string]: RepositoryJsonValue }> {
+  if (depth > 64 || typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError("Execution snapshot Provider settings are invalid.");
   }
-  throw new TypeError("Sandbox setting is invalid.");
+  const keys = Object.keys(value);
+  if (Reflect.ownKeys(value).some((key) => typeof key !== "string" || !keys.includes(key))) {
+    throw new TypeError("Execution snapshot Provider settings are invalid.");
+  }
+  const output: Record<string, RepositoryJsonValue> = {};
+  const record = value as Readonly<Record<string, unknown>>;
+  for (const key of keys) output[key] = snapshotJsonValue(readDataProperty(record, key), depth + 1);
+  return Object.freeze(output);
 }
 
-function freezeSandbox(value: ApplicationRunSandboxSetting): RepositoryJsonValue {
-  return value.mode === "danger-full-access"
-    ? Object.freeze({ mode: value.mode })
-    : Object.freeze({ mode: value.mode, networkAccess: value.networkAccess });
+function snapshotJsonValue(value: unknown, depth: number): RepositoryJsonValue {
+  if (depth > 64) throw new TypeError("Execution snapshot Provider settings are invalid.");
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (Array.isArray(value)) {
+    const output: RepositoryJsonValue[] = [];
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.hasOwn(value, index)) throw new TypeError("Execution snapshot Provider settings are invalid.");
+      output.push(
+        snapshotJsonValue(
+          readDataProperty(value as unknown as Readonly<Record<string, unknown>>, String(index)),
+          depth + 1,
+        ),
+      );
+    }
+    return Object.freeze(output);
+  }
+  return snapshotJsonObject(value, depth);
 }
 
 function isSafePendingDispatchPhase(value: ApplicationRunPhase): boolean {
@@ -1018,6 +1213,21 @@ function domainFailure(
     overallStatus: "failure",
     error: { kind: "domain", code, message, retryable },
     persistence: { status: "rejected", effect: "none" },
+  };
+}
+
+function providerCapabilityFailure(retryable: boolean): WriteFailure {
+  return {
+    overallStatus: "failure",
+    error: {
+      kind: "domain",
+      code: "provider_capability_unavailable",
+      message: retryable
+        ? "Provider runtime capability is temporarily unavailable."
+        : "Provider runtime does not support the requested execution settings.",
+      retryable,
+    },
+    persistence: { status: "not_attempted", effect: "none" },
   };
 }
 

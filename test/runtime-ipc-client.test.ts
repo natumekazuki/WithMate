@@ -34,6 +34,19 @@ import {
   type RuntimeHost,
   type RuntimeHostDependencies,
 } from "../src/main/runtime-host/runtime-host.js";
+
+function providerSettings(reasoningEffort = "medium") {
+  return {
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    settings: {
+      model: "gpt-test",
+      reasoningEffort,
+      approvalPolicy: "never",
+      sandbox: { mode: "workspace-write", networkAccess: false },
+    },
+  } as const;
+}
 import {
   startRuntimeHostClient,
   type RuntimeHostBootstrapDependencies,
@@ -83,12 +96,15 @@ test("runtime IPC client cancels client-scoped waits, never cancels durable writ
   let writeSignal: AbortSignal | undefined;
   let startSignal: AbortSignal | undefined;
   let cancelSignal: AbortSignal | undefined;
+  let interactionSignal: AbortSignal | undefined;
   let writeCalls = 0;
   let startCalls = 0;
   let cancelCalls = 0;
+  let interactionCalls = 0;
   const durable = deferred<unknown>();
   const durableStart = deferred<unknown>();
   const durableCancel = deferred<unknown>();
+  const durableInteraction = deferred<unknown>();
   const fixture = await createHostFixture(context, {
     follow: async (_request, options) => {
       followSignal = options?.signal;
@@ -108,6 +124,11 @@ test("runtime IPC client cancels client-scoped waits, never cancels durable writ
       cancelCalls += 1;
       cancelSignal = options?.signal;
       return await durableCancel.promise;
+    },
+    respondInteraction: async (_request, options) => {
+      interactionCalls += 1;
+      interactionSignal = options?.signal;
+      return await durableInteraction.promise;
     },
     list: async () => readResponse({ items: [] }),
   });
@@ -139,16 +160,30 @@ test("runtime IPC client cancels client-scoped waits, never cancels durable writ
 
   await assert.rejects(
     client.request(
+      "run.respond_interaction",
+      {
+        sessionId: "session-1",
+        runId: "run-1",
+        idempotencyKey: randomUUID(),
+        response: { interactionId: "interaction-1", kind: "provider.approval", payload: { decision: "accept" } },
+      },
+      { timeoutMs: 25 },
+    ),
+    (error: unknown) => error instanceof RuntimeIpcClientError && error.code === "request_timeout",
+  );
+  assert.equal(interactionCalls, 1);
+  assert.equal(interactionSignal?.aborted, false);
+  durableInteraction.resolve(writeResponse(respondInteractionValue()));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  await assert.rejects(
+    client.request(
       "run.start",
       {
         sessionId: "session-1",
         idempotencyKey: randomUUID(),
         contentBlocks: [{ type: "text", text: "hello" }],
-        execution: {
-          model: "gpt-test",
-          reasoningEffort: "medium",
-          sandbox: { mode: "read-only", networkAccess: false },
-        },
+        providerSettings: providerSettings(),
       },
       { timeoutMs: 25 },
     ),
@@ -187,6 +222,7 @@ test("runtime IPC client cancels client-scoped waits, never cancels durable writ
   assert.equal(writeCalls, 1);
   assert.equal(startCalls, 1);
   assert.equal(cancelCalls, 1);
+  assert.equal(interactionCalls, 1);
 });
 
 test("a queued request timeout remains not-started and a connection loss settles the sent sibling", async (context) => {
@@ -222,8 +258,15 @@ test("a queued request timeout remains not-started and a connection loss settles
 });
 
 test("runtime Application client closes only its connection and a later client keeps using the same host generation", async (context) => {
+  const pendingInteractions = readResponse({
+    sessionId: "session-1",
+    runId: "run-1",
+    runVersion: 7,
+    interactions: [interactionSnapshot("interaction-1")],
+  });
   const fixture = await createHostFixture(context, {
     list: async () => readResponse({ items: [] }),
+    interactions: async () => pendingInteractions,
   });
   const firstClient = await RuntimeIpcClient.connect(fixture.identity, { timeoutMs: 2_000 });
   const firstRuntime = createRuntimeApplicationClient(firstClient);
@@ -231,12 +274,29 @@ test("runtime Application client closes only its connection and a later client k
     await firstRuntime.operations.list({ context: { authorization: LOCAL_AUTHORIZATION }, limit: 1 }),
     readResponse({ items: [] }),
   );
+  assertJsonEqual(
+    await firstRuntime.runOperations.interactions({
+      context: { authorization: LOCAL_AUTHORIZATION },
+      sessionId: "session-1",
+      runId: "run-1",
+    }),
+    pendingInteractions,
+  );
   assert.deepEqual(await firstRuntime.shutdown(), { checkpoint: "completed" });
 
   const secondClient = await RuntimeIpcClient.connect(fixture.identity, { timeoutMs: 2_000 });
   context.after(() => secondClient.close().catch(() => undefined));
   assert.equal(secondClient.hostGenerationId, fixture.host.generationId);
   assertJsonEqual(await secondClient.request("session.list", { limit: 1 }), readResponse({ items: [] }));
+  const secondRuntime = createRuntimeApplicationClient(secondClient);
+  assertJsonEqual(
+    await secondRuntime.runOperations.interactions({
+      context: { authorization: LOCAL_AUTHORIZATION },
+      sessionId: "session-1",
+      runId: "run-1",
+    }),
+    pendingInteractions,
+  );
 });
 
 test("runtime Application client preserves exact retry and export reconciliation after IPC response loss", async () => {
@@ -278,11 +338,7 @@ test("runtime Application client preserves exact retry and export reconciliation
     sessionId: "session-1",
     idempotencyKey,
     contentBlocks: [{ type: "text", text: "hello" }],
-    execution: {
-      model: "gpt-test",
-      reasoningEffort: "medium",
-      sandbox: { mode: "read-only", networkAccess: false },
-    },
+    providerSettings: providerSettings(),
   });
   assert.deepEqual(start.persistence, {
     status: "failed",
@@ -386,12 +442,18 @@ test("runtime Application client preserves exact retry and export reconciliation
   });
 });
 
-test("runtime Application client owns the complete 24-operation proxy allowlist without forwarding authorization", async () => {
+test("runtime Application client owns the complete 27-operation proxy allowlist without forwarding authorization", async () => {
   const calls: Array<Readonly<{ operation: RuntimeIpcOperation; payload: RuntimeIpcOperationPayload }>> = [];
   let closeCalls = 0;
   const client = {
     async request(operation: RuntimeIpcOperation, payload: RuntimeIpcOperationPayload) {
       calls.push({ operation, payload });
+      if (operation === "run.interactions") {
+        return readResponse({ sessionId: "session-1", runId: "run-1", runVersion: 1, interactions: [] });
+      }
+      if (operation === "run.respond_interaction") {
+        return writeResponse(respondInteractionValue());
+      }
       return {};
     },
     async close() {
@@ -440,18 +502,14 @@ test("runtime Application client owns the complete 24-operation proxy allowlist 
     sessionId: "session-1",
     idempotencyKey,
     contentBlocks: [{ type: "text", text: "hello" }],
-    execution: {
-      model: "gpt-test",
-      reasoningEffort: "medium",
-      sandbox: { mode: "workspace-write", networkAccess: false },
-    },
+    providerSettings: providerSettings(),
   });
   await runtime.runOperations.retry({
     context,
     sessionId: "session-1",
     retryOfRunId: "run-source",
     idempotencyKey,
-    executionOverrides: { reasoningEffort: "high" },
+    providerSettingsOverride: providerSettings("high"),
   });
   await runtime.runOperations.sendInput({
     context,
@@ -466,7 +524,15 @@ test("runtime Application client owns the complete 24-operation proxy allowlist 
     runId: "run-1",
     idempotencyKey,
   });
+  await runtime.runOperations.respondInteraction({
+    context,
+    sessionId: "session-1",
+    runId: "run-1",
+    idempotencyKey,
+    response: { interactionId: "interaction-1", kind: "provider.approval", payload: { decision: "accept" } },
+  });
   await runtime.runOperations.status({ context, sessionId: "session-1", runId: "run-1" });
+  await runtime.runOperations.interactions({ context, sessionId: "session-1", runId: "run-1" });
   await runtime.runOperations.events({ context, sessionId: "session-1", runId: "run-1", limit: 1 });
   await runtime.runOperations.follow({
     context,
@@ -518,6 +584,186 @@ test("runtime Application client owns the complete 24-operation proxy allowlist 
   assert.equal(calls[0]?.payload.idempotencyKey, idempotencyKey);
   assert.equal(calls.at(-1)?.payload.destination, path.resolve("output.bin"));
   assert.equal(closeCalls, 1);
+});
+
+test("runtime Application client canonicalizes valid interactions and rejects malformed projections from a hostile host", async () => {
+  const canonicalValue = {
+    sessionId: "session-1",
+    runId: "run-1",
+    runVersion: 7,
+    interactions: canonicalInteractionSnapshots(),
+  };
+  const canonicalClient = {
+    async request() {
+      return readResponse(canonicalValue);
+    },
+    async close() {},
+  } as unknown as RuntimeIpcClient;
+  const canonicalRuntime = createRuntimeApplicationClient(canonicalClient);
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(
+        await canonicalRuntime.runOperations.interactions({
+          context: { authorization: LOCAL_AUTHORIZATION },
+          sessionId: "session-1",
+          runId: "run-1",
+        }),
+      ),
+    ),
+    readResponse(canonicalValue),
+  );
+
+  const validValue = {
+    sessionId: "session-1",
+    runId: "run-1",
+    runVersion: 7,
+    interactions: [interactionSnapshot("interaction-1")],
+  };
+  const invalidValues = [
+    {
+      ...validValue,
+      interactions: [{ ...interactionSnapshot("interaction-1"), threadId: "private-thread" }],
+    },
+    {
+      ...validValue,
+      interactions: [interactionSnapshot("interaction-1"), interactionSnapshot("interaction-1")],
+    },
+    {
+      ...validValue,
+      interactions: [{ ...interactionSnapshot("interaction-1"), kind: "" }],
+    },
+    {
+      ...validValue,
+      interactions: [{ ...interactionSnapshot("interaction-1"), display: [] }],
+    },
+    {
+      ...validValue,
+      interactions: [
+        {
+          ...interactionSnapshot("interaction-1"),
+          display: {
+            summary: "Approve command",
+            command: "node --version",
+            rawRequestId: "provider-private",
+          },
+        },
+      ],
+    },
+    {
+      ...validValue,
+      interactions: [
+        {
+          ...interactionSnapshot("interaction-1"),
+          display: {
+            summary: "Approve command",
+            command: "node --version",
+            absolutePath: "C:\\private\\secret.txt",
+          },
+        },
+      ],
+    },
+    {
+      ...validValue,
+      interactions: [{ ...interactionSnapshot("interaction-1"), definitionVersion: "codex-unknown-v2" }],
+    },
+    {
+      ...validValue,
+      interactions: [
+        {
+          ...interactionSnapshot("interaction-1"),
+          display: { summary: "path:C:\\Users\\alice\\secret.txt", command: "node --version" },
+        },
+      ],
+    },
+    {
+      ...validValue,
+      interactions: [
+        {
+          ...interactionSnapshot("interaction-1"),
+          display: {
+            summary: "Approve command",
+            command: "node --version",
+            availableDecisions: ["accept", "accept", "cancel"],
+          },
+        },
+      ],
+    },
+  ];
+
+  for (const invalidValue of invalidValues) {
+    const client = {
+      async request() {
+        return readResponse(invalidValue);
+      },
+      async close() {},
+    } as unknown as RuntimeIpcClient;
+    const runtime = createRuntimeApplicationClient(client);
+    await assert.rejects(
+      runtime.runOperations.interactions({
+        context: { authorization: LOCAL_AUTHORIZATION },
+        sessionId: "session-1",
+        runId: "run-1",
+      }),
+      /response is invalid|value is invalid/u,
+    );
+  }
+});
+
+test("runtime Application client rejects malformed interaction response certainty from a hostile host", async () => {
+  const client = {
+    async request() {
+      return writeResponse({ ...respondInteractionValue(), semanticAction: "accept" });
+    },
+    async close() {},
+  } as unknown as RuntimeIpcClient;
+  const runtime = createRuntimeApplicationClient(client);
+  await assert.rejects(
+    runtime.runOperations.respondInteraction({
+      context: { authorization: LOCAL_AUTHORIZATION },
+      sessionId: "session-1",
+      runId: "run-1",
+      idempotencyKey: randomUUID(),
+      response: { interactionId: "interaction-1", kind: "provider.approval", payload: { decision: "accept" } },
+    }),
+    /response is invalid|value is invalid/u,
+  );
+});
+
+test("runtime Application client rejects partial interaction responses from a hostile host", async () => {
+  const client = {
+    async request() {
+      return {
+        overallStatus: "partial_success",
+        value: respondInteractionValue(),
+        issues: [
+          {
+            kind: "persistence",
+            code: "persistence_operation_failed",
+            message: "Persistence failed after interaction response admission.",
+            retryable: true,
+            effect: "unknown",
+          },
+        ],
+        persistence: {
+          status: "failed",
+          effect: "unknown",
+          reconciliation: "exact_request_required",
+        },
+      };
+    },
+    async close() {},
+  } as unknown as RuntimeIpcClient;
+  const runtime = createRuntimeApplicationClient(client);
+  await assert.rejects(
+    runtime.runOperations.respondInteraction({
+      context: { authorization: LOCAL_AUTHORIZATION },
+      sessionId: "session-1",
+      runId: "run-1",
+      idempotencyKey: randomUUID(),
+      response: { interactionId: "interaction-1", kind: "provider.approval", payload: { decision: "accept" } },
+    }),
+    /response is invalid|value is invalid/u,
+  );
 });
 
 test("simultaneous bootstrap attempts converge on one owner and do not spawn when a handshake is rejected", async (context) => {
@@ -761,7 +1007,9 @@ function fakeRuntimeApplication(overrides: Readonly<Record<string, FakeMethod>>)
       retry: overrides.retry ?? fallback,
       sendInput: overrides.sendInput ?? fallback,
       cancel: overrides.cancel ?? fallback,
+      respondInteraction: overrides.respondInteraction ?? fallback,
       status: overrides.status ?? fallback,
+      interactions: overrides.interactions ?? fallback,
       events: overrides.events ?? fallback,
       follow: overrides.follow ?? fallback,
     },
@@ -799,6 +1047,108 @@ function runStatus(runId: string): Readonly<Record<string, unknown>> {
     liveActivity: "running",
     createdAt: 1,
     updatedAt: 1,
+  };
+}
+
+function interactionSnapshot(interactionId: string): Readonly<Record<string, unknown>> {
+  return {
+    interactionId,
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    kind: "codex.command_approval",
+    answerable: true,
+    display: {
+      summary: "Approve command",
+      command: "node --version",
+      availableDecisions: ["accept", "decline", "cancel"],
+    },
+  };
+}
+
+function canonicalInteractionSnapshots() {
+  const base = {
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    answerable: true,
+  } as const;
+  return [
+    {
+      ...base,
+      interactionId: "interaction-command",
+      kind: "codex.command_approval",
+      display: {
+        summary: "Approve command",
+        command: "node --version",
+        availableDecisions: ["accept", "decline", "cancel"],
+      },
+    },
+    {
+      ...base,
+      interactionId: "interaction-file",
+      kind: "codex.file_change_approval",
+      display: { summary: "Changes", changes: [{ displayPath: "src/index.ts", changeKind: "update" }] },
+    },
+    {
+      ...base,
+      interactionId: "interaction-permission",
+      kind: "codex.permission_approval",
+      display: { summary: "Permissions", permissions: ["workspace_write"] },
+    },
+    {
+      ...base,
+      interactionId: "interaction-input",
+      kind: "codex.user_input",
+      display: {
+        questions: [
+          {
+            questionId: "choice",
+            header: "Choice",
+            prompt: "Choose one",
+            allowOther: false,
+            options: [{ label: "one" }, { label: "two", description: "Second" }],
+          },
+        ],
+      },
+    },
+    {
+      ...base,
+      interactionId: "interaction-tool",
+      kind: "codex.mcp_tool_approval",
+      display: { server: "fixture", tool: "collect", summary: "Allow collect" },
+    },
+    {
+      ...base,
+      interactionId: "interaction-form",
+      kind: "codex.mcp_server_form",
+      display: {
+        server: "fixture",
+        message: "Enter values",
+        fields: [{ fieldId: "value", label: "Value", inputType: "string", required: false, maxLength: 4096 }],
+      },
+    },
+    {
+      ...base,
+      interactionId: "interaction-unavailable",
+      kind: "codex.command_approval",
+      answerable: false,
+      display: {
+        summary: "A command approval request is unavailable.",
+        unavailableReason: "unsafe_projection",
+      },
+    },
+  ] as const;
+}
+
+function respondInteractionValue(): Readonly<Record<string, unknown>> {
+  return {
+    sessionId: "session-1",
+    runId: "run-1",
+    interactionId: "interaction-1",
+    admittedAt: 1,
+    effectCertainty: "admitted",
+    writeAttemptedAt: null,
+    settledAt: null,
+    resolutionCode: null,
   };
 }
 

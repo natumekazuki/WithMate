@@ -319,9 +319,15 @@ test("real stdout routes unknown notification and server request beside a respon
   });
   const event = await transport.nextEvent();
   if (event.kind !== "serverRequest") assert.fail("expected server request");
+  assert.deepEqual(transport.observeServerRequestResolution("server-1"), {
+    kind: "current",
+    identity: event.request.identity,
+  });
+  assert.deepEqual(transport.observeServerRequestResolution("server-1"), { kind: "duplicate" });
+  assert.deepEqual(transport.observeServerRequestResolution(1), { kind: "invalid" });
   assert.deepEqual(
-    { id: event.request.id, method: event.request.method, params: event.request.params },
-    { id: "server-1", method: "future/request", params: { prompt: "fixture" } },
+    { method: event.request.method, params: event.request.params },
+    { method: "future/request", params: { prompt: "fixture" } },
   );
   await event.request.respond({ accepted: true });
   await transport.close();

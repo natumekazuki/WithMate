@@ -1,12 +1,21 @@
 import { createHash } from "node:crypto";
 
-import { APPLICATION_RUN_LIMITS, type ApplicationRunLiveActivity } from "../shared/application-run-model.js";
+import {
+  APPLICATION_RUN_LIMITS,
+  type ApplicationRunInteractionResponse,
+  type ApplicationRunInteractionsResult,
+  type ApplicationRunLiveActivity,
+} from "../shared/application-run-model.js";
 import type {
   RepositoryCommandResult,
   RunDispatchResolutionCommand,
   RunDispatchResolutionResult,
   RunInputBeginCommand,
   RunInputResolutionCommand,
+  RunInteractionResponseAdmissionCommand,
+  RunInteractionResponseMarkWriteAttemptCommand,
+  RunInteractionResponseResult,
+  RunInteractionResponseSettlementCommand,
   RunOutputAppendCommand,
   RunOutputDraft,
   RunOutputPayloadCommand,
@@ -23,6 +32,10 @@ import type {
   CodexAdapterTurnSnapshot,
 } from "./providers/codex/index.js";
 import type {
+  ApplicationRunInteractionResponseOwnerInput,
+  ApplicationRunInteractionResponseOwnerPort,
+} from "./application-run-interaction-response-service.js";
+import type {
   ApplicationRunCancelHandoffRecord,
   ApplicationRunCancelOwnerPort,
   ApplicationRunCancelOwnerReservation,
@@ -38,12 +51,27 @@ import type {
   ApplicationRunDispatchControl,
   ApplicationRunPreparedDispatch,
   ApplicationRunProviderEventPort,
+  ApplicationRunProviderInteractionHandle,
+  ApplicationRunProviderInteractionResponse,
+  ApplicationRunProviderInteractionResponseReservation,
+  ApplicationRunProviderInteractionResponseResult,
 } from "./application-run-runtime-service.js";
 import {
   classifyApplicationRunProviderMutationFailure,
   type ApplicationRunProviderMutationFailure,
 } from "./application-run-provider-failure.js";
-import type { ApplicationRunLiveActivityPort, ApplicationRunLiveActivitySnapshot } from "./application-run-service.js";
+import type {
+  ApplicationRunInteractionReadPort,
+  ApplicationRunLiveActivityPort,
+  ApplicationRunLiveActivitySnapshot,
+} from "./application-run-service.js";
+import {
+  ApplicationRunInteractionState,
+  type ApplicationRunInteractionClaim,
+  type ApplicationRunInteractionStateLimits,
+} from "./application-run-interaction-state.js";
+import type { ProviderDefinitionRegistry } from "./providers/provider-definition.js";
+import { defaultProviderDefinitionRegistry } from "./providers/provider-registry.js";
 import { PersistenceClientError, type PersistenceWorkerClient } from "./persistence-worker-client.js";
 import { RepositoryReadClient } from "./repository-read-client.js";
 import { RepositoryWriteClient } from "./repository-write-client.js";
@@ -85,18 +113,29 @@ export type ApplicationRunEventReadPort = Pick<RepositoryReadClient, "runGet" | 
 
 export type ApplicationRunEventWritePort = Pick<
   RepositoryWriteClient,
-  "resolveRunDispatch" | "beginRunInput" | "resolveRunInput" | "appendRunOutput" | "completeRun"
+  | "resolveRunDispatch"
+  | "beginRunInput"
+  | "resolveRunInput"
+  | "admitRunInteractionResponse"
+  | "markRunInteractionResponseWriteAttempt"
+  | "settleRunInteractionResponse"
+  | "appendRunOutput"
+  | "completeRun"
 >;
 
 export type ApplicationRunEventServiceOptions = Readonly<{
   reads: ApplicationRunEventReadPort;
   writes: ApplicationRunEventWritePort;
+  providers?: ProviderDefinitionRegistry;
   limits?: Readonly<{
     maxTrackedAttempts?: number;
     maxBufferedEventsPerAttempt?: number;
     maxPersistedOutputsPerAttempt?: number;
     maxPendingInputsPerAttempt?: number;
     maxTrackedInputs?: number;
+    maxPendingInteractions?: number;
+    maxInteractionProjectionBytes?: number;
+    maxInteractionTombstones?: number;
   }>;
 }>;
 
@@ -152,6 +191,44 @@ type InputWork = {
   abortListener: (() => void) | null;
 };
 
+type InteractionResponseWorkStatus =
+  | "reserved"
+  | "admission_retryable"
+  | "admission_pending"
+  | "admitted"
+  | "write_mark_pending"
+  | "write_attempted"
+  | "provider_started"
+  | "settlement_pending"
+  | "fail_closed"
+  | "settled";
+
+type InteractionWriteEffectState = {
+  unknownObserved: boolean;
+};
+
+type InteractionResponseWork = {
+  readonly state: AttemptState;
+  readonly claim: ApplicationRunInteractionClaim;
+  readonly admissionCommand: RunInteractionResponseAdmissionCommand;
+  readonly response: ApplicationRunInteractionResponse;
+  readonly providerReservation: ApplicationRunProviderInteractionResponseReservation;
+  readonly admissionWriteEffect: InteractionWriteEffectState;
+  readonly writeMarkWriteEffect: InteractionWriteEffectState;
+  readonly settlement: Promise<RepositoryCommandResult<RunInteractionResponseResult>>;
+  readonly resolveSettlement: (result: RepositoryCommandResult<RunInteractionResponseResult>) => void;
+  status: InteractionResponseWorkStatus;
+  current: RunInteractionResponseResult | null;
+  writeMarkCommand: RunInteractionResponseMarkWriteAttemptCommand | null;
+  inFlightSettlementCommand: RunInteractionResponseSettlementCommand | null;
+  inFlightSettlementWriteEffect: InteractionWriteEffectState | null;
+  desiredSettlement: RunInteractionResponseSettlementCommand["outcome"] | null;
+  reservationDisposition: "held" | "consumed" | "released";
+  settlementResolved: boolean;
+  failClosedResult: RepositoryCommandResult<RunInteractionResponseResult> | null;
+  failClosedAfterNotSentSettlement: boolean;
+};
+
 type AttemptState = {
   readonly dispatch: ApplicationRunPreparedDispatch;
   readonly control: ApplicationRunDispatchControl;
@@ -162,6 +239,7 @@ type AttemptState = {
   turnId: string | null;
   runVersion: number | null;
   activity: ApplicationRunLiveActivity | null;
+  readonly interactions: ApplicationRunInteractionState;
   bufferedEvents: CodexAdapterEvent[];
   eventLimitExceeded: boolean;
   excludedLateAcceptanceIds: Set<string>;
@@ -172,9 +250,13 @@ type AttemptState = {
   releaseReason: ApplicationRunGenerationReleaseReason | null;
   startTurnResult: ApplicationRunStartTurnResult | null;
   startTurnFailure: ApplicationRunProviderMutationFailure | null;
+  pendingCancelPreflights: number;
   cancelWork: CancelWork | null;
   inputQueue: InputWork[];
   inputDrainScheduled: boolean;
+  interactionResponses: Map<string, InteractionResponseWork>;
+  interactionResponseFailClosed: boolean;
+  interruptTurnStarted: boolean;
   chain: Promise<void>;
 };
 
@@ -184,6 +266,8 @@ export class ApplicationRunEventService
     ApplicationRunProviderEventPort,
     ApplicationRunProviderGenerationPort,
     ApplicationRunLiveActivityPort,
+    ApplicationRunInteractionReadPort,
+    ApplicationRunInteractionResponseOwnerPort,
     ApplicationRunInputOwnerPort
 {
   readonly #reads: ApplicationRunEventReadPort;
@@ -193,6 +277,8 @@ export class ApplicationRunEventService
   readonly #maxPersistedOutputsPerAttempt: number;
   readonly #maxPendingInputsPerAttempt: number;
   readonly #maxTrackedInputs: number;
+  readonly #interactionLimits: ApplicationRunInteractionStateLimits;
+  readonly #providers: ProviderDefinitionRegistry;
   readonly #attemptsByRun = new Map<string, AttemptState>();
   readonly #attemptsByOwner = new Map<string, AttemptState>();
   readonly #persistenceRetryTasks = new Map<AttemptState, Promise<void>>();
@@ -204,6 +290,7 @@ export class ApplicationRunEventService
   constructor(options: ApplicationRunEventServiceOptions) {
     this.#reads = options.reads;
     this.#writes = options.writes;
+    this.#providers = options.providers ?? defaultProviderDefinitionRegistry;
     this.#maxTrackedAttempts = positiveLimit(
       options.limits?.maxTrackedAttempts ?? APPLICATION_RUN_EVENT_LIMITS.maxTrackedAttempts,
     );
@@ -219,6 +306,17 @@ export class ApplicationRunEventService
     this.#maxTrackedInputs = positiveLimit(
       options.limits?.maxTrackedInputs ?? APPLICATION_RUN_EVENT_LIMITS.maxTrackedInputs,
     );
+    this.#interactionLimits = Object.freeze({
+      ...(options.limits?.maxPendingInteractions === undefined
+        ? {}
+        : { maxPending: positiveLimit(options.limits.maxPendingInteractions) }),
+      ...(options.limits?.maxInteractionProjectionBytes === undefined
+        ? {}
+        : { maxProjectionBytes: positiveLimit(options.limits.maxInteractionProjectionBytes) }),
+      ...(options.limits?.maxInteractionTombstones === undefined
+        ? {}
+        : { maxTombstones: positiveLimit(options.limits.maxInteractionTombstones) }),
+    });
     this.cancelOwner = Object.freeze<ApplicationRunCancelOwnerPort>({
       preflight: (input, operationOptions) => this.#preflightCancel(input, operationOptions),
       handoff: (record) => this.#handoffCancel(record),
@@ -247,6 +345,24 @@ export class ApplicationRunEventService
       turnId: null,
       runVersion: null,
       activity: null,
+      interactions: new ApplicationRunInteractionState(
+        {
+          sessionId: dispatch.admission.sessionId,
+          runId: dispatch.admission.runId,
+          attemptId: dispatch.admission.attemptId,
+          bindingId: dispatch.admission.bindingId,
+          workspaceKey: dispatch.workspaceKey,
+          providerId: dispatch.providerId,
+          definitionVersion: dispatch.executionSnapshot.definitionVersion,
+          persistenceMode: dispatch.persistenceMode,
+          ephemeralOwnerToken: dispatch.ephemeralOwnerToken,
+          runtimeGenerationId: dispatch.generationId,
+          externalConversationId: dispatch.threadId,
+        },
+        (providerId, definitionVersion, kind) =>
+          this.#providers.interactionActivity(providerId, definitionVersion, kind),
+        this.#interactionLimits,
+      ),
       bufferedEvents: [],
       eventLimitExceeded: false,
       excludedLateAcceptanceIds: new Set(),
@@ -257,9 +373,13 @@ export class ApplicationRunEventService
       releaseReason: null,
       startTurnResult: null,
       startTurnFailure: null,
+      pendingCancelPreflights: 0,
       cancelWork: null,
       inputQueue: [],
       inputDrainScheduled: false,
+      interactionResponses: new Map(),
+      interactionResponseFailClosed: false,
+      interruptTurnStarted: false,
       chain: Promise.resolve(),
     };
     this.#attemptsByRun.set(dispatch.admission.runId, state);
@@ -279,7 +399,9 @@ export class ApplicationRunEventService
     if (state === undefined || state.dispatch.admission.sessionId !== input.sessionId) {
       return Promise.resolve(cancelPreflightFailure("not_found"));
     }
+    state.pendingCancelPreflights += 1;
     return this.#enqueue(state, async () => {
+      state.pendingCancelPreflights -= 1;
       if (options?.signal?.aborted === true || state.cancelWork !== null || !this.#isCancelOwnerCurrent(state)) {
         return cancelPreflightFailure("lifecycle_conflict");
       }
@@ -513,6 +635,7 @@ export class ApplicationRunEventService
   }
 
   async #retryPersistence(state: AttemptState): Promise<void> {
+    if (!(await this.#retryInteractionResponsePersistence(state))) return;
     if (!(await this.#retryInputPersistence(state))) return;
     if (!(await this.#retryPendingResolution(state))) return;
     if (state.releaseReason !== null) {
@@ -546,6 +669,23 @@ export class ApplicationRunEventService
     if (durabilityPending) throw new Error("Run persistence outcome is still unknown.");
   }
 
+  async prepareGenerationRelease(
+    generationId: string,
+    _reason: ApplicationRunGenerationReleaseReason,
+  ): Promise<Readonly<{ kind: "ready" } | { kind: "pending" }>> {
+    const attempts = [...this.#attemptsByRun.values()].filter((state) => state.dispatch.generationId === generationId);
+    let pending = false;
+    await Promise.all(
+      attempts.map((state) =>
+        this.#enqueue(state, async () => {
+          state.interactions.close();
+          if (!(await this.#settleInteractionResponsesForOwnerLoss(state))) pending = true;
+        }),
+      ),
+    );
+    return { kind: pending ? "pending" : "ready" };
+  }
+
   async read(
     input: Readonly<{ sessionId: string; runId: string }>,
   ): Promise<ApplicationRunLiveActivitySnapshot | null> {
@@ -559,12 +699,664 @@ export class ApplicationRunEventService
     ) {
       return null;
     }
+    const includeInteractionActivity =
+      !state.control.signal.aborted &&
+      safeIsCurrent(state.control) &&
+      state.turnId !== null &&
+      state.interactions.matchesActiveExecution(state.turnId);
+    const activity = applicationRunActivity(state, { includeInteractionActivity });
+    if (activity === null) return null;
     return Object.freeze({
       sessionId: input.sessionId,
       runId: input.runId,
       runVersion: state.runVersion,
-      activity: state.activity,
+      activity,
     });
+  }
+
+  async readInteractions(
+    input: Readonly<{ sessionId: string; runId: string; runVersion: number }>,
+  ): Promise<ApplicationRunInteractionsResult | null> {
+    const state = this.#attemptsByRun.get(input.runId);
+    if (state === undefined) return null;
+    return this.#enqueue(state, async () => {
+      if (
+        state.phase !== "accepted" ||
+        state.dispatch.admission.sessionId !== input.sessionId ||
+        state.dispatch.admission.runId !== input.runId ||
+        state.runVersion !== input.runVersion ||
+        state.turnId === null ||
+        !state.interactions.matchesActiveExecution(state.turnId) ||
+        state.control.signal.aborted ||
+        !safeIsCurrent(state.control)
+      ) {
+        return null;
+      }
+      return Object.freeze({
+        sessionId: input.sessionId,
+        runId: input.runId,
+        runVersion: input.runVersion,
+        interactions: state.interactions.snapshot(),
+      });
+    });
+  }
+
+  respond(
+    input: ApplicationRunInteractionResponseOwnerInput,
+  ): Promise<RepositoryCommandResult<RunInteractionResponseResult>> {
+    const state = this.#attemptsByRun.get(input.runId);
+    if (state === undefined || state.dispatch.admission.sessionId !== input.sessionId) {
+      return Promise.resolve(interactionResponseOwnerFailure("not_found", "The live Run interaction was not found."));
+    }
+    if (state.interactionResponseFailClosed) {
+      return Promise.resolve(
+        interactionResponseOwnerFailure("lifecycle_conflict", "The live Run interaction is no longer answerable."),
+      );
+    }
+    if (state.pendingCancelPreflights > 0) {
+      return Promise.resolve(
+        interactionResponseOwnerFailure("lifecycle_conflict", "The live Run interaction is being canceled."),
+      );
+    }
+    const existing = state.interactionResponses.get(input.response.interactionId);
+    if (existing !== undefined) {
+      if (!interactionResponseWorkMatches(existing, input)) {
+        return Promise.resolve(
+          interactionResponseOwnerFailure("lifecycle_conflict", "The Run interaction already has another response."),
+        );
+      }
+      if (existing.status === "admission_retryable") {
+        if (
+          state.phase !== "accepted" ||
+          state.turnId === null ||
+          state.runVersion === null ||
+          state.cancelWork !== null ||
+          state.terminalCommand !== null ||
+          state.control.signal.aborted ||
+          !safeIsCurrent(state.control) ||
+          !state.interactions.matchesActiveExecution(state.turnId)
+        ) {
+          return Promise.resolve(
+            interactionResponseOwnerFailure("lifecycle_conflict", "The live Run interaction is no longer answerable."),
+          );
+        }
+        const retry = retryInteractionResponseWork(existing);
+        state.interactionResponses.set(input.response.interactionId, retry);
+        return this.#enqueue(state, () => this.#driveInteractionResponse(retry)).then(() => retry.settlement);
+      }
+      return this.#enqueue(state, () => this.#driveInteractionResponse(existing)).then(async () => {
+        if (existing.current !== null && existing.status === "settled") {
+          return { ok: true, replayed: true, value: existing.current };
+        }
+        const result = await existing.settlement;
+        return result.ok ? { ...result, replayed: true } : result;
+      });
+    }
+
+    const reserve = state.control.adapter.reserveInteractionResponse;
+    const writeReserved = state.control.adapter.writeReservedInteractionResponse;
+    const releaseReserved = state.control.adapter.releaseInteractionResponseReservation;
+    if (
+      state.phase !== "accepted" ||
+      state.turnId === null ||
+      state.runVersion === null ||
+      state.cancelWork !== null ||
+      state.terminalCommand !== null ||
+      state.control.signal.aborted ||
+      !safeIsCurrent(state.control) ||
+      typeof reserve !== "function" ||
+      typeof writeReserved !== "function" ||
+      typeof releaseReserved !== "function" ||
+      !state.interactions.matchesActiveExecution(state.turnId)
+    ) {
+      return Promise.resolve(
+        interactionResponseOwnerFailure("lifecycle_conflict", "The live Run interaction is no longer answerable."),
+      );
+    }
+    const claim = state.interactions.lookup(input.response.interactionId, input.response.kind);
+    if (claim === null || !interactionResponseOwnerMatches(state, claim, input)) {
+      return Promise.resolve(
+        interactionResponseOwnerFailure(
+          "reference_invalid",
+          "The Run interaction owner tuple does not match the active execution.",
+        ),
+      );
+    }
+    let canonical: ReturnType<ProviderDefinitionRegistry["canonicalizeInteractionResponse"]>;
+    try {
+      canonical = this.#providers.canonicalizeInteractionResponse(claim.snapshot, input.response);
+    } catch {
+      return Promise.resolve(
+        interactionResponseOwnerFailure(
+          "lifecycle_conflict",
+          "The Run interaction response is invalid for the current snapshot.",
+        ),
+      );
+    }
+    if (
+      canonical.semanticAction !== input.semanticAction ||
+      JSON.stringify(canonical.response) !== input.canonicalResponseJson
+    ) {
+      return Promise.resolve(
+        interactionResponseOwnerFailure(
+          "reference_invalid",
+          "The Run interaction response changed after replay validation.",
+        ),
+      );
+    }
+    let reserved: ReturnType<typeof reserve>;
+    try {
+      reserved = reserve.call(
+        state.control.adapter,
+        claim.handle as ApplicationRunProviderInteractionHandle,
+        canonical.response as ApplicationRunProviderInteractionResponse,
+      );
+    } catch {
+      return Promise.resolve(
+        interactionResponseOwnerFailure("lifecycle_conflict", "The Provider response handle could not be reserved."),
+      );
+    }
+    if (reserved.kind === "not_reserved") {
+      return Promise.resolve(
+        interactionResponseOwnerFailure("lifecycle_conflict", "The Provider response handle is no longer available."),
+      );
+    }
+
+    const admissionCommand: RunInteractionResponseAdmissionCommand = {
+      sessionId: input.sessionId,
+      workspaceKey: input.workspaceKey,
+      idempotencyKey: input.idempotencyKey,
+      runId: input.runId,
+      attemptId: claim.owner.attemptId,
+      bindingId: claim.owner.bindingId,
+      ephemeralOwnerToken: claim.owner.ephemeralOwnerToken,
+      externalConversationId: claim.owner.externalConversationId,
+      externalExecutionId: claim.owner.externalExecutionId,
+      providerId: claim.owner.providerId,
+      definitionVersion: claim.owner.definitionVersion,
+      interactionKind: claim.snapshot.kind,
+      interactionId: claim.snapshot.interactionId,
+      semanticAction: canonical.semanticAction,
+      canonicalResponseJson: input.canonicalResponseJson,
+    };
+    let resolveSettlement!: (result: RepositoryCommandResult<RunInteractionResponseResult>) => void;
+    const settlement = new Promise<RepositoryCommandResult<RunInteractionResponseResult>>((resolve) => {
+      resolveSettlement = resolve;
+    });
+    const work: InteractionResponseWork = {
+      state,
+      claim,
+      admissionCommand,
+      response: canonical.response,
+      providerReservation: reserved.reservation,
+      admissionWriteEffect: { unknownObserved: false },
+      writeMarkWriteEffect: { unknownObserved: false },
+      settlement,
+      resolveSettlement,
+      status: "reserved",
+      current: null,
+      writeMarkCommand: null,
+      inFlightSettlementCommand: null,
+      inFlightSettlementWriteEffect: null,
+      desiredSettlement: null,
+      reservationDisposition: "held",
+      settlementResolved: false,
+      failClosedResult: null,
+      failClosedAfterNotSentSettlement: false,
+    };
+    state.interactionResponses.set(claim.snapshot.interactionId, work);
+    return this.#enqueue(state, () => this.#driveInteractionResponse(work)).then(() => settlement);
+  }
+
+  async #settleInteractionResponseFromProvider(
+    work: InteractionResponseWork,
+    result: ApplicationRunProviderInteractionResponseResult,
+  ): Promise<void> {
+    if (result.kind === "write_attempted") {
+      if (result.providerResolution === "resolved") {
+        await this.#requestInteractionResponseSettlement(work, {
+          effectCertainty: "resolved",
+          resolutionCode: "provider_resolved",
+        });
+      } else {
+        this.#resolveInteractionResponse(work, interactionResponseSuccess(work));
+      }
+      return;
+    }
+    if (result.kind === "not_sent") {
+      await this.#requestInteractionResponseSettlement(work, {
+        effectCertainty: "not_sent",
+        resolutionCode: result.code === "write_rejected" ? "transport_not_sent" : "adapter_rejected",
+      });
+      return;
+    }
+    await this.#requestInteractionResponseSettlement(work, {
+      effectCertainty: "ambiguous",
+      resolutionCode: "transport_unknown",
+    });
+  }
+
+  async #requestInteractionResponseSettlement(
+    work: InteractionResponseWork,
+    outcome: RunInteractionResponseSettlementCommand["outcome"],
+  ): Promise<void> {
+    work.desiredSettlement = strongerInteractionResponseOutcome(work.desiredSettlement, outcome);
+    await this.#driveInteractionResponse(work);
+  }
+
+  async #settleInteractionResponsesForOwnerLoss(
+    state: AttemptState,
+    terminalizationInProgress = false,
+  ): Promise<boolean> {
+    for (const work of state.interactionResponses.values()) {
+      if (work.status === "fail_closed") {
+        await this.#driveInteractionResponse(work, terminalizationInProgress);
+        if (state.interactionResponses.get(work.admissionCommand.interactionId) === work) return false;
+        continue;
+      }
+      if (work.status === "admission_retryable") {
+        if (!(await this.#releaseInteractionResponseReservation(work))) return false;
+        work.status = "settled";
+        state.interactionResponses.delete(work.admissionCommand.interactionId);
+        continue;
+      }
+      if (work.status === "settled" && work.current !== null && work.current.effectCertainty !== "write_attempted") {
+        continue;
+      }
+      if (work.status === "reserved" || work.status === "admission_pending" || work.status === "admitted") {
+        work.desiredSettlement = strongerInteractionResponseOutcome(work.desiredSettlement, {
+          effectCertainty: "not_sent",
+          resolutionCode: "owner_lost_before_write",
+        });
+      } else {
+        work.desiredSettlement = strongerInteractionResponseOutcome(work.desiredSettlement, {
+          effectCertainty: "ambiguous",
+          resolutionCode: "process_unknown",
+        });
+      }
+      await this.#driveInteractionResponse(work);
+      if (
+        work.current === null ||
+        (work.current.effectCertainty !== "resolved" &&
+          work.current.effectCertainty !== "ambiguous" &&
+          work.current.effectCertainty !== "not_sent")
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  async #retryInteractionResponsePersistence(state: AttemptState): Promise<boolean> {
+    for (const work of state.interactionResponses.values()) {
+      await this.#driveInteractionResponse(work);
+      if (interactionResponsePersistencePending(work)) return false;
+    }
+    return true;
+  }
+
+  async #driveInteractionResponse(work: InteractionResponseWork, terminalizationInProgress = false): Promise<void> {
+    while (true) {
+      switch (work.status) {
+        case "admission_retryable":
+          if (work.desiredSettlement !== null) {
+            if (!(await this.#releaseInteractionResponseReservation(work))) return;
+            work.status = "settled";
+            work.state.interactionResponses.delete(work.admissionCommand.interactionId);
+          }
+          return;
+        case "reserved":
+          work.status = "admission_pending";
+          continue;
+        case "admission_pending": {
+          const admitted = await interactionWriteExact(
+            () => this.#writes.admitRunInteractionResponse(work.admissionCommand),
+            work.admissionWriteEffect,
+          );
+          if (admitted.kind === "unknown") {
+            this.#schedulePersistenceRetry(work.state);
+            return;
+          }
+          if (admitted.kind === "failure") {
+            if (!admitted.result.error.retryable) {
+              this.#beginFailClosedInteractionResponse(work, admitted.result);
+              continue;
+            } else {
+              work.status = "admission_retryable";
+            }
+            this.#resolveInteractionResponse(work, admitted.result);
+            return;
+          }
+          if (!admitted.result.ok) {
+            if (admitted.result.error.retryable) {
+              work.status = "admission_retryable";
+              this.#resolveInteractionResponse(work, admitted.result);
+              return;
+            }
+            this.#beginFailClosedInteractionResponse(work, admitted.result);
+            continue;
+          }
+          if (!interactionResponseResultMatches(admitted.result.value, work.admissionCommand)) {
+            throw new TypeError("Interaction response admission projection is invalid.");
+          }
+          work.current = admitted.result.value;
+          if (work.current.effectCertainty === "admitted") {
+            work.state.interactions.markResponseAdmitted(work.claim);
+            work.status = "admitted";
+            continue;
+          }
+          if (isTerminalInteractionResponse(work.current)) {
+            if (work.current.effectCertainty === "not_sent") {
+              this.#beginFailClosedInteractionResponse(work, admitted.result);
+              continue;
+            }
+            if (!(await this.#releaseInteractionResponseReservation(work))) return;
+            work.status = "settled";
+            this.#resolveInteractionResponse(work, admitted.result);
+            return;
+          }
+          this.#resolveInteractionResponse(work, admitted.result);
+          work.desiredSettlement = strongerInteractionResponseOutcome(work.desiredSettlement, {
+            effectCertainty: "ambiguous",
+            resolutionCode: "process_unknown",
+          });
+          work.status = "settlement_pending";
+          continue;
+        }
+        case "admitted":
+          if (work.state.interactionResponseFailClosed) {
+            work.desiredSettlement = strongerInteractionResponseOutcome(work.desiredSettlement, {
+              effectCertainty: "not_sent",
+              resolutionCode: "owner_lost_before_write",
+            });
+            work.status = "settlement_pending";
+            continue;
+          }
+          if (isOwnerLossBeforeWrite(work.desiredSettlement)) {
+            work.status = "settlement_pending";
+            continue;
+          }
+          work.writeMarkCommand = {
+            responseRefId: interactionResponseCurrent(work).responseRefId,
+            sessionId: work.admissionCommand.sessionId,
+            workspaceKey: work.admissionCommand.workspaceKey,
+            runId: work.admissionCommand.runId,
+            interactionId: work.admissionCommand.interactionId,
+          };
+          work.status = "write_mark_pending";
+          continue;
+        case "write_mark_pending": {
+          const command = work.writeMarkCommand;
+          if (command === null) throw new TypeError("Interaction response write marker is unavailable.");
+          const marked = await interactionWriteExact(
+            () => this.#writes.markRunInteractionResponseWriteAttempt(command),
+            work.writeMarkWriteEffect,
+          );
+          if (marked.kind === "unknown") {
+            this.#schedulePersistenceRetry(work.state);
+            return;
+          }
+          if (marked.kind === "failure" || !marked.result.ok) {
+            work.failClosedAfterNotSentSettlement = true;
+            work.desiredSettlement = strongerInteractionResponseOutcome(work.desiredSettlement, {
+              effectCertainty: "not_sent",
+              resolutionCode: "owner_lost_before_write",
+            });
+            work.status = "settlement_pending";
+            continue;
+          }
+          if (!interactionResponseResultMatches(marked.result.value, work.admissionCommand)) {
+            throw new TypeError("Interaction response write-attempt projection is invalid.");
+          }
+          work.current = marked.result.value;
+          if (work.current.effectCertainty !== "write_attempted") {
+            if (work.current.effectCertainty === "not_sent") {
+              this.#beginFailClosedInteractionResponse(work, marked.result);
+              continue;
+            }
+            if (!(await this.#releaseInteractionResponseReservation(work))) return;
+            work.status = isTerminalInteractionResponse(work.current) ? "settled" : "provider_started";
+            this.#resolveInteractionResponse(work, marked.result);
+            return;
+          }
+          if (work.state.interactionResponseFailClosed) {
+            work.desiredSettlement = strongerInteractionResponseOutcome(work.desiredSettlement, {
+              effectCertainty: "ambiguous",
+              resolutionCode: "process_unknown",
+            });
+            work.status = "settlement_pending";
+            continue;
+          }
+          work.status = "write_attempted";
+          continue;
+        }
+        case "write_attempted": {
+          if (work.state.interactionResponseFailClosed) {
+            work.desiredSettlement = strongerInteractionResponseOutcome(work.desiredSettlement, {
+              effectCertainty: "ambiguous",
+              resolutionCode: "process_unknown",
+            });
+            work.status = "settlement_pending";
+            continue;
+          }
+          if (isOwnerLossOutcome(work.desiredSettlement)) {
+            work.status = "settlement_pending";
+            continue;
+          }
+          const writeReserved = work.state.control.adapter.writeReservedInteractionResponse;
+          if (typeof writeReserved !== "function" || work.reservationDisposition !== "held") {
+            work.desiredSettlement = strongerInteractionResponseOutcome(work.desiredSettlement, {
+              effectCertainty: "ambiguous",
+              resolutionCode: "process_unknown",
+            });
+            work.status = "settlement_pending";
+            continue;
+          }
+          work.reservationDisposition = "consumed";
+          work.status = "provider_started";
+          let providerSettlement: Promise<ApplicationRunProviderInteractionResponseResult>;
+          try {
+            providerSettlement = writeReserved.call(work.state.control.adapter, work.providerReservation);
+          } catch {
+            providerSettlement = Promise.resolve({
+              kind: "ambiguous",
+              effect: "unknown",
+              code: "write_failed",
+              providerResolution: "pending",
+            });
+          }
+          providerSettlement.then(
+            (result) => {
+              void this.#enqueue(work.state, () => this.#settleInteractionResponseFromProvider(work, result)).catch(
+                () => undefined,
+              );
+            },
+            () => {
+              void this.#enqueue(work.state, () =>
+                this.#requestInteractionResponseSettlement(work, {
+                  effectCertainty: "ambiguous",
+                  resolutionCode: "process_unknown",
+                }),
+              ).catch(() => undefined);
+            },
+          );
+          if (work.desiredSettlement !== null) {
+            work.status = "settlement_pending";
+            continue;
+          }
+          return;
+        }
+        case "provider_started":
+          if (work.desiredSettlement === null) return;
+          work.status = "settlement_pending";
+          continue;
+        case "settlement_pending": {
+          const current = work.current;
+          if (current === null) {
+            work.status = "admission_pending";
+            continue;
+          }
+          if (isTerminalInteractionResponse(current) && work.reservationDisposition === "held") {
+            if (!(await this.#releaseInteractionResponseReservation(work))) return;
+            work.status = "settled";
+            return;
+          }
+          if (work.inFlightSettlementCommand === null) {
+            const desired = work.desiredSettlement;
+            if (desired === null || !interactionResponseOutcomeAdvances(current, desired)) {
+              work.desiredSettlement = null;
+              work.status = isTerminalInteractionResponse(current) ? "settled" : "provider_started";
+              return;
+            }
+            work.desiredSettlement = null;
+            work.inFlightSettlementCommand = {
+              responseRefId: current.responseRefId,
+              sessionId: work.admissionCommand.sessionId,
+              workspaceKey: work.admissionCommand.workspaceKey,
+              runId: work.admissionCommand.runId,
+              interactionId: work.admissionCommand.interactionId,
+              outcome: desired,
+            };
+            work.inFlightSettlementWriteEffect = { unknownObserved: false };
+          }
+          const command = work.inFlightSettlementCommand;
+          const writeEffect = work.inFlightSettlementWriteEffect;
+          if (writeEffect === null) throw new TypeError("Interaction response settlement certainty is unavailable.");
+          const settled = await interactionWriteExact(
+            () => this.#writes.settleRunInteractionResponse(command),
+            writeEffect,
+          );
+          if (settled.kind === "unknown") {
+            this.#schedulePersistenceRetry(work.state);
+            return;
+          }
+          if (settled.kind === "failure") {
+            if (settled.result.error.retryable) {
+              this.#schedulePersistenceRetry(work.state);
+              return;
+            }
+            this.#beginFailClosedInteractionResponse(work, settled.result);
+            continue;
+          }
+          if (!settled.result.ok) {
+            if (settled.result.error.retryable) {
+              this.#schedulePersistenceRetry(work.state);
+              return;
+            }
+            this.#beginFailClosedInteractionResponse(work, settled.result);
+            continue;
+          }
+          if (!interactionResponseResultMatches(settled.result.value, work.admissionCommand)) {
+            throw new TypeError("Interaction response settlement projection is invalid.");
+          }
+          work.current = settled.result.value;
+          work.inFlightSettlementCommand = null;
+          work.inFlightSettlementWriteEffect = null;
+          if (work.failClosedAfterNotSentSettlement && work.current.effectCertainty === "not_sent") {
+            this.#beginFailClosedInteractionResponse(work, settled.result);
+            continue;
+          }
+          work.failClosedAfterNotSentSettlement = false;
+          this.#resolveInteractionResponse(work, settled.result);
+          if (work.desiredSettlement !== null) continue;
+          if (isTerminalInteractionResponse(work.current) && work.reservationDisposition === "held") {
+            if (!(await this.#releaseInteractionResponseReservation(work))) return;
+          }
+          work.status = isTerminalInteractionResponse(work.current) ? "settled" : "provider_started";
+          return;
+        }
+        case "fail_closed": {
+          work.state.interactions.close();
+          if (!work.state.interruptTurnStarted) {
+            work.state.interruptTurnStarted = true;
+            const interrupt = work.state.control.adapter.interruptTurn;
+            if (typeof interrupt === "function") {
+              try {
+                await interrupt.call(
+                  work.state.control.adapter,
+                  {
+                    threadId: work.claim.owner.externalConversationId,
+                    turnId: work.claim.owner.externalExecutionId,
+                  },
+                  { signal: work.state.control.signal },
+                );
+              } catch {
+                // The interrupt is deliberately at-most-once. Its uncertain outcome
+                // still converges through local terminal persistence below.
+              }
+            }
+          }
+          if (!(await this.#releaseInteractionResponseReservation(work))) return;
+          work.status = "settled";
+          work.state.interactionResponses.delete(work.admissionCommand.interactionId);
+          const result = work.failClosedResult;
+          if (result === null) throw new TypeError("Fail-closed interaction response result is unavailable.");
+          this.#resolveInteractionResponse(work, result);
+          if (!terminalizationInProgress && work.state.phase !== "closed") {
+            await this.#terminalize(work.state, interactionResponseFailClosedOutcome());
+          }
+          return;
+        }
+        case "settled":
+          if (work.desiredSettlement !== null && work.current !== null) {
+            work.status = "settlement_pending";
+            continue;
+          }
+          return;
+      }
+    }
+  }
+
+  async #releaseInteractionResponseReservation(work: InteractionResponseWork): Promise<boolean> {
+    if (work.reservationDisposition !== "held") return true;
+    const release = work.state.control.adapter.releaseInteractionResponseReservation;
+    if (typeof release !== "function") return false;
+    try {
+      await release.call(work.state.control.adapter, work.providerReservation);
+      work.reservationDisposition = "released";
+      return true;
+    } catch {
+      this.#schedulePersistenceRetry(work.state);
+      return false;
+    }
+  }
+
+  #beginFailClosedInteractionResponse(
+    work: InteractionResponseWork,
+    result: RepositoryCommandResult<RunInteractionResponseResult>,
+  ): void {
+    work.failClosedResult = result;
+    work.status = "fail_closed";
+    const firstFailure = !work.state.interactionResponseFailClosed;
+    work.state.interactionResponseFailClosed = true;
+    work.state.interactions.close();
+    if (firstFailure) this.#sealInteractionResponsesForFailClosedAttempt(work.state);
+  }
+
+  #sealInteractionResponsesForFailClosedAttempt(state: AttemptState): void {
+    for (const sibling of state.interactionResponses.values()) {
+      if (sibling.status === "fail_closed") continue;
+      const beforeProviderWrite =
+        sibling.status === "reserved" ||
+        sibling.status === "admission_retryable" ||
+        sibling.status === "admission_pending" ||
+        sibling.status === "admitted";
+      sibling.desiredSettlement = strongerInteractionResponseOutcome(
+        sibling.desiredSettlement,
+        beforeProviderWrite
+          ? { effectCertainty: "not_sent", resolutionCode: "owner_lost_before_write" }
+          : { effectCertainty: "ambiguous", resolutionCode: "process_unknown" },
+      );
+    }
+  }
+
+  #resolveInteractionResponse(
+    work: InteractionResponseWork,
+    result: RepositoryCommandResult<RunInteractionResponseResult>,
+  ): void {
+    if (work.settlementResolved) return;
+    work.settlementResolved = true;
+    work.resolveSettlement(result);
   }
 
   #enqueue<T>(state: AttemptState, operation: () => Promise<T>): Promise<T> {
@@ -591,6 +1383,14 @@ export class ApplicationRunEventService
       this.#scheduleCancelDispositionSettlement(work);
       return;
     }
+    if (work.state.interruptTurnStarted) {
+      work.disposition = { kind: "not_sent", effect: "none", code: "capability_unavailable" };
+      work.status = "settled";
+      this.#scheduleCancelDispositionSettlement(work);
+      return;
+    }
+    work.state.interruptTurnStarted = true;
+    work.state.interactions.close();
     work.status = "calling";
     let result: CancelDisposition;
     try {
@@ -662,6 +1462,7 @@ export class ApplicationRunEventService
   #isCancelOwnerCurrent(state: AttemptState): boolean {
     return (
       state.phase === "accepted" &&
+      !state.interactionResponseFailClosed &&
       state.turnId !== null &&
       state.terminalCommand === null &&
       state.releaseReason === null &&
@@ -902,6 +1703,7 @@ export class ApplicationRunEventService
   #isInputDeliveryOpen(state: AttemptState): boolean {
     return (
       state.phase === "accepted" &&
+      !state.interactionResponseFailClosed &&
       state.terminalCommand === null &&
       state.releaseReason === null &&
       (state.cancelWork === null || state.cancelWork.status === "reserved" || state.cancelWork.status === "released")
@@ -1063,6 +1865,7 @@ export class ApplicationRunEventService
     state.phase = "accepted";
     state.turnId = turnId;
     state.activity = "running";
+    state.interactions.activate(turnId);
     state.runVersion = await this.#readRunVersion(state);
     const buffered = state.bufferedEvents;
     state.bufferedEvents = [];
@@ -1085,6 +1888,11 @@ export class ApplicationRunEventService
 
   async #releaseAttempt(state: AttemptState, reason: ApplicationRunGenerationReleaseReason): Promise<boolean> {
     state.releaseReason ??= reason;
+    state.interactions.close();
+    if (!(await this.#settleInteractionResponsesForOwnerLoss(state, true))) {
+      this.#schedulePersistenceRetry(state);
+      return false;
+    }
     if (!(await this.#retryInputPersistence(state))) return false;
     if (!(await this.#retryPendingResolution(state))) return false;
     if (state.phase === "sending") {
@@ -1125,6 +1933,21 @@ export class ApplicationRunEventService
 
   async #acceptAttemptEvent(state: AttemptState, event: CodexAdapterEvent): Promise<void> {
     if (state.phase === "closed" || state.terminalCommand !== null) return;
+    if (event.kind === "interaction_pending") {
+      state.interactions.pending(event.handle, event.owner, event.snapshot);
+      return;
+    }
+    if (event.kind === "interaction_resolved") {
+      const responseWork = [...state.interactionResponses.values()].find((work) => work.claim.handle === event.handle);
+      state.interactions.resolved(event.handle, event.owner);
+      if (responseWork !== undefined) {
+        await this.#requestInteractionResponseSettlement(responseWork, {
+          effectCertainty: "resolved",
+          resolutionCode: "provider_resolved",
+        });
+      }
+      return;
+    }
     if (
       (event.kind === "connection_failure" &&
         (event.code === "adapter_resource_limit" || event.code === "event_queue_overflow")) ||
@@ -1242,6 +2065,9 @@ export class ApplicationRunEventService
         ) {
           state.releaseReason = null;
         }
+        return;
+      case "interaction_pending":
+      case "interaction_resolved":
         return;
       case "thread_started":
         return;
@@ -1419,8 +2245,17 @@ export class ApplicationRunEventService
     outputs: readonly RunTerminalOutputDraft[] = [],
     cancelCorrelation: RunTerminalCommand["cancelCorrelation"] = { kind: "none" },
   ): Promise<boolean> {
+    state.interactions.close();
+    if (!(await this.#settleInteractionResponsesForOwnerLoss(state, true))) {
+      this.#schedulePersistenceRetry(state);
+      return false;
+    }
+    const effectiveOutcome = state.interactionResponseFailClosed ? interactionResponseFailClosedOutcome() : outcome;
+    const effectiveCancelCorrelation = state.interactionResponseFailClosed
+      ? ({ kind: "none" } as const)
+      : cancelCorrelation;
     const acceptedExecution = state.phase === "accepted" && state.turnId !== null;
-    const ambiguousExecution = state.phase === "ambiguous" && outcome.kind === "interrupted";
+    const ambiguousExecution = state.phase === "ambiguous" && effectiveOutcome.kind === "interrupted";
     if (!acceptedExecution && !ambiguousExecution) {
       this.#close(state);
       return true;
@@ -1442,8 +2277,8 @@ export class ApplicationRunEventService
         },
         providerExecution: acceptedExecution ? executionCorrelation(state) : null,
         preDispatchResolution: acceptedExecution ? { kind: "not_applicable" } : { kind: "dispatch_ambiguous" },
-        cancelCorrelation,
-        outcome,
+        cancelCorrelation: effectiveCancelCorrelation,
+        outcome: effectiveOutcome,
         outputs: terminalOutputs,
         childResult: null,
       } satisfies RunTerminalCommand);
@@ -1655,6 +2490,7 @@ export class ApplicationRunEventService
     if (state.phase === "closed") return;
     state.phase = "closed";
     state.activity = null;
+    state.interactions.close();
     state.bufferedEvents = [];
     state.excludedLateAcceptanceIds.clear();
     state.outputCommands.clear();
@@ -1686,6 +2522,7 @@ export class ApplicationRunEventService
       work.status = "settled";
     }
     state.inputQueue = [];
+    state.interactionResponses.clear();
     if (this.#attemptsByRun.get(state.dispatch.admission.runId) === state) {
       this.#attemptsByRun.delete(state.dispatch.admission.runId);
     }
@@ -1696,6 +2533,9 @@ export class ApplicationRunEventService
 
 function hasPendingPersistence(state: AttemptState): boolean {
   if (state.pendingResolution !== null || state.terminalCommand !== null) return true;
+  for (const work of state.interactionResponses.values()) {
+    if (interactionResponsePersistencePending(work)) return true;
+  }
   if (state.inputQueue.some((work) => work.status === "beginning" || work.status === "resolving")) return true;
   for (const output of state.outputCommands.values()) {
     if (!output.confirmed) return true;
@@ -1814,6 +2654,9 @@ function eventCorrelation(event: CodexAdapterEvent): Readonly<{ threadId: string
       return { threadId: event.threadId, turnId: null };
     case "turn_started":
       return { threadId: event.turn.threadId, turnId: event.turn.turnId };
+    case "interaction_pending":
+    case "interaction_resolved":
+      return { threadId: event.owner.threadId, turnId: event.owner.turnId };
     case "item_output":
     case "turn_output":
     case "turn_terminal":
@@ -1833,8 +2676,226 @@ function eventCorrelation(event: CodexAdapterEvent): Readonly<{ threadId: string
   }
 }
 
+function applicationRunActivity(
+  state: AttemptState,
+  options: Readonly<{ includeInteractionActivity: boolean }> = { includeInteractionActivity: true },
+): ApplicationRunLiveActivity | null {
+  if (!options.includeInteractionActivity) {
+    return state.activity;
+  }
+  const interactionActivity = state.interactions.activity();
+  if (interactionActivity === "waiting_input") return "waiting_input";
+  if (interactionActivity === "waiting_approval") return "waiting_approval";
+  if (state.activity === "waiting_child") return "waiting_child";
+  return state.activity;
+}
+
 function acceptanceTurnId(event: CodexAdapterEvent): string | null {
   return event.kind === "turn_started" ? event.turn.turnId : event.kind === "turn_terminal" ? event.turnId : null;
+}
+
+function interactionResponseOwnerMatches(
+  state: AttemptState,
+  claim: ApplicationRunInteractionClaim,
+  input: ApplicationRunInteractionResponseOwnerInput,
+): boolean {
+  return (
+    state.phase === "accepted" &&
+    state.turnId !== null &&
+    input.sessionId === claim.owner.sessionId &&
+    input.runId === claim.owner.runId &&
+    input.workspaceKey === claim.owner.workspaceKey &&
+    input.providerId === claim.owner.providerId &&
+    input.definitionVersion === claim.owner.definitionVersion &&
+    state.dispatch.admission.attemptId === claim.owner.attemptId &&
+    state.dispatch.admission.bindingId === claim.owner.bindingId &&
+    state.dispatch.persistenceMode === claim.owner.persistenceMode &&
+    state.dispatch.ephemeralOwnerToken === claim.owner.ephemeralOwnerToken &&
+    state.dispatch.generationId === claim.owner.runtimeGenerationId &&
+    state.dispatch.threadId === claim.owner.externalConversationId &&
+    state.turnId === claim.owner.externalExecutionId
+  );
+}
+
+function interactionResponseResultMatches(
+  result: RunInteractionResponseResult,
+  command: RunInteractionResponseAdmissionCommand,
+): boolean {
+  return (
+    result.sessionId === command.sessionId &&
+    result.runId === command.runId &&
+    result.interactionId === command.interactionId &&
+    result.providerId === command.providerId &&
+    result.definitionVersion === command.definitionVersion &&
+    result.interactionKind === command.interactionKind &&
+    result.semanticAction === command.semanticAction
+  );
+}
+
+function interactionResponseWorkMatches(
+  work: InteractionResponseWork,
+  input: ApplicationRunInteractionResponseOwnerInput,
+): boolean {
+  return (
+    work.admissionCommand.sessionId === input.sessionId &&
+    work.admissionCommand.workspaceKey === input.workspaceKey &&
+    work.admissionCommand.runId === input.runId &&
+    work.admissionCommand.idempotencyKey === input.idempotencyKey &&
+    work.admissionCommand.interactionId === input.response.interactionId &&
+    work.admissionCommand.interactionKind === input.response.kind &&
+    work.admissionCommand.semanticAction === input.semanticAction &&
+    work.admissionCommand.canonicalResponseJson === input.canonicalResponseJson
+  );
+}
+
+function interactionResponseCurrent(work: InteractionResponseWork): RunInteractionResponseResult {
+  if (work.current === null) throw new TypeError("Interaction response persistence owner is unavailable.");
+  return work.current;
+}
+
+function interactionResponseSuccess(
+  work: InteractionResponseWork,
+): RepositoryCommandResult<RunInteractionResponseResult> {
+  return { ok: true, replayed: false, value: interactionResponseCurrent(work) };
+}
+
+function strongerInteractionResponseOutcome(
+  current: RunInteractionResponseSettlementCommand["outcome"] | null,
+  incoming: RunInteractionResponseSettlementCommand["outcome"],
+): RunInteractionResponseSettlementCommand["outcome"] {
+  if (current === null) return incoming;
+  return interactionResponseOutcomeRank(incoming) > interactionResponseOutcomeRank(current) ? incoming : current;
+}
+
+function interactionResponseOutcomeRank(outcome: RunInteractionResponseSettlementCommand["outcome"]): number {
+  switch (outcome.effectCertainty) {
+    case "ambiguous":
+      return 1;
+    case "not_sent":
+      return 2;
+    case "resolved":
+      return 3;
+  }
+}
+
+function interactionResponseOutcomeAdvances(
+  current: RunInteractionResponseResult,
+  outcome: RunInteractionResponseSettlementCommand["outcome"],
+): boolean {
+  if (current.effectCertainty === "admitted" || current.effectCertainty === "write_attempted") return true;
+  return current.effectCertainty === "ambiguous" && outcome.effectCertainty === "resolved";
+}
+
+function isOwnerLossBeforeWrite(outcome: RunInteractionResponseSettlementCommand["outcome"] | null): boolean {
+  return outcome?.effectCertainty === "not_sent" && outcome.resolutionCode === "owner_lost_before_write";
+}
+
+function isOwnerLossOutcome(outcome: RunInteractionResponseSettlementCommand["outcome"] | null): boolean {
+  return (
+    isOwnerLossBeforeWrite(outcome) ||
+    (outcome?.effectCertainty === "ambiguous" && outcome.resolutionCode === "process_unknown")
+  );
+}
+
+function interactionResponsePersistencePending(work: InteractionResponseWork): boolean {
+  return (
+    work.status === "reserved" ||
+    work.status === "admission_pending" ||
+    work.status === "admitted" ||
+    work.status === "write_mark_pending" ||
+    work.status === "settlement_pending" ||
+    work.status === "fail_closed" ||
+    work.inFlightSettlementCommand !== null ||
+    work.desiredSettlement !== null
+  );
+}
+
+function interactionResponseFailClosedOutcome(): RunTerminalCommand["outcome"] {
+  return {
+    kind: "interrupted",
+    failureOrigin: "application",
+    providerErrorCode: null,
+    errorSummary: "Interaction response persistence could not safely admit the Provider response.",
+  };
+}
+
+type InteractionWriteExactResult =
+  | Readonly<{ kind: "result"; result: RepositoryCommandResult<RunInteractionResponseResult> }>
+  | Readonly<{
+      kind: "failure";
+      result: Extract<RepositoryCommandResult<RunInteractionResponseResult>, Readonly<{ ok: false }>>;
+    }>
+  | Readonly<{ kind: "unknown" }>;
+
+async function interactionWriteExact(
+  write: () => Promise<RepositoryCommandResult<RunInteractionResponseResult>>,
+  effectState: InteractionWriteEffectState,
+): Promise<InteractionWriteExactResult> {
+  try {
+    return { kind: "result", result: await write() };
+  } catch (error) {
+    if (!(error instanceof PersistenceClientError)) {
+      effectState.unknownObserved = true;
+      return { kind: "unknown" };
+    }
+    if (error.persistenceError.effect === "none") {
+      if (effectState.unknownObserved) return { kind: "unknown" };
+      return {
+        kind: "failure",
+        result: interactionResponseOwnerFailure(
+          "lifecycle_conflict",
+          "Interaction response persistence was rejected.",
+          error.persistenceError.retryable,
+        ),
+      };
+    }
+    effectState.unknownObserved = true;
+    try {
+      return { kind: "result", result: await write() };
+    } catch {
+      // The first call may already have committed. A later no-effect retry cannot
+      // reduce that command's aggregate certainty back to no effect.
+      return { kind: "unknown" };
+    }
+  }
+}
+
+function retryInteractionResponseWork(work: InteractionResponseWork): InteractionResponseWork {
+  if (
+    work.status !== "admission_retryable" ||
+    work.current !== null ||
+    work.reservationDisposition !== "held" ||
+    !work.settlementResolved
+  ) {
+    throw new TypeError("Interaction response work is not retryable.");
+  }
+  let resolveSettlement!: (result: RepositoryCommandResult<RunInteractionResponseResult>) => void;
+  const settlement = new Promise<RepositoryCommandResult<RunInteractionResponseResult>>((resolve) => {
+    resolveSettlement = resolve;
+  });
+  return {
+    ...work,
+    settlement,
+    resolveSettlement,
+    status: "reserved",
+    settlementResolved: false,
+  };
+}
+
+function isTerminalInteractionResponse(result: RunInteractionResponseResult): boolean {
+  return (
+    result.effectCertainty === "resolved" ||
+    result.effectCertainty === "ambiguous" ||
+    result.effectCertainty === "not_sent"
+  );
+}
+
+function interactionResponseOwnerFailure(
+  code: "not_found" | "reference_invalid" | "lifecycle_conflict",
+  message: string,
+  retryable = false,
+): Extract<RepositoryCommandResult<RunInteractionResponseResult>, Readonly<{ ok: false }>> {
+  return { ok: false, error: { code, message, retryable }, replayed: false };
 }
 
 function providerOwnerKey(generationId: string, threadId: string): string {

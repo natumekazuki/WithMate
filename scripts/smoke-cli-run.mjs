@@ -774,11 +774,14 @@ try {
 function runExecutionSnapshot(workspaceKey) {
   return {
     providerId: "codex",
-    model: "smoke-model",
+    definitionVersion: "codex-provider-v1",
     modelSelection: "explicit",
-    reasoning: { effort: "medium" },
-    approval: { policy: "never" },
-    sandbox: { mode: "workspace-write", networkAccess: false },
+    settings: {
+      model: "smoke-model",
+      reasoningEffort: "medium",
+      approvalPolicy: "never",
+      sandbox: { mode: "workspace-write", networkAccess: false },
+    },
     workspace: { key: workspaceKey, path: workspacePath, allowedAdditionalDirectories: [] },
     character: null,
   };
@@ -786,16 +789,20 @@ function runExecutionSnapshot(workspaceKey) {
 
 function runProviderRequest(contentBlocks) {
   return {
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
     contentBlocks,
-    model: "smoke-model",
-    reasoningEffort: "medium",
-    approvalPolicy: "never",
-    sandboxPolicy: {
-      mode: "workspace-write",
-      networkAccess: false,
-      writableRoots: [workspacePath],
+    startTurn: {
+      model: "smoke-model",
+      reasoningEffort: "medium",
+      approvalPolicy: "never",
+      sandboxPolicy: {
+        mode: "workspace-write",
+        networkAccess: false,
+        writableRoots: [workspacePath],
+      },
+      workspacePath,
     },
-    workspacePath,
   };
 }
 

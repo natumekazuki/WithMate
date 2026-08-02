@@ -4,8 +4,15 @@ import { resolveWorkspaceIdentity } from "../../../shared/workspace-path.js";
 import {
   CODEX_ADAPTER_LIMITS,
   CODEX_ADAPTER_SCHEMA_BASELINE,
+  type CodexAdapterCapabilityPreflightInput,
+  type CodexAdapterCapabilityPreflightResult,
   type CodexAdapterConnectionFailureCode,
   type CodexAdapterInterruptAcknowledgement,
+  type CodexAdapterInteractionHandle,
+  type CodexAdapterInteractionResponse,
+  type CodexAdapterInteractionResponseReservation,
+  type CodexAdapterInteractionResponseReserveResult,
+  type CodexAdapterInteractionResponseResult,
   type CodexAdapterDiagnostic,
   type CodexAdapterEvent,
   type CodexAdapterModel,
@@ -18,6 +25,7 @@ import {
   type CodexAdapterReadThreadSnapshot,
   type CodexAdapterRequestOptions,
   type CodexAdapterSandboxPolicy,
+  type CodexAdapterServerRequestPort,
   type CodexAdapterSteerAcknowledgement,
   type CodexAdapterThreadSnapshot,
   type CodexAdapterTransportEvent,
@@ -31,6 +39,7 @@ import {
   type CodexStartTurnInput,
   type CodexSteerTurnInput,
 } from "./codex-adapter-contract.js";
+import { CodexAdapterInteractionManager } from "./codex-adapter-interactions.js";
 import {
   decodeModelListResponse,
   decodeThreadReadResponse,
@@ -132,6 +141,7 @@ type PendingTurnMutation = {
 type ThreadContext = Readonly<{
   cliVersion: string;
   model: string;
+  workspacePath: string;
   provisionalModelOwner?: PendingTurnMutation;
 }>;
 
@@ -152,6 +162,7 @@ type PendingSteerMutation = {
 type ThreadMutationProjection = Readonly<{
   snapshot: CodexAdapterThreadSnapshot;
   identity: CodexThreadLifecycleIdentity;
+  workspacePath: string;
   activeTurn: CodexAdapterTurnSnapshot | undefined;
 }>;
 
@@ -160,6 +171,7 @@ export class CodexAdapter {
   readonly #cliVersion: string;
   readonly #lifecycle = new CodexAdapterLifecycle();
   readonly #items = new CodexAdapterItemMapper();
+  readonly #interactions = new CodexAdapterInteractionManager();
   readonly #threadContexts = new Map<string, ThreadContext>();
   readonly #pendingThreadMutations = new Set<PendingThreadMutation>();
   readonly #pendingResumeThreads = new Map<string, PendingThreadMutation>();
@@ -192,7 +204,7 @@ export class CodexAdapter {
     if (!snapshot.ok) throw new TypeError("Codex Adapter options are invalid.");
     this.#transport = transport;
     this.#cliVersion = snapshot.value.cliVersion;
-    if (this.#supportsSchemaBaseline()) void this.#pumpEvents();
+    void this.#pumpEvents();
   }
 
   async listModels(
@@ -262,6 +274,26 @@ export class CodexAdapter {
     });
   }
 
+  async preflightCapability(
+    input: CodexAdapterCapabilityPreflightInput,
+    requestOptions?: CodexAdapterRequestOptions,
+  ): Promise<CodexAdapterCapabilityPreflightResult> {
+    const capability = snapshotCapabilityPreflightInput(input);
+    if (!capability.ok) return Object.freeze({ kind: "unsupported", effect: "none" });
+    const options = snapshotAdapterRequestOptions(requestOptions);
+    if (!options.ok) return Object.freeze({ kind: "unsupported", effect: "none" });
+    const validation = await this.#validateModelCapability(
+      capability.value.model,
+      capability.value.reasoningEffort,
+      options.value,
+      capability.value.requiredModality,
+      capability.value.modelSelection === "explicit",
+    );
+    if (validation.kind === "valid") return Object.freeze({ kind: "supported", effect: "none" });
+    if (validation.kind === "invalid") return Object.freeze({ kind: "unsupported", effect: "none" });
+    return Object.freeze({ kind: "unavailable", effect: "none", failure: validation.failure });
+  }
+
   async startThread(
     input: CodexStartThreadInput,
     requestOptions?: CodexAdapterRequestOptions,
@@ -271,14 +303,12 @@ export class CodexAdapter {
     const workspaceIdentity = resolveWorkspaceIdentity(snapshots.input.workspacePath);
     if (workspaceIdentity === undefined) return notSentMutation("invalid_input");
     if (!this.#isOperational()) return this.#unavailableMutationResult();
-    if (snapshots.input.approvalPolicy !== "never") {
-      return notSentMutation("capability_unavailable");
-    }
     const modelCapability = await this.#validateModelCapability(
       snapshots.input.model,
       snapshots.input.reasoningEffort,
       snapshots.requestOptions,
       "text",
+      snapshots.input.modelSelection === "explicit",
     );
     if (modelCapability.kind !== "valid") return modelCapabilityMutationFailure(modelCapability);
     if (!this.#isOperational()) return this.#unavailableMutationResult();
@@ -289,7 +319,7 @@ export class CodexAdapter {
       {
         model: snapshots.input.model,
         cwd: workspaceIdentity.workspacePath,
-        approvalPolicy: "never",
+        approvalPolicy: snapshots.input.approvalPolicy,
         sandbox: snapshots.input.sandboxMode,
         ephemeral: snapshots.input.persistence === "ephemeral",
       },
@@ -298,10 +328,9 @@ export class CodexAdapter {
       {
         model: snapshots.input.model,
         workspaceKey: workspaceIdentity.workspaceKey,
-        approvalPolicy: "never",
+        approvalPolicy: snapshots.input.approvalPolicy,
         sandboxMode: snapshots.input.sandboxMode,
         ephemeral: snapshots.input.persistence === "ephemeral",
-        cliVersion: this.#cliVersion,
       },
     );
     if (result.kind !== "accepted") {
@@ -324,12 +353,14 @@ export class CodexAdapter {
       result.value.snapshot.reasoningEffort ?? undefined,
       snapshots.requestOptions,
       "text",
+      snapshots.input.modelSelection === "explicit",
     );
     if (effectiveModelCapability.kind !== "valid") return ambiguousInvalidResponse();
     const acceptedSnapshot = this.#acceptThreadSnapshot(
       result.value.snapshot,
       result.value.identity,
       result.value.activeTurn,
+      result.value.workspacePath,
     );
     if (acceptedSnapshot === undefined) return ambiguousInvalidResponse();
     this.#releasePendingThreadMutation(pendingThread);
@@ -348,9 +379,6 @@ export class CodexAdapter {
       return notSentMutation("invalid_input");
     }
     if (!this.#isOperational()) return this.#unavailableMutationResult();
-    if (snapshots.input.approvalPolicy !== undefined && snapshots.input.approvalPolicy !== "never") {
-      return notSentMutation("capability_unavailable");
-    }
     if (this.#ambiguousTurnThreads.has(snapshots.input.threadId)) {
       return notSentMutation("capability_unavailable");
     }
@@ -380,7 +408,7 @@ export class CodexAdapter {
         threadId: snapshots.input.threadId,
         ...(snapshots.input.model === undefined ? {} : { model: snapshots.input.model }),
         ...(workspaceIdentity === undefined ? {} : { cwd: workspaceIdentity.workspacePath }),
-        approvalPolicy: "never",
+        approvalPolicy: snapshots.input.approvalPolicy ?? "never",
         ...(snapshots.input.sandboxMode === undefined ? {} : { sandbox: snapshots.input.sandboxMode }),
       },
       snapshots.requestOptions,
@@ -388,7 +416,7 @@ export class CodexAdapter {
       {
         ...(snapshots.input.model === undefined ? {} : { model: snapshots.input.model }),
         ...(workspaceIdentity === undefined ? {} : { workspaceKey: workspaceIdentity.workspaceKey }),
-        approvalPolicy: "never",
+        approvalPolicy: snapshots.input.approvalPolicy ?? "never",
         ...(snapshots.input.sandboxMode === undefined ? {} : { sandboxMode: snapshots.input.sandboxMode }),
       },
     );
@@ -416,6 +444,7 @@ export class CodexAdapter {
       result.value.snapshot,
       result.value.identity,
       result.value.activeTurn,
+      result.value.workspacePath,
     );
     if (acceptedSnapshot === undefined) return ambiguousInvalidResponse();
     this.#releasePendingThreadMutation(pendingThread);
@@ -465,9 +494,6 @@ export class CodexAdapter {
   ): Promise<CodexAdapterMutationResult<CodexAdapterTurnSnapshot>> {
     const snapshots = snapshotOperationInputs(snapshotStartTurnInput(input), requestOptions);
     if (!snapshots.ok) return snapshots.result;
-    if (snapshots.input.approvalPolicy !== undefined && snapshots.input.approvalPolicy !== "never") {
-      return notSentMutation("capability_unavailable");
-    }
     if (this.#isTurnMutationUnavailable(snapshots.input.threadId)) {
       return this.#unavailableMutationResult();
     }
@@ -511,7 +537,7 @@ export class CodexAdapter {
         threadId: snapshots.input.threadId,
         input: toCodexUserInput(snapshots.input.contentBlocks),
         ...(snapshots.input.workspacePath === undefined ? {} : { cwd: snapshots.input.workspacePath }),
-        approvalPolicy: "never",
+        approvalPolicy: snapshots.input.approvalPolicy ?? "never",
         ...(snapshots.input.sandboxPolicy === undefined
           ? {}
           : { sandboxPolicy: toCodexSandboxPolicy(snapshots.input.sandboxPolicy) }),
@@ -735,6 +761,23 @@ export class CodexAdapter {
     });
   }
 
+  reserveInteractionResponse(
+    handle: CodexAdapterInteractionHandle,
+    response: CodexAdapterInteractionResponse,
+  ): CodexAdapterInteractionResponseReserveResult {
+    return this.#interactions.reserve(handle, response);
+  }
+
+  writeReservedInteractionResponse(
+    reservation: CodexAdapterInteractionResponseReservation,
+  ): Promise<CodexAdapterInteractionResponseResult> {
+    return this.#interactions.writeReserved(reservation);
+  }
+
+  releaseInteractionResponseReservation(reservation: CodexAdapterInteractionResponseReservation): void {
+    this.#interactions.releaseReservation(reservation);
+  }
+
   nextEvent(): Promise<CodexAdapterEvent> {
     this.#materializePendingConnectionFailure();
     const queued = this.#eventQueue.shift();
@@ -743,7 +786,6 @@ export class CodexAdapter {
       this.#materializePendingConnectionFailure();
       return Promise.resolve(queued.event);
     }
-    if (!this.#supportsSchemaBaseline()) return Promise.reject(adapterUnavailableError());
     if (this.#state !== "open") return Promise.reject(adapterClosedError());
     if (this.#eventWaiter !== undefined) return Promise.reject(adapterEventWaiterError());
     return new Promise<CodexAdapterEvent>((resolve, reject) => {
@@ -767,6 +809,7 @@ export class CodexAdapter {
     snapshot: CodexAdapterThreadSnapshot,
     identity: CodexThreadLifecycleIdentity,
     activeTurn: CodexAdapterTurnSnapshot | undefined,
+    workspacePath: string,
   ): CodexAdapterThreadSnapshot | undefined {
     if (this.#state !== "open") return undefined;
     const lifecycle = this.#lifecycle.acceptThreadResponse(snapshot, identity);
@@ -777,7 +820,7 @@ export class CodexAdapter {
     if (accepted !== undefined) {
       this.#threadContexts.set(
         snapshot.threadId,
-        Object.freeze({ cliVersion: snapshot.cliVersion, model: snapshot.model }),
+        Object.freeze({ cliVersion: snapshot.cliVersion, model: snapshot.model, workspacePath }),
       );
     }
     this.#emitComponentResult(lifecycle);
@@ -821,6 +864,7 @@ export class CodexAdapter {
         Object.freeze({
           cliVersion: threadContext.cliVersion,
           model,
+          workspacePath: threadContext.workspacePath,
           ...(pendingTurn === undefined ? {} : { provisionalModelOwner: pendingTurn }),
         }),
       );
@@ -851,7 +895,11 @@ export class CodexAdapter {
     if (threadContext?.provisionalModelOwner !== owner) return;
     this.#threadContexts.set(
       threadId,
-      Object.freeze({ cliVersion: threadContext.cliVersion, model: threadContext.model }),
+      Object.freeze({
+        cliVersion: threadContext.cliVersion,
+        model: threadContext.model,
+        workspacePath: threadContext.workspacePath,
+      }),
     );
   }
 
@@ -860,7 +908,11 @@ export class CodexAdapter {
     if (threadContext?.provisionalModelOwner !== owner) return;
     this.#threadContexts.set(
       threadId,
-      Object.freeze({ cliVersion: threadContext.cliVersion, model: owner.previousModel }),
+      Object.freeze({
+        cliVersion: threadContext.cliVersion,
+        model: owner.previousModel,
+        workspacePath: threadContext.workspacePath,
+      }),
     );
   }
 
@@ -1007,16 +1059,7 @@ export class CodexAdapter {
         this.#acceptNotification(event.method, event.params);
         break;
       case "serverRequest":
-        const method = event.method;
-        this.#emitEvents([
-          diagnosticEvent(
-            "unsupported_server_request",
-            "An unsupported Codex server request closed the Adapter connection.",
-            method === undefined ? {} : { method },
-            method === undefined ? "applied" : "not_required",
-          ),
-        ]);
-        this.#enterFailure("unsupported_server_request", false);
+        this.#acceptServerRequest(event.request);
         break;
       case "protocolAnomaly":
         this.#emitEvents([
@@ -1025,6 +1068,68 @@ export class CodexAdapter {
         this.#enterFailure("protocol_failed", false);
         break;
     }
+  }
+
+  #acceptServerRequest(request: CodexAdapterServerRequestPort): void {
+    try {
+      const ownerRecord = inspectServerRequestOwner(request.params);
+      const workspacePath =
+        ownerRecord === undefined ? undefined : this.#threadContexts.get(ownerRecord.threadId)?.workspacePath;
+      const admission = this.#interactions.admit(request, workspacePath, (threadId, turnId) =>
+        this.#lifecycle.isActiveTurn(threadId, turnId),
+      );
+      if (admission.protocolFailure) {
+        this.#sendFailClosedResponse(this.#interactions.failClosedRequest(request));
+        this.#emitEvents([
+          diagnosticEvent("known_invalid_payload", "A Codex interaction request violated the Provider protocol.", {
+            method: request.method,
+          }),
+        ]);
+        this.#enterFailure("protocol_failed", false);
+        return;
+      }
+      if (admission.event !== undefined) this.#emitEvents([admission.event]);
+      if (admission.resourceLimit) {
+        this.#emitEvents([diagnosticEvent("resource_limit", "A Codex interaction resource limit was reached.")]);
+        if (admission.event === undefined) this.#sendFailClosedResponse(this.#interactions.failClosedRequest(request));
+      }
+      if (admission.event !== undefined && admission.failClosed) {
+        this.#sendFailClosedResponse(this.#interactions.failClosed(admission.event.handle));
+      }
+      if (admission.interrupt && ownerRecord !== undefined) {
+        this.#interruptFailClosedInteraction(ownerRecord.threadId, ownerRecord.turnId);
+      }
+      if (admission.resourceLimit) return;
+      if (admission.event === undefined) {
+        this.#sendFailClosedResponse(this.#interactions.failClosedRequest(request));
+        this.#emitEvents([
+          diagnosticEvent("unsupported_server_request", "A Codex server request could not be admitted safely.", {
+            method: request.method,
+          }),
+        ]);
+        this.#enterFailure("unsupported_server_request", false);
+      }
+    } finally {
+      request.releasePayload?.();
+    }
+  }
+
+  #sendFailClosedResponse(response: Promise<void>): void {
+    void response.catch((error: unknown) => {
+      const failure = snapshotTransportFailure(error);
+      this.#enterFailure(failure?.kind === "connection_failure" ? failure.code : "protocol_failed", false);
+    });
+  }
+
+  #interruptFailClosedInteraction(threadId: string, turnId: string): void {
+    void this.#requestMutation("turn/interrupt", { threadId, turnId }, {}).then(
+      (result) => {
+        if (result.kind !== "accepted" || !decodeTurnInterruptResponse(result.value).ok) {
+          this.#enterFailure(result.kind === "connection_failure" ? result.code : "protocol_failed", false);
+        }
+      },
+      () => this.#enterFailure("protocol_failed", false),
+    );
   }
 
   #acceptNotification(method: unknown, params: unknown): void {
@@ -1043,7 +1148,7 @@ export class CodexAdapter {
         break;
       case "unknown_valid":
         this.#emitEvents([
-          providerMetadataEvent(classified.method, classified.correlation),
+          providerMetadataEvent(classified.correlation),
           diagnosticEvent("unknown_notification", "An unknown Codex notification was retained as bounded metadata.", {
             method: classified.method,
             correlation: classified.correlation,
@@ -1105,6 +1210,23 @@ export class CodexAdapter {
         );
         break;
       case "item/started":
+        if (
+          notification.item.classification === "operation" &&
+          notification.item.itemType === "fileChange" &&
+          notification.item.fileChanges !== undefined
+        ) {
+          const observation = this.#interactions.observeFileChanges(
+            notification.threadId,
+            notification.turnId,
+            notification.item.id,
+            notification.item.fileChanges,
+          );
+          if (observation.kind === "resource_limit") {
+            this.#emitEvents([
+              diagnosticEvent("resource_limit", "A Codex file observation resource limit was reached."),
+            ]);
+          }
+        }
         this.#observePendingSteer(notification);
         this.#emitComponentResult(
           this.#items.acceptItemStarted(notification.threadId, notification.turnId, notification.item),
@@ -1116,6 +1238,43 @@ export class CodexAdapter {
           this.#items.acceptItemCompleted(notification.threadId, notification.turnId, notification.item),
         );
         break;
+      case "item/fileChange/patchUpdated":
+        {
+          const observation = this.#interactions.observeFileChanges(
+            notification.threadId,
+            notification.turnId,
+            notification.itemId,
+            notification.changes,
+          );
+          if (observation.kind === "resource_limit") {
+            this.#emitEvents([
+              diagnosticEvent("resource_limit", "A Codex file observation resource limit was reached."),
+            ]);
+          }
+        }
+        break;
+      case "serverRequest/resolved": {
+        const observed = this.#transport.observeServerRequestResolution(notification.requestId);
+        if (observed.kind !== "current") {
+          this.#emitEvents([
+            diagnosticEvent(
+              "protocol_anomaly",
+              observed.kind === "duplicate"
+                ? "A duplicate Codex interaction resolution closed the Adapter connection."
+                : "An unknown Codex interaction resolution closed the Adapter connection.",
+            ),
+          ]);
+          this.#enterFailure("protocol_failed", false);
+          break;
+        }
+        const resolution = this.#interactions.resolve(observed.identity, notification.threadId);
+        if (resolution.kind === "resolved") this.#emitEvents([resolution.event]);
+        else {
+          this.#emitEvents([diagnosticEvent("identity_mismatch", "An interaction resolution had no current owner.")]);
+          this.#enterFailure("protocol_failed", false);
+        }
+        break;
+      }
       case "item/agentMessage/delta":
         this.#emitComponentResult(
           this.#items.acceptAgentDelta(
@@ -1204,6 +1363,7 @@ export class CodexAdapter {
   }
 
   #acceptTurnTerminal(threadId: string, turnId: string, status: "completed" | "failed" | "interrupted"): void {
+    this.#interactions.completeTurn(threadId, turnId);
     const terminalWasKnown = this.#lifecycle.hasTerminalTurn(threadId, turnId);
     if (!terminalWasKnown && this.#pendingTurnModels.has(threadId) && !this.#lifecycle.hasActiveTurn(threadId)) {
       this.#acceptTurnStarted(
@@ -1374,6 +1534,7 @@ export class CodexAdapter {
     this.#pendingSteers.clear();
     this.#ambiguousTurnThreads.clear();
     this.#turnTokenUsage.clear();
+    this.#interactions.close();
     this.#modelsByRequestName = undefined;
     this.#modelCatalogLoadPromise = undefined;
     if (includeResourceDiagnostic) {
@@ -1407,6 +1568,7 @@ export class CodexAdapter {
     this.#pendingSteers.clear();
     this.#ambiguousTurnThreads.clear();
     this.#turnTokenUsage.clear();
+    this.#interactions.close();
     this.#modelsByRequestName = undefined;
     this.#modelCatalogLoadPromise = undefined;
     const waiter = this.#eventWaiter;
@@ -1447,7 +1609,7 @@ export class CodexAdapter {
     requireSelectable = true,
   ): Promise<ModelCapabilityValidation> {
     if (this.#modelsByRequestName === undefined) {
-      const load = (this.#modelCatalogLoadPromise ??= this.listModels({}, requestOptions));
+      const load = (this.#modelCatalogLoadPromise ??= this.listModels());
       try {
         const result = await load;
         if (result.kind !== "accepted") {
@@ -1491,12 +1653,11 @@ export class CodexAdapter {
     const decoded = decode(response.value);
     if (
       !decoded.ok ||
-      decoded.value.effective.approvalPolicy !== expected.approvalPolicy ||
+      (expected.approvalPolicy !== undefined && decoded.value.effective.approvalPolicy !== expected.approvalPolicy) ||
       (expected.model !== undefined && decoded.value.model !== expected.model) ||
       (expected.workspaceKey !== undefined && decoded.value.effective.workspaceKey !== expected.workspaceKey) ||
       (expected.sandboxMode !== undefined && decoded.value.effective.sandboxMode !== expected.sandboxMode) ||
-      (expected.ephemeral !== undefined && decoded.value.thread.ephemeral !== expected.ephemeral) ||
-      (expected.cliVersion !== undefined && decoded.value.thread.cliVersion !== expected.cliVersion)
+      (expected.ephemeral !== undefined && decoded.value.thread.ephemeral !== expected.ephemeral)
     ) {
       return ambiguousInvalidResponse();
     }
@@ -1527,6 +1688,7 @@ export class CodexAdapter {
           workspaceKey: decoded.value.thread.workspaceKey,
           ephemeral: decoded.value.thread.ephemeral,
         }),
+        workspacePath: decoded.value.effective.cwd,
         activeTurn:
           activeTurn === undefined
             ? undefined
@@ -1577,12 +1739,8 @@ export class CodexAdapter {
     }
   }
 
-  #supportsSchemaBaseline(): boolean {
-    return this.#cliVersion === CODEX_ADAPTER_SCHEMA_BASELINE.cliVersion;
-  }
-
   #isOperational(): boolean {
-    return this.#state === "open" && this.#supportsSchemaBaseline();
+    return this.#state === "open";
   }
 
   #unavailableMutationResult(): CodexAdapterMutationResult<never> {
@@ -1668,7 +1826,6 @@ function tokenUsageBreakdownAtLeast(
 }
 
 function providerMetadataEvent(
-  method: string,
   correlation: Readonly<{ threadId?: string; turnId?: string; itemId?: string }>,
 ): CodexAdapterEvent {
   return Object.freeze({
@@ -1676,7 +1833,7 @@ function providerMetadataEvent(
     correlation,
     output: Object.freeze({
       category: "provider_metadata",
-      kind: method,
+      kind: "other",
       summary: "Unknown Codex notification metadata was observed.",
       completionState: "complete",
       payload: Object.freeze({ kind: "none", redaction: "not_required" }),
@@ -1686,7 +1843,7 @@ function providerMetadataEvent(
 
 type SnapshottedAdapterTransportEvent =
   | Readonly<{ kind: "notification"; method: unknown; params: unknown }>
-  | Readonly<{ kind: "serverRequest"; method: string | undefined }>
+  | Readonly<{ kind: "serverRequest"; request: CodexAdapterServerRequestPort }>
   | Readonly<{
       kind: "protocolAnomaly";
       code: "duplicate_or_late_response_id" | "unknown_response_id";
@@ -1706,7 +1863,10 @@ function snapshotAdapterTransportEvent(event: unknown): SnapshottedAdapterTransp
       });
     case "serverRequest":
       if (!hasExactKeys(record, ["kind", "request"], [])) return undefined;
-      return Object.freeze({ kind: "serverRequest", method: snapshotServerRequestMethod(record.request) });
+      {
+        const request = snapshotServerRequest(record.request);
+        return request === undefined ? undefined : Object.freeze({ kind: "serverRequest", request });
+      }
     case "protocolAnomaly":
       if (
         !hasExactKeys(record, ["kind", "code", "responseIdType"], []) ||
@@ -1750,19 +1910,106 @@ function hasExactKeys(
   return required.every((key) => Object.hasOwn(record, key)) && keys.every((key) => allowed.has(key));
 }
 
-function snapshotServerRequestMethod(request: unknown): string | undefined {
+function snapshotServerRequest(request: unknown): CodexAdapterServerRequestPort | undefined {
   try {
-    if ((typeof request !== "object" || request === null) && typeof request !== "function") return undefined;
-    const descriptor = Object.getOwnPropertyDescriptor(request, "method");
-    if (descriptor === undefined || !("value" in descriptor) || typeof descriptor.value !== "string") {
+    if (typeof request !== "object" || request === null) return undefined;
+    const methodDescriptor = Object.getOwnPropertyDescriptor(request, "method");
+    const paramsDescriptor = Object.getOwnPropertyDescriptor(request, "params");
+    if (
+      methodDescriptor === undefined ||
+      !("value" in methodDescriptor) ||
+      typeof methodDescriptor.value !== "string" ||
+      paramsDescriptor === undefined ||
+      !("value" in paramsDescriptor)
+    )
       return undefined;
-    }
-    const method = descriptor.value;
-    return method.length > 0 &&
+    const method = methodDescriptor.value;
+    if (!(
+      method.length > 0 &&
       method.length <= CODEX_ADAPTER_LIMITS.maxMethodCharacters &&
       Buffer.byteLength(method, "utf8") <= CODEX_ADAPTER_LIMITS.maxShortStringBytes
-      ? method
-      : undefined;
+    ))
+      return undefined;
+    const identity = readRequestIdentity(request);
+    const respond = dataMethod(request, "respond");
+    if (identity === undefined || respond === undefined) return undefined;
+    const releaseUpstreamPayload = dataMethod(request, "releasePayload");
+    let params = paramsDescriptor.value;
+    let released = false;
+    if (releaseUpstreamPayload !== undefined) {
+      Reflect.apply(releaseUpstreamPayload, request, []);
+    } else if (paramsDescriptor.writable !== true || !Reflect.set(request, "params", undefined, request)) {
+      return undefined;
+    }
+    return Object.freeze({
+      identity,
+      method,
+      get params() {
+        return params;
+      },
+      respond: (result: unknown) =>
+        Promise.resolve(Reflect.apply(respond, request, [result]) as unknown).then(() => undefined),
+      releasePayload: () => {
+        if (released) return;
+        released = true;
+        params = undefined;
+      },
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function readRequestIdentity(request: object): CodexAdapterServerRequestPort["identity"] | undefined {
+  let current: object | null = request;
+  for (let depth = 0; depth < 4 && current !== null; depth += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, "identity");
+    if (descriptor !== undefined) {
+      const value =
+        "value" in descriptor
+          ? descriptor.value
+          : typeof descriptor.get === "function"
+            ? Reflect.apply(descriptor.get, request, [])
+            : undefined;
+      return typeof value === "object" && value !== null
+        ? (value as CodexAdapterServerRequestPort["identity"])
+        : undefined;
+    }
+    current = Object.getPrototypeOf(current) as object | null;
+  }
+  return undefined;
+}
+
+function dataMethod(value: object, key: string): ((...args: readonly unknown[]) => unknown) | undefined {
+  let current: object | null = value;
+  for (let depth = 0; depth < 4 && current !== null; depth += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, key);
+    if (descriptor !== undefined)
+      return "value" in descriptor && typeof descriptor.value === "function"
+        ? (descriptor.value as (...args: readonly unknown[]) => unknown)
+        : undefined;
+    current = Object.getPrototypeOf(current) as object | null;
+  }
+  return undefined;
+}
+
+function inspectServerRequestOwner(params: unknown): Readonly<{ threadId: string; turnId: string }> | undefined {
+  try {
+    if (typeof params !== "object" || params === null || Array.isArray(params)) return undefined;
+    const prototype = Object.getPrototypeOf(params) as unknown;
+    if (prototype !== Object.prototype && prototype !== null) return undefined;
+    const threadDescriptor = Object.getOwnPropertyDescriptor(params, "threadId");
+    const turnDescriptor = Object.getOwnPropertyDescriptor(params, "turnId");
+    if (
+      threadDescriptor === undefined ||
+      !("value" in threadDescriptor) ||
+      turnDescriptor === undefined ||
+      !("value" in turnDescriptor) ||
+      typeof threadDescriptor.value !== "string" ||
+      typeof turnDescriptor.value !== "string"
+    )
+      return undefined;
+    return Object.freeze({ threadId: threadDescriptor.value, turnId: turnDescriptor.value });
   } catch {
     return undefined;
   }
@@ -1800,10 +2047,6 @@ function jsonBytes(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
 
-function adapterUnavailableError(): Error {
-  return new Error("Codex Adapter capability is unavailable for this CLI version.");
-}
-
 function adapterClosedError(): Error {
   return new Error("Codex Adapter is closed.");
 }
@@ -1815,10 +2058,9 @@ function adapterEventWaiterError(): Error {
 type ExpectedThreadConfiguration = Readonly<{
   model?: string;
   workspaceKey?: string;
-  approvalPolicy: "never";
+  approvalPolicy?: "never" | "untrusted" | "on-request";
   sandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
   ephemeral?: boolean;
-  cliVersion?: string;
 }>;
 
 type OperationSnapshots<T> =
@@ -1840,6 +2082,57 @@ function snapshotOperationInputs<T>(
     });
   }
   return Object.freeze({ ok: true, input: input.value, requestOptions: options.value });
+}
+
+function snapshotCapabilityPreflightInput(
+  value: unknown,
+): Readonly<{ ok: true; value: CodexAdapterCapabilityPreflightInput }> | Readonly<{ ok: false }> {
+  try {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return Object.freeze({ ok: false });
+    const prototype = Object.getPrototypeOf(value) as unknown;
+    if (prototype !== Object.prototype && prototype !== null) return Object.freeze({ ok: false });
+    const keys = ["model", "modelSelection", "reasoningEffort", "requiredModality"] as const;
+    const actualKeys = Object.keys(value);
+    if (actualKeys.length !== keys.length || actualKeys.some((key) => !keys.includes(key as (typeof keys)[number]))) {
+      return Object.freeze({ ok: false });
+    }
+    const record = value as Readonly<Record<string, unknown>>;
+    const entries = Object.fromEntries(
+      keys.map((key) => {
+        const descriptor = Object.getOwnPropertyDescriptor(record, key);
+        if (descriptor === undefined || !("value" in descriptor)) throw new TypeError("Invalid capability input.");
+        return [key, descriptor.value] as const;
+      }),
+    );
+    const model = entries.model;
+    const modelSelection = entries.modelSelection;
+    const reasoningEffort = entries.reasoningEffort;
+    const requiredModality = entries.requiredModality;
+    if (
+      !isBoundedCapabilityString(model) ||
+      (modelSelection !== "explicit" && modelSelection !== "inherited") ||
+      !isBoundedCapabilityString(reasoningEffort) ||
+      (requiredModality !== "text" && requiredModality !== "image" && requiredModality !== "audio")
+    ) {
+      return Object.freeze({ ok: false });
+    }
+    return Object.freeze({
+      ok: true,
+      value: Object.freeze({ model, modelSelection, reasoningEffort, requiredModality }),
+    });
+  } catch {
+    return Object.freeze({ ok: false });
+  }
+}
+
+function isBoundedCapabilityString(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= CODEX_ADAPTER_LIMITS.maxIdentifierCharacters &&
+    Buffer.byteLength(value, "utf8") <= CODEX_ADAPTER_LIMITS.maxIdentifierBytes &&
+    !value.includes("\0")
+  );
 }
 
 function toCodexUserInput(contentBlocks: CodexStartTurnInput["contentBlocks"]): readonly unknown[] {

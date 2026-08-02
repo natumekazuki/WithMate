@@ -32,7 +32,10 @@ test("handshake gates operations until initialize response validation and initia
     method: "initialize",
     params: {
       clientInfo: { name: "withmate", version: "1.0.0" },
-      capabilities: null,
+      capabilities: {
+        experimentalApi: true,
+        mcpServerOpenaiFormElicitation: true,
+      },
     },
   });
   await assert.rejects(session.request("model/list", {}), isFailure("request_not_sent", "not_ready"));
@@ -155,9 +158,12 @@ test("notifications and server requests are delivered without blocking a respons
   const event = await session.nextEvent();
   assert.equal(event.kind, "serverRequest");
   if (event.kind !== "serverRequest") assert.fail("expected server request");
+  assert.equal(Object.getPrototypeOf(event.request.identity), null);
+  assert.deepEqual(Object.keys(event.request.identity), []);
+  assert.equal(Object.isFrozen(event.request.identity), true);
   assert.deepEqual(
-    { id: event.request.id, method: event.request.method, params: event.request.params },
-    { id: "server-1", method: "future/request", params: { prompt: "x" } },
+    { method: event.request.method, params: event.request.params },
+    { method: "future/request", params: { prompt: "x" } },
   );
   await event.request.respond({ accepted: true });
   assert.deepEqual(writer.messages.at(-1), { id: "server-1", result: { accepted: true } });
@@ -165,6 +171,36 @@ test("notifications and server requests are delivered without blocking a respons
     event.request.respond({ accepted: false }),
     isFailure("request_not_sent", "server_request_settled"),
   );
+});
+
+test("server request payload release preserves queued and direct-waiter response ownership", async () => {
+  for (const delivery of ["queued", "direct_waiter"] as const) {
+    const writer = new RecordingWriter();
+    const session = await readySession(writer);
+    const payload = { prompt: delivery, additive: { future: "x".repeat(64 * 1_024) } };
+    const trace = {
+      traceparent: "x".repeat(64 * 1_024),
+      tracestate: "y".repeat(64 * 1_024),
+    };
+    const next = delivery === "direct_waiter" ? session.nextEvent() : undefined;
+
+    session.accept({ kind: "serverRequest", id: delivery, method: "future/request", params: payload, trace });
+    const event = await (next ?? session.nextEvent());
+    if (event.kind !== "serverRequest") assert.fail("expected server request");
+    assert.equal(event.request.params, payload);
+    assert.equal(event.request.trace, trace);
+
+    event.request.releasePayload();
+    assert.equal(event.request.params, undefined);
+    assert.equal(event.request.trace, undefined);
+    await event.request.respond({ accepted: true });
+    assert.deepEqual(writer.messages.at(-1), { id: delivery, result: { accepted: true } });
+    assert.equal(session.outstandingServerRequestCount, 0);
+    await assert.rejects(
+      event.request.respond({ accepted: false }),
+      isFailure("request_not_sent", "server_request_settled"),
+    );
+  }
 });
 
 test("duplicate, late, and unknown response IDs become bounded anomalies", async () => {
@@ -369,6 +405,43 @@ test("pending request and stopped-consumer event limits fail boundedly", async (
   await assert.rejects(session.nextEvent(), isFailure("connection_failure", "event_queue_overflow"));
 });
 
+test("queued events enforce a prospective byte aggregate and release bytes on dequeue", async () => {
+  const limits = {
+    ...CODEX_TRANSPORT_LIMITS,
+    maxQueuedEvents: 4,
+    maxQueuedEventBytes: 100,
+  };
+  const session = await readySession(new RecordingWriter(), { limits });
+
+  session.accept({ kind: "notification", method: "one", params: { future: "x" } }, 60);
+  assert.equal(session.queuedEventCount, 1);
+  assert.equal(session.queuedEventBytes, 60);
+
+  session.accept({ kind: "notification", method: "two", params: { future: "y" } }, 41);
+  assert.equal(session.state, "failed");
+  assert.equal(session.queuedEventCount, 1);
+  assert.equal(session.queuedEventBytes, 60);
+  assert.deepEqual(await session.nextEvent(), { kind: "notification", method: "one", params: { future: "x" } });
+  assert.equal(session.queuedEventBytes, 0);
+  await assert.rejects(session.nextEvent(), isFailure("connection_failure", "event_queue_overflow"));
+});
+
+test("terminal transport release discards queued event payloads after close preparation", async () => {
+  const session = await readySession(new RecordingWriter());
+  session.accept({ kind: "notification", method: "one", params: { future: "x" } });
+  session.accept({ kind: "notification", method: "two", params: { future: "y" } });
+  assert.equal(session.queuedEventCount, 2);
+  assert.ok(session.queuedEventBytes > 0);
+
+  session.prepareClose();
+  assert.equal(session.queuedEventCount, 2);
+  session.beginClose();
+  session.releaseTransportResources();
+
+  assert.equal(session.queuedEventCount, 0);
+  assert.equal(session.queuedEventBytes, 0);
+});
+
 test("duplicate server request IDs fail the connection before double delivery", async () => {
   const writer = new RecordingWriter();
   const session = await readySession(writer);
@@ -377,27 +450,93 @@ test("duplicate server request IDs fail the connection before double delivery", 
 
   assert.equal(session.state, "failed");
   assert.equal(session.outstandingServerRequestCount, 0);
+  assert.equal(session.seenServerRequestCount, 0);
+  assert.equal(session.seenServerRequestIdBytes, 0);
+  assert.deepEqual(session.observeServerRequestResolution(7), { kind: "invalid" });
   const first = await session.nextEvent();
   if (first.kind !== "serverRequest") assert.fail("expected preserved server request");
   await assert.rejects(first.request.respond({ ok: true }), isFailure("request_not_sent", "server_request_settled"));
   await assert.rejects(session.nextEvent(), isFailure("connection_failure", "duplicate_server_request"));
 });
 
-test("a settled server request ID can be reused by a later request", async () => {
+test("a server request ID cannot be reused after its response and resolution", async () => {
   const writer = new RecordingWriter();
   const session = await readySession(writer);
   session.accept({ kind: "serverRequest", id: 7, method: "first" });
   const event = await session.nextEvent();
   if (event.kind !== "serverRequest") assert.fail("expected server request");
   await event.request.respond({ ok: true });
+  assert.deepEqual(session.observeServerRequestResolution(7), {
+    kind: "current",
+    identity: event.request.identity,
+  });
 
   session.accept({ kind: "serverRequest", id: 7, method: "second" });
-  const reused = await session.nextEvent();
-  if (reused.kind !== "serverRequest") assert.fail("expected reused server request ID");
-  await reused.request.respond({ ok: true });
-
-  assert.equal(session.state, "ready");
+  assert.equal(session.state, "failed");
   assert.equal(session.outstandingServerRequestCount, 0);
+  await assert.rejects(session.nextEvent(), isFailure("connection_failure", "duplicate_server_request"));
+});
+
+test("early and late resolutions share one identity without settling the response port", async () => {
+  const writer = new RecordingWriter();
+  const session = await readySession(writer);
+  session.accept({ kind: "serverRequest", id: "request", method: "first" });
+  const event = await session.nextEvent();
+  if (event.kind !== "serverRequest") assert.fail("expected server request");
+
+  assert.deepEqual(session.observeServerRequestResolution("request"), {
+    kind: "current",
+    identity: event.request.identity,
+  });
+  assert.equal(session.outstandingServerRequestCount, 1);
+  assert.deepEqual(session.observeServerRequestResolution("request"), { kind: "duplicate" });
+  await event.request.respond({ ok: true });
+  assert.equal(session.outstandingServerRequestCount, 0);
+  assert.deepEqual(session.observeServerRequestResolution("request"), { kind: "duplicate" });
+  await assert.rejects(event.request.respond({ ok: false }), isFailure("request_not_sent", "server_request_settled"));
+});
+
+test("server request identity resolution is type-sensitive and rejects unknown values", async () => {
+  const writer = new RecordingWriter();
+  const session = await readySession(writer);
+  session.accept({ kind: "serverRequest", id: "1", method: "string" });
+  session.accept({ kind: "serverRequest", id: 1, method: "number" });
+  const stringEvent = await session.nextEvent();
+  const numberEvent = await session.nextEvent();
+  if (stringEvent.kind !== "serverRequest" || numberEvent.kind !== "serverRequest") {
+    assert.fail("expected server requests");
+  }
+
+  assert.notEqual(stringEvent.request.identity, numberEvent.request.identity);
+  assert.deepEqual(session.observeServerRequestResolution("1"), {
+    kind: "current",
+    identity: stringEvent.request.identity,
+  });
+  assert.deepEqual(session.observeServerRequestResolution(1), {
+    kind: "current",
+    identity: numberEvent.request.identity,
+  });
+  assert.deepEqual(session.observeServerRequestResolution("unknown"), { kind: "invalid" });
+  assert.deepEqual(session.observeServerRequestResolution({ requestId: 1 }), { kind: "invalid" });
+});
+
+test("a new connection generation can reuse a prior raw server request ID", async () => {
+  const firstWriter = new RecordingWriter();
+  const first = await readySession(firstWriter);
+  first.accept({ kind: "serverRequest", id: 7, method: "first" });
+  const firstEvent = await first.nextEvent();
+  if (firstEvent.kind !== "serverRequest") assert.fail("expected server request");
+  await firstEvent.request.respond({ ok: true });
+  first.prepareClose();
+
+  const secondWriter = new RecordingWriter();
+  const second = await readySession(secondWriter);
+  second.accept({ kind: "serverRequest", id: 7, method: "second" });
+  const secondEvent = await second.nextEvent();
+  if (secondEvent.kind !== "serverRequest") assert.fail("expected server request");
+
+  assert.notEqual(firstEvent.request.identity, secondEvent.request.identity);
+  assert.equal(second.state, "ready");
 });
 
 test("server response pre-send rejection permits one explicit retry without automatic retry", async () => {
@@ -459,35 +598,63 @@ test("server success and error responses preserve an explicit JSON-RPC 2.0 reque
   });
 });
 
-test("settled server request IDs do not consume a connection-lifetime allowance", async () => {
+test("seen server request count is retained to its exact connection-lifetime cap", async () => {
   const writer = new RecordingWriter();
-  const session = await readySession(writer);
-  for (let index = 0; index <= 4_096; index += 1) {
+  const session = await readySession(writer, {
+    limits: { ...CODEX_TRANSPORT_LIMITS, maxPendingRequests: 2 },
+  });
+  for (let index = 0; index < 2; index += 1) {
     session.accept({ kind: "serverRequest", id: `request-${index}`, method: "request" });
     const event = await session.nextEvent();
     if (event.kind !== "serverRequest") assert.fail("expected server request");
     await event.request.respond({ ok: true });
   }
 
-  assert.equal(session.state, "ready");
+  assert.equal(session.seenServerRequestCount, 2);
   assert.equal(session.outstandingServerRequestCount, 0);
+  session.accept({ kind: "serverRequest", id: "request-2", method: "request" });
+  assert.equal(session.state, "failed");
+  await assert.rejects(session.nextEvent(), isFailure("connection_failure", "server_request_limit"));
 });
 
-test("outstanding server request IDs have an aggregate byte limit", async () => {
+test("seen raw server request IDs retain UTF-8 bytes to the exact connection-lifetime cap", async () => {
   const exactBoundaryId = "識別";
   const writer = new RecordingWriter();
   const session = await readySession(writer, {
     limits: {
       ...CODEX_TRANSPORT_LIMITS,
-      maxOutstandingServerRequestIdBytes: Buffer.byteLength(`string:${exactBoundaryId}`, "utf8"),
+      maxOutstandingServerRequestIdBytes: Buffer.byteLength(exactBoundaryId, "utf8"),
     },
   });
   session.accept({ kind: "serverRequest", id: exactBoundaryId, method: "first" });
-  assert.equal((await session.nextEvent()).kind, "serverRequest");
+  const event = await session.nextEvent();
+  if (event.kind !== "serverRequest") assert.fail("expected server request");
+  await event.request.respond({ ok: true });
+  assert.equal(session.seenServerRequestIdBytes, Buffer.byteLength(exactBoundaryId, "utf8"));
   session.accept({ kind: "serverRequest", id: "x", method: "second" });
 
   assert.equal(session.state, "failed");
   await assert.rejects(session.nextEvent(), isFailure("connection_failure", "server_request_limit"));
+  assert.equal(session.seenServerRequestCount, 0);
+  assert.equal(session.seenServerRequestIdBytes, 0);
+});
+
+test("close clears all outstanding and seen server request identity state", async () => {
+  const writer = new RecordingWriter();
+  const session = await readySession(writer);
+  session.accept({ kind: "serverRequest", id: "request", method: "request" });
+  const event = await session.nextEvent();
+  if (event.kind !== "serverRequest") assert.fail("expected server request");
+  await event.request.respond({ ok: true });
+  assert.equal(session.seenServerRequestCount, 1);
+  assert.equal(session.seenServerRequestIdBytes, Buffer.byteLength("request", "utf8"));
+
+  session.prepareClose();
+
+  assert.equal(session.outstandingServerRequestCount, 0);
+  assert.equal(session.seenServerRequestCount, 0);
+  assert.equal(session.seenServerRequestIdBytes, 0);
+  assert.deepEqual(session.observeServerRequestResolution("request"), { kind: "invalid" });
 });
 
 test("unknown request write outcome fails the connection and all sibling pending requests", async () => {

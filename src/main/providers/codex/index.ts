@@ -26,10 +26,19 @@ export { CODEX_ADAPTER_LIMITS, CODEX_ADAPTER_SCHEMA_BASELINE } from "./codex-ada
 export { CodexAdapter } from "./codex-adapter.js";
 export type {
   CodexAdapterApprovalPolicy,
+  CodexAdapterCapabilityPreflightInput,
+  CodexAdapterCapabilityPreflightResult,
   CodexAdapterDiagnostic,
   CodexAdapterDiagnosticCode,
   CodexAdapterEvent,
   CodexAdapterInterruptAcknowledgement,
+  CodexAdapterInteractionHandle,
+  CodexAdapterInteractionKind,
+  CodexAdapterInteractionOwner,
+  CodexAdapterInteractionResponse,
+  CodexAdapterInteractionResponseResult,
+  CodexAdapterInteractionSnapshot,
+  CodexAdapterInteractionUnavailableDisplay,
   CodexAdapterLimits,
   CodexAdapterModelSelection,
   CodexAdapterModel,
@@ -60,3 +69,34 @@ export type {
   CodexStartTurnInput,
   CodexSteerTurnInput,
 } from "./codex-adapter-contract.js";
+export {
+  CODEX_PROVIDER_DEFINITION_VERSION,
+  CODEX_PROVIDER_ID,
+  CODEX_PROVIDER_INTERACTION_UI,
+  CODEX_PROVIDER_SETTINGS_UI,
+  canonicalizeCodexProviderSettings,
+  codexProviderDefinition,
+} from "./codex-provider-definition.js";
+export {
+  CODEX_INTERACTION_KINDS,
+  canonicalizeCodexInteractionResponse,
+  canonicalizeCodexInteractionResponseShape,
+  encodeCanonicalCodexInteractionResponse,
+} from "./codex-interaction-definition.js";
+export type { CodexCanonicalInteractionResponse } from "./codex-interaction-definition.js";
+export {
+  canonicalizeCodexInteractionRequest,
+  canonicalizeCodexInteractionSnapshot,
+  canonicalizeSafeDisplayText,
+  canonicalizeWorkspaceRelativePath,
+} from "./codex-interaction-codec.js";
+export type {
+  CodexCanonicalInteractionRequest,
+  CodexInteractionRequestCanonicalization,
+  CodexInteractionRequestContext,
+} from "./codex-interaction-codec.js";
+export type {
+  CodexProviderApprovalPolicy,
+  CodexProviderSandboxSetting,
+  CodexProviderSettings,
+} from "./codex-provider-definition.js";

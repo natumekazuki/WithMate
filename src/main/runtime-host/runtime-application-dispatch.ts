@@ -1,10 +1,7 @@
 import type { RuntimeApplication } from "../runtime-application.js";
-import type {
-  ApplicationRunExecutionOverrides,
-  ApplicationRunExecutionSettings,
-  ApplicationRunSandboxSetting,
-} from "../../shared/application-run-model.js";
+import type { ApplicationRunProviderSettings } from "../../shared/application-run-model.js";
 import type { TextContentBlock } from "../../shared/message-content.js";
+import { defaultProviderDefinitionRegistry } from "../providers/provider-registry.js";
 import type { RuntimeIpcOperation, RuntimeIpcOperationPayload } from "./runtime-ipc-contract.js";
 
 export async function dispatchRuntimeApplicationOperation(
@@ -133,7 +130,7 @@ export async function dispatchRuntimeApplicationOperation(
           sessionId: stringField(payload, "sessionId"),
           idempotencyKey: stringField(payload, "idempotencyKey"),
           contentBlocks: textContentBlocksField(payload, "contentBlocks"),
-          execution: executionSettingsField(payload, "execution"),
+          providerSettings: providerSettingsField(payload, "providerSettings"),
         },
         options,
       );
@@ -144,8 +141,8 @@ export async function dispatchRuntimeApplicationOperation(
           sessionId: stringField(payload, "sessionId"),
           retryOfRunId: stringField(payload, "retryOfRunId"),
           idempotencyKey: stringField(payload, "idempotencyKey"),
-          ...(Object.hasOwn(payload, "executionOverrides")
-            ? { executionOverrides: executionOverridesField(payload, "executionOverrides") }
+          ...(Object.hasOwn(payload, "providerSettingsOverride")
+            ? { providerSettingsOverride: providerSettingsField(payload, "providerSettingsOverride") }
             : {}),
         },
         options,
@@ -171,7 +168,19 @@ export async function dispatchRuntimeApplicationOperation(
         },
         options,
       );
+    case "run.respond_interaction":
+      return await application.runOperations.respondInteraction(
+        {
+          context,
+          sessionId: stringField(payload, "sessionId"),
+          runId: stringField(payload, "runId"),
+          idempotencyKey: stringField(payload, "idempotencyKey"),
+          response: interactionResponseField(payload, "response"),
+        },
+        options,
+      );
     case "run.status":
+    case "run.interactions":
     case "run.output_counts": {
       const request = {
         context,
@@ -180,7 +189,9 @@ export async function dispatchRuntimeApplicationOperation(
       };
       return operation === "run.status"
         ? await application.runOperations.status(request, options)
-        : await application.runOutputOperations.outputCounts(request, options);
+        : operation === "run.interactions"
+          ? await application.runOperations.interactions(request, options)
+          : await application.runOutputOperations.outputCounts(request, options);
     }
     case "run.events":
       return await application.runOperations.events(
@@ -297,34 +308,21 @@ function textContentBlocksField(payload: RuntimeIpcOperationPayload, key: string
   return value as readonly TextContentBlock[];
 }
 
-function executionSettingsField(payload: RuntimeIpcOperationPayload, key: string): ApplicationRunExecutionSettings {
-  const value = recordField(payload, key);
-  return {
-    model: stringField(value, "model"),
-    reasoningEffort: stringField(value, "reasoningEffort"),
-    sandbox: sandboxField(value, "sandbox"),
-  };
-}
-
-function executionOverridesField(payload: RuntimeIpcOperationPayload, key: string): ApplicationRunExecutionOverrides {
-  const value = recordField(payload, key);
-  return {
-    ...optionalString(value, "model"),
-    ...optionalString(value, "reasoningEffort"),
-    ...(Object.hasOwn(value, "sandbox") ? { sandbox: sandboxField(value, "sandbox") } : {}),
-  };
-}
-
-function sandboxField(payload: RuntimeIpcOperationPayload, key: string): ApplicationRunSandboxSetting {
-  const value = recordField(payload, key);
-  const mode = stringField(value, "mode");
-  if (mode === "danger-full-access") return { mode };
-  if (mode === "read-only" || mode === "workspace-write") {
-    const networkAccess = value.networkAccess;
-    if (typeof networkAccess !== "boolean") throw new TypeError(`Runtime payload field ${key} is invalid.`);
-    return { mode, networkAccess };
+function providerSettingsField(payload: RuntimeIpcOperationPayload, key: string): ApplicationRunProviderSettings {
+  try {
+    return defaultProviderDefinitionRegistry.canonicalizeEnvelope(recordField(payload, key));
+  } catch {
+    throw new TypeError(`Runtime payload field ${key} is invalid.`);
   }
-  throw new TypeError(`Runtime payload field ${key} is invalid.`);
+}
+
+function interactionResponseField(
+  payload: RuntimeIpcOperationPayload,
+  key: string,
+): Parameters<RuntimeApplication["runOperations"]["respondInteraction"]>[0]["response"] {
+  return recordField(payload, key) as Parameters<
+    RuntimeApplication["runOperations"]["respondInteraction"]
+  >[0]["response"];
 }
 
 function recordField(payload: RuntimeIpcOperationPayload, key: string): RuntimeIpcOperationPayload {

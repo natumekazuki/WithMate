@@ -11,6 +11,16 @@ type OutputOperations = ApplicationRunOutputOperations<Authorization>;
 
 const authorization: Authorization = { transport: "test" };
 const outputOperations = runOutputOperations();
+const providerSettings = {
+  providerId: "codex",
+  definitionVersion: "codex-provider-v1",
+  settings: {
+    model: "gpt-test",
+    reasoningEffort: "medium",
+    approvalPolicy: "never",
+    sandbox: { mode: "workspace-write", networkAccess: false },
+  },
+} as const;
 
 test("Run mutations dispatch only caller-owned fields", async () => {
   const calls: unknown[] = [];
@@ -57,11 +67,7 @@ test("Run mutations dispatch only caller-owned fields", async () => {
       sessionId: "session-1",
       idempotencyKey,
       contentBlocks: [{ type: "text", text: "hello" }],
-      execution: {
-        model: "gpt-test",
-        reasoningEffort: "medium",
-        sandbox: { mode: "workspace-write", networkAccess: false },
-      },
+      providerSettings,
     },
     { operations, outputOperations, authorization },
   );
@@ -71,7 +77,10 @@ test("Run mutations dispatch only caller-owned fields", async () => {
       sessionId: "session-1",
       retryOfRunId: "run-source",
       idempotencyKey,
-      executionOverrides: { reasoningEffort: "high" },
+      providerSettingsOverride: {
+        ...providerSettings,
+        settings: { ...providerSettings.settings, reasoningEffort: "high" },
+      },
     },
     { operations, outputOperations, authorization },
   );
@@ -109,11 +118,7 @@ test("Run mutations dispatch only caller-owned fields", async () => {
         sessionId: "session-1",
         idempotencyKey,
         contentBlocks: [{ type: "text", text: "hello" }],
-        execution: {
-          model: "gpt-test",
-          reasoningEffort: "medium",
-          sandbox: { mode: "workspace-write", networkAccess: false },
-        },
+        providerSettings,
       },
       {},
     ],
@@ -124,7 +129,10 @@ test("Run mutations dispatch only caller-owned fields", async () => {
         sessionId: "session-1",
         retryOfRunId: "run-source",
         idempotencyKey,
-        executionOverrides: { reasoningEffort: "high" },
+        providerSettingsOverride: {
+          ...providerSettings,
+          settings: { ...providerSettings.settings, reasoningEffort: "high" },
+        },
       },
       {},
     ],
@@ -148,6 +156,70 @@ test("Run mutations dispatch only caller-owned fields", async () => {
         idempotencyKey,
       },
       { timeoutMs: 750 },
+    ],
+  ]);
+});
+
+test("Run interaction operations dispatch the exact public request and preserve caller wait controls", async () => {
+  const calls: unknown[] = [];
+  const operations = runOperations({
+    interactions: async (request, options) => {
+      calls.push(["interactions", request, options]);
+      return success({ sessionId: request.sessionId, runId: request.runId, runVersion: 7, interactions: [] });
+    },
+    respondInteraction: async (request, options) => {
+      calls.push(["respond-interaction", request, options]);
+      return writeSuccess({
+        sessionId: request.sessionId,
+        runId: request.runId,
+        interactionId: request.response.interactionId,
+        admittedAt: 1,
+        effectCertainty: "admitted" as const,
+        writeAttemptedAt: null,
+        settledAt: null,
+        resolutionCode: null,
+      });
+    },
+  });
+  const controller = new AbortController();
+  const response = {
+    interactionId: "interaction-1",
+    kind: "provider.approval",
+    payload: { decision: "accept" },
+  } as const;
+  const read = await dispatchCliRunCommand(
+    { identity: { namespace: "run", operation: "interactions" }, sessionId: "session-1", runId: "run-1" },
+    { operations, outputOperations, authorization, signal: controller.signal, timeoutMs: 2_000 },
+  );
+  const write = await dispatchCliRunCommand(
+    {
+      identity: { namespace: "run", operation: "respond-interaction" },
+      sessionId: "session-1",
+      runId: "run-1",
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000701",
+      response,
+      timeoutMs: 1_000,
+    },
+    { operations, outputOperations, authorization, signal: controller.signal },
+  );
+  assert.equal(read.ok, true);
+  assert.equal(write.ok, true);
+  assert.deepEqual(calls, [
+    [
+      "interactions",
+      { context: { authorization }, sessionId: "session-1", runId: "run-1" },
+      { timeoutMs: 2_000, signal: controller.signal },
+    ],
+    [
+      "respond-interaction",
+      {
+        context: { authorization },
+        sessionId: "session-1",
+        runId: "run-1",
+        idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000701",
+        response,
+      },
+      { timeoutMs: 1_000, signal: controller.signal },
     ],
   ]);
 });
@@ -411,7 +483,9 @@ function runOperations(overrides: Partial<Operations>): Operations {
     retry: overrides.retry ?? unsupported,
     sendInput: overrides.sendInput ?? unsupported,
     cancel: overrides.cancel ?? unsupported,
+    respondInteraction: overrides.respondInteraction ?? unsupported,
     status: overrides.status ?? unsupported,
+    interactions: overrides.interactions ?? unsupported,
     events: overrides.events ?? unsupported,
     follow: overrides.follow ?? unsupported,
   };

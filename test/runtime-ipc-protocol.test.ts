@@ -116,6 +116,17 @@ test("runtime IPC rejects unknown fields, kinds, operations, authorization, and 
     () => decodeRuntimeIpcEnvelope(runtimeRequest("session.list", { localRepositoryKeys: [] })),
     protocolFailure("invalid_envelope"),
   );
+  assert.throws(
+    () =>
+      decodeRuntimeIpcEnvelope(
+        runtimeRequest("run.interactions", {
+          sessionId: "session_abc",
+          runId: "run_abc",
+          adapterHandle: "private",
+        }),
+      ),
+    protocolFailure("invalid_envelope"),
+  );
 });
 
 test("runtime IPC reports protocol version mismatch before applying version-specific exact fields", () => {
@@ -166,7 +177,7 @@ test("runtime IPC failure codes admit only their defined execution and retry tup
   );
 });
 
-test("runtime IPC allowlist covers all 25 operational Application operations", () => {
+test("runtime IPC allowlist covers all 27 operational Application operations", () => {
   const idempotencyKey = randomUUID();
   const validPayloads = {
     "session.create": {
@@ -199,19 +210,13 @@ test("runtime IPC allowlist covers all 25 operational Application operations", (
       sessionId: "session_abc",
       idempotencyKey,
       contentBlocks: [{ type: "text", text: "hello" }],
-      execution: {
-        model: "gpt-test",
-        reasoningEffort: "medium",
-        sandbox: { mode: "workspace-write", networkAccess: false },
-      },
+      providerSettings: providerSettings(),
     },
     "run.retry": {
       sessionId: "session_abc",
       retryOfRunId: "run_source",
       idempotencyKey,
-      executionOverrides: {
-        reasoningEffort: "high",
-      },
+      providerSettingsOverride: providerSettings("high"),
     },
     "run.send_input": {
       sessionId: "session_abc",
@@ -220,7 +225,14 @@ test("runtime IPC allowlist covers all 25 operational Application operations", (
       contentBlocks: [{ type: "text", text: "continue" }],
     },
     "run.cancel": { sessionId: "session_abc", runId: "run_abc", idempotencyKey },
+    "run.respond_interaction": {
+      sessionId: "session_abc",
+      runId: "run_abc",
+      idempotencyKey,
+      response: { interactionId: "interaction_abc", kind: "provider.approval", payload: { decision: "accept" } },
+    },
     "run.status": { sessionId: "session_abc", runId: "run_abc" },
+    "run.interactions": { sessionId: "session_abc", runId: "run_abc" },
     "run.events": { sessionId: "session_abc", runId: "run_abc", limit: 25 },
     "run.follow": { sessionId: "session_abc", runId: "run_abc", limit: 25, waitMs: 10_000, pollMs: 250 },
     "run.output_counts": { sessionId: "session_abc", runId: "run_abc" },
@@ -245,13 +257,63 @@ test("runtime IPC allowlist covers all 25 operational Application operations", (
       destination: "C:\\exports\\output.bin",
     },
   } satisfies Record<RuntimeIpcOperation, unknown>;
-  assert.equal(RUNTIME_IPC_OPERATIONS.length, 25);
+  assert.equal(RUNTIME_IPC_OPERATIONS.length, 27);
   for (const operation of RUNTIME_IPC_OPERATIONS) {
     const decoded = decodeRuntimeIpcEnvelope(runtimeRequest(operation, validPayloads[operation]));
     assert.equal(decoded.kind, "request");
     if (decoded.kind !== "request") throw new Error("Expected a runtime request.");
     assert.equal(decoded.operation, operation);
   }
+});
+
+test("Run interaction response payload is exact, bounded, and hostile-structure free", () => {
+  const base = {
+    sessionId: "session_abc",
+    runId: "run_abc",
+    idempotencyKey: randomUUID(),
+  };
+  const valid = {
+    interactionId: "interaction_abc",
+    kind: "provider.approval",
+    payload: { decision: "accept", selections: ["one"] },
+  };
+  assert.doesNotThrow(() =>
+    decodeRuntimeIpcEnvelope(runtimeRequest("run.respond_interaction", { ...base, response: valid })),
+  );
+
+  const sparse: unknown[] = [];
+  sparse.length = 1;
+  const accessor = Object.defineProperty({}, "decision", { enumerable: true, get: () => "accept" });
+  const proxy = new Proxy(
+    { decision: "accept" },
+    {
+      ownKeys: () => {
+        throw new Error("hostile");
+      },
+    },
+  );
+  for (const response of [
+    { ...valid, privateRequestId: "provider-private" },
+    { ...valid, payload: sparse },
+    { ...valid, payload: accessor },
+    { ...valid, payload: proxy },
+    { ...valid, payload: { score: 0.5 } },
+  ]) {
+    assert.throws(
+      () => decodeRuntimeIpcEnvelope(runtimeRequest("run.respond_interaction", { ...base, response })),
+      protocolFailure("invalid_envelope"),
+    );
+  }
+  assert.throws(
+    () =>
+      decodeRuntimeIpcEnvelope(
+        runtimeRequest("run.respond_interaction", {
+          ...base,
+          response: { ...valid, payload: { text: "x".repeat(384 * 1_024) } },
+        }),
+      ),
+    protocolFailure("invalid_envelope"),
+  );
 });
 
 test("Run content mutations snapshot exact inline content and reject one byte beyond the IPC content limit", () => {
@@ -262,11 +324,7 @@ test("Run content mutations snapshot exact inline content and reject one byte be
     sessionId: "session_abc",
     idempotencyKey,
     contentBlocks: [{ type: "text", text: exactText }],
-    execution: {
-      model: "gpt-test",
-      reasoningEffort: "medium",
-      sandbox: { mode: "read-only", networkAccess: true },
-    },
+    providerSettings: providerSettings(),
   };
 
   assert.doesNotThrow(() => decodeRuntimeIpcEnvelope(runtimeRequest("run.start", payload)));
@@ -309,12 +367,25 @@ test("Run content mutations snapshot exact inline content and reject one byte be
           sessionId: "session_abc",
           retryOfRunId: "run_source",
           idempotencyKey,
-          executionOverrides: { providerId: "attacker" },
+          providerSettingsOverride: { providerId: "attacker" },
         }),
       ),
     protocolFailure("invalid_envelope"),
   );
 });
+
+function providerSettings(reasoningEffort = "medium") {
+  return {
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    settings: {
+      model: "gpt-test",
+      reasoningEffort,
+      approvalPolicy: "never",
+      sandbox: { mode: "workspace-write", networkAccess: false },
+    },
+  } as const;
+}
 
 test("runtime IPC operation payload arrays must be dense, bounded, and read once", () => {
   const sparse: string[] = [];

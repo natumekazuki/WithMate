@@ -7,20 +7,1385 @@ import {
   type ApplicationRunEventWritePort,
 } from "../src/main/application-run-event-service.js";
 import { ApplicationRunDispatchService } from "../src/main/application-run-dispatch-service.js";
+import {
+  APPLICATION_RUN_INTERACTION_LIMITS,
+  ApplicationRunInteractionState,
+} from "../src/main/application-run-interaction-state.js";
 import type {
   ApplicationRunBindingOwnership,
   ApplicationRunDispatchControl,
   ApplicationRunPreparedDispatch,
   ApplicationRunProviderAdapterPort,
+  ApplicationRunProviderInteractionHandle,
+  ApplicationRunProviderInteractionResponse,
+  ApplicationRunProviderInteractionResponseReservation,
+  ApplicationRunProviderInteractionResponseResult,
 } from "../src/main/application-run-runtime-service.js";
 import { PersistenceClientError } from "../src/main/persistence-worker-client.js";
+import type {
+  CodexAdapterInteractionKind,
+  CodexAdapterServerRequestPort,
+  CodexAdapterEvent,
+} from "../src/main/providers/codex/index.js";
+import { CodexAdapterInteractionManager } from "../src/main/providers/codex/codex-adapter-interactions.js";
+import type { CodexServerRequestIdentity } from "../src/main/providers/codex/protocol-session.js";
 import type {
   RunDispatchResolutionCommand,
   RunInputBeginCommand,
   RunInputResolutionCommand,
+  RunInteractionResponseAdmissionCommand,
+  RunInteractionResponseMarkWriteAttemptCommand,
+  RunInteractionResponseResult,
+  RunInteractionResponseSettlementCommand,
   RunOutputAppendCommand,
   RunTerminalCommand,
 } from "../src/shared/repository-write-model.js";
+
+test("pending interactions stay provisional until durable acceptance and activity priority is computed", async () => {
+  const fixture = eventFixture();
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  const approval = pendingInteraction(interactionHandle(), "approval-1", "codex.command_approval");
+  await fixture.service.accept("codex-1", approval);
+  assert.equal(await fixture.service.readInteractions({ sessionId: "session-1", runId: "run-1", runVersion: 7 }), null);
+
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  const active = await fixture.service.readInteractions({ sessionId: "session-1", runId: "run-1", runVersion: 7 });
+  assert.deepEqual(active, {
+    sessionId: "session-1",
+    runId: "run-1",
+    runVersion: 7,
+    interactions: [approval.snapshot],
+  });
+  assert.equal(JSON.stringify(active).includes("handle"), false);
+  assert.equal(JSON.stringify(active).includes("connectionGeneration"), false);
+  assert.equal(await fixture.service.readInteractions({ sessionId: "session-1", runId: "run-1", runVersion: 6 }), null);
+  assert.equal((await fixture.service.read({ sessionId: "session-1", runId: "run-1" }))?.activity, "waiting_approval");
+
+  const input = pendingInteraction(interactionHandle(), "input-1", "codex.user_input", false);
+  await fixture.service.accept("codex-1", input);
+  assert.equal((await fixture.service.read({ sessionId: "session-1", runId: "run-1" }))?.activity, "waiting_input");
+  await fixture.service.accept("codex-1", turnStarted("turn-1"));
+  assert.equal((await fixture.service.read({ sessionId: "session-1", runId: "run-1" }))?.activity, "waiting_input");
+
+  await fixture.service.accept("codex-1", {
+    kind: "interaction_resolved",
+    handle: input.handle,
+    owner: input.owner,
+  });
+  assert.equal((await fixture.service.read({ sessionId: "session-1", runId: "run-1" }))?.activity, "waiting_approval");
+  await fixture.service.accept("codex-1", {
+    kind: "interaction_resolved",
+    handle: approval.handle,
+    owner: approval.owner,
+  });
+  assert.equal((await fixture.service.read({ sessionId: "session-1", runId: "run-1" }))?.activity, "running");
+});
+
+test("interaction reads require the current runtime generation owner", async () => {
+  let current = true;
+  const fixture = eventFixture({ isCurrent: () => current });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-1", "codex.command_approval"),
+  );
+  current = false;
+  assert.equal(await fixture.service.readInteractions({ sessionId: "session-1", runId: "run-1", runVersion: 7 }), null);
+});
+
+test("read ignores pending interaction-derived activity when runtime generation is not current", async () => {
+  let current = true;
+  const fixture = eventFixture({ isCurrent: () => current });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-1", "codex.command_approval"),
+  );
+  assert.equal((await fixture.service.read({ sessionId: "session-1", runId: "run-1" }))?.activity, "waiting_approval");
+  current = false;
+  assert.equal((await fixture.service.read({ sessionId: "session-1", runId: "run-1" }))?.activity, "running");
+});
+
+test("interaction response consumes the live handle synchronously and settles without holding the Attempt chain", async () => {
+  let resolveProvider!: (result: ApplicationRunProviderInteractionResponseResult) => void;
+  const providerSettlement = new Promise<ApplicationRunProviderInteractionResponseResult>((resolve) => {
+    resolveProvider = resolve;
+  });
+  let consumed = false;
+  const fixture = eventFixture({
+    respondOperation(handle) {
+      assert.equal(handle, pending.handle);
+      consumed = true;
+      return providerSettlement;
+    },
+  });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  const pending = pendingInteraction(interactionHandle(), "approval-response-1", "codex.command_approval");
+  await fixture.service.accept("codex-1", pending);
+
+  const response = fixture.service.respond(interactionResponseInput("approval-response-1"));
+  await waitFor(() => consumed);
+  assert.equal(fixture.interactionResponses.length, 1);
+  assert.equal(await isSettled(response.then(() => undefined)), false);
+  assert.equal(
+    (await fixture.service.readInteractions({ sessionId: "session-1", runId: "run-1", runVersion: 7 }))?.interactions[0]
+      ?.answerable,
+    false,
+  );
+
+  const cancel = await fixture.service.cancelOwner.preflight({ sessionId: "session-1", runId: "run-1" });
+  assert.equal(cancel.ok, true);
+  if (cancel.ok && cancel.value.kind === "active_execution")
+    fixture.service.cancelOwner.release(cancel.value.reservation);
+
+  resolveProvider({ kind: "write_attempted", effect: "unknown", providerResolution: "resolved" });
+  const result = await response;
+  assert.equal(result.ok && result.value.effectCertainty, "resolved");
+  assert.equal(fixture.interactionSettlements.length, 1);
+});
+
+test("interaction response reserves synchronously before resolved or terminal evidence can retire its handle", async () => {
+  for (const evidence of ["resolved", "terminal"] as const) {
+    let releaseAdmission!: () => void;
+    const admissionGate = new Promise<void>((resolve) => {
+      releaseAdmission = resolve;
+    });
+    const fixture = eventFixture({ interactionAdmissionGate: admissionGate });
+    const attempt = fixture.service.register(dispatch(), fixture.control);
+    assert.ok(attempt);
+    await attempt.settleStartTurn(acceptedTurn("turn-1"));
+    const pending = pendingInteraction(
+      interactionHandle(),
+      `approval-reservation-${evidence}`,
+      "codex.command_approval",
+    );
+    await fixture.service.accept("codex-1", pending);
+
+    const response = fixture.service.respond(interactionResponseInput(pending.snapshot.interactionId));
+    assert.equal(fixture.reservedInteractionHandles.length, 1);
+    assert.equal(fixture.interactionResponses.length, 0);
+    const laterEvidence =
+      evidence === "resolved"
+        ? fixture.service.accept("codex-1", {
+            kind: "interaction_resolved",
+            handle: pending.handle,
+            owner: pending.owner,
+          })
+        : fixture.service.accept("codex-1", {
+            kind: "turn_terminal",
+            threadId: "thread-1",
+            turnId: "turn-1",
+            status: "completed",
+            finalAssistantMessage: null,
+            contentFailure: null,
+          });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(fixture.interactionResponses.length, 0);
+
+    releaseAdmission();
+    const result = await response;
+    await laterEvidence;
+    assert.equal(result.ok && result.value.effectCertainty, evidence === "resolved" ? "resolved" : "ambiguous");
+    assert.equal(fixture.interactionResponses.length, 1);
+  }
+});
+
+test("Application response ownership keeps a real Codex reservation through early resolved evidence", async () => {
+  let releaseAdmission!: () => void;
+  const admissionGate = new Promise<void>((resolve) => {
+    releaseAdmission = resolve;
+  });
+  const manager = new CodexAdapterInteractionManager();
+  const providerResponses: unknown[] = [];
+  const request: CodexAdapterServerRequestPort = {
+    identity: Object.freeze(Object.create(null)) as CodexServerRequestIdentity,
+    method: "item/commandExecution/requestApproval",
+    params: {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "item-1",
+      startedAtMs: 1,
+      command: "npm test",
+      cwd: process.cwd(),
+    },
+    async respond(result) {
+      providerResponses.push(result);
+    },
+  };
+  const admission = manager.admit(
+    request,
+    process.cwd(),
+    (threadId, turnId) => threadId === "thread-1" && turnId === "turn-1",
+  );
+  assert.ok(admission.event);
+  const fixture = eventFixture({
+    interactionAdmissionGate: admissionGate,
+    interactionAdapter: {
+      reserveInteractionResponse: (handle, response) => manager.reserve(handle, response),
+      writeReservedInteractionResponse: (reservation) => manager.writeReserved(reservation),
+      releaseInteractionResponseReservation: (reservation) => manager.releaseReservation(reservation),
+    },
+  });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept("codex-1", admission.event);
+
+  const response = fixture.service.respond(interactionResponseInput(admission.event.snapshot.interactionId));
+  assert.equal(fixture.reservedInteractionHandles.length, 1);
+  const resolution = manager.resolve(request.identity, "thread-1");
+  assert.equal(resolution.kind, "resolved");
+  assert.equal(providerResponses.length, 0);
+  const resolvedEvidence =
+    resolution.kind === "resolved" ? fixture.service.accept("codex-1", resolution.event) : Promise.resolve();
+
+  releaseAdmission();
+  const result = await response;
+  await resolvedEvidence;
+  assert.equal(result.ok && result.value.effectCertainty, "resolved");
+  assert.equal(providerResponses.length, 1);
+});
+
+test("fail-closed admission retains a real Codex reservation through one interrupt and release retry", async () => {
+  const manager = new CodexAdapterInteractionManager();
+  const providerResponses: unknown[] = [];
+  const request: CodexAdapterServerRequestPort = {
+    identity: Object.freeze(Object.create(null)) as CodexServerRequestIdentity,
+    method: "item/commandExecution/requestApproval",
+    params: {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "item-fail-closed",
+      startedAtMs: 1,
+      command: "npm test",
+      cwd: process.cwd(),
+    },
+    async respond(result) {
+      providerResponses.push(result);
+    },
+  };
+  const admission = manager.admit(
+    request,
+    process.cwd(),
+    (threadId, turnId) => threadId === "thread-1" && turnId === "turn-1",
+  );
+  assert.ok(admission.event);
+  let releaseCalls = 0;
+  const fixture = eventFixture({
+    interactionAdmissionErrorSequence: ["nonretryable_none"],
+    terminalUnknownOnce: true,
+    interactionAdapter: {
+      reserveInteractionResponse: (handle, response) => manager.reserve(handle, response),
+      writeReservedInteractionResponse: (reservation) => manager.writeReserved(reservation),
+      releaseInteractionResponseReservation(reservation) {
+        releaseCalls += 1;
+        if (releaseCalls === 1) throw new Error("release unavailable");
+        manager.releaseReservation(reservation);
+      },
+    },
+  });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept("codex-1", admission.event);
+
+  const result = await fixture.service.respond(interactionResponseInput(admission.event.snapshot.interactionId));
+  await attempt.done;
+
+  assert.equal(result.ok, false);
+  assert.equal(!result.ok && result.error.retryable, false);
+  assert.equal(fixture.interactionAdmissions.length, 1);
+  assert.equal(fixture.interactionWriteMarks.length, 0);
+  assert.equal(fixture.interactionResponses.length, 0);
+  assert.equal(providerResponses.length, 0);
+  assert.equal(fixture.interruptInputs.length, 1);
+  assert.equal(releaseCalls, 2);
+  assert.equal(manager.reserve(admission.event.handle, { decision: "accept" }).kind, "not_reserved");
+  assert.equal(await fixture.service.readInteractions({ sessionId: "session-1", runId: "run-1", runVersion: 7 }), null);
+  assert.equal(await fixture.service.read({ sessionId: "session-1", runId: "run-1" }), null);
+  assert.equal(fixture.terminals.length, 2);
+  assert.equal(fixture.terminals[0], fixture.terminals[1]);
+  assert.deepEqual(fixture.terminals[0]?.outcome, {
+    kind: "interrupted",
+    failureOrigin: "application",
+    providerErrorCode: null,
+    errorSummary: "Interaction response persistence could not safely admit the Provider response.",
+  });
+  assert.deepEqual(fixture.terminals[0]?.cancelCorrelation, { kind: "none" });
+});
+
+test("interaction response exact-retries frozen admission and write marker after commit response loss", async () => {
+  const fixture = eventFixture({
+    interactionAdmissionUnknownAfterCommitCount: 1,
+    interactionMarkUnknownAfterCommitCount: 1,
+  });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-frozen-commands", "codex.command_approval"),
+  );
+
+  const response = await fixture.service.respond(interactionResponseInput("approval-frozen-commands"));
+  assert.equal(response.ok && response.value.effectCertainty, "resolved");
+  assert.equal(fixture.interactionAdmissions.length, 2);
+  assert.equal(fixture.interactionAdmissions[0], fixture.interactionAdmissions[1]);
+  assert.equal(fixture.interactionWriteMarks.length, 2);
+  assert.equal(fixture.interactionWriteMarks[0], fixture.interactionWriteMarks[1]);
+  assert.equal(fixture.interactionResponses.length, 1);
+});
+
+test("retryable no-effect admission failure retains the reservation and retryability for an exact same-key retry", async () => {
+  const fixture = eventFixture({ interactionAdmissionErrorSequence: ["none"] });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-admission-none", "codex.command_approval"),
+  );
+
+  const input = interactionResponseInput("approval-admission-none");
+  const first = await fixture.service.respond(input);
+  assert.equal(first.ok, false);
+  assert.equal(!first.ok && first.error.retryable, true);
+  assert.equal(fixture.reservedInteractionHandles.length, 1);
+  assert.equal(fixture.interactionResponses.length, 0);
+  assert.equal(fixture.interactionWriteMarks.length, 0);
+
+  const retry = await fixture.service.respond(input);
+  assert.equal(retry.ok && retry.value.effectCertainty, "resolved");
+  assert.equal(fixture.reservedInteractionHandles.length, 1);
+  assert.equal(fixture.releasedInteractionReservations.length, 0);
+  assert.equal(fixture.interactionResponses.length, 1);
+  assert.equal(fixture.interactionWriteMarks.length, 1);
+});
+
+test("nonretryable no-effect admission failure remains nonretryable and releases its reservation", async () => {
+  const fixture = eventFixture({ interactionAdmissionErrorSequence: ["nonretryable_none"] });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-admission-nonretryable", "codex.command_approval"),
+  );
+
+  const result = await fixture.service.respond(interactionResponseInput("approval-admission-nonretryable"));
+  assert.equal(result.ok, false);
+  assert.equal(!result.ok && result.error.retryable, false);
+  assert.equal(fixture.reservedInteractionHandles.length, 1);
+  assert.equal(fixture.releasedInteractionReservations.length, 1);
+  assert.equal(fixture.interactionResponses.length, 0);
+  assert.equal(fixture.interactionWriteMarks.length, 0);
+  assert.equal(fixture.interruptInputs.length, 1);
+  assert.equal(fixture.terminals[0]?.outcome.kind, "interrupted");
+  assert.equal(
+    fixture.terminals[0]?.outcome.kind === "interrupted" && fixture.terminals[0].outcome.failureOrigin,
+    "application",
+  );
+});
+
+test("nonretryable admission result and durable pre-write settlement both fail closed without Provider response", async () => {
+  const admissionRejected = eventFixture({
+    interactionAdmissionOperation: async () => ({
+      ok: false,
+      replayed: false,
+      error: {
+        code: "lifecycle_conflict",
+        message: "interaction admission was rejected",
+        retryable: false,
+      },
+    }),
+  });
+  const rejectedAttempt = admissionRejected.service.register(dispatch(), admissionRejected.control);
+  assert.ok(rejectedAttempt);
+  await rejectedAttempt.settleStartTurn(acceptedTurn("turn-1"));
+  await admissionRejected.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-admission-rejected", "codex.command_approval"),
+  );
+
+  const rejected = await admissionRejected.service.respond(interactionResponseInput("approval-admission-rejected"));
+  await rejectedAttempt.done;
+  assert.equal(rejected.ok, false);
+  assert.equal(admissionRejected.interactionAdmissions.length, 1);
+  assert.equal(admissionRejected.interactionResponses.length, 0);
+  assert.equal(admissionRejected.interruptInputs.length, 1);
+  assert.equal(admissionRejected.terminals[0]?.outcome.kind, "interrupted");
+
+  const markerRejected = eventFixture({ interactionMarkErrorSequence: ["none"] });
+  const markerAttempt = markerRejected.service.register(dispatch(), markerRejected.control);
+  assert.ok(markerAttempt);
+  await markerAttempt.settleStartTurn(acceptedTurn("turn-1"));
+  await markerRejected.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-marker-rejected", "codex.command_approval"),
+  );
+
+  const settled = await markerRejected.service.respond(interactionResponseInput("approval-marker-rejected"));
+  await markerAttempt.done;
+  assert.equal(settled.ok && settled.value.effectCertainty, "not_sent");
+  assert.equal(markerRejected.interactionAdmissions.length, 1);
+  assert.equal(markerRejected.interactionWriteMarks.length, 1);
+  assert.equal(markerRejected.interactionSettlements.length, 1);
+  assert.equal(markerRejected.interactionResponses.length, 0);
+  assert.equal(markerRejected.interruptInputs.length, 1);
+  assert.equal(markerRejected.terminals[0]?.outcome.kind, "interrupted");
+});
+
+test("fail-closed pre-write settlement automatically retries one frozen retryable command", async () => {
+  let releaseSecondSettlement!: () => void;
+  const secondSettlementGate = new Promise<void>((resolve) => {
+    releaseSecondSettlement = resolve;
+  });
+  const fixture = eventFixture({
+    interactionMarkErrorSequence: ["none"],
+    interactionSettlementErrorSequence: ["none"],
+    beforeInteractionSettlement: (_command, call) => (call === 2 ? secondSettlementGate : undefined),
+  });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-settlement-retryable", "codex.command_approval"),
+  );
+
+  const response = fixture.service.respond(interactionResponseInput("approval-settlement-retryable"));
+  await waitFor(() => fixture.interactionSettlements.length === 2);
+  assert.equal(await isSettled(response.then(() => undefined)), false);
+  assert.equal(fixture.interactionResponses.length, 0);
+  assert.equal(fixture.releasedInteractionReservations.length, 0);
+  assert.equal(fixture.terminals.length, 0);
+
+  releaseSecondSettlement();
+  const result = await response;
+  await attempt.done;
+  assert.equal(result.ok && result.value.effectCertainty, "not_sent");
+  assert.equal(fixture.interactionSettlements.length, 2);
+  assert.equal(fixture.interactionSettlements[0], fixture.interactionSettlements[1]);
+  assert.equal(fixture.interactionResponses.length, 0);
+  assert.equal(fixture.releasedInteractionReservations.length, 1);
+  assert.equal(fixture.interruptInputs.length, 1);
+  assert.equal(fixture.terminals.length, 1);
+});
+
+test("deterministic nonretryable settlement failure closes the Attempt without Provider response", async () => {
+  const fixture = eventFixture({
+    interactionMarkErrorSequence: ["none"],
+    interactionSettlementErrorSequence: ["nonretryable_none"],
+  });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-settlement-nonretryable", "codex.command_approval"),
+  );
+
+  const result = await fixture.service.respond(interactionResponseInput("approval-settlement-nonretryable"));
+  await attempt.done;
+  assert.equal(result.ok, false);
+  assert.equal(!result.ok && result.error.retryable, false);
+  assert.equal(fixture.interactionSettlements.length, 1);
+  assert.equal(fixture.interactionResponses.length, 0);
+  assert.equal(fixture.releasedInteractionReservations.length, 1);
+  assert.equal(fixture.interruptInputs.length, 1);
+  assert.equal(fixture.terminals[0]?.outcome.kind, "interrupted");
+  assert.equal(await fixture.service.readInteractions({ sessionId: "session-1", runId: "run-1", runVersion: 7 }), null);
+});
+
+test("one fail-closed response seals every synchronously reserved sibling before Provider write", async () => {
+  const fixture = eventFixture({
+    interactionAdmissionErrorSequence: ["nonretryable_none"],
+    interactionReleaseRejectCount: 1,
+  });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  const firstPending = pendingInteraction(interactionHandle(), "approval-fail-closed-first", "codex.command_approval");
+  const secondPending = pendingInteraction(
+    interactionHandle(),
+    "approval-fail-closed-second",
+    "codex.command_approval",
+  );
+  await fixture.service.accept("codex-1", firstPending);
+  await fixture.service.accept("codex-1", secondPending);
+
+  const first = fixture.service.respond(interactionResponseInput("approval-fail-closed-first"));
+  const second = fixture.service.respond(interactionResponseInput("approval-fail-closed-second"));
+  assert.equal(fixture.reservedInteractionHandles.length, 2);
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+  await attempt.done;
+
+  assert.equal(firstResult.ok, false);
+  assert.equal(secondResult.ok && secondResult.value.effectCertainty, "not_sent");
+  assert.equal(fixture.interactionAdmissions.length, 2);
+  assert.equal(fixture.interactionWriteMarks.length, 0);
+  assert.equal(fixture.interactionSettlements.length, 1);
+  assert.equal(fixture.interactionResponses.length, 0);
+  assert.equal(fixture.interruptInputs.length, 1);
+  assert.equal(fixture.releasedInteractionReservations.length, 2);
+  assert.equal(fixture.terminals.length, 1);
+  assert.equal(fixture.terminals[0]?.outcome.kind, "interrupted");
+});
+
+test("fail-closed hard gate preserves queued resolved evidence without Provider write", async () => {
+  let settleInterrupt!: (
+    result: Awaited<ReturnType<NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>>>,
+  ) => void;
+  const fixture = eventFixture({
+    interactionAdmissionErrorSequence: ["success", "nonretryable_none"],
+    interactionMarkErrorSequence: ["unknown_after_commit", "none"],
+    interactionReleaseRejectCount: 1,
+    interruptOperation: () => new Promise((resolve) => (settleInterrupt = resolve)),
+  });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  const retriedPending = pendingInteraction(
+    interactionHandle(),
+    "approval-fail-closed-retried",
+    "codex.command_approval",
+  );
+  const rejectedPending = pendingInteraction(
+    interactionHandle(),
+    "approval-fail-closed-rejected",
+    "codex.command_approval",
+  );
+  await fixture.service.accept("codex-1", retriedPending);
+  await fixture.service.accept("codex-1", rejectedPending);
+
+  const retried = fixture.service.respond(interactionResponseInput("approval-fail-closed-retried"));
+  const rejected = fixture.service.respond(interactionResponseInput("approval-fail-closed-rejected"));
+  const resolved = fixture.service.accept("codex-1", {
+    kind: "interaction_resolved",
+    handle: retriedPending.handle,
+    owner: retriedPending.owner,
+  });
+  assert.equal(fixture.reservedInteractionHandles.length, 2);
+  await waitFor(() => fixture.interruptInputs.length === 1);
+  settleInterrupt({
+    kind: "accepted",
+    effect: "present",
+    value: { threadId: "thread-1", turnId: "turn-1", terminal: false },
+  });
+
+  await resolved;
+  const [retriedResult, rejectedResult] = await Promise.all([retried, rejected]);
+  await attempt.done;
+
+  assert.equal(retriedResult.ok && retriedResult.value.effectCertainty, "resolved");
+  assert.equal(rejectedResult.ok, false);
+  assert.equal(fixture.interactionAdmissions.length, 2);
+  assert.equal(fixture.interactionWriteMarks.length, 3);
+  assert.ok(fixture.interactionWriteMarks.every((command) => command === fixture.interactionWriteMarks[0]));
+  assert.equal(fixture.interactionSettlements.length, 1);
+  assert.equal(fixture.interactionSettlements[0]?.outcome.effectCertainty, "resolved");
+  assert.equal(fixture.interactionResponses.length, 0);
+  assert.equal(fixture.interruptInputs.length, 1);
+  assert.equal(fixture.releasedInteractionReservations.length, 2);
+  assert.equal(fixture.terminals.length, 1);
+  assert.equal(fixture.terminals[0]?.outcome.kind, "interrupted");
+});
+
+test("fail-closed interaction interrupt dispositions are observed at most once", async () => {
+  const scenarios: readonly Readonly<{
+    name: string;
+    operation: NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>;
+  }>[] = [
+    {
+      name: "accepted",
+      operation: async (input) => ({
+        kind: "accepted",
+        effect: "present",
+        value: { threadId: input.threadId, turnId: input.turnId, terminal: false },
+      }),
+    },
+    { name: "rejected", operation: async () => ({ kind: "rejected", effect: "none", code: -32_000 }) },
+    {
+      name: "not_sent",
+      operation: async () => ({ kind: "not_sent", effect: "none", code: "capability_unavailable" }),
+    },
+    { name: "ambiguous", operation: async () => ({ kind: "ambiguous", effect: "unknown", code: "timeout" }) },
+    {
+      name: "throw",
+      operation: async () => {
+        throw new Error("interrupt failed");
+      },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const fixture = eventFixture({
+      interactionAdmissionErrorSequence: ["nonretryable_none"],
+      interruptOperation: scenario.operation,
+    });
+    const attempt = fixture.service.register(dispatch(), fixture.control);
+    assert.ok(attempt);
+    await attempt.settleStartTurn(acceptedTurn("turn-1"));
+    await fixture.service.accept(
+      "codex-1",
+      pendingInteraction(interactionHandle(), `approval-interrupt-${scenario.name}`, "codex.command_approval"),
+    );
+
+    await fixture.service.respond(interactionResponseInput(`approval-interrupt-${scenario.name}`));
+    await attempt.done;
+    assert.equal(fixture.interruptInputs.length, 1, scenario.name);
+    assert.equal(fixture.interactionResponses.length, 0, scenario.name);
+    assert.equal(fixture.terminals.length, 1, scenario.name);
+    assert.equal(fixture.terminals[0]?.outcome.kind, "interrupted", scenario.name);
+  }
+});
+
+test("fail-closed interaction response retires a handed-off cancel without a second Provider interrupt", async () => {
+  let settleProvider!: (result: ApplicationRunProviderInteractionResponseResult) => void;
+  let settleInterrupt!: (
+    result: Awaited<ReturnType<NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>>>,
+  ) => void;
+  const fixture = eventFixture({
+    interactionSettlementErrorSequence: ["nonretryable_none"],
+    interactionReleaseRejectCount: 1,
+    respondOperation: () => new Promise((resolve) => (settleProvider = resolve)),
+    interruptOperation: () => new Promise((resolve) => (settleInterrupt = resolve)),
+  });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-fail-closed-cancel", "codex.command_approval"),
+  );
+
+  const response = fixture.service.respond(interactionResponseInput("approval-fail-closed-cancel"));
+  await waitFor(() => fixture.interactionResponses.length === 1);
+  const cancel = await reserveCancel(fixture);
+  settleProvider({
+    kind: "write_attempted",
+    effect: "unknown",
+    providerResolution: "resolved",
+  });
+  await waitFor(() => fixture.interruptInputs.length === 1);
+  fixture.service.cancelOwner.handoff(cancelHandoff(cancel));
+  settleInterrupt({
+    kind: "accepted",
+    effect: "present",
+    value: { threadId: "thread-1", turnId: "turn-1", terminal: false },
+  });
+
+  const result = await response;
+  await attempt.done;
+  assert.equal(result.ok, false);
+  assert.equal(fixture.interactionResponses.length, 1);
+  assert.equal(fixture.interactionSettlements.length, 1);
+  assert.equal(fixture.interruptInputs.length, 1);
+  assert.equal(fixture.releasedInteractionReservations.length, 0);
+  assert.equal(fixture.terminals.length, 1);
+  assert.equal(fixture.terminals[0]?.outcome.kind, "interrupted");
+  const retired = await fixture.service.cancelOwner.preflight({ sessionId: "session-1", runId: "run-1" });
+  assert.equal(retired.ok, false);
+  assert.equal(!retired.ok && retired.error.code, "not_found");
+});
+
+test("cancel-first and response-fail-close-second share one Attempt interrupt latch", async () => {
+  const scenarios: readonly Readonly<{
+    name: string;
+    disposition: Awaited<ReturnType<NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>>> | "throw";
+  }>[] = [
+    {
+      name: "accepted",
+      disposition: {
+        kind: "accepted",
+        effect: "present",
+        value: { threadId: "thread-1", turnId: "turn-1", terminal: false },
+      },
+    },
+    {
+      name: "not_sent",
+      disposition: { kind: "not_sent", effect: "none", code: "capability_unavailable" },
+    },
+    { name: "throw", disposition: "throw" },
+  ];
+
+  for (const scenario of scenarios) {
+    let settleProvider!: (result: ApplicationRunProviderInteractionResponseResult) => void;
+    let settleInterrupt!: (
+      result: Awaited<ReturnType<NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>>>,
+    ) => void;
+    let rejectInterrupt!: (error: Error) => void;
+    const fixture = eventFixture({
+      interactionSettlementErrorSequence: ["nonretryable_none"],
+      respondOperation: () => new Promise((resolve) => (settleProvider = resolve)),
+      interruptOperation: () =>
+        new Promise((resolve, reject) => {
+          settleInterrupt = resolve;
+          rejectInterrupt = reject;
+        }),
+    });
+    const attempt = fixture.service.register(dispatch(), fixture.control);
+    assert.ok(attempt);
+    await attempt.settleStartTurn(acceptedTurn("turn-1"));
+    await fixture.service.accept(
+      "codex-1",
+      pendingInteraction(interactionHandle(), `approval-cancel-first-${scenario.name}`, "codex.command_approval"),
+    );
+
+    const response = fixture.service.respond(interactionResponseInput(`approval-cancel-first-${scenario.name}`));
+    await waitFor(() => fixture.interactionResponses.length === 1);
+    const cancel = await reserveCancel(fixture);
+    fixture.service.cancelOwner.handoff(cancelHandoff(cancel));
+    await waitFor(() => fixture.interruptInputs.length === 1);
+    settleProvider({
+      kind: "write_attempted",
+      effect: "unknown",
+      providerResolution: "resolved",
+    });
+    await Promise.resolve();
+    if (scenario.disposition === "throw") {
+      rejectInterrupt(new Error("interrupt failed"));
+    } else {
+      settleInterrupt(scenario.disposition);
+    }
+
+    const result = await response;
+    await attempt.done;
+    assert.equal(result.ok, false, scenario.name);
+    assert.equal(fixture.interactionResponses.length, 1, scenario.name);
+    assert.equal(fixture.interactionSettlements.length, 1, scenario.name);
+    assert.equal(fixture.interruptInputs.length, 1, scenario.name);
+    assert.equal(fixture.releasedInteractionReservations.length, 0, scenario.name);
+    assert.equal(fixture.terminals.length, 1, scenario.name);
+    assert.deepEqual(
+      fixture.terminals[0]?.outcome,
+      {
+        kind: "interrupted",
+        failureOrigin: "application",
+        providerErrorCode: null,
+        errorSummary: "Interaction response persistence could not safely admit the Provider response.",
+      },
+      scenario.name,
+    );
+    assert.deepEqual(fixture.terminals[0]?.cancelCorrelation, { kind: "none" }, scenario.name);
+  }
+});
+
+test("fail-closed interaction response retires handed-off supplemental input without steering Provider", async () => {
+  let settleInterrupt!: (
+    result: Awaited<ReturnType<NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>>>,
+  ) => void;
+  const fixture = eventFixture({
+    interactionAdmissionErrorSequence: ["nonretryable_none"],
+    interactionReleaseRejectCount: 1,
+    interruptOperation: () => new Promise((resolve) => (settleInterrupt = resolve)),
+  });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  const input = await reserveInput(fixture);
+  await fixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-fail-closed-input", "codex.command_approval"),
+  );
+
+  const response = fixture.service.respond(interactionResponseInput("approval-fail-closed-input"));
+  await waitFor(() => fixture.interruptInputs.length === 1);
+  fixture.service.handoff(inputHandoff(input, "input-message-fail-closed", 2));
+  settleInterrupt({
+    kind: "accepted",
+    effect: "present",
+    value: { threadId: "thread-1", turnId: "turn-1", terminal: false },
+  });
+
+  const result = await response;
+  await attempt.done;
+  assert.equal(result.ok, false);
+  assert.equal(fixture.inputBegins.length, 0);
+  assert.equal(fixture.steerInputs.length, 0);
+  assert.equal(fixture.inputResolutions.length, 0);
+  assert.equal(fixture.releasedInteractionReservations.length, 1);
+  assert.equal(fixture.terminals.length, 1);
+  assert.equal(fixture.terminals[0]?.outcome.kind, "interrupted");
+  const retired = await fixture.service.preflight({ sessionId: "session-1", runId: "run-1" });
+  assert.equal(retired.ok, false);
+  assert.equal(!retired.ok && retired.error.code, "not_found");
+});
+
+test("fail-closed interaction response blocks Provider steering after an exact input begin retry", async () => {
+  let inputBeginAvailable = false;
+  let settleInterrupt!: (
+    result: Awaited<ReturnType<NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>>>,
+  ) => void;
+  const fixture = eventFixture({
+    interactionAdmissionErrorSequence: ["nonretryable_none"],
+    async inputBeginOperation(command) {
+      if (!inputBeginAvailable) throw nonePersistenceFailure();
+      return {
+        ok: true,
+        replayed: false,
+        value: {
+          sessionId: command.sessionId,
+          runId: command.runId,
+          attemptId: command.attemptId,
+          messageId: command.messageId,
+          bindingId: command.bindingId,
+          deliveryState: "dispatching" as const,
+          dispatchingAt: 15,
+          sendAllowed: true,
+        },
+      };
+    },
+    interruptOperation: () => new Promise((resolve) => (settleInterrupt = resolve)),
+  });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  const input = await reserveInput(fixture);
+  fixture.service.handoff(inputHandoff(input, "input-message-fail-closed-begin", 2));
+  await waitFor(() => fixture.inputBegins.length >= 1);
+  await fixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-fail-closed-input-begin", "codex.command_approval"),
+  );
+
+  const response = fixture.service.respond(interactionResponseInput("approval-fail-closed-input-begin"));
+  await waitFor(() => fixture.interruptInputs.length === 1);
+  inputBeginAvailable = true;
+  settleInterrupt({
+    kind: "accepted",
+    effect: "present",
+    value: { threadId: "thread-1", turnId: "turn-1", terminal: false },
+  });
+
+  const result = await response;
+  await attempt.done;
+  assert.equal(result.ok, false);
+  assert.ok(fixture.inputBegins.length >= 2);
+  assert.ok(fixture.inputBegins.every((command) => command === fixture.inputBegins[0]));
+  assert.equal(fixture.steerInputs.length, 0);
+  assert.equal(fixture.inputResolutions.length, 1);
+  assert.deepEqual(fixture.inputResolutions[0]?.outcome, {
+    kind: "rejected",
+    resolutionCode: "delivery_not_sent",
+  });
+  assert.equal(fixture.terminals.length, 1);
+  assert.equal(fixture.terminals[0]?.outcome.kind, "interrupted");
+});
+
+test("queued interaction resolution and terminal evidence cannot overtake fail-closed terminalization", async () => {
+  let settleInterrupt!: (
+    result: Awaited<ReturnType<NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>>>,
+  ) => void;
+  const fixture = eventFixture({
+    interactionAdmissionErrorSequence: ["nonretryable_none"],
+    interactionReleaseRejectCount: 1,
+    interruptOperation: () => new Promise((resolve) => (settleInterrupt = resolve)),
+  });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  const pending = pendingInteraction(interactionHandle(), "approval-fail-closed-race", "codex.command_approval");
+  await fixture.service.accept("codex-1", pending);
+
+  const response = fixture.service.respond(interactionResponseInput("approval-fail-closed-race"));
+  await waitFor(() => fixture.interruptInputs.length === 1);
+  assert.equal((await fixture.service.read({ sessionId: "session-1", runId: "run-1" }))?.activity, "running");
+  const terminal = fixture.service.accept("codex-1", terminalEvent("completed"));
+  const resolved = fixture.service.accept("codex-1", {
+    kind: "interaction_resolved",
+    handle: pending.handle,
+    owner: pending.owner,
+  });
+  settleInterrupt({
+    kind: "accepted",
+    effect: "present",
+    value: { threadId: "thread-1", turnId: "turn-1", terminal: false },
+  });
+
+  await response;
+  await resolved;
+  await terminal;
+  await attempt.done;
+  assert.equal(fixture.interruptInputs.length, 1);
+  assert.equal(fixture.interactionResponses.length, 0);
+  assert.equal(fixture.terminals.length, 1);
+  assert.deepEqual(fixture.terminals[0]?.outcome, {
+    kind: "interrupted",
+    failureOrigin: "application",
+    providerErrorCode: null,
+    errorSummary: "Interaction response persistence could not safely admit the Provider response.",
+  });
+});
+
+test("resolved-first and cancel-first interaction response races never call Provider", async () => {
+  const resolvedFixture = eventFixture();
+  const resolvedAttempt = resolvedFixture.service.register(dispatch(), resolvedFixture.control);
+  assert.ok(resolvedAttempt);
+  await resolvedAttempt.settleStartTurn(acceptedTurn("turn-1"));
+  const resolvedPending = pendingInteraction(interactionHandle(), "approval-resolved-first", "codex.command_approval");
+  await resolvedFixture.service.accept("codex-1", resolvedPending);
+  await resolvedFixture.service.accept("codex-1", {
+    kind: "interaction_resolved",
+    handle: resolvedPending.handle,
+    owner: resolvedPending.owner,
+  });
+  const resolved = await resolvedFixture.service.respond(interactionResponseInput("approval-resolved-first"));
+  assert.equal(resolved.ok, false);
+  assert.equal(resolvedFixture.interactionResponses.length, 0);
+
+  const cancelFixture = eventFixture();
+  const cancelAttempt = cancelFixture.service.register(dispatch(), cancelFixture.control);
+  assert.ok(cancelAttempt);
+  await cancelAttempt.settleStartTurn(acceptedTurn("turn-1"));
+  await cancelFixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-cancel-first", "codex.command_approval"),
+  );
+  const cancel = await cancelFixture.service.cancelOwner.preflight({ sessionId: "session-1", runId: "run-1" });
+  assert.equal(cancel.ok, true);
+  const canceled = await cancelFixture.service.respond(interactionResponseInput("approval-cancel-first"));
+  assert.equal(canceled.ok, false);
+  assert.equal(cancelFixture.interactionResponses.length, 0);
+  if (cancel.ok && cancel.value.kind === "active_execution")
+    cancelFixture.service.cancelOwner.release(cancel.value.reservation);
+});
+
+test("a queued cancel preflight wins before a later interaction response can reserve Provider", async () => {
+  const fixture = eventFixture();
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-cancel-queued", "codex.command_approval"),
+  );
+
+  const cancel = fixture.service.cancelOwner.preflight({ sessionId: "session-1", runId: "run-1" });
+  const response = fixture.service.respond(interactionResponseInput("approval-cancel-queued"));
+
+  const cancelResult = await cancel;
+  assert.equal(cancelResult.ok, true);
+  const responseResult = await response;
+  assert.equal(responseResult.ok, false);
+  assert.equal(fixture.reservedInteractionHandles.length, 0);
+  assert.equal(fixture.interactionAdmissions.length, 0);
+  assert.equal(fixture.interactionWriteMarks.length, 0);
+  assert.equal(fixture.interactionResponses.length, 0);
+  if (cancelResult.ok && cancelResult.value.kind === "active_execution") {
+    fixture.service.cancelOwner.release(cancelResult.value.reservation);
+  }
+});
+
+test("an exact persistence retry never downgrades earlier unknown certainty to no effect", async () => {
+  for (const phase of ["admission", "mark", "settlement"] as const) {
+    const fixture = eventFixture({
+      ...(phase === "admission"
+        ? { interactionAdmissionErrorSequence: ["unknown_after_commit", "none", "none"] as const }
+        : {}),
+      ...(phase === "mark" ? { interactionMarkErrorSequence: ["unknown_after_commit", "none", "none"] as const } : {}),
+      ...(phase === "settlement"
+        ? { interactionSettlementErrorSequence: ["unknown_after_commit", "none", "none"] as const }
+        : {}),
+    });
+    const attempt = fixture.service.register(dispatch(), fixture.control);
+    assert.ok(attempt);
+    await attempt.settleStartTurn(acceptedTurn("turn-1"));
+    await fixture.service.accept(
+      "codex-1",
+      pendingInteraction(interactionHandle(), `approval-unknown-none-${phase}`, "codex.command_approval"),
+    );
+
+    const result = await fixture.service.respond(interactionResponseInput(`approval-unknown-none-${phase}`));
+    assert.equal(result.ok && result.value.effectCertainty, "resolved", phase);
+    assert.equal(fixture.interactionResponses.length, 1, phase);
+    assert.equal(fixture.reservedInteractionHandles.length, 1, phase);
+    assert.equal(fixture.releasedInteractionReservations.length, 0, phase);
+    assert.equal(fixture.interactionAdmissions.length, phase === "admission" ? 4 : 1, phase);
+    assert.equal(fixture.interactionWriteMarks.length, phase === "mark" ? 4 : 1, phase);
+    assert.equal(fixture.interactionSettlements.length, phase === "settlement" ? 4 : 1, phase);
+    const exactCommands =
+      phase === "admission"
+        ? fixture.interactionAdmissions
+        : phase === "mark"
+          ? fixture.interactionWriteMarks
+          : fixture.interactionSettlements;
+    assert.ok(
+      exactCommands.every((command) => command === exactCommands[0]),
+      phase,
+    );
+  }
+});
+
+test("interaction response settlement retries persistence without resending Provider write", async () => {
+  const fixture = eventFixture({ interactionSettlementUnknownCount: 1 });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-retry", "codex.command_approval"),
+  );
+
+  const response = await fixture.service.respond(interactionResponseInput("approval-retry"));
+  assert.equal(response.ok && response.value.effectCertainty, "resolved");
+  assert.equal(fixture.interactionResponses.length, 1);
+  assert.equal(fixture.interactionSettlements.length, 2);
+});
+
+test("resolved evidence upgrades an ambiguous interaction response without another Provider write", async () => {
+  const fixture = eventFixture({
+    respondOperation() {
+      return Promise.resolve({
+        kind: "ambiguous",
+        effect: "unknown",
+        code: "connection_lost",
+        providerResolution: "pending",
+      });
+    },
+  });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  const pending = pendingInteraction(interactionHandle(), "approval-ambiguous", "codex.command_approval");
+  await fixture.service.accept("codex-1", pending);
+  const response = await fixture.service.respond(interactionResponseInput("approval-ambiguous"));
+  assert.equal(response.ok && response.value.effectCertainty, "ambiguous");
+
+  await fixture.service.accept("codex-1", {
+    kind: "interaction_resolved",
+    handle: pending.handle,
+    owner: pending.owner,
+  });
+  assert.equal(fixture.interactionResponses.length, 1);
+  assert.equal(fixture.interactionSettlements.at(-1)?.outcome.effectCertainty, "resolved");
+});
+
+test("resolved evidence survives an in-flight ambiguous exact command and converges in two durable steps", async () => {
+  const fixture = eventFixture({
+    interactionSettlementUnknownCount: 4,
+    respondOperation() {
+      return Promise.resolve({
+        kind: "ambiguous",
+        effect: "unknown",
+        code: "connection_lost",
+        providerResolution: "pending",
+      });
+    },
+  });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  const pending = pendingInteraction(interactionHandle(), "approval-ambiguous-inflight", "codex.command_approval");
+  await fixture.service.accept("codex-1", pending);
+  const response = fixture.service.respond(interactionResponseInput("approval-ambiguous-inflight"));
+  await waitFor(() => fixture.interactionSettlements.length >= 2);
+
+  await fixture.service.accept("codex-1", {
+    kind: "interaction_resolved",
+    handle: pending.handle,
+    owner: pending.owner,
+  });
+  const result = await response;
+  await waitFor(() => fixture.interactionSettlements.at(-1)?.outcome.effectCertainty === "resolved");
+  assert.equal(result.ok && result.value.effectCertainty, "ambiguous");
+  assert.equal(fixture.interactionResponses.length, 1);
+  const outcomes = fixture.interactionSettlements.map((command) => command.outcome.effectCertainty);
+  const firstResolved = outcomes.indexOf("resolved");
+  assert.ok(firstResolved > 0);
+  assert.deepEqual(new Set(outcomes.slice(0, firstResolved)), new Set(["ambiguous"]));
+});
+
+test("same-key owner replay and a second client key never resend an admitted interaction response", async () => {
+  const fixture = eventFixture({
+    respondOperation() {
+      return Promise.resolve({ kind: "write_attempted", effect: "unknown", providerResolution: "pending" });
+    },
+  });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-owner-replay", "codex.command_approval"),
+  );
+  const firstInput = interactionResponseInput("approval-owner-replay");
+  const first = await fixture.service.respond(firstInput);
+  const replay = await fixture.service.respond(firstInput);
+  const conflict = await fixture.service.respond({
+    ...firstInput,
+    idempotencyKey: "20000000-0000-4000-8000-000000000002",
+  });
+  assert.equal(first.ok && first.value.effectCertainty, "write_attempted");
+  assert.equal(replay.ok && replay.replayed, true);
+  assert.equal(conflict.ok, false);
+  assert.equal(fixture.interactionResponses.length, 1);
+});
+
+test("same-key joins a reserved admission while a different key conflicts before Provider write", async () => {
+  let releaseAdmission!: () => void;
+  const admissionGate = new Promise<void>((resolve) => {
+    releaseAdmission = resolve;
+  });
+  const fixture = eventFixture({ interactionAdmissionGate: admissionGate });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-reserved-replay", "codex.command_approval"),
+  );
+  const input = interactionResponseInput("approval-reserved-replay");
+  const first = fixture.service.respond(input);
+  const same = fixture.service.respond(input);
+  const conflict = await fixture.service.respond({
+    ...input,
+    idempotencyKey: "20000000-0000-4000-8000-000000000002",
+  });
+  assert.equal(conflict.ok, false);
+  assert.equal(fixture.reservedInteractionHandles.length, 1);
+  assert.equal(fixture.interactionResponses.length, 0);
+
+  releaseAdmission();
+  const [firstResult, sameResult] = await Promise.all([first, same]);
+  assert.equal(firstResult.ok && firstResult.replayed, false);
+  assert.equal(sameResult.ok && sameResult.replayed, true);
+  assert.equal(fixture.interactionResponses.length, 1);
+});
+
+test("generation release before and after interaction write produce not-found or ambiguous without resend", async () => {
+  const beforeFixture = eventFixture();
+  const beforeAttempt = beforeFixture.service.register(dispatch(), beforeFixture.control);
+  assert.ok(beforeAttempt);
+  await beforeAttempt.settleStartTurn(acceptedTurn("turn-1"));
+  await beforeFixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-before-release", "codex.command_approval"),
+  );
+  await beforeFixture.service.releaseGeneration("codex-1", { kind: "shutdown" });
+  const before = await beforeFixture.service.respond(interactionResponseInput("approval-before-release"));
+  assert.equal(before.ok, false);
+  assert.equal(beforeFixture.interactionResponses.length, 0);
+
+  const afterFixture = eventFixture({
+    respondOperation() {
+      return Promise.resolve({ kind: "write_attempted", effect: "unknown", providerResolution: "pending" });
+    },
+  });
+  const afterAttempt = afterFixture.service.register(dispatch(), afterFixture.control);
+  assert.ok(afterAttempt);
+  await afterAttempt.settleStartTurn(acceptedTurn("turn-1"));
+  await afterFixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-after-release", "codex.command_approval"),
+  );
+  const after = await afterFixture.service.respond(interactionResponseInput("approval-after-release"));
+  assert.equal(after.ok && after.value.effectCertainty, "write_attempted");
+  await afterFixture.service.releaseGeneration("codex-1", { kind: "shutdown" });
+  assert.equal(afterFixture.interactionResponses.length, 1);
+  assert.equal(afterFixture.interactionSettlements.at(-1)?.outcome.effectCertainty, "ambiguous");
+  assert.equal(afterFixture.interactionResponses.length, 1);
+});
+
+test("generation release barrier preserves no-effect before marker and ambiguity after marker", async () => {
+  const beforeFixture = eventFixture({ interactionAdmissionUnknownAfterCommitCount: 2 });
+  const beforeAttempt = beforeFixture.service.register(dispatch(), beforeFixture.control);
+  assert.ok(beforeAttempt);
+  await beforeAttempt.settleStartTurn(acceptedTurn("turn-1"));
+  await beforeFixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-before-marker", "codex.command_approval"),
+  );
+  const beforeResponse = beforeFixture.service.respond(interactionResponseInput("approval-before-marker"));
+  await waitFor(() => beforeFixture.interactionAdmissions.length === 2);
+  assert.deepEqual(await beforeFixture.service.prepareGenerationRelease("codex-1", { kind: "shutdown" }), {
+    kind: "ready",
+  });
+  const before = await beforeResponse;
+  assert.equal(before.ok && before.value.effectCertainty, "not_sent");
+  assert.equal(beforeFixture.interactionWriteMarks.length, 0);
+  assert.equal(beforeFixture.interactionResponses.length, 0);
+  assert.equal(beforeFixture.releasedInteractionReservations.length, 1);
+
+  const afterFixture = eventFixture({ interactionMarkUnknownAfterCommitCount: 2 });
+  const afterAttempt = afterFixture.service.register(dispatch(), afterFixture.control);
+  assert.ok(afterAttempt);
+  await afterAttempt.settleStartTurn(acceptedTurn("turn-1"));
+  await afterFixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-after-marker", "codex.command_approval"),
+  );
+  const afterResponse = afterFixture.service.respond(interactionResponseInput("approval-after-marker"));
+  await waitFor(() => afterFixture.interactionWriteMarks.length === 2);
+  assert.deepEqual(await afterFixture.service.prepareGenerationRelease("codex-1", { kind: "shutdown" }), {
+    kind: "ready",
+  });
+  const after = await afterResponse;
+  assert.equal(after.ok && after.value.effectCertainty, "ambiguous");
+  assert.equal(afterFixture.interactionResponses.length, 0);
+  assert.equal(afterFixture.releasedInteractionReservations.length, 1);
+});
+
+test("read ignores pending interaction-derived activity after attempt signal is aborted", async () => {
+  const abortController = new AbortController();
+  const fixture = eventFixture({ signal: abortController.signal });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-1", "codex.command_approval"),
+  );
+  assert.equal((await fixture.service.read({ sessionId: "session-1", runId: "run-1" }))?.activity, "waiting_approval");
+  abortController.abort();
+  assert.equal((await fixture.service.read({ sessionId: "session-1", runId: "run-1" }))?.activity, "running");
+});
+
+test("resolved-before-activation is never published and terminal close prevents late resurrection", async () => {
+  const fixture = eventFixture({ terminalUnknownCount: 2 });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  const pending = pendingInteraction(interactionHandle(), "approval-1", "codex.command_approval");
+  await fixture.service.accept("codex-1", pending);
+  await fixture.service.accept("codex-1", {
+    kind: "interaction_resolved",
+    handle: pending.handle,
+    owner: pending.owner,
+  });
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  assert.deepEqual(
+    (await fixture.service.readInteractions({ sessionId: "session-1", runId: "run-1", runVersion: 7 }))?.interactions,
+    [],
+  );
+
+  const live = pendingInteraction(interactionHandle(), "approval-2", "codex.command_approval");
+  await fixture.service.accept("codex-1", live);
+  await fixture.service.accept("codex-1", {
+    kind: "turn_terminal",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    status: "completed",
+    finalAssistantMessage: null,
+    contentFailure: null,
+  });
+  assert.equal(await fixture.service.readInteractions({ sessionId: "session-1", runId: "run-1", runVersion: 7 }), null);
+  await fixture.service.accept("codex-1", live);
+  assert.equal(await fixture.service.readInteractions({ sessionId: "session-1", runId: "run-1", runVersion: 7 }), null);
+});
+
+test("interaction owner conflicts and per-Attempt capacity fail the event consumer instead of overwriting", async () => {
+  const fixture = eventFixture({ limits: { maxPendingInteractions: 1 } });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  const first = pendingInteraction(interactionHandle(), "approval-1", "codex.command_approval");
+  await fixture.service.accept("codex-1", first);
+  await assert.rejects(
+    fixture.service.accept("codex-1", pendingInteraction(interactionHandle(), "approval-2", "codex.command_approval")),
+    /capacity/u,
+  );
+  await assert.rejects(
+    fixture.service.accept("codex-1", {
+      kind: "interaction_resolved",
+      handle: first.handle,
+      owner: { ...first.owner, connectionGeneration: "adapter-other" },
+    }),
+    /generation/u,
+  );
+  assert.deepEqual(
+    (await fixture.service.readInteractions({ sessionId: "session-1", runId: "run-1", runVersion: 7 }))?.interactions,
+    [first.snapshot],
+  );
+});
+
+test("durable cancel handoff clears interactions after owner validation and before Provider interrupt", async () => {
+  let fixture!: ReturnType<typeof eventFixture>;
+  let activityAtInterrupt: unknown = "not-called";
+  fixture = eventFixture({
+    interruptOperation: async (input) => {
+      activityAtInterrupt = (await fixture.service.read({ sessionId: "session-1", runId: "run-1" }))?.activity;
+      return {
+        kind: "accepted",
+        effect: "present",
+        value: { threadId: input.threadId, turnId: input.turnId, terminal: false },
+      };
+    },
+  });
+  const attempt = fixture.service.register(dispatch(), fixture.control);
+  assert.ok(attempt);
+  await attempt.settleStartTurn(acceptedTurn("turn-1"));
+  await fixture.service.accept(
+    "codex-1",
+    pendingInteraction(interactionHandle(), "approval-1", "codex.command_approval"),
+  );
+  const reservation = await reserveCancel(fixture);
+  fixture.service.cancelOwner.handoff(cancelHandoff(reservation));
+  await waitFor(() => fixture.interruptInputs.length === 1);
+  assert.equal(activityAtInterrupt, "running");
+});
+
+test("interaction state validates full dynamic owner tuple, definition tuple, aggregate bytes, and closed races", () => {
+  assert.deepEqual(APPLICATION_RUN_INTERACTION_LIMITS, {
+    maxPendingPerAttempt: 32,
+    maxProjectionBytesPerAttempt: 384 * 1_024,
+    maxTombstonesPerAttempt: 128,
+  });
+  const owner = {
+    sessionId: "session-1",
+    runId: "run-1",
+    attemptId: "attempt-1",
+    bindingId: "binding-1",
+    workspaceKey: "workspace-1",
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    persistenceMode: "persistent" as const,
+    ephemeralOwnerToken: null,
+    runtimeGenerationId: "codex-1",
+    externalConversationId: "thread-1",
+  };
+  const state = new ApplicationRunInteractionState(owner, interactionActivity, {
+    maxPending: 2,
+    maxProjectionBytes: 1_000,
+    maxTombstones: 1,
+  });
+  const handle = interactionHandle();
+  const pending = pendingInteraction(handle, "approval-1", "codex.command_approval");
+  state.pending(handle, pending.owner, pending.snapshot);
+  assert.throws(() => state.resolved(handle, { ...pending.owner, itemId: "item-other" }), /owner/u);
+  assert.throws(
+    () => state.pending(interactionHandle(), pending.owner, { ...pending.snapshot, providerId: "other" } as never),
+    /definition owner/u,
+  );
+  assert.throws(
+    () =>
+      state.pending(interactionHandle(), pending.owner, {
+        ...pending.snapshot,
+        interactionId: "large",
+        display: { summary: "x".repeat(512), command: "x".repeat(512) },
+      }),
+    /projection capacity/u,
+  );
+  assert.throws(
+    () =>
+      state.pending(interactionHandle(), pending.owner, {
+        ...pending.snapshot,
+        interactionId: "fractional",
+        display: { maxLength: 1.5 },
+      }),
+    /number is invalid/u,
+  );
+  state.close();
+  state.pending(interactionHandle(), pending.owner, { ...pending.snapshot, interactionId: "late" });
+  state.activate("turn-1");
+  assert.deepEqual(state.snapshot(), []);
+});
 
 test("accepted Provider events persist safe output once, expose versioned live state, and terminalize exactly", async () => {
   const fixture = eventFixture({
@@ -1822,8 +3187,40 @@ function eventFixture(
     steerOperation?: NonNullable<ApplicationRunProviderAdapterPort["steerTurn"]>;
     interruptResult?: Awaited<ReturnType<NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>>>;
     interruptOperation?: NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>;
+    respondOperation?: (
+      handle: ApplicationRunProviderInteractionHandle,
+      response: ApplicationRunProviderInteractionResponse,
+    ) => Promise<ApplicationRunProviderInteractionResponseResult>;
+    interactionAdapter?: Readonly<{
+      reserveInteractionResponse: NonNullable<ApplicationRunProviderAdapterPort["reserveInteractionResponse"]>;
+      writeReservedInteractionResponse: NonNullable<
+        ApplicationRunProviderAdapterPort["writeReservedInteractionResponse"]
+      >;
+      releaseInteractionResponseReservation: NonNullable<
+        ApplicationRunProviderAdapterPort["releaseInteractionResponseReservation"]
+      >;
+    }>;
+    interactionAdmissionGate?: Promise<void>;
+    interactionAdmissionUnknownAfterCommitCount?: number;
+    interactionAdmissionEffectNone?: boolean;
+    interactionAdmissionErrorSequence?: readonly ("success" | "none" | "nonretryable_none" | "unknown_after_commit")[];
+    interactionAdmissionOperation?: (
+      command: RunInteractionResponseAdmissionCommand,
+      call: number,
+    ) => ReturnType<ApplicationRunEventWritePort["admitRunInteractionResponse"]>;
+    interactionMarkGate?: Promise<void>;
+    interactionMarkUnknownAfterCommitCount?: number;
+    interactionMarkErrorSequence?: readonly ("none" | "unknown_after_commit")[];
+    interactionSettlementUnknownCount?: number;
+    interactionSettlementErrorSequence?: readonly ("none" | "nonretryable_none" | "unknown_after_commit")[];
+    beforeInteractionSettlement?: (
+      command: RunInteractionResponseSettlementCommand,
+      call: number,
+    ) => void | Promise<void>;
+    interactionReleaseRejectCount?: number;
     receiverSensitiveInterrupt?: boolean;
     isCurrent?: () => boolean;
+    signal?: AbortSignal;
     afterInputBegin?: () => void;
     persistedRunCancel?: Readonly<{ phase: "active" } | { phase: "canceling"; requestedAt: number }>;
     limits?: Readonly<{
@@ -1832,6 +3229,9 @@ function eventFixture(
       maxPersistedOutputsPerAttempt?: number;
       maxPendingInputsPerAttempt?: number;
       maxTrackedInputs?: number;
+      maxPendingInteractions?: number;
+      maxInteractionProjectionBytes?: number;
+      maxInteractionTombstones?: number;
     }>;
   }> = {},
 ) {
@@ -1839,6 +3239,12 @@ function eventFixture(
   const outputs: RunOutputAppendCommand[] = [];
   const inputBegins: RunInputBeginCommand[] = [];
   const inputResolutions: RunInputResolutionCommand[] = [];
+  const interactionAdmissions: RunInteractionResponseAdmissionCommand[] = [];
+  const interactionWriteMarks: RunInteractionResponseMarkWriteAttemptCommand[] = [];
+  const interactionSettlements: RunInteractionResponseSettlementCommand[] = [];
+  let interactionResponse: RunInteractionResponseResult | undefined;
+  let interactionAdmissionCalls = 0;
+  let interactionMarkCalls = 0;
   const inputDeliveryStates = new Map<string, "dispatching" | RunInputResolutionCommand["outcome"]["kind"]>();
   const terminals: RunTerminalCommand[] = [];
   const terminalized: Parameters<ApplicationRunDispatchControl["terminalize"]>[0][] = [];
@@ -1849,9 +3255,22 @@ function eventFixture(
   let inputBeginCalls = 0;
   const committedInputMessages = new Set<string>();
   let inputResolutionCalls = 0;
+  let interactionSettlementCalls = 0;
   const steerInputs: Parameters<NonNullable<ApplicationRunProviderAdapterPort["steerTurn"]>>[0][] = [];
   const interruptInputs: Parameters<NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>>[0][] = [];
   const interruptSignals: (AbortSignal | undefined)[] = [];
+  const interactionResponses: ApplicationRunProviderInteractionResponse[] = [];
+  const interactionHandles: ApplicationRunProviderInteractionHandle[] = [];
+  const reservedInteractionHandles: ApplicationRunProviderInteractionHandle[] = [];
+  const releasedInteractionReservations: object[] = [];
+  let interactionReleaseCalls = 0;
+  const interactionReservations = new WeakMap<
+    object,
+    Readonly<{
+      handle: ApplicationRunProviderInteractionHandle;
+      response: ApplicationRunProviderInteractionResponse;
+    }>
+  >();
   const resolutionCallsByOutcome: Record<RunDispatchResolutionCommand["outcome"]["kind"], number> = {
     accepted: 0,
     rejected: 0,
@@ -1899,6 +3318,115 @@ function eventFixture(
     },
   };
   const writes: ApplicationRunEventWritePort = {
+    async admitRunInteractionResponse(command) {
+      interactionAdmissionCalls += 1;
+      interactionAdmissions.push(command);
+      await options.interactionAdmissionGate;
+      const scriptedError = options.interactionAdmissionErrorSequence?.[interactionAdmissionCalls - 1];
+      if (options.interactionAdmissionOperation !== undefined) {
+        return options.interactionAdmissionOperation(command, interactionAdmissionCalls);
+      }
+      if (
+        options.interactionAdmissionEffectNone === true ||
+        scriptedError === "none" ||
+        scriptedError === "nonretryable_none"
+      ) {
+        throw nonePersistenceFailure(scriptedError !== "nonretryable_none");
+      }
+      if (interactionResponse !== undefined) {
+        if (interactionAdmissions[0]?.idempotencyKey !== command.idempotencyKey) {
+          return {
+            ok: false,
+            replayed: false,
+            error: {
+              code: "lifecycle_conflict",
+              message: "interaction already answered",
+              retryable: false,
+            },
+          };
+        }
+        if (
+          scriptedError === "unknown_after_commit" ||
+          interactionAdmissionCalls <= (options.interactionAdmissionUnknownAfterCommitCount ?? 0)
+        ) {
+          throw unknownPersistenceFailure();
+        }
+        return { ok: true, replayed: true, value: interactionResponse };
+      }
+      interactionResponse = {
+        responseRefId: "response-ref-1",
+        sessionId: command.sessionId,
+        runId: command.runId,
+        interactionId: command.interactionId,
+        providerId: command.providerId,
+        definitionVersion: command.definitionVersion,
+        interactionKind: command.interactionKind,
+        semanticAction: command.semanticAction,
+        admittedAt: 21,
+        effectCertainty: "admitted",
+        writeAttemptedAt: null,
+        settledAt: null,
+        resolutionCode: null,
+      };
+      if (
+        scriptedError === "unknown_after_commit" ||
+        interactionAdmissionCalls <= (options.interactionAdmissionUnknownAfterCommitCount ?? 0)
+      ) {
+        throw unknownPersistenceFailure();
+      }
+      return success(interactionResponse);
+    },
+    async markRunInteractionResponseWriteAttempt(command) {
+      interactionMarkCalls += 1;
+      interactionWriteMarks.push(command);
+      if (interactionResponse === undefined) throw new Error("interaction response not admitted");
+      await options.interactionMarkGate;
+      const scriptedError = options.interactionMarkErrorSequence?.[interactionMarkCalls - 1];
+      if (scriptedError === "none") {
+        throw nonePersistenceFailure();
+      }
+      interactionResponse = {
+        ...interactionResponse,
+        effectCertainty: "write_attempted",
+        writeAttemptedAt: 22,
+        settledAt: null,
+        resolutionCode: null,
+      };
+      if (
+        scriptedError === "unknown_after_commit" ||
+        interactionMarkCalls <= (options.interactionMarkUnknownAfterCommitCount ?? 0)
+      ) {
+        throw unknownPersistenceFailure();
+      }
+      return success(interactionResponse);
+    },
+    async settleRunInteractionResponse(command) {
+      if (interactionResponse === undefined) throw new Error("interaction response not admitted");
+      interactionSettlements.push(command);
+      interactionSettlementCalls += 1;
+      await options.beforeInteractionSettlement?.(command, interactionSettlementCalls);
+      const scriptedError = options.interactionSettlementErrorSequence?.[interactionSettlementCalls - 1];
+      if (scriptedError === "none" || scriptedError === "nonretryable_none") {
+        throw nonePersistenceFailure(scriptedError !== "nonretryable_none");
+      }
+      if (interactionSettlementCalls <= (options.interactionSettlementUnknownCount ?? 0)) {
+        throw unknownPersistenceFailure();
+      }
+      interactionResponse = {
+        ...interactionResponse,
+        effectCertainty: command.outcome.effectCertainty,
+        writeAttemptedAt:
+          interactionResponse.writeAttemptedAt ??
+          (command.outcome.effectCertainty === "not_sent" &&
+          command.outcome.resolutionCode === "owner_lost_before_write"
+            ? null
+            : 22),
+        settledAt: 23,
+        resolutionCode: command.outcome.resolutionCode,
+      } as RunInteractionResponseResult;
+      if (scriptedError === "unknown_after_commit") throw unknownPersistenceFailure();
+      return success(interactionResponse);
+    },
     async resolveRunDispatch(command) {
       resolutions.push(command);
       resolutionCalls += 1;
@@ -2017,7 +3545,7 @@ function eventFixture(
   });
   const control: ApplicationRunDispatchControl = {
     adapter: {
-      async steerTurn(input) {
+      async steerTurn(input: Parameters<NonNullable<ApplicationRunProviderAdapterPort["steerTurn"]>>[0]) {
         steerInputs.push(input);
         if (options.steerOperation !== undefined) return options.steerOperation(input);
         return (
@@ -2028,7 +3556,10 @@ function eventFixture(
           }
         );
       },
-      async interruptTurn(input, operationOptions) {
+      async interruptTurn(
+        input: Parameters<NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>>[0],
+        operationOptions: Parameters<NonNullable<ApplicationRunProviderAdapterPort["interruptTurn"]>>[1],
+      ) {
         if (options.receiverSensitiveInterrupt === true && this !== control.adapter) {
           throw new TypeError("Provider Adapter receiver was lost.");
         }
@@ -2045,8 +3576,51 @@ function eventFixture(
           }
         );
       },
-    } as ApplicationRunProviderAdapterPort,
-    signal: new AbortController().signal,
+      reserveInteractionResponse(
+        handle: ApplicationRunProviderInteractionHandle,
+        response: ApplicationRunProviderInteractionResponse,
+      ) {
+        reservedInteractionHandles.push(handle);
+        if (options.interactionAdapter !== undefined) {
+          return options.interactionAdapter.reserveInteractionResponse(handle, response);
+        }
+        const token = {};
+        interactionReservations.set(token, { handle, response });
+        return { kind: "reserved", reservation: { token } };
+      },
+      writeReservedInteractionResponse(reservation: ApplicationRunProviderInteractionResponseReservation) {
+        if (options.interactionAdapter !== undefined) {
+          return options.interactionAdapter.writeReservedInteractionResponse(reservation);
+        }
+        const reserved = interactionReservations.get(reservation.token);
+        if (reserved === undefined) throw new TypeError("Unknown interaction response reservation.");
+        interactionReservations.delete(reservation.token);
+        interactionHandles.push(reserved.handle);
+        interactionResponses.push(reserved.response);
+        if (options.respondOperation !== undefined) {
+          return options.respondOperation.call(this, reserved.handle, reserved.response);
+        }
+        return Promise.resolve({
+          kind: "write_attempted",
+          effect: "unknown",
+          providerResolution: "resolved",
+        });
+      },
+      releaseInteractionResponseReservation(reservation: ApplicationRunProviderInteractionResponseReservation) {
+        if (options.interactionAdapter !== undefined) {
+          return options.interactionAdapter.releaseInteractionResponseReservation(reservation);
+        }
+        interactionReleaseCalls += 1;
+        if (interactionReleaseCalls <= (options.interactionReleaseRejectCount ?? 0)) {
+          throw new Error("interaction reservation release unavailable");
+        }
+        if (!interactionReservations.delete(reservation.token)) {
+          throw new TypeError("Unknown interaction response reservation.");
+        }
+        releasedInteractionReservations.push(reservation.token);
+      },
+    } as unknown as ApplicationRunProviderAdapterPort,
+    ...(options.signal === undefined ? { signal: new AbortController().signal } : { signal: options.signal }),
     isCurrent: options.isCurrent ?? (() => true),
     async terminalize(failure) {
       terminalizeCalls += 1;
@@ -2064,10 +3638,17 @@ function eventFixture(
     resolutions,
     inputBegins,
     inputResolutions,
+    interactionAdmissions,
+    interactionWriteMarks,
+    interactionSettlements,
     inputDeliveryStates,
     steerInputs,
     interruptInputs,
     interruptSignals,
+    interactionResponses,
+    interactionHandles,
+    reservedInteractionHandles,
+    releasedInteractionReservations,
     outputs,
     terminals,
     terminalized,
@@ -2107,11 +3688,14 @@ function dispatch(
     generationId: "codex-1",
     executionSnapshot: {
       providerId: "codex",
-      model: "gpt-5.6",
+      definitionVersion: "codex-provider-v1",
       modelSelection: "explicit",
-      reasoning: { effort: "high" },
-      approval: { policy: "never" },
-      sandbox: { mode: "workspace-write", networkAccess: false },
+      settings: {
+        model: "gpt-5.6",
+        reasoningEffort: "high",
+        approvalPolicy: "never",
+        sandbox: { mode: "workspace-write", networkAccess: false },
+      },
       workspace: {
         key: "workspace-1",
         path: process.cwd(),
@@ -2138,6 +3722,72 @@ function acceptedTurn(turnId: string) {
     effect: "present",
     value: { threadId: "thread-1", turnId, status: "in_progress" },
   } as const;
+}
+
+function interactionHandle(): ApplicationRunProviderInteractionHandle {
+  return Object.freeze({}) as unknown as ApplicationRunProviderInteractionHandle;
+}
+
+function interactionResponseInput(interactionId: string) {
+  const response = {
+    interactionId,
+    kind: "codex.command_approval",
+    payload: { decision: "accept" },
+  } as const;
+  return {
+    sessionId: "session-1",
+    runId: "run-1",
+    workspaceKey: "workspace-1",
+    idempotencyKey: "10000000-0000-4000-8000-000000000001",
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    response,
+    semanticAction: "accept",
+    canonicalResponseJson: JSON.stringify(response),
+  } as const;
+}
+
+function interactionActivity(
+  _providerId: string,
+  _definitionVersion: string,
+  kind: string,
+): "waiting_input" | "waiting_approval" | undefined {
+  return kind === "codex.user_input" || kind === "codex.mcp_server_form"
+    ? "waiting_input"
+    : kind.startsWith("codex.")
+      ? "waiting_approval"
+      : undefined;
+}
+
+function pendingInteraction(
+  handle: ApplicationRunProviderInteractionHandle,
+  interactionId: string,
+  kind: CodexAdapterInteractionKind,
+  answerable = true,
+): Extract<CodexAdapterEvent, Readonly<{ kind: "interaction_pending" }>> {
+  const display = !answerable
+    ? { summary: "Interaction unavailable", unavailableReason: "unsafe_projection" as const }
+    : kind === "codex.user_input"
+      ? { questions: [{ questionId: "q1", header: "Input", prompt: "Continue?", allowOther: false, options: [] }] }
+      : { summary: "Approve command", command: "npm test", availableDecisions: ["accept", "decline", "cancel"] };
+  return {
+    kind: "interaction_pending",
+    handle,
+    owner: {
+      connectionGeneration: "adapter-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "item-1",
+    },
+    snapshot: {
+      interactionId,
+      providerId: "codex",
+      definitionVersion: "codex-provider-v1",
+      kind,
+      answerable,
+      display,
+    },
+  } as unknown as Extract<CodexAdapterEvent, Readonly<{ kind: "interaction_pending" }>>;
 }
 
 function turnStarted(turnId: string) {
@@ -2173,5 +3823,14 @@ function unknownPersistenceFailure(): PersistenceClientError {
     message: "response lost",
     retryable: true,
     effect: "unknown",
+  });
+}
+
+function nonePersistenceFailure(retryable = true): PersistenceClientError {
+  return new PersistenceClientError({
+    code: "request_timeout",
+    message: "request was not sent",
+    retryable,
+    effect: "none",
   });
 }

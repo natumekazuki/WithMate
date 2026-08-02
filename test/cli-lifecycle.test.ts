@@ -48,12 +48,8 @@ const runStartArgv = [
   "018f1f4e-7f0a-7000-8000-000000000004",
   "--content-blocks-json",
   '[{"type":"text","text":"hello"}]',
-  "--model",
-  "gpt-test",
-  "--reasoning-effort",
-  "medium",
-  "--sandbox-json",
-  '{"mode":"danger-full-access"}',
+  "--provider-settings-json",
+  '{"providerId":"codex","definitionVersion":"codex-provider-v1","settings":{"model":"gpt-test","reasoningEffort":"medium","approvalPolicy":"never","sandbox":{"mode":"danger-full-access"}}}',
 ] as const;
 const runRetryArgv = [
   "run",
@@ -105,6 +101,7 @@ test("help and parse failures do not register signals or start runtime", async (
 
   const help = await runCliLifecycle(["--help"], dependencies);
   const runHelp = await runCliLifecycle(["run", "--help"], dependencies);
+  const interactionHelp = await runCliLifecycle(["run", "respond-interaction", "--help"], dependencies);
   const messageHelp = await runCliLifecycle(["session", "messages", "--help"], dependencies);
   const invalid = await runCliLifecycle(["session", "read"], dependencies);
   const invalidMessage = await runCliLifecycle(
@@ -172,6 +169,7 @@ test("help and parse failures do not register signals or start runtime", async (
 
   assert.equal(help.exitCode, CLI_EXIT_CODES.success);
   assert.equal(runHelp.exitCode, CLI_EXIT_CODES.success);
+  assert.equal(interactionHelp.exitCode, CLI_EXIT_CODES.success);
   assert.equal(messageHelp.exitCode, CLI_EXIT_CODES.success);
   assert.equal(invalid.exitCode, CLI_EXIT_CODES.usageInvalid);
   assert.equal(invalidMessage.exitCode, CLI_EXIT_CODES.usageInvalid);
@@ -245,12 +243,8 @@ test("Run start completion returns durable admission without waiting for termina
       "018f1f4e-7f0a-7000-8000-000000000701",
       "--content-blocks-json",
       '[{"type":"text","text":"hello"}]',
-      "--model",
-      "gpt-test",
-      "--reasoning-effort",
-      "medium",
-      "--sandbox-json",
-      '{"mode":"workspace-write","networkAccess":false}',
+      "--provider-settings-json",
+      '{"providerId":"codex","definitionVersion":"codex-provider-v1","settings":{"model":"gpt-test","reasoningEffort":"medium","approvalPolicy":"never","sandbox":{"mode":"workspace-write","networkAccess":false}}}',
     ],
     {
       version: CLI_VERSION,
@@ -1247,7 +1241,9 @@ function unsupportedRunOperations(overrides: Partial<RunOperations> = {}): RunOp
     retry: overrides.retry ?? unsupported,
     sendInput: overrides.sendInput ?? unsupported,
     cancel: overrides.cancel ?? unsupported,
+    respondInteraction: overrides.respondInteraction ?? unsupported,
     status: overrides.status ?? unsupported,
+    interactions: overrides.interactions ?? unsupported,
     events: overrides.events ?? unsupported,
     follow: overrides.follow ?? unsupported,
   };

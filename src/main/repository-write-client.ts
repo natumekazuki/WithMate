@@ -22,6 +22,10 @@ import {
   type RunInputBeginResult,
   type RunInputResolutionCommand,
   type RunInputResolutionResult,
+  type RunInteractionResponseAdmissionCommand,
+  type RunInteractionResponseMarkWriteAttemptCommand,
+  type RunInteractionResponseResult,
+  type RunInteractionResponseSettlementCommand,
   type RunCancelAdmissionCommand,
   type RunCancelAdmissionResult,
   type RunOutputAppendCommand,
@@ -154,6 +158,32 @@ export class RepositoryWriteClient {
     options?: RequestOptions,
   ): Promise<RepositoryCommandResult<RunInputResolutionResult>> {
     return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runInputResolve, "write", command, options);
+  }
+
+  admitRunInteractionResponse(
+    command: RunInteractionResponseAdmissionCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<RunInteractionResponseResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runInteractionResponseAdmit, "write", command, options);
+  }
+
+  markRunInteractionResponseWriteAttempt(
+    command: RunInteractionResponseMarkWriteAttemptCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<RunInteractionResponseResult>> {
+    return this.#worker.request(
+      REPOSITORY_WRITE_OPERATIONS.runInteractionResponseMarkWriteAttempt,
+      "write",
+      command,
+      options,
+    );
+  }
+
+  settleRunInteractionResponse(
+    command: RunInteractionResponseSettlementCommand,
+    options?: RequestOptions,
+  ): Promise<RepositoryCommandResult<RunInteractionResponseResult>> {
+    return this.#worker.request(REPOSITORY_WRITE_OPERATIONS.runInteractionResponseSettle, "write", command, options);
   }
 
   admitRunCancel(

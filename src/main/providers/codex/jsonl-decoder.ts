@@ -17,7 +17,7 @@ export class CodexJsonlDecoder {
     }
   }
 
-  push(chunk: Uint8Array, emit: (envelope: CodexWireEnvelope) => void): void {
+  push(chunk: Uint8Array, emit: (envelope: CodexWireEnvelope, lineBytes: number) => void): void {
     if (this.#ended) {
       throw new Error("Codex JSONL decoder has already ended.");
     }
@@ -40,7 +40,7 @@ export class CodexJsonlDecoder {
 
       if (newlineOffset === -1) break;
       this.#line += this.#decode(new Uint8Array(), false);
-      emit(this.#finishLine());
+      emit(this.#finishLine(), contentBytes);
       offset = newlineOffset + 1;
     }
   }

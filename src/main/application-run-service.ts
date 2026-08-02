@@ -8,11 +8,16 @@ import type {
   ApplicationRunEventsRequest,
   ApplicationRunFollowRequest,
   ApplicationRunFollowResult,
+  ApplicationRunInteraction,
+  ApplicationRunInteractionsRequest,
+  ApplicationRunInteractionsResult,
   ApplicationRunLiveActivity,
   ApplicationRunOperations,
   ApplicationRunOperation,
   ApplicationRunPhase,
   ApplicationRunRetryRequest,
+  ApplicationRunRespondInteractionRequest,
+  ApplicationRunRespondInteractionResult,
   ApplicationRunSendInputRequest,
   ApplicationRunSendInputResult,
   ApplicationRunStartRequest,
@@ -28,13 +33,20 @@ import type {
 } from "../shared/application-service-model.js";
 import type { PersistenceError } from "../shared/persistence-protocol.js";
 import type { RunEventPage } from "../shared/repository-read-model.js";
+import type {
+  RunInteractionResponseReplayProbeRequest,
+  RunInteractionResponseReplayProbeResult,
+} from "../shared/repository-read-model.js";
 import {
   ApplicationRunAdmissionService,
   createRepositoryApplicationRunAdmissionPort,
+  createRepositoryApplicationRunAdmissionReplayPort,
   defaultApplicationRunAdmissionPort,
   defaultApplicationRunWorkHandoffPort,
   type ApplicationRunAdmissionPort,
+  type ApplicationRunAdmissionReplayPort,
   type ApplicationRunAdmissionReadPort,
+  type ApplicationRunProviderCapabilityPreflightPort,
   type ApplicationRunWorkHandoffPort,
 } from "./application-run-admission-service.js";
 import {
@@ -49,6 +61,13 @@ import {
 } from "./application-run-cancel-service.js";
 import { projectPersistedRun } from "./application-run-projection.js";
 import {
+  ApplicationRunInteractionResponseService,
+  defaultApplicationRunInteractionResponseOwnerPort,
+  type ApplicationRunInteractionResponseReadPort,
+  type ApplicationRunInteractionResponseOwnerPort,
+  type ApplicationRunInteractionResponseReplayPort,
+} from "./application-run-interaction-response-service.js";
+import {
   ApplicationRunInputService,
   createRepositoryApplicationRunInputAdmissionPort,
   createRepositoryApplicationRunInputReplayPort,
@@ -60,6 +79,8 @@ import {
 } from "./application-run-input-service.js";
 import { PersistenceClientError } from "./persistence-worker-client.js";
 import type { PersistenceWorkerClient } from "./persistence-worker-client.js";
+import type { ProviderDefinitionRegistry } from "./providers/provider-definition.js";
+import { defaultProviderDefinitionRegistry } from "./providers/provider-registry.js";
 import { RepositoryReadClient } from "./repository-read-client.js";
 
 type RunReadPort = ApplicationRunAdmissionReadPort & Pick<RepositoryReadClient, "runEventsPage">;
@@ -118,6 +139,12 @@ export interface ApplicationRunLiveActivityPort {
   read(input: Readonly<{ sessionId: string; runId: string }>): Promise<ApplicationRunLiveActivitySnapshot | null>;
 }
 
+export interface ApplicationRunInteractionReadPort {
+  readInteractions(
+    input: Readonly<{ sessionId: string; runId: string; runVersion: number }>,
+  ): Promise<ApplicationRunInteractionsResult | null>;
+}
+
 export interface ApplicationRunClock {
   now(): number;
 }
@@ -131,6 +158,8 @@ export type ApplicationRunServiceOptions<TAuthorizationContext> = Readonly<{
   access: ApplicationRunAccessValidator<TAuthorizationContext>;
   snapshotAuthorization(value: unknown): TAuthorizationContext;
   admission?: ApplicationRunAdmissionPort;
+  admissionReplay?: ApplicationRunAdmissionReplayPort;
+  providerCapabilityPreflight?: ApplicationRunProviderCapabilityPreflightPort;
   handoff?: ApplicationRunWorkHandoffPort;
   inputAdmission?: ApplicationRunInputAdmissionPort;
   inputOwner?: ApplicationRunInputOwnerPort;
@@ -139,6 +168,10 @@ export type ApplicationRunServiceOptions<TAuthorizationContext> = Readonly<{
   cancelOwner?: ApplicationRunCancelOwnerPort;
   cancelReplay?: ApplicationRunCancelReplayPort;
   liveActivity?: ApplicationRunLiveActivityPort;
+  interactions?: ApplicationRunInteractionReadPort;
+  interactionResponseOwner?: ApplicationRunInteractionResponseOwnerPort;
+  interactionResponseReplay?: ApplicationRunInteractionResponseReplayPort;
+  providers?: ProviderDefinitionRegistry;
   clock?: ApplicationRunClock;
   sleeper?: ApplicationRunSleeper;
 }>;
@@ -147,6 +180,12 @@ const terminalPhases = new Set<ApplicationRunPhase>(["completed", "failed", "can
 
 const defaultLiveActivity: ApplicationRunLiveActivityPort = {
   async read() {
+    return null;
+  },
+};
+
+const defaultInteractions: ApplicationRunInteractionReadPort = {
+  async readInteractions() {
     return null;
   },
 };
@@ -184,11 +223,27 @@ export function createApplicationRunOperations<TAuthorizationContext>(
     reads: new RepositoryReadClient(worker),
     ...options,
     admission: options.admission ?? createRepositoryApplicationRunAdmissionPort(worker),
+    admissionReplay: options.admissionReplay ?? createRepositoryApplicationRunAdmissionReplayPort(worker),
     inputAdmission: options.inputAdmission ?? createRepositoryApplicationRunInputAdmissionPort(worker),
     inputReplay: options.inputReplay ?? createRepositoryApplicationRunInputReplayPort(worker),
     cancelAdmission: options.cancelAdmission ?? createRepositoryApplicationRunCancelAdmissionPort(worker),
     cancelReplay: options.cancelReplay ?? createRepositoryApplicationRunCancelReplayPort(worker),
+    interactionResponseReplay:
+      options.interactionResponseReplay ??
+      new RepositoryApplicationRunInteractionResponseReplayPort(new RepositoryReadClient(worker)),
   });
+}
+
+class RepositoryApplicationRunInteractionResponseReplayPort implements ApplicationRunInteractionResponseReplayPort {
+  readonly #reads: RepositoryReadClient;
+
+  constructor(reads: RepositoryReadClient) {
+    this.#reads = reads;
+  }
+
+  probe(input: RunInteractionResponseReplayProbeRequest): Promise<RunInteractionResponseReplayProbeResult> {
+    return this.#reads.runInteractionResponseReplayProbe(input);
+  }
 }
 
 export class ApplicationRunService<TAuthorizationContext> implements ApplicationRunOperations<TAuthorizationContext> {
@@ -198,7 +253,10 @@ export class ApplicationRunService<TAuthorizationContext> implements Application
   readonly #admissionService: ApplicationRunAdmissionService<TAuthorizationContext>;
   readonly #inputService: ApplicationRunInputService<TAuthorizationContext>;
   readonly #cancelService: ApplicationRunCancelService<TAuthorizationContext>;
+  readonly #interactionResponseService: ApplicationRunInteractionResponseService<TAuthorizationContext>;
   readonly #liveActivity: ApplicationRunLiveActivityPort;
+  readonly #interactions: ApplicationRunInteractionReadPort;
+  readonly #providers: ProviderDefinitionRegistry;
   readonly #clock: ApplicationRunClock;
   readonly #sleeper: ApplicationRunSleeper;
 
@@ -209,9 +267,12 @@ export class ApplicationRunService<TAuthorizationContext> implements Application
     this.#admissionService = new ApplicationRunAdmissionService({
       reads: options.reads,
       admission: options.admission ?? defaultApplicationRunAdmissionPort(),
+      ...(options.admissionReplay === undefined ? {} : { replay: options.admissionReplay }),
+      ...(options.providerCapabilityPreflight === undefined ? {} : { preflight: options.providerCapabilityPreflight }),
       handoff: options.handoff ?? defaultApplicationRunWorkHandoffPort(),
       access: options.access,
       snapshotAuthorization: options.snapshotAuthorization,
+      ...(options.providers === undefined ? {} : { providers: options.providers }),
     });
     this.#inputService = new ApplicationRunInputService({
       access: options.access,
@@ -228,7 +289,17 @@ export class ApplicationRunService<TAuthorizationContext> implements Application
       owner: options.cancelOwner ?? defaultApplicationRunCancelOwnerPort(),
       ...(options.cancelReplay === undefined ? {} : { replay: options.cancelReplay }),
     });
+    this.#interactionResponseService = new ApplicationRunInteractionResponseService({
+      reads: applicationRunInteractionResponseReads(options.reads),
+      access: options.access,
+      snapshotAuthorization: options.snapshotAuthorization,
+      owner: options.interactionResponseOwner ?? defaultApplicationRunInteractionResponseOwnerPort(),
+      ...(options.interactionResponseReplay === undefined ? {} : { replay: options.interactionResponseReplay }),
+      ...(options.providers === undefined ? {} : { providers: options.providers }),
+    });
     this.#liveActivity = options.liveActivity ?? defaultLiveActivity;
+    this.#interactions = options.interactions ?? defaultInteractions;
+    this.#providers = options.providers ?? defaultProviderDefinitionRegistry;
     this.#clock = options.clock ?? monotonicClock;
     this.#sleeper = options.sleeper ?? defaultSleeper;
   }
@@ -261,6 +332,13 @@ export class ApplicationRunService<TAuthorizationContext> implements Application
     return this.#cancelService.cancel(request, options);
   }
 
+  respondInteraction(
+    request: ApplicationRunRespondInteractionRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationRunRespondInteractionResult, "write">> {
+    return this.#interactionResponseService.respondInteraction(request, options);
+  }
+
   async status(
     request: ApplicationRunStatusRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
@@ -288,6 +366,47 @@ export class ApplicationRunService<TAuthorizationContext> implements Application
       prepared.control,
     );
     return page.ok ? readOutcome(prepared.control, page.value.value, page.value.issues) : page.response;
+  }
+
+  async interactions(
+    request: ApplicationRunInteractionsRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationRunInteractionsResult, "read">> {
+    const prepared = prepareOperation(options, () => decodeInteractionsRequest(request, this.#snapshotAuthorization));
+    if (!prepared.ok) return prepared.response;
+    const scope = await this.#authorizeAndResolveScope("interactions", prepared.input, prepared.control);
+    if (!scope.ok) return scope.response;
+    const run = await readRepository(prepared.control, (repositoryOptions) =>
+      this.#reads.runGet(scope.value, repositoryOptions),
+    );
+    if (!run.ok) return run.response;
+    const persisted = projectOperationValue(prepared.control, () => projectRunStatus(run.value, scope.value));
+    if (!persisted.ok) return persisted.response;
+    const empty = () =>
+      Object.freeze({
+        sessionId: scope.value.sessionId,
+        runId: scope.value.runId,
+        runVersion: persisted.value.version,
+        interactions: Object.freeze([]),
+      });
+    if (persisted.value.status.phase !== "active") return readSuccess(prepared.control, empty());
+
+    const live = await runControlled(prepared.control, () =>
+      this.#interactions.readInteractions({
+        sessionId: scope.value.sessionId,
+        runId: scope.value.runId,
+        runVersion: persisted.value.version,
+      }),
+    );
+    if (live.status === "interrupted") {
+      return interruptionFailure(prepared.control, live.interruption);
+    }
+    if (live.status === "rejected") return persistenceApplicationFailure();
+    const projected = projectOperationValue(prepared.control, () =>
+      projectInteractions(live.value, scope.value, persisted.value.version, this.#providers),
+    );
+    if (!projected.ok) return projected.response;
+    return readSuccess(prepared.control, projected.value ?? empty());
   }
 
   async follow(
@@ -357,7 +476,7 @@ export class ApplicationRunService<TAuthorizationContext> implements Application
   }
 
   async #authorizeAndResolveScope(
-    operation: Extract<ApplicationRunOperation, "status" | "events" | "follow">,
+    operation: Extract<ApplicationRunOperation, "status" | "events" | "follow" | "interactions">,
     input: ApplicationRunStatusRequest<TAuthorizationContext>,
     control: OperationControl,
   ): Promise<OperationResolution<RunScope>> {
@@ -446,6 +565,14 @@ export class ApplicationRunService<TAuthorizationContext> implements Application
   }
 }
 
+function applicationRunInteractionResponseReads(reads: RunReadPort): ApplicationRunInteractionResponseReadPort {
+  return {
+    readSession: (input, options) => reads.sessionGet(input, options),
+    readRun: (input, options) => reads.runGet(input, options),
+    readSnapshotChunk: (input, options) => reads.runSnapshotChunk(input, options),
+  };
+}
+
 function decodeStatusRequest<TAuthorizationContext>(
   value: unknown,
   snapshotAuthorization: (value: unknown) => TAuthorizationContext,
@@ -460,6 +587,13 @@ function decodeStatusRequest<TAuthorizationContext>(
       runId: boundedString(request.runId),
     },
   };
+}
+
+function decodeInteractionsRequest<TAuthorizationContext>(
+  value: unknown,
+  snapshotAuthorization: (value: unknown) => TAuthorizationContext,
+): RequestDecodeResult<ApplicationRunInteractionsRequest<TAuthorizationContext>> {
+  return decodeStatusRequest(value, snapshotAuthorization);
 }
 
 function decodeEventsRequest<TAuthorizationContext>(
@@ -773,6 +907,42 @@ function projectLiveActivity(
   const version = nonNegativeInteger(snapshot.runVersion);
   const activity = enumString(snapshot.activity, ["running", "waiting_approval", "waiting_input", "waiting_child"]);
   return version === expectedVersion ? activity : null;
+}
+
+function projectInteractions(
+  value: unknown,
+  expected: RunScope,
+  expectedVersion: number,
+  providers: ProviderDefinitionRegistry,
+): ApplicationRunInteractionsResult | null {
+  if (value === null) return null;
+  const snapshot = projectionRecord(value, ["sessionId", "runId", "runVersion", "interactions"]);
+  if (boundedString(snapshot.sessionId) !== expected.sessionId || boundedString(snapshot.runId) !== expected.runId) {
+    throw new TypeError("Run interaction scope mismatch.");
+  }
+  const runVersion = nonNegativeInteger(snapshot.runVersion);
+  if (runVersion !== expectedVersion) return null;
+  if (
+    !Array.isArray(snapshot.interactions) ||
+    snapshot.interactions.length > APPLICATION_RUN_LIMITS.interactionsMaxItems
+  ) {
+    throw new TypeError("Run interaction snapshot is invalid.");
+  }
+  const interactions: ApplicationRunInteraction[] = [];
+  const interactionIds = new Set<string>();
+  for (const value of snapshot.interactions) {
+    const interaction = providers.canonicalizeInteractionSnapshot(value);
+    const interactionId = interaction.interactionId;
+    if (interactionIds.has(interactionId)) throw new TypeError("Run interaction identity is duplicated.");
+    interactionIds.add(interactionId);
+    interactions.push(interaction);
+  }
+  return Object.freeze({
+    sessionId: expected.sessionId,
+    runId: expected.runId,
+    runVersion,
+    interactions: Object.freeze(interactions),
+  });
 }
 
 function projectRunEventPage(

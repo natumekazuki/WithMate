@@ -26,6 +26,18 @@ test("JSONL decoder preserves UTF-8 split boundaries, multiple lines, and CRLF",
   decoder.finish();
 });
 
+test("JSONL decoder reports exact JSON line bytes without CRLF delimiters", () => {
+  const first = '{"id":1,"result":{"text":"境界"}}';
+  const second = '{"method":"future/event","params":{"ok":true}}';
+  const observed: number[] = [];
+  const decoder = new CodexJsonlDecoder();
+
+  decoder.push(encoder.encode(`${first}\r\n${second}\n`), (_envelope, lineBytes) => observed.push(lineBytes));
+
+  assert.deepEqual(observed, [encoder.encode(first).byteLength, encoder.encode(second).byteLength]);
+  decoder.finish();
+});
+
 test("JSONL decoder accepts omitted jsonrpc and exact jsonrpc 2.0 envelopes", () => {
   const envelopes = decode(
     [
@@ -53,6 +65,25 @@ test("JSONL decoder accepts omitted jsonrpc and exact jsonrpc 2.0 envelopes", ()
     },
     { kind: "notification", method: "future/notification", emittedAtMs: 1784722603886 },
   ]);
+});
+
+test("JSONL decoder ignores additive fields while preserving known envelope validation", () => {
+  assert.deepEqual(
+    decode(
+      [
+        '{"id":1,"result":{"ok":true},"future":"response"}',
+        '{"id":2,"error":{"code":-32600,"message":"invalid","future":"detail"},"future":"error"}',
+        '{"id":"server","method":"future/request","trace":{"traceparent":null,"future":"trace"},"future":"request"}',
+        '{"method":"future/event","emittedAtMs":1,"future":"notification"}',
+      ].join("\n") + "\n",
+    ),
+    [
+      { kind: "response", id: 1, result: { ok: true } },
+      { kind: "errorResponse", id: 2, error: { code: -32600, message: "invalid" } },
+      { kind: "serverRequest", id: "server", method: "future/request", trace: { traceparent: null } },
+      { kind: "notification", method: "future/event", emittedAtMs: 1 },
+    ],
+  );
 });
 
 test("JSONL decoder rejects malformed JSON without exposing the raw line", () => {
@@ -111,13 +142,9 @@ test("wire validation rejects ambiguous or unsupported outer envelopes", () => {
     '{"jsonrpc":"1.0","id":1,"result":null}',
     '{"id":1,"result":null,"error":{"code":1,"message":"no"}}',
     '{"id":9007199254740992,"result":null}',
-    '{"id":1,"result":null,"extra":true}',
-    '{"id":1,"error":{"code":1,"message":"no"},"extra":true}',
     '{"id":1,"method":"server/request","result":null}',
-    '{"id":"server","method":"server/request","extra":true}',
     '{"id":9007199254740992,"method":"server/request"}',
     '{"method":""}',
-    '{"method":"future/event","extra":true}',
     '{"method":"future/event","emittedAtMs":"1784722603886"}',
     '{"method":"future/event","emittedAtMs":1.5}',
     '{"method":"future/event","emittedAtMs":9007199254740992}',
