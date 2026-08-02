@@ -281,14 +281,14 @@ describe("SettingsCatalogService", () => {
         launchAtLoginEnabled: true,
       });
       await auxiliarySessionsRequested.promise;
-      storage.updateSessionRightPaneVisibility(true);
+      storage.updateSessionSidePane("context");
       resumeAuxiliarySessions.resolve();
 
       const updated = await updating;
 
       assert.equal(updated.launchAtLoginEnabled, true);
-      assert.equal(updated.sessionRightPaneVisible, true);
-      assert.equal(storage.getSettings().sessionRightPaneVisible, true);
+      assert.equal(updated.sessionSidePane, "context");
+      assert.equal(storage.getSettings().sessionSidePane, "context");
     } finally {
       storage.close();
       await rm(tempDirectory, { recursive: true, force: true });
@@ -370,16 +370,16 @@ describe("SettingsCatalogService", () => {
         },
       });
       await sessionReplacementStarted.promise;
-      storage.updateSessionRightPaneVisibility(true);
+      storage.updateSessionSidePane("files");
       resumeSessionReplacement.resolve();
 
       const updated = await updating;
 
       assert.equal(updated.launchAtLoginEnabled, true);
-      assert.equal(updated.sessionRightPaneVisible, true);
+      assert.equal(updated.sessionSidePane, "files");
       assert.ok(broadcastSettings);
-      assert.equal(broadcastSettings.sessionRightPaneVisible, true);
-      assert.equal(storage.getSettings().sessionRightPaneVisible, true);
+      assert.equal(broadcastSettings.sessionSidePane, "files");
+      assert.equal(storage.getSettings().sessionSidePane, "files");
     } finally {
       storage.close();
       await rm(tempDirectory, { recursive: true, force: true });
@@ -462,12 +462,12 @@ describe("SettingsCatalogService", () => {
         },
       });
       await firstSessionReplacementStarted.promise;
-      storage.updateSessionRightPaneVisibility(true);
+      storage.updateSessionSidePane("context");
       rejectFirstSessionReplacement.resolve();
 
       await assert.rejects(() => updating, /session replacement failed/);
       assert.equal(replaceCallCount, 2);
-      assert.equal(storage.getSettings().sessionRightPaneVisible, true);
+      assert.equal(storage.getSettings().sessionSidePane, "context");
     } finally {
       storage.close();
       await rm(tempDirectory, { recursive: true, force: true });

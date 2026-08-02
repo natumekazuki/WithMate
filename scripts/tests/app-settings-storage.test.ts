@@ -12,6 +12,44 @@ import {
 import { AppSettingsStorage } from "../../src-electron/app-settings-storage.js";
 
 describe("AppSettingsStorage", () => {
+  it("legacy right pane visibility を canonical side pane へ一度だけ移行する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const initialStorage = new AppSettingsStorage(dbPath);
+      initialStorage.close();
+
+      const legacyDatabase = new DatabaseSync(dbPath);
+      legacyDatabase.prepare("DELETE FROM app_settings WHERE setting_key = ?").run("session_side_pane");
+      legacyDatabase
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value
+        `)
+        .run("session_right_pane_visible", "true", new Date().toISOString());
+      legacyDatabase.close();
+
+      const migratedStorage = new AppSettingsStorage(dbPath);
+      assert.equal(migratedStorage.getSettings().sessionSidePane, "context");
+      migratedStorage.updateSessionSidePane("files");
+      migratedStorage.close();
+
+      const staleLegacyDatabase = new DatabaseSync(dbPath);
+      staleLegacyDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run("false", "session_right_pane_visible");
+      staleLegacyDatabase.close();
+
+      const reopenedStorage = new AppSettingsStorage(dbPath);
+      assert.equal(reopenedStorage.getSettings().sessionSidePane, "files");
+      reopenedStorage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("Session turn notification setting の欠損値と不正値は既定の有効へ戻す", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -90,7 +128,7 @@ describe("AppSettingsStorage", () => {
 
     try {
       const storage = new AppSettingsStorage(dbPath);
-      storage.updateSessionRightPaneVisibility(true);
+      storage.updateSessionSidePane("context");
       const updated = storage.updateSettings({
         ...createDefaultAppSettings(),
         memoryGenerationEnabled: false,
@@ -98,7 +136,7 @@ describe("AppSettingsStorage", () => {
         sessionTurnNotificationEnabled: false,
         sessionTurnNotificationResponsePreviewEnabled: true,
         autoCollapseActionDockOnSend: false,
-        sessionRightPaneVisible: true,
+        sessionSidePane: "context",
         memoryFileQuotaBytes: 2 * MEMORY_FILE_QUOTA_DEFAULT_BYTES,
         userMicrocopyCatalog: {
           ...createDefaultAppSettings().userMicrocopyCatalog,
@@ -182,22 +220,22 @@ describe("AppSettingsStorage", () => {
 
     try {
       const storage = new AppSettingsStorage(dbPath);
-      assert.equal(storage.getSettings().sessionRightPaneVisible, false);
+      assert.equal(storage.getSettings().sessionSidePane, "none");
 
       storage.updateSettings({
         ...createDefaultAppSettings(),
         memoryGenerationEnabled: false,
       });
-      const updated = storage.updateSessionRightPaneVisibility(true);
+      const updated = storage.updateSessionSidePane("files");
       storage.close();
 
       const reopened = new AppSettingsStorage(dbPath);
       const loaded = reopened.getSettings();
       reopened.close();
 
-      assert.equal(updated.sessionRightPaneVisible, true);
+      assert.equal(updated.sessionSidePane, "files");
       assert.equal(updated.memoryGenerationEnabled, false);
-      assert.equal(loaded.sessionRightPaneVisible, true);
+      assert.equal(loaded.sessionSidePane, "files");
       assert.equal(loaded.memoryGenerationEnabled, false);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
@@ -212,7 +250,7 @@ describe("AppSettingsStorage", () => {
       const storage = new AppSettingsStorage(dbPath);
       const staleSettings = storage.getSettings();
 
-      storage.updateSessionRightPaneVisibility(true);
+      storage.updateSessionSidePane("context");
       const updated = storage.updateSettings({
         ...staleSettings,
         launchAtLoginEnabled: true,
@@ -224,8 +262,8 @@ describe("AppSettingsStorage", () => {
       reopened.close();
 
       assert.equal(updated.launchAtLoginEnabled, true);
-      assert.equal(updated.sessionRightPaneVisible, true);
-      assert.equal(loaded.sessionRightPaneVisible, true);
+      assert.equal(updated.sessionSidePane, "context");
+      assert.equal(loaded.sessionSidePane, "context");
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
@@ -244,7 +282,7 @@ describe("AppSettingsStorage", () => {
         sessionTurnNotificationEnabled: false,
         sessionTurnNotificationResponsePreviewEnabled: true,
         autoCollapseActionDockOnSend: false,
-        sessionRightPaneVisible: true,
+        sessionSidePane: "context",
         userMicrocopyCatalog: {
           ...createDefaultAppSettings().userMicrocopyCatalog,
           "dock.status.preparing": ["準備中"],
@@ -303,7 +341,7 @@ describe("AppSettingsStorage", () => {
           triggerIntervalMinutes: 90,
         },
       });
-      storage.updateSessionRightPaneVisibility(true);
+      storage.updateSessionSidePane("files");
 
       const reset = storage.resetSettings();
       storage.close();

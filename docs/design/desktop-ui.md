@@ -181,7 +181,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - Home と同じ dark base を使う
 - キャラカラーは限定的に使い、過度に Session 全体へ広げない
 - チャット UI の実装正本は `chat` domain の単一 UI 定義だけとする
-- Agent / Companion / メイトークは同じ chat screen / header / message list / composer / right pane shell を使い、mode と service adapter で差分を切り替える
+- Agent / Companion は同じ chat screen / header / message list / composer / pane shell を使い、mode と service adapter で差分を切り替える
 - 新しい会話機能を追加する場合も、chat layout 実装を増やさず、Session UI の mode を追加する
 - session title の rename / delete
 - `Audit Log` overlay
@@ -189,18 +189,18 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - `Work Chat`
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
-- wide desktop (`1920x1080` baseline) では Session 本体を「`header(必要時のみ) + 中央 2 分割`」にする
-  - 通常時は左列を最上端から `message list + Action Dock` に使い切る
-  - 右列は `title handle + context pane` を持つ
+- wide desktop (`1920x1080` baseline) では Session 本体を「`header(必要時のみ) + side pane / work surface`」にする
+  - 通常時は work surface を最上端から `message list + Action Dock` に使い切る
+  - Agent では左に File Explorer、右に `title handle + context pane` を開けるが、左右を同時には表示しない
   - title handle を押した時だけ、header が左端まで伸びた full-width strip として出る
-  - 中央左: `message list + Action Dock`
-  - 中央右: `Latest Command`
-  - 左右の境界は splitter の drag で調整し、click で right pane の表示 / 非表示を切り替える
-  - right pane を隠した時も splitter は再表示 affordance として残し、pane の内容と調整済みの幅を保持する
-  - right pane の表示状態は app 共通設定へ保存し、初期値は非表示とする。新しく開く Agent / Companion Window は最後に選んだ状態を使う
+  - work surface: `message list または file / live Git Diff preview + Action Dock`
+  - context pane: `Latest Command`
+  - splitter の click で対応する pane を切り替える。Context pane の splitter は wide layout で drag による幅調整も受け付ける
+  - pane を隠した時も splitter は再表示 affordance として残す
+  - side pane の表示状態は `files | context | none` の単一値として app 共通設定へ保存し、初期値は `none` とする。新しく開く Window は利用可能な永続値を初期値として使う
   - 開いている Window の表示状態は renderer local state とし、別 Window での切り替えには追従させない
-  - right pane は Action Dock の手前で切らず、下端まで縦に伸ばす
-  - viewport が `1400px` 未満の narrow width では `message list + Action Dock -> splitter -> Latest Command` の縦 stack へ戻し、splitter の click 操作だけを維持する。`1400px` 以上では drag と click の両方を使う
+  - side pane は Action Dock の手前で切らず、下端まで縦に伸ばす
+  - viewport が `1400px` 未満の narrow width では active side pane と work surface を縦 stack にし、splitter の click 操作だけを維持する。`1400px` 以上では Context pane の drag と各 splitter の click を使う
   - current minimum は split-screen を考慮し、`900px` 台の window 幅でも縦 stack のまま到達性を維持する
   - Full HD では文字サイズそのものより density を先に調整し、Session 専用の gap / padding / chip / button 高さをやや詰める
   - user bubble は assistant avatar 分の左 gutter を持たず、row 幅いっぱいを使えるようにする
@@ -216,6 +216,22 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - default では通常送信の直後に compact へ戻す
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
   - retry banner、skill picker、`@path` 候補、blocked feedback がある時は expanded を維持する
+- Agent の `File Explorer`
+  - `Workspace`、`Session Folder`、`Add Directory` で許可した directory を root として表示する
+  - dotfile や ignore 対象を除外せず、展開した directory の直下だけを Main process から取得する
+  - 未作成の `Session Folder` は root の初回展開時に空ディレクトリとして作成する
+  - tree row は仮想化し、file 本文は選択時に 1 件だけ chunk read する
+  - `Files | Changes` を切り替え、Changes は Workspace の Working Tree / Staged を 1 file 単位で中央 live Git Diff へ開く
+  - Changes は user configuration から外部 command を実行しない。Git executable、directory identity、config / index の隔離境界は ADR 014 を正本とする。有効な clean / process filter が必要な repository では、他の操作 feedback がある場合も理由を表示して利用不可にする
+  - File Explorer の user-visible 導線は Companion に追加しない
+- 中央 file preview
+  - message list だけを置き換え、Action Dock は表示したまま入力、添付、送信を受け付ける
+  - Text、Markdown、raster image、SVG、unsupported binary metadata を表示する。Text と source は行番号、soft wrap、文字コード切替を持つ
+  - Markdown は shared rich text renderer の Preview を既定とし、Source へ切り替えられる
+  - image は 100% を既定とし、Zoom と Fit を受け付ける
+  - Ctrl+F は active な chat / Text / Markdown / live Git Diff を検索する。Preview 中の chat component は状態保持のため mount したまま非表示にするが、shortcut と検索対象からは外す。Text、Markdown、live Git Diff の選択コピーは chat と同じ floating Copy を使う
+  - file と live Git Diff は Back to Chat で閉じる。run、approval、elicitation の状態は preview 中も確認できる
+- live Git Diff と chat artifact Diff は別機能とする。既存 chat artifact の `Open Diff` は snapshot を inline modal / Diff Window に開く従来経路を維持し、File Explorer の Changes や中央 live Git Diff へ接続しない
 - work surface は外側 card を持たず、padding / gap を抑えて message viewport を優先する
 - message list は条件付き follow mode で動かす
   - viewport bottom gap が 80px 以下のときは末尾追従を許可する

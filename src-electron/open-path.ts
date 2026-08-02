@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { OpenPathOptions } from "../src/withmate-window-types.js";
+import type { OpenPathOptions, OpenPathResult } from "../src/withmate-window-types.js";
 
 export type ResolvedOpenPathTarget =
   | {
@@ -13,9 +13,18 @@ export type ResolvedOpenPathTarget =
       targetPath: string;
     };
 
-export type OpenPathFallbackCommand = {
-  command: string;
-  args: string[];
+export type LocalPathStat = {
+  isDirectory(): boolean;
+  isFile(): boolean;
+};
+
+export type OpenLocalPathDeps = {
+  statTarget(targetPath: string): Promise<LocalPathStat>;
+  openWithDefaultApp(targetPath: string): Promise<string>;
+};
+
+export type RevealLocalPathDeps = OpenLocalPathDeps & {
+  revealInFileManager(targetPath: string): void;
 };
 
 function stripLocalPathFragment(target: string): string {
@@ -117,7 +126,7 @@ export function resolveOpenPathTarget(target: string, options: OpenPathOptions =
     };
   }
 
-  if (trimmed.startsWith("file://")) {
+  if (/^file:\/\//i.test(trimmed)) {
     const fileUrl = new URL(trimmed);
     fileUrl.hash = "";
     fileUrl.search = "";
@@ -172,16 +181,126 @@ export function resolveOpenPathTarget(target: string, options: OpenPathOptions =
   };
 }
 
-export function buildDirectoryOpenFallbackCommand(
-  targetPath: string,
-  platform: NodeJS.Platform = process.platform,
-): OpenPathFallbackCommand | null {
-  if (platform !== "win32") {
-    return null;
+function isMissingLocalPathError(error: unknown): boolean {
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String(error.code)
+    : "";
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
+export function resolveProtocolRelativeExternalFallbackAfterLocalOpen(
+  target: string,
+  localResult: OpenPathResult,
+): string | null {
+  return localResult.status === "not-found"
+    ? resolveProtocolRelativeExternalFallback(target)
+    : null;
+}
+
+function describeLocalPathError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  return String(error || "Unknown filesystem error");
+}
+
+function projectLocalPathStatError(targetPath: string, error: unknown): OpenPathResult {
+  if (isMissingLocalPathError(error)) {
+    return {
+      status: "not-found",
+      targetType: "local-path",
+      target: targetPath,
+      message: "The local path was not found.",
+    };
   }
 
   return {
-    command: "explorer.exe",
-    args: [targetPath],
+    status: "failed",
+    targetType: "local-path",
+    target: targetPath,
+    message: `The local path could not be inspected: ${describeLocalPathError(error)}`,
   };
+}
+
+function projectUnsupportedLocalPathType(targetPath: string): OpenPathResult {
+  return {
+    status: "failed",
+    targetType: "local-path",
+    target: targetPath,
+    message: "The local path is not a file or directory.",
+  };
+}
+
+async function openExistingLocalPathWithDefaultApp(
+  targetPath: string,
+  openWithDefaultApp: OpenLocalPathDeps["openWithDefaultApp"],
+): Promise<OpenPathResult> {
+  try {
+    const errorMessage = await openWithDefaultApp(targetPath);
+    return errorMessage
+      ? { status: "failed", targetType: "local-path", target: targetPath, message: errorMessage }
+      : { status: "opened", targetType: "local-path", target: targetPath };
+  } catch (error) {
+    return {
+      status: "failed",
+      targetType: "local-path",
+      target: targetPath,
+      message: `The default application could not open this path: ${describeLocalPathError(error)}`,
+    };
+  }
+}
+
+export async function openLocalPathWithDefaultApp(
+  targetPath: string,
+  deps: OpenLocalPathDeps,
+): Promise<OpenPathResult> {
+  let targetStat: LocalPathStat;
+  try {
+    targetStat = await deps.statTarget(targetPath);
+  } catch (error) {
+    return projectLocalPathStatError(targetPath, error);
+  }
+
+  if (!targetStat.isFile() && !targetStat.isDirectory()) {
+    return projectUnsupportedLocalPathType(targetPath);
+  }
+
+  return openExistingLocalPathWithDefaultApp(targetPath, deps.openWithDefaultApp);
+}
+
+export async function revealLocalPathInFileManager(
+  targetPath: string,
+  deps: RevealLocalPathDeps,
+): Promise<OpenPathResult> {
+  let targetStat: LocalPathStat;
+  try {
+    targetStat = await deps.statTarget(targetPath);
+  } catch (error) {
+    return projectLocalPathStatError(targetPath, error);
+  }
+
+  if (targetStat.isFile()) {
+    try {
+      deps.revealInFileManager(targetPath);
+      return {
+        status: "revealed",
+        targetType: "local-path",
+        target: targetPath,
+        message: "The file was revealed in the file manager.",
+      };
+    } catch (error) {
+      return {
+        status: "failed",
+        targetType: "local-path",
+        target: targetPath,
+        message: `The file could not be revealed: ${describeLocalPathError(error)}`,
+      };
+    }
+  }
+
+  if (targetStat.isDirectory()) {
+    return openExistingLocalPathWithDefaultApp(targetPath, deps.openWithDefaultApp);
+  }
+
+  return projectUnsupportedLocalPathType(targetPath);
 }

@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -65,6 +64,7 @@ import {
 } from "../src/model-catalog.js";
 import type {
   OpenPathOptions,
+  OpenPathResult,
   SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
@@ -86,8 +86,9 @@ import { resolveComposerPreview } from "./composer-attachments.js";
 import { areDirectoryPathsEquivalent } from "./additional-directories.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import {
-  buildDirectoryOpenFallbackCommand,
-  resolveProtocolRelativeExternalFallback,
+  openLocalPathWithDefaultApp,
+  revealLocalPathInFileManager,
+  resolveProtocolRelativeExternalFallbackAfterLocalOpen,
   resolveOpenPathTarget,
 } from "./open-path.js";
 import { launchTerminalAtPath } from "./open-terminal.js";
@@ -112,6 +113,8 @@ import { SessionElicitationService } from "./session-elicitation-service.js";
 import { WindowBroadcastService } from "./window-broadcast-service.js";
 import { WindowDialogService } from "./window-dialog-service.js";
 import { SessionMemorySupportService } from "./session-memory-support-service.js";
+import { SessionFileExplorerService, type SessionFileExplorerContext } from "./session-file-explorer-service.js";
+import { WorkspaceGitChangesService } from "./workspace-git-changes-service.js";
 import {
   appendSessionFilesDirectory,
   appendSessionFilesDirectoryForSessionId,
@@ -163,6 +166,7 @@ import {
   resolveProviderSkillRootPath,
   type AppSettings,
 } from "../src/provider-settings-state.js";
+import type { SessionSidePane } from "../src/session-side-pane.js";
 import { discoverSessionSkills } from "./skill-discovery.js";
 import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
@@ -900,7 +904,10 @@ function writeRendererLog(input: RendererLogInput, windowId?: number): void {
 
 async function openDirectory(directoryPath: string): Promise<void> {
   mkdirSync(directoryPath, { recursive: true });
-  await openLocalPath(directoryPath);
+  const result = await openLocalPath(directoryPath);
+  if (result.status !== "opened") {
+    throw new Error(result.message);
+  }
 }
 
 function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0]): BrowserWindow {
@@ -1301,7 +1308,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               settings: {
                 getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
-                updateSessionRightPaneVisibility,
+                updateSessionSidePane,
                 getAppDatabaseDiagnostics,
                 getMemoryV6Diagnostics,
                 installMemoryV6CliShim,
@@ -1344,6 +1351,14 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 listOpenSessionWindowIds: () => listOpenSessionWindowIds(),
                 listOpenCompanionReviewWindowIds: () => listOpenCompanionReviewWindowIds(),
                 getSession: (sessionId) => getDisplaySession(sessionId),
+                getSessionFileExplorerOwnerSessionId,
+                listSessionFileRoots: (sessionId) => createSessionFileExplorerService().listRoots(sessionId),
+                listSessionDirectory: (request) => createSessionFileExplorerService().listDirectory(request),
+                inspectSessionFile: (request) => createSessionFileExplorerService().inspectFile(request),
+                readSessionFileChunk: (request) => createSessionFileExplorerService().readFileChunk(request),
+                openSessionFile: (request) => createSessionFileExplorerService().openFile(request),
+                listWorkspaceChanges: (sessionId) => createWorkspaceGitChangesService().listChanges(sessionId),
+                getWorkspaceFileDiff: (request) => createWorkspaceGitChangesService().getFileDiff(request),
                 getSessionMessageArtifact,
                 getDiffPreview: (token) => requireAuxWindowService().getDiffPreview(token),
                 previewComposerInput,
@@ -1752,8 +1767,8 @@ async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   return savedSettings;
 }
 
-function updateSessionRightPaneVisibility(isVisible: boolean): AppSettings {
-  return requireAppSettingsStorage().updateSessionRightPaneVisibility(isVisible);
+function updateSessionSidePane(sidePane: SessionSidePane): AppSettings {
+  return requireAppSettingsStorage().updateSessionSidePane(sidePane);
 }
 
 async function resetAppSettings(): Promise<AppSettings> {
@@ -2904,6 +2919,52 @@ function getSession(sessionId: string): Session | null {
   return sessions.find((session) => session.id === sessionId) ?? null;
 }
 
+async function getSessionFileExplorerContext(sessionId: string): Promise<SessionFileExplorerContext | null> {
+  const auxiliarySession = requireAuxiliarySessionService().getAuxiliarySession(sessionId);
+  if (auxiliarySession) {
+    const parentSession = await getAuxiliaryParentSession(auxiliarySession.parentSessionId);
+    if (!parentSession) {
+      return null;
+    }
+    return {
+      workspacePath: parentSession.workspacePath,
+      parentSessionId: parentSession.id,
+      allowedAdditionalDirectories: auxiliarySession.allowedAdditionalDirectories,
+    };
+  }
+
+  const session = await getRuntimeSession(sessionId);
+  if (!session) {
+    return null;
+  }
+  return {
+    workspacePath: session.workspacePath,
+    parentSessionId: session.id,
+    allowedAdditionalDirectories: session.allowedAdditionalDirectories,
+  };
+}
+
+async function getSessionFileExplorerOwnerSessionId(sessionId: string): Promise<string | null> {
+  return (await getSessionFileExplorerContext(sessionId))?.parentSessionId ?? null;
+}
+
+function createSessionFileExplorerService(): SessionFileExplorerService {
+  return new SessionFileExplorerService({
+    userDataPath: app.getPath("userData"),
+    getSessionContext: getSessionFileExplorerContext,
+    openResolvedPath: (targetPath, reveal) => openPathTarget(targetPath, { reveal }),
+  });
+}
+
+function createWorkspaceGitChangesService(): WorkspaceGitChangesService {
+  return new WorkspaceGitChangesService({
+    getWorkspaceContext: async (sessionId) => {
+      const context = await getSessionFileExplorerContext(sessionId);
+      return context ? { workspacePath: context.workspacePath } : null;
+    },
+  });
+}
+
 async function getAuxiliaryParentSession(parentSessionId: string): Promise<Session | null> {
   return resolveAuxiliaryParentSession({
     parentSessionId,
@@ -3215,68 +3276,43 @@ async function openSessionFilesTerminal(sessionId: string): Promise<void> {
   await launchTerminalAtPath(directoryPath);
 }
 
-async function openDirectoryWithExplorerFallback(directoryPath: string): Promise<boolean> {
-  let directoryStat;
-  try {
-    directoryStat = await stat(directoryPath);
-  } catch {
-    return false;
-  }
-
-  if (!directoryStat.isDirectory()) {
-    return false;
-  }
-
-  const fallbackCommand = buildDirectoryOpenFallbackCommand(directoryPath);
-  if (!fallbackCommand) {
-    return false;
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(fallbackCommand.command, fallbackCommand.args, {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: false,
-    });
-
-    child.once("error", reject);
-    child.once("spawn", () => {
-      child.unref();
-      resolve();
-    });
+async function openLocalPath(targetPath: string): Promise<OpenPathResult> {
+  return openLocalPathWithDefaultApp(targetPath, {
+    statTarget: stat,
+    openWithDefaultApp: (pathValue) => shell.openPath(pathValue),
   });
-  return true;
 }
 
-async function openLocalPath(targetPath: string): Promise<void> {
-  const errorMessage = await shell.openPath(targetPath);
-  if (!errorMessage) {
-    return;
-  }
-
-  if (await openDirectoryWithExplorerFallback(targetPath)) {
-    return;
-  }
-
-  throw new Error(errorMessage);
-}
-
-async function openPathTarget(target: string, options?: OpenPathOptions): Promise<void> {
-  const protocolRelativeExternalFallback = resolveProtocolRelativeExternalFallback(target);
-  const resolved = resolveOpenPathTarget(target, options);
-  if (resolved.type === "external-url") {
-    await shell.openExternal(resolved.target);
-    return;
-  }
-
+async function openPathTarget(target: string, options?: OpenPathOptions): Promise<OpenPathResult> {
   try {
-    await openLocalPath(resolved.targetPath);
-  } catch (error) {
-    if (protocolRelativeExternalFallback) {
-      await shell.openExternal(protocolRelativeExternalFallback);
-      return;
+    const resolved = resolveOpenPathTarget(target, options);
+    if (resolved.type === "external-url") {
+      await shell.openExternal(resolved.target);
+      return { status: "opened", targetType: "external-url", target: resolved.target };
     }
-    throw error;
+
+    if (options?.reveal) {
+      return revealLocalPathInFileManager(resolved.targetPath, {
+        statTarget: stat,
+        openWithDefaultApp: (pathValue) => shell.openPath(pathValue),
+        revealInFileManager: (pathValue) => shell.showItemInFolder(pathValue),
+      });
+    }
+
+    const localResult = await openLocalPath(resolved.targetPath);
+    const externalFallback = resolveProtocolRelativeExternalFallbackAfterLocalOpen(target, localResult);
+    if (externalFallback) {
+      await shell.openExternal(externalFallback);
+      return { status: "opened", targetType: "external-url", target: externalFallback };
+    }
+    return localResult;
+  } catch (error) {
+    return {
+      status: "failed",
+      targetType: "unknown",
+      target,
+      message: error instanceof Error ? error.message : "The target could not be opened.",
+    };
   }
 }
 

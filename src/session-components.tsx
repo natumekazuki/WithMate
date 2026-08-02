@@ -43,6 +43,22 @@ import {
 } from "./session-ui-projection.js";
 import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
+import { SessionContentFindBar } from "./session-content-find-bar.js";
+import { clampFindMatchIndex, findTextMatches } from "./find-text-matches.js";
+import {
+  isMessageRenderedSearchTextNode,
+  projectMessageRenderedSearchText,
+} from "./message-rendered-search-text.js";
+import {
+  appendRenderedTextMatches,
+  applyRenderedTextHighlights,
+  clearRenderedTextHighlights,
+  createRenderedTextSearchIndex,
+  findRenderedTextMatchOffsets,
+  resolveRenderedTextMatch,
+  scrollRenderedTextMatchIntoView,
+  type RenderedTextMatch,
+} from "./file-explorer/rendered-text-search.js";
 
 function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
@@ -735,6 +751,7 @@ export function SessionHeaderHandle({ taskTitle, onClick }: SessionHeaderHandleP
 }
 
 export const SESSION_RIGHT_PANE_ID = "session-right-pane";
+export const SESSION_LEFT_PANE_ID = "session-left-pane";
 
 export type SessionChatScreenProps = {
   mode: ChatWindowModeKind;
@@ -742,10 +759,14 @@ export type SessionChatScreenProps = {
   style?: CSSProperties;
   header: ReactNode;
   messageColumn: ReactNode;
+  mainContent?: ReactNode;
   actionDock: ReactNode;
+  leftPane?: ReactNode;
+  leftSplitter?: ReactNode;
   rightPane: ReactNode;
   splitter: ReactNode;
   isRightPaneVisible?: boolean;
+  isLeftPaneVisible?: boolean;
   workbenchRef?: RefObject<HTMLDivElement | null>;
   workbenchStyle?: CSSProperties;
   modals?: ReactNode;
@@ -757,10 +778,14 @@ export function SessionChatScreen({
   style,
   header,
   messageColumn,
+  mainContent,
   actionDock,
+  leftPane = null,
+  leftSplitter = null,
   rightPane,
   splitter,
   isRightPaneVisible = true,
+  isLeftPaneVisible = false,
   workbenchRef,
   workbenchStyle,
   modals,
@@ -772,9 +797,25 @@ export function SessionChatScreen({
       <section className="content-grid session-content-grid">
         <section className="chat-panel session-work-surface rise-3">
           <div className="session-workbench" ref={workbenchRef} style={workbenchStyle}>
-            <div className={`session-main-grid${isRightPaneVisible ? "" : " session-main-grid-right-pane-hidden"}`}>
+            <div className={`session-main-grid${isLeftPaneVisible ? " session-main-grid-left-pane-visible" : ""}${
+              isRightPaneVisible ? " session-main-grid-right-pane-visible" : ""
+            }`}>
+              <div
+                id={SESSION_LEFT_PANE_ID}
+                className="session-left-pane-slot"
+                hidden={!isLeftPaneVisible}
+              >
+                {leftPane}
+              </div>
+
+              {leftSplitter}
               <div className="session-message-stack">
-                {messageColumn}
+                <div className="session-central-surface" hidden={mainContent !== undefined}>
+                  {messageColumn}
+                </div>
+                <div className="session-central-surface" hidden={mainContent === undefined}>
+                  {mainContent}
+                </div>
                 {actionDock}
               </div>
 
@@ -2016,7 +2057,15 @@ export type SessionMessageColumnProps = {
   getChangedFilesEmptyText: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
   onCopyMessageText?: (text: string) => void;
   onQuoteMessageText?: (text: string) => void;
+  inlinePathFeedback?: string;
+  onDismissInlinePathFeedback?: () => void;
+  isContentActive?: boolean;
 };
+
+function getNonBlankSelectionText(selection: Selection): string | null {
+  const text = selection.toString();
+  return text.trim() ? text : null;
+}
 
 function getSelectionDetailsWithinMessageList(element: Element | null): { anchorRect: DOMRect; text: string } | null {
   if (!element || typeof window === "undefined") {
@@ -2043,8 +2092,8 @@ function getSelectionDetailsWithinMessageList(element: Element | null): { anchor
     return null;
   }
 
-  const text = selection.toString().trim();
-  if (!text) {
+  const text = getNonBlankSelectionText(selection);
+  if (text === null) {
     return null;
   }
 
@@ -2133,6 +2182,94 @@ function MessageResponseActions({
   );
 }
 
+export type SelectionCopySurfaceProps = {
+  children: ReactNode;
+  className?: string;
+  onCopyText: (text: string) => void;
+  surfaceRef?: RefObject<HTMLDivElement | null>;
+};
+
+export function SelectionCopySurface({
+  children,
+  className = "",
+  onCopyText,
+  surfaceRef: externalSurfaceRef,
+}: SelectionCopySurfaceProps) {
+  const internalSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const surfaceRef = externalSurfaceRef ?? internalSurfaceRef;
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const [selectionToolbar, setSelectionToolbar] = useState<{ style: CSSProperties; text: string } | null>(null);
+
+  const updateSelectionToolbar = useCallback(() => {
+    const surface = surfaceRef.current;
+    const selection = typeof window === "undefined" ? null : window.getSelection();
+    if (!surface || !selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      setSelectionToolbar(null);
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    const commonAncestor = range.commonAncestorContainer;
+    const commonElement = commonAncestor.nodeType === Node.ELEMENT_NODE
+      ? commonAncestor as Element
+      : commonAncestor.parentElement;
+    const selectableBody = commonElement?.closest("[data-selection-copy-body='true']") ?? null;
+    const selectedText = getNonBlankSelectionText(selection);
+    if (!selectableBody || !surface.contains(selectableBody) || selectedText === null) {
+      setSelectionToolbar(null);
+      return;
+    }
+
+    const anchorRect = range.getBoundingClientRect();
+    const fallbackRect = range.getClientRects()[0] ?? null;
+    const resolvedAnchorRect = anchorRect.width > 0 || anchorRect.height > 0 ? anchorRect : fallbackRect;
+    const boundaryRect = surface.getBoundingClientRect();
+    if (!resolvedAnchorRect || !rectsIntersect(resolvedAnchorRect, boundaryRect)) {
+      setSelectionToolbar(null);
+      return;
+    }
+
+    setSelectionToolbar({
+      text: selectedText,
+      style: clampToolbarPosition({
+        anchorRect: resolvedAnchorRect,
+        boundaryRect,
+        toolbarRect: toolbarRef.current?.getBoundingClientRect() ?? { width: 72, height: 32 },
+      }),
+    });
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined" || typeof window === "undefined") {
+      return;
+    }
+
+    document.addEventListener("selectionchange", updateSelectionToolbar);
+    window.addEventListener("resize", updateSelectionToolbar);
+    const surface = surfaceRef.current;
+    surface?.addEventListener("scroll", updateSelectionToolbar, { passive: true });
+    return () => {
+      document.removeEventListener("selectionchange", updateSelectionToolbar);
+      window.removeEventListener("resize", updateSelectionToolbar);
+      surface?.removeEventListener("scroll", updateSelectionToolbar);
+    };
+  }, [updateSelectionToolbar]);
+
+  return (
+    <div ref={surfaceRef} className={className}>
+      <div data-selection-copy-body="true">{children}</div>
+      {selectionToolbar ? (
+        <MessageResponseActions
+          actionText={selectionToolbar.text}
+          onCopyMessageText={onCopyText}
+          style={selectionToolbar.style}
+          toolbarRef={toolbarRef}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 export function SessionMessageColumn({
   sessionId,
   character,
@@ -2161,11 +2298,17 @@ export function SessionMessageColumn({
   getChangedFilesEmptyText,
   onCopyMessageText,
   onQuoteMessageText,
+  inlinePathFeedback = "",
+  onDismissInlinePathFeedback,
+  isContentActive = true,
 }: SessionMessageColumnProps) {
   const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
   const [loadedArtifactDetails, setLoadedArtifactDetails] = useState<Record<string, MessageArtifact>>({});
   const [loadingArtifactDetails, setLoadingArtifactDetails] = useState<Record<string, boolean>>({});
   const [selectionToolbar, setSelectionToolbar] = useState<{ style: CSSProperties; text: string } | null>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [currentFindMatch, setCurrentFindMatch] = useState(0);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const getMessageKey = useCallback(
     (index: number) => messageKeys?.[index] ?? `${sessionId}-${index}`,
@@ -2194,6 +2337,19 @@ export function SessionMessageColumn({
     liveElicitationRequest === null &&
     !liveRunErrorMessage.trim() &&
     pendingMessageText.trim().length > 0;
+  const hasFindQuery = findQuery.trim().length > 0;
+  const messageRenderedSearchTexts = useMemo(
+    () => (hasFindQuery
+      ? messages.map((message) => projectMessageRenderedSearchText(message.text))
+      : []),
+    [hasFindQuery, messages],
+  );
+  const pendingRenderedSearchText = useMemo(
+    () => (hasFindQuery && isRunning && hasPendingMessageText
+      ? projectMessageRenderedSearchText(pendingMessageText)
+      : ""),
+    [hasFindQuery, hasPendingMessageText, isRunning, pendingMessageText],
+  );
   const hasPendingInlineContent =
     liveApprovalRequest !== null ||
     liveElicitationRequest !== null ||
@@ -2212,9 +2368,47 @@ export function SessionMessageColumn({
     },
     [hasPendingInlineContent, messageGroups, pendingMessageGroupId],
   );
+  const messageFindMatches = useMemo(() => {
+    const matches: Array<
+      | { kind: "message"; messageIndex: number; occurrenceIndex: number }
+      | { kind: "pending"; occurrenceIndex: number }
+    > = [];
+    const pendingMatches = findTextMatches(pendingRenderedSearchText, findQuery);
+    const appendPendingMatches = () => {
+      pendingMatches.forEach((_, occurrenceIndex) => {
+        matches.push({ kind: "pending", occurrenceIndex });
+      });
+    };
+    messageRenderedSearchTexts.forEach((text, messageIndex) => {
+      findTextMatches(text, findQuery).forEach((_, occurrenceIndex) => {
+        matches.push({ kind: "message", messageIndex, occurrenceIndex });
+      });
+      if (messageIndex === pendingMessageGroupEndIndex) {
+        appendPendingMatches();
+      }
+    });
+    if (pendingMessageGroupEndIndex < 0) {
+      appendPendingMatches();
+    }
+    return matches;
+  }, [findQuery, messageRenderedSearchTexts, pendingMessageGroupEndIndex, pendingRenderedSearchText]);
+  const activeCurrentFindMatch = clampFindMatchIndex(currentFindMatch, messageFindMatches.length);
   const canRenderGroupedPendingInlineContent =
     pendingMessageGroupEndIndex >= 0 &&
     virtualMessages.some((virtualMessage) => virtualMessage.index === pendingMessageGroupEndIndex);
+  const getFindMatchScrollIndex = useCallback((match: (typeof messageFindMatches)[number] | undefined) => {
+    if (!match) {
+      return null;
+    }
+    if (match.kind === "message") {
+      return match.messageIndex;
+    }
+    if (pendingMessageGroupEndIndex >= 0) {
+      return pendingMessageGroupEndIndex;
+    }
+    return messages.length > 0 ? messages.length - 1 : null;
+  }, [messages.length, pendingMessageGroupEndIndex]);
+  const firstFindScrollIndex = getFindMatchScrollIndex(messageFindMatches[0]);
 
   const handleMessageListScroll: UIEventHandler<HTMLDivElement> = (event) => {
     onMessageListScroll(event);
@@ -2262,6 +2456,123 @@ export function SessionMessageColumn({
       messageListElement?.removeEventListener("scroll", updateSelectionToolbar);
     };
   }, [messageListRef, updateSelectionToolbar]);
+
+  useEffect(() => {
+    setCurrentFindMatch(0);
+  }, [findQuery, sessionId]);
+
+  useEffect(() => {
+    setCurrentFindMatch((current) => clampFindMatchIndex(current, messageFindMatches.length));
+  }, [messageFindMatches.length]);
+
+  useEffect(() => {
+    if (firstFindScrollIndex !== null) {
+      messageVirtualizer.scrollToIndex(firstFindScrollIndex, { align: "center" });
+    }
+  }, [findQuery, firstFindScrollIndex, messageVirtualizer, sessionId]);
+
+  useEffect(() => {
+    if (!isContentActive) {
+      return;
+    }
+    const handleFindShortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "f") {
+        event.preventDefault();
+        setFindOpen(true);
+      } else if (event.key === "Escape" && findOpen) {
+        event.preventDefault();
+        setFindOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleFindShortcut);
+    return () => window.removeEventListener("keydown", handleFindShortcut);
+  }, [findOpen, isContentActive]);
+
+  const navigateFindMatch = useCallback((direction: 1 | -1) => {
+    if (messageFindMatches.length === 0) {
+      return;
+    }
+    setCurrentFindMatch((current) => {
+      const next = (
+        clampFindMatchIndex(current, messageFindMatches.length)
+        + direction
+        + messageFindMatches.length
+      ) % messageFindMatches.length;
+      const scrollIndex = getFindMatchScrollIndex(messageFindMatches[next]);
+      if (scrollIndex !== null) {
+        messageVirtualizer.scrollToIndex(scrollIndex, { align: "center" });
+      }
+      return next;
+    });
+  }, [getFindMatchScrollIndex, messageFindMatches, messageVirtualizer]);
+
+  const visibleMessageSignature = virtualMessages.map((message) => message.index).join(",");
+  useLayoutEffect(() => {
+    const messageListElement = messageListRef.current;
+    if (!isContentActive || !findOpen || !findQuery.trim() || !messageListElement) {
+      return;
+    }
+    const ownerDocument = messageListElement.ownerDocument;
+    const current = messageFindMatches[activeCurrentFindMatch] ?? null;
+    const applyHighlights = () => {
+      const resolvedMatches: RenderedTextMatch[] = [];
+      let resolvedCurrentMatch: RenderedTextMatch | null = null;
+      const appendPendingHighlights = (container: ParentNode) => {
+        const pendingRichText = container.querySelector<HTMLElement>(
+          "[data-pending-message-body=\"true\"] > .rich-text",
+        );
+        if (!pendingRichText) {
+          return false;
+        }
+        const index = createRenderedTextSearchIndex(pendingRichText, isMessageRenderedSearchTextNode);
+        const matches = findRenderedTextMatchOffsets(index, findQuery);
+        appendRenderedTextMatches(resolvedMatches, index, matches);
+        if (current?.kind === "pending") {
+          resolvedCurrentMatch = resolveRenderedTextMatch(index, matches, current.occurrenceIndex);
+        }
+        return true;
+      };
+      let pendingHighlightsAppended = false;
+      for (const row of messageListElement.querySelectorAll<HTMLElement>(".session-message-virtual-row")) {
+        const messageIndex = Number(row.dataset.index);
+        const richText = row.querySelector<HTMLElement>("[data-message-body=\"true\"] > .rich-text");
+        if (!Number.isInteger(messageIndex) || !richText) {
+          continue;
+        }
+        const index = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
+        const matches = findRenderedTextMatchOffsets(index, findQuery);
+        appendRenderedTextMatches(resolvedMatches, index, matches);
+        if (current?.kind === "message" && current.messageIndex === messageIndex) {
+          resolvedCurrentMatch = resolveRenderedTextMatch(index, matches, current.occurrenceIndex);
+        }
+        if (messageIndex === pendingMessageGroupEndIndex) {
+          pendingHighlightsAppended = appendPendingHighlights(row);
+        }
+      }
+      if (!pendingHighlightsAppended) {
+        appendPendingHighlights(messageListElement);
+      }
+      applyRenderedTextHighlights(ownerDocument, resolvedMatches, resolvedCurrentMatch);
+      scrollRenderedTextMatchIntoView(resolvedCurrentMatch);
+    };
+    applyHighlights();
+    const MutationObserverConstructor = ownerDocument.defaultView?.MutationObserver;
+    const observer = MutationObserverConstructor ? new MutationObserverConstructor(applyHighlights) : null;
+    observer?.observe(messageListElement, { childList: true, characterData: true, subtree: true });
+    return () => {
+      observer?.disconnect();
+      clearRenderedTextHighlights(ownerDocument);
+    };
+  }, [
+    activeCurrentFindMatch,
+    findOpen,
+    findQuery,
+    isContentActive,
+    messageFindMatches,
+    messageListRef,
+    pendingMessageGroupEndIndex,
+    visibleMessageSignature,
+  ]);
 
   useLayoutEffect(() => {
     if (isMessageListFollowing) {
@@ -2370,7 +2681,13 @@ export function SessionMessageColumn({
           />
         ) : null}
         {hasPendingMessageText ? (
-          <MessageRichText text={pendingMessageText} onOpenPath={onOpenPath} />
+          <div data-pending-message-body="true">
+            <MessageRichText
+              text={pendingMessageText}
+              forceFullRender={findOpen && hasFindQuery}
+              onOpenPath={onOpenPath}
+            />
+          </div>
         ) : null}
         {liveRunErrorMessage ? (
           <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
@@ -2381,6 +2698,24 @@ export function SessionMessageColumn({
 
   return (
     <div className="session-message-column">
+      {inlinePathFeedback ? (
+        <div className="session-inline-path-feedback" role="alert">
+          <span>{inlinePathFeedback}</span>
+          {onDismissInlinePathFeedback ? (
+            <button type="button" onClick={onDismissInlinePathFeedback} aria-label="Dismiss path open result">×</button>
+          ) : null}
+        </div>
+      ) : null}
+      <SessionContentFindBar
+        open={findOpen}
+        query={findQuery}
+        currentMatch={activeCurrentFindMatch}
+        matchCount={messageFindMatches.length}
+        onQueryChange={setFindQuery}
+        onPrevious={() => navigateFindMatch(-1)}
+        onNext={() => navigateFindMatch(1)}
+        onClose={() => setFindOpen(false)}
+      />
       <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
         {messages.length > 0 || isRunning ? (
           <div className="session-message-list-window">
@@ -2496,7 +2831,11 @@ export function SessionMessageColumn({
                     data-message-body="true"
                     data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
                   >
-                    <MessageRichText text={message.text} onOpenPath={onOpenPath} />
+                    <MessageRichText
+                      text={message.text}
+                      forceFullRender={findOpen && hasFindQuery}
+                      onOpenPath={onOpenPath}
+                    />
                   </div>
 
                   {artifact ? (
@@ -2659,6 +2998,7 @@ export type SessionActionDockCompactRowProps = {
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
   modeLabel?: string;
+  chatNotice?: string;
   isSendDisabled: boolean;
   showJumpToBottom: boolean;
   sendButtonTitle?: string;
@@ -2675,6 +3015,7 @@ export function SessionActionDockCompactRow({
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
   modeLabel,
+  chatNotice,
   isSendDisabled,
   showJumpToBottom,
   sendButtonTitle,
@@ -2699,6 +3040,9 @@ export function SessionActionDockCompactRow({
           />
         </button>
         <div className="session-action-dock-compact-actions">
+          {chatNotice ? (
+            <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
+          ) : null}
           {showJumpToBottom ? (
             <button
               className="drawer-toggle compact secondary message-jump-bottom-button"
@@ -2736,6 +3080,9 @@ export function SessionActionDockCompactRow({
         </span>
       </button>
       <div className="session-action-dock-compact-meta" aria-label="draft summary">
+        {chatNotice ? (
+          <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
+        ) : null}
         {attachmentCount > 0 ? (
           <span className="session-action-dock-compact-badge">{`添付 ${attachmentCount}`}</span>
         ) : null}
@@ -2822,6 +3169,7 @@ export type SessionComposerExpandedProps = {
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
   modeLabel?: string;
+  chatNotice?: string;
   composerBlocked: boolean;
   canSelectCustomAgent: boolean;
   showAttachmentControls?: boolean;
@@ -2897,6 +3245,7 @@ export function SessionComposerExpanded({
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
   modeLabel,
+  chatNotice,
   composerBlocked,
   canSelectCustomAgent,
   showAttachmentControls = true,
@@ -2996,6 +3345,7 @@ export function SessionComposerExpanded({
     showJumpToBottom ||
     canCollapseActionDock ||
     !!modeLabel ||
+    !!chatNotice ||
     isRunning;
 
   return (
@@ -3004,6 +3354,9 @@ export function SessionComposerExpanded({
       {showComposerToolbar ? (
         <div className="composer-attachments-toolbar">
           {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}
+          {chatNotice ? (
+            <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
+          ) : null}
           {showAttachmentControls ? (
             <div className="composer-attachment-button-group" role="group" aria-label="添付">
               <button className="drawer-toggle compact secondary" type="button" onClick={onPickFile} disabled={isRunning || composerBlocked}>

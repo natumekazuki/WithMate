@@ -1,4 +1,4 @@
-import type { ComponentProps, RefObject } from "react";
+import type { ComponentProps, ReactNode, RefObject } from "react";
 import { ChatWorkbenchSplitter, type ChatWindowProps } from "./chat-window.js";
 import {
   SessionContextPane,
@@ -15,10 +15,14 @@ type LiveSessionWindowShellPropsInput = {
   workbenchStyle?: ChatWindowProps["workbenchStyle"];
   headerProps: ChatWindowProps["headerProps"];
   messageColumnProps: ChatWindowProps["messageColumnProps"];
+  mainContent?: ReactNode;
   isActionDockExpanded: boolean;
   composerProps: ChatWindowProps["composerProps"];
   compactActionDockProps: ChatWindowProps["compactActionDockProps"];
   splitterProps: ComponentProps<typeof ChatWorkbenchSplitter>;
+  leftPane?: ReactNode;
+  leftSplitterProps?: ComponentProps<typeof ChatWorkbenchSplitter>;
+  isLeftPaneVisible?: boolean;
   isRightPaneVisible: boolean;
   rightPaneProps: SessionContextPaneProps;
   modals: ChatWindowProps["modals"];
@@ -40,11 +44,18 @@ export function buildLiveSessionWindowShellProps(
     workbenchStyle: input.workbenchStyle,
     isHeaderExpanded: input.isHeaderExpanded,
     headerProps: input.headerProps,
-    messageColumnProps: input.messageColumnProps,
+    messageColumnProps: {
+      ...input.messageColumnProps,
+      isContentActive: input.mainContent === undefined,
+    },
+    mainContent: input.mainContent,
     isActionDockExpanded: input.isActionDockExpanded,
     composerProps: input.composerProps,
     compactActionDockProps: input.compactActionDockProps,
     splitter: <ChatWorkbenchSplitter {...input.splitterProps} />,
+    leftPane: input.leftPane,
+    leftSplitter: input.leftSplitterProps ? <ChatWorkbenchSplitter {...input.leftSplitterProps} /> : null,
+    isLeftPaneVisible: input.isLeftPaneVisible ?? false,
     isRightPaneVisible: input.isRightPaneVisible,
     rightPane: (
       <SessionPaneErrorBoundary>

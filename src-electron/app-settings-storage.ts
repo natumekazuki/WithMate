@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from "../src/provider-settings-state.js";
+import { isSessionSidePane, type SessionSidePane } from "../src/session-side-pane.js";
 import { CREATE_APP_SETTINGS_TABLE_SQL } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
@@ -11,7 +12,8 @@ const SESSION_TURN_NOTIFICATION_ENABLED_KEY = "session_turn_notification_enabled
 const SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY =
   "session_turn_notification_response_preview_enabled";
 const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
-const SESSION_RIGHT_PANE_VISIBLE_KEY = "session_right_pane_visible";
+const SESSION_SIDE_PANE_KEY = "session_side_pane";
+const LEGACY_SESSION_RIGHT_PANE_VISIBLE_KEY = "session_right_pane_visible";
 const MEMORY_FILE_QUOTA_BYTES_KEY = "memory_file_quota_bytes";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
@@ -29,7 +31,28 @@ export class AppSettingsStorage {
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
     this.db.exec(CREATE_APP_SETTINGS_TABLE_SQL);
+    this.ensureSessionSidePaneDefault();
     this.ensureDefaults();
+  }
+
+  private ensureSessionSidePaneDefault(): void {
+    const canonicalRow = this.db
+      .prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?")
+      .get(SESSION_SIDE_PANE_KEY) as { setting_value: string } | undefined;
+    if (canonicalRow) {
+      return;
+    }
+
+    const legacyRow = this.db
+      .prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?")
+      .get(LEGACY_SESSION_RIGHT_PANE_VISIBLE_KEY) as { setting_value: string } | undefined;
+    const initialSidePane: SessionSidePane = legacyRow?.setting_value === "true" ? "context" : "none";
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+      `)
+      .run(SESSION_SIDE_PANE_KEY, initialSidePane, new Date().toISOString());
   }
 
   private ensureDefaults(): void {
@@ -81,13 +104,6 @@ export class AppSettingsStorage {
         String(DEFAULT_APP_SETTINGS.autoCollapseActionDockOnSend),
         updatedAt,
       );
-    this.db
-      .prepare(`
-        INSERT INTO app_settings (setting_key, setting_value, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(setting_key) DO NOTHING
-      `)
-      .run(SESSION_RIGHT_PANE_VISIBLE_KEY, String(DEFAULT_APP_SETTINGS.sessionRightPaneVisible), updatedAt);
     this.db
       .prepare(`
         INSERT INTO app_settings (setting_key, setting_value, updated_at)
@@ -171,8 +187,8 @@ export class AppSettingsStorage {
         settings.autoCollapseActionDockOnSend = row.setting_value === "true";
         continue;
       }
-      if (row.setting_key === SESSION_RIGHT_PANE_VISIBLE_KEY) {
-        settings.sessionRightPaneVisible = row.setting_value === "true";
+      if (row.setting_key === SESSION_SIDE_PANE_KEY) {
+        settings.sessionSidePane = isSessionSidePane(row.setting_value) ? row.setting_value : "none";
         continue;
       }
       if (row.setting_key === MEMORY_FILE_QUOTA_BYTES_KEY) {
@@ -240,7 +256,7 @@ export class AppSettingsStorage {
     const normalized = normalizeAppSettings(nextSettings);
     const updatedAt = new Date().toISOString();
 
-    // Right pane visibility has its own write path so stale full-settings snapshots cannot overwrite it.
+    // Side pane selection has its own write path so stale full-settings snapshots cannot overwrite it.
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       this.db
@@ -366,7 +382,7 @@ export class AppSettingsStorage {
     return this.getSettings();
   }
 
-  updateSessionRightPaneVisibility(isVisible: boolean): AppSettings {
+  updateSessionSidePane(sidePane: SessionSidePane): AppSettings {
     this.db
       .prepare(`
         INSERT INTO app_settings (setting_key, setting_value, updated_at)
@@ -375,7 +391,7 @@ export class AppSettingsStorage {
           setting_value = excluded.setting_value,
           updated_at = excluded.updated_at
       `)
-      .run(SESSION_RIGHT_PANE_VISIBLE_KEY, String(isVisible), new Date().toISOString());
+      .run(SESSION_SIDE_PANE_KEY, sidePane, new Date().toISOString());
     return this.getSettings();
   }
 
@@ -383,6 +399,7 @@ export class AppSettingsStorage {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       this.db.exec("DELETE FROM app_settings;");
+      this.ensureSessionSidePaneDefault();
       this.ensureDefaults();
       this.db.exec("COMMIT");
       return this.getSettings();

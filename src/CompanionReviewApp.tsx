@@ -84,6 +84,7 @@ import {
   type AppSettings,
 } from "./provider-settings-state.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
+import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { SessionHeader } from "./session-components.js";
 import { ChatHeaderHandle, ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
@@ -175,10 +176,11 @@ import {
   type ComposerPathPickerKind,
 } from "./session-composer-paths.js";
 import {
-  useSessionContextRail,
+  useSessionSidePanes,
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
-import { persistSessionRightPaneVisibility } from "./session-right-pane-preference.js";
+import { persistSessionSidePane } from "./session-side-pane-preference.js";
+import type { SessionSidePane } from "./session-side-pane.js";
 import {
   applyOptimisticSessionRunUpdate,
   applyResolvedSessionRunUpdate,
@@ -1142,8 +1144,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     () => companionSessionAuditLogs.find((entry) => isTerminalAuditLogPhase(entry.phase)) ?? null,
     [companionSessionAuditLogs],
   );
-  const handleContextRailVisibilityChange = useCallback((isVisible: boolean) => {
-    void persistSessionRightPaneVisibility(withmateApi, isVisible);
+  const handleSidePaneChange = useCallback((sidePane: SessionSidePane) => {
+    void persistSessionSidePane(withmateApi, sidePane);
   }, [withmateApi]);
   const {
     sessionWorkbenchRef,
@@ -1152,11 +1154,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     isContextRailResizing,
     handleStartContextRailResize,
     handleToggleContextRailVisibility,
-  } = useSessionContextRail({
+  } = useSessionSidePanes({
     ownerKey: snapshot?.session.id ?? null,
     enabled: !isMergeView,
-    initialContextRailVisibility: isAppSettingsLoaded ? appSettings.sessionRightPaneVisible : null,
-    onContextRailVisibilityChange: handleContextRailVisibilityChange,
+    filesPaneEnabled: false,
+    initialSidePane: isAppSettingsLoaded ? appSettings.sessionSidePane : null,
+    onSidePaneChange: handleSidePaneChange,
   });
   const companionMessageListScrollSignature = useMemo(
     () =>
@@ -2831,11 +2834,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     if (!snapshot || !withmateApi) {
       return;
     }
-    try {
-      await withmateApi.openPath(snapshot.session.worktreePath);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "Explorer を開けなかったよ。");
-    }
+    showOpenPathFeedback(await resolveOpenPathFeedback(
+      () => withmateApi.openPath(snapshot.session.worktreePath),
+      "Explorer を開けなかったよ。",
+    ));
   }
 
   async function openCompanionTerminal(): Promise<void> {
@@ -3068,7 +3070,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           }),
         onResolveLiveApproval: (request, decision) => void handleResolveCompanionLiveApproval(request, decision),
         onResolveLiveElicitation: (request, response) => void handleResolveCompanionLiveElicitation(request, response),
-        onOpenInlinePath: (target) => openCompanionInlinePath(getWithMateApi(), target, snapshot.session.worktreePath),
+        onOpenInlinePath: (target) => void openCompanionInlinePath(
+          getWithMateApi(),
+          target,
+          snapshot.session.worktreePath,
+        ).then(showOpenPathFeedback),
         onCopyMessageText: handleCopyMessageText,
         onQuoteMessageText: handleQuoteMessageText,
         onToggleRetryDetails: handleToggleRetryDetails,

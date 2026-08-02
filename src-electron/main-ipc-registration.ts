@@ -66,6 +66,20 @@ import type {
 } from "../src/companion-review-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
+import { isSessionSidePane, type SessionSidePane } from "../src/session-side-pane.js";
+import type {
+  SessionDirectoryEntry,
+  SessionDirectoryRequest,
+  SessionFileChunkRequest,
+  SessionFileChunkResult,
+  SessionFileDescriptor,
+  SessionFileOpenRequest,
+  SessionFileResourceRequest,
+  SessionFileRoot,
+  WorkspaceChangesResult,
+  WorkspaceFileDiffRequest,
+  WorkspaceFileDiffResult,
+} from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
@@ -111,6 +125,13 @@ import {
   WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
+  WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
+  WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
+  WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
+  WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
+  WITHMATE_OPEN_SESSION_FILE_CHANNEL,
+  WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL,
+  WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
@@ -184,7 +205,7 @@ import {
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
-  WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL,
+  WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
@@ -194,6 +215,7 @@ import {
   parseImageFilePickerPurpose,
   type ImageFilePickerPurpose,
   type OpenPathOptions,
+  type OpenPathResult,
   type DeleteSessionsLastActiveBeforeRequest,
   type DeleteSessionsResult,
   type ResetAppDatabaseRequest,
@@ -281,7 +303,7 @@ export type MainIpcRegistrationDeps = {
   cancelAuxiliarySessionRun?(auxiliarySessionId: string): Awaitable<void>;
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
-  updateSessionRightPaneVisibility(isVisible: boolean): Awaitable<AppSettings>;
+  updateSessionSidePane(sidePane: SessionSidePane): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
@@ -299,6 +321,14 @@ export type MainIpcRegistrationDeps = {
   exportModelCatalogDocument(revision: number | null): ModelCatalogDocument | null;
   exportModelCatalogToFile(revision: number | null, targetWindow?: MaybeWindow): Promise<string | null>;
   getSession(sessionId: string): Awaitable<Session | null>;
+  getSessionFileExplorerOwnerSessionId(sessionId: string): Awaitable<string | null>;
+  listSessionFileRoots(sessionId: string): Awaitable<SessionFileRoot[]>;
+  listSessionDirectory(request: SessionDirectoryRequest): Awaitable<SessionDirectoryEntry[]>;
+  inspectSessionFile(request: SessionFileResourceRequest): Awaitable<SessionFileDescriptor>;
+  readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
+  openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
+  listWorkspaceChanges(sessionId: string): Awaitable<WorkspaceChangesResult>;
+  getWorkspaceFileDiff(request: WorkspaceFileDiffRequest): Awaitable<WorkspaceFileDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
@@ -363,7 +393,7 @@ export type MainIpcRegistrationDeps = {
   savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string>;
   openSessionFilesDirectory(sessionId: string): Promise<void>;
   openSessionFilesTerminal(sessionId: string): Promise<void>;
-  openPathTarget(target: string, options?: OpenPathOptions): Promise<void>;
+  openPathTarget(target: string, options?: OpenPathOptions): Promise<OpenPathResult>;
   openAppLogFolder(): Promise<void>;
   openCrashDumpFolder(): Promise<void>;
   openSessionTerminal(sessionId: string): Promise<void>;
@@ -423,7 +453,7 @@ type MainIpcSettingsDeps = Pick<
   | "isMemoryV6ReviewWindow"
   | "getAppSettings"
   | "updateAppSettings"
-  | "updateSessionRightPaneVisibility"
+  | "updateSessionSidePane"
   | "getAppDatabaseDiagnostics"
   | "getMemoryV6Diagnostics"
   | "installMemoryV6CliShim"
@@ -470,6 +500,8 @@ type MainIpcAuxiliaryDepsRequired = {
 
 type MainIpcSessionQueryDeps = Pick<
   MainIpcRegistrationDeps,
+  | "resolveEventWindow"
+  | "resolveSessionWindow"
   | "listSessionSummaries"
   | "listCompanionSessionSummaries"
   | "listSessionAuditLogs"
@@ -491,6 +523,14 @@ type MainIpcSessionQueryDeps = Pick<
   | "listOpenSessionWindowIds"
   | "listOpenCompanionReviewWindowIds"
   | "getSession"
+  | "getSessionFileExplorerOwnerSessionId"
+  | "listSessionFileRoots"
+  | "listSessionDirectory"
+  | "inspectSessionFile"
+  | "readSessionFileChunk"
+  | "openSessionFile"
+  | "listWorkspaceChanges"
+  | "getWorkspaceFileDiff"
   | "getSessionMessageArtifact"
   | "getDiffPreview"
   | "previewComposerInput"
@@ -610,6 +650,22 @@ function assertSessionDeleteSender(
     return;
   }
   throw new Error("Session delete IPC is only available from Home, Settings, or the target Session window.");
+}
+
+async function assertSessionFileExplorerSender(
+  event: IpcMainInvokeEvent,
+  sessionId: string,
+  deps: Pick<
+    MainIpcRegistrationDeps,
+    "resolveEventWindow" | "resolveSessionWindow" | "getSessionFileExplorerOwnerSessionId"
+  >,
+): Promise<void> {
+  const ownerSessionId = await deps.getSessionFileExplorerOwnerSessionId(sessionId);
+  const window = deps.resolveEventWindow(event);
+  if (ownerSessionId && window && deps.resolveSessionWindow(ownerSessionId) === window) {
+    return;
+  }
+  throw new Error("File Explorer IPC is only available from the owning Session window.");
 }
 
 type AuxiliaryOwnerWindowKind = "session" | "companion-review";
@@ -882,11 +938,11 @@ function registerCatalogHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCatal
 function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSettingsDeps): void {
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => deps.getAppSettings());
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => deps.updateAppSettings(settings));
-  ipcMain.handle(WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL, (_event, isVisible) => {
-    if (typeof isVisible !== "boolean") {
-      throw new TypeError("right pane の表示状態は boolean で指定してね。");
+  ipcMain.handle(WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL, (_event, sidePane) => {
+    if (!isSessionSidePane(sidePane)) {
+      throw new TypeError("side pane は files、context、none のいずれかで指定してね。");
     }
-    return deps.updateSessionRightPaneVisibility(isVisible);
+    return deps.updateSessionSidePane(sidePane);
   });
   ipcMain.handle(WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL, () => deps.getAppDatabaseDiagnostics());
   ipcMain.handle(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL, () => deps.getMemoryV6Diagnostics());
@@ -994,6 +1050,55 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
       return null;
     }
     return deps.getSession(sessionId);
+  });
+  ipcMain.handle(WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL, async (event, sessionId: string) => {
+    if (typeof sessionId !== "string" || !sessionId) {
+      throw new TypeError("Session ID が不正だよ。");
+    }
+    await assertSessionFileExplorerSender(event, sessionId, deps);
+    return deps.listSessionFileRoots(sessionId);
+  });
+  ipcMain.handle(WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL, async (event, request: SessionDirectoryRequest) => {
+    if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
+      throw new TypeError("File Explorer request が不正だよ。");
+    }
+    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.listSessionDirectory(request);
+  });
+  ipcMain.handle(WITHMATE_INSPECT_SESSION_FILE_CHANNEL, async (event, request: SessionFileResourceRequest) => {
+    if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
+      throw new TypeError("File Explorer request が不正だよ。");
+    }
+    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.inspectSessionFile(request);
+  });
+  ipcMain.handle(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL, async (event, request: SessionFileChunkRequest) => {
+    if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
+      throw new TypeError("File Explorer request が不正だよ。");
+    }
+    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.readSessionFileChunk(request);
+  });
+  ipcMain.handle(WITHMATE_OPEN_SESSION_FILE_CHANNEL, async (event, request: SessionFileOpenRequest) => {
+    if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
+      throw new TypeError("File Explorer request が不正だよ。");
+    }
+    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.openSessionFile(request);
+  });
+  ipcMain.handle(WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL, async (event, sessionId: string) => {
+    if (typeof sessionId !== "string" || !sessionId) {
+      throw new TypeError("Session ID が不正だよ。");
+    }
+    await assertSessionFileExplorerSender(event, sessionId, deps);
+    return deps.listWorkspaceChanges(sessionId);
+  });
+  ipcMain.handle(WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL, async (event, request: WorkspaceFileDiffRequest) => {
+    if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
+      throw new TypeError("Git Diff request が不正だよ。");
+    }
+    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.getWorkspaceFileDiff(request);
   });
   ipcMain.handle(WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL, (_event, sessionId: string, messageIndex: number) => {
     if (!sessionId || !Number.isInteger(messageIndex) || messageIndex < 0) {
