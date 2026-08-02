@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readdir,
+  realpath,
   rename,
   rm,
   symlink,
@@ -118,6 +119,7 @@ test("WorkspaceGitChangesService は隔離した status / diff と非継承 Git 
   try {
     await initializeRepository(repositoryPath);
     await mkdir(workspacePath);
+    const canonicalRepositoryPath = await realpath(repositoryPath);
     await writeFile(path.join(workspacePath, "a.ts"), "old\n");
     assert.equal((await runGitForTest(repositoryPath, ["add", "src/a.ts"])).exitCode, 0);
     assert.equal((await runGitForTest(repositoryPath, [
@@ -153,11 +155,11 @@ test("WorkspaceGitChangesService は隔離した status / diff と非継承 Git 
         }
         const accessesOriginalRepository = (
           args.includes("--show-toplevel")
-          || args.some((arg) => arg === `--git-dir=${path.join(repositoryPath, ".git")}`)
+          || args.some((arg) => arg === `--git-dir=${path.join(canonicalRepositoryPath, ".git")}`)
         );
         const safeDirectoryArg = `safe.directory=${process.platform === "win32"
-          ? repositoryPath.replace(/\\/g, "/")
-          : repositoryPath}`;
+          ? canonicalRepositoryPath.replace(/\\/g, "/")
+          : canonicalRepositoryPath}`;
         if (accessesOriginalRepository && !args.includes(safeDirectoryArg)) {
           return {
             exitCode: 128,
@@ -191,8 +193,8 @@ test("WorkspaceGitChangesService は隔離した status / diff と非継承 Git 
     const identityArgs = calls.find(({ args }) => args.includes("--show-toplevel"))?.args;
     assert.ok(identityArgs);
     assert.ok(identityArgs.includes(`safe.directory=${process.platform === "win32"
-      ? repositoryPath.replace(/\\/g, "/")
-      : repositoryPath}`));
+      ? canonicalRepositoryPath.replace(/\\/g, "/")
+      : canonicalRepositoryPath}`));
     const configReadCall = calls.find(({ args }) => args.includes("--get-regexp"));
     assert.ok(configReadCall);
     assert.equal(configReadCall.env.GIT_CONFIG_GLOBAL, undefined);
@@ -359,6 +361,7 @@ test("WorkspaceGitChangesService は nested Workspace のisolated statusをrepos
   try {
     await initializeRepository(repositoryPath);
     await mkdir(workspacePath);
+    const canonicalWorkspacePath = await realpath(workspacePath);
     await writeFile(path.join(workspacePath, "inside.txt"), "base\n");
     await writeFile(path.join(repositoryPath, "outside.txt"), "base\n");
     assert.equal((await runGitForTest(repositoryPath, ["add", "src/inside.txt", "outside.txt"])).exitCode, 0);
@@ -373,7 +376,7 @@ test("WorkspaceGitChangesService は nested Workspace のisolated statusをrepos
       runGit: async (workingDirectoryPath, args, options) => {
         const result = await runGitForTest(workingDirectoryPath, args, options);
         if (args.includes("status") && args.some((arg) => arg.startsWith("--git-dir="))) {
-          assert.equal(workingDirectoryPath, workspacePath);
+          assert.equal(workingDirectoryPath, canonicalWorkspacePath);
           isolatedStatusOutput = result.stdout.toString("utf8");
         }
         return result;
@@ -550,6 +553,8 @@ test("WorkspaceGitChangesService は削除・移動済みsymlink intent-to-add�
       "",
     ]).join("\n"), "utf8");
     assert.equal((await runGitForTest(repositoryPath, [
+      "-c",
+      "core.symlinks=false",
       "apply",
       "--intent-to-add",
       "--unidiff-zero",
