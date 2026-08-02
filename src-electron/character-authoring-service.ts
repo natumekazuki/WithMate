@@ -1,61 +1,107 @@
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 
 import { DEFAULT_APPROVAL_MODE } from "../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
-import {
-  DEFAULT_CHARACTER_THEME,
-  type CharacterDetail,
+import type {
+  CharacterDetail,
+  CharacterRuntimeSnapshot,
 } from "../src/character/character-catalog.js";
+import {
+  isUnknownCharacterOwnerId,
+  normalizeCharacterOwnerId,
+} from "../src/character/character-owner.js";
 import {
   type CharacterAuthoringSessionStartResult,
   type StartCharacterAuthoringSessionInput,
 } from "../src/character/character-authoring.js";
-import {
-  DEFAULT_PROVIDER_ID,
-} from "../src/model-catalog.js";
 import type { CreateSessionInput, Session } from "../src/session-state.js";
+import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
 
 export const CHARACTER_AUTHORING_SKILL_NAME = "withmate-character-authoring";
 const CODEX_WORKSPACE_SKILL_ROOT = ".agents/skills";
 const COPILOT_WORKSPACE_SKILL_ROOT = ".github/skills";
+
+export function resolveCharacterAuthoringRuntimeSessionForTurn(
+  session: Session,
+  createRuntimeSnapshot: (characterId: string) => CharacterRuntimeSnapshot | null,
+): Session {
+  if (session.sessionKind !== "character-authoring") {
+    return session;
+  }
+
+  const snapshot = createRuntimeSnapshot(session.characterId);
+  if (!snapshot) {
+    return session.characterRuntimeSnapshot
+      ? { ...session, characterRuntimeSnapshot: null }
+      : session;
+  }
+
+  return {
+    ...session,
+    character: snapshot.name,
+    characterIconPath: snapshot.iconFilePath,
+    characterThemeColors: snapshot.theme,
+    characterRuntimeSnapshot: snapshot,
+  };
+}
 
 type CharacterAuthoringServiceDeps = {
   bundledSkillPath: string;
   createSession(input: Omit<CreateSessionInput, "id">): Promise<Session>;
   getCharacter(characterId: string): Promise<CharacterDetail | null> | CharacterDetail | null;
   getCharacterDirectory(characterId: string): string | null;
+  resolveProvider(providerId: string): string;
+  runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
 };
 
 type AuthoringSeed = {
   name: string;
   description: string;
-  definitionMarkdown: string;
-  notesMarkdown: string;
 };
 
 export class CharacterAuthoringService {
   constructor(private readonly deps: CharacterAuthoringServiceDeps) {}
 
   async startSession(input: StartCharacterAuthoringSessionInput): Promise<CharacterAuthoringSessionStartResult> {
-    const characterId = input.characterId?.trim();
-    if (!characterId) {
+    return this.deps.runProviderRuntimeOperationExclusive(
+      () => this.startSessionExclusive(input),
+    );
+  }
+
+  private async startSessionExclusive(
+    input: StartCharacterAuthoringSessionInput,
+  ): Promise<CharacterAuthoringSessionStartResult> {
+    if (input.mode !== "create" && input.mode !== "improve") {
+      throw new Error("Character authoring mode が正しくありません。");
+    }
+    const requestedProvider = input.provider?.trim();
+    if (!requestedProvider) {
+      throw new Error("Authoring session を開始する provider を選択してください。");
+    }
+    const provider = this.deps.resolveProvider(requestedProvider);
+    if (provider !== requestedProvider) {
+      throw new Error("Character authoring provider を一意に解決できませんでした。");
+    }
+    const characterId = normalizeCharacterOwnerId(input.characterId);
+    if (!characterId || isUnknownCharacterOwnerId(characterId)) {
       throw new Error("Authoring session は保存済み Character でのみ開始できます。先に Character を保存してください。");
     }
+    const normalizedInput = { ...input, provider, characterId };
 
     const character = await this.deps.getCharacter(characterId);
     if (!character) {
       throw new Error("Authoring session は保存済み Character でのみ開始できます。先に Character を保存してください。");
     }
 
-    const seed = await this.resolveSeed(input, character);
+    const seed = this.resolveSeed(character);
     const runId = this.createRunId(seed.name);
     const workspacePath = this.deps.getCharacterDirectory(characterId);
     if (!workspacePath) {
       throw new Error("Character authoring workspace を解決できませんでした。");
     }
-    await this.prepareWorkspace(workspacePath, runId, input, seed);
+    await this.prepareWorkspace(workspacePath, runId, normalizedInput, seed);
 
     const session = await this.deps.createSession({
       taskTitle: input.mode === "improve"
@@ -68,15 +114,12 @@ export class CharacterAuthoringService {
       characterId,
       character: seed.name,
       characterIconPath: character.iconFilePath,
-      characterThemeColors: {
-        main: input.theme?.main ?? DEFAULT_CHARACTER_THEME.main,
-        sub: input.theme?.sub ?? DEFAULT_CHARACTER_THEME.sub,
-      },
+      characterThemeColors: { ...character.theme },
       approvalMode: input.approvalMode ?? DEFAULT_APPROVAL_MODE,
       codexSandboxMode: input.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE,
-      provider: input.provider ?? DEFAULT_PROVIDER_ID,
-      model: input.model,
-      reasoningEffort: input.reasoningEffort,
+      provider,
+      model: normalizedInput.model,
+      reasoningEffort: normalizedInput.reasoningEffort,
       customAgentName: "",
       allowedAdditionalDirectories: [],
     });
@@ -88,28 +131,12 @@ export class CharacterAuthoringService {
     };
   }
 
-  private async resolveSeed(
-    input: StartCharacterAuthoringSessionInput,
-    character: CharacterDetail,
-  ): Promise<AuthoringSeed> {
-    const name = this.normalizeName(input.name || character.name || "New Character");
-    const description = (input.description ?? character.description).trim();
+  private resolveSeed(character: CharacterDetail): AuthoringSeed {
+    const name = this.normalizeName(character.name || "New Character");
+    const description = character.description.trim();
     return {
       name,
       description,
-      definitionMarkdown: input.definitionMarkdown?.trim()
-        ? input.definitionMarkdown
-        : character.definitionMarkdown.trim()
-          ? character.definitionMarkdown
-          : await this.readTemplate("character.md", {
-              character_name: name,
-              short_description: description || "作成中の相手",
-            }),
-      notesMarkdown: input.notesMarkdown?.trim()
-        ? input.notesMarkdown
-        : character.notesMarkdown.trim()
-          ? character.notesMarkdown
-          : await this.readTemplate("character-notes.md"),
     };
   }
 
@@ -135,17 +162,15 @@ export class CharacterAuthoringService {
       characterId: input.characterId ?? null,
       name: seed.name,
       description: seed.description,
-      userInstruction: input.userInstruction?.trim() || "",
       skill: CHARACTER_AUTHORING_SKILL_NAME,
       skillPath: `${skillRootPath}/${CHARACTER_AUTHORING_SKILL_NAME}`,
     }, null, 2)}\n`, "utf8");
-    await writeFile(path.join(workspacePath, "character.md"), seed.definitionMarkdown, "utf8");
-    await writeFile(path.join(workspacePath, "character-notes.md"), seed.notesMarkdown, "utf8");
-
   }
 
   private buildAgentsInstructions(input: StartCharacterAuthoringSessionInput): string {
-    const modeLabel = input.mode === "improve" ? "既存の character.md / character-notes.md を改善する" : "新しい character.md / character-notes.md を作成する";
+    const modeLabel = input.mode === "improve"
+      ? "既存の character.md と、必要な場合の character-notes.md を改善する"
+      : "新しい character.md と、必要な場合の character-notes.md を作成する";
     const skillPath = `${this.resolveWorkspaceSkillRoot(input.provider)}/${CHARACTER_AUTHORING_SKILL_NAME}`;
     return [
       "# Character Authoring Workspace",
@@ -159,20 +184,21 @@ export class CharacterAuthoringService {
       "- Skill picker や agent picker で別 Skill / 別 agent を選ぶ前提にしない。",
       "- 会話履歴からの自動成長や companion/session history の取り込みは行わない。",
       "- 編集対象はこの workspace 内の `character.md` / `character-notes.md` に限定する。",
+      "- authoring session の開始処理は Character files を書き換えない。保存済みの現在内容を正本として読む。",
       "- `character.md` 本文には WithMate の実装説明、prompt 注入説明、作成 workflow、notes/report の扱いを書かない。",
       "- `character.md` では相手を作り物として扱わず、一人の相手として本人らしさ、口調、距離感、反応を書く。",
-      "- `character-notes.md` は調査メモ、採用理由、改稿履歴、再導入しない判断を残す場所として使う。",
+      "- `character-notes.md` を使う場合は、調査メモ、採用理由、改稿履歴、再導入しない判断を残す。",
       "",
       "## 初回作業",
       "",
-      "- `AUTHORING_PROMPT.md` を読み、必要な追加情報がなければ成果物を更新する。",
+      "- `AUTHORING_PROMPT.md` と固定 Skill の参照資料を読む。",
+      "- 改善指示は通常の Session composer から自然言語で受け取る。起動入力に別の改善指示がある前提にしない。",
       "- 完了時は変更したファイルと未確認事項を短く報告する。",
       "",
     ].join("\n");
   }
 
   private buildAuthoringPrompt(input: StartCharacterAuthoringSessionInput, seed: AuthoringSeed): string {
-    const instruction = input.userInstruction?.trim();
     const skillPath = `${this.resolveWorkspaceSkillRoot(input.provider)}/${CHARACTER_AUTHORING_SKILL_NAME}`;
     return [
       `# ${seed.name} Character Authoring`,
@@ -181,7 +207,7 @@ export class CharacterAuthoringService {
       "",
       "## Goal",
       "",
-      "WithMate V5 用の `character.md` と `character-notes.md` を、person-first の runtime definition として整える。",
+      "WithMate 用の `character.md` と、必要な場合の `character-notes.md` を person-first の runtime definition として整える。",
       "",
       "## Constraints",
       "",
@@ -189,23 +215,13 @@ export class CharacterAuthoringService {
       `- Skill 配置は \`${skillPath}\`。`,
       "- Grow From Conversations は扱わない。",
       "- session / companion history は入力にしない。",
+      "- 改善内容はこの Session の通常メッセージで受け取る。",
+      "- source 調査と `character-notes.md` の作成・更新要否は、固定 Skill の mode 判定に従う。",
       "- `character.md` はユーザーに見える返答へ効く振る舞いだけを書く。",
-      "- `character-notes.md` に根拠、解釈、改稿理由、再導入しない判断を残す。",
+      "- `character-notes.md` を使う場合は、根拠、解釈、改稿理由、再導入しない判断を残す。",
+      "- Character root に source report、review checklist、manifest、Zip などの追加成果物を作らない。",
       "",
-      instruction ? "## User Instruction" : "",
-      instruction ? "" : "",
-      instruction || "",
-      "",
-    ].filter((line, index, lines) => line || lines[index - 1] !== "").join("\n");
-  }
-
-  private async readTemplate(templateName: string, replacements: Record<string, string> = {}): Promise<string> {
-    const templatePath = path.join(this.deps.bundledSkillPath, "templates", templateName);
-    let contents = await readFile(templatePath, "utf8");
-    for (const [key, value] of Object.entries(replacements)) {
-      contents = contents.replaceAll(`{${key}}`, value);
-    }
-    return contents;
+    ].join("\n");
   }
 
   private createRunId(name: string): string {
@@ -225,7 +241,7 @@ export class CharacterAuthoringService {
     return normalized;
   }
 
-  private resolveWorkspaceSkillRoot(providerId: string | null | undefined): string {
+  private resolveWorkspaceSkillRoot(providerId: string): string {
     return providerId === "copilot" ? COPILOT_WORKSPACE_SKILL_ROOT : CODEX_WORKSPACE_SKILL_ROOT;
   }
 }

@@ -2,20 +2,13 @@ import type { ApprovalMode } from "../approval-mode.js";
 import type { CodexSandboxMode } from "../codex-sandbox-mode.js";
 import type { ModelReasoningEffort } from "../model-catalog.js";
 import type { Session } from "../session-state.js";
-import type { CharacterTheme } from "./character-catalog.js";
 
 export type CharacterAuthoringMode = "create" | "improve";
 
 export type StartCharacterAuthoringSessionInput = {
   mode: CharacterAuthoringMode;
   characterId?: string | null;
-  name: string;
-  description?: string;
-  definitionMarkdown?: string;
-  notesMarkdown?: string;
-  theme?: Partial<CharacterTheme>;
-  userInstruction?: string;
-  provider?: string;
+  provider: string;
   approvalMode?: ApprovalMode;
   codexSandboxMode?: CodexSandboxMode;
   model?: string;

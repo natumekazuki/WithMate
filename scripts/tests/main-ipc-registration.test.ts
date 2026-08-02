@@ -32,6 +32,11 @@ import {
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
   WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
+  WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
+  WITHMATE_OPEN_SESSION_FILE_CHANNEL,
+  WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL,
+  WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
@@ -42,7 +47,7 @@ import {
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
-  WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL,
+  WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL,
   WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
 } from "../../src/withmate-ipc-channels.js";
 
@@ -130,8 +135,10 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL));
   assert.ok(handlers.has(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_APP_SETTINGS_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
   assert.ok(handlers.has(WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
@@ -213,28 +220,97 @@ test("pick-image-file IPC は Character icon purpose を伝播し、不正な pu
   );
 });
 
-test("right pane 表示設定 IPC は boolean だけを専用更新処理へ渡す", async () => {
+test("side pane 設定 IPC は列挙値だけを専用更新処理へ渡す", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
-  const visibilityUpdates: boolean[] = [];
+  const sidePaneUpdates: string[] = [];
   const { deps } = createDeps({
-    updateSessionRightPaneVisibility: (isVisible: boolean) => {
-      visibilityUpdates.push(isVisible);
-      return { sessionRightPaneVisible: isVisible };
+    updateSessionSidePane: (sidePane: "files" | "context" | "none") => {
+      sidePaneUpdates.push(sidePane);
+      return { sessionSidePane: sidePane };
     },
   });
 
   registerMainIpcHandlers(ipcMain, deps);
 
   assert.deepEqual(
-    await handlers.get(WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL)?.({}, false),
-    { sessionRightPaneVisible: false },
+    await handlers.get(WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL)?.({}, "files"),
+    { sessionSidePane: "files" },
   );
   await assert.rejects(
     () =>
-      handlers.get(WITHMATE_UPDATE_SESSION_RIGHT_PANE_VISIBILITY_CHANNEL)?.({}, "false") as Promise<unknown>,
-    /boolean/,
+      handlers.get(WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL)?.({}, "left") as Promise<unknown>,
+    /files、context、none/,
   );
-  assert.deepEqual(visibilityUpdates, [false]);
+  assert.deepEqual(sidePaneUpdates, ["files"]);
+});
+
+test("File Explorer IPC は owning Session window からだけ利用でき、Auxiliary ID を parent へ解決する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const otherWindow = createWindowStub("file:///home.html");
+  let currentWindow = ownerWindow;
+  const directoryRequests: unknown[] = [];
+  const openRequests: unknown[] = [];
+  const diffRequests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    listSessionFileRoots: async () => [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:/repo" }],
+    listSessionDirectory: async (request: unknown) => {
+      directoryRequests.push(request);
+      return [];
+    },
+    openSessionFile: async (request: unknown) => {
+      openRequests.push(request);
+      return { status: "opened", targetType: "local-path", target: "C:/repo/src/App.tsx" };
+    },
+    listWorkspaceChanges: async () => ({ status: "ok", entries: [] }),
+    getWorkspaceFileDiff: async (request: unknown) => {
+      diffRequests.push(request);
+      return { status: "not-changed", message: "none" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL)?.({}, "aux-1"),
+    [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:/repo" }],
+  );
+  const request = { sessionId: "aux-1", rootId: "workspace", relativePath: "src" };
+  assert.deepEqual(await handlers.get(WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL)?.({}, request), []);
+  assert.deepEqual(directoryRequests, [request]);
+  const openRequest = { sessionId: "aux-1", rootId: "workspace", relativePath: "src/App.tsx" };
+  assert.deepEqual(await handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, openRequest), {
+    status: "opened",
+    targetType: "local-path",
+    target: "C:/repo/src/App.tsx",
+  });
+  assert.deepEqual(openRequests, [openRequest]);
+  assert.deepEqual(await handlers.get(WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL)?.({}, "aux-1"), {
+    status: "ok",
+    entries: [],
+  });
+  const diffRequest = { sessionId: "aux-1", relativePath: "src/App.tsx", scope: "working-tree" };
+  assert.deepEqual(await handlers.get(WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL)?.({}, diffRequest), {
+    status: "not-changed",
+    message: "none",
+  });
+  assert.deepEqual(diffRequests, [diffRequest]);
+
+  currentWindow = otherWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, openRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
 });
 
 test("registerMainIpcHandlers は Mate 未作成時でも session runtime IPC を block しない", async () => {

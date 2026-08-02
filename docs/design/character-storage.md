@@ -132,21 +132,15 @@ Character 0 件時は `null` を返し、Home / launch branch 側で neutral fal
 
 ## Runtime Snapshot
 
-`CharacterRuntimeSnapshot` は session / companion 作成時に保存する immutable input である。
+通常 Session と Companion の `CharacterRuntimeSnapshot` は、作成時に保存する immutable input である。汎用 update は保存済み `characterId` と snapshot の差し替えを永続化前に拒否し、runtime prompt は catalog の現在値ではなく保存済み snapshot を使う。
 
-最低限含める:
+`character-authoring` Session は例外である。stable owner は `Session.characterId` に保持したまま、各 turn の開始時に canonical `character.md` から runtime snapshot を再生成する。定義が hard contract を満たさない、または必須ファイルが欠落した場合は snapshot を投影せず、古い snapshot と provider thread ID を composer / provider validation より前に破棄し、process-local thread cache も無効化する。
 
-- `characterId`
-- `name`
-- `description`
-- `iconFilePath`
-- `theme`
-- `definitionMarkdown`
-- `definitionSha256`
-- `definitionByteSize`
-- `snapshotAt`
+V6 の既存 row で stable owner と snapshot owner が一致しない場合は、owner を維持して snapshot と provider thread ID を read projection から同時に無効化する。
 
-Runtime prompt injection は catalog 現在値ではなく saved snapshot を使う。実際の injection 接続は Branch 6 で扱う。
+relational owner と runtime policy owner のどちらもない legacy row は、表示名や snapshot から Character ID を推測せず、Character ID の生成領域外にある予約 ID `withmate:unresolved-character-owner` へ回復する。この ID は public create と runtime snapshot 解決では拒否し、実 Character を再解決しない。
+
+snapshot の field shape は `src/character/character-catalog.ts`、normalization と prompt projection は `src/character/character-runtime-snapshot.ts`、authoring turn の再解決は `src-electron/character-authoring-service.ts` を正本とする。stable owner の判断理由は `docs/adr/009-stable-character-runtime-owner.md`、authoring 例外は `docs/adr/010-character-authoring-project-contract.md` を参照する。
 
 ## Data Safety
 

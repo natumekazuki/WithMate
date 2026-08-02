@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { UNKNOWN_CHARACTER_OWNER_ID } from "../../src/character/character-owner.js";
 import { resolveModelSelection, type ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
   applyCopilotCustomAgentSelection,
@@ -128,6 +129,77 @@ describe("session-state session kind", () => {
     });
 
     assert.equal(session.sessionKind, "character-authoring");
+  });
+
+  it("Character ID と runtime snapshot owner が異なる Session は owner を維持して snapshot と thread を破棄する", () => {
+    const session = createSession("codex");
+
+    const normalized = normalizeSession({
+      ...session,
+      threadId: "stale-thread",
+      characterRuntimeSnapshot: {
+        characterId: "char-b",
+        name: "B",
+        description: "",
+        iconFilePath: "",
+        theme: { main: "#6f8cff", sub: "#6fb8c7" },
+        definitionMarkdown: "# Character\nB",
+        definitionSha256: "char-b-sha256",
+        definitionByteSize: 13,
+        snapshotAt: "2026-08-01T00:00:00.000Z",
+      },
+    });
+
+    assert.equal(normalized?.characterId, "char-a");
+    assert.equal(normalized?.characterRuntimeSnapshot, null);
+    assert.equal(normalized?.threadId, "");
+  });
+
+  it("Character owner を trim し、欠損した legacy owner を表示名から推測しない", () => {
+    const base = createSession("codex");
+    const built = buildNewSession({
+      ...base,
+      characterId: " char-a ",
+    });
+
+    assert.equal(built.characterId, "char-a");
+    assert.throws(
+      () => buildNewSession({ ...base, characterId: "   " }),
+      /characterId/,
+    );
+    assert.throws(
+      () => buildNewSession({ ...base, characterId: UNKNOWN_CHARACTER_OWNER_ID }),
+      /characterId/,
+    );
+
+    const normalized = normalizeSession({
+      ...built,
+      characterId: " char-a ",
+      characterRuntimeSnapshot: {
+        characterId: " char-a ",
+        name: "A",
+        description: "",
+        iconFilePath: "",
+        theme: { main: "#6f8cff", sub: "#6fb8c7" },
+        definitionMarkdown: "# Character\nA",
+        definitionSha256: "char-a-sha256",
+        definitionByteSize: 13,
+        snapshotAt: "2026-08-01T00:00:00.000Z",
+      },
+    });
+    assert.equal(normalized?.characterId, "char-a");
+    assert.equal(normalized?.characterRuntimeSnapshot?.characterId, "char-a");
+
+    const recovered = normalizeSession({
+      ...built,
+      characterId: " ",
+      character: "Display Name",
+      characterRuntimeSnapshot: null,
+      threadId: "stale-thread",
+    });
+    assert.equal(recovered?.characterId, UNKNOWN_CHARACTER_OWNER_ID);
+    assert.notEqual(recovered?.characterId, "Display Name");
+    assert.equal(recovered?.threadId, "");
   });
 });
 

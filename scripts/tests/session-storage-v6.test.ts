@@ -6,7 +6,10 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
+import { UNKNOWN_CHARACTER_OWNER_ID } from "../../src/character/character-owner.js";
 import { buildNewSession, type MessageArtifact } from "../../src/session-state.js";
+import { resolveCharacterAuthoringRuntimeSessionForTurn } from "../../src-electron/character-authoring-service.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 
 async function removeDirectoryWithRetry(targetPath: string, attempts = 5): Promise<void> {
@@ -52,6 +55,43 @@ function createArtifact(): MessageArtifact {
     ],
     runChecks: [{ label: "npm test", value: "pass" }],
   };
+}
+
+function createCharacterRuntimeSnapshot(
+  characterId: string,
+  name: string,
+): CharacterRuntimeSnapshot {
+  return {
+    characterId,
+    name,
+    description: "",
+    iconFilePath: "",
+    theme: { main: "#6f8cff", sub: "#6fb8c7" },
+    definitionMarkdown: `# Character\n${name}`,
+    definitionSha256: `${characterId}-sha256`,
+    definitionByteSize: name.length,
+    snapshotAt: "2026-08-01T00:00:00.000Z",
+  };
+}
+
+function insertCharacterRows(dbPath: string, characterIds: readonly string[]): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    const insert = db.prepare(`
+      INSERT INTO characters (id, name, created_at, updated_at)
+      VALUES (?, ?, ?, ?)
+    `);
+    for (const characterId of characterIds) {
+      insert.run(
+        characterId,
+        characterId,
+        "2026-08-01T00:00:00.000Z",
+        "2026-08-01T00:00:00.000Z",
+      );
+    }
+  } finally {
+    db.close();
+  }
 }
 
 function insertAuxiliarySessionRows(dbPath: string, rows: Array<{ id: string; parentSessionId: string }>): void {
@@ -155,6 +195,345 @@ function listSessionTurnSummaries(dbPath: string): string[] {
 }
 
 describe("SessionStorageV6", () => {
+  it("snapshot を作れない Character authoring Session も修復対象 ID を round-trip する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const session = buildNewSession({
+        id: "repair-muse",
+        taskTitle: "Muse の character.md 改善",
+        workspaceLabel: "Muse authoring",
+        workspacePath: "C:/characters/muse",
+        branch: "main",
+        sessionKind: "character-authoring",
+        characterId: "muse",
+        character: "Muse",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        characterRuntimeSnapshot: null,
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      });
+
+      storage.insertSession(session);
+      storage.close();
+      storage = new SessionStorageV6(dbPath);
+
+      const reloaded = storage.getSession(session.id);
+      assert.ok(reloaded);
+      assert.equal(reloaded.characterId, "muse");
+      assert.equal(reloaded.character, "Muse");
+      assert.equal(reloaded.characterRuntimeSnapshot, null);
+
+      const resolvedCharacterIds: string[] = [];
+      const resolved = resolveCharacterAuthoringRuntimeSessionForTurn(reloaded, (characterId) => {
+        resolvedCharacterIds.push(characterId);
+        return {
+          ...createCharacterRuntimeSnapshot(characterId, "Muse repaired"),
+          description: "修復済み",
+        };
+      });
+
+      assert.deepEqual(resolvedCharacterIds, ["muse"]);
+      assert.equal(resolved.characterId, "muse");
+      assert.equal(resolved.characterRuntimeSnapshot?.characterId, "muse");
+      assert.equal(resolved.character, "Muse repaired");
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("snapshot を作れない通常 Session も stable Character ID を round-trip する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const session = buildNewSession({
+        id: "default-invalid-muse",
+        taskTitle: "Muse session",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "muse-id",
+        character: "Muse Display",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        characterRuntimeSnapshot: null,
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      });
+
+      storage.insertSession(session);
+      storage.close();
+      storage = new SessionStorageV6(dbPath);
+
+      const reloaded = storage.getSession(session.id);
+      assert.ok(reloaded);
+      assert.equal(reloaded.sessionKind, "default");
+      assert.equal(reloaded.characterId, "muse-id");
+      assert.equal(reloaded.character, "Muse Display");
+      assert.equal(reloaded.characterRuntimeSnapshot, null);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("legacy row の owner を trim し、欠損時は表示名や snapshot から推測しない", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      insertCharacterRows(dbPath, ["muse"]);
+      const sessions = [
+        buildNewSession({
+          id: "whitespace-runtime-owner",
+          taskTitle: "Whitespace owner",
+          workspaceLabel: "workspace",
+          workspacePath: "C:/workspace",
+          branch: "main",
+          characterId: "muse",
+          character: "Muse Display",
+          characterIconPath: "",
+          characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+          characterRuntimeSnapshot: null,
+          approvalMode: DEFAULT_APPROVAL_MODE,
+        }),
+        {
+          ...buildNewSession({
+            id: "missing-runtime-owner",
+            taskTitle: "Missing owner",
+            workspaceLabel: "workspace",
+            workspacePath: "C:/workspace",
+            branch: "main",
+            characterId: "muse",
+            character: "Display Name",
+            characterIconPath: "",
+            characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+            characterRuntimeSnapshot: null,
+            approvalMode: DEFAULT_APPROVAL_MODE,
+          }),
+          threadId: "thread-missing-owner",
+        },
+        {
+          ...buildNewSession({
+            id: "snapshot-only-owner",
+            taskTitle: "Snapshot only owner",
+            workspaceLabel: "workspace",
+            workspacePath: "C:/workspace",
+            branch: "main",
+            characterId: "muse",
+            character: "Snapshot Display",
+            characterIconPath: "",
+            characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+            characterRuntimeSnapshot: createCharacterRuntimeSnapshot("muse", "Snapshot Display"),
+            approvalMode: DEFAULT_APPROVAL_MODE,
+          }),
+          threadId: "thread-snapshot-only",
+        },
+      ];
+      sessions.forEach((session) => storage?.insertSession(session));
+      storage.close();
+      storage = null;
+
+      const db = new DatabaseSync(dbPath);
+      const updateOwner = db.prepare(`
+        UPDATE sessions_v6
+        SET character_id = NULL,
+            runtime_policy_json = ?
+        WHERE id = ?
+      `);
+      updateOwner.run(JSON.stringify({
+        characterId: " muse ",
+        characterName: "Muse Display",
+      }), "whitespace-runtime-owner");
+      updateOwner.run(JSON.stringify({
+        characterName: "Display Name",
+      }), "missing-runtime-owner");
+      updateOwner.run(JSON.stringify({
+        characterName: "Snapshot Display",
+      }), "snapshot-only-owner");
+      db.close();
+
+      storage = new SessionStorageV6(dbPath);
+      assert.equal(storage.getSession("whitespace-runtime-owner")?.characterId, "muse");
+
+      const missingOwner = storage.getSession("missing-runtime-owner");
+      assert.equal(missingOwner?.characterId, UNKNOWN_CHARACTER_OWNER_ID);
+      assert.notEqual(missingOwner?.characterId, "Display Name");
+      assert.equal(missingOwner?.characterRuntimeSnapshot, null);
+      assert.equal(missingOwner?.threadId, "");
+
+      const snapshotOnly = storage.getSession("snapshot-only-owner");
+      assert.equal(snapshotOnly?.characterId, UNKNOWN_CHARACTER_OWNER_ID);
+      assert.equal(snapshotOnly?.characterRuntimeSnapshot, null);
+      assert.equal(snapshotOnly?.threadId, "");
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("obsolete field や snapshot を欠損した Character owner の fallback に使わない", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      insertCharacterRows(dbPath, ["muse"]);
+      const session = buildNewSession({
+        id: "obsolete-authoring-owner",
+        taskTitle: "Muse authoring",
+        workspaceLabel: "Muse authoring",
+        workspacePath: "C:/characters/muse",
+        branch: "main",
+        sessionKind: "character-authoring",
+        characterId: "muse",
+        character: "Muse",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        characterRuntimeSnapshot: createCharacterRuntimeSnapshot("muse", "Muse"),
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      });
+      storage.insertSession(session);
+      storage.close();
+      storage = null;
+
+      const db = new DatabaseSync(dbPath);
+      db.prepare(`
+        UPDATE sessions_v6
+        SET character_id = NULL,
+            runtime_policy_json = ?
+        WHERE id = ?
+      `).run(JSON.stringify({
+        authoringCharacterId: "obsolete-owner",
+        characterName: "Muse",
+      }), session.id);
+      db.close();
+
+      storage = new SessionStorageV6(dbPath);
+      const reloaded = storage.getSession(session.id);
+      assert.ok(reloaded);
+      assert.equal(reloaded.characterId, UNKNOWN_CHARACTER_OWNER_ID);
+      assert.equal(reloaded.characterRuntimeSnapshot, null);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("Character ID と runtime snapshot owner が異なる Session は保存しない", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      insertCharacterRows(dbPath, ["muse", "other"]);
+      const mismatched = {
+        ...buildNewSession({
+          id: "mismatched-owner",
+          taskTitle: "Muse authoring",
+          workspaceLabel: "Muse authoring",
+          workspacePath: "C:/characters/muse",
+          branch: "main",
+          sessionKind: "character-authoring",
+          characterId: "muse",
+          character: "Muse",
+          characterIconPath: "",
+          characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+          characterRuntimeSnapshot: createCharacterRuntimeSnapshot("muse", "Muse"),
+          approvalMode: DEFAULT_APPROVAL_MODE,
+        }),
+        characterRuntimeSnapshot: createCharacterRuntimeSnapshot("other", "Other"),
+      };
+
+      assert.throws(() => storage?.insertSession(mismatched), /保存できない session 形式/);
+      assert.equal(storage.getSession(mismatched.id), null);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("既存 row の runtime snapshot owner が不一致なら relational owner を維持して snapshot と thread を無効化する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      insertCharacterRows(dbPath, ["muse", "other"]);
+      const sessions = (["default", "character-authoring"] as const).map((sessionKind) => ({
+        ...buildNewSession({
+          id: `corrupted-owner-${sessionKind}`,
+          taskTitle: "Muse session",
+          workspaceLabel: "Muse workspace",
+          workspacePath: "C:/characters/muse",
+          branch: "main",
+          sessionKind,
+          characterId: "muse",
+          character: "Muse",
+          characterIconPath: "",
+          characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+          characterRuntimeSnapshot: createCharacterRuntimeSnapshot("muse", "Muse"),
+          approvalMode: DEFAULT_APPROVAL_MODE,
+        }),
+        threadId: `thread-for-other-owner-${sessionKind}`,
+      }));
+      sessions.forEach((session) => storage?.insertSession(session));
+      storage.close();
+      storage = null;
+
+      const db = new DatabaseSync(dbPath);
+      const replaceSnapshot = db.prepare(`
+        UPDATE sessions_v6
+        SET character_snapshot_json = ?
+        WHERE id = ?
+      `);
+      sessions.forEach((session) => replaceSnapshot.run(
+        JSON.stringify(createCharacterRuntimeSnapshot("other", "Other")),
+        session.id,
+      ));
+      db.close();
+
+      storage = new SessionStorageV6(dbPath);
+      const summaries = new Map(storage.listSessionSummaries().map((summary) => [summary.id, summary]));
+      const reloaded = sessions.map((session) => storage?.getSession(session.id));
+      reloaded.forEach((session) => {
+        assert.ok(session);
+        assert.equal(session.characterId, "muse");
+        assert.equal(session.characterRuntimeSnapshot, null);
+        assert.equal(session.threadId, "");
+        assert.equal(summaries.get(session.id)?.threadId, "");
+      });
+
+      const authoringSession = reloaded.find((session) => session?.sessionKind === "character-authoring");
+      assert.ok(authoringSession);
+      const resolvedAuthoringSession = resolveCharacterAuthoringRuntimeSessionForTurn(
+        authoringSession,
+        () => createCharacterRuntimeSnapshot("muse", "Muse refreshed"),
+      );
+      assert.equal(resolvedAuthoringSession.characterRuntimeSnapshot?.characterId, "muse");
+      assert.equal(resolvedAuthoringSession.threadId, "");
+
+      reloaded.forEach((session) => storage?.upsertSession(session!));
+      storage.close();
+      storage = new SessionStorageV6(dbPath);
+      sessions.forEach((session) => assert.equal(storage?.getSession(session.id)?.threadId, ""));
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("getLatestSessionSummaryForProvider は legacy provider 表記を正規化して最新一件だけを返す", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");

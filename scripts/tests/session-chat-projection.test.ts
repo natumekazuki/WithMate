@@ -365,6 +365,7 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
     isMessageListFollowing: false,
     composerSendButtonTitle: "Agent stop",
     actionDockCompactPreview: "Agent preview",
+    chatNotice: "New messages",
     attachmentCount: 2,
     onCollapseActionDock,
     onExpandActionDock,
@@ -385,8 +386,10 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
   assert.equal(props.composerProps.selectedReasoningEffort, "medium");
   assert.equal(props.composerProps.sendButtonTitle, "Agent stop");
   assert.equal(props.composerProps.onCollapse, onCollapseActionDock);
+  assert.equal(props.composerProps.chatNotice, "New messages");
   assert.equal(props.compactActionDockProps.actionDockCompactPreview, "Agent preview");
   assert.equal(props.compactActionDockProps.attachmentCount, 2);
+  assert.equal(props.compactActionDockProps.chatNotice, "New messages");
   assert.equal(props.compactActionDockProps.isRunning, true);
   assert.equal(props.compactActionDockProps.pendingRunIndicatorText, "Agent responding");
   assert.equal(props.compactActionDockProps.showJumpToBottom, true);

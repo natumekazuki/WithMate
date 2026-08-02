@@ -18,6 +18,7 @@ import { normalizeAllowedAdditionalDirectories } from "./additional-directories.
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import { sessionSummaryToSession } from "./session-summary-adapter.js";
 import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
+import { hasSameCharacterRuntimeIdentity } from "../src/character/character-runtime-snapshot.js";
 import type {
   DeleteSessionsLastActiveBeforeCutoff,
   DeleteSessionsResult,
@@ -82,6 +83,15 @@ function assertSessionWritable(session: Session): void {
 export class SessionPersistenceService {
   constructor(private readonly deps: SessionPersistenceServiceDeps) {}
 
+  resolveCharacterAuthoringProvider(providerId: string): string {
+    return this.resolveEnabledProviderCatalog(
+      this.deps.getModelCatalogSnapshot(),
+      this.deps.getAppSettings(),
+      providerId,
+      true,
+    ).id;
+  }
+
   async createSession(input: CreateSessionInput): Promise<Session> {
     const requestedSessionId = input.id?.trim() ?? "";
     if (
@@ -96,7 +106,12 @@ export class SessionPersistenceService {
 
     const appSettings = this.deps.getAppSettings();
     const snapshot = this.deps.getModelCatalogSnapshot();
-    const provider = this.resolveEnabledProviderCatalog(snapshot, appSettings, input.provider);
+    const provider = this.resolveEnabledProviderCatalog(
+      snapshot,
+      appSettings,
+      input.provider,
+      input.sessionKind === "character-authoring",
+    );
     const requestedModel = input.provider && input.provider !== provider.id
       ? provider.defaultModelId
       : input.model ?? provider.defaultModelId;
@@ -131,6 +146,11 @@ export class SessionPersistenceService {
     }
 
     assertSessionWritable(currentSession);
+
+    const storedCurrentSession = await this.deps.getStoredSession?.(nextSession.id) ?? currentSession;
+    if (!hasSameCharacterRuntimeIdentity(storedCurrentSession, nextSession)) {
+      throw new Error("Session の Character owner / runtime snapshot は更新できないよ。");
+    }
 
     if (this.deps.isSessionRunInFlight(nextSession.id) || isRunningSession(currentSession)) {
       throw new Error("実行中のセッションは更新できないよ。");
@@ -370,10 +390,25 @@ export class SessionPersistenceService {
     snapshot: ModelCatalogSnapshot,
     appSettings = this.deps.getAppSettings(),
     requestedProviderId?: string | null,
+    requireRequestedProvider = false,
   ): ModelCatalogProvider {
-    const requestedProvider = requestedProviderId ? getProviderCatalog(snapshot.providers, requestedProviderId) : null;
+    const normalizedRequestedProviderId = requestedProviderId?.trim() ?? "";
+    const requestedProvider = requireRequestedProvider
+      ? snapshot.providers.find((provider) => provider.id === normalizedRequestedProviderId) ?? null
+      : requestedProviderId
+        ? getProviderCatalog(snapshot.providers, requestedProviderId)
+        : null;
     if (requestedProvider && getProviderAppSettings(appSettings, requestedProvider.id).enabled) {
       return requestedProvider;
+    }
+    if (requireRequestedProvider) {
+      if (!normalizedRequestedProviderId) {
+        throw new Error("Character authoring の provider を選択してください。");
+      }
+      if (!requestedProvider) {
+        throw new Error("選択した Character authoring provider が model catalog に見つからないよ。");
+      }
+      throw new Error("選択した Character authoring provider は Settings で無効になっているよ。");
     }
 
     const defaultProvider = snapshot.providers.find((provider) => provider.id === DEFAULT_PROVIDER_ID) ?? null;

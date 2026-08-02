@@ -17,6 +17,7 @@ import {
 import type { ChangedFile, DiffRow } from "../src/runtime-state.js";
 import { summarizeMessageArtifact, type Message, type MessageArtifact } from "../src/session-state.js";
 import {
+  hasSameCharacterRuntimeIdentity,
   parseCharacterRuntimeSnapshotJson,
   stringifyCharacterRuntimeSnapshot,
 } from "../src/character/character-runtime-snapshot.js";
@@ -875,6 +876,11 @@ export class CompanionStorageV3 {
   }
 
   async updateSession(session: CompanionSession): Promise<CompanionSession> {
+    const currentSession = await this.getSession(session.id);
+    if (currentSession && !hasSameCharacterRuntimeIdentity(currentSession, session)) {
+      throw new Error("Companion Session の Character owner / runtime snapshot は更新できないよ。");
+    }
+
     return this.writeSession(session, true);
   }
 

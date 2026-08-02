@@ -204,7 +204,7 @@ V5 preview では legacy MateTalk runtime / window / `mode=mate-talk` route を 
 2. Main Process が `Character Editor Window` を create mode または edit mode で開く
 3. Editor は Main Process の Character storage API から detail を読み、保存時も Main Process 経由で更新する
 4. 保存後の catalog 更新は Home / launch selector の次回取得に反映される
-5. 既存 session / companion は作成時点の `CharacterRuntimeSnapshot` を使い続け、catalog 現在値へ自動追従しない
+5. 通常 session / companion は作成時点の `CharacterRuntimeSnapshot` を使い続け、catalog 現在値へ自動追従しない。`character-authoring` session は例外として turn 開始時に canonical `character.md` から snapshot を再生成する。詳細は `docs/design/character-storage.md` を参照する
 
 ### Session Policy Update
 

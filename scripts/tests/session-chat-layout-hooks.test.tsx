@@ -4,7 +4,8 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { useSessionContextRail } from "../../src/session-chat-layout-hooks.js";
+import { useSessionSidePanes } from "../../src/session-chat-layout-hooks.js";
+import type { SessionSidePane } from "../../src/session-side-pane.js";
 
 function dispatchPointerEvent(
   dom: JSDOM,
@@ -23,7 +24,7 @@ function dispatchPointerEvent(
   return event;
 }
 
-test("useSessionContextRail は保存済み状態を一度だけ反映し、click で表示を切り替える", async () => {
+test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右ペインを排他的に切り替える", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -42,20 +43,24 @@ test("useSessionContextRail は保存済み状態を一度だけ反映し、clic
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
 
   let root: Root | null = null;
-  const visibilityChanges: boolean[] = [];
+  const sidePaneChanges: SessionSidePane[] = [];
 
-  function Harness({ initialVisibility }: { initialVisibility: boolean | null }) {
+  function Harness({ initialSidePane }: { initialSidePane: SessionSidePane | null }) {
     const {
       sessionWorkbenchRef,
       sessionWorkbenchStyle,
+      activeSidePane,
       isContextRailVisible,
       isContextRailResizing,
+      isFilesPaneResizing,
       handleStartContextRailResize,
+      handleStartFilesPaneResize,
       handleToggleContextRailVisibility,
-    } = useSessionContextRail({
+      handleToggleFilesPaneVisibility,
+    } = useSessionSidePanes({
       ownerKey: "session-1",
-      initialContextRailVisibility: initialVisibility,
-      onContextRailVisibilityChange: (isVisible) => visibilityChanges.push(isVisible),
+      initialSidePane,
+      onSidePaneChange: (sidePane) => sidePaneChanges.push(sidePane),
     });
 
     return React.createElement(
@@ -76,14 +81,34 @@ test("useSessionContextRail は保存済み状態を一度だけ反映し、clic
         "toggle",
       ),
       React.createElement(
+        "button",
+        {
+          type: "button",
+          onClick: handleToggleFilesPaneVisibility,
+          "data-testid": "files-toggle",
+        },
+        "files",
+      ),
+      React.createElement(
+        "button",
+        {
+          type: "button",
+          onPointerDown: handleStartFilesPaneResize,
+          onClick: handleToggleFilesPaneVisibility,
+          "data-testid": "files-splitter",
+        },
+        "files splitter",
+      ),
+      React.createElement(
         "output",
         { "data-testid": "visibility" },
         isContextRailVisible ? "visible" : "hidden",
       ),
+      React.createElement("output", { "data-testid": "active-pane" }, activeSidePane),
       React.createElement(
         "output",
         { "data-testid": "resizing" },
-        isContextRailResizing ? "resizing" : "idle",
+        isContextRailResizing ? "context" : isFilesPaneResizing ? "files" : "idle",
       ),
     );
   }
@@ -91,21 +116,27 @@ test("useSessionContextRail は保存済み状態を一度だけ反映し、clic
   try {
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement(Harness, { initialVisibility: null }));
+      root.render(React.createElement(Harness, { initialSidePane: null }));
     });
 
     const workbench = dom.window.document.querySelector<HTMLElement>("[data-testid=\"workbench\"]");
     const splitter = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"splitter\"]");
+    const filesToggle = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"files-toggle\"]");
+    const filesSplitter = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"files-splitter\"]");
     const visibility = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"visibility\"]");
+    const activePane = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"active-pane\"]");
     const resizing = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"resizing\"]");
     assert.ok(workbench);
     assert.ok(splitter);
+    assert.ok(filesToggle);
+    assert.ok(filesSplitter);
     assert.ok(visibility);
+    assert.ok(activePane);
     assert.ok(resizing);
     assert.equal(visibility.textContent, "hidden");
 
     await act(async () => {
-      root?.render(React.createElement(Harness, { initialVisibility: true }));
+      root?.render(React.createElement(Harness, { initialSidePane: "context" }));
     });
     assert.equal(visibility.textContent, "visible");
 
@@ -138,8 +169,22 @@ test("useSessionContextRail は保存済み状態を一度だけ反映し、clic
     assert.equal(visibility.textContent, "visible");
 
     await act(async () => {
-      root?.render(React.createElement(Harness, { initialVisibility: false }));
+      root?.render(React.createElement(Harness, { initialSidePane: "none" }));
     });
+    assert.equal(visibility.textContent, "visible");
+
+    await act(async () => filesToggle.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+    assert.equal(activePane.textContent, "files");
+    assert.equal(visibility.textContent, "hidden");
+    await act(async () => dispatchPointerEvent(dom, filesSplitter, "pointerdown", 320));
+    assert.equal(resizing.textContent, "files");
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 700));
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 700));
+    await act(async () => filesSplitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+    assert.equal(activePane.textContent, "files");
+    assert.equal(workbench.style.getPropertyValue("--session-file-explorer-width"), "700px");
+    await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+    assert.equal(activePane.textContent, "context");
     assert.equal(visibility.textContent, "visible");
 
     viewportWidth = 1200;
@@ -168,7 +213,7 @@ test("useSessionContextRail は保存済み状態を一度だけ反映し、clic
     await act(async () => {
       boundaryPointerDown = dispatchPointerEvent(dom, splitter, "pointerdown", 956);
     });
-    assert.equal(resizing.textContent, "resizing");
+    assert.equal(resizing.textContent, "context");
     assert.equal(boundaryPointerDown.defaultPrevented, true);
     assert.equal(dom.window.document.body.style.cursor, "col-resize");
     assert.equal(dom.window.document.body.style.userSelect, "none");
@@ -181,14 +226,19 @@ test("useSessionContextRail は保存済み状態を一度だけ反映し、clic
     viewportWidth = 1600;
     workbenchWidth = 1600;
     await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1180));
-    assert.equal(resizing.textContent, "resizing");
+    assert.equal(resizing.textContent, "context");
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 1140));
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 1140));
     await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
 
     assert.equal(visibility.textContent, "visible");
     assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "460px");
-    assert.deepEqual(visibilityChanges, [false, true, false, true]);
+
+    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 1140));
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 200));
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 200));
+    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "800px");
+    assert.deepEqual(sidePaneChanges, ["none", "context", "files", "context", "none", "context"]);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();

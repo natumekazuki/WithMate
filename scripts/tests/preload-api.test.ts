@@ -160,9 +160,13 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:resolve-launch-character",
     args: [{ characterId: "char-1" }],
   });
-  assert.deepEqual(await api.startCharacterAuthoringSession({ mode: "improve", characterId: "char-1", name: "Mia" }), {
+  assert.deepEqual(await api.startCharacterAuthoringSession({
+    mode: "improve",
+    characterId: "char-1",
+    provider: "codex",
+  }), {
     channel: "withmate:start-character-authoring-session",
-    args: [{ mode: "improve", characterId: "char-1", name: "Mia" }],
+    args: [{ mode: "improve", characterId: "char-1", provider: "codex" }],
   });
   assert.deepEqual(await api.getSessionBackgroundActivity("session-1", "memory-generation"), {
     channel: "withmate:get-session-background-activity",
@@ -229,6 +233,44 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:open-session-files-terminal",
     args: ["session-1"],
   });
+  const fileRequest = { sessionId: "session-1", rootId: "workspace", relativePath: "src/App.tsx" };
+  assert.deepEqual(await api.listSessionFileRoots("session-1"), {
+    channel: "withmate:list-session-file-roots",
+    args: ["session-1"],
+  });
+  assert.deepEqual(await api.listSessionDirectory({ ...fileRequest, relativePath: "src" }), {
+    channel: "withmate:list-session-directory",
+    args: [{ ...fileRequest, relativePath: "src" }],
+  });
+  assert.deepEqual(await api.inspectSessionFile(fileRequest), {
+    channel: "withmate:inspect-session-file",
+    args: [fileRequest],
+  });
+  assert.deepEqual(await api.readSessionFileChunk({
+    ...fileRequest,
+    offset: 0,
+    length: 1024,
+    expectedRevision: "10:20",
+  }), {
+    channel: "withmate:read-session-file-chunk",
+    args: [{ ...fileRequest, offset: 0, length: 1024, expectedRevision: "10:20" }],
+  });
+  assert.deepEqual(await api.openSessionFile({ ...fileRequest, reveal: true }), {
+    channel: "withmate:open-session-file",
+    args: [{ ...fileRequest, reveal: true }],
+  });
+  assert.deepEqual(await api.listWorkspaceChanges("session-1"), {
+    channel: "withmate:list-workspace-changes",
+    args: ["session-1"],
+  });
+  assert.deepEqual(await api.getWorkspaceFileDiff({
+    sessionId: "session-1",
+    relativePath: "src/App.tsx",
+    scope: "working-tree",
+  }), {
+    channel: "withmate:get-workspace-file-diff",
+    args: [{ sessionId: "session-1", relativePath: "src/App.tsx", scope: "working-tree" }],
+  });
   assert.deepEqual(await api.createAuxiliarySession({ parentSessionId: "session-1", provider: "copilot" }), {
     channel: "withmate:create-auxiliary-session",
     args: [{ parentSessionId: "session-1", provider: "copilot" }],
@@ -241,9 +283,9 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:cancel-auxiliary-session-run",
     args: ["aux-1"],
   });
-  assert.deepEqual(await api.updateSessionRightPaneVisibility(false), {
-    channel: "withmate:update-session-right-pane-visibility",
-    args: [false],
+  assert.deepEqual(await api.updateSessionSidePane("files"), {
+    channel: "withmate:update-session-side-pane",
+    args: ["files"],
   });
 });
 
@@ -300,6 +342,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getSessionBackgroundActivity",
     "getSessionContextTelemetry",
     "getSessionMessageArtifact",
+    "getWorkspaceFileDiff",
     "importModelCatalog",
     "importModelCatalogFile",
     "installMemoryV6CliShim",
@@ -318,6 +361,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionCustomAgents",
     "listSessionSkills",
     "listSessionSummaries",
+    "listWorkspaceChanges",
     "listWorkspaceCustomAgents",
     "listWorkspaceSkills",
     "mergeCompanionSelectedFiles",
@@ -330,6 +374,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "openCrashDumpFolder",
     "openPath",
     "openSession",
+    "openSessionFile",
     "openSessionFilesDirectory",
     "openSessionFilesTerminal",
     "openSessionMonitorWindow",
@@ -347,6 +392,10 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "resetMate",
     "previewCompanionComposerInput",
     "previewComposerInput",
+    "inspectSessionFile",
+    "listSessionDirectory",
+    "listSessionFileRoots",
+    "readSessionFileChunk",
     "reportRendererLog",
     "resetAppDatabase",
     "restoreCompanionTargetStash",
@@ -378,7 +427,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "forgetMemoryV6Entry",
     "uninstallMemoryV6CliShim",
     "updateAppSettings",
-    "updateSessionRightPaneVisibility",
+    "updateSessionSidePane",
     "updateAuxiliarySession",
     "updateCharacterDefinition",
     "updateCharacterMetadata",

@@ -1,27 +1,11 @@
 # Message Rich Text
 
 - 作成日: 2026-03-14
-- 対象: Session Window の assistant / user message 表示
+- 対象: Session Window の message と Markdown file preview
 
 ## Goal
 
-Codex の返答を生テキストの塊として出すのではなく、読みやすい最小限の rich text として表示する。
-
-対象は readability 改善であり、完全な Markdown renderer を作ることではない。
-
-## Supported Syntax
-
-現行実装で表示を整える対象:
-
-- 段落
-- 改行
-- `#` / `##` / `###` 見出し
-- `- item` / `* item` の箇条書き
-- `1. item` の番号付きリスト
-- `**strong**` の強調
-- インラインコード `` `code` ``
-- コードフェンス ````` ``` `````
-- Markdown link `[label](target)`
+Session message と Markdown file preview に同じ rich text renderer を使い、構文、link、image の挙動が表示面によって分岐しないようにする。構文と表示の executable contract は `src/MessageRichText.tsx` と `scripts/tests/message-rich-text.test.ts` を正本とする。
 
 ## Link Handling
 
@@ -29,29 +13,32 @@ Codex の返答を生テキストの塊として出すのではなく、読み�
 - ローカル絶対パスは OS に関連付けられた既定動作で開く
 - Session 文脈では workspace 相対 path link も workspace root 基準で解決して開く
 - ローカル path link に `#L10` などの fragment が付いている場合は、少なくとも path 本体を開けるように fragment を無視して扱う
-- 開けない場合でも chat 表示自体は壊さない
+- Markdown file preview の相対 link と相対 image は、その file の親 directory と同じ認可済み root の中で解決する
+- OS の既定アプリで file を開けない場合は理由を表示し、通常の Open から Explorer 表示へ自動で切り替えない
+
+## Image Handling
+
+- absolute local path、`file:`、HTTP、HTTPS、data、blob image を既定表示する。protocol-relative URL は HTTPS に正規化する。Markdown file preview の local image は相対・絶対とも登録済み root へ対応付け、file の親 directory または対応する root から認可済み read を行う
+- external image の自動通信と CSP の判断は `docs/adr/012-markdown-resource-loading-policy.md` を正本とする
+- SVG は `<img>` の resource として描画し、inline DOM へ挿入しない
+- file preview の local image 読込は Main process の root authorization と chunk read を経由し、preview 単位の固定同時数キューで実行する。file、reload、表示 mode、encoding の切替または unmount 後に待機処理を開始せず、実行中の stale read も次の chunk へ進めない。表示を継続する切替では resolver identity を current generation へ更新し、同じ source も再解決する
+- resolving、loading、error を visible state として表示する
 
 ## Non Goals
 
 - CommonMark 完全互換
-- テーブル構文
-- ネストした list の厳密再現
 - HTML 埋め込み
-- 数式
 
 ## Rendering Policy
 
-- まず block を切り分ける
-- block 内では inline token を解釈する
-- 改行は視認性優先で保持する
-- インラインコードは pill 風に表示する
-- コードフェンスは dark panel で表示する
-- Markdown link は chip 風に表示し、クリックで開けるようにする
+- message と file preview は同じ component mapping を使う
+- 呼び出し元は path open と local image resolution の context だけを注入する
+- Markdown file preview は Preview を既定とし、Source は file preview 側が切り替える
 
 ## Safety
 
-- `dangerouslySetInnerHTML` は使わない
-- 文字列をアプリ側で限定的に parse して React element へ変換する
+- user-provided SVG や未 sanitization の HTML へ `dangerouslySetInnerHTML` を使わない。Mermaid は strict mode で生成した projection に限り、既存の専用 renderer 境界で挿入する
+- user-provided SVG を inline render しない
 
 ## Related Documents
 

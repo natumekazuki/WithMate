@@ -58,6 +58,20 @@ import type {
 } from "../src/companion-review-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
+import type { SessionSidePane } from "../src/session-side-pane.js";
+import type {
+  SessionDirectoryEntry,
+  SessionDirectoryRequest,
+  SessionFileChunkRequest,
+  SessionFileChunkResult,
+  SessionFileDescriptor,
+  SessionFileOpenRequest,
+  SessionFileResourceRequest,
+  SessionFileRoot,
+  WorkspaceChangesResult,
+  WorkspaceFileDiffRequest,
+  WorkspaceFileDiffResult,
+} from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
 import type {
@@ -67,6 +81,7 @@ import type {
   DeleteSessionsResult,
   ResetAppDatabaseRequest,
   SavePastedSessionFileRequest,
+  OpenPathResult,
 } from "../src/withmate-window-types.js";
 import type {
   CreateMateInput,
@@ -111,7 +126,7 @@ export type MainIpcWindowDepsArgs = {
   savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string>;
   openSessionFilesDirectory(sessionId: string): Promise<void>;
   openSessionFilesTerminal(sessionId: string): Promise<void>;
-  openPathTarget(target: string, options?: OpenPathOptions): Promise<void>;
+  openPathTarget(target: string, options?: OpenPathOptions): Promise<OpenPathResult>;
   openAppLogFolder(): Promise<void>;
   openCrashDumpFolder(): Promise<void>;
   openSessionTerminal(sessionId: string): Promise<void>;
@@ -131,7 +146,7 @@ export type MainIpcCatalogDepsArgs = {
 export type MainIpcSettingsDepsArgs = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
-  updateSessionRightPaneVisibility(isVisible: boolean): Awaitable<AppSettings>;
+  updateSessionSidePane(sidePane: SessionSidePane): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
@@ -189,6 +204,14 @@ export type MainIpcSessionQueryDepsArgs = {
   listOpenSessionWindowIds(): string[];
   listOpenCompanionReviewWindowIds(): string[];
   getSession(sessionId: string): Awaitable<Session | null>;
+  getSessionFileExplorerOwnerSessionId(sessionId: string): Awaitable<string | null>;
+  listSessionFileRoots(sessionId: string): Awaitable<SessionFileRoot[]>;
+  listSessionDirectory(request: SessionDirectoryRequest): Awaitable<SessionDirectoryEntry[]>;
+  inspectSessionFile(request: SessionFileResourceRequest): Awaitable<SessionFileDescriptor>;
+  readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
+  openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
+  listWorkspaceChanges(sessionId: string): Awaitable<WorkspaceChangesResult>;
+  getWorkspaceFileDiff(request: WorkspaceFileDiffRequest): Awaitable<WorkspaceFileDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
@@ -358,7 +381,7 @@ export function createMainIpcRegistrationDeps(
     exportModelCatalogToFile: args.catalog.exportModelCatalogToFile,
     getAppSettings: args.settings.getAppSettings,
     updateAppSettings: args.settings.updateAppSettings,
-    updateSessionRightPaneVisibility: args.settings.updateSessionRightPaneVisibility,
+    updateSessionSidePane: args.settings.updateSessionSidePane,
     getAppDatabaseDiagnostics: args.settings.getAppDatabaseDiagnostics,
     getMemoryV6Diagnostics: args.settings.getMemoryV6Diagnostics,
     installMemoryV6CliShim: args.settings.installMemoryV6CliShim,
@@ -391,6 +414,14 @@ export function createMainIpcRegistrationDeps(
     listOpenSessionWindowIds: args.sessionQuery.listOpenSessionWindowIds,
     listOpenCompanionReviewWindowIds: args.sessionQuery.listOpenCompanionReviewWindowIds,
     getSession: args.sessionQuery.getSession,
+    getSessionFileExplorerOwnerSessionId: args.sessionQuery.getSessionFileExplorerOwnerSessionId,
+    listSessionFileRoots: args.sessionQuery.listSessionFileRoots,
+    listSessionDirectory: args.sessionQuery.listSessionDirectory,
+    inspectSessionFile: args.sessionQuery.inspectSessionFile,
+    readSessionFileChunk: args.sessionQuery.readSessionFileChunk,
+    openSessionFile: args.sessionQuery.openSessionFile,
+    listWorkspaceChanges: args.sessionQuery.listWorkspaceChanges,
+    getWorkspaceFileDiff: args.sessionQuery.getWorkspaceFileDiff,
     getSessionMessageArtifact: args.sessionQuery.getSessionMessageArtifact,
     getDiffPreview: args.sessionQuery.getDiffPreview,
     previewComposerInput: args.sessionQuery.previewComposerInput,

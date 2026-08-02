@@ -137,10 +137,25 @@ import {
   resolveComposerPreviewDisplay,
 } from "./composer-preview-config.js";
 import {
-  useSessionContextRail,
+  useSessionSidePanes,
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
-import { persistSessionRightPaneVisibility } from "./session-right-pane-preference.js";
+import { persistSessionSidePane } from "./session-side-pane-preference.js";
+import type { SessionSidePane } from "./session-side-pane.js";
+import { SessionFileExplorerPane } from "./file-explorer/SessionFileExplorerPane.js";
+import { SessionDiffPreview, SessionFilePreview } from "./file-explorer/SessionFilePreview.js";
+import { WorkspaceChangesPane } from "./file-explorer/WorkspaceChangesPane.js";
+import type {
+  SessionFileResourceRequest,
+  WorkspaceChangeScope,
+} from "./file-explorer/file-explorer-contract.js";
+import { projectWorkspaceFileDiffAvailability } from "./file-explorer/file-preview-utils.js";
+import {
+  acknowledgePreviewChatMessageCount,
+  beginPreviewChatActivity,
+  endPreviewChatActivity,
+  observePreviewChatMessageCount,
+} from "./file-explorer/preview-chat-activity.js";
 import {
   applyOptimisticSessionRunUpdate,
   applyResolvedSessionRunUpdate,
@@ -152,6 +167,7 @@ import {
 } from "./session-live-run-state.js";
 import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
+import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
@@ -437,6 +453,20 @@ export default function AgentSessionWindowApp() {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
+  const [selectedFilePreview, setSelectedFilePreview] = useState<SessionFileResourceRequest | null>(null);
+  const [selectedFileDiffScopes, setSelectedFileDiffScopes] = useState<WorkspaceChangeScope[]>([]);
+  const [selectedFileDiffAvailabilityMessage, setSelectedFileDiffAvailabilityMessage] = useState("");
+  const [fileExplorerTab, setFileExplorerTab] = useState<"files" | "changes">("files");
+  const [workspaceDiffPreview, setWorkspaceDiffPreview] = useState<{
+    sessionId: string;
+    relativePath: string;
+    scope: WorkspaceChangeScope;
+    generation: number;
+    patch: string;
+  } | null>(null);
+  const [workspaceDiffLoadingScope, setWorkspaceDiffLoadingScope] = useState<WorkspaceChangeScope | null>(null);
+  const [previewChatActivity, setPreviewChatActivity] = useState(() => endPreviewChatActivity());
+  const [inlinePathFeedback, setInlinePathFeedback] = useState("");
   const [liveRunState, setLiveRunState] = useState<OwnedLiveSessionRunState>({ ownerSessionId: null, state: null });
   const [liveAssistantBridge, setLiveAssistantBridge] = useState<LiveAssistantProjection | null>(null);
   const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] = useState<ProviderOwnedQuotaTelemetry>({
@@ -492,6 +522,7 @@ export default function AgentSessionWindowApp() {
   const auxiliarySessionSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const auxiliaryLoadRevisionRef = useRef(0);
   const mainComposerCaretRef = useRef(0);
+  const workspaceDiffRequestRevisionRef = useRef(0);
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
 
   useEffect(() => {
@@ -564,8 +595,8 @@ export default function AgentSessionWindowApp() {
     [companionSessions, openCompanionReviewWindowIds],
   );
   const selectedSessionId = selectedSession?.id ?? null;
-  const handleContextRailVisibilityChange = useCallback((isVisible: boolean) => {
-    void persistSessionRightPaneVisibility(withmateApi, isVisible);
+  const handleSidePaneChange = useCallback((sidePane: SessionSidePane) => {
+    void persistSessionSidePane(withmateApi, sidePane);
   }, [withmateApi]);
   useEffect(() => {
     let active = true;
@@ -611,15 +642,234 @@ export default function AgentSessionWindowApp() {
     sessionWorkbenchRef,
     sessionWorkbenchStyle,
     isContextRailVisible,
+    isFilesPaneVisible,
     isContextRailResizing,
+    isFilesPaneResizing,
     handleStartContextRailResize,
+    handleStartFilesPaneResize,
     handleToggleContextRailVisibility,
-  } = useSessionContextRail({
+    handleToggleFilesPaneVisibility,
+  } = useSessionSidePanes({
     ownerKey: selectedSessionId,
-    initialContextRailVisibility: isAppSettingsLoaded ? appSettings.sessionRightPaneVisible : null,
-    onContextRailVisibilityChange: handleContextRailVisibilityChange,
+    initialSidePane: isAppSettingsLoaded ? appSettings.sessionSidePane : null,
+    onSidePaneChange: handleSidePaneChange,
   });
   const activeRunSessionId = activeAuxiliarySession?.id ?? selectedSessionId;
+  const activeRunMessageCount = activeAuxiliarySession?.messages.length ?? selectedSession?.messages.length ?? 0;
+  const isCentralPreviewActive = selectedFilePreview !== null || workspaceDiffPreview !== null;
+  const beginCentralPreviewIfNeeded = useCallback(() => {
+    if (!isCentralPreviewActive && activeRunSessionId) {
+      setPreviewChatActivity(beginPreviewChatActivity(activeRunSessionId, activeRunMessageCount));
+    }
+  }, [activeRunMessageCount, activeRunSessionId, isCentralPreviewActive]);
+  const closeCentralPreview = useCallback(() => {
+    workspaceDiffRequestRevisionRef.current += 1;
+    setWorkspaceDiffLoadingScope(null);
+    setWorkspaceDiffPreview(null);
+    setSelectedFileDiffAvailabilityMessage("");
+    setSelectedFilePreview(null);
+    setPreviewChatActivity(endPreviewChatActivity());
+  }, []);
+  useEffect(() => {
+    if (!isCentralPreviewActive || !activeRunSessionId) {
+      setPreviewChatActivity((current) => (
+        current.ownerSessionId === null ? current : endPreviewChatActivity()
+      ));
+      return;
+    }
+
+    setPreviewChatActivity((current) => observePreviewChatMessageCount(
+      current,
+      activeRunSessionId,
+      activeRunMessageCount,
+    ));
+  }, [activeRunMessageCount, activeRunSessionId, isCentralPreviewActive]);
+  useEffect(() => {
+    workspaceDiffRequestRevisionRef.current += 1;
+    setSelectedFilePreview((current) => current?.sessionId === activeRunSessionId ? current : null);
+    setSelectedFileDiffScopes([]);
+    setSelectedFileDiffAvailabilityMessage("");
+    setWorkspaceDiffPreview(null);
+    setWorkspaceDiffLoadingScope(null);
+  }, [activeRunSessionId]);
+  useEffect(() => {
+    let active = true;
+    setSelectedFileDiffScopes([]);
+    setSelectedFileDiffAvailabilityMessage("");
+    if (
+      !withmateApi ||
+      !activeRunSessionId ||
+      !selectedFilePreview ||
+      selectedFilePreview.rootId !== "workspace"
+    ) {
+      return () => {
+        active = false;
+      };
+    }
+    void withmateApi.listWorkspaceChanges(activeRunSessionId).then((result) => {
+      if (!active) {
+        return;
+      }
+      const availability = projectWorkspaceFileDiffAvailability(result, selectedFilePreview.relativePath);
+      setSelectedFileDiffScopes(availability.scopes);
+      setSelectedFileDiffAvailabilityMessage(availability.message);
+    }).catch(() => {
+      if (active) {
+        setSelectedFileDiffScopes([]);
+        setSelectedFileDiffAvailabilityMessage("");
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [activeRunSessionId, selectedFilePreview, withmateApi]);
+  const handleOpenWorkspaceFile = useCallback((relativePath: string) => {
+    if (!activeRunSessionId) {
+      return;
+    }
+    workspaceDiffRequestRevisionRef.current += 1;
+    beginCentralPreviewIfNeeded();
+    setWorkspaceDiffLoadingScope(null);
+    setWorkspaceDiffPreview(null);
+    setSelectedFileDiffAvailabilityMessage("");
+    setSelectedFilePreview({
+      sessionId: activeRunSessionId,
+      rootId: "workspace",
+      relativePath,
+    });
+  }, [activeRunSessionId, beginCentralPreviewIfNeeded]);
+  const handleShowWorkspaceDiff = useCallback((
+    relativePath: string,
+    scope: WorkspaceChangeScope,
+  ): Promise<string | null> => {
+    if (!withmateApi || !activeRunSessionId) {
+      return Promise.resolve("Git diff is not available for this session.");
+    }
+    const revision = workspaceDiffRequestRevisionRef.current + 1;
+    workspaceDiffRequestRevisionRef.current = revision;
+    setWorkspaceDiffLoadingScope(scope);
+    return withmateApi.getWorkspaceFileDiff({
+      sessionId: activeRunSessionId,
+      relativePath,
+      scope,
+    }).then((result) => {
+      if (workspaceDiffRequestRevisionRef.current !== revision) {
+        return null;
+      }
+      if (result.status !== "ok") {
+        return result.message;
+      }
+      beginCentralPreviewIfNeeded();
+      setWorkspaceDiffPreview({
+        sessionId: activeRunSessionId,
+        relativePath: result.relativePath,
+        scope: result.scope,
+        generation: revision,
+        patch: result.patch,
+      });
+      return null;
+    }).catch((error) => (
+      workspaceDiffRequestRevisionRef.current === revision
+        ? error instanceof Error ? error.message : "Git diff failed."
+        : null
+    )).finally(() => {
+      if (workspaceDiffRequestRevisionRef.current === revision) {
+        setWorkspaceDiffLoadingScope(null);
+      }
+    });
+  }, [activeRunSessionId, beginCentralPreviewIfNeeded, withmateApi]);
+  const handleOpenSelectedFileDiff = useCallback(async (scope: WorkspaceChangeScope): Promise<string | null> => {
+    if (!withmateApi || !activeRunSessionId || !selectedFilePreview || selectedFilePreview.rootId !== "workspace") {
+      return "Git Diff is available for Workspace files only.";
+    }
+    const revision = workspaceDiffRequestRevisionRef.current + 1;
+    workspaceDiffRequestRevisionRef.current = revision;
+    const request = { ...selectedFilePreview };
+    setWorkspaceDiffLoadingScope(scope);
+    try {
+      const status = await withmateApi.listWorkspaceChanges(activeRunSessionId);
+      if (workspaceDiffRequestRevisionRef.current !== revision) {
+        return null;
+      }
+      if (status.status !== "ok") {
+        return status.message;
+      }
+      const change = status.entries.find((entry) => entry.relativePath === request.relativePath);
+      if (!change) {
+        return "This file has no Git changes.";
+      }
+      if (change.kinds[scope] === "untracked") {
+        return "Untracked files do not have a Git diff yet.";
+      }
+      if (!change.scopes.includes(scope)) {
+        return "This file is no longer changed in the selected Git scope.";
+      }
+      const result = await withmateApi.getWorkspaceFileDiff({
+        sessionId: activeRunSessionId,
+        relativePath: request.relativePath,
+        scope,
+      });
+      if (workspaceDiffRequestRevisionRef.current !== revision) {
+        return null;
+      }
+      if (result.status !== "ok") {
+        return result.message;
+      }
+      setWorkspaceDiffPreview({
+        sessionId: activeRunSessionId,
+        relativePath: result.relativePath,
+        scope: result.scope,
+        generation: revision,
+        patch: result.patch,
+      });
+      return null;
+    } catch (error) {
+      return workspaceDiffRequestRevisionRef.current === revision
+        ? error instanceof Error ? error.message : "Git diff failed."
+        : null;
+    } finally {
+      if (workspaceDiffRequestRevisionRef.current === revision) {
+        setWorkspaceDiffLoadingScope(null);
+      }
+    }
+  }, [activeRunSessionId, selectedFilePreview, withmateApi]);
+  const handleReloadWorkspaceDiff = useCallback(async (): Promise<string | null> => {
+    if (!withmateApi || !workspaceDiffPreview || workspaceDiffPreview.sessionId !== activeRunSessionId) {
+      return "Git diff is no longer available for this session.";
+    }
+    const revision = workspaceDiffRequestRevisionRef.current + 1;
+    workspaceDiffRequestRevisionRef.current = revision;
+    setWorkspaceDiffLoadingScope(workspaceDiffPreview.scope);
+    try {
+      const result = await withmateApi.getWorkspaceFileDiff({
+        sessionId: workspaceDiffPreview.sessionId,
+        relativePath: workspaceDiffPreview.relativePath,
+        scope: workspaceDiffPreview.scope,
+      });
+      if (workspaceDiffRequestRevisionRef.current !== revision) {
+        return null;
+      }
+      if (result.status !== "ok") {
+        return result.message;
+      }
+      setWorkspaceDiffPreview({
+        sessionId: workspaceDiffPreview.sessionId,
+        relativePath: result.relativePath,
+        scope: result.scope,
+        generation: revision,
+        patch: result.patch,
+      });
+      return null;
+    } catch (error) {
+      return workspaceDiffRequestRevisionRef.current === revision
+        ? error instanceof Error ? error.message : "Git diff failed."
+        : null;
+    } finally {
+      if (workspaceDiffRequestRevisionRef.current === revision) {
+        setWorkspaceDiffLoadingScope(null);
+      }
+    }
+  }, [activeRunSessionId, withmateApi, workspaceDiffPreview]);
   const selectedSessionLiveRun = useMemo(
     () => (activeRunSessionId !== null && liveRunState.ownerSessionId === activeRunSessionId ? liveRunState.state : null),
     [activeRunSessionId, liveRunState.ownerSessionId, liveRunState.state],
@@ -1732,6 +1982,13 @@ export default function AgentSessionWindowApp() {
       updateLiveRunState: (update) => setLiveRunState(update),
       applyRunningSession: (runningSession) => setSessions([runningSession]),
     });
+    if (isCentralPreviewActive) {
+      setPreviewChatActivity((current) => acknowledgePreviewChatMessageCount(
+        current,
+        updatedSession.id,
+        updatedSession.messages.length,
+      ));
+    }
     logSessionRunStuckInvestigation("renderer.optimistic-running-applied", {
       sessionId: updatedSession.id,
       elapsedMs: Date.now() - investigationStartedAt,
@@ -2276,11 +2533,10 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    try {
-      await withmateApi.openPath(target, { baseDirectory: selectedSession?.workspacePath ?? null });
-    } catch {
-      // 読みやすさ改善が主目的なので、開けない場合は UI を壊さない
-    }
+    setInlinePathFeedback(await resolveOpenPathFeedback(
+      () => withmateApi.openPath(target, { baseDirectory: selectedSession?.workspacePath ?? null }),
+      "The path could not be opened.",
+    ));
   };
 
   const handleCancelAuxiliaryRun = async () => {
@@ -2437,6 +2693,15 @@ export default function AgentSessionWindowApp() {
           runningSession,
         ),
       }),
+      afterRunningSessionApplied: (runningSession) => {
+        if (isCentralPreviewActive) {
+          setPreviewChatActivity((current) => acknowledgePreviewChatMessageCount(
+            current,
+            runningSession.id,
+            runningSession.messages.length,
+          ));
+        }
+      },
       ...createAuxiliarySessionSendResultAppliers({
         activeSessionRef: activeAuxiliarySessionRef,
         setActiveSession: setActiveAuxiliarySession,
@@ -2793,11 +3058,10 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    try {
-      await withmateApi.openPath(selectedSession.workspacePath);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "Explorer を開けなかったよ。");
-    }
+    showOpenPathFeedback(await resolveOpenPathFeedback(
+      () => withmateApi.openPath(selectedSession.workspacePath),
+      "Explorer を開けなかったよ。",
+    ));
   };
 
   const handleOpenSessionFilesTerminal = createSessionFilesOpenHandler({
@@ -2941,10 +3205,86 @@ export default function AgentSessionWindowApp() {
     return <ChatWindowStatusScreen message="Session が選択されていません。Home Window から session を開いてね。" />;
   }
 
+  const fileExplorerRootsRevision = [
+    activeRunSessionId ?? "",
+    ...(activeAuxiliarySession?.allowedAdditionalDirectories ?? selectedSession.allowedAdditionalDirectories),
+  ].join("\u0000");
+  const fileExplorerPane = (
+    <SessionFileExplorerPane
+      api={withmateApi}
+      sessionId={activeRunSessionId}
+      enabled={isFilesPaneVisible}
+      rootsRevision={fileExplorerRootsRevision}
+      selectedFile={selectedFilePreview}
+      activeTab={fileExplorerTab}
+      onActiveTabChange={setFileExplorerTab}
+      onOpenFile={(request) => {
+        workspaceDiffRequestRevisionRef.current += 1;
+        beginCentralPreviewIfNeeded();
+        setWorkspaceDiffLoadingScope(null);
+        setWorkspaceDiffPreview(null);
+        setSelectedFileDiffAvailabilityMessage("");
+        setSelectedFilePreview(request);
+      }}
+      changesContent={(
+        <WorkspaceChangesPane
+          api={withmateApi}
+          sessionId={activeRunSessionId}
+          enabled={isFilesPaneVisible && fileExplorerTab === "changes"}
+          onOpenFile={handleOpenWorkspaceFile}
+          onOpenDiff={handleShowWorkspaceDiff}
+        />
+      )}
+    />
+  );
+  const previewChatNotice = liveApprovalRequest
+    ? "Approval required"
+    : liveElicitationRequest
+      ? "Input required"
+      : renderedIsRunning
+        ? "Running"
+        : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
+          ? "New messages"
+          : "";
+  const actionDockChatNotice = liveApprovalRequest
+    ? "Approval required"
+    : liveElicitationRequest
+      ? "Input required"
+      : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
+        ? "New messages"
+        : "";
+  const filePreviewContent = workspaceDiffPreview ? (
+    <SessionDiffPreview
+      title={`${workspaceDiffPreview.relativePath} · ${workspaceDiffPreview.scope === "staged" ? "Staged" : "Working Tree"}`}
+      previewRevision={workspaceDiffPreview.generation}
+      patch={workspaceDiffPreview.patch}
+      onClose={closeCentralPreview}
+      onCopyText={handleCopyMessageText}
+      onReload={handleReloadWorkspaceDiff}
+      reloadPending={workspaceDiffLoadingScope === workspaceDiffPreview.scope}
+      chatNotice={previewChatNotice}
+    />
+  ) : selectedFilePreview ? (
+    <SessionFilePreview
+      api={withmateApi}
+      request={selectedFilePreview}
+      onClose={closeCentralPreview}
+      onCopyText={handleCopyMessageText}
+      diffScopes={selectedFileDiffScopes}
+      diffAvailabilityMessage={selectedFileDiffAvailabilityMessage}
+      onOpenDiff={selectedFileDiffScopes.length > 0 ? handleOpenSelectedFileDiff : undefined}
+      diffLoadingScope={workspaceDiffLoadingScope}
+      chatNotice={previewChatNotice}
+    />
+  ) : undefined;
+
   return (
     <>
       <ChatWindow
       {...buildAgentSessionChatWindowProps({
+        mainContent: filePreviewContent,
+        leftPane: fileExplorerPane,
+        isFilesPaneVisible,
         selectedSession: renderedSession,
         selectedSessionCharacter,
         displayedMessages: renderedMessages,
@@ -2970,6 +3310,7 @@ export default function AgentSessionWindowApp() {
         liveRunAssistantText,
         hasLiveRunAssistantText,
         liveRunErrorMessage: selectedSessionLiveRun?.errorMessage ?? "",
+        inlinePathFeedback,
         pendingMessageGroupId: resolvePendingAuxiliaryMessageGroupId(activeAuxiliarySession),
         isMessageListFollowing,
         retryBanner: activeAuxiliarySession ? null : retryBanner,
@@ -3007,9 +3348,11 @@ export default function AgentSessionWindowApp() {
         actionDockCompactPreview: activeAuxiliarySession
           ? (renderedDraft.trim() || (activeAuxiliarySession.runState === "running" ? "実行中" : "下書きなし"))
           : actionDockCompactPreview,
+        chatNotice: isCentralPreviewActive ? actionDockChatNotice : "",
         attachmentCount: composerPreview.attachments.length,
         isActionDockExpanded,
         isContextRailResizing,
+        isFilesPaneResizing,
         isContextRailVisible,
         latestCommandView,
         runningDetailsEntries,
@@ -3069,6 +3412,7 @@ export default function AgentSessionWindowApp() {
         onResolveLiveApproval: (request, decision) => void handleResolveLiveApproval(request, decision),
         onResolveLiveElicitation: (request, response) => void handleResolveLiveElicitation(request, response),
         onOpenInlinePath: handleOpenInlinePath,
+        onDismissInlinePathFeedback: () => setInlinePathFeedback(""),
         getChangedFilesEmptyText,
         onCopyMessageText: handleCopyMessageText,
         onQuoteMessageText: handleQuoteMessageText,
@@ -3184,7 +3528,9 @@ export default function AgentSessionWindowApp() {
           onSelectedSessionChange: (value) => handleChangeReasoningEffort(value as Session["reasoningEffort"]),
         }),
         onStartContextRailResize: handleStartContextRailResize,
+        onStartFilesPaneResize: handleStartFilesPaneResize,
         onToggleContextRailVisibility: handleToggleContextRailVisibility,
+        onToggleFilesPaneVisibility: handleToggleFilesPaneVisibility,
         onCycleContextPaneTab: handleCycleContextPaneTab,
         onOpenCompanionReview: (sessionId) => void withmateApi?.openCompanionReviewWindow(sessionId),
         onCloseDiff: () => setSelectedDiff(null),

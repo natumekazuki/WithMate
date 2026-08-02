@@ -87,10 +87,11 @@ describe("approval mode helpers", () => {
     assert.equal(getProviderAppSettings(normalized, "codex").skillRootPath, "C:/skills/codex");
   });
 
-  it("right pane 表示設定は初期値を非表示とし、boolean だけを受け入れる", () => {
-    assert.equal(createDefaultAppSettings().sessionRightPaneVisible, false);
-    assert.equal(normalizeAppSettings({ sessionRightPaneVisible: true }).sessionRightPaneVisible, true);
-    assert.equal(normalizeAppSettings({ sessionRightPaneVisible: "true" }).sessionRightPaneVisible, false);
+  it("session side pane は初期値を none とし、列挙値だけを受け入れる", () => {
+    assert.equal(createDefaultAppSettings().sessionSidePane, "none");
+    assert.equal(normalizeAppSettings({ sessionSidePane: "files" }).sessionSidePane, "files");
+    assert.equal(normalizeAppSettings({ sessionSidePane: "context" }).sessionSidePane, "context");
+    assert.equal(normalizeAppSettings({ sessionSidePane: true }).sessionSidePane, "none");
   });
 });
 

@@ -10,7 +10,13 @@ export type SavePastedSessionFileRequest = {
 
 export type OpenPathOptions = {
   baseDirectory?: string | null;
+  reveal?: boolean;
 };
+
+export type OpenPathResult =
+  | { status: "opened"; targetType: "external-url" | "local-path"; target: string }
+  | { status: "revealed"; targetType: "local-path"; target: string; message: string }
+  | { status: "not-found" | "failed"; targetType: "external-url" | "local-path" | "unknown"; target: string; message: string };
 
 export const IMAGE_FILE_PICKER_PURPOSES = ["general", "character-icon"] as const;
 

@@ -4,7 +4,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { ChatWindowStatusScreen, ChatWorkbenchSplitter } from "../../src/chat/chat-window.js";
-import { SessionChatScreen } from "../../src/session-components.js";
+import { SessionActionDockCompactRow, SessionChatScreen } from "../../src/session-components.js";
 
 test("ChatWindowStatusScreen は Session 共通 shell で状態表示をレンダリングする", () => {
   const html = renderToStaticMarkup(React.createElement(ChatWindowStatusScreen, { message: "準備しています。" }));
@@ -61,12 +61,13 @@ test("ChatWorkbenchSplitter は右ペインの表示状態を切り替える aff
   assert.match(collapsedHtml, />‹<\/span>/);
 });
 
-test("SessionChatScreen は右ペインを unmount せずにレイアウトから隠す", () => {
+test("SessionChatScreen は左右ペインと chat を unmount せずにレイアウトから隠す", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionChatScreen, {
       mode: "agent",
       header: null,
       messageColumn: React.createElement("div", null, "Messages"),
+      mainContent: React.createElement("div", null, "File Preview"),
       actionDock: React.createElement("div", null, "Composer"),
       splitter: React.createElement("button", { type: "button" }, "Toggle"),
       rightPane: React.createElement("aside", null, "Latest Command"),
@@ -74,7 +75,31 @@ test("SessionChatScreen は右ペインを unmount せずにレイアウトか�
     }),
   );
 
-  assert.match(html, /session-main-grid session-main-grid-right-pane-hidden/);
+  assert.match(html, /class="session-main-grid"/);
+  assert.match(html, /id="session-left-pane" class="session-left-pane-slot" hidden=""/);
   assert.match(html, /id="session-right-pane" class="session-right-pane-slot" hidden=""/);
+  assert.match(html, /class="session-central-surface" hidden=""><div>Messages<\/div><\/div>/);
+  assert.match(html, /class="session-central-surface"><div>File Preview<\/div><\/div>/);
+  assert.match(html, /<div>Composer<\/div>/);
   assert.match(html, /Latest Command/);
+});
+
+test("SessionActionDockCompactRow は preview 中の chat notice を表示する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(SessionActionDockCompactRow, {
+      draft: "",
+      actionDockCompactPreview: "下書きなし",
+      attachmentCount: 0,
+      isRunning: false,
+      chatNotice: "New messages",
+      isSendDisabled: true,
+      showJumpToBottom: false,
+      onExpand() {},
+      onJumpToBottom() {},
+      onSendOrCancel() {},
+    }),
+  );
+
+  assert.match(html, /session-action-dock-compact-badge attention/);
+  assert.match(html, />New messages<\/span>/);
 });

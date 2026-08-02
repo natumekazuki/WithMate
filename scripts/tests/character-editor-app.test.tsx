@@ -224,6 +224,20 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
     await act(async () => {
       button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
     });
+    assert.equal(startInputs.length, 0);
+    assert.match(rootElement.textContent ?? "", /先に変更を保存してから authoring session を開始してください。/);
+
+    await act(async () => {
+      findButtonByText(rootElement, "Save")
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    assert.equal(definitionUpdateCount, 1);
+    assert.equal(metadataUpdates.length, 1);
+
+    await act(async () => {
+      button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
 
     const codexProviderButton = findButtonByText(rootElement, "Codex");
     assert.equal(codexProviderButton.getAttribute("aria-selected"), "true");
@@ -238,15 +252,11 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
       startButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
     });
 
-    assert.equal(startInputs.length, 1);
-    assert.equal(startInputs[0]?.mode, "improve");
-    assert.equal(startInputs[0]?.characterId, "char-1");
-    assert.equal(startInputs[0]?.name, "Muse");
-    assert.equal(startInputs[0]?.userInstruction, "");
-    assert.equal(startInputs[0]?.provider, "copilot");
-    assert.equal(startInputs[0]?.model, undefined);
-    assert.equal(startInputs[0]?.reasoningEffort, undefined);
-    assert.equal(Object.hasOwn(startInputs[0] ?? {}, "iconFilePath"), false);
+    assert.deepEqual(startInputs, [{
+      mode: "improve",
+      characterId: "char-1",
+      provider: "copilot",
+    }]);
 
     currentCharacter = {
       ...currentCharacter,
