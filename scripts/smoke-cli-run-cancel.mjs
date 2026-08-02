@@ -210,13 +210,22 @@ function startArgs(sessionId, idempotencyKey, prompt) {
     idempotencyKey,
     "--content-blocks-json",
     JSON.stringify([{ type: "text", text: prompt }]),
-    "--model",
-    "gpt-5.4",
-    "--reasoning-effort",
-    "medium",
-    "--sandbox-json",
-    sandboxJson,
+    "--provider-settings-json",
+    providerSettingsJson(sandboxJson),
   ];
+}
+
+function providerSettingsJson(sandboxJson) {
+  return JSON.stringify({
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    settings: {
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      approvalPolicy: "never",
+      sandbox: JSON.parse(sandboxJson),
+    },
+  });
 }
 
 function cancelRunWithKey(sessionId, runId, idempotencyKey) {

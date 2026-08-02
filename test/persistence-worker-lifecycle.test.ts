@@ -481,6 +481,49 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       ).ok,
       true,
     );
+    const interactionCommand = {
+      ...scope,
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000327",
+      ephemeralOwnerToken: null,
+      externalConversationId: "conversation-worker-integration",
+      externalExecutionId: "execution-worker-integration",
+      providerId: "provider",
+      definitionVersion: "test-provider-v1",
+      interactionKind: "command_approval",
+      interactionId: "interaction-worker-integration",
+      semanticAction: "accept" as const,
+      canonicalResponseJson:
+        '{"decision":"accept","interactionId":"interaction-worker-integration","kind":"command_approval"}',
+    };
+    const interaction = await repository.admitRunInteractionResponse(interactionCommand);
+    assert.equal(interaction.ok && interaction.value.effectCertainty, "admitted");
+    if (!interaction.ok) assert.fail("Interaction response admission failed");
+    const interactionScope = {
+      responseRefId: interaction.value.responseRefId,
+      sessionId: scope.sessionId,
+      workspaceKey: scope.workspaceKey,
+      runId: scope.runId,
+      interactionId: interactionCommand.interactionId,
+    };
+    assert.equal((await repository.markRunInteractionResponseWriteAttempt(interactionScope)).ok, true);
+    const interactionProbeRequest = {
+      sessionId: scope.sessionId,
+      runId: scope.runId,
+      idempotencyKey: interactionCommand.idempotencyKey,
+      interactionKind: interactionCommand.interactionKind,
+      interactionId: interactionCommand.interactionId,
+      canonicalResponseJson: interactionCommand.canonicalResponseJson,
+    };
+    assert.equal((await recoveryRepository.runInteractionResponseReplayProbe(interactionProbeRequest)).kind, "replay");
+    assert.equal(
+      (
+        await repository.settleRunInteractionResponse({
+          ...interactionScope,
+          outcome: { effectCertainty: "resolved", resolutionCode: "provider_resolved" },
+        })
+      ).ok,
+      true,
+    );
     const inputAdmission = await repository.admitRunInput({
       sessionId: scope.sessionId,
       workspaceKey: scope.workspaceKey,
@@ -652,6 +695,13 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
     const resumedClient = new PersistenceWorkerClient(options);
     await resumedClient.start();
     const resumedRepository = new RepositoryWriteClient(resumedClient);
+    const resumedInteractionProbe = await new RepositoryReadClient(resumedClient).runInteractionResponseReplayProbe(
+      interactionProbeRequest,
+    );
+    assert.equal(
+      resumedInteractionProbe.kind === "replay" && resumedInteractionProbe.value.effectCertainty,
+      "resolved",
+    );
     const resumedInputDeliveries = await new RepositoryReadClient(resumedClient).runInputDeliveriesPage({
       sessionId: scope.sessionId,
       runId: scope.runId,
@@ -664,6 +714,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       invalidatedBindings: 0,
       abortedDispatches: 0,
       settledInputDeliveries: 0,
+      settledInteractionResponses: 0,
       availableChildResults: 0,
       repairedDelegations: 0,
       storedOutputPayloads: 0,
@@ -1497,11 +1548,14 @@ function productionRunAdmission(sessionId: string, _runId: string, idempotencyKe
     run: {
       executionSnapshot: {
         providerId: "provider",
-        model: "test-model",
+        definitionVersion: "test-provider-v1",
         modelSelection: "explicit",
-        reasoning: { effort: "medium" },
-        approval: { policy: "never" },
-        sandbox: { mode: "workspace-write", networkAccess: false },
+        settings: {
+          model: "test-model",
+          reasoningEffort: "medium",
+          approvalPolicy: "never",
+          sandbox: { mode: "workspace-write", networkAccess: false },
+        },
         workspace: {
           key: PRODUCTION_TEST_WORKSPACE.workspaceKey,
           path: PRODUCTION_TEST_WORKSPACE.workspacePath,
@@ -1516,16 +1570,20 @@ function productionRunAdmission(sessionId: string, _runId: string, idempotencyKe
 
 function productionRunProviderRequest() {
   return {
+    providerId: "provider",
+    definitionVersion: "test-provider-v1",
     contentBlocks: [{ type: "text", text: "hello" }],
-    model: "test-model",
-    reasoningEffort: "medium",
-    approvalPolicy: "never",
-    sandboxPolicy: {
-      mode: "workspace-write",
-      networkAccess: false,
-      writableRoots: [PRODUCTION_TEST_WORKSPACE.workspacePath],
+    startTurn: {
+      model: "test-model",
+      reasoningEffort: "medium",
+      approvalPolicy: "never",
+      sandboxPolicy: {
+        mode: "workspace-write",
+        networkAccess: false,
+        writableRoots: [PRODUCTION_TEST_WORKSPACE.workspacePath],
+      },
+      workspacePath: PRODUCTION_TEST_WORKSPACE.workspacePath,
     },
-    workspacePath: PRODUCTION_TEST_WORKSPACE.workspacePath,
   } as const;
 }
 
@@ -1560,11 +1618,14 @@ function productionChildStart(parentSessionId: string, parentRunId: string, idem
       id: "run-worker-child",
       executionSnapshot: {
         providerId: "provider",
-        model: "test-model",
+        definitionVersion: "test-provider-v1",
         modelSelection: "explicit",
-        reasoning: { effort: "medium" },
-        approval: { mode: "on-request" },
-        sandbox: { mode: "workspace-write" },
+        settings: {
+          model: "test-model",
+          reasoningEffort: "medium",
+          approvalPolicy: "on-request",
+          sandbox: { mode: "workspace-write", networkAccess: false },
+        },
         workspace: { key: PRODUCTION_TEST_WORKSPACE.workspaceKey },
         character: { id: "character" },
       },

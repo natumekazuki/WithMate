@@ -163,6 +163,230 @@ test("authorization rejection prevents every Repository and live activity call",
   assert.deepEqual(calls, ["authorize"]);
 });
 
+test("Run interactions authorizes exact read scope and projects only active current-version public state", async () => {
+  const authorizationTargets: unknown[] = [];
+  const readsSeen: unknown[] = [];
+  const service = createService({
+    access: allowAccess(authorizationTargets),
+    interactions: {
+      async readInteractions(input) {
+        readsSeen.push(input);
+        return {
+          sessionId: "session-1",
+          runId: "run-1",
+          runVersion: 7,
+          interactions: [
+            {
+              interactionId: "interaction-public",
+              providerId: "codex",
+              definitionVersion: "codex-provider-v1",
+              kind: "codex.command_approval",
+              answerable: true,
+              display: {
+                summary: "Approve command",
+                command: "npm test",
+                availableDecisions: ["accept", "decline", "cancel"],
+              },
+            },
+          ],
+        } as never;
+      },
+    },
+  });
+
+  const response = await service.interactions(request());
+  assert.equal(response.overallStatus, "success");
+  if (response.overallStatus === "success") {
+    assert.deepEqual(response.value, {
+      sessionId: "session-1",
+      runId: "run-1",
+      runVersion: 7,
+      interactions: [
+        {
+          interactionId: "interaction-public",
+          providerId: "codex",
+          definitionVersion: "codex-provider-v1",
+          kind: "codex.command_approval",
+          answerable: true,
+          display: {
+            summary: "Approve command",
+            command: "npm test",
+            availableDecisions: ["accept", "decline", "cancel"],
+          },
+        },
+      ],
+    });
+  }
+  assert.deepEqual(readsSeen, [{ sessionId: "session-1", runId: "run-1", runVersion: 7 }]);
+  assert.deepEqual(authorizationTargets, [
+    {
+      operation: "interactions",
+      access: "read",
+      context: { authorization },
+      target: { kind: "run", sessionId: "session-1", runId: "run-1" },
+    },
+  ]);
+});
+
+test("Run interactions returns an empty versioned snapshot for terminal, absent, or stale live ownership", async () => {
+  let terminalReads = 0;
+  const terminal = createService({
+    reads: reads({ run: repositoryRun("completed") }),
+    interactions: {
+      async readInteractions() {
+        terminalReads += 1;
+        return null;
+      },
+    },
+  });
+  const absent = createService({
+    interactions: {
+      async readInteractions() {
+        return null;
+      },
+    },
+  });
+  const stale = createService({
+    interactions: {
+      async readInteractions() {
+        return { sessionId: "session-1", runId: "run-1", runVersion: 6, interactions: [] };
+      },
+    },
+  });
+
+  for (const response of [
+    await terminal.interactions(request()),
+    await absent.interactions(request()),
+    await stale.interactions(request()),
+  ]) {
+    assert.equal(response.overallStatus, "success");
+    if (response.overallStatus === "success") {
+      assert.deepEqual(response.value, {
+        sessionId: "session-1",
+        runId: "run-1",
+        runVersion: 7,
+        interactions: [],
+      });
+    }
+  }
+  assert.equal(terminalReads, 0);
+});
+
+test("Run interactions rejects unknown request fields and malformed live scope", async () => {
+  const invalidRequest = await createService().interactions({ ...request(), attemptId: "private" } as never);
+  assert.equal(invalidRequest.overallStatus, "failure");
+  if (invalidRequest.overallStatus === "failure") assert.equal(invalidRequest.error.code, "request_invalid");
+
+  const malformed = await createService({
+    interactions: {
+      async readInteractions() {
+        return { sessionId: "session-other", runId: "run-1", runVersion: 7, interactions: [] };
+      },
+    },
+  }).interactions(request());
+  assert.deepEqual(malformed, internalReadFailure());
+
+  const fractionalDisplay = await createService({
+    interactions: {
+      async readInteractions() {
+        return {
+          sessionId: "session-1",
+          runId: "run-1",
+          runVersion: 7,
+          interactions: [
+            {
+              interactionId: "interaction-public",
+              providerId: "codex",
+              definitionVersion: "codex-provider-v1",
+              kind: "codex.mcp_server_form",
+              answerable: true,
+              display: { maxLength: 1.5 },
+            },
+          ],
+        };
+      },
+    },
+  }).interactions(request());
+  assert.deepEqual(fractionalDisplay, internalReadFailure());
+
+  const unsafeSnapshots = [
+    {
+      interactionId: "interaction-public",
+      providerId: "codex",
+      definitionVersion: "codex-provider-v1",
+      kind: "codex.command_approval",
+      answerable: true,
+      display: { summary: "File:///private/secret", command: "npm test" },
+    },
+    {
+      interactionId: "interaction-public",
+      providerId: "codex",
+      definitionVersion: "codex-provider-v1",
+      kind: "codex.command_approval",
+      answerable: true,
+      display: { summary: "Approve command", command: "npm test", rawProviderId: "provider-request-1" },
+    },
+    {
+      interactionId: "interaction-public",
+      providerId: "codex",
+      definitionVersion: "codex-provider-v1",
+      kind: "codex.command_approval",
+      answerable: true,
+      display: { summary: "Approve command", command: "npm test", secret: "token" },
+    },
+    {
+      interactionId: "interaction-public",
+      providerId: "raw-provider-request-1",
+      definitionVersion: "codex-provider-v1",
+      kind: "codex.command_approval",
+      answerable: true,
+      display: { summary: "Approve command", command: "npm test" },
+    },
+  ];
+  for (const snapshot of unsafeSnapshots) {
+    const response = await createService({
+      interactions: {
+        async readInteractions() {
+          return {
+            sessionId: "session-1",
+            runId: "run-1",
+            runVersion: 7,
+            interactions: [snapshot],
+          };
+        },
+      },
+    }).interactions(request());
+    assert.deepEqual(response, internalReadFailure());
+  }
+});
+
+test("Run interactions authorization denial prevents Repository and live owner reads", async () => {
+  const calls: string[] = [];
+  const response = await createService({
+    access: {
+      async authorize() {
+        calls.push("authorize");
+        return { allowed: false, error: { code: "forbidden", message: "denied", retryable: false } };
+      },
+    },
+    reads: reads({
+      sessionGet: async () => {
+        calls.push("sessionGet");
+        return sessionProjection();
+      },
+    }),
+    interactions: {
+      async readInteractions() {
+        calls.push("interactions");
+        return null;
+      },
+    },
+  }).interactions(request());
+  assert.equal(response.overallStatus, "failure");
+  if (response.overallStatus === "failure") assert.equal(response.error.kind, "access");
+  assert.deepEqual(calls, ["authorize"]);
+});
+
 test("Run scope mismatch is rejected and Repository not_found stays a domain rejection", async () => {
   const malformedScope = createService({
     reads: reads({ sessionGet: async () => sessionProjection("other-session") }),
@@ -894,6 +1118,7 @@ function createService(
       return { principal: "owner" };
     },
     ...(overrides.liveActivity === undefined ? {} : { liveActivity: overrides.liveActivity }),
+    ...(overrides.interactions === undefined ? {} : { interactions: overrides.interactions }),
     ...(overrides.clock === undefined ? {} : { clock: overrides.clock }),
     ...(overrides.sleeper === undefined ? {} : { sleeper: overrides.sleeper }),
   });

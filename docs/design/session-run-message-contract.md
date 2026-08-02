@@ -211,7 +211,8 @@ streaming delta を連結した実行中の仮出力。Message ではない。
 - active Run の実行設定は snapshot とし、Session の後続設定変更で書き換えない。
 - terminal Run は再び active state へ戻さない。
 - retry は新しい Run として作り、`retryOfRunId` で元 Run を参照する。
-- execution snapshotはmodelがstartまたはretry requestで明示されたかを`modelSelection`へ記録する。retryでmodelを省略した場合は元Runのmodel値を継承し、その値と`inherited` provenanceをProvider Adapter境界まで渡す。Adapterは元Runのmodelを`thread/resume`と`turn/start`へ指定してcurrent Thread modelから復元するが、catalogの新規選択に必要な`selectable`条件は要求しない。
+- execution snapshotは`providerId`、`definitionVersion`、Provider definitionがcanonicalizeした`settings`、Application所有のworkspace / Character scopeを保持する。modelがstartまたはretry requestで明示されたかを`modelSelection`へ記録し、retryでProvider settings overrideを省略した場合は元Runのenvelopeを継承して`inherited` provenanceをProvider Adapter境界まで渡す。AdapterはBindingを新規作成する`thread/start`を含め、元Runのmodelを`thread/start`、`thread/resume`、`turn/start`へ指定してcurrent Thread modelから復元するが、catalogの新規選択に必要な`selectable`条件は要求しない。
+- 新規Runのcanonical commandは、read-only exact replay probe、Provider live capability preflight、durable admissionの順に処理する。exact replayは現在のProvider runtimeやcatalogへ依存せず既存のdurable outcomeを返す。preflight失敗時は二度目のprobeで競合commitを回収し、未admitならRun、Thread、Turnを作らない。
 - transport 内部の再試行は同じ Run の attempt とし、user Message と Run を重複作成しない。
 - user-visible な partial output、確定した command / file change、または未解決 approval がある場合、外部会話を捨てて無条件に内部再試行しない。
 - `completed` への遷移と、存在する場合の final assistant Message の論理確定は同じ domain transition で行う。
@@ -238,7 +239,7 @@ Run の寿命と、active Run が現在何を待っているかを 1 つの enum
 
 - `phase`: Run の lifecycle と terminal outcome を表す正本。
 - `live activity`: active phase 内の表示・操作用live state。DBには保存しない。
-- live interaction: approval / user input request 本体。実行中だけ request ID ごとにメモリ管理し、解決後の事実だけ RunEvent / RunOutputItem に保存する。
+- live interaction: approval / user input / elicitation request 本体。実行中だけ request ID ごとにメモリ管理し、解決後の事実だけ RunEvent / RunOutputItem に保存する。
 
 ### Run phase
 
@@ -381,12 +382,16 @@ Run が `failed`、`canceled`、`interrupted` へ遷移した場合も、Session
 
 ### Approval / user input
 
-1. Provider request を外部 request ID と Run ID で相関する。
-2. unresolved request は Application Service のlive stateにだけ保持し、live activityを`waiting_approval`または`waiting_input`へ投影する。
-3. CLI / GUI の回答に idempotency key を要求する。
-4. Provider response が解決済みであることを確認する。
-5. 解決後の事実を RunEvent、必要な bounded summary を RunOutputItem に保存し、unresolved request がなくなればlive activityを`running`へ戻す。
-6. runtime hostまたはProvider processの再起動後は未解決requestを回答可能な状態へ復元せず、継続可能な同一Turnとrequestの未解決状態をProviderから証明できない限りRunを`interrupted`へ収束させる。
+1. Provider requestをRun / Attempt / Binding / external execution / connection generationで相関し、WithMate発行のopaque interaction IDへ写像する。
+2. unresolved requestはApplication Serviceのlive stateにだけ保持し、live activityを`waiting_approval`または`waiting_input`へ投影する。
+3. `run interactions`はProvider definition versionに一致するbounded snapshotを返す。回答判断に必要なcommand、path、change集合、permission、question、option、自由入力可否、form schemaをpublic上限内へ完全に投影できないrequestはunavailableとし、切り詰めた表示を`answerable=true`で返さない。command内のworkspace absolute pathは完全に識別できる場合だけ`<workspace>`起点へ置換し、外部absolute pathまたは曖昧なpath表現が残るrequestは回答可能にしない。file changeの表示pathはslash区切りのworkspace相対pathに正規化できる場合だけ公開し、absolute、drive-qualified、parent-relative、Unicode control、bidi control、未知change kindは回答可能なsnapshotへ含めない。Provider item IDはopaque interaction IDへの内部相関にだけ使い、public snapshot、response、diagnosticへ公開しない。Adapter内部ではowner照合とdedupeにだけ保持し、永続payloadへ写さない。`run respond-interaction`はsnapshotと同じkindのclosed response JSONとidempotency keyを要求する。Codex初期definitionの静的なpublic shapeは`schema/providers/codex/interaction-v1.schema.json`を正本とする。
+4. unknown field、unknownまたは不一致kind、`answerable=false`、stale owner、解決済みinteractionをdurable admission前に拒否する。user inputは一意なquestion ID / option label、全questionへの1件回答、questionごとの`allowOther`を照合する。option外の回答は`allowOther=true`の場合だけ2,048 code point以下で受理し、`isSecret=true`はsecure入力経路を実装するまでunavailableとする。MCP formは一意なfield ID、未知fieldなし、required field全件、snapshot固有の`maxLength`を照合する。required fieldがなければacceptの空`values`を許可し、decline / cancelでは値を受理しない。public shapeとProvider settingsのversion境界はADR 015を正本とする。
+5. 同じProvider methodで届くrequestでもdiscriminatorと回答shapeが異なる場合は別kindとして保持する。CodexではMCP tool approvalとMCP server elicitationを分離し、tool approvalのpersist広告をuser未選択の永続grantへ変換しない。
+6. response admission、Run cancel admission、`serverRequest/resolved`、相関したTurn terminalを同じper-Run mutation ownerで直列化する。ownerはcurrent pending handleを検証し、`admitted`をdurable commitした後、同じowner占有中にexact responseの一回送信準備と`write_attempted`へのdurable遷移を確定してからtransport writeへ解放する。
+7. resolved / terminalまたはcancelがownerへ先に受理されていればProvider write前にresponseを拒否する。response admissionが先ならqueued resolved / terminalまたはcancelはwrite attempt後に処理し、cancelを回答効果の防止として扱わない。
+8. response effect certaintyは`admitted`、`write_attempted`、`resolved`、`ambiguous`を区別する。same-key retryは保存済みcertaintyを返し、Provider responseを再送しない。write開始後の切断では後続cancelを許可しても、回答の効果を防止したとは扱わない。
+9. Provider responseが解決済みであることを確認し、解決後の事実をRunEvent、必要なbounded summaryをRunOutputItemへ保存する。unresolved requestがなくなればlive activityを`running`へ戻す。
+10. runtime hostまたはProvider processの再起動後は未解決requestを回答可能な状態へ復元せず、継続可能な同一Turnとrequestの未解決状態をProviderから証明できない限りRunを`interrupted`へ収束させる。
 
 複数pending requestが発生した場合に備え、live activityだけでrequest本体を表現しない。古いrequest ID、timeout済みrequest、別TurnのrequestへDB recordだけを根拠に回答しない。
 
@@ -437,8 +442,8 @@ Provider resume は会話継続の仕組みであり、未完了 Run の成功�
 - active Runへのsupplemental input: `withmate run send-input`
 - cancel: `withmate run cancel`
 - retry: `withmate run retry`
-- approval 回答
-- user input / elicitation 回答
+- pending interaction取得: `withmate run interactions`
+- kind-discriminated interaction回答: `withmate run respond-interaction`
 
 ### Linked Session / Multi-Agent
 
@@ -492,7 +497,7 @@ Auxiliary も Session / Run / Message の共通 contract を使うが、Multi-Ag
 - linked Session へ渡す history、summary、Character snapshot の範囲。
 - Session明示削除とProvider側Thread / Session削除を連動させるか。
 - Copilot ACP の resume、cancel、steer、permission、並行実行から確定する状態 mapping。
-- Codex approval / elicitationのtimeout、重複回答、process切断から確定するremaining recovery mapping。interrupt、steer、explicit assistant phase、completed persistent Threadのprocess再起動後resume、stdio App Server異常終了時の`interrupted`収束は実測済み。
+- Codex approval / user input / elicitationのtimeout、重複回答、process切断から確定するremaining recovery mapping。command / file approval、turn scope permission、feature有効時user input、MCP direct call、MCP tool approvalからserver formを経るmodel Turn round tripは実測済み。interrupt、steer、explicit assistant phase、completed persistent Threadのprocess再起動後resume、stdio App Server異常終了時の`interrupted`収束も実測済み。
 - 将来 1 Session に複数 active Run を許可する場合の branch / merge contract。
 
 ## 検証 Gate
@@ -507,7 +512,7 @@ Auxiliary も Session / Run / Message の共通 contract を使うが、Multi-Ag
 - streaming delta と final item の不一致
 - final output なしの正常完了
 - cancel と terminal event の競合
-- approval 回答と cancel の競合
+- interaction response admissionとcancel admissionの両順序、write開始後切断時の`ambiguous`、same-key retryで再送しないこと
 - non-terminal Run の起動時補正
 - unknown / duplicate / out-of-order Provider event
 - supplemental input の accepted / rejected / ambiguous / aborted と冪等再送

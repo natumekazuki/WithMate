@@ -6,6 +6,7 @@ export type CodexTransportLimits = Readonly<{
   maxRetiredUnsentRequestIds: number;
   maxOutstandingServerRequestIdBytes: number;
   maxQueuedEvents: number;
+  maxQueuedEventBytes: number;
   maxQueuedWriteBytes: number;
   maxStderrBytes: number;
 }>;
@@ -16,6 +17,7 @@ export const CODEX_TRANSPORT_LIMITS: CodexTransportLimits = Object.freeze({
   maxRetiredUnsentRequestIds: 4096,
   maxOutstandingServerRequestIdBytes: 256 * 1024,
   maxQueuedEvents: 128,
+  maxQueuedEventBytes: APPLICATION_RUN_PAYLOAD_LIMITS.codexWireMaxLineBytes * 2,
   maxQueuedWriteBytes: APPLICATION_RUN_PAYLOAD_LIMITS.codexWireMaxLineBytes * 2,
   maxStderrBytes: 64 * 1024,
 });
@@ -27,6 +29,7 @@ export function validateCodexTransportLimits(limits: CodexTransportLimits): Code
     "maxRetiredUnsentRequestIds",
     "maxOutstandingServerRequestIdBytes",
     "maxQueuedEvents",
+    "maxQueuedEventBytes",
     "maxQueuedWriteBytes",
     "maxStderrBytes",
   ] as const satisfies readonly (keyof CodexTransportLimits)[];

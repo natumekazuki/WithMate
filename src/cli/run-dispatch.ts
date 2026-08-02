@@ -49,7 +49,7 @@ export async function dispatchCliRunCommand<TAuthorizationContext>(
           sessionId: command.sessionId,
           idempotencyKey: command.idempotencyKey,
           contentBlocks: command.contentBlocks,
-          execution: command.execution,
+          providerSettings: command.providerSettings,
         },
         options,
       );
@@ -60,7 +60,9 @@ export async function dispatchCliRunCommand<TAuthorizationContext>(
           sessionId: command.sessionId,
           retryOfRunId: command.retryOfRunId,
           idempotencyKey: command.idempotencyKey,
-          ...(command.executionOverrides === undefined ? {} : { executionOverrides: command.executionOverrides }),
+          ...(command.providerSettingsOverride === undefined
+            ? {}
+            : { providerSettingsOverride: command.providerSettingsOverride }),
         },
         options,
       );
@@ -85,8 +87,24 @@ export async function dispatchCliRunCommand<TAuthorizationContext>(
         },
         options,
       );
+    } else if (isCommandFor(command, "respond-interaction")) {
+      response = await dependencies.operations.respondInteraction(
+        {
+          context,
+          sessionId: command.sessionId,
+          runId: command.runId,
+          idempotencyKey: command.idempotencyKey,
+          response: command.response,
+        },
+        options,
+      );
     } else if (isCommandFor(command, "status")) {
       response = await dependencies.operations.status(
+        { context, sessionId: command.sessionId, runId: command.runId },
+        options,
+      );
+    } else if (isCommandFor(command, "interactions")) {
+      response = await dependencies.operations.interactions(
         { context, sessionId: command.sessionId, runId: command.runId },
         options,
       );

@@ -31,6 +31,7 @@ test("adapter snapshots supported operation inputs into immutable exact values",
 
   const startThread = snapshotStartThreadInput({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "workspace-write",
@@ -40,6 +41,7 @@ test("adapter snapshots supported operation inputs into immutable exact values",
   if (!startThread.ok) assert.fail("expected a valid thread/start input");
   assert.equal(Object.isFrozen(startThread.value), true);
   assert.equal(startThread.value.workspacePath, process.cwd());
+  assert.equal(startThread.value.modelSelection, "explicit");
 
   assert.equal(
     snapshotResumeThreadInput({
@@ -100,6 +102,7 @@ test("thread start and resume accept canonical multibyte workspace paths through
 
   const start = snapshotStartThreadInput({
     model: "gpt-5.4",
+    modelSelection: "inherited",
     workspacePath,
     approvalPolicy: "never",
     sandboxMode: "workspace-write",
@@ -202,6 +205,27 @@ test("adapter input validators reject accessors, sparse arrays, aliases, prototy
   Object.assign(customPrototype, { threadId: "thread-1", turnId: "turn-1" });
   assert.deepEqual(snapshotInterruptTurnInput(customPrototype), { ok: false });
   assert.deepEqual(snapshotListModelsInput({ pageSize: 1, future: true }), { ok: false });
+  assert.deepEqual(
+    snapshotStartThreadInput({
+      model: "gpt-5.4",
+      workspacePath: process.cwd(),
+      approvalPolicy: "never",
+      sandboxMode: "read-only",
+      persistence: "persistent",
+    }),
+    { ok: false },
+  );
+  assert.deepEqual(
+    snapshotStartThreadInput({
+      model: "gpt-5.4",
+      modelSelection: "future",
+      workspacePath: process.cwd(),
+      approvalPolicy: "never",
+      sandboxMode: "read-only",
+      persistence: "persistent",
+    }),
+    { ok: false },
+  );
   assert.deepEqual(snapshotResumeThreadInput({ threadId: "thread-1", model: "gpt-5.4", modelSelection: "future" }), {
     ok: false,
   });
@@ -475,10 +499,10 @@ test("item notifications reject an explicitly invalid agentMessage phase", () =>
   assert.equal(classified.kind, "known_invalid");
 });
 
-test("response validators reject schema drift, aggregate overflow, and invalid status payload combinations", () => {
-  assert.deepEqual(decodeModelListResponse({ data: [modelFixture({ future: true })], nextCursor: null }), {
-    ok: false,
-  });
+test("response validators ignore additive schema fields while rejecting aggregate overflow and invalid known values", () => {
+  const additiveModel = decodeModelListResponse({ data: [modelFixture({ future: true })], nextCursor: null });
+  assert.equal(additiveModel.ok, true);
+  if (additiveModel.ok) assert.equal(Object.hasOwn(additiveModel.value.models[0] ?? {}, "future"), false);
   assert.deepEqual(
     decodeModelListResponse({
       data: Array.from({ length: 33 }, (_, index) =>
@@ -517,25 +541,29 @@ test("response validators reject schema drift, aggregate overflow, and invalid s
   );
   assert.deepEqual(decodeThreadStartResponse(threadOperationFixture({ reasoningEffort: "" })), { ok: false });
   assert.equal(decodeThreadStartResponse(threadOperationFixture({ reasoningEffort: null })).ok, true);
-  assert.deepEqual(decodeTurnInterruptResponse({ unexpected: true }), { ok: false });
-  assert.deepEqual(decodeTurnSteerResponse({ turnId: "turn-1", future: true }), { ok: false });
-  assert.deepEqual(
-    classifyCodexNotification("item/completed", {
-      item: {
-        type: "mcpToolCall",
-        id: "mcp",
-        server: "server",
-        tool: "tool",
-        status: "completed",
-        arguments: {},
-        appContext: { connectorId: "connector", templateId: "not-stable" },
-      },
-      threadId: "thread-1",
-      turnId: "turn-1",
-      completedAtMs: 1,
-    }),
-    { kind: "known_invalid", method: "item/completed" },
-  );
+  assert.deepEqual(decodeTurnInterruptResponse({ unexpected: true }), { ok: true, value: {} });
+  assert.deepEqual(decodeTurnSteerResponse({ turnId: "turn-1", future: true }), {
+    ok: true,
+    value: { turnId: "turn-1" },
+  });
+  const additiveMcpItem = classifyCodexNotification("item/completed", {
+    item: {
+      type: "mcpToolCall",
+      id: "mcp",
+      server: "server",
+      tool: "tool",
+      status: "completed",
+      arguments: {},
+      appContext: { connectorId: "connector", templateId: "not-stable" },
+    },
+    threadId: "thread-1",
+    turnId: "turn-1",
+    completedAtMs: 1,
+  });
+  assert.equal(additiveMcpItem.kind, "known");
+  if (additiveMcpItem.kind === "known" && additiveMcpItem.notification.method === "item/completed") {
+    assert.equal(Object.hasOwn(additiveMcpItem.notification.item, "appContext"), false);
+  }
 
   assert.deepEqual(
     decodeModelListResponse({
@@ -669,7 +697,7 @@ test("notification classification separates supported, supported-invalid, and bo
   assert.equal(descriptorReads, 1);
 });
 
-test("known item schemas are exact even when their projection is unsupported", () => {
+test("known item schemas ignore additive fields without weakening required known fields", () => {
   assert.deepEqual(
     classifyCodexNotification("item/completed", {
       item: { type: "hookPrompt" },
@@ -701,17 +729,42 @@ test("known item schemas are exact even when their projection is unsupported", (
       },
     },
   );
-  assert.deepEqual(
+  assert.equal(
     classifyCodexNotification("item/completed", {
-      item: agentMessageFixture({
-        memoryCitation: { entries: [], threadIds: [], future: true },
-      }),
+      item: agentMessageFixture({ memoryCitation: { entries: [], threadIds: [], future: true } }),
       threadId: "thread-1",
       turnId: "turn-1",
       completedAtMs: 1,
-    }),
-    { kind: "known_invalid", method: "item/completed" },
+    }).kind,
+    "known",
   );
+
+  for (const item of [
+    agentMessageFixture({ command: "known sibling field" }),
+    commandExecutionFixture({ text: "known sibling field" }),
+    {
+      type: "fileChange",
+      id: "file-change-add",
+      status: "completed",
+      changes: [{ path: "added.txt", kind: { type: "add", move_path: "renamed.txt" }, diff: "" }],
+    },
+    {
+      type: "fileChange",
+      id: "file-change-delete",
+      status: "completed",
+      changes: [{ path: "deleted.txt", kind: { type: "delete", move_path: "renamed.txt" }, diff: "" }],
+    },
+  ]) {
+    assert.deepEqual(
+      classifyCodexNotification("item/completed", {
+        item,
+        threadId: "thread-1",
+        turnId: "turn-1",
+        completedAtMs: 1,
+      }),
+      { kind: "known_invalid", method: "item/completed" },
+    );
+  }
 
   const collab = {
     type: "collabAgentToolCall",
@@ -759,6 +812,87 @@ test("known item schemas are exact even when their projection is unsupported", (
     }),
     { kind: "known_invalid", method: "item/started" },
   );
+});
+
+test("nested stable protocol variants reject known sibling fields while ignoring future additive fields", () => {
+  assert.deepEqual(
+    decodeThreadStartResponse(
+      threadOperationFixture({ sandbox: { type: "dangerFullAccess", writableRoots: [process.cwd()] } }),
+    ),
+    { ok: false },
+  );
+  assert.equal(
+    decodeThreadStartResponse(threadOperationFixture({ sandbox: { type: "dangerFullAccess", futureField: true } })).ok,
+    true,
+  );
+
+  const cases = [
+    {
+      invalid: commandExecutionFixture({
+        commandActions: [
+          {
+            type: "read",
+            command: "read file",
+            name: "file",
+            path: "file.txt",
+            query: "known search sibling",
+          },
+        ],
+      }),
+      additive: commandExecutionFixture({
+        commandActions: [{ type: "read", command: "read file", name: "file", path: "file.txt", futureField: true }],
+      }),
+    },
+    {
+      invalid: {
+        type: "dynamicToolCall",
+        id: "dynamic-known-sibling",
+        tool: "tool",
+        arguments: {},
+        status: "completed",
+        contentItems: [{ type: "inputText", text: "hello", imageUrl: "https://example.test/image" }],
+      },
+      additive: {
+        type: "dynamicToolCall",
+        id: "dynamic-additive",
+        tool: "tool",
+        arguments: {},
+        status: "completed",
+        contentItems: [{ type: "inputText", text: "hello", futureField: true }],
+      },
+    },
+    {
+      invalid: {
+        type: "webSearch",
+        id: "search-known-sibling",
+        query: "query",
+        action: { type: "openPage", url: "https://example.test", pattern: "known find sibling" },
+      },
+      additive: {
+        type: "webSearch",
+        id: "search-additive",
+        query: "query",
+        action: { type: "openPage", url: "https://example.test", futureField: true },
+      },
+    },
+    {
+      invalid: {
+        type: "userMessage",
+        id: "user-known-sibling",
+        content: [{ type: "text", text: "hello", url: "https://example.test/audio" }],
+      },
+      additive: {
+        type: "userMessage",
+        id: "user-additive",
+        content: [{ type: "text", text: "hello", futureField: true }],
+      },
+    },
+  ];
+
+  for (const fixture of cases) {
+    assert.deepEqual(decodeTurnStartResponse({ turn: turnFixture({ items: [fixture.invalid] }) }), { ok: false });
+    assert.equal(decodeTurnStartResponse({ turn: turnFixture({ items: [fixture.additive] }) }).ok, true);
+  }
 });
 
 test("unknown stable item variants still require a non-empty item ID", () => {
@@ -837,8 +971,8 @@ test("stable usage, warning, and error notifications are known and exact", () =>
     { kind: "known_invalid", method: "thread/tokenUsage/updated" },
   );
   assert.deepEqual(classifyCodexNotification("warning", { message: "warning", future: true }), {
-    kind: "known_invalid",
-    method: "warning",
+    kind: "known",
+    notification: { method: "warning", threadId: null, message: "warning" },
   });
 });
 

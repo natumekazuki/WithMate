@@ -43,6 +43,9 @@ Operations:
   retry             Admit a new Run that reuses a terminal source Run Message
   send-input        Admit and deliver a supplemental user Message to a live Run
   cancel            Request cancellation of an active Run
+  interactions      Read bounded pending live interactions
+  respond-interaction
+                     Admit an exact response to a pending live interaction
   status            Read the persisted Run status
   events            Read a bounded RunEvent page
   follow            Wait for events, terminal closure, or a bounded deadline
@@ -192,14 +195,12 @@ Required options:
   --session-id <session-id>
   --idempotency-key <lowercase-uuid>
   --content-blocks-json <json-array>    Maximum 4096 blocks and 65536 UTF-8 JSON bytes
-  --model <model>
-  --reasoning-effort <effort>
-  --sandbox-json <json-object>
+  --provider-settings-json <json-object>
 
-Sandbox JSON:
-  {"mode":"read-only","networkAccess":false}
-  {"mode":"workspace-write","networkAccess":false}
-  {"mode":"danger-full-access"}
+Complete Codex Provider settings envelope example:
+  {"providerId":"codex","definitionVersion":"codex-provider-v1","settings":{"model":"<model-id>","reasoningEffort":"<supported-effort>","approvalPolicy":"never","sandbox":{"mode":"workspace-write","networkAccess":false}}}
+
+The envelope and its settings are exact. Partial settings and unknown fields are rejected.
 
 Optional options:
   --timeout-ms <1..2147483647>
@@ -212,12 +213,12 @@ Required options:
   --retry-of-run-id <run-id>
   --idempotency-key <lowercase-uuid>
 
-Optional execution overrides:
-  --model <model>
-  --reasoning-effort <effort>
-  --sandbox-json <json-object>
+Optional complete settings replacement:
+  --provider-settings-json <json-object>
 
-Unspecified execution settings are inherited from the source Run.
+If the option is omitted, the complete Provider settings envelope is inherited from the source Run.
+If supplied, it must be a complete same-Provider envelope and replaces the source envelope in full.
+Partial settings merge is not supported.
 The source Message body cannot be changed by retry.
 
 Optional options:
@@ -255,6 +256,37 @@ A terminal target is a successful no-op and does not interrupt the Provider.
 Provider interrupt acceptance is not terminal; use status, events, or follow to observe terminal closure.
 The optional timeout, SIGINT, and client disconnect only bound this request. They neither undo a durable
 cancellation admission nor implicitly cancel server work.
+
+Optional options:
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
+  interactions: `Usage: withmate run interactions [options]
+
+Required options:
+  --session-id <session-id>
+  --run-id <run-id>
+
+Optional options:
+  --timeout-ms <1..2147483647>
+  -h, --help
+`,
+  "respond-interaction": `Usage: withmate run respond-interaction [options]
+
+Required options:
+  --session-id <session-id>
+  --run-id <run-id>
+  --idempotency-key <lowercase-uuid>
+  --response-json <json-object>    Exact {interactionId,kind,payload} object
+
+The response kind must match the pending interaction. Provider-specific response validation is applied by the
+Provider definition at admission. While its idempotency receipt is retained (30 days),
+retrying the same response with the same idempotency key returns its current durable certainty without sending it
+again. After the receipt expires, replay returns idempotency_expired and does not send the response.
+A response with a different idempotency key for the same interaction is rejected before the Provider send.
+A stale, already-resolved, or terminal interaction is also rejected before the Provider send.
+The optional timeout, SIGINT, and client disconnect only bound this client request. They do not undo an admitted
+response or cancel runtime-host work, the live Run, or the Provider connection.
 
 Optional options:
   --timeout-ms <1..2147483647>

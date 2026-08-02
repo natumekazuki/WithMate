@@ -1,9 +1,7 @@
 import { ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS } from "../shared/allowed-additional-directories.js";
-import {
-  APPLICATION_RUN_LIMITS,
-  type ApplicationRunExecutionOverrides,
-  type ApplicationRunExecutionSettings,
-} from "../shared/application-run-model.js";
+import { APPLICATION_RUN_LIMITS, type ApplicationRunInteractionJsonValue } from "../shared/application-run-model.js";
+import { APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS } from "../shared/application-run-interaction-limits.js";
+import type { ProviderSettingsEnvelope } from "../shared/provider-settings.js";
 import {
   APPLICATION_RUN_OUTPUT_CATEGORIES,
   APPLICATION_RUN_OUTPUT_LIMITS,
@@ -52,6 +50,7 @@ export const CLI_RUN_LIMITS = {
   followDefaultPollMs: APPLICATION_RUN_LIMITS.followDefaultPollMs,
   followMinPollMs: APPLICATION_RUN_LIMITS.followMinPollMs,
   followMaxPollMs: APPLICATION_RUN_LIMITS.followMaxPollMs,
+  interactionsMaxItems: APPLICATION_RUN_LIMITS.interactionsMaxItems,
   outputsDefaultItems: APPLICATION_RUN_OUTPUT_LIMITS.outputsDefaultItems,
   outputsMaxItems: APPLICATION_RUN_OUTPUT_LIMITS.outputsMaxItems,
   previewDefaultBytes: APPLICATION_RUN_OUTPUT_LIMITS.previewDefaultBytes,
@@ -61,6 +60,7 @@ export const CLI_RUN_LIMITS = {
   maxDestinationPathLength: APPLICATION_RUN_OUTPUT_LIMITS.maxDestinationPathLength,
   maxInlineContentBlocks: RUN_MUTATION_INLINE_CONTENT_LIMITS.maxBlocks,
   maxInlineContentJsonBytes: RUN_MUTATION_INLINE_CONTENT_LIMITS.maxJsonBytes,
+  maxInteractionResponseJsonBytes: APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS.maxCollectionWireBytes,
 } as const;
 
 export const CLI_RUN_OUTPUT_CATEGORIES = APPLICATION_RUN_OUTPUT_CATEGORIES;
@@ -99,7 +99,9 @@ export type CliRunOperation =
   | "retry"
   | "send-input"
   | "cancel"
+  | "respond-interaction"
   | "status"
+  | "interactions"
   | "events"
   | "follow"
   | "output-counts"
@@ -222,7 +224,7 @@ export type CliRunStartCommand = CliTimeoutOption &
     sessionId: string;
     idempotencyKey: string;
     contentBlocks: readonly TextContentBlock[];
-    execution: ApplicationRunExecutionSettings;
+    providerSettings: ProviderSettingsEnvelope;
   }>;
 
 export type CliRunRetryCommand = CliTimeoutOption &
@@ -231,7 +233,7 @@ export type CliRunRetryCommand = CliTimeoutOption &
     sessionId: string;
     retryOfRunId: string;
     idempotencyKey: string;
-    executionOverrides?: ApplicationRunExecutionOverrides;
+    providerSettingsOverride?: ProviderSettingsEnvelope;
   }>;
 
 export type CliRunSendInputCommand = CliTimeoutOption &
@@ -256,6 +258,26 @@ export type CliRunStatusCommand = CliTimeoutOption &
     identity: CliCommandIdentity<"status">;
     sessionId: string;
     runId: string;
+  }>;
+
+export type CliRunInteractionsCommand = CliTimeoutOption &
+  Readonly<{
+    identity: CliCommandIdentity<"interactions">;
+    sessionId: string;
+    runId: string;
+  }>;
+
+export type CliRunRespondInteractionCommand = CliTimeoutOption &
+  Readonly<{
+    identity: CliCommandIdentity<"respond-interaction">;
+    sessionId: string;
+    runId: string;
+    idempotencyKey: string;
+    response: Readonly<{
+      interactionId: string;
+      kind: string;
+      payload: ApplicationRunInteractionJsonValue;
+    }>;
   }>;
 
 export type CliRunEventsCommand = CliTimeoutOption &
@@ -323,7 +345,9 @@ export type CliValidatedRunCommand =
   | CliRunRetryCommand
   | CliRunSendInputCommand
   | CliRunCancelCommand
+  | CliRunRespondInteractionCommand
   | CliRunStatusCommand
+  | CliRunInteractionsCommand
   | CliRunEventsCommand
   | CliRunFollowCommand
   | CliRunOutputCountsCommand
@@ -436,6 +460,7 @@ export type CliApplicationError =
         | "not_found"
         | "reference_invalid"
         | "lifecycle_conflict"
+        | "provider_capability_unavailable"
         | "session_busy"
         | "insufficient_disk_space"
         | "idempotency_conflict"
@@ -908,6 +933,75 @@ export type CliRunCancelValue = Extract<
   Readonly<{ phase: "canceling" | "completed" | "failed" | "canceled" | "interrupted" }>
 >;
 
+export type CliRunInteractionJsonValue = ApplicationRunInteractionJsonValue;
+
+export type CliRunInteraction = Readonly<{
+  interactionId: string;
+  providerId: string;
+  definitionVersion: string;
+  kind: string;
+  answerable: boolean;
+  display: Readonly<{ [key: string]: CliRunInteractionJsonValue }>;
+}>;
+
+export type CliRunInteractionsValue = Readonly<{
+  sessionId: string;
+  runId: string;
+  runVersion: number;
+  interactions: readonly CliRunInteraction[];
+}>;
+
+type CliRunRespondInteractionValueBase = Readonly<{
+  sessionId: string;
+  runId: string;
+  interactionId: string;
+  admittedAt: number;
+}>;
+
+export type CliRunRespondInteractionValue =
+  | (CliRunRespondInteractionValueBase &
+      Readonly<{
+        effectCertainty: "admitted";
+        writeAttemptedAt: null;
+        settledAt: null;
+        resolutionCode: null;
+      }>)
+  | (CliRunRespondInteractionValueBase &
+      Readonly<{
+        effectCertainty: "write_attempted";
+        writeAttemptedAt: number;
+        settledAt: null;
+        resolutionCode: null;
+      }>)
+  | (CliRunRespondInteractionValueBase &
+      Readonly<{
+        effectCertainty: "resolved";
+        writeAttemptedAt: number;
+        settledAt: number;
+        resolutionCode: "provider_resolved";
+      }>)
+  | (CliRunRespondInteractionValueBase &
+      Readonly<{
+        effectCertainty: "ambiguous";
+        writeAttemptedAt: number;
+        settledAt: number;
+        resolutionCode: "transport_unknown" | "process_unknown";
+      }>)
+  | (CliRunRespondInteractionValueBase &
+      Readonly<{
+        effectCertainty: "not_sent";
+        writeAttemptedAt: null;
+        settledAt: number;
+        resolutionCode: "owner_lost_before_write" | "adapter_rejected";
+      }>)
+  | (CliRunRespondInteractionValueBase &
+      Readonly<{
+        effectCertainty: "not_sent";
+        writeAttemptedAt: number;
+        settledAt: number;
+        resolutionCode: "transport_not_sent" | "adapter_rejected";
+      }>);
+
 export type CliRunEvent = Readonly<{
   ordinal: number;
   kind: "run_terminal" | "child_result_collected" | "unknown";
@@ -1184,7 +1278,9 @@ type CliRunOperationContract = {
   retry: Readonly<{ mode: "write"; value: CliRunAdmissionValue }>;
   "send-input": Readonly<{ mode: "write"; value: CliRunInputValue }>;
   cancel: Readonly<{ mode: "write"; value: CliRunCancelValue }>;
+  "respond-interaction": Readonly<{ mode: "write"; value: CliRunRespondInteractionValue }>;
   status: Readonly<{ mode: "read"; value: CliRunStatusValue }>;
+  interactions: Readonly<{ mode: "read"; value: CliRunInteractionsValue }>;
   events: Readonly<{ mode: "read"; value: CliRunEventsValue }>;
   follow: Readonly<{ mode: "read"; value: CliRunFollowValue }>;
   "output-counts": Readonly<{ mode: "read"; value: CliRunOutputCountsValue }>;

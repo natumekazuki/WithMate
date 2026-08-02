@@ -23,6 +23,7 @@ test("operation responses and notifications converge into one lifecycle with a f
 
   const thread = await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -99,6 +100,7 @@ test("notification-first Thread start cannot admit a Turn and converges to the l
   const adapter = createAdapter(transport);
   const pending = adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -156,6 +158,7 @@ test("notification-first Thread identity conflicts make the mutation ambiguous w
     try {
       const pending = adapter.startThread({
         model: "gpt-5.4",
+        modelSelection: "explicit",
         workspacePath: process.cwd(),
         approvalPolicy: "never",
         sandboxMode: "read-only",
@@ -185,6 +188,7 @@ test("a response-first Thread identity conflict quarantines later Turn mutations
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -221,6 +225,7 @@ test("a Thread identity conflict while turn/start is pending prevents an accepte
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -305,6 +310,7 @@ test("Thread identity quarantine is rechecked after asynchronous capability vali
     const adapter = createAdapter(transport);
     await adapter.startThread({
       model: "gpt-5.4",
+      modelSelection: "explicit",
       workspacePath: process.cwd(),
       approvalPolicy: "never",
       sandboxMode: "read-only",
@@ -338,6 +344,7 @@ test("an observed thread/started makes a contradictory Thread start remote error
   const adapter = createAdapter(transport);
   const pending = adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -412,6 +419,7 @@ test("a single pending Thread start rejects different notification and response 
   const adapter = createAdapter(transport);
   const pending = adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -450,6 +458,7 @@ test("a notification during concurrent Thread starts keeps an uncorrelated failu
   const adapter = createAdapter(transport);
   const input = {
     model: "gpt-5.4",
+    modelSelection: "explicit" as const,
     workspacePath: process.cwd(),
     approvalPolicy: "never" as const,
     sandboxMode: "read-only" as const,
@@ -488,6 +497,7 @@ test("a delayed notification for a response-confirmed Thread is not attributed t
   const adapter = createAdapter(transport);
   const input = {
     model: "gpt-5.4",
+    modelSelection: "explicit" as const,
     workspacePath: process.cwd(),
     approvalPolicy: "never" as const,
     sandboxMode: "read-only" as const,
@@ -544,12 +554,13 @@ test("unknown notifications preserve their full correlation tuple without suppre
       correlation: { threadId: "thread-1", turnId: "turn-1", itemId: "item-1" },
       output: {
         category: "provider_metadata",
-        kind: "future/progress",
+        kind: "other",
         completionState: "complete",
         payload: { kind: "none", redaction: "not_required" },
       },
     },
   );
+  assert.doesNotMatch(JSON.stringify(metadata.output), /future\/progress|thread-1|turn-1|item-1/);
   const diagnostic = await adapter.nextEvent();
   assert.equal(diagnostic.kind, "diagnostic");
   if (diagnostic.kind !== "diagnostic") assert.fail("expected diagnostic");
@@ -574,6 +585,7 @@ test("unknown notifications preserve their full correlation tuple without suppre
     (
       await adapter.startThread({
         model: "gpt-5.4",
+        modelSelection: "explicit",
         workspacePath: process.cwd(),
         approvalPolicy: "never",
         sandboxMode: "read-only",
@@ -591,6 +603,7 @@ test("stable token usage, warning, and error notifications map without raw provi
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -788,6 +801,7 @@ test("token usage accepts a smaller latest request when cumulative totals advanc
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -860,6 +874,7 @@ test("terminal-first turn/start converges while an active Turn still rejects dup
   const terminalFirstAdapter = createAdapter(terminalFirstTransport);
   await terminalFirstAdapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -901,6 +916,7 @@ test("terminal-first turn/start converges while an active Turn still rejects dup
   const activeTurnAdapter = createAdapter(activeTurnTransport);
   await activeTurnAdapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -986,6 +1002,7 @@ test("an observed turn/started proves a contradictory remote error was accepted 
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1028,6 +1045,7 @@ test("a terminal-only observed Turn proves acceptance and preserves the terminal
     const adapter = createAdapter(transport);
     await adapter.startThread({
       model: "gpt-5.4",
+      modelSelection: "explicit",
       workspacePath: process.cwd(),
       approvalPolicy: "never",
       sandboxMode: "read-only",
@@ -1086,6 +1104,7 @@ test("a duplicate terminal from an earlier Turn is not side-effect evidence for 
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1138,6 +1157,7 @@ test("a delayed turn/started from an earlier terminal Turn is not evidence for a
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1186,6 +1206,7 @@ test("conflicting Turn start IDs invalidate mutation admission for the observed 
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1231,6 +1252,7 @@ test("a terminal observed Turn still conflicts with a different turn/start respo
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1278,6 +1300,7 @@ test("a delayed turn/started after terminal still conflicts with a different res
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1395,6 +1418,7 @@ test("an ambiguous Thread resume blocks a later Turn start on the same idle Thre
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1431,6 +1455,7 @@ test("an ambiguous Thread resume does not block a Turn start on another Thread",
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1439,6 +1464,7 @@ test("an ambiguous Thread resume does not block a Turn start on another Thread",
   await adapter.nextEvent();
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1472,6 +1498,7 @@ test("a pending Thread resume is rechecked after Turn capability validation and 
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1516,6 +1543,7 @@ test("an ambiguous Thread resume blocks steer and interrupt on the same active T
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1573,6 +1601,7 @@ test("an accepted Turn model override becomes the validation context for the nex
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1653,6 +1682,7 @@ test("an inherited retry restores its source Run model after a later Turn change
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1736,6 +1766,7 @@ test("a request_not_sent Turn override cannot replace the current model after an
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1790,6 +1821,7 @@ test("a steer response acknowledges delivery without projecting a Turn status af
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1826,6 +1858,7 @@ test("a matching userMessage notification prevents steer delivery from reverting
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1872,6 +1905,7 @@ test("a steer client ID observed on another Turn makes the operation and origina
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1924,6 +1958,7 @@ test("an accepted steer retains correlation until a later userMessage observatio
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -1986,6 +2021,7 @@ test("an ambiguous steer retains correlation for a delayed conflicting userMessa
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -2041,6 +2077,7 @@ test("a delayed matching userMessage releases an ambiguous steer correlation own
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -2104,6 +2141,7 @@ test("a terminal observed before an ambiguous steer response releases its correl
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -2162,6 +2200,7 @@ test("any observed matching terminal makes a contradictory interrupt remote erro
     try {
       await adapter.startThread({
         model: "gpt-5.4",
+        modelSelection: "explicit",
         workspacePath: process.cwd(),
         approvalPolicy: "never",
         sandboxMode: "read-only",
@@ -2200,6 +2239,7 @@ test("request_not_sent keeps effect none despite unrelated notification observat
   const startThreadAdapter = createAdapter(startThreadTransport);
   const threadInput = {
     model: "gpt-5.4",
+    modelSelection: "explicit" as const,
     workspacePath: process.cwd(),
     approvalPolicy: "never" as const,
     sandboxMode: "read-only" as const,
@@ -2283,6 +2323,7 @@ test("an older turn/start response cannot release a newer pending Turn owner", a
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -2394,6 +2435,7 @@ test("an older request_not_sent cannot roll back a newer owner of the same model
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -2487,10 +2529,12 @@ test("known-invalid payloads and unsupported server requests diagnose then close
   requestTransport.emit({
     kind: "serverRequest",
     request: {
+      identity: Object.freeze({}),
       method: "item/requestApproval",
       params: { secret: "not-projected" },
       respond: () => {
         responses += 1;
+        return Promise.resolve();
       },
     } as never,
   });
@@ -2500,35 +2544,43 @@ test("known-invalid payloads and unsupported server requests diagnose then close
   const { summary: requestSummary, ...requestDetails } = requestDiagnostic.diagnostic;
   assertBoundedPublicSummary(requestSummary, ["not-projected"]);
   assert.deepEqual(requestDetails, {
-    code: "unsupported_server_request",
+    code: "known_invalid_payload",
     method: "item/requestApproval",
     redaction: "not_required",
   });
   assert.deepEqual(await requestAdapter.nextEvent(), {
     kind: "connection_failure",
-    code: "unsupported_server_request",
+    code: "protocol_failed",
   });
   await waitFor(() => requestTransport.closeCount === 1);
   assert.equal(responses, 0);
 });
 
-test("unsupported server request methods are snapshotted and bounded before diagnostics", async () => {
+test("invalid server request ports are rejected before request content reaches diagnostics", async () => {
   for (const method of [{ raw: "object" }, "x".repeat(CODEX_ADAPTER_LIMITS.maxShortStringBytes + 1)]) {
     const transport = new ControlledTransport([]);
     const adapter = createAdapter(transport);
-    transport.emit({ kind: "serverRequest", request: { method, params: { secret: "hidden" } } as never });
+    transport.emit({
+      kind: "serverRequest",
+      request: {
+        method,
+        params: { secret: "hidden" },
+        matchesRequestId: () => false,
+        respond: async () => undefined,
+      } as never,
+    });
     const event = await adapter.nextEvent();
     assert.equal(event.kind, "diagnostic");
     if (event.kind !== "diagnostic") assert.fail("expected bounded server request diagnostic");
     const { summary, ...diagnostic } = event.diagnostic;
     assertBoundedPublicSummary(summary, ["hidden"]);
     assert.deepEqual(diagnostic, {
-      code: "unsupported_server_request",
+      code: "known_invalid_payload",
       redaction: "applied",
     });
     assert.deepEqual(await adapter.nextEvent(), {
       kind: "connection_failure",
-      code: "unsupported_server_request",
+      code: "protocol_failed",
     });
     await waitFor(() => transport.closeCount === 1);
   }
@@ -2599,6 +2651,7 @@ test("event queue accepts the exact cap and defers one terminal failure without 
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -2634,6 +2687,7 @@ test("terminal overflow preserves every previously queued terminal outcome", asy
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -2744,6 +2798,7 @@ test("queued output text accepts the exact connection cap and fails prospectivel
   for (let index = 0; index < 9; index += 1) {
     await adapter.startThread({
       model: "gpt-5.4",
+      modelSelection: "explicit",
       workspacePath: process.cwd(),
       approvalPolicy: "never",
       sandboxMode: "read-only",
@@ -2801,6 +2856,7 @@ test("close preserves a received terminal event until the consumer drains it", a
   const adapter = createAdapter(transport);
   await adapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -2890,6 +2946,7 @@ test("close or failure during catalog loading cannot send a later mutation or pa
   const failingAdapter = createAdapter(failingTransport);
   const startResult = failingAdapter.startThread({
     model: "gpt-5.4",
+    modelSelection: "explicit",
     workspacePath: process.cwd(),
     approvalPolicy: "never",
     sandboxMode: "read-only",
@@ -2943,7 +3000,7 @@ test("production transport satisfies the Adapter process contract", async () => 
         correlation: { threadId: "fixture-thread", turnId: "fixture-turn" },
         output: {
           category: "provider_metadata",
-          kind: "future/modelCatalogObserved",
+          kind: "other",
           completionState: "complete",
           payload: { kind: "none", redaction: "not_required" },
         },
@@ -2988,6 +3045,10 @@ class ControlledTransport implements CodexAdapterTransportPort {
     const response = this.#responses.shift();
     if (response === undefined) return Promise.reject(new Error("missing fake response"));
     return Promise.resolve(response as TResult);
+  }
+
+  observeServerRequestResolution(): Readonly<{ kind: "invalid" }> {
+    return Object.freeze({ kind: "invalid" });
   }
 
   nextEvent(): Promise<CodexAdapterTransportEvent> {

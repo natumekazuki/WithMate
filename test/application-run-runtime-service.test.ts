@@ -12,6 +12,8 @@ import { resolveWorkspaceIdentity } from "../src/shared/workspace-path.js";
 import type {
   CodexAppServerTransport,
   CodexAdapterEvent,
+  CodexAdapterCapabilityPreflightInput,
+  CodexAdapterCapabilityPreflightResult,
   CodexAdapterMutationResult,
   CodexAdapterThreadSnapshot,
   CodexAdapterTurnSnapshot,
@@ -36,10 +38,59 @@ import {
   CodexApplicationRunRuntimeFactory,
   WITHMATE_CODEX_EXECUTABLE_ENV,
   resolveConfiguredCodexExecutable,
-  resolveSupportedCodexCliVersion,
+  observeCodexCliVersion,
 } from "../src/main/runtime-codex-provider.js";
 
 const TEST_WORKSPACE = resolveWorkspaceIdentity(workspacePath())!;
+
+test("capability preflight starts and reuses a warm runtime without Thread or Turn mutations", async () => {
+  const adapter = new FakeAdapter();
+  const factory = runtimeFactory(adapter);
+  const fixture = runtimeFixture({ factory });
+
+  assert.deepEqual(await fixture.owner.preflight(executionSnapshot()), { kind: "supported" });
+  assert.deepEqual(await fixture.owner.preflight(executionSnapshot()), { kind: "supported" });
+
+  assert.equal(factory.starts, 1);
+  assert.deepEqual(adapter.preflightInputs, [
+    {
+      model: "gpt-5.6",
+      modelSelection: "explicit",
+      reasoningEffort: "high",
+      requiredModality: "text",
+    },
+    {
+      model: "gpt-5.6",
+      modelSelection: "explicit",
+      reasoningEffort: "high",
+      requiredModality: "text",
+    },
+  ]);
+  assert.equal(adapter.startInputs.length, 0);
+  assert.equal(adapter.resumeInputs.length, 0);
+  assert.equal(adapter.turnInputs.length, 0);
+
+  await fixture.owner.shutdown();
+  assert.equal(adapter.closeCalls, 1);
+});
+
+test("capability preflight maps catalog unavailability without Provider mutations", async () => {
+  const adapter = new FakeAdapter({
+    preflightResult: {
+      kind: "unavailable",
+      effect: "none",
+      failure: { kind: "not_sent", effect: "none", code: "timeout" },
+    },
+  });
+  const fixture = runtimeFixture({ factory: runtimeFactory(adapter) });
+
+  assert.deepEqual(await fixture.owner.preflight(executionSnapshot()), { kind: "unavailable" });
+  assert.equal(adapter.startInputs.length, 0);
+  assert.equal(adapter.resumeInputs.length, 0);
+  assert.equal(adapter.turnInputs.length, 0);
+
+  await fixture.owner.shutdown();
+});
 
 test("runtime owner is lazy, deduplicates simultaneous handoff, and readies the event consumer before Thread creation", async () => {
   const adapter = new FakeAdapter();
@@ -392,6 +443,36 @@ test("creating Binding work is owned once and a current-generation active Bindin
   assert.equal(adapter.resumeInputs.length, 0);
   assert.equal(fixture.bindingResolutions.length, 1);
   assert.equal(fixture.terminals.length, 0);
+
+  await fixture.owner.shutdown();
+});
+
+test("an inherited retry creating a Binding preserves model provenance for Thread start", async () => {
+  const adapter = new FakeAdapter();
+  const fixture = runtimeFixture({
+    factory: runtimeFactory(adapter),
+    reads: runtimeReads(
+      () => recoveryProjection({ bindingState: "creating", externalConversationId: null }),
+      "codex",
+      "inherited",
+    ),
+  });
+
+  fixture.owner.handoff(admission());
+  await waitFor(() => fixture.ready.length === 1);
+
+  assert.deepEqual(adapter.startInputs, [
+    {
+      model: "gpt-5.6",
+      modelSelection: "inherited",
+      reasoningEffort: "high",
+      workspacePath: workspacePath(),
+      approvalPolicy: "never",
+      sandboxMode: "workspace-write",
+      persistence: "persistent",
+    },
+  ]);
+  assert.equal(adapter.resumeInputs.length, 0);
 
   await fixture.owner.shutdown();
 });
@@ -914,6 +995,69 @@ test("an unresolved event accept keeps the exact event and generation owner acro
   assert.equal(generationReleases, 1);
 });
 
+test("generation release barrier keeps the Provider runtime open while interaction durability is pending", async () => {
+  let barrierReady = false;
+  let barrierCalls = 0;
+  let generationReleases = 0;
+  const adapter = new FakeAdapter();
+  const fixture = runtimeFixture({
+    factory: runtimeFactory(adapter),
+    events: {
+      accept() {},
+      prepareGenerationRelease() {
+        barrierCalls += 1;
+        return { kind: barrierReady ? "ready" : "pending" };
+      },
+      releaseGeneration() {
+        generationReleases += 1;
+      },
+    },
+  });
+
+  fixture.owner.handoff(admission());
+  await waitFor(() => fixture.ready.length === 1);
+  await assert.rejects(fixture.owner.shutdown(), ApplicationRunRuntimeShutdownPendingError);
+  assert.equal(barrierCalls, 1);
+  assert.equal(adapter.closeCalls, 0);
+  assert.equal(generationReleases, 0);
+
+  barrierReady = true;
+  await fixture.owner.shutdown();
+  assert.equal(barrierCalls, 2);
+  assert.equal(adapter.closeCalls, 1);
+  assert.equal(generationReleases, 1);
+});
+
+test("connection retirement rechecks a pending interaction barrier before closing the Provider", async () => {
+  let barrierCalls = 0;
+  let generationReleases = 0;
+  const adapter = new FakeAdapter();
+  const fixture = runtimeFixture({
+    factory: runtimeFactory(adapter),
+    events: {
+      accept() {},
+      prepareGenerationRelease() {
+        barrierCalls += 1;
+        return { kind: barrierCalls < 3 ? "pending" : "ready" };
+      },
+      releaseGeneration() {
+        generationReleases += 1;
+      },
+    },
+  });
+
+  fixture.owner.handoff(admission());
+  await waitFor(() => fixture.ready.length === 1);
+  adapter.emit({ kind: "connection_failure", code: "process_exited" });
+  await waitFor(() => barrierCalls >= 2);
+  assert.equal(adapter.closeCalls, 0);
+  assert.equal(generationReleases, 0);
+  await waitFor(() => generationReleases === 1);
+  assert.equal(barrierCalls, 3);
+  assert.equal(adapter.closeCalls, 1);
+  await fixture.owner.shutdown();
+});
+
 test("shutdown drains Provider events received before close before releasing the generation", async () => {
   const order: string[] = [];
   const acceptedEvents: CodexAdapterEvent[] = [];
@@ -1046,43 +1190,6 @@ test("deterministic Codex runtime startup failures terminalize as failed applica
     assert.equal(
       fixture.terminals[0]?.outcome.kind === "failed" && fixture.terminals[0].outcome.errorSummary,
       "Provider runtime configuration is invalid.",
-    );
-    await fixture.owner.shutdown();
-  });
-
-  await context.test("unsupported Provider capability", async () => {
-    let closeCalls = 0;
-    const unsupportedTransport = {
-      async start() {
-        return {
-          platformFamily: process.platform === "win32" ? "windows" : "unix",
-          platformOs: process.platform,
-          userAgent: "codex-cli/unsupported",
-        };
-      },
-      async close() {
-        closeCalls += 1;
-      },
-    } as unknown as CodexAppServerTransport;
-    const fixture = runtimeFixture({
-      factory: new CodexApplicationRunRuntimeFactory(
-        { [WITHMATE_CODEX_EXECUTABLE_ENV]: process.execPath },
-        { createTransport: () => unsupportedTransport },
-      ),
-    });
-
-    fixture.owner.handoff(admission());
-    await waitFor(() => fixture.terminals.length === 1);
-
-    assert.equal(closeCalls, 1);
-    assert.equal(fixture.terminals[0]?.outcome.kind, "failed");
-    assert.equal(
-      fixture.terminals[0]?.outcome.kind === "failed" && fixture.terminals[0].outcome.failureOrigin,
-      "application",
-    );
-    assert.equal(
-      fixture.terminals[0]?.outcome.kind === "failed" && fixture.terminals[0].outcome.errorSummary,
-      "Provider runtime capability is unavailable.",
     );
     await fixture.owner.shutdown();
   });
@@ -1385,11 +1492,7 @@ test("Codex runtime startup retains failed cleanup and blocks a successor until 
   let secondCloseAttempts = 0;
   const firstTransport = {
     async start() {
-      return {
-        platformFamily: process.platform === "win32" ? "windows" : "unix",
-        platformOs: process.platform,
-        userAgent: "codex-cli/unsupported",
-      };
+      throw new Error("startup_failed");
     },
     async close() {
       firstCloseAttempts += 1;
@@ -1834,18 +1937,83 @@ function createPortableExecutableFixture(sectionCount = 1): Uint8Array {
   return fixture;
 }
 
-test("Codex runtime accepts only the exact negotiated schema baseline", () => {
-  assert.equal(resolveSupportedCodexCliVersion("codex-cli/0.145.0"), "0.145.0");
-  for (const unsupported of [
-    "codex-cli/0.144.6",
-    "codex-cli/0.146.0",
-    "codex-cli/fake-process-smoke",
-    "codex-cli/0.145.0\n",
-    "codex-cli/0.145.0 (windows)",
-    "codex_cli_rs/0.145.0",
-  ]) {
-    assert.equal(resolveSupportedCodexCliVersion(unsupported), undefined);
-  }
+test("Codex runtime records the observed CLI identity without treating its version as an admission gate", () => {
+  assert.equal(observeCodexCliVersion("codex-cli/0.145.0"), "0.145.0");
+  assert.equal(observeCodexCliVersion("codex-cli/0.146.0"), "0.146.0");
+  assert.equal(observeCodexCliVersion("codex-cli/future"), "future");
+  assert.equal(observeCodexCliVersion("codex_cli_rs/0.147.0"), "codex_cli_rs/0.147.0");
+});
+
+test("Codex runtime starts an observed 0.146 App Server and lets decoded protocol operations decide compatibility", async () => {
+  const methods: string[] = [];
+  let closeCalls = 0;
+  const transport = {
+    async start() {
+      return {
+        platformFamily: process.platform === "win32" ? "windows" : "unix",
+        platformOs: process.platform,
+        userAgent: "codex-cli/0.146.0",
+      };
+    },
+    request<TResult>(method: string): Promise<TResult> {
+      methods.push(method);
+      if (method !== "model/list") return Promise.reject(new Error("unexpected request"));
+      return Promise.resolve({
+        data: [
+          {
+            id: "gpt-5.6",
+            model: "gpt-5.6",
+            upgrade: null,
+            upgradeInfo: null,
+            availabilityNux: null,
+            displayName: "GPT-5.6",
+            description: "General model",
+            hidden: false,
+            supportedReasoningEfforts: [{ reasoningEffort: "high", description: "High" }],
+            defaultReasoningEffort: "high",
+            inputModalities: ["text", "image"],
+            supportsPersonality: true,
+            additionalSpeedTiers: [],
+            serviceTiers: [],
+            defaultServiceTier: null,
+            isDefault: true,
+            futureField: "ignored",
+          },
+        ],
+        nextCursor: null,
+        futurePageField: true,
+      } as TResult);
+    },
+    nextEvent() {
+      return new Promise(() => undefined);
+    },
+    observeServerRequestResolution() {
+      return Object.freeze({ kind: "invalid" as const });
+    },
+    async close() {
+      closeCalls += 1;
+    },
+  } as unknown as CodexAppServerTransport;
+  const factory = new CodexApplicationRunRuntimeFactory(
+    { [WITHMATE_CODEX_EXECUTABLE_ENV]: process.execPath },
+    { createTransport: () => transport },
+  );
+
+  const runtime = await factory.start("codex", "codex-0.146", new AbortController().signal);
+  const preflightCapability = runtime.adapter.preflightCapability;
+  if (preflightCapability === undefined) assert.fail("expected Codex capability preflight");
+  const result = await preflightCapability.call(runtime.adapter, {
+    model: "gpt-5.6",
+    modelSelection: "explicit",
+    reasoningEffort: "high",
+    requiredModality: "text",
+  });
+
+  assert.deepEqual(result, { kind: "supported", effect: "none" });
+  assert.deepEqual(methods, ["model/list"]);
+
+  await runtime.adapter.close();
+  assert.equal(closeCalls, 1);
 });
 
 type RuntimeFixtureOptions = Readonly<{
@@ -2072,11 +2240,14 @@ function executionSnapshot(
 ): RunExecutionSnapshot {
   return {
     providerId,
-    model: "gpt-5.6",
+    definitionVersion: "codex-provider-v1",
     modelSelection,
-    reasoning: { effort: "high" },
-    approval: { policy: "never" },
-    sandbox: { mode: "workspace-write", networkAccess: false },
+    settings: {
+      model: "gpt-5.6",
+      reasoningEffort: "high",
+      approvalPolicy: "never",
+      sandbox: { mode: "workspace-write", networkAccess: false },
+    },
     workspace: {
       key: TEST_WORKSPACE.workspaceKey,
       path: workspacePath(),
@@ -2172,8 +2343,10 @@ function runtimeFactory(adapter: FakeAdapter) {
 }
 
 class FakeAdapter implements ApplicationRunProviderAdapterPort {
+  readonly preflightInputs: CodexAdapterCapabilityPreflightInput[] = [];
   readonly startInputs: CodexStartThreadInput[] = [];
   readonly resumeInputs: CodexResumeThreadInput[] = [];
+  readonly turnInputs: CodexStartTurnInput[] = [];
   eventWaits = 0;
   eventWaitsBeforeFirstMutation = 0;
   closeCalls = 0;
@@ -2183,6 +2356,7 @@ class FakeAdapter implements ApplicationRunProviderAdapterPort {
   #eventReject: ((error: Error) => void) | undefined;
   readonly #startResult: CodexAdapterMutationResult<CodexAdapterThreadSnapshot>;
   readonly #resumeResult: CodexAdapterMutationResult<CodexAdapterThreadSnapshot>;
+  readonly #preflightResult: CodexAdapterCapabilityPreflightResult;
   readonly #startOperation:
     ((signal: AbortSignal | undefined) => Promise<CodexAdapterMutationResult<CodexAdapterThreadSnapshot>>) | undefined;
   readonly #nextEventThrows: boolean;
@@ -2193,6 +2367,7 @@ class FakeAdapter implements ApplicationRunProviderAdapterPort {
     options: Readonly<{
       startResult?: CodexAdapterMutationResult<CodexAdapterThreadSnapshot>;
       resumeResult?: CodexAdapterMutationResult<CodexAdapterThreadSnapshot>;
+      preflightResult?: CodexAdapterCapabilityPreflightResult;
       startOperation?(signal: AbortSignal | undefined): Promise<CodexAdapterMutationResult<CodexAdapterThreadSnapshot>>;
       nextEventThrows?: boolean;
       onClose?(): void;
@@ -2201,10 +2376,16 @@ class FakeAdapter implements ApplicationRunProviderAdapterPort {
   ) {
     this.#startResult = options.startResult ?? acceptedThread("thread-1");
     this.#resumeResult = options.resumeResult ?? acceptedThread("thread-existing");
+    this.#preflightResult = options.preflightResult ?? { kind: "supported", effect: "none" };
     this.#startOperation = options.startOperation;
     this.#nextEventThrows = options.nextEventThrows === true;
     this.#onClose = options.onClose;
     this.#closeOperation = options.closeOperation;
+  }
+
+  async preflightCapability(input: CodexAdapterCapabilityPreflightInput) {
+    this.preflightInputs.push(input);
+    return this.#preflightResult;
   }
 
   async startThread(input: CodexStartThreadInput, options?: Readonly<{ signal?: AbortSignal }>) {
@@ -2221,6 +2402,7 @@ class FakeAdapter implements ApplicationRunProviderAdapterPort {
 
   async startTurn(input: CodexStartTurnInput): Promise<CodexAdapterMutationResult<CodexAdapterTurnSnapshot>> {
     this.#recordMutationReadiness();
+    this.turnInputs.push(input);
     return {
       kind: "accepted",
       effect: "present",

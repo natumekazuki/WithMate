@@ -21,7 +21,7 @@ import {
   type RuntimeIpcResponse,
 } from "../src/main/runtime-host/runtime-ipc-contract.js";
 import { RuntimeIpcJsonlDecoder } from "../src/main/runtime-host/runtime-ipc-jsonl.js";
-import { decodeRuntimeWireValue } from "../src/main/runtime-host/runtime-ipc-value.js";
+import { decodeRuntimeWireValue, encodeRuntimeWireValue } from "../src/main/runtime-host/runtime-ipc-value.js";
 import { snapshotRuntimeApplicationResponse } from "../src/main/runtime-host/runtime-application-response.js";
 import { startRuntimeHost, type RuntimeHostDependencies } from "../src/main/runtime-host/runtime-host.js";
 import { dispatchRuntimeApplicationOperation } from "../src/main/runtime-host/runtime-application-dispatch.js";
@@ -33,6 +33,11 @@ import {
 } from "../src/main/runtime-application.js";
 import { PERSISTENCE_PROTOCOL_VERSION } from "../src/shared/persistence-protocol.js";
 import {
+  APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS,
+  applicationRunInteractionCollectionWireBytes,
+  applicationRunInteractionWireItemBytes,
+} from "../src/shared/application-run-interaction-limits.js";
+import {
   connectRuntimeEndpoint,
   createRuntimeEndpointListener,
   type RuntimeEndpointConnection,
@@ -43,6 +48,19 @@ import {
   resolveRuntimeOwnerIdentity,
   type RuntimeOwnerIdentity,
 } from "../src/main/runtime-host/runtime-owner-identity.js";
+
+function providerSettings(reasoningEffort = "medium") {
+  return {
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    settings: {
+      model: "gpt-test",
+      reasoningEffort,
+      approvalPolicy: "never",
+      sandbox: { mode: "workspace-write", networkAccess: false },
+    },
+  } as const;
+}
 
 const LOCAL_AUTHORIZATION = Object.freeze({
   transport: "local_cli",
@@ -594,7 +612,7 @@ test("runtime host bounds in-flight work per connection and aborts abandoned rea
   await waitFor(() => abortedReads === 32);
 });
 
-test("runtime host propagates client cancel to export but not disconnect to Run cancel work", async (context) => {
+test("runtime host propagates client cancel to export but not disconnect to admitted interaction response work", async (context) => {
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-runtime-host-cancel-"));
   context.after(() => rm(fixtureRoot, { recursive: true, force: true }));
   let exportSignal: AbortSignal | undefined;
@@ -605,7 +623,7 @@ test("runtime host propagates client cancel to export but not disconnect to Run 
       exportSignal = options?.signal;
       return await rejectWhenAborted(options?.signal);
     },
-    cancel: async (_request, options) => {
+    respondInteraction: async (_request, options) => {
       writeSignal = options?.signal;
       return await new Promise((resolve) => {
         completeWrite = resolve;
@@ -668,10 +686,11 @@ test("runtime host propagates client cancel to export but not disconnect to Run 
   await writeConnection.write(
     Buffer.from(
       encodeRuntimeIpcEnvelope(
-        runtimeRequest(host.generationId, writeClientId, 1, "run.cancel", {
+        runtimeRequest(host.generationId, writeClientId, 1, "run.respond_interaction", {
           sessionId: "session-1",
           runId: "run-1",
           idempotencyKey: randomUUID(),
+          response: { interactionId: "interaction-1", kind: "provider.approval", payload: { decision: "accept" } },
         }),
       ),
     ),
@@ -684,11 +703,12 @@ test("runtime host propagates client cancel to export but not disconnect to Run 
     writeResponse({
       sessionId: "session-1",
       runId: "run-1",
-      phase: "canceling",
-      liveActivity: null,
-      createdAt: 1,
-      updatedAt: 2,
-      cancellation: { requestedAt: 2 },
+      interactionId: "interaction-1",
+      admittedAt: 1,
+      effectCertainty: "admitted",
+      writeAttemptedAt: null,
+      settledAt: null,
+      resolutionCode: null,
     }),
   );
   await host.close();
@@ -1123,6 +1143,268 @@ test("runtime response projection rejects fields outside the operation-owned App
   );
 });
 
+test("runtime response projection canonicalizes the closed Provider interaction snapshots", () => {
+  const payload = { sessionId: "session-1", runId: "run-1" };
+  const interactions = canonicalInteractionSnapshots();
+  const projected = decodeRuntimeWireValue(
+    snapshotRuntimeApplicationResponse(
+      "run.interactions",
+      payload,
+      readResponse({ sessionId: "session-1", runId: "run-1", runVersion: 7, interactions }),
+    ),
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify((projected as { value: { interactions: unknown } }).value.interactions)),
+    interactions,
+  );
+
+  const interaction = interactions[0] as (typeof interactions)[number];
+  const invalidInteractions = [
+    { ...interaction, adapterHandle: { requestId: 42 } },
+    { ...interaction, definitionVersion: "codex-unknown-interactions-v2" },
+    {
+      ...interaction,
+      kind: "codex.file_change_approval",
+    },
+    { ...interaction, display: { ...interaction.display, rawRequestId: "provider-private" } },
+    { ...interaction, display: { ...interaction.display, absolutePath: "C:\\private\\secret.txt" } },
+    { ...interaction, display: { ...interaction.display, extra: true } },
+    { ...interaction, display: { summary: "unsafe\u202etext", command: "node --version" } },
+    { ...interaction, display: { summary: "Location=/home/alice/.ssh/id_rsa", command: "node --version" } },
+    { ...interaction, display: { ...interaction.display, availableDecisions: ["accept", "accept"] } },
+    {
+      ...interaction,
+      kind: "codex.file_change_approval",
+      display: { summary: "Changes", changes: [{ displayPath: "C:\\private\\secret.txt", changeKind: "update" }] },
+    },
+    { ...interaction, answerable: false },
+  ];
+  for (const invalidInteraction of invalidInteractions) {
+    assert.throws(
+      () =>
+        snapshotRuntimeApplicationResponse(
+          "run.interactions",
+          payload,
+          readResponse({
+            sessionId: "session-1",
+            runId: "run-1",
+            runVersion: 7,
+            interactions: [invalidInteraction],
+          }),
+        ),
+      /response is invalid/u,
+    );
+  }
+  assert.throws(
+    () =>
+      snapshotRuntimeApplicationResponse(
+        "run.interactions",
+        payload,
+        readResponse({
+          sessionId: "session-1",
+          runId: "run-1",
+          runVersion: 7,
+          interactions: [interaction, { ...interaction }],
+        }),
+      ),
+    /response is invalid/u,
+  );
+  assert.throws(
+    () =>
+      snapshotRuntimeApplicationResponse(
+        "run.interactions",
+        payload,
+        readResponse({
+          sessionId: "session-1",
+          runId: "run-1",
+          runVersion: 7,
+          interactions: Array.from({ length: 33 }, (_unused, index) => ({
+            ...interaction,
+            interactionId: `interaction-${index}`,
+          })),
+        }),
+      ),
+    /response is invalid/u,
+  );
+});
+
+test("runtime interaction response projection admits only public certainty tuples", () => {
+  const payload = {
+    sessionId: "session-1",
+    runId: "run-1",
+    idempotencyKey: randomUUID(),
+    response: { interactionId: "interaction-1", kind: "provider.approval", payload: { decision: "accept" } },
+  };
+  const variants = [
+    { effectCertainty: "admitted", writeAttemptedAt: null, settledAt: null, resolutionCode: null },
+    { effectCertainty: "write_attempted", writeAttemptedAt: 2, settledAt: null, resolutionCode: null },
+    { effectCertainty: "resolved", writeAttemptedAt: 2, settledAt: 3, resolutionCode: "provider_resolved" },
+    { effectCertainty: "ambiguous", writeAttemptedAt: 2, settledAt: 3, resolutionCode: "transport_unknown" },
+    { effectCertainty: "ambiguous", writeAttemptedAt: 2, settledAt: 3, resolutionCode: "process_unknown" },
+    { effectCertainty: "not_sent", writeAttemptedAt: null, settledAt: 3, resolutionCode: "owner_lost_before_write" },
+    { effectCertainty: "not_sent", writeAttemptedAt: null, settledAt: 3, resolutionCode: "adapter_rejected" },
+    { effectCertainty: "not_sent", writeAttemptedAt: 2, settledAt: 3, resolutionCode: "transport_not_sent" },
+    { effectCertainty: "not_sent", writeAttemptedAt: 2, settledAt: 3, resolutionCode: "adapter_rejected" },
+  ] as const;
+  for (const variant of variants) {
+    assert.doesNotThrow(() =>
+      snapshotRuntimeApplicationResponse(
+        "run.respond_interaction",
+        payload,
+        writeResponse({
+          sessionId: "session-1",
+          runId: "run-1",
+          interactionId: "interaction-1",
+          admittedAt: 1,
+          ...variant,
+        }),
+      ),
+    );
+  }
+  for (const value of [
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      interactionId: "interaction-1",
+      admittedAt: 1,
+      effectCertainty: "resolved",
+      writeAttemptedAt: null,
+      settledAt: 3,
+      resolutionCode: "provider_resolved",
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      interactionId: "interaction-1",
+      admittedAt: 3,
+      effectCertainty: "ambiguous",
+      writeAttemptedAt: 2,
+      settledAt: 4,
+      resolutionCode: "process_unknown",
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      interactionId: "interaction-1",
+      admittedAt: 1,
+      effectCertainty: "not_sent",
+      writeAttemptedAt: null,
+      settledAt: 3,
+      resolutionCode: "transport_not_sent",
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      interactionId: "interaction-1",
+      admittedAt: 1,
+      effectCertainty: "not_sent",
+      writeAttemptedAt: 2,
+      settledAt: 3,
+      resolutionCode: "owner_lost_before_write",
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      interactionId: "interaction-1",
+      admittedAt: 1,
+      effectCertainty: "admitted",
+      writeAttemptedAt: null,
+      settledAt: null,
+      resolutionCode: null,
+      semanticAction: "accept",
+    },
+  ]) {
+    assert.throws(
+      () => snapshotRuntimeApplicationResponse("run.respond_interaction", payload, writeResponse(value)),
+      /response is invalid/u,
+    );
+  }
+
+  assert.doesNotThrow(() =>
+    snapshotRuntimeApplicationResponse("run.respond_interaction", payload, {
+      overallStatus: "failure",
+      error: { kind: "domain", code: "reference_invalid", message: "Interaction is stale.", retryable: false },
+      persistence: { status: "rejected", effect: "none" },
+    }),
+  );
+  assert.doesNotThrow(() =>
+    snapshotRuntimeApplicationResponse("run.respond_interaction", payload, {
+      overallStatus: "failure",
+      error: {
+        kind: "persistence",
+        code: "persistence_operation_failed",
+        message: "Admission outcome is unknown.",
+        retryable: true,
+        effect: "unknown",
+      },
+      persistence: { status: "failed", effect: "unknown", reconciliation: "exact_request_required" },
+    }),
+  );
+});
+
+test("Run interaction transport budget fits one actual IPC envelope and rejects the next prospective item", () => {
+  const payload = { sessionId: "\ud800".repeat(1_024), runId: "\ud800".repeat(1_024) };
+  let interactions: readonly ReturnType<typeof largeFileInteraction>[] | undefined;
+  for (let pathLength = 1; pathLength <= 512; pathLength += 1) {
+    const candidate = Object.freeze(
+      Array.from({ length: 3 }, (_unused, index) => largeFileInteraction(index, pathLength)),
+    );
+    const itemBytes = candidate.reduce((total, item) => total + applicationRunInteractionWireItemBytes(item), 0);
+    const collectionBytes = applicationRunInteractionCollectionWireBytes(itemBytes, candidate.length);
+    if (collectionBytes > APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS.maxCollectionWireBytes) break;
+    interactions = candidate;
+  }
+  assert.ok(interactions, "expected a bounded near-limit interaction collection");
+  const itemBytes = interactions.reduce((total, item) => total + applicationRunInteractionWireItemBytes(item), 0);
+  const collectionBytes = applicationRunInteractionCollectionWireBytes(itemBytes, interactions.length);
+  assert.equal(collectionBytes, Buffer.byteLength(JSON.stringify(encodeRuntimeWireValue(interactions)), "utf8"));
+  assert.ok(
+    APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS.maxCollectionWireBytes - collectionBytes < 4 * 1_024,
+    "expected the collection to exercise the shared budget boundary",
+  );
+
+  const value = snapshotRuntimeApplicationResponse(
+    "run.interactions",
+    payload,
+    readResponse({ ...payload, runVersion: Number.MAX_SAFE_INTEGER, interactions }),
+  );
+  const hostGenerationId = randomUUID();
+  const clientId = randomUUID();
+  const requestSequence = Number.MAX_SAFE_INTEGER;
+  const response: RuntimeIpcResponse = {
+    protocolVersion: RUNTIME_IPC_PROTOCOL_VERSION,
+    kind: "response",
+    hostGenerationId,
+    clientId,
+    requestId: deriveRuntimeRequestId(clientId, requestSequence),
+    requestSequence,
+    operation: "run.interactions",
+    outcome: "success",
+    value,
+  };
+  const encoded = encodeRuntimeIpcEnvelope(response);
+  const lineBytes = Buffer.byteLength(encoded, "utf8") - 1;
+  assert.ok(lineBytes - collectionBytes <= APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS.runtimeEnvelopeReserveBytes);
+  assert.ok(lineBytes <= RUNTIME_IPC_LIMITS.maxLineBytes);
+
+  const over = Object.freeze([...interactions, interactions[0] as ReturnType<typeof largeFileInteraction>]);
+  assert.ok(
+    applicationRunInteractionCollectionWireBytes(
+      itemBytes + applicationRunInteractionWireItemBytes(over.at(-1) as ReturnType<typeof largeFileInteraction>),
+      over.length,
+    ) > APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS.maxCollectionWireBytes,
+  );
+  assert.throws(
+    () =>
+      snapshotRuntimeApplicationResponse(
+        "run.interactions",
+        payload,
+        readResponse({ ...payload, runVersion: Number.MAX_SAFE_INTEGER, interactions: over }),
+      ),
+    /response is invalid/u,
+  );
+});
+
 test("runtime Session Run history preserves phase-valid cancellation facts", () => {
   const payload = { sessionId: "session-1", limit: 5 };
   const base = {
@@ -1185,11 +1467,7 @@ test("runtime Run mutation response exposes only the durable admission identity"
     sessionId: "session-1",
     idempotencyKey,
     contentBlocks: [{ type: "text", text: "hello" }],
-    execution: {
-      model: "gpt-test",
-      reasoningEffort: "medium",
-      sandbox: { mode: "read-only", networkAccess: false },
-    },
+    providerSettings: providerSettings(),
   };
   const retryPayload = {
     sessionId: "session-1",
@@ -1593,7 +1871,7 @@ test("runtime host starts the real Application composition only after its endpoi
   assert.deepEqual(await host.close(), { checkpoint: "completed" });
 });
 
-test("runtime dispatch owns the complete 25-operation allowlist and never spreads client authorization", async () => {
+test("runtime dispatch owns the complete 27-operation allowlist and never spreads client authorization", async () => {
   const calls: Array<Readonly<{ name: string; request: Readonly<Record<string, unknown>>; signal: AbortSignal }>> = [];
   const application = completeDispatchApplication(calls);
   const signal = new AbortController().signal;
@@ -1686,6 +1964,96 @@ async function readEnvelope(connection: RuntimeEndpointConnection): Promise<Runt
   }
 }
 
+function largeFileInteraction(index: number, pathLength: number) {
+  return Object.freeze({
+    interactionId: `interaction-${index}`,
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    kind: "codex.file_change_approval",
+    answerable: true,
+    display: Object.freeze({
+      summary: "Codex requests permission to apply file changes.",
+      changes: Object.freeze(
+        Array.from({ length: 256 }, () => Object.freeze({ displayPath: "x".repeat(pathLength), changeKind: "update" })),
+      ),
+    }),
+  });
+}
+
+function canonicalInteractionSnapshots() {
+  const base = {
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    answerable: true,
+  } as const;
+  return [
+    {
+      ...base,
+      interactionId: "interaction-command",
+      kind: "codex.command_approval",
+      display: {
+        summary: "Approve command",
+        command: "node --version",
+        availableDecisions: ["accept", "decline", "cancel"],
+      },
+    },
+    {
+      ...base,
+      interactionId: "interaction-file",
+      kind: "codex.file_change_approval",
+      display: { summary: "Changes", changes: [{ displayPath: "src/index.ts", changeKind: "update" }] },
+    },
+    {
+      ...base,
+      interactionId: "interaction-permission",
+      kind: "codex.permission_approval",
+      display: { summary: "Permissions", permissions: ["workspace_write"] },
+    },
+    {
+      ...base,
+      interactionId: "interaction-input",
+      kind: "codex.user_input",
+      display: {
+        questions: [
+          {
+            questionId: "choice",
+            header: "Choice",
+            prompt: "Choose one",
+            allowOther: false,
+            options: [{ label: "one" }, { label: "two", description: "Second" }],
+          },
+        ],
+      },
+    },
+    {
+      ...base,
+      interactionId: "interaction-tool",
+      kind: "codex.mcp_tool_approval",
+      display: { server: "fixture", tool: "collect", summary: "Allow collect" },
+    },
+    {
+      ...base,
+      interactionId: "interaction-form",
+      kind: "codex.mcp_server_form",
+      display: {
+        server: "fixture",
+        message: "Enter values",
+        fields: [{ fieldId: "value", label: "Value", inputType: "string", required: false, maxLength: 4096 }],
+      },
+    },
+    {
+      ...base,
+      interactionId: "interaction-unavailable",
+      kind: "codex.command_approval",
+      answerable: false,
+      display: {
+        summary: "A command approval request is unavailable.",
+        unavailableReason: "unsafe_projection",
+      },
+    },
+  ] as const;
+}
+
 function readResponse(value: unknown): Readonly<Record<string, unknown>> {
   return {
     overallStatus: "success",
@@ -1750,7 +2118,9 @@ function fakeRuntimeApplication(
       retry: overrides.retry ?? fallback,
       sendInput: overrides.sendInput ?? fallback,
       cancel: overrides.cancel ?? fallback,
+      respondInteraction: overrides.respondInteraction ?? fallback,
       status: overrides.status ?? fallback,
+      interactions: overrides.interactions ?? fallback,
       events: overrides.events ?? fallback,
       follow: overrides.follow ?? fallback,
     },
@@ -1794,7 +2164,9 @@ function completeDispatchApplication(
     retry: method("run.retry"),
     sendInput: method("run.send_input"),
     cancel: method("run.cancel"),
+    respondInteraction: method("run.respond_interaction"),
     status: method("run.status"),
+    interactions: method("run.interactions"),
     events: method("run.events"),
     follow: method("run.follow"),
     outputCounts: method("run.output_counts"),
@@ -1833,17 +2205,13 @@ function operationPayloads(): Readonly<Record<RuntimeIpcOperation, RuntimeIpcOpe
       sessionId: "session-1",
       idempotencyKey,
       contentBlocks: [{ type: "text", text: "hello" }],
-      execution: {
-        model: "gpt-test",
-        reasoningEffort: "medium",
-        sandbox: { mode: "workspace-write", networkAccess: false },
-      },
+      providerSettings: providerSettings(),
     },
     "run.retry": {
       sessionId: "session-1",
       retryOfRunId: "run-source",
       idempotencyKey,
-      executionOverrides: { reasoningEffort: "high" },
+      providerSettingsOverride: providerSettings("high"),
     },
     "run.send_input": {
       sessionId: "session-1",
@@ -1852,7 +2220,14 @@ function operationPayloads(): Readonly<Record<RuntimeIpcOperation, RuntimeIpcOpe
       contentBlocks: [{ type: "text", text: "continue" }],
     },
     "run.cancel": { sessionId: "session-1", runId: "run-1", idempotencyKey },
+    "run.respond_interaction": {
+      sessionId: "session-1",
+      runId: "run-1",
+      idempotencyKey,
+      response: { interactionId: "interaction-1", kind: "provider.approval", payload: { decision: "accept" } },
+    },
     "run.status": { sessionId: "session-1", runId: "run-1" },
+    "run.interactions": { sessionId: "session-1", runId: "run-1" },
     "run.events": { sessionId: "session-1", runId: "run-1", limit: 1 },
     "run.follow": { sessionId: "session-1", runId: "run-1", limit: 1, waitMs: 1, pollMs: 25 },
     "run.output_counts": { sessionId: "session-1", runId: "run-1" },

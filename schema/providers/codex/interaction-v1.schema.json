@@ -1,0 +1,519 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://withmate.local/schema/providers/codex/interaction-v1.schema.json",
+  "title": "Codex interaction snapshot or response v1",
+  "$comment": "Static public shape for codex-provider-v1. Runtime validation must also match the response to the current snapshot, owner tuple, answerable state, unique dynamic question or field identifiers, option membership or allowOther-authorized bounded free input, required fields, and per-field limits before durable admission. File display paths are canonical slash-separated workspace-relative paths; absolute, drive-qualified, parent-relative, Unicode control, bidi-control, or otherwise unsafe paths are unavailable. Safety-relevant Provider content that cannot be projected completely within these bounds is unavailable rather than truncated into an answerable snapshot.",
+  "oneOf": [{ "$ref": "#/$defs/snapshot" }, { "$ref": "#/$defs/response" }],
+  "$defs": {
+    "interactionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "questionOrFieldId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "displayText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "^(?!.*[\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069\\ud800-\\udfff\\ufffe\\uffff])(?!.*(?:[Ff][Ii][Ll][Ee]://|(?:^|[^A-Za-z0-9_./-])(?<![Hh][Tt][Tt][Pp]:)(?<![Hh][Tt][Tt][Pp][Ss]:)/{2,}|(?:^|[^A-Za-z0-9_./-])(?:[A-Za-z]:|\\\\|/[^\\s/]|~[A-Za-z0-9._-]*(?=$|[\\\\/])))).+$",
+      "$comment": "Runtime validation also enforces an 8192-byte UTF-8 bound."
+    },
+    "commandDisplayText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "^(?!.*[\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069\\ud800-\\udfff\\ufffe\\uffff])(?!.*(?:(?<=[^\\s'\\x22=,:;|&<>(){}\\[\\]])<workspace>|<workspace>(?![\\\\/\\s;|&<>()'\\x22]|$)|<<workspace>|<workspace>>|<workspace(?!>)|(?<!<)workspace>))(?!.*(?:[Ff][Ii][Ll][Ee]://|(?:^|[^A-Za-z0-9_./-])(?<![Hh][Tt][Tt][Pp]:)(?<![Hh][Tt][Tt][Pp][Ss]:)/{2,}|(?:^|[^A-Za-z0-9_./-])(?:[A-Za-z]:|(?<!<workspace>)\\\\|(?<!<workspace>)/(?!/)|~[A-Za-z0-9._-]*(?=$|[\\\\/]))))(?!.*(?:^|[\\\\/\\s'\\x22=;|&<>(){}\\[\\]])\\.\\.(?=$|[\\\\/\\s'\\x22=;|&<>(){}\\[\\]])).+$",
+      "allOf": [
+        {
+          "pattern": "^(?!.*(?:(?<=[^\\s'\\x22=,:;|&<>(){}\\[\\]])['\\x22]<workspace>|'<workspace>(?!['\\\\/])|\\x22<workspace>(?![\\x22\\\\/])|'[^']+<workspace>|\\x22[^\\x22]+<workspace>|'[^']*'<workspace>|\\x22[^\\x22]*\\x22<workspace>|'<workspace>[^']*$|\\x22<workspace>[^\\x22]*$|(?<!['\\x22])<workspace>[^\\s;|&<>()]*['\\x22]|'<workspace>[^']*'(?![\\s;|&<>()]|$)|\\x22<workspace>[^\\x22]*\\x22(?![\\s;|&<>()]|$)|[\\\\`^]['\\x22].*<workspace>|'<workspace>[^']*[\\\\`^]['\\x22]|\\x22<workspace>[^\\x22]*[\\\\`^]['\\x22])).+$",
+          "$comment": "A workspace placeholder is accepted only at the start of an unquoted token or immediately after a provable opening quote. Quoted tokens must close on an unescaped matching quote followed by a command token boundary."
+        }
+      ],
+      "$comment": "Command display may use <workspace> only as an independent path root token. Private, drive-relative, root-relative, home-relative, parent-relative, UNC, device, and file URI forms are rejected. Runtime validation also enforces token boundaries and an 8192-byte UTF-8 bound."
+    },
+    "shortDisplayText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!.*[\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069\\ud800-\\udfff\\ufffe\\uffff])(?!.*(?:[Ff][Ii][Ll][Ee]://|(?:^|[^A-Za-z0-9_./-])(?<![Hh][Tt][Tt][Pp]:)(?<![Hh][Tt][Tt][Pp][Ss]:)/{2,}|(?:^|[^A-Za-z0-9_./-])(?:[A-Za-z]:|\\\\|/[^\\s/]|~[A-Za-z0-9._-]*(?=$|[\\\\/])))).+$",
+      "$comment": "Runtime validation also enforces a 2048-byte UTF-8 bound."
+    },
+    "workspaceRelativeDisplayPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!.*[\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069\\ud800-\\udfff\\ufffe\\uffff])(?!/)(?!~(?:/|$))(?!\\.\\.?$)(?!\\.\\.?/)(?!.*//)(?!.*\\/$)(?!.*/\\.\\.?(?:/|$))[^:\\\\]+$"
+    },
+    "snapshotCommon": {
+      "type": "object",
+      "required": ["interactionId", "providerId", "definitionVersion", "kind", "answerable", "display"],
+      "properties": {
+        "interactionId": { "$ref": "#/$defs/interactionId" },
+        "providerId": { "const": "codex" },
+        "definitionVersion": { "const": "codex-provider-v1" },
+        "kind": { "type": "string" },
+        "answerable": { "type": "boolean" },
+        "display": { "type": "object" }
+      }
+    },
+    "responseCommon": {
+      "type": "object",
+      "required": ["interactionId", "kind", "payload"],
+      "properties": {
+        "interactionId": { "$ref": "#/$defs/interactionId" },
+        "kind": { "type": "string" },
+        "payload": { "type": "object" }
+      }
+    },
+    "decisionPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision"],
+      "properties": {
+        "decision": { "enum": ["accept", "decline", "cancel"] }
+      }
+    },
+    "permissionPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["permissions", "scope"],
+      "properties": {
+        "permissions": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["workspace_write", "network"] }
+        },
+        "scope": { "const": "turn" }
+      }
+    },
+    "unavailableReason": {
+      "enum": [
+        "unsafe_projection",
+        "unsupported_shape",
+        "secret_input",
+        "resource_limit",
+        "owner_unresolved",
+        "response_admitted"
+      ]
+    },
+    "snapshot": {
+      "oneOf": [
+        { "$ref": "#/$defs/unavailableSnapshot" },
+        { "$ref": "#/$defs/commandApprovalSnapshot" },
+        { "$ref": "#/$defs/fileChangeApprovalSnapshot" },
+        { "$ref": "#/$defs/permissionApprovalSnapshot" },
+        { "$ref": "#/$defs/userInputSnapshot" },
+        { "$ref": "#/$defs/mcpToolApprovalSnapshot" },
+        { "$ref": "#/$defs/mcpServerFormSnapshot" }
+      ]
+    },
+    "unavailableSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["interactionId", "providerId", "definitionVersion", "kind", "answerable", "display"],
+      "properties": {
+        "interactionId": { "$ref": "#/$defs/interactionId" },
+        "providerId": { "const": "codex" },
+        "definitionVersion": { "const": "codex-provider-v1" },
+        "kind": {
+          "enum": [
+            "codex.command_approval",
+            "codex.file_change_approval",
+            "codex.permission_approval",
+            "codex.user_input",
+            "codex.mcp_tool_approval",
+            "codex.mcp_server_form"
+          ]
+        },
+        "answerable": { "const": false },
+        "display": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["summary", "unavailableReason"],
+          "properties": {
+            "summary": { "$ref": "#/$defs/shortDisplayText" },
+            "unavailableReason": { "$ref": "#/$defs/unavailableReason" }
+          }
+        }
+      }
+    },
+    "response": {
+      "oneOf": [
+        { "$ref": "#/$defs/commandApprovalResponse" },
+        { "$ref": "#/$defs/fileChangeApprovalResponse" },
+        { "$ref": "#/$defs/permissionApprovalResponse" },
+        { "$ref": "#/$defs/userInputResponse" },
+        { "$ref": "#/$defs/mcpToolApprovalResponse" },
+        { "$ref": "#/$defs/mcpServerFormResponse" }
+      ]
+    },
+    "commandApprovalSnapshot": {
+      "allOf": [
+        { "$ref": "#/$defs/snapshotCommon" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interactionId", "providerId", "definitionVersion", "kind", "answerable", "display"],
+          "properties": {
+            "interactionId": { "$ref": "#/$defs/interactionId" },
+            "providerId": { "const": "codex" },
+            "definitionVersion": { "const": "codex-provider-v1" },
+            "kind": { "const": "codex.command_approval" },
+            "answerable": { "const": true },
+            "display": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["summary", "command", "availableDecisions"],
+              "properties": {
+                "summary": { "$ref": "#/$defs/shortDisplayText" },
+                "command": { "$ref": "#/$defs/commandDisplayText" },
+                "availableDecisions": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 3,
+                  "uniqueItems": true,
+                  "items": { "enum": ["accept", "decline", "cancel"] }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "fileChangeApprovalSnapshot": {
+      "allOf": [
+        { "$ref": "#/$defs/snapshotCommon" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interactionId", "providerId", "definitionVersion", "kind", "answerable", "display"],
+          "properties": {
+            "interactionId": { "$ref": "#/$defs/interactionId" },
+            "providerId": { "const": "codex" },
+            "definitionVersion": { "const": "codex-provider-v1" },
+            "kind": { "const": "codex.file_change_approval" },
+            "answerable": { "const": true },
+            "display": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["summary", "changes"],
+              "properties": {
+                "summary": { "$ref": "#/$defs/shortDisplayText" },
+                "changes": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 256,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["displayPath", "changeKind"],
+                    "properties": {
+                      "displayPath": { "$ref": "#/$defs/workspaceRelativeDisplayPath" },
+                      "changeKind": { "enum": ["add", "update", "delete", "move"] }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "permissionApprovalSnapshot": {
+      "allOf": [
+        { "$ref": "#/$defs/snapshotCommon" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interactionId", "providerId", "definitionVersion", "kind", "answerable", "display"],
+          "properties": {
+            "interactionId": { "$ref": "#/$defs/interactionId" },
+            "providerId": { "const": "codex" },
+            "definitionVersion": { "const": "codex-provider-v1" },
+            "kind": { "const": "codex.permission_approval" },
+            "answerable": { "const": true },
+            "display": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["summary", "permissions"],
+              "properties": {
+                "summary": { "$ref": "#/$defs/shortDisplayText" },
+                "permissions": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 2,
+                  "uniqueItems": true,
+                  "items": { "enum": ["workspace_write", "network"] }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "userInputSnapshot": {
+      "allOf": [
+        { "$ref": "#/$defs/snapshotCommon" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interactionId", "providerId", "definitionVersion", "kind", "answerable", "display"],
+          "properties": {
+            "interactionId": { "$ref": "#/$defs/interactionId" },
+            "providerId": { "const": "codex" },
+            "definitionVersion": { "const": "codex-provider-v1" },
+            "kind": { "const": "codex.user_input" },
+            "answerable": { "const": true },
+            "display": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["questions"],
+              "properties": {
+                "questions": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["questionId", "header", "prompt", "allowOther", "options"],
+                    "properties": {
+                      "questionId": { "$ref": "#/$defs/questionOrFieldId" },
+                      "header": { "$ref": "#/$defs/shortDisplayText" },
+                      "prompt": { "$ref": "#/$defs/displayText" },
+                      "allowOther": { "type": "boolean" },
+                      "options": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 16,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": ["label"],
+                          "properties": {
+                            "label": { "$ref": "#/$defs/shortDisplayText" },
+                            "description": { "$ref": "#/$defs/shortDisplayText" }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "mcpToolApprovalSnapshot": {
+      "allOf": [
+        { "$ref": "#/$defs/snapshotCommon" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interactionId", "providerId", "definitionVersion", "kind", "answerable", "display"],
+          "properties": {
+            "interactionId": { "$ref": "#/$defs/interactionId" },
+            "providerId": { "const": "codex" },
+            "definitionVersion": { "const": "codex-provider-v1" },
+            "kind": { "const": "codex.mcp_tool_approval" },
+            "answerable": { "const": true },
+            "display": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["server", "tool", "summary"],
+              "properties": {
+                "server": { "$ref": "#/$defs/shortDisplayText" },
+                "tool": { "$ref": "#/$defs/shortDisplayText" },
+                "summary": { "$ref": "#/$defs/displayText" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "mcpServerFormSnapshot": {
+      "allOf": [
+        { "$ref": "#/$defs/snapshotCommon" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interactionId", "providerId", "definitionVersion", "kind", "answerable", "display"],
+          "properties": {
+            "interactionId": { "$ref": "#/$defs/interactionId" },
+            "providerId": { "const": "codex" },
+            "definitionVersion": { "const": "codex-provider-v1" },
+            "kind": { "const": "codex.mcp_server_form" },
+            "answerable": { "const": true },
+            "display": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["server", "message", "fields"],
+              "properties": {
+                "server": { "$ref": "#/$defs/shortDisplayText" },
+                "message": { "$ref": "#/$defs/displayText" },
+                "fields": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["fieldId", "label", "inputType", "required", "maxLength"],
+                    "properties": {
+                      "fieldId": { "$ref": "#/$defs/questionOrFieldId" },
+                      "label": { "$ref": "#/$defs/shortDisplayText" },
+                      "inputType": { "const": "string" },
+                      "required": { "type": "boolean" },
+                      "maxLength": { "type": "integer", "minimum": 1, "maximum": 4096 }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "commandApprovalResponse": {
+      "allOf": [
+        { "$ref": "#/$defs/responseCommon" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interactionId", "kind", "payload"],
+          "properties": {
+            "interactionId": { "$ref": "#/$defs/interactionId" },
+            "kind": { "const": "codex.command_approval" },
+            "payload": { "$ref": "#/$defs/decisionPayload" }
+          }
+        }
+      ]
+    },
+    "fileChangeApprovalResponse": {
+      "allOf": [
+        { "$ref": "#/$defs/responseCommon" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interactionId", "kind", "payload"],
+          "properties": {
+            "interactionId": { "$ref": "#/$defs/interactionId" },
+            "kind": { "const": "codex.file_change_approval" },
+            "payload": { "$ref": "#/$defs/decisionPayload" }
+          }
+        }
+      ]
+    },
+    "permissionApprovalResponse": {
+      "allOf": [
+        { "$ref": "#/$defs/responseCommon" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interactionId", "kind", "payload"],
+          "properties": {
+            "interactionId": { "$ref": "#/$defs/interactionId" },
+            "kind": { "const": "codex.permission_approval" },
+            "payload": { "$ref": "#/$defs/permissionPayload" }
+          }
+        }
+      ]
+    },
+    "userInputResponse": {
+      "allOf": [
+        { "$ref": "#/$defs/responseCommon" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interactionId", "kind", "payload"],
+          "properties": {
+            "interactionId": { "$ref": "#/$defs/interactionId" },
+            "kind": { "const": "codex.user_input" },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["answers"],
+              "properties": {
+                "answers": {
+                  "type": "object",
+                  "minProperties": 1,
+                  "maxProperties": 32,
+                  "propertyNames": { "$ref": "#/$defs/questionOrFieldId" },
+                  "additionalProperties": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "mcpToolApprovalResponse": {
+      "allOf": [
+        { "$ref": "#/$defs/responseCommon" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interactionId", "kind", "payload"],
+          "properties": {
+            "interactionId": { "$ref": "#/$defs/interactionId" },
+            "kind": { "const": "codex.mcp_tool_approval" },
+            "payload": { "$ref": "#/$defs/decisionPayload" }
+          }
+        }
+      ]
+    },
+    "mcpServerFormResponse": {
+      "allOf": [
+        { "$ref": "#/$defs/responseCommon" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interactionId", "kind", "payload"],
+          "properties": {
+            "interactionId": { "$ref": "#/$defs/interactionId" },
+            "kind": { "const": "codex.mcp_server_form" },
+            "payload": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["action", "values"],
+                  "properties": {
+                    "action": { "const": "accept" },
+                    "values": {
+                      "type": "object",
+                      "maxProperties": 32,
+                      "propertyNames": { "$ref": "#/$defs/questionOrFieldId" },
+                      "additionalProperties": { "type": "string", "maxLength": 4096 }
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["action"],
+                  "properties": {
+                    "action": { "enum": ["decline", "cancel"] }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

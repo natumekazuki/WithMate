@@ -28,8 +28,7 @@ const fakeLogPath = path.join(tempDirectory, "fake-codex.jsonl");
 const fakeUserAgentPath = path.join(tempDirectory, "fake-codex-user-agent.txt");
 const fakeWrapperPath = path.join(fakeCwd, "app-server");
 const crashMarker = "CRASH_PROVIDER_AFTER_ACCEPTANCE";
-const supportedUserAgent = "codex-cli/0.145.0";
-const unsupportedUserAgent = "codex-cli/0.146.0";
+const observedUserAgent = "codex-cli/0.146.0";
 const environment = isolatedEnvironment(appDataRoot, {
   WITHMATE_CODEX_EXECUTABLE: process.execPath,
   WITHMATE_FAKE_CODEX_LOG: fakeLogPath,
@@ -49,7 +48,6 @@ const keys = {
   simultaneousB: "018f1f4e-7f0a-7000-8000-000000000714",
   simultaneousC: "018f1f4e-7f0a-7000-8000-000000000715",
   providerCrash: "018f1f4e-7f0a-7000-8000-000000000716",
-  versionMismatch: "018f1f4e-7f0a-7000-8000-000000000717",
 };
 
 fs.mkdirSync(workspacePath, { recursive: true });
@@ -65,28 +63,12 @@ fs.writeFileSync(
   ].join("\n"),
   "utf8",
 );
-fs.writeFileSync(fakeUserAgentPath, unsupportedUserAgent, "utf8");
+fs.writeFileSync(fakeUserAgentPath, observedUserAgent, "utf8");
 
 let runtimeHost;
 try {
   runtimeHost = await startFakeRuntimeHost();
   const sessionA = createSession("Process smoke A", keys.sessionA);
-
-  const versionMismatchPrompt = "unsupported-provider-version";
-  const versionMismatchAdmission = startRun(sessionA, keys.versionMismatch, versionMismatchPrompt);
-  const versionMismatchStatus = await waitForTerminal(sessionA, versionMismatchAdmission.runId);
-  assert.equal(versionMismatchStatus.phase, "failed");
-  assert.deepEqual(versionMismatchStatus.failure, {
-    origin: "application",
-    summary: "Provider runtime capability is unavailable.",
-  });
-  await waitForLog((entries) => countLog(entries, "process.stdin_closed") === 1);
-  const mismatchEntries = readLog();
-  assert.equal(countProtocolRequest(mismatchEntries, "initialize"), 1);
-  for (const method of ["model/list", "thread/start", "thread/resume", "turn/start"]) {
-    assert.equal(countProtocolRequest(mismatchEntries, method), 0);
-  }
-  fs.writeFileSync(fakeUserAgentPath, supportedUserAgent, "utf8");
 
   const normalPrompt = "normal-start";
   const normalAdmission = startRun(sessionA, keys.startA, normalPrompt);
@@ -209,12 +191,8 @@ function startArgs(sessionId, idempotencyKey, prompt) {
     idempotencyKey,
     "--content-blocks-json",
     JSON.stringify([{ type: "text", text: prompt }]),
-    "--model",
-    "gpt-5.4",
-    "--reasoning-effort",
-    "medium",
-    "--sandbox-json",
-    sandboxJson,
+    "--provider-settings-json",
+    providerSettingsJson(sandboxJson),
   ];
 }
 
@@ -268,11 +246,7 @@ async function writeRunStartAndDisconnect(sessionId, idempotencyKey, prompt) {
       sessionId,
       idempotencyKey,
       contentBlocks: [{ type: "text", text: prompt }],
-      execution: {
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
-        sandbox: { mode: "read-only", networkAccess: false },
-      },
+      providerSettings: JSON.parse(providerSettingsJson('{"mode":"read-only","networkAccess":false}')),
     });
     await connection.write(
       Buffer.from(
@@ -293,6 +267,19 @@ async function writeRunStartAndDisconnect(sessionId, idempotencyKey, prompt) {
   }
 }
 
+function providerSettingsJson(sandboxJson) {
+  return JSON.stringify({
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    settings: {
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      approvalPolicy: "never",
+      sandbox: JSON.parse(sandboxJson),
+    },
+  });
+}
+
 async function readEnvelope(connection) {
   const decoder = new RuntimeIpcJsonlDecoder();
   while (true) {
@@ -310,10 +297,6 @@ function providerMutationCount(entries) {
 
 function countLog(entries, event, prompt) {
   return entries.filter((entry) => entry.event === event && (prompt === undefined || entry.prompt === prompt)).length;
-}
-
-function countProtocolRequest(entries, method) {
-  return entries.filter((entry) => entry.event === "protocol.request" && entry.method === method).length;
 }
 
 async function waitForLog(predicate, timeoutMs = 15_000) {

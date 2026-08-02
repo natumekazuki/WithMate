@@ -462,6 +462,7 @@ test("public Application Service barrel exposes the transport-neutral Session co
       | "destination_exists"
       | "destination_invalid"
       | "payload_integrity_mismatch"
+      | "provider_capability_unavailable"
     >,
     Equal<ApplicationSessionLifecycleStatus, SessionLifecycleStatus>,
     Equal<CapacityError["details"], ApplicationCapacityExceededDetails>,

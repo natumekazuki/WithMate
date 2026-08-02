@@ -7,7 +7,6 @@ import {
   ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS,
   normalizeAllowedAdditionalDirectories,
 } from "../shared/allowed-additional-directories.js";
-import { buildApplicationRunProviderRequest } from "../shared/application-run-execution.js";
 import { APPLICATION_RUN_LIMITS } from "../shared/application-run-model.js";
 import { MESSAGE_CONTENT_LIMITS, snapshotMessageContentBlocks } from "../shared/message-content.js";
 import { isCanonicalUuid, isPlainObject } from "../shared/persistence-runtime-protocol.js";
@@ -42,6 +41,10 @@ import {
   type RunInputResolutionCode,
   type RunInputResolutionCommand,
   type RunInputResolutionResult,
+  type RunInteractionResponseAdmissionCommand,
+  type RunInteractionResponseMarkWriteAttemptCommand,
+  type RunInteractionResponseResult,
+  type RunInteractionResponseSettlementCommand,
   type RunCancelAdmissionCommand,
   type RunCancelAdmissionResult,
   type RunOutputAppendCommand,
@@ -69,7 +72,22 @@ import {
 } from "../shared/repository-write-model.js";
 import { executeWriteTransaction } from "./request-executor.js";
 import { prepareRunCancelIdempotency, projectRunCancelAdmissionResult } from "./run-cancel-idempotency.js";
+import {
+  decodeRunAdmissionReplay,
+  isAdmissionProviderRequest,
+  isRunExecutionSnapshot,
+  prepareNormalRunAdmissionIdempotency,
+  prepareRetryRunAdmissionIdempotency,
+} from "./run-admission-idempotency.js";
 import { prepareRunInputIdempotency } from "./run-input-idempotency.js";
+import {
+  admitRunInteractionResponse,
+  interactionResponseFingerprint,
+  markRunInteractionResponseWriteAttempt,
+  repairRunInteractionResponses,
+  RUN_INTERACTION_RESPONSE_IDEMPOTENCY_OPERATION,
+  settleRunInteractionResponse,
+} from "./run-interaction-response.js";
 
 export const DEFAULT_IDEMPOTENCY_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 export const RUN_OUTPUT_PAYLOAD_LIMITS = {
@@ -202,7 +220,7 @@ export function createRepositoryWriteOperations(
       write((payload) =>
         runDecoded(decodeStartupRepair(payload), () => {
           const now = readClock(clock);
-          return executeWriteTransaction(database, () => repairStartupState(database, now));
+          return executeWriteTransaction(database, () => repairStartupState(database, now, retentionMs));
         }),
       ),
     ],
@@ -349,6 +367,41 @@ export function createRepositoryWriteOperations(
       ),
     ],
     [
+      REPOSITORY_WRITE_OPERATIONS.runInteractionResponseAdmit,
+      write((payload) =>
+        runDecoded(decodeRunInteractionResponseAdmission(payload), (command) => {
+          const fingerprint = interactionResponseFingerprint(command);
+          if (fingerprint === undefined) throw invalidCommand();
+          const now = readClock(clock);
+          return executeWriteTransaction(database, () =>
+            admitRunInteractionResponse(database, command, fingerprint, now, ephemeralBindingOwners),
+          );
+        }),
+      ),
+    ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.runInteractionResponseMarkWriteAttempt,
+      write((payload) =>
+        runDecoded(decodeRunInteractionResponseMarkWriteAttempt(payload), (command) => {
+          const now = readClock(clock);
+          return executeWriteTransaction(database, () =>
+            markRunInteractionResponseWriteAttempt(database, command, now),
+          );
+        }),
+      ),
+    ],
+    [
+      REPOSITORY_WRITE_OPERATIONS.runInteractionResponseSettle,
+      write((payload) =>
+        runDecoded(decodeRunInteractionResponseSettlement(payload), (command) => {
+          const now = readClock(clock);
+          return executeWriteTransaction(database, () =>
+            settleRunInteractionResponse(database, command, now, retentionMs),
+          );
+        }),
+      ),
+    ],
+    [
       REPOSITORY_WRITE_OPERATIONS.runCancelAdmit,
       write((payload) =>
         runDecoded(decodeRunCancelAdmission(payload), (command) => {
@@ -419,7 +472,12 @@ function executeRepositoryTransaction<T>(database: DatabaseSync, operation: () =
   }
 }
 
-function repairStartupState(database: DatabaseSync, now: number): RepositoryCommandResult<StartupRepairResult> {
+function repairStartupState(
+  database: DatabaseSync,
+  now: number,
+  retentionMs: number,
+): RepositoryCommandResult<StartupRepairResult> {
+  const settledInteractionResponses = repairRunInteractionResponses(database, now, retentionMs);
   const expiredIdempotencyRecords = Number(
     database
       .prepare(
@@ -644,6 +702,7 @@ function repairStartupState(database: DatabaseSync, now: number): RepositoryComm
         invalidatedBindings,
         abortedDispatches,
         settledInputDeliveries: abortedInputDeliveries + ambiguousInputDeliveries,
+        settledInteractionResponses,
         availableChildResults,
         repairedDelegations,
         storedOutputPayloads,
@@ -730,7 +789,16 @@ function inspectStartupState(database: DatabaseSync): StartupRepairResult["inspe
       `
         SELECT COUNT(*) AS count
         FROM idempotency_records i
-        WHERE i.record_state = 'in_progress' OR (i.record_state = 'completed' AND (
+        WHERE (i.record_state = 'in_progress' AND NOT (
+          i.operation = 'run.interaction.respond'
+          AND i.response_ref_type = 'interaction'
+          AND i.response_ref_id IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM run_interaction_responses rr
+            WHERE rr.id = i.response_ref_id AND rr.session_id = i.scope_session_id
+              AND rr.effect_certainty IN ('admitted', 'write_attempted')
+          )
+        )) OR (i.record_state = 'completed' AND (
           (i.response_ref_type = 'session' AND NOT EXISTS (
             SELECT 1 FROM sessions s WHERE s.id = i.response_ref_id AND s.id = i.scope_session_id
           ))
@@ -759,11 +827,39 @@ function inspectStartupState(database: DatabaseSync): StartupRepairResult["inspe
             )
           ))
           OR (i.response_ref_type = 'interaction' AND NOT EXISTS (
-            SELECT 1 FROM run_input_deliveries rd
-            JOIN messages m ON m.id = rd.message_id
-            WHERE rd.message_id = i.response_ref_id AND m.session_id = i.scope_session_id
+            SELECT 1 FROM run_interaction_responses rr
+            WHERE rr.id = i.response_ref_id AND rr.session_id = i.scope_session_id
+              AND i.operation = 'run.interaction.respond'
+              AND rr.effect_certainty IN ('resolved', 'ambiguous', 'not_sent')
           ))
         ))
+      `,
+    ),
+    diagnosticInteractionResponses: scalarCount(
+      database,
+      `
+        SELECT COUNT(*) AS count
+        FROM run_interaction_responses rr
+        WHERE NOT EXISTS (
+          SELECT 1 FROM idempotency_records i
+          WHERE i.response_ref_type = 'interaction' AND i.response_ref_id = rr.id
+            AND i.scope_session_id = rr.session_id
+            AND i.operation = 'run.interaction.respond'
+            AND ((rr.effect_certainty IN ('admitted', 'write_attempted')
+                  AND i.record_state = 'in_progress')
+              OR (rr.effect_certainty IN ('resolved', 'ambiguous', 'not_sent')
+                  AND i.record_state = 'completed' AND i.response_kind = 'success'
+                  AND i.response_envelope_json IS NOT NULL))
+        ) OR (
+          rr.effect_certainty IN ('resolved', 'ambiguous', 'not_sent')
+          AND NOT EXISTS (
+            SELECT 1 FROM run_events e
+            WHERE e.run_id = rr.run_id AND e.subject_type = 'interaction'
+              AND e.subject_id = rr.interaction_id
+              AND e.dedupe_key = 'interaction-response:' || rr.id || ':' || rr.effect_certainty
+              AND e.event_code = 'run.interaction.response.' || rr.effect_certainty
+          )
+        )
       `,
     ),
     diagnosticChildResults: scalarCount(
@@ -1238,6 +1334,12 @@ function deleteSessionSubtree(
               )
             )
           ))
+          OR (response_ref_type = 'interaction' AND response_ref_id IN (
+            SELECT id FROM run_interaction_responses
+            WHERE run_id IN (
+              SELECT id FROM runs WHERE session_id IN (SELECT id FROM temp.session_deletion_workset)
+            )
+          ))
         )
     `,
     )
@@ -1293,6 +1395,14 @@ function deleteSessionSubtree(
     .prepare(
       `
       DELETE FROM run_input_deliveries
+      WHERE run_id IN (SELECT id FROM runs WHERE session_id IN (SELECT id FROM temp.session_deletion_workset))
+    `,
+    )
+    .run();
+  database
+    .prepare(
+      `
+      DELETE FROM run_interaction_responses
       WHERE run_id IN (SELECT id FROM runs WHERE session_id IN (SELECT id FROM temp.session_deletion_workset))
     `,
     )
@@ -1433,6 +1543,9 @@ function admitSessionSubtreeDelete(
         target_outputs(id) AS (
           SELECT id FROM run_output_items WHERE run_id IN (SELECT id FROM target_runs)
         ),
+        target_interaction_responses(id) AS (
+          SELECT id FROM run_interaction_responses WHERE run_id IN (SELECT id FROM target_runs)
+        ),
         target_relations(id) AS (
           SELECT id FROM session_relations
           WHERE parent_session_id IN (SELECT id FROM temp.session_deletion_workset)
@@ -1460,6 +1573,7 @@ function admitSessionSubtreeDelete(
             OR (subject_type = 'delegation' AND subject_id IN (SELECT id FROM target_delegations))
             OR (subject_type = 'child_result_delivery' AND subject_id IN (SELECT id FROM target_deliveries)))
         + (SELECT COUNT(*) FROM run_input_deliveries WHERE run_id IN (SELECT id FROM target_runs))
+        + (SELECT COUNT(*) FROM target_interaction_responses)
         + (SELECT COUNT(*) FROM target_outputs)
         + (SELECT COUNT(*) FROM run_output_payloads WHERE output_item_id IN (SELECT id FROM target_outputs))
         + (SELECT COUNT(*) FROM target_relations)
@@ -1470,7 +1584,9 @@ function admitSessionSubtreeDelete(
             OR (record_state = 'completed' AND (
               (response_ref_type = 'session' AND response_ref_id IN (SELECT id FROM temp.session_deletion_workset))
               OR (response_ref_type = 'run' AND response_ref_id IN (SELECT id FROM target_runs))
-              OR (response_ref_type = 'delivery' AND response_ref_id IN (SELECT id FROM target_deliveries)))))
+              OR (response_ref_type = 'delivery' AND response_ref_id IN (SELECT id FROM target_deliveries))
+              OR (response_ref_type = 'interaction'
+                AND response_ref_id IN (SELECT id FROM target_interaction_responses)))))
         + (SELECT COUNT(*) FROM temp.session_deletion_workset)
         + 2 AS affected_row_count,
         COALESCE((SELECT SUM(length(CAST(allowed_additional_directories_json AS BLOB))) FROM sessions
@@ -1484,7 +1600,9 @@ function admitSessionSubtreeDelete(
             OR (record_state = 'completed' AND (
               (response_ref_type = 'session' AND response_ref_id IN (SELECT id FROM temp.session_deletion_workset))
               OR (response_ref_type = 'run' AND response_ref_id IN (SELECT id FROM target_runs))
-              OR (response_ref_type = 'delivery' AND response_ref_id IN (SELECT id FROM target_deliveries))))), 0)
+              OR (response_ref_type = 'delivery' AND response_ref_id IN (SELECT id FROM target_deliveries))
+              OR (response_ref_type = 'interaction'
+                AND response_ref_id IN (SELECT id FROM target_interaction_responses))))), 0)
         + COALESCE((SELECT SUM(byte_length) FROM run_output_payloads
           WHERE output_item_id IN (SELECT id FROM target_outputs)), 0) AS payload_bytes
     `,
@@ -1711,16 +1829,10 @@ function admitRetryRun(
   if (!isTerminalRunPhase(source.phase)) {
     return failure("lifecycle_conflict", "Retry source Run must be terminal.");
   }
-  const sourceExecutionSnapshot = snapshotStoredExecutionSnapshot(source.execution_snapshot_json);
-  if (
-    command.run.executionSnapshot.modelSelection === "inherited" &&
-    (sourceExecutionSnapshot === undefined || command.run.executionSnapshot.model !== sourceExecutionSnapshot.model)
-  ) {
-    return failure("request_invalid", "Inherited retry model does not match its source Run.");
-  }
   const sourceContent = snapshotStoredMessageContent(source.content_blocks_json);
   if (
     sourceContent === undefined ||
+    !isRetryModelSelectionValid(command.run.executionSnapshot, source.execution_snapshot_json) ||
     !isAdmissionProviderRequest(sourceContent, command.run.executionSnapshot, command.dispatch.providerRequest)
   ) {
     return failure(
@@ -1796,6 +1908,32 @@ function admitRetryRun(
   return success(value, false);
 }
 
+function isRetryModelSelectionValid(
+  snapshot: RetryRunAdmissionCommand["run"]["executionSnapshot"],
+  sourceSnapshotJson: string,
+): boolean {
+  if (snapshot.modelSelection === "explicit") return true;
+  let source: unknown;
+  try {
+    source = JSON.parse(sourceSnapshotJson);
+  } catch {
+    return false;
+  }
+  if (!isRunExecutionSnapshot(source)) return false;
+  return (
+    canonicalJsonString({
+      providerId: snapshot.providerId,
+      definitionVersion: snapshot.definitionVersion,
+      settings: snapshot.settings,
+    }) ===
+    canonicalJsonString({
+      providerId: source.providerId,
+      definitionVersion: source.definitionVersion,
+      settings: source.settings,
+    })
+  );
+}
+
 function isAdmissionSnapshotScoped(
   snapshot: NormalRunAdmissionCommand["run"]["executionSnapshot"],
   workspaceKey: string,
@@ -1817,37 +1955,11 @@ function isAdmissionSnapshotScoped(
   );
 }
 
-function isAdmissionProviderRequest(
-  contentBlocks: NonNullable<ReturnType<typeof snapshotMessageContentBlocks>>,
-  snapshot: NormalRunAdmissionCommand["run"]["executionSnapshot"],
-  providerRequest: RunAdmissionDispatch["providerRequest"],
-): boolean {
-  try {
-    return (
-      canonicalJsonString(providerRequest) ===
-      canonicalJsonString(buildApplicationRunProviderRequest(contentBlocks, snapshot))
-    );
-  } catch {
-    return false;
-  }
-}
-
 function snapshotStoredMessageContent(
   contentBlocksJson: string,
 ): NonNullable<ReturnType<typeof snapshotMessageContentBlocks>> | undefined {
   try {
     return snapshotMessageContentBlocks(JSON.parse(contentBlocksJson));
-  } catch {
-    return undefined;
-  }
-}
-
-function snapshotStoredExecutionSnapshot(
-  executionSnapshotJson: string,
-): NormalRunAdmissionCommand["run"]["executionSnapshot"] | undefined {
-  try {
-    const value: unknown = JSON.parse(executionSnapshotJson);
-    return isApplicationRunExecutionSnapshot(value) ? value : undefined;
   } catch {
     return undefined;
   }
@@ -3808,112 +3920,6 @@ function decodeChildResultCollectReplay(
   return value as ChildResultCollectResult;
 }
 
-function decodeRunAdmissionReplay(
-  database: DatabaseSync,
-  command: NormalRunAdmissionCommand,
-  value: unknown,
-  responseRefId: string,
-): NormalRunAdmissionResult | undefined;
-function decodeRunAdmissionReplay(
-  database: DatabaseSync,
-  command: RetryRunAdmissionCommand,
-  value: unknown,
-  responseRefId: string,
-): RetryRunAdmissionResult | undefined;
-function decodeRunAdmissionReplay(
-  database: DatabaseSync,
-  command: NormalRunAdmissionCommand | RetryRunAdmissionCommand,
-  value: unknown,
-  responseRefId: string,
-): NormalRunAdmissionResult | RetryRunAdmissionResult | undefined {
-  const isRetry = "retryOfRunId" in command;
-  const keys = [
-    "sessionId",
-    "messageId",
-    "runId",
-    "attemptId",
-    "bindingId",
-    "runPhase",
-    "bindingState",
-    "dispatchState",
-    "admittedAt",
-    ...(isRetry ? ["retryOfRunId"] : []),
-  ];
-  if (!isPlainObject(value) || !hasExactKeys(value, keys)) return undefined;
-  const messageId = value.messageId;
-  const runId = value.runId;
-  const attemptId = value.attemptId;
-  const bindingId = value.bindingId;
-  if (
-    value.sessionId !== command.sessionId ||
-    !isBoundedString(messageId, 1_024) ||
-    !isBoundedString(runId, 1_024) ||
-    runId !== responseRefId ||
-    !isBoundedString(attemptId, 1_024) ||
-    !isBoundedString(bindingId, 1_024)
-  ) {
-    return undefined;
-  }
-  const row = database
-    .prepare(
-      `
-      SELECT r.initiating_message_id, r.retry_of_run_id, r.phase AS run_phase, r.created_at,
-        a.id AS attempt_id, a.provider_binding_id, b.id AS binding_id, b.created_by_run_attempt_id,
-        b.persistence_mode,
-        b.binding_state, d.dispatch_state
-      FROM runs r
-      JOIN sessions s ON s.id = r.session_id
-      JOIN run_attempts a ON a.id = ? AND a.run_id = r.id
-      JOIN run_dispatches d ON d.run_attempt_id = a.id
-      JOIN provider_bindings b ON b.id = ?
-        AND (a.provider_binding_id = b.id
-          OR (a.provider_binding_id IS NULL AND b.created_by_run_attempt_id = a.id))
-        AND b.session_id = r.session_id AND b.provider_id = s.provider_id
-      JOIN run_attempts creator_a ON creator_a.id = b.created_by_run_attempt_id
-      JOIN runs creator_r ON creator_r.id = creator_a.run_id AND creator_r.session_id = r.session_id
-      WHERE r.id = ? AND r.session_id = ? AND s.workspace_key = ?
-        AND (b.persistence_mode = 'persistent' OR b.created_by_run_attempt_id = a.id)
-    `,
-    )
-    .get(attemptId, bindingId, runId, command.sessionId, command.workspaceKey) as
-    | Readonly<{
-        initiating_message_id: string;
-        retry_of_run_id: string | null;
-        run_phase: NonTerminalRunPhase | TerminalRunPhase;
-        created_at: number;
-        attempt_id: string;
-        provider_binding_id: string | null;
-        binding_id: string;
-        created_by_run_attempt_id: string;
-        persistence_mode: "persistent" | "ephemeral";
-        binding_state: "creating" | "active" | "invalidated" | "superseded";
-        dispatch_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
-      }>
-    | undefined;
-  const retryOfRunId = isRetry ? command.retryOfRunId : null;
-  if (
-    row === undefined ||
-    row.retry_of_run_id !== retryOfRunId ||
-    messageId !== row.initiating_message_id ||
-    value.attemptId !== row.attempt_id ||
-    value.bindingId !== row.binding_id ||
-    row.persistence_mode !== "persistent" ||
-    value.runPhase !== "queued" ||
-    value.bindingState !== (row.created_by_run_attempt_id === row.attempt_id ? "creating" : "active") ||
-    value.dispatchState !== "pending" ||
-    value.admittedAt !== row.created_at ||
-    (isRetry && value.retryOfRunId !== retryOfRunId)
-  ) {
-    return undefined;
-  }
-  return {
-    ...(value as unknown as NormalRunAdmissionResult | RetryRunAdmissionResult),
-    runPhase: row.run_phase,
-    bindingState: row.binding_state,
-    dispatchState: row.dispatch_state,
-  };
-}
-
 function decodeChildStartReplay(
   database: DatabaseSync,
   prepared: PreparedChildStart,
@@ -4097,69 +4103,20 @@ function sessionTransitionFingerprint(
 }
 
 function prepareNormalRunAdmission(command: NormalRunAdmissionCommand): PreparedNormalRunAdmission {
-  const contentBlocksJson = canonicalJsonString(command.message.contentBlocks);
-  const executionSnapshotJson = canonicalJsonString(command.run.executionSnapshot);
-  const providerRequestJson = canonicalJsonString(command.dispatch.providerRequest);
-  if (
-    providerRequestJson !==
-    canonicalJsonString(
-      buildApplicationRunProviderRequest(command.message.contentBlocks, command.run.executionSnapshot),
-    )
-  ) {
-    throw invalidCommand();
-  }
-  if (
-    Buffer.byteLength(contentBlocksJson) > MESSAGE_CONTENT_LIMITS.maxJsonBytes ||
-    Buffer.byteLength(executionSnapshotJson) > RUN_WRITE_PAYLOAD_LIMITS.executionSnapshotMaxJsonBytes ||
-    Buffer.byteLength(providerRequestJson) > RUN_WRITE_PAYLOAD_LIMITS.providerRequestMaxJsonBytes
-  ) {
-    throw invalidCommand();
-  }
-  const dispatchFingerprint = fingerprintJson(providerRequestJson);
+  const prepared = prepareNormalRunAdmissionIdempotency(command);
+  if (prepared === undefined) throw invalidCommand();
   return {
     command,
-    contentBlocksJson,
-    executionSnapshotJson,
-    dispatchFingerprint,
-    fingerprint: fingerprint({
-      operation: "run.admit",
-      sessionId: command.sessionId,
-      workspaceKey: command.workspaceKey,
-      message: { contentBlocks: JSON.parse(contentBlocksJson) },
-      run: { executionSnapshot: JSON.parse(executionSnapshotJson) },
-      dispatch: {
-        requestFingerprint: dispatchFingerprint,
-        providerIdempotencyKey: command.dispatch.providerIdempotencyKey,
-      },
-    }),
+    ...prepared,
   };
 }
 
 function prepareRetryRunAdmission(command: RetryRunAdmissionCommand): PreparedRetryRunAdmission {
-  const executionSnapshotJson = canonicalJsonString(command.run.executionSnapshot);
-  const providerRequestJson = canonicalJsonString(command.dispatch.providerRequest);
-  if (
-    Buffer.byteLength(executionSnapshotJson) > RUN_WRITE_PAYLOAD_LIMITS.executionSnapshotMaxJsonBytes ||
-    Buffer.byteLength(providerRequestJson) > RUN_WRITE_PAYLOAD_LIMITS.providerRequestMaxJsonBytes
-  ) {
-    throw invalidCommand();
-  }
-  const dispatchFingerprint = fingerprintJson(providerRequestJson);
+  const prepared = prepareRetryRunAdmissionIdempotency(command);
+  if (prepared === undefined) throw invalidCommand();
   return {
     command,
-    executionSnapshotJson,
-    dispatchFingerprint,
-    fingerprint: fingerprint({
-      operation: "run.retry",
-      sessionId: command.sessionId,
-      workspaceKey: command.workspaceKey,
-      retryOfRunId: command.retryOfRunId,
-      run: { executionSnapshot: JSON.parse(executionSnapshotJson) },
-      dispatch: {
-        requestFingerprint: dispatchFingerprint,
-        providerIdempotencyKey: command.dispatch.providerIdempotencyKey,
-      },
-    }),
+    ...prepared,
   };
 }
 
@@ -4659,6 +4616,92 @@ function decodeRunInputAdmission(payload: Readonly<Record<string, unknown>>): De
       contentBlocks,
     },
   };
+}
+
+function decodeRunInteractionResponseAdmission(
+  payload: Readonly<Record<string, unknown>>,
+): DecodeResult<RunInteractionResponseAdmissionCommand> {
+  if (
+    !hasExactKeys(payload, [
+      "sessionId",
+      "workspaceKey",
+      "idempotencyKey",
+      "runId",
+      "attemptId",
+      "bindingId",
+      "ephemeralOwnerToken",
+      "externalConversationId",
+      "externalExecutionId",
+      "providerId",
+      "definitionVersion",
+      "interactionKind",
+      "interactionId",
+      "semanticAction",
+      "canonicalResponseJson",
+    ]) ||
+    !isBoundedString(payload.sessionId, 1_024) ||
+    !isBoundedString(payload.workspaceKey, 1_024) ||
+    !isCanonicalUuid(payload.idempotencyKey) ||
+    !isBoundedString(payload.runId, 1_024) ||
+    !isBoundedString(payload.attemptId, 1_024) ||
+    !isBoundedString(payload.bindingId, 1_024) ||
+    (payload.ephemeralOwnerToken !== null && !isCanonicalUuid(payload.ephemeralOwnerToken)) ||
+    !isBoundedString(payload.externalConversationId, 4_096) ||
+    !isBoundedString(payload.externalExecutionId, 4_096) ||
+    !isBoundedString(payload.providerId, 1_024) ||
+    !isBoundedString(payload.definitionVersion, 1_024) ||
+    !isBoundedString(payload.interactionKind, 1_024) ||
+    !isBoundedString(payload.interactionId, 1_024) ||
+    !isRunInteractionSemanticAction(payload.semanticAction) ||
+    typeof payload.canonicalResponseJson !== "string" ||
+    Buffer.byteLength(payload.canonicalResponseJson) > 64 * 1024
+  ) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as RunInteractionResponseAdmissionCommand };
+}
+
+function decodeRunInteractionResponseMarkWriteAttempt(
+  payload: Readonly<Record<string, unknown>>,
+): DecodeResult<RunInteractionResponseMarkWriteAttemptCommand> {
+  if (
+    !hasExactKeys(payload, ["responseRefId", "sessionId", "workspaceKey", "runId", "interactionId"]) ||
+    !isCanonicalUuid(payload.responseRefId) ||
+    !isBoundedString(payload.sessionId, 1_024) ||
+    !isBoundedString(payload.workspaceKey, 1_024) ||
+    !isBoundedString(payload.runId, 1_024) ||
+    !isBoundedString(payload.interactionId, 1_024)
+  ) {
+    return decodeFailure();
+  }
+  return { ok: true, value: payload as unknown as RunInteractionResponseMarkWriteAttemptCommand };
+}
+
+function decodeRunInteractionResponseSettlement(
+  payload: Readonly<Record<string, unknown>>,
+): DecodeResult<RunInteractionResponseSettlementCommand> {
+  if (
+    !hasExactKeys(payload, ["responseRefId", "sessionId", "workspaceKey", "runId", "interactionId", "outcome"]) ||
+    !isCanonicalUuid(payload.responseRefId) ||
+    !isBoundedString(payload.sessionId, 1_024) ||
+    !isBoundedString(payload.workspaceKey, 1_024) ||
+    !isBoundedString(payload.runId, 1_024) ||
+    !isBoundedString(payload.interactionId, 1_024) ||
+    !isPlainObject(payload.outcome) ||
+    !hasExactKeys(payload.outcome, ["effectCertainty", "resolutionCode"])
+  ) {
+    return decodeFailure();
+  }
+  const outcome = payload.outcome;
+  const valid =
+    (outcome.effectCertainty === "resolved" && outcome.resolutionCode === "provider_resolved") ||
+    (outcome.effectCertainty === "ambiguous" &&
+      (outcome.resolutionCode === "transport_unknown" || outcome.resolutionCode === "process_unknown")) ||
+    (outcome.effectCertainty === "not_sent" &&
+      (outcome.resolutionCode === "transport_not_sent" ||
+        outcome.resolutionCode === "owner_lost_before_write" ||
+        outcome.resolutionCode === "adapter_rejected"));
+  return valid ? { ok: true, value: payload as unknown as RunInteractionResponseSettlementCommand } : decodeFailure();
 }
 
 function decodeRunCancelAdmission(payload: Readonly<Record<string, unknown>>): DecodeResult<RunCancelAdmissionCommand> {
@@ -5600,12 +5643,25 @@ function hasEarlierUnresolvedRunInput(database: DatabaseSync, attemptId: string,
 function hasResponseReference(
   database: DatabaseSync,
   operation: string,
-  refType: "session" | "run" | "delivery",
+  refType: "session" | "run" | "delivery" | "interaction",
   refId: string,
   scopeSessionId: string,
 ): boolean {
   if (refType === "session") {
     return refId === scopeSessionId && database.prepare("SELECT 1 FROM sessions WHERE id = ?").get(refId) !== undefined;
+  }
+  if (refType === "interaction") {
+    return (
+      operation === RUN_INTERACTION_RESPONSE_IDEMPOTENCY_OPERATION &&
+      database
+        .prepare(
+          `
+          SELECT 1 FROM run_interaction_responses
+          WHERE id = ? AND session_id = ?
+        `,
+        )
+        .get(refId, scopeSessionId) !== undefined
+    );
   }
   if (refType === "delivery") {
     if (operation === REPOSITORY_WRITE_OPERATIONS.childStart) {
@@ -6449,6 +6505,12 @@ function isRunInputResolutionCode(value: unknown): value is RunInputResolutionCo
   );
 }
 
+function isRunInteractionSemanticAction(
+  value: unknown,
+): value is RunInteractionResponseAdmissionCommand["semanticAction"] {
+  return value === "accept" || value === "decline" || value === "cancel" || value === "answer" || value === "submit";
+}
+
 function isDenseBoundedStringArray(value: unknown, maxItems: number, maxLength: number): value is string[] {
   if (!Array.isArray(value) || value.length > maxItems) return false;
   for (let index = 0; index < value.length; index += 1) {
@@ -6475,13 +6537,6 @@ function isApplicationRunExecutionSnapshot(
 ): value is NormalRunAdmissionCommand["run"]["executionSnapshot"] {
   if (!isRunExecutionSnapshot(value) || value.character !== null) return false;
   if (
-    !isPlainObject(value.reasoning) ||
-    !hasExactKeys(value.reasoning, ["effort"]) ||
-    !isBoundedString(value.reasoning.effort, 1_024) ||
-    !isPlainObject(value.approval) ||
-    !hasExactKeys(value.approval, ["policy"]) ||
-    value.approval.policy !== "never" ||
-    !isPlainObject(value.sandbox) ||
     !isPlainObject(value.workspace) ||
     !hasExactKeys(value.workspace, ["key", "path", "allowedAdditionalDirectories"]) ||
     !isBoundedString(value.workspace.key, 1_024) ||
@@ -6494,12 +6549,6 @@ function isApplicationRunExecutionSnapshot(
   ) {
     return false;
   }
-  const sandbox =
-    (hasExactKeys(value.sandbox, ["mode"]) && value.sandbox.mode === "danger-full-access") ||
-    (hasExactKeys(value.sandbox, ["mode", "networkAccess"]) &&
-      (value.sandbox.mode === "read-only" || value.sandbox.mode === "workspace-write") &&
-      typeof value.sandbox.networkAccess === "boolean");
-  if (!sandbox) return false;
   const workspace = resolveWorkspaceIdentity(value.workspace.path);
   const directories = normalizeAllowedAdditionalDirectories(value.workspace.allowedAdditionalDirectories);
   return (
@@ -6508,31 +6557,6 @@ function isApplicationRunExecutionSnapshot(
     workspace.workspaceKey === value.workspace.key &&
     directories !== undefined &&
     canonicalJsonString(directories) === canonicalJsonString(value.workspace.allowedAdditionalDirectories)
-  );
-}
-
-function isRunExecutionSnapshot(value: unknown): value is NormalRunAdmissionCommand["run"]["executionSnapshot"] {
-  return (
-    isPlainObject(value) &&
-    hasExactKeys(value, [
-      "providerId",
-      "model",
-      "modelSelection",
-      "reasoning",
-      "approval",
-      "sandbox",
-      "workspace",
-      "character",
-    ]) &&
-    isBoundedString(value.providerId, 1_024) &&
-    isBoundedString(value.model, 1_024) &&
-    (value.modelSelection === "explicit" || value.modelSelection === "inherited") &&
-    isJsonValue(value.reasoning) &&
-    isJsonValue(value.approval) &&
-    isJsonValue(value.sandbox) &&
-    isPlainObject(value.workspace) &&
-    isJsonValue(value.workspace) &&
-    (value.character === null || (isPlainObject(value.character) && isJsonValue(value.character)))
   );
 }
 

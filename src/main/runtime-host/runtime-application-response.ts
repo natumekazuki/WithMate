@@ -1,8 +1,14 @@
 import {
   APPLICATION_RUN_LIMITS,
   isApplicationRunCancelDomainErrorCode,
+  isApplicationRunRespondInteractionDomainErrorCode,
   isApplicationRunSendInputDomainErrorCode,
 } from "../../shared/application-run-model.js";
+import {
+  APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS,
+  applicationRunInteractionCollectionWireBytes,
+  applicationRunInteractionWireItemBytes,
+} from "../../shared/application-run-interaction-limits.js";
 import {
   APPLICATION_RUN_OUTPUT_CATEGORIES,
   APPLICATION_RUN_OUTPUT_LIMITS,
@@ -23,6 +29,7 @@ import {
   resolveWorkspaceIdentity,
   WORKSPACE_PATH_MAX_LENGTH,
 } from "../../shared/workspace-path.js";
+import { defaultProviderDefinitionRegistry } from "../providers/provider-registry.js";
 import type { RuntimeIpcOperation, RuntimeIpcOperationPayload } from "./runtime-ipc-contract.js";
 import { encodeRuntimeWireValue, type RuntimeWireValue } from "./runtime-ipc-value.js";
 
@@ -37,6 +44,7 @@ const WRITE_OPERATIONS = new Set<RuntimeIpcOperation>([
   "run.retry",
   "run.send_input",
   "run.cancel",
+  "run.respond_interaction",
 ]);
 const IDENTIFIER_MAX_LENGTH = 1_024;
 const CURSOR_MAX_LENGTH = 2_048;
@@ -138,8 +146,12 @@ function snapshotOperationValue(
       return snapshotRunInput(value, payload);
     case "run.cancel":
       return snapshotRunCancel(value, payload);
+    case "run.respond_interaction":
+      return snapshotRunRespondInteraction(value, payload);
     case "run.status":
       return snapshotRunStatus(value, payload);
+    case "run.interactions":
+      return snapshotRunInteractions(value, payload);
     case "run.events":
       return snapshotRunEventPage(value, payload);
     case "run.follow":
@@ -622,6 +634,43 @@ function snapshotRunStatus(value: unknown, payload: RuntimeIpcOperationPayload):
   };
 }
 
+function snapshotRunInteractions(value: unknown, payload: RuntimeIpcOperationPayload): unknown {
+  const result = exact(value, ["sessionId", "runId", "runVersion", "interactions"]);
+  requireScope(result, payload, ["sessionId", "runId"]);
+  if (!isNonNegativeInteger(result.runVersion)) malformed();
+  const interactionIds = new Set<string>();
+  let providerId: string | undefined;
+  let definitionVersion: string | undefined;
+  let interactionWireItemBytes = 0;
+  let interactionCount = 0;
+  const interactions = array(result.interactions, APPLICATION_RUN_LIMITS.interactionsMaxItems).map((value) => {
+    const interaction = canonicalInteractionSnapshot(value);
+    if (interactionIds.has(interaction.interactionId)) malformed();
+    providerId ??= interaction.providerId;
+    definitionVersion ??= interaction.definitionVersion;
+    if (interaction.providerId !== providerId || interaction.definitionVersion !== definitionVersion) malformed();
+    interactionIds.add(interaction.interactionId);
+    interactionWireItemBytes += applicationRunInteractionWireItemBytes(interaction);
+    interactionCount += 1;
+    if (
+      applicationRunInteractionCollectionWireBytes(interactionWireItemBytes, interactionCount) >
+      APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS.maxCollectionWireBytes
+    ) {
+      malformed();
+    }
+    return interaction;
+  });
+  return { ...result, interactions };
+}
+
+function canonicalInteractionSnapshot(value: unknown) {
+  try {
+    return defaultProviderDefinitionRegistry.canonicalizeInteractionSnapshot(value);
+  } catch {
+    malformed();
+  }
+}
+
 function snapshotRunCancel(value: unknown, payload: RuntimeIpcOperationPayload): unknown {
   const status = snapshotRunStatus(value, payload) as Readonly<Record<string, unknown>>;
   if (
@@ -634,6 +683,73 @@ function snapshotRunCancel(value: unknown, payload: RuntimeIpcOperationPayload):
     malformed();
   }
   return status;
+}
+
+function snapshotRunRespondInteraction(value: unknown, payload: RuntimeIpcOperationPayload): unknown {
+  const result = exact(value, [
+    "sessionId",
+    "runId",
+    "interactionId",
+    "admittedAt",
+    "effectCertainty",
+    "writeAttemptedAt",
+    "settledAt",
+    "resolutionCode",
+  ]);
+  requireScope(result, payload, ["sessionId", "runId"]);
+  if (
+    result.interactionId !== record(payload.response, ["interactionId", "kind", "payload"]).interactionId ||
+    !isNonNegativeInteger(result.admittedAt)
+  ) {
+    malformed();
+  }
+  const effectCertainty = enumeration(result.effectCertainty, [
+    "admitted",
+    "write_attempted",
+    "resolved",
+    "ambiguous",
+    "not_sent",
+  ] as const);
+  if (effectCertainty === "admitted") {
+    if (result.writeAttemptedAt !== null || result.settledAt !== null || result.resolutionCode !== null) malformed();
+  } else if (effectCertainty === "write_attempted") {
+    if (
+      !isNonNegativeInteger(result.writeAttemptedAt) ||
+      result.writeAttemptedAt < result.admittedAt ||
+      result.settledAt !== null ||
+      result.resolutionCode !== null
+    ) {
+      malformed();
+    }
+  } else {
+    if (
+      !isNonNegativeInteger(result.settledAt) ||
+      result.settledAt < result.admittedAt ||
+      (result.writeAttemptedAt !== null &&
+        (!isNonNegativeInteger(result.writeAttemptedAt) ||
+          result.writeAttemptedAt < result.admittedAt ||
+          result.settledAt < result.writeAttemptedAt))
+    ) {
+      malformed();
+    }
+    if (effectCertainty === "resolved") {
+      if (!isNonNegativeInteger(result.writeAttemptedAt) || result.resolutionCode !== "provider_resolved") malformed();
+    } else if (effectCertainty === "ambiguous") {
+      if (
+        !isNonNegativeInteger(result.writeAttemptedAt) ||
+        (result.resolutionCode !== "transport_unknown" && result.resolutionCode !== "process_unknown")
+      ) {
+        malformed();
+      }
+    } else if (result.writeAttemptedAt === null) {
+      if (result.resolutionCode !== "owner_lost_before_write" && result.resolutionCode !== "adapter_rejected") {
+        malformed();
+      }
+    } else if (result.resolutionCode !== "transport_not_sent" && result.resolutionCode !== "adapter_rejected") {
+      malformed();
+    }
+  }
+  return result;
 }
 
 function snapshotRunAdmission(
@@ -1188,7 +1304,8 @@ function validateOutcomeCombination(
     (operation === "run.start" ||
       operation === "run.retry" ||
       operation === "run.send_input" ||
-      operation === "run.cancel")
+      operation === "run.cancel" ||
+      operation === "run.respond_interaction")
   ) {
     malformed();
   }
@@ -1211,6 +1328,7 @@ function validateOutcomeCombination(
       "session.read_directories_chunk",
       "session.message_content_chunk",
       "run.status",
+      "run.interactions",
       "run.output_counts",
       "run.output_preview",
       "run.output_chunk",
@@ -1351,6 +1469,13 @@ function validateFailureCombination(
   if (operation === "run.cancel" && error.kind === "domain" && !isApplicationRunCancelDomainErrorCode(error.code)) {
     malformed();
   }
+  if (
+    operation === "run.respond_interaction" &&
+    error.kind === "domain" &&
+    !isApplicationRunRespondInteractionDomainErrorCode(error.code)
+  ) {
+    malformed();
+  }
 
   switch (persistence.status) {
     case "not_attempted":
@@ -1397,6 +1522,7 @@ function isSimpleDomainCode(value: unknown): boolean {
       "not_found",
       "reference_invalid",
       "lifecycle_conflict",
+      "provider_capability_unavailable",
       "session_busy",
       "insufficient_disk_space",
       "idempotency_conflict",

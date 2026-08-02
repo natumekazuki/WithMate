@@ -9,6 +9,8 @@ import {
   type Page,
   type RecoveryProjection,
   type RunDetail,
+  type RunAdmissionReplayProbeRequest,
+  type RunAdmissionReplayProbeResult,
   type RunEventPage,
   type RunHistoryListItem,
   type RunInputDeliveryRecoveryItem,
@@ -16,6 +18,8 @@ import {
   type RunCancelReplayProbeResult,
   type RunInputReplayProbeRequest,
   type RunInputReplayProbeResult,
+  type RunInteractionResponseReplayProbeRequest,
+  type RunInteractionResponseReplayProbeResult,
   type RunOutputListItem,
   type RunOutputItemDetail,
   type RunOutputPayloadChunkRequest,
@@ -174,6 +178,20 @@ export class RepositoryReadClient {
 
   runInputReplayProbe(input: RunInputReplayProbeRequest, options?: RequestOptions): Promise<RunInputReplayProbeResult> {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.runInputReplayProbe, "read", input, options);
+  }
+
+  runAdmissionReplayProbe(
+    input: RunAdmissionReplayProbeRequest,
+    options?: RequestOptions,
+  ): Promise<RunAdmissionReplayProbeResult> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.runAdmissionReplayProbe, "read", input, options);
+  }
+
+  runInteractionResponseReplayProbe(
+    input: RunInteractionResponseReplayProbeRequest,
+    options?: RequestOptions,
+  ): Promise<RunInteractionResponseReplayProbeResult> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.runInteractionResponseReplayProbe, "read", input, options);
   }
 
   runCancelReplayProbe(

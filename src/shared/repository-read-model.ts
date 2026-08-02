@@ -1,9 +1,14 @@
 import { MAX_PERSISTENCE_RESPONSE_BYTES } from "./persistence-protocol.js";
 import type { LocalRepositoryMetadata } from "./session-metadata.js";
 import type {
+  NormalRunAdmissionResult,
   RepositoryCommandError,
+  RepositoryJsonValue,
+  RetryRunAdmissionResult,
+  RunExecutionSnapshot,
   RunCancelAdmissionResult,
   RunInputAdmissionResult,
+  RunInteractionResponseResult,
   RunOutputCategory,
 } from "./repository-write-model.js";
 import type { TextContentBlock } from "./message-content.js";
@@ -24,7 +29,9 @@ export const REPOSITORY_READ_OPERATIONS = {
   runOutputGet: "repository.run.output.get",
   runOutputPayloadMetadata: "repository.run.output.payload-metadata",
   runInputDeliveriesPage: "repository.run.input-deliveries.page",
+  runAdmissionReplayProbe: "repository.run.admission-replay.probe",
   runInputReplayProbe: "repository.run.input-replay.probe",
+  runInteractionResponseReplayProbe: "repository.run.interaction-response-replay.probe",
   runCancelReplayProbe: "repository.run.cancel-replay.probe",
   payloadChunk: "payload.read_chunk",
   childResultsPage: "repository.child-results.page",
@@ -220,6 +227,49 @@ export type RunInputReplayProbeRequest = Readonly<{
 export type RunInputReplayProbeResult =
   | Readonly<{ kind: "absent" }>
   | Readonly<{ kind: "replay"; value: RunInputAdmissionResult }>
+  | Readonly<{ kind: "failure"; error: RepositoryCommandError }>;
+
+export type RunAdmissionReplayProbeRequest =
+  | Readonly<{
+      sessionId: string;
+      workspaceKey: string;
+      idempotencyKey: string;
+      message: Readonly<{ contentBlocks: readonly TextContentBlock[] }>;
+      run: Readonly<{ executionSnapshot: RunExecutionSnapshot }>;
+      dispatch: Readonly<{
+        providerRequest: Readonly<{ [key: string]: RepositoryJsonValue }>;
+        providerIdempotencyKey: string | null;
+      }>;
+    }>
+  | Readonly<{
+      sessionId: string;
+      workspaceKey: string;
+      idempotencyKey: string;
+      retryOfRunId: string;
+      run: Readonly<{ executionSnapshot: RunExecutionSnapshot }>;
+      dispatch: Readonly<{
+        providerRequest: Readonly<{ [key: string]: RepositoryJsonValue }>;
+        providerIdempotencyKey: string | null;
+      }>;
+    }>;
+
+export type RunAdmissionReplayProbeResult =
+  | Readonly<{ kind: "absent" }>
+  | Readonly<{ kind: "replay"; value: NormalRunAdmissionResult | RetryRunAdmissionResult }>
+  | Readonly<{ kind: "failure"; error: RepositoryCommandError }>;
+
+export type RunInteractionResponseReplayProbeRequest = Readonly<{
+  sessionId: string;
+  runId: string;
+  idempotencyKey: string;
+  interactionKind: string;
+  interactionId: string;
+  canonicalResponseJson: string;
+}>;
+
+export type RunInteractionResponseReplayProbeResult =
+  | Readonly<{ kind: "absent" }>
+  | Readonly<{ kind: "replay"; value: RunInteractionResponseResult }>
   | Readonly<{ kind: "failure"; error: RepositoryCommandError }>;
 
 export type RunCancelReplayProbeRequest = Readonly<{

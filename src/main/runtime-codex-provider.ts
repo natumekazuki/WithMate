@@ -2,20 +2,15 @@ import { constants as fsConstants } from "node:fs";
 import { access, open, stat, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 
-import {
-  CODEX_ADAPTER_SCHEMA_BASELINE,
-  CodexAdapter,
-  CodexAppServerTransport,
-  type CodexAppServerTransportOptions,
-} from "./providers/codex/index.js";
+import { CodexAdapter, CodexAppServerTransport, type CodexAppServerTransportOptions } from "./providers/codex/index.js";
 import type {
   ApplicationRunProviderRuntime,
   ApplicationRunProviderRuntimeFactory,
 } from "./application-run-runtime-service.js";
 import { ApplicationRunProviderRuntimeStartupError } from "./application-run-provider-failure.js";
+import { CODEX_PROVIDER_ID } from "./providers/codex/codex-provider-definition.js";
 
 export const WITHMATE_CODEX_EXECUTABLE_ENV = "WITHMATE_CODEX_EXECUTABLE";
-export const CODEX_PROVIDER_ID = "codex";
 const MAX_EXECUTABLE_HEADER_ENTRIES = 4_096;
 
 export type CodexApplicationRunRuntimeFactoryDependencies = Readonly<{
@@ -77,10 +72,7 @@ export class CodexApplicationRunRuntimeFactory implements ApplicationRunProvider
     }
     try {
       const connectionInfo = await transport.start(signal);
-      const cliVersion = resolveSupportedCodexCliVersion(connectionInfo.userAgent);
-      if (cliVersion === undefined) {
-        throw new ApplicationRunProviderRuntimeStartupError("capability", "Codex CLI version is unsupported.");
-      }
+      const cliVersion = observeCodexCliVersion(connectionInfo.userAgent);
       const adapter = new CodexAdapter(transport, {
         cliVersion,
       });
@@ -109,12 +101,9 @@ export class CodexApplicationRunRuntimeFactory implements ApplicationRunProvider
   }
 }
 
-export function resolveSupportedCodexCliVersion(
-  userAgent: string,
-): typeof CODEX_ADAPTER_SCHEMA_BASELINE.cliVersion | undefined {
-  return userAgent === `codex-cli/${CODEX_ADAPTER_SCHEMA_BASELINE.cliVersion}`
-    ? CODEX_ADAPTER_SCHEMA_BASELINE.cliVersion
-    : undefined;
+export function observeCodexCliVersion(userAgent: string): string {
+  const prefix = "codex-cli/";
+  return userAgent.startsWith(prefix) && userAgent.length > prefix.length ? userAgent.slice(prefix.length) : userAgent;
 }
 
 export async function resolveConfiguredCodexExecutable(

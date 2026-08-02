@@ -1,4 +1,5 @@
 import path from "node:path";
+import { Buffer } from "node:buffer";
 
 import {
   CodexTransportError,
@@ -44,6 +45,16 @@ export type CodexStartOptions = Readonly<{
 
 export type CodexProtocolAnomalyCode = "duplicate_or_late_response_id" | "unknown_response_id";
 
+declare const CODEX_SERVER_REQUEST_IDENTITY: unique symbol;
+export type CodexServerRequestIdentity = Readonly<{
+  readonly [CODEX_SERVER_REQUEST_IDENTITY]: true;
+}>;
+
+export type CodexServerRequestResolution =
+  | Readonly<{ kind: "current"; identity: CodexServerRequestIdentity }>
+  | Readonly<{ kind: "duplicate" }>
+  | Readonly<{ kind: "invalid" }>;
+
 export type CodexProtocolEvent =
   | Readonly<{ kind: "notification"; method: string; params?: unknown }>
   | Readonly<{ kind: "serverRequest"; request: CodexServerRequest }>
@@ -81,19 +92,38 @@ type EventWaiter = {
   reject: (error: unknown) => void;
 };
 
+type SeenServerRequest = {
+  readonly identity: CodexServerRequestIdentity;
+  resolutionSeen: boolean;
+};
+
+type QueuedProtocolEvent = Readonly<{
+  event: CodexProtocolEvent;
+  wireBytes: number;
+}>;
+
 export class CodexServerRequest {
+  readonly #identity = createServerRequestIdentity();
   #state: "pending" | "writing" | "settled" = "pending";
   #valid = true;
+  params: unknown;
+  trace: CodexW3cTraceContext | null | undefined;
 
   constructor(
-    readonly id: CodexRequestId,
     readonly method: string,
-    readonly params: unknown,
-    readonly trace: CodexW3cTraceContext | null | undefined,
+    params: unknown,
+    trace: CodexW3cTraceContext | null | undefined,
     private readonly settle: (
       message: Readonly<{ result: unknown }> | Readonly<{ error: CodexWireError }>,
     ) => Promise<void>,
-  ) {}
+  ) {
+    this.params = params;
+    this.trace = trace;
+  }
+
+  get identity(): CodexServerRequestIdentity {
+    return this.#identity;
+  }
 
   respond(result: unknown): Promise<void> {
     return this.#use({ result });
@@ -110,7 +140,13 @@ export class CodexServerRequest {
     });
   }
 
+  releasePayload(): void {
+    this.params = undefined;
+    this.trace = undefined;
+  }
+
   invalidate(): void {
+    this.releasePayload();
     this.#valid = false;
     this.#state = "settled";
   }
@@ -133,8 +169,9 @@ export class CodexServerRequest {
 export class CodexProtocolSession {
   readonly #pending = new Map<number, PendingRequest>();
   readonly #retiredUnsentRequestIds = new Set<number>();
-  readonly #events: CodexProtocolEvent[] = [];
-  readonly #serverRequests = new Map<string, CodexServerRequest>();
+  readonly #events: QueuedProtocolEvent[] = [];
+  readonly #serverRequests = new Map<CodexServerRequestIdentity, CodexServerRequest>();
+  readonly #seenServerRequests = new Map<string, SeenServerRequest>();
   readonly #limits: CodexTransportLimits;
   readonly #defaultRequestTimeoutMs: number;
   readonly #clientInfo: CodexClientInfo;
@@ -145,7 +182,8 @@ export class CodexProtocolSession {
   #connectionInfo: CodexConnectionInfo | undefined;
   #eventWaiter: EventWaiter | undefined;
   #terminalError: CodexTransportError | undefined;
-  #outstandingServerRequestIdBytes = 0;
+  #seenServerRequestIdBytes = 0;
+  #queuedEventBytes = 0;
 
   constructor(options: CodexProtocolSessionOptions) {
     this.#limits = validateCodexTransportLimits(options.limits ?? CODEX_TRANSPORT_LIMITS);
@@ -170,8 +208,20 @@ export class CodexProtocolSession {
     return this.#events.length;
   }
 
+  get queuedEventBytes(): number {
+    return this.#queuedEventBytes;
+  }
+
   get outstandingServerRequestCount(): number {
     return this.#serverRequests.size;
+  }
+
+  get seenServerRequestCount(): number {
+    return this.#seenServerRequests.size;
+  }
+
+  get seenServerRequestIdBytes(): number {
+    return this.#seenServerRequestIdBytes;
   }
 
   start(options: CodexStartOptions = {}): Promise<CodexConnectionInfo> {
@@ -189,33 +239,52 @@ export class CodexProtocolSession {
     return this.#request<TResult>(method, params, options);
   }
 
-  accept(envelope: CodexWireEnvelope): void {
+  accept(envelope: CodexWireEnvelope, wireBytes: number = encodedEnvelopeBytes(envelope)): void {
     if (this.#state === "failed" || this.#state === "closed" || this.#state === "closing") return;
+    if (!Number.isSafeInteger(wireBytes) || wireBytes < 1 || wireBytes > this.#limits.maxLineBytes) {
+      this.#failConnection(connectionFailure("protocol_failed"));
+      return;
+    }
     switch (envelope.kind) {
       case "response":
       case "errorResponse":
-        this.#acceptResponse(envelope);
+        this.#acceptResponse(envelope, wireBytes);
         return;
       case "notification":
-        this.#enqueueEvent({
-          kind: "notification",
-          method: envelope.method,
-          ...(Object.prototype.hasOwnProperty.call(envelope, "params") ? { params: envelope.params } : {}),
-        });
+        this.#enqueueEvent(
+          {
+            kind: "notification",
+            method: envelope.method,
+            ...(Object.prototype.hasOwnProperty.call(envelope, "params") ? { params: envelope.params } : {}),
+          },
+          wireBytes,
+        );
         return;
       case "serverRequest":
-        this.#acceptServerRequest(envelope);
+        this.#acceptServerRequest(envelope, wireBytes);
     }
   }
 
   nextEvent(): Promise<CodexProtocolEvent> {
     const queued = this.#events.shift();
-    if (queued !== undefined) return Promise.resolve(queued);
+    if (queued !== undefined) {
+      this.#queuedEventBytes -= queued.wireBytes;
+      return Promise.resolve(queued.event);
+    }
     if (this.#terminalError !== undefined) return Promise.reject(this.#terminalError);
     if (this.#eventWaiter !== undefined) return Promise.reject(requestNotSent("event_waiter_exists"));
     return new Promise<CodexProtocolEvent>((resolve, reject) => {
       this.#eventWaiter = { resolve, reject };
     });
+  }
+
+  observeServerRequestResolution(requestId: unknown): CodexServerRequestResolution {
+    if (!isRequestId(requestId)) return Object.freeze({ kind: "invalid" });
+    const seen = this.#seenServerRequests.get(requestKey(requestId));
+    if (seen === undefined) return Object.freeze({ kind: "invalid" });
+    if (seen.resolutionSeen) return Object.freeze({ kind: "duplicate" });
+    seen.resolutionSeen = true;
+    return Object.freeze({ kind: "current", identity: seen.identity });
   }
 
   fail(code: CodexConnectionFailureCode): void {
@@ -228,8 +297,9 @@ export class CodexProtocolSession {
     this.#terminalError = requestNotSent("closing");
     for (const request of this.#serverRequests.values()) request.invalidate();
     this.#serverRequests.clear();
+    this.#seenServerRequests.clear();
     this.#retiredUnsentRequestIds.clear();
-    this.#outstandingServerRequestIdBytes = 0;
+    this.#seenServerRequestIdBytes = 0;
     const waiter = this.#eventWaiter;
     this.#eventWaiter = undefined;
     waiter?.reject(this.#terminalError);
@@ -249,6 +319,12 @@ export class CodexProtocolSession {
 
   releaseTransportResources(): void {
     this.#writer = undefined;
+    if (this.#state === "closing" || this.#state === "closed") this.discardQueuedEvents();
+  }
+
+  discardQueuedEvents(): void {
+    this.#events.length = 0;
+    this.#queuedEventBytes = 0;
   }
 
   async #performHandshake(options: CodexStartOptions): Promise<CodexConnectionInfo> {
@@ -282,7 +358,10 @@ export class CodexProtocolSession {
       "initialize",
       {
         clientInfo: this.#clientInfo,
-        capabilities: null,
+        capabilities: {
+          experimentalApi: true,
+          mcpServerOpenaiFormElicitation: true,
+        },
       },
       { timeoutMs, ...(signal === undefined ? {} : { signal }) },
     );
@@ -344,7 +423,10 @@ export class CodexProtocolSession {
     });
   }
 
-  #acceptResponse(envelope: Extract<CodexWireEnvelope, { kind: "response" | "errorResponse" }>): void {
+  #acceptResponse(
+    envelope: Extract<CodexWireEnvelope, { kind: "response" | "errorResponse" }>,
+    wireBytes: number,
+  ): void {
     const requestId = envelope.id;
     const pending = typeof requestId === "number" ? this.#pending.get(requestId) : undefined;
     if (pending === undefined) {
@@ -352,14 +434,17 @@ export class CodexProtocolSession {
         this.#failConnection(connectionFailure("protocol_failed"));
         return;
       }
-      this.#enqueueEvent({
-        kind: "protocolAnomaly",
-        code:
-          typeof requestId === "number" && requestId >= 1 && requestId < this.#nextRequestId
-            ? "duplicate_or_late_response_id"
-            : "unknown_response_id",
-        responseIdType: typeof requestId === "number" ? "number" : "string",
-      });
+      this.#enqueueEvent(
+        {
+          kind: "protocolAnomaly",
+          code:
+            typeof requestId === "number" && requestId >= 1 && requestId < this.#nextRequestId
+              ? "duplicate_or_late_response_id"
+              : "unknown_response_id",
+          responseIdType: typeof requestId === "number" ? "number" : "string",
+        },
+        wireBytes,
+      );
       return;
     }
     if (!pending.writeStarted) {
@@ -376,61 +461,57 @@ export class CodexProtocolSession {
     }
   }
 
-  #acceptServerRequest(envelope: CodexWireServerRequest): void {
+  #acceptServerRequest(envelope: CodexWireServerRequest, wireBytes: number): void {
     const key = requestKey(envelope.id);
-    if (this.#serverRequests.has(key)) {
+    if (this.#seenServerRequests.has(key)) {
       this.#failConnection(connectionFailure("duplicate_server_request"));
       return;
     }
-    const keyBytes = Buffer.byteLength(key, "utf8");
+    const requestIdBytes = serverRequestIdBytes(envelope.id);
     if (
-      this.#serverRequests.size >= this.#limits.maxPendingRequests ||
-      this.#outstandingServerRequestIdBytes + keyBytes > this.#limits.maxOutstandingServerRequestIdBytes
+      this.#seenServerRequests.size >= this.#limits.maxPendingRequests ||
+      this.#seenServerRequestIdBytes + requestIdBytes > this.#limits.maxOutstandingServerRequestIdBytes
     ) {
       this.#failConnection(connectionFailure("server_request_limit"));
       return;
     }
-    this.#outstandingServerRequestIdBytes += keyBytes;
 
+    const requestId = envelope.id;
+    const jsonrpc = envelope.jsonrpc;
     let request: CodexServerRequest;
-    request = new CodexServerRequest(
-      envelope.id,
-      envelope.method,
-      envelope.params,
-      envelope.trace,
-      async (response) => {
-        if (this.#serverRequests.get(key) !== request) throw requestNotSent("server_request_settled");
-        if (this.#state === "failed" || this.#state === "closed" || this.#state === "closing") {
-          throw requestNotSent(this.#state === "closing" ? "closing" : "not_ready");
-        }
-        const message: CodexClientWireMessage =
-          "result" in response
-            ? {
-                id: envelope.id,
-                result: response.result,
-                ...(envelope.jsonrpc === undefined ? {} : { jsonrpc: envelope.jsonrpc }),
-              }
-            : {
-                id: envelope.id,
-                error: response.error,
-                ...(envelope.jsonrpc === undefined ? {} : { jsonrpc: envelope.jsonrpc }),
-              };
-        try {
-          await this.#write(message);
-        } catch (error) {
-          const failure = mapWriteFailure(error);
-          if (isUnknownWriteFailure(failure)) this.#failConnection(connectionFailure("stdin_failed"));
-          throw failure;
-        }
-        this.#serverRequests.delete(key);
-        this.#outstandingServerRequestIdBytes -= keyBytes;
-      },
-    );
-    this.#serverRequests.set(key, request);
-    this.#enqueueEvent({ kind: "serverRequest", request });
+    request = new CodexServerRequest(envelope.method, envelope.params, envelope.trace, async (response) => {
+      if (this.#serverRequests.get(request.identity) !== request) throw requestNotSent("server_request_settled");
+      if (this.#state === "failed" || this.#state === "closed" || this.#state === "closing") {
+        throw requestNotSent(this.#state === "closing" ? "closing" : "not_ready");
+      }
+      const message: CodexClientWireMessage =
+        "result" in response
+          ? {
+              id: requestId,
+              result: response.result,
+              ...(jsonrpc === undefined ? {} : { jsonrpc }),
+            }
+          : {
+              id: requestId,
+              error: response.error,
+              ...(jsonrpc === undefined ? {} : { jsonrpc }),
+            };
+      try {
+        await this.#write(message);
+      } catch (error) {
+        const failure = mapWriteFailure(error);
+        if (isUnknownWriteFailure(failure)) this.#failConnection(connectionFailure("stdin_failed"));
+        throw failure;
+      }
+      this.#serverRequests.delete(request.identity);
+    });
+    this.#seenServerRequests.set(key, { identity: request.identity, resolutionSeen: false });
+    this.#seenServerRequestIdBytes += requestIdBytes;
+    this.#serverRequests.set(request.identity, request);
+    this.#enqueueEvent({ kind: "serverRequest", request }, wireBytes);
   }
 
-  #enqueueEvent(event: CodexProtocolEvent): void {
+  #enqueueEvent(event: CodexProtocolEvent, wireBytes: number): void {
     if (this.#state === "failed" || this.#state === "closed") return;
     const waiter = this.#eventWaiter;
     if (waiter !== undefined) {
@@ -438,11 +519,15 @@ export class CodexProtocolSession {
       waiter.resolve(event);
       return;
     }
-    if (this.#events.length >= this.#limits.maxQueuedEvents) {
+    if (
+      this.#events.length >= this.#limits.maxQueuedEvents ||
+      this.#queuedEventBytes + wireBytes > this.#limits.maxQueuedEventBytes
+    ) {
       this.#failConnection(connectionFailure("event_queue_overflow"));
       return;
     }
-    this.#events.push(event);
+    this.#events.push({ event, wireBytes });
+    this.#queuedEventBytes += wireBytes;
   }
 
   #write(message: CodexClientWireMessage, onWriteStarted: () => void = () => undefined): Promise<void> {
@@ -507,10 +592,20 @@ export class CodexProtocolSession {
     this.#retiredUnsentRequestIds.clear();
     for (const request of this.#serverRequests.values()) request.invalidate();
     this.#serverRequests.clear();
-    this.#outstandingServerRequestIdBytes = 0;
+    this.#seenServerRequests.clear();
+    this.#seenServerRequestIdBytes = 0;
     const waiter = this.#eventWaiter;
     this.#eventWaiter = undefined;
     waiter?.reject(error);
+  }
+}
+
+function encodedEnvelopeBytes(envelope: CodexWireEnvelope): number {
+  try {
+    const encoded = JSON.stringify(envelope);
+    return typeof encoded === "string" ? Buffer.byteLength(encoded, "utf8") : Number.NaN;
+  } catch {
+    return Number.NaN;
   }
 }
 
@@ -598,6 +693,18 @@ function isWireError(value: unknown): value is CodexWireError {
 
 function requestKey(id: CodexRequestId): string {
   return `${typeof id}:${String(id)}`;
+}
+
+function serverRequestIdBytes(id: CodexRequestId): number {
+  return Buffer.byteLength(String(id), "utf8");
+}
+
+function isRequestId(value: unknown): value is CodexRequestId {
+  return typeof value === "string" || (typeof value === "number" && Number.isSafeInteger(value));
+}
+
+function createServerRequestIdentity(): CodexServerRequestIdentity {
+  return Object.freeze(Object.create(null)) as CodexServerRequestIdentity;
 }
 
 function isNonEmptyString(value: unknown): value is string {

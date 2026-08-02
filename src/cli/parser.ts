@@ -1,7 +1,11 @@
 import { normalizeHostAbsolutePath, WORKSPACE_PATH_MAX_LENGTH } from "../shared/workspace-path.js";
 import { isCanonicalUuid } from "../shared/persistence-runtime-protocol.js";
-import type { ApplicationRunSandboxSetting } from "../shared/application-run-model.js";
+import type { ProviderSettingsEnvelope } from "../shared/provider-settings.js";
 import { RUN_MUTATION_INLINE_CONTENT_LIMITS, snapshotMessageContentBlocks } from "../shared/message-content.js";
+import {
+  APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS,
+  applicationRunInteractionWireItemBytes,
+} from "../shared/application-run-interaction-limits.js";
 import {
   canonicalizeSessionQuery,
   canonicalizeSessionTitle,
@@ -19,6 +23,7 @@ import {
   type CliCommandIdentity,
   type CliParseResult,
   type CliRunOperation,
+  type CliRunRespondInteractionCommand,
   type CliSessionOperation,
   type CliSessionWriteCommand,
   type CliUsageErrorCode,
@@ -61,7 +66,9 @@ const runOperations = new Set<CliRunOperation>([
   "retry",
   "send-input",
   "cancel",
+  "respond-interaction",
   "status",
+  "interactions",
   "events",
   "follow",
   "output-counts",
@@ -163,8 +170,12 @@ function parseRunCommand(identity: CliCommandIdentity<CliRunOperation>, argv: re
       return parseRunSendInput(identity as CliCommandIdentity<"send-input">, argv);
     case "cancel":
       return parseRunCancel(identity as CliCommandIdentity<"cancel">, argv);
+    case "respond-interaction":
+      return parseRunRespondInteraction(identity as CliCommandIdentity<"respond-interaction">, argv);
     case "status":
       return parseRunStatus(identity as CliCommandIdentity<"status">, argv);
+    case "interactions":
+      return parseRunInteractions(identity as CliCommandIdentity<"interactions">, argv);
     case "events":
       return parseRunEvents(identity as CliCommandIdentity<"events">, argv);
     case "follow":
@@ -187,11 +198,7 @@ function parseRunStart(identity: CliCommandIdentity<"start">, argv: readonly str
     "--session-id": requiredOption(parseIdentifier),
     "--idempotency-key": requiredOption(parseUuid),
     "--content-blocks-json": requiredOption(parseContentBlocksJson),
-    "--model": requiredOption((value) => parseBoundedString(value, CLI_RUN_LIMITS.maxExecutionSettingLength)),
-    "--reasoning-effort": requiredOption((value) =>
-      parseBoundedString(value, CLI_RUN_LIMITS.maxExecutionSettingLength),
-    ),
-    "--sandbox-json": requiredOption(parseSandboxJson),
+    "--provider-settings-json": requiredOption(parseProviderSettingsJson),
     ...timeoutOption,
   });
   if (!parsed.ok) return parsed.result;
@@ -204,11 +211,7 @@ function parseRunStart(identity: CliCommandIdentity<"start">, argv: readonly str
       contentBlocks: parsed.values["--content-blocks-json"] as NonNullable<
         ReturnType<typeof snapshotMessageContentBlocks>
       >,
-      execution: {
-        model: parsed.values["--model"] as string,
-        reasoningEffort: parsed.values["--reasoning-effort"] as string,
-        sandbox: parsed.values["--sandbox-json"] as ApplicationRunSandboxSetting,
-      },
+      providerSettings: parsed.values["--provider-settings-json"] as ProviderSettingsEnvelope,
       ...optionalTimeout(parsed.values),
     },
   };
@@ -258,26 +261,40 @@ function parseRunCancel(identity: CliCommandIdentity<"cancel">, argv: readonly s
   };
 }
 
+function parseRunRespondInteraction(
+  identity: CliCommandIdentity<"respond-interaction">,
+  argv: readonly string[],
+): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--run-id": requiredOption(parseIdentifier),
+    "--idempotency-key": requiredOption(parseUuid),
+    "--response-json": requiredOption(parseInteractionResponseJson),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      runId: parsed.values["--run-id"] as string,
+      idempotencyKey: parsed.values["--idempotency-key"] as string,
+      response: parsed.values["--response-json"] as CliRunRespondInteractionCommand["response"],
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
 function parseRunRetry(identity: CliCommandIdentity<"retry">, argv: readonly string[]): CliParseResult {
   const parsed = parseOptions(identity, argv, {
     "--session-id": requiredOption(parseIdentifier),
     "--retry-of-run-id": requiredOption(parseIdentifier),
     "--idempotency-key": requiredOption(parseUuid),
-    "--model": option((value) => parseBoundedString(value, CLI_RUN_LIMITS.maxExecutionSettingLength)),
-    "--reasoning-effort": option((value) => parseBoundedString(value, CLI_RUN_LIMITS.maxExecutionSettingLength)),
-    "--sandbox-json": option(parseSandboxJson),
+    "--provider-settings-json": option(parseProviderSettingsJson),
     ...timeoutOption,
   });
   if (!parsed.ok) return parsed.result;
-  const executionOverrides = {
-    ...(parsed.values["--model"] === undefined ? {} : { model: parsed.values["--model"] as string }),
-    ...(parsed.values["--reasoning-effort"] === undefined
-      ? {}
-      : { reasoningEffort: parsed.values["--reasoning-effort"] as string }),
-    ...(parsed.values["--sandbox-json"] === undefined
-      ? {}
-      : { sandbox: parsed.values["--sandbox-json"] as ApplicationRunSandboxSetting }),
-  };
   return {
     kind: "command",
     command: {
@@ -285,13 +302,33 @@ function parseRunRetry(identity: CliCommandIdentity<"retry">, argv: readonly str
       sessionId: parsed.values["--session-id"] as string,
       retryOfRunId: parsed.values["--retry-of-run-id"] as string,
       idempotencyKey: parsed.values["--idempotency-key"] as string,
-      ...(Object.keys(executionOverrides).length === 0 ? {} : { executionOverrides }),
+      ...(parsed.values["--provider-settings-json"] === undefined
+        ? {}
+        : { providerSettingsOverride: parsed.values["--provider-settings-json"] as ProviderSettingsEnvelope }),
       ...optionalTimeout(parsed.values),
     },
   };
 }
 
 function parseRunStatus(identity: CliCommandIdentity<"status">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--run-id": requiredOption(parseIdentifier),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      runId: parsed.values["--run-id"] as string,
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
+function parseRunInteractions(identity: CliCommandIdentity<"interactions">, argv: readonly string[]): CliParseResult {
   const parsed = parseOptions(identity, argv, {
     "--session-id": requiredOption(parseIdentifier),
     "--run-id": requiredOption(parseIdentifier),
@@ -818,30 +855,60 @@ function parseContentBlocksJson(value: string) {
   }
 }
 
-function parseSandboxJson(value: string): ApplicationRunSandboxSetting | undefined {
+function parseProviderSettingsJson(value: string): ProviderSettingsEnvelope | undefined {
   if (new TextEncoder().encode(value).byteLength > CLI_RUN_LIMITS.maxInlineContentJsonBytes) return undefined;
   try {
-    const sandbox = parseStrictJson(value);
-    if (typeof sandbox !== "object" || sandbox === null || Array.isArray(sandbox)) return undefined;
-    const keys = Object.keys(sandbox);
-    if (Reflect.ownKeys(sandbox).some((key) => typeof key !== "string" || !keys.includes(key))) return undefined;
-    const record = sandbox as Readonly<Record<string, unknown>>;
-    if (record.mode === "danger-full-access" && keys.length === 1 && keys[0] === "mode") {
-      return { mode: record.mode };
-    }
+    const envelope = parseStrictJson(value);
+    if (!isExactRecord(envelope, ["providerId", "definitionVersion", "settings"])) return undefined;
     if (
-      (record.mode === "read-only" || record.mode === "workspace-write") &&
-      keys.length === 2 &&
-      keys.includes("mode") &&
-      keys.includes("networkAccess") &&
-      typeof record.networkAccess === "boolean"
-    ) {
-      return { mode: record.mode, networkAccess: record.networkAccess };
-    }
-    return undefined;
+      typeof envelope.providerId !== "string" ||
+      parseBoundedString(envelope.providerId, CLI_RUN_LIMITS.maxExecutionSettingLength) === undefined ||
+      typeof envelope.definitionVersion !== "string" ||
+      parseBoundedString(envelope.definitionVersion, CLI_RUN_LIMITS.maxExecutionSettingLength) === undefined ||
+      !isPlainJsonObject(envelope.settings)
+    )
+      return undefined;
+    return envelope as ProviderSettingsEnvelope;
   } catch {
     return undefined;
   }
+}
+
+function parseInteractionResponseJson(value: string): CliRunRespondInteractionCommand["response"] | undefined {
+  if (new TextEncoder().encode(value).byteLength > CLI_RUN_LIMITS.maxInteractionResponseJsonBytes) return undefined;
+  try {
+    const response = parseStrictJson(value);
+    if (!isExactRecord(response, ["interactionId", "kind", "payload"])) return undefined;
+    if (
+      parseIdentifierValue(response.interactionId) === undefined ||
+      parseIdentifierValue(response.kind) === undefined
+    ) {
+      return undefined;
+    }
+    if (
+      applicationRunInteractionWireItemBytes(response) >
+      APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS.maxCollectionWireBytes
+    ) {
+      return undefined;
+    }
+    return response as CliRunRespondInteractionCommand["response"];
+  } catch {
+    return undefined;
+  }
+}
+
+function isExactRecord(value: unknown, keys: readonly string[]): value is Readonly<Record<string, unknown>> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const actual = Object.keys(value);
+  return (
+    actual.length === keys.length &&
+    actual.every((key) => keys.includes(key)) &&
+    Reflect.ownKeys(value).every((key) => typeof key === "string" && actual.includes(key))
+  );
+}
+
+function isPlainJsonObject(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeAbsolutePathValue(value: string): string | undefined {
@@ -858,6 +925,10 @@ function parseExportDestination(value: string): string | undefined {
 
 function parseIdentifier(value: string): string | undefined {
   return parseBoundedString(value, CLI_SESSION_LIMITS.maxIdentifierLength);
+}
+
+function parseIdentifierValue(value: unknown): string | undefined {
+  return typeof value === "string" ? parseIdentifier(value) : undefined;
 }
 
 function parseBoundedString(value: string, maxLength: number): string | undefined {

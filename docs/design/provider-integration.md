@@ -104,7 +104,7 @@ Providerは実際の処理状態とProvider固有eventを所有する。WithMate
 
 - phase は `queued`、`starting`、`active`、`canceling`、`finalizing` と terminal phase を表す。
 - live activity はactive Runの`running`、`waiting_approval`、`waiting_input`を表し、DBへ保存しない。
-- approval / elicitationのrequest本体はlive activityへ埋め込まず、request IDごとのlive interactionとしてruntime hostのメモリで管理する。
+- approval / user input / MCP elicitationのrequest本体はlive activityへ埋め込まず、WithMate発行のopaque IDごとのlive interactionとしてruntime hostのメモリで管理する。Provider request IDはAdapter内部相関に限定する。Provider設定とinteractionのversion境界、dynamic response validation、上限超過時のfail-closed projectionはADR 015、Codex初期interactionの機械可読なpublic shapeは`schema/providers/codex/interaction-v1.schema.json`を正本とする。
 
 状態遷移、terminal outcome、retry / recovery の契約は `docs/design/session-run-message-contract.md` で定める。Provider の terminal event、WithMate process の crash、persistence failure を同一の失敗として扱わない。
 
@@ -131,8 +131,8 @@ Provider Adapter が WithMate へ公開する最小操作候補:
 - message を送信して Run を開始する
 - 実行中の Run へ追加指示を送る
 - Run を cancel する
-- approval request へ回答する
-- elicitation request へ回答する
+- pending interactionのbounded snapshotを取得する
+- kind-discriminated responseでpending interactionへ回答する
 - Provider capability、model、protocol version を取得する
 - 外部会話を終了または解放する
 
@@ -141,8 +141,7 @@ Provider Adapter が WithMate へ公開する最小 event 候補:
 - Run 開始
 - assistant message の途中出力
 - tool / command 実行の開始、更新、終了
-- approval request
-- elicitation request
+- Provider固有kindを保ったpending interaction request
 - Run の正常完了、失敗、cancel、中断
 - Provider process または transport の異常
 - 未対応の Provider event
@@ -157,8 +156,12 @@ CLIのversion付きJSON envelope、exit code、projectionはADR 006 / 011を維�
 - `withmate run retry`
 - `withmate run send-input`
 - `withmate run cancel`
+- `withmate run interactions`
+- `withmate run respond-interaction`
 
 operational CLIはruntime hostへlocal IPCで接続する。help、version、argv parseだけはhostを起動しない。connection closeやSIGINTはclient lifecycleだけを中断し、`run cancel`へ暗黙変換しない。
+
+Session作成は`withmate session create --provider <providerId>`でProviderを固定する。definition versionはSessionへ固定せず、各Runが完全な`providerId + definitionVersion + settings` envelopeをsnapshotする。Run start / retryの`--provider-settings-json <json>`は同じSession Providerに属する登録済みdefinitionだけを受理し、partial mergeやRun単位のProvider切替は行わない。retryでoverrideを省略した場合はsource Runのversioned envelopeを継承し、後続versionへ暗黙upgradeしない。詳細はADR 015を正本とする。
 
 共通CLI contractとして次を維持する。
 
@@ -188,11 +191,12 @@ operational CLIはruntime hostへlocal IPCで接続する。help、version、arg
 - ephemeral Thread は `thread/read(includeTurns=true)` を利用できない。transport の smoke test と、永続履歴・resume の検証を分ける。
 - completed persistent ThreadはApp Server process再起動後に履歴をread / resumeできる。
 - stdio App Server processをactive Turn中に終了すると、再起動後は同じTurnが`interrupted`となる。切断前の未確定assistant deltaはProvider履歴から復元できない。streaming deltaを永続化しない方針に従い、crash時の未確定draft消失を許容し、復旧時に推測でpartial outputを生成しない。
-- model catalog は `model/list` から取得できる。version / account による差分を前提に起動時または明示 refresh で取得する。
+- model catalog は `model/list`、Provider featureは`modelProvider/capabilities/read`から取得できる。version / account による差分を前提に、起動時または明示refreshでvisible / hidden両catalogとcapabilityを取得する。
 - `codex-cli 0.144.6`では、`turn/interrupt`の空response後にThread idleと`turn/completed(interrupted)`が届く。user cancelはterminal eventとの相関後に確定する。
 - `turn/steer`はactive Turn ID不一致とactive Turn不在を拒否し、一致時は同じTurnへsupplemental user Messageを反映する。
-- explicit agentMessage phaseの`commentary`と`final_answer`を実測した。stable schemaが許可する`null`はphase unknownとしてfallbackし、受信時点でfinalと断定しない。
-- WindowsではCodex managed daemon lifecycleが非対応である。初期CP3はWithMate runtime hostがstdio App Server childを所有し、CLI client-only切断をWithMate local IPC境界へ置く。
+- `gpt-5.6-luna` / `high`の3 Turnでexplicit agentMessage phaseの`commentary`と`final_answer`を実測した。stable schemaが許可する`null`はphase unknownとしてfallbackし、受信時点でfinalと断定しない。
+- `codex-cli 0.145.0`でもWindowsのmanaged daemon lifecycleはUnix限定として拒否された。CLI helpにはexperimental WebSocket endpointが存在するが、初期CP3はWithMate runtime hostがstdio App Server childを所有し、CLI client-only切断をWithMate local IPC境界へ置く。
+- `codex-cli 0.145.0`ではcommand / file approvalのaccept / decline、turn scopeのpermission approval、`request_user_input`を実測した。MCPはdirect callとephemeral Thread上のLuna Turnで完全round tripを実測した。model Turnでは同じ`mcpServer/elicitation/request`で届くMCP tool approvalとserver formをmetadataの`codex_approval_kind`で分離し、tool approvalの`serverRequest/resolved`より後に届くformだけを次段として扱う。stable protocolの`_meta`に加え、live probeで観測した`meta` aliasを同じschema-evidenced inputとして受理する。各requestの解決、fixture response、MCP item terminal、Turn terminalを確認し、`serverRequest/resolved`だけをinteraction round trip完了とみなさない。
 
 詳細は `docs/investigations/codex-app-server/capability-matrix.md` と `docs/investigations/codex-app-server/validation-results.md` を参照する。
 
@@ -201,7 +205,7 @@ operational CLIはruntime hostへlocal IPCで接続する。help、version、arg
 - Provider を変更する linked Session へ、どの context を引き継ぐか。
 - 将来 1 つの Session に複数 active Run を許可する場合、branch / merge contract をどう定義するか。
 - Provider 側 conversation history と WithMate message の欠落・重複をどう照合するか。
-- Codex App Server と ACP で共通化できる approval / elicitation contract の範囲。
+- Provider間でapproval / sandboxの意味を共通enumへ揃えない。各Provider definitionが設定UI、validation、interaction kindを所有し、共通層はADR 015のversioned envelopeとgeneric interaction操作だけを維持する。
 - ACP で Session list、resume、steering、cancel、並行実行をどこまで利用できるか。
 - Copilot ACP で Provider model catalog を取得できない場合の fallback。
 

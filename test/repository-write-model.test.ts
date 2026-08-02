@@ -18,6 +18,7 @@ import {
 import { APPLICATION_RUN_PAYLOAD_LIMITS } from "../src/shared/application-run-payload-limits.js";
 import { MESSAGE_CONTENT_LIMITS } from "../src/shared/message-content.js";
 import { PERSISTENCE_PROTOCOL_VERSION, type WorkerToMainMessage } from "../src/shared/persistence-protocol.js";
+import { REPOSITORY_READ_OPERATIONS } from "../src/shared/repository-read-model.js";
 import { REPOSITORY_WRITE_OPERATIONS } from "../src/shared/repository-write-model.js";
 import { MAX_SESSION_TREE_SIZE } from "../src/shared/session-limits.js";
 import { resolveWorkspaceIdentity } from "../src/shared/workspace-path.js";
@@ -615,6 +616,105 @@ repositoryTest("normal Run admission atomically creates Message, Run, Attempt, D
   });
 });
 
+repositoryTest("Run admission replay probe validates exact fingerprint, expiry, and current durable projection", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    let now = 200;
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => now, 1);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000768", "session-1")) as CommandResult).ok,
+      true,
+    );
+    const command = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000769", "run-probe", "create");
+    const probe = () => {
+      const operation = createRepositoryReadOperations(database, { clock: () => now }).get(
+        REPOSITORY_READ_OPERATIONS.runAdmissionReplayProbe,
+      );
+      assert.ok(operation);
+      return operation;
+    };
+
+    assert.deepEqual(probe().execute(command).result, { kind: "absent" });
+    assert.equal((admit(command) as CommandResult).ok, true);
+    const regenerated = normalRunAdmissionCommand(command.idempotencyKey, "run-probe-regenerated", "create");
+    const replay = probe().execute(regenerated).result as Readonly<Record<string, unknown>>;
+    assert.equal(replay.kind, "replay");
+    assert.equal((replay.value as Readonly<Record<string, unknown>>).runId, "run-probe");
+
+    const conflict = probe().execute({
+      ...command,
+      message: { contentBlocks: [{ type: "text", text: "different" }] },
+      dispatch: {
+        ...command.dispatch,
+        providerRequest: repositoryRunProviderRequest([{ type: "text", text: "different" }]),
+      },
+    }).result as Readonly<{ kind: string; error: Readonly<Record<string, unknown>> }>;
+    assert.equal(conflict.kind, "failure");
+    assert.equal(conflict.error.code, "idempotency_conflict");
+
+    now = 201;
+    const expired = probe().execute(command).result as Readonly<{
+      kind: string;
+      error: Readonly<Record<string, unknown>>;
+    }>;
+    assert.equal(expired.kind, "failure");
+    assert.equal(expired.error.code, "idempotency_expired");
+    assert.equal(
+      (
+        database
+          .prepare("SELECT record_state FROM idempotency_records WHERE idempotency_key = ?")
+          .get(command.idempotencyKey) as Readonly<Record<string, unknown>>
+      ).record_state,
+      "completed",
+    );
+  });
+});
+
+repositoryTest("Retry admission replay probe ignores regenerated identities and preserves inherited provenance", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const retry = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runRetry, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000770", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (
+        admit(
+          normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000771", "run-source", "create"),
+        ) as CommandResult
+      ).ok,
+      true,
+    );
+    makeRunRetryable(database, "run-source", "attempt-run-source", "binding-run-source", 250);
+
+    const command = retryRunAdmissionCommand(
+      "018f1f4e-7f0a-7000-8000-000000000772",
+      "run-retry-probe",
+      "run-source",
+      "reuse",
+    );
+    assert.equal((retry(command) as CommandResult).ok, true);
+    const operation = createRepositoryReadOperations(database, { clock: () => 300 }).get(
+      REPOSITORY_READ_OPERATIONS.runAdmissionReplayProbe,
+    );
+    assert.ok(operation);
+
+    const regenerated = retryRunAdmissionCommand(
+      command.idempotencyKey,
+      "run-retry-probe-regenerated",
+      "run-source",
+      "reuse",
+    );
+    const replay = operation.execute(regenerated).result as Readonly<Record<string, unknown>>;
+    assert.equal(replay.kind, "replay");
+    const value = replay.value as Readonly<Record<string, unknown>>;
+    assert.equal(value.runId, "run-retry-probe");
+    assert.equal(value.retryOfRunId, "run-source");
+  });
+});
+
 repositoryTest("Run admission and Dispatch begin accept core Message content above the CLI inline budget", () => {
   withDatabase((database) => {
     const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
@@ -662,11 +762,14 @@ repositoryTest("Run admission accepts the maximum Message combined with the acce
     ];
     const executionSnapshot = {
       providerId: "provider",
-      model: "test-model",
+      definitionVersion: "test-provider-v1",
       modelSelection: "explicit" as const,
-      reasoning: { effort: "medium" },
-      approval: { policy: "never" },
-      sandbox: { mode: "workspace-write", networkAccess: false },
+      settings: {
+        model: "test-model",
+        reasoningEffort: "medium",
+        approvalPolicy: "never",
+        sandbox: { mode: "workspace-write", networkAccess: false },
+      },
       workspace: {
         key: TEST_WORKSPACE.workspaceKey,
         path: TEST_WORKSPACE.workspacePath,
@@ -675,16 +778,20 @@ repositoryTest("Run admission accepts the maximum Message combined with the acce
       character: null,
     };
     const providerRequest = {
+      providerId: "provider",
+      definitionVersion: "test-provider-v1",
       contentBlocks,
-      model: "test-model",
-      reasoningEffort: "medium",
-      approvalPolicy: "never",
-      sandboxPolicy: {
-        mode: "workspace-write",
-        networkAccess: false,
-        writableRoots: [TEST_WORKSPACE.workspacePath, ...directories],
+      startTurn: {
+        model: "test-model",
+        reasoningEffort: "medium",
+        approvalPolicy: "never",
+        sandboxPolicy: {
+          mode: "workspace-write",
+          networkAccess: false,
+          writableRoots: [TEST_WORKSPACE.workspacePath, ...directories],
+        },
+        workspacePath: TEST_WORKSPACE.workspacePath,
       },
-      workspacePath: TEST_WORKSPACE.workspacePath,
     };
     const command = {
       ...normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000767", "run-1", "create"),
@@ -752,18 +859,9 @@ repositoryTest(
           path: OTHER_TEST_WORKSPACE.workspacePath,
         },
       };
-      const providerRequest = {
-        ...command.dispatch.providerRequest,
-        sandboxPolicy: {
-          ...command.dispatch.providerRequest.sandboxPolicy,
-          writableRoots: [OTHER_TEST_WORKSPACE.workspacePath, TEST_ADDITIONAL_DIRECTORY],
-        },
-        workspacePath: OTHER_TEST_WORKSPACE.workspacePath,
-      };
       const rejected = admit({
         ...command,
         run: { executionSnapshot },
-        dispatch: { ...command.dispatch, providerRequest },
       }) as CommandResult;
       assert.equal(!rejected.ok && rejected.error.code, "reference_invalid");
       assert.equal(count(database, "runs"), 0);
@@ -1213,6 +1311,7 @@ repositoryTest("normal Run admission enforces app capacity and the execution sna
     );
     const mismatched = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000132", "run-mismatch", "create");
     mismatched.run.executionSnapshot.providerId = "other-provider";
+    mismatched.dispatch.providerRequest.providerId = "other-provider";
     const mismatchResult = admit(mismatched) as CommandResult;
     assert.equal(!mismatchResult.ok && mismatchResult.error.code, "reference_invalid");
     assert.equal(count(database, "runs"), 0);
@@ -1303,13 +1402,19 @@ repositoryTest("Run admission idempotency directly rejects conflicts, expiry, an
     );
     const command = normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000140", "run-1", "create");
     assert.equal((admit(command) as CommandResult).ok, true);
-    const changedSnapshot = { ...command.run.executionSnapshot, model: "different-model" };
+    const changedSnapshot = {
+      ...command.run.executionSnapshot,
+      settings: { ...command.run.executionSnapshot.settings, model: "different-model" },
+    };
     const conflict = admit({
       ...command,
       run: { executionSnapshot: changedSnapshot },
       dispatch: {
         ...command.dispatch,
-        providerRequest: { ...command.dispatch.providerRequest, model: "different-model" },
+        providerRequest: {
+          ...command.dispatch.providerRequest,
+          startTurn: { ...command.dispatch.providerRequest.startTurn, model: "different-model" },
+        },
       },
     }) as CommandResult;
     assert.equal(!conflict.ok && conflict.error.code, "idempotency_conflict");
@@ -5292,6 +5397,7 @@ repositoryTest("startup repair converges local state and reports provider reconc
         invalidatedBindings: 1,
         abortedDispatches: 1,
         settledInputDeliveries: 2,
+        settledInteractionResponses: 0,
         availableChildResults: 1,
         repairedDelegations: 1,
         storedOutputPayloads: 1,
@@ -5304,6 +5410,7 @@ repositoryTest("startup repair converges local state and reports provider reconc
         ephemeralResumeBlockedRuns: 1,
         diagnosticRuns: 1,
         diagnosticIdempotencyRecords: 2,
+        diagnosticInteractionResponses: 0,
         diagnosticChildResults: 1,
       },
     });
@@ -5422,6 +5529,7 @@ repositoryTest("startup repair converges local state and reports provider reconc
         invalidatedBindings: 0,
         abortedDispatches: 0,
         settledInputDeliveries: 0,
+        settledInteractionResponses: 0,
         availableChildResults: 0,
         repairedDelegations: 0,
         storedOutputPayloads: 0,
@@ -6351,6 +6459,477 @@ function makeBindingEphemeral(database: DatabaseSync, bindingId: string = "bindi
   database.prepare("UPDATE provider_bindings SET persistence_mode = 'ephemeral' WHERE id = ?").run(bindingId);
 }
 
+repositoryTest("interaction response admission is durable, exact-replayable, and stores no response payload", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const command = interactionResponseAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000901", "interaction-1");
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInteractionResponseAdmit, () => 600);
+    const first = admit(command) as CommandResult;
+    assert.equal(first.ok && first.value.effectCertainty, "admitted");
+    assert.equal(count(database, "run_interaction_responses"), 1);
+    const probe = createRepositoryReadOperations(database, { clock: () => 600 }).get(
+      REPOSITORY_READ_OPERATIONS.runInteractionResponseReplayProbe,
+    );
+    assert.ok(probe);
+    const probeRequest = interactionResponseReplayProbeRequest(command);
+    const admittedProbe = probe.execute(probeRequest).result as { kind: string; value?: { effectCertainty: string } };
+    assert.equal(admittedProbe.kind === "replay" && admittedProbe.value?.effectCertainty, "admitted");
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            `SELECT record_state, operation, response_kind, response_ref_type,
+              response_envelope_json, completed_at, expires_at
+             FROM idempotency_records WHERE idempotency_key = ?`,
+          )
+          .get(command.idempotencyKey),
+      },
+      {
+        record_state: "in_progress",
+        operation: "run.interaction.respond",
+        response_kind: null,
+        response_ref_type: "interaction",
+        response_envelope_json: null,
+        completed_at: null,
+        expires_at: null,
+      },
+    );
+    database
+      .prepare(
+        "UPDATE run_attempts SET attempt_state = 'failed', failure_origin = 'process', terminal_at = 650 WHERE id = 'attempt-run-1'",
+      )
+      .run();
+    database
+      .prepare(
+        "UPDATE runs SET phase = 'failed', failure_origin = 'process', terminal_at = 650, updated_at = 650 WHERE id = 'run-1'",
+      )
+      .run();
+    database.prepare("UPDATE sessions SET lifecycle_status = 'archived' WHERE id = 'session-1'").run();
+    const replay = admit(command) as CommandResult;
+    assert.equal(replay.ok && replay.replayed && replay.value.effectCertainty, "admitted");
+
+    const conflict = admit({ ...command, canonicalResponseJson: '{"decision":"decline"}' }) as CommandResult;
+    assert.equal(!conflict.ok && conflict.error.code, "idempotency_conflict");
+    const probeConflict = probe.execute({ ...probeRequest, canonicalResponseJson: '{"decision":"decline"}' })
+      .result as {
+      kind: string;
+      error?: { code: string };
+    };
+    assert.equal(probeConflict.kind === "failure" && probeConflict.error?.code, "idempotency_conflict");
+    const duplicate = admit({
+      ...command,
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000902",
+    }) as CommandResult;
+    assert.equal(!duplicate.ok && duplicate.error.code, "lifecycle_conflict");
+    const columns = database
+      .prepare("PRAGMA table_info(run_interaction_responses)")
+      .all()
+      .map((row) => (row as { name: string }).name);
+    assert.equal(
+      columns.some((name) =>
+        /canonical|payload|external|conversation|execution|generation|request_handle|provider_request|provider_response/u.test(
+          name,
+        ),
+      ),
+      false,
+    );
+  });
+});
+
+repositoryTest("interaction response admission rejects stale owner tuple fields before durable mutation", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInteractionResponseAdmit, () => 600);
+    const command = interactionResponseAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000906", "interaction-1");
+    const mismatches = [
+      { externalConversationId: "wrong-conversation" },
+      { externalExecutionId: "wrong-execution" },
+      { definitionVersion: "wrong-definition" },
+      { bindingId: "wrong-binding" },
+    ];
+    for (const [index, mismatch] of mismatches.entries()) {
+      const result = admit({
+        ...command,
+        ...mismatch,
+        idempotencyKey: `018f1f4e-7f0a-7000-8000-${(907 + index).toString().padStart(12, "0")}`,
+      }) as CommandResult;
+      assert.equal(
+        !result.ok &&
+          (result.error.code === "reference_invalid" ||
+            result.error.code === "not_found" ||
+            result.error.code === "lifecycle_conflict"),
+        true,
+      );
+    }
+    assert.equal(count(database, "run_interaction_responses"), 0);
+    assert.equal(
+      (
+        database
+          .prepare("SELECT COUNT(*) AS count FROM idempotency_records WHERE operation = 'run.interaction.respond'")
+          .get() as { count: number }
+      ).count,
+      0,
+    );
+  });
+});
+
+repositoryTest("interaction response schema rejects invalid certainty and owner combinations", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const command = interactionResponseAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000912", "interaction-1");
+    const admitted = operationFor(
+      database,
+      REPOSITORY_WRITE_OPERATIONS.runInteractionResponseAdmit,
+      () => 600,
+    )(command) as CommandResult;
+    assert.equal(admitted.ok, true);
+    const responseRefId = admitted.ok ? (admitted.value.responseRefId as string) : "";
+    assert.throws(
+      () =>
+        database
+          .prepare(
+            "UPDATE run_interaction_responses SET effect_certainty = 'resolved', resolution_code = 'provider_resolved' WHERE id = ?",
+          )
+          .run(responseRefId),
+      /constraint/iu,
+    );
+    assert.throws(
+      () =>
+        database
+          .prepare(
+            `INSERT INTO idempotency_records (
+              idempotency_key, scope_session_id, operation, request_fingerprint, record_state,
+              response_ref_type, response_ref_id, created_at
+            ) VALUES (?, 'session-1', 'unrelated.operation', ?, 'in_progress', 'interaction', ?, 1)`,
+          )
+          .run("018f1f4e-7f0a-7000-8000-000000000913", "a".repeat(64), responseRefId),
+      /constraint/iu,
+    );
+    assert.throws(
+      () =>
+        database
+          .prepare(
+            `INSERT INTO idempotency_records (
+              idempotency_key, scope_session_id, operation, request_fingerprint, record_state,
+              response_kind, response_ref_type, response_ref_id, response_envelope_json,
+              created_at, completed_at, expires_at
+            ) VALUES (?, 'session-1', 'unrelated.operation', ?, 'completed',
+              'success', 'interaction', ?, '{}', 1, 1, 2)`,
+          )
+          .run("018f1f4e-7f0a-7000-8000-000000000916", "b".repeat(64), responseRefId),
+      /constraint/iu,
+    );
+    assert.throws(
+      () =>
+        database
+          .prepare(
+            `INSERT INTO run_interaction_responses (
+              id, session_id, run_id, run_attempt_id, provider_binding_id, interaction_id,
+              provider_id, definition_version, interaction_kind, semantic_action,
+              effect_certainty, admitted_at
+            ) VALUES (?, 'session-1', 'run-1', 'attempt-run-1', 'binding-run-1',
+              'interaction-wrong-provider', 'wrong-provider', 'test-provider-v1',
+              'command_approval', 'accept', 'admitted', 1)`,
+          )
+          .run("018f1f4e-7f0a-7000-8000-000000000914"),
+      /constraint/iu,
+    );
+  });
+});
+
+repositoryTest("interaction response certainty is monotonic and terminal facts complete idempotency", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const command = interactionResponseAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000903", "interaction-1");
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInteractionResponseAdmit, () => 600);
+    const admitted = admit(command) as CommandResult;
+    assert.equal(admitted.ok, true);
+    const responseRefId = admitted.ok ? (admitted.value.responseRefId as string) : "";
+    const scope = {
+      responseRefId,
+      sessionId: "session-1",
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
+      runId: "run-1",
+      interactionId: "interaction-1",
+    };
+    const mark = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInteractionResponseMarkWriteAttempt, () => 700);
+    const marked = mark(scope) as CommandResult;
+    assert.equal(marked.ok && (marked.value as { effectCertainty: string }).effectCertainty, "write_attempted");
+    assert.equal((mark(scope) as CommandResult).replayed, true);
+    assert.equal(count(database, "run_events"), 0);
+    const probe = createRepositoryReadOperations(database, { clock: () => 750 }).get(
+      REPOSITORY_READ_OPERATIONS.runInteractionResponseReplayProbe,
+    );
+    assert.ok(probe);
+    const probeRequest = interactionResponseReplayProbeRequest(command);
+    assert.equal(
+      (probe.execute(probeRequest).result as { value?: { effectCertainty: string } }).value?.effectCertainty,
+      "write_attempted",
+    );
+
+    const settleAmbiguous = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInteractionResponseSettle, () => 800);
+    const ambiguous = settleAmbiguous({
+      ...scope,
+      outcome: { effectCertainty: "ambiguous", resolutionCode: "transport_unknown" },
+    }) as CommandResult;
+    assert.equal(ambiguous.ok && ambiguous.value.effectCertainty, "ambiguous");
+    assert.equal(
+      (probe.execute(probeRequest).result as { value?: { effectCertainty: string } }).value?.effectCertainty,
+      "ambiguous",
+    );
+    const replay = admit(command) as CommandResult;
+    assert.equal(replay.ok && replay.replayed && replay.value.effectCertainty, "ambiguous");
+
+    const settleResolved = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInteractionResponseSettle, () => 900);
+    const resolved = settleResolved({
+      ...scope,
+      outcome: { effectCertainty: "resolved", resolutionCode: "provider_resolved" },
+    }) as CommandResult;
+    assert.equal(resolved.ok && resolved.value.effectCertainty, "resolved");
+    assert.equal(
+      (probe.execute(probeRequest).result as { value?: { effectCertainty: string } }).value?.effectCertainty,
+      "resolved",
+    );
+    const downgrade = settleResolved({
+      ...scope,
+      outcome: { effectCertainty: "not_sent", resolutionCode: "transport_not_sent" },
+    }) as CommandResult;
+    assert.equal(!downgrade.ok && downgrade.error.code, "lifecycle_conflict");
+    assert.deepEqual(
+      database
+        .prepare("SELECT event_code, subject_type, subject_id FROM run_events ORDER BY ordinal")
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        {
+          event_code: "run.interaction.response.ambiguous",
+          subject_type: "interaction",
+          subject_id: "interaction-1",
+        },
+        {
+          event_code: "run.interaction.response.resolved",
+          subject_type: "interaction",
+          subject_id: "interaction-1",
+        },
+      ],
+    );
+    const record = database
+      .prepare("SELECT record_state, response_envelope_json FROM idempotency_records WHERE idempotency_key = ?")
+      .get(command.idempotencyKey) as { record_state: string; response_envelope_json: string };
+    assert.equal(record.record_state, "completed");
+    assert.equal(record.response_envelope_json.includes(command.canonicalResponseJson), false);
+  });
+});
+
+repositoryTest("expired interaction response replay scrubs the durable idempotency receipt", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const command = interactionResponseAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000915", "interaction-1");
+    const admitted = operationFor(
+      database,
+      REPOSITORY_WRITE_OPERATIONS.runInteractionResponseAdmit,
+      () => 600,
+    )(command) as CommandResult;
+    assert.equal(admitted.ok, true);
+    const responseRefId = admitted.ok ? (admitted.value.responseRefId as string) : "";
+    const settled = operationFor(
+      database,
+      REPOSITORY_WRITE_OPERATIONS.runInteractionResponseSettle,
+      () => 610,
+      10,
+    )({
+      responseRefId,
+      sessionId: "session-1",
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
+      runId: "run-1",
+      interactionId: "interaction-1",
+      outcome: { effectCertainty: "not_sent", resolutionCode: "adapter_rejected" },
+    }) as CommandResult;
+    assert.equal(settled.ok && settled.value.effectCertainty, "not_sent");
+
+    const expired = operationFor(
+      database,
+      REPOSITORY_WRITE_OPERATIONS.runInteractionResponseAdmit,
+      () => 620,
+    )(command) as CommandResult;
+    assert.equal(!expired.ok && expired.error.code, "idempotency_expired");
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            `SELECT record_state, response_kind, response_ref_type, response_ref_id,
+              response_envelope_json FROM idempotency_records WHERE idempotency_key = ?`,
+          )
+          .get(command.idempotencyKey),
+      },
+      {
+        record_state: "expired",
+        response_kind: null,
+        response_ref_type: null,
+        response_ref_id: null,
+        response_envelope_json: null,
+      },
+    );
+  });
+});
+
+repositoryTest("startup repair settles admitted and write-attempted interaction responses before expiry", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInteractionResponseAdmit, () => 600);
+    const admittedCommand = interactionResponseAdmissionCommand(
+      "018f1f4e-7f0a-7000-8000-000000000904",
+      "interaction-admitted",
+    );
+    const attemptedCommand = interactionResponseAdmissionCommand(
+      "018f1f4e-7f0a-7000-8000-000000000905",
+      "interaction-attempted",
+    );
+    const admitted = admit(admittedCommand) as CommandResult;
+    const attempted = admit(attemptedCommand) as CommandResult;
+    assert.equal(admitted.ok && attempted.ok, true);
+    const mark = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInteractionResponseMarkWriteAttempt, () => 700);
+    assert.equal(
+      (
+        mark({
+          responseRefId: attempted.ok ? attempted.value.responseRefId : "",
+          sessionId: "session-1",
+          workspaceKey: TEST_WORKSPACE.workspaceKey,
+          runId: "run-1",
+          interactionId: "interaction-attempted",
+        }) as CommandResult
+      ).ok,
+      true,
+    );
+    const repair = operationFor(database, REPOSITORY_WRITE_OPERATIONS.startupRepair, () => 800);
+    const result = repair({}) as CommandResult;
+    assert.equal(
+      result.ok &&
+        (result.value as { repaired: { settledInteractionResponses: number } }).repaired.settledInteractionResponses,
+      2,
+    );
+    assert.deepEqual(
+      database
+        .prepare(
+          "SELECT interaction_id, effect_certainty, resolution_code FROM run_interaction_responses ORDER BY interaction_id",
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        {
+          interaction_id: "interaction-admitted",
+          effect_certainty: "not_sent",
+          resolution_code: "owner_lost_before_write",
+        },
+        {
+          interaction_id: "interaction-attempted",
+          effect_certainty: "ambiguous",
+          resolution_code: "process_unknown",
+        },
+      ],
+    );
+    assert.equal(
+      result.ok &&
+        (result.value as { inspection: { diagnosticInteractionResponses: number } }).inspection
+          .diagnosticInteractionResponses,
+      0,
+    );
+    assert.equal(count(database, "run_events"), 2);
+    const probe = createRepositoryReadOperations(database, { clock: () => 800 }).get(
+      REPOSITORY_READ_OPERATIONS.runInteractionResponseReplayProbe,
+    );
+    assert.ok(probe);
+    assert.equal(
+      (
+        probe.execute(interactionResponseReplayProbeRequest(admittedCommand)).result as {
+          value?: { effectCertainty: string };
+        }
+      ).value?.effectCertainty,
+      "not_sent",
+    );
+  });
+});
+
+repositoryTest("Session subtree deletion removes interaction responses before their Run owner", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const command = interactionResponseAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000915", "interaction-1");
+    const admitted = operationFor(
+      database,
+      REPOSITORY_WRITE_OPERATIONS.runInteractionResponseAdmit,
+      () => 600,
+    )(command) as CommandResult;
+    assert.equal(admitted.ok, true);
+    const settle = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runInteractionResponseSettle, () => 700);
+    const settled = settle({
+      responseRefId: admitted.ok ? admitted.value.responseRefId : "",
+      sessionId: "session-1",
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
+      runId: "run-1",
+      interactionId: "interaction-1",
+      outcome: { effectCertainty: "not_sent", resolutionCode: "owner_lost_before_write" },
+    }) as CommandResult;
+    assert.equal(settled.ok, true);
+    database
+      .prepare(
+        "UPDATE run_attempts SET attempt_state = 'failed', failure_origin = 'process', terminal_at = 800 WHERE id = 'attempt-run-1'",
+      )
+      .run();
+    database
+      .prepare(
+        "UPDATE runs SET phase = 'failed', failure_origin = 'process', terminal_at = 800, updated_at = 800 WHERE id = 'run-1'",
+      )
+      .run();
+    const remove = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionDeleteSubtree, () => 900);
+    const removed = remove({
+      deletionId: "018f1f4e-7f0a-7000-8000-000000000916",
+      sessionId: "session-1",
+      workspaceKey: TEST_WORKSPACE.workspaceKey,
+    }) as CommandResult;
+    assert.equal(removed.ok, true);
+    assert.equal(count(database, "run_interaction_responses"), 0);
+    assert.equal(count(database, "runs"), 0);
+    assert.equal(count(database, "sessions"), 0);
+  });
+});
+
+repositoryTest("interaction replay and startup inspection reject a missing response reference", () => {
+  withDatabase((database) => {
+    activatePersistentRun(database);
+    const command = interactionResponseAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000917", "interaction-1");
+    const admitted = operationFor(
+      database,
+      REPOSITORY_WRITE_OPERATIONS.runInteractionResponseAdmit,
+      () => 600,
+    )(command) as CommandResult;
+    assert.equal(admitted.ok, true);
+    database
+      .prepare("DELETE FROM run_interaction_responses WHERE id = ?")
+      .run(admitted.ok ? (admitted.value.responseRefId as string) : "");
+    const probe = createRepositoryReadOperations(database, { clock: () => 700 }).get(
+      REPOSITORY_READ_OPERATIONS.runInteractionResponseReplayProbe,
+    );
+    assert.ok(probe);
+    const replay = probe.execute(interactionResponseReplayProbeRequest(command)).result as {
+      kind: string;
+      error?: { code: string };
+    };
+    assert.equal(replay.kind === "failure" && replay.error?.code, "reference_invalid");
+    const repair = operationFor(database, REPOSITORY_WRITE_OPERATIONS.startupRepair, () => 800)({}) as CommandResult;
+    assert.equal(
+      repair.ok &&
+        (repair.value as { repaired: { settledInteractionResponses: number } }).repaired.settledInteractionResponses,
+      0,
+    );
+    assert.equal(
+      repair.ok &&
+        (repair.value as { inspection: { diagnosticIdempotencyRecords: number } }).inspection
+          .diagnosticIdempotencyRecords,
+      1,
+    );
+  });
+});
+
 function operationFor(
   database: DatabaseSync,
   name: string,
@@ -6498,11 +7077,14 @@ function childStartCommand(
       id: `child-run-${suffix}`,
       executionSnapshot: {
         providerId: "provider",
-        model: "test-model",
+        definitionVersion: "test-provider-v1",
         modelSelection: "explicit" as const,
-        reasoning: { effort: "medium" },
-        approval: { mode: "on-request" },
-        sandbox: { mode: "workspace-write" },
+        settings: {
+          model: "test-model",
+          reasoningEffort: "medium",
+          approvalPolicy: "on-request",
+          sandbox: { mode: "workspace-write", networkAccess: false },
+        },
         workspace: { key: TEST_WORKSPACE.workspaceKey },
         character: { id: "child-character" },
       },
@@ -6776,11 +7358,14 @@ function dispatchBeginCommand(ephemeralOwnerToken: string | null = null) {
 function repositoryRunExecutionSnapshot(modelSelection: "explicit" | "inherited") {
   return {
     providerId: "provider",
-    model: "test-model",
+    definitionVersion: "test-provider-v1",
     modelSelection,
-    reasoning: { effort: "medium" },
-    approval: { policy: "never" },
-    sandbox: { mode: "workspace-write", networkAccess: false },
+    settings: {
+      model: "test-model",
+      reasoningEffort: "medium",
+      approvalPolicy: "never",
+      sandbox: { mode: "workspace-write", networkAccess: false },
+    },
     workspace: {
       key: TEST_WORKSPACE.workspaceKey,
       path: TEST_WORKSPACE.workspacePath,
@@ -6792,16 +7377,20 @@ function repositoryRunExecutionSnapshot(modelSelection: "explicit" | "inherited"
 
 function repositoryRunProviderRequest(contentBlocks: readonly Readonly<{ type: "text"; text: string }>[]) {
   return {
+    providerId: "provider",
+    definitionVersion: "test-provider-v1",
     contentBlocks,
-    model: "test-model",
-    reasoningEffort: "medium",
-    approvalPolicy: "never",
-    sandboxPolicy: {
-      mode: "workspace-write",
-      networkAccess: false,
-      writableRoots: [TEST_WORKSPACE.workspacePath, TEST_ADDITIONAL_DIRECTORY],
+    startTurn: {
+      model: "test-model",
+      reasoningEffort: "medium",
+      approvalPolicy: "never",
+      sandboxPolicy: {
+        mode: "workspace-write",
+        networkAccess: false,
+        writableRoots: [TEST_WORKSPACE.workspacePath, TEST_ADDITIONAL_DIRECTORY],
+      },
+      workspacePath: TEST_WORKSPACE.workspacePath,
     },
-    workspacePath: TEST_WORKSPACE.workspacePath,
   };
 }
 
@@ -6836,6 +7425,37 @@ function runInputAdmissionCommand(
     attemptId: "attempt-run-1",
     ephemeralOwnerToken,
     contentBlocks: [{ type: "text", text }],
+  };
+}
+
+function interactionResponseAdmissionCommand(idempotencyKey: string, interactionId: string) {
+  return {
+    sessionId: "session-1",
+    workspaceKey: TEST_WORKSPACE.workspaceKey,
+    idempotencyKey,
+    runId: "run-1",
+    attemptId: "attempt-run-1",
+    bindingId: "binding-run-1",
+    ephemeralOwnerToken: null,
+    externalConversationId: "external-1",
+    externalExecutionId: "execution-1",
+    providerId: "provider",
+    definitionVersion: "test-provider-v1",
+    interactionKind: "command_approval",
+    interactionId,
+    semanticAction: "accept",
+    canonicalResponseJson: JSON.stringify({ decision: "accept", interactionId, kind: "command_approval" }),
+  } as const;
+}
+
+function interactionResponseReplayProbeRequest(command: ReturnType<typeof interactionResponseAdmissionCommand>) {
+  return {
+    sessionId: command.sessionId,
+    runId: command.runId,
+    idempotencyKey: command.idempotencyKey,
+    interactionKind: command.interactionKind,
+    interactionId: command.interactionId,
+    canonicalResponseJson: command.canonicalResponseJson,
   };
 }
 

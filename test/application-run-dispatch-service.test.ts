@@ -117,7 +117,7 @@ test("an ephemeral Binding owner token is preserved across Dispatch begin and pr
   assert.deepEqual(resolutions[0]?.outcome, { kind: "rejected" });
 });
 
-test("an inherited retry sends its source Run model with inherited provenance", async () => {
+test("a retry sends its exact source Run model with inherited Provider selection provenance", async () => {
   const inputs: CodexStartTurnInput[] = [];
   const service = new ApplicationRunDispatchService({
     writes: dispatchWrites({ begin: (command) => beginSuccess(command, true) }),
@@ -617,11 +617,14 @@ function preparedDispatch(
     generationId: "codex-1",
     executionSnapshot: {
       providerId: "codex",
-      model: "gpt-5.6",
+      definitionVersion: "codex-provider-v1",
       modelSelection: overrides.modelSelection ?? "explicit",
-      reasoning: { effort: "high" },
-      approval: { policy: "never" },
-      sandbox: { mode: "workspace-write", networkAccess: false },
+      settings: {
+        model: "gpt-5.6",
+        reasoningEffort: "high",
+        approvalPolicy: "never",
+        sandbox: { mode: "workspace-write", networkAccess: false },
+      },
       workspace: {
         key: "workspace-1",
         path: workspacePath(),

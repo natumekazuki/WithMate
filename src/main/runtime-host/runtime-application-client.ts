@@ -6,6 +6,8 @@ import type {
 } from "../../shared/application-service-model.js";
 import type { ApplicationRunOutputExportResponse } from "../../shared/application-run-output-model.js";
 import type { RuntimeIpcOperation, RuntimeIpcOperationPayload } from "./runtime-ipc-contract.js";
+import { snapshotRuntimeApplicationResponse } from "./runtime-application-response.js";
+import { decodeRuntimeWireValue } from "./runtime-ipc-value.js";
 import {
   RuntimeIpcClient,
   RuntimeIpcClientError,
@@ -29,6 +31,7 @@ const DURABLE_WRITE_OPERATIONS = new Set<RuntimeIpcOperation>([
   "run.retry",
   "run.send_input",
   "run.cancel",
+  "run.respond_interaction",
 ]);
 
 type RuntimeTransportFailure = Readonly<{
@@ -50,6 +53,15 @@ export function createRuntimeApplicationClient(client: RuntimeIpcClient): Runtim
       if (failure === undefined) throw error;
       return projectRuntimeTransportFailure(operation, failure) as TValue;
     }
+  };
+
+  const invokeValidated = async <TValue>(
+    operation: RuntimeIpcOperation,
+    payload: RuntimeIpcOperationPayload,
+    control: RuntimeIpcClientControl | undefined,
+  ): Promise<TValue> => {
+    const response = await invoke<unknown>(operation, payload, control);
+    return decodeRuntimeWireValue(snapshotRuntimeApplicationResponse(operation, payload, response)) as TValue;
   };
 
   const operations: RuntimeApplication["operations"] = {
@@ -169,7 +181,7 @@ export function createRuntimeApplicationClient(client: RuntimeIpcClient): Runtim
           sessionId: request.sessionId,
           idempotencyKey: request.idempotencyKey,
           contentBlocks: request.contentBlocks,
-          execution: request.execution,
+          providerSettings: request.providerSettings,
         },
         control,
       ),
@@ -180,7 +192,9 @@ export function createRuntimeApplicationClient(client: RuntimeIpcClient): Runtim
           sessionId: request.sessionId,
           retryOfRunId: request.retryOfRunId,
           idempotencyKey: request.idempotencyKey,
-          ...(request.executionOverrides === undefined ? {} : { executionOverrides: request.executionOverrides }),
+          ...(request.providerSettingsOverride === undefined
+            ? {}
+            : { providerSettingsOverride: request.providerSettingsOverride }),
         },
         control,
       ),
@@ -205,7 +219,20 @@ export function createRuntimeApplicationClient(client: RuntimeIpcClient): Runtim
         },
         control,
       ),
+    respondInteraction: (request, control) => {
+      const payload = {
+        sessionId: request.sessionId,
+        runId: request.runId,
+        idempotencyKey: request.idempotencyKey,
+        response: request.response,
+      };
+      return invokeValidated("run.respond_interaction", payload, control);
+    },
     status: (request, control) => invoke("run.status", { sessionId: request.sessionId, runId: request.runId }, control),
+    interactions: (request, control) => {
+      const payload = { sessionId: request.sessionId, runId: request.runId };
+      return invokeValidated("run.interactions", payload, control);
+    },
     events: (request, control) =>
       invoke(
         "run.events",

@@ -19,7 +19,12 @@ import type {
 } from "../shared/repository-write-model.js";
 import type {
   CodexAdapterEvent,
+  CodexAdapterCapabilityPreflightInput,
+  CodexAdapterCapabilityPreflightResult,
   CodexAdapterInterruptAcknowledgement,
+  CodexAdapterInteractionHandle,
+  CodexAdapterInteractionResponse,
+  CodexAdapterInteractionResponseResult,
   CodexAdapterMutationResult,
   CodexAdapterSteerAcknowledgement,
   CodexAdapterThreadSnapshot,
@@ -33,6 +38,8 @@ import type {
 import { decodeApplicationRunExecutionSnapshot } from "./application-run-admission-service.js";
 import type {
   ApplicationRunAdmissionRecord,
+  ApplicationRunProviderCapabilityPreflightPort,
+  ApplicationRunProviderCapabilityPreflightResult,
   ApplicationRunWorkHandoffPort,
 } from "./application-run-admission-service.js";
 import {
@@ -44,6 +51,8 @@ import {
 import { PersistenceClientError, type PersistenceWorkerClient } from "./persistence-worker-client.js";
 import { RepositoryReadClient } from "./repository-read-client.js";
 import { RepositoryWriteClient } from "./repository-write-client.js";
+import type { ProviderDefinitionRegistry } from "./providers/provider-definition.js";
+import { defaultProviderDefinitionRegistry } from "./providers/provider-registry.js";
 
 export const APPLICATION_RUN_RUNTIME_LIMITS = Object.freeze({
   maxLiveRuns: 128,
@@ -53,7 +62,29 @@ export const APPLICATION_RUN_RUNTIME_LIMITS = Object.freeze({
   persistenceRetryDelayMs: 25,
 } as const);
 
+export type ApplicationRunProviderInteractionResponseReservation = Readonly<{
+  token: object;
+}>;
+
+export type ApplicationRunProviderInteractionHandle = CodexAdapterInteractionHandle;
+export type ApplicationRunProviderInteractionResponse = CodexAdapterInteractionResponse;
+export type ApplicationRunProviderInteractionResponseResult = CodexAdapterInteractionResponseResult;
+
+export type ApplicationRunProviderInteractionResponseReserveResult =
+  | Readonly<{
+      kind: "reserved";
+      reservation: ApplicationRunProviderInteractionResponseReservation;
+    }>
+  | Readonly<{
+      kind: "not_reserved";
+      code: "capability_unavailable" | "write_rejected";
+    }>;
+
 export interface ApplicationRunProviderAdapterPort {
+  preflightCapability?(
+    input: CodexAdapterCapabilityPreflightInput,
+    options?: ApplicationOperationOptions,
+  ): Promise<CodexAdapterCapabilityPreflightResult>;
   startThread(
     input: CodexStartThreadInput & Readonly<{ reasoningEffort: string }>,
     options?: ApplicationOperationOptions,
@@ -74,6 +105,16 @@ export interface ApplicationRunProviderAdapterPort {
     input: CodexInterruptTurnInput,
     options?: ApplicationOperationOptions,
   ): Promise<CodexAdapterMutationResult<CodexAdapterInterruptAcknowledgement>>;
+  reserveInteractionResponse?(
+    handle: ApplicationRunProviderInteractionHandle,
+    response: ApplicationRunProviderInteractionResponse,
+  ): ApplicationRunProviderInteractionResponseReserveResult;
+  writeReservedInteractionResponse?(
+    reservation: ApplicationRunProviderInteractionResponseReservation,
+  ): Promise<ApplicationRunProviderInteractionResponseResult>;
+  releaseInteractionResponseReservation?(
+    reservation: ApplicationRunProviderInteractionResponseReservation,
+  ): void | Promise<void>;
   nextEvent(): Promise<CodexAdapterEvent>;
   close(): Promise<void>;
 }
@@ -136,6 +177,12 @@ export interface ApplicationRunDispatchReadyPort {
 export interface ApplicationRunProviderEventPort {
   accept(generationId: string, event: CodexAdapterEvent): void | Promise<void>;
   retryRun?(runId: string): Promise<boolean>;
+  prepareGenerationRelease?(
+    generationId: string,
+    reason: Readonly<
+      { kind: "connection_failure"; code: string } | { kind: "shutdown" } | { kind: "event_consumer_failure" }
+    >,
+  ): Readonly<{ kind: "ready" } | { kind: "pending" }> | Promise<Readonly<{ kind: "ready" } | { kind: "pending" }>>;
   releaseGeneration(
     generationId: string,
     reason: Readonly<
@@ -165,6 +212,7 @@ export type ApplicationRunRuntimeServiceOptions = Readonly<{
   writes: ApplicationRunRuntimeWritePort;
   runtimeFactory: ApplicationRunProviderRuntimeFactory;
   dispatchReady: ApplicationRunDispatchReadyPort;
+  providers?: ProviderDefinitionRegistry;
   events?: ApplicationRunProviderEventPort;
   persistenceRetryable?: () => boolean;
   limits?: Readonly<{
@@ -229,11 +277,14 @@ const discardUnownedProviderEvents: ApplicationRunProviderEventPort = {
   },
 };
 
-export class ApplicationRunRuntimeService implements ApplicationRunWorkHandoffPort {
+export class ApplicationRunRuntimeService
+  implements ApplicationRunWorkHandoffPort, ApplicationRunProviderCapabilityPreflightPort
+{
   readonly #reads: ApplicationRunRuntimeReadPort;
   readonly #writes: ApplicationRunRuntimeWritePort;
   readonly #runtimeFactory: ApplicationRunProviderRuntimeFactory;
   readonly #dispatchReady: ApplicationRunDispatchReadyPort;
+  readonly #providers: ProviderDefinitionRegistry;
   readonly #events: ApplicationRunProviderEventPort;
   readonly #persistenceRetryable: () => boolean;
   readonly #maxLiveRuns: number;
@@ -261,12 +312,51 @@ export class ApplicationRunRuntimeService implements ApplicationRunWorkHandoffPo
     this.#writes = options.writes;
     this.#runtimeFactory = options.runtimeFactory;
     this.#dispatchReady = options.dispatchReady;
+    this.#providers = options.providers ?? defaultProviderDefinitionRegistry;
     this.#events = options.events ?? discardUnownedProviderEvents;
     this.#persistenceRetryable = options.persistenceRetryable ?? (() => true);
     this.#maxLiveRuns = positiveLimit(options.limits?.maxLiveRuns ?? APPLICATION_RUN_RUNTIME_LIMITS.maxLiveRuns);
     this.#maxTrackedBindings = positiveLimit(
       options.limits?.maxTrackedBindings ?? APPLICATION_RUN_RUNTIME_LIMITS.maxTrackedBindings,
     );
+  }
+
+  async preflight(
+    snapshot: RunExecutionSnapshot,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationRunProviderCapabilityPreflightResult> {
+    let compiled;
+    try {
+      compiled = this.#providers.compileSnapshot(snapshot);
+    } catch {
+      return Object.freeze({ kind: "unsupported" });
+    }
+    let runtime: RuntimeState;
+    try {
+      runtime = await this.#getRuntime(compiled.providerId);
+    } catch {
+      return Object.freeze({ kind: "unavailable" });
+    }
+    if (runtime.failed || this.#runtime !== runtime || this.#closing) {
+      return Object.freeze({ kind: "unavailable" });
+    }
+    if (runtime.runtime.adapter.preflightCapability === undefined) {
+      return Object.freeze({ kind: "unavailable" });
+    }
+    try {
+      const result = await runtime.runtime.adapter.preflightCapability(
+        {
+          model: compiled.startTurn.model,
+          modelSelection: compiled.startTurn.modelSelection,
+          reasoningEffort: compiled.startTurn.reasoningEffort,
+          requiredModality: "text",
+        },
+        options,
+      );
+      return Object.freeze({ kind: result.kind });
+    } catch {
+      return Object.freeze({ kind: "unavailable" });
+    }
   }
 
   handoff(record: ApplicationRunAdmissionRecord): void {
@@ -458,20 +548,22 @@ export class ApplicationRunRuntimeService implements ApplicationRunWorkHandoffPo
   }
 
   async #createBinding(context: RuntimeExecutionContext, runtime: RuntimeState): Promise<void> {
-    const settings = providerSettings(context.snapshot);
+    let compiled;
+    try {
+      compiled = this.#providers.compileSnapshot(context.snapshot);
+    } catch {
+      await this.#terminalize(
+        context,
+        "binding_creation_not_sent",
+        "failed",
+        "application",
+        "Provider execution snapshot is invalid.",
+      );
+      return;
+    }
     let result: CodexAdapterMutationResult<CodexAdapterThreadSnapshot>;
     try {
-      result = await runtime.runtime.adapter.startThread(
-        {
-          model: settings.model,
-          reasoningEffort: settings.reasoningEffort,
-          workspacePath: settings.workspacePath,
-          approvalPolicy: "never",
-          sandboxMode: settings.sandboxMode,
-          persistence: "persistent",
-        },
-        { signal: this.#lifecycleAbort.signal },
-      );
+      result = await runtime.runtime.adapter.startThread(compiled.startThread, { signal: this.#lifecycleAbort.signal });
     } catch {
       await this.#terminalize(
         context,
@@ -563,18 +655,25 @@ export class ApplicationRunRuntimeService implements ApplicationRunWorkHandoffPo
       return;
     }
 
-    const settings = providerSettings(context.snapshot);
+    let compiled;
+    try {
+      compiled = this.#providers.compileSnapshot(context.snapshot);
+    } catch {
+      await this.#terminalize(
+        context,
+        "dispatch_not_sent",
+        "failed",
+        "application",
+        "Provider execution snapshot is invalid.",
+      );
+      return;
+    }
     let result: CodexAdapterMutationResult<CodexAdapterThreadSnapshot>;
     try {
       result = await runtime.runtime.adapter.resumeThread(
         {
           threadId,
-          model: settings.model,
-          modelSelection: context.snapshot.modelSelection,
-          reasoningEffort: settings.reasoningEffort,
-          workspacePath: settings.workspacePath,
-          approvalPolicy: "never",
-          sandboxMode: settings.sandboxMode,
+          ...compiled.resumeThread,
         },
         { signal: this.#lifecycleAbort.signal },
       );
@@ -841,6 +940,15 @@ export class ApplicationRunRuntimeService implements ApplicationRunWorkHandoffPo
       if (this.#runtime !== runtime) return;
       runtime.failed = true;
       runtime.eventDrain?.beginClose();
+      if (this.#events.prepareGenerationRelease !== undefined) {
+        while (true) {
+          const interactionBarrier = await this.#events.prepareGenerationRelease(runtime.generationId, retireReason);
+          if (interactionBarrier.kind === "ready") break;
+          if (this.#closing || !(await waitForRetry(this.#lifecycleAbort.signal))) {
+            throw new Error("Run interaction response persistence outcome is still unknown.");
+          }
+        }
+      }
       await this.#closeRuntime(runtime);
       try {
         await runtime.eventDrain?.drain();
@@ -929,7 +1037,7 @@ export class ApplicationRunRuntimeService implements ApplicationRunWorkHandoffPo
             APPLICATION_RUN_RUNTIME_LIMITS.maxSnapshotBytes,
             run.executionSnapshotByteLength,
           );
-    const snapshot = decodeApplicationRunExecutionSnapshot(snapshotValue);
+    const snapshot = decodeApplicationRunExecutionSnapshot(snapshotValue, null);
     const directories = await readSessionDirectories(this.#reads, session);
     const contentValue = await readJsonChunks(
       (offset, maxBytes) =>
@@ -1208,31 +1316,6 @@ function isSafeRuntimeCandidate(context: RuntimeExecutionContext): boolean {
     recovery.dispatchState === "pending" &&
     (recovery.bindingState !== "active" || recovery.externalConversationId !== null)
   );
-}
-
-function providerSettings(snapshot: RunExecutionSnapshot): Readonly<{
-  model: string;
-  reasoningEffort: string;
-  workspacePath: string;
-  sandboxMode: "read-only" | "workspace-write" | "danger-full-access";
-}> {
-  const sandbox = snapshot.sandbox as Readonly<Record<string, unknown>>;
-  const reasoning = snapshot.reasoning as Readonly<Record<string, unknown>>;
-  const workspace = snapshot.workspace as Readonly<Record<string, unknown>>;
-  if (
-    typeof snapshot.model !== "string" ||
-    typeof reasoning.effort !== "string" ||
-    (sandbox.mode !== "read-only" && sandbox.mode !== "workspace-write" && sandbox.mode !== "danger-full-access") ||
-    typeof workspace.path !== "string"
-  ) {
-    throw new TypeError("Provider execution settings are invalid.");
-  }
-  return {
-    model: snapshot.model,
-    reasoningEffort: reasoning.effort,
-    workspacePath: workspace.path,
-    sandboxMode: sandbox.mode,
-  };
 }
 
 function snapshotAdmissionRecord(value: ApplicationRunAdmissionRecord): ApplicationRunAdmissionRecord {

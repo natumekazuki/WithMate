@@ -54,3 +54,18 @@ CP6はCP3で成立した共通Run operationへCopilot Adapterを接続するた�
 CLIやWindowから独立した長寿命WithMate runtime hostがPersistence Worker、Provider接続、live Run、draft、interactionを所有する。Operational CLIはlocal IPC clientとし、CLI connection終了をRun cancelまたはProvider disconnectへ変換しない。
 
 Codexはruntime hostが所有するstdio App Server childを使い、Codex managed daemonを初期依存にしない。public CLI operation名は`withmate run start`、`withmate run retry`、`withmate run send-input`、`withmate run cancel`とする。owner、IPC、recovery、alternatives、consequencesはADR 013を正本とする。
+
+## D-008: Provider settingsとlive interactionをProvider definitionでversion管理する
+
+- date: 2026-07-31
+- status: accepted
+
+ProviderはSession作成時に固定し、変更時は新しいSessionを作る。Providerごとに異なるapproval、sandbox、permission、将来の設定を共通enumへ変換せず、`providerId + definitionVersion`で識別するProvider definitionがsettings schema、GUI definition、canonicalization、Provider request変換、interaction schemaを一体で所有する。初期実装はCodex、CP6はGitHub Copilotを対象とし、Cursorはdefinitionとruntime evidenceを追加するまで利用可能として公開しない。
+
+Sessionが固定するのは`providerId`だけとし、各Runが`definitionVersion + settings`をsnapshotする。同じSessionで別versionを使う場合も同じProviderの完全なenvelopeを明示し、retryのoverride省略と過去Runはsource Runのversionを維持する。
+
+Session作成は`withmate session create --provider <providerId>`、Run start / retryの完全設定envelopeは`--provider-settings-json <json>`で受ける。pending interactionは`withmate run interactions`で取得し、`withmate run respond-interaction`へsnapshotと同じkindのclosed response JSONとidempotency keyを渡す。Provider request IDとraw payloadは公開しない。
+
+同じProvider methodでもdiscriminatorと回答shapeが異なるrequestは別interaction kindにする。CodexではMCP tool approvalとMCP server elicitationを分離し、userが選択していないsession / always grantを補わない。version境界、retry、race、effect certainty、alternatives、consequencesはADR 015を正本とする。
+
+`definitionVersion`はWithMate public contractのsemantic versionとし、Codex CLI releaseとは分離する。Codex CLI identityは接続診断へ記録するがversion gateには使わず、実payloadのDecoderがstable protocol互換性を判定する。外部protocol objectの未知加算fieldはcanonical projectionから除外し、必須field、既知field、既知variant、resource limitはstrictに検証する。WithMate public settingsとinteraction responseはclosed contractを維持する。
