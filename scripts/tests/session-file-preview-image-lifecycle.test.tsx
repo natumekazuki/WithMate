@@ -613,3 +613,72 @@ test("Git Diff世代切替後に古いReloadが完了しても現在のfeedback�
     dom.window.close();
   }
 });
+
+test("Git Diff検索はReloadで一致件数が減っても現在位置を有効範囲へ収める", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
+    configurable: true,
+    value(this: HTMLElement, name: string, listener: EventListener) {
+      this.addEventListener(name.replace(/^on/, ""), listener);
+    },
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
+    configurable: true,
+    value(this: HTMLElement, name: string, listener: EventListener) {
+      this.removeEventListener(name.replace(/^on/, ""), listener);
+    },
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  const render = async (patch: string, previewRevision: number) => {
+    await act(async () => {
+      root?.render(React.createElement(SessionDiffPreview, {
+        title: "same.txt · Working Tree",
+        previewRevision,
+        patch,
+        onClose() {},
+        onCopyText() {},
+      }));
+    });
+  };
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await render("needle needle\n", 1);
+    const findButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Find");
+    assert.ok(findButton);
+    await act(async () => findButton.click());
+    const input = container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    assert.ok(input);
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      dom.window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    assert.ok(setInputValue);
+    await act(async () => {
+      setInputValue.call(input, "needle");
+      const propertyChange = new dom.window.Event("propertychange", { bubbles: true });
+      Object.defineProperty(propertyChange, "propertyName", { value: "value" });
+      input.dispatchEvent(propertyChange);
+    });
+    const nextButton = container.querySelector<HTMLButtonElement>("button[aria-label='Next match']");
+    assert.ok(nextButton);
+    await act(async () => nextButton.click());
+    assert.equal(container.querySelector(".session-content-find-count")?.textContent, "2/2");
+
+    await render("needle\n", 2);
+    assert.equal(container.querySelector(".session-content-find-count")?.textContent, "1/1");
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});

@@ -92,3 +92,20 @@ test("file preview は条件付き find / feedback の有無にかかわらず�
   );
   assert.match(stylesSource, /\.session-file-preview-feedback\s*{\s*grid-area:\s*feedback;/);
 });
+
+test("Markdown preview は暗いsurface上のlinkとMermaid errorへ高contrast色を使う", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.session-file-preview\s*{[\s\S]*?--session-file-link:\s*#93c5fd;[\s\S]*?--session-file-error:\s*#fca5a5;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-file-markdown a,\s*\.session-file-markdown a:visited\s*{\s*color:\s*var\(--session-file-link\);\s*}/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-file-markdown \.message-mermaid-error\s*{\s*color:\s*var\(--session-file-error\);\s*}/,
+  );
+});

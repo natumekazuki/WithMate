@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 
 import { MessageRichText } from "../MessageRichText.js";
@@ -19,7 +20,7 @@ import type {
 } from "./file-explorer-contract.js";
 import {
   decodeSessionFileBytes,
-  findPreviewLineMatches,
+  findPreviewTextMatches,
   formatFileByteLength,
   PreviewByteAccumulator,
   shouldInitiallyFitSvg,
@@ -29,18 +30,24 @@ import {
   SESSION_FILE_READ_CHUNK_BYTES,
   splitPreviewLines,
   type SessionFileEncodingSelection,
+  type PreviewTextMatch,
 } from "./file-preview-utils.js";
 import { isLikelyBinarySessionFile } from "./file-content-detection.js";
 import { SessionContentFindBar } from "../session-content-find-bar.js";
 import {
+  applyRenderedTextHighlights,
+  clearRenderedTextHighlights,
   createRenderedTextSearchIndex,
   findRenderedTextMatchOffsets,
   resolveRenderedTextMatch,
+  resolveRenderedTextMatches,
+  scrollRenderedTextMatchIntoView,
   type RenderedTextMatch,
   type RenderedTextMatchOffsets,
   type RenderedTextSearchIndex,
 } from "./rendered-text-search.js";
 import { PreviewResourceQueue } from "./preview-resource-queue.js";
+import { clampFindMatchIndex } from "../find-text-matches.js";
 
 type FilePreviewApi = Pick<
   WithMateWindowApi,
@@ -80,19 +87,6 @@ const ENCODING_OPTIONS: Array<{ value: SessionFileEncodingSelection; label: stri
   { value: "utf-16le", label: "UTF-16 LE" },
   { value: "utf-16be", label: "UTF-16 BE" },
 ];
-
-function selectRenderedTextMatch(match: RenderedTextMatch | undefined): void {
-  if (!match || !match.startNode.isConnected || !match.endNode.isConnected) {
-    return;
-  }
-  const range = document.createRange();
-  range.setStart(match.startNode, match.startOffset);
-  range.setEnd(match.endNode, match.endOffset);
-  const selection = window.getSelection();
-  selection?.removeAllRanges();
-  selection?.addRange(range);
-  match.startNode.parentElement?.scrollIntoView({ block: "center" });
-}
 
 function copyBytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);
@@ -136,17 +130,61 @@ async function readWholeResource(
 type VirtualizedTextContentProps = {
   text: string;
   copyText: (text: string) => void;
-  targetLine: number | null;
+  matches: PreviewTextMatch[];
+  currentMatchIndex: number;
   variant?: "text" | "diff";
 };
+
+type IndexedPreviewTextMatch = PreviewTextMatch & { matchIndex: number };
+
+function renderHighlightedLine(
+  line: string,
+  matches: IndexedPreviewTextMatch[],
+  currentMatchIndex: number,
+): ReactNode {
+  if (matches.length === 0) {
+    return line || " ";
+  }
+  const content: ReactNode[] = [];
+  let offset = 0;
+  for (const match of matches) {
+    if (match.startOffset > offset) {
+      content.push(line.slice(offset, match.startOffset));
+    }
+    content.push(
+      <mark
+        key={`${match.startOffset}-${match.endOffset}`}
+        className={match.matchIndex === currentMatchIndex ? "is-current" : undefined}
+      >
+        {line.slice(match.startOffset, match.endOffset)}
+      </mark>,
+    );
+    offset = match.endOffset;
+  }
+  if (offset < line.length) {
+    content.push(line.slice(offset));
+  }
+  return content;
+}
 
 function VirtualizedTextContent({
   text,
   copyText,
-  targetLine,
+  matches,
+  currentMatchIndex,
   variant = "text",
 }: VirtualizedTextContentProps) {
   const lines = useMemo(() => splitPreviewLines(text), [text]);
+  const matchesByLine = useMemo(() => {
+    const grouped = new Map<number, IndexedPreviewTextMatch[]>();
+    matches.forEach((match, matchIndex) => {
+      const lineMatches = grouped.get(match.lineIndex) ?? [];
+      lineMatches.push({ ...match, matchIndex });
+      grouped.set(match.lineIndex, lineMatches);
+    });
+    return grouped;
+  }, [matches]);
+  const targetLine = matches[currentMatchIndex]?.lineIndex ?? null;
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
     count: lines.length,
@@ -184,13 +222,12 @@ function VirtualizedTextContent({
             <div
               key={virtualLine.key}
               className={`session-file-text-line${diffKind}`}
-              data-current-match={targetLine === virtualLine.index ? "true" : undefined}
               data-index={virtualLine.index}
               ref={virtualizer.measureElement}
               style={{ transform: `translateY(${virtualLine.start}px)` }}
             >
               <span className="session-file-line-number" aria-hidden="true">{virtualLine.index + 1}</span>
-              <code>{line || " "}</code>
+              <code>{renderHighlightedLine(line, matchesByLine.get(virtualLine.index) ?? [], currentMatchIndex)}</code>
             </div>
           );
         })}
@@ -368,7 +405,7 @@ export function SessionFilePreview({
   }, [encoding, loaded]);
   const textLines = useMemo(() => splitPreviewLines(decodedText), [decodedText]);
   const findMatches = useMemo(
-    () => findPreviewLineMatches(textLines, findQuery),
+    () => findPreviewTextMatches(textLines, findQuery),
     [findQuery, textLines],
   );
 
@@ -402,8 +439,32 @@ export function SessionFilePreview({
     renderedMarkdownMatchesRef.current = matches;
     setRenderedMarkdownMatchCount(matches.offsets.length);
     setCurrentMatch(0);
-    selectRenderedTextMatch(index ? resolveRenderedTextMatch(index, matches, 0) ?? undefined : undefined);
   }, [findQuery, renderedMarkdownIndexRevision]);
+
+  const activeFindMatchCount = previewKind === "markdown" && markdownMode === "preview"
+    ? renderedMarkdownMatchCount
+    : findMatches.length;
+  const activeCurrentMatch = clampFindMatchIndex(currentMatch, activeFindMatchCount);
+
+  useEffect(() => {
+    setCurrentMatch((current) => clampFindMatchIndex(current, activeFindMatchCount));
+  }, [activeFindMatchCount]);
+
+  useLayoutEffect(() => {
+    if (!findOpen || markdownMode !== "preview" || previewKind !== "markdown") {
+      return;
+    }
+    const index = renderedMarkdownIndexRef.current;
+    const matches = renderedMarkdownMatchesRef.current;
+    if (!index) {
+      return;
+    }
+    const resolvedMatches = resolveRenderedTextMatches(index, matches);
+    const resolvedCurrentMatch = resolveRenderedTextMatch(index, matches, activeCurrentMatch);
+    applyRenderedTextHighlights(document, resolvedMatches, resolvedCurrentMatch);
+    scrollRenderedTextMatchIntoView(resolvedCurrentMatch);
+    return () => clearRenderedTextHighlights(document);
+  }, [activeCurrentMatch, findOpen, markdownMode, previewKind, renderedMarkdownIndexRevision]);
 
   useEffect(() => {
     if (!loaded || (loaded.descriptor.kind !== "image" && loaded.descriptor.kind !== "svg")) {
@@ -448,8 +509,11 @@ export function SessionFilePreview({
         return;
       }
       setCurrentMatch((current) => {
-        const next = (current + direction + matches.offsets.length) % matches.offsets.length;
-        selectRenderedTextMatch(resolveRenderedTextMatch(index, matches, next) ?? undefined);
+        const next = (
+          clampFindMatchIndex(current, matches.offsets.length)
+          + direction
+          + matches.offsets.length
+        ) % matches.offsets.length;
         return next;
       });
       return;
@@ -457,13 +521,12 @@ export function SessionFilePreview({
     if (findMatches.length === 0) {
       return;
     }
-    setCurrentMatch((current) => (current + direction + findMatches.length) % findMatches.length);
+    setCurrentMatch((current) => (
+      clampFindMatchIndex(current, findMatches.length)
+      + direction
+      + findMatches.length
+    ) % findMatches.length);
   }, [findMatches.length, markdownMode, previewKind]);
-
-  const currentTargetLine = findMatches.length > 0 ? findMatches[currentMatch] ?? findMatches[0] : null;
-  const activeFindMatchCount = previewKind === "markdown" && markdownMode === "preview"
-    ? renderedMarkdownMatchCount
-    : findMatches.length;
   const openCurrentFile = useCallback(async () => {
     if (!api) {
       return;
@@ -665,7 +728,7 @@ export function SessionFilePreview({
         <SessionContentFindBar
           open
           query={findQuery}
-          currentMatch={currentMatch}
+          currentMatch={activeCurrentMatch}
           matchCount={activeFindMatchCount}
           onQueryChange={setFindQuery}
           onPrevious={() => navigateMatch(-1)}
@@ -704,7 +767,12 @@ export function SessionFilePreview({
       ) : null}
 
       {loadState.status === "ready" && loaded && previewKind === "text" ? (
-        <VirtualizedTextContent text={decodedText} copyText={onCopyText} targetLine={currentTargetLine} />
+        <VirtualizedTextContent
+          text={decodedText}
+          copyText={onCopyText}
+          matches={findMatches}
+          currentMatchIndex={activeCurrentMatch}
+        />
       ) : null}
       {loadState.status === "ready" && loaded && previewKind === "markdown" ? (
         markdownMode === "preview" ? (
@@ -721,7 +789,12 @@ export function SessionFilePreview({
             />
           </SelectionCopySurface>
         ) : (
-          <VirtualizedTextContent text={decodedText} copyText={onCopyText} targetLine={currentTargetLine} />
+          <VirtualizedTextContent
+            text={decodedText}
+            copyText={onCopyText}
+            matches={findMatches}
+            currentMatchIndex={activeCurrentMatch}
+          />
         )
       ) : null}
       {loadState.status === "ready" && loaded && descriptor && (previewKind === "image" || previewKind === "svg") ? (
@@ -780,11 +853,16 @@ export function SessionDiffPreview({
     reloadRevisionRef.current += 1;
   }
   const lines = useMemo(() => splitPreviewLines(patch), [patch]);
-  const matches = useMemo(() => findPreviewLineMatches(lines, query), [lines, query]);
+  const matches = useMemo(() => findPreviewTextMatches(lines, query), [lines, query]);
+  const activeCurrentMatch = clampFindMatchIndex(currentMatch, matches.length);
 
   useEffect(() => {
     setCurrentMatch(0);
   }, [query]);
+
+  useEffect(() => {
+    setCurrentMatch((current) => clampFindMatchIndex(current, matches.length));
+  }, [matches.length]);
 
   useEffect(() => {
     setFeedback("");
@@ -810,7 +888,11 @@ export function SessionDiffPreview({
 
   const navigate = (direction: 1 | -1) => {
     if (matches.length > 0) {
-      setCurrentMatch((current) => (current + direction + matches.length) % matches.length);
+      setCurrentMatch((current) => (
+        clampFindMatchIndex(current, matches.length)
+        + direction
+        + matches.length
+      ) % matches.length);
     }
   };
 
@@ -854,7 +936,7 @@ export function SessionDiffPreview({
       <SessionContentFindBar
         open={findOpen}
         query={query}
-        currentMatch={currentMatch}
+        currentMatch={activeCurrentMatch}
         matchCount={matches.length}
         onQueryChange={setQuery}
         onPrevious={() => navigate(-1)}
@@ -864,7 +946,8 @@ export function SessionDiffPreview({
       <VirtualizedTextContent
         text={patch}
         copyText={onCopyText}
-        targetLine={matches.length > 0 ? matches[currentMatch] ?? matches[0] : null}
+        matches={matches}
+        currentMatchIndex={activeCurrentMatch}
         variant="diff"
       />
       {feedback ? <p className="session-file-preview-feedback" role="alert">{feedback}</p> : null}

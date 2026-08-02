@@ -64,6 +64,131 @@ const DEFAULT_CLEANUP_RETRY_DELAY_MS = 50;
 const CLEANUP_ATTEMPTS = 3;
 let defaultGitExecutablePath: Promise<string> | null = null;
 
+function normalizeGitConfigPath(directoryPath: string): string {
+  return process.platform === "win32" ? directoryPath.replace(/\\/g, "/") : directoryPath;
+}
+
+function listAncestorDirectoryPaths(directoryPath: string): string[] {
+  const ancestors: string[] = [];
+  let currentPath = path.resolve(directoryPath);
+  while (true) {
+    ancestors.push(currentPath);
+    const parentPath = path.dirname(currentPath);
+    if (parentPath === currentPath) {
+      return ancestors;
+    }
+    currentPath = parentPath;
+  }
+}
+
+function createSafeDirectoryArgs(directoryPaths: string[]): string[] {
+  return directoryPaths.flatMap((directoryPath) => [
+    "-c",
+    `safe.directory=${normalizeGitConfigPath(directoryPath)}`,
+  ]);
+}
+
+const WORK_TREE_CONFIG_KEYS = [
+  "core.autocrlf",
+  "core.eol",
+  "core.filemode",
+  "core.symlinks",
+  "core.ignorecase",
+  "core.precomposeunicode",
+] as const;
+
+function normalizeGitBoolean(value: string | null): "true" | "false" | null {
+  if (value === null) {
+    return "true";
+  }
+  if (value === "") {
+    return "false";
+  }
+  if (/^(?:true|yes|on|1)$/i.test(value)) {
+    return "true";
+  }
+  if (/^(?:false|no|off|0)$/i.test(value)) {
+    return "false";
+  }
+  const numericMatch = /^([+-]?)(0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*)([kKmMgG]?)$/.exec(value);
+  if (numericMatch) {
+    const [, , digits, suffix] = numericMatch;
+    const radix = digits.toLowerCase().startsWith("0x") ? 16 : digits.length > 1 && digits.startsWith("0") ? 8 : 10;
+    const magnitudeDigits = (radix === 16 ? digits.slice(2) : radix === 8 ? digits.slice(1) : digits)
+      .replace(/^0+/, "")
+      .toLowerCase();
+    if (!magnitudeDigits) {
+      return "false";
+    }
+    const multiplier = suffix.toLowerCase() === "k"
+      ? 1024n
+      : suffix.toLowerCase() === "m"
+        ? 1024n ** 2n
+        : suffix.toLowerCase() === "g"
+          ? 1024n ** 3n
+          : 1n;
+    const maximumMagnitude = process.platform === "win32"
+      ? 0x7fffffffn
+      : 0x7fffffffffffffffn;
+    const maximumInputDigits = (maximumMagnitude / multiplier).toString(radix);
+    if (
+      magnitudeDigits.length > maximumInputDigits.length
+      || (
+        magnitudeDigits.length === maximumInputDigits.length
+        && magnitudeDigits > maximumInputDigits
+      )
+    ) {
+      return null;
+    }
+    return "true";
+  }
+  return null;
+}
+
+function normalizeWorkTreeConfigValue(key: string, value: string | null): string | null {
+  if (["core.filemode", "core.symlinks", "core.ignorecase", "core.precomposeunicode"].includes(key)) {
+    return normalizeGitBoolean(value);
+  }
+  if (key === "core.autocrlf") {
+    const normalizedBoolean = normalizeGitBoolean(value);
+    return normalizedBoolean ?? (value?.toLowerCase() === "input" ? "input" : null);
+  }
+  if (key === "core.eol") {
+    const normalized = value?.toLowerCase();
+    return normalized === "lf" || normalized === "crlf" || normalized === "native" ? normalized : null;
+  }
+  return null;
+}
+
+function parseWorkTreeConfigArgs(output: Buffer): string[] {
+  const values = new Map<string, string>();
+  for (const record of output.toString("utf8").split("\0")) {
+    if (!record) {
+      continue;
+    }
+    const separatorIndex = record.indexOf("\n");
+    if (separatorIndex === 0) {
+      throw new Error("Git work tree config returned an unsupported result.");
+    }
+    const key = (separatorIndex < 0 ? record : record.slice(0, separatorIndex)).toLowerCase();
+    if (!WORK_TREE_CONFIG_KEYS.includes(key as (typeof WORK_TREE_CONFIG_KEYS)[number])) {
+      continue;
+    }
+    const value = normalizeWorkTreeConfigValue(
+      key,
+      separatorIndex < 0 ? null : record.slice(separatorIndex + 1),
+    );
+    if (value === null) {
+      throw new Error(`Git work tree config ${key} has an unsupported value.`);
+    }
+    values.set(key, value);
+  }
+  return WORK_TREE_CONFIG_KEYS.flatMap((key) => {
+    const value = values.get(key);
+    return value === undefined ? [] : ["-c", `${key}=${value}`];
+  });
+}
+
 type WorkspaceGitAdmissionJob = {
   supersessionKey: string;
   start(): Promise<void>;
@@ -164,17 +289,23 @@ function getDefaultGitExecutablePath(): Promise<string> {
   return defaultGitExecutablePath;
 }
 
-function createWorkspaceGitProcessEnv(sourceEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function createWorkspaceGitConfigReadEnv(sourceEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const inheritedEnv = Object.fromEntries(
     Object.entries(sourceEnv).filter(([name]) => !name.toUpperCase().startsWith("GIT_")),
   );
   return {
     ...inheritedEnv,
+    LC_ALL: "C",
+    LANG: "C",
+  };
+}
+
+function createWorkspaceGitProcessEnv(sourceEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...createWorkspaceGitConfigReadEnv(sourceEnv),
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_SYSTEM: GIT_NULL_DEVICE,
     GIT_CONFIG_GLOBAL: GIT_NULL_DEVICE,
-    LC_ALL: "C",
-    LANG: "C",
   };
 }
 
@@ -427,6 +558,7 @@ type WorkspaceGitOperation = {
   workspaceLease: DirectoryLease;
   repositoryLeases: DirectoryLease[];
   isolatedGitDirectoryPath: string | null;
+  workTreeConfigArgs: string[] | null;
   signal: AbortSignal;
 };
 
@@ -438,6 +570,7 @@ type DirectoryLease = {
 type IsolatedGitContext = {
   gitDirectoryPath: string;
   lockRepositoryRelativePath: string;
+  workTreeConfigArgs: string[];
 };
 
 class OperationIdentityChangedError extends Error {
@@ -592,6 +725,7 @@ export class WorkspaceGitChangesService {
   readonly #runGit: NonNullable<WorkspaceGitChangesServiceDeps["runGit"]>;
   readonly #resolveGitExecutablePath: () => Promise<string>;
   readonly #gitProcessEnv: NodeJS.ProcessEnv;
+  readonly #gitConfigReadEnv: NodeJS.ProcessEnv;
   readonly #operationTimeoutMs: number;
   readonly #cleanupRetryDelayMs: number;
   readonly #removeTemporaryDirectory: (directoryPath: string) => Promise<void>;
@@ -604,6 +738,7 @@ export class WorkspaceGitChangesService {
     this.#resolveGitExecutablePath = deps.resolveGitExecutablePath
       ?? (deps.runGit ? async () => "git" : getDefaultGitExecutablePath);
     this.#gitProcessEnv = createWorkspaceGitProcessEnv(deps.processEnv ?? process.env);
+    this.#gitConfigReadEnv = createWorkspaceGitConfigReadEnv(deps.processEnv ?? process.env);
     this.#operationTimeoutMs = deps.operationTimeoutMs ?? DEFAULT_WORKSPACE_GIT_OPERATION_TIMEOUT_MS;
     this.#cleanupRetryDelayMs = deps.cleanupRetryDelayMs ?? DEFAULT_CLEANUP_RETRY_DELAY_MS;
     this.#removeTemporaryDirectory = deps.removeTemporaryDirectory
@@ -630,10 +765,15 @@ export class WorkspaceGitChangesService {
     commonDirectoryPath?: string,
     signal?: AbortSignal,
     indexFilePath?: string,
+    safeDirectoryPaths: string[] = [],
   ): Promise<{ exitCode: number; stdout: Buffer; stderr: string }> {
     throwIfAborted(signal);
     const executablePath = await this.#getGitExecutablePath();
-    return this.#runGit(workspacePath, [...GIT_GLOBAL_ARGS, ...args], {
+    return this.#runGit(workspacePath, [
+      ...GIT_GLOBAL_ARGS,
+      ...createSafeDirectoryArgs(safeDirectoryPaths),
+      ...args,
+    ], {
       executablePath,
       env: commonDirectoryPath || indexFilePath
         ? {
@@ -645,6 +785,40 @@ export class WorkspaceGitChangesService {
       stdin,
       signal,
     });
+  }
+
+  async #readWorkTreeConfigArgs(operation: WorkspaceGitOperation): Promise<string[]> {
+    await this.#assertOperationIdentity(operation);
+    const executablePath = await this.#getGitExecutablePath();
+    let result: GitCommandResult;
+    try {
+      result = await this.#runGit(operation.workspaceIdentity.realPath, [
+        ...GIT_GLOBAL_ARGS,
+        ...createSafeDirectoryArgs([operation.repositoryIdentity.topLevel.realPath]),
+        `--git-dir=${operation.repositoryIdentity.gitDirectory.realPath}`,
+        `--work-tree=${operation.repositoryIdentity.topLevel.realPath}`,
+        "config",
+        "--null",
+        "--get-regexp",
+        "^core\\.(autocrlf|eol|filemode|symlinks|ignorecase|precomposeunicode)$",
+      ], {
+        executablePath,
+        env: {
+          ...this.#gitConfigReadEnv,
+          GIT_COMMON_DIR: operation.repositoryIdentity.commonDirectory.realPath,
+        },
+        signal: operation.signal,
+      });
+    } finally {
+      await this.#assertOperationIdentity(operation);
+    }
+    if (result.exitCode === 1 && result.stdout.length === 0) {
+      return [];
+    }
+    if (result.exitCode !== 0) {
+      throw new Error(result.stderr || "Git work tree config could not be resolved.");
+    }
+    return parseWorkTreeConfigArgs(result.stdout);
   }
 
   async #captureRepositoryIdentity(
@@ -662,7 +836,7 @@ export class WorkspaceGitChangesService {
         "--show-toplevel",
         "--git-dir",
         "--git-common-dir",
-      ], undefined, undefined, signal);
+      ], undefined, undefined, signal, undefined, listAncestorDirectoryPaths(expectedWorkspaceIdentity.realPath));
     } finally {
       await this.#assertWorkspaceIdentity(workspacePath, expectedWorkspaceIdentity);
     }
@@ -737,6 +911,8 @@ export class WorkspaceGitChangesService {
         stdin,
         operation.repositoryIdentity.commonDirectory.realPath,
         operation.signal,
+        undefined,
+        [operation.repositoryIdentity.topLevel.realPath],
       );
     } catch (error) {
       await this.#assertOperationIdentity(operation);
@@ -818,6 +994,7 @@ export class WorkspaceGitChangesService {
         `--work-tree=${operation.repositoryIdentity.topLevel.realPath}`,
         "-c",
         "core.bare=false",
+        ...isolatedContext.workTreeConfigArgs,
         ...args,
       ],
       stdin,
@@ -1042,9 +1219,11 @@ export class WorkspaceGitChangesService {
       return {
         gitDirectoryPath: path.join(operation.isolatedGitDirectoryPath, "repository.git"),
         lockRepositoryRelativePath: `${normalizeWorkspacePrefix(workspacePrefix)}${operation.workspaceLease.fileName}`,
+        workTreeConfigArgs: operation.workTreeConfigArgs ?? [],
       };
     }
     throwIfAborted(operation.signal);
+    operation.workTreeConfigArgs = await this.#readWorkTreeConfigArgs(operation);
     const rootPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-preview-"));
     operation.isolatedGitDirectoryPath = rootPath;
     const gitDirectoryPath = path.join(rootPath, "repository.git");
@@ -1104,6 +1283,7 @@ export class WorkspaceGitChangesService {
     return {
       gitDirectoryPath,
       lockRepositoryRelativePath: `${normalizeWorkspacePrefix(workspacePrefix)}${operation.workspaceLease.fileName}`,
+      workTreeConfigArgs: operation.workTreeConfigArgs,
     };
   }
 
@@ -1232,6 +1412,7 @@ export class WorkspaceGitChangesService {
         workspaceLease,
         repositoryLeases,
         isolatedGitDirectoryPath: null,
+        workTreeConfigArgs: null,
         signal,
       };
     } catch (error) {
@@ -1277,6 +1458,7 @@ export class WorkspaceGitChangesService {
       "--porcelain=v1",
       "-z",
       "--untracked-files=all",
+      "--ignore-submodules=dirty",
       "--",
       ".",
       `:(exclude,top,literal)${isolatedContext.lockRepositoryRelativePath}`,
@@ -1390,7 +1572,14 @@ export class WorkspaceGitChangesService {
         const workspacePrefix = normalizeWorkspacePrefix(await this.#readWorkspacePrefix(operation));
         const repositoryRelativePath = `${workspacePrefix}${relativePath}`;
         const isolatedContext = await this.#prepareIsolatedGit(operation, workspacePrefix);
-        const args = ["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=3"];
+        const args = [
+          "diff",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--no-color",
+          "--unified=3",
+          "--ignore-submodules=dirty",
+        ];
         if (request.scope === "staged") {
           args.push("--cached");
         }

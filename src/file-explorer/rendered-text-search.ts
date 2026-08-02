@@ -29,11 +29,35 @@ export type RenderedTextMatchOffsets = {
   normalizedQueryLength: number;
 };
 
+export type RenderedTextNodeFilter = (node: Text) => boolean;
+
+export const MAX_RENDERED_TEXT_HIGHLIGHT_RANGES = 5_000;
+
+const FIND_MATCH_HIGHLIGHT_NAME = "withmate-find-match";
+const FIND_CURRENT_HIGHLIGHT_NAME = "withmate-find-current";
+
+type HighlightRegistry = {
+  set(name: string, highlight: unknown): void;
+  delete(name: string): boolean;
+};
+
+type HighlightCollection = {
+  add(range: Range): HighlightCollection;
+};
+
+type HighlightWindow = Window & typeof globalThis & {
+  CSS?: { highlights?: HighlightRegistry };
+  Highlight?: new () => HighlightCollection;
+};
+
 function normalizeSearchText(value: string): string {
   return value.toLocaleLowerCase();
 }
 
-export function createRenderedTextSearchIndex(container: HTMLElement): RenderedTextSearchIndex {
+export function createRenderedTextSearchIndex(
+  container: HTMLElement,
+  includeTextNode: RenderedTextNodeFilter = () => true,
+): RenderedTextSearchIndex {
   const normalizedParts: string[] = [];
   const runs: TextRun[] = [];
   let normalizedStart = 0;
@@ -43,7 +67,7 @@ export function createRenderedTextSearchIndex(container: HTMLElement): RenderedT
   while (current) {
     const node = current as Text;
     const text = node.textContent ?? "";
-    if (text) {
+    if (text && includeTextNode(node)) {
       const normalizedText = normalizeSearchText(text);
       const expandedOffsets: ExpandedOffset[] = [];
       let sourceOffset = 0;
@@ -169,6 +193,95 @@ export function resolveRenderedTextMatch(
     endNode: endRun.node,
     endOffset: mapNormalizedUnitOffset(endRun, normalizedEndOffset, "end"),
   };
+}
+
+export function resolveRenderedTextMatches(
+  index: RenderedTextSearchIndex,
+  matches: RenderedTextMatchOffsets,
+  limit = MAX_RENDERED_TEXT_HIGHLIGHT_RANGES,
+): RenderedTextMatch[] {
+  const resolvedMatches: RenderedTextMatch[] = [];
+  const matchLimit = Math.min(matches.offsets.length, Math.max(0, limit));
+  for (let matchIndex = 0; matchIndex < matchLimit; matchIndex += 1) {
+    const match = resolveRenderedTextMatch(index, matches, matchIndex);
+    if (match) {
+      resolvedMatches.push(match);
+    }
+  }
+  return resolvedMatches;
+}
+
+export function appendRenderedTextMatches(
+  target: RenderedTextMatch[],
+  index: RenderedTextSearchIndex,
+  matches: RenderedTextMatchOffsets,
+  limit = MAX_RENDERED_TEXT_HIGHLIGHT_RANGES,
+): void {
+  const remaining = Math.max(0, limit - target.length);
+  if (remaining === 0) {
+    return;
+  }
+  const resolved = resolveRenderedTextMatches(index, matches, remaining);
+  for (const match of resolved) {
+    target.push(match);
+  }
+}
+
+export function scrollRenderedTextMatchIntoView(match: RenderedTextMatch | null): void {
+  if (!match || !match.startNode.isConnected || !match.endNode.isConnected) {
+    return;
+  }
+  const target = match.startNode.parentElement;
+  if (typeof target?.scrollIntoView === "function") {
+    target.scrollIntoView({ block: "center", inline: "nearest" });
+  }
+}
+
+function createRange(document: Document, match: RenderedTextMatch): Range | null {
+  if (!match.startNode.isConnected || !match.endNode.isConnected) {
+    return null;
+  }
+  const range = document.createRange();
+  range.setStart(match.startNode, match.startOffset);
+  range.setEnd(match.endNode, match.endOffset);
+  return range;
+}
+
+export function clearRenderedTextHighlights(document: Document): void {
+  const highlightWindow = document.defaultView as HighlightWindow | null;
+  highlightWindow?.CSS?.highlights?.delete(FIND_MATCH_HIGHLIGHT_NAME);
+  highlightWindow?.CSS?.highlights?.delete(FIND_CURRENT_HIGHLIGHT_NAME);
+}
+
+export function applyRenderedTextHighlights(
+  document: Document,
+  matches: RenderedTextMatch[],
+  currentMatch: RenderedTextMatch | null,
+): boolean {
+  const highlightWindow = document.defaultView as HighlightWindow | null;
+  const registry = highlightWindow?.CSS?.highlights;
+  const HighlightConstructor = highlightWindow?.Highlight;
+  if (!registry || !HighlightConstructor) {
+    return false;
+  }
+  const ranges = matches
+    .slice(0, MAX_RENDERED_TEXT_HIGHLIGHT_RANGES)
+    .map((match) => createRange(document, match))
+    .filter((range): range is Range => range !== null);
+  const currentRange = currentMatch ? createRange(document, currentMatch) : null;
+  const matchHighlight = new HighlightConstructor();
+  for (const range of ranges) {
+    matchHighlight.add(range);
+  }
+  registry.set(FIND_MATCH_HIGHLIGHT_NAME, matchHighlight);
+  if (currentRange) {
+    const currentHighlight = new HighlightConstructor();
+    currentHighlight.add(currentRange);
+    registry.set(FIND_CURRENT_HIGHLIGHT_NAME, currentHighlight);
+  } else {
+    registry.delete(FIND_CURRENT_HIGHLIGHT_NAME);
+  }
+  return true;
 }
 
 export function getRenderedTextSearchIndexStats(index: RenderedTextSearchIndex): {

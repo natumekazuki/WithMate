@@ -44,6 +44,21 @@ import {
 import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
 import { SessionContentFindBar } from "./session-content-find-bar.js";
+import { clampFindMatchIndex, findTextMatches } from "./find-text-matches.js";
+import {
+  isMessageRenderedSearchTextNode,
+  projectMessageRenderedSearchText,
+} from "./message-rendered-search-text.js";
+import {
+  appendRenderedTextMatches,
+  applyRenderedTextHighlights,
+  clearRenderedTextHighlights,
+  createRenderedTextSearchIndex,
+  findRenderedTextMatchOffsets,
+  resolveRenderedTextMatch,
+  scrollRenderedTextMatchIntoView,
+  type RenderedTextMatch,
+} from "./file-explorer/rendered-text-search.js";
 
 function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
@@ -2316,30 +2331,25 @@ export function SessionMessageColumn({
     useFlushSync: false,
   });
   const virtualMessages = messageVirtualizer.getVirtualItems();
-  const messageFindMatches = useMemo(() => {
-    const query = findQuery.trim().toLocaleLowerCase();
-    if (!query) {
-      return [] as number[];
-    }
-    const matches: number[] = [];
-    messages.forEach((message, messageIndex) => {
-      const text = message.text.toLocaleLowerCase();
-      let offset = text.indexOf(query);
-      while (offset >= 0) {
-        matches.push(messageIndex);
-        offset = text.indexOf(query, offset + Math.max(1, query.length));
-      }
-    });
-    return matches;
-  }, [findQuery, messages]);
-  const firstFindMessageIndex = messageFindMatches[0] ?? null;
-  const currentFindMessageIndex = messageFindMatches[currentFindMatch] ?? null;
   const hasPendingMessageText =
     !hasLiveRunAssistantText &&
     liveApprovalRequest === null &&
     liveElicitationRequest === null &&
     !liveRunErrorMessage.trim() &&
     pendingMessageText.trim().length > 0;
+  const hasFindQuery = findQuery.trim().length > 0;
+  const messageRenderedSearchTexts = useMemo(
+    () => (hasFindQuery
+      ? messages.map((message) => projectMessageRenderedSearchText(message.text))
+      : []),
+    [hasFindQuery, messages],
+  );
+  const pendingRenderedSearchText = useMemo(
+    () => (hasFindQuery && isRunning && hasPendingMessageText
+      ? projectMessageRenderedSearchText(pendingMessageText)
+      : ""),
+    [hasFindQuery, hasPendingMessageText, isRunning, pendingMessageText],
+  );
   const hasPendingInlineContent =
     liveApprovalRequest !== null ||
     liveElicitationRequest !== null ||
@@ -2358,9 +2368,47 @@ export function SessionMessageColumn({
     },
     [hasPendingInlineContent, messageGroups, pendingMessageGroupId],
   );
+  const messageFindMatches = useMemo(() => {
+    const matches: Array<
+      | { kind: "message"; messageIndex: number; occurrenceIndex: number }
+      | { kind: "pending"; occurrenceIndex: number }
+    > = [];
+    const pendingMatches = findTextMatches(pendingRenderedSearchText, findQuery);
+    const appendPendingMatches = () => {
+      pendingMatches.forEach((_, occurrenceIndex) => {
+        matches.push({ kind: "pending", occurrenceIndex });
+      });
+    };
+    messageRenderedSearchTexts.forEach((text, messageIndex) => {
+      findTextMatches(text, findQuery).forEach((_, occurrenceIndex) => {
+        matches.push({ kind: "message", messageIndex, occurrenceIndex });
+      });
+      if (messageIndex === pendingMessageGroupEndIndex) {
+        appendPendingMatches();
+      }
+    });
+    if (pendingMessageGroupEndIndex < 0) {
+      appendPendingMatches();
+    }
+    return matches;
+  }, [findQuery, messageRenderedSearchTexts, pendingMessageGroupEndIndex, pendingRenderedSearchText]);
+  const activeCurrentFindMatch = clampFindMatchIndex(currentFindMatch, messageFindMatches.length);
   const canRenderGroupedPendingInlineContent =
     pendingMessageGroupEndIndex >= 0 &&
     virtualMessages.some((virtualMessage) => virtualMessage.index === pendingMessageGroupEndIndex);
+  const getFindMatchScrollIndex = useCallback((match: (typeof messageFindMatches)[number] | undefined) => {
+    if (!match) {
+      return null;
+    }
+    if (match.kind === "message") {
+      return match.messageIndex;
+    }
+    if (pendingMessageGroupEndIndex >= 0) {
+      return pendingMessageGroupEndIndex;
+    }
+    return messages.length > 0 ? messages.length - 1 : null;
+  }, [messages.length, pendingMessageGroupEndIndex]);
+  const firstFindScrollIndex = getFindMatchScrollIndex(messageFindMatches[0]);
 
   const handleMessageListScroll: UIEventHandler<HTMLDivElement> = (event) => {
     onMessageListScroll(event);
@@ -2411,10 +2459,17 @@ export function SessionMessageColumn({
 
   useEffect(() => {
     setCurrentFindMatch(0);
-    if (firstFindMessageIndex !== null) {
-      messageVirtualizer.scrollToIndex(firstFindMessageIndex, { align: "center" });
+  }, [findQuery, sessionId]);
+
+  useEffect(() => {
+    setCurrentFindMatch((current) => clampFindMatchIndex(current, messageFindMatches.length));
+  }, [messageFindMatches.length]);
+
+  useEffect(() => {
+    if (firstFindScrollIndex !== null) {
+      messageVirtualizer.scrollToIndex(firstFindScrollIndex, { align: "center" });
     }
-  }, [findQuery, firstFindMessageIndex, messageVirtualizer, sessionId]);
+  }, [findQuery, firstFindScrollIndex, messageVirtualizer, sessionId]);
 
   useEffect(() => {
     if (!isContentActive) {
@@ -2438,11 +2493,86 @@ export function SessionMessageColumn({
       return;
     }
     setCurrentFindMatch((current) => {
-      const next = (current + direction + messageFindMatches.length) % messageFindMatches.length;
-      messageVirtualizer.scrollToIndex(messageFindMatches[next] ?? 0, { align: "center" });
+      const next = (
+        clampFindMatchIndex(current, messageFindMatches.length)
+        + direction
+        + messageFindMatches.length
+      ) % messageFindMatches.length;
+      const scrollIndex = getFindMatchScrollIndex(messageFindMatches[next]);
+      if (scrollIndex !== null) {
+        messageVirtualizer.scrollToIndex(scrollIndex, { align: "center" });
+      }
       return next;
     });
-  }, [messageFindMatches, messageVirtualizer]);
+  }, [getFindMatchScrollIndex, messageFindMatches, messageVirtualizer]);
+
+  const visibleMessageSignature = virtualMessages.map((message) => message.index).join(",");
+  useLayoutEffect(() => {
+    const messageListElement = messageListRef.current;
+    if (!isContentActive || !findOpen || !findQuery.trim() || !messageListElement) {
+      return;
+    }
+    const ownerDocument = messageListElement.ownerDocument;
+    const current = messageFindMatches[activeCurrentFindMatch] ?? null;
+    const applyHighlights = () => {
+      const resolvedMatches: RenderedTextMatch[] = [];
+      let resolvedCurrentMatch: RenderedTextMatch | null = null;
+      const appendPendingHighlights = (container: ParentNode) => {
+        const pendingRichText = container.querySelector<HTMLElement>(
+          "[data-pending-message-body=\"true\"] > .rich-text",
+        );
+        if (!pendingRichText) {
+          return false;
+        }
+        const index = createRenderedTextSearchIndex(pendingRichText, isMessageRenderedSearchTextNode);
+        const matches = findRenderedTextMatchOffsets(index, findQuery);
+        appendRenderedTextMatches(resolvedMatches, index, matches);
+        if (current?.kind === "pending") {
+          resolvedCurrentMatch = resolveRenderedTextMatch(index, matches, current.occurrenceIndex);
+        }
+        return true;
+      };
+      let pendingHighlightsAppended = false;
+      for (const row of messageListElement.querySelectorAll<HTMLElement>(".session-message-virtual-row")) {
+        const messageIndex = Number(row.dataset.index);
+        const richText = row.querySelector<HTMLElement>("[data-message-body=\"true\"] > .rich-text");
+        if (!Number.isInteger(messageIndex) || !richText) {
+          continue;
+        }
+        const index = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
+        const matches = findRenderedTextMatchOffsets(index, findQuery);
+        appendRenderedTextMatches(resolvedMatches, index, matches);
+        if (current?.kind === "message" && current.messageIndex === messageIndex) {
+          resolvedCurrentMatch = resolveRenderedTextMatch(index, matches, current.occurrenceIndex);
+        }
+        if (messageIndex === pendingMessageGroupEndIndex) {
+          pendingHighlightsAppended = appendPendingHighlights(row);
+        }
+      }
+      if (!pendingHighlightsAppended) {
+        appendPendingHighlights(messageListElement);
+      }
+      applyRenderedTextHighlights(ownerDocument, resolvedMatches, resolvedCurrentMatch);
+      scrollRenderedTextMatchIntoView(resolvedCurrentMatch);
+    };
+    applyHighlights();
+    const MutationObserverConstructor = ownerDocument.defaultView?.MutationObserver;
+    const observer = MutationObserverConstructor ? new MutationObserverConstructor(applyHighlights) : null;
+    observer?.observe(messageListElement, { childList: true, characterData: true, subtree: true });
+    return () => {
+      observer?.disconnect();
+      clearRenderedTextHighlights(ownerDocument);
+    };
+  }, [
+    activeCurrentFindMatch,
+    findOpen,
+    findQuery,
+    isContentActive,
+    messageFindMatches,
+    messageListRef,
+    pendingMessageGroupEndIndex,
+    visibleMessageSignature,
+  ]);
 
   useLayoutEffect(() => {
     if (isMessageListFollowing) {
@@ -2551,7 +2681,13 @@ export function SessionMessageColumn({
           />
         ) : null}
         {hasPendingMessageText ? (
-          <MessageRichText text={pendingMessageText} onOpenPath={onOpenPath} />
+          <div data-pending-message-body="true">
+            <MessageRichText
+              text={pendingMessageText}
+              forceFullRender={findOpen && hasFindQuery}
+              onOpenPath={onOpenPath}
+            />
+          </div>
         ) : null}
         {liveRunErrorMessage ? (
           <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
@@ -2573,7 +2709,7 @@ export function SessionMessageColumn({
       <SessionContentFindBar
         open={findOpen}
         query={findQuery}
-        currentMatch={currentFindMatch}
+        currentMatch={activeCurrentFindMatch}
         matchCount={messageFindMatches.length}
         onQueryChange={setFindQuery}
         onPrevious={() => navigateFindMatch(-1)}
@@ -2627,7 +2763,7 @@ export function SessionMessageColumn({
               <div
                 key={`${message.role}-${messageKey}`}
                 ref={messageVirtualizer.measureElement}
-                className={`session-message-virtual-row${currentFindMessageIndex === absoluteIndex ? " is-find-target" : ""}${
+                className={`session-message-virtual-row${
                   doesMessageGroupContinue ? " auxiliary-message-group-continues" : ""
                 }${absoluteIndex === messages.length - 1 ? " session-message-virtual-row-end" : ""}`}
                 data-index={absoluteIndex}
@@ -2695,7 +2831,11 @@ export function SessionMessageColumn({
                     data-message-body="true"
                     data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
                   >
-                    <MessageRichText text={message.text} onOpenPath={onOpenPath} />
+                    <MessageRichText
+                      text={message.text}
+                      forceFullRender={findOpen && hasFindQuery}
+                      onOpenPath={onOpenPath}
+                    />
                   </div>
 
                   {artifact ? (

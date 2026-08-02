@@ -3,7 +3,7 @@ import test from "node:test";
 
 import {
   decodeSessionFileBytes,
-  findPreviewLineMatches,
+  findPreviewTextMatches,
   PreviewByteAccumulator,
   projectWorkspaceFileDiffAvailability,
   resolveAuthorizedMarkdownResource,
@@ -24,6 +24,14 @@ test("decodeSessionFileBytes は Auto と手動指定で UTF-8 / Shift_JIS / UTF
     decodeSessionFileBytes(Uint8Array.from([0x00, 0x41, 0x00, 0x42]), "utf-16be", "utf-8"),
     "AB",
   );
+});
+
+test("findPreviewTextMatches は同じ行の複数一致を別々の検索結果として返す", () => {
+  assert.deepEqual(findPreviewTextMatches(["alpha alpha", "beta alpha"], "alpha"), [
+    { lineIndex: 0, startOffset: 0, endOffset: 5 },
+    { lineIndex: 0, startOffset: 6, endOffset: 11 },
+    { lineIndex: 1, startOffset: 5, endOffset: 10 },
+  ]);
 });
 
 test("decodeSessionFileBytes の Auto は ASCII inspection prefix より後ろの Shift_JIS まで検証する", () => {
@@ -67,7 +75,7 @@ test("projectWorkspaceFileDiffAvailability は変更なしとGit失敗を区別�
   });
   assert.deepEqual(projectWorkspaceFileDiffAvailability({ status: "not-git", message: "Not a Git repository." }, "src/App.tsx"), {
     scopes: [],
-    message: "Not a Git repository.",
+    message: "",
   });
   assert.deepEqual(projectWorkspaceFileDiffAvailability({
     status: "ok",
@@ -88,7 +96,6 @@ test("resolveRelativeMarkdownResourcePath は Markdown 親基準で正規化し 
   assert.equal(resolveRelativeMarkdownResourcePath("docs/readme.md", "images/hero%20one.png"), "docs/images/hero one.png");
   assert.equal(resolveRelativeMarkdownResourcePath("readme.md", "../secret.png"), null);
   assert.equal(resolveRelativeMarkdownResourcePath("readme.md", "%2e%2e/secret.png"), null);
-  assert.deepEqual(findPreviewLineMatches(["Alpha", "beta alpha", "Gamma"], "ALPHA"), [0, 1]);
 });
 
 test("resolveMarkdownLinkTarget は外部・絶対・相対 link を先に分類し root escape を fallback しない", () => {

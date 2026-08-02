@@ -4,6 +4,7 @@ import type {
   WorkspaceChangesResult,
   WorkspaceChangeScope,
 } from "./file-explorer-contract.js";
+import { findTextMatches } from "../find-text-matches.js";
 import { detectSessionFileEncoding } from "./file-content-detection.js";
 
 export type SessionFileEncodingSelection = "auto" | SessionFileEncoding;
@@ -82,7 +83,7 @@ export function projectWorkspaceFileDiffAvailability(
   relativePath: string,
 ): { scopes: WorkspaceChangeScope[]; message: string } {
   if (result.status !== "ok") {
-    return { scopes: [], message: result.message };
+    return { scopes: [], message: "" };
   }
   const change = result.entries.find((entry) => entry.relativePath === relativePath);
   return {
@@ -171,15 +172,17 @@ export function splitPreviewLines(text: string): string[] {
   return text.split(/\r\n|\n|\r/);
 }
 
-export function findPreviewLineMatches(lines: string[], query: string): number[] {
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  if (!normalizedQuery) {
-    return [];
-  }
-  const matches: number[] = [];
+export type PreviewTextMatch = {
+  lineIndex: number;
+  startOffset: number;
+  endOffset: number;
+};
+
+export function findPreviewTextMatches(lines: string[], query: string): PreviewTextMatch[] {
+  const matches: PreviewTextMatch[] = [];
   lines.forEach((line, index) => {
-    if (line.toLocaleLowerCase().includes(normalizedQuery)) {
-      matches.push(index);
+    for (const match of findTextMatches(line, query)) {
+      matches.push({ lineIndex: index, ...match });
     }
   });
   return matches;

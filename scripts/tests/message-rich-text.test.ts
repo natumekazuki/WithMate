@@ -6,7 +6,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { handleMarkdownLinkClick, MessageRichText } from "../../src/MessageRichText.js";
+import {
+  handleMarkdownLinkClick,
+  MessageRichText,
+  resolveMessageMarkdownRenderMode,
+} from "../../src/MessageRichText.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -231,6 +235,48 @@ test("MessageRichText は browser 初回 render を light markdown にして後�
   }
 });
 
+test("MessageRichText は既存表示で検索を始めた瞬間に full rendererへ切り替える", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  const markdown = ["| A | B |", "| --- | --- |", "| 1 | 2 |"].join("\n");
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, { text: markdown }));
+    });
+    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "light");
+
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, { text: markdown, forceFullRender: true }));
+    });
+
+    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "full");
+    assert.notEqual(container.querySelector("table.message-table"), null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("resolveMessageMarkdownRenderMode はeffect前のlight stateより検索中のfull指定を優先する", () => {
+  assert.equal(resolveMessageMarkdownRenderMode(
+    true,
+    "same text",
+    { text: "same text", mode: "light" },
+    false,
+  ), "full");
+});
+
 test("MessageRichText は GFM 拡張記法を render する", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -329,7 +375,7 @@ test("MessageRichText は code literal 内の local path link 風テキストを
   assert.match(html, /<code class="message-inline-code">\[log\]\(C:\/tmp\/log file\.txt\)<\/code>/);
   assert.match(
     html,
-    /<pre class="message-code-block"><code class="message-inline-code language-txt">\[sample\]\(meeting notes\.md\)\n<\/code><\/pre>/,
+    /<pre class="message-code-block"><code class="message-inline-code language-txt">\[sample\]\(meeting notes\.md\)<\/code><\/pre>/,
   );
   assert.match(html, /\[indented\]\(meeting notes\.md\)/);
   assert.match(html, /\[tabbed\]\(meeting notes\.md\)/);
@@ -391,7 +437,7 @@ test("MessageRichText は先頭空白付き Markdown 行でも停止せずに re
   assert.match(html, /<h3 class="message-heading level-1">title<\/h3>/);
   assert.match(html, /<ul class="message-list">\s*<li>item<\/li>\s*<\/ul>/);
   assert.match(html, /<ol class="message-list ordered">\s*<li>first<\/li>\s*<\/ol>/);
-  assert.match(html, /<pre class="message-code-block"><code class="message-inline-code language-ts">const answer = 42;\n<\/code><\/pre>/);
+  assert.match(html, /<pre class="message-code-block"><code class="message-inline-code language-ts">const answer = 42;<\/code><\/pre>/);
 });
 
 test("MessageRichText は先頭空白付き Markdown を既存 block と inline のまま扱う", () => {
@@ -424,6 +470,6 @@ test("MessageRichText は 4 文字以上インデントされた block marker �
   assert.doesNotMatch(html, /<ol class="message-list ordered">/);
   assert.match(
     html,
-    /<pre class="message-code-block"><code class="message-inline-code"># not heading\n- not list\n1\. not ordered\n```ts\n<\/code><\/pre>/,
+    /<pre class="message-code-block"><code class="message-inline-code"># not heading\n- not list\n1\. not ordered\n```ts<\/code><\/pre>/,
   );
 });

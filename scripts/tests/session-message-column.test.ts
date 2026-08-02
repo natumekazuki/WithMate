@@ -244,9 +244,12 @@ type MountedSessionMessageColumn = {
   rerender: (callbacks: {
     getChangedFilesEmptyText?: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
     isMessageListFollowing?: boolean;
+    messageGroups?: SessionMessageColumnProps["messageGroups"];
     messages?: Message[];
     onCopyMessageText?: (text: string) => void;
     onQuoteMessageText?: (text: string) => void;
+    pendingMessageGroupId?: string | null;
+    pendingMessageText?: string;
   }) => Promise<void>;
   resizeMessageRow: (index: number, height: number) => Promise<void>;
   cleanup: () => Promise<void>;
@@ -259,6 +262,10 @@ async function mountSessionMessageColumn(options: {
   expandedArtifacts?: Record<string, boolean>;
   getChangedFilesEmptyText?: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
   component?: ComponentType<SessionMessageColumnProps>;
+  isRunning?: boolean;
+  messageGroups?: SessionMessageColumnProps["messageGroups"];
+  pendingMessageGroupId?: string | null;
+  pendingMessageText?: string;
 }): Promise<MountedSessionMessageColumn> {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
@@ -400,9 +407,12 @@ async function mountSessionMessageColumn(options: {
   const renderMessageColumn = async (callbacks: {
     getChangedFilesEmptyText?: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
     isMessageListFollowing?: boolean;
+    messageGroups?: SessionMessageColumnProps["messageGroups"];
     messages?: Message[];
     onCopyMessageText?: (text: string) => void;
     onQuoteMessageText?: (text: string) => void;
+    pendingMessageGroupId?: string | null;
+    pendingMessageText?: string;
   }) => {
     await act(async () => {
       root.render(
@@ -410,9 +420,10 @@ async function mountSessionMessageColumn(options: {
           sessionId: "session-1",
           character,
           messages: callbacks.messages ?? options.messages,
+          messageGroups: callbacks.messageGroups ?? options.messageGroups,
           expandedArtifacts,
           messageListRef,
-          isRunning: false,
+          isRunning: options.isRunning ?? false,
           liveApprovalRequest: null,
           approvalActionRequestId: null,
           liveElicitationRequest: null,
@@ -420,6 +431,8 @@ async function mountSessionMessageColumn(options: {
           liveRunAssistantText: "",
           hasLiveRunAssistantText: false,
           liveRunErrorMessage: "",
+          pendingMessageText: callbacks.pendingMessageText ?? options.pendingMessageText,
+          pendingMessageGroupId: callbacks.pendingMessageGroupId ?? options.pendingMessageGroupId,
           isMessageListFollowing: callbacks.isMessageListFollowing ?? false,
           onMessageListScroll() {},
           onToggleArtifact() {},
@@ -461,6 +474,9 @@ async function mountSessionMessageColumn(options: {
       });
     },
     async cleanup() {
+      if (dom.window.document.activeElement instanceof dom.window.HTMLElement) {
+        dom.window.document.activeElement.blur();
+      }
       await act(async () => {
         root.unmount();
       });
@@ -549,11 +565,33 @@ test("SessionMessageColumn は上方向へスクロールして先頭メッセ�
 });
 
 test("SessionMessageColumn は検索開始時に未mountの最初の一致へ移動する", async () => {
+  class TestHighlight {
+    readonly ranges: Range[] = [];
+
+    constructor(...ranges: Range[]) {
+      assert.equal(ranges.length, 0);
+    }
+
+    add(range: Range) {
+      this.ranges.push(range);
+      return this;
+    }
+  }
+
   const messages = createMessages(100);
-  messages[0] = { role: "assistant", text: "only early needle" };
+  messages[0] = { role: "assistant", text: "only early needle and another needle" };
   const mounted = await mountSessionMessageColumn({ messages });
 
   try {
+    const highlights = new Map<string, TestHighlight>();
+    Object.defineProperty(mounted.dom.window, "CSS", {
+      configurable: true,
+      value: { highlights },
+    });
+    Object.defineProperty(mounted.dom.window, "Highlight", {
+      configurable: true,
+      value: TestHighlight,
+    });
     const messageList = mounted.messageListRef.current;
     assert.ok(messageList);
     const initialScrollTop = messageList.scrollTop;
@@ -574,7 +612,7 @@ test("SessionMessageColumn は検索開始時に未mountの最初の一致へ移
     )?.set;
     assert.ok(setInputValue);
     await act(async () => {
-      setInputValue.call(input, "only early needle");
+      setInputValue.call(input, "needle");
       const propertyChange = new mounted.dom.window.Event("propertychange", { bubbles: true });
       Object.defineProperty(propertyChange, "propertyName", { value: "value" });
       input.dispatchEvent(propertyChange);
@@ -585,6 +623,255 @@ test("SessionMessageColumn は検索開始時に未mountの最初の一致へ移
       messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
     });
     assert.match(mounted.container.textContent ?? "", /only early needle/);
+    assert.deepEqual(
+      highlights.get("withmate-find-match")?.ranges.map((range) => range.toString()),
+      ["needle", "needle"],
+    );
+    assert.deepEqual(
+      highlights.get("withmate-find-current")?.ranges.map((range) => range.startOffset),
+      [11],
+    );
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+test("SessionMessageColumn の検索は表示文字列とpendingを同じ順序で数え現在位置をclampする", async () => {
+  class TestHighlight {
+    readonly ranges: Range[] = [];
+
+    constructor(...ranges: Range[]) {
+      assert.equal(ranges.length, 0);
+    }
+
+    add(range: Range) {
+      this.ranges.push(range);
+      return this;
+    }
+  }
+
+  const linkMessage: Message = {
+    role: "assistant",
+    text: "[needle](https://needle.example/path)",
+  };
+  const mounted = await mountSessionMessageColumn({
+    isRunning: true,
+    messages: [linkMessage],
+    pendingMessageText: "pending needle",
+  });
+
+  try {
+    const highlights = new Map<string, TestHighlight>();
+    Object.defineProperty(mounted.dom.window, "CSS", {
+      configurable: true,
+      value: { highlights },
+    });
+    Object.defineProperty(mounted.dom.window, "Highlight", {
+      configurable: true,
+      value: TestHighlight,
+    });
+    await act(async () => {
+      mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
+        key: "f",
+        ctrlKey: true,
+        bubbles: true,
+      }));
+    });
+    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    assert.ok(input);
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      mounted.dom.window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    assert.ok(setInputValue);
+    await act(async () => {
+      setInputValue.call(input, "needle");
+      const propertyChange = new mounted.dom.window.Event("propertychange", { bubbles: true });
+      Object.defineProperty(propertyChange, "propertyName", { value: "value" });
+      input.dispatchEvent(propertyChange);
+    });
+
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/2");
+    assert.equal(highlights.get("withmate-find-match")?.ranges.length, 2);
+    assert.equal(
+      highlights.get("withmate-find-current")?.ranges[0]?.startContainer.parentElement?.tagName,
+      "A",
+    );
+
+    const nextButton = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']");
+    assert.ok(nextButton);
+    await act(async () => {
+      nextButton.click();
+    });
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "2/2");
+    assert.equal(
+      highlights.get("withmate-find-current")?.ranges[0]?.startContainer.parentElement?.tagName,
+      "P",
+    );
+
+    await mounted.rerender({
+      messages: [],
+      pendingMessageText: "pending needle",
+    });
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/1");
+    assert.equal(highlights.get("withmate-find-current")?.ranges.length, 1);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+test("SessionMessageColumn の検索は Auxiliary group 内のpendingを画面表示順に数える", async () => {
+  class TestHighlight {
+    readonly ranges: Range[] = [];
+
+    constructor(...ranges: Range[]) {
+      assert.equal(ranges.length, 0);
+    }
+
+    add(range: Range) {
+      this.ranges.push(range);
+      return this;
+    }
+  }
+
+  const mounted = await mountSessionMessageColumn({
+    isRunning: true,
+    messages: [
+      { role: "assistant", text: "main needle" },
+      { role: "user", text: "aux needle", accent: true },
+      { role: "assistant", text: "later needle" },
+    ],
+    messageGroups: [
+      null,
+      { id: "aux-1", label: "Auxiliary" },
+      null,
+    ],
+    pendingMessageText: "pending needle",
+    pendingMessageGroupId: "aux-1",
+  });
+
+  try {
+    const highlights = new Map<string, TestHighlight>();
+    Object.defineProperty(mounted.dom.window, "CSS", {
+      configurable: true,
+      value: { highlights },
+    });
+    Object.defineProperty(mounted.dom.window, "Highlight", {
+      configurable: true,
+      value: TestHighlight,
+    });
+    await act(async () => {
+      mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
+        key: "f",
+        ctrlKey: true,
+        bubbles: true,
+      }));
+    });
+    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    assert.ok(input);
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      mounted.dom.window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    assert.ok(setInputValue);
+    await act(async () => {
+      setInputValue.call(input, "needle");
+      const propertyChange = new mounted.dom.window.Event("propertychange", { bubbles: true });
+      Object.defineProperty(propertyChange, "propertyName", { value: "value" });
+      input.dispatchEvent(propertyChange);
+    });
+
+    const nextButton = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']");
+    assert.ok(nextButton);
+    await act(async () => nextButton.click());
+    await act(async () => nextButton.click());
+
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "3/4");
+    const pendingRange = highlights.get("withmate-find-current")?.ranges[0];
+    assert.ok(pendingRange);
+    assert.ok(
+      pendingRange.startContainer.parentElement?.closest("[data-pending-message-body='true']"),
+      "3件目は後続main messageではなくgroup内pendingを指す",
+    );
+
+    await act(async () => nextButton.click());
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "4/4");
+    const laterRange = highlights.get("withmate-find-current")?.ranges[0];
+    assert.equal(
+      laterRange?.startContainer.parentElement?.closest<HTMLElement>(".session-message-virtual-row")?.dataset.index,
+      "2",
+    );
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+test("SessionMessageColumn の検索は5000件highlight budgetへgroup内pendingを表示順に含める", async () => {
+  class TestHighlight {
+    readonly ranges: Range[] = [];
+
+    constructor(...ranges: Range[]) {
+      assert.equal(ranges.length, 0);
+    }
+
+    add(range: Range) {
+      this.ranges.push(range);
+      return this;
+    }
+  }
+
+  const mounted = await mountSessionMessageColumn({
+    isRunning: true,
+    messages: [
+      { role: "user", text: "x", accent: true },
+      { role: "assistant", text: "x".repeat(6_000) },
+    ],
+    messageGroups: [
+      { id: "aux-1", label: "Auxiliary" },
+      null,
+    ],
+    pendingMessageText: "x",
+    pendingMessageGroupId: "aux-1",
+  });
+
+  try {
+    const highlights = new Map<string, TestHighlight>();
+    Object.defineProperty(mounted.dom.window, "CSS", {
+      configurable: true,
+      value: { highlights },
+    });
+    Object.defineProperty(mounted.dom.window, "Highlight", {
+      configurable: true,
+      value: TestHighlight,
+    });
+    await act(async () => {
+      mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
+        key: "f",
+        ctrlKey: true,
+        bubbles: true,
+      }));
+    });
+    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    assert.ok(input);
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      mounted.dom.window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    assert.ok(setInputValue);
+    await act(async () => {
+      setInputValue.call(input, "x");
+      const propertyChange = new mounted.dom.window.Event("propertychange", { bubbles: true });
+      Object.defineProperty(propertyChange, "propertyName", { value: "value" });
+      input.dispatchEvent(propertyChange);
+    });
+
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/6002");
+    const allMatches = highlights.get("withmate-find-match")?.ranges ?? [];
+    assert.equal(allMatches.length, 5_000);
+    assert.ok(
+      allMatches.some((range) => range.startContainer.parentElement?.closest("[data-pending-message-body='true']")),
+      "semantic順で2件目のpendingを先頭5000件highlightへ含める",
+    );
   } finally {
     await mounted.cleanup();
   }

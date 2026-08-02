@@ -20,6 +20,7 @@ import {
   parseGitPorcelainV1Z,
   WorkspaceGitChangesService,
 } from "../../src-electron/workspace-git-changes-service.js";
+import type { WorkspaceChangesResult } from "../../src/file-explorer/file-explorer-contract.js";
 
 const EXPECTED_GIT_GLOBAL_ARGS = ["--no-optional-locks", "--no-pager", "-c", "core.fsmonitor=false"];
 
@@ -139,6 +140,31 @@ test("WorkspaceGitChangesService は隔離した status / diff と非継承 Git 
       },
       runGit: async (workingDirectoryPath, args, options) => {
         calls.push({ args, env: options.env });
+        if (args.includes("--get-regexp")) {
+          return {
+            exitCode: 0,
+            stdout: Buffer.from(
+              "core.autocrlf\ntrue\0core.filemode\0core.symlinks\n\0core.ignorecase\n2\0"
+              + "core.precomposeunicode\n0x1\0filter.untrusted.clean\nexternal-command\0",
+              "utf8",
+            ),
+            stderr: "",
+          };
+        }
+        const accessesOriginalRepository = (
+          args.includes("--show-toplevel")
+          || args.some((arg) => arg === `--git-dir=${path.join(repositoryPath, ".git")}`)
+        );
+        const safeDirectoryArg = `safe.directory=${process.platform === "win32"
+          ? repositoryPath.replace(/\\/g, "/")
+          : repositoryPath}`;
+        if (accessesOriginalRepository && !args.includes(safeDirectoryArg)) {
+          return {
+            exitCode: 128,
+            stdout: Buffer.alloc(0),
+            stderr: `fatal: detected dubious ownership in repository at '${repositoryPath}'`,
+          };
+        }
         return runGitForTest(workingDirectoryPath, args, options);
       },
     });
@@ -162,11 +188,31 @@ test("WorkspaceGitChangesService は隔離した status / diff と非継承 Git 
       assert.equal(env.git_work_tree, undefined);
       assert.equal(env.GIT_CONFIG_COUNT, undefined);
     }
+    const identityArgs = calls.find(({ args }) => args.includes("--show-toplevel"))?.args;
+    assert.ok(identityArgs);
+    assert.ok(identityArgs.includes(`safe.directory=${process.platform === "win32"
+      ? repositoryPath.replace(/\\/g, "/")
+      : repositoryPath}`));
+    const configReadCall = calls.find(({ args }) => args.includes("--get-regexp"));
+    assert.ok(configReadCall);
+    assert.equal(configReadCall.env.GIT_CONFIG_GLOBAL, undefined);
+    assert.equal(configReadCall.env.GIT_CONFIG_SYSTEM, undefined);
+    assert.equal(configReadCall.env.GIT_CONFIG_NOSYSTEM, undefined);
+    const statusArgs = calls.find(({ args }) => args.includes("status"))?.args;
+    assert.ok(statusArgs);
+    assert.ok(statusArgs.includes("core.autocrlf=true"));
+    assert.ok(statusArgs.includes("core.filemode=true"));
+    assert.ok(statusArgs.includes("core.symlinks=false"));
+    assert.ok(statusArgs.includes("core.ignorecase=true"));
+    assert.ok(statusArgs.includes("core.precomposeunicode=true"));
+    assert.ok(statusArgs.includes("--ignore-submodules=dirty"));
+    assert.equal(statusArgs.some((arg) => arg.includes("filter.untrusted")), false);
     const diffArgs = [...calls].reverse().find(({ args }) => args.includes("diff"))?.args;
     assert.ok(diffArgs);
     assert.ok(diffArgs.some((arg) => arg.startsWith("--git-dir=") && !arg.endsWith(`${path.sep}.git`)));
     assert.deepEqual(diffArgs.slice(diffArgs.indexOf("diff")), [
       "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=3",
+      "--ignore-submodules=dirty",
       "--", ":(top,literal)src/a.ts",
     ]);
     await assert.rejects(() => access(path.join(repositoryPath, "trace.txt")));
@@ -174,6 +220,47 @@ test("WorkspaceGitChangesService は隔離した status / diff と非継承 Git 
       () => service.getFileDiff({ sessionId: "session-1", relativePath: "../escape", scope: "working-tree" }),
       /invalid segment/,
     );
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
+});
+
+test("WorkspaceGitChangesService は Git boolean の有効な基数・単位表記を保持し範囲外値を拒否する", async () => {
+  const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-config-bool-"));
+  try {
+    await initializeRepository(repositoryPath);
+    await writeFile(path.join(repositoryPath, "tracked.txt"), "changed\n");
+    const configValues = [
+      "1k",
+      "0x1",
+      `${"0".repeat(128)}1`,
+      process.platform === "win32" ? "2147483648" : "9223372036854775808",
+    ];
+    const results: WorkspaceChangesResult[] = [];
+    for (const configValue of configValues) {
+      const service = new WorkspaceGitChangesService({
+        getWorkspaceContext: async () => ({ workspacePath: repositoryPath }),
+        runGit: async (workingDirectoryPath, args, options) => {
+          if (args.includes("--get-regexp")) {
+            return {
+              exitCode: 0,
+              stdout: Buffer.from(`core.ignorecase\n${configValue}\0`, "utf8"),
+              stderr: "",
+            };
+          }
+          return runGitForTest(workingDirectoryPath, args, options);
+        },
+      });
+      results.push(await service.listChanges("session-1"));
+    }
+
+    assert.equal(results[0]?.status, "ok", JSON.stringify(results[0]));
+    assert.equal(results[1]?.status, "ok", JSON.stringify(results[1]));
+    assert.equal(results[2]?.status, "ok", JSON.stringify(results[2]));
+    assert.deepEqual(results[3], {
+      status: "failed",
+      message: "Git work tree config core.ignorecase has an unsupported value.",
+    });
   } finally {
     await rm(repositoryPath, { recursive: true, force: true });
   }
@@ -858,6 +945,93 @@ test("WorkspaceGitChangesService は active clean filter を実行せず typed f
     await assert.rejects(() => access(markerPath));
   } finally {
     await rm(repositoryPath, { recursive: true, force: true });
+  }
+});
+
+test("WorkspaceGitChangesService は populated submodule の status / diff で clean filter を実行しない", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-git-submodule-filter-"));
+  const repositoryPath = path.join(tempRoot, "repository");
+  const submoduleSourcePath = path.join(tempRoot, "submodule-source");
+  const submodulePath = path.join(repositoryPath, "modules", "child");
+  const markerPath = path.join(tempRoot, "submodule-filter-ran.txt");
+  const filterScriptPath = path.join(tempRoot, "submodule-filter-script.cjs");
+  try {
+    await initializeRepository(submoduleSourcePath);
+    await writeFile(path.join(submoduleSourcePath, ".gitattributes"), "tracked.txt filter=marker\n");
+    assert.equal((await runGitForTest(submoduleSourcePath, ["add", ".gitattributes"])).exitCode, 0);
+    assert.equal((await runGitForTest(submoduleSourcePath, [
+      "-c",
+      "user.name=WithMate Test",
+      "-c",
+      "user.email=withmate@example.invalid",
+      "commit",
+      "--quiet",
+      "-m",
+      "attributes",
+    ])).exitCode, 0);
+
+    await initializeRepository(repositoryPath);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c",
+      "protocol.file.allow=always",
+      "submodule",
+      "add",
+      "--quiet",
+      submoduleSourcePath,
+      "modules/child",
+    ])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c",
+      "user.name=WithMate Test",
+      "-c",
+      "user.email=withmate@example.invalid",
+      "commit",
+      "--quiet",
+      "-m",
+      "submodule",
+    ])).exitCode, 0);
+
+    await writeFile(path.join(submodulePath, "next.txt"), "next\n");
+    assert.equal((await runGitForTest(submodulePath, ["add", "next.txt"])).exitCode, 0);
+    assert.equal((await runGitForTest(submodulePath, [
+      "-c",
+      "user.name=WithMate Test",
+      "-c",
+      "user.email=withmate@example.invalid",
+      "commit",
+      "--quiet",
+      "-m",
+      "next",
+    ])).exitCode, 0);
+
+    await writeFile(
+      filterScriptPath,
+      "const fs = require('node:fs'); fs.writeFileSync(process.argv[2], 'ran'); process.stdin.pipe(process.stdout);\n",
+    );
+    const command = `"${process.execPath.replaceAll("\\", "/")}" "${filterScriptPath.replaceAll("\\", "/")}" "${markerPath.replaceAll("\\", "/")}"`;
+    assert.equal((await runGitForTest(submodulePath, ["config", "filter.marker.clean", command])).exitCode, 0);
+    assert.equal((await runGitForTest(submodulePath, ["config", "filter.marker.required", "true"])).exitCode, 0);
+    await writeFile(path.join(submodulePath, "tracked.txt"), "changed\n");
+
+    const service = new WorkspaceGitChangesService({
+      getWorkspaceContext: async () => ({ workspacePath: repositoryPath }),
+    });
+    const result = await service.listChanges("session-1");
+
+    assert.equal(result.status, "ok", JSON.stringify(result));
+    const diff = await service.getFileDiff({
+      sessionId: "session-1",
+      relativePath: "modules/child",
+      scope: "working-tree",
+    });
+    assert.equal(diff.status, "ok", JSON.stringify(diff));
+    if (diff.status === "ok") {
+      assert.match(diff.patch, /Subproject commit [0-9a-f]+\n\+Subproject commit [0-9a-f]+/);
+      assert.doesNotMatch(diff.patch, /-dirty/);
+    }
+    await assert.rejects(() => access(markerPath));
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
   }
 });
 

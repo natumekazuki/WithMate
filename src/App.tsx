@@ -644,7 +644,9 @@ export default function AgentSessionWindowApp() {
     isContextRailVisible,
     isFilesPaneVisible,
     isContextRailResizing,
+    isFilesPaneResizing,
     handleStartContextRailResize,
+    handleStartFilesPaneResize,
     handleToggleContextRailVisibility,
     handleToggleFilesPaneVisibility,
   } = useSessionSidePanes({
@@ -711,12 +713,10 @@ export default function AgentSessionWindowApp() {
       const availability = projectWorkspaceFileDiffAvailability(result, selectedFilePreview.relativePath);
       setSelectedFileDiffScopes(availability.scopes);
       setSelectedFileDiffAvailabilityMessage(availability.message);
-    }).catch((error) => {
+    }).catch(() => {
       if (active) {
         setSelectedFileDiffScopes([]);
-        setSelectedFileDiffAvailabilityMessage(
-          error instanceof Error ? error.message : "Git changes could not be loaded.",
-        );
+        setSelectedFileDiffAvailabilityMessage("");
       }
     });
     return () => {
@@ -3352,6 +3352,7 @@ export default function AgentSessionWindowApp() {
         attachmentCount: composerPreview.attachments.length,
         isActionDockExpanded,
         isContextRailResizing,
+        isFilesPaneResizing,
         isContextRailVisible,
         latestCommandView,
         runningDetailsEntries,
@@ -3527,6 +3528,7 @@ export default function AgentSessionWindowApp() {
           onSelectedSessionChange: (value) => handleChangeReasoningEffort(value as Session["reasoningEffort"]),
         }),
         onStartContextRailResize: handleStartContextRailResize,
+        onStartFilesPaneResize: handleStartFilesPaneResize,
         onToggleContextRailVisibility: handleToggleContextRailVisibility,
         onToggleFilesPaneVisibility: handleToggleFilesPaneVisibility,
         onCycleContextPaneTab: handleCycleContextPaneTab,

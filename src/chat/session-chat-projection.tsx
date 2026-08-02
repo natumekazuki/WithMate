@@ -95,6 +95,7 @@ export type AgentSessionChatProjectionInput = {
   attachmentCount: number;
   isActionDockExpanded: boolean;
   isContextRailResizing: boolean;
+  isFilesPaneResizing: boolean;
   isContextRailVisible: boolean;
   latestCommandView: SessionContextPaneProps["latestCommandView"];
   runningDetailsEntries: SessionContextPaneProps["runningDetailsEntries"];
@@ -182,6 +183,7 @@ export type AgentSessionChatProjectionInput = {
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
   onChangeReasoningEffort: SessionComposerExpandedProps["onChangeReasoningEffort"];
   onStartContextRailResize: PointerEventHandler<HTMLButtonElement>;
+  onStartFilesPaneResize: PointerEventHandler<HTMLButtonElement>;
   onToggleContextRailVisibility: () => void;
   onToggleFilesPaneVisibility: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
@@ -399,7 +401,9 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     leftPane: input.leftPane,
     leftSplitterProps: {
       side: "left",
+      isActive: input.isFilesPaneResizing,
       isRightPaneVisible: input.isFilesPaneVisible,
+      onPointerDown: input.isFilesPaneVisible ? input.onStartFilesPaneResize : undefined,
       onToggleRightPane: input.onToggleFilesPaneVisibility,
       ariaLabel: input.isFilesPaneVisible ? "File Explorer を非表示" : "File Explorer を表示",
       title: input.isFilesPaneVisible ? "File Explorer を非表示" : "File Explorer を表示",

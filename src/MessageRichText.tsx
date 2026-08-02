@@ -12,11 +12,27 @@ import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-resul
 type MessageRichTextProps = {
   text: string;
   className?: string;
+  forceFullRender?: boolean;
   onOpenPath?: (target: string) => void;
   resolveImageSource?: (target: string) => Promise<string | null>;
 };
 
 type MarkdownRenderMode = "light" | "full";
+
+export function resolveMessageMarkdownRenderMode(
+  forceFullRender: boolean,
+  text: string,
+  renderState: { text: string; mode: MarkdownRenderMode },
+  shouldDefer: boolean,
+): MarkdownRenderMode {
+  if (forceFullRender) {
+    return "full";
+  }
+  if (renderState.text === text) {
+    return renderState.mode;
+  }
+  return shouldDefer ? "light" : "full";
+}
 
 type MermaidRenderState =
   | { status: "pending" }
@@ -312,11 +328,16 @@ const markdownComponents: Components = {
       </pre>
     );
   },
-  code: ({ children, className: codeClassName, node, ...props }) => (
-    <code {...props} className={mergeClassName("message-inline-code", codeClassName)}>
-      {children}
-    </code>
-  ),
+  code: ({ children, className: codeClassName, node, ...props }) => {
+    const renderedChildren = typeof children === "string" && children.endsWith("\n")
+      ? children.slice(0, -1)
+      : children;
+    return (
+      <code {...props} className={mergeClassName("message-inline-code", codeClassName)}>
+        {renderedChildren}
+      </code>
+    );
+  },
   table: ({ children, className: tableClassName, node, ...props }) => (
     <table {...props} className={mergeClassName("message-table", tableClassName)}>
       {children}
@@ -513,18 +534,19 @@ function createMarkdownComponents(
 function MessageRichTextComponent({
   text,
   className = "message-body",
+  forceFullRender = false,
   onOpenPath,
   resolveImageSource,
 }: MessageRichTextProps) {
   const reactId = useId();
   const footnotePrefix = useMemo(() => `message-footnote-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}-`, [reactId]);
   const footnoteLabelId = `${footnotePrefix}footnote-label`;
-  const shouldDefer = shouldDeferRichMarkdownRender();
+  const shouldDefer = !forceFullRender && shouldDeferRichMarkdownRender();
   const [renderState, setRenderState] = useState<{ text: string; mode: MarkdownRenderMode }>(() => ({
     text,
     mode: shouldDefer ? "light" : "full",
   }));
-  const renderMode = renderState.text === text ? renderState.mode : shouldDefer ? "light" : "full";
+  const renderMode = resolveMessageMarkdownRenderMode(forceFullRender, text, renderState, shouldDefer);
   const isFullRender = renderMode === "full";
   const components = useMemo(
     () => createMarkdownComponents(onOpenPath, { enableMermaid: isFullRender, resolveImageSource }),

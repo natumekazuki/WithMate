@@ -1,6 +1,6 @@
 # Session File Explorer and Preview Plan
 
-- Status: Implementation Complete / Review In Progress
+- Status: Follow-up Implementation Complete / Review In Progress
 - Created: 2026-08-02
 - Target: Agent Session UI and Auxiliary Session UI
 - Out of scope: Companion UI
@@ -31,6 +31,7 @@
 
 - 左に File Explorer ペインを追加する。
 - 左の File Explorer と右の Context ペインは同時表示しない。
+- 開いている側のペインだけを resize 対象とし、File Explorer は右端、Context は左端の splitter から幅を変更できる。desktop layout の最大幅は session workbench の 50% とし、狭幅 layout では drag resize を無効にする。
 - 表示状態は `files | context | none` の単一状態で所有し、片方を開く操作はもう片方を原子的に閉じる。
 - 現在開いているペインのトグル操作は `none` に戻す。
 - ペイン状態は既存の right pane 専用設定更新境界を置き換えて永続化する。
@@ -84,10 +85,10 @@
 
 - Ctrl+F で中央領域共通の find bar を toolbar 直下に開く。ActionDock の textarea に focus がある場合も同じ shortcut を使う。
 - find bar は query、match count、previous、next、close を持つ。Enter は next、Shift+Enter は previous、Escape は find bar を閉じて元の focus へ戻す。
-- current match は Chat では対象 message、Text / Source / Git Diff では対象行を強調表示する。Markdown Preview は preview container 内の rendered text node だけを検索し、該当 range を選択して中央へ移動する。
+- Chat、Text / Source、Markdown Preview、Git Diff は一致件数と移動順を全件から求め、current match だけを別色で示して中央へ移動する。Markdown Preview と Chat は rendered text node、Text / Source / Git Diff は decoded line model の文字範囲へ highlight を投影する。DOM Range の同時登録は active surface ごとに 5,000 件へ制限し、上限外でも current match は常に別色で表示する。
 - 検索対象は現在の中央表示だけとし、file preview 中に chat を同時検索しない。
 - find bar の UI と shortcut contract を共有し、query state、検索、移動は active surface が所有する。
-  - Chat: DOM に mount されていない message も含め、現在の session の message projection を検索して対象 message へ scroll する。
+  - Chat: DOM に mount されていない message も含め、現在の session の message projection を検索して対象 message へ scroll する。検索中は light render を使わず、count と DOM index を full renderer に揃える。画像状態、数式、Mermaid、footnote の自動生成 label / back-reference は双方で対象外にし、参照済み footnote 本文だけを最初の参照順で末尾へ加える。
   - Text / Source: decoded text model の全行を検索し、virtualized row へ scroll する。
   - Markdown Preview: rendered text を検索して該当要素へ移動する。Source 表示では raw Markdown を検索する。
 - Git Diff: hunk header、追加・削除・context line を検索し、該当 row へ scroll する。
@@ -157,6 +158,7 @@
   - Staged: `git diff --cached -- <path>`
 - Git 引数は service 側で固定し、Renderer から raw command、任意 option、shell string を受け取らない。diff は `--no-ext-diff --no-textconv --no-color` を固定し、user configuration による external command 実行を許可しない。
 - Git executable は process-start PATH の絶対 entry から絶対 real path へ固定し、継承元の `GIT_*` は大文字小文字を区別せずすべて除去する。
+- ownership が異なる repository は、identity discovery 中は Workspace の canonical ancestor、identity 確定後は canonical repository root だけを command-local `safe.directory` として許可する。system/global Git config は変更しない。checkout と同じ status semantics に必要な `core.autocrlf` などの固定 allowlist だけを effective config から取得して隔離 invocation へ投影し、filter / hook / external command 設定は継承しない。Changes 取得失敗は通常 file preview のエラーとして投影しない。
 - Git process は認可時に確定した Workspace、Git directory、common directory の canonical identity へ lease で固定し、操作中の rename / replacement を成立させない。identity を保持できない platform では typed failure とする。
 - HEAD と Workspace scope の index を操作ごとの一時 Git directory へ投影し、status / diff は元 repository の local config を読み込まない隔離 invocation で実行する。
 - index projection は `assume-unchanged`、`skip-worktree`、存在しない intent-to-add path、空 file の staged rename を含む scope semantics を維持する。nested Workspace の isolated status は Workspace current directory と pathspec で直接限定し、取得後の表示 filtering だけに依存しない。
@@ -164,7 +166,7 @@
 - Git operation は process 全体の active 2件、pending 16件を上限とする。同じ Session の同種の待機要求は新しい要求で置き換え、60秒の deadline 後は child process の close を待ってから lease と一時 Git directory を解放する。cleanup failure は timeout より優先する typed failure とし、bounded retry 後も残った resource は process lifetime の backlog から次の service instanceでも再試行する。
 - Workspace が repository root より下位にある場合も、status path を Workspace-relative へ変換し、Workspace 外の変更を Changes に混ぜない。diff pathspec は repository root 基準の literal path とする。
 - path は Workspace 配下の変更一覧から発行した opaque identifier または検証済み相対 path に限定する。
-- non-Git Workspace、rename、delete、untracked、empty diff、process failure を観測可能な結果として返す。binary diff と submodule change は Git が返した patch 表現をそのまま表示する。
+- non-Git Workspace、rename、delete、untracked、empty diff、process failure を観測可能な結果として返す。binary diff と gitlink commit change は Git が返した patch 表現をそのまま表示し、populated submodule 内だけの dirty change は親 repository の Changes に含めない。
 - untracked file は差分を合成せず、file preview を開く導線を出す。
 - live Git Diff は既存の artifact `DiffViewer` と分離した virtualized unified view に表示する。artifact の inline / popout split view は変更しない。
 
@@ -427,6 +429,7 @@ npm run build
 
 - Agent と Auxiliary Session で各 root を展開し、左右ペインが排他になることを確認する。
 - minimum/default window width と light/dark theme で tree、toolbar、selected、focus、error の contrast を確認する。
+- Markdown Preview の通常本文が preview surface の text token を継承し、暗い背景へ同化しないことを確認する。
 - 大量ファイル directory、大きい text、長い一行、大きい diff、巨大画像を順に開き、操作可能性と解放後のメモリ傾向を確認する。
 - UTF-8、Shift_JIS / Windows-31J、UTF-16 の同一内容を Auto と手動で切り替える。
 - Text / Source の行番号と viewport 端での固定 soft wrap を確認する。
@@ -513,3 +516,10 @@ npm run build
 - [x] 同一 path / scope の live Git Diff を再取得した時も load generation を更新し、旧 Reload feedback を破棄
 - [x] directory 待機列の supersession を同一 Session / root / path に限定
 - [x] complete-diff closure review
+- [x] ownership が異なる repository を command-local trust で扱い、通常 file preview から Changes 補助取得エラーを分離
+- [x] Markdown Preview の本文 contrast を preview surface で固定
+- [x] Chat / Text / Markdown / Git Diff の全検索一致と current match を別色で表示
+- [x] 排他的な左右ペインの双方を splitter で resize し、最大幅を workbench の 50% に統一
+- [x] populated submodule の dirty 判定を親 status / diff から除外し、submodule local filter を実行しない
+- [x] Markdown Preview の link / Mermaid error contrast を preview surface に合わせる
+- [x] Chat 検索を Markdown の本文 projection と pending message に揃え、renderer 生成 label を除外し、dense hit の Range 登録上限と件数縮小後の current match を安定化
